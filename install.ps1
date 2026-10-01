@@ -1,8 +1,18 @@
+param(
+  [string]$Destination = "",
+  [string]$AssetDirectory = "",
+  [string]$UserConfigDirectory = "",
+  [switch]$SkipUserSetup,
+  [switch]$SkipRuntimeSetup,
+  [switch]$Headless
+)
 $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
 
 $Repo = "deathbyknowledge/gsv"
-$InstallDir = if ($env:GSV_INSTALL_DIR) {
+$InstallDir = if ($Destination) {
+  $Destination
+} elseif ($env:GSV_INSTALL_DIR) {
   $env:GSV_INSTALL_DIR
 } else {
   Join-Path $env:LOCALAPPDATA "Programs\gsv\bin"
@@ -10,7 +20,7 @@ $InstallDir = if ($env:GSV_INSTALL_DIR) {
 $Channel = if ($env:GSV_CHANNEL) { $env:GSV_CHANNEL } else { "stable" }
 $Version = if ($env:GSV_VERSION) { $env:GSV_VERSION } else { "" }
 $ConfigRoot = if ($env:APPDATA) { $env:APPDATA } else { Join-Path $env:USERPROFILE "AppData\Roaming" }
-$ConfigDir = Join-Path $ConfigRoot "gsv"
+$ConfigDir = if ($UserConfigDirectory) { $UserConfigDirectory } else { Join-Path $ConfigRoot "gsv" }
 $DevReleaseTag = "dev"
 $Platform = "windows-x64"
 
@@ -57,7 +67,11 @@ function Download-VerifiedAsset(
 ) {
   $url = Add-CacheBustIfMutable $ReleaseRef (Release-AssetUrl $ReleaseRef $Asset)
   Write-Info "Downloading $Asset"
-  Invoke-WebRequest -Uri $url -OutFile $Destination | Out-Null
+  if ($AssetDirectory) {
+    Copy-Item -LiteralPath (Join-Path $AssetDirectory $Asset) -Destination $Destination
+  } else {
+    Invoke-WebRequest -UseBasicParsing -Uri $url -OutFile $Destination | Out-Null
+  }
   $expected = Get-ExpectedChecksum $Checksums $Asset
   $actual = (Get-FileHash -Algorithm SHA256 $Destination).Hash.ToLowerInvariant()
   if ($actual -ne $expected) { throw "Checksum verification failed for $Asset" }
@@ -84,7 +98,7 @@ function Ensure-ConfigFile {
 [release]
 $channelLine
 "@
-  Set-Content -Path $configFile -Value $configContent -Encoding UTF8
+  [IO.File]::WriteAllText($configFile, $configContent, [Text.UTF8Encoding]::new($false))
   Write-Success "Created config at $configFile"
 }
 
@@ -102,7 +116,7 @@ function Set-ReleaseChannelInConfig([string]$Channel) {
     if ($line -match '^\s*\[') { $inRelease = $false; continue }
     if ($inRelease -and $line -match '^\s*#?\s*channel\s*=') {
       $lines[$index] = $channelLine
-      Set-Content -Path $configFile -Value $lines -Encoding UTF8
+      [IO.File]::WriteAllLines($configFile, $lines, [Text.UTF8Encoding]::new($false))
       return
     }
   }
@@ -113,7 +127,7 @@ function Set-ReleaseChannelInConfig([string]$Channel) {
     $lines.Add("[release]")
     $lines.Add($channelLine)
   }
-  Set-Content -Path $configFile -Value $lines -Encoding UTF8
+  [IO.File]::WriteAllLines($configFile, $lines, [Text.UTF8Encoding]::new($false))
 }
 
 function Add-InstallDirToPath {
@@ -141,24 +155,51 @@ function Restore-Binaries([array]$Installed) {
   }
 }
 
-function Restore-ScheduledTask([bool]$Existed, [string]$Xml, [bool]$WasRunning) {
-  Stop-ScheduledTask -TaskName "gsvd" -ErrorAction SilentlyContinue
-  if (-not $Existed) {
-    Unregister-ScheduledTask -TaskName "gsvd" -Confirm:$false -ErrorAction SilentlyContinue
-    return
+function Stop-GsvService {
+  $service = Get-Service -Name gsvd -ErrorAction SilentlyContinue
+  if ($service -and $service.Status -ne 'Stopped') {
+    $service.Stop()
+    $service.WaitForStatus('Stopped', [TimeSpan]::FromSeconds(30))
   }
-  Register-ScheduledTask -TaskName "gsvd" -Xml $Xml -Force | Out-Null
-  if ($WasRunning) { Start-ScheduledTask -TaskName "gsvd" }
 }
 
 function Wait-GsvdHealthy {
-  for ($attempt = 0; $attempt -lt 10; $attempt++) {
-    $task = Get-ScheduledTask -TaskName "gsvd" -ErrorAction SilentlyContinue
-    & (Join-Path $InstallDir "gsv.exe") daemon doctor *> $null
-    if ($LASTEXITCODE -eq 0 -and $task -and $task.State -eq "Running") { return $true }
+  for ($attempt = 0; $attempt -lt 15; $attempt++) {
+    $service = Get-Service -Name gsvd -ErrorAction SilentlyContinue
+    & (Join-Path $InstallDir 'gsv.exe') daemon diagnostics --json *> $null
+    if ($LASTEXITCODE -eq 0 -and $service -and $service.Status -eq 'Running') { return $true }
     Start-Sleep -Seconds 1
   }
   return $false
+}
+
+function Install-MicrosoftRuntime([string]$Url, [string]$Name, [string[]]$Arguments) {
+  $path = Join-Path ([IO.Path]::GetTempPath()) (([Guid]::NewGuid().ToString('N')) + '.exe')
+  try {
+    Invoke-WebRequest -UseBasicParsing -Uri $Url -OutFile $path | Out-Null
+    $signature = Get-AuthenticodeSignature -FilePath $path
+    if ($signature.Status -ne 'Valid' -or $signature.SignerCertificate.Subject -notmatch 'O=Microsoft Corporation') {
+      throw "$Name installer does not have a valid Microsoft signature"
+    }
+    $process = Start-Process -FilePath $path -ArgumentList $Arguments -Wait -PassThru
+    if ($process.ExitCode -notin @(0, 1638, 3010)) { throw "$Name installation failed: $($process.ExitCode)" }
+  } finally { Remove-Item -LiteralPath $path -Force -ErrorAction SilentlyContinue }
+}
+
+function Ensure-DesktopRuntimes {
+  if ($SkipRuntimeSetup) { return }
+  $webview = @(
+    'HKLM:\SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}',
+    'HKLM:\SOFTWARE\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}',
+    'HKCU:\SOFTWARE\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}'
+  ) | Where-Object { (Get-ItemProperty -Path $_ -Name pv -ErrorAction SilentlyContinue).pv -match '^[1-9]' }
+  if (-not $webview) {
+    Install-MicrosoftRuntime 'https://go.microsoft.com/fwlink/p/?LinkId=2124703' 'WebView2' @('/silent', '/install')
+  }
+  $vc = Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\VisualStudio\14.0\VC\Runtimes\x64' -ErrorAction SilentlyContinue
+  if (-not $vc -or $vc.Installed -ne 1) {
+    Install-MicrosoftRuntime 'https://aka.ms/vs/17/release/vc_redist.x64.exe' 'Visual C++ runtime' @('/install', '/quiet', '/norestart')
+  }
 }
 
 function Install-GsvHost {
@@ -170,19 +211,29 @@ function Install-GsvHost {
   if ($resolvedInstallDir -eq $volumeRoot -or $resolvedInstallDir -eq $userProfile) {
     throw "GSV_INSTALL_DIR must name a dedicated binary directory"
   }
-  if ($env:PROCESSOR_ARCHITECTURE -match "ARM64") {
-    Write-Warn "Windows ARM64 is not a released target; installing the x64 CLI and daemon under emulation."
+  if ([Environment]::OSVersion.Version.Major -lt 10) { throw 'GSV requires Windows 10 or newer' }
+  if ($env:PROCESSOR_ARCHITECTURE -match 'ARM64' -or $env:PROCESSOR_ARCHITEW6432 -match 'ARM64') {
+    throw 'This release supports Windows x64 only'
   }
-
   $releaseRef = Resolve-ReleaseRef
   $tempDir = Join-Path ([System.IO.Path]::GetTempPath()) ([System.Guid]::NewGuid().ToString("N"))
   $assets = [ordered]@{
     "gsv-$Platform.exe" = "gsv.exe"
     "gsvd-$Platform.exe" = "gsvd.exe"
+    "gsv-desktop-$Platform.exe" = "gsv-desktop.exe"
+    "gsv-transcribe-$Platform.exe" = "gsv-transcribe.exe"
+    "gsv-vision-$Platform.exe" = "gsv-vision.exe"
+    "gsv-transcribe-THIRD_PARTY.md" = "gsv-transcribe-THIRD_PARTY.md"
+    "gsv-vision-LICENSE.apache-2.0" = "gsv-vision-LICENSE.apache-2.0"
+    "gsv-vision-PROVENANCE.md" = "gsv-vision-PROVENANCE.md"
+    "gsv-vision-THIRD_PARTY.md" = "gsv-vision-THIRD_PARTY.md"
   }
-  $taskExisted = $false
-  $taskWasRunning = $false
-  $taskXml = ""
+  if ($Headless) {
+    $assets = [ordered]@{ "gsv-$Platform.exe" = "gsv.exe"; "gsvd-$Platform.exe" = "gsvd.exe" }
+  }
+  $serviceExisted = $false
+  $serviceWasRunning = $false
+  $serviceBinary = ""
   $installed = @()
   $rollbackNeeded = $false
   New-Item -ItemType Directory -Force -Path $tempDir | Out-Null
@@ -190,23 +241,41 @@ function Install-GsvHost {
   try {
     Write-Info "Downloading release manifest ($releaseRef)"
     $checksumUrl = Add-CacheBustIfMutable $releaseRef (Release-AssetUrl $releaseRef "checksums.txt")
-    $checksums = (Invoke-WebRequest -Uri $checksumUrl).Content
+    $checksums = if ($AssetDirectory) { Get-Content -Raw -LiteralPath (Join-Path $AssetDirectory "checksums.txt") } else { (Invoke-WebRequest -UseBasicParsing -Uri $checksumUrl).Content }
     foreach ($asset in $assets.Keys) {
       Download-VerifiedAsset $releaseRef $asset (Join-Path $tempDir $asset) $checksums
     }
     Write-Success "Verified $($assets.Count) release artifacts"
 
-    $oldTask = Get-ScheduledTask -TaskName "gsvd" -ErrorAction SilentlyContinue
-    $taskExisted = $null -ne $oldTask
-    $taskWasRunning = $taskExisted -and $oldTask.State -eq "Running"
-    $taskXml = if ($taskExisted) { Export-ScheduledTask -TaskName "gsvd" } else { "" }
+    $service = Get-CimInstance Win32_Service -Filter "Name='gsvd'" -ErrorAction Stop
+    $serviceExisted = $null -ne $service
+    $serviceWasRunning = $serviceExisted -and $service.State -eq 'Running'
+    if ($serviceExisted) {
+      if ($service.PathName -notmatch '^"([^"\r\n]+)"\s+--windows-service$') { throw 'Unrecognized GSV service registration' }
+      $serviceBinary = $Matches[1]
+      $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
+      $admin = ([Security.Principal.WindowsPrincipal]::new($identity)).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+      if (-not $admin) {
+        # Download and verify this release's installer before requesting elevation.
+        Download-VerifiedAsset $releaseRef 'install.ps1' (Join-Path $tempDir 'install.ps1') $checksums
+        [IO.File]::WriteAllText((Join-Path $tempDir 'checksums.txt'), $checksums)
+        $quote = { param($value) '"' + $value.Replace('"', '\"') + '"' }
+        $arguments = '-NoProfile -ExecutionPolicy Bypass -File ' + (& $quote (Join-Path $tempDir 'install.ps1')) + ' -Destination ' + (& $quote $InstallDir) + ' -AssetDirectory ' + (& $quote $tempDir) + ' -UserConfigDirectory ' + (& $quote $ConfigDir) + ' -SkipUserSetup'
+        if ($SkipRuntimeSetup) { $arguments += ' -SkipRuntimeSetup' }
+        if ($Headless) { $arguments += ' -Headless' }
+        $elevated = Start-Process -FilePath "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -Verb RunAs -ArgumentList $arguments -Wait -PassThru
+        if ($elevated.ExitCode -ne 0) { throw 'Administrator installation failed' }
+        return
+      }
+    }
+    $busy = Get-Process -Name gsv-desktop,gsv-transcribe,gsv-vision -ErrorAction SilentlyContinue
+    if ($busy) { throw 'Close GSV Desktop and its input helpers, then run the installer again.' }
+    if (-not $Headless) { Ensure-DesktopRuntimes }
 
     New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
     $rollbackNeeded = $true
     try {
-      if ($taskExisted) {
-        Stop-ScheduledTask -TaskName "gsvd" -ErrorAction Stop
-      }
+      if ($serviceExisted) { Stop-GsvService }
       foreach ($entry in $assets.GetEnumerator()) {
         $target = Join-Path $InstallDir $entry.Value
         $staged = "$target.new.$PID"
@@ -224,24 +293,29 @@ function Install-GsvHost {
         }
       }
 
+      if ($serviceExisted -and $serviceBinary -ne (Join-Path $InstallDir 'gsvd.exe')) {
+        $backup = "$serviceBinary.backup.$PID"
+        Move-Item -LiteralPath $serviceBinary -Destination $backup
+        $installed += [PSCustomObject]@{ Target = $serviceBinary; Backup = $backup }
+        Copy-Item -LiteralPath (Join-Path $tempDir "gsvd-$Platform.exe") -Destination $serviceBinary
+      }
+
       # The config must be complete before the replacement daemon starts.
       Ensure-ConfigFile
       if ($Version -eq $DevReleaseTag) { Set-ReleaseChannelInConfig "dev" }
 
-      if ($taskExisted) {
-        & (Join-Path $InstallDir "gsv.exe") daemon start *> $null
-        if ($LASTEXITCODE -ne 0 -or -not (Wait-GsvdHealthy)) {
-          throw "The updated gsvd service did not become healthy"
-        }
-        if (-not $taskWasRunning) { Stop-ScheduledTask -TaskName "gsvd" -ErrorAction SilentlyContinue }
-        Write-Success "Migrated and verified the gsvd scheduled task"
+      if ($serviceExisted) {
+        Start-Service -Name gsvd
+        if (-not (Wait-GsvdHealthy)) { throw 'The updated gsvd service did not become healthy' }
+        if (-not $serviceWasRunning) { Stop-GsvService }
+        Write-Success 'Updated and verified the gsvd Windows service'
       }
     } catch {
-      if ($taskExisted) { Stop-ScheduledTask -TaskName "gsvd" -ErrorAction SilentlyContinue }
+      if ($serviceExisted) { Stop-GsvService }
       Restore-Binaries $installed
-      Restore-ScheduledTask $taskExisted $taskXml $taskWasRunning
+      if ($serviceWasRunning) { Start-Service -Name gsvd }
       $rollbackNeeded = $false
-      throw "Installation failed and the previous binaries and scheduled task were restored: $($_.Exception.Message)"
+      throw "Installation failed; previous binaries were restored: $($_.Exception.Message)"
     }
 
     $rollbackNeeded = $false
@@ -250,9 +324,9 @@ function Install-GsvHost {
     }
   } finally {
     if ($rollbackNeeded) {
-      if ($taskExisted) { Stop-ScheduledTask -TaskName "gsvd" -ErrorAction SilentlyContinue }
+      if ($serviceExisted) { Stop-GsvService }
       Restore-Binaries $installed
-      Restore-ScheduledTask $taskExisted $taskXml $taskWasRunning
+      if ($serviceWasRunning) { Start-Service -Name gsvd }
     }
     Remove-Item -Recurse -Force $tempDir -ErrorAction SilentlyContinue
   }
@@ -262,6 +336,7 @@ Write-Host ""
 Write-Host "GSV host installer · Windows x64" -ForegroundColor Cyan
 Write-Host ""
 Install-GsvHost
+if ($SkipUserSetup) { return }
 if ($env:GSV_NO_MODIFY_PATH -eq "1") {
   Write-Info "Left the user PATH alone (GSV_NO_MODIFY_PATH=1); add $InstallDir yourself"
 } else {
@@ -275,8 +350,18 @@ if (-not $Version) {
     Write-Warn "Could not persist release.channel"
   }
 }
-Write-Success "Installed gsv and gsvd to $InstallDir"
-Write-Warn "GSV Desktop is not yet released for Windows."
+if (-not $Headless) {
+$shell = New-Object -ComObject WScript.Shell
+$shortcut = $shell.CreateShortcut((Join-Path ([Environment]::GetFolderPath('Programs')) 'GSV.lnk'))
+$shortcut.TargetPath = Join-Path $InstallDir 'gsv-desktop.exe'
+$shortcut.WorkingDirectory = $InstallDir
+$shortcut.Save()
+}
+if ($Headless) {
+  Write-Success "Installed GSV CLI and daemon to $InstallDir"
+} else {
+  Write-Success "Installed GSV Desktop, CLI, daemon and local input helpers to $InstallDir"
+}
 Write-Host ""
 Write-Host "  Next: finish setting up your space in your browser."
 Write-Host "  CLI login: gsv --url wss://your-space.example/ws auth login"

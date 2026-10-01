@@ -172,6 +172,9 @@ jobs:
           - os: macos-15
             target: aarch64-apple-darwin
             platform: darwin-arm64
+          - os: windows-2022
+            target: x86_64-pc-windows-msvc
+            platform: windows-x64
 
     runs-on: ${{ matrix.os }}
     steps:
@@ -181,6 +184,11 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
+
+      - uses: ilammy/msvc-dev-cmd@v1
+        if: runner.os == 'Windows'
+        with:
+          arch: x64
 
       - name: Install Linux native build dependencies
         if: runner.os == 'Linux'
@@ -229,7 +237,11 @@ jobs:
           --package desktop --package transcriber --package gestures
 
       - name: Check shipped voice helper
-        run: python3 host/scripts/check-transcriber.py host/target/${{ matrix.target }}/release/gsv-transcribe
+        shell: bash
+        run: |
+          suffix=""
+          if [ "${{ runner.os }}" = "Windows" ]; then suffix=".exe"; fi
+          python3 host/scripts/check-transcriber.py "host/target/${{ matrix.target }}/release/gsv-transcribe${suffix}"
 
       - name: Test gesture helper for this release target
         working-directory: host
@@ -238,6 +250,7 @@ jobs:
           --package gestures --package gesture-protocol
 
       - name: Check gesture fixture parity
+        shell: bash
         env:
           CARGO_BUILD_TARGET: ${{ matrix.target }}
         run: scripts/vision-native/parity.sh
@@ -247,9 +260,11 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p release
-          cp "host/target/${{ matrix.target }}/release/gsv-desktop" "release/gsv-desktop-${{ matrix.platform }}"
-          cp "host/target/${{ matrix.target }}/release/gsv-transcribe" "release/gsv-transcribe-${{ matrix.platform }}"
-          cp "host/target/${{ matrix.target }}/release/gsv-vision" "release/gsv-vision-${{ matrix.platform }}"
+          suffix=""
+          if [ "${{ runner.os }}" = "Windows" ]; then suffix=".exe"; fi
+          cp "host/target/${{ matrix.target }}/release/gsv-desktop${suffix}" "release/gsv-desktop-${{ matrix.platform }}${suffix}"
+          cp "host/target/${{ matrix.target }}/release/gsv-transcribe${suffix}" "release/gsv-transcribe-${{ matrix.platform }}${suffix}"
+          cp "host/target/${{ matrix.target }}/release/gsv-vision${suffix}" "release/gsv-vision-${{ matrix.platform }}${suffix}"
           if [ "${{ matrix.platform }}" = "linux-x64" ]; then
             cp host/helpers/transcriber/THIRD_PARTY.md release/gsv-transcribe-THIRD_PARTY.md
             cp host/helpers/gestures/models/LICENSE.apache-2.0 release/gsv-vision-LICENSE.apache-2.0
@@ -266,6 +281,18 @@ jobs:
           cargo build --manifest-path host/Cargo.toml --locked --release --package gsv --package machine
           host/scripts/package-macos.sh --release --skip-build --output "$RUNNER_TEMP/gsv-app"
           cp "$RUNNER_TEMP/gsv-app/"*.zip "release/gsv-desktop-${{ matrix.platform }}.zip"
+
+      - name: Package Windows distribution
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          GSV_WINDOWS_SIGNING_THUMBPRINT: ${{ vars.GSV_WINDOWS_SIGNING_THUMBPRINT }}
+        run: |
+          cargo build --manifest-path host/Cargo.toml --locked --release --target ${{ matrix.target }} --package gsv --package machine
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          ./host/scripts/sign-windows.ps1 -Directory host/target/${{ matrix.target }}/release
+          ./host/scripts/package-windows.ps1 -BinDir host/target/${{ matrix.target }}/release -Output release
+          ./host/scripts/sign-windows.ps1 -Directory release
 
       - name: Upload Desktop
         uses: actions/upload-artifact@v4
@@ -374,6 +401,7 @@ jobs:
           cp artifacts/gsv-desktop-linux-arm64/* release/
           cp artifacts/gsv-desktop-darwin-x64/* release/
           cp artifacts/gsv-desktop-darwin-arm64/* release/
+          cp artifacts/gsv-desktop-windows-x64/* release/
 
           # Cloudflare deploy bundles (modular, per component/adapter)
           cp artifacts/gsv-cloudflare-bundles/gsv-cloudflare-*.tar.gz release/
@@ -470,8 +498,7 @@ jobs:
           Desktop, and both local helpers as one versioned set, and migrates an existing
           device service to execute \`gsvd --foreground\` directly. Linux and macOS
           receive Desktop, \`gsv-transcribe\`, and \`gsv-vision\`; the vision model
-          license and provenance are included as verified assets. Windows currently
-          receives the CLI and daemon only.
+          license and provenance are included as verified assets. Windows 10 x64 receives all five applications, with a boot-capable SCM daemon.
 
           ### Manual Installation
 
@@ -480,7 +507,7 @@ jobs:
           - **macOS (Intel)**: \`gsv-darwin-x64\`, \`gsvd-darwin-x64\`, \`gsv-desktop-darwin-x64\`, \`gsv-transcribe-darwin-x64\`, \`gsv-vision-darwin-x64\`
           - **Linux (x64)**: \`gsv-linux-x64\`, \`gsvd-linux-x64\`, \`gsv-desktop-linux-x64\`, \`gsv-transcribe-linux-x64\`, \`gsv-vision-linux-x64\`
           - **Linux (ARM64)**: \`gsv-linux-arm64\`, \`gsvd-linux-arm64\`, \`gsv-desktop-linux-arm64\`, \`gsv-transcribe-linux-arm64\`, \`gsv-vision-linux-arm64\`
-          - **Windows (x64)**: \`gsv-windows-x64.exe\`, \`gsvd-windows-x64.exe\`
+          - **Windows (x64)**: \`gsv-desktop-windows-x64-setup.exe\` or \`gsv-desktop-windows-x64.zip\` (all five applications)
 
           ### macOS app
 
@@ -547,6 +574,11 @@ jobs:
             release/gsv-desktop-linux-arm64
             release/gsv-desktop-darwin-x64
             release/gsv-desktop-darwin-arm64
+            release/gsv-desktop-windows-x64.exe
+            release/gsv-transcribe-windows-x64.exe
+            release/gsv-vision-windows-x64.exe
+            release/gsv-desktop-windows-x64.zip
+            release/gsv-desktop-windows-x64-setup.exe
             release/gsv-transcribe-linux-x64
             release/gsv-transcribe-linux-arm64
             release/gsv-transcribe-darwin-x64

@@ -26,11 +26,29 @@ On Linux or macOS:
 curl -fsSL https://install.gsv.space | bash
 ```
 
-On Windows PowerShell:
+On Windows, download `gsv-desktop-windows-x64-setup.exe` from the release and
+run it, or use PowerShell:
 
 ```powershell
 irm https://install.gsv.space/install.ps1 | iex
 ```
+
+The setup executable installs all five applications, adds a Start-menu shortcut,
+and registers an Apps uninstall entry. The ZIP contains the same payload with
+`install.ps1`; extract it and run `./install.ps1 -AssetDirectory .`.
+Desktop needs WebView2 and the Visual C++ x64 runtime; the installer downloads
+and verifies Microsoft's installers when either is missing. Internet access is
+needed for missing runtimes even when the GSV payload is already downloaded.
+
+For a Windows server without Desktop:
+
+```powershell
+Invoke-WebRequest -UseBasicParsing https://install.gsv.space/install.ps1 -OutFile install.ps1
+./install.ps1 -Headless
+```
+
+This installs only `gsv.exe` and `gsvd.exe`. Pair the computer with the invitation
+from Fleet, then inspect it with `gsv daemon status`.
 
 Use `GSV_CHANNEL=dev` for the moving development channel, or set
 `GSV_VERSION=vX.Y.Z` to install an immutable release tag.
@@ -38,8 +56,10 @@ Use `GSV_CHANNEL=dev` for the moving development channel, or set
 ## Install location
 
 New installations go to a per-user directory: `~/.gsv/bin` on Linux and macOS,
-`%LOCALAPPDATA%\Programs\gsv\bin` on Windows. No `sudo` is involved, the
-daemon can update itself there, and `~/.gsv` holds the host tools, logs and model cache. Desktop keeps its
+`%LOCALAPPDATA%\Programs\gsv\bin` on Windows. On Linux and macOS, no `sudo`
+is involved, the daemon can update itself there, and `~/.gsv` holds the host
+tools, logs and model cache. Windows service registration and updates require
+administrator approval; its protected copy is described below. Desktop keeps its
 private session and webview state in the platform application data directory. The installer
 puts the directory on `PATH` for new shells: one marked, guarded line in
 `~/.profile`, plus `~/.bash_profile`, `~/.bashrc`, `~/.zshrc`, and
@@ -48,10 +68,10 @@ Windows it is the user `Path` in the registry. Set `GSV_NO_MODIFY_PATH=1` to
 skip that and add it yourself. The daemon service never depends on `PATH`; it
 is registered with the absolute path of `gsvd`.
 
-`GSV_INSTALL_DIR` overrides the destination. A directory this user cannot write
-is installed with `sudo`, and the daemon there cannot update itself.
+`GSV_INSTALL_DIR` overrides the destination. On Unix, a directory this user cannot
+write is installed with `sudo`, and the daemon there cannot update itself.
 
-An existing installation stays where it is. When `GSV_INSTALL_DIR` is unset the
+On Unix, an existing installation stays where it is. When `GSV_INSTALL_DIR` is unset the
 installer updates the directory the `gsvd` service runs from, or a previous
 `/usr/local/bin` installation, in place, and prints how to move if that
 directory is not user-writable. A daemon that Desktop enrolled from inside its
@@ -89,15 +109,19 @@ Daemon enrollment and logs live at `%ProgramData%\GSV\daemon`; CLI and Desktop
 credentials stay in your profile. Only the enrolling user and administrators
 can manage this service. One machine service has one enrolled owner; another
 Windows user cannot silently replace it. `gsv daemon uninstall` stops and
-removes the service while retaining enrollment and workspace data.
+removes the service and its workspace access grant while retaining enrollment,
+logs, protected service binaries and workspace data. Removing GSV through Apps
+also removes the user applications, shortcut and PATH entry. Saved service
+state remains available for reinstall by the same owner.
 
-Windows automatic daemon updates are disabled. Run the installer from an
-administrator PowerShell to update an existing boot service. Desktop must be
+Windows automatic daemon updates are disabled. Rerun setup or the PowerShell
+installer to update; it requests administrator approval for the existing boot
+service and restores the previous binaries if the updated service cannot start. Desktop must be
 closed before replacing its executables. There is no scheduled-task migration.
 
 ## Existing device daemon
 
-When the `gsvd` user service already exists, the installer:
+On Unix, when the `gsvd` user service already exists, the installer:
 
 1. records whether it is installed and running;
 2. stops it before replacing its executable;
@@ -112,7 +136,7 @@ enrolled; run `gsv daemon install` after configuring a driver credential.
 
 ## Automatic daemon updates
 
-A connected machine keeps itself current. When the gateway is redeployed,
+On Linux and macOS, a connected machine keeps itself current. When the gateway is redeployed,
 `gsvd` learns about it the next time it connects: a gateway that requires a
 newer protocol rejects the handshake and names the release it needs, and a
 gateway that merely runs a newer release reports it on a successful connect.
@@ -127,8 +151,7 @@ running `gsvd`, which the per-user default guarantees. Only a pre-existing
 system-wide installation, such as one under `/usr/local/bin`, updates manually
 until it is migrated, and a daemon inside the Desktop application bundle is
 updated by Desktop. The daemon also
-only updates itself when a service manager runs it (systemd, launchd, or the
-Windows SCM service), since something has to restart it afterwards; a
+only updates itself when a service manager runs it (systemd or launchd), since something has to restart it afterwards; a
 `gsvd --foreground` started by hand reports the newer release and leaves the
 update to you. The daemon makes at most one attempt per hour and only
 ever moves to a release the gateway named. Installer output is written to `~/.gsv/logs/auto-update.log`,
@@ -207,3 +230,7 @@ After installing the daemon service, inspect it with:
 gsv daemon doctor
 gsv daemon status
 ```
+
+Windows release artifacts are unsigned unless the release runner has a signing
+certificate configured. SmartScreen may show an unknown-publisher warning.
+The installer still checks every GSV asset against the release manifest.

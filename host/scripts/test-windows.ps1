@@ -22,6 +22,33 @@ try {
   }
   $service = Get-Service gsvd
   if ($service.Status -ne 'Running') { throw 'Service did not survive restart' }
+  $assets = Join-Path $root 'assets'
+  $destination = Join-Path $root 'installed with spaces 日本語'
+  New-Item -ItemType Directory -Path $assets | Out-Null
+  Copy-Item $cli (Join-Path $assets 'gsv-windows-x64.exe')
+  Copy-Item (Join-Path $bin 'gsvd.exe') (Join-Path $assets 'gsvd-windows-x64.exe')
+  function Write-Checksums {
+    $lines = Get-ChildItem $assets -Filter '*.exe' | ForEach-Object {
+      (Get-FileHash -Algorithm SHA256 $_.FullName).Hash.ToLowerInvariant() + '  ' + $_.Name
+    }
+    [IO.File]::WriteAllLines((Join-Path $assets 'checksums.txt'), $lines, [Text.UTF8Encoding]::new($false))
+  }
+  Write-Checksums
+  $installer = Join-Path $PSScriptRoot '../../install.ps1'
+  & $installer -Destination $destination -AssetDirectory $assets -UserConfigDirectory (Join-Path $root 'user-config') -Headless -SkipUserSetup
+  if (-not (Test-Path (Join-Path $destination 'gsv.exe'))) { throw 'Installer did not install the CLI' }
+  if ((Get-Service gsvd).Status -ne 'Running') { throw 'Installer did not restore the service' }
+  $serviceBinary = Join-Path $env:ProgramFiles 'GSV/service/gsvd.exe'
+  $before = (Get-FileHash $serviceBinary).Hash
+  [IO.File]::WriteAllText((Join-Path $assets 'gsvd-windows-x64.exe'), 'invalid executable for rollback test')
+  Write-Checksums
+  $rejected = $false
+  try {
+    & $installer -Destination $destination -AssetDirectory $assets -UserConfigDirectory (Join-Path $root 'user-config') -Headless -SkipUserSetup
+  } catch { $rejected = $true }
+  if (-not $rejected) { throw 'Installer accepted a daemon that could not start' }
+  if ((Get-FileHash $serviceBinary).Hash -ne $before) { throw 'Failed update did not restore the daemon' }
+  if ((Get-Service gsvd).Status -ne 'Running') { throw 'Failed update did not recover the service' }
   & $cli daemon uninstall
   if ($LASTEXITCODE) { throw 'Service uninstall failed' }
   Start-Sleep -Seconds 1
@@ -36,4 +63,6 @@ try {
     & sc.exe delete gsvd | Out-Null
   }
   Remove-Item -Recurse -Force $root -ErrorAction SilentlyContinue
+  Remove-Item -Recurse -Force (Join-Path $env:ProgramData 'GSV') -ErrorAction SilentlyContinue
+  Remove-Item -Recurse -Force (Join-Path $env:ProgramFiles 'GSV') -ErrorAction SilentlyContinue
 }
