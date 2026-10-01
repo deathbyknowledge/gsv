@@ -129,10 +129,9 @@ pub fn resume(pid: u32) -> io::Result<()> {
     entry.dwSize = mem::size_of::<THREADENTRY32>() as u32;
     // SAFETY: entry points to initialized storage of the declared size.
     let mut found = unsafe { Thread32First(snapshot.as_raw_handle(), &mut entry) };
-    let mut resumed = false;
     while found != 0 {
         if entry.th32OwnerProcessID == pid {
-            // SAFETY: the snapshot supplied the thread ID; access is limited to resume.
+            // SAFETY: the snapshot supplied the thread ID; access is limited to query/resume.
             let handle = unsafe {
                 OpenThread(
                     THREAD_SUSPEND_RESUME | THREAD_QUERY_LIMITED_INFORMATION,
@@ -149,8 +148,9 @@ pub fn resume(pid: u32) -> io::Result<()> {
                 // SAFETY: OpenThread returned a newly owned handle.
                 let thread = unsafe { OwnedHandle::from_raw_handle(handle) };
                 // Snapshot ordering does not identify the primary thread. Windows
-                // can create loader threads before it; resume every suspended
-                // thread in this owned child, rechecking IDs against reuse.
+                // can create loader threads before it. A zero return means that
+                // thread was already running; keep looking for the suspended
+                // primary thread, rechecking IDs against reuse.
                 // SAFETY: thread is live and has query access.
                 if unsafe { GetProcessIdOfThread(thread.as_raw_handle()) } == pid {
                     // SAFETY: this thread still belongs to our assigned child.
@@ -158,21 +158,19 @@ pub fn resume(pid: u32) -> io::Result<()> {
                     if previous == u32::MAX {
                         return Err(io::Error::last_os_error());
                     }
-                    resumed |= previous > 0;
+                    if previous > 0 {
+                        return Ok(());
+                    }
                 }
             }
         }
         // SAFETY: the snapshot and output buffer remain valid.
         found = unsafe { Thread32Next(snapshot.as_raw_handle(), &mut entry) };
     }
-    if resumed {
-        Ok(())
-    } else {
-        Err(io::Error::new(
-            io::ErrorKind::NotFound,
-            "suspended child thread disappeared",
-        ))
-    }
+    Err(io::Error::new(
+        io::ErrorKind::NotFound,
+        "suspended child thread disappeared",
+    ))
 }
 
 /// Join the installer's cancellation job without retaining a handle that could
