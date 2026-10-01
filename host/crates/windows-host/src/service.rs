@@ -1,5 +1,4 @@
 use std::{
-    ffi::OsString,
     path::PathBuf,
     sync::atomic::{AtomicBool, Ordering},
     time::{Duration, Instant},
@@ -20,12 +19,58 @@ pub fn enter_service() {
 pub fn is_service_process() -> bool {
     SERVICE_PROCESS.load(Ordering::Relaxed)
 }
+fn known_folder(id: &windows_sys::core::GUID) -> PathBuf {
+    use std::{ffi::OsString, os::windows::ffi::OsStringExt, ptr};
+    let mut value = ptr::null_mut();
+    // SAFETY: id and the output pointer are valid; the shell allocates the result.
+    let result = unsafe {
+        windows_sys::Win32::UI::Shell::SHGetKnownFolderPath(id, 0, ptr::null_mut(), &mut value)
+    };
+    assert!(
+        result >= 0 && !value.is_null(),
+        "Windows system folder is unavailable"
+    );
+    // SAFETY: a successful result is a NUL-terminated UTF-16 allocation.
+    unsafe {
+        let mut length = 0;
+        while *value.add(length) != 0 {
+            length += 1;
+        }
+        let path = PathBuf::from(OsString::from_wide(std::slice::from_raw_parts(
+            value, length,
+        )));
+        windows_sys::Win32::System::Com::CoTaskMemFree(value.cast());
+        path
+    }
+}
+
 pub fn data_dir() -> PathBuf {
-    PathBuf::from(
-        std::env::var_os("ProgramData").unwrap_or_else(|| OsString::from(r"C:\ProgramData")),
-    )
-    .join("GSV")
-    .join("daemon")
+    known_folder(&windows_sys::Win32::UI::Shell::FOLDERID_ProgramData)
+        .join("GSV")
+        .join("daemon")
+}
+
+pub fn binary_dir() -> PathBuf {
+    known_folder(&windows_sys::Win32::UI::Shell::FOLDERID_ProgramFilesX64)
+        .join("GSV")
+        .join("service")
+}
+
+pub fn system_tool(name: &str) -> PathBuf {
+    use std::{ffi::OsString, os::windows::ffi::OsStringExt};
+    let mut buffer = vec![0u16; 32768];
+    // SAFETY: buffer is writable and its capacity is passed accurately.
+    let length = unsafe {
+        windows_sys::Win32::System::SystemInformation::GetSystemDirectoryW(
+            buffer.as_mut_ptr(),
+            buffer.len() as u32,
+        )
+    };
+    assert!(
+        length > 0 && (length as usize) < buffer.len(),
+        "Windows system directory is unavailable"
+    );
+    PathBuf::from(OsString::from_wide(&buffer[..length as usize])).join(name)
 }
 pub fn open(access: ServiceAccess) -> windows_service::Result<Service> {
     ServiceManager::local_computer(None::<&str>, ServiceManagerAccess::CONNECT)?

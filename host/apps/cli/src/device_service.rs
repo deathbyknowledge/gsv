@@ -1,6 +1,7 @@
 use crate::{build_info, logger};
 #[cfg(any(test, target_os = "windows"))]
 use base64::Engine;
+#[cfg(any(test, not(windows)))]
 use std::ffi::OsString;
 use std::fs::{self, File};
 #[cfg(target_os = "linux")]
@@ -589,16 +590,20 @@ fn encode_powershell_script(script: &str) -> String {
 
 #[cfg(target_os = "windows")]
 fn run_windows_powershell_script(script: &str, context: &str) -> Result<(), DynError> {
+    use std::os::windows::process::CommandExt;
     let encoded = encode_powershell_script(script);
     run_command_capture(
-        Command::new("powershell.exe")
-            .arg("-NoLogo")
-            .arg("-NoProfile")
-            .arg("-NonInteractive")
-            .arg("-ExecutionPolicy")
-            .arg("Bypass")
-            .arg("-EncodedCommand")
-            .arg(encoded),
+        Command::new(windows_host::service::system_tool(
+            r"WindowsPowerShell\v1.0\powershell.exe",
+        ))
+        .creation_flags(0x0800_0000)
+        .arg("-NoLogo")
+        .arg("-NoProfile")
+        .arg("-NonInteractive")
+        .arg("-ExecutionPolicy")
+        .arg("Bypass")
+        .arg("-EncodedCommand")
+        .arg(encoded),
         context,
     )
 }
@@ -943,9 +948,9 @@ fn launchd_target() -> Result<String, DynError> {
 #[path = "windows_service.rs"]
 mod windows_service;
 #[cfg(target_os = "windows")]
-pub use windows_service::install_elevated;
-#[cfg(target_os = "windows")]
 use windows_service::WindowsServiceManager;
+#[cfg(target_os = "windows")]
+pub use windows_service::{install_elevated, sync_configuration};
 
 #[cfg(test)]
 mod tests {

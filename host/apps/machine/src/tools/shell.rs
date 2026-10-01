@@ -448,15 +448,27 @@ where
     R: AsyncRead + Unpin + Send + 'static,
 {
     let mut buf = vec![0u8; 4096];
+    let mut pending = Vec::new();
     loop {
-        match reader.read(&mut buf).await {
-            Ok(0) => return,
-            Ok(count) => {
-                let chunk = String::from_utf8_lossy(&buf[..count]).to_string();
-                let mut lock = state.lock().await;
-                append_output(&mut lock, &chunk, stream);
+        let count = reader.read(&mut buf).await.unwrap_or(0);
+        pending.extend_from_slice(&buf[..count]);
+        // Preserve a UTF-8 character split across pipe reads. Invalid bytes still
+        // use the text contract's replacement character; EOF flushes a short tail.
+        let complete = if count == 0 {
+            pending.len()
+        } else {
+            match std::str::from_utf8(&pending) {
+                Err(error) if error.error_len().is_none() => error.valid_up_to(),
+                _ => pending.len(),
             }
-            Err(_) => return,
+        };
+        if complete > 0 {
+            let chunk = String::from_utf8_lossy(&pending[..complete]);
+            append_output(&mut *state.lock().await, &chunk, stream);
+            pending.drain(..complete);
+        }
+        if count == 0 {
+            return;
         }
     }
 }
@@ -1305,5 +1317,60 @@ mod tests {
         assert!(process_exists(pid));
 
         terminate_process(&handle).await;
+    }
+}
+
+#[cfg(all(test, windows))]
+mod windows_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn powershell_preserves_unicode_cwd_stdin_and_exit_code() {
+        let root = tempfile::tempdir().unwrap();
+        let cwd = root.path().join("space 日本語");
+        std::fs::create_dir(&cwd).unwrap();
+        let tool = ShellTool::new(cwd);
+        let result = tool
+            .execute(json!({ "input": "[Console]::Write('héllo 日本語'); exit 7" }))
+            .await
+            .unwrap();
+        assert_eq!(result.data["stdout"], "héllo 日本語");
+        assert_eq!(result.data["exitCode"], 7);
+        let id = Uuid::new_v4().to_string();
+        tool.execute(json!({ "sessionId": id, "start": true, "input": "[Console]::Write([Console]::ReadLine())" })).await.unwrap();
+        let result = tool
+            .execute(json!({ "sessionId": id, "input": "hello 日本語\n" }))
+            .await
+            .unwrap();
+        assert_eq!(result.data["stdout"], "hello 日本語");
+        assert_eq!(result.data["status"], "completed");
+        let result = tool
+            .execute(json!({ "sessionId": id, "input": "" }))
+            .await
+            .unwrap();
+        assert_eq!(result.data["output"], "");
+    }
+
+    #[tokio::test]
+    async fn windows_named_sessions_reject_duplicate_starts_and_remain_cancellable() {
+        let tool = ShellTool::new(std::env::temp_dir());
+        let id = Uuid::new_v4().to_string();
+        let args = json!({ "sessionId": id, "start": true, "input": "Start-Sleep -Seconds 60" });
+        let (first, second) = tokio::join!(tool.execute(args.clone()), tool.execute(args));
+        assert_ne!(first.is_ok(), second.is_ok());
+        ShellCancelTool
+            .execute(json!({ "sessionId": id }))
+            .await
+            .unwrap();
+        let result = tool
+            .execute(json!({ "sessionId": id, "input": "" }))
+            .await
+            .unwrap();
+        assert_eq!(result.data["status"], "failed");
+        let timed = tool
+            .execute(json!({ "input": "Start-Sleep -Seconds 60", "timeoutMs": 250 }))
+            .await
+            .unwrap();
+        assert_eq!(timed.data["status"], "timed_out");
     }
 }

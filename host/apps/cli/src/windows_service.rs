@@ -1,7 +1,7 @@
 use super::*;
 use host_config::{CliConfig, ConfigFile};
 use windows_host::{
-    security::{current_user_sid_string, SecurityDescriptor},
+    security::{current_user_sid_string, protect_directory, SecurityDescriptor},
     service::{
         self,
         windows_service::{
@@ -20,17 +20,15 @@ use windows_sys::Win32::{
 
 pub(super) struct WindowsServiceManager;
 
-fn system_tool(name: &str) -> PathBuf {
-    PathBuf::from(std::env::var_os("SystemRoot").unwrap_or_else(|| "C:\\Windows".into()))
-        .join("System32")
-        .join(name)
-}
+use windows_host::service::system_tool;
 
 impl DeviceServiceManager for WindowsServiceManager {
     fn is_installed(&self) -> Result<bool, DynError> {
         Ok(service::installed()?)
     }
     fn install(&self, _spec: &DeviceServiceInstallSpec) -> Result<(), DynError> {
+        let job_name = format!("Local\\gsv-install-{}", uuid::Uuid::new_v4());
+        let _job = windows_host::process::ProcessTree::named(&job_name)?;
         let owner = current_user_sid_string()?;
         let source =
             CliConfig::config_path().ok_or("Could not find the enrolling user's configuration")?;
@@ -42,6 +40,8 @@ impl DeviceServiceManager for WindowsServiceManager {
             source.to_string_lossy().into_owned(),
             "--owner-sid".into(),
             owner,
+            "--job".into(),
+            job_name,
         ]);
         let script = format!(
             "$ErrorActionPreference = 'Stop'\n$p = Start-Process -FilePath {} -ArgumentList {} -Verb RunAs -Wait -PassThru\nif ($p.ExitCode -ne 0) {{ throw 'GSV service installation failed; run gsv daemon install from an administrator terminal for details.' }}",
@@ -54,6 +54,12 @@ impl DeviceServiceManager for WindowsServiceManager {
     }
     fn uninstall(&self) -> Result<(), DynError> {
         service::stop()?;
+        let config: CliConfig = ConfigFile::new(service::data_dir().join("config.toml")).load()?;
+        if let Some(workspace) = config.device.workspace {
+            if workspace.exists() {
+                run_command_capture(Command::new(system_tool("icacls.exe")).arg(workspace).args(["/remove:g", "NT SERVICE\\gsvd"]), "Could not remove the service workspace grant; retry uninstall from an administrator terminal")?;
+            }
+        }
         service::open(ServiceAccess::DELETE)?.delete()?;
         println!(
             "Service removed. Enrollment and workspace remain at {}",
@@ -89,7 +95,7 @@ impl DeviceServiceManager for WindowsServiceManager {
     }
 }
 
-/// Runs only in the administrator process. The source file never travels in arguments.
+/// Runs only in the administrator process. Configuration contents never enter arguments.
 pub fn install_elevated(source: &Path, owner: &str) -> Result<(), DynError> {
     // Validate the SID before using it in Windows security descriptors or ACL arguments.
     let _ = SecurityDescriptor::new(owner)?;
@@ -113,30 +119,22 @@ pub fn install_elevated(source: &Path, owner: &str) -> Result<(), DynError> {
         return Err("The service workspace must be an existing directory".into());
     }
     let data = service::data_dir();
-    let bin = PathBuf::from(std::env::var_os("ProgramFiles").ok_or("ProgramFiles is unavailable")?)
-        .join("GSV")
-        .join("service");
+    let bin = service::binary_dir();
+    let protected = "O:BAD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;GRGX;;;BU)";
+    protect_directory(bin.parent().unwrap(), protected)?;
+    protect_directory(&bin, protected)?;
+    protect_directory(data.parent().unwrap(), protected)?;
     let executable = bin.join("gsvd.exe");
     let installed = service::installed()?;
-    if installed {
+    if data.join("owner.sid").exists() {
         let existing_owner = fs::read_to_string(data.join("owner.sid"))?;
         if existing_owner.trim() != owner {
-            return Err("This machine is enrolled by another Windows user. Uninstall its service before replacing it.".into());
+            return Err("This machine has enrollment owned by another Windows user. An administrator must explicitly retire its saved enrollment before replacing it.".into());
         }
+    }
+    if installed {
         service::stop()?;
     }
-    fs::create_dir_all(&bin)?;
-    // A service executable must never be writable by the account executing agent commands.
-    run_command_capture(
-        Command::new(system_tool("icacls.exe")).arg(&bin).args([
-            "/inheritance:r",
-            "/grant:r",
-            "*S-1-5-18:(OI)(CI)F",
-            "*S-1-5-32-544:(OI)(CI)F",
-            "*S-1-5-32-545:(OI)(CI)RX",
-        ]),
-        "Could not protect service binaries",
-    )?;
     let source_executable = resolve_gsvd_executable()?;
     if source_executable != executable {
         fs::copy(source_executable, &executable)?;
@@ -165,6 +163,12 @@ pub fn install_elevated(source: &Path, owner: &str) -> Result<(), DynError> {
         manager.create_service(&info, ServiceAccess::ALL_ACCESS)?
     };
     svc.set_config_service_sid_info(ServiceSidType::Unrestricted)?;
+    run_command_capture(
+        Command::new(system_tool("icacls.exe"))
+            .arg(&bin)
+            .args(["/grant", "NT SERVICE\\gsvd:(OI)(CI)RX"]),
+        "Could not grant service executable access",
+    )?;
     svc.set_description("Connects this machine to its owner's GSV space before Windows login.")?;
     svc.update_failure_actions(ServiceFailureActions {
         reset_period: ServiceFailureResetPeriod::After(Duration::from_secs(86400)),
@@ -197,17 +201,17 @@ pub fn install_elevated(source: &Path, owner: &str) -> Result<(), DynError> {
     {
         return Err(std::io::Error::last_os_error().into());
     }
-    fs::create_dir_all(&data)?;
+    // Resolve the service SID through its registered account, then install an
+    // exact DACL rather than retaining permissions from a pre-existing folder.
+    protect_directory(
+        &data,
+        &format!("O:BAD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;0x1301bf;;;{owner})"),
+    )?;
     run_command_capture(
-        Command::new(system_tool("icacls.exe")).arg(&data).args([
-            "/inheritance:r",
-            "/grant:r",
-            "*S-1-5-18:(OI)(CI)F",
-            "*S-1-5-32-544:(OI)(CI)F",
-            &format!("*{owner}:(OI)(CI)M"),
-            "NT SERVICE\\gsvd:(OI)(CI)M",
-        ]),
-        "Could not protect daemon state",
+        Command::new(system_tool("icacls.exe"))
+            .arg(&data)
+            .args(["/grant", "NT SERVICE\\gsvd:(OI)(CI)M"]),
+        "Could not grant service state access",
     )?;
     fs::write(data.join("owner.sid"), owner)?;
     ConfigFile::new(data.join("config.toml")).save(&machine)?;
@@ -226,5 +230,32 @@ pub fn install_elevated(source: &Path, owner: &str) -> Result<(), DynError> {
             .unwrap_or_default()
             .to_string_lossy()
     );
+    Ok(())
+}
+
+pub fn sync_configuration() -> Result<(), DynError> {
+    if !service::installed()? {
+        return Ok(());
+    }
+    let data = service::data_dir();
+    if fs::read_to_string(data.join("owner.sid"))?.trim() != current_user_sid_string()? {
+        return Err("Only the enrolled Windows owner may change daemon configuration".into());
+    }
+    let source = CliConfig::load();
+    ConfigFile::<CliConfig>::new(data.join("config.toml")).update(|config| {
+        // Workspace ACL changes are an installation operation, not a reload.
+        if source.device.workspace != config.device.workspace {
+            return Err(host_config::ConfigError::Io(std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                "Run gsv daemon install to change the service workspace",
+            )));
+        }
+        config.device = source.device.clone();
+        config.device.gateway_url = Some(source.device_gateway_url());
+        config.device.gateway_username = source.device_gateway_username();
+        config.device.auto_update = Some(false);
+        config.release = source.release.clone();
+        Ok(())
+    })?;
     Ok(())
 }

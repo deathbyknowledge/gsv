@@ -80,13 +80,20 @@ fn service_main(_: Vec<OsString>) {
     let result = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build();
+    let stopping = shutdown.clone();
     let failed = match result {
-        Ok(runtime) => runtime
-            .block_on(crate::app::run_with_shutdown(shutdown, || {
-                let _ = handle.set_service_status(status(ServiceState::Running, false));
-            }))
-            .is_err(),
+        Ok(runtime) => runtime.block_on(async {
+            tokio::select! {
+                result = crate::app::run_with_shutdown(shutdown, || {
+                    let _ = handle.set_service_status(status(ServiceState::Running, false));
+                }) => result.is_err(),
+                _ = async {
+                    stopping.cancelled().await;
+                    tokio::time::sleep(Duration::from_secs(25)).await;
+                } => true,
+            }
+        }),
         Err(_) => true,
-    };
+    } && !stopping.is_cancelled();
     let _ = handle.set_service_status(status(ServiceState::Stopped, failed));
 }

@@ -52,6 +52,11 @@ impl DaemonControlEndpoint {
                 service: true,
             });
         }
+        Self::foreground_user()
+    }
+
+    /// A foreground daemon never claims the SCM service endpoint.
+    pub fn foreground_user() -> Result<Self, Error> {
         let sid = crate::transport::windows::current_user_sid_string()?;
         Ok(Self {
             pipe_name: format!(r"\\.\pipe\gsv-daemon-control-v1-{sid}").into(),

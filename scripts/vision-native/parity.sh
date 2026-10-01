@@ -3,7 +3,11 @@ set -euo pipefail
 
 readonly script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 readonly repository_root="$(cd "$script_dir/../.." && pwd)"
-readonly fixtures="$($script_dir/fixtures.sh)"
+fixtures="$($script_dir/fixtures.sh)"
+if command -v cygpath >/dev/null 2>&1; then
+  fixtures="$(cygpath -w "$fixtures")"
+fi
+readonly fixtures
 
 if [[ $# -eq 0 ]]; then
   set -- --release --package gestures

@@ -858,6 +858,7 @@ future_desktop = "kept"
         let path = temp.path().join("config.toml");
         let original = b"# keep formatting\n[gateway]\nusername = \"root\"\n";
         std::fs::write(&path, original).expect("seed config");
+        #[cfg(unix)]
         let before = std::fs::metadata(&path).expect("metadata before skipped update");
 
         let result = ConfigFile::<CliConfig>::new(&path)

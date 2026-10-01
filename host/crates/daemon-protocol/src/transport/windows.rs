@@ -112,7 +112,7 @@ fn create_pipe(
     let descriptor = if endpoint.is_service() {
         let owner = std::fs::read_to_string(windows_host::service::data_dir().join("owner.sid"))?;
         windows_host::security::SecurityDescriptor::from_sddl(&format!(
-            "D:P(A;;GA;;;{current_sid})(A;;GA;;;{})",
+            "D:P(A;;GA;;;{current_sid})(A;;GA;;;BA)(A;;GA;;;{})",
             owner.trim()
         ))?
     } else {

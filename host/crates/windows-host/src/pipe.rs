@@ -2,7 +2,7 @@ use crate::security::{current_user_sid_string, SecurityDescriptor};
 use std::{
     ffi::OsStr,
     fs::File,
-    io,
+    io::{self, Read, Write},
     os::windows::{
         ffi::OsStrExt,
         io::{AsRawHandle, FromRawHandle},
@@ -13,7 +13,7 @@ use std::{
 use windows_sys::Win32::{
     Foundation::{ERROR_PIPE_CONNECTED, ERROR_PIPE_LISTENING, INVALID_HANDLE_VALUE},
     Security::SECURITY_ATTRIBUTES,
-    Storage::FileSystem::{FILE_FLAG_FIRST_PIPE_INSTANCE, PIPE_ACCESS_INBOUND},
+    Storage::FileSystem::{FILE_FLAG_FIRST_PIPE_INSTANCE, PIPE_ACCESS_DUPLEX},
     System::Pipes::{
         ConnectNamedPipe, CreateNamedPipeW, GetNamedPipeClientProcessId,
         GetNamedPipeServerProcessId, SetNamedPipeHandleState, PIPE_NOWAIT,
@@ -34,7 +34,7 @@ pub fn create(name: &OsStr) -> io::Result<File> {
     let handle = unsafe {
         CreateNamedPipeW(
             name.as_ptr(),
-            PIPE_ACCESS_INBOUND | FILE_FLAG_FIRST_PIPE_INSTANCE,
+            PIPE_ACCESS_DUPLEX | FILE_FLAG_FIRST_PIPE_INSTANCE,
             PIPE_NOWAIT | PIPE_REJECT_REMOTE_CLIENTS,
             1,
             4096,
@@ -57,10 +57,10 @@ pub fn accept(pipe: &File, child_pid: u32, timeout: Duration) -> io::Result<()> 
         // SAFETY: pipe is a live synchronous named pipe in nonblocking mode.
         let connected = unsafe { ConnectNamedPipe(pipe.as_raw_handle(), ptr::null_mut()) };
         let error = io::Error::last_os_error();
-        if connected != 0 || error.raw_os_error() == Some(ERROR_PIPE_CONNECTED as i32) {
+        if connected == 0 && error.raw_os_error() == Some(ERROR_PIPE_CONNECTED as i32) {
             break;
         }
-        if error.raw_os_error() != Some(ERROR_PIPE_LISTENING as i32) {
+        if connected == 0 && error.raw_os_error() != Some(ERROR_PIPE_LISTENING as i32) {
             return Err(error);
         }
         if Instant::now() >= deadline {
@@ -89,11 +89,16 @@ pub fn accept(pipe: &File, child_pid: u32, timeout: Duration) -> io::Result<()> 
     {
         return Err(io::Error::last_os_error());
     }
+    let mut output = pipe;
+    output.write_all(&[1])?;
     Ok(())
 }
 
 pub fn connect(name: &OsStr, parent_pid: u32) -> io::Result<File> {
-    let file = std::fs::OpenOptions::new().write(true).open(name)?;
+    let mut file = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(name)?;
     let mut pid = 0;
     // SAFETY: file is the connected pipe and pid is a valid output pointer.
     if unsafe { GetNamedPipeServerProcessId(file.as_raw_handle(), &mut pid) } == 0 {
@@ -103,6 +108,14 @@ pub fn connect(name: &OsStr, parent_pid: u32) -> io::Result<File> {
         return Err(io::Error::new(
             io::ErrorKind::PermissionDenied,
             "unexpected Desktop process",
+        ));
+    }
+    let mut acknowledged = [0];
+    file.read_exact(&mut acknowledged)?;
+    if acknowledged != [1] {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "Desktop did not acknowledge the helper connection",
         ));
     }
     Ok(file)

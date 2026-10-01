@@ -17,9 +17,12 @@ use std::time::Duration;
 use crossbeam_channel::{bounded, Receiver, Sender, TryRecvError, TrySendError};
 use gesture_protocol::{
     read_frame, write_frame, ControlStatus, DesktopCommand, GestureContext, GestureIntent,
-    HelperEvent, LifecycleState, ScrollState, SessionId, EVENT_CHANNEL_CONTRACT_MARKER, EVENT_FD,
+    HelperEvent, LifecycleState, ScrollState, SessionId, EVENT_CHANNEL_CONTRACT_MARKER,
     EVENT_FD_MARKER_ENV, PROTOCOL_VERSION, SESSION_HIGH_ENV, SESSION_LOW_ENV,
 };
+
+#[cfg(unix)]
+use gesture_protocol::EVENT_FD;
 
 const EVENT_QUEUE_CAPACITY: usize = 4;
 const SNAPSHOT_QUEUE_CAPACITY: usize = 1;

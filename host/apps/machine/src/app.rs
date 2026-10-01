@@ -52,6 +52,13 @@ pub(crate) async fn run_with_shutdown(
     let mut settings = resolve_settings(&args, &CliConfig::load())?;
     let _logging_guard = machine::logger::init_device_logging()?;
     let (runtime, mut actions) = DaemonRuntime::new(settings.device_id.clone());
+    #[cfg(windows)]
+    let endpoint = if windows_host::service::is_service_process() {
+        DaemonControlEndpoint::current_user()?
+    } else {
+        DaemonControlEndpoint::foreground_user()?
+    };
+    #[cfg(not(windows))]
     let endpoint = DaemonControlEndpoint::current_user()?;
     let server_shutdown = CancellationToken::new();
     let server = DaemonControlServer::bind(&endpoint, runtime.clone(), ServerOptions::default())?;
@@ -203,6 +210,10 @@ async fn wait_for_shutdown_signal() {
 
 #[cfg(not(unix))]
 async fn wait_for_shutdown_signal() {
+    #[cfg(windows)]
+    if windows_host::service::is_service_process() {
+        std::future::pending::<()>().await;
+    }
     tokio::signal::ctrl_c()
         .await
         .expect("Failed to subscribe to Ctrl+C");

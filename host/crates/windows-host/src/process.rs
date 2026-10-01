@@ -20,13 +20,46 @@ use windows_sys::Win32::{
 pub struct ProcessTree(OwnedHandle);
 impl ProcessTree {
     pub fn new() -> io::Result<Self> {
-        // SAFETY: an unnamed job with the caller's default security descriptor.
-        let handle = unsafe { CreateJobObjectW(ptr::null(), ptr::null()) };
+        Self::create(None)
+    }
+    pub fn named(name: &str) -> io::Result<Self> {
+        Self::create(Some(name))
+    }
+    fn create(name: Option<&str>) -> io::Result<Self> {
+        use windows_sys::Win32::{
+            Foundation::{GetLastError, ERROR_ALREADY_EXISTS},
+            Security::SECURITY_ATTRIBUTES,
+        };
+        let sid = crate::security::current_user_sid_string()?;
+        let descriptor = crate::security::SecurityDescriptor::from_sddl(&format!(
+            "D:P(A;;GA;;;{sid})(A;;GA;;;BA)"
+        ))?;
+        let attributes = SECURITY_ATTRIBUTES {
+            nLength: mem::size_of::<SECURITY_ATTRIBUTES>() as u32,
+            lpSecurityDescriptor: descriptor.pointer,
+            bInheritHandle: 0,
+        };
+        let name: Option<Vec<u16>> = name.map(|name| name.encode_utf16().chain(Some(0)).collect());
+        // SAFETY: the descriptor and optional NUL-terminated name remain alive.
+        let handle = unsafe {
+            CreateJobObjectW(
+                &attributes,
+                name.as_ref().map_or(ptr::null(), |name| name.as_ptr()),
+            )
+        };
+        // SAFETY: GetLastError is read immediately after CreateJobObjectW.
+        let existed = unsafe { GetLastError() } == ERROR_ALREADY_EXISTS;
         if handle.is_null() {
             return Err(io::Error::last_os_error());
         }
         // SAFETY: the job handle was newly allocated and ownership moves to this guard.
         let job = Self(unsafe { OwnedHandle::from_raw_handle(handle) });
+        if name.is_some() && existed {
+            return Err(io::Error::new(
+                io::ErrorKind::AlreadyExists,
+                "installation job already exists",
+            ));
+        }
         // SAFETY: this Windows POD structure accepts an all-zero baseline.
         let mut limits: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = unsafe { mem::zeroed() };
         limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
@@ -115,4 +148,26 @@ pub fn resume(pid: u32) -> io::Result<()> {
         io::ErrorKind::NotFound,
         "suspended child thread disappeared",
     ))
+}
+
+/// Join the installer's cancellation job without retaining a handle that could
+/// keep it alive after the enrolling process exits or is cancelled.
+pub fn join_installation(name: &str) -> io::Result<()> {
+    use windows_sys::Win32::System::{
+        JobObjects::OpenJobObjectW, SystemServices::JOB_OBJECT_ASSIGN_PROCESS,
+        Threading::GetCurrentProcess,
+    };
+    let name: Vec<u16> = name.encode_utf16().chain(Some(0)).collect();
+    // SAFETY: the job name is terminated and the handle is non-inheritable.
+    let handle = unsafe { OpenJobObjectW(JOB_OBJECT_ASSIGN_PROCESS, 0, name.as_ptr()) };
+    if handle.is_null() {
+        return Err(io::Error::last_os_error());
+    }
+    // SAFETY: this guard uniquely owns the newly opened handle.
+    let job = unsafe { OwnedHandle::from_raw_handle(handle) };
+    // SAFETY: GetCurrentProcess is a live pseudo-handle; job has assignment access.
+    if unsafe { AssignProcessToJobObject(job.as_raw_handle(), GetCurrentProcess()) } == 0 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(())
 }

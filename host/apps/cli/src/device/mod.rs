@@ -209,6 +209,8 @@ pub(crate) fn run_daemon_service(
                 device_service::install_device_service()?;
                 println!("Migrated the service to the `gsvd` executable.");
             } else if gateway_changed {
+                #[cfg(windows)]
+                device_service::sync_configuration()?;
                 device_service::restart_device_service()?;
             } else {
                 device_service::start_device_service()?;
@@ -228,6 +230,10 @@ pub(crate) fn run_daemon_service(
                 device_service::install_device_service()?;
                 println!("Migrated the service to the `gsvd` executable.");
             } else {
+                #[cfg(windows)]
+                if gateway_changed {
+                    device_service::sync_configuration()?;
+                }
                 device_service::restart_device_service()?;
             }
             if gateway_changed {
@@ -280,6 +286,8 @@ pub(crate) async fn show_daemon_live_status() -> Result<(), Box<dyn std::error::
 }
 
 pub(crate) async fn reload_daemon() -> Result<(), Box<dyn std::error::Error>> {
+    #[cfg(windows)]
+    device_service::sync_configuration()?;
     daemon_control_client()?.reload().await?;
     println!("gsvd accepted the configuration reload.");
     Ok(())

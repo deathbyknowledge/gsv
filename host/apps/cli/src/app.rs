@@ -164,7 +164,14 @@ pub(crate) async fn run() -> Result<(), Box<dyn std::error::Error>> {
         },
         Commands::Daemon { action } => match action {
             #[cfg(windows)]
-            DaemonAction::WindowsInstall { config, owner_sid } => {
+            DaemonAction::WindowsInstall {
+                config,
+                owner_sid,
+                job,
+            } => {
+                if let Some(job) = job {
+                    windows_host::process::join_installation(&job)?;
+                }
                 gsv::device_service::install_elevated(&config, &owner_sid)
             }
             DaemonAction::Install { id, workspace } => run_daemon_service(

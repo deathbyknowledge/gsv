@@ -148,7 +148,7 @@ focuses the existing window. The independent `gsvd` service keeps running.
 Desktop offers Connect this computer after sign-in and through its space menu.
 The frontend creates the same ordinary device invitation as Fleet; the native
 host passes it on private stdin to `gsv pair - --preserve-cli-login --no-replace`.
-The CLI stores the driver credential in private `config.toml` and owns per-user
+The CLI stores the driver credential in private `config.toml` and owns OS
 service installation; `gsvd` owns the persistent machine connection. Existing
 bindings for this space and account resume automatically, while other bindings
 are preserved. Interrupted enrollment and failed service installation retain
@@ -163,25 +163,26 @@ and [host installation](../how-to/install-host-apps.md) for distribution.
 Release artifacts install `gsv`, `gsvd`, Desktop, and any Desktop helper as one
 versioned distribution, into a per-user directory (`~/.gsv/bin`, or
 `%LOCALAPPDATA%\Programs\gsv\bin` on Windows) unless `GSV_INSTALL_DIR` says
-otherwise or an earlier installation already exists. The service definition
+otherwise or an earlier installation already exists. Windows additionally copies
+`gsvd` into its protected service directory. The service definition
 points directly at `gsvd` by absolute path while
 retaining the established `gsvd` systemd, launchd, or SCM service identity.
-Service installation detects and replaces legacy definitions that invoke the
-hidden compatibility launcher `gsv device run`.
+Unix service installation detects and replaces legacy definitions that invoke the
+hidden compatibility launcher `gsv device run`; Windows has no migration path.
 
 CLI, Desktop, and driver credentials stay separate. Daemon upgrades replace the
 binary transactionally and restart only after the replacement is complete; a
 failed health check restores the previous executable. Desktop updates do not
 silently alter a running agent Process.
 
-The daemon keeps itself current from the gateway handshake, because the gateway
+On Linux and macOS, the daemon keeps itself current from the gateway handshake, because the gateway
 cannot reach a machine. A protocol error 102 names the server version and the
 installer, which means the daemon must update; a successful connect against a
 newer release means it should. Either way `gsvd` starts the ordinary installer,
 pinned with `GSV_VERSION` to the release the gateway named (`vX.Y.Z` on the
 stable channel, `dev` on the dev channel), detached from its own service: a
 transient `systemd-run --user` unit on Linux under systemd, a new session on
-macOS and other Unix hosts, and a detached process on Windows. The installer's
+macOS and other Unix hosts. The installer's
 checksum verification, service stop, transactional swap, health check, and
 rollback then run unchanged, and the daemon stays connected or retrying until
 the installer stops it. Guardrails: only a release the gateway named, at most
@@ -200,3 +201,21 @@ model license and provenance. On macOS,
 metadata, and local gesture models. The result is ad-hoc signed and unnotarized. Public distribution additionally requires Developer ID signing,
 hardened-runtime entitlements, Apple notarization, and stapling; those release
 credentials are not configured in the repository.
+
+On Windows, `host/scripts/package-windows.ps1` packages all five executables,
+licenses, checksums and the PowerShell installer in a ZIP and an NSIS setup
+executable. Setup creates a Start-menu shortcut and an Apps uninstall entry.
+The installer verifies every asset before mutation, requests elevation for an
+existing boot service, checks its health, and rolls back binaries if that check
+fails. `-Headless` installs only the CLI and daemon without Desktop runtimes.
+WebView2 and the Visual C++ runtime are downloaded from Microsoft when needed;
+their Authenticode signatures are verified before execution.
+
+`host/scripts/sign-windows.ps1` uses `GSV_WINDOWS_SIGNING_THUMBPRINT` when the
+matching certificate and private key are provisioned in the Windows build
+runner. It signs SHA-256 with a timestamp and verifies the result. Without that
+release credential, Windows artifacts are unsigned; checksums remain mandatory.
+The Windows workflow separately tests SCM, IPC, shell process trees and installer
+rollback, then builds Desktop and helpers and runs recorded gesture parity.
+Physical microphone/camera permissions, GUI onboarding/UAC and reboot recovery
+also need a Windows release smoke test on an actual computer.

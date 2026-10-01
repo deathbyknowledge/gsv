@@ -146,3 +146,103 @@ impl Drop for OwnedHandle {
         }
     }
 }
+
+/// Creates a managed directory atomically with its final ACL. Existing paths
+/// must be administrator-owned ordinary directories, never junctions or links.
+pub fn protect_directory(path: &std::path::Path, sddl: &str) -> io::Result<()> {
+    use std::os::windows::fs::MetadataExt;
+    use windows_sys::Win32::{
+        Foundation::ERROR_ALREADY_EXISTS,
+        Security::{
+            Authorization::{GetNamedSecurityInfoW, SetNamedSecurityInfoW, SE_FILE_OBJECT},
+            GetSecurityDescriptorDacl, GetSecurityDescriptorOwner, DACL_SECURITY_INFORMATION,
+            OWNER_SECURITY_INFORMATION, PROTECTED_DACL_SECURITY_INFORMATION, SECURITY_ATTRIBUTES,
+        },
+        Storage::FileSystem::{CreateDirectoryW, FILE_ATTRIBUTE_REPARSE_POINT},
+    };
+    let descriptor = SecurityDescriptor::from_sddl(sddl)?;
+    let name = wide_null(path.as_os_str());
+    let attributes = SECURITY_ATTRIBUTES {
+        nLength: mem::size_of::<SECURITY_ATTRIBUTES>() as u32,
+        lpSecurityDescriptor: descriptor.pointer,
+        bInheritHandle: 0,
+    };
+    // SAFETY: name and the descriptor remain live throughout this call.
+    if unsafe { CreateDirectoryW(name.as_ptr(), &attributes) } == 0 {
+        let error = io::Error::last_os_error();
+        if error.raw_os_error() != Some(ERROR_ALREADY_EXISTS as i32) {
+            return Err(error);
+        }
+    }
+    let metadata = std::fs::symlink_metadata(path)?;
+    if !metadata.is_dir() || metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "Managed service paths cannot be links or junctions",
+        ));
+    }
+    let mut owner = ptr::null_mut();
+    let mut existing = ptr::null_mut();
+    // SAFETY: valid path and output pointers; existing owns the returned allocation.
+    let result = unsafe {
+        GetNamedSecurityInfoW(
+            name.as_ptr(),
+            SE_FILE_OBJECT,
+            OWNER_SECURITY_INFORMATION,
+            &mut owner,
+            ptr::null_mut(),
+            ptr::null_mut(),
+            ptr::null_mut(),
+            &mut existing,
+        )
+    };
+    if result != 0 {
+        return Err(io::Error::from_raw_os_error(result as i32));
+    }
+    let existing = SecurityDescriptor { pointer: existing };
+    let owner_sid = sid_to_string(owner)?;
+    if owner_sid != "S-1-5-32-544" && owner_sid != "S-1-5-18" {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "An administrator must remove the existing untrusted GSV service directory",
+        ));
+    }
+    drop(existing);
+    let mut dacl = ptr::null_mut();
+    let mut present = 0;
+    let mut defaulted = 0;
+    // SAFETY: the descriptor was successfully parsed above and outputs are writable.
+    unsafe {
+        if GetSecurityDescriptorOwner(descriptor.pointer, &mut owner, &mut defaulted) == 0
+            || GetSecurityDescriptorDacl(
+                descriptor.pointer,
+                &mut present,
+                &mut dacl,
+                &mut defaulted,
+            ) == 0
+            || present == 0
+            || dacl.is_null()
+            || owner.is_null()
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "Managed directory requires an owner and an explicit ACL",
+            ));
+        }
+        let result = SetNamedSecurityInfoW(
+            name.as_ptr(),
+            SE_FILE_OBJECT,
+            OWNER_SECURITY_INFORMATION
+                | DACL_SECURITY_INFORMATION
+                | PROTECTED_DACL_SECURITY_INFORMATION,
+            owner,
+            ptr::null_mut(),
+            dacl,
+            ptr::null_mut(),
+        );
+        if result != 0 {
+            return Err(io::Error::from_raw_os_error(result as i32));
+        }
+    }
+    Ok(())
+}
