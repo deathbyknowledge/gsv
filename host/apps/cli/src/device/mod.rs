@@ -26,7 +26,13 @@ pub(crate) fn resolve_device_id(cli_device_id: Option<String>, cfg: &CliConfig) 
 pub(crate) fn resolve_device_workspace(cli_workspace: Option<PathBuf>, cfg: &CliConfig) -> PathBuf {
     cli_workspace
         .or_else(|| cfg.default_device_workspace())
-        .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")))
+        .unwrap_or_else(|| {
+            #[cfg(windows)]
+            if let Some(path) = host_config::default_machine_workspace() {
+                return path;
+            }
+            std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
+        })
 }
 
 fn persist_device_defaults(
@@ -36,6 +42,10 @@ fn persist_device_defaults(
 ) -> Result<(String, PathBuf, bool), Box<dyn std::error::Error>> {
     let device_id = resolve_device_id(device_id, cfg);
     let workspace = resolve_device_workspace(workspace, cfg);
+    #[cfg(windows)]
+    if Some(&workspace) == host_config::default_machine_workspace().as_ref() {
+        std::fs::create_dir_all(&workspace)?;
+    }
     let workspace = workspace.canonicalize().unwrap_or(workspace);
 
     let config_path = CliConfig::config_path().ok_or("Could not determine config directory")?;

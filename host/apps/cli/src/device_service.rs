@@ -13,18 +13,25 @@ use std::time::Duration;
 
 type DynError = Box<dyn std::error::Error>;
 
-#[cfg(any(test, target_os = "linux"))]
+#[cfg(target_os = "linux")]
 const DEVICE_SYSTEMD_UNIT_NAME: &str = "gsvd.service";
 #[cfg(any(test, target_os = "macos"))]
 const DEVICE_LAUNCHD_LABEL: &str = "gsvd";
-#[cfg(target_os = "windows")]
-const DEVICE_WINDOWS_TASK_NAME: &str = "gsvd";
 const LOG_POLL_INTERVAL: Duration = Duration::from_millis(250);
 
+#[cfg_attr(
+    windows,
+    allow(
+        dead_code,
+        reason = "Windows registers a protected service copy; these fields also describe the Unix definitions in shared tests."
+    )
+)]
 struct DeviceServiceInstallSpec {
+    #[cfg(any(test, not(windows)))]
     description: &'static str,
     exe_path: PathBuf,
     args: Vec<String>,
+    #[cfg(any(test, not(windows)))]
     path_env: Option<String>,
 }
 
@@ -32,9 +39,11 @@ impl DeviceServiceInstallSpec {
     fn current() -> Result<Self, DynError> {
         let exe_path = resolve_gsvd_executable()?;
         Ok(Self {
+            #[cfg(any(test, not(windows)))]
             description: "gsvd",
             exe_path,
             args: vec!["--foreground".to_string()],
+            #[cfg(any(test, not(windows)))]
             path_env: device_service_path(),
         })
     }
@@ -276,7 +285,7 @@ fn platform_service_manager() -> Option<Box<dyn DeviceServiceManager>> {
 
     #[cfg(target_os = "windows")]
     {
-        Some(Box::new(WindowsTaskServiceManager))
+        Some(Box::new(WindowsServiceManager))
     }
 
     #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
@@ -360,6 +369,7 @@ fn run_command_capture(cmd: &mut Command, context: &str) -> Result<(), DynError>
     Err(format!("{}: {}", context, detail).into())
 }
 
+#[cfg(not(windows))]
 fn run_command_passthrough(cmd: &mut Command, context: &str) -> Result<(), DynError> {
     let status = cmd.status()?;
     if status.success() {
@@ -402,6 +412,7 @@ fn probe_path_from_login_shell() -> Option<OsString> {
     None
 }
 
+#[cfg(any(test, not(windows)))]
 fn select_service_path(
     probed_path: Option<OsString>,
     env_path: Option<OsString>,
@@ -420,6 +431,7 @@ fn select_service_path(
         .or_else(|| env_path.and_then(normalize))
 }
 
+#[cfg(any(test, not(windows)))]
 fn device_service_path() -> Option<String> {
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     {
@@ -432,7 +444,7 @@ fn device_service_path() -> Option<String> {
     }
 }
 
-#[cfg(any(test, target_os = "macos", target_os = "windows"))]
+#[cfg(any(test, target_os = "macos"))]
 fn xml_escape(value: &str) -> String {
     value
         .replace('&', "&amp;")
@@ -564,77 +576,6 @@ fn windows_arguments_string(args: &[String]) -> String {
 #[cfg(any(test, target_os = "windows"))]
 fn powershell_single_quote(value: &str) -> String {
     format!("'{}'", value.replace('\'', "''"))
-}
-
-#[cfg(any(test, target_os = "windows"))]
-fn windows_task_registration_script(
-    task_name: &str,
-    user_id: &str,
-    spec: &DeviceServiceInstallSpec,
-) -> String {
-    let task_name = powershell_single_quote(task_name);
-    let user_id = powershell_single_quote(user_id);
-    let description = powershell_single_quote(spec.description);
-    let exe_path = powershell_single_quote(&spec.exe_path.display().to_string());
-    let args = powershell_single_quote(&windows_arguments_string(&spec.args));
-
-    format!(
-        "$ErrorActionPreference = 'Stop'\n\
-$ProgressPreference = 'SilentlyContinue'\n\
-Import-Module ScheduledTasks -ErrorAction Stop\n\
-$TaskName = {task_name}\n\
-$UserId = {user_id}\n\
-$Action = New-ScheduledTaskAction -Execute {exe_path} -Argument {args}\n\
-$Principal = New-ScheduledTaskPrincipal -UserId $UserId -LogonType Interactive -RunLevel Limited\n\
-$Settings = $null\n\
-try {{\n\
-  $Settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -MultipleInstances IgnoreNew -ExecutionTimeLimit ([TimeSpan]::Zero)\n\
-}} catch {{\n\
-  $Settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -MultipleInstances IgnoreNew\n\
-}}\n\
-try {{ $Settings.ExecutionTimeLimit = 'PT0S' }} catch {{}}\n\
-function Register-GsvTask($Trigger) {{\n\
-  $Task = New-ScheduledTask -Action $Action -Trigger $Trigger -Principal $Principal -Settings $Settings -Description {description}\n\
-  Register-ScheduledTask -TaskName $TaskName -InputObject $Task -Force | Out-Null\n\
-}}\n\
-try {{\n\
-  Register-GsvTask (New-ScheduledTaskTrigger -AtLogOn -User $UserId)\n\
-}} catch {{\n\
-  $ScopedTriggerError = $_.Exception.Message\n\
-  try {{\n\
-    Register-GsvTask (New-ScheduledTaskTrigger -AtLogOn)\n\
-  }} catch {{\n\
-    throw \"Could not register scheduled task '$TaskName' for '$UserId'. User-scoped logon trigger failed: $ScopedTriggerError. Generic logon trigger failed: $($_.Exception.Message)\"\n\
-  }}\n\
-}}\n"
-    )
-}
-
-#[cfg(any(test, target_os = "windows"))]
-fn windows_task_stop_if_running_script(task_name: &str) -> String {
-    let task_name = powershell_single_quote(task_name);
-    format!(
-        "$ErrorActionPreference = 'Stop'\n\
-$ProgressPreference = 'SilentlyContinue'\n\
-Import-Module ScheduledTasks -ErrorAction Stop\n\
-$TaskName = {task_name}\n\
-$Task = Get-ScheduledTask -TaskName $TaskName -ErrorAction Stop\n\
-$InitialState = [string]$Task.State\n\
-if ($InitialState -eq 'Unknown') {{ throw \"Scheduled task '$TaskName' state is unknown\" }}\n\
-if ($InitialState -eq 'Running' -or $InitialState -eq 'Queued') {{\n\
-  Stop-ScheduledTask -TaskName $TaskName -ErrorAction Stop\n\
-  $Stopped = $false\n\
-  for ($Attempt = 0; $Attempt -lt 50; $Attempt++) {{\n\
-    $State = [string](Get-ScheduledTask -TaskName $TaskName -ErrorAction Stop).State\n\
-    if ($State -eq 'Ready' -or $State -eq 'Disabled') {{\n\
-      $Stopped = $true\n\
-      break\n\
-    }}\n\
-    Start-Sleep -Milliseconds 100\n\
-  }}\n\
-  if (-not $Stopped) {{ throw \"Scheduled task '$TaskName' did not stop\" }}\n\
-}}\n"
-    )
 }
 
 #[cfg(any(test, target_os = "windows"))]
@@ -999,128 +940,12 @@ fn launchd_target() -> Result<String, DynError> {
 }
 
 #[cfg(target_os = "windows")]
-struct WindowsTaskServiceManager;
-
+#[path = "windows_service.rs"]
+mod windows_service;
 #[cfg(target_os = "windows")]
-impl DeviceServiceManager for WindowsTaskServiceManager {
-    fn is_installed(&self) -> Result<bool, DynError> {
-        Ok(Command::new("schtasks")
-            .arg("/query")
-            .arg("/tn")
-            .arg(DEVICE_WINDOWS_TASK_NAME)
-            .status()?
-            .success())
-    }
-
-    fn install(&self, spec: &DeviceServiceInstallSpec) -> Result<(), DynError> {
-        let user_id = current_windows_user_id();
-        let script = windows_task_registration_script(DEVICE_WINDOWS_TASK_NAME, &user_id, spec);
-        run_windows_powershell_script(&script, "Failed to register Windows scheduled task")?;
-
-        run_command_capture(
-            Command::new("schtasks")
-                .arg("/run")
-                .arg("/tn")
-                .arg(DEVICE_WINDOWS_TASK_NAME),
-            "Failed to start Windows scheduled task",
-        )?;
-
-        println!(
-            "Installed Windows scheduled task: {}",
-            DEVICE_WINDOWS_TASK_NAME
-        );
-        println!("Logs: {}", logger::device_log_pattern().display());
-        Ok(())
-    }
-
-    fn uninstall(&self) -> Result<(), DynError> {
-        let script = windows_task_stop_if_running_script(DEVICE_WINDOWS_TASK_NAME);
-        run_windows_powershell_script(&script, "Failed to stop Windows scheduled task")?;
-        run_command_capture(
-            Command::new("schtasks")
-                .arg("/delete")
-                .arg("/tn")
-                .arg(DEVICE_WINDOWS_TASK_NAME)
-                .arg("/f"),
-            "Failed to delete Windows scheduled task",
-        )
-    }
-
-    fn start(&self) -> Result<(), DynError> {
-        run_command_capture(
-            Command::new("schtasks")
-                .arg("/run")
-                .arg("/tn")
-                .arg(DEVICE_WINDOWS_TASK_NAME),
-            "Failed to start Windows scheduled task",
-        )
-    }
-
-    fn restart(&self) -> Result<(), DynError> {
-        let script = windows_task_stop_if_running_script(DEVICE_WINDOWS_TASK_NAME);
-        run_windows_powershell_script(&script, "Failed to stop Windows scheduled task")?;
-        self.start()
-    }
-
-    fn stop(&self) -> Result<(), DynError> {
-        let script = windows_task_stop_if_running_script(DEVICE_WINDOWS_TASK_NAME);
-        run_windows_powershell_script(&script, "Failed to stop Windows scheduled task")
-    }
-
-    fn status(&self) -> Result<(), DynError> {
-        run_command_passthrough(
-            Command::new("schtasks")
-                .arg("/query")
-                .arg("/tn")
-                .arg(DEVICE_WINDOWS_TASK_NAME)
-                .arg("/fo")
-                .arg("LIST")
-                .arg("/v"),
-            "Failed to read Windows scheduled task status",
-        )
-    }
-
-    fn needs_migration(&self, spec: &DeviceServiceInstallSpec) -> Result<bool, DynError> {
-        let output = Command::new("schtasks")
-            .arg("/query")
-            .arg("/tn")
-            .arg(DEVICE_WINDOWS_TASK_NAME)
-            .arg("/xml")
-            .output()?;
-        if !output.status.success() {
-            return Ok(false);
-        }
-        let xml = String::from_utf8_lossy(&output.stdout);
-        let executable = xml_escape(&spec.exe_path.display().to_string());
-        let arguments = xml_escape(&windows_arguments_string(&spec.args));
-        Ok(!xml.contains(&format!("<Command>{executable}</Command>"))
-            || !xml.contains(&format!("<Arguments>{arguments}</Arguments>")))
-    }
-}
-
+pub use windows_service::install_elevated;
 #[cfg(target_os = "windows")]
-fn current_windows_user_id() -> String {
-    if let Ok(output) = Command::new("whoami").output() {
-        if output.status.success() {
-            let user_id = String::from_utf8_lossy(&output.stdout).trim().to_string();
-            if !user_id.is_empty() {
-                return user_id;
-            }
-        }
-    }
-
-    let username = std::env::var("USERNAME")
-        .ok()
-        .filter(|value| !value.trim().is_empty())
-        .unwrap_or_else(whoami::username);
-    let domain = std::env::var("USERDOMAIN")
-        .ok()
-        .filter(|value| !value.trim().is_empty());
-    match domain {
-        Some(domain) => format!(r"{}\{}", domain, username),
-        None => username,
-    }
-}
+use windows_service::WindowsServiceManager;
 
 #[cfg(test)]
 mod tests {
@@ -1179,6 +1004,7 @@ mod tests {
 
     fn test_spec() -> DeviceServiceInstallSpec {
         DeviceServiceInstallSpec {
+            #[cfg(any(test, not(windows)))]
             description: "gsvd",
             exe_path: PathBuf::from("/Applications/GSV/gsvd"),
             args: vec!["--foreground".to_string()],
@@ -1259,6 +1085,7 @@ mod tests {
     fn detects_legacy_systemd_and_launchd_entrypoints() {
         let current = test_spec();
         let legacy = DeviceServiceInstallSpec {
+            #[cfg(any(test, not(windows)))]
             description: "gsvd",
             exe_path: PathBuf::from("/Applications/GSV/gsv"),
             args: vec!["device".to_string(), "run".to_string()],
@@ -1287,58 +1114,6 @@ mod tests {
     #[test]
     fn test_encode_powershell_script_uses_utf16le_base64() {
         assert_eq!(encode_powershell_script("A"), "QQA=");
-    }
-
-    #[test]
-    fn test_windows_task_registration_script_sets_infinite_execution_time() {
-        let mut spec = test_spec();
-        spec.exe_path = PathBuf::from(r"C:\Program Files\GSV\gsvd.exe");
-        let script = windows_task_registration_script("gsvd", r"ACME\hank", &spec);
-
-        assert!(script.contains("$UserId = 'ACME\\hank'"));
-        assert!(script.contains("$ProgressPreference = 'SilentlyContinue'"));
-        assert!(
-            script.contains("Register-GsvTask (New-ScheduledTaskTrigger -AtLogOn -User $UserId)")
-        );
-        assert!(script.contains("Register-GsvTask (New-ScheduledTaskTrigger -AtLogOn)"));
-        assert!(script.contains(
-            "$Principal = New-ScheduledTaskPrincipal -UserId $UserId -LogonType Interactive -RunLevel Limited"
-        ));
-        assert!(script.contains(
-            "$Action = New-ScheduledTaskAction -Execute 'C:\\Program Files\\GSV\\gsvd.exe' -Argument '--foreground'"
-        ));
-        assert!(!script.contains("AllowStartOnDemand"));
-        assert!(script.contains("-ExecutionTimeLimit ([TimeSpan]::Zero)"));
-        assert!(script.contains("$Settings.ExecutionTimeLimit = 'PT0S'"));
-        let fallback_settings = script
-            .find("New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -MultipleInstances IgnoreNew\n")
-            .expect("fallback settings constructor");
-        let explicit_infinite_limit = script
-            .find("$Settings.ExecutionTimeLimit = 'PT0S'")
-            .expect("explicit infinite execution time assignment");
-        assert!(explicit_infinite_limit > fallback_settings);
-        assert!(!script.contains("$Settings.Enabled"));
-        assert!(!script.contains("$Settings.Hidden"));
-        assert!(script.contains(
-            "Register-ScheduledTask -TaskName $TaskName -InputObject $Task -Force | Out-Null"
-        ));
-        assert!(script.contains(
-            "User-scoped logon trigger failed: $ScopedTriggerError. Generic logon trigger failed:"
-        ));
-    }
-
-    #[test]
-    fn windows_stop_script_ignores_only_an_explicit_non_running_state() {
-        let script = windows_task_stop_if_running_script("gsvd");
-
-        assert!(script.contains("$Task = Get-ScheduledTask -TaskName $TaskName -ErrorAction Stop"));
-        assert!(script.contains("$InitialState = [string]$Task.State"));
-        assert!(script.contains("if ($InitialState -eq 'Unknown')"));
-        assert!(script.contains("$InitialState -eq 'Running' -or $InitialState -eq 'Queued'"));
-        assert!(script.contains("Stop-ScheduledTask -TaskName $TaskName -ErrorAction Stop"));
-        assert!(script.contains("$State -eq 'Ready' -or $State -eq 'Disabled'"));
-        assert!(script.contains("Scheduled task '$TaskName' did not stop"));
-        assert!(!script.contains("SilentlyContinue\n  Stop-ScheduledTask"));
     }
 
     #[test]

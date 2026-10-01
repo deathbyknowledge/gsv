@@ -1,0 +1,79 @@
+name: Windows host
+on:
+  workflow_dispatch:
+  push:
+    branches: [windows-binaries]
+  pull_request:
+    paths:
+      - '.github/workflows/desktop-windows.yml'
+      - '.github/workflows/release.yml'
+      - 'host/**'
+      - 'install.ps1'
+      - 'web/**'
+      - 'packages/gsv/**'
+      - 'package*.json'
+permissions:
+  contents: read
+concurrency:
+  group: windows-host-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  windows:
+    runs-on: windows-2022
+    timeout-minutes: 60
+    env:
+      CARGO_PROFILE_DEV_DEBUG: 0
+      CARGO_PROFILE_TEST_DEBUG: 0
+      CMAKE_BUILD_PARALLEL_LEVEL: 4
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
+        with:
+          workspaces: host -> target
+          key: windows-host
+          cache-on-failure: true
+      - name: Build shared frontend
+        run: |
+          npm ci --ignore-scripts --workspace web --workspace packages/gsv --include-workspace-root=false
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          npm run gsv:build
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          npm run build:desktop --workspace web
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+      - name: Test Windows host and native helpers
+        working-directory: host
+        run: cargo test --locked --package windows-host --package host-config --package gateway-client --package daemon-protocol --package desktop-protocol --package desktop-native --package gsv --package machine --package desktop --package transcriber --package gestures --package gesture-protocol
+      - name: Build distribution
+        working-directory: host
+        run: cargo build --locked --package gsv --package machine --package desktop --package transcriber --package gestures
+      - name: Check voice helper
+        run: python host/scripts/check-transcriber.py host/target/debug/gsv-transcribe.exe
+      - name: Check gesture fixture parity
+        shell: bash
+        run: scripts/vision-native/parity.sh --package gestures
+      - name: Smoke test SCM and installer
+        run: ./host/scripts/test-windows.ps1 -BinDir host/target/debug
+      - name: Lint Windows host
+        working-directory: host
+        run: cargo clippy --locked --package windows-host --package host-config --package daemon-protocol --package desktop-protocol --package desktop-native --package machine --package desktop --package transcriber --package gestures --package gesture-protocol --all-targets -- -D warnings
+      - name: Collect test binaries
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gsv-windows-x64-test
+          path: |
+            host/target/debug/gsv.exe
+            host/target/debug/gsvd.exe
+            host/target/debug/gsv-desktop.exe
+            host/target/debug/gsv-transcribe.exe
+            host/target/debug/gsv-vision.exe

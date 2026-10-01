@@ -1,3 +1,20 @@
+if(MSVC)
+  file(GLOB archives "${ARCHIVE_DIR}/*.lib")
+  foreach(required gsv_litert_bridge tensorflow-lite XNNPACK)
+    if(NOT EXISTS "${ARCHIVE_DIR}/${required}.lib")
+      message(FATAL_ERROR "Missing gesture CPU archive: ${required}.lib")
+    endif()
+  endforeach()
+  file(MAKE_DIRECTORY "${CMAKE_INSTALL_PREFIX}/lib")
+  set(response "")
+  foreach(archive IN LISTS archives)
+    string(APPEND response "\"${archive}\"\n")
+  endforeach()
+  file(WRITE "${ARCHIVE_DIR}/bundle.rsp" "${response}")
+  execute_process(COMMAND "${AR}" /NOLOGO "/OUT:${CMAKE_INSTALL_PREFIX}/lib/gsv_litert.lib"
+    "@${ARCHIVE_DIR}/bundle.rsp" COMMAND_ERROR_IS_FATAL ANY)
+  return()
+endif()
 file(GLOB archives "${ARCHIVE_DIR}/*.a")
 if(NOT EXISTS "${ARCHIVE_DIR}/libgsv_litert_bridge.a" OR
    NOT EXISTS "${ARCHIVE_DIR}/libtensorflow-lite.a" OR

@@ -347,10 +347,19 @@ mod tests {
 
     #[tokio::test]
     async fn cli_disconnect_cancels_queued_work_and_reload_rejects_old_replies() {
-        use std::os::unix::fs::PermissionsExt;
+        #[cfg(unix)]
         let temp = tempfile::tempdir().unwrap();
-        std::fs::set_permissions(temp.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
-        let endpoint = DesktopControlEndpoint::from_path(temp.path().join("desktop.sock"));
+        #[cfg(unix)]
+        let endpoint = {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(temp.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
+            DesktopControlEndpoint::from_path(temp.path().join("desktop.sock"))
+        };
+        #[cfg(windows)]
+        let endpoint = DesktopControlEndpoint::from_pipe_name(format!(
+            r"\\.\pipe\gsv-desktop-test-{}",
+            uuid::Uuid::new_v4()
+        ));
         let bridge = ControlBridge::default();
         let (updates, mut events) = channel();
         let lease = bridge.attach(updates);

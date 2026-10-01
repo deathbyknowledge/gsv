@@ -170,6 +170,14 @@ pub(crate) enum LegacyDeviceAction {
 
 #[derive(Subcommand)]
 pub(crate) enum DaemonAction {
+    #[cfg(windows)]
+    #[command(hide = true)]
+    WindowsInstall {
+        #[arg(long)]
+        config: PathBuf,
+        #[arg(long)]
+        owner_sid: String,
+    },
     /// Install and start the gsvd service
     Install {
         /// Machine ID (saved to local config during install)

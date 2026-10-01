@@ -29,6 +29,8 @@ struct ProcessHandle {
     state: Arc<AsyncMutex<ProcessState>>,
     stdin: Arc<AsyncMutex<Option<ChildStdin>>>,
     cancellation: CancellationToken,
+    #[cfg(windows)]
+    tree: Arc<windows_host::process::ProcessTree>,
 }
 
 #[derive(Clone)]
@@ -49,6 +51,7 @@ struct ProcessSnapshot {
 
 struct ProcessState {
     session_id: String,
+    #[cfg(not(windows))]
     pid: Option<u32>,
     started_at: i64,
     ended_at: Option<i64>,
@@ -300,7 +303,8 @@ fn resolve_shell_program() -> ShellProgram {
             launch_args: vec![
                 "-NoLogo".to_string(),
                 "-NoProfile".to_string(),
-                "-Command".to_string(),
+                "-NonInteractive".to_string(),
+                "-EncodedCommand".to_string(),
             ],
         }
     }
@@ -340,6 +344,7 @@ fn format_shell_spawn_error(_shell: &str, error: &std::io::Error) -> String {
     format!("Failed to execute: {}", error)
 }
 
+#[cfg(not(windows))]
 async fn terminate_pid(pid: u32, force: bool) {
     #[cfg(unix)]
     {
@@ -350,15 +355,6 @@ async fn terminate_pid(pid: u32, force: bool) {
         // SAFETY: the negative, checked PID targets only the child-owned process group.
         let _ = unsafe { libc::kill(-group, signal) };
     }
-    #[cfg(windows)]
-    {
-        let mut command = Command::new("taskkill");
-        command.arg("/PID").arg(pid.to_string()).arg("/T");
-        if force {
-            command.arg("/F");
-        }
-        let _ = command.status().await;
-    }
     #[cfg(not(any(unix, windows)))]
     {
         let _ = pid;
@@ -366,6 +362,7 @@ async fn terminate_pid(pid: u32, force: bool) {
     }
 }
 
+#[cfg(not(windows))]
 fn force_terminate_pid(pid: u32) {
     #[cfg(unix)]
     {
@@ -375,14 +372,6 @@ fn force_terminate_pid(pid: u32) {
         // SAFETY: the negative, checked PID targets only the child-owned process group.
         let _ = unsafe { libc::kill(-group, libc::SIGKILL) };
     }
-    #[cfg(windows)]
-    {
-        let _ = std::process::Command::new("taskkill")
-            .arg("/PID")
-            .arg(pid.to_string())
-            .args(["/T", "/F"])
-            .status();
-    }
     #[cfg(not(any(unix, windows)))]
     {
         let _ = pid;
@@ -390,26 +379,42 @@ fn force_terminate_pid(pid: u32) {
 }
 
 async fn terminate_process(handle: &ProcessHandle) {
-    let pid = {
-        let state = handle.state.lock().await;
-        state.ended_at.is_none().then_some(state.pid).flatten()
-    };
-    let Some(pid) = pid else {
-        return;
-    };
-    terminate_pid(pid, false).await;
-    tokio::time::sleep(Duration::from_millis(250)).await;
-    terminate_pid(pid, true).await;
+    #[cfg(windows)]
+    handle.tree.terminate();
+    #[cfg(not(windows))]
+    {
+        let pid = {
+            let state = handle.state.lock().await;
+            state.ended_at.is_none().then_some(state.pid).flatten()
+        };
+        let Some(pid) = pid else {
+            return;
+        };
+        terminate_pid(pid, false).await;
+        tokio::time::sleep(Duration::from_millis(250)).await;
+        terminate_pid(pid, true).await;
+    }
 }
 
 struct ForegroundProcessGuard {
+    #[cfg(windows)]
+    tree: Arc<windows_host::process::ProcessTree>,
     pid: Option<u32>,
     session_id: String,
 }
 
 impl ForegroundProcessGuard {
-    fn new(pid: Option<u32>, session_id: String) -> Self {
-        Self { pid, session_id }
+    fn new(
+        pid: Option<u32>,
+        session_id: String,
+        #[cfg(windows)] tree: Arc<windows_host::process::ProcessTree>,
+    ) -> Self {
+        Self {
+            pid,
+            session_id,
+            #[cfg(windows)]
+            tree,
+        }
     }
 
     fn disarm(&mut self) {
@@ -422,7 +427,13 @@ impl Drop for ForegroundProcessGuard {
         let Some(pid) = self.pid.take() else {
             return;
         };
+        #[cfg(not(windows))]
         force_terminate_pid(pid);
+        #[cfg(windows)]
+        {
+            let _ = pid;
+            self.tree.terminate();
+        }
         let session_id = self.session_id.clone();
         if let Ok(runtime) = tokio::runtime::Handle::try_current() {
             runtime.spawn(async move {
@@ -501,6 +512,13 @@ async fn launch_managed_process(
     }
     let shell = resolve_shell_program();
     let mut cmd = Command::new(&shell.executable);
+    #[cfg(windows)]
+    let command = {
+        use base64::Engine;
+        let code = format!("[Console]::InputEncoding = [Console]::OutputEncoding = $OutputEncoding = [System.Text.UTF8Encoding]::new($false); $global:LASTEXITCODE = $null;\n{command}\n$gsvSuccess = $?; if ($null -ne $LASTEXITCODE) {{ exit $LASTEXITCODE }}; if (-not $gsvSuccess) {{ exit 1 }}");
+        let bytes: Vec<u8> = code.encode_utf16().flat_map(u16::to_le_bytes).collect();
+        base64::engine::general_purpose::STANDARD.encode(bytes)
+    };
     cmd.args(&shell.launch_args).arg(&command);
     cmd.current_dir(&cwd);
     cmd.stdin(Stdio::piped());
@@ -509,11 +527,26 @@ async fn launch_managed_process(
     #[cfg(unix)]
     cmd.process_group(0);
 
+    #[cfg(windows)]
+    cmd.creation_flags(0x08000000 | 0x00000004)
+        .kill_on_drop(true);
+    #[cfg(windows)]
+    let tree = Arc::new(
+        windows_host::process::ProcessTree::new()
+            .map_err(|error| format!("Could not own shell process tree: {error}"))?,
+    );
     let mut child = cmd
         .spawn()
         .map_err(|e| format_shell_spawn_error(&shell.executable, &e))?;
 
     let pid = child.id();
+    #[cfg(windows)]
+    {
+        let child_pid = pid.ok_or("Shell process has no Windows process ID")?;
+        tree.assign(child_pid)
+            .and_then(|()| windows_host::process::resume(child_pid))
+            .map_err(|error| format!("Could not start owned shell process: {error}"))?;
+    }
     let stdin = child.stdin.take();
     let stdout = child.stdout.take();
     let stderr = child.stderr.take();
@@ -521,6 +554,7 @@ async fn launch_managed_process(
 
     let state = Arc::new(AsyncMutex::new(ProcessState {
         session_id: session_id.clone(),
+        #[cfg(not(windows))]
         pid,
         started_at,
         ended_at: None,
@@ -541,8 +575,15 @@ async fn launch_managed_process(
         state: state.clone(),
         stdin: Arc::new(AsyncMutex::new(stdin)),
         cancellation: CancellationToken::new(),
+        #[cfg(windows)]
+        tree: tree.clone(),
     };
-    let foreground = ForegroundProcessGuard::new(pid, session_id.clone());
+    let foreground = ForegroundProcessGuard::new(
+        pid,
+        session_id.clone(),
+        #[cfg(windows)]
+        tree.clone(),
+    );
 
     let mut output_tasks = Vec::new();
     if let Some(stdout) = stdout {
@@ -588,6 +629,8 @@ async fn launch_managed_process(
                 child.wait().await
             }
         };
+        #[cfg(windows)]
+        handle_for_wait.tree.terminate();
         for mut task in output_tasks {
             if tokio::time::timeout(Duration::from_secs(1), &mut task)
                 .await

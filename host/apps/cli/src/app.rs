@@ -163,6 +163,10 @@ pub(crate) async fn run() -> Result<(), Box<dyn std::error::Error>> {
             }
         },
         Commands::Daemon { action } => match action {
+            #[cfg(windows)]
+            DaemonAction::WindowsInstall { config, owner_sid } => {
+                gsv::device_service::install_elevated(&config, &owner_sid)
+            }
             DaemonAction::Install { id, workspace } => run_daemon_service(
                 DaemonServiceAction::Install { id, workspace },
                 &cfg,

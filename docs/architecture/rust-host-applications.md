@@ -45,14 +45,37 @@ The daemon remains in the foreground. The OS service manager owns detachment,
 restart, and login/boot behavior. It authenticates with a driver-bound
 credential and runs as an unprivileged OS user.
 
+### Windows service ownership
+
+On Windows 10 x64, `gsvd --windows-service` registers with SCM and starts
+before interactive login. SCM stop and shutdown controls enter the same
+cancellation path as foreground shutdown. Crash recovery belongs to SCM.
+`gsvd --foreground` remains available for attached use.
+
+Installation requests administrator elevation, copies the service executable
+to `%ProgramFiles%\GSV\service`, and defaults to the passwordless virtual
+account `NT SERVICE\gsvd`. Administrators may configure a different service
+logon account through Windows Services. Reinstallation preserves that account.
+The service SID receives access to its state and selected workspace; agent
+commands inherit the service account's permissions, never the installer's.
+The default Windows workspace is `%USERPROFILE%\GSV`.
+
+`%ProgramData%\GSV\daemon` holds the daemon-only enrollment, owner SID and
+logs. CLI and Desktop login credentials are not copied there. The local pipe
+ACL admits the enrolled owner and service account, rejects remote clients,
+and clients authenticate the server against the process registered in SCM.
+Desktop and audio/camera helpers remain in the interactive user's session.
+Windows updates are administrator-managed because the service cannot replace
+its protected executable. Legacy scheduled tasks are not migrated.
+
 ## `gsv`
 
 `gsv` is an operator client. It owns gateway administration, authentication,
 chat and process commands, deployment, OS service installation/control for
 `gsvd`, and the client sides of local Desktop and daemon control.
 
-`gsv daemon install|start|restart|stop|uninstall` controls the per-user OS
-service. `gsv daemon status|reload|reconnect|diagnostics` talks to the running
+`gsv daemon install|start|restart|stop|uninstall` controls the OS service.
+Linux and macOS use the current user; Windows uses the native SCM boot service. `gsv daemon status|reload|reconnect|diagnostics` talks to the running
 daemon over `daemon-protocol`; status also reports the OS service state. The
 protocol deliberately carries only bounded, redacted lifecycle information.
 Gateway frames, credentials, file content, and media remain on their owning
@@ -142,7 +165,7 @@ versioned distribution, into a per-user directory (`~/.gsv/bin`, or
 `%LOCALAPPDATA%\Programs\gsv\bin` on Windows) unless `GSV_INSTALL_DIR` says
 otherwise or an earlier installation already exists. The service definition
 points directly at `gsvd` by absolute path while
-retaining the established `gsvd` systemd, launchd, or Windows task identity.
+retaining the established `gsvd` systemd, launchd, or SCM service identity.
 Service installation detects and replaces legacy definitions that invoke the
 hidden compatibility launcher `gsv device run`.
 
@@ -170,7 +193,7 @@ person; the CLI prints one hint when the gateway is newer.
 
 Published host artifacts cover Linux x64/ARM64 and macOS Intel/Apple Silicon
 for Desktop, `gsv-transcribe`, `gsv-vision`, `gsv`, and `gsvd`, plus Windows x64
-for `gsv` and `gsvd`. Checksums cover every release asset, including the vision
+for all five host executables. Checksums cover every release asset, including the vision
 model license and provenance. On macOS,
 `host/scripts/package-macos.sh` assembles an architecture-native development
 `GSV.app` and ZIP containing Desktop, CLI, daemon, helpers, application

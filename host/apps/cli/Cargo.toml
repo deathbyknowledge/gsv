@@ -110,3 +110,7 @@ dbg_macro = "warn"
 # Suppressions should be intentional and documented.
 allow_attributes = "warn"
 allow_attributes_without_reason = "warn"
+
+[target.'cfg(windows)'.dependencies]
+windows-host = { path = "../../crates/windows-host" }
+windows-sys = { version = "0.61", features = ["Win32_Security", "Win32_System_Services"] }

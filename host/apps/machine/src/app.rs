@@ -34,9 +34,20 @@ struct Args {
     /// service managers provide detachment and restart policy.
     #[arg(long)]
     foreground: bool,
+
+    #[cfg(windows)]
+    #[arg(long, hide = true)]
+    windows_service: bool,
 }
 
 pub(crate) async fn run() -> Result<(), Box<dyn std::error::Error>> {
+    run_with_shutdown(CancellationToken::new(), || {}).await
+}
+
+pub(crate) async fn run_with_shutdown(
+    shutdown: CancellationToken,
+    ready: impl FnOnce(),
+) -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
     let mut settings = resolve_settings(&args, &CliConfig::load())?;
     let _logging_guard = machine::logger::init_device_logging()?;
@@ -48,7 +59,13 @@ pub(crate) async fn run() -> Result<(), Box<dyn std::error::Error>> {
         let server_shutdown = server_shutdown.clone();
         async move { server.run_until(server_shutdown.cancelled()).await }
     });
-    let signal = wait_for_shutdown_signal();
+    ready();
+    let signal = async {
+        tokio::select! {
+            _ = wait_for_shutdown_signal() => {},
+            _ = shutdown.cancelled() => {},
+        }
+    };
     tokio::pin!(signal);
 
     let result = loop {
@@ -210,6 +227,8 @@ mod tests {
             id: None,
             workspace: None,
             foreground: true,
+            #[cfg(windows)]
+            windows_service: false,
         }
     }
 

@@ -200,9 +200,13 @@ async fn pair_using(
     protect_existing_machine(&config, &invite, options.no_replace)?;
     let workspace = workspace
         .or(config.device.workspace.clone())
-        .or_else(dirs::home_dir)
-        .ok_or("Could not find the home directory. Pass --workspace PATH.")?
-        .canonicalize()?;
+        .or_else(host_config::default_machine_workspace)
+        .ok_or("Could not find the home directory. Pass --workspace PATH.")?;
+    #[cfg(windows)]
+    if Some(&workspace) == host_config::default_machine_workspace().as_ref() {
+        std::fs::create_dir_all(&workspace)?;
+    }
+    let workspace = workspace.canonicalize()?;
     if !workspace.is_dir() {
         return Err("The device workspace must be a directory".into());
     }

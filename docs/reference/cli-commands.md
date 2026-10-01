@@ -449,7 +449,8 @@ The driver runtime is the separate `gsvd` executable. The hidden legacy command
 `gsv device run` transfers process ownership to the sibling
 `gsvd --foreground`; the CLI never embeds the driver. `install` creates and
 starts a launchd agent on
-macOS, a systemd user unit on Linux, or a scheduled task on Windows. Reinstalling
+macOS, a systemd user unit on Linux, or an automatic SCM service on Windows. Windows installation requests administrator
+approval and uses a dedicated service account. Reinstalling
 or starting an old definition migrates `gsv device run` to the direct `gsvd`
 entrypoint without changing the existing service identity. `doctor` checks the
 installed executable and definition. The daemon writes daily rotated JSONL logs
@@ -465,7 +466,7 @@ turns automatic updates off.
 `status` combines the operating-system service state with the live daemon's
 version, PID, machine id, connection phase, uptime, and reconnect count. These
 live operations use a versioned same-user Unix socket on macOS/Linux and a
-current-user Windows named pipe. They do not expose credentials or gateway
+Windows named pipe restricted to the enrolled service owner and execution account. They do not expose credentials or gateway
 traffic.
 
 Device identity resolves as `--id`, then local `device.id`, then

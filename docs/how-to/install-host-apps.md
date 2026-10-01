@@ -13,10 +13,9 @@ refuses to manage a mismatched daemon.
 | Linux ARM64 | yes | yes | yes | yes | yes |
 | macOS Intel | yes | yes | yes | yes | yes |
 | macOS Apple Silicon | yes | yes | yes | yes | yes |
-| Windows x64 | yes | yes | not yet | not yet | not yet |
+| Windows 10+ x64 | yes | yes | yes | yes | yes |
 
-Windows ARM64 can run the Windows x64 CLI and daemon through emulation, but it
-is not a native release target. Other operating systems and architectures are
+Windows ARM64 is not a supported release target. Other operating systems and architectures are
 not currently published.
 
 ## Install
@@ -71,6 +70,31 @@ Every artifact is checked against the release's `checksums.txt` before an
 installed binary is changed. The installer preserves the existing config and
 keeps user, Desktop, and driver credentials separate.
 
+## Windows service and permissions
+
+Connecting a Windows computer requests administrator approval to install the
+`gsvd` SCM service. It starts at boot, reconnects when networking is available,
+and keeps running through sign-out or Desktop exit. No interactive login is
+needed to reach an enrolled server after reboot.
+
+By default commands run as `NT SERVICE\gsvd`, a dedicated virtual account,
+with read/write access to the selected workspace. The default is
+`%USERPROFILE%\GSV`. This identity does not inherit your personal SSH keys,
+user-installed tools, mapped drives, or browser sessions. Configure credentials
+and tools for the service account, or choose its Log On account in Windows
+Services. Use UNC paths for network shares and grant that account access.
+
+The protected executable lives at `%ProgramFiles%\GSV\service\gsvd.exe`.
+Daemon enrollment and logs live at `%ProgramData%\GSV\daemon`; CLI and Desktop
+credentials stay in your profile. Only the enrolling user and administrators
+can manage this service. One machine service has one enrolled owner; another
+Windows user cannot silently replace it. `gsv daemon uninstall` stops and
+removes the service while retaining enrollment and workspace data.
+
+Windows automatic daemon updates are disabled. Run the installer from an
+administrator PowerShell to update an existing boot service. Desktop must be
+closed before replacing its executables. There is no scheduled-task migration.
+
 ## Existing device daemon
 
 When the `gsvd` user service already exists, the installer:
@@ -104,7 +128,7 @@ system-wide installation, such as one under `/usr/local/bin`, updates manually
 until it is migrated, and a daemon inside the Desktop application bundle is
 updated by Desktop. The daemon also
 only updates itself when a service manager runs it (systemd, launchd, or the
-Windows scheduled task), since something has to restart it afterwards; a
+Windows SCM service), since something has to restart it afterwards; a
 `gsvd --foreground` started by hand reports the newer release and leaves the
 update to you. The daemon makes at most one attempt per hour and only
 ever moves to a release the gateway named. Installer output is written to `~/.gsv/logs/auto-update.log`,
@@ -124,7 +148,7 @@ update them.
 
 ## Desktop
 
-On Linux and macOS, start or focus the installed app with:
+Start or focus the installed app with:
 
 ```bash
 gsv desktop
@@ -164,7 +188,9 @@ macOS releases also include `gsv-desktop-darwin-arm64.zip` and
 `gsv-desktop-darwin-x64.zip`, each containing `GSV.app` with the CLI, daemon and
 helpers. The developer app is ad-hoc signed and unnotarized. After the first
 blocked launch, use System Settings → Privacy & Security → Open Anyway.
-Replace the bundle to update it. Windows receives only the CLI and daemon.
+Replace the bundle to update it. Windows includes both local helpers; microphone
+and camera access require an interactive session and permission in Windows
+Privacy settings.
 
 ## Manual verification
 

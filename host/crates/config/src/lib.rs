@@ -18,7 +18,22 @@ pub fn gsv_home() -> PathBuf {
         .join(".gsv")
 }
 
+pub fn default_machine_workspace() -> Option<PathBuf> {
+    let home = dirs::home_dir()?;
+    if cfg!(windows) {
+        Some(home.join("GSV"))
+    } else {
+        Some(home)
+    }
+}
+
 pub fn device_log_dir() -> PathBuf {
+    #[cfg(windows)]
+    if windows_host::service::is_service_process()
+        || windows_host::service::installed().unwrap_or(false)
+    {
+        return windows_host::service::data_dir().join("logs");
+    }
     gsv_home().join("logs")
 }
 
@@ -454,6 +469,10 @@ fn set_private_permissions(_file: &File) -> Result<(), std::io::Error> {
 impl CliConfig {
     /// Get the config file path
     pub fn config_path() -> Option<PathBuf> {
+        #[cfg(windows)]
+        if windows_host::service::is_service_process() {
+            return Some(windows_host::service::data_dir().join("config.toml"));
+        }
         dirs::config_dir().map(|d| d.join("gsv").join("config.toml"))
     }
 

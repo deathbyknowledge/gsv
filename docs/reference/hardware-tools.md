@@ -230,7 +230,10 @@ Device filesystem semantics:
 Device shell semantics:
 
 - Unix devices run commands through the user's shell with `-lc`.
-- Windows devices run commands through PowerShell.
+- Windows devices run commands through PowerShell with UTF-8 input/output.
+  The SCM service executes commands as its configured service account, including
+  before interactive login. Cancellation terminates the owned Windows Job Object
+  and its descendant processes. Use drive-qualified paths or UNC paths for files.
 - `input` starts a command; `cwd` selects its working directory.
 - Long-running commands return a resumable `sessionId` instead of holding the original route open.
 - `Shell` with `sessionId` and `input: ""` polls for more output.

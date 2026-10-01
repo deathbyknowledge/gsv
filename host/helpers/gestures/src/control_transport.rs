@@ -338,7 +338,19 @@ fn inherited_event_output() -> Result<File, ControlTransportError> {
     Ok(unsafe { File::from_raw_fd(EVENT_FD) })
 }
 
-#[cfg(not(unix))]
+#[cfg(windows)]
+fn inherited_event_output() -> Result<File, ControlTransportError> {
+    let name = env::var_os(gesture_protocol::EVENT_PIPE_ENV)
+        .ok_or(ControlTransportError::InvalidEnvironment)?;
+    let pid = env::var(gesture_protocol::PARENT_PID_ENV)
+        .ok()
+        .and_then(|value| value.parse().ok())
+        .ok_or(ControlTransportError::InvalidEnvironment)?;
+    windows_host::pipe::connect(&name, pid)
+        .map_err(|_| ControlTransportError::EventChannelUnavailable)
+}
+
+#[cfg(not(any(unix, windows)))]
 fn inherited_event_output() -> Result<File, ControlTransportError> {
     Err(ControlTransportError::EventChannelUnavailable)
 }
