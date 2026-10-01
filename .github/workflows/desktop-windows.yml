@@ -31,9 +31,12 @@ jobs:
         working-directory: host
         run: cargo test --locked --package windows-host --package host-config --package gateway-client --package daemon-protocol --package gsv --package machine
       - name: Build CLI and daemon
+        id: core_build
+        if: ${{ !cancelled() }}
         working-directory: host
         run: cargo build --locked --package gsv --package machine
       - name: Smoke test SCM and transactional installer
+        if: ${{ !cancelled() && steps.core_build.outcome == 'success' }}
         run: ./host/scripts/test-windows.ps1 -BinDir host/target/debug
   windows:
     concurrency:
@@ -74,20 +77,26 @@ jobs:
         working-directory: host
         run: cargo test --locked --package desktop-protocol --package desktop-native --package desktop --package transcriber --package gestures --package gesture-protocol
       - name: Build distribution
+        id: distribution
+        if: ${{ !cancelled() }}
         working-directory: host
         run: cargo build --locked --package gsv --package machine --package desktop --package transcriber --package gestures
       - name: Check voice helper
+        if: ${{ !cancelled() && steps.distribution.outcome == 'success' }}
         run: python host/scripts/check-transcriber.py host/target/debug/gsv-transcribe.exe
       - name: Check gesture fixture parity
+        if: ${{ !cancelled() && steps.distribution.outcome == 'success' }}
         shell: bash
         run: scripts/vision-native/parity.sh --package gestures
       - name: Package Windows installer
+        if: ${{ !cancelled() && steps.distribution.outcome == 'success' }}
         run: ./host/scripts/package-windows.ps1 -BinDir host/target/debug -Output release
       - name: Lint Windows host
+        if: ${{ !cancelled() && steps.distribution.outcome == 'success' }}
         working-directory: host
         run: cargo clippy --locked --package windows-host --package host-config --package daemon-protocol --package desktop-protocol --package desktop-native --package machine --package desktop --package transcriber --package gestures --package gesture-protocol --all-targets -- -D warnings
       - name: Collect test binaries
-        if: success()
+        if: ${{ !cancelled() && steps.distribution.outcome == 'success' }}
         uses: actions/upload-artifact@v4
         with:
           name: gsv-windows-x64-test
