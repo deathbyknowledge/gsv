@@ -28,6 +28,18 @@ try {
   }
   $service = Get-Service gsvd
   if ($service.Status -ne 'Running') { throw 'Service did not survive restart' }
+  $nextWorkspace = Join-Path $root 'replacement workspace'
+  New-Item -ItemType Directory -Path $nextWorkspace | Out-Null
+  $nextToml = "[device]`nid = 'windows-ci'`nworkspace = '$nextWorkspace'`n"
+  [IO.File]::WriteAllText($config, $nextToml, [Text.UTF8Encoding]::new($false))
+  Copy-Item $config (Join-Path $cliConfig 'config.toml') -Force
+  & $cli daemon windows-install --config $config --owner-sid $owner
+  if ($LASTEXITCODE) { throw 'Workspace replacement failed' }
+  $serviceSid = ([Security.Principal.NTAccount]::new('NT SERVICE', 'gsvd')).Translate([Security.Principal.SecurityIdentifier]).Value
+  $oldRules = (Get-Acl $workspace).GetAccessRules($true, $false, [Security.Principal.SecurityIdentifier])
+  if ($oldRules | Where-Object { $_.IdentityReference.Value -eq $serviceSid }) { throw 'Previous workspace retained its service grant' }
+  & $cli daemon reload
+  if ($LASTEXITCODE) { throw 'Configuration reload rejected the unchanged workspace' }
   $assets = Join-Path $root 'assets'
   $destination = Join-Path $root 'installed with spaces 日本語'
   New-Item -ItemType Directory -Path $assets | Out-Null

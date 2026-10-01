@@ -159,6 +159,14 @@ pub fn install_elevated(source: &Path, owner: &str) -> Result<(), DynError> {
             return Err("This machine has enrollment owned by another Windows user. An administrator must explicitly retire its saved enrollment before replacing it.".into());
         }
     }
+    let previous_workspace = if data.join("config.toml").exists() {
+        ConfigFile::<CliConfig>::new(data.join("config.toml"))
+            .load()?
+            .device
+            .workspace
+    } else {
+        None
+    };
     if installed {
         service::stop()?;
     }
@@ -248,6 +256,14 @@ pub fn install_elevated(source: &Path, owner: &str) -> Result<(), DynError> {
             .args(["/grant", "NT SERVICE\\gsvd:(OI)(CI)M"]),
         "Could not grant access to the selected workspace",
     )?;
+    if let Some(previous) = previous_workspace.filter(|path| path != &workspace && path.exists()) {
+        run_command_capture(
+            Command::new(system_tool("icacls.exe"))
+                .arg(previous)
+                .args(["/remove:g", "NT SERVICE\\gsvd"]),
+            "Could not remove access to the previous workspace",
+        )?;
+    }
     service::start()?;
     println!(
         "Installed boot service gsvd. Workspace: {}. Account: {}",
