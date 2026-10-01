@@ -102,9 +102,6 @@ jobs:
           - os: macos-15
             target: aarch64-apple-darwin
             platform: darwin-arm64
-          - os: windows-2022
-            target: x86_64-pc-windows-msvc
-            platform: windows-x64
 
     runs-on: ${{ matrix.os }}
     steps:
@@ -291,6 +288,9 @@ jobs:
           cargo build --manifest-path host/Cargo.toml --locked --release --target ${{ matrix.target }} --package gsv --package machine
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           ./host/scripts/sign-windows.ps1 -Directory host/target/${{ matrix.target }}/release
+          foreach ($name in @('gsv', 'gsvd', 'gsv-desktop', 'gsv-transcribe', 'gsv-vision')) {
+            Copy-Item "host/target/${{ matrix.target }}/release/$name.exe" "release/$name-windows-x64.exe" -Force
+          }
           ./host/scripts/package-windows.ps1 -BinDir host/target/${{ matrix.target }}/release -Output release
           ./host/scripts/sign-windows.ps1 -Directory release
 
@@ -393,7 +393,6 @@ jobs:
           cp artifacts/gsv-host-tools-linux-arm64/* release/
           cp artifacts/gsv-host-tools-darwin-x64/* release/
           cp artifacts/gsv-host-tools-darwin-arm64/* release/
-          cp artifacts/gsv-host-tools-windows-x64/* release/
 
           # Desktop and isolated local transcription helper
           # Gesture-vision helper and its model metadata
