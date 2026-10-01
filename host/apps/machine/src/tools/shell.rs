@@ -447,6 +447,38 @@ impl Drop for ForegroundProcessGuard {
     }
 }
 
+fn decode_output(pending: &mut Vec<u8>, eof: bool) -> String {
+    let mut consumed = 0;
+    let mut text = String::new();
+    while consumed < pending.len() {
+        match std::str::from_utf8(&pending[consumed..]) {
+            Ok(valid) => {
+                text.push_str(valid);
+                consumed = pending.len();
+            }
+            Err(error) => {
+                let valid_end = consumed + error.valid_up_to();
+                text.push_str(
+                    std::str::from_utf8(&pending[consumed..valid_end])
+                        .expect("UTF-8 validator identified a valid prefix"),
+                );
+                consumed = valid_end;
+                if let Some(length) = error.error_len() {
+                    text.push('\u{fffd}');
+                    consumed += length;
+                } else if eof {
+                    text.push('\u{fffd}');
+                    consumed = pending.len();
+                } else {
+                    break;
+                }
+            }
+        }
+    }
+    pending.drain(..consumed);
+    text
+}
+
 async fn pump_stream<R>(mut reader: R, state: Arc<AsyncMutex<ProcessState>>, stream: OutputStream)
 where
     R: AsyncRead + Unpin + Send + 'static,
@@ -458,18 +490,9 @@ where
         pending.extend_from_slice(&buf[..count]);
         // Preserve a UTF-8 character split across pipe reads. Invalid bytes still
         // use the text contract's replacement character; EOF flushes a short tail.
-        let complete = if count == 0 {
-            pending.len()
-        } else {
-            match std::str::from_utf8(&pending) {
-                Err(error) if error.error_len().is_none() => error.valid_up_to(),
-                _ => pending.len(),
-            }
-        };
-        if complete > 0 {
-            let chunk = String::from_utf8_lossy(&pending[..complete]);
+        let chunk = decode_output(&mut pending, count == 0);
+        if !chunk.is_empty() {
             append_output(&mut *state.lock().await, &chunk, stream);
-            pending.drain(..complete);
         }
         if count == 0 {
             return;
@@ -1372,9 +1395,27 @@ mod windows_tests {
             .unwrap();
         assert_eq!(result.data["status"], "failed");
         let timed = tool
-            .execute(json!({ "input": "Start-Sleep -Seconds 60", "timeoutMs": 250 }))
+            .execute(json!({ "input": "Start-Sleep -Seconds 60", "timeout": 250 }))
             .await
             .unwrap();
         assert_eq!(timed.data["status"], "timed_out");
+    }
+}
+
+#[cfg(test)]
+mod output_encoding_tests {
+    use super::decode_output;
+
+    #[test]
+    fn unicode_survives_pipe_boundaries_and_malformed_bytes() {
+        let mut pending = vec![b'a', 0xff, 0xe6];
+        assert_eq!(decode_output(&mut pending, false), "a�");
+        pending.extend_from_slice(&[0x97, 0xa5, 0xf0, 0x9f]);
+        assert_eq!(decode_output(&mut pending, false), "日");
+        pending.extend_from_slice(&[0x98, 0x80]);
+        assert_eq!(decode_output(&mut pending, false), "😀");
+        pending.extend_from_slice(&[0xe6]);
+        assert_eq!(decode_output(&mut pending, true), "�");
+        assert!(pending.is_empty());
     }
 }

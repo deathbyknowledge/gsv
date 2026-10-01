@@ -197,7 +197,8 @@ function Ensure-DesktopRuntimes {
     Install-MicrosoftRuntime 'https://go.microsoft.com/fwlink/p/?LinkId=2124703' 'WebView2' @('/silent', '/install')
   }
   $vc = Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\VisualStudio\14.0\VC\Runtimes\x64' -ErrorAction SilentlyContinue
-  if (-not $vc -or $vc.Installed -ne 1) {
+  $vcVersion = if ($vc.Version) { [version]($vc.Version.TrimStart('v')) } else { [version]'0.0' }
+  if (-not $vc -or $vc.Installed -ne 1 -or $vcVersion -lt [version]'14.44') {
     Install-MicrosoftRuntime 'https://aka.ms/vs/17/release/vc_redist.x64.exe' 'Visual C++ runtime' @('/install', '/quiet', '/norestart')
   }
 }

@@ -371,7 +371,9 @@ where
             }
             match FileExt::try_lock_exclusive(&lock) {
                 Ok(()) => break,
-                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                Err(error)
+                    if error.raw_os_error() == fs2::lock_contended_error().raw_os_error() =>
+                {
                     std::thread::sleep(Duration::from_millis(10));
                 }
                 Err(error) => return Err(error.into()),
