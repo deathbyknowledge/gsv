@@ -1353,6 +1353,24 @@ mod tests {
 mod windows_tests {
     use super::*;
 
+    async fn terminal_result(tool: &ShellTool, mut result: ToolOutput) -> ToolOutput {
+        tokio::time::timeout(Duration::from_secs(35), async {
+            while result.data["status"] == "running" {
+                result = tool
+                    .execute(json!({
+                        "sessionId": result.data["sessionId"],
+                        "input": "",
+                        "yieldMs": 10_000,
+                    }))
+                    .await
+                    .unwrap();
+            }
+            result
+        })
+        .await
+        .expect("PowerShell did not finish within the bounded session timeout")
+    }
+
     #[tokio::test]
     async fn powershell_preserves_unicode_cwd_stdin_and_exit_code() {
         let root = tempfile::tempdir().unwrap();
@@ -1361,18 +1379,20 @@ mod windows_tests {
         let tool = ShellTool::new(cwd);
         let result = tool
             .execute(
-                json!({ "input": "[Console]::Write('héllo 日本語'); exit 7", "yieldMs": 10_000 }),
+                json!({ "input": "[Console]::Write('héllo 日本語'); exit 7", "yieldMs": 10_000, "timeout": 30_000 }),
             )
             .await
             .unwrap();
+        let result = terminal_result(&tool, result).await;
         assert_eq!(result.data["stdout"], "héllo 日本語", "{}", result.data);
         assert_eq!(result.data["exitCode"], 7);
         let id = Uuid::new_v4().to_string();
-        tool.execute(json!({ "sessionId": id, "start": true, "input": "[Console]::Write([Console]::ReadLine())" })).await.unwrap();
+        tool.execute(json!({ "sessionId": id, "start": true, "input": "[Console]::Write([Console]::ReadLine())", "timeout": 30_000 })).await.unwrap();
         let result = tool
             .execute(json!({ "sessionId": id, "input": "hello 日本語\n", "yieldMs": 10_000 }))
             .await
             .unwrap();
+        let result = terminal_result(&tool, result).await;
         assert_eq!(result.data["stdout"], "hello 日本語", "{}", result.data);
         assert_eq!(result.data["status"], "completed");
         let result = tool
