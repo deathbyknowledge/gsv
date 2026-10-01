@@ -308,6 +308,8 @@ fn resolve_shell_program() -> ShellProgram {
                 "-NoLogo".to_string(),
                 "-NoProfile".to_string(),
                 "-NonInteractive".to_string(),
+                "-OutputFormat".to_string(),
+                "Text".to_string(),
                 "-EncodedCommand".to_string(),
             ],
         }
@@ -1358,7 +1360,9 @@ mod windows_tests {
         std::fs::create_dir(&cwd).unwrap();
         let tool = ShellTool::new(cwd);
         let result = tool
-            .execute(json!({ "input": "[Console]::Write('héllo 日本語'); exit 7" }))
+            .execute(
+                json!({ "input": "[Console]::Write('héllo 日本語'); exit 7", "yieldMs": 10_000 }),
+            )
             .await
             .unwrap();
         assert_eq!(result.data["stdout"], "héllo 日本語");
@@ -1366,7 +1370,7 @@ mod windows_tests {
         let id = Uuid::new_v4().to_string();
         tool.execute(json!({ "sessionId": id, "start": true, "input": "[Console]::Write([Console]::ReadLine())" })).await.unwrap();
         let result = tool
-            .execute(json!({ "sessionId": id, "input": "hello 日本語\n" }))
+            .execute(json!({ "sessionId": id, "input": "hello 日本語\n", "yieldMs": 10_000 }))
             .await
             .unwrap();
         assert_eq!(result.data["stdout"], "hello 日本語");

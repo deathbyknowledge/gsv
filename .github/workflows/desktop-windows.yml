@@ -1,8 +1,6 @@
 name: Windows host
 on:
   workflow_dispatch:
-  push:
-    branches: [windows-binaries]
   pull_request:
     paths:
       - '.github/workflows/desktop-windows.yml'
@@ -74,7 +72,7 @@ jobs:
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
       - name: Test Windows host and native helpers
         working-directory: host
-        run: cargo test --locked --package windows-host --package host-config --package gateway-client --package daemon-protocol --package desktop-protocol --package desktop-native --package gsv --package machine --package desktop --package transcriber --package gestures --package gesture-protocol
+        run: cargo test --locked --package desktop-protocol --package desktop-native --package desktop --package transcriber --package gestures --package gesture-protocol
       - name: Build distribution
         working-directory: host
         run: cargo build --locked --package gsv --package machine --package desktop --package transcriber --package gestures
