@@ -1365,7 +1365,7 @@ mod windows_tests {
             )
             .await
             .unwrap();
-        assert_eq!(result.data["stdout"], "héllo 日本語");
+        assert_eq!(result.data["stdout"], "héllo 日本語", "{}", result.data);
         assert_eq!(result.data["exitCode"], 7);
         let id = Uuid::new_v4().to_string();
         tool.execute(json!({ "sessionId": id, "start": true, "input": "[Console]::Write([Console]::ReadLine())" })).await.unwrap();
@@ -1373,7 +1373,7 @@ mod windows_tests {
             .execute(json!({ "sessionId": id, "input": "hello 日本語\n", "yieldMs": 10_000 }))
             .await
             .unwrap();
-        assert_eq!(result.data["stdout"], "hello 日本語");
+        assert_eq!(result.data["stdout"], "hello 日本語", "{}", result.data);
         assert_eq!(result.data["status"], "completed");
         let result = tool
             .execute(json!({ "sessionId": id, "input": "" }))

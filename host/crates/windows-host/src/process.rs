@@ -105,13 +105,16 @@ impl ProcessTree {
 /// Resume a CREATE_SUSPENDED child only after assigning its entire future tree.
 pub fn resume(pid: u32) -> io::Result<()> {
     use windows_sys::Win32::{
-        Foundation::INVALID_HANDLE_VALUE,
+        Foundation::{ERROR_INVALID_PARAMETER, INVALID_HANDLE_VALUE},
         System::{
             Diagnostics::ToolHelp::{
                 CreateToolhelp32Snapshot, Thread32First, Thread32Next, TH32CS_SNAPTHREAD,
                 THREADENTRY32,
             },
-            Threading::{OpenThread, ResumeThread, THREAD_SUSPEND_RESUME},
+            Threading::{
+                GetProcessIdOfThread, OpenThread, ResumeThread, THREAD_QUERY_LIMITED_INFORMATION,
+                THREAD_SUSPEND_RESUME,
+            },
         },
     };
     // SAFETY: requesting a read-only system thread snapshot.
@@ -126,28 +129,50 @@ pub fn resume(pid: u32) -> io::Result<()> {
     entry.dwSize = mem::size_of::<THREADENTRY32>() as u32;
     // SAFETY: entry points to initialized storage of the declared size.
     let mut found = unsafe { Thread32First(snapshot.as_raw_handle(), &mut entry) };
+    let mut resumed = false;
     while found != 0 {
         if entry.th32OwnerProcessID == pid {
             // SAFETY: the snapshot supplied the thread ID; access is limited to resume.
-            let thread = unsafe { OpenThread(THREAD_SUSPEND_RESUME, 0, entry.th32ThreadID) };
-            if thread.is_null() {
-                return Err(io::Error::last_os_error());
+            let handle = unsafe {
+                OpenThread(
+                    THREAD_SUSPEND_RESUME | THREAD_QUERY_LIMITED_INFORMATION,
+                    0,
+                    entry.th32ThreadID,
+                )
+            };
+            if handle.is_null() {
+                let error = io::Error::last_os_error();
+                if error.raw_os_error() != Some(ERROR_INVALID_PARAMETER as i32) {
+                    return Err(error);
+                }
+            } else {
+                // SAFETY: OpenThread returned a newly owned handle.
+                let thread = unsafe { OwnedHandle::from_raw_handle(handle) };
+                // Snapshot ordering does not identify the primary thread. Windows
+                // can create loader threads before it; resume every suspended
+                // thread in this owned child, rechecking IDs against reuse.
+                // SAFETY: thread is live and has query access.
+                if unsafe { GetProcessIdOfThread(thread.as_raw_handle()) } == pid {
+                    // SAFETY: this thread still belongs to our assigned child.
+                    let previous = unsafe { ResumeThread(thread.as_raw_handle()) };
+                    if previous == u32::MAX {
+                        return Err(io::Error::last_os_error());
+                    }
+                    resumed |= previous > 0;
+                }
             }
-            // SAFETY: OpenThread returned a newly owned handle.
-            let thread = unsafe { OwnedHandle::from_raw_handle(thread) };
-            // SAFETY: only the primary thread of our still-suspended child is resumed.
-            if unsafe { ResumeThread(thread.as_raw_handle()) } == u32::MAX {
-                return Err(io::Error::last_os_error());
-            }
-            return Ok(());
         }
         // SAFETY: the snapshot and output buffer remain valid.
         found = unsafe { Thread32Next(snapshot.as_raw_handle(), &mut entry) };
     }
-    Err(io::Error::new(
-        io::ErrorKind::NotFound,
-        "suspended child thread disappeared",
-    ))
+    if resumed {
+        Ok(())
+    } else {
+        Err(io::Error::new(
+            io::ErrorKind::NotFound,
+            "suspended child thread disappeared",
+        ))
+    }
 }
 
 /// Join the installer's cancellation job without retaining a handle that could
