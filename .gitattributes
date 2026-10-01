@@ -1,2 +1,3 @@
 scripts/vision-mediapipe/*.patch whitespace=-blank-at-eol
 workers/gateway/src/prompts/**/*.md text eol=lf
+*.sh text eol=lf
