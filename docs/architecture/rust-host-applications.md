@@ -62,8 +62,9 @@ The default Windows workspace is `%USERPROFILE%\GSV`.
 
 Service installation selects only the bundled `gsvd.exe` beside the CLI, without
 consulting `GSV_GSVD_PATH` or `PATH`. The enrolling process locks and checks that
-file before requesting UAC approval. The elevated child verifies its pinned
-SHA-256 digest and copies from the locked handle; it never executes a candidate
+file before requesting UAC approval. The elevated child reads from that locked
+file, verifies its pinned SHA-256 digest against an owned byte snapshot, and
+writes that snapshot; it never executes a candidate
 to discover its version. A changed or unbundled candidate fails before altering
 the existing service.
 

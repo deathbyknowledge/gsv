@@ -118,9 +118,9 @@ pub(super) fn packaged_daemon_path() -> Result<PathBuf, DynError> {
     Ok(path.canonicalize()?)
 }
 
-/// Keeps the selected bytes immutable across the UAC prompt and copies from the
-/// same open file after elevation. A path or inherited environment is not proof
-/// that an executable still matches the one checked by the enrolling process.
+/// Denies replacement across the UAC prompt. The elevated process verifies an
+/// owned byte snapshot before writing it; paths and sharing locks alone cannot
+/// authenticate bytes subsequently read from a file.
 struct PinnedDaemon {
     path: PathBuf,
     file: File,
@@ -162,6 +162,15 @@ impl PinnedDaemon {
         }
         Ok(())
     }
+
+    fn verified_bytes(&mut self, expected_sha256: &str) -> Result<Vec<u8>, DynError> {
+        self.verify(expected_sha256)?;
+        self.file.rewind()?;
+        let mut bytes = Vec::new();
+        self.file.read_to_end(&mut bytes)?;
+        self.verify(&format!("{:x}", Sha256::digest(&bytes)))?;
+        Ok(bytes)
+    }
 }
 
 /// Runs only in the administrator process. Configuration contents never enter arguments.
@@ -176,7 +185,7 @@ pub fn install_elevated(
         return Err("Service installation requires the bundled gsvd.exe beside gsv.exe".into());
     }
     let mut daemon = PinnedDaemon::open(&packaged)?;
-    daemon.verify(daemon_sha256)?;
+    let daemon_bytes = daemon.verified_bytes(daemon_sha256)?;
     // Validate the SID before using it in Windows security descriptors or ACL arguments.
     let _ = SecurityDescriptor::new(owner)?;
     let manager = ServiceManager::local_computer(
@@ -252,7 +261,7 @@ pub fn install_elevated(
     }
     if executable.canonicalize().ok().as_ref() != Some(&daemon.path) {
         let mut destination = File::create(&executable)?;
-        std::io::copy(&mut daemon.file, &mut destination)?;
+        destination.write_all(&daemon_bytes)?;
         destination.sync_all()?;
     }
     let info = ServiceInfo {
@@ -433,13 +442,15 @@ mod tests {
         assert!(fs::rename(&path, directory.path().join("moved.exe")).is_err());
         let child = PinnedDaemon::open(&path).expect("child can read pinned daemon");
         child.verify(&daemon.sha256).expect("same daemon bytes");
-        let mut copied = Vec::new();
-        std::io::copy(&mut daemon.file, &mut copied).expect("copy pinned bytes");
+        let copied = daemon
+            .verified_bytes(&child.sha256)
+            .expect("snapshot pinned bytes");
         assert_eq!(copied, b"abc");
 
         drop(child);
         drop(daemon);
         fs::write(&path, b"replacement").expect("pin released after installation");
+        assert_eq!(copied, b"abc");
     }
 
     #[test]
@@ -451,7 +462,7 @@ mod tests {
         let approved_sha256 = daemon.sha256.clone();
         drop(daemon);
         fs::write(&path, b"replacement daemon").expect("replace unpinned daemon");
-        let replaced = PinnedDaemon::open(&path).expect("pin replacement");
-        assert!(replaced.verify(&approved_sha256).is_err());
+        let mut replaced = PinnedDaemon::open(&path).expect("pin replacement");
+        assert!(replaced.verified_bytes(&approved_sha256).is_err());
     }
 }
