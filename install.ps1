@@ -251,8 +251,11 @@ function Install-GsvHost {
     $serviceExisted = $null -ne $service
     $serviceWasRunning = $serviceExisted -and $service.State -eq 'Running'
     if ($serviceExisted) {
-      if ($service.PathName -notmatch '^"([^"\r\n]+)"\s+--windows-service$') { throw 'Unrecognized GSV service registration' }
-      $serviceBinary = $Matches[1]
+      if ($service.PathName -match '^"([^"\r\n]+)"\s+--windows-service$') {
+        $serviceBinary = $Matches[1]
+      } elseif ($service.PathName -match '^([^"\s]+)\s+--windows-service$') {
+        $serviceBinary = $Matches[1]
+      } else { throw 'Unrecognized GSV service registration' }
       $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
       $admin = ([Security.Principal.WindowsPrincipal]::new($identity)).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
       if (-not $admin) {

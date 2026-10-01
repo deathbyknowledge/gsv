@@ -13,8 +13,10 @@ export function targetArgs(target: string, args: FileRequestArgs): FileRequestAr
   return normalizedTarget === "gsv" ? args : { ...args, target: normalizedTarget };
 }
 
+type FilePathRoot = { root: string; rest: string };
+
 // Paths belong to the selected target, independently of the browser's OS.
-function splitRoot(input: string): { root: string; rest: string } {
+function splitRoot(input: string): FilePathRoot {
   let raw = input.replaceAll("\\", "/").trim();
   raw = raw.replace(/^\/\/\?\/UNC\//i, "//").replace(/^\/\/\?\/(?=[a-z]:\/)/i, "");
   const drive = /^([a-z]:)\//i.exec(raw);

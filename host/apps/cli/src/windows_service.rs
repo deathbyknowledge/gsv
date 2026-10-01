@@ -118,6 +118,33 @@ pub fn install_elevated(source: &Path, owner: &str) -> Result<(), DynError> {
     if !workspace.is_dir() {
         return Err("The service workspace must be an existing directory".into());
     }
+    let workspace = workspace.canonicalize()?;
+    let normalize = |path: &Path| {
+        path.to_string_lossy()
+            .trim_start_matches(r"\\?\")
+            .trim_end_matches('\\')
+            .to_ascii_lowercase()
+    };
+    let normalized = normalize(&workspace);
+    let system = system_tool("..").canonicalize()?;
+    let service_bin = service::binary_dir();
+    let protected_roots = [system.as_path(), service_bin.parent().unwrap()];
+    if normalized.len() == 2 && normalized.ends_with(':')
+        || protected_roots.iter().any(|root| {
+            let root = normalize(root);
+            normalized == root || normalized.starts_with(&format!("{root}\\"))
+        })
+        || normalized == normalize(service::data_dir().parent().unwrap())
+        || normalized.starts_with(&format!(
+            "{}\\",
+            normalize(service::data_dir().parent().unwrap())
+        ))
+    {
+        return Err(
+            "Choose a dedicated workspace outside Windows and GSV service directories".into(),
+        );
+    }
+    machine.device.workspace = Some(workspace.clone());
     let data = service::data_dir();
     let bin = service::binary_dir();
     let protected = "O:BAD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;GRGX;;;BU)";

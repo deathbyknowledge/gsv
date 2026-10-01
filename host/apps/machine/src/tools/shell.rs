@@ -299,7 +299,11 @@ fn resolve_shell_program() -> ShellProgram {
     #[cfg(windows)]
     {
         ShellProgram {
-            executable: "powershell.exe".to_string(),
+            executable: windows_host::service::system_tool(
+                r"WindowsPowerShell\v1.0\powershell.exe",
+            )
+            .to_string_lossy()
+            .into_owned(),
             launch_args: vec![
                 "-NoLogo".to_string(),
                 "-NoProfile".to_string(),
@@ -337,7 +341,7 @@ fn format_shell_spawn_error(_shell: &str, error: &std::io::Error) -> String {
         if _shell.eq_ignore_ascii_case("powershell.exe")
             && error.kind() == std::io::ErrorKind::NotFound
         {
-            return "Failed to execute: powershell.exe not found. Ensure Windows PowerShell is available on PATH.".to_string();
+            return "Failed to execute: Windows PowerShell is unavailable in the Windows system directory.".to_string();
         }
     }
 
