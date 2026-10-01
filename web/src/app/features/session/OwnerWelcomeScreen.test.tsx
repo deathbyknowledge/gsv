@@ -2,7 +2,7 @@ import type { ComponentChildren, JSX, VNode } from "preact";
 import { act } from "preact/test-utils";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { TextInput } from "../../components/ui/TextInput";
-import { OwnerWelcome, type WelcomeSnapshot } from "../../services/session/ownerWelcome";
+import { OwnerWelcome, type OwnedInvite, type WelcomeSnapshot } from "../../services/session/ownerWelcome";
 import { collectNodes, collectText, createTestRoot, deferred } from "../../testing/testHarness";
 import { OwnerWelcomeScreen } from "./OwnerWelcomeScreen";
 
@@ -15,7 +15,15 @@ describe("owner welcome", () => {
       origin: "https://accounts.example.com", flow: "create", sessionSecret: null,
       challenge: null, inviteCode: "invite_fixture", inviteId: null, handle: null,
     } : null };
-    const fetcher = vi.fn(async () => Response.json({ deliveryStatus: "sent" }));
+    const invite = { id: "invite_fixture", state: "claimed", handle: null, origin: null, lastError: null };
+    const fetcher = vi.fn(async (url: string) => {
+      if (url.endsWith("/code")) return Response.json({ deliveryStatus: "sent" });
+      if (url.endsWith("/verify")) return Response.json({ email: "owner@example.com", expiresAt: Date.now() + 60_000 });
+      if (url.endsWith("/session")) return Response.json({ email: "owner@example.com", expiresAt: Date.now() + 60_000,
+        spaceDomain: "example.com", spaces: [], invites: [] });
+      if (url.endsWith("/invites/claim")) return Response.json(invite);
+      throw new Error(`Unexpected request: ${url}`);
+    });
     const client = new OwnerWelcome(snapshot, { save: async (_revision, value) => {
       snapshot = { revision: crypto.randomUUID(), value };
       return structuredClone(snapshot);
@@ -53,6 +61,97 @@ describe("owner welcome", () => {
       await act(() => form().props.onSubmit(new Event("submit")));
       await vi.waitFor(() => expect(field("Code")).toBeDefined());
       expect(fetcher).toHaveBeenCalledExactlyOnceWith("https://accounts.example.com/owner/api/code", expect.objectContaining({ method: "POST" }));
+      await act(() => { field("Code").props.onChange?.("123456"); });
+      await act(() => form().props.onSubmit(new Event("submit")));
+      await vi.waitFor(() => expect(field("Handle")).toBeDefined());
+      expect(checkbox()).toBeUndefined();
+      expect(fetcher).toHaveBeenCalledWith("https://accounts.example.com/owner/api/invites/claim", expect.objectContaining({ method: "POST" }));
+    } finally { await root.unmount(); }
+  });
+
+  it.each(["sign-in", "saved-code", "saved-invite", "saved-handle", "listed-invite"])("requires agreement before claiming or preparing a space through %s", async (entry) => {
+    const invite: OwnedInvite = { id: "invite_fixture", state: "claimed",
+      handle: ["saved-handle", "listed-invite"].includes(entry) ? "my-space" : null, origin: null, lastError: null };
+    const hasInvite = ["saved-invite", "saved-handle", "listed-invite"].includes(entry);
+    const invites = hasInvite ? [invite] : [];
+    let snapshot: WelcomeSnapshot = { revision: "initial", value: entry === "sign-in" ? null : {
+      origin: "https://accounts.example.com", flow: entry === "listed-invite" ? "open" : "create", sessionSecret: "a".repeat(64),
+      challenge: null, inviteCode: entry === "saved-code" ? "invite_fixture" : null,
+      inviteId: hasInvite && entry !== "listed-invite" ? invite.id : null, handle: invite.handle,
+    } };
+    const fetcher = vi.fn(async (url: string) => {
+      if (url.endsWith("/code")) return Response.json({ deliveryStatus: "sent" });
+      if (url.endsWith("/verify")) return Response.json({ email: "owner@example.com", expiresAt: Date.now() + 60_000 });
+      if (url.endsWith("/session")) return Response.json({ email: "owner@example.com", expiresAt: Date.now() + 60_000,
+        spaceDomain: "example.com", spaces: [], invites });
+      if (url.endsWith("/invites/claim")) { invites.push(invite); return Response.json(invite); }
+      if (url.endsWith("/space")) return Response.json({ invite, origin: "https://my-space.example.com", handle: "my-space",
+        onboardingToken: `onboard_${"a".repeat(43)}`, expiresAt: Date.now() + 60_000 });
+      if (url.includes("/handle?")) return Response.json({ available: true });
+      throw new Error(`Unexpected request: ${url}`);
+    });
+    const client = new OwnerWelcome(snapshot, { save: async (_revision, value) => {
+      snapshot = { revision: crypto.randomUUID(), value };
+      return structuredClone(snapshot);
+    } }, "https://accounts.example.com", fetcher);
+    const onConnect = vi.fn();
+    const root = createTestRoot("Owner invite consent");
+    let tree: ComponentChildren;
+    function Harness() {
+      tree = OwnerWelcomeScreen({ ready: true, resume: entry !== "sign-in", load: async () => client, onConnect });
+      return null;
+    }
+    const field = (label: string) => collectNodes(tree).find((node) => node.type === TextInput && node.props.label === label);
+    const button = (label: string) => collectNodes(tree).find((node) => node.props.label === label || node.props["aria-label"] === label)!;
+    // SAFETY: The screen's native form owns an Event-based submit handler.
+    const form = () => collectNodes(tree).find((node) => node.type === "form") as VNode<{ onSubmit: (event: Event) => void }>;
+    // SAFETY: The screen's only native input is its agreement checkbox.
+    const checkbox = () => collectNodes(tree).find((node) => node.type === "input") as VNode<JSX.InputHTMLAttributes<HTMLInputElement>>;
+    const creationRequests = () => fetcher.mock.calls.filter(([url]) => url.includes("/invites/"));
+    try {
+      await root.render(<Harness />);
+      if (entry === "sign-in") {
+        await vi.waitFor(() => expect(button("Open your space")?.props.disabled).toBe(false));
+        await act(() => { button("Open your space").props.onClick?.(); });
+        await vi.waitFor(() => expect(field("Email")?.props.disabled).toBe(false));
+        expect(checkbox()).toBeUndefined();
+        await act(() => { field("Email")!.props.onChange?.("owner@example.com"); });
+        await act(() => form().props.onSubmit(new Event("submit")));
+        await vi.waitFor(() => expect(field("Code")?.props.disabled).toBe(false));
+        await act(() => { field("Code")!.props.onChange?.("123456"); });
+        await act(() => form().props.onSubmit(new Event("submit")));
+        await vi.waitFor(() => expect(button("Use an invite")?.props.disabled).toBe(false));
+        expect(collectText(tree)).toContain("No spaces yet.");
+        await act(() => { button("Use an invite").props.onClick?.(); });
+        await vi.waitFor(() => expect(field("Invite code")?.props.disabled).toBe(false));
+        await act(() => { field("Invite code")!.props.onChange?.("invite_fixture"); });
+        await act(() => form().props.onSubmit(new Event("submit")));
+      } else if (entry === "listed-invite") {
+        await vi.waitFor(() => expect(button("Continue my-space")?.props.disabled).toBe(false));
+        await act(() => { button("Continue my-space").props.onClick?.(); });
+      }
+      await vi.waitFor(() => expect(checkbox()?.props.disabled).toBe(false));
+      expect(collectText(tree)).toContain("Before you begin");
+      expect(checkbox().props).toMatchObject({ required: true, checked: false });
+      expect(field("Handle")).toBeUndefined();
+      expect(creationRequests()).toHaveLength(0);
+      await act(() => form().props.onSubmit(new Event("submit")));
+      expect(checkbox().props["aria-invalid"]).toBe(true);
+      expect(creationRequests()).toHaveLength(0);
+      expect(onConnect).not.toHaveBeenCalled();
+
+      // SAFETY: The handler only reads the checkbox's checked state.
+      await act(() => checkbox().props.onChange?.({ currentTarget: { checked: true } } as JSX.TargetedEvent<HTMLInputElement>));
+      await act(() => form().props.onSubmit(new Event("submit")));
+      if (!invite.handle) {
+        await vi.waitFor(() => expect(field("Handle")?.props.disabled).toBe(false));
+        await act(() => { field("Handle")!.props.onChange?.("my-space"); });
+        await act(() => form().props.onSubmit(new Event("submit")));
+      }
+      await vi.waitFor(() => expect(onConnect).toHaveBeenCalledExactlyOnceWith("https://my-space.example.com", `onboard_${"a".repeat(43)}`));
+      expect(creationRequests().map(([url]) => new URL(url).pathname)).toEqual([
+        ...(!hasInvite ? ["/owner/api/invites/claim"] : []), "/owner/api/invites/invite_fixture/space",
+      ]);
     } finally { await root.unmount(); }
   });
 
@@ -134,9 +233,17 @@ describe("owner welcome", () => {
     }
     try {
       await root.render(<Harness />);
+      // SAFETY: The screen's only native input is its agreement checkbox.
+      const checkbox = () => collectNodes(tree).find((node) => node.type === "input") as VNode<JSX.InputHTMLAttributes<HTMLInputElement>>;
+      await vi.waitFor(() => expect(checkbox()?.props.disabled).toBe(false));
+      // SAFETY: The handler only reads the checkbox's checked state.
+      await act(() => checkbox().props.onChange?.({ currentTarget: { checked: true } } as JSX.TargetedEvent<HTMLInputElement>));
+      // SAFETY: The screen's native form owns an Event-based submit handler.
+      const form = collectNodes(tree).find((node) => node.type === "form") as VNode<{ onSubmit: (event: Event) => void }>;
+      await act(() => form.props.onSubmit(new Event("submit")));
       await vi.waitFor(() => expect(collectNodes(tree).find((node) => node.type === TextInput && node.props.label === "Handle")?.props)
         .toMatchObject({ suffix: ".example.com" }));
-      expect(fetcher).toHaveBeenCalledExactlyOnceWith("https://accounts.example.com/owner/api/session", expect.objectContaining({ method: "GET" }));
+      expect(fetcher).toHaveBeenCalledWith("https://accounts.example.com/owner/api/session", expect.objectContaining({ method: "GET" }));
       // Desktop renders this screen too; the beta app link belongs to the browser signup entry alone.
       expect(collectNodes(tree).some((node) => node.type === "a")).toBe(false);
     } finally { await root.unmount(); }

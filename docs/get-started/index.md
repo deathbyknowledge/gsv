@@ -24,6 +24,11 @@ it works once. The signup page also links to the beta Desktop app for macOS and
 Linux; see [Install host apps](/how-to/install-host-apps) for the download and
 first-launch steps.
 
+If you are already signed in and choose **Use an invite**, confirm the same age,
+Terms and Privacy agreement on **Before you begin** before the invite is claimed.
+Resuming signup after reopening the browser or app also requires confirmation
+before claiming an invite or continuing space creation.
+
 Owner sign-in on **My spaces** lists spaces you own. It is separate from your
 account inside each space. Signing in alone does not create a space or grant
 operator administration rights. Spaces come from an operator's setup invitation
