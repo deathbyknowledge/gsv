@@ -268,7 +268,13 @@ pub fn sync_configuration() -> Result<(), DynError> {
     if fs::read_to_string(data.join("owner.sid"))?.trim() != current_user_sid_string()? {
         return Err("Only the enrolled Windows owner may change daemon configuration".into());
     }
-    let source = CliConfig::load();
+    let mut source = CliConfig::load();
+    source.device.workspace = source
+        .device
+        .workspace
+        .as_ref()
+        .map(fs::canonicalize)
+        .transpose()?;
     ConfigFile::<CliConfig>::new(data.join("config.toml")).update(|config| {
         // Workspace ACL changes are an installation operation, not a reload.
         if source.device.workspace != config.device.workspace {
