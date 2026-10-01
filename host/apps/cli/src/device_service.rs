@@ -20,31 +20,29 @@ const DEVICE_SYSTEMD_UNIT_NAME: &str = "gsvd.service";
 const DEVICE_LAUNCHD_LABEL: &str = "gsvd";
 const LOG_POLL_INTERVAL: Duration = Duration::from_millis(250);
 
-#[cfg_attr(
-    windows,
-    allow(
-        dead_code,
-        reason = "Windows registers a protected service copy; these fields also describe the Unix definitions in shared tests."
-    )
-)]
 struct DeviceServiceInstallSpec {
-    #[cfg(any(test, not(windows)))]
+    #[cfg(not(windows))]
     description: &'static str,
     exe_path: PathBuf,
-    args: Vec<String>,
     #[cfg(any(test, not(windows)))]
+    args: Vec<String>,
+    #[cfg(not(windows))]
     path_env: Option<String>,
 }
 
 impl DeviceServiceInstallSpec {
     fn current() -> Result<Self, DynError> {
+        #[cfg(windows)]
+        let exe_path = windows_service::packaged_daemon_path()?;
+        #[cfg(not(windows))]
         let exe_path = resolve_gsvd_executable()?;
         Ok(Self {
-            #[cfg(any(test, not(windows)))]
+            #[cfg(not(windows))]
             description: "gsvd",
             exe_path,
-            args: vec!["--foreground".to_string()],
             #[cfg(any(test, not(windows)))]
+            args: vec!["--foreground".to_string()],
+            #[cfg(not(windows))]
             path_env: device_service_path(),
         })
     }
@@ -124,19 +122,19 @@ fn find_executable_on_path(name: &str) -> Option<PathBuf> {
 }
 
 fn is_runnable_file(path: &Path) -> bool {
-    if !path.is_file() {
-        return false;
-    }
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
+        if !path.is_file() {
+            return false;
+        }
         fs::metadata(path)
             .map(|metadata| metadata.permissions().mode() & 0o111 != 0)
             .unwrap_or(false)
     }
     #[cfg(not(unix))]
     {
-        true
+        path.is_file()
     }
 }
 
@@ -438,7 +436,7 @@ fn select_service_path(
         .or_else(|| env_path.and_then(normalize))
 }
 
-#[cfg(any(test, not(windows)))]
+#[cfg(not(windows))]
 fn device_service_path() -> Option<String> {
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     {
@@ -1015,10 +1013,11 @@ mod tests {
 
     fn test_spec() -> DeviceServiceInstallSpec {
         DeviceServiceInstallSpec {
-            #[cfg(any(test, not(windows)))]
+            #[cfg(not(windows))]
             description: "gsvd",
             exe_path: PathBuf::from("/Applications/GSV/gsvd"),
             args: vec!["--foreground".to_string()],
+            #[cfg(not(windows))]
             path_env: Some("/opt/bin:/usr/bin".to_string()),
         }
     }
@@ -1096,10 +1095,11 @@ mod tests {
     fn detects_legacy_systemd_and_launchd_entrypoints() {
         let current = test_spec();
         let legacy = DeviceServiceInstallSpec {
-            #[cfg(any(test, not(windows)))]
+            #[cfg(not(windows))]
             description: "gsvd",
             exe_path: PathBuf::from("/Applications/GSV/gsv"),
             args: vec!["device".to_string(), "run".to_string()],
+            #[cfg(not(windows))]
             path_env: None,
         };
         let current_unit = format!("ExecStart={}\n", systemd_exec_start(&current));

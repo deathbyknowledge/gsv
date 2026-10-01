@@ -524,6 +524,12 @@ migrates an existing legacy service definition during upgrade. See
 [Install Host Applications](/how-to/install-host-apps) for the release matrix,
 checksum verification, and rollback contract.
 
+Windows service installation requires the bundled `gsvd.exe` beside `gsv.exe`;
+`GSV_GSVD_PATH` and `PATH` do not override that selection. The CLI checks the
+daemon before administrator approval and verifies the same bytes before copying
+them to the protected service directory. Reinstall the complete distribution if
+the bundled daemon is missing or has changed during approval.
+
 ## Auth Commands
 
 ```bash

@@ -1,5 +1,7 @@
 use super::*;
 use host_config::{CliConfig, ConfigFile};
+use sha2::{Digest, Sha256};
+use std::os::windows::fs::{MetadataExt, OpenOptionsExt};
 use windows_host::{
     security::{current_user_sid_string, protect_directory, SecurityDescriptor},
     service::{
@@ -15,7 +17,9 @@ use windows_host::{
     },
 };
 use windows_sys::Win32::{
-    Security::DACL_SECURITY_INFORMATION, System::Services::SetServiceObjectSecurity,
+    Security::DACL_SECURITY_INFORMATION,
+    Storage::FileSystem::{FILE_ATTRIBUTE_REPARSE_POINT, FILE_SHARE_READ},
+    System::Services::SetServiceObjectSecurity,
 };
 
 pub(super) struct WindowsServiceManager;
@@ -26,7 +30,9 @@ impl DeviceServiceManager for WindowsServiceManager {
     fn is_installed(&self) -> Result<bool, DynError> {
         Ok(service::installed()?)
     }
-    fn install(&self, _spec: &DeviceServiceInstallSpec) -> Result<(), DynError> {
+    fn install(&self, spec: &DeviceServiceInstallSpec) -> Result<(), DynError> {
+        let daemon = PinnedDaemon::open(&spec.exe_path)?;
+        validate_gsvd_version(&daemon.path)?;
         let job_name = format!("Local\\gsv-install-{}", uuid::Uuid::new_v4());
         let _job = windows_host::process::ProcessTree::named(&job_name)?;
         let owner = current_user_sid_string()?;
@@ -40,6 +46,10 @@ impl DeviceServiceManager for WindowsServiceManager {
             source.to_string_lossy().into_owned(),
             "--owner-sid".into(),
             owner,
+            "--daemon-source".into(),
+            daemon.path.to_string_lossy().into_owned(),
+            "--daemon-sha256".into(),
+            daemon.sha256.clone(),
             "--job".into(),
             job_name,
         ]);
@@ -95,8 +105,78 @@ impl DeviceServiceManager for WindowsServiceManager {
     }
 }
 
+pub(super) fn packaged_daemon_path() -> Result<PathBuf, DynError> {
+    let path = std::env::current_exe()?
+        .canonicalize()?
+        .with_file_name("gsvd.exe");
+    let metadata = fs::symlink_metadata(&path).map_err(|error| {
+        format!("Could not open bundled gsvd.exe; reinstall the complete GSV distribution: {error}")
+    })?;
+    if !metadata.is_file() || metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+        return Err("The bundled gsvd.exe must be an ordinary file beside gsv.exe".into());
+    }
+    Ok(path.canonicalize()?)
+}
+
+/// Keeps the selected bytes immutable across the UAC prompt and copies from the
+/// same open file after elevation. A path or inherited environment is not proof
+/// that an executable still matches the one checked by the enrolling process.
+struct PinnedDaemon {
+    path: PathBuf,
+    file: File,
+    sha256: String,
+}
+
+impl PinnedDaemon {
+    fn open(path: &Path) -> Result<Self, DynError> {
+        let mut file = fs::OpenOptions::new()
+            .read(true)
+            .share_mode(FILE_SHARE_READ)
+            .open(path)?;
+        if !file.metadata()?.is_file() {
+            return Err("The bundled daemon must be an ordinary file".into());
+        }
+        let mut digest = Sha256::new();
+        let mut buffer = [0_u8; 65536];
+        loop {
+            let read = file.read(&mut buffer)?;
+            if read == 0 {
+                break;
+            }
+            digest.update(&buffer[..read]);
+        }
+        file.rewind()?;
+        Ok(Self {
+            path: path.to_path_buf(),
+            file,
+            sha256: format!("{:x}", digest.finalize()),
+        })
+    }
+
+    fn verify(&self, expected_sha256: &str) -> Result<(), DynError> {
+        if !self.sha256.eq_ignore_ascii_case(expected_sha256) {
+            return Err(
+                "The bundled daemon changed after approval was requested; retry gsv daemon install"
+                    .into(),
+            );
+        }
+        Ok(())
+    }
+}
+
 /// Runs only in the administrator process. Configuration contents never enter arguments.
-pub fn install_elevated(source: &Path, owner: &str) -> Result<(), DynError> {
+pub fn install_elevated(
+    source: &Path,
+    owner: &str,
+    daemon_source: &Path,
+    daemon_sha256: &str,
+) -> Result<(), DynError> {
+    let packaged = packaged_daemon_path()?;
+    if daemon_source.canonicalize()? != packaged {
+        return Err("Service installation requires the bundled gsvd.exe beside gsv.exe".into());
+    }
+    let mut daemon = PinnedDaemon::open(&packaged)?;
+    daemon.verify(daemon_sha256)?;
     // Validate the SID before using it in Windows security descriptors or ACL arguments.
     let _ = SecurityDescriptor::new(owner)?;
     let manager = ServiceManager::local_computer(
@@ -104,8 +184,10 @@ pub fn install_elevated(source: &Path, owner: &str) -> Result<(), DynError> {
         ServiceManagerAccess::CONNECT | ServiceManagerAccess::CREATE_SERVICE,
     )?;
     let config: CliConfig = ConfigFile::new(source).load()?;
-    let mut machine = CliConfig::default();
-    machine.device = config.device.clone();
+    let mut machine = CliConfig {
+        device: config.device.clone(),
+        ..CliConfig::default()
+    };
     machine.device.gateway_url = Some(config.device_gateway_url());
     machine.device.gateway_username = config.device_gateway_username();
     machine.device.auto_update = Some(false);
@@ -127,30 +209,28 @@ pub fn install_elevated(source: &Path, owner: &str) -> Result<(), DynError> {
     };
     let normalized = normalize(&workspace);
     let system = system_tool("..").canonicalize()?;
-    let service_bin = service::binary_dir();
-    let protected_roots = [system.as_path(), service_bin.parent().unwrap()];
+    let data = service::data_dir();
+    let bin = service::binary_dir();
+    let binary_root = bin.parent().expect("service binary directory has a parent");
+    let data_root = data.parent().expect("service data directory has a parent");
+    let protected_roots = [system.as_path(), binary_root];
     if normalized.len() == 2 && normalized.ends_with(':')
         || protected_roots.iter().any(|root| {
             let root = normalize(root);
             normalized == root || normalized.starts_with(&format!("{root}\\"))
         })
-        || normalized == normalize(service::data_dir().parent().unwrap())
-        || normalized.starts_with(&format!(
-            "{}\\",
-            normalize(service::data_dir().parent().unwrap())
-        ))
+        || normalized == normalize(data_root)
+        || normalized.starts_with(&format!("{}\\", normalize(data_root)))
     {
         return Err(
             "Choose a dedicated workspace outside Windows and GSV service directories".into(),
         );
     }
     machine.device.workspace = Some(workspace.clone());
-    let data = service::data_dir();
-    let bin = service::binary_dir();
     let protected = "O:BAD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;GRGX;;;BU)";
-    protect_directory(bin.parent().unwrap(), protected)?;
+    protect_directory(binary_root, protected)?;
     protect_directory(&bin, protected)?;
-    protect_directory(data.parent().unwrap(), protected)?;
+    protect_directory(data_root, protected)?;
     let executable = bin.join("gsvd.exe");
     let installed = service::installed()?;
     if data.join("owner.sid").exists() {
@@ -170,9 +250,10 @@ pub fn install_elevated(source: &Path, owner: &str) -> Result<(), DynError> {
     if installed {
         service::stop()?;
     }
-    let source_executable = resolve_gsvd_executable()?;
-    if source_executable != executable {
-        fs::copy(source_executable, &executable)?;
+    if executable.canonicalize().ok().as_ref() != Some(&daemon.path) {
+        let mut destination = File::create(&executable)?;
+        std::io::copy(&mut daemon.file, &mut destination)?;
+        destination.sync_all()?;
     }
     let info = ServiceInfo {
         name: service::NAME.into(),
@@ -331,4 +412,46 @@ pub(super) fn registered_executable() -> Result<PathBuf, DynError> {
     );
     validate_gsvd_version(&path)?;
     Ok(path)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn pinned_daemon_prevents_replacement_until_installation_finishes() {
+        let directory = tempfile::tempdir().expect("test directory");
+        let path = directory.path().join("gsvd.exe");
+        fs::write(&path, b"abc").expect("test daemon");
+        let mut daemon = PinnedDaemon::open(&path).expect("pin test daemon");
+        daemon
+            .verify("ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad")
+            .expect("known SHA-256 digest");
+
+        assert!(fs::write(&path, b"replacement").is_err());
+        assert!(fs::remove_file(&path).is_err());
+        assert!(fs::rename(&path, directory.path().join("moved.exe")).is_err());
+        let child = PinnedDaemon::open(&path).expect("child can read pinned daemon");
+        child.verify(&daemon.sha256).expect("same daemon bytes");
+        let mut copied = Vec::new();
+        std::io::copy(&mut daemon.file, &mut copied).expect("copy pinned bytes");
+        assert_eq!(copied, b"abc");
+
+        drop(child);
+        drop(daemon);
+        fs::write(&path, b"replacement").expect("pin released after installation");
+    }
+
+    #[test]
+    fn pinned_daemon_rejects_changed_bytes() {
+        let directory = tempfile::tempdir().expect("test directory");
+        let path = directory.path().join("gsvd.exe");
+        fs::write(&path, b"approved daemon").expect("test daemon");
+        let daemon = PinnedDaemon::open(&path).expect("pin test daemon");
+        let approved_sha256 = daemon.sha256.clone();
+        drop(daemon);
+        fs::write(&path, b"replacement daemon").expect("replace unpinned daemon");
+        let replaced = PinnedDaemon::open(&path).expect("pin replacement");
+        assert!(replaced.verify(&approved_sha256).is_err());
+    }
 }

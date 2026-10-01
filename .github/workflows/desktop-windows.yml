@@ -22,6 +22,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
         with:
           workspaces: host -> target
@@ -30,6 +32,9 @@ jobs:
       - name: Test service, IPC and process ownership
         working-directory: host
         run: cargo test --locked --package windows-host --package host-config --package gateway-client --package daemon-protocol --package gsv --package machine
+      - name: Lint Windows service-control library
+        working-directory: host
+        run: cargo clippy --locked --package gsv --lib -- -D warnings
       - name: Build CLI and daemon
         id: core_build
         if: ${{ !cancelled() }}

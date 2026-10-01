@@ -178,6 +178,10 @@ pub(crate) enum DaemonAction {
         #[arg(long)]
         owner_sid: String,
         #[arg(long)]
+        daemon_source: PathBuf,
+        #[arg(long)]
+        daemon_sha256: String,
+        #[arg(long)]
         job: Option<String>,
     },
     /// Install and start the gsvd service

@@ -60,6 +60,13 @@ The service SID receives access to its state and selected workspace; agent
 commands inherit the service account's permissions, never the installer's.
 The default Windows workspace is `%USERPROFILE%\GSV`.
 
+Service installation selects only the bundled `gsvd.exe` beside the CLI, without
+consulting `GSV_GSVD_PATH` or `PATH`. The enrolling process locks and checks that
+file before requesting UAC approval. The elevated child verifies its pinned
+SHA-256 digest and copies from the locked handle; it never executes a candidate
+to discover its version. A changed or unbundled candidate fails before altering
+the existing service.
+
 `%ProgramData%\GSV\daemon` holds the daemon-only enrollment, owner SID and
 logs. CLI and Desktop login credentials are not copied there. The local pipe
 ACL admits the enrolled owner and service account, rejects remote clients,

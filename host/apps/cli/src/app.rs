@@ -167,12 +167,19 @@ pub(crate) async fn run() -> Result<(), Box<dyn std::error::Error>> {
             DaemonAction::WindowsInstall {
                 config,
                 owner_sid,
+                daemon_source,
+                daemon_sha256,
                 job,
             } => {
                 if let Some(job) = job {
                     windows_host::process::join_installation(&job)?;
                 }
-                gsv::device_service::install_elevated(&config, &owner_sid)
+                gsv::device_service::install_elevated(
+                    &config,
+                    &owner_sid,
+                    &daemon_source,
+                    &daemon_sha256,
+                )
             }
             DaemonAction::Install { id, workspace } => run_daemon_service(
                 DaemonServiceAction::Install { id, workspace },
