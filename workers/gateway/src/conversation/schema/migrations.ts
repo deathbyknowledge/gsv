@@ -5,6 +5,8 @@ import { CONVERSATION_V003_ADD_CONTACT_KIND } from "./v003_add_contact_kind";
 import { CONVERSATION_V004_SELECTED_TARGET } from "./v004_selected_target";
 import { CONVERSATION_V005_SEARCH } from "./v005_search";
 
+import { CONVERSATION_V006_MESSAGE_ORIGINS } from "./v006_message_origins";
+
 export const CONVERSATION_SCHEMA_COMPONENT = "conversation";
 
 export const CONVERSATION_MIGRATIONS: readonly SqlMigration[] = [
@@ -13,6 +15,7 @@ export const CONVERSATION_MIGRATIONS: readonly SqlMigration[] = [
   CONVERSATION_V003_ADD_CONTACT_KIND,
   CONVERSATION_V004_SELECTED_TARGET,
   CONVERSATION_V005_SEARCH,
+  CONVERSATION_V006_MESSAGE_ORIGINS,
 ];
 
 export function runConversationSqlMigrations(storage: DurableObjectStorage): void {

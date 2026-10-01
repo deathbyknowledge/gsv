@@ -4,7 +4,7 @@ This is the distributed part. Connecting a device turns it into part of one comp
 
 ## Connect a machine
 
-1. Open **Fleet** and click **connect** beside Places.
+1. Open **Fleet** and click **connect** beside Places. While your cloud is the only place, Zen offers the same panel: hover **your cloud** below the composer and click **+ connect place**.
 2. Enter a name, such as **My macbook**. The target ID starts as **my-macbook** and follows the name until you edit it yourself.
 3. Choose the platform and click **create invitation**.
 4. Run the install command on that computer, then the `gsv pair CODE` command. It supplies the gateway, account and target identity and starts the background daemon.

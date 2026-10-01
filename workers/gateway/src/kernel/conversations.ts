@@ -2,6 +2,11 @@ import type {
   ConversationKind,
   ConversationMember,
   ConversationSummary,
+  ConversationInboxArgs,
+  ConversationInboxEntry,
+  ConversationMessage,
+  ConversationPreview,
+  ConversationViewUpdateArgs,
 } from "@humansandmachines/gsv/protocol";
 
 type ConversationRow = {
@@ -9,11 +14,19 @@ type ConversationRow = {
   owner_uid: number;
   kind: ConversationKind;
   title: string | null;
-  handler_pid: string;
+  handler_pid: string | null;
   latest_sequence: number;
   created_at: number;
   updated_at: number;
+  read_through_sequence: number;
+  archived: number;
+  view_revision: number;
+  latest_incoming_sequence: number;
+  preview_sequence: number;
+  preview_json: string | null;
 };
+
+type InboxRow = ConversationRow & { inbox_contact_id: string };
 
 export class ConversationRegistry {
   constructor(private readonly sql: SqlStorage) {}
@@ -93,7 +106,6 @@ export class ConversationRegistry {
 
   ensureContact(
     ownerUid: number,
-    handlerPid: string,
     title: string,
     conversationId: string,
   ): ConversationSummary {
@@ -101,9 +113,6 @@ export class ConversationRegistry {
     if (existing) {
       if (existing.ownerUid !== ownerUid || existing.kind !== "contact") {
         throw new Error("Contact conversation identity does not match its contact");
-      }
-      if (existing.handlerPid !== handlerPid) {
-        this.setHandler(existing.id, handlerPid);
       }
       if (existing.title !== title) {
         this.setTitle(existing.id, title);
@@ -115,7 +124,6 @@ export class ConversationRegistry {
       ownerUid,
       kind: "contact",
       title,
-      handlerPid,
     });
   }
 
@@ -124,8 +132,10 @@ export class ConversationRegistry {
     ownerUid: number;
     kind: ConversationKind;
     title: string | null;
-    handlerPid: string;
+    handlerPid?: string;
   }): ConversationSummary {
+    if (input.kind !== "contact" && !input.handlerPid) throw new Error("This conversation requires a process handler");
+    if (input.kind === "contact" && input.handlerPid) throw new Error("Contact conversations do not dispatch to a process handler");
     const now = Date.now();
     this.sql.exec(
       `INSERT INTO conversations
@@ -135,12 +145,12 @@ export class ConversationRegistry {
       input.ownerUid,
       input.kind,
       input.title,
-      input.handlerPid,
+      input.handlerPid ?? null,
       now,
       now,
     );
     this.addMember(input.id, { kind: "account", id: String(input.ownerUid), role: "member" });
-    this.addMember(input.id, { kind: "process", id: input.handlerPid, role: "handler" });
+    if (input.handlerPid) this.addMember(input.id, { kind: "process", id: input.handlerPid, role: "handler" });
     return this.get(input.id)!;
   }
 
@@ -193,9 +203,18 @@ export class ConversationRegistry {
     ).toArray().map(toSummary);
   }
 
+  discardContactIntake(id: string, ownerUid: number): void {
+    const conversation = this.get(id);
+    if (!conversation) return;
+    if (conversation.ownerUid !== ownerUid || conversation.kind !== "contact" || conversation.handlerPid) throw new Error("Conversation is not a message request");
+    this.sql.exec("DELETE FROM conversation_members WHERE conversation_id = ?", id);
+    this.sql.exec("DELETE FROM conversations WHERE conversation_id = ?", id);
+  }
+
   setHandler(id: string, handlerPid: string): void {
     const current = this.get(id);
     if (!current) throw new Error("Conversation does not exist");
+    if (current.kind === "contact") throw new Error("Contact conversations do not dispatch to a process handler");
     this.sql.exec(
       `UPDATE conversation_members
        SET role = 'observer'
@@ -241,6 +260,73 @@ export class ConversationRegistry {
     );
   }
 
+  recordContactMessage(message: ConversationMessage, muted: boolean): void {
+    const preview: ConversationPreview = {
+      id: message.id, sequence: message.sequence, author: message.author,
+      text: [...message.text].slice(0, 280).join(""), createdAt: message.createdAt,
+      attachmentCount: message.media?.length ?? 0,
+      ...(message.social ? { provenance: message.social.provenance } : undefined),
+    };
+    const incoming = message.author.kind === "contact";
+    this.sql.exec(
+      `UPDATE conversations SET
+        archived = CASE WHEN ? > latest_sequence AND ? = 0 THEN 0 ELSE archived END,
+        view_revision = view_revision + CASE WHEN ? > latest_sequence THEN 1 ELSE 0 END,
+        latest_incoming_sequence = MAX(latest_incoming_sequence, ?),
+        preview_json = CASE WHEN ? > preview_sequence THEN ? ELSE preview_json END,
+        preview_sequence = MAX(preview_sequence, ?),
+        updated_at = CASE WHEN ? > latest_sequence THEN MAX(updated_at, ?) ELSE updated_at END,
+        latest_sequence = MAX(latest_sequence, ?)
+       WHERE conversation_id = ? AND kind = 'contact'`,
+      message.sequence, Number(muted), message.sequence, incoming ? message.sequence : 0,
+      message.sequence, JSON.stringify(preview), message.sequence, message.sequence,
+      message.createdAt, message.sequence, message.conversationId,
+    );
+  }
+
+  inbox(ownerUid: number, args: ConversationInboxArgs): ConversationInboxEntry[] {
+    const cursor = args.before;
+    return this.sql.exec<InboxRow>(
+      `SELECT c.*, f.contact_id AS inbox_contact_id FROM conversations c
+       JOIN federation_contacts f ON f.conversation_id = c.conversation_id AND f.owner_uid = c.owner_uid
+       WHERE c.owner_uid = ? AND c.kind = 'contact' AND c.archived = ?
+       ${cursor ? "AND (c.updated_at < ? OR (c.updated_at = ? AND c.conversation_id < ?))" : ""}
+       ORDER BY c.updated_at DESC, c.conversation_id DESC LIMIT ?`,
+      ownerUid, Number(args.archived ?? false),
+      ...(cursor ? [cursor.updatedAt, cursor.updatedAt, cursor.conversationId] : []), args.limit ?? 30,
+    ).toArray().map(toInboxEntry);
+  }
+
+  inboxEntry(ownerUid: number, conversationId: string): ConversationInboxEntry | null {
+    const row = this.sql.exec<InboxRow>(
+      `SELECT c.*, f.contact_id AS inbox_contact_id FROM conversations c
+       JOIN federation_contacts f ON f.conversation_id = c.conversation_id AND f.owner_uid = c.owner_uid
+       WHERE c.owner_uid = ? AND c.conversation_id = ? AND c.kind = 'contact' LIMIT 1`,
+      ownerUid, conversationId,
+    ).toArray()[0];
+    return row ? toInboxEntry(row) : null;
+  }
+
+  updateView(ownerUid: number, args: ConversationViewUpdateArgs): ConversationInboxEntry {
+    const entry = this.inboxEntry(ownerUid, args.conversationId);
+    if (!entry) throw new Error("Conversation not found");
+    if (args.archived !== undefined && args.expectedRevision !== entry.view.revision) {
+      throw new Error("Conversation changed; review its latest state before archiving");
+    }
+    const read = args.readThroughSequence ?? entry.view.readThroughSequence;
+    if (!Number.isSafeInteger(read) || read < 0 || read > entry.conversation.latestSequence) {
+      throw new Error("Read position must identify a committed message in this conversation");
+    }
+    const nextRead = Math.max(entry.view.readThroughSequence, read);
+    const archived = args.archived ?? entry.view.archived;
+    if (nextRead !== entry.view.readThroughSequence || archived !== entry.view.archived) this.sql.exec(
+      `UPDATE conversations SET read_through_sequence = ?, archived = ?, view_revision = view_revision + 1
+       WHERE conversation_id = ? AND owner_uid = ?`,
+      nextRead, Number(archived), args.conversationId, ownerUid,
+    );
+    return this.inboxEntry(ownerUid, args.conversationId)!;
+  }
+
   members(id: string): ConversationMember[] {
     return this.sql.exec<{
       member_kind: ConversationMember["kind"];
@@ -273,15 +359,27 @@ export class ConversationRegistry {
   }
 }
 
-function toSummary(row: ConversationRow): ConversationSummary {
+function toInboxEntry(row: InboxRow): ConversationInboxEntry {
   return {
+    conversation: toSummary(row), contactId: row.inbox_contact_id,
+    view: { readThroughSequence: row.read_through_sequence, archived: row.archived === 1, revision: row.view_revision },
+    unread: row.latest_incoming_sequence > row.read_through_sequence,
+    latestIncomingSequence: row.latest_incoming_sequence,
+    // SAFETY: the projection is written only from committed, typed Conversation messages.
+    preview: row.preview_json ? JSON.parse(row.preview_json) as ConversationPreview : null,
+  };
+}
+
+function toSummary(row: ConversationRow): ConversationSummary {
+  const common = {
     id: row.conversation_id,
     ownerUid: row.owner_uid,
-    kind: row.kind,
     title: row.title,
-    handlerPid: row.handler_pid,
     latestSequence: row.latest_sequence,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
+  if (row.kind === "contact") return { ...common, kind: "contact" };
+  if (!row.handler_pid) throw new Error("Conversation is missing its process handler");
+  return { ...common, kind: row.kind, handlerPid: row.handler_pid };
 }

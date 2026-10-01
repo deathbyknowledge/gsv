@@ -823,7 +823,7 @@ checksum = "52560adf09603e58c9a7ee1fe1dcb95a16927b17c127f0ac02d6e768a0e25bc1"
 
 [[package]]
 name = "daemon-protocol"
-version = "0.6.2"
+version = "0.6.3"
 dependencies = [
  "async-trait",
  "libc",
@@ -958,7 +958,7 @@ dependencies = [
 
 [[package]]
 name = "desktop"
-version = "0.6.2"
+version = "0.6.3"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -984,7 +984,7 @@ dependencies = [
 
 [[package]]
 name = "desktop-native"
-version = "0.6.2"
+version = "0.6.3"
 dependencies = [
  "gesture-protocol",
  "libc",
@@ -997,7 +997,7 @@ dependencies = [
 
 [[package]]
 name = "desktop-protocol"
-version = "0.6.2"
+version = "0.6.3"
 dependencies = [
  "async-trait",
  "libc",
@@ -1470,7 +1470,7 @@ dependencies = [
 
 [[package]]
 name = "gateway-client"
-version = "0.6.2"
+version = "0.6.3"
 dependencies = [
  "futures-util",
  "serde",
@@ -1592,7 +1592,7 @@ dependencies = [
 
 [[package]]
 name = "gesture-protocol"
-version = "0.6.2"
+version = "0.6.3"
 dependencies = [
  "serde",
  "serde_json",
@@ -1600,7 +1600,7 @@ dependencies = [
 
 [[package]]
 name = "gestures"
-version = "0.6.2"
+version = "0.6.3"
 dependencies = [
  "cameras",
  "cmake",
@@ -1755,7 +1755,7 @@ dependencies = [
 
 [[package]]
 name = "gsv"
-version = "0.6.2"
+version = "0.6.3"
 dependencies = [
  "base64 0.22.1",
  "chrono",
@@ -1877,7 +1877,7 @@ dependencies = [
 
 [[package]]
 name = "host-config"
-version = "0.6.2"
+version = "0.6.3"
 dependencies = [
  "chrono",
  "dirs 5.0.1",
@@ -2586,7 +2586,7 @@ checksum = "dae608c151f68243f2b000364e1f7b186d9c29845f7d2d85bd31b9ad77ad552b"
 
 [[package]]
 name = "machine"
-version = "0.6.2"
+version = "0.6.3"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -5458,7 +5458,7 @@ dependencies = [
 
 [[package]]
 name = "transcriber"
-version = "0.6.2"
+version = "0.6.3"
 dependencies = [
  "cpal",
  "crossbeam-channel",
@@ -6265,7 +6265,7 @@ dependencies = [
 
 [[package]]
 name = "windows-host"
-version = "0.6.2"
+version = "0.6.3"
 dependencies = [
  "tempfile",
  "windows-service",

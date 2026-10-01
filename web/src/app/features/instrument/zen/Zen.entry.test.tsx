@@ -15,6 +15,8 @@ import { collectNodes, collectText, createTestRoot, deferred } from "../../../te
 import { PromptLine, type PromptLineHandle } from "../shared/PromptLine";
 import { NativeVoiceControls } from "../../../services/platform/NativeVoiceControls";
 import { Zen } from "./Zen";
+import { ConnectPlace } from "../fleet/ConnectPlace";
+import { FleetDialog } from "../fleet/FleetDialog";
 import { ZenText } from "./ZenText";
 import { ThinkingMark } from "./ThinkingMark";
 
@@ -162,6 +164,46 @@ describe("Zen conversation entry", () => {
     } finally { await zen.unmount(); }
   });
 
+  it("offers to connect a place while the cloud is the only one, and stays in Zen", async () => {
+    const zen = await mountedZen();
+    try {
+      const cloud = () => zen.nodes().find((node) => node.type === "button"
+        && node.props["aria-label"] === "Use your cloud for the next message or command")!;
+      const connect = () => zen.nodes().find((node) => node.type === "button" && node.props.class === "zen-connect-place")!;
+      expect(cloud().props.class).toBe("zen-place is-alone");
+      expect(connect()).toBeDefined();
+      expect(zen.props(FleetDialog).open).toBe(false);
+
+      await act(() => { connect().props.onClick!(); });
+      expect(zen.props(FleetDialog).open).toBe(true);
+      expect(zen.props(FleetDialog).title).toBe("Connect a place");
+      expect(zen.props(ConnectPlace).targets).toEqual([]);
+
+      await act(() => { zen.props(ConnectPlace).onClose(); });
+      expect(zen.props(FleetDialog).open).toBe(false);
+      expect(zen.props(PromptLine).place.id).toBe("gsv");
+
+      await act(() => { connect().props.onClick!(); });
+      await act(() => { zen.props(ConnectPlace).onConnected("laptop"); });
+      expect(zen.props(FleetDialog).open).toBe(false);
+      expect(zen.props(PromptLine).place.id).toBe("laptop");
+      expect(zen.onFleet).not.toHaveBeenCalled();
+    } finally { await zen.unmount(); }
+  });
+
+  it("keeps the selected place styling once another place is connected", async () => {
+    targets = [{ targetId: "laptop", label: "Laptop", online: true, implements: ["shell.exec"], platform: "linux",
+      ownerUid: 1000, ownerUsername: "hank", description: "", version: "0.6.2", lastSeenAt: 1 }];
+    const zen = await mountedZen();
+    try {
+      const cloud = zen.nodes().find((node) => node.type === "button"
+        && node.props["aria-label"] === "Use your cloud for the next message or command")!;
+      expect(cloud.props.class).toBe("zen-place is-selected");
+      expect(zen.nodes().some((node) => node.props.class === "zen-connect-place")).toBe(false);
+      expect(zen.props(FleetDialog).open).toBe(false);
+    } finally { await zen.unmount(); }
+  });
+
   it.each([
     { target: "gsv", readiness: "your cloud ready", status: "completed", queuedCount: 0 },
     { target: "laptop", readiness: "laptop offline", status: "aborted", queuedCount: 1 },
@@ -252,7 +294,7 @@ describe("Zen conversation entry", () => {
   it("opens a fresh Ship at the ordinary composer without sending a message", async () => {
     const zen = await mountedZen();
     try {
-      await vi.waitFor(() => expect(zen.text()).toContain("What would you like to do?"));
+      await vi.waitFor(() => expect(zen.text()).toContain("I am the ship. Who are you?"));
       expect(zen.props<ComponentProps<typeof PromptLine>>(PromptLine).disabled).toBe(false);
       expect(send).not.toHaveBeenCalled();
       expect([...storage.values()]).toEqual([]);
@@ -264,7 +306,7 @@ describe("Zen conversation entry", () => {
     const zen = await mountedZen();
     try {
       await vi.waitFor(() => expect(zen.props(ZenText).text).toBe("Your machine is online."));
-      expect(zen.text()).not.toContain("What would you like to do?");
+      expect(zen.text()).not.toContain("I am the ship. Who are you?");
       expect(send).not.toHaveBeenCalled();
     } finally { await zen.unmount(); }
   });
@@ -354,7 +396,7 @@ describe("Zen conversation entry", () => {
     const zen = await mountedZen("helper");
     try {
       await vi.waitFor(() => expect(zen.text()).toContain("This helper has no messages yet."));
-      expect(zen.text()).not.toContain("What would you like to do?");
+      expect(zen.text()).not.toContain("I am the ship. Who are you?");
       expect(send).not.toHaveBeenCalled();
     } finally { await zen.unmount(); }
   });

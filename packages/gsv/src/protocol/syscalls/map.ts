@@ -116,6 +116,8 @@ import type {
   ConnectResult,
   SysBootstrapArgs,
   SysBootstrapResult,
+  SysFeedbackArgs,
+  SysFeedbackResult,
   SysConfigGetArgs,
   SysConfigGetResult,
   SysConfigSetArgs,
@@ -258,6 +260,12 @@ import type {
   MailStatusResult,
 } from "./mail";
 import type {
+  ConversationInboxArgs,
+  ConversationInboxResult,
+  ConversationViewGetArgs,
+  ConversationViewGetResult,
+  ConversationViewUpdateArgs,
+  ConversationViewUpdateResult,
   ConversationForProcessArgs,
   ConversationForProcessResult,
   ConversationHistoryArgs,
@@ -294,6 +302,14 @@ import type {
   ContactDeliveryGetResult,
   ContactListArgs,
   ContactListResult,
+  ContactNoticeDismissArgs,
+  ContactNoticeDismissResult,
+  ContactPreferencesUpdateArgs,
+  ContactPreferencesUpdateResult,
+  ContactBlockSetArgs,
+  ContactBlockSetResult,
+  ContactBlockListArgs,
+  ContactBlockListResult,
   ContactRequestCreateArgs,
   ContactRequestCreateResult,
   ContactRequestListArgs,
@@ -305,6 +321,12 @@ import type {
   ContactSendArgs,
   ContactSendResult,
 } from "./contact";
+import type {
+  ProfileGetArgs, ProfileGetResult, ProfileUpdateArgs, ProfileUpdateResult,
+  ProfilePublishArgs, ProfilePublishResult, ProfileUnpublishArgs, ProfileUnpublishResult,
+  ProfileResolveArgs, ProfileResolveResult,
+} from "./profile";
+import type { ApproachCreateArgs, ApproachGetArgs, ApproachResult, ApproachListArgs, ApproachListResult, ApproachDecideArgs, ApproachRetryArgs } from "./approach";
 
 export type SyscallDomains = {
   "fs.read": { args: FsReadArgs; result: FsReadResult };
@@ -331,11 +353,26 @@ export type SyscallDomains = {
 
   "conversation.ship": { args: ConversationShipArgs; result: ConversationShipResult };
   "conversation.forProcess": { args: ConversationForProcessArgs; result: ConversationForProcessResult };
+  "conversation.inbox": { args: ConversationInboxArgs; result: ConversationInboxResult };
+  "conversation.view.get": { args: ConversationViewGetArgs; result: ConversationViewGetResult };
+  "conversation.view.update": { args: ConversationViewUpdateArgs; result: ConversationViewUpdateResult };
   "conversation.list": { args: ConversationListArgs; result: ConversationListResult };
   "conversation.history": { args: ConversationHistoryArgs; result: ConversationHistoryResult };
   "conversation.search": { args: ConversationSearchArgs; result: ConversationSearchResult };
   "conversation.send": { args: ConversationSendArgs; result: ConversationSendResult };
   "conversation.media.read": { args: ConversationMediaReadArgs; result: ConversationMediaReadResult };
+
+  "profile.get": { args: ProfileGetArgs; result: ProfileGetResult };
+  "profile.update": { args: ProfileUpdateArgs; result: ProfileUpdateResult };
+  "profile.publish": { args: ProfilePublishArgs; result: ProfilePublishResult };
+  "profile.unpublish": { args: ProfileUnpublishArgs; result: ProfileUnpublishResult };
+  "profile.resolve": { args: ProfileResolveArgs; result: ProfileResolveResult };
+
+  "approach.create": { args: ApproachCreateArgs; result: ApproachResult };
+  "approach.get": { args: ApproachGetArgs; result: ApproachResult };
+  "approach.list": { args: ApproachListArgs; result: ApproachListResult };
+  "approach.decide": { args: ApproachDecideArgs; result: ApproachResult };
+  "approach.retry": { args: ApproachRetryArgs; result: ApproachResult };
 
   "contact.identity": { args: ContactIdentityArgs; result: ContactIdentityResult };
   "contact.invite.create": { args: ContactInviteCreateArgs; result: ContactInviteCreateResult };
@@ -343,6 +380,10 @@ export type SyscallDomains = {
   "contact.invite.list": { args: ContactInviteListArgs; result: ContactInviteListResult };
   "contact.invite.cancel": { args: ContactInviteCancelArgs; result: ContactInviteCancelResult };
   "contact.list": { args: ContactListArgs; result: ContactListResult };
+  "contact.notice.dismiss": { args: ContactNoticeDismissArgs; result: ContactNoticeDismissResult };
+  "contact.preferences.update": { args: ContactPreferencesUpdateArgs; result: ContactPreferencesUpdateResult };
+  "contact.block.set": { args: ContactBlockSetArgs; result: ContactBlockSetResult };
+  "contact.block.list": { args: ContactBlockListArgs; result: ContactBlockListResult };
   "contact.alias.set": { args: ContactAliasSetArgs; result: ContactAliasSetResult };
   "contact.revoke": { args: ContactRevokeArgs; result: ContactRevokeResult };
   "contact.send": { args: ContactSendArgs; result: ContactSendResult };
@@ -396,6 +437,7 @@ export type SyscallDomains = {
   "sys.setup.assist": { args: SysSetupAssistArgs; result: SysSetupAssistResult };
   "sys.setup": { args: SysSetupArgs; result: SysSetupResult };
   "sys.bootstrap": { args: SysBootstrapArgs; result: SysBootstrapResult };
+  "sys.feedback": { args: SysFeedbackArgs; result: SysFeedbackResult };
   "sys.config.get": { args: SysConfigGetArgs; result: SysConfigGetResult };
   "sys.config.set": { args: SysConfigSetArgs; result: SysConfigSetResult };
   "sys.target.list": { args: SysTargetListArgs; result: SysTargetListResult };

@@ -42,6 +42,7 @@ Active standing defaults and standalone task prompts live in
 | `voice/` | Ship's public voice |
 | `instance-facts/` | Runtime values, responsibility snapshot, Crew account name, and owner context template |
 | `tasks/` | Separate compaction, setup, delegated-run, and correction instructions |
+| `onboarding/` | The "Welcome to gsv" brief the Kernel seeds as the details of Ship's initial responsibility, never a context file |
 
 Category and scope are independent. `knowledge/shared.md` contributes once to
 each account's prompt: through Ship's saved role file or an ordinary agent's

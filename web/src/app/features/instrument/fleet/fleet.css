@@ -229,14 +229,15 @@
 .fleet-dialog::backdrop { background: rgba(0, 0, 0, .35); }
 .fleet-dialog-head {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
-  gap: 24px;
+  gap: 8px 24px;
   padding: 14px 24px;
   border-bottom: 1px solid var(--rule-inner);
 }
 .fleet-dialog-head > span { color: var(--faint); font-size: 10px; letter-spacing: .16em; text-transform: uppercase; }
-.fleet-dialog-head button { white-space: nowrap; }
+.fleet-dialog-head button { white-space: nowrap; margin-left: auto; }
 .fleet-dialog-head kbd { margin-left: 8px; color: var(--faint); font: inherit; font-size: 10px; }
 .fleet-dialog > .instrument-view:not([hidden]) { display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); height: auto; min-height: 0; overflow: hidden; }
 .fleet-inspector {
@@ -368,13 +369,13 @@
 .fleet td.id { font-family: var(--gsv-font-mono); color: var(--faint); font-size: 11px; letter-spacing: 0.04em; }
 .fleet .dot { border-radius: 0; box-shadow: none; }
 .fleet .dot.is-idle { background: var(--idle); box-shadow: none; }
-.fleet .actions, .fleet .fleet-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 16px; margin-top: 18px; }
+.fleet .actions, .fleet-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 16px; margin-top: 18px; }
 .fleet .inspector .full-id { font-size: 11px; color: var(--faint); letter-spacing: 0.04em; word-break: break-all; margin-top: 4px; }
 
 /* the inspector's facts: label and value pairs, as the prototype drew them */
-.fleet .kv, .fleet .fleet-kv { display: grid; grid-template-columns: 110px 1fr; gap: 6px 12px; font-size: 12px; margin: 0; }
-.fleet .kv dt, .fleet .fleet-kv dt { color: var(--faint); letter-spacing: 0.12em; text-transform: uppercase; font-size: 10px; padding-top: 2px; }
-.fleet .kv dd, .fleet .fleet-kv dd { margin: 0; color: var(--label); white-space: normal; overflow-wrap: anywhere; }
+.fleet .kv, .fleet-kv { display: grid; grid-template-columns: 110px minmax(0, 1fr); gap: 6px 12px; font-size: 12px; margin: 0; }
+.fleet .kv dt, .fleet-kv dt { color: var(--faint); letter-spacing: 0.12em; text-transform: uppercase; font-size: 10px; padding-top: 2px; }
+.fleet .kv dd, .fleet-kv dd { margin: 0; color: var(--label); white-space: normal; overflow-wrap: anywhere; }
 .fleet .inspector h3 { margin: 0 0 4px; font-size: 16px; font-weight: 400; letter-spacing: 0.12em; color: var(--text-title); text-shadow: var(--glow-soft); }
 .fleet .inspector .sub { font-size: 11px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--text-dim); margin-bottom: 16px; }
 .fleet .inspector .note { margin-top: 18px; font-size: 12px; color: var(--text-dim); line-height: 1.55; }
@@ -423,14 +424,6 @@
 .fleet-tree .place-head:focus, .fleet-tree li.f button.file:focus { background: var(--selected); box-shadow: inset 3px 0 0 var(--accent); }
 
 /* Contact conversations stay beside the relationship they belong to. */
-.fleet-contact-tabs { display: flex; gap: 18px; margin-bottom: 22px; }
-.fleet-contact-history { max-height: 48vh; min-height: 8rem; overflow-y: auto; overflow-anchor: none; padding-right: 8px; }
-.fleet-contact-message { margin: 18px 0 24px; }
-.fleet-contact-message header { display: flex; justify-content: space-between; gap: 12px; font-size: 10px; color: var(--faint); }
-.fleet-contact-message header span { color: var(--label); text-transform: uppercase; letter-spacing: .12em; }
-.fleet-contact-message p { white-space: pre-wrap; font: 14px/1.65 var(--gsv-font-prose); margin: 10px 0; }
-.fleet-contact-conversation .fleet-actions .note { margin: 0; }
-.fleet-contact-conversation .zen-draft-attachments { margin-top: 12px; }
 .fleet-contact-request { padding: 16px 0; border-bottom: 1px solid var(--border); }
 .fleet-contact-request .sub { margin: 0 0 8px; }
 .fleet-contact-request h4 { margin: 0; color: var(--text-title); font-size: 14px; font-weight: 400; }
@@ -441,13 +434,6 @@
 .fleet-contact-request dt { color: var(--faint); margin-top: 8px; }
 .fleet-contact-request dd { margin: 4px 0 0 12px; white-space: pre-wrap; }
 
-.fleet-inspector:has(.fleet-contact-conversation) { display: flex; flex-direction: column; overflow: hidden; }
-.fleet-inspector > .fleet-connection:has(.fleet-contact-conversation), .fleet-contact-conversation { display: flex; flex-direction: column; flex: 1; min-height: 0; }
-.fleet-contact-conversation .fleet-contact-history { flex: 1; min-height: 4rem; max-height: none; scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
-.fleet-contact-conversation > .fleet-place-form { flex-shrink: 0; margin-top: 12px; padding-top: 0; }
-.fleet-contact-conversation textarea { min-height: 3.5rem; max-height: 20vh; }
-.fleet-contact-conversation .fleet-actions { margin-top: 10px; }
-.fleet-contact-conversation .fleet-actions button[type="submit"] { margin-inline-start: auto; }
 
 .fleet-file-reader { height: 100%; min-height: 0; display: flex; flex-direction: column; padding: 0 24px 20px; background: transparent; }
 .file-reader-head { display: flex; align-items: baseline; gap: 20px; padding: 22px 0 18px; border-bottom: 1px solid var(--border); }

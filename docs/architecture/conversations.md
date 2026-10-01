@@ -17,12 +17,29 @@ The Kernel owns the conversation directory and membership:
 
 - **Ship** is the stable conversation with the user's personal intelligence. Web, Desktop, CLI,
   Telegram, Slack, and other private surfaces all contribute to the same Ship message stream.
-  The current personal Process is replaceable; the Ship conversation is not.
+  The current personal Process is replaceable; the Ship conversation is not. In the web and
+  Desktop clients an empty Ship conversation shows the interface greeting ("Welcome to the ship."
+  / "I am the ship. Who are you?"); the CLI and messengers show none. Nothing is sent on the
+  user's behalf, and the Ship's onboarding responsibility tells it which surfaces saw the greeting
+  so it can treat the first message as the answer or introduce itself first.
 - **Work** is a conversation handled by one explicit interactive work Process. Opening Work does not
   replace Ship or redefine the personal intelligence.
 - **Group** is tied to one normalized adapter surface and can retain multiple account and Process
   members. Current authorization remains owner-scoped, while the membership schema can represent
   later multi-user and multi-Process conversations.
+- **Contact** is a conversation with an authenticated person on another space. It has no mandatory
+  Process handler. People owns its presentation; accepting a contact alone starts no agent work.
+
+The Kernel separately admits contact messages to Ship attention. A human can enable standing
+handling for one contact generation. Enabling it does not create work or wake Ship; the next
+incoming message creates a responsibility and later messages reuse that active record. After
+handling is disabled or completed, new work starts only on another incoming message while
+the preference is enabled; terminal records stay terminal. An outgoing message
+can instead bind to an existing owned Ship responsibility awaiting a reply. Exact reply references
+select that responsibility; without a reference, only one active task can be selected unambiguously.
+Both human and Process-authored replies may continue authorized work. A receipt or duplicate message
+never creates another responsibility. Revocation ends standing handling and returns unfinished tasks
+to Ship with the disconnection recorded. A replacement contact generation requires a fresh handoff.
 
 Delegated Process work is not copied into Ship. A child returns a typed Process event to its caller;
 the personal intelligence decides whether the result should become a canonical Message, cause more
@@ -112,8 +129,9 @@ owner and are resolved only when a user inspects a span.
 
 ## Storage and retention
 
-The Kernel Durable Object stores only the conversation directory, membership, handler, surface
-mapping, and latest sequence. Each conversation has its own installation-scoped Conversation Durable
+The Kernel Durable Object stores the conversation directory, membership, optional handler, surface
+mapping, latest sequence and private inbox projection. Contact previews, read positions and archive
+state stay in that projection; canonical messages have one owner. Each conversation has its own installation-scoped Conversation Durable
 Object:
 
 - SQLite retains the newest 1,000 canonical messages for indexed, strongly consistent access.
@@ -121,6 +139,8 @@ Object:
   segment in installation-scoped R2.
 - SQLite retains the segment index and idempotency receipts, so history paging and retried appends
   remain stable across the hot/archive boundary.
+- Contact messages retain authenticated origin, authorship and reply references. Their origin index
+  maps an immutable remote message identity to the local sequence even after archival.
 - Conversation messages store immutable resource references. The Process retains an exact source
   revision in the run-as agent archive before committing it, so the bytes remain readable after
   temporary Process cleanup without a second conversation-owned copy.
@@ -152,7 +172,8 @@ native saves apply to the attachment blobs resolved by the authenticated fronten
 
 ## Search
 
-Zen opens conversation search with `/` in browse mode or `Ctrl/Cmd+F`. Selecting a result shows the
+Zen opens conversation search with `/` in browse mode or `Ctrl/Cmd+F`; People uses the same search
+dialog and syscall for the selected contact conversation. Selecting a result shows the
 original message and surrounding messages in the dialog, preserving the conversation position and
 any draft when the dialog closes.
 

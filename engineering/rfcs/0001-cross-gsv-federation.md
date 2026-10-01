@@ -2,6 +2,10 @@
 
 Status: **implemented for staging validation**
 
+The contact attention and mandatory handler design below is superseded by the
+[agreed social redesign](../social-redesign-2026-09-29.md). Current behavior is
+documented in [Conversations](../../docs/architecture/conversations.md).
+
 ## Summary
 
 This RFC defines direct communication between independently owned GSV

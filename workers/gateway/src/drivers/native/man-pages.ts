@@ -248,6 +248,8 @@ export function renderManualPage(topic: string): string | null {
         "  A Contact send reports accepted once GSV durably owns it; this is distinct",
         "  from remote confirmation. Retain delivery_id and use `message delivery show`",
         "  to observe queued, delivered, or failed state.",
+        "  --responsibility ID links a contact's replies to existing open Ship work.",
+        "  It does not enable permanent handling of that contact's conversations.",
         "",
         "EXAMPLES",
         "  message current",

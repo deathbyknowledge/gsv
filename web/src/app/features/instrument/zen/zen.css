@@ -385,6 +385,13 @@
 .zen-place:enabled:hover, .zen-place:focus-visible { color: var(--text); }
 .zen-place.is-selected { color: var(--text); text-decoration: underline; text-underline-offset: 5px; }
 .zen-place:disabled { color: var(--text-dim); cursor: default; }
+/* the only place reads as plain text; hovering or focusing its row underlines it and reveals the offer to connect another */
+.zen-place.is-alone { color: var(--text-dim); text-decoration: none; }
+.zen-places li:hover .zen-place.is-alone, .zen-places li:focus-within .zen-place.is-alone { color: var(--text); text-decoration: underline; text-underline-offset: 5px; }
+.zen-connect-place { visibility: hidden; white-space: nowrap; color: var(--text-dim); }
+.zen-places li:hover .zen-connect-place, .zen-places li:focus-within .zen-connect-place { visibility: visible; }
+.zen-connect-place:hover, .zen-connect-place:focus-visible { color: var(--accent); }
+@media (hover: none) { .zen-connect-place { visibility: visible; } }
 .zen-place-status {
   flex: none;
   width: 7px;

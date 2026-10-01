@@ -22,7 +22,7 @@ import { formatTargetConnectionEvent } from "../../prompts/target-events";
 import { formatScheduleEventMessage } from "../../prompts/schedule-events";
 export { formatScheduleEventMessage } from "../../prompts/schedule-events";
 import { formatResponsibilityReadyEvent, formatResponsibilityTransitionEvent } from "../../prompts/responsibility-events";
-export { formatResponsibilityTransitionEvent, formatResponsibilityLine } from "../../prompts/responsibility-events";
+export { formatResponsibilityTransitionEvent } from "../../prompts/responsibility-events";
 
 export function renderHistoryEvent(event: ProcHistoryEvent): string {
   switch (event.kind) {

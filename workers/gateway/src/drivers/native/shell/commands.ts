@@ -30,6 +30,7 @@ import { buildStatCommand } from "./stat";
 import { buildTargetsCommands } from "./targets";
 import { buildWikiCommand } from "./wiki";
 import { buildWebCommand } from "./web";
+import { buildFeedbackCommand } from "./feedback";
 import { ShellDiscoveryCatalog } from "./discovery";
 
 export type NativeShellCommandOptions = {
@@ -62,6 +63,7 @@ export function buildCustomCommands(
   const skills = buildSkillsCommand(fs, ctx, identity);
   const wiki = buildWikiCommand(ctx);
   const web = buildWebCommand(ctx, options?.request);
+  const feedback = buildFeedbackCommand(ctx, options?.request);
   const proc = buildProcCommand(ctx);
   const rgitCommands = buildRgitCommands(ctx);
   const r12y = buildR12yCommand(ctx);
@@ -109,6 +111,7 @@ export function buildCustomCommands(
     skills,
     wiki,
     web,
+    feedback,
     flynn,
   ];
   discovery.registerCommands(nativeCommands);

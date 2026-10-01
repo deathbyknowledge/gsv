@@ -1,6 +1,6 @@
 ---
 name: browser-target
-description: Use extension-provided browser targets to inspect and operate active browser state through the target's advertised filesystem and shell commands.
+description: Use a paired browser: the user's signed-in profile, reaching any site they are logged into (calendar, mail, dashboards) with no integration. Load for any website or web app question; if none is paired, offer pairing.
 aliases: browser-extension, browser
 ---
 
@@ -9,11 +9,15 @@ aliases: browser-extension, browser
 Use this skill when a target is listed as kind `browser`, has platform
 `browser` or `browser-extension`, or when the user asks you to act on an active
 browser target. Browser target ids are user-configured and may look like
-`browser:chrome`, `rearden:brave`, or another device id.
+`browser:chrome`, `rearden:brave`, or another device id. Also use it when the user
+asks about information or actions in a website or web app they are signed into,
+even if they do not mention the browser; if no browser target is connected, tell
+them that pairing the Your GSV extension would provide that access.
 
 ## Model
 
 - Browser targets are active browser profiles connected by the GSV browser extension.
+- A paired browser is the user's signed-in profile. Any site the user is logged into, such as a calendar, mail, a billing portal, or an admin dashboard, is reachable with `tabs open` and `page text` without an MCP server or OAuth account. Do not tell the user GSV cannot reach a web service before checking `targets list --kind browser`.
 - Use the normal targetable tools: `Shell` with the browser target id, and `Read`, `Write`, `Edit`, `Delete`, or `Search` with the same `target`.
 - Use normal file tools only for paths the target advertises.
 - Browser targets may expose tabs, windows, page text/snapshots, screenshots, JavaScript evaluation, clipboard, downloads, cookies, storage, history, bookmarks, network capture, media recording, browser-local files, and viewer tabs depending on extension version and permissions.
