@@ -572,7 +572,7 @@ fn windows_quote_argument(arg: &str) -> String {
     arg.to_string()
 }
 
-#[cfg(any(test, target_os = "windows"))]
+#[cfg(target_os = "windows")]
 fn windows_arguments_string(args: &[String]) -> String {
     args.iter()
         .map(|arg| windows_quote_argument(arg))
@@ -580,7 +580,7 @@ fn windows_arguments_string(args: &[String]) -> String {
         .join(" ")
 }
 
-#[cfg(any(test, target_os = "windows"))]
+#[cfg(target_os = "windows")]
 fn powershell_single_quote(value: &str) -> String {
     format!("'{}'", value.replace('\'', "''"))
 }
