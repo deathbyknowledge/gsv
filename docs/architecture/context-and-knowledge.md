@@ -5,6 +5,9 @@ repositories. Memory belongs to the human rather than to one agent. The kernel
 provides generic filesystem and repository primitives; knowledge-specific
 behavior lives in agent workflows and the Wiki shell surface.
 
+Memory's Markdown reader shares the conversation's code blocks: long lines scroll within the
+block, and copy preserves the code's indentation and internal line breaks.
+
 ## Layers
 
 | Layer | Location | Purpose |

@@ -11,6 +11,10 @@ Conversation messages do not belong to a Process. A Process handles an interacti
 canonical message records the relevant PID and run ID, but killing that Process does not delete the
 conversation. Users can inspect the referenced Process while it exists or read its archive later.
 
+Web and Desktop render Ship's Markdown code blocks at a readable monospace size with a copy action.
+Long lines scroll inside the block. Copy preserves indentation and internal line breaks without
+adding the renderer's final newline to the clipboard.
+
 ## Conversation kinds
 
 The Kernel owns the conversation directory and membership:
