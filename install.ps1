@@ -186,8 +186,9 @@ function Install-MicrosoftRuntime([string]$Url, [string]$Name, [string[]]$Argume
   } finally { Remove-Item -LiteralPath $path -Force -ErrorAction SilentlyContinue }
 }
 
-function Ensure-DesktopRuntimes {
+function Ensure-HostRuntimes {
   if ($SkipRuntimeSetup) { return }
+  if (-not $Headless) {
   $webview = @(
     'HKLM:\SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}',
     'HKLM:\SOFTWARE\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}',
@@ -195,6 +196,7 @@ function Ensure-DesktopRuntimes {
   ) | Where-Object { (Get-ItemProperty -Path $_ -Name pv -ErrorAction SilentlyContinue).pv -match '^[1-9]' }
   if (-not $webview) {
     Install-MicrosoftRuntime 'https://go.microsoft.com/fwlink/p/?LinkId=2124703' 'WebView2' @('/silent', '/install')
+  }
   }
   $vc = Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\VisualStudio\14.0\VC\Runtimes\x64' -ErrorAction SilentlyContinue
   $vcVersion = if ($vc.Version) { [version]($vc.Version.TrimStart('v')) } else { [version]'0.0' }
@@ -274,7 +276,7 @@ function Install-GsvHost {
     }
     $busy = Get-Process -Name gsv-desktop,gsv-transcribe,gsv-vision -ErrorAction SilentlyContinue
     if ($busy) { throw 'Close GSV Desktop and its input helpers, then run the installer again.' }
-    if (-not $Headless) { Ensure-DesktopRuntimes }
+    Ensure-HostRuntimes
 
     New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
     $rollbackNeeded = $true

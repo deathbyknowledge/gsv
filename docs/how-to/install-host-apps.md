@@ -47,7 +47,8 @@ Invoke-WebRequest -UseBasicParsing https://install.gsv.space/install.ps1 -OutFil
 ./install.ps1 -Headless
 ```
 
-This installs only `gsv.exe` and `gsvd.exe`. Pair the computer with the invitation
+This installs only `gsv.exe` and `gsvd.exe`, plus the Visual C++ runtime if needed.
+It does not install WebView2. Pair the computer with the invitation
 from Fleet, then inspect it with `gsv daemon status`.
 
 Use `GSV_CHANNEL=dev` for the moving development channel, or set

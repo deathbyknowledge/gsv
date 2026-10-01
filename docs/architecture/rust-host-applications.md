@@ -207,7 +207,7 @@ licenses, checksums and the PowerShell installer in a ZIP and an NSIS setup
 executable. Setup creates a Start-menu shortcut and an Apps uninstall entry.
 The installer verifies every asset before mutation, requests elevation for an
 existing boot service, checks its health, and rolls back binaries if that check
-fails. `-Headless` installs only the CLI and daemon without Desktop runtimes.
+fails. `-Headless` installs only the CLI and daemon without WebView2.
 WebView2 and the Visual C++ runtime are downloaded from Microsoft when needed;
 their Authenticode signatures are verified before execution.
 

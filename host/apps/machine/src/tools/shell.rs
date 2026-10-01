@@ -1402,7 +1402,8 @@ mod windows_tests {
             .execute(json!({ "input": "Start-Sleep -Seconds 60", "timeout": 250 }))
             .await
             .unwrap();
-        assert_eq!(timed.data["status"], "timed_out");
+        assert_eq!(timed.data["status"], "failed");
+        assert_eq!(timed.data["error"], "Command timed out");
     }
 }
 
