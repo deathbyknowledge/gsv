@@ -16,7 +16,7 @@ try {
   if ($LASTEXITCODE) { throw 'Service installation failed' }
   $service = Get-CimInstance Win32_Service -Filter "Name='gsvd'"
   if ($service.StartMode -ne 'Auto' -or $service.StartName -ne 'NT SERVICE\gsvd') { throw 'Service must boot under its own account' }
-  foreach ($action in @('status', 'diagnostics', 'restart', 'stop', 'start')) {
+  foreach ($action in @('doctor', 'status', 'diagnostics', 'restart', 'stop', 'start')) {
     & $cli daemon $action
     if ($LASTEXITCODE) { throw "daemon $action failed" }
   }

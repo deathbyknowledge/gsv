@@ -205,6 +205,12 @@ pub fn doctor_device_service() -> Result<(), DynError> {
     let manager = require_platform_service_manager()?;
     let executable = resolve_gsvd_executable()?;
     let installed = manager.is_installed()?;
+    #[cfg(windows)]
+    let executable = if installed {
+        windows_service::registered_executable()?
+    } else {
+        executable
+    };
     let migration_required =
         installed && manager.needs_migration(&DeviceServiceInstallSpec::current()?)?;
     let daemon_version = read_gsvd_version(&executable)?;

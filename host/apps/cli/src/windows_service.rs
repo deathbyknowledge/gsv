@@ -286,3 +286,27 @@ pub fn sync_configuration() -> Result<(), DynError> {
     })?;
     Ok(())
 }
+
+/// Inspect the executable registered with SCM, including when it is stopped.
+pub(super) fn registered_executable() -> Result<PathBuf, DynError> {
+    let config = service::open(ServiceAccess::QUERY_CONFIG)?.query_config()?;
+    let path = service::binary_dir().join("gsvd.exe");
+    let expected = windows_arguments_string(&[
+        path.to_string_lossy().into_owned(),
+        "--windows-service".to_owned(),
+    ]);
+    if !config
+        .executable_path
+        .to_string_lossy()
+        .eq_ignore_ascii_case(&expected)
+    {
+        return Err("Unexpected Windows service executable or arguments; run gsv daemon install to repair its registration".into());
+    }
+    println!("service startup: {:?}", config.start_type);
+    println!(
+        "service account: {}",
+        config.account_name.unwrap_or_default().to_string_lossy()
+    );
+    validate_gsvd_version(&path)?;
+    Ok(path)
+}
