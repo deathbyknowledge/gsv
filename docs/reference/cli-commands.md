@@ -436,6 +436,12 @@ preference, and process-switch fencing.
 
 ## Daemon Commands
 
+Ship can create an invitation from Shell on `gsv` with
+`targets pair --name "My laptop" --platform mac`. Supported platforms are `mac`,
+`linux`, `windows` and `browser`. The result contains setup instructions for the
+space's release. `targets pair list` and `targets pair cancel INVITATION_ID`
+manage the human owner's invitations. See [Connect devices](../how-to/connect-devices.md).
+
 Open **Fleet**, click **connect** beside Places, name the computer and create an invitation.
 After installing GSV, paste the provided command:
 

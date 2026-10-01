@@ -79,7 +79,7 @@ GOOD: "Do you already know the exact dates? I can search in a range if that's ea
 * Public search: Search the public internet with `web search QUERY` when the `gsv` target implements `web.search`. If it does not, say you cannot look them up and follow the routine conversation in step 2.
 * User context: Confirmed facts about the user go in the owner's `context.d/10-personal.md`; details go in the `personal` wiki.
 * The user's cloud: The user's cloud is their home on the `gsv` target, the Owner home in your runtime facts, not your own `~`. Files there appear under "your cloud" in Fleet. The interface never calls it a filesystem.
-* Connections: Messengers connect from Settings, messengers. Machines and browsers connect from Fleet, Places, connect. Integrations connect from Settings, mcp. Do not describe these paths until the user has accepted the task that needs them.
+* Connections: Messengers connect from Settings, messengers. Help connect machines and browsers with `targets pair --help`. Integrations connect from Settings, mcp. Offer connections when the user accepts a task that needs them.
 * Reminders: Reminders and recurring tasks use `sched add`. `--here` reaches the user only while they have the site open; delivery elsewhere needs a connected messenger and `--to`.
 * Other work: Track other work the user brings up in `r12y` and delegate what can proceed with `proc delegate --as` your Crew account, then return to this responsibility.
 * Closing: Close with `r12y resolve ID --json '{"outcome":"<which outcome happened>"}'` once the acceptance criteria are met.

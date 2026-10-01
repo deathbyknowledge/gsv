@@ -1,0 +1,41 @@
+.markdown-code-block {
+  min-width: 0;
+  max-width: 100%;
+  margin: 0.7em 0;
+  border: 1px solid var(--border);
+  background: var(--panel-2);
+}
+.markdown-code-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 4px 14px 0;
+  font: 400 11px/1.5 var(--gsv-font-mono);
+  color: var(--text-dim);
+}
+.markdown-code-header button {
+  min-width: 44px;
+  padding: 5px 0;
+  text-align: right;
+  color: var(--label);
+}
+.markdown-code-header button:hover { color: var(--accent); }
+.markdown-code-block pre {
+  margin: 0;
+  padding: 8px 14px 14px;
+  max-width: 100%;
+  overflow-x: auto;
+  white-space: pre;
+  text-wrap: nowrap;
+  tab-size: 2;
+  font: 400 clamp(13px, 0.72em, 18px)/1.65 var(--gsv-font-mono);
+  color: var(--text-hi);
+}
+.markdown-code-block pre:focus-visible { outline: 1px solid var(--accent); outline-offset: -1px; }
+.markdown-code-block pre > code {
+  font: inherit;
+  color: inherit;
+  background: none;
+  padding: 0;
+}

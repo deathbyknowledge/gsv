@@ -122,12 +122,13 @@
 }
 .zen-moment .text p { margin: 0 0 0.6em; }
 .zen-moment .text p:last-child { margin-bottom: 0; }
-.zen-moment .text code {
+.zen-moment .text :not(pre) > code {
   font-family: var(--gsv-font-mono);
   font-size: 0.72em;
   color: var(--label);
   background: var(--panel-2);
   padding: 0.05em 0.3em;
+  overflow-wrap: anywhere;
 }
 .zen-moment .text a.ref {
   color: var(--target);
@@ -454,16 +455,6 @@
 .zen-moment .text a[href^="#place:"] {
   color: var(--target);
   border-bottom: 1px solid rgba(151, 170, 255, 0.35);
-}
-.zen-moment .text pre {
-  font-family: var(--gsv-font-mono);
-  font-size: 0.6em;
-  line-height: 1.5;
-  color: var(--label);
-  border-left: 2px solid var(--border);
-  padding-left: 14px;
-  overflow-x: auto;
-  white-space: pre;
 }
 .zen-moment .text ul,
 .zen-moment .text ol {

@@ -3,6 +3,7 @@ import { useViewActive } from "../../../services/navigation/ViewActivity";
 import type { LibraryNote } from "../../../services/memory/libraryTypes";
 import { assignLibraryHeadingIds } from "../../../services/memory/libraryLinks";
 import { renderMarkdownHtml } from "../shared/markdown";
+import { enhanceCodeBlocks } from "../shared/codeBlocks";
 import { memoryLinkFromUrl, memoryLinkHref, resolveMemoryLink, type MemoryLink } from "./memoryLinks";
 
 function scrollToHeading(article: HTMLElement, fragment: string): void {
@@ -27,6 +28,7 @@ export function MemoryArticle({ note, db, fragment, onOpen }: {
     const previous = rendered.current;
     if (previous?.db === db && previous.path === note.path && previous.markdown === note.markdown) return;
     article.innerHTML = renderMarkdownHtml(note.markdown);
+    enhanceCodeBlocks(article);
     assignLibraryHeadingIds(article);
     for (const anchor of article.querySelectorAll<HTMLAnchorElement>("a[href]")) {
       const href = anchor.getAttribute("href") || "";

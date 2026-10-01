@@ -328,6 +328,7 @@ describe("Zen conversation entry", () => {
     send.mockReturnValue(accepted.promise);
     const zen = await mountedZen();
     try {
+      await vi.waitFor(() => expect(zen.text()).toContain("I am the ship. Who are you?"));
       const prompt = () => zen.props<ComponentProps<typeof PromptLine>>(PromptLine);
       await act(() => { expect(prompt().onSubmit("Help me plan my week")).toBe(true); });
       expect(zen.props(ZenText).text).toBe("Help me plan my week");
