@@ -944,6 +944,9 @@ describe("proc handlers", () => {
       peer: testPeer({ kind: "human", account: IDENTITY, calls: ["*"] }),
       auth: makePersonalAgentAuth(),
       config: { get: vi.fn(() => "1002") },
+      responsibilities: {
+        getByDedupeKey: vi.fn(() => null),
+      },
       procs: {
         get: vi.fn(() => null),
         spawn: vi.fn(),
@@ -1011,6 +1014,9 @@ describe("proc handlers", () => {
       peer: testPeer({ kind: "human", account: IDENTITY, calls: ["*"] }),
       auth: makePersonalAgentAuth(),
       config: { get: vi.fn(() => "1002") },
+      responsibilities: {
+        getByDedupeKey: vi.fn(() => null),
+      },
       procs: {
         get: vi.fn(() => null),
         spawn: vi.fn(),

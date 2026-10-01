@@ -30,6 +30,7 @@ export function createGlyphReveal(container: HTMLElement, content: HTMLElement):
   for (let node = walker.nextNode(); node; node = walker.nextNode()) {
     // SAFETY: SHOW_TEXT restricts this walker to Text nodes.
     const text = node as Text;
+    if (text.parentElement?.closest(".markdown-code-header")) continue;
     for (const part of segmenter.segment(text.data)) {
       // Choose once per reveal so the other letters stay readable throughout.
       glyphs.push({

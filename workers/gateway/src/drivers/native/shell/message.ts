@@ -598,6 +598,7 @@ async function sendMessage(
   const attachmentPaths: string[] = [];
   let attachmentMime: string | undefined;
   let requestedDeliveryId: string | undefined;
+  let responsibilityId: string | undefined;
   let also = false;
 
   for (let index = 0; index < args.length; index += 1) {
@@ -625,6 +626,11 @@ async function sendMessage(
     if (current === "--delivery-id") {
       index += 1;
       requestedDeliveryId = requireShellOptionValue(args[index], current);
+      continue;
+    }
+    if (current === "--responsibility") {
+      index += 1;
+      responsibilityId = requireShellOptionValue(args[index], current);
       continue;
     }
     if (current === "--also") {
@@ -659,6 +665,9 @@ async function sendMessage(
     throw new Error("message send requires --message or --attach");
   }
   const requestedDestination = to.trim();
+  if (responsibilityId && !requestedDestination.startsWith("contact:")) {
+    throw new Error("--responsibility requires a contact destination");
+  }
   if (requestedDestination.toLowerCase() === "here") {
     throw new Error(
       "--to here is not a message destination. To reply to the current conversation, "
@@ -677,6 +686,7 @@ async function sendMessage(
       text: text?.trim() ?? "",
       ...(media ? { media } : undefined),
       ...(requestedDeliveryId ? { idempotencyKey: requestedDeliveryId } : undefined),
+      ...(responsibilityId ? { responsibilityId } : undefined),
     }, ctx);
     const delivered = contactResult.state === "delivered";
     return completed([
@@ -982,7 +992,7 @@ function messageUsage(): string {
     "  message search QUERY [--with CONTACT_OR_CONVERSATION] [--before SEQUENCE] [--limit N] [--json]",
     "  message delivery show DELIVERY_ID [--json]",
     "  message send [--message TEXT]",
-    "  message send --to DESTINATION [--message TEXT] [--attach PATH]... [--mime TYPE] [--delivery-id ID] [--also]",
+    "  message send --to DESTINATION [--message TEXT] [--attach PATH]... [--mime TYPE] [--delivery-id ID] [--responsibility ID] [--also]",
     "",
     "A literal `message send <<'GSV_MESSAGE'` block sends to the current conversation and keeps the run active.",
     "Run `yield` when work is complete, or append `&& yield` to the message block header.",
@@ -990,6 +1000,7 @@ function messageUsage(): string {
     "Do not use --to or --also for the current conversation. Issue current-conversation",
     "attach and send commands as separate direct Shell tool calls.",
     "Inside an active run, --also is required for an additional destination send.",
+    "For a contact, --responsibility links replies to existing Ship work without handing over future conversations.",
     "Use `message destinations` and copy its opaque GSV id; do not use provider ids.",
     "Use `message route` to inspect routing, open a private-DM work direct line from personal,",
     "or manage groups, channels, and threads.",

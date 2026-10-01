@@ -6,7 +6,7 @@ import type {
   SysSetupResult,
   SysTokenCreateResult,
 } from "@humansandmachines/gsv/protocol";
-import { createPairingCredential, createPairingSecret } from "@humansandmachines/gsv/protocol";
+import { createPairingCredential, createPairingSecret, decodeDevicePairingCode } from "@humansandmachines/gsv/protocol";
 import type { TestHarness } from "wrangler";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { createGatewayTestHarness, webSocketUrl } from "./harness";
@@ -166,6 +166,30 @@ describe("gateway authentication integration", () => {
     expect((await user.sys.target.list({})).targets).toContainEqual(expect.objectContaining({ targetId: "my-macbook", label: "Edited name" }));
     await user.sys.target.delete({ targetId: "my-macbook" });
     await expect(connectOnce({ protocol: 4, peer: peerInfo("my-macbook", ["fs.*"]), auth: { username: USERNAME, token: credential } })).rejects.toMatchObject({ code: 401 });
+  });
+
+  it("redeems a native-shell invitation and exposes the connected browser target", async () => {
+    const origin = new URL(baseUrl);
+    origin.hostname = "localhost";
+    expect((await harness.getWorker("gsv-test-dependencies").fetch("http://gsv-test-dependencies/__test/default-origin", { method: "POST", body: origin.origin })).status).toBe(204);
+    await setup();
+    const user = createClient({ username: USERNAME, password: PASSWORD, peer: peerInfo("pairing-shell") });
+    await user.connect();
+    const created = await user.shell.exec({ target: "gsv", input: "targets pair --name 'My browser' --platform browser" });
+    if (created.status === "running") throw new Error("Native pairing did not finish");
+    expect(created.exitCode, created.stderr).toBe(0);
+    const { code, extensionUrl } = JSON.parse(created.stdout ?? "");
+    expect(extensionUrl).toContain("gsv-browser-extension.zip");
+    const invite = decodeDevicePairingCode(code);
+    expect(invite).toMatchObject({ username: USERNAME, targetId: "my-browser", label: "My browser" });
+    const credential = createPairingCredential();
+    await new GSVClient().requestOnce(invite.gatewayUrl, "sys.pair.redeem", { id: invite.id, secret: invite.secret, credential });
+    const browser = createClient({ username: USERNAME, token: credential, peer: { ...peerInfo(invite.targetId, ["shell.exec"]), platform: "browser" } });
+    await browser.connect();
+    const shown = await user.shell.exec({ target: "gsv", input: "targets show my-browser --json" });
+    if (shown.status === "running") throw new Error("Native target lookup did not finish");
+    expect(shown.exitCode, shown.stderr).toBe(0);
+    expect(JSON.parse(shown.stdout ?? "")).toMatchObject({ id: "my-browser", label: "My browser", platform: "browser", online: true });
   });
 
   it("infers machine authority from a device-bound token and registers its implementations", async () => {

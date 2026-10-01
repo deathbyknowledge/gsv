@@ -47,7 +47,7 @@ Remove optional features together with their machinery. Do not retain a feature 
 | --- | --- |
 | Someone new contacts the user | A message request; no agent work until accepted or explicitly handed to Ship. Acceptance alone does not imply delegation. |
 | The user handles the conversation | Messages arrive in People. The user can ask Ship to help when needed. |
-| The user chooses “Let Ship handle this” | Ship can read and reply with its ordinary capabilities and approval rules, involving the user when needed. |
+| The user enables “Ship replies” | The next incoming message wakes Ship, which can read and reply with its ordinary capabilities and approval rules. Enabling the switch alone starts no work. |
 | The user asks Ship to contact someone for a task | Ship tracks the work, sends the message, and receives replies as continuations of that work. |
 
 The receiving space independently decides whether its Ship handles the incoming conversation. An instruction to one Ship never grants authority to the other.
@@ -80,6 +80,33 @@ Do not introduce a second helper runtime, Process role system or per-contact san
 
 ## Validation when implementation resumes
 
+## People surface
+
+People owns conversations with other people, their message requests and the private address book. At a glance it answers who wrote, what is unread, and whether the user or Ship is handling a conversation. Primary actions are read/reply, accept/decline a request, and hand a conversation to Ship or take it back.
+
+Use a conversation list and a spacious message pane. Requests opens the first-message decision queue; Contacts opens the private address book. Keep search within the selected conversation and reuse main's search endpoint. Put infrequent relationship actions in its details rather than beside every message. A new-conversation dialog supports saved people, a public profile address and private invitations. Public profile editing remains in Settings. Fleet keeps processes, targets and responsibilities and links to People where needed.
+
+Ship handoff uses ordinary capabilities and an ordinary responsibility. Per-task reply continuation is separate from the standing contact preference. No assistant persona, scoped helper runtime, shared social graph or digest is part of this screen.
+
 Integrate against current main and obtain CI for the actual head. Test the owning boundaries and a two-space flow: first contact and acceptance preserving the first message; human and Ship authorship; delegated reply continuation; no work from delivery acknowledgements or duplicate deliveries; interrupted/retried delivery; media; mute/block/reconnect; and main's search.
 
 The review of the old branch is recorded locally at `/tmp/gsv-pr-sweep-2026-09-29/social-assessment.md`. That assessment is evidence and history; this file records the approved direction.
+
+## Visual refinement, 30 September
+
+Keep reading and replying as the main People job: one conversation header, a
+readable message column and a quiet composer. Show message actions on interaction
+while keeping failures and active Ship handling visible. Details opens a focused
+dialog; saved contacts and archive are secondary actions, and connection management
+and structured work open on demand. Saving is address-book membership, independent
+of conversation access or delegation. Memory and People share a full-height shell
+divider, with content kept below the header.
+
+Conversations are the default People view. A counted Requests entry opens the
+incoming decision queue; sent and past requests are secondary there. Contacts is
+an address-book selector reached from the heading or New conversation, rather
+than an equal conversation tab. Both views offer a direct return to conversations,
+retaining the previous conversation and draft. New conversation filters saved
+people locally and can open a public profile address. The conversation header owns
+the Ship replies switch for future incoming messages; Details keeps infrequent preferences.
+The composer uses the same attach text action as Zen.

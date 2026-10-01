@@ -24,6 +24,29 @@ the cached session token from `gsv auth login`, or prompt/login when needed.
 
 ## Chat and Shell
 
+When the operator enables feedback, the Instrument header has a **feedback** action.
+Reports include the text you submit, your space, account, and app/server versions.
+The optional **Include last 20 Ship messages** checkbox starts unchecked. It
+captures recent messages, thinking, tool inputs/results and runtime events through
+your existing history permissions. Review the snapshot before sending: tool results
+can contain private content. No files or media are fetched for the report, and
+oversized activity is visibly shortened to 64,000 characters. Unchecking removes it. A failed submission keeps your draft
+and the exact selected snapshot for retry.
+The same report can be sent from the `gsv` target shell:
+
+```bash
+feedback < report.txt
+```
+
+Use a report file rather than inline text, `printf`, or a heredoc: shell command
+text is recorded in Logs.
+
+Ship can use this command when asked to report an issue. Send only the details the
+user wants shared. `feedback --id UUID < report.txt` keeps the same report identity on a retry.
+Reports go to the operator's configured inbox; the public runtime has no default
+destination. The header action appears only when `sys.connect` advertises
+`operator-feedback` for the caller.
+
 ```bash
 gsv chat [MESSAGE] [--pid PID]
 gsv shell
@@ -71,7 +94,7 @@ message search QUERY [--with CONTACT_OR_CONVERSATION] [--before SEQUENCE] [--lim
 message delivery show DELIVERY_ID [--json]
 message send [--message TEXT]
 yield
-message send --to DESTINATION [--message TEXT] [--attach PATH]... [--mime TYPE] [--delivery-id ID] [--also]
+message send --to DESTINATION [--message TEXT] [--attach PATH]... [--mime TYPE] [--delivery-id ID] [--responsibility ID] [--also]
 contact identity
 contact list [--all] [--json]
 contact alias CONTACT_ID NAME|--clear
@@ -278,6 +301,11 @@ never a recoverable code. `message history --with contact:...` reads the Contact
 conversation. A Contact send reports durable local acceptance separately from
 remote confirmation; use `message delivery show` with its delivery id.
 
+When Ship contacts someone for an existing task, pass `--responsibility ID` to
+associate replies with that open Ship responsibility. A reply continues the same
+work without enabling permanent handling of that contact. Acceptance and new
+messages stay in People unless the person chooses **Let Ship handle this**.
+
 Use `contact request create` and `contact request update` when the exchange has
 a durable lifecycle rather than being only a message. Request revisions prevent
 a stale client from overwriting a newer decision. The requester may cancel an
@@ -407,6 +435,12 @@ remains the owner of gateway authentication, process selection, microphone
 preference, and process-switch fencing.
 
 ## Daemon Commands
+
+Ship can create an invitation from Shell on `gsv` with
+`targets pair --name "My laptop" --platform mac`. Supported platforms are `mac`,
+`linux`, `windows` and `browser`. The result contains setup instructions for the
+space's release. `targets pair list` and `targets pair cancel INVITATION_ID`
+manage the human owner's invitations. See [Connect devices](../how-to/connect-devices.md).
 
 Open **Fleet**, click **connect** beside Places, name the computer and create an invitation.
 After installing GSV, paste the provided command:

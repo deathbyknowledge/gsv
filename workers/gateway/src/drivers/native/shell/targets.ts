@@ -1,6 +1,10 @@
 import { defineCommand } from "just-bash";
 import type { ExecResult } from "just-bash";
+import { createPairingSecret, encodeDevicePairingCode, pairingGatewayUrl } from "@humansandmachines/gsv/protocol";
+import { buildCliInstallCommand, browserExtensionDownloadUrl, machineDeviceIdFromName } from "@humansandmachines/gsv/device-setup";
 import type { KernelContext } from "../../../kernel/context";
+import { handleSysPairCreate, handleSysPairList, handleSysPairCancel } from "../../../kernel/sys/pair";
+import { SERVER_RELEASE } from "../../../version";
 import {
   GSV_TARGET_ID,
   gsvTargetImplementations,
@@ -81,9 +85,53 @@ async function runTargetsCommand(
       return listTargets(parseTargetListOptions(rest, true), ctx);
     case "show":
       return showTarget(rest, ctx, commandName);
+    case "pair":
+      return await pairTarget(rest, ctx);
     default:
       return listTargets(parseTargetListOptions(args), ctx);
   }
+}
+
+async function pairTarget(args: string[], ctx: KernelContext): Promise<ExecResult> {
+  if (args[0] === "list" && args.length === 1) {
+    requireCommandCapability(ctx, "sys.pair.list");
+    return { stdout: `${JSON.stringify(handleSysPairList(ctx))}\n`, stderr: "", exitCode: 0 };
+  }
+  if (args[0] === "cancel" && args.length === 2) {
+    requireCommandCapability(ctx, "sys.pair.cancel");
+    return { stdout: `${JSON.stringify(await handleSysPairCancel({ id: args[1] }, ctx))}\n`, stderr: "", exitCode: 0 };
+  }
+  requireCommandCapability(ctx, "sys.pair.create");
+  let label = "", platform = "", targetId = "", replace = false;
+  for (let i = 0; i < args.length; i++) {
+    const option = args[i];
+    switch (option) {
+      case "--name": label = requireShellOptionValue(args[++i], option); break;
+      case "--platform": platform = requireShellOptionValue(args[++i], option); break;
+      case "--id": targetId = requireShellOptionValue(args[++i], option); break;
+      case "--replace": replace = true; break;
+      default: throw new Error(`unknown pairing option: ${option}`);
+    }
+  }
+  if (!label.trim() || !["mac", "linux", "windows", "browser"].includes(platform)) {
+    throw new Error("expected targets pair --name NAME --platform mac|linux|windows|browser");
+  }
+  if (replace && !targetId) throw new Error("--replace requires --id of an existing target");
+  if (!ctx.installationIdentity) throw new Error("Space address is unavailable");
+  const gatewayUrl = pairingGatewayUrl(ctx.installationIdentity.canonicalOrigin);
+  const secret = createPairingSecret();
+  const { pairing } = await handleSysPairCreate({
+    id: crypto.randomUUID(), secret, label, targetId: targetId || machineDeviceIdFromName(label), replace,
+  }, ctx);
+  const code = encodeDevicePairingCode(gatewayUrl, pairing, secret);
+  const instructions = platform === "browser" ? {
+    extensionUrl: browserExtensionDownloadUrl(SERVER_RELEASE), code,
+    instructions: "Download and unzip Your GSV. Enable developer mode in chrome://extensions, load the folder, then open its toolbar panel and paste the invitation to pair this browser.",
+  } : {
+    installCommand: buildCliInstallCommand(platform === "windows" ? "windows" : "unix", SERVER_RELEASE),
+    pairCommand: `${platform === "windows" ? "gsv.exe" : "gsv"} pair ${code}`,
+  };
+  return { stdout: `${JSON.stringify({ pairing, platform, ...instructions })}\n`, stderr: "", exitCode: 0 };
 }
 
 async function listTargets(options: ListOptions, ctx: KernelContext): Promise<ExecResult> {
@@ -350,9 +398,15 @@ function targetsUsage(commandName: "targets" | "devices"): string {
     `Usage: ${commandName} list [--all|--online] [--search QUERY] [--limit N] [--offset N] [--json]`,
     `Usage: ${commandName} search <query> [--all|--online] [--limit N] [--offset N] [--json]`,
     `Usage: ${commandName} show <target-id> [--json]`,
+    `Usage: ${commandName} pair --name NAME --platform mac|linux|windows|browser [--id TARGET_ID] [--replace]`,
+    `Usage: ${commandName} pair list | pair cancel INVITATION_ID`,
     "",
     "Lists Unix-shaped capability environments visible to this process.",
     "Offline targets cannot accept target-aware operations until they reconnect.",
     "Use --online to show only targets that are currently reachable.",
+    "Pair returns JSON with a ten-minute invitation and installation steps for the human owner.",
+    "Ask for the name and platform; share the returned steps only with the owner.",
+    "Check existing targets first. --replace explicitly pairs an owned target again.",
+    "Use pair list/cancel to discard an unused or lost invitation before creating another.",
   ].join("\n") + "\n";
 }

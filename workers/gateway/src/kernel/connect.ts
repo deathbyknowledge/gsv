@@ -19,7 +19,8 @@ import type {
   ProcessIdentity,
 } from "@humansandmachines/gsv/protocol";
 import type { CapabilityStore } from "./capabilities";
-import { isValidCapability } from "./capabilities";
+import { hasCapability, isValidCapability } from "./capabilities";
+import { FEEDBACK_FEATURE } from "@humansandmachines/gsv/services/feedback";
 import type { KernelContext } from "./context";
 import type { TargetRecord } from "./target-registry";
 import { SERVER_RELEASE } from "../version";
@@ -184,6 +185,7 @@ export async function handleConnect(
   };
 
   const serverFeatures = gsvInferenceFeaturesFromEnv(ctx.env);
+  if (ctx.env.FEEDBACK && hasCapability(capabilities, "sys.feedback")) serverFeatures.push(FEEDBACK_FEATURE);
   const result: ConnectResult = {
     protocol: PROTOCOL_VERSION,
     server: {
