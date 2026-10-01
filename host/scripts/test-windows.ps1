@@ -4,6 +4,9 @@ $bin = (Resolve-Path $BinDir).Path
 $cli = Join-Path $bin 'gsv.exe'
 $root = Join-Path $env:TEMP ('gsv-service-test-' + [Guid]::NewGuid().ToString('N'))
 if (Get-Service gsvd -ErrorAction SilentlyContinue) { throw 'SCM smoke test requires a clean machine' }
+foreach ($directory in @((Join-Path $env:ProgramData 'GSV'), (Join-Path $env:ProgramFiles 'GSV'))) {
+  if (Test-Path -LiteralPath $directory) { throw "SCM smoke test requires a clean machine; existing directory: $directory" }
+}
 New-Item -ItemType Directory -Path $root | Out-Null
 $workspace = Join-Path $root 'workspace with spaces 日本語'
 New-Item -ItemType Directory -Path $workspace | Out-Null
