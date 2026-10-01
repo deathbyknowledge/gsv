@@ -35,6 +35,18 @@ fn main() -> Result<(), Box<dyn Error>> {
     }
     println!("cargo:rerun-if-changed=native");
     let mut config = cmake::Config::new("native");
+    println!("cargo:rerun-if-env-changed=GSV_VISION_CMAKE_DIR");
+    if let Some(directory) = std::env::var_os("GSV_VISION_CMAKE_DIR") {
+        config.out_dir(directory);
+    }
+    if target_os == "windows" {
+        // cmake-rs replaces MSVC's Release flags when selecting the CRT.
+        // Preserve optimization for the CPU runtime, including debug Rust builds.
+        for flag in ["/O2", "/Ob2", "/DNDEBUG"] {
+            config.cflag(flag);
+            config.cxxflag(flag);
+        }
+    }
     if target_os == "macos" {
         println!("cargo:rerun-if-env-changed=MACOSX_DEPLOYMENT_TARGET");
         let minimum = std::env::var("MACOSX_DEPLOYMENT_TARGET").unwrap_or("12.0".into());

@@ -1249,6 +1249,9 @@ async fn run_requests(
 fn voice_error_message(code: VoiceErrorCode, phase: Option<&str>) -> &'static str {
     match code {
         VoiceErrorCode::NotInstalled => "The voice helper is missing from this build.",
+        VoiceErrorCode::UnsupportedCpu => {
+            "Local voice requires a CPU with AVX2, FMA and F16C support."
+        }
         VoiceErrorCode::HelperUnavailable => "The voice helper could not start. Try voice again.",
         VoiceErrorCode::MicrophoneUnavailable => {
             "The microphone could not open. Choose an available microphone."
