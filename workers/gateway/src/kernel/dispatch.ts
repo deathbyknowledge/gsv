@@ -646,7 +646,7 @@ async function dispatchKernel(
         data = handleSysPairList(ctx);
         break;
       case "sys.pair.cancel":
-        data = handleSysPairCancel(frame.args, ctx);
+        data = await handleSysPairCancel(frame.args, ctx);
         break;
       case "sys.pair.redeem":
         return errFrame(frame.id, 400, "sys.pair.redeem requires the connection enrollment path");

@@ -1575,7 +1575,7 @@ Runtime behavior:
 | `sys.token.create` | `handleSysTokenCreate` | Creates a hashed human, machine, or service token; the kind is the principal kind the token authenticates as. Root may target any uid. Machine tokens must bind to one `peerId`. Raw token is returned only once. |
 | `sys.token.list` | `handleSysTokenList` | Lists token metadata, including revoked tokens, never raw token values. Non-root is scoped to self; root can list all or one uid. |
 | `sys.token.revoke` | `handleSysTokenRevoke` | Revokes a token by id with optional reason. Non-root can revoke only own tokens. Missing or inaccessible token returns `revoked: false`. |
-| `sys.pair.create` | `handleSysPairCreate` | A signed-in human creates an idempotent, ten-minute device invitation for a free target ID. The Kernel retains its secret hashed and creates no device credential yet. |
+| `sys.pair.create` | `handleSysPairCreate` | A signed-in human or permitted process creates an idempotent, ten-minute device invitation for a free target ID. Processes act for their human owner. The Kernel retains its secret hashed and creates no device credential yet. |
 | `sys.pair.list` | `handleSysPairList` | Lists the caller's recent invitations and their pending, paired, cancelled or expired state, without secrets. |
 | `sys.pair.cancel` | `handleSysPairCancel` | Cancels an unused caller-owned invitation; an already-paired device and its credential remain intact. |
 | `sys.pair.redeem` | `handleSysPairRedeem` | Pre-connect enrollment. Consumes one invitation and atomically registers the receiving client's persisted random machine credential for the invitation's account and target. The same credential may recover an acknowledgement; another cannot reuse the invitation. |
