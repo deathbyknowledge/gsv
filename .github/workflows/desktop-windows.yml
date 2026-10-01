@@ -63,7 +63,7 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
         with:
           workspaces: host -> target
-          key: windows-host
+          key: windows-host-native-v1
           cache-on-failure: true
           cache-workspace-crates: true
       - name: Build shared frontend
