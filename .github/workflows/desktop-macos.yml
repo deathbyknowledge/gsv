@@ -24,7 +24,7 @@ permissions:
 
 concurrency:
   # Keep reusable and manually dispatched builds independent of PR validation.
-  group: desktop-macos-${{ github.event.pull_request.number || github.run_id }}
+  group: desktop-macos-${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
   cancel-in-progress: true
 
 jobs:
