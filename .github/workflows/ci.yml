@@ -62,6 +62,8 @@ jobs:
               - 'host/Cargo.lock'
               - 'scripts/version.mjs'
               - 'scripts/test-host-installer.sh'
+              - 'scripts/test-installer-animation.py'
+              - 'tools/installer-animation/**'
               - 'install.sh'
               - 'install.ps1'
               - 'package.json'

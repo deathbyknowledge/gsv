@@ -187,14 +187,20 @@ cache_bust_url_if_mutable() {
 download_file() {
     local url="$1"
     local output="$2"
+    local downloader options
     if command -v curl >/dev/null 2>&1; then
-        curl -fsSL -o "$output" "$url"
+        downloader=curl
+        options=(-fsSL -o "$output")
+        if [ -n "${3:-}" ]; then options+=(--max-time "$3"); fi
     elif command -v wget >/dev/null 2>&1; then
-        wget -q -O "$output" "$url"
+        downloader=wget
+        options=(-q -O "$output")
+        if [ -n "${3:-}" ]; then options+=(--timeout="$3" --tries=1); fi
     else
         error "curl or wget is required"
         return 1
     fi
+    "$downloader" "${options[@]}" "$url"
 }
 
 sha256_file() {
@@ -226,6 +232,85 @@ verify_asset() {
         error "Checksum verification failed for $asset"
         return 1
     fi
+}
+
+# Playback reads cached frames; no model rendering or extra runtime is needed.
+play_animation() {
+    trap - EXIT
+    trap 'exit 0' INT TERM HUP
+    local resized=1
+    trap 'resized=1' WINCH
+    local frames=() record size cols rows width height left top picture status index frame=0
+    while true; do
+        if [ "$resized" -eq 1 ]; then
+            resized=0
+            size="$(stty size <&3 2>/dev/null)" || return 0
+            read -r rows cols <<< "$size"
+            frames=(); width=0; height=0
+            while IFS= read -r -d $'\f' record; do
+                local frame_cols frame_rows
+                read -r frame_cols frame_rows <<< "${record%%$'\n'*}"
+                if [ "$width" -eq 0 ] && [ "$frame_cols" -lt "$cols" ] && [ "$((frame_rows + 8))" -lt "$rows" ]; then
+                    width="$frame_cols"; height="$frame_rows"
+                fi
+                if [ "$frame_cols" -eq "$width" ]; then
+                    frames+=("${record#*$'\n'}")
+                    if [ "${#frames[@]}" -eq 240 ]; then break; fi
+                fi
+            done < "$TMP_DIR/animation.frames"
+            if [ "$width" -eq 0 ]; then width=20; fi
+            if [ "$cols" -lt "$width" ]; then width="$cols"; fi
+            printf -v left '%*s' "$(((cols - width) / 2))" ''
+            top=$(((rows - height - 6) / 2 + 1))
+            if [ "$top" -lt 1 ]; then top=1; fi
+            printf '\033[2J'
+        fi
+        printf '\033[%d;1H%sGSV\033[K\n\n' "$top" "$left"
+        if [ "${#frames[@]}" -gt 0 ]; then
+            index="$frame"
+            if [ "$index" -ge 240 ]; then index=$((48 + (frame - 240) % 192)); fi
+            picture="${frames[$index]}"
+            printf '%s%s\n\n' "$left" "${picture//$'\n'/$'\n'$left}"
+        fi
+        status="$(< "$TMP_DIR/animation.status")"
+        printf '%s%s\033[K\033[J' "$left" "$status"
+        frame=$((frame + 1))
+        sleep 0.083
+    done
+}
+
+start_animation() {
+    [ -t 1 ] && [ -t 2 ] && [ "${TERM:-dumb}" != dumb ] && [ "${GSV_NO_ANIMATION:-0}" != 1 ] && [ -z "${CI:-}" ] || return 0
+    command -v gzip >/dev/null && command -v stty >/dev/null || return 0
+    local size cols rows asset="gsv-installer-animation.gz" url
+    size="$(stty size <&2 2>/dev/null)" || return 0
+    read -r rows cols <<< "$size"
+    [ "$cols" -gt 56 ] && [ "$rows" -gt 30 ] || return 0
+    # Older releases and failed optional downloads keep the ordinary installer.
+    awk -v name="$asset" '$2 == name || $2 == "*" name { found=1 } END { exit !found }' "$TMP_DIR/checksums.txt" || return 0
+    url="$(cache_bust_url_if_mutable "$1" "$(release_asset_url "$1" "$asset")")"
+    download_file "$url" "$TMP_DIR/$asset" 3 >/dev/null 2>&1 && \
+        verify_asset "$asset" "$TMP_DIR/$asset" "$TMP_DIR/checksums.txt" >/dev/null 2>&1 && \
+        gzip -dc "$TMP_DIR/$asset" > "$TMP_DIR/animation.frames" 2>/dev/null || return 0
+    printf 'Downloading GSV' > "$TMP_DIR/animation.status"
+    exec 3>&1 4>&2
+    ANIMATION_ACTIVE=1
+    exec > "$TMP_DIR/install.log" 2>&1
+    printf '\033[?1049h\033[?25l\033[2J' >&3
+    play_animation </dev/null >&3 &
+    ANIMATION_PID=$!
+}
+
+stop_animation() {
+    [ "${ANIMATION_ACTIVE:-0}" -eq 1 ] || return 0
+    if [ -n "${ANIMATION_PID:-}" ]; then
+        kill "$ANIMATION_PID" 2>/dev/null || true
+        wait "$ANIMATION_PID" 2>/dev/null || true
+    fi
+    printf '\033[0m\033[?25h\033[?1049l' >&3 2>/dev/null || true
+    exec 1>&3 2>&4 3>&- 4>&-
+    ANIMATION_ACTIVE=0
+    cat "$TMP_DIR/install.log" || true
 }
 
 delegate_to_pinned_installer() {
@@ -274,6 +359,7 @@ prepare_install_dir() {
         error "Cannot write $INSTALL_DIR and sudo is unavailable"
         exit 1
     fi
+    stop_animation
     sudo mkdir -p "$INSTALL_DIR"
     USE_SUDO=1
 }
@@ -549,7 +635,10 @@ persist_release_channel() {
 
 cleanup() {
     local status=$?
-    trap - EXIT INT TERM
+    trap - EXIT
+    trap '' INT TERM HUP
+    set +e
+    stop_animation
     if [ "$status" -ne 0 ] && [ "${INSTALL_IN_PROGRESS:-0}" -eq 1 ]; then
         stop_existing_service || true
         rollback_binaries || true
@@ -570,7 +659,10 @@ main() {
     TMP_DIR="$(mktemp -d)"
     INSTALL_IN_PROGRESS=0
     BACKUPS=()
-    trap cleanup EXIT INT TERM
+    trap cleanup EXIT
+    trap 'exit 130' INT
+    trap 'exit 143' TERM
+    trap 'exit 129' HUP
 
     ASSETS=(
         "gsv-${PLATFORM}"
@@ -603,6 +695,7 @@ main() {
     local checksum_url
     checksum_url="$(cache_bust_url_if_mutable "$release_ref" "$(release_asset_url "$release_ref" checksums.txt)")"
     download_file "$checksum_url" "$TMP_DIR/checksums.txt"
+    start_animation "$release_ref"
 
     local asset
     for asset in "${ASSETS[@]}"; do
@@ -613,6 +706,7 @@ main() {
         verify_asset "$asset" "$TMP_DIR/$asset" "$TMP_DIR/checksums.txt"
     done
     success "Verified ${#ASSETS[@]} release artifacts"
+    if [ "${ANIMATION_ACTIVE:-0}" -eq 1 ]; then printf 'Installing' > "$TMP_DIR/animation.status"; fi
 
     explain_existing_install_dir
     prepare_install_dir

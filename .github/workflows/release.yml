@@ -424,6 +424,7 @@ jobs:
           # Include install script
           cp install.sh release/
           cp install.ps1 release/
+          cp tools/installer-animation/gsv-installer-animation.gz release/
 
           # Create checksums
           cd release
@@ -598,6 +599,7 @@ jobs:
             release/gsv-browser-extension.zip
             release/install.sh
             release/install.ps1
+            release/gsv-installer-animation.gz
             release/checksums.txt
 
       - name: Remove retired desktop downloads
