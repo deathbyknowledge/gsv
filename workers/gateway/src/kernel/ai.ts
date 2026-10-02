@@ -68,8 +68,6 @@ import { CODEMODE_EXEC_DEFINITION } from "../syscalls/codemode";
 import { isCodeModeAvailable } from "../codemode/availability";
 import { DEFAULT_TEXT_GENERATION_MAX_TOKENS } from "../inference/default-models";
 import { createGenerationService } from "../inference/execution-client";
-import { TimeoutError } from "../inference/timeout";
-import { raceWithAbort } from "../shared/abort";
 import { extractGeneratedText } from "../inference/generated-text";
 import {
   inferenceLogicalRequestId,
@@ -1059,7 +1057,7 @@ async function resolveCompleteAiModelConfig(options: {
     options.model.oauthAccountKey?.trim() || undefined,
   );
   const modelContextWindow = options.model.contextWindowTokens === undefined
-    ? await resolveModelContextWindow(options.ctx, provider, model, options.generationTimeoutMs)
+    ? await options.ctx.modelMetadata.resolve(provider, model, options.generationTimeoutMs)
     : null;
   const contextWindowTokens = options.model.contextWindowTokens
     ?? modelContextWindow
@@ -1319,25 +1317,4 @@ function listReadyMcpServerNames(ctx: KernelContext, uid: number): string[] {
     }
   }
   return [...names].sort((left, right) => left.localeCompare(right));
-}
-
-async function resolveModelContextWindow(ctx: KernelContext, provider: string, model: string, generationTimeoutMs: number): Promise<number | null> {
-  const service = ctx.env.INFERENCE_EXECUTION;
-  if (!service) return null;
-  const timeoutMs = Math.min(generationTimeoutMs, 5000);
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(
-    new TimeoutError(`Model metadata resolution timed out after ${timeoutMs}ms`),
-  ), timeoutMs);
-  try {
-    const pending = service.resolveModel(provider, model);
-    const metadata = await raceWithAbort(pending, controller.signal, { onAbort: () => {
-      // SAFETY: Cloudflare RPC promises provide optional explicit disposal.
-      const rpc = pending as typeof pending & { [Symbol.dispose]?: () => void };
-      try { rpc[Symbol.dispose]?.(); } catch { /* Timeout remains terminal if disposal fails. */ }
-    } });
-    return metadata.contextWindowTokens;
-  } finally {
-    clearTimeout(timeout);
-  }
 }

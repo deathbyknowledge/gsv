@@ -85,6 +85,15 @@ An agent, Process, or the owner may prefer an entry from any layer by its stable
 | `config/ai/generation/timeout_ms` | `users/{uid}/ai/generation/timeout_ms` | `180000` | Maximum time to wait for one model generation before the run is released. |
 | `config/ai/generation/streaming` | `users/{uid}/ai/generation/streaming` | `auto` | `auto` streams when the provider supports it; `off` forces final-output only. |
 
+Without an explicit `contextWindowTokens`, the Kernel resolves the model's
+context limit through the inference service. Each lookup waits at most ten
+seconds, capped by a shorter generation timeout. Successful metadata is cached
+in that Kernel for one minute (up to 64 provider/model pairs); failures and
+late replies are not cached. A routing change can therefore take up to a minute
+to appear in newly resolved configuration. An active run retains its resolved
+configuration. Generation admission, permissions, credentials and usage checks
+remain independent of this metadata cache.
+
 Image generation, transcription, and speech each own a separate complete configuration under `config/ai/{capability}` or `users/{uid}/ai/{capability}`. Setting any user-scoped provider, model, credential, or speaker selects that whole scope; provider and model must both be present, and missing values are not borrowed from the text stack or system capability configuration. Their `api_key` values belong only to that capability configuration.
 
 Legacy per-field text-model keys and `model_profiles` are not read. Move each connection into the ordered `models` stack before upgrading.

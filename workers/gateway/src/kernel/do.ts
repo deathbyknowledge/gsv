@@ -16,6 +16,7 @@ import type { InstallationDeletionRequest } from "@humansandmachines/gsv/service
 import { GatewayDeletion } from "../installation/deletion";
 import { InstallationRetirement, durableResourceName, stateWithRetirementStorage } from "../installation/retirement";
 import { DurableObject } from "cloudflare:workers";
+import { ModelMetadataResolver } from "../inference/model-metadata";
 import { z } from "zod";
 import { McpClientManager, SqlMcpServerRows } from "./mcp-client";
 import type {
@@ -407,6 +408,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
   readonly people: PeopleStore;
   readonly caps: CapabilityStore;
   readonly config: ConfigStore;
+  readonly modelMetadata: ModelMetadataResolver;
   readonly manual: ManualUpdater;
   readonly targets: TargetRegistry;
   readonly routes: RoutingTable;
@@ -451,6 +453,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
     const ctx = stateWithRetirementStorage(state, this.retirement);
     this.ctx = ctx;
     this.env = env;
+    this.modelMetadata = new ModelMetadataResolver(env, this.installationId);
     Object.assign(this, kernelRuntimes(this));
     const sql = ctx.storage.sql;
     if (!this.retirement.state) runKernelSqlMigrations(ctx.storage);
@@ -1471,6 +1474,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
       invalidateAccountConnections: (uid) => this.connectionRuntime.invalidateAccountConnections(uid),
       caps: this.caps,
       config: this.config,
+      modelMetadata: this.modelMetadata,
       manual: this.manual,
       targets: this.targets,
       procs: this.procs,
