@@ -29,8 +29,9 @@ export function renderWhatsAppText(markdown: string): string {
  * Ship's Markdown as the ordered WhatsApp messages it becomes: paragraph
  * groups rendered with WhatsApp's markers, each within the text limit.
  */
-export function whatsAppTextMessages(markdown: string): string[] {
-  const messages = splitMarkdownParagraphs(markdown).flatMap((paragraphs) =>
+export function whatsAppTextMessages(markdown: string, splitParagraphs = true): string[] {
+  const paragraphs = splitParagraphs ? splitMarkdownParagraphs(markdown) : [markdown];
+  const messages = paragraphs.flatMap((paragraphs) =>
     fitMarkdownToLimit(paragraphs, renderWhatsAppText, WHATSAPP_TEXT_LIMIT)
       .map((fitted) => fitted.rendered));
   return messages.length > 0
@@ -43,9 +44,7 @@ export function whatsAppTextMessages(markdown: string): string[] {
  * within `limit` code points; the caller attaches the buttons to the last one.
  */
 export function whatsAppPromptMessages(prompt: string, limit: number): string[] {
-  const messages = splitMarkdownParagraphs(prompt).flatMap((paragraphs) =>
-    fitMarkdownToLimit(paragraphs, (plain) => plain, limit).map((fitted) => fitted.rendered));
-  return messages.length > 0 ? messages : splitTextAtLimit(prompt, limit);
+  return fitMarkdownToLimit(prompt, (plain) => plain, limit).map((fitted) => fitted.rendered);
 }
 
 function renderBlockTokens(tokens: Token[], blockquoteDepth = 0): string {

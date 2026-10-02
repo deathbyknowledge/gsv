@@ -526,10 +526,8 @@ describe("managed Telegram clean-instance flow", () => {
       (message) => message.method === "sendAudio",
     )).toHaveLength(sentAudioCount);
 
-    // A long reply goes out as paragraph messages in order: the greeting and
-    // intro stay with the paragraph they introduce, a paragraph past Telegram's
-    // limit is split, only the first message quotes the inbound, and the bot
-    // types between messages.
+    // Each prose paragraph is a message. An oversized paragraph is split,
+    // only the first message quotes the inbound, and the bot types between messages.
     const isText = (message: TelegramApiMessage): boolean =>
       message.method === "sendMessage" || message.method === "sendRichMessage";
     const recordsBeforeParagraphs = (await telegramMessages()).length;
@@ -545,10 +543,13 @@ describe("managed Telegram clean-instance flow", () => {
     const paragraphRecords = (await telegramMessages()).slice(recordsBeforeParagraphs);
     expect(paragraphRecords.map((record) => record.method)).toEqual([
       "sendRichMessage", "sendChatAction", "sendRichMessage", "sendChatAction", "sendRichMessage",
+      "sendChatAction", "sendRichMessage", "sendChatAction", "sendRichMessage",
     ]);
     const paragraphMessages = paragraphRecords.filter(isText);
     expect(paragraphMessages.map((message) => message.body.text)).toEqual([
-      expect.stringMatching(/^Hi Hank!\n\nHere is the report\.\n\nword word/),
+      "Hi Hank!",
+      "Here is the report.",
+      expect.stringMatching(/^word word/),
       expect.stringMatching(/^word word/),
       "Anything else?",
     ]);

@@ -101,9 +101,9 @@ Platform. You message that number from your own WhatsApp account.
 
 1. In GSV, open **Settings → Messengers → WhatsApp**. It shows the GSV number
    and a link that opens WhatsApp on it.
-2. Send the number any message. It replies with a short-lived pairing code. If
-   your number is already connected to another GSV, send `/link` to get a new
-   code.
+2. Send the number any message. It replies with instructions and a separate
+   code-only message you can copy. The code expires in 10 minutes. If your
+   number is already connected to another GSV, send `/link` to get a new code.
 3. Enter the code back in GSV. GSV shows the WhatsApp profile name and the
    masked number that requested it.
 4. Confirm only if that is your WhatsApp number. The code alone cannot choose a
@@ -112,7 +112,8 @@ Platform. You message that number from your own WhatsApp account.
 
 You can send text, photos, documents, voice notes, videos, and locations. GSV
 replies with text and attachments, and a long reply arrives as several
-messages, one per paragraph group, rather than one wall of text. Approval
+messages, one per prose paragraph. Headings stay with the following block;
+code blocks, lists, tables and quotations stay together. Approval
 prompts arrive with reply buttons; the decision comes back as a reply quoting
 the prompt.
 

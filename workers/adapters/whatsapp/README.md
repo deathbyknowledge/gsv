@@ -39,8 +39,9 @@ eligibility. The adapter does not enforce or assume a geographic exception.
 
 - A reply goes out as paragraph messages: the Markdown is split at blank lines
   by the shared splitter in `workers/adapters/shared/src/paragraph-messages.ts`,
-  fenced code blocks, lists and tables stay whole, and runs of short paragraphs
-  merge so a greeting and a one-line question stay in one bubble. Each message
+  headings stay with the following block, and fenced code blocks, lists, tables
+  and quotations stay whole. Short prose paragraphs are separate messages too.
+  Each message
   is rendered with WhatsApp's own markers and kept within Meta's 4096 character
   limit by splitting the Markdown further and rendering again. Only the first
   message quotes the inbound message; the typing indicator is refreshed between
@@ -144,7 +145,7 @@ numbers on the same account are acknowledged and ignored.
 
 1. Send any message to the GSV WhatsApp number. Send `/link` to request a new
    code when the number is already connected somewhere.
-2. Copy the 12-character code from its reply.
+2. Copy the code-only message that follows the instructions. It expires in 10 minutes.
 3. Open **GSV → Settings → Messengers → WhatsApp**, enter the code, inspect the
    name and masked number, and explicitly confirm it.
 4. Send another WhatsApp message. It enters the space's canonical Ship

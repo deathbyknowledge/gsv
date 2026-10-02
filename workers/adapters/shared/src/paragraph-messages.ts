@@ -12,14 +12,6 @@ import { lexer, type Token } from "marked";
  * should adopt them when their outbound text moves to paragraph messages.
  */
 
-/**
- * A message keeps absorbing the following paragraph while it is shorter than
- * this many code points, so a greeting and a one-line question stay in one
- * bubble and a heading stays with the paragraph it introduces. Once a message
- * reaches the threshold it closes and the next paragraph starts a new one.
- */
-export const SHORT_MESSAGE_THRESHOLD = 320;
-
 /** Below this limit a single code point could render past it (`"` becomes `&quot;`). */
 const MINIMUM_RENDER_LIMIT = 16;
 
@@ -42,29 +34,14 @@ type MarkdownBlocks = {
 
 /**
  * Splits Markdown at blank lines into messages. Fenced code blocks, lists,
- * tables and block quotes stay whole even when they contain blank lines, and
- * runs of short paragraphs merge into one message. A reference-style link
+ * tables and block quotes stay whole even when they contain blank lines.
+ * Headings stay with the block they introduce. A reference-style link
  * definition travels with every message that uses it, since each message is
  * rendered on its own later.
  */
 export function splitMarkdownParagraphs(markdown: string): string[] {
   const { blocks, definitions } = markdownBlocks(markdown);
-  const messages: string[] = [];
-  let current = "";
-  for (const block of blocks) {
-    if (!current) {
-      current = block;
-      continue;
-    }
-    if (codePointLength(current) < SHORT_MESSAGE_THRESHOLD) {
-      current = `${current}\n\n${block}`;
-      continue;
-    }
-    messages.push(current);
-    current = block;
-  }
-  if (current) messages.push(current);
-  return messages.map((message) => withDefinitions(message, definitions));
+  return blocks.map((block) => withDefinitions(block, definitions));
 }
 
 /**
@@ -169,6 +146,7 @@ function markdownBlocks(markdown: string): MarkdownBlocks {
   }
   const blocks: string[] = [];
   const definitions: LinkDefinition[] = [];
+  let followsHeading = false;
   for (const token of tokens) {
     if (token.type === "space") continue;
     if (token.type === "def") {
@@ -177,7 +155,10 @@ function markdownBlocks(markdown: string): MarkdownBlocks {
     }
     // Leading spaces belong to indented code; only surrounding blank lines go.
     const raw = token.raw.replace(/^\n+/, "").trimEnd();
-    if (raw) blocks.push(raw);
+    if (!raw) continue;
+    if (followsHeading) blocks[blocks.length - 1] += `\n\n${raw}`;
+    else blocks.push(raw);
+    followsHeading = token.type === "heading";
   }
   return { blocks, definitions };
 }

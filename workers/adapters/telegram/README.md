@@ -16,8 +16,9 @@ staging and production require different BotFather bots and credentials.
 
 - A reply goes out as paragraph messages: the Markdown is split at blank lines
   by the shared splitter in `workers/adapters/shared/src/paragraph-messages.ts`,
-  fenced code blocks, lists and tables stay whole, and runs of short paragraphs
-  merge so a greeting and a one-line question stay in one bubble. Each message
+  headings stay with the following block, and fenced code blocks, lists, tables
+  and quotations stay whole. Short prose paragraphs are separate messages too.
+  Each message
   fits Telegram's 4096 character limit both as Markdown and as the HTML the
   formatting fallback renders, so no message is cut inside a tag or entity.
 - Messages are sent in order about one second apart, because Telegram

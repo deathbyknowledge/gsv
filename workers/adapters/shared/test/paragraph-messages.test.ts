@@ -4,7 +4,6 @@ import { describe, expect, it } from "vitest";
 import {
   codePointLength,
   fitMarkdownToLimit,
-  SHORT_MESSAGE_THRESHOLD,
   splitMarkdownParagraphs,
   splitTextAtLimit,
 } from "../src/paragraph-messages";
@@ -18,25 +17,25 @@ describe("splitMarkdownParagraphs", () => {
     expect(splitMarkdownParagraphs("one line")).toEqual(["one line"]);
   });
 
-  it("keeps a greeting with the short question that follows it", () => {
+  it("keeps short prose paragraphs separate", () => {
     expect(splitMarkdownParagraphs("Hi John!\n\nDid the deploy finish?")).toEqual([
-      "Hi John!\n\nDid the deploy finish?",
+      "Hi John!", "Did the deploy finish?",
     ]);
   });
 
-  it("keeps a heading or intro with the paragraph it introduces and closes after it", () => {
+  it("keeps headings with the block they introduce regardless of length", () => {
     const messages = splitMarkdownParagraphs(`# Report\n\n${LONG}\n\nAnything else?`);
     expect(messages).toEqual([`# Report\n\n${LONG}`, "Anything else?"]);
-    expect(codePointLength(messages[0]!)).toBeGreaterThan(SHORT_MESSAGE_THRESHOLD);
+    expect(splitMarkdownParagraphs("# Report\n\n## Status\n\nAll done.\n\nAnything else?"))
+      .toEqual(["# Report\n\n## Status\n\nAll done.", "Anything else?"]);
+    expect(splitMarkdownParagraphs("Status\n======\n\n- Done\n- Verified"))
+      .toEqual(["Status\n======\n\n- Done\n- Verified"]);
   });
 
-  it("merges runs of short paragraphs until the message reaches the threshold", () => {
+  it("does not merge a run of short paragraphs", () => {
     const short = "x".repeat(100);
     const messages = splitMarkdownParagraphs(Array.from({ length: 7 }, () => short).join("\n\n"));
-    expect(messages).toEqual([
-      [short, short, short, short].join("\n\n"),
-      [short, short, short].join("\n\n"),
-    ]);
+    expect(messages).toEqual(Array.from({ length: 7 }, () => short));
   });
 
   it("keeps fenced code blocks, loose lists, tables and block quotes whole", () => {
@@ -50,9 +49,7 @@ describe("splitMarkdownParagraphs", () => {
     for (const block of [code, list, table, quote]) {
       expect(messages.filter((message) => message.includes(block))).toHaveLength(1);
     }
-    // Short blocks join the paragraph after them; the loose list is long enough
-    // to stand alone even though blank lines separate its items.
-    expect(messages).toEqual([LONG, `${code}\n\n${LONG}`, list, `${table}\n\n${LONG}`, quote]);
+    expect(messages).toEqual([LONG, code, LONG, list, table, LONG, quote]);
   });
 
   it("preserves indentation that makes a code block", () => {
@@ -127,12 +124,13 @@ describe("fitMarkdownToLimit", () => {
     const markdown = `See the [report][r] and the [summary][S].\n\n${LONG}\n\nRead the [report][r] again.\n\n${definitions}`;
     const messages = splitMarkdownParagraphs(markdown);
     expect(messages).toEqual([
-      `See the [report][r] and the [summary][S].\n\n${LONG}\n\n${definitions}`,
+      `See the [report][r] and the [summary][S].\n\n${definitions}`,
+      LONG,
       "Read the [report][r] again.\n\n[r]: https://example.com/report",
     ]);
 
     const html = (piece: string): string => marked.parse(piece, { async: false });
-    const fitted = fitMarkdownToLimit(messages[0]!, html, 160);
+    const fitted = fitMarkdownToLimit(`${messages[0]}\n\n${LONG}`, html, 160);
     expect(fitted.length).toBeGreaterThan(1);
     for (const piece of fitted) {
       expect(codePointLength(piece.markdown)).toBeLessThanOrEqual(160);

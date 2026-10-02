@@ -150,6 +150,7 @@ type ResponseContext =
   | { kind: "installation"; installationId: string; generation: string };
 
 type DeliveryOptions = {
+  splitParagraphs?: boolean;
   controls?: WhatsAppApprovalControls;
   /** What to keep when an approval prompt has to wait for the person's reply. */
   approval?: WhatsAppApprovalSource;
@@ -497,6 +498,8 @@ export class ManagedWhatsAppPeer extends DurableObject<ManagedWhatsAppPeerEnv> {
       async (message, context) => await this.deliverMessage(
         message,
         context ?? { kind: "platform" },
+        undefined,
+        { splitParagraphs: false },
       ),
     );
     if (result.state !== "pending") return true;
@@ -688,24 +691,20 @@ export class ManagedWhatsAppPeer extends DurableObject<ManagedWhatsAppPeerEnv> {
     if (!issue) return { terminal: true };
     return {
       terminal: true,
-      responses: [{
+      responses: [
+        "In GSV, open Settings → Messengers → WhatsApp and paste the code below.\nExpires in 10 minutes.",
+        formatPairingCode(issue.code),
+      ].map((text, index) => ({
         message: {
-          deliveryId: `managed-pair:${issue.claimId}:${inbound.deliveryId}`,
+          deliveryId: `managed-pair:${issue.claimId}:${inbound.deliveryId}:${index}`,
           surface: { kind: "dm", id: inbound.surfaceId },
           actorId: inbound.actorId,
-          text: [
-            "Connect this WhatsApp number to your GSV.",
-            "",
-            `Pairing code: ${formatPairingCode(issue.code)}`,
-            "",
-            "Open GSV → Settings → Messengers → WhatsApp, enter the code, and confirm the identity shown there.",
-            "This code expires in 10 minutes.",
-          ].join("\n"),
+          text,
           replyToId: inbound.messageId,
         },
         expiresAt: issue.expiresAt,
         context: { kind: "platform", claimId: issue.claimId, routeGeneration },
-      }],
+      })),
     };
   }
 
@@ -896,14 +895,14 @@ export class ManagedWhatsAppPeer extends DurableObject<ManagedWhatsAppPeerEnv> {
         addPart((index) => send(buildWhatsAppInteractivePayload(to, { ...controls, text: last }), index));
         anchor = parts.length - 1;
       } else if (media.length === 0) {
-        for (const body of whatsAppTextMessages(text)) addText(body);
+        for (const body of whatsAppTextMessages(text, options.splitParagraphs)) addText(body);
       } else {
         const rendered = renderWhatsAppText(text);
         const captionOnFirst = Boolean(rendered)
           && whatsAppMediaSupportsCaption(media[0]!.type)
           && whatsAppCaptionFits(rendered);
         if (rendered && !captionOnFirst) {
-          for (const body of whatsAppTextMessages(text)) addText(body);
+          for (const body of whatsAppTextMessages(text, options.splitParagraphs)) addText(body);
         }
         const upload = (bytes: Uint8Array, mimeType: string, filename: string) =>
           uploadWhatsAppMedia(token, phoneNumberId, bytes, mimeType, filename, fetcher);

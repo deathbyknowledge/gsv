@@ -286,14 +286,15 @@ describe("managed WhatsApp clean-instance flow", () => {
   it("pairs a number-first identity and routes later messages to the selected installation", async () => {
     expect((await SELF.fetch(await text("wamid.in.1", "hello"))).status).toBe(200);
     await vi.waitFor(async () => {
-      expect(await sentMessages()).toHaveLength(1);
+      expect(await sentMessages()).toHaveLength(2);
     });
     const pairingMessage = (await sentMessages())[0]!;
     expect(pairingMessage.body.to).toBe(ACTOR);
     expect(pairingMessage.body.context).toEqual({ message_id: "wamid.in.1" });
     const pairingText = pairingMessage.body.text?.body ?? "";
     expect(pairingText).toContain("Settings → Messengers → WhatsApp");
-    const code = pairingText.match(/[A-HJ-NP-Z2-9]{4}(?:-[A-HJ-NP-Z2-9]{4}){2}/)?.[0];
+    const code = (await sentMessages())[1]!.body.text?.body;
+    expect(code).toMatch(/^[A-HJ-NP-Z2-9]{4}(?:-[A-HJ-NP-Z2-9]{4}){2}$/);
     expect(code).toBeTruthy();
     const normalizedCode = code!.replaceAll("-", "");
     // SAFETY: The test environment exposes the declared Durable Object namespace binding.
@@ -509,7 +510,7 @@ describe("managed WhatsApp clean-instance flow", () => {
     await vi.waitFor(async () => {
       const messages = await sentMessages();
       expect(messages.length).toBeGreaterThan(messagesBeforePairCommand);
-      expect(messages.at(-1)?.body.text?.body).toContain("Pairing code:");
+      expect(messages.at(-1)?.body.text?.body).toMatch(/^[A-HJ-NP-Z2-9]{4}(?:-[A-HJ-NP-Z2-9]{4}){2}$/);
     });
     const relinkText = (await sentMessages()).at(-1)?.body.text?.body ?? "";
     const relinkCode = relinkText.match(/[A-HJ-NP-Z2-9]{4}(?:-[A-HJ-NP-Z2-9]{4}){2}/)?.[0];
@@ -578,7 +579,7 @@ describe("managed WhatsApp clean-instance flow", () => {
       surface: { kind: "dm", id: ACTOR },
       actorId: ACTOR,
       routeGeneration: relinked.route.generation,
-      text: `**Report**\n\n${"word ".repeat(1_000)}`,
+      text: `# Report\n\n${"word ".repeat(1_000)}`,
       replyToId: "wamid.in.7",
     })).resolves.toMatchObject({ ok: true, messageId: expect.stringMatching(/^wamid\.out\./) });
     const longChunks = (await sentMessages()).filter((record) => record.body.text?.body.startsWith("*Report*") || record.body.text?.body.startsWith("word word"));
@@ -587,10 +588,8 @@ describe("managed WhatsApp clean-instance flow", () => {
     expect(longChunks[1]!.body.context).toBeUndefined();
     expect(longChunks.every((record) => [...record.body.text!.body].length <= 4096)).toBe(true);
 
-    // A long reply goes out as paragraph messages in order: the greeting and
-    // intro stay with the paragraph they introduce, the closing question is its
-    // own message, only the first quotes the inbound, and the typing indicator
-    // rides a read receipt between messages.
+    // Each prose paragraph is a message. An oversized paragraph is split,
+    // only the first quotes the inbound, and typing rides a read receipt between messages.
     const recordsBeforeParagraphs = (await graphRecords()).length;
     await expect(peer.sendMessage("installation_test", {
       deliveryId: "outbound-paragraphs-1",
@@ -601,10 +600,12 @@ describe("managed WhatsApp clean-instance flow", () => {
       replyToId: "wamid.in.7",
     })).resolves.toMatchObject({ ok: true, messageId: expect.stringMatching(/^wamid\.out\./) });
     const paragraphRecords = (await graphRecords()).slice(recordsBeforeParagraphs);
-    expect(paragraphRecords.map((record) => record.kind)).toEqual(["message", "read", "message", "read", "message"]);
+    expect(paragraphRecords.map((record) => record.kind)).toEqual(["message", "read", "message", "read", "message", "read", "message", "read", "message"]);
     const paragraphMessages = paragraphRecords.filter((record) => record.kind === "message");
     expect(paragraphMessages.map((record) => record.body.text?.body)).toEqual([
-      expect.stringMatching(/^Hi Hank!\n\nHere is the \*report\*\.\n\nword word/),
+      "Hi Hank!",
+      "Here is the *report*.",
+      expect.stringMatching(/^word word/),
       expect.stringMatching(/^word word/),
       "Anything else?",
     ]);
@@ -797,7 +798,7 @@ describe("managed WhatsApp clean-instance flow", () => {
 
     // A longer reply waits behind the pending template instead of sending another.
     const sentBeforeHolding = (await sentMessages()).length;
-    const longText = `**Report**\n\n${"word ".repeat(300).trimEnd()}\n\nAnything else?`;
+    const longText = `# Report\n\n${"word ".repeat(300).trimEnd()}\n\nAnything else?`;
     const longDelivery = {
       deliveryId: "outbound-closed-long",
       surface,
@@ -944,7 +945,7 @@ describe("managed WhatsApp clean-instance flow", () => {
     // A pair command is attempted ahead of the queue, so the pending reply does not hold it up.
     expect((await SELF.fetch(await text("wamid.in.14", "/link"))).status).toBe(200);
     await vi.waitFor(async () => {
-      expect((await sentMessages()).at(-1)?.body.text?.body).toContain("Pairing code:");
+      expect((await sentMessages()).at(-1)?.body.text?.body).toMatch(/^[A-HJ-NP-Z2-9]{4}(?:-[A-HJ-NP-Z2-9]{4}){2}$/);
     });
     const code = ((await sentMessages()).at(-1)?.body.text?.body ?? "").match(/[A-HJ-NP-Z2-9]{4}(?:-[A-HJ-NP-Z2-9]{4}){2}/)?.[0];
     expect(code).toBeTruthy();

@@ -60,15 +60,15 @@ describe("renderWhatsAppText", () => {
 });
 
 describe("whatsAppTextMessages", () => {
-  it("keeps a short reply as one rendered message and drops empty input", () => {
-    expect(whatsAppTextMessages("Hi!\n\nDid the **deploy** finish?")).toEqual(["Hi!\n\nDid the *deploy* finish?"]);
+  it("sends short paragraphs separately and drops empty input", () => {
+    expect(whatsAppTextMessages("Hi!\n\nDid the **deploy** finish?")).toEqual(["Hi!", "Did the *deploy* finish?"]);
     expect(whatsAppTextMessages("   ")).toEqual([]);
   });
 
   it("sends each long paragraph as its own message within Meta's limit", () => {
     const paragraph = "word ".repeat(80).trimEnd();
     expect(whatsAppTextMessages(`${paragraph}\n\n${paragraph}\n\nBye.`)).toEqual([paragraph, paragraph, "Bye."]);
-    const messages = whatsAppTextMessages(`**Report**\n\n${"word ".repeat(1_000)}`);
+    const messages = whatsAppTextMessages(`# Report\n\n${"word ".repeat(1_000)}`);
     expect(messages).toHaveLength(2);
     expect(messages[0]).toMatch(/^\*Report\*\n\nword word/);
     expect(messages[1]).toMatch(/^word word/);

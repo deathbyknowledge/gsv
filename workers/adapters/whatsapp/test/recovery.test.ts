@@ -36,7 +36,7 @@ it("offers pairing after revocation and changes the route only after confirmatio
   await peer.handleWebhook({ kind: "message", inbound: incoming(actorId, "wamid.recovery", "__identity_revoked__") });
   let code = "";
   await vi.waitFor(async () => {
-    const text = (await messages(actorId)).find((message) => message.body.text?.body?.includes("Pairing code:"))?.body.text?.body ?? "";
+    const text = (await messages(actorId)).find((message) => /^[A-HJ-NP-Z2-9]{4}(?:-[A-HJ-NP-Z2-9]{4}){2}$/.test(message.body.text?.body ?? ""))?.body.text?.body ?? "";
     code = text.match(/[A-HJ-NP-Z2-9]{4}(?:-[A-HJ-NP-Z2-9]{4}){2}/)?.[0]?.replaceAll("-", "") ?? "";
     expect(code).toHaveLength(12);
   });
@@ -134,7 +134,8 @@ it("releases held output before answering a linked /link command", async () => {
   await peer.handleWebhook({ kind: "message", inbound: incoming(actorId, "wamid.link.release", "/link") });
   const replies = (await messages(actorId)).filter((message) => message.body.type === "text");
   expect(replies[0]?.body.text?.body).toBe(text);
-  expect(replies[1]?.body.text?.body).toContain("Pairing code:");
+  expect(replies[1]?.body.text?.body).toContain("Settings → Messengers → WhatsApp");
+  expect(replies[2]?.body.text?.body).toMatch(/^[A-HJ-NP-Z2-9]{4}(?:-[A-HJ-NP-Z2-9]{4}){2}$/);
   await runInDurableObject(peer, async (_instance, state) => {
     expect((await state.storage.list({ prefix: "managed_whatsapp_peer:v1:held:" })).size).toBe(0);
   });

@@ -755,7 +755,7 @@ export class ManagedTelegramPeer extends DurableObject<ManagedTelegramPeerEnv> {
       // the approval buttons when there are any, otherwise the first message.
       let anchor = 0;
       if (media.length === 0) {
-        const chunks = telegramTextChunks(text);
+        const chunks = telegramTextChunks(text, context.kind !== "platform" && !options.replyMarkup);
         for (const [index, chunk] of chunks.entries()) {
           parts.push(async () => {
             const sent = await sendManagedTelegramText(
@@ -912,8 +912,9 @@ export class ManagedTelegramPeer extends DurableObject<ManagedTelegramPeerEnv> {
  * paragraph group, each within the text limit as Markdown and as HTML so the
  * rich, HTML and plain fallbacks all fit.
  */
-function telegramTextChunks(markdown: string): string[] {
-  const chunks = splitMarkdownParagraphs(markdown).flatMap((paragraphs) =>
+function telegramTextChunks(markdown: string, splitParagraphs = true): string[] {
+  const paragraphs = splitParagraphs ? splitMarkdownParagraphs(markdown) : [markdown];
+  const chunks = paragraphs.flatMap((paragraphs) =>
     fitMarkdownToLimit(paragraphs, markdownToTelegramHtml, TELEGRAM_TEXT_LIMIT)
       .map((fitted) => fitted.markdown));
   return chunks.length > 0 ? chunks : splitTextAtLimit(markdown, TELEGRAM_TEXT_LIMIT);
