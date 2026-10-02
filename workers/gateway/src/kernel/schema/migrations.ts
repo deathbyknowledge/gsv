@@ -111,6 +111,7 @@ import { KERNEL_V061_BOUND_APPROACH_INVITES } from "./v061_bound_approach_invite
 import { KERNEL_V062_PRIVATE_CONVERSATION_VIEWS } from "./v062_private_conversation_views";
 
 import { KERNEL_V063_CONTACT_REPLY_CONTINUATIONS } from "./v063_contact_reply_continuations";
+import { KERNEL_V064_RECORD_RUN_ROUTE_PLATFORM } from "./v064_record_run_route_platform";
 
 export const KERNEL_SCHEMA_COMPONENT = "kernel";
 
@@ -178,6 +179,7 @@ export const KERNEL_MIGRATIONS: readonly SqlMigration[] = [
   KERNEL_V061_BOUND_APPROACH_INVITES,
   KERNEL_V062_PRIVATE_CONVERSATION_VIEWS,
   KERNEL_V063_CONTACT_REPLY_CONTINUATIONS,
+  KERNEL_V064_RECORD_RUN_ROUTE_PLATFORM,
 ];
 
 export function runKernelSqlMigrations(storage: DurableObjectStorage): void {

@@ -8,6 +8,8 @@ import type {
 } from "@humansandmachines/gsv/protocol";
 import {
   emitTelemetry,
+  shipPlatformFromAdapter,
+  shipPlatformFromPeer,
 } from "@humansandmachines/gsv/telemetry";
 import {
   type ProcessRuntimePatch,
@@ -414,6 +416,11 @@ async commitProcessMessage(
                 ? "adapter"
                 : "background",
             hasMedia: Boolean(message.media?.length),
+            platform: route?.kind === "connection"
+              ? shipPlatformFromPeer(route.clientPlatform)
+              : route?.kind === "adapter"
+                ? shipPlatformFromAdapter(route.destination.adapter)
+                : "background",
           },
         },
       });

@@ -852,6 +852,7 @@ export async function forwardToProcess(
           processId: pid,
           uid: proc.ownerUid,
           connectionId: ctx.connection.id,
+          clientPlatform: ctx.connection.state.clientPlatform?.trim() || undefined,
         });
       }
       const result: ForwardedProcessResult = {

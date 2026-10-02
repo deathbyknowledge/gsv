@@ -193,6 +193,7 @@ export async function handleConversationSend(
       processId: conversation.handlerPid,
       uid: conversation.ownerUid,
       connectionId: ctx.connection.id,
+      clientPlatform: interactionOrigin?.kind === "client" ? interactionOrigin.platform : undefined,
     });
   }
   let result: Extract<ProcSendResult, { ok: true }>;
