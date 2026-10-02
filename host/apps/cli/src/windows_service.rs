@@ -37,6 +37,9 @@ use windows_sys::Win32::{
 #[path = "windows_service/enrollment.rs"]
 mod enrollment;
 use enrollment::Enrollment;
+#[path = "windows_service/workspace_permissions.rs"]
+mod workspace_permissions;
+use workspace_permissions::change_workspace_grant;
 #[path = "windows_service/workspace_escrow.rs"]
 mod workspace_escrow;
 use workspace_escrow::{WorkspaceEscrow, WorkspaceRollback};
@@ -115,19 +118,9 @@ impl DeviceServiceManager for WindowsServiceManager {
             powershell_single_quote(&executable.to_string_lossy()), powershell_single_quote(&args),
         );
         enrollment.run(script, escrow, || {
-            run_command_capture(
-                Command::new(system_tool("icacls.exe"))
-                    .arg(&workspace)
-                    .args(["/grant", "NT SERVICE\\gsvd:(OI)(CI)M"]),
-                "Could not grant access to the selected workspace using your existing permissions",
-            )?;
-            if let Some(previous) = &previous_workspace {
-                run_command_capture(
-                    Command::new(system_tool("icacls.exe"))
-                        .arg(previous)
-                        .args(["/remove:g", "NT SERVICE\\gsvd"]),
-                    "Could not remove access to the previous workspace using your existing permissions",
-                )?;
+            change_workspace_grant(&workspace_access, true)?;
+            if let Some(previous) = &previous_access {
+                change_workspace_grant(previous, false)?;
             }
             service::start()
         })
@@ -137,7 +130,7 @@ impl DeviceServiceManager for WindowsServiceManager {
         let config: CliConfig = ConfigFile::new(service::data_dir().join("config.toml")).load()?;
         if let Some(workspace) = config.device.workspace {
             if workspace.exists() {
-                run_command_capture(Command::new(system_tool("icacls.exe")).arg(workspace).args(["/remove:g", "NT SERVICE\\gsvd"]), "Could not remove the service workspace grant; retry uninstall from an administrator terminal")?;
+                change_workspace_grant(&workspace_acl_access(&workspace)?, false)?;
             }
         }
         service::open(ServiceAccess::DELETE)?.delete()?;

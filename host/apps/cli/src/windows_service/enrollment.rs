@@ -2,12 +2,6 @@ use super::*;
 use std::os::windows::io::{AsRawHandle, OwnedHandle};
 use windows_sys::Win32::{
     Foundation::{GetLastError, ERROR_ALREADY_EXISTS, WAIT_OBJECT_0, WAIT_TIMEOUT},
-    Security::{
-        Authorization::{GetSecurityInfo, SetSecurityInfo, SE_FILE_OBJECT},
-        GetSecurityDescriptorControl, GetSecurityDescriptorDacl,
-        PROTECTED_DACL_SECURITY_INFORMATION, SE_DACL_PROTECTED,
-        UNPROTECTED_DACL_SECURITY_INFORMATION,
-    },
     System::Threading::{
         CreateEventW, OpenEventW, SetEvent, WaitForMultipleObjects, WaitForSingleObject,
         EVENT_MODIFY_STATE, INFINITE, SYNCHRONIZATION_SYNCHRONIZE,
@@ -157,82 +151,6 @@ fn signal(event: &OwnedHandle) -> Result<(), DynError> {
         return Err(std::io::Error::last_os_error().into());
     }
     Ok(())
-}
-
-/// The preflight handle retains WRITE_DAC authority even if an ACL operation
-/// fails midway. Restoring the original DACL never requires elevation.
-pub(super) struct WorkspaceAcl {
-    file: File,
-    descriptor: SecurityDescriptor,
-    restored: bool,
-}
-
-impl WorkspaceAcl {
-    pub(super) fn capture(file: File) -> Result<Self, DynError> {
-        let mut pointer = std::ptr::null_mut();
-        // SAFETY: the file has READ_CONTROL and the output pointer is writable.
-        let error = unsafe {
-            GetSecurityInfo(
-                file.as_raw_handle(),
-                SE_FILE_OBJECT,
-                DACL_SECURITY_INFORMATION,
-                std::ptr::null_mut(),
-                std::ptr::null_mut(),
-                std::ptr::null_mut(),
-                std::ptr::null_mut(),
-                &mut pointer,
-            )
-        };
-        if error != 0 {
-            return Err(std::io::Error::from_raw_os_error(error as i32).into());
-        }
-        Ok(Self {
-            file,
-            descriptor: SecurityDescriptor { pointer },
-            restored: false,
-        })
-    }
-
-    pub(super) fn restore(&mut self) -> Result<(), DynError> {
-        if self.restored {
-            return Ok(());
-        }
-        let mut dacl = std::ptr::null_mut();
-        let mut present = 0;
-        let mut defaulted = 0;
-        let mut control = 0;
-        let mut revision = 0;
-        // SAFETY: the captured descriptor and all output pointers remain live.
-        if unsafe { GetSecurityDescriptorDacl(self.descriptor.pointer, &mut present, &mut dacl, &mut defaulted) } == 0
-            // SAFETY: the captured descriptor and both output pointers are valid.
-            || unsafe { GetSecurityDescriptorControl(self.descriptor.pointer, &mut control, &mut revision) } == 0
-        {
-            return Err(std::io::Error::last_os_error().into());
-        }
-        let flags = DACL_SECURITY_INFORMATION
-            | if control & SE_DACL_PROTECTED != 0 {
-                PROTECTED_DACL_SECURITY_INFORMATION
-            } else {
-                UNPROTECTED_DACL_SECURITY_INFORMATION
-            };
-        // SAFETY: the handle retains WRITE_DAC and dacl belongs to the live snapshot.
-        let error = unsafe {
-            SetSecurityInfo(
-                self.file.as_raw_handle(),
-                SE_FILE_OBJECT,
-                flags,
-                std::ptr::null_mut(),
-                std::ptr::null_mut(),
-                dacl,
-                std::ptr::null_mut(),
-            )
-        };
-        if error != 0 {
-            return Err(std::io::Error::from_raw_os_error(error as i32).into());
-        }
-        self.restored = true;
-        Ok(())
-    }
 }
 
 #[cfg(test)]

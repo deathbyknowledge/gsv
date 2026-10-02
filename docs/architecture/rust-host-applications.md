@@ -70,6 +70,8 @@ use an argument to borrow another process's authority. These handles and ACL
 snapshots survive caller exit and authorize only restoration of the prior ACLs.
 The enrolling process grants
 the service access, revokes any previous workspace grant, and starts the service.
+Workspace ACL changes use synchronous Windows APIs on those handles inside the
+caller process. No external ACL worker can survive it and overwrite rollback.
 The elevated replacement guard remains active throughout those caller-side steps.
 A failed grant or startup restores the original workspace ACLs before rolling
 back the daemon and enrollment. Caller exit signals the same rollback in the

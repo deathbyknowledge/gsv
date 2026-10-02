@@ -1,5 +1,4 @@
 use super::*;
-use enrollment::WorkspaceAcl;
 use std::os::windows::io::{AsRawHandle, OwnedHandle};
 use windows_sys::Win32::{
     Foundation::{
@@ -16,6 +15,7 @@ use windows_sys::Win32::{
         Threading::{GetCurrentProcess, OpenProcess, PROCESS_DUP_HANDLE, PROCESS_SYNCHRONIZE},
     },
 };
+use workspace_permissions::WorkspaceAcl;
 
 fn pipe_name(id: &str) -> Result<String, DynError> {
     Ok(format!(

@@ -135,6 +135,15 @@ try {
     }
     return "$($acl.GetOwner([Security.Principal.SecurityIdentifier]).Value);$($acl.GetGroup([Security.Principal.SecurityIdentifier]).Value);$($acl.AreAccessRulesProtected);$($rules -join ';')"
   }
+  $descendantAcls = @{}
+  foreach ($index in 1..128) {
+    $child = Join-Path $failedWorkspace ("child-" + $index)
+    New-Item -ItemType Directory -Path $child | Out-Null
+    $leaf = Join-Path $child 'file.txt'
+    [IO.File]::WriteAllText($leaf, 'workspace rollback fixture')
+    $descendantAcls[$child] = Get-WorkspacePermissions $child
+    $descendantAcls[$leaf] = Get-WorkspacePermissions $leaf
+  }
   $failedAcl = Get-WorkspacePermissions $failedWorkspace
   $priorAcl = Get-WorkspacePermissions $nextWorkspace
   $fixtureSource = Join-Path $root 'failed-service.cs'
@@ -170,8 +179,8 @@ class FailedService {
   Copy-Item $config (Join-Path $cliConfig 'config.toml') -Force
   & $cli daemon reload
   if ($LASTEXITCODE) { throw 'Startup rollback did not restore the previous enrollment workspace' }
-  # Kill the real enrolling CLI after both ACL mutations and before commit.
-  # The elevated transaction must retain the caller's original ACL authority.
+  # Kill as soon as the first grant is visible, without waiting for propagation
+  # through the subtree or the old grant's revocation. No ACL worker may outlive it.
   [IO.File]::WriteAllText((Join-Path $cliConfig 'config.toml'), "[device]`nid = 'windows-ci'`nworkspace = '$failedWorkspace'`n", [Text.UTF8Encoding]::new($false))
   $enrolling = Start-Process -FilePath (Join-Path $changedPackage 'gsv.exe') -ArgumentList 'daemon install' -PassThru -WindowStyle Hidden -RedirectStandardOutput (Join-Path $root 'cancelled-install.out') -RedirectStandardError (Join-Path $root 'cancelled-install.err')
   try {
@@ -180,8 +189,7 @@ class FailedService {
       $enrolling.Refresh()
       if ($enrolling.HasExited) { throw 'Enrollment exited before the cancellation test reached its ACL changes' }
       $granted = (Get-Acl $failedWorkspace).GetAccessRules($true, $false, [Security.Principal.SecurityIdentifier]) | Where-Object { $_.IdentityReference.Value -eq $serviceSid }
-      $oldGrant = (Get-Acl $nextWorkspace).GetAccessRules($true, $false, [Security.Principal.SecurityIdentifier]) | Where-Object { $_.IdentityReference.Value -eq $serviceSid }
-      if ($granted -and -not $oldGrant) { break }
+      if ($granted) { break }
       if ([DateTime]::UtcNow -gt $deadline) { throw 'Enrollment did not reach the cancellation boundary' }
       Start-Sleep -Milliseconds 50
     } while ($true)
@@ -202,6 +210,10 @@ class FailedService {
   Copy-Item $config (Join-Path $cliConfig 'config.toml') -Force
   & $cli daemon reload
   if ($LASTEXITCODE) { throw 'Caller-exit rollback did not restore enrollment configuration' }
+  foreach ($entry in $descendantAcls.GetEnumerator()) {
+    if ((Get-WorkspacePermissions $entry.Key) -ne $entry.Value) { throw "Caller exit left changed descendant permissions: $($entry.Key)" }
+  }
+
 
 
   $assets = Join-Path $root 'assets'
