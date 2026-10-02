@@ -2,8 +2,8 @@ import type { AsciiAnimationScene } from "../../../../components/ui/AsciiAnimati
 import { AsciiMeshRaster, rotationMatrix } from "../../../../components/ui/asciiMesh";
 import { buildVoyager, type VoyagerPoint } from "./voyager";
 
-export function createShipScene({ cols = 120, rows = 60, aspect = 1.62 } = {}) {
-  const raster = new AsciiMeshRaster(cols, rows, { aspect, perspective: 0.1 });
+export function createShipScene() {
+  const raster = new AsciiMeshRaster(120, 60, { aspect: 1.62, perspective: 0.1 });
   let particles: AsciiMeshRaster | undefined;
   let model: ReturnType<typeof buildVoyager>;
   let heading = 0, pitch = 0;
@@ -49,10 +49,10 @@ export function createShipScene({ cols = 120, rows = 60, aspect = 1.62 } = {}) {
         const perspective = 1 + z * 0.1;
         const flicker = point.flicker === undefined ? 1 : 0.91 + Math.sin(idle * 3 + point.flicker) * 0.09;
         const light = Math.min(1, point.brightness * (0.8 + (z + 1) * 0.19) * (0.3 + 0.7 * formed) * flicker * exposure);
-        target.splat(raster.width / 2 + x * unit * aspect * perspective, raster.height / 2 + y * unit * perspective, z, light, 1.15);
+        target.splat(raster.width / 2 + x * unit * 1.62 * perspective, raster.height / 2 + y * unit * perspective, z, light, 1.15);
       };
       if (surface < 1) {
-        particles ??= new AsciiMeshRaster(cols, rows);
+        particles ??= new AsciiMeshRaster(120, 60);
         particles.clear();
         for (const point of model.points) drawPoint(point, particles);
         raster.crossfadeFrom(particles, surface);

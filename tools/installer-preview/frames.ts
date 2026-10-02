@@ -1,26 +1,25 @@
 import { writeFileSync } from "node:fs";
-import { createShipScene } from "../../web/src/app/features/session/backgrounds/ship/shipScene";
+import { createSatelliteScene } from "./satellite";
 
-// Generated from the UI's Voyager. Installation playback will only print cached frames.
+// Render once during development; terminal playback only prints cached frames.
 function render(cols: number, rows: number) {
-const scene = createShipScene({ cols, rows, aspect: 2 });
-scene.prepare();
-const frames: string[] = [];
-for (let frame = 0; frame < 180; frame++) {
-  const { foreground, nebula = "", stars = "" } = scene.frame(frame / 12, true, "dark");
-  const layers = [nebula, foreground, stars];
-  let output = "", color = -1;
-  for (let i = 0; i < foreground.length; i++) {
-    if (foreground[i] === "\n") { output += "\n"; continue; }
-    const layer = stars[i] !== " " ? 2 : foreground[i] !== " " ? 1 : nebula[i] !== " " ? 0 : -1;
-    if (layer !== color && layer !== -1) {
-      output += `\x1b[38;5;${[240, 250, 255][layer]}m`;
-      color = layer;
+  const scene = createSatelliteScene(cols, rows);
+  const frames: string[] = [];
+  for (let frame = 0; frame < 240; frame++) {
+    const { foreground, nebula = "", stars = "" } = scene.frame(frame / 12);
+    const layers = [nebula, foreground, stars];
+    let output = "", color = -1;
+    for (let i = 0; i < foreground.length; i++) {
+      if (foreground[i] === "\n") { output += "\n"; continue; }
+      const layer = stars[i] !== " " ? 2 : foreground[i] !== " " ? 1 : nebula[i] !== " " ? 0 : -1;
+      if (layer !== color && layer !== -1) {
+        output += `\x1b[38;5;${[244, 253, 255][layer]}m`;
+        color = layer;
+      }
+      output += layer === -1 ? " " : layers[layer][i];
     }
-    output += layer === -1 ? " " : layers[layer][i];
+    frames.push(`${output}\x1b[0m`);
   }
-  frames.push(`${output}\x1b[0m`);
+  return { cols, rows, frames };
 }
-return frames;
-}
-writeFileSync(process.argv[2], JSON.stringify({ wide: render(120, 60), narrow: render(96, 46) }));
+writeFileSync(process.argv[2], JSON.stringify([render(96, 36), render(76, 28), render(56, 22)]));
