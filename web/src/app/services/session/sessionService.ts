@@ -267,7 +267,6 @@ export function createSessionService(client: SessionClient, options: SessionServ
     message: "Booting up...",
   };
 
-  let pendingRevokes = Array.from(new Set(readPersistedRevokes(storage)));
   let refreshTimerId: number | null = null;
   let reconnectTimerId: number | null = null;
   let reconnectStableTimerId: number | null = null;
@@ -333,7 +332,7 @@ export function createSessionService(client: SessionClient, options: SessionServ
     clearRefreshTimer();
   };
 
-  const persistPendingRevokes = (): void => {
+  const persistPendingRevokes = (pendingRevokes: string[]): void => {
     if (disposed) return;
     if (pendingRevokes.length === 0) {
       removeValue(STORAGE_PENDING_REVOKES, storage);
@@ -347,24 +346,24 @@ export function createSessionService(client: SessionClient, options: SessionServ
     if (!tokenId) {
       return;
     }
-    if (!pendingRevokes.includes(tokenId)) {
-      pendingRevokes.push(tokenId);
-      persistPendingRevokes();
-    }
+    // Called under the credential lock; another tab may have added cleanup since our last read.
+    persistPendingRevokes([...new Set([...readPersistedRevokes(storage), tokenId])]);
   };
 
   const drainPendingRevokes = async (reason: string): Promise<void> => {
     const generation = reconnectGeneration;
-    if (disposed || !client.isConnected() || pendingRevokes.length === 0) return;
-    const requestedRevokes = [...pendingRevokes];
+    if (disposed || !client.isConnected()) return;
+    const requestedRevokes = readPersistedRevokes(storage);
     for (const tokenId of requestedRevokes) {
       if (disposed || generation !== reconnectGeneration || !client.isConnected()) return;
       try {
         const revoked = await revokeSessionToken(client, tokenId, reason);
         if (disposed || generation !== reconnectGeneration) return;
         if (revoked) {
-          pendingRevokes = pendingRevokes.filter((id) => id !== tokenId);
-          persistPendingRevokes();
+          await withSessionTokenLock(() => {
+            if (disposed || generation !== reconnectGeneration) return;
+            persistPendingRevokes(readPersistedRevokes(storage).filter((id) => id !== tokenId));
+          });
         }
       } catch {
         // Keep failed and unattempted revocations for a later authenticated connection.

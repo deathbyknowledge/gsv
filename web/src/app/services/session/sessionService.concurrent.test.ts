@@ -4,6 +4,7 @@ import type { ConnectResult } from "@humansandmachines/gsv/protocol";
 import { createSessionService, type SessionClient, type SessionStorage } from "./sessionService";
 
 const KEY = "gsv.ui.session.token.v1";
+const REVOKES = "gsv.ui.session.pending-revokes.v1";
 const DAY = 24 * 60 * 60 * 1000;
 const token = (id: string, days = 30, username = "alice") => ({ username, tokenId: id, token: `secret-${id}`, expiresAt: Date.now() + days * DAY });
 // SAFETY: The fixture writes token() records; the service writes its validated persisted token shape.
@@ -249,6 +250,34 @@ describe("remembered sessions across windows", () => {
     expect(first.snapshot().phase).toBe("ready");
     expect(second.snapshot().phase).toBe("ready");
     first.dispose?.(); second.dispose?.();
+  });
+
+  it.each([false, true])("preserves another tab's pending revocations through rotation and sign-out (old revoke: %s)", async (oldRevoked) => {
+    changeToken(token("old", 29));
+    const a = clientFixture("a"), b = clientFixture("b");
+    const oldRequest = deferred<{ revoked: boolean }>();
+    a.client.sys.token.revoke.mockReturnValueOnce(oldRequest.promise);
+    b.client.sys.token.revoke.mockImplementation(async ({ tokenId }) => ({ revoked: !oldRevoked && tokenId === "renewed-a" }));
+    const first = createSessionService(a.client), second = createSessionService(b.client);
+    await Promise.all([first.start(), second.start()]);
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(persisted()?.tokenId).toBe("renewed-a");
+    await second.lock();
+    expect(JSON.parse(window.localStorage.getItem(REVOKES) ?? "[]"))
+      .toEqual(oldRevoked ? ["old", "renewed-a"] : ["old"]);
+    oldRequest.resolve({ revoked: oldRevoked });
+    await vi.advanceTimersByTimeAsync(0);
+    const remaining = oldRevoked ? "renewed-a" : "old";
+    expect(JSON.parse(window.localStorage.getItem(REVOKES) ?? "[]")).toEqual([remaining]);
+    first.dispose?.(); second.dispose?.();
+
+    // A new tab still has the failed cleanup after both earlier tabs have closed.
+    const next = clientFixture("next");
+    const reopened = createSessionService(next.client);
+    await reopened.login({ username: "alice", password: "password" });
+    expect(next.client.sys.token.revoke).toHaveBeenCalledWith({ tokenId: remaining, reason: "ui session cleanup" });
+    expect(window.localStorage.getItem(REVOKES)).toBeNull();
+    reopened.dispose?.();
   });
 
   it("signs other browser tabs out without touching a separate desktop session", async () => {
