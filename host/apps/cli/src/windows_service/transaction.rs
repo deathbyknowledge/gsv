@@ -19,6 +19,9 @@ impl ServiceReplacement {
         let executable = service::binary_dir().join("gsvd.exe");
         let staged = executable.with_file_name(format!(".gsvd-{}.new", uuid::Uuid::new_v4()));
         let installed = service::installed()?;
+        if installed {
+            validate_registration(&service::open(ServiceAccess::QUERY_CONFIG)?.query_config()?)?;
+        }
         let was_running = installed
             && service::open(ServiceAccess::QUERY_STATUS)?
                 .query_status()?

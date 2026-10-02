@@ -12,9 +12,9 @@ use windows_host::{
         self,
         windows_service::{
             service::{
-                ServiceAccess, ServiceAction, ServiceActionType, ServiceErrorControl,
-                ServiceFailureActions, ServiceFailureResetPeriod, ServiceInfo, ServiceSidType,
-                ServiceStartType, ServiceState, ServiceType,
+                ServiceAccess, ServiceAction, ServiceActionType, ServiceConfig,
+                ServiceErrorControl, ServiceFailureActions, ServiceFailureResetPeriod, ServiceInfo,
+                ServiceSidType, ServiceStartType, ServiceState, ServiceType,
             },
             service_manager::{ServiceManager, ServiceManagerAccess},
         },
@@ -366,6 +366,10 @@ pub fn install_elevated(
         .transpose()?;
     let data = service::data_dir();
     let bin = service::binary_dir();
+    let installed = service::installed()?;
+    if installed {
+        validate_registration(&service::open(ServiceAccess::QUERY_CONFIG)?.query_config()?)?;
+    }
     let binary_root = bin.parent().expect("service binary directory has a parent");
     let data_root = data.parent().expect("service data directory has a parent");
     machine.device.workspace = Some(workspace.clone());
@@ -374,7 +378,6 @@ pub fn install_elevated(
     protect_directory(&bin, protected)?;
     protect_directory(data_root, protected)?;
     let executable = bin.join("gsvd.exe");
-    let installed = service::installed()?;
     let owner_path = service::owner_sid_path();
     if owner_path.exists() {
         let existing_owner = fs::read_to_string(&owner_path)?;
@@ -397,79 +400,77 @@ pub fn install_elevated(
             executable_path: executable,
             launch_arguments: vec!["--windows-service".into()],
             dependencies: vec![],
-            account_name: if installed {
-                None
-            } else {
-                Some(service::ACCOUNT.into())
-            },
+            account_name: Some(service::ACCOUNT.into()),
             account_password: None,
         };
         let svc = if installed {
-            let svc = service::open(ServiceAccess::ALL_ACCESS)?;
-            svc.change_config(&info)?;
-            svc
+            service::open(ServiceAccess::QUERY_CONFIG)?
         } else {
             manager.create_service(&info, ServiceAccess::ALL_ACCESS)?
         };
-        svc.set_config_service_sid_info(ServiceSidType::Unrestricted)?;
-        // Commands share the daemon's OS identity. The SCM token needs directory
-        // traversal, not the impersonation/backup privileges often given to services.
-        let mut privileges: Vec<u16> = "SeChangeNotifyPrivilege\0\0".encode_utf16().collect();
-        let required = SERVICE_REQUIRED_PRIVILEGES_INFOW {
-            pmszRequiredPrivileges: privileges.as_mut_ptr(),
-        };
-        // SAFETY: the service handle allows configuration and both buffers stay live.
-        if unsafe {
-            ChangeServiceConfig2W(
-                svc.raw_handle(),
-                SERVICE_CONFIG_REQUIRED_PRIVILEGES_INFO,
-                (&required as *const SERVICE_REQUIRED_PRIVILEGES_INFOW).cast(),
-            )
-        } == 0
-        {
-            return Err(std::io::Error::last_os_error().into());
-        }
+        // Existing registrations belong to their administrator. Replacing the
+        // executable must not rewrite settings that a rollback cannot restore.
+        if !installed {
+            svc.set_config_service_sid_info(ServiceSidType::Unrestricted)?;
+            // Commands share the daemon's OS identity. The SCM token needs directory
+            // traversal, not the impersonation/backup privileges often given to services.
+            let mut privileges: Vec<u16> = "SeChangeNotifyPrivilege\0\0".encode_utf16().collect();
+            let required = SERVICE_REQUIRED_PRIVILEGES_INFOW {
+                pmszRequiredPrivileges: privileges.as_mut_ptr(),
+            };
+            // SAFETY: the service handle allows configuration and both buffers stay live.
+            if unsafe {
+                ChangeServiceConfig2W(
+                    svc.raw_handle(),
+                    SERVICE_CONFIG_REQUIRED_PRIVILEGES_INFO,
+                    (&required as *const SERVICE_REQUIRED_PRIVILEGES_INFOW).cast(),
+                )
+            } == 0
+            {
+                return Err(std::io::Error::last_os_error().into());
+            }
 
+            svc.set_description(
+                "Connects this machine to its owner's GSV space before Windows login.",
+            )?;
+            svc.update_failure_actions(ServiceFailureActions {
+                reset_period: ServiceFailureResetPeriod::After(Duration::from_secs(86400)),
+                reboot_msg: None,
+                command: None,
+                actions: Some(
+                    vec![10, 30, 60]
+                        .into_iter()
+                        .map(|seconds| ServiceAction {
+                            action_type: ServiceActionType::Restart,
+                            delay: Duration::from_secs(seconds),
+                        })
+                        .collect(),
+                ),
+            })?;
+            svc.set_failure_actions_on_non_crash_failures(true)?;
+            // The enrolling user may inspect, start, stop and remove their service, but
+            // cannot change its privileged registration or executable through this ACL.
+            let descriptor = SecurityDescriptor::from_sddl(&format!(
+                "D:P(A;;GA;;;SY)(A;;GA;;;BA)(A;;CCLCSWRPWPLOCRRCSD;;;{owner})"
+            ))?;
+            // SAFETY: the live service handle has WRITE_DAC and the descriptor remains valid.
+            if unsafe {
+                SetServiceObjectSecurity(
+                    svc.raw_handle(),
+                    DACL_SECURITY_INFORMATION,
+                    descriptor.pointer,
+                )
+            } == 0
+            {
+                return Err(std::io::Error::last_os_error().into());
+            }
+        }
         run_command_capture(
             Command::new(system_tool("icacls.exe"))
                 .arg(&bin)
                 .args(["/grant", "NT SERVICE\\gsvd:(OI)(CI)RX"]),
             "Could not grant service executable access",
         )?;
-        svc.set_description(
-            "Connects this machine to its owner's GSV space before Windows login.",
-        )?;
-        svc.update_failure_actions(ServiceFailureActions {
-            reset_period: ServiceFailureResetPeriod::After(Duration::from_secs(86400)),
-            reboot_msg: None,
-            command: None,
-            actions: Some(
-                vec![10, 30, 60]
-                    .into_iter()
-                    .map(|seconds| ServiceAction {
-                        action_type: ServiceActionType::Restart,
-                        delay: Duration::from_secs(seconds),
-                    })
-                    .collect(),
-            ),
-        })?;
-        svc.set_failure_actions_on_non_crash_failures(true)?;
-        // The enrolling user may inspect, start, stop and remove their service, but
-        // cannot change its privileged registration or executable through this ACL.
-        let descriptor = SecurityDescriptor::from_sddl(&format!(
-            "D:P(A;;GA;;;SY)(A;;GA;;;BA)(A;;CCLCSWRPWPLOCRRCSD;;;{owner})"
-        ))?;
-        // SAFETY: the live service handle has WRITE_DAC and the descriptor remains valid.
-        if unsafe {
-            SetServiceObjectSecurity(
-                svc.raw_handle(),
-                DACL_SECURITY_INFORMATION,
-                descriptor.pointer,
-            )
-        } == 0
-        {
-            return Err(std::io::Error::last_os_error().into());
-        }
         // Resolve the service SID through its registered account, then install an
         // exact DACL rather than retaining permissions from a pre-existing folder.
         protect_directory(
@@ -579,18 +580,8 @@ pub fn sync_configuration() -> Result<(), DynError> {
 /// Inspect the executable registered with SCM, including when it is stopped.
 pub(super) fn registered_executable() -> Result<PathBuf, DynError> {
     let config = service::open(ServiceAccess::QUERY_CONFIG)?.query_config()?;
+    validate_registration(&config)?;
     let path = service::binary_dir().join("gsvd.exe");
-    let expected = windows_arguments_string(&[
-        path.to_string_lossy().into_owned(),
-        "--windows-service".to_owned(),
-    ]);
-    if !config
-        .executable_path
-        .to_string_lossy()
-        .eq_ignore_ascii_case(&expected)
-    {
-        return Err("Unexpected Windows service executable or arguments; run gsv daemon install to repair its registration".into());
-    }
     println!("service startup: {:?}", config.start_type);
     println!(
         "service account: {}",
@@ -598,6 +589,23 @@ pub(super) fn registered_executable() -> Result<PathBuf, DynError> {
     );
     validate_gsvd_version(&path)?;
     Ok(path)
+}
+
+fn validate_registration(config: &ServiceConfig) -> Result<(), DynError> {
+    let path = service::binary_dir().join("gsvd.exe");
+    let expected = windows_arguments_string(&[
+        path.to_string_lossy().into_owned(),
+        "--windows-service".to_owned(),
+    ]);
+    if config.service_type != ServiceType::OWN_PROCESS
+        || !config
+            .executable_path
+            .to_string_lossy()
+            .eq_ignore_ascii_case(&expected)
+    {
+        return Err("The existing gsvd registration is not the expected GSV service. An administrator must restore or remove that registration before installing GSV; it has not been changed.".into());
+    }
+    Ok(())
 }
 
 #[cfg(test)]

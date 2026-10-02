@@ -23,10 +23,29 @@ $marker = Join-Path $root 'untrusted-daemon-executed'
 $trap = Join-Path $root 'untrusted-gsvd.cmd'
 $protectedWorkspace = Join-Path $env:ProgramFiles ('gsv-workspace-test-' + [Guid]::NewGuid().ToString('N'))
 $version = (& $daemonSource --version).Trim()
+$sc = Join-Path ([Environment]::SystemDirectory) 'sc.exe'
+function Get-ServiceRegistration {
+  $settings = Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Services\gsvd' |
+    Select-Object ImagePath, Type, Start, ErrorControl, DisplayName, ObjectName, Description, RequiredPrivileges, ServiceSidType, FailureActions, FailureActionsOnNonCrashFailures, DependOnService, DependOnGroup |
+    ConvertTo-Json -Compress -Depth 3
+  $security = (& $sc sdshow gsvd | Out-String).Trim()
+  if ($LASTEXITCODE) { throw 'Could not read service security for the rollback check' }
+  return "$settings;$security"
+}
 [IO.File]::WriteAllText($trap, "@echo off`r`necho executed> `"%GSV_TEST_DAEMON_MARKER%`"`r`necho $version`r`n")
 try {
   New-Item -ItemType Directory -Path $cliConfig | Out-Null
   Copy-Item $config (Join-Path $cliConfig 'config.toml')
+  # A colliding SCM name is not permission to replace another service.
+  & $sc create gsvd binPath= ((Join-Path ([Environment]::SystemDirectory) 'cmd.exe') + ' /c exit 1') start= demand DisplayName= 'Unrelated service fixture'
+  if ($LASTEXITCODE) { throw 'Could not create the service collision fixture' }
+  $foreignRegistration = Get-ServiceRegistration
+  & $cli daemon windows-install --config $config --owner-sid $owner --workspace $workspace --daemon-source $daemonSource --daemon-sha256 $daemonHash
+  if (-not $LASTEXITCODE) { throw 'Installation accepted a conflicting service registration' }
+  if ((Get-ServiceRegistration) -ne $foreignRegistration -or (Get-Service gsvd).Status -ne 'Stopped') { throw 'Rejected collision changed the existing service' }
+  if (Test-Path (Join-Path $env:ProgramFiles 'GSV')) { throw 'Rejected collision changed GSV service files' }
+  & $sc delete gsvd
+  if ($LASTEXITCODE) { throw 'Could not remove the service collision fixture' }
   $env:GSV_TEST_DAEMON_MARKER = $marker
   & $trap --version
   if ($LASTEXITCODE -or -not (Test-Path $marker)) { throw 'Untrusted daemon fixture did not run' }
@@ -69,6 +88,16 @@ try {
   $serviceBinary = Join-Path $env:ProgramFiles 'GSV/service/gsvd.exe'
   $installedHash = (Get-FileHash $serviceBinary).Hash
   $installedPid = $service.ProcessId
+  # Administrator choices survive both successful replacements and rollback.
+  & $sc config gsvd start= demand DisplayName= 'Custom GSV machine'
+  if ($LASTEXITCODE) { throw 'Could not configure custom startup settings' }
+  & $sc description gsvd 'Custom recovery fixture'
+  if ($LASTEXITCODE) { throw 'Could not configure a custom description' }
+  & $sc failure gsvd reset= 1234 actions= restart/7000/restart/19000
+  if ($LASTEXITCODE) { throw 'Could not configure custom recovery actions' }
+  & $sc failureflag gsvd 0
+  if ($LASTEXITCODE) { throw 'Could not configure custom recovery policy' }
+  $registration = Get-ServiceRegistration
   $changedPackage = Join-Path $root 'changed package'
   New-Item -ItemType Directory -Path $changedPackage | Out-Null
   Copy-Item $cli (Join-Path $changedPackage 'gsv.exe')
@@ -100,6 +129,7 @@ try {
       if (-not $LASTEXITCODE) { throw 'Reinstallation unexpectedly replaced a locked file' }
     } finally { $locked.Dispose() }
     if ((Get-FileHash $serviceBinary).Hash -ne $installedHash -or (Get-Service gsvd).Status -ne 'Running') { throw 'Failed reinstall did not restore the previous running daemon' }
+    if ((Get-ServiceRegistration) -ne $registration) { throw 'Failed reinstall changed SCM configuration' }
   }
   foreach ($action in @('doctor', 'status', 'diagnostics', 'reload', 'restart', 'stop', 'start')) {
     & $cli daemon $action
@@ -115,6 +145,7 @@ try {
   $env:GSV_GSVD_PATH = $trap
   & $cli daemon install
   if ($LASTEXITCODE) { throw 'Workspace replacement failed' }
+  if ((Get-ServiceRegistration) -ne $registration) { throw 'Workspace replacement changed SCM configuration' }
   if (Test-Path $marker) { throw 'Elevated installation executed the inherited daemon override' }
   $env:GSV_GSVD_PATH = $previousOverride
   $serviceSid = ([Security.Principal.NTAccount]::new('NT SERVICE', 'gsvd')).Translate([Security.Principal.SecurityIdentifier]).Value
@@ -168,6 +199,7 @@ class FailedService {
   & (Join-Path $changedPackage 'gsv.exe') daemon install
   if (-not $LASTEXITCODE) { throw 'Installation accepted a daemon that failed to start' }
   if ((Get-Service gsvd).Status -ne 'Running' -or (Get-FileHash $serviceBinary).Hash -ne $installedHash) { throw 'Startup failure did not restore the running daemon' }
+  if ((Get-ServiceRegistration) -ne $registration) { throw 'Startup failure changed SCM configuration' }
   $restoredFailedAcl = Get-WorkspacePermissions $failedWorkspace
   $restoredPriorAcl = Get-WorkspacePermissions $nextWorkspace
   if ($restoredFailedAcl -ne $failedAcl -or $restoredPriorAcl -ne $priorAcl) {
@@ -210,6 +242,7 @@ class FailedService {
   Copy-Item $config (Join-Path $cliConfig 'config.toml') -Force
   & $cli daemon reload
   if ($LASTEXITCODE) { throw 'Caller-exit rollback did not restore enrollment configuration' }
+  if ((Get-ServiceRegistration) -ne $registration) { throw 'Caller-exit rollback changed SCM configuration' }
   foreach ($entry in $descendantAcls.GetEnumerator()) {
     if ((Get-WorkspacePermissions $entry.Key) -ne $entry.Value) { throw "Caller exit left changed descendant permissions: $($entry.Key)" }
   }
@@ -258,6 +291,7 @@ class FailedService {
   & $installer -Destination $destination -AssetDirectory $assets -UserConfigDirectory (Join-Path $root 'user-config') -Headless -SkipUserSetup
   if (-not (Test-Path (Join-Path $destination 'gsv.exe'))) { throw 'Installer did not install the CLI' }
   if ((Get-Service gsvd).Status -ne 'Running') { throw 'Installer did not restore the service' }
+  if ((Get-ServiceRegistration) -ne $registration) { throw 'Installer changed SCM configuration' }
   $before = (Get-FileHash $serviceBinary).Hash
   [IO.File]::WriteAllText((Join-Path $assets 'gsvd-windows-x64.exe'), 'invalid executable for rollback test')
   Write-Checksums
@@ -268,6 +302,7 @@ class FailedService {
   if (-not $rejected) { throw 'Installer accepted a daemon that could not start' }
   if ((Get-FileHash $serviceBinary).Hash -ne $before) { throw 'Failed update did not restore the daemon' }
   if ((Get-Service gsvd).Status -ne 'Running') { throw 'Failed update did not recover the service' }
+  if ((Get-ServiceRegistration) -ne $registration) { throw 'Failed update changed SCM configuration' }
   & $cli daemon uninstall
   if ($LASTEXITCODE) { throw 'Service uninstall failed' }
   Start-Sleep -Seconds 1

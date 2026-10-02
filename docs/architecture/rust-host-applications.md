@@ -55,7 +55,11 @@ cancellation path as foreground shutdown. Crash recovery belongs to SCM.
 Installation requests administrator elevation, copies the service executable
 to `%ProgramFiles%\GSV\service`, and defaults to the passwordless virtual
 account `NT SERVICE\gsvd`. Administrators may configure a different service
-logon account through Windows Services. Reinstallation preserves that account.
+logon account through Windows Services. Reinstallation and upgrades preserve the
+existing SCM configuration, including the account, startup and recovery settings,
+token privileges, service SID policy, description, and service DACL. Only a new
+registration receives the defaults. A conflicting `gsvd` executable or service
+type is rejected before replacement; an administrator must resolve it explicitly.
 The service SID receives access to its state and selected workspace; agent
 commands inherit the service account's permissions, never the installer's.
 The default Windows workspace is `%USERPROFILE%\GSV`.
