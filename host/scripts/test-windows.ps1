@@ -119,6 +119,30 @@ try {
   if ($oldRules | Where-Object { $_.IdentityReference.Value -eq $serviceSid }) { throw 'Previous workspace retained its service grant' }
   & $cli daemon reload
   if ($LASTEXITCODE) { throw 'Configuration reload rejected the unchanged workspace' }
+  # A version-compatible executable that cannot enter SCM must roll back the
+  # complete public install, including both workspace grants and prior config.
+  $failedWorkspace = Join-Path $root 'workspace for failed startup'
+  New-Item -ItemType Directory -Path $failedWorkspace | Out-Null
+  $failedAcl = (Get-Acl $failedWorkspace).Sddl
+  $priorAcl = (Get-Acl $nextWorkspace).Sddl
+  $fixtureSource = Join-Path $root 'failed-service.cs'
+  [IO.File]::WriteAllText($fixtureSource, ('class FailedService { static int Main(string[] args) { if (args.Length == 1 && args[0] == "--version") { System.Console.WriteLine("' + $version + '"); return 0; } return 1; }'))
+  Remove-Item $changedDaemon
+  $compiler = Join-Path ([Environment]::GetFolderPath('Windows')) 'Microsoft.NET/Framework64/v4.0.30319/csc.exe'
+  & $compiler /nologo /target:exe ("/out:" + $changedDaemon) $fixtureSource
+  if ($LASTEXITCODE) { throw 'Could not compile the failed-service fixture' }
+  [IO.File]::WriteAllText((Join-Path $cliConfig 'config.toml'), "[device]`nid = 'windows-ci'`nworkspace = '$failedWorkspace'`n", [Text.UTF8Encoding]::new($false))
+  & (Join-Path $changedPackage 'gsv.exe') daemon install
+  if (-not $LASTEXITCODE) { throw 'Installation accepted a daemon that failed to start' }
+  if ((Get-Service gsvd).Status -ne 'Running' -or (Get-FileHash $serviceBinary).Hash -ne $installedHash) { throw 'Startup failure did not restore the running daemon' }
+  if ((Get-Acl $failedWorkspace).Sddl -ne $failedAcl -or (Get-Acl $nextWorkspace).Sddl -ne $priorAcl) { throw 'Startup failure did not restore workspace permissions' }
+  # TOML serialization may normalize formatting; the persisted workspace must match.
+  & $cli daemon diagnostics --json *> $null
+  if ($LASTEXITCODE) { throw 'Rolled-back daemon control is unavailable' }
+  Copy-Item $config (Join-Path $cliConfig 'config.toml') -Force
+  & $cli daemon reload
+  if ($LASTEXITCODE) { throw 'Startup rollback did not restore the previous enrollment workspace' }
+
   $assets = Join-Path $root 'assets'
   $destination = Join-Path $root 'installed with spaces 日本語'
   New-Item -ItemType Directory -Path $assets | Out-Null

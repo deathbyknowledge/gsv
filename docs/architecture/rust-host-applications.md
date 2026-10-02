@@ -65,6 +65,10 @@ privilege level. Before requesting elevation, it must be able to read and change
 the selected directory's ACL. The elevated child only registers the protected
 service; it never grants or revokes workspace access. The enrolling process grants
 the service access, revokes any previous workspace grant, and starts the service.
+The elevated replacement guard remains active throughout those caller-side steps.
+A failed grant or startup restores the original workspace ACLs before rolling
+back the daemon and enrollment. Caller exit signals rollback in the surviving
+elevated process; it never commits solely because registration completed.
 Administrator approval cannot make an otherwise inaccessible directory writable
 by agent commands.
 

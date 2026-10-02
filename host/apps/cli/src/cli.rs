@@ -189,8 +189,10 @@ pub(crate) enum DaemonAction {
         daemon_source: PathBuf,
         #[arg(long)]
         daemon_sha256: String,
-        #[arg(long)]
-        job: Option<String>,
+        #[arg(long, requires = "parent_pid")]
+        transaction: Option<String>,
+        #[arg(long, requires = "transaction")]
+        parent_pid: Option<u32>,
     },
     /// Install and start the gsvd service
     Install {

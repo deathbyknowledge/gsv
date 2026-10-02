@@ -174,19 +174,16 @@ pub(crate) async fn run() -> Result<(), Box<dyn std::error::Error>> {
                 workspace,
                 daemon_source,
                 daemon_sha256,
-                job,
-            } => {
-                if let Some(job) = job {
-                    windows_host::process::join_installation(&job)?;
-                }
-                gsv::device_service::install_elevated(
-                    &config,
-                    &owner_sid,
-                    &workspace,
-                    &daemon_source,
-                    &daemon_sha256,
-                )
-            }
+                transaction,
+                parent_pid,
+            } => gsv::device_service::install_elevated(
+                &config,
+                &owner_sid,
+                &workspace,
+                &daemon_source,
+                &daemon_sha256,
+                transaction.as_deref().zip(parent_pid),
+            ),
             DaemonAction::Install { id, workspace } => run_daemon_service(
                 DaemonServiceAction::Install { id, workspace },
                 &cfg,
