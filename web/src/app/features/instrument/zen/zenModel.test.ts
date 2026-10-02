@@ -535,6 +535,19 @@ describe("momentsFromConversation", () => {
   const message = (overrides: Partial<ChatTranscriptRow>): ChatTranscriptRow => ({
     id: "m", role: "assistant", text: "", time: "", timestamp: 1_000, ...overrides,
   });
+  it("shows a failed first run even when Ship never sent a reply", () => {
+    const transcript = transcriptRowsFromRecords([{
+      id: 2, messageId: 2, index: 0, generation: 1, runId: "first-run", createdAt: 2000, source: "typed",
+      kind: "event", payload: {
+        kind: "runtime.failed", severity: "error", audience: "both",
+        payload: { reason: "tick.error", prefix: "Process run failed", error: "Model metadata unavailable" },
+      },
+    }]);
+    const moments = momentsFromConversation([message({ role: "user", text: "Hello" })], transcript, null);
+    expect(moments).toHaveLength(2);
+    expect(moments[1]).toMatchObject({ role: "note", text: "Process run failed: Model metadata unavailable",
+      event: { kind: "runtime.failed", severity: "error" }, thinking: false });
+  });
   it("keeps a person's line breaks from the committed message through reload", () => {
     const typed = "cancel printer\nremind me of the plan for gmail\n\npark 3";
     const committed: ConversationMessage = { id: "m1", conversationId: "canonical-ship", sequence: 1,

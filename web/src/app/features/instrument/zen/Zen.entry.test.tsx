@@ -1,5 +1,5 @@
 import { GSVClient, type GsvClientStatus } from "@humansandmachines/gsv/client";
-import type { ConversationMessage, ConversationSendArgs, ConversationSendResult, ConversationSummary, ProcContextState, SysTargetSummary } from "@humansandmachines/gsv/protocol";
+import type { ConversationMessage, ConversationSendArgs, ConversationSendResult, ConversationSummary, ProcContextState, ProcHistoryRecord, SysTargetSummary } from "@humansandmachines/gsv/protocol";
 import { conversationSendMessageId } from "@humansandmachines/gsv/protocol/stable-id";
 import { QueryClient, QueryClientProvider } from "@tanstack/preact-query";
 import type { ComponentChildren, ComponentProps, ComponentType } from "preact";
@@ -19,6 +19,7 @@ import { ConnectPlace } from "../fleet/ConnectPlace";
 import { FleetDialog } from "../fleet/FleetDialog";
 import { ZenText } from "./ZenText";
 import { ThinkingMark } from "./ThinkingMark";
+import { ApprovalCard } from "./ApprovalCard";
 
 let storage: Map<string, string>;
 let messages: ConversationMessage[];
@@ -29,6 +30,7 @@ let gateway: string;
 let shipPid: string;
 let activeRunId: string | null;
 let runContext: ProcContextState | null;
+let processRecords: ProcHistoryRecord[];
 const signals = new Set<Parameters<GSVClient["onSignal"]>[0]>();
 const statuses = new Set<Parameters<GSVClient["onStatus"]>[0]>();
 const send = vi.fn<(args: ConversationSendArgs) => Promise<ConversationSendResult>>();
@@ -57,6 +59,7 @@ beforeEach(() => {
   shipPid = "ship";
   activeRunId = null;
   runContext = null;
+  processRecords = [];
   signals.clear();
   statuses.clear();
   send.mockReset();
@@ -82,7 +85,7 @@ beforeEach(() => {
     if (call === "conversation.forProcess") return { data: { conversation: conversation(z.object({ pid: z.string() }).parse(args).pid) } };
     if (call === "conversation.history") return { data: { conversation: conversation(), messages, hasMore } };
     if (call === "proc.history") return { data: { ok: true, pid: z.object({ pid: z.string() }).parse(args).pid,
-      format: 2, records: [], messages: [], messageCount: 0, cursor: "epoch:1", hasMore: false,
+      format: 2, records: processRecords, messages: [], messageCount: processRecords.length, cursor: "epoch:1", hasMore: false,
       activeRunId, context: runContext, contextRevision: runContext?.revision ?? 0,
       historyRevision: 1, historyGeneration: 1, historyResetRevision: 0 } };
     if (call === "proc.observe" || call === "proc.unobserve") return { data: { ok: true, pid: shipPid } };
@@ -122,6 +125,47 @@ async function mountedZen(pid?: string, initialTarget?: string) {
 }
 
 describe("Zen conversation entry", () => {
+  // Regression coverage for the former interaction:
+  /* an approval takes the keys: the prompt lets go so y and n reach the decision */
+  it.each([false, true])("shows a mail approval without interrupting a draft, with a newer event: %s", async (newerEvent) => {
+    activeRunId = "mail-run";
+    if (newerEvent) processRecords = [
+      { id: 1, messageId: 1, index: 0, generation: 1, runId: activeRunId, createdAt: 1, source: "typed",
+        kind: "call", payload: { callId: "send-mail", tool: "Shell", syscall: "shell.exec", target: "gsv",
+          args: { input: "mail send --to recipient@example.invalid --message Hello" }, runId: activeRunId } },
+      { id: 2, messageId: 2, index: 0, generation: 1, runId: activeRunId, createdAt: 2, source: "typed",
+        kind: "event", payload: { kind: "legacy", payload: { text: "A newer runtime event" }, severity: "info", audience: "person" } },
+    ];
+    const zen = await mountedZen();
+    try {
+      const input: PromptLineHandle = {
+        disabled: false, chip: null, focus: vi.fn(), setValue: vi.fn(),
+        selection: () => ({ value: "Keep typing", start: 5, end: 5 }),
+        append: vi.fn(), blur: vi.fn(), submit: vi.fn(),
+      };
+      zen.props(NativeVoiceControls).prompt.current = input;
+      await act(() => {
+        zen.props(PromptLine).onFocusChange?.(true);
+        zen.props(PromptLine).onInput?.("Keep typing");
+      });
+      await act(() => {
+        for (const listener of signals) listener("proc.run.hil.requested", {
+          pid: shipPid, requestId: "mail-approval", runId: "mail-run", callId: "nested-mail",
+          toolName: "mail.send", syscall: "mail.send", target: "gsv",
+          args: { to: "recipient@example.invalid", subject: "Hello", text: "A message" }, createdAt: 2,
+        });
+      });
+      await vi.waitFor(() => expect(zen.props(ApprovalCard).request.requestId).toBe("mail-approval"));
+      const approval = zen.nodes().find((node) => node.props.class === "zen-moment is-approval");
+      expect(collectNodes(approval).some((node) => node.type === ApprovalCard)).toBe(true);
+      expect(input.blur).not.toHaveBeenCalled();
+      expect(input.focus).not.toHaveBeenCalled();
+      expect(input.setValue).not.toHaveBeenCalled();
+      expect(zen.dirty()).toBe(true);
+      expect(zen.props(PromptLine).disabled).toBe(false);
+    } finally { await zen.unmount(); }
+  });
+
   it.each([undefined, "laptop"])("defaults to gsv with an online machine, unless target %s was explicitly selected", async (initialTarget) => {
     targets = [{ targetId: "laptop", label: "Laptop", online: true, implements: ["shell.exec"], platform: "linux",
       ownerUid: 1000, ownerUsername: "hank", description: "", version: "0.6.2", lastSeenAt: 1 }];

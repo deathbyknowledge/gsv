@@ -122,6 +122,11 @@ their projections, so no partial text outlives its message. Adapters never see t
 The same rule applies to approvals: a client-origin HIL request does not jump to Telegram if its
 connection disappears, while a background Personal event may use the authorized private fallback.
 
+In Web and Desktop, new approval requests scroll into view without moving the composer cursor or
+changing its draft. Use the buttons to decide, or `y` / `n` when not typing. The request has its own
+transcript row, independent of messages and runtime activity. Approvals from delegated work appear
+above the composer.
+
 Opening a Process activity inspector calls `proc.observe`. Raw Process signals then reach that
 specific client in addition to any connection that owns the active run. Closing the inspector calls
 `proc.unobserve`. Observation is explicit so every connected client does not receive every model

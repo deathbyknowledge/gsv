@@ -67,8 +67,10 @@ describe("desktop owner API", () => {
     expect(claim.status).toBe(200);
     expect(await claim.text()).not.toContain("operator-only");
     const handle = `test-${crypto.randomUUID()}`;
-    const first = await (await f.request(`/invites/${issued.invite.id}/space`, f.sessionSecret, { handle })).json<{ origin: string; onboardingToken: string }>();
+    expect(await (await f.request(`/handle?value=${handle.toUpperCase()}`, f.sessionSecret)).json()).toEqual({ available: true });
+    const first = await (await f.request(`/invites/${issued.invite.id}/space`, f.sessionSecret, { handle: handle.toUpperCase() })).json<{ origin: string; onboardingToken: string }>();
     expect(first.origin).toBe(`https://${handle}.${initialSession.spaceDomain}`);
+    expect(await (await f.request(`/handle?value=${handle.toUpperCase()}`, f.sessionSecret)).json()).toEqual({ available: false });
     f.restart();
     const resumed = await (await f.request(`/invites/${issued.invite.id}/space`, f.sessionSecret, { handle })).json<typeof first>();
     expect(resumed.origin).toBe(first.origin);
@@ -108,5 +110,13 @@ describe("desktop owner API", () => {
     expect(response.status).toBe(503);
     expect(await response.text()).not.toContain("private delivery address");
     expect((await f.request("/session", secret())).status).toBe(401);
+  });
+
+  it("explains invalid handle characters before space creation", async () => {
+    const f = await fixture();
+    await f.signIn();
+    const response = await f.request("/handle?value=not_a_handle", f.sessionSecret);
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({ error: "Use letters, numbers or hyphens. Start and end with a letter or number." });
   });
 });

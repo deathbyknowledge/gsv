@@ -602,6 +602,9 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
 
   const latest = moments[moments.length - 1];
   const pendingHil: ProcHilRequest | null = runtime.pendingHil;
+  useLayoutEffect(() => {
+    if (active && pendingHil) scrolling.follow();
+  }, [active, pendingHil?.requestId, scrolling.follow]);
 
   const toggleActivity = useCallback((key: string) => {
     setOpenActivities((current) => {
@@ -703,11 +706,6 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
     },
     [client, pendingHil, pid],
   );
-
-  /* an approval takes the keys: the prompt lets go so y and n reach the decision */
-  useEffect(() => {
-    if (active && pendingHil) promptRef.current?.blur();
-  }, [active, pendingHil]);
 
   useEffect(() => {
     if (!active || !prefill || !connected || !pid) return;
@@ -839,9 +837,8 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
       if (progress >= 1) return null;
       return Math.max(0, progress);
     };
-    return moments.map((moment, index) => {
+    return moments.map((moment) => {
       if (moment.role === "note") return null;
-      const isLatest = index === moments.length - 1;
       const receipt = receipts.get(moment.id);
       return <>
         {moment.role === "human" || moment.text || moment.media?.length || moment.streaming ? <div class="who">
@@ -903,22 +900,11 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
             <button type="button" onClick={() => outbox.discard(moment.outgoing!.id)}>dismiss</button>
           </div>
         ) : null}
-        {isLatest && pendingHil ? (
-          <ApprovalCard
-            request={pendingHil}
-            who={who}
-            place={placeLabel(pendingHil.target, places)}
-            onInspect={() => {
-              if (pid) onFleet({ kind: "approval", pid, requestId: pendingHil.requestId });
-            }}
-            onDecide={(decision) => void decide(decision)}
-          />
-        ) : null}
       </>;
     });
   }, [ready, moments, who, today, timeZone, places, openActivities, toggleActivity, onFleet,
     receipts, memoryCollections.data, onMemory, pendingHil, settling, tick, onTextClick,
-    pid, connected, outbox.sending, outbox.cancelUpload, outbox.retry, outbox.discard, decide]);
+    pid, connected, outbox.sending, outbox.cancelUpload, outbox.retry, outbox.discard]);
 
   /* the status line */
   const selectorPlaces = useMemo(() => orderPlaces(targetsQuery.data ?? []), [targetsQuery.data]);
@@ -926,7 +912,7 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
   const cloudAlone = !!targetsQuery.data && !targetsQuery.isError && selectorPlaces.length === 1;
   const activeRun = connected ? runtime.activeRunId : null;
   const currentModel = runtime.context?.runId === activeRun ? runtime.context.model : null;
-  const showFeedback = note !== null || pendingHil !== null || activeRun !== null;
+  const showFeedback = note !== null || (pendingHil === null && activeRun !== null);
 
   const latestMessageIndex = useMemo(() => moments.reduce((latest, moment, index) =>
     moment.role === "human" || (moment.role === "ship" && (moment.text !== "" || moment.media?.length || moment.streaming)) ? index : latest, -1), [moments]);
@@ -936,7 +922,7 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
       <button type="button" disabled={!connected || conversation.historyFetching} onClick={() => void conversation.retryHistory()}>retry</button>
     </div>
   ) : null;
-  const empty = ready && moments.length === 0 && pid !== null;
+  const empty = ready && moments.length === 0 && pid !== null && pendingHil === null;
 
   return (
     <main class={`zen${!promptFocused ? " is-browse" : ""}${draggingFiles ? " is-file-drop" : ""}`} aria-label="Zen"
@@ -969,7 +955,7 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
           </div>
         ) : (
           <div class="zen-moments" ref={momentsRef}>
-            <div class="zen-content" ref={contentRef}>
+            <div class={`zen-content${pendingHil ? " has-approval" : ""}`} ref={contentRef}>
               {historyFailure}
               {(conversation.loadingOlder || processRuntime.loadingOlderHistory) && <div class="zen-history-status"><LoadingState>loading earlier messages</LoadingState></div>}
               {(conversation.error || processRuntime.historyError) && <div class="zen-history-status is-err" role="alert">
@@ -1006,6 +992,20 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
                   </div>
                 );
               })}
+              {pendingHil ? (
+                <div class="zen-moment is-approval">
+                  <ApprovalCard
+                    key={pendingHil.requestId}
+                    request={pendingHil}
+                    who={who}
+                    place={placeLabel(pendingHil.target, places)}
+                    onInspect={() => {
+                      if (pid) onFleet({ kind: "approval", pid, requestId: pendingHil.requestId });
+                    }}
+                    onDecide={(decision) => void decide(decision)}
+                  />
+                </div>
+              ) : null}
             </div>
           </div>
         )}
@@ -1044,11 +1044,10 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
               onRemove={() => setAttachments((current) => current.filter((file) => file.id !== attachment.id))} />)}
           </ul>}
           {showFeedback && <div class="zen-feedback">
-            {activeRun !== null && <span role="status">
+            {activeRun !== null && pendingHil === null && <span role="status">
               {currentModel && <>{currentModel} · </>}
               {currentPlace.label} {currentPlace.online ? "ready" : "offline"}
             </span>}
-            {pendingHil && <span class="is-warn" role="status">Waiting for your approval</span>}
             {note ? <span class="is-err" role="alert">{note}</span> : null}
           </div>}
           <PromptLine

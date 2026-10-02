@@ -13,6 +13,11 @@ The SDK defines the history records and event payload schemas in
 | `result` | Call identity, outcome, typed output, errors, media, and resources |
 | `event` | Registered event kind, payload, severity, and audience |
 
+Unexpected run and scheduling failures persist a `runtime.failed` event and the
+terminal run status atomically, before notifications. Clients show the error in
+activity history, including after a reload; a failed run does not leave the
+conversation silently idle.
+
 An original message and its companion records form one ordered group. A model
 turn can contain a note and several calls; a later Conversation commit or media
 failure can add another member to that older group. Paging and synchronization

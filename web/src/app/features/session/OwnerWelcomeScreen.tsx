@@ -35,6 +35,7 @@ export function OwnerWelcomeScreen({ ready, resume, load, onConnect, addressPane
   const consentId = useId();
   const [code, setCode] = useState("");
   const [handle, setHandle] = useState("");
+  const [handleError, setHandleError] = useState("");
   const [availability, setAvailability] = useState<"idle" | "checking" | "available" | "unavailable">("idle");
 
   const run = async (operation: () => Promise<void>) => {
@@ -89,12 +90,17 @@ export function OwnerWelcomeScreen({ ready, resume, load, onConnect, addressPane
   }, [ready]);
 
   useEffect(() => {
+    setHandleError("");
     if (!flow || step !== "handle" || !handle.trim()) { setAvailability("idle"); return; }
     let active = true;
     setAvailability("checking");
     const timer = setTimeout(() => {
       void flow.available(handle.trim()).then((available) => { if (active) setAvailability(available ? "available" : "unavailable"); })
-        .catch(() => { if (active) setAvailability("idle"); });
+        .catch((failure) => {
+          if (!active) return;
+          setAvailability("idle");
+          setHandleError(failure instanceof Error ? failure.message : "Could not check this handle. Try again.");
+        });
     }, 350);
     return () => { active = false; clearTimeout(timer); };
   }, [step, handle, flow]);
@@ -104,6 +110,7 @@ export function OwnerWelcomeScreen({ ready, resume, load, onConnect, addressPane
   } satisfies Record<Step, string>;
   const requiresConsent = step === "consent" || (step === "email" && flow?.state.flow === "create");
   const consentError = requiresConsent && consentTouched && !consent;
+  const formError = error === handleError ? loadError : error || loadError;
   const start = (intent: "open" | "create") => void run(async () => {
     setConsent(false); setConsentTouched(false);
     if (intent === "open") setStep("email");
@@ -182,9 +189,9 @@ export function OwnerWelcomeScreen({ ready, resume, load, onConnect, addressPane
           <TextInput label="Code" value={code} onChange={(value) => setCode(value.replace(/\D/g, "").slice(0, 6))} disabled={busy}
             placeholder="000000" inputProps={{ autoFocus: true, inputMode: "numeric", autoComplete: "one-time-code", maxLength: 6 }} />
         </>}
-        {step === "handle" && <TextInput label="Handle" value={handle} onChange={setHandle} disabled={busy} suffix={owner ? `.${owner.spaceDomain}` : undefined}
-          placeholder="your-name" status={availability === "available" ? "success" : availability === "unavailable" ? "error" : "none"}
-          message={availability === "available" ? "Available" : availability === "unavailable" ? "Already taken" : ""}
+        {step === "handle" && <TextInput label="Handle" value={handle} onChange={(value) => { setHandle(value.toLowerCase()); setError(""); }} disabled={busy} suffix={owner ? `.${owner.spaceDomain}` : undefined}
+          placeholder="your-name" status={handleError || availability === "unavailable" ? "error" : availability === "available" ? "success" : "none"}
+          message={handleError || (availability === "available" ? "Available" : availability === "unavailable" ? "Already taken" : "")}
           inputProps={{ autoFocus: true, autoCapitalize: "none", spellcheck: false, maxLength: 63 }} />}
         {step === "spaces" && <>
           <p class="desktop-welcome-detail">{owner?.email}</p>
@@ -223,7 +230,7 @@ export function OwnerWelcomeScreen({ ready, resume, load, onConnect, addressPane
         }) })}
       </div>}
     </div>}
-    {(error || loadError) && <p class="gsv-login-error" role="alert">{error || loadError}</p>}
+    {formError && <p class="gsv-login-error" role="alert">{formError}</p>}
     {step !== "welcome" && <button class="gsv-auth-link desktop-welcome-back" type="button" disabled={busy} onClick={back}>Back</button>}
     {(loadError || (step === "welcome" && error)) && <button type="button" class="gsv-auth-link desktop-welcome-back" disabled={busy} onClick={() => flow ? void run(() => advance(flow)) : window.location.reload()}>Retry</button>}
   </section></AuthLayout>;
