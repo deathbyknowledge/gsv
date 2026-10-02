@@ -236,6 +236,7 @@ describe("conversation handlers", () => {
       processId: PROCESS.processId,
       uid: 1000,
       connectionId: "connection-1",
+      clientPlatform: "macos",
     });
     expect(vi.mocked(ctx.runRoutes.setConnectionRoute).mock.invocationCallOrder[0])
       .toBeLessThan(sendFrameToProcessMock.mock.invocationCallOrder[0]);

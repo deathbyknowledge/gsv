@@ -8,6 +8,8 @@ import type {
 } from "@humansandmachines/gsv/protocol";
 import {
   emitTelemetry,
+  shipPlatformFromAdapter,
+  shipPlatformFromPeer,
 } from "@humansandmachines/gsv/telemetry";
 import {
   type ProcessRuntimePatch,
@@ -108,15 +110,17 @@ readonly pendingProcessSignals = new Map<string, Promise<void>>();
     if (!userFrame) return;
 
     let route = runId ? this.host.runRoutes.get(runId) : null;
-    if (!route && runId && frame.signal === "proc.run.hil.requested") {
-      route = this.host.runRoutes.materializeProcessApprovalRoute({
+    if ((!route || route.kind === "detached") && runId && frame.signal === "proc.run.hil.requested") {
+      // A detached route delivers nothing, so approval still falls back to an
+      // inherited approval route or the personal adapter.
+      const replacement = this.host.runRoutes.materializeProcessApprovalRoute({
         processId,
         runId,
         uid: ownerUid,
-      });
-      if (!route && !userFrame.payload?.conversationId) {
-        route = this.host.adapterDelivery.materializePersonalAdapterFallback(processId, runId, ownerUid);
-      }
+      }) ?? (userFrame.payload?.conversationId
+        ? null
+        : this.host.adapterDelivery.materializePersonalAdapterFallback(processId, runId, ownerUid));
+      if (replacement) route = replacement;
     }
 
     this.broadcastProcessSignal(ownerUid, processId, route, userFrame);
@@ -140,7 +144,7 @@ readonly pendingProcessSignals = new Map<string, Promise<void>>();
       return;
     }
 
-    if (route.kind === "connection") {
+    if (route.kind === "connection" || route.kind === "detached") {
       if (frame.signal === "proc.run.finished") {
         this.host.runRoutes.delete(runId);
       }
@@ -393,8 +397,9 @@ async commitProcessMessage(
     this.host.conversations.recordSequence(conversation.id, message.sequence);
 
     let route = this.host.runRoutes.get(args.runId);
-    if (!route && !args.conversationId) {
-      route = this.host.adapterDelivery.materializePersonalAdapterFallback(processId, args.runId, process.ownerUid);
+    if ((!route || route.kind === "detached") && !args.conversationId) {
+      const fallback = this.host.adapterDelivery.materializePersonalAdapterFallback(processId, args.runId, process.ownerUid);
+      if (fallback) route = fallback;
     }
     if (route?.uid !== process.ownerUid || route?.processId !== processId) {
       if (route) this.host.runRoutes.delete(args.runId);
@@ -414,6 +419,11 @@ async commitProcessMessage(
                 ? "adapter"
                 : "background",
             hasMedia: Boolean(message.media?.length),
+            platform: route?.kind === "connection" || route?.kind === "detached"
+              ? shipPlatformFromPeer(route.clientPlatform)
+              : route?.kind === "adapter"
+                ? shipPlatformFromAdapter(route.destination.adapter)
+                : "background",
           },
         },
       });

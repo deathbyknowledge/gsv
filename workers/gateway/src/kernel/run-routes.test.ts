@@ -34,6 +34,40 @@ describe("RunRouteStore", () => {
     });
   });
 
+  it("retains the reporting client platform on connection routes", async () => {
+    await runWithRealKernelSql((sql) => {
+      vi.spyOn(Date, "now").mockReturnValue(1_000);
+      const store = new RunRouteStore(sql);
+
+      const created = store.setConnectionRoute({
+        runId: "run-platform",
+        processId: "init:1000",
+        uid: 1000,
+        connectionId: "conn-a",
+        clientPlatform: "phone",
+      });
+      expect(created.clientPlatform).toBe("phone");
+
+      const route = store.get("run-platform");
+      expect(route?.kind).toBe("connection");
+      if (route?.kind === "connection") {
+        expect(route.clientPlatform).toBe("phone");
+      }
+
+      store.setConnectionRoute({
+        runId: "run-anonymous",
+        processId: "init:1000",
+        uid: 1000,
+        connectionId: "conn-b",
+      });
+      const anonymous = store.get("run-anonymous");
+      expect(anonymous?.kind).toBe("connection");
+      if (anonymous?.kind === "connection") {
+        expect(anonymous.clientPlatform).toBeUndefined();
+      }
+    });
+  });
+
   it("stores and resolves adapter routes", async () => {
     await runWithRealKernelSql((sql) => {
       vi.spyOn(Date, "now").mockReturnValue(2_000);
@@ -114,7 +148,7 @@ describe("RunRouteStore", () => {
     });
   });
 
-  it("clears only connection routes for a connection id", async () => {
+  it("detaches a closed connection's routes but keeps their platform attribution", async () => {
     await runWithRealKernelSql((sql) => {
       vi.spyOn(Date, "now").mockReturnValue(50_000);
       const store = new RunRouteStore(sql);
@@ -124,6 +158,7 @@ describe("RunRouteStore", () => {
         processId: "init:1000",
         uid: 1000,
         connectionId: "conn-a",
+        clientPlatform: "tablet",
       });
       store.setConnectionRoute({
         runId: "run-c2",
@@ -146,9 +181,20 @@ describe("RunRouteStore", () => {
 
       store.clearForConnection("conn-a");
 
-      expect(store.get("run-c1")).toBeNull();
-      expect(store.get("run-c2")).not.toBeNull();
-      expect(store.get("run-a1")).not.toBeNull();
+      const detached = store.get("run-c1");
+      expect(detached?.kind).toBe("detached");
+      if (detached?.kind === "detached") {
+        expect(detached.clientPlatform).toBe("tablet");
+        expect(detached.processId).toBe("init:1000");
+        expect(detached.uid).toBe(1000);
+      }
+      expect(store.get("run-c2")?.kind).toBe("connection");
+      expect(store.get("run-a1")?.kind).toBe("adapter");
+      expect(store.inheritProcessApprovalRoute({
+        processId: "child:1",
+        uid: 1000,
+        sourceRunId: "run-c1",
+      })).toBeNull();
     });
   });
 

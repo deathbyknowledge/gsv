@@ -9,6 +9,9 @@ export type ConnectionRunRoute = {
   processId: string;
   uid: number;
   connectionId: string;
+  // The `peer.platform` string the routed connection reported on connect,
+  // retained so a reply can still attribute its surface after the socket closes.
+  clientPlatform?: string;
   createdAt: number;
   expiresAt: number;
 };
@@ -25,7 +28,22 @@ export type AdapterRunRoute = {
   expiresAt: number;
 };
 
-export type RunRoute = ConnectionRunRoute | AdapterRunRoute;
+// A connection route whose socket closed before the run reached its terminal
+// boundary. It delivers nothing and never seeds an approval route; it only
+// retains which surface started the run so a late reply is still attributed.
+export type DetachedRunRoute = {
+  kind: "detached";
+  runId: string;
+  processId: string;
+  uid: number;
+  clientPlatform?: string;
+  createdAt: number;
+  expiresAt: number;
+};
+
+export type RunRoute = ConnectionRunRoute | AdapterRunRoute | DetachedRunRoute;
+
+export type DeliveryRunRoute = ConnectionRunRoute | AdapterRunRoute;
 
 export type ProcessApprovalRoute =
   | Omit<ConnectionRunRoute, "runId">
@@ -44,24 +62,34 @@ export class RunRouteStore {
       processId: string;
       uid: number;
       connectionId: string;
+      clientPlatform?: string;
     },
     ttlMs = DEFAULT_TTL_MS,
   ): ConnectionRunRoute {
     const now = Date.now();
     const expiresAt = now + ttlMs;
     this.upsert({
-      ...input,
+      runId: input.runId,
+      processId: input.processId,
+      uid: input.uid,
+      connectionId: input.connectionId,
+      clientPlatform: input.clientPlatform ?? null,
       routeKind: "connection",
       createdAt: now,
       expiresAt,
     });
 
-    return {
+    const route: ConnectionRunRoute = {
       kind: "connection",
-      ...input,
+      runId: input.runId,
+      processId: input.processId,
+      uid: input.uid,
+      connectionId: input.connectionId,
       createdAt: now,
       expiresAt,
     };
+    if (input.clientPlatform !== undefined) route.clientPlatform = input.clientPlatform;
+    return route;
   }
 
   setAdapterRoute(
@@ -113,9 +141,9 @@ export class RunRouteStore {
     this.pruneExpired();
 
     const rows = this.sql.exec<RunRouteRow>(
-      `SELECT run_id, route_kind, process_id, uid, connection_id, adapter, account_id,
-              actor_id, surface_kind, surface_id, thread_id, reply_to_id, route_generation,
-              created_at, expires_at
+      `SELECT run_id, route_kind, process_id, uid, connection_id, client_platform, adapter,
+              account_id, actor_id, surface_kind, surface_id, thread_id, reply_to_id,
+              route_generation, created_at, expires_at
        FROM run_routes
        WHERE run_id = ?
        LIMIT 1`,
@@ -135,12 +163,13 @@ export class RunRouteStore {
     connectionId?: string;
   }): ProcessApprovalRoute | null {
     this.pruneExpired();
-    let source: ProcessApprovalRoute | RunRoute | null = null;
+    let source: ProcessApprovalRoute | DeliveryRunRoute | null = null;
 
     if (input.sourceRunId) {
       const runRoute = this.get(input.sourceRunId);
       if (
         runRoute
+        && runRoute.kind !== "detached"
         && runRoute.uid === input.uid
         && (!input.sourceProcessId || runRoute.processId === input.sourceProcessId)
       ) {
@@ -217,7 +246,8 @@ export class RunRouteStore {
 
   clearForConnection(connectionId: string): void {
     this.sql.exec(
-      `DELETE FROM run_routes WHERE route_kind = 'connection' AND connection_id = ?`,
+      `UPDATE run_routes SET route_kind = 'detached', connection_id = NULL
+       WHERE route_kind = 'connection' AND connection_id = ?`,
       connectionId,
     );
     this.sql.exec(
@@ -253,7 +283,7 @@ export class RunRouteStore {
 
   private setProcessApprovalRoute(
     processId: string,
-    source: ProcessApprovalRoute | RunRoute,
+    source: ProcessApprovalRoute | DeliveryRunRoute,
   ): ProcessApprovalRoute {
     const now = Date.now();
     const expiresAt = source.expiresAt;
@@ -310,6 +340,7 @@ export class RunRouteStore {
     processId: string;
     uid: number;
     connectionId?: string;
+    clientPlatform?: string | null;
     adapter?: string;
     accountId?: string;
     actorId?: string;
@@ -323,13 +354,14 @@ export class RunRouteStore {
   }): void {
     this.sql.exec(
       `INSERT OR REPLACE INTO run_routes
-       (run_id, route_kind, process_id, uid, connection_id, adapter, account_id, actor_id, surface_kind, surface_id, thread_id, reply_to_id, route_generation, created_at, expires_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       (run_id, route_kind, process_id, uid, connection_id, client_platform, adapter, account_id, actor_id, surface_kind, surface_id, thread_id, reply_to_id, route_generation, created_at, expires_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       input.runId,
       input.routeKind,
       input.processId,
       input.uid,
       input.connectionId ?? null,
+      input.clientPlatform ?? null,
       input.adapter ?? null,
       input.accountId ?? null,
       input.actorId ?? null,
@@ -389,6 +421,7 @@ type RunRouteRow = {
   process_id: string | null;
   uid: number;
   connection_id: string | null;
+  client_platform: string | null;
   adapter: string | null;
   account_id: string | null;
   actor_id: string | null;
@@ -401,7 +434,7 @@ type RunRouteRow = {
   expires_at: number;
 };
 
-type ProcessApprovalRouteRow = Omit<RunRouteRow, "run_id" | "process_id"> & {
+type ProcessApprovalRouteRow = Omit<RunRouteRow, "run_id" | "process_id" | "client_platform"> & {
   process_id: string;
 };
 
@@ -428,7 +461,20 @@ function toRoute(row: RunRouteRow): RunRoute {
     };
   }
 
-  return {
+  if (row.route_kind === "detached") {
+    const route: DetachedRunRoute = {
+      kind: "detached",
+      runId: row.run_id,
+      processId: row.process_id ?? "",
+      uid: row.uid,
+      createdAt: row.created_at,
+      expiresAt: row.expires_at,
+    };
+    if (row.client_platform !== null) route.clientPlatform = row.client_platform;
+    return route;
+  }
+
+  const route: ConnectionRunRoute = {
     kind: "connection",
     runId: row.run_id,
     processId: row.process_id ?? "",
@@ -437,6 +483,8 @@ function toRoute(row: RunRouteRow): RunRoute {
     createdAt: row.created_at,
     expiresAt: row.expires_at,
   };
+  if (row.client_platform !== null) route.clientPlatform = row.client_platform;
+  return route;
 }
 
 function toProcessApprovalRoute(row: ProcessApprovalRouteRow): ProcessApprovalRoute {
