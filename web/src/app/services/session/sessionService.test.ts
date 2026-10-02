@@ -14,6 +14,8 @@ function installWindow(): void {
   const values = new Map<string, string>();
   const sessionValues = new Map<string, string>();
   vi.stubGlobal("window", {
+    addEventListener: vi.fn(),
+    removeEventListener: vi.fn(),
     clearTimeout: vi.fn(),
     location: { host: "example.test", protocol: "https:", pathname: "/", search: "", hash: "" },
     history: { state: null, replaceState: vi.fn() },

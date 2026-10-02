@@ -286,3 +286,38 @@ describe("ConnectionRuntime.broadcastLedgerChanges", () => {
     expect(healthy.send).toHaveBeenCalledOnce();
   });
 });
+
+describe("ConnectionRuntime client coexistence", () => {
+  function state(kind: "human" | "machine", implementsCalls: string[], uid = 1000): KernelConnectionState & { step: "connected"; peer: ConnectedPeer } {
+    return { step: "connected", protocol: 4, clientId: "gsv-ui", peer: {
+      ...MACHINE_PEER, id: "gsv-ui",
+      principal: { kind, account: { ...MACHINE_PEER.principal.account, uid } },
+      grant: { calls: [], signals: ["message.committed"], implements: implementsCalls },
+    } };
+  }
+
+  it("keeps same-name UI windows connected and broadcasts committed messages to both", () => {
+    const user = state("human", []);
+    const sockets = [fakeSocket(user), fakeSocket(user), fakeSocket(state("human", [], 1001))];
+    const { runtime, host } = runtimeWith(sockets);
+    runtime.rehydrateConnections();
+    runtime.activateConnection(Array.from(host.connections.values())[1], user);
+    expect(host.connections.size).toBe(3);
+    expect(sockets.every(socket => socket.close.mock.calls.length === 0)).toBe(true);
+    runtime.broadcastToUserUid(1000, "message.committed", { message: "new message" });
+    expect(sockets[0].send).toHaveBeenCalledOnce();
+    expect(sockets[1].send).toHaveBeenCalledOnce();
+    expect(sockets[2].send).not.toHaveBeenCalled();
+  });
+
+  it.each(["human", "machine"] as const)("replaces a reconnected %s operation provider without displacing other accounts or ordinary UI clients", (kind) => {
+    const provider = state(kind, ["shell.exec"]);
+    const sockets = [fakeSocket(provider), fakeSocket(state("human", [])), fakeSocket(state(kind, ["shell.exec"], 1001)), fakeSocket(provider)];
+    const { runtime, host } = runtimeWith(sockets);
+    runtime.rehydrateConnections();
+    runtime.activateConnection(Array.from(host.connections.values())[3], provider);
+    expect(sockets[0].close).toHaveBeenCalledExactlyOnceWith(1000, "Replaced by newer connection");
+    for (const socket of sockets.slice(1)) expect(socket.close).not.toHaveBeenCalled();
+    expect(host.connections.size).toBe(3);
+  });
+});
