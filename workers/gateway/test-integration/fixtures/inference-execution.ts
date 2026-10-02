@@ -16,6 +16,7 @@ export class InferenceExecutor extends SharedInferenceExecutor<ExecutionEnvironm
 export default class ExecutionService extends WorkerEntrypoint<ExecutionEnvironment> implements InferenceExecutionService {
   getExecutor(installationId: string): Promise<ExecutorContract> { return getInferenceExecutor(this.env, installationId); }
   async resolveModel(provider: string, model: string): Promise<InferenceModelMetadata> {
+    if (model === "integration-metadata-error") throw new Error("Fixture model metadata unavailable");
     if (provider === "gsv" && model === "default") return { provider, model, contextWindowTokens: GSV_INFERENCE_MODEL_METADATA.contextWindow };
     return resolveInferenceModel(this.env, provider, model);
   }

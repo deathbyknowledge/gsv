@@ -197,7 +197,7 @@ export const procHistoryEventPayloadSchemas = {
     pendingEvents: z.optional(nonNegativeIntegerSchema),
   }),
   "runtime.failed": z.strictObject({
-    reason: z.literal("schedule.error"),
+    reason: z.enum(["schedule.error", "tick.error"]),
     error: z.string(),
     prefix: z.optional(z.string()),
   }),
@@ -296,7 +296,7 @@ export type ProcHistoryEventPayloadMap = {
   "adapter.work.returned": { eventId: string; workPid: string };
   "history.compacted": { summary: string; segmentId: string; archivedMessages: number; archivePath: string };
   "runtime.wake": { source: "process"; reason?: string; pendingEvents?: number };
-  "runtime.failed": { reason: "schedule.error"; error: string; prefix?: string };
+  "runtime.failed": { reason: "schedule.error" | "tick.error"; error: string; prefix?: string };
   "target.connection": {
     targetId: string;
     event: "connected" | "disconnected";

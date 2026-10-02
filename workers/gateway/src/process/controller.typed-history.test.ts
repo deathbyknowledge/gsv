@@ -25,6 +25,30 @@ function isolateAdmission(process: Process): void {
 }
 
 describe("typed controller history producers", () => {
+  it("keeps an unexpected first-run failure visible after reload", async () => {
+    const stub = await initProcess("typed-first-run-failure", ROOT_IDENTITY);
+    await runInProcess(stub, async (process: Process) => {
+      isolateAdmission(process);
+      process.runs.active = { runId: "first-run" };
+      vi.spyOn(process.run, "runTick").mockRejectedValue(new Error("Model metadata unavailable"));
+      await process.run.tick({ runId: "first-run", generation: 0 });
+      expect(process.runs.active).toBeNull();
+      await vi.waitFor(() => expect(process.sendSignal).toHaveBeenCalledWith("proc.run.finished", expect.objectContaining({
+        runId: "first-run", status: "error", error: "Process run failed: Model metadata unavailable",
+      })));
+    });
+    await evictDurableObject(stub);
+    await runInProcess(stub, (process: Process) => {
+      expect(storedRecords(process)).toEqual([{
+        kind: "event", payload: {
+          kind: "runtime.failed", severity: "error", audience: "both",
+          payload: { reason: "tick.error", error: "Model metadata unavailable", prefix: "Process run failed" },
+        },
+      }]);
+      expect(process.store.messages.getMessages()[0]?.content).toBe("Process run failed: Model metadata unavailable");
+    });
+  });
+
   it.each([false, true])("persists each responsibility wake once across reload with active run=%s", async (busy) => {
     const stub = await initProcess(`typed-responsibility-ready-${busy}`, ROOT_IDENTITY);
     const input = {

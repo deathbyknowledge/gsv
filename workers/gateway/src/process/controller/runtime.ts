@@ -697,21 +697,10 @@ export class ProcessController {
       return true;
     } catch (error) {
       if (this.host.handleRunStopped(runId)) return false;
-      const message = `${prefix}: ${errorMessageFromUnknown(error)}`;
-      await this.appendRuntimeMessage(message, {
-        runId,
-        event: {
-          kind: "runtime.failed",
-          payload: { reason: "schedule.error", error: errorMessageFromUnknown(error), prefix },
-          severity: "error",
-          audience: "both",
-        },
-      });
-      await this.host.run.finishRun(runId, {
+      await this.host.run.failWithRuntimeEvent(runId, {
         reason: "schedule.error",
-        status: "error",
-        resultText: null,
-        error: message,
+        error: errorMessageFromUnknown(error),
+        prefix,
       });
       return false;
     }
@@ -767,10 +756,9 @@ export class ProcessController {
         this.host.signals.announceRun(next.runId, "queue.promote"),
       );
     } catch (error) {
-      await this.host.run.finishRun(next.runId, {
+      await this.host.run.failWithRuntimeEvent(next.runId, {
         reason: "schedule.error",
-        status: "error",
-        resultText: null,
+        prefix: "Failed to schedule process run",
         error: error instanceof Error ? error.message : String(error),
       });
     }

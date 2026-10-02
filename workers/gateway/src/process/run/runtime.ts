@@ -628,6 +628,14 @@ export class ProcessRun {
     });
   }
 
+  async failWithRuntimeEvent(runId: string, payload: ProcHistoryEventPayload<"runtime.failed">): Promise<void> {
+    if (this.host.handleRunStopped(runId)) return;
+    const event = { kind: "runtime.failed", payload, severity: "error", audience: "both" } as const;
+    const message = renderHistoryEvent(event);
+    await this.host.history.appendSystemMessage(runId, message, { kind: "event", payload: event });
+    await this.finishRun(runId, { reason: payload.reason, status: "error", resultText: null, error: message });
+  }
+
   commitRunFinishState(run: RunState, options: RunFinishOptions): CompletedRunTransition {
     const shouldQueueRuntimeWake =
       (run.pendingRuntimeEvents ?? 0) > 0 && this.host.store.queue.queueSize() === 0;
@@ -2004,11 +2012,10 @@ export class ProcessRun {
       await this.runTick(runId);
     } catch (error) {
       if (!this.host.handleRunStopped(runId)) {
-        await this.finishRun(runId, {
+        await this.failWithRuntimeEvent(runId, {
           reason: "tick.error",
-          status: "error",
-          resultText: null,
-          error: `Process run failed: ${errorMessageFromUnknown(error)}`,
+          prefix: "Process run failed",
+          error: errorMessageFromUnknown(error),
         });
       }
     } finally {
@@ -2017,11 +2024,10 @@ export class ProcessRun {
         try {
           await this.scheduleTick(runId);
         } catch (error) {
-          await this.finishRun(runId, {
+          await this.failWithRuntimeEvent(runId, {
             reason: "schedule.error",
-            status: "error",
-            resultText: null,
-            error: `Failed to schedule deferred process run: ${errorMessageFromUnknown(error)}`,
+            prefix: "Failed to schedule deferred process run",
+            error: errorMessageFromUnknown(error),
           });
         }
       }
