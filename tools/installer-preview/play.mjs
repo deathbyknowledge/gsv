@@ -13,15 +13,15 @@ let frame = 0, previousSize = "";
 while (true) {
   const size = `${output.columns}x${output.rows}`;
   if (size !== previousSize) { output.write("\x1b[2J"); previousSize = size; }
-  const wide = output.columns >= 80 && output.rows >= 36;
+  const wide = output.columns >= 120 && output.rows >= 68;
   const frames = wide ? cached.wide : cached.narrow;
   const index = frame % frames.length;
   const step = index < 65 ? "Downloading GSV" : index < 145 ? "Installing" : "Ready";
-  const width = wide ? 76 : 52;
+  const width = wide ? 120 : 96;
   const left = " ".repeat(Math.max(0, Math.floor((output.columns - width) / 2)));
-  const top = "\n".repeat(Math.max(0, Math.floor((output.rows - (wide ? 34 : 30)) / 2)));
+  const top = "\n".repeat(Math.max(0, Math.floor((output.rows - (wide ? 66 : 52)) / 2)));
   output.write(`\x1b[H${top}${left}GSV\x1b[K\n\n`);
-  if (output.columns >= 52 && output.rows >= 30) {
+  if (output.columns >= 96 && output.rows >= 52) {
     output.write(frames[index].split("\n").map(line => left + line).join("\n") + "\n\n");
   }
   output.write(`${left}\x1b[97m${step}\x1b[0m\x1b[K\n\n${left}\x1b[90mInstaller preview · Ctrl+C to close\x1b[0m\x1b[J`);

@@ -23,4 +23,4 @@ for (let frame = 0; frame < 180; frame++) {
 }
 return frames;
 }
-writeFileSync(process.argv[2], JSON.stringify({ wide: render(76, 28), narrow: render(52, 24) }));
+writeFileSync(process.argv[2], JSON.stringify({ wide: render(120, 60), narrow: render(96, 46) }));
