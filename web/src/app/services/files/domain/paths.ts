@@ -66,7 +66,7 @@ export function resolvePath(
   if (!raw) return base;
   const inputRoot = splitRoot(raw).root;
   const baseRoot = splitRoot(base).root;
-  if (inputRoot === "/" && /^[a-z]:\/$/i.test(baseRoot)) {
+  if (inputRoot === "/" && baseRoot) {
     return normalizePath(`${baseRoot}${splitRoot(raw).rest}`, "absolute");
   }
   if (inputRoot) return normalizePath(raw, "absolute");

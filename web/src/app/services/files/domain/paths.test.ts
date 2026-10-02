@@ -17,6 +17,18 @@ describe("remote target paths", () => {
     expect(parentPath("//server/share/")).toBe("//server/share/");
     expect(resolvePath("../../other", "//server/share/docs")).toBe("//server/share/other");
   });
+  it.each(["\\docs", "/docs", "\\..\\docs", "/../docs"])(
+    "resolves root-relative %s within the current UNC share",
+    (path) => {
+      expect(resolvePath(path, "//server/share/current")).toBe("//server/share/docs");
+      expect(resolvePath(path, "\\\\?\\UNC\\server\\share\\current")).toBe("//server/share/docs");
+    },
+  );
+  it("keeps the UNC volume for its root and accepts an explicitly different volume", () => {
+    expect(resolvePath("\\", "//server/share/current")).toBe("//server/share/");
+    expect(resolvePath("\\\\other\\share\\docs", "//server/share/current")).toBe("//other/share/docs");
+    expect(resolvePath("D:\\docs", "//server/share/current")).toBe("D:/docs");
+  });
   it("accepts extended paths emitted by Rust canonicalize", () => {
     expect(normalizePath("\\\\?\\C:\\Users\\Alice")).toBe("C:/Users/Alice");
     expect(normalizePath("\\\\?\\UNC\\server\\share\\docs")).toBe("//server/share/docs");
@@ -26,6 +38,7 @@ describe("remote target paths", () => {
     expect(parentPath("/")).toBe("/");
     expect(resolvePath("../docs", "home/alice")).toBe("home/docs");
     expect(resolvePath("/docs", "home/alice")).toBe("/docs");
+    expect(resolvePath("/docs", "/home/alice")).toBe("/docs");
     expect(childPath(".", "hello.txt")).toBe("hello.txt");
   });
 });

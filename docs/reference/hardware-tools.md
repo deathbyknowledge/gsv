@@ -225,6 +225,8 @@ Device filesystem semantics:
 - Relative paths resolve against the configured device workspace.
 - Absolute paths are used as-is on the device.
 - Returned paths are local machine paths.
+- Windows root-relative paths retain the current drive or UNC share. Resolving
+  `\docs` from `//server/share/current` gives `//server/share/docs`.
 - Reads can return text, directory listings, or supported image content.
 
 Device shell semantics:
