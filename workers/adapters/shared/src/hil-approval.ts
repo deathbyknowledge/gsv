@@ -40,7 +40,8 @@ export type AdapterHilSubmission =
       presentation: AdapterHilPresentation;
     };
 
-type StoredAdapterHilRequest = Pick<ProcHilRequest, "pid" | "requestId" | "runId">;
+/** The identity of one approval request; enough to submit it, never its arguments. */
+export type StoredAdapterHilRequest = Pick<ProcHilRequest, "pid" | "requestId" | "runId">;
 type StoredAdapterHilContext = Pick<
   AdapterDeliveryContext,
   "deliveryId" | "accountId" | "actorId" | "surface" | "routeGeneration"
@@ -79,13 +80,17 @@ type AdapterHilJsonRow = {
 const APPROVAL_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
 const APPROVAL_PROCESSING_LEASE_MS = 60_000;
 
-/** Persist one interaction-scoped callback capability before rendering controls. */
+/**
+ * Persist one interaction-scoped callback capability before rendering controls.
+ * Only the request identity is needed, so an adapter that holds a prompt for
+ * later can prepare it again without keeping the tool arguments.
+ */
 export async function prepareAdapterHilApproval(
   storage: DurableObjectStorage,
   provider: string,
   binding: string | undefined,
   context: AdapterDeliveryContext,
-  request: ProcHilRequest,
+  request: StoredAdapterHilRequest,
   presentationInput: AdapterHilPresentation,
   owner?: AdapterDataScope,
 ): Promise<string | null> {
@@ -346,7 +351,7 @@ function sameApproval(
   record: AdapterHilRecord,
   binding: string | undefined,
   context: AdapterDeliveryContext,
-  request: ProcHilRequest,
+  request: StoredAdapterHilRequest,
   presentation: AdapterHilPresentation,
 ): boolean {
   return record.binding === binding

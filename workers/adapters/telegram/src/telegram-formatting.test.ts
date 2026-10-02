@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { codePointLength, fitMarkdownToLimit } from "../../shared/src/paragraph-messages";
 import {
   buildTelegramReplyParameters,
   callTelegramApiWithMarkdownCaption,
@@ -16,6 +17,17 @@ function formattingError(description = "Bad Request: can't parse entities"):
 }
 
 describe("markdownToTelegramHtml", () => {
+  it.each(["[download][r]", "[r]", "[r][]"])("fits oversized link definitions in rich, HTML and plain fallbacks: %s", (reference) => {
+    const markdown = `See ${reference}.\n\n[r]: https://example.com/download?signature=${"a".repeat(8_192)}`;
+    const chunks = fitMarkdownToLimit(markdown, markdownToTelegramHtml, 4096);
+    expect(chunks.length).toBeGreaterThan(0);
+    for (const chunk of chunks) {
+      expect(codePointLength(chunk.markdown)).toBeLessThanOrEqual(4096);
+      expect(codePointLength(chunk.rendered)).toBeLessThanOrEqual(4096);
+      expect(chunk.rendered).toBe(markdownToTelegramHtml(chunk.markdown));
+    }
+  });
+
   it("renders common agent Markdown using Telegram-supported HTML", () => {
     const html = markdownToTelegramHtml([
       "# Summary",

@@ -52,6 +52,8 @@ npm run test:managed --prefix "$ROOT_DIR/workers/adapters/telegram" --workspaces
 npm run typecheck --prefix "$ROOT_DIR/workers/adapters/slack" --workspaces=false
 npm run test --prefix "$ROOT_DIR/workers/adapters/slack" --workspaces=false
 npm run test:managed --prefix "$ROOT_DIR/workers/adapters/slack" --workspaces=false
+npm run typecheck --prefix "$ROOT_DIR/workers/adapters/whatsapp" --workspaces=false
+npm run test:run --prefix "$ROOT_DIR/workers/adapters/whatsapp" --workspaces=false
 
 generate_types "$ACCOUNTS_DIR" "wrangler.jsonc" "accounts" "ManagedAccountsEnv"
 generate_types "$INFERENCE_DIR" "wrangler.jsonc" "inference" "ManagedInferenceEnv"
@@ -59,6 +61,7 @@ generate_types "$ROOT_DIR/workers/gateway" "wrangler.managed.jsonc" "gateway" "M
 generate_types "$ROOT_DIR/workers/adapters/email" "wrangler.jsonc" "email" "ManagedEmailEnv"
 generate_types "$ROOT_DIR/workers/adapters/telegram" "wrangler.managed.jsonc" "telegram" "ManagedTelegramEnv"
 generate_types "$ROOT_DIR/workers/adapters/slack" "wrangler.managed.jsonc" "slack" "ManagedSlackEnv"
+generate_types "$ROOT_DIR/workers/adapters/whatsapp" "wrangler.managed.jsonc" "whatsapp" "ManagedWhatsAppEnv"
 
 run_wrangler "$ACCOUNTS_DIR" "wrangler.jsonc" "accounts" --assets "$ROOT_DIR/web/dist"
 run_wrangler "$INFERENCE_DIR" "wrangler.jsonc" "inference"
@@ -67,5 +70,6 @@ run_wrangler "$ROOT_DIR/workers/gateway" "wrangler.managed.jsonc" "gateway"
 run_wrangler "$ROOT_DIR/workers/adapters/email" "wrangler.jsonc" "email"
 run_wrangler "$ROOT_DIR/workers/adapters/telegram" "wrangler.managed.jsonc" "telegram"
 run_wrangler "$ROOT_DIR/workers/adapters/slack" "wrangler.managed.jsonc" "slack"
+run_wrangler "$ROOT_DIR/workers/adapters/whatsapp" "wrangler.managed.jsonc" "whatsapp"
 
 echo "Managed production configs and Worker bundles are valid."
