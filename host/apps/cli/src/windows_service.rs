@@ -27,7 +27,10 @@ use windows_sys::Win32::{
         CreateFileW, CREATE_NEW, FILE_ATTRIBUTE_NORMAL, FILE_ATTRIBUTE_REPARSE_POINT,
         FILE_FLAG_BACKUP_SEMANTICS, FILE_SHARE_READ, FILE_SHARE_WRITE, READ_CONTROL, WRITE_DAC,
     },
-    System::Services::SetServiceObjectSecurity,
+    System::Services::{
+        ChangeServiceConfig2W, SetServiceObjectSecurity, SERVICE_CONFIG_REQUIRED_PRIVILEGES_INFO,
+        SERVICE_REQUIRED_PRIVILEGES_INFOW,
+    },
 };
 
 #[path = "windows_service/enrollment.rs"]
@@ -421,6 +424,24 @@ pub fn install_elevated(
             manager.create_service(&info, ServiceAccess::ALL_ACCESS)?
         };
         svc.set_config_service_sid_info(ServiceSidType::Unrestricted)?;
+        // Commands share the daemon's OS identity. The SCM token needs directory
+        // traversal, not the impersonation/backup privileges often given to services.
+        let mut privileges: Vec<u16> = "SeChangeNotifyPrivilege\0\0".encode_utf16().collect();
+        let required = SERVICE_REQUIRED_PRIVILEGES_INFOW {
+            pmszRequiredPrivileges: privileges.as_mut_ptr(),
+        };
+        // SAFETY: the service handle allows configuration and both buffers stay live.
+        if unsafe {
+            ChangeServiceConfig2W(
+                svc.raw_handle(),
+                SERVICE_CONFIG_REQUIRED_PRIVILEGES_INFO,
+                (&required as *const SERVICE_REQUIRED_PRIVILEGES_INFOW).cast(),
+            )
+        } == 0
+        {
+            return Err(std::io::Error::last_os_error().into());
+        }
+
         run_command_capture(
             Command::new(system_tool("icacls.exe"))
                 .arg(&bin)

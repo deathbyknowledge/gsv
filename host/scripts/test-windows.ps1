@@ -63,6 +63,9 @@ try {
   [IO.File]::WriteAllText((Join-Path $env:ProgramData 'GSV/daemon/owner.sid'), 'S-1-5-7')
   $service = Get-CimInstance Win32_Service -Filter "Name='gsvd'"
   if ($service.StartMode -ne 'Auto' -or $service.StartName -ne 'NT SERVICE\gsvd') { throw 'Service must boot under its own account' }
+  $privileges = (& (Join-Path ([Environment]::SystemDirectory) 'sc.exe') qprivs gsvd | Out-String)
+  if ($LASTEXITCODE -or [regex]::Matches($privileges, 'Se\w+Privilege').Count -ne 1 -or $privileges -notmatch 'SeChangeNotifyPrivilege') { throw 'Service retains unnecessary token privileges' }
+
   $serviceBinary = Join-Path $env:ProgramFiles 'GSV/service/gsvd.exe'
   $installedHash = (Get-FileHash $serviceBinary).Hash
   $installedPid = $service.ProcessId
