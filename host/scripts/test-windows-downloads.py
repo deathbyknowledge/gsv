@@ -4,6 +4,7 @@
 import argparse
 import hashlib
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+import os
 from pathlib import Path
 import subprocess
 import tempfile
@@ -56,12 +57,12 @@ $DevReleaseTag = 'dev'
 $asset = 'gsv-windows-x64.exe'
 $destination = Join-Path $Directory 'gsv.exe'
 foreach ($kind in @('binary', 'text')) {
-  $checksums = Get-ReleaseChecksums $kind $Directory
+  $checksums = Get-ReleaseChecksums $kind
   Download-VerifiedAsset $kind $asset $destination $checksums
 }
 $failures = @{ missing = 'Release checksum is missing'; tampered = 'Checksum verification failed' }
 foreach ($kind in $failures.Keys) {
-  $checksums = Get-ReleaseChecksums $kind $Directory
+  $checksums = Get-ReleaseChecksums $kind
   $rejected = $false
   try {
     Download-VerifiedAsset $kind $asset $destination $checksums
@@ -93,6 +94,9 @@ def main():
                      str(installer), f"http://127.0.0.1:{server.server_port}", directory],
                     check=True,
                     timeout=60,
+                    # Let each PowerShell version select its own built-in modules.
+                    env={key: value for key, value in os.environ.items()
+                         if key.casefold() != "psmodulepath"},
                 )
         finally:
             server.shutdown()

@@ -51,16 +51,14 @@ function Add-CacheBustIfMutable([string]$ReleaseRef, [string]$Url) {
   return "$Url`?ts=$([DateTimeOffset]::UtcNow.ToUnixTimeSeconds())"
 }
 
-function Get-ReleaseChecksums([string]$ReleaseRef, [string]$TempDir) {
+function Get-ReleaseChecksums([string]$ReleaseRef) {
   if ($ExpectedChecksums) { return $ExpectedChecksums }
   if ($AssetDirectory) {
-    $manifestPath = Join-Path $AssetDirectory "checksums.txt"
-  } else {
-    $manifestPath = Join-Path $TempDir "checksums.txt"
-    $url = Add-CacheBustIfMutable $ReleaseRef (Release-AssetUrl $ReleaseRef "checksums.txt")
-    Invoke-WebRequest -UseBasicParsing -Uri $url -OutFile $manifestPath | Out-Null
+    return Get-Content -Raw -Encoding UTF8 -LiteralPath (Join-Path $AssetDirectory "checksums.txt")
   }
-  return Get-Content -Raw -Encoding UTF8 -LiteralPath $manifestPath
+  $url = Add-CacheBustIfMutable $ReleaseRef (Release-AssetUrl $ReleaseRef "checksums.txt")
+  $response = Invoke-WebRequest -UseBasicParsing -Uri $url
+  return [Text.Encoding]::UTF8.GetString($response.RawContentStream.ToArray())
 }
 
 function Get-ExpectedChecksum([string]$Checksums, [string]$Asset) {
@@ -292,7 +290,7 @@ function Install-GsvHost {
 
   try {
     Write-Info "Downloading release manifest ($releaseRef)"
-    $checksums = Get-ReleaseChecksums $releaseRef $tempDir
+    $checksums = Get-ReleaseChecksums $releaseRef
     foreach ($asset in $assets.Keys) {
       Download-VerifiedAsset $releaseRef $asset (Join-Path $tempDir $asset) $checksums
     }
