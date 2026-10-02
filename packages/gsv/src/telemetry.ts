@@ -228,12 +228,30 @@ const installationActivatedSchema = z.strictObject({
   properties: z.strictObject({}),
 });
 
+// Closed allowlist so product analytics can break Ship replies down by the
+// surface that will receive them without ever carrying a raw peer platform
+// string or adapter name. Unknown clients and adapters classify as "other".
+export const shipPlatformSchema = z.enum([
+  "web",
+  "phone",
+  "tablet",
+  "desktop",
+  "cli",
+  "telegram",
+  "discord",
+  "slack",
+  "background",
+  "other",
+]);
+
 const shipMessageCommittedSchema = z.strictObject({
   stream: z.literal("product"),
   name: z.literal("ship.message.committed"),
   properties: z.strictObject({
     delivery: z.enum(["client", "adapter", "background"]),
     hasMedia: z.boolean(),
+    // Optional only for compatibility with producers during rolling upgrades.
+    platform: z.optional(shipPlatformSchema),
   }),
 });
 
@@ -425,6 +443,7 @@ export type InferenceFailureStage = z.infer<
 >;
 export type IntegrationKind = z.infer<typeof integrationKindSchema>;
 export type IntegrationProvider = z.infer<typeof integrationProviderSchema>;
+export type ShipPlatform = z.infer<typeof shipPlatformSchema>;
 
 const INTEGRATION_PROVIDER_DOMAINS: ReadonlyArray<
   readonly [Exclude<IntegrationProvider, "other">, ReadonlyArray<string>]
@@ -470,6 +489,42 @@ export function integrationProviderFromUrl(url: string): IntegrationProvider {
     }
   }
   return "other";
+}
+
+// Rust clients (CLI and machine daemon) report their operating system as the
+// peer platform; the Instrument UI reports its own closed set. Legacy UI
+// builds reported "browser" before they self-identified.
+const CLI_PEER_PLATFORMS = new Set(["macos", "linux", "windows", "freebsd", "openbsd", "netbsd"]);
+const ADAPTER_SHIP_PLATFORMS: readonly ShipPlatform[] = ["telegram", "discord", "slack"];
+
+/**
+ * Classify the free-form `peer.platform` string a connected client reported
+ * into the closed Ship platform allowlist. Only allowlist values leave this
+ * function; the reported string itself never enters a telemetry record.
+ */
+export function shipPlatformFromPeer(platform: string | undefined): ShipPlatform {
+  const normalized = (platform ?? "").trim().toLowerCase();
+  if (normalized === "browser") return "web";
+  if (CLI_PEER_PLATFORMS.has(normalized)) return "cli";
+  if (
+    normalized === "web"
+    || normalized === "phone"
+    || normalized === "tablet"
+    || normalized === "desktop"
+  ) {
+    return normalized;
+  }
+  return "other";
+}
+
+/**
+ * Classify an adapter name into the closed Ship platform allowlist. Adapters
+ * outside the allowlist become "other" so the record never carries a
+ * deployment-specific adapter slug.
+ */
+export function shipPlatformFromAdapter(adapter: string): ShipPlatform {
+  const normalized = adapter.trim().toLowerCase();
+  return ADAPTER_SHIP_PLATFORMS.find((platform) => platform === normalized) ?? "other";
 }
 
 export type TelemetryEnvironment = {
