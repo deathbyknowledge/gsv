@@ -162,8 +162,8 @@ state, device credential and control pipe. Those are private from other OS
 users, not isolated from authorized machine commands. The default virtual
 account is not an administrator, and SCM retains only `SeChangeNotifyPrivilege`
 for directory traversal. Administrator elevation is limited to registration and
-updates; commands cannot rewrite the administrator-owned executable or owner
-identity. Choosing a different service logon account also chooses its filesystem
+updates. Under the default account, commands cannot rewrite the administrator-owned
+executable or owner identity. Choosing a different service logon account also chooses its filesystem
 and network authority.
 
 Tool approval is a policy layer, not an isolation layer. Profiles can auto,
