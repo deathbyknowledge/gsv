@@ -143,6 +143,10 @@ type InboundPayload =
       kind: "release";
       tap: WhatsAppTemplateTap;
       routeGeneration?: string;
+    }
+  | {
+      kind: "release-held";
+      routeGeneration: string;
     };
 
 type ResponseContext =
@@ -510,14 +514,14 @@ export class ManagedWhatsAppPeer extends DurableObject<ManagedWhatsAppPeerEnv> {
   private async forwardInbound(
     payload: InboundPayload,
   ): Promise<InboundDeliveryDisposition<ResponseContext>> {
-    if (payload.kind === "release") {
+    if (payload.kind === "release" || payload.kind === "release-held") {
       const state = await this.requireState();
       const route = state.activeRoute;
       if (!route || this.retirement.retired(route) || !payload.routeGeneration || route.generation !== payload.routeGeneration) {
         return { terminal: true };
       }
       // The tap only reopens the window; the person hears nothing but the held messages.
-      await this.markRead(payload.tap.interactionId, route);
+      if (payload.kind === "release") await this.markRead(payload.tap.interactionId, route);
       return { terminal: await this.releaseHeld(route) };
     }
     if (payload.kind === "approval") {
@@ -567,7 +571,18 @@ export class ManagedWhatsAppPeer extends DurableObject<ManagedWhatsAppPeerEnv> {
     await this.markRead(inbound.messageId, route);
     // The person's message reopened the window: held replies go out first, then theirs is relayed.
     const released = await this.releaseHeld(route);
-    if (isManagedWhatsAppPairCommand(inbound.text)) return await this.pairingResponse(inbound, route.generation);
+    if (isManagedWhatsAppPairCommand(inbound.text)) {
+      if (!released) {
+        // Pairing can reply immediately while this owned receipt retries the held queue.
+        await this.inboundDeliveries.enqueueAndArm(
+          `held-after:${inbound.deliveryId}`,
+          { kind: "release-held", routeGeneration: route.generation },
+          Date.now() + INBOUND_RETRY_DELAY_MS,
+          route,
+        );
+      }
+      return await this.pairingResponse(inbound, route.generation);
+    }
     if (!released) return { terminal: false };
     if (inbound.unsupportedContent) {
       return platformResponse(inbound, `managed-unsupported:${inbound.deliveryId}`, UNSUPPORTED_TEXT, linked);
@@ -862,6 +877,7 @@ export class ManagedWhatsAppPeer extends DurableObject<ManagedWhatsAppPeerEnv> {
       const issue = this.deliveryContextIssue(current, context);
       if (issue) throw new Error(issue);
       if (!whatsAppWindowOpen(current, Date.now())) {
+        if (options.templateFallback === false) return await fail("retryable", WHATSAPP_WINDOW_CLOSED_ERROR);
         if (!fallbackOwner || claim.progress.sent > 0) return await fail("permanent", WHATSAPP_WINDOW_CLOSED_ERROR);
         return await this.deliverOutsideWindow(message, fallbackOwner, claim, options, fail, current);
       }
@@ -939,6 +955,7 @@ export class ManagedWhatsAppPeer extends DurableObject<ManagedWhatsAppPeerEnv> {
       return { ok: true, messageId: anchorMessageId };
     } catch (error) {
       if (error instanceof ManagedWhatsAppDeliveryError) {
+        if (error.windowClosed && options.templateFallback === false) return await fail("retryable", error.message);
         // Meta knows the window better than the local receipt: when it refuses
         // the first part, the template path takes the whole message.
         if (error.windowClosed && fallbackOwner && sentInAttempt === 0 && claim.progress.sent === 0) {
@@ -1102,6 +1119,8 @@ export class ManagedWhatsAppPeer extends DurableObject<ManagedWhatsAppPeerEnv> {
   }
 
   private async releaseHeldNow(owner: AdapterDataOwner): Promise<boolean> {
+    // A delayed receipt cannot release the queue until a fresh message opens the window.
+    if (!whatsAppWindowOpen(await this.requireState(), Date.now())) return true;
     let held: HeldOutboundRecord[];
     try {
       held = await this.held.list(owner);

@@ -173,6 +173,33 @@ it.each(["release", "message", "approval"] as const)("retries held output from a
   expect((await messages(actorId)).filter((record) => record.body.text?.body === heldText)).toHaveLength(1);
 });
 
+it("retains held output when the window expires during release preparation", async () => {
+  const actorId = "34690214445";
+  const { peer, route } = await seed(actorId);
+  await runInDurableObject(peer, async (instance, state) => {
+    const held = instance["held"];
+    await held.hold({ deliveryId: "window-expires", owner: route, markdown: "Still waiting" });
+    const list = held.list;
+    held.list = async (owner) => {
+      const records = await list.call(held, owner);
+      const current = (await state.storage.get<ManagedWhatsAppPeerState>(stateKey))!;
+      await state.storage.put(stateKey, { ...current, lastInboundAt: Date.now() - 25 * 60 * 60 * 1000 });
+      return records;
+    };
+    try {
+      expect(await instance["releaseHeld"](route)).toBe(false);
+      expect(await list.call(held, route)).toHaveLength(1);
+    } finally {
+      held.list = list;
+    }
+    const current = (await state.storage.get<ManagedWhatsAppPeerState>(stateKey))!;
+    await state.storage.put(stateKey, { ...current, lastInboundAt: Date.now() });
+    expect(await instance["releaseHeld"](route)).toBe(true);
+    expect(await held.list(route)).toEqual([]);
+  });
+  expect((await messages(actorId)).map((message) => message.body.text?.body)).toEqual(["Still waiting"]);
+});
+
 it("retries a reopened-window race without keeping a duplicate held copy", async () => {
   const actorId = "34690214444";
   const { peer, route, message } = await seed(actorId, true);

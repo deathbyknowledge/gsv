@@ -80,7 +80,7 @@ export function bindManagedWhatsAppPeerIdentity(
   };
   // The person's latest message answers the pending template; the messages
   // held behind it are released by the peer once this receipt is recorded.
-  if (!latest && state?.pendingTemplate) next.pendingTemplate = state.pendingTemplate;
+  if ((!latest || !whatsAppWindowOpen(next, now)) && state?.pendingTemplate) next.pendingTemplate = state.pendingTemplate;
   return next;
 }
 

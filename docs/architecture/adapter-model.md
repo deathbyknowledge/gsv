@@ -339,7 +339,10 @@ format, so an update cannot reinterpret that count and repeat earlier
 paragraphs. Unversioned partial receipts retain the first staging format.
 WhatsApp keeps a blocked held-message release pending on the triggering
 inbound receipt or Kernel delivery, so its existing retry owner can resume
-without another user message. Explicit pairing commands retain priority.
+without another user message. Explicit pairing commands retain response
+priority and persist a separate release attempt in the same inbound ledger.
+Delayed receipts that do not open the 24-hour window leave pending templates
+and held messages intact.
 Outcomes that may already have reached a provider are reported as
 ambiguous and are not replayed; Discord can additionally reuse an
 enforced deterministic nonce, while Telegram conservatively uses at-most-once

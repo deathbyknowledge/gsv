@@ -97,6 +97,19 @@ describe("managed WhatsApp peer state", () => {
     expect(answered).toMatchObject({ lastInboundAt: now + 1_000, lastInboundMessageId: "wamid.two" });
   });
 
+  it("keeps the pending template when a newer receipt is still outside the service window", () => {
+    const now = 1_700_000_000_000;
+    const identity = { actorId: "34611111189", surfaceId: "34611111189" };
+    const before = bindManagedWhatsAppPeerIdentity(undefined, { ...identity, messageId: "wamid.old", timestamp: now - 2 * WHATSAPP_CUSTOMER_SERVICE_WINDOW_MS }, now);
+    const pending = withPendingWhatsAppTemplate(before, now, "wamid.template");
+    const delayed = bindManagedWhatsAppPeerIdentity(pending, { ...identity, messageId: "wamid.delayed", timestamp: now - WHATSAPP_CUSTOMER_SERVICE_WINDOW_MS }, now);
+    expect(whatsAppWindowOpen(delayed, now)).toBe(false);
+    expect(delayed.pendingTemplate).toEqual(pending.pendingTemplate);
+    const fresh = bindManagedWhatsAppPeerIdentity(delayed, { ...identity, messageId: "wamid.fresh", timestamp: now }, now);
+    expect(whatsAppWindowOpen(fresh, now)).toBe(true);
+    expect(fresh.pendingTemplate).toBeUndefined();
+  });
+
   it("keeps the old route live until explicit confirmation activates the new one", () => {
     const prepared = prepareManagedWhatsAppPairing(pendingState(), {
       claimId: "claim-1",

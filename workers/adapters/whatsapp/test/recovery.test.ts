@@ -141,6 +141,70 @@ it("releases held output before answering a linked /link command", async () => {
   });
 });
 
+it.each([false, true])("retries held output after answering /link while preserving route ownership (relinked: %s)", async (relinked) => {
+  const actorId = `3469010999${Number(relinked)}`;
+  const { peer, route } = await seed(actorId);
+  const text = "held-after-pairing-rate-limit ".repeat(60).trim();
+  using held = await peer.sendMessage(route.installationId, {
+    deliveryId: "held-during-link", routeGeneration: route.generation,
+    surface: { kind: "dm", id: actorId }, actorId, text,
+  });
+  expect(held.ok).toBe(true);
+  const inbound = incoming(actorId, "wamid.link.blocked", "/link");
+  await bindings.WHATSAPP_API.fetch("https://graph.test/throttle", { method: "POST", body: "held-after-pairing-rate-limit" });
+  try {
+    await peer.handleWebhook({ kind: "message", inbound });
+    const replies = (await messages(actorId)).filter((message) => message.body.type === "text");
+    expect(replies.map((message) => message.body.text?.body)).toEqual([
+      expect.stringContaining("Settings → Messengers"),
+      expect.stringMatching(/^[A-HJ-NP-Z2-9]{4}(?:-[A-HJ-NP-Z2-9]{4}){2}$/),
+    ]);
+    await runInDurableObject(peer, async (instance, state) => {
+      await instance["drainInbound"]();
+      expect(await state.storage.get(`managed_whatsapp_peer:v1:inbound:held-after:${inbound.deliveryId}`)).toMatchObject({ state: "provider" });
+      expect(await state.storage.getAlarm()).not.toBeNull();
+      if (relinked) {
+        const current = (await state.storage.get<ManagedWhatsAppPeerState>(stateKey))!;
+        await state.storage.put(stateKey, { ...current, activeRoute: { ...route, generation: "replacement" } });
+      }
+    });
+  } finally {
+    await bindings.WHATSAPP_API.fetch("https://graph.test/throttle", { method: "POST", body: "" });
+  }
+  await runInDurableObject(peer, async (instance, state) => {
+    await instance.alarm();
+    expect(await state.storage.get(`managed_whatsapp_peer:v1:inbound:held-after:${inbound.deliveryId}`)).toMatchObject({ state: "completed" });
+    expect(await instance["held"].list(route)).toHaveLength(relinked ? 1 : 0);
+  });
+  expect((await messages(actorId)).filter((message) => message.body.text?.body === text)).toHaveLength(relinked ? 0 : 1);
+});
+
+it("retains a template and its held output when a newer inbound message is still over 24 hours old", async () => {
+  const actorId = "34690110000";
+  const { peer, route } = await seed(actorId);
+  await runInDurableObject(peer, async (_instance, state) => {
+    const current = (await state.storage.get<ManagedWhatsAppPeerState>(stateKey))!;
+    await state.storage.put(stateKey, { ...current, lastInboundAt: Date.now() - 48 * 60 * 60 * 1000, lastInboundMessageId: "wamid.before" });
+  });
+  const text = "A delayed waiting report. ".repeat(100).trim();
+  using held = await peer.sendMessage(route.installationId, {
+    deliveryId: "held-before-stale-message", routeGeneration: route.generation,
+    surface: { kind: "dm", id: actorId }, actorId, text,
+  });
+  expect(held.ok).toBe(true);
+  await peer.handleWebhook({ kind: "message", inbound: incoming(actorId, "wamid.old.distinct", "delayed hello", Date.now() - 25 * 60 * 60 * 1000) });
+  await runInDurableObject(peer, async (instance, state) => {
+    await instance["drainInbound"]();
+    expect((await state.storage.get<ManagedWhatsAppPeerState>(stateKey))!.pendingTemplate).toBeDefined();
+    expect(await instance["held"].list(route)).toContainEqual(expect.objectContaining({ markdown: text }));
+  });
+  expect((await messages(actorId)).filter((message) => message.body.type === "template")).toHaveLength(1);
+  expect((await messages(actorId)).some((message) => message.body.text?.body === text)).toBe(false);
+  await peer.handleWebhook({ kind: "release", tap: { actorId, surfaceId: actorId, interactionId: "wamid.fresh", timestamp: Date.now() } });
+  await runInDurableObject(peer, async (instance) => { await instance["drainInbound"](); });
+  expect((await messages(actorId)).filter((message) => message.body.text?.body === text)).toHaveLength(1);
+});
+
 it("drops a /link command admitted before the number was relinked", async () => {
   const actorId = "34690106666";
   const { peer, route } = await seed(actorId);
