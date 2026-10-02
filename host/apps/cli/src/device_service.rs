@@ -152,15 +152,16 @@ pub fn device_service_needs_migration() -> Result<bool, DynError> {
     manager.needs_migration(&DeviceServiceInstallSpec::current()?)
 }
 
-pub fn install_device_service() -> Result<(), DynError> {
+pub fn install_device_service(reload_configuration: bool) -> Result<(), DynError> {
     let spec = DeviceServiceInstallSpec::current()?;
     let manager = require_platform_service_manager()?;
-    install_device_service_with_manager(manager.as_ref(), &spec).map(|_| ())
+    install_device_service_with_manager(manager.as_ref(), &spec, reload_configuration).map(|_| ())
 }
 
 fn install_device_service_with_manager(
     manager: &dyn DeviceServiceManager,
     spec: &DeviceServiceInstallSpec,
+    reload_configuration: bool,
 ) -> Result<bool, DynError> {
     let was_legacy = manager.is_installed()? && manager.needs_migration(spec)?;
     manager.install(spec)?;
@@ -171,6 +172,11 @@ fn install_device_service_with_manager(
     // Restart only migrations so the established service identity now runs the
     // newly installed gsvd entrypoint.
     if was_legacy {
+        manager.restart()?;
+    }
+    // Windows starts the updated configuration before committing enrollment.
+    // Other platforms may retain the running process after replacing its definition.
+    if reload_configuration && !was_legacy && !cfg!(windows) {
         manager.restart()?;
     }
 
@@ -927,12 +933,14 @@ mod tests {
 
     struct RecordingServiceManager {
         calls: RefCell<Vec<&'static str>>,
+        legacy: bool,
     }
 
     impl RecordingServiceManager {
         fn legacy() -> Self {
             Self {
                 calls: RefCell::new(Vec::new()),
+                legacy: true,
             }
         }
     }
@@ -971,7 +979,7 @@ mod tests {
 
         fn needs_migration(&self, _spec: &DeviceServiceInstallSpec) -> Result<bool, DynError> {
             self.calls.borrow_mut().push("needs_migration");
-            Ok(true)
+            Ok(self.legacy)
         }
     }
 
@@ -1045,7 +1053,7 @@ mod tests {
     fn installing_a_legacy_definition_restarts_its_running_process() {
         let manager = RecordingServiceManager::legacy();
 
-        let migrated = install_device_service_with_manager(&manager, &test_spec())
+        let migrated = install_device_service_with_manager(&manager, &test_spec(), true)
             .expect("legacy service migration");
 
         assert!(migrated);
@@ -1053,6 +1061,22 @@ mod tests {
             manager.calls.into_inner(),
             vec!["is_installed", "needs_migration", "install", "restart"]
         );
+    }
+
+    #[test]
+    fn configuration_install_does_not_restart_after_windows_commits() {
+        for reload in [false, true] {
+            let manager = RecordingServiceManager {
+                calls: RefCell::new(Vec::new()),
+                legacy: false,
+            };
+            install_device_service_with_manager(&manager, &test_spec(), reload).unwrap();
+            let mut expected = vec!["is_installed", "needs_migration", "install"];
+            if reload && !cfg!(windows) {
+                expected.push("restart");
+            }
+            assert_eq!(manager.calls.into_inner(), expected);
+        }
     }
 
     #[test]

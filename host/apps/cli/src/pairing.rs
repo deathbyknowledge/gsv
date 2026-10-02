@@ -347,10 +347,7 @@ async fn pair_using(
     println!("Paired {} as {}.", invite.label, invite.target_id);
     if !options.no_install {
         let installed = device_service::device_service_is_installed()?;
-        device_service::install_device_service().map_err(|_private_error| "Pairing is saved, but service installation failed. Fix the service setup and run gsv daemon install to retry.")?;
-        if installed {
-            device_service::restart_device_service()?;
-        }
+        device_service::install_device_service(installed).map_err(|_private_error| "Pairing is saved, but service installation failed. Fix the service setup and run gsv daemon install to retry.")?;
         println!("The GSV background service is running.");
     }
     Ok(())

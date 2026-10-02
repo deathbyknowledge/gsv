@@ -175,10 +175,7 @@ pub(crate) fn run_daemon_service(
             let (device_id, workspace, defaults_changed) =
                 persist_device_defaults(cfg, id, workspace)?;
             let was_legacy = device_service::device_service_needs_migration()?;
-            device_service::install_device_service()?;
-            if (gateway_changed || defaults_changed) && !was_legacy {
-                device_service::restart_device_service()?;
-            }
+            device_service::install_device_service(gateway_changed || defaults_changed)?;
 
             println!("gsvd installed and started.");
             if was_legacy {
@@ -206,7 +203,7 @@ pub(crate) fn run_daemon_service(
                 gateway_token_override,
             )?;
             if device_service::device_service_needs_migration()? {
-                device_service::install_device_service()?;
+                device_service::install_device_service(false)?;
                 println!("Migrated the service to the `gsvd` executable.");
             } else if gateway_changed {
                 #[cfg(windows)]
@@ -227,7 +224,7 @@ pub(crate) fn run_daemon_service(
                 gateway_token_override,
             )?;
             if device_service::device_service_needs_migration()? {
-                device_service::install_device_service()?;
+                device_service::install_device_service(false)?;
                 println!("Migrated the service to the `gsvd` executable.");
             } else {
                 #[cfg(windows)]

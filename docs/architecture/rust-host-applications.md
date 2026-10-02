@@ -89,6 +89,8 @@ A failed grant or startup restores the original workspace ACLs before rolling
 back the daemon and enrollment. Caller exit signals the same rollback in the
 surviving elevated process, using the transferred handles. It never commits
 solely because registration completed.
+Pairing and installation configuration changes use that same startup; callers
+do not stop and restart the service again after the transaction commits.
 Administrator approval cannot make an otherwise inaccessible directory writable
 by agent commands.
 

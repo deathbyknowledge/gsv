@@ -141,9 +141,8 @@ try {
   New-Item -ItemType Directory -Path $nextWorkspace | Out-Null
   $nextToml = "[device]`nid = 'windows-ci'`nworkspace = '$nextWorkspace'`n"
   [IO.File]::WriteAllText($config, $nextToml, [Text.UTF8Encoding]::new($false))
-  Copy-Item $config (Join-Path $cliConfig 'config.toml') -Force
   $env:GSV_GSVD_PATH = $trap
-  & $cli daemon install
+  & $cli daemon install --workspace $nextWorkspace
   if ($LASTEXITCODE) { throw 'Workspace replacement failed' }
   if ((Get-ServiceRegistration) -ne $registration) { throw 'Workspace replacement changed SCM configuration' }
   if (Test-Path $marker) { throw 'Elevated installation executed the inherited daemon override' }
