@@ -21,6 +21,8 @@ const META_KEY = "outbound_delivery:v1:meta";
 export type DeliveryProgress = {
   sent: number;
   messageId?: string;
+  /** Adapter-owned partition format; absent on receipts from the first staging build. */
+  formatVersion?: number;
 };
 
 type DeliveryRecord = (
@@ -510,6 +512,7 @@ function isDeliveryProgress(value: DeliveryProgress | undefined): boolean {
   if (value === undefined) return true;
   return Number.isSafeInteger(value.sent)
     && value.sent >= 0
+    && (value.formatVersion === undefined || (Number.isSafeInteger(value.formatVersion) && value.formatVersion >= 0))
     && (value.messageId === undefined || isStringValue(value.messageId));
 }
 
@@ -517,6 +520,7 @@ function normalizeProgress(progress: DeliveryProgress): DeliveryProgress {
   const sent = positiveIntegerOrZero(progress.sent, "progress.sent");
   const normalized: DeliveryProgress = { sent };
   if (progress.messageId) normalized.messageId = truncate(progress.messageId, MAX_MESSAGE_ID_LENGTH);
+  if (progress.formatVersion !== undefined) normalized.formatVersion = positiveIntegerOrZero(progress.formatVersion, "progress.formatVersion");
   return normalized;
 }
 

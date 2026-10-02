@@ -721,6 +721,7 @@ export class ManagedTelegramPeer extends DurableObject<ManagedTelegramPeerEnv> {
       return { ok: false, error: "Telegram delivery ledger unavailable", retryable: true };
     }
     if (!claim.claimed) return claim.result;
+    const legacyGrouping = claim.progress.sent > 0 && (claim.progress.formatVersion ?? 0) === 0;
 
     const fail = async (kind: DeliveryFailureKind): Promise<AdapterSendResult> => {
       const error = `Telegram delivery failed (${kind})`;
@@ -755,7 +756,7 @@ export class ManagedTelegramPeer extends DurableObject<ManagedTelegramPeerEnv> {
       // the approval buttons when there are any, otherwise the first message.
       let anchor = 0;
       if (media.length === 0) {
-        const chunks = telegramTextChunks(text, context.kind !== "platform" && !options.replyMarkup);
+        const chunks = telegramTextChunks(text, legacyGrouping || (context.kind !== "platform" && !options.replyMarkup), legacyGrouping);
         for (const [index, chunk] of chunks.entries()) {
           parts.push(async () => {
             const sent = await sendManagedTelegramText(
@@ -814,6 +815,7 @@ export class ManagedTelegramPeer extends DurableObject<ManagedTelegramPeerEnv> {
         await this.deliveries.recordProgress(message.deliveryId, claim.attemptId, {
           sent: index + 1,
           messageId: anchorMessageId,
+          formatVersion: legacyGrouping ? 0 : 1,
         });
       }
       await this.deliveries.succeed(message.deliveryId, claim.attemptId, anchorMessageId);
@@ -912,8 +914,8 @@ export class ManagedTelegramPeer extends DurableObject<ManagedTelegramPeerEnv> {
  * paragraph group, each within the text limit as Markdown and as HTML so the
  * rich, HTML and plain fallbacks all fit.
  */
-function telegramTextChunks(markdown: string, splitParagraphs = true): string[] {
-  const paragraphs = splitParagraphs ? splitMarkdownParagraphs(markdown) : [markdown];
+function telegramTextChunks(markdown: string, splitParagraphs = true, legacyGrouping = false): string[] {
+  const paragraphs = splitParagraphs ? splitMarkdownParagraphs(markdown, legacyGrouping) : [markdown];
   const chunks = paragraphs.flatMap((paragraphs) =>
     fitMarkdownToLimit(paragraphs, markdownToTelegramHtml, TELEGRAM_TEXT_LIMIT)
       .map((fitted) => fitted.markdown));

@@ -829,6 +829,7 @@ export class ManagedWhatsAppPeer extends DurableObject<ManagedWhatsAppPeerEnv> {
       return { ok: false, error: "WhatsApp delivery ledger unavailable", retryable: true };
     }
     if (!claim.claimed) return claim.result;
+    const legacyGrouping = claim.progress.sent > 0 && (claim.progress.formatVersion ?? 0) === 0;
 
     const fail = async (kind: DeliveryFailureKind, detail?: string): Promise<AdapterSendResult> => {
       const error = detail ?? `WhatsApp delivery failed (${kind})`;
@@ -889,20 +890,20 @@ export class ManagedWhatsAppPeer extends DurableObject<ManagedWhatsAppPeerEnv> {
       let anchor = 0;
       if (options.controls) {
         const controls = options.controls;
-        const prompts = whatsAppPromptMessages(controls.text, WHATSAPP_INTERACTIVE_BODY_LIMIT);
+        const prompts = whatsAppPromptMessages(controls.text, WHATSAPP_INTERACTIVE_BODY_LIMIT, legacyGrouping);
         for (const prompt of prompts.slice(0, -1)) addText(prompt);
         const last = prompts.at(-1) ?? controls.text;
         addPart((index) => send(buildWhatsAppInteractivePayload(to, { ...controls, text: last }), index));
         anchor = parts.length - 1;
       } else if (media.length === 0) {
-        for (const body of whatsAppTextMessages(text, options.splitParagraphs)) addText(body);
+        for (const body of whatsAppTextMessages(text, legacyGrouping || options.splitParagraphs, legacyGrouping)) addText(body);
       } else {
         const rendered = renderWhatsAppText(text);
         const captionOnFirst = Boolean(rendered)
           && whatsAppMediaSupportsCaption(media[0]!.type)
           && whatsAppCaptionFits(rendered);
         if (rendered && !captionOnFirst) {
-          for (const body of whatsAppTextMessages(text, options.splitParagraphs)) addText(body);
+          for (const body of whatsAppTextMessages(text, legacyGrouping || options.splitParagraphs, legacyGrouping)) addText(body);
         }
         const upload = (bytes: Uint8Array, mimeType: string, filename: string) =>
           uploadWhatsAppMedia(token, phoneNumberId, bytes, mimeType, filename, fetcher);
@@ -929,6 +930,7 @@ export class ManagedWhatsAppPeer extends DurableObject<ManagedWhatsAppPeerEnv> {
         await this.deliveries.recordProgress(message.deliveryId, claim.attemptId, {
           sent: index + 1,
           messageId: anchorMessageId,
+          formatVersion: legacyGrouping ? 0 : 1,
         });
       }
       await this.deliveries.succeed(message.deliveryId, claim.attemptId, anchorMessageId);

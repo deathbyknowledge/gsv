@@ -1,5 +1,6 @@
 import { env, runInDurableObject } from "cloudflare:test";
 import { expect, it, vi } from "vitest";
+import { DeliveryLedger, fingerprintOutboundDelivery } from "../../shared/src/delivery-ledger";
 import type { ManagedTelegramPeerEnv } from "../src/managed-peer";
 import type { ManagedTelegramPeerState } from "../src/managed-peer-state";
 
@@ -26,6 +27,23 @@ async function sentTexts(actorId: string): Promise<string[]> {
   const records = await (await bindings.TELEGRAM_API.fetch("https://telegram-api.test/messages")).json<Array<{ body: { chat_id?: string; text?: string } }>>();
   return records.filter((record) => String(record.body.chat_id) === actorId && record.body.text !== undefined).map((record) => record.body.text!);
 }
+
+it.each([undefined, 0, 1])("resumes the original paragraph partition after an update (format: %s)", async (formatVersion) => {
+  const actorId = `82${formatVersion ?? 2}45`;
+  const { peer, route, message } = await seed(actorId);
+  const paragraphs = ["a".repeat(200), "b".repeat(200), "c".repeat(200)];
+  message.text = paragraphs.join("\n\n");
+  await runInDurableObject(peer, async (_instance, state) => {
+    const ledger = new DeliveryLedger(state.storage);
+    const claim = await ledger.claim(message.deliveryId, await fingerprintOutboundDelivery(message));
+    if (!claim.claimed) throw new Error("Expected a fresh receipt");
+    await ledger.recordProgress(message.deliveryId, claim.attemptId, { sent: 1, messageId: "accepted-prefix", formatVersion });
+    await ledger.releaseRetryable(message.deliveryId, claim.attemptId);
+  });
+  using result = await peer.sendMessage(route.installationId, message);
+  expect(result).toMatchObject({ ok: true, messageId: "accepted-prefix" });
+  expect(await sentTexts(actorId)).toEqual(paragraphs.slice(formatVersion === 1 ? 1 : 2));
+});
 
 it.each([
   ["recordProgress", "22345", false],

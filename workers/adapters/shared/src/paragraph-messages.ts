@@ -39,8 +39,18 @@ type MarkdownBlocks = {
  * definition travels with every message that uses it, since each message is
  * rendered on its own later.
  */
-export function splitMarkdownParagraphs(markdown: string): string[] {
-  const { blocks, definitions } = markdownBlocks(markdown);
+export function splitMarkdownParagraphs(markdown: string, legacyGrouping = false): string[] {
+  const { blocks, definitions } = markdownBlocks(markdown, !legacyGrouping);
+  // Resume partially delivered staging messages with exactly their original partition.
+  if (legacyGrouping) {
+    const grouped: string[] = [];
+    for (const block of blocks) {
+      const previous = grouped.at(-1);
+      if (previous !== undefined && codePointLength(previous) < 320) grouped[grouped.length - 1] += `\n\n${block}`;
+      else grouped.push(block);
+    }
+    return grouped.map((block) => withDefinitions(block, definitions));
+  }
   return blocks.map((block) => withDefinitions(block, definitions));
 }
 
@@ -118,9 +128,8 @@ function fitPieces(
       continue;
     }
     if (markdownLimit <= 1) {
-      // One code point rendered past the limit; cutting the rendering is the last resort.
-      fitted.push(...splitTextAtLimit(rendered, limit).map((cut) => ({ markdown: complete, rendered: cut })));
-      continue;
+      // A renderer must fit one code point; never cut its markup to conceal a broken contract.
+      throw new Error("A single character exceeds the rendered message limit");
     }
     // Shrink the Markdown allowance by the observed overhead of rendering or
     // of the definitions, with some headroom, and always by at least one code
@@ -132,7 +141,7 @@ function fitPieces(
   return fitted;
 }
 
-function markdownBlocks(markdown: string): MarkdownBlocks {
+function markdownBlocks(markdown: string, joinHeadings = true): MarkdownBlocks {
   const trimmed = markdown.trim();
   if (!trimmed) return { blocks: [], definitions: [] };
   let tokens: Token[];
@@ -158,7 +167,7 @@ function markdownBlocks(markdown: string): MarkdownBlocks {
     if (!raw) continue;
     if (followsHeading) blocks[blocks.length - 1] += `\n\n${raw}`;
     else blocks.push(raw);
-    followsHeading = token.type === "heading";
+    followsHeading = joinHeadings && token.type === "heading";
   }
   return { blocks, definitions };
 }

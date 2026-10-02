@@ -1,5 +1,6 @@
 import { env, runInDurableObject } from "cloudflare:test";
 import { expect, it, vi } from "vitest";
+import { DeliveryLedger, fingerprintOutboundDelivery } from "../../shared/src/delivery-ledger";
 import { binaryBodyFromOwnedBytes } from "../../shared/src/media-body";
 import type { ManagedWhatsAppPeerEnv } from "../src/managed-peer";
 import type { ManagedWhatsAppPeerState } from "../src/managed-peer-state";
@@ -32,6 +33,23 @@ async function messages(actorId: string): Promise<GraphMessage[]> {
   const records = await (await bindings.WHATSAPP_API.fetch("https://graph.test/records")).json<GraphMessage[]>();
   return records.filter((record) => record.kind === "message" && record.body.to === actorId);
 }
+
+it.each([undefined, 0, 1])("resumes the original paragraph partition after an update (format: %s)", async (formatVersion) => {
+  const actorId = `3469021111${formatVersion ?? 2}`;
+  const { peer, route, message } = await seed(actorId);
+  const paragraphs = ["a".repeat(200), "b".repeat(200), "c".repeat(200)];
+  message.text = paragraphs.join("\n\n");
+  await runInDurableObject(peer, async (_instance, state) => {
+    const ledger = new DeliveryLedger(state.storage);
+    const claim = await ledger.claim(message.deliveryId, await fingerprintOutboundDelivery(message));
+    if (!claim.claimed) throw new Error("Expected a fresh receipt");
+    await ledger.recordProgress(message.deliveryId, claim.attemptId, { sent: 1, messageId: "accepted-prefix", formatVersion });
+    await ledger.releaseRetryable(message.deliveryId, claim.attemptId);
+  });
+  using result = await peer.sendMessage(route.installationId, message);
+  expect(result).toMatchObject({ ok: true, messageId: "accepted-prefix" });
+  expect((await messages(actorId)).map((record) => record.body.text?.body)).toEqual(paragraphs.slice(formatVersion === 1 ? 1 : 2));
+});
 
 async function partiallySent(actorId: string) {
   const fixture = await seed(actorId);

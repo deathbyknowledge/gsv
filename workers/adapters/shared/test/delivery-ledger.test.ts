@@ -98,14 +98,14 @@ describe("DeliveryLedger", () => {
     if (!first.claimed) throw new Error("expected a delivery claim");
     expect(first.progress).toEqual({ sent: 0 });
 
-    await ledger.recordProgress("delivery-parts", first.attemptId, { sent: 1, messageId: "part-1" });
-    await ledger.recordProgress("delivery-parts", first.attemptId, { sent: 2, messageId: "part-1" });
+    await ledger.recordProgress("delivery-parts", first.attemptId, { sent: 1, messageId: "part-1", formatVersion: 1 });
+    await ledger.recordProgress("delivery-parts", first.attemptId, { sent: 2, messageId: "part-1", formatVersion: 1 });
     await ledger.releaseRetryable("delivery-parts", first.attemptId);
 
     const retry = await ledger.claim("delivery-parts", REQUEST_FINGERPRINT);
     if (!retry.claimed) throw new Error("expected a retry claim");
-    expect(retry.progress).toEqual({ sent: 2, messageId: "part-1" });
-    await ledger.recordProgress("delivery-parts", retry.attemptId, { sent: 3, messageId: "part-1" });
+    expect(retry.progress).toEqual({ sent: 2, messageId: "part-1", formatVersion: 1 });
+    await ledger.recordProgress("delivery-parts", retry.attemptId, { ...retry.progress, sent: 3 });
     await ledger.succeed("delivery-parts", retry.attemptId, "part-1");
     await expect(ledger.claim("delivery-parts", REQUEST_FINGERPRINT)).resolves.toEqual({
       claimed: false,

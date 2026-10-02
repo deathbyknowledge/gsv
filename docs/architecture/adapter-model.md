@@ -334,7 +334,10 @@ binds the id to a fingerprint of its exact destination, reply context, text,
 media metadata, and binary media bytes. Reusing an id with different content is
 rejected instead of being mistaken for a successful replay, and that binding is
 retained across retry-safe failures. Only failures known to be safe are
-retryable. Outcomes that may already have reached a provider are reported as
+retryable. Multipart receipts retain the accepted part count and partition
+format, so an update cannot reinterpret that count and repeat earlier
+paragraphs. Unversioned partial receipts retain the first staging format.
+Outcomes that may already have reached a provider are reported as
 ambiguous and are not replayed; Discord can additionally reuse an
 enforced deterministic nonce, while Telegram conservatively uses at-most-once
 delivery for ambiguous outcomes. The Kernel retains retry-safe delivery as scheduled work,

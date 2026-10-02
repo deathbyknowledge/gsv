@@ -38,6 +38,13 @@ describe("splitMarkdownParagraphs", () => {
     expect(messages).toEqual(Array.from({ length: 7 }, () => short));
   });
 
+  it("retains the first staging partition only when resuming its receipt", () => {
+    const short = "x".repeat(200);
+    const markdown = `${short}\n\n${short}\n\n# Heading\n\n${short}`;
+    expect(splitMarkdownParagraphs(markdown, true)).toEqual([`${short}\n\n${short}`, `# Heading\n\n${short}`]);
+    expect(splitMarkdownParagraphs(markdown)).toEqual([short, short, `# Heading\n\n${short}`]);
+  });
+
   it("keeps fenced code blocks, loose lists, tables and block quotes whole", () => {
     const code = "```ts\nconst a = 1;\n\nconst b = 2;\n```";
     const list = Array.from({ length: 40 }, (_, index) => `- item ${index}`).join("\n\n");
@@ -148,5 +155,10 @@ describe("fitMarkdownToLimit", () => {
     const fitted = fitMarkdownToLimit(markdown, html, 40);
     expect(fitted.every((message) => codePointLength(message.rendered) <= 40)).toBe(true);
     expect(fitted.every((message) => /^(<b>ab<\/b>)( <b>ab<\/b>)*$/.test(message.rendered))).toBe(true);
+  });
+
+  it("rejects a renderer that cannot fit a single character instead of cutting its markup", () => {
+    expect(() => fitMarkdownToLimit("x", (text) => `<a href="https://example.com/${"x".repeat(64)}">${text}</a>`, 32))
+      .toThrow("A single character exceeds the rendered message limit");
   });
 });
