@@ -110,6 +110,29 @@ it("does not template or hold an already partially sent delivery after the windo
   });
 });
 
+it("keeps a new delivery behind held output rejected with a retryable status", async () => {
+  const actorId = "34690212222";
+  const { peer, route, message } = await seed(actorId);
+  const older = "held-message-awaiting-retry";
+  await runInDurableObject(peer, async (instance) => {
+    await instance["held"].hold({ deliveryId: "earlier-delivery", owner: route, markdown: older });
+  });
+  await bindings.WHATSAPP_API.fetch("https://graph.test/throttle", { method: "POST", body: older });
+  try {
+    using blocked = await peer.sendMessage(route.installationId, message);
+    expect(blocked).toMatchObject({ ok: false, retryable: true });
+    expect(await messages(actorId)).toEqual([]);
+    await runInDurableObject(peer, async (_instance, state) => {
+      expect(await state.storage.get(`outbound_delivery:v1:record:${message.deliveryId}`)).toMatchObject({ state: "retryable" });
+    });
+  } finally {
+    await bindings.WHATSAPP_API.fetch("https://graph.test/throttle", { method: "POST", body: "" });
+  }
+  using retried = await peer.sendMessage(route.installationId, message);
+  expect(retried).toMatchObject({ ok: true });
+  expect((await messages(actorId)).map((record) => record.body.text?.body)).toEqual([older, message.text]);
+});
+
 it("retries an unsent suffix after a local failure before the next provider call", async () => {
   const actorId = "34690207777";
   const { peer, route, message, first, second } = await partiallySent(actorId);
@@ -150,7 +173,7 @@ it.each([false, true])("does not dispatch after the route changes during prepara
         return result;
       };
     } else {
-      instance["releaseHeld"] = async (owner) => { await release.call(instance, owner); await relink(); };
+      instance["releaseHeld"] = async (owner) => { const result = await release.call(instance, owner); await relink(); return result; };
     }
     try {
       expect(await instance.sendMessage(route.installationId, message)).toMatchObject({

@@ -187,7 +187,7 @@ export class ManagedWhatsAppPeer extends DurableObject<ManagedWhatsAppPeerEnv> {
   private readonly inboundDeliveries: InboundDeliveryLedger<InboundPayload, ResponseContext>;
   private readonly held: WhatsAppHeldOutbound;
   private drainPromise?: Promise<void>;
-  private releasePromise?: Promise<void>;
+  private releasePromise?: Promise<boolean>;
   private templateAttempt?: Promise<AdapterSendResult>;
 
   constructor(ctx: DurableObjectState, env: ManagedWhatsAppPeerEnv) {
@@ -866,7 +866,9 @@ export class ManagedWhatsAppPeer extends DurableObject<ManagedWhatsAppPeerEnv> {
         return await this.deliverOutsideWindow(message, fallbackOwner, claim, options, fail, current);
       }
       // Replies still held behind a template go out first so the person reads them in order.
-      if (fallbackOwner) await this.releaseHeld(fallbackOwner);
+      if (fallbackOwner && !await this.releaseHeld(fallbackOwner)) {
+        return await fail("retryable", "Earlier WhatsApp messages are waiting to be delivered");
+      }
       const token = this.accessToken();
       const phoneNumberId = this.phoneNumberId();
       const fetcher = this.whatsAppFetch(owner, context);
@@ -1078,7 +1080,7 @@ export class ManagedWhatsAppPeer extends DurableObject<ManagedWhatsAppPeerEnv> {
    * inbound message and a Kernel delivery arriving together cannot race each
    * other for the same records.
    */
-  private async releaseHeld(owner: AdapterDataOwner): Promise<void> {
+  private async releaseHeld(owner: AdapterDataOwner): Promise<boolean> {
     // Webhook admission records the reply immediately, but a template request
     // already sent to Meta must settle before its held messages are released.
     if (this.templateAttempt) await this.templateAttempt;
@@ -1088,18 +1090,18 @@ export class ManagedWhatsAppPeer extends DurableObject<ManagedWhatsAppPeerEnv> {
     const running = this.releaseHeldNow(owner);
     this.releasePromise = running;
     try {
-      await running;
+      return await running;
     } finally {
       if (this.releasePromise === running) this.releasePromise = undefined;
     }
   }
 
-  private async releaseHeldNow(owner: AdapterDataOwner): Promise<void> {
+  private async releaseHeldNow(owner: AdapterDataOwner): Promise<boolean> {
     let held: HeldOutboundRecord[];
     try {
       held = await this.held.list(owner);
     } catch {
-      return;
+      return false;
     }
     for (const record of held) {
       let result: AdapterSendResult;
@@ -1110,11 +1112,11 @@ export class ManagedWhatsAppPeer extends DurableObject<ManagedWhatsAppPeerEnv> {
           component: "managed_whatsapp",
           event: "held_release_failed",
         }));
-        return;
+        return false;
       }
       if (!result.ok) {
         // A retryable failure keeps this message and the ones after it for the next reply.
-        if (result.retryable) return;
+        if (result.retryable) return false;
         // An unknown outcome keeps the record: the message may still be in
         // flight or may have arrived, and only expiry decides. Later records
         // still go out, since no ordering can be promised past an unknown.
@@ -1133,6 +1135,7 @@ export class ManagedWhatsAppPeer extends DurableObject<ManagedWhatsAppPeerEnv> {
       // Delivered, or refused for good: nothing is left to release.
       await this.held.remove(record.deliveryId);
     }
+    return true;
   }
 
   private async deliverHeld(record: HeldOutboundRecord, owner: AdapterDataOwner): Promise<AdapterSendResult> {
