@@ -644,9 +644,7 @@ mod tests {
         let process = unsafe { GetCurrentProcess() };
         assert_ne!(
             // SAFETY: GetCurrentProcess is live and the output pointer is writable.
-            unsafe {
-                OpenProcessToken(process, TOKEN_DUPLICATE | TOKEN_QUERY, &mut process_token)
-            },
+            unsafe { OpenProcessToken(process, TOKEN_DUPLICATE | TOKEN_QUERY, &mut process_token) },
             0
         );
         // SAFETY: OpenProcessToken returned a newly owned handle.
