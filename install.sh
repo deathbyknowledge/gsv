@@ -307,10 +307,10 @@ stop_animation() {
         kill "$ANIMATION_PID" 2>/dev/null || true
         wait "$ANIMATION_PID" 2>/dev/null || true
     fi
-    printf '\033[0m\033[?25h\033[?1049l' >&3
+    printf '\033[0m\033[?25h\033[?1049l' >&3 2>/dev/null || true
     exec 1>&3 2>&4 3>&- 4>&-
     ANIMATION_ACTIVE=0
-    cat "$TMP_DIR/install.log"
+    cat "$TMP_DIR/install.log" || true
 }
 
 delegate_to_pinned_installer() {
@@ -635,7 +635,9 @@ persist_release_channel() {
 
 cleanup() {
     local status=$?
-    trap - EXIT INT TERM HUP
+    trap - EXIT
+    trap '' INT TERM HUP
+    set +e
     stop_animation
     if [ "$status" -ne 0 ] && [ "${INSTALL_IN_PROGRESS:-0}" -eq 1 ]; then
         stop_existing_service || true

@@ -36,6 +36,29 @@ def check(case, animated=True, exit_code=0):
                    TERM="xterm-256color", GSV_VERSION="v-test", GSV_INSTALLER_RELEASE_BOUND="1",
                    GSV_INSTALL_DIR=str(root / "installed"), GSV_TEST_RELEASE_DIR=str(release),
                    GSV_TEST_DOWNLOAD_DELAY="3" if case in ("success", "resize") else "0.7")
+        if case == "hangup":
+            (root / "tmp").mkdir()
+            (root / "bin").mkdir()
+            (root / "installed").mkdir()
+            original = b"#!/bin/sh\nprintf 'previous-version\\n'\n"
+            installed_names = ("gsv", "gsvd", "gsv-desktop", "gsv-transcribe", "gsv-vision")
+            for name in installed_names:
+                target = root / "installed" / name
+                target.write_bytes(original)
+                target.chmod(0o755)
+            service = root / "home/.config/systemd/user/gsvd.service"
+            service.parent.mkdir(parents=True)
+            service_text = f'[Service]\nExecStart="{root}/installed/gsvd"\n'
+            service.write_text(service_text)
+            copier = root / "bin/cp"
+            copier.write_text(f'''#!/bin/sh
+case "$2" in
+  */.gsvd.new.*) touch '{root}/replacement-started'; sleep 10 ;;
+esac
+exec /usr/bin/cp "$@"
+''')
+            copier.chmod(0o755)
+            env.update(PATH=f"{root}/bin:{env['PATH']}", TMPDIR=str(root / "tmp"), GSV_TEST_SYSTEMCTL_LOG=str(root / "service.log"))
         if case == "disabled":
             env["GSV_NO_ANIMATION"] = "1"
         pid, terminal = pty.fork()
@@ -63,27 +86,46 @@ def check(case, animated=True, exit_code=0):
                 if enter in output and case == "interrupt" and not interrupted:
                     os.write(terminal, b"\x03")
                     interrupted = True
+                if case == "hangup" and (root / "replacement-started").exists():
+                    assert (root / "installed/gsv").read_bytes() != original
+                    os.close(terminal)
+                    terminal = None
+                    break
                 if b"Downloading GSV\x1b[K" in output and case == "resize" and not resized:
                     fcntl.ioctl(terminal, termios.TIOCSWINSZ, struct.pack("HHHH", 33, 60, 0, 0))
                     resized = True
             else:
                 raise AssertionError(f"{case}: installer did not finish")
-            _, status = os.waitpid(pid, 0)
+            while time.monotonic() < deadline:
+                exited, result = os.waitpid(pid, os.WNOHANG)
+                if exited:
+                    status = result
+                    break
+                time.sleep(0.05)
+            assert status is not None, f"{case}: cleanup did not finish"
         finally:
             if status is None:
                 os.killpg(pid, signal.SIGKILL)
                 os.waitpid(pid, 0)
-            os.close(terminal)
+            if terminal is not None:
+                os.close(terminal)
         actual = os.waitstatus_to_exitcode(status)
         assert actual == exit_code, (case, actual, output[-2500:])
         assert (enter in output) == animated, (case, output[-2500:])
-        if animated:
+        if animated and case != "hangup":
             assert output.count(enter) == output.count(restore) == 1, (case, output[-2500:])
         if case == "resize":
             assert resized and output.count(b"\x1b[2J") >= 3, output[-2500:]
         if case == "success":
             assert b"Downloading GSV\x1b[K" in output, output[-2500:]
-        if exit_code == 0:
+        if case == "hangup":
+            assert {path.name for path in (root / "installed").iterdir()} == set(installed_names)
+            assert all(path.read_bytes() == original for path in (root / "installed").iterdir())
+            assert service.read_text() == service_text
+            assert not list((root / "tmp").iterdir()), "installer left temporary files after hangup"
+            service_log = (root / "service.log").read_text()
+            assert service_log.rfind("--user start gsvd.service") > service_log.rfind("--user stop gsvd.service") >= 0
+        elif exit_code == 0:
             assert (root / "installed/gsv").is_file(), case
             assert b"Installed gsv, gsvd, Desktop" in output, (case, output[-2500:])
         else:
@@ -96,6 +138,7 @@ for case in ("success", "resize"):
     check(case)
 check("checksum", exit_code=1)
 check("interrupt", exit_code=130)
+check("hangup", exit_code=129)
 for case in ("small", "disabled", "missing-animation", "corrupt-animation"):
     check(case, animated=False)
-print("installer terminal success, resize, interruption, failure and text fallback passed")
+print("installer terminal success, resize, interruption, hangup rollback, failure and text fallback passed")
