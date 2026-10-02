@@ -14,8 +14,9 @@ import {
 const STORAGE_USERNAME = "gsv.ui.gateway.username";
 const STORAGE_SESSION_TOKEN = "gsv.ui.session.token.v1";
 const STORAGE_PENDING_REVOKES = "gsv.ui.session.pending-revokes.v1";
-const SESSION_TOKEN_TTL_MS = 12 * 60 * 60 * 1000;
-const SESSION_TOKEN_REFRESH_LEEWAY_MS = 10 * 60 * 1000;
+const SESSION_TOKEN_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+const SESSION_TOKEN_REFRESH_INTERVAL_MS = 24 * 60 * 60 * 1000;
+const SESSION_TOKEN_REFRESH_RETRY_MS = 60_000;
 const LOCK_REVOKE_WAIT_MS = 1_500;
 const SESSION_RECONNECT_DELAYS_MS = [0, 1_000, 2_000, 5_000, 10_000];
 const SESSION_RECONNECT_STABLE_MS = 10_000;
@@ -316,8 +317,11 @@ export function createSessionService(client: SessionClient, options: SessionServ
   };
 
   const clearStoredSessionToken = (): void => {
+    const stored = readPersistedToken(storage);
+    if (!stored || (stored.username === snapshot.username && stored.tokenId === currentSessionToken?.tokenId)) {
+      removeValue(STORAGE_SESSION_TOKEN, storage);
+    }
     currentSessionToken = null;
-    removeValue(STORAGE_SESSION_TOKEN, storage);
     clearRefreshTimer();
   };
 
@@ -367,7 +371,7 @@ export function createSessionService(client: SessionClient, options: SessionServ
       return;
     }
 
-    const refreshAt = token.expiresAt - SESSION_TOKEN_REFRESH_LEEWAY_MS;
+    const refreshAt = token.expiresAt - SESSION_TOKEN_TTL_MS + SESSION_TOKEN_REFRESH_INTERVAL_MS;
     const delayMs = Math.max(1_000, refreshAt - Date.now());
     refreshTimerId = window.setTimeout(() => {
       void refreshSessionToken("scheduled");
@@ -376,40 +380,52 @@ export function createSessionService(client: SessionClient, options: SessionServ
 
   const refreshSessionToken = async (reason: "post-login" | "scheduled"): Promise<void> => {
     const generation = reconnectGeneration;
-    if (disposed || snapshot.phase !== "ready" || !client.isConnected()) {
-      return;
-    }
-
-    const username = snapshot.username;
-    if (!username) {
-      return;
-    }
-
-    const nextExpiry = Date.now() + SESSION_TOKEN_TTL_MS;
-
-    let nextToken: UserSessionToken;
-    try {
-      nextToken = await createUserSessionToken(client, nextExpiry);
-    } catch {
-      if (disposed || generation !== reconnectGeneration) return;
-      if (reason === "scheduled" && currentSessionToken?.expiresAt && currentSessionToken.expiresAt <= Date.now()) {
-        clearStoredSessionToken();
+    const rotate = async (): Promise<void> => {
+      if (disposed || generation !== reconnectGeneration || snapshot.phase !== "ready" || !client.isConnected()) return;
+      const username = snapshot.username;
+      if (!username) return;
+      const previousToken = readPersistedToken(storage);
+      if (reason === "scheduled") {
+        if (!syncStoredSession() || !currentSessionToken) return;
+        const refreshAt = currentSessionToken.expiresAt === null ? Infinity
+          : currentSessionToken.expiresAt - SESSION_TOKEN_TTL_MS + SESSION_TOKEN_REFRESH_INTERVAL_MS;
+        if (refreshAt > Date.now()) {
+          scheduleRefresh(currentSessionToken);
+          return;
+        }
       }
-      return;
+
+      let nextToken: UserSessionToken;
+      try {
+        nextToken = await createUserSessionToken(client, Date.now() + SESSION_TOKEN_TTL_MS);
+      } catch {
+        if (disposed || generation !== reconnectGeneration) return;
+        clearRefreshTimer();
+        refreshTimerId = window.setTimeout(() => { void refreshSessionToken(reason); }, SESSION_TOKEN_REFRESH_RETRY_MS);
+        return;
+      }
+
+      // A sign-out or account switch in another tab must win over an in-flight renewal.
+      if (disposed || generation !== reconnectGeneration || snapshot.phase !== "ready"
+        || readPersistedToken(storage)?.tokenId !== previousToken?.tokenId) {
+        queueRevoke(nextToken.tokenId);
+        await drainPendingRevokes("ui session superseded");
+        return;
+      }
+      const persisted = toPersistedToken(username, nextToken);
+      currentSessionToken = persisted;
+      storePersistedToken(persisted, storage);
+      scheduleRefresh(persisted);
+      if (previousToken && previousToken.tokenId !== nextToken.tokenId) queueRevoke(previousToken.tokenId);
+      await drainPendingRevokes("ui session rotated");
+    };
+
+    // Browser tabs share one remembered credential. Native sessions have their own storage.
+    if (!storage && window.navigator?.locks) {
+      await window.navigator.locks.request(STORAGE_SESSION_TOKEN, rotate);
+    } else {
+      await rotate();
     }
-
-    if (disposed || generation !== reconnectGeneration || snapshot.phase !== "ready") return;
-    const previousToken = currentSessionToken;
-    const persisted = toPersistedToken(username, nextToken);
-    currentSessionToken = persisted;
-    storePersistedToken(persisted, storage);
-    scheduleRefresh(persisted);
-
-    if (previousToken && previousToken.tokenId !== nextToken.tokenId) {
-      queueRevoke(previousToken.tokenId);
-    }
-
-    await drainPendingRevokes("ui session rotated");
   };
 
   const setLockedAfterDisconnect = (message: string): void => {
@@ -425,6 +441,27 @@ export function createSessionService(client: SessionClient, options: SessionServ
     });
   };
 
+  const syncStoredSession = (): boolean => {
+    const stored = readPersistedToken(storage);
+    if (stored?.tokenId === currentSessionToken?.tokenId) return true;
+    currentSessionToken = stored;
+    if (!stored || stored.username !== snapshot.username) {
+      cancelSilentReconnect();
+      setLockedAfterDisconnect(stored ? "Account changed in another tab. Sign in to continue." : "Signed out");
+      client.disconnect();
+      return false;
+    }
+    scheduleRefresh(stored);
+    return true;
+  };
+
+  const onStorage = (event: StorageEvent): void => {
+    if (event.storageArea !== window.localStorage || (event.key !== null && event.key !== STORAGE_SESSION_TOKEN)) return;
+    // Read the latest value: a suspended tab can receive older queued storage events.
+    syncStoredSession();
+  };
+  if (!storage) window.addEventListener("storage", onStorage);
+
   const markConnectionStableSoon = (): void => {
     clearReconnectStableTimer();
     reconnectStableTimerId = window.setTimeout(() => {
@@ -439,10 +476,12 @@ export function createSessionService(client: SessionClient, options: SessionServ
   };
 
   const runSilentReconnect = async (generation: number): Promise<void> => {
-    if (reconnectInFlight || generation !== reconnectGeneration || snapshot.phase !== "ready") {
+    if (disposed || reconnectInFlight || generation !== reconnectGeneration
+      || (snapshot.phase !== "ready" && snapshot.phase !== "booting")) {
       return;
     }
 
+    if (!syncStoredSession()) return;
     const token = currentSessionToken;
     if (!token) {
       finishSilentReconnectFailure("Disconnected");
@@ -453,16 +492,12 @@ export function createSessionService(client: SessionClient, options: SessionServ
       finishSilentReconnectFailure("Session expired. Sign in again.");
       return;
     }
-    if (reconnectAttempts >= SESSION_RECONNECT_DELAYS_MS.length) {
-      finishSilentReconnectFailure("Connection interrupted. Sign in again.");
-      return;
-    }
 
     reconnectAttempts += 1;
     reconnectInFlight = true;
     clearRefreshTimer();
     setSnapshot({
-      phase: "ready",
+      phase: snapshot.phase,
       url: gatewayUrl(),
       username: token.username,
       connectionId: null,
@@ -476,22 +511,17 @@ export function createSessionService(client: SessionClient, options: SessionServ
         token: token.token,
       });
 
-      if (generation !== reconnectGeneration || currentSessionToken?.tokenId !== token.tokenId) {
-        client.disconnect();
-        return;
-      }
+      if (disposed || generation !== reconnectGeneration || !syncStoredSession()) return;
 
       storeValue(STORAGE_USERNAME, token.username, storage);
-      setSnapshot({ ...snapshot, server: result.server });
-      scheduleRefresh(token);
+      setSnapshot({ ...snapshot, phase: "ready", connectionId: result.server.connectionId, server: result.server, message: null });
+      if (currentSessionToken) scheduleRefresh(currentSessionToken);
       await drainPendingRevokes("ui session cleanup");
     } catch (error) {
       if (generation === reconnectGeneration) {
         client.disconnect();
       }
-      if (generation !== reconnectGeneration || snapshot.phase !== "ready") {
-        return;
-      }
+      if (disposed || generation !== reconnectGeneration || !syncStoredSession()) return;
 
       if (isSetupRequiredError(error)) {
         setSnapshot({
@@ -504,17 +534,13 @@ export function createSessionService(client: SessionClient, options: SessionServ
         return;
       }
 
-      if (isAuthenticationRejectedError(error)) {
+      if (isAuthenticationRejectedError(error) && currentSessionToken?.tokenId === token.tokenId) {
         clearStoredSessionToken();
         finishSilentReconnectFailure("Session expired. Sign in again.");
         return;
       }
 
-      const nextDelay = SESSION_RECONNECT_DELAYS_MS[reconnectAttempts];
-      if (nextDelay === undefined) {
-        finishSilentReconnectFailure("Unable to reconnect. Sign in again.");
-        return;
-      }
+      const nextDelay = SESSION_RECONNECT_DELAYS_MS[Math.min(reconnectAttempts, SESSION_RECONNECT_DELAYS_MS.length - 1)];
 
       clearReconnectTimer();
       reconnectTimerId = window.setTimeout(() => {
@@ -533,6 +559,7 @@ export function createSessionService(client: SessionClient, options: SessionServ
       return;
     }
 
+    if (!syncStoredSession()) return;
     const token = currentSessionToken;
     if (!token) {
       setLockedAfterDisconnect("Disconnected");
@@ -543,13 +570,8 @@ export function createSessionService(client: SessionClient, options: SessionServ
       setLockedAfterDisconnect("Session expired. Sign in again.");
       return;
     }
-    if (reconnectAttempts >= SESSION_RECONNECT_DELAYS_MS.length) {
-      setLockedAfterDisconnect("Connection interrupted. Sign in again.");
-      return;
-    }
-
     const generation = reconnectGeneration;
-    const delay = SESSION_RECONNECT_DELAYS_MS[reconnectAttempts] ?? 0;
+    const delay = SESSION_RECONNECT_DELAYS_MS[Math.min(reconnectAttempts, SESSION_RECONNECT_DELAYS_MS.length - 1)];
     clearReconnectTimer();
     reconnectTimerId = window.setTimeout(() => {
       reconnectTimerId = null;
@@ -718,7 +740,9 @@ export function createSessionService(client: SessionClient, options: SessionServ
   const lock = async (reason = "Session locked"): Promise<void> => {
     cancelSilentReconnect();
     const lockGeneration = reconnectGeneration;
-    const previousTokenId = currentSessionToken?.tokenId ?? null;
+    const stored = readPersistedToken(storage);
+    if (stored?.username === snapshot.username) currentSessionToken = stored;
+    const previousTokenId = currentSessionToken?.username === snapshot.username ? currentSessionToken.tokenId : null;
 
     if (previousTokenId) {
       queueRevoke(previousTokenId);
@@ -748,7 +772,7 @@ export function createSessionService(client: SessionClient, options: SessionServ
     cancelSilentReconnect();
     const generation = reconnectGeneration;
     const url = gatewayUrl();
-    const persisted = currentSessionToken;
+    const persisted = currentSessionToken = readPersistedToken(storage);
 
     if (installationOnboardingToken) {
       setSnapshot({
@@ -816,47 +840,7 @@ export function createSessionService(client: SessionClient, options: SessionServ
       message: "Booting up...",
     });
 
-    try {
-      const result = await client.connect({
-        url,
-        username: persisted.username,
-        token: persisted.token,
-      });
-      if (disposed || generation !== reconnectGeneration) return;
-
-      setSnapshot({
-        phase: "ready",
-        url,
-        username: persisted.username,
-        connectionId: result.server.connectionId,
-        server: result.server,
-        message: null,
-      });
-
-      await drainPendingRevokes("ui session cleanup");
-      scheduleRefresh(persisted);
-    } catch (error) {
-      if (disposed || generation !== reconnectGeneration) return;
-      clearStoredSessionToken();
-      if (isSetupRequiredError(error)) {
-        setSnapshot({
-          phase: "setup",
-          url,
-          username: persisted.username,
-          connectionId: null,
-          message: null,
-        });
-        return;
-      }
-
-      setSnapshot({
-        phase: "locked",
-        url,
-        username: persisted.username,
-        connectionId: null,
-        message: "Session expired. Sign in again.",
-      });
-    }
+    await runSilentReconnect(generation);
   };
 
   return {
@@ -878,6 +862,7 @@ export function createSessionService(client: SessionClient, options: SessionServ
       cancelSilentReconnect();
       clearRefreshTimer();
       unsubscribeStatus();
+      if (!storage) window.removeEventListener("storage", onStorage);
       listeners.clear();
       client.disconnect();
     },

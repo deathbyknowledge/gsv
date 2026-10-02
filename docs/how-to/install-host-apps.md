@@ -36,6 +36,14 @@ irm https://install.gsv.space/install.ps1 | iex
 Use `GSV_CHANNEL=dev` for the moving development channel, or set
 `GSV_VERSION=vX.Y.Z` to install an immutable release tag.
 
+## Sign-in and multiple windows
+
+Desktop and browser windows can stay connected to the same space at once. They
+receive new conversation messages live and refresh server state after a
+reconnect. A remembered space sign-in lasts 30 days and renews during use.
+Browser tabs share renewal and sign-out; Desktop has its own stored session.
+A temporary network interruption reconnects without asking you to sign in again.
+
 ## Install location
 
 New installations go to a per-user directory: `~/.gsv/bin` on Linux and macOS,

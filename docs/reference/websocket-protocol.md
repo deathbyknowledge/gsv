@@ -141,6 +141,12 @@ Error:
 3. Wait for a normal success response or a structured error.
 4. After connect succeeds, exchange syscall requests, responses, and signals until the socket closes.
 
+Ordinary UI clients can use the same application peer name across browser tabs
+and Desktop. Each WebSocket has its own server-issued connection identity and
+receives the account's authorized signals. A reconnecting operation provider
+replaces the older provider connection with the same peer name, account and
+principal kind; it does not replace ordinary UI connections.
+
 The gateway rejects setup-mode connections with error code `425` and details:
 
 ```json
