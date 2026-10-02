@@ -148,7 +148,7 @@ describe("RunRouteStore", () => {
     });
   });
 
-  it("clears only connection routes for a connection id", async () => {
+  it("detaches a closed connection's routes but keeps their platform attribution", async () => {
     await runWithRealKernelSql((sql) => {
       vi.spyOn(Date, "now").mockReturnValue(50_000);
       const store = new RunRouteStore(sql);
@@ -158,6 +158,7 @@ describe("RunRouteStore", () => {
         processId: "init:1000",
         uid: 1000,
         connectionId: "conn-a",
+        clientPlatform: "tablet",
       });
       store.setConnectionRoute({
         runId: "run-c2",
@@ -180,9 +181,20 @@ describe("RunRouteStore", () => {
 
       store.clearForConnection("conn-a");
 
-      expect(store.get("run-c1")).toBeNull();
-      expect(store.get("run-c2")).not.toBeNull();
-      expect(store.get("run-a1")).not.toBeNull();
+      const detached = store.get("run-c1");
+      expect(detached?.kind).toBe("detached");
+      if (detached?.kind === "detached") {
+        expect(detached.clientPlatform).toBe("tablet");
+        expect(detached.processId).toBe("init:1000");
+        expect(detached.uid).toBe(1000);
+      }
+      expect(store.get("run-c2")?.kind).toBe("connection");
+      expect(store.get("run-a1")?.kind).toBe("adapter");
+      expect(store.inheritProcessApprovalRoute({
+        processId: "child:1",
+        uid: 1000,
+        sourceRunId: "run-c1",
+      })).toBeNull();
     });
   });
 

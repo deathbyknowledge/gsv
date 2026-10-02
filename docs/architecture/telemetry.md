@@ -76,9 +76,10 @@ producer switch and tail consumer; schema support alone does not export anything
   A committed Ship reply also carries a closed `platform` class for the surface
   that receives it: `web`, `phone`, `tablet`, `desktop`, `cli`, `telegram`,
   `discord`, `slack`, `background`, or `other`. The Kernel derives it from the
-  run route at commit time, so a client that disconnects mid-run is still
-  classified; the reported peer platform string and adapter name never leave
-  the Gateway.
+  run route at commit time. A client that disconnects mid-run leaves a detached
+  route that delivers nothing but keeps the attribution until the run finishes,
+  so its late replies are still classified; the reported peer platform string
+  and adapter name never leave the Gateway.
 - Accounts: activation. This is not a full signup funnel; anonymous invite/email
   steps intentionally do not invent an installation identity or export addresses.
 - Inference: logical terminal outcomes, cost/tokens, provider attempt failures,

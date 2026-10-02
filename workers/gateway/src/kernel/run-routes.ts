@@ -28,7 +28,22 @@ export type AdapterRunRoute = {
   expiresAt: number;
 };
 
-export type RunRoute = ConnectionRunRoute | AdapterRunRoute;
+// A connection route whose socket closed before the run reached its terminal
+// boundary. It delivers nothing and never seeds an approval route; it only
+// retains which surface started the run so a late reply is still attributed.
+export type DetachedRunRoute = {
+  kind: "detached";
+  runId: string;
+  processId: string;
+  uid: number;
+  clientPlatform?: string;
+  createdAt: number;
+  expiresAt: number;
+};
+
+export type RunRoute = ConnectionRunRoute | AdapterRunRoute | DetachedRunRoute;
+
+export type DeliveryRunRoute = ConnectionRunRoute | AdapterRunRoute;
 
 export type ProcessApprovalRoute =
   | Omit<ConnectionRunRoute, "runId">
@@ -148,12 +163,13 @@ export class RunRouteStore {
     connectionId?: string;
   }): ProcessApprovalRoute | null {
     this.pruneExpired();
-    let source: ProcessApprovalRoute | RunRoute | null = null;
+    let source: ProcessApprovalRoute | DeliveryRunRoute | null = null;
 
     if (input.sourceRunId) {
       const runRoute = this.get(input.sourceRunId);
       if (
         runRoute
+        && runRoute.kind !== "detached"
         && runRoute.uid === input.uid
         && (!input.sourceProcessId || runRoute.processId === input.sourceProcessId)
       ) {
@@ -230,7 +246,8 @@ export class RunRouteStore {
 
   clearForConnection(connectionId: string): void {
     this.sql.exec(
-      `DELETE FROM run_routes WHERE route_kind = 'connection' AND connection_id = ?`,
+      `UPDATE run_routes SET route_kind = 'detached', connection_id = NULL
+       WHERE route_kind = 'connection' AND connection_id = ?`,
       connectionId,
     );
     this.sql.exec(
@@ -266,7 +283,7 @@ export class RunRouteStore {
 
   private setProcessApprovalRoute(
     processId: string,
-    source: ProcessApprovalRoute | RunRoute,
+    source: ProcessApprovalRoute | DeliveryRunRoute,
   ): ProcessApprovalRoute {
     const now = Date.now();
     const expiresAt = source.expiresAt;
@@ -442,6 +459,19 @@ function toRoute(row: RunRouteRow): RunRoute {
       createdAt: row.created_at,
       expiresAt: row.expires_at,
     };
+  }
+
+  if (row.route_kind === "detached") {
+    const route: DetachedRunRoute = {
+      kind: "detached",
+      runId: row.run_id,
+      processId: row.process_id ?? "",
+      uid: row.uid,
+      createdAt: row.created_at,
+      expiresAt: row.expires_at,
+    };
+    if (row.client_platform !== null) route.clientPlatform = row.client_platform;
+    return route;
   }
 
   const route: ConnectionRunRoute = {
