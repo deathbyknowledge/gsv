@@ -170,6 +170,30 @@ pub(crate) enum LegacyDeviceAction {
 
 #[derive(Subcommand)]
 pub(crate) enum DaemonAction {
+    #[cfg(windows)]
+    #[command(hide = true)]
+    WindowsUpdate {
+        #[arg(long)]
+        daemon_sha256: String,
+    },
+    #[cfg(windows)]
+    #[command(hide = true)]
+    WindowsInstall {
+        #[arg(long)]
+        config: PathBuf,
+        #[arg(long)]
+        owner_sid: String,
+        #[arg(long)]
+        workspace: PathBuf,
+        #[arg(long)]
+        daemon_source: PathBuf,
+        #[arg(long)]
+        daemon_sha256: String,
+        #[arg(long, requires = "parent_pid")]
+        transaction: Option<String>,
+        #[arg(long, requires = "transaction")]
+        parent_pid: Option<u32>,
+    },
     /// Install and start the gsvd service
     Install {
         /// Machine ID (saved to local config during install)

@@ -225,12 +225,17 @@ Device filesystem semantics:
 - Relative paths resolve against the configured device workspace.
 - Absolute paths are used as-is on the device.
 - Returned paths are local machine paths.
+- Windows root-relative paths retain the current drive or UNC share. Resolving
+  `\docs` from `//server/share/current` gives `//server/share/docs`.
 - Reads can return text, directory listings, or supported image content.
 
 Device shell semantics:
 
 - Unix devices run commands through the user's shell with `-lc`.
-- Windows devices run commands through PowerShell.
+- Windows devices run commands through PowerShell with UTF-8 input/output.
+  The SCM service executes commands as its configured service account, including
+  before interactive login. Cancellation terminates the owned Windows Job Object
+  and its descendant processes. Use drive-qualified paths or UNC paths for files.
 - `input` starts a command; `cwd` selects its working directory.
 - Long-running commands return a resumable `sessionId` instead of holding the original route open.
 - `Shell` with `sessionId` and `input: ""` polls for more output.

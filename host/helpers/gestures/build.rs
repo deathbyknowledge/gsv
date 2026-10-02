@@ -26,8 +26,8 @@ const MODELS: [ModelContract; 2] = [
 
 fn main() -> Result<(), Box<dyn Error>> {
     let target_os = std::env::var("CARGO_CFG_TARGET_OS")?;
-    if !matches!(target_os.as_str(), "linux" | "macos") {
-        return Err("the gesture CPU runtime supports Linux and macOS".into());
+    if !matches!(target_os.as_str(), "linux" | "macos" | "windows") {
+        return Err("the gesture CPU runtime supports Linux, macOS and Windows".into());
     }
     for contract in MODELS {
         println!("cargo:rerun-if-changed={}", contract.path);
@@ -35,6 +35,18 @@ fn main() -> Result<(), Box<dyn Error>> {
     }
     println!("cargo:rerun-if-changed=native");
     let mut config = cmake::Config::new("native");
+    println!("cargo:rerun-if-env-changed=GSV_VISION_CMAKE_DIR");
+    if let Some(directory) = std::env::var_os("GSV_VISION_CMAKE_DIR") {
+        config.out_dir(directory);
+    }
+    if target_os == "windows" {
+        // cmake-rs replaces MSVC's Release flags when selecting the CRT.
+        // Preserve optimization for the CPU runtime, including debug Rust builds.
+        for flag in ["/O2", "/Ob2", "/DNDEBUG"] {
+            config.cflag(flag);
+            config.cxxflag(flag);
+        }
+    }
     if target_os == "macos" {
         println!("cargo:rerun-if-env-changed=MACOSX_DEPLOYMENT_TARGET");
         let minimum = std::env::var("MACOSX_DEPLOYMENT_TARGET").unwrap_or("12.0".into());
@@ -50,6 +62,8 @@ fn main() -> Result<(), Box<dyn Error>> {
     if target_os == "macos" {
         println!("cargo:rustc-link-lib=c++");
         println!("cargo:rustc-link-lib=framework=Foundation");
+    } else if target_os == "windows" {
+        println!("cargo:rustc-link-lib=psapi");
     } else {
         println!("cargo:rustc-link-lib=stdc++");
         println!("cargo:rustc-link-lib=dl");

@@ -1,3 +1,5 @@
+#![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
+
 mod control;
 mod downloads;
 mod input;
@@ -251,8 +253,17 @@ fn open_external(value: &str) -> Result<(), String> {
     }
     #[cfg(target_os = "macos")]
     let mut command = Command::new("open");
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(not(any(target_os = "macos", windows)))]
     let mut command = Command::new("xdg-open");
+    #[cfg(windows)]
+    let mut command = {
+        use std::os::windows::process::CommandExt;
+        let mut command = Command::new("rundll32.exe");
+        command
+            .arg("url.dll,FileProtocolHandler")
+            .creation_flags(0x08000000);
+        command
+    };
     let mut child = command
         .arg(url.as_str())
         .stdin(std::process::Stdio::null())

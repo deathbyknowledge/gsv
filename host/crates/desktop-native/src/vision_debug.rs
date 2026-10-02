@@ -13,12 +13,14 @@ use std::time::{Duration, Instant};
 
 use gesture_protocol::{
     read_frame, write_frame, ControlStatus, DesktopCommand, GestureContext, GestureIntent,
-    HelperEvent, LifecycleState, ScrollState, SessionId, EVENT_CHANNEL_CONTRACT_MARKER, EVENT_FD,
+    HelperEvent, LifecycleState, ScrollState, SessionId, EVENT_CHANNEL_CONTRACT_MARKER,
     EVENT_FD_MARKER_ENV, PROTOCOL_VERSION, SESSION_HIGH_ENV, SESSION_LOW_ENV,
 };
 use tokio::sync::{mpsc as tokio_mpsc, watch};
 use uuid::Uuid;
 
+#[cfg(unix)]
+use gesture_protocol::EVENT_FD;
 #[cfg(unix)]
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
 #[cfg(unix)]
@@ -42,6 +44,14 @@ const HELPER_ENVIRONMENT: &[&str] = &[
     "LD_LIBRARY_PATH",
     "DYLD_LIBRARY_PATH",
     "TMPDIR",
+    "SYSTEMROOT",
+    "WINDIR",
+    "TEMP",
+    "TMP",
+    "USERPROFILE",
+    "APPDATA",
+    "LOCALAPPDATA",
+    "PROGRAMDATA",
     "LANG",
     "LC_ALL",
     "GSV_GESTURE_DOMINANT_HAND",
@@ -52,7 +62,7 @@ const HELPER_ENVIRONMENT: &[&str] = &[
 pub enum VisionDebugError {
     InvalidOverride,
     NotInstalled,
-    #[cfg(not(unix))]
+    #[cfg(not(any(unix, windows)))]
     Unsupported,
     StartFailed,
     HandshakeFailed,
@@ -63,7 +73,7 @@ impl fmt::Display for VisionDebugError {
         formatter.write_str(match self {
             Self::InvalidOverride => "GSV_VISION_HELPER does not name a file",
             Self::NotInstalled => "gsv-vision was not found",
-            #[cfg(not(unix))]
+            #[cfg(not(any(unix, windows)))]
             Self::Unsupported => "gesture control is not supported on this platform",
             Self::StartFailed => "gsv-vision could not be started",
             Self::HandshakeFailed => "gsv-vision did not complete its protocol handshake",
@@ -425,18 +435,18 @@ pub fn start_for_desktop() -> Result<Option<VisionHandle>, VisionDebugError> {
         return Ok(None);
     };
 
-    #[cfg(not(unix))]
+    #[cfg(not(any(unix, windows)))]
     {
         Err(VisionDebugError::Unsupported)
     }
 
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     {
         start_supported(mode, current_executable).map(Some)
     }
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 fn start_supported(
     mode: LaunchMode,
     current_executable: Option<PathBuf>,
@@ -482,23 +492,47 @@ fn new_session_id() -> SessionId {
     SessionId::new((value >> 64) as u64, value as u64)
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 fn spawn_helper(
     command: &mut Command,
     session_id: SessionId,
 ) -> Result<SpawnedHelper, VisionDebugError> {
+    #[cfg(unix)]
     let (event_reader, event_writer) =
         anonymous_pipe().map_err(|_| VisionDebugError::StartFailed)?;
+    #[cfg(unix)]
     let writer_fd = event_writer.as_raw_fd();
     // SAFETY: the callback performs only async-signal-safe fd operations. The
     // owned writer remains alive until `spawn` returns and is then closed in
     // Desktop, leaving the helper as the event pipe's sole writer.
+    #[cfg(unix)]
     unsafe {
         command.pre_exec(move || map_event_fd(writer_fd));
     }
+    #[cfg(windows)]
+    let event_reader = {
+        use std::os::windows::process::CommandExt;
+        let name = format!(r"\\.\pipe\gsv-vision-{}", Uuid::new_v4());
+        let pipe = windows_host::pipe::create(OsStr::new(&name))
+            .map_err(|_| VisionDebugError::StartFailed)?;
+        command
+            .env(gesture_protocol::EVENT_PIPE_ENV, name)
+            .env(
+                gesture_protocol::PARENT_PID_ENV,
+                std::process::id().to_string(),
+            )
+            .creation_flags(0x08000000);
+        pipe
+    };
     let spawn = command.stdin(Stdio::piped()).spawn();
+    #[cfg(unix)]
     drop(event_writer);
     let mut child = spawn.map_err(|_| VisionDebugError::StartFailed)?;
+    #[cfg(windows)]
+    if windows_host::pipe::accept(&event_reader, child.id(), HELPER_HANDSHAKE_TIMEOUT).is_err() {
+        terminate_and_reap(child);
+        return Err(VisionDebugError::HandshakeFailed);
+    }
     let Some(stdin) = child.stdin.take() else {
         terminate_and_reap(child);
         return Err(VisionDebugError::StartFailed);
@@ -1091,8 +1125,15 @@ fn allowed_environment(
     environment
         .into_iter()
         .filter(|(key, _)| {
-            key.to_str()
-                .is_some_and(|key| HELPER_ENVIRONMENT.contains(&key))
+            key.to_str().is_some_and(|key| {
+                HELPER_ENVIRONMENT.iter().any(|allowed| {
+                    if cfg!(windows) {
+                        key.eq_ignore_ascii_case(allowed)
+                    } else {
+                        key == *allowed
+                    }
+                })
+            })
         })
         .collect()
 }

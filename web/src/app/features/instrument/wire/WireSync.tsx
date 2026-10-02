@@ -1,5 +1,5 @@
 import { useQueryClient } from "@tanstack/preact-query";
-import { useEffect, useRef } from "preact/hooks";
+import { useEffect } from "preact/hooks";
 import { useGateway } from "../../../services/gateway/GatewayProvider";
 import { useTerminalSessions } from "../../../services/terminal/TerminalProvider";
 import type { ConsoleTarget } from "../../../domain/system/consoleModels";
@@ -31,21 +31,8 @@ export function WireSync(): null {
   const { client, connected } = useGateway();
   const { sessions } = useTerminalSessions();
   const queryClient = useQueryClient();
-  const dropped = useRef(false);
-  const connectedBefore = useRef(connected);
 
-  useEffect(() => {
-    if (!connected) {
-      if (connectedBefore.current) dropped.current = true;
-      return;
-    }
-    connectedBefore.current = true;
-    if (dropped.current) {
-      dropped.current = false;
-      void queryClient.invalidateQueries();
-    }
-  }, [connected, queryClient]);
-
+  // GatewaySignalInvalidator owns reconnect catch-up for the shared query client.
   useEffect(() => {
     if (!connected) return;
     const ledger = createLedgerSync(queryClient);

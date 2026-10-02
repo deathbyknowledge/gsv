@@ -41,3 +41,6 @@ desktop-native = { path = "../../crates/desktop-native", features = ["test-suppo
 [[bin]]
 name = "gsv-desktop"
 path = "src/main.rs"
+
+[target.'cfg(windows)'.dependencies]
+windows-host = { path = "../../crates/windows-host" }

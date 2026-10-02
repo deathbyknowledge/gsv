@@ -5,6 +5,7 @@ edition = "2021"
 publish = false
 
 [dependencies]
+base64 = "0.22"
 daemon-protocol = { path = "../../crates/daemon-protocol" }
 gateway-client = { path = "../../crates/gateway-client", default-features = false }
 host-config = { path = "../../crates/config" }
@@ -64,3 +65,6 @@ await_holding_lock = "warn"
 let_underscore_future = "warn"
 undocumented_unsafe_blocks = "warn"
 dbg_macro = "warn"
+
+[target.'cfg(windows)'.dependencies]
+windows-host = { path = "../../crates/windows-host" }

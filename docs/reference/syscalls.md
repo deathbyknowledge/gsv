@@ -229,6 +229,11 @@ type NetworkSyscalls = {
 
 `shell.exec` starts, polls, or writes to a shell command on the selected target. Use `gsv` for the Worker sandbox shell, or a device id for local source trees, private networks, OS packages, credentials, or hardware.
 
+Windows machine targets use Windows PowerShell. Its final statement determines
+success: implicit completion returns 0 or 1, and `exit N` returns N. To preserve a
+native program's exact code, end the command with `exit $LASTEXITCODE`. An earlier
+native command's exit code does not override a later cmdlet's result.
+
 The native `gsv` shell exposes the immutable installation identity as
 `GSV_INSTALLATION_ID` and its persisted canonical HTTP(S) origin as `GSV_URL`.
 It does not derive either value from an agent-supplied hostname.

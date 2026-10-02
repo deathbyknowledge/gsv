@@ -483,11 +483,13 @@ The driver runtime is the separate `gsvd` executable. The hidden legacy command
 `gsv device run` transfers process ownership to the sibling
 `gsvd --foreground`; the CLI never embeds the driver. `install` creates and
 starts a launchd agent on
-macOS, a systemd user unit on Linux, or a scheduled task on Windows. Reinstalling
+macOS, a systemd user unit on Linux, or an automatic SCM service on Windows. Windows installation requests administrator
+approval and uses a dedicated service account. On Unix, reinstalling
 or starting an old definition migrates `gsv device run` to the direct `gsvd`
 entrypoint without changing the existing service identity. `doctor` checks the
 installed executable and definition. The daemon writes daily rotated JSONL logs
-under `~/.gsv/logs/device.log*`; `logs` tails the latest file with `-l, --lines`
+under `~/.gsv/logs/device.log*` (Windows service logs use
+`%ProgramData%\GSV\daemon\logs`); `logs` tails the latest file with `-l, --lines`
 defaulting to `100`. Foreground logs use compact text by default; set
 `GSV_DEVICE_CONSOLE_FORMAT=json` or `GSV_DEVICE_CONSOLE_FORMAT=quiet` to change that.
 
@@ -495,16 +497,24 @@ defaulting to `100`. Foreground logs use compact text by default; set
 current settings. `diagnostics` reports bounded, redacted runtime notices,
 including the daemon's latest automatic-update decision; the installer it
 starts logs to `~/.gsv/logs/auto-update.log`, and `device.auto_update`
-turns automatic updates off.
+turns automatic updates off. Windows boot services always use administrator-managed
+installer updates. On Windows, `reload` copies the enrolled owner's device settings
+to the protected service configuration; changing its workspace requires `install`
+to update filesystem permissions. `reconnect` only reconnects.
 `status` combines the operating-system service state with the live daemon's
 version, PID, machine id, connection phase, uptime, and reconnect count. These
 live operations use a versioned same-user Unix socket on macOS/Linux and a
-current-user Windows named pipe. They do not expose credentials or gateway
+Windows named pipe restricted to the enrolled service owner and execution account. They do not expose credentials or gateway
 traffic.
 
 Device identity resolves as `--id`, then local `device.id`, then
 `device-<hostname>`. Workspace resolves as `--workspace`, then
-`device.workspace`, then the current directory. A persistent daemon should have
+`device.workspace`, then the current directory for a foreground daemon.
+Windows pairing and service installation default to `%USERPROFILE%\GSV`.
+The enrolling user must already be able to change the workspace's permissions.
+Workspace grants and removal run at that user's original privilege level;
+administrator approval only authorizes the protected service registration.
+A persistent daemon should have
 `gateway.username` and `device.token` configured, usually from
 the device invitation flow, or
 `gsv auth token create --kind machine --peer ...` followed by
@@ -522,6 +532,12 @@ The verified host installer ships `gsv` and `gsvd` as a matching pair and
 migrates an existing legacy service definition during upgrade. See
 [Install Host Applications](/how-to/install-host-apps) for the release matrix,
 checksum verification, and rollback contract.
+
+Windows service installation requires the bundled `gsvd.exe` beside `gsv.exe`;
+`GSV_GSVD_PATH` and `PATH` do not override that selection. The CLI checks the
+daemon before administrator approval and verifies the same bytes before copying
+them to the protected service directory. Reinstall the complete distribution if
+the bundled daemon is missing or has changed during approval.
 
 ## Auth Commands
 

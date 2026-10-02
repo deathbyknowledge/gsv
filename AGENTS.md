@@ -106,12 +106,18 @@ Contact conversations have no mandatory Process handler. Pairing and first-messa
 - `host/apps/cli/`: user, deployment, administration, and OS service-control commands.
 - `host/apps/machine/`: the `gsvd` machine driver, concrete tools, transfer ownership, reconnect, logging, and shutdown.
 - `host/helpers/`: separately supervised local transcription and gesture processes.
-- `host/crates/`: shared gateway transport, host configuration, Desktop IPC, and gesture protocol contracts. `host/` owns their Cargo workspace and build artifacts.
+- `host/crates/`: shared gateway transport, host configuration, Desktop IPC, gesture protocol contracts, and Windows SCM/process ownership primitives. `host/` owns their Cargo workspace and build artifacts.
 - `workers/adapters/`: platform-specific messaging workers and identity normalization.
 - `extension/`: browser-backed target and browser integration.
 - `workers/ripgit/`: git-backed repositories and filesystem storage operations.
 
 Keep platform-specific identity and delivery behavior in its adapter. Keep visual presentation in the web and Desktop clients. Keep target selection below stable syscall contracts.
+
+Windows uses an automatic SCM service for `gsvd`, with a dedicated execution
+account, protected executable, and daemon-only enrollment in ProgramData.
+CLI and Desktop remain user processes. The service control pipe authorizes its
+enrolling owner explicitly; Desktop and input helper IPC remain same-user.
+OS service privilege must never become an agent shell privilege by accident.
 
 ## Runtime invariants
 
@@ -223,7 +229,7 @@ npm run dev
 
 Validate only the surfaces affected by the change:
 
-Before Desktop Rust checks, build its shared frontend with `npm run gsv:build && npm run build --workspace web -- --config vite.desktop.config.ts`.
+Before Desktop Rust checks, build its shared frontend with `npm run gsv:build && npm run build:desktop --workspace web`.
 
 - Managed service implementations: validate them in their owning deployment repository against `packages/gsv/src/services/`
 - Gateway: `cd workers/gateway && npx tsc --noEmit && npm run test:run`

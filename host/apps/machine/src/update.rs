@@ -818,7 +818,7 @@ fn push_within_limit(body: &mut Vec<u8>, chunk: &[u8], limit: usize) -> Result<(
 pub enum ServiceManager {
     Systemd,
     Launchd,
-    WindowsTask,
+    WindowsService,
 }
 
 impl Display for ServiceManager {
@@ -826,7 +826,7 @@ impl Display for ServiceManager {
         f.write_str(match self {
             Self::Systemd => "systemd",
             Self::Launchd => "launchd",
-            Self::WindowsTask => "windows-task",
+            Self::WindowsService => "windows-service",
         })
     }
 }
@@ -848,11 +848,10 @@ pub struct ServiceContext {
     pub parent_is_launchd: bool,
     /// The program `~/Library/LaunchAgents/gsvd.plist` runs, if it exists.
     pub launchd_program: Option<PathBuf>,
-    /// The `gsvd` scheduled task reports itself running; the control pipe is
-    /// exclusive, so a running task is this process.
-    pub windows_task_running: bool,
-    /// The program the scheduled task runs, when the listing exposes it.
-    pub windows_task_program: Option<PathBuf>,
+    /// The native SCM dispatcher admitted this process as the gsvd service.
+    pub windows_service_running: bool,
+    /// The executable admitted by the service dispatcher.
+    pub windows_service_program: Option<PathBuf>,
 }
 
 const SERVICE_LABEL: &str = "gsvd";
@@ -874,15 +873,14 @@ pub fn service_manager(context: &ServiceContext) -> Option<ServiceManager> {
     {
         return Some(ServiceManager::Launchd);
     }
-    // schtasks lists the action on most systems; when the listing lacks it
-    // the exclusive control pipe still proves a running task is this process.
-    if context.windows_task_running
+    // SCM entry sets this only after the native service dispatcher accepts it.
+    if context.windows_service_running
         && context
-            .windows_task_program
+            .windows_service_program
             .as_deref()
             .is_none_or(|program| same_executable(Some(program), exe))
     {
-        return Some(ServiceManager::WindowsTask);
+        return Some(ServiceManager::WindowsService);
     }
     None
 }
@@ -954,20 +952,6 @@ fn decode_xml_entities(text: &str) -> String {
     })
 }
 
-/// The program a `schtasks /query /fo LIST /v` listing shows as the action.
-pub fn task_to_run_program(listing: &str) -> Option<PathBuf> {
-    let value = listing.lines().find_map(|line| {
-        let (key, value) = line.split_once(':')?;
-        key.trim()
-            .eq_ignore_ascii_case("Task To Run")
-            .then(|| value.trim())
-    })?;
-    match value.strip_prefix('"') {
-        Some(quoted) => quoted.split('"').next().map(PathBuf::from),
-        None => value.split_whitespace().next().map(PathBuf::from),
-    }
-}
-
 /// The program the user unit in `config_dir` runs, if the unit exists.
 pub fn systemd_unit_program(config_dir: &Path) -> Option<PathBuf> {
     let unit = config_dir.join("systemd").join("user").join("gsvd.service");
@@ -982,7 +966,7 @@ pub fn launchd_agent_program(home: &Path) -> Option<PathBuf> {
 
 fn detect_service_manager() -> Option<ServiceManager> {
     let executable = std::env::current_exe().ok()?;
-    let listing = windows_task_listing();
+    let windows = windows_service_context();
     service_manager(&ServiceContext {
         executable,
         systemd_invocation: cfg!(target_os = "linux")
@@ -1003,8 +987,8 @@ fn detect_service_manager() -> Option<ServiceManager> {
         } else {
             None
         },
-        windows_task_running: listing.as_deref().is_some_and(task_status_running),
-        windows_task_program: listing.as_deref().and_then(task_to_run_program),
+        windows_service_running: windows.0,
+        windows_service_program: windows.1,
     })
 }
 
@@ -1020,28 +1004,16 @@ fn parent_is_launchd() -> bool {
 }
 
 #[cfg(windows)]
-fn windows_task_listing() -> Option<String> {
-    Command::new("schtasks")
-        .args(["/query", "/tn", SERVICE_LABEL, "/fo", "LIST", "/v"])
-        .output()
-        .ok()
-        .filter(|output| output.status.success())
-        .map(|output| String::from_utf8_lossy(&output.stdout).into_owned())
+fn windows_service_context() -> (bool, Option<PathBuf>) {
+    (
+        windows_host::service::is_service_process(),
+        std::env::current_exe().ok(),
+    )
 }
 
 #[cfg(not(windows))]
-fn windows_task_listing() -> Option<String> {
-    None
-}
-
-/// Whether a `schtasks /query /fo LIST /v` listing shows the task running.
-pub fn task_status_running(listing: &str) -> bool {
-    listing.lines().any(|line| {
-        let mut parts = line.splitn(2, ':');
-        let key = parts.next().unwrap_or("").trim();
-        let value = parts.next().unwrap_or("").trim();
-        key.eq_ignore_ascii_case("Status") && value.eq_ignore_ascii_case("Running")
-    })
+fn windows_service_context() -> (bool, Option<PathBuf>) {
+    (false, None)
 }
 
 /// Where distributions install `systemd-run` when a unit's PATH is too
@@ -1107,7 +1079,7 @@ pub fn detach_strategy(
             systemd_run.map(|program| DetachStrategy::SystemdRun { program })
         }
         ServiceManager::Launchd => Some(DetachStrategy::NewSession),
-        ServiceManager::WindowsTask => Some(DetachStrategy::WindowsDetached),
+        ServiceManager::WindowsService => Some(DetachStrategy::WindowsDetached),
     }
 }
 
@@ -1418,32 +1390,25 @@ mod tests {
         );
 
         let task = ServiceContext {
-            windows_task_running: true,
-            windows_task_program: Some(exe.clone()),
+            windows_service_running: true,
+            windows_service_program: Some(exe.clone()),
             ..base.clone()
         };
-        assert_eq!(service_manager(&task), Some(ServiceManager::WindowsTask));
+        assert_eq!(service_manager(&task), Some(ServiceManager::WindowsService));
         assert_eq!(
             service_manager(&ServiceContext {
-                windows_task_program: None,
+                windows_service_program: None,
                 ..task.clone()
             }),
-            Some(ServiceManager::WindowsTask)
+            Some(ServiceManager::WindowsService)
         );
         assert_eq!(
             service_manager(&ServiceContext {
-                windows_task_program: Some(other),
+                windows_service_program: Some(other),
                 ..task.clone()
             }),
             None
         );
-        assert!(task_status_running(
-            "TaskName: \\gsvd\r\nStatus:        Running\r\n"
-        ));
-        assert!(!task_status_running(
-            "TaskName: \\gsvd\r\nStatus:        Ready\r\n"
-        ));
-        assert!(!task_status_running(""));
     }
 
     #[test]
@@ -1467,15 +1432,6 @@ mod tests {
             Some(PathBuf::from("/Users/me/GSV & Tools/bin/gsvd"))
         );
         assert_eq!(plist_program("<plist><dict></dict></plist>"), None);
-
-        let listing = "HostName:      PC\r\nTaskName:      \\gsvd\r\nStatus:        Running\r\nTask To Run:   \"C:\\Users\\me\\AppData\\Local\\Programs\\gsv\\bin\\gsvd.exe\" --foreground\r\n";
-        assert_eq!(
-            task_to_run_program(listing),
-            Some(PathBuf::from(
-                "C:\\Users\\me\\AppData\\Local\\Programs\\gsv\\bin\\gsvd.exe"
-            ))
-        );
-        assert_eq!(task_to_run_program("Status: Running\r\n"), None);
     }
 
     #[test]

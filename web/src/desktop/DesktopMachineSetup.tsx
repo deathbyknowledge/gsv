@@ -110,6 +110,7 @@ function MachineSetup({ origin, generation, username, request, nativeReady }: Om
         <p class="note">Already connected to {new URL(other.origin).host} as {other.username}.</p> : machine?.configured ?
         !error && <p class="note" role="status">{state.busy ? "Connecting…" : online ? "Connected" : machine.running ? "Connecting…" : "Connection stopped"}</p> : <>
           <p class="note">Let your Ship use this computer’s files and commands, even when the app is closed.</p>
+          {navigator.platform.startsWith("Win") && <p class="note">Windows asks for administrator approval so this computer can reconnect after a restart, before you sign in. Commands use a separate account with access to the configured workspace; the default is the GSV folder in your user profile.</p>}
           {!machine?.pending && <label>Display name<input value={label} maxLength={100} required autoComplete="off"
             disabled={state.busy} onInput={(event) => setLabel(event.currentTarget.value)} /></label>}
           {needsInvitation && !allowed && !accounts.isPending && <p class="note">Your account cannot connect a computer.</p>}

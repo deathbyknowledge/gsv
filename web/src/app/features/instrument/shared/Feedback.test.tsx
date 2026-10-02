@@ -53,7 +53,7 @@ function mockActivity() {
 beforeEach(() => {
   vi.stubGlobal("document", {});
   fixture.available = true;
-  vi.stubGlobal("window", { location: { protocol: "https:", host: "example.com" }, sessionStorage: { getItem: () => null, setItem: () => {} } });
+  vi.stubGlobal("window", { addEventListener: vi.fn(), removeEventListener: vi.fn(), location: { protocol: "https:", host: "example.com" }, sessionStorage: { getItem: () => null, setItem: () => {} } });
   listeners.clear();
   vi.spyOn(GSVClient.prototype, "getStatus").mockReturnValue(connectedStatus);
   vi.spyOn(GSVClient.prototype, "onStatus").mockImplementation(listener => { listeners.add(listener); return () => listeners.delete(listener); });
