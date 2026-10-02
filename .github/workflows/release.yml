@@ -240,6 +240,11 @@ jobs:
           if [ "${{ runner.os }}" = "Windows" ]; then suffix=".exe"; fi
           python3 host/scripts/check-transcriber.py "host/target/${{ matrix.target }}/release/gsv-transcribe${suffix}"
 
+      - name: Transcribe recorded speech with the release build
+        env:
+          CARGO_BUILD_TARGET: ${{ matrix.target }}
+        run: python3 host/scripts/check-transcription.py --release
+
       - name: Test gesture helper for this release target
         working-directory: host
         run: >-

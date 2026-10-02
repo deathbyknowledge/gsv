@@ -4,7 +4,14 @@ use std::process::Command;
 
 fn main() -> Result<(), Box<dyn Error>> {
     println!("cargo:rerun-if-changed=build.rs");
-    if std::env::var("CARGO_CFG_TARGET_OS")? != "macos" {
+    let target_os = std::env::var("CARGO_CFG_TARGET_OS")?;
+    if target_os == "linux" {
+        // Ubuntu's static OpenBLAS uses .ctors/.dtors. GNU ld folds them into
+        // the startup/shutdown arrays; lld leaves them uncalled, so the first
+        // matrix multiplication dereferences an uninitialized dispatch table.
+        println!("cargo:rustc-link-arg=-fuse-ld=bfd");
+    }
+    if target_os != "macos" {
         return Ok(());
     }
     println!("cargo:rerun-if-env-changed=DEVELOPER_DIR");

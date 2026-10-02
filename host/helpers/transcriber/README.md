@@ -35,9 +35,16 @@ Include the system math library in CMake's C link probes: Ubuntu's ARM64 OpenBLA
 uses `sqrt`, and `FindBLAS` otherwise rejects the installed archive as unavailable.
 This bundles accelerated BLAS into the helper: users do not install a BLAS or Fortran runtime,
 and distributions cannot substitute an incompatible `libblas.so.3`. CI uses the same settings.
+The helper's Linux build script selects GNU ld (`ld.bfd`) so the archive's legacy
+constructor and destructor sections become executable startup/shutdown entries.
+Leaving those sections uncalled crashes the first inference operation.
 Run `python3 host/scripts/check-transcriber.py path/to/gsv-transcribe` to check the built
 artifact's handshake, shutdown and runtime linkage without microphone capture or model setup.
 macOS continues to use the system Accelerate framework.
+
+`python3 host/scripts/check-transcription.py --release` also exercises streaming
+inference with a pinned public speech recording and the production model.
+Linux CI and every native release run it without opening a microphone.
 
 Windows CI and releases set
 `TRANSCRIBE_CMAKE_ARGS="-UGGML_* -DTRANSCRIBE_X86_CONSERVATIVE=ON -DGGML_AVX=ON -DGGML_AVX2=ON -DGGML_FMA=ON -DGGML_F16C=ON"` so the speech
