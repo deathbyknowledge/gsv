@@ -36,6 +36,12 @@ irm https://install.gsv.space/install.ps1 | iex
 Use `GSV_CHANNEL=dev` for the moving development channel, or set
 `GSV_VERSION=vX.Y.Z` to install an immutable release tag.
 
+The Linux and macOS installer shows a satellite animation in a terminal with
+enough space, using the terminal's current font. It plays cached frames while
+the real installation runs and restores the terminal, including the install
+log, on completion or interruption. Small terminals, redirected output and CI
+keep ordinary text output. Set `GSV_NO_ANIMATION=1` to use text explicitly.
+
 ## Install location
 
 New installations go to a per-user directory: `~/.gsv/bin` on Linux and macOS,

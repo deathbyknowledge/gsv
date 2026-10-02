@@ -49,6 +49,7 @@ printf 'vision-license-v1\n' > "$FIXTURES/gsv-vision-LICENSE.apache-2.0"
 printf 'vision-provenance-v1\n' > "$FIXTURES/gsv-vision-PROVENANCE.md"
 printf 'vision-runtime-v1\n' > "$FIXTURES/gsv-vision-THIRD_PARTY.md"
 cp "$REPOSITORY_ROOT/install.sh" "$FIXTURES/install.sh"
+cp "$REPOSITORY_ROOT/tools/installer-animation/gsv-installer-animation.gz" "$FIXTURES/"
 write_checksums
 
 cat > "$FAKE_BIN/curl" <<'SH'
@@ -65,6 +66,7 @@ while [ "$#" -gt 0 ]; do
 done
 asset="${url%%\?*}"
 asset="${asset##*/}"
+if [ "$asset" = gsv-linux-x64 ]; then sleep "${GSV_TEST_DOWNLOAD_DELAY:-0}"; fi
 cp "$GSV_TEST_RELEASE_DIR/$asset" "$output"
 SH
 chmod 0755 "$FAKE_BIN/curl"
@@ -465,4 +467,6 @@ DEFAULT_HOME="$DEV_SERVICE_HOME" run_default_installer env GSV_VERSION=dev >/dev
 grep -qF -- '--user start gsvd.service channel=channel = "dev"' "$SYSTEMCTL_LOG"
 test "$(grep -c '^channel = "dev"$' "$DEV_SERVICE_HOME/.config/gsv/config.toml")" = "1"
 
-echo "host installer checksum, replacement, default directory, PATH, bundle, launcher, encoded-path, and dev-channel smoke passed"
+python3 "$REPOSITORY_ROOT/scripts/test-installer-animation.py" "$REPOSITORY_ROOT" "$FIXTURES" "$FAKE_BIN"
+
+echo "host installer checksum, replacement, default directory, PATH, bundle, launcher, encoded-path, dev-channel, and terminal animation smoke passed"
