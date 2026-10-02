@@ -1,207 +1,138 @@
 use super::*;
 use std::os::windows::io::{AsRawHandle, OwnedHandle};
 use windows_sys::Win32::{
-    Foundation::{GetLastError, ERROR_ALREADY_EXISTS, WAIT_OBJECT_0, WAIT_TIMEOUT},
-    System::Threading::{
-        CreateEventW, OpenEventW, SetEvent, WaitForMultipleObjects, WaitForSingleObject,
-        EVENT_MODIFY_STATE, INFINITE, SYNCHRONIZATION_SYNCHRONIZE,
+    Foundation::{WAIT_OBJECT_0, WAIT_TIMEOUT},
+    System::{
+        Com::{CoInitializeEx, CoUninitialize, COINIT_APARTMENTTHREADED, COINIT_DISABLE_OLE1DDE},
+        Threading::{GetExitCodeProcess, GetProcessId, WaitForSingleObject, INFINITE},
+    },
+    UI::{
+        Shell::{
+            ShellExecuteExW, SEE_MASK_FLAG_NO_UI, SEE_MASK_NOASYNC, SEE_MASK_NOCLOSEPROCESS,
+            SHELLEXECUTEINFOW,
+        },
+        WindowsAndMessaging::SW_HIDE,
     },
 };
 
 /// Keeps the elevated replacement alive until the original caller has applied
 /// workspace permissions and started SCM. Caller death aborts the replacement.
-pub(super) struct Enrollment {
-    pub(super) id: String,
-    ready: OwnedHandle,
-    commit: OwnedHandle,
-    abort: OwnedHandle,
-}
-
-impl Enrollment {
-    pub(super) fn create(owner: &str) -> Result<Self, DynError> {
-        Self::events(&uuid::Uuid::new_v4().to_string(), Some(owner))
-    }
-
-    fn events(id: &str, owner: Option<&str>) -> Result<Self, DynError> {
-        let id = uuid::Uuid::parse_str(id)?.to_string();
-        let descriptor = owner
-            .map(|owner| {
-                SecurityDescriptor::from_sddl(&format!("D:P(A;;GA;;;BA)(A;;GA;;;{owner})"))
-            })
-            .transpose()?;
-        let event = |suffix: &str| -> Result<OwnedHandle, DynError> {
-            let name: Vec<u16> = format!("Local\\gsv-install-{id}-{suffix}")
-                .encode_utf16()
-                .chain(Some(0))
-                .collect();
-            let handle = if let Some(descriptor) = &descriptor {
-                let attributes = SECURITY_ATTRIBUTES {
-                    nLength: std::mem::size_of::<SECURITY_ATTRIBUTES>() as u32,
-                    lpSecurityDescriptor: descriptor.pointer,
-                    bInheritHandle: 0,
-                };
-                // SAFETY: the descriptor and terminated event name remain live.
-                let handle = unsafe { CreateEventW(&attributes, 1, 0, name.as_ptr()) };
-                // SAFETY: GetLastError reads the calling thread's last API result.
-                let existed = unsafe { GetLastError() } == ERROR_ALREADY_EXISTS;
-                if handle.is_null() {
-                    return Err(std::io::Error::last_os_error().into());
-                }
-                // SAFETY: CreateEventW returned a newly owned handle.
-                let handle = unsafe { OwnedHandle::from_raw_handle(handle) };
-                if existed {
-                    return Err("Enrollment event already exists".into());
-                }
-                return Ok(handle);
-            } else {
-                // SAFETY: the terminated event name remains live.
-                unsafe {
-                    OpenEventW(
-                        EVENT_MODIFY_STATE | SYNCHRONIZATION_SYNCHRONIZE,
-                        0,
-                        name.as_ptr(),
-                    )
-                }
-            };
-            if handle.is_null() {
-                return Err(std::io::Error::last_os_error().into());
-            }
-            // SAFETY: OpenEventW returned a newly owned handle.
-            Ok(unsafe { OwnedHandle::from_raw_handle(handle) })
-        };
-        Ok(Self {
-            ready: event("ready")?,
-            commit: event("commit")?,
-            abort: event("abort")?,
-            id,
-        })
-    }
-
-    pub(super) fn run(
-        &self,
-        script: String,
-        mut escrow: WorkspaceEscrow,
-        complete: impl FnOnce() -> Result<(), DynError>,
-    ) -> Result<(), DynError> {
-        let worker = std::thread::spawn(move || {
-            run_windows_powershell_script(
-                &script,
-                "Administrator approval is required to install the boot service",
-            )
-            .map_err(|error| error.to_string())
-        });
-        loop {
-            escrow.send_if_connected()?;
-            // SAFETY: the event handle is live throughout the bounded wait.
-            match unsafe { WaitForSingleObject(self.ready.as_raw_handle(), 100) } {
-                WAIT_OBJECT_0 => break,
-                WAIT_TIMEOUT if !worker.is_finished() => continue,
-                _ => {
-                    signal(&self.abort)?;
-                    let result = worker
-                        .join()
-                        .map_err(|_panic| "Enrollment worker stopped unexpectedly")?;
-                    return Err(result
-                        .err()
-                        .unwrap_or_else(|| "Enrollment ended before registration was ready".into())
-                        .into());
-                }
-            }
-        }
-        let result = complete();
-        signal(if result.is_ok() {
-            &self.commit
-        } else {
-            &self.abort
-        })?;
-        let elevated = worker
-            .join()
-            .map_err(|_panic| "Enrollment worker stopped unexpectedly")?;
-        match (result, elevated) {
-            (Ok(()), Ok(())) => Ok(()),
-            (Err(error), Ok(())) => Err(error),
-            (Ok(()), Err(error)) => Err(error.into()),
-            (Err(error), Err(elevated)) => Err(format!("{error}; {elevated}").into()),
-        }
-    }
-
-    pub(super) fn wait_for_caller(id: &str, parent: &OwnedHandle) -> Result<(), DynError> {
-        let events = Self::events(id, None)?;
-        signal(&events.ready)?;
-        let handles = [
-            events.abort.as_raw_handle(),
-            parent.as_raw_handle(),
-            events.commit.as_raw_handle(),
-        ];
-        // SAFETY: all three handles remain live until this wait completes.
-        match unsafe { WaitForMultipleObjects(handles.len() as u32, handles.as_ptr(), 0, INFINITE) }
-        {
-            value if value == WAIT_OBJECT_0 + 2 => Ok(()),
-            value if value == WAIT_OBJECT_0 || value == WAIT_OBJECT_0 + 1 => {
-                Err("Enrollment cancelled; restoring the previous service".into())
-            }
-            _ => Err(std::io::Error::last_os_error().into()),
-        }
-    }
-}
-
-fn signal(event: &OwnedHandle) -> Result<(), DynError> {
-    // SAFETY: the owned event handle remains live.
-    if unsafe { SetEvent(event.as_raw_handle()) } == 0 {
+pub(super) fn run(
+    executable: &Path,
+    arguments: &str,
+    mut escrow: WorkspaceEscrow,
+    complete: impl FnOnce() -> Result<(), DynError>,
+) -> Result<(), DynError> {
+    let child = elevate(executable, arguments)?;
+    // SAFETY: ShellExecuteEx returned this live, owned process handle.
+    let child_pid = unsafe { GetProcessId(child.as_raw_handle()) };
+    if child_pid == 0 {
         return Err(std::io::Error::last_os_error().into());
     }
-    Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn enrollment_waits_for_commit_and_aborts_when_the_caller_exits() {
-        for commit in [true, false] {
-            let enrollment = Enrollment::create(&current_user_sid_string().unwrap()).unwrap();
-            let mut caller = Command::new(system_tool(r"WindowsPowerShell\v1.0\powershell.exe"))
-                .args(["-NoProfile", "-Command", "Start-Sleep -Seconds 30"])
-                .spawn()
-                .unwrap();
-            let id = enrollment.id.clone();
-            // SAFETY: the test child is alive; only synchronize access is requested.
-            let parent = unsafe {
-                windows_sys::Win32::System::Threading::OpenProcess(
-                    windows_sys::Win32::System::Threading::PROCESS_SYNCHRONIZE,
-                    0,
-                    caller.id(),
-                )
-            };
-            assert!(!parent.is_null());
-            // SAFETY: OpenProcess returned a newly owned handle.
-            let parent = unsafe { OwnedHandle::from_raw_handle(parent) };
-            let child = std::thread::spawn(move || {
-                Enrollment::wait_for_caller(&id, &parent).map_err(|error| error.to_string())
-            });
-            // SAFETY: the event handle remains live throughout the bounded wait.
-            assert_eq!(
-                unsafe { WaitForSingleObject(enrollment.ready.as_raw_handle(), 5000) },
-                WAIT_OBJECT_0
-            );
-            assert!(!child.is_finished(), "registration alone must not commit");
-            if commit {
-                signal(&enrollment.commit).unwrap();
-            } else {
-                caller.kill().unwrap();
-                caller.wait().unwrap();
+    let ready = (|| -> Result<(), DynError> {
+        loop {
+            if escrow.ready(child_pid)? {
+                return Ok(());
             }
-            let result = child.join().unwrap();
-            if commit {
-                assert!(result.is_ok());
-                caller.kill().unwrap();
-                caller.wait().unwrap();
-            } else {
-                assert!(result
-                    .unwrap_err()
-                    .contains("restoring the previous service"));
+            // SAFETY: the child handle remains live throughout the bounded wait.
+            match unsafe { WaitForSingleObject(child.as_raw_handle(), 100) } {
+                WAIT_TIMEOUT => {}
+                WAIT_OBJECT_0 => {
+                    return Err("Elevated enrollment ended before registration was ready".into());
+                }
+                _ => return Err(std::io::Error::last_os_error().into()),
             }
         }
+    })();
+    if let Err(error) = ready {
+        // Closing our endpoint aborts a child that reached its transaction wait.
+        drop(escrow);
+        let _ = wait(&child);
+        return Err(error);
     }
+    let result = complete();
+    let sent = escrow.complete(result.is_ok());
+    if sent.is_err() {
+        drop(escrow);
+    }
+    let elevated = wait(&child);
+    match (result.and(sent), elevated) {
+        (Ok(()), Ok(())) => Ok(()),
+        (Err(error), Ok(())) | (Ok(()), Err(error)) => Err(error),
+        (Err(error), Err(elevated)) => Err(format!("{error}; {elevated}").into()),
+    }
+}
+
+fn elevate(executable: &Path, arguments: &str) -> Result<OwnedHandle, DynError> {
+    let executable: Vec<u16> = executable
+        .as_os_str()
+        .encode_wide()
+        .chain(Some(0))
+        .collect();
+    let arguments: Vec<u16> = arguments.encode_utf16().chain(Some(0)).collect();
+    // A dedicated STA keeps shell activation independent of the caller's COM mode.
+    std::thread::spawn(move || -> Result<OwnedHandle, std::io::Error> {
+        // SAFETY: this new thread owns and balances its COM apartment.
+        let initialized = unsafe {
+            CoInitializeEx(
+                std::ptr::null(),
+                (COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE) as u32,
+            )
+        };
+        if initialized < 0 {
+            return Err(std::io::Error::other(format!(
+                "Could not initialize Windows elevation: {initialized:#x}"
+            )));
+        }
+        let verb: Vec<u16> = "runas".encode_utf16().chain(Some(0)).collect();
+        let directory: Vec<u16> = system_tool("")
+            .as_os_str()
+            .encode_wide()
+            .chain(Some(0))
+            .collect();
+        let mut info = SHELLEXECUTEINFOW {
+            cbSize: std::mem::size_of::<SHELLEXECUTEINFOW>() as u32,
+            fMask: SEE_MASK_NOCLOSEPROCESS | SEE_MASK_NOASYNC | SEE_MASK_FLAG_NO_UI,
+            lpVerb: verb.as_ptr(),
+            lpFile: executable.as_ptr(),
+            lpParameters: arguments.as_ptr(),
+            lpDirectory: directory.as_ptr(),
+            nShow: SW_HIDE,
+            ..SHELLEXECUTEINFOW::default()
+        };
+        // SAFETY: the structure and all terminated strings remain live; the
+        // no-close flag returns the exact process Windows launches after UAC.
+        let result = if unsafe { ShellExecuteExW(&mut info) } == 0 {
+            Err(std::io::Error::last_os_error())
+        } else if info.hProcess.is_null() {
+            Err(std::io::Error::other(
+                "Windows returned no installer process",
+            ))
+        } else {
+            // SAFETY: ShellExecuteEx transferred ownership of this process handle.
+            Ok(unsafe { OwnedHandle::from_raw_handle(info.hProcess) })
+        };
+        // SAFETY: successful CoInitializeEx above must be balanced on this thread.
+        unsafe { CoUninitialize() };
+        result
+    })
+    .join()
+    .map_err(|_panic| "Windows elevation worker stopped unexpectedly")?
+    .map_err(Into::into)
+}
+
+fn wait(child: &OwnedHandle) -> Result<(), DynError> {
+    // SAFETY: the process handle remains owned throughout the wait.
+    if unsafe { WaitForSingleObject(child.as_raw_handle(), INFINITE) } != WAIT_OBJECT_0 {
+        return Err(std::io::Error::last_os_error().into());
+    }
+    let mut code = 0;
+    // SAFETY: the process has exited and code is valid output storage.
+    if unsafe { GetExitCodeProcess(child.as_raw_handle(), &mut code) } == 0 {
+        return Err(std::io::Error::last_os_error().into());
+    }
+    if code != 0 {
+        return Err(format!("Elevated GSV installation failed with exit code {code}").into());
+    }
+    Ok(())
 }

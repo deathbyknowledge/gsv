@@ -75,6 +75,11 @@ directory handles over a local pipe. The elevated child checks the pipe's actual
 server PID and duplicates those handles with identical access rights; it cannot
 use an argument to borrow another process's authority. These handles and ACL
 snapshots survive caller exit and authorize only restoration of the prior ACLs.
+Windows launches the elevated CLI directly and returns its process handle. The
+caller checks the pipe client's PID against that exact process before transferring
+authority. Readiness, commit and abort travel on that authenticated connection;
+named events cannot complete someone else's enrollment. The elevated child also
+watches the original caller's process handle independently of pipe closure.
 The enrolling process grants
 the service access, revokes any previous workspace grant, and starts the service.
 Workspace ACL changes use synchronous Windows APIs on those handles inside the

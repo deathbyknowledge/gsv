@@ -1,6 +1,4 @@
 use crate::{build_info, logger};
-#[cfg(any(test, target_os = "windows"))]
-use base64::Engine;
 #[cfg(any(test, not(windows)))]
 use std::ffi::OsString;
 use std::fs::{self, File};
@@ -578,40 +576,6 @@ fn windows_arguments_string(args: &[String]) -> String {
         .join(" ")
 }
 
-#[cfg(target_os = "windows")]
-fn powershell_single_quote(value: &str) -> String {
-    format!("'{}'", value.replace('\'', "''"))
-}
-
-#[cfg(any(test, target_os = "windows"))]
-fn encode_powershell_script(script: &str) -> String {
-    let mut utf16 = Vec::with_capacity(script.len() * 2);
-    for unit in script.encode_utf16() {
-        utf16.extend_from_slice(&unit.to_le_bytes());
-    }
-    base64::engine::general_purpose::STANDARD.encode(utf16)
-}
-
-#[cfg(target_os = "windows")]
-fn run_windows_powershell_script(script: &str, context: &str) -> Result<(), DynError> {
-    use std::os::windows::process::CommandExt;
-    let encoded = encode_powershell_script(script);
-    run_command_capture(
-        Command::new(windows_host::service::system_tool(
-            r"WindowsPowerShell\v1.0\powershell.exe",
-        ))
-        .creation_flags(0x0800_0000)
-        .arg("-NoLogo")
-        .arg("-NoProfile")
-        .arg("-NonInteractive")
-        .arg("-ExecutionPolicy")
-        .arg("Bypass")
-        .arg("-EncodedCommand")
-        .arg(encoded),
-        context,
-    )
-}
-
 #[cfg(target_os = "linux")]
 struct SystemdUserServiceManager;
 
@@ -1120,11 +1084,6 @@ mod tests {
             windows_quote_argument(r#"say "hello" now"#),
             r#""say \"hello\" now""#
         );
-    }
-
-    #[test]
-    fn test_encode_powershell_script_uses_utf16le_base64() {
-        assert_eq!(encode_powershell_script("A"), "QQA=");
     }
 
     #[test]

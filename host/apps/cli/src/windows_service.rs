@@ -38,7 +38,6 @@ use windows_sys::Win32::{
 
 #[path = "windows_service/enrollment.rs"]
 mod enrollment;
-use enrollment::Enrollment;
 #[path = "windows_service/workspace_permissions.rs"]
 mod workspace_permissions;
 use workspace_permissions::change_workspace_grant;
@@ -89,9 +88,9 @@ impl DeviceServiceManager for WindowsServiceManager {
             .as_deref()
             .map(workspace_acl_access)
             .transpose()?;
-        let enrollment = Enrollment::create(&owner)?;
+        let transaction = uuid::Uuid::new_v4().to_string();
         let escrow = WorkspaceEscrow::create(
-            &enrollment.id,
+            &transaction,
             &owner,
             &workspace_access,
             previous_access.as_ref(),
@@ -111,15 +110,11 @@ impl DeviceServiceManager for WindowsServiceManager {
             "--daemon-sha256".into(),
             daemon.sha256.clone(),
             "--transaction".into(),
-            enrollment.id.clone(),
+            transaction,
             "--parent-pid".into(),
             std::process::id().to_string(),
         ]);
-        let script = format!(
-            "$ErrorActionPreference = 'Stop'\n$p = Start-Process -FilePath {} -ArgumentList {} -Verb RunAs -Wait -PassThru\nif ($p.ExitCode -ne 0) {{ throw 'GSV service installation failed; run gsv daemon install from an administrator terminal for details.' }}",
-            powershell_single_quote(&executable.to_string_lossy()), powershell_single_quote(&args),
-        );
-        enrollment.run(script, escrow, || {
+        enrollment::run(&executable, &args, escrow, || {
             change_workspace_grant(&workspace_access, true)?;
             if let Some(previous) = &previous_access {
                 change_workspace_grant(previous, false)?;
@@ -508,8 +503,8 @@ pub fn install_elevated(
         Ok(())
     })();
     let result = result.and_then(|()| {
-        if let (Some((id, _)), Some(rollback)) = (transaction, workspace_rollback.as_mut()) {
-            if let Err(error) = Enrollment::wait_for_caller(id, &rollback.parent) {
+        if let Some(rollback) = workspace_rollback.as_mut() {
+            if let Err(error) = rollback.wait_for_caller() {
                 // Restore caller-authorized ACLs before the previous daemon is
                 // restarted, including when the original caller no longer exists.
                 rollback.restore()?;
@@ -645,23 +640,21 @@ mod tests {
             .expect("Program Files contains the GSV service directory")
             .to_path_buf();
         let mut process_token = ptr::null_mut();
-        // SAFETY: GetCurrentProcess is live and the output pointer is writable.
+        // SAFETY: GetCurrentProcess returns a non-owned pseudo-handle.
+        let process = unsafe { GetCurrentProcess() };
         assert_ne!(
+            // SAFETY: GetCurrentProcess is live and the output pointer is writable.
             unsafe {
-                OpenProcessToken(
-                    GetCurrentProcess(),
-                    TOKEN_DUPLICATE | TOKEN_QUERY,
-                    &mut process_token,
-                )
+                OpenProcessToken(process, TOKEN_DUPLICATE | TOKEN_QUERY, &mut process_token)
             },
             0
         );
         // SAFETY: OpenProcessToken returned a newly owned handle.
         let process_token = unsafe { OwnedHandle::from_raw_handle(process_token) };
         let mut restricted = ptr::null_mut();
-        // SAFETY: the source handle is live, empty SID lists are null, and the
-        // output is writable. LUA_TOKEN removes the caller's administrator grant.
         assert_ne!(
+            // SAFETY: the source handle is live, empty SID lists are null, and the
+            // output is writable. LUA_TOKEN removes the caller's administrator grant.
             unsafe {
                 CreateRestrictedToken(
                     process_token.as_raw_handle(),
@@ -686,14 +679,14 @@ mod tests {
                 assert_ne!(unsafe { RevertToSelf() }, 0);
             }
         }
-        // SAFETY: the restricted primary token has QUERY and DUPLICATE access.
         assert_ne!(
+            // SAFETY: the restricted primary token has QUERY and DUPLICATE access.
             unsafe { ImpersonateLoggedOnUser(restricted.as_raw_handle()) },
             0
         );
         let _revert = Revert;
         workspace_acl_access(workspace.path()).expect("user controls the workspace ACL");
-        assert!(workspace_acl_access(&protected).is_err());
+        workspace_acl_access(&protected).unwrap_err();
     }
 
     #[test]
@@ -732,6 +725,6 @@ mod tests {
         drop(daemon);
         fs::write(&path, b"replacement daemon").expect("replace unpinned daemon");
         let mut replaced = PinnedDaemon::open(&path).expect("pin replacement");
-        assert!(replaced.verified_bytes(&approved_sha256).is_err());
+        replaced.verified_bytes(&approved_sha256).unwrap_err();
     }
 }
