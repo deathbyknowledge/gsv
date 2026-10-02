@@ -49,7 +49,7 @@ const RESULT: ManagedInferenceResult = {
 };
 
 describe("GSV inference provider", () => {
-  afterEach(() => vi.useRealTimers());
+  afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); });
 
   it("advertises the default 32k output budget", () => {
     const service: ManagedInferenceService = {
@@ -203,6 +203,7 @@ describe("GSV inference provider", () => {
   });
 
   it("aborts an active byte stream on request cancellation", async () => {
+    const errorLog = vi.spyOn(console, "error").mockImplementation(() => {});
     let markStarted: () => void = () => {};
     const started = new Promise<void>((resolve) => {
       markStarted = resolve;
@@ -230,6 +231,7 @@ describe("GSV inference provider", () => {
     expect(abort).toHaveBeenCalledTimes(1);
     expect(abort).toHaveBeenCalledWith(ATTRIBUTION.logicalRequestId);
     expect(dispose).toHaveBeenCalledOnce();
+    expect(errorLog).not.toHaveBeenCalled();
   });
 
   it("settles cancellation while acquiring the inference target", async () => {
@@ -285,6 +287,7 @@ describe("GSV inference provider", () => {
   });
 
   it("bounds acquisition by the original factory deadline and disposes a late target", async () => {
+    const errorLog = vi.spyOn(console, "error").mockImplementation(() => {});
     vi.useFakeTimers();
     const deadlineAt = Date.now() + 1_000;
     const acquisition = Promise.withResolvers<ManagedInferenceTarget>();
@@ -305,9 +308,13 @@ describe("GSV inference provider", () => {
     expect(dispose).toHaveBeenCalledOnce();
     expect(target.generateStream).not.toHaveBeenCalled();
     expect(target.abort).not.toHaveBeenCalled();
+    expect(errorLog).toHaveBeenCalledExactlyOnceWith(JSON.stringify({
+      component: "gsv_inference", event: "target_acquisition_failed",
+    }));
   });
 
   it("bounds a stalled stream RPC after delayed acquisition and cancels its late body", async () => {
+    const errorLog = vi.spyOn(console, "error").mockImplementation(() => {});
     vi.useFakeTimers();
     const deadlineAt = Date.now() + 1_000;
     const acquisition = Promise.withResolvers<ManagedInferenceTarget>();
@@ -337,9 +344,13 @@ describe("GSV inference provider", () => {
     await vi.advanceTimersByTimeAsync(0);
     expect(cancel).toHaveBeenCalledOnce();
     await expect(stream.result()).resolves.toMatchObject({ stopReason: "error", content: [] });
+    expect(errorLog).toHaveBeenCalledExactlyOnceWith(JSON.stringify({
+      component: "gsv_inference", event: "stream_start_failed",
+    }));
   });
 
   it("times out an active stream without waiting for source cancellation", async () => {
+    const errorLog = vi.spyOn(console, "error").mockImplementation(() => {});
     vi.useFakeTimers();
     const cancel = vi.fn(() => new Promise<void>(() => {}));
     const { service, target, dispose } = managedService(vi.fn(async () => new ReadableStream({
@@ -361,6 +372,9 @@ describe("GSV inference provider", () => {
     expect(target.abort).toHaveBeenCalledExactlyOnceWith(ATTRIBUTION.logicalRequestId, "timeout");
     expect(cancel).toHaveBeenCalledOnce();
     expect(dispose).toHaveBeenCalledOnce();
+    expect(errorLog).toHaveBeenCalledExactlyOnceWith(JSON.stringify({
+      component: "gsv_inference", event: "stream_consume_failed",
+    }));
   });
 
   it("clears the generation deadline after success", async () => {
@@ -404,6 +418,40 @@ describe("GSV inference provider", () => {
     await vi.waitFor(() => expect(cancel).toHaveBeenCalledOnce());
     expect(abort).toHaveBeenCalledTimes(1);
     expect(dispose).toHaveBeenCalledOnce();
+  });
+  it("logs only an allowlisted stage when stream validation fails", async () => {
+    const privatePayload = "private tool arguments";
+    const errorLog = vi.spyOn(console, "error").mockImplementation(() => {});
+    const malformedEvent = new TextEncoder().encode(`${JSON.stringify({
+      type: "toolcall_start",
+      contentIndex: 0,
+      toolCall: {
+        type: "toolCall",
+        id: "call_test",
+        name: "Shell",
+        arguments: {},
+        privatePayload,
+      },
+    })}\n`);
+    const { service } = managedService(vi.fn(async () => new ReadableStream({
+      start(controller) {
+        controller.enqueue(malformedEvent);
+        controller.close();
+      },
+    })));
+
+    await expect(providerStream(service, new AbortController().signal).result())
+      .resolves.toMatchObject({
+        stopReason: "error",
+        errorMessage: "GSV inference is unavailable",
+      });
+
+    expect(errorLog).toHaveBeenCalledWith(JSON.stringify({
+      component: "gsv_inference",
+      event: "stream_consume_failed",
+    }));
+    expect(JSON.stringify(errorLog.mock.calls)).not.toContain(privatePayload);
+    errorLog.mockRestore();
   });
 });
 
