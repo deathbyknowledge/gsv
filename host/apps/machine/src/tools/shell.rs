@@ -556,7 +556,10 @@ async fn launch_managed_process(
     #[cfg(windows)]
     let command = {
         use base64::Engine;
-        let code = format!("[Console]::InputEncoding = [Console]::OutputEncoding = $OutputEncoding = [System.Text.UTF8Encoding]::new($false); $global:LASTEXITCODE = $null;\n{command}\n$gsvSuccess = $?; if ($null -ne $LASTEXITCODE) {{ exit $LASTEXITCODE }}; if (-not $gsvSuccess) {{ exit 1 }}");
+        // Let PowerShell report its final statement's success (0/1). LASTEXITCODE
+        // can belong to an earlier native command; explicit `exit N` still
+        // preserves N through PowerShell's normal process exit behavior.
+        let code = format!("[Console]::InputEncoding = [Console]::OutputEncoding = $OutputEncoding = [System.Text.UTF8Encoding]::new($false);\n{command}");
         let bytes: Vec<u8> = code.encode_utf16().flat_map(u16::to_le_bytes).collect();
         base64::engine::general_purpose::STANDARD.encode(bytes)
     };
@@ -1400,6 +1403,30 @@ mod windows_tests {
             .await
             .unwrap();
         assert_eq!(result.data["output"], "");
+    }
+
+    #[tokio::test]
+    async fn powershell_reports_the_final_statement_status() {
+        let root = tempfile::tempdir().unwrap();
+        let tool = ShellTool::new(root.path().to_path_buf());
+        for (command, expected) in [
+            ("cmd /c exit 0; Get-Item missing", 1),
+            ("cmd /c exit 7; Write-Output ok", 0),
+            ("cmd /c exit 7; Get-Item missing", 1),
+            ("Write-Output ok; cmd /c exit 7", 1),
+            ("cmd /c exit 7; exit $LASTEXITCODE", 7),
+        ] {
+            let result = tool
+                .execute(json!({"input": command, "yieldMs": 10_000, "timeout": 30_000}))
+                .await
+                .unwrap();
+            let result = terminal_result(&tool, result).await;
+            assert_eq!(
+                result.data["exitCode"], expected,
+                "{command}: {}",
+                result.data
+            );
+        }
     }
 
     #[tokio::test]
