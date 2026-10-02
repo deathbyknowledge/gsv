@@ -164,6 +164,10 @@ pub(crate) async fn run() -> Result<(), Box<dyn std::error::Error>> {
         },
         Commands::Daemon { action } => match action {
             #[cfg(windows)]
+            DaemonAction::WindowsUpdate { daemon_sha256 } => {
+                gsv::device_service::update_elevated(&daemon_sha256).await
+            }
+            #[cfg(windows)]
             DaemonAction::WindowsInstall {
                 config,
                 owner_sid,

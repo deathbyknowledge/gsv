@@ -155,22 +155,60 @@ function Restore-Binaries([array]$Installed) {
   }
 }
 
-function Stop-GsvService {
-  $service = Get-Service -Name gsvd -ErrorAction SilentlyContinue
-  if ($service -and $service.Status -ne 'Stopped') {
-    $service.Stop()
-    $service.WaitForStatus('Stopped', [TimeSpan]::FromSeconds(30))
+# This bootstrap is passed by value to Windows PowerShell. Only its two pinned
+# byte snapshots cross UAC; the child never rereads a script or checksum manifest.
+function Get-ServiceUpdateCommand([string]$Source, [string]$CliHash, [string]$DaemonHash) {
+  $quote = { param($value) "'" + $value.Replace("'", "''") + "'" }
+  $prefix = '$source = ' + (& $quote $Source) + '; $cliHash = ' + (& $quote $CliHash) + '; $daemonHash = ' + (& $quote $DaemonHash) + ";`n"
+  return $prefix + @'
+$ErrorActionPreference = 'Stop'
+$env:PSModulePath = [IO.Path]::Combine([Environment]::SystemDirectory, 'WindowsPowerShell\v1.0\Modules')
+$stage = $null
+try {
+  $root = [IO.Path]::Combine([Environment]::GetFolderPath('ProgramFiles'), 'GSV')
+  $bin = [IO.Path]::Combine($root, 'service')
+  foreach ($path in @($root, $bin)) {
+    $directory = [IO.DirectoryInfo]::new($path)
+    if (-not $directory.Exists -or ($directory.Attributes -band [IO.FileAttributes]::ReparsePoint)) { throw 'Untrusted service directory' }
+    $acl = $directory.GetAccessControl()
+    if ($acl.GetOwner([Security.Principal.SecurityIdentifier]).Value -notin @('S-1-5-18', 'S-1-5-32-544')) { throw 'Untrusted service directory owner' }
+    $rules = $acl.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier])
+    if (-not $rules.Count) { throw 'Service directory has no protective ACL' }
+    foreach ($rule in $rules) {
+      if ($rule.AccessControlType -eq 'Allow' -and $rule.IdentityReference.Value -notin @('S-1-5-18', 'S-1-5-32-544') -and ([int]$rule.FileSystemRights -band 0x500D0156)) { throw 'Service directory is writable by an unprivileged identity' }
+    }
   }
+  $directoryAcl = [Security.AccessControl.DirectorySecurity]::new()
+  $directoryAcl.SetSecurityDescriptorSddlForm('O:BAD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;GRGX;;;BU)')
+  $stage = [IO.Path]::Combine($bin, '.update-' + [Guid]::NewGuid().ToString('N'))
+  [IO.Directory]::CreateDirectory($stage, $directoryAcl) > $null
+  $fileAcl = [Security.AccessControl.FileSecurity]::new()
+  $fileAcl.SetSecurityDescriptorSddlForm('O:BAD:P(A;;FA;;;SY)(A;;FA;;;BA)(A;;GRGX;;;BU)')
+  foreach ($entry in @(@('gsv-windows-x64.exe', 'gsv.exe', $cliHash), @('gsvd-windows-x64.exe', 'gsvd.exe', $daemonHash))) {
+    $bytes = [IO.File]::ReadAllBytes([IO.Path]::Combine($source, $entry[0]))
+    $hasher = [Security.Cryptography.SHA256]::Create()
+    try { $actual = [BitConverter]::ToString($hasher.ComputeHash($bytes)).Replace('-', '') } finally { $hasher.Dispose() }
+    if ($actual -ne $entry[2]) { throw 'Service update bytes changed after approval was requested' }
+    $file = [IO.FileStream]::new([IO.Path]::Combine($stage, $entry[1]), [IO.FileMode]::CreateNew, [Security.AccessControl.FileSystemRights]::Write, [IO.FileShare]::Read, 65536, [IO.FileOptions]::WriteThrough, $fileAcl)
+    try { $file.Write($bytes, 0, $bytes.Length); $file.Flush($true) } finally { $file.Dispose() }
+  }
+  & ([IO.Path]::Combine($stage, 'gsv.exe')) daemon windows-update --daemon-sha256 $daemonHash
+  if ($LASTEXITCODE -ne 0) { throw 'Protected service update failed' }
+} catch {
+  [Console]::Error.WriteLine($_.Exception.Message)
+  exit 1
+} finally {
+  if ($stage -and [IO.Directory]::Exists($stage)) { [IO.Directory]::Delete($stage, $true) }
+}
+'@
 }
 
-function Wait-GsvdHealthy {
-  for ($attempt = 0; $attempt -lt 15; $attempt++) {
-    $service = Get-Service -Name gsvd -ErrorAction SilentlyContinue
-    & (Join-Path $InstallDir 'gsv.exe') daemon diagnostics --json *> $null
-    if ($LASTEXITCODE -eq 0 -and $service -and $service.Status -eq 'Running') { return $true }
-    Start-Sleep -Seconds 1
-  }
-  return $false
+function Update-GsvService([string]$Source, [string]$Checksums) {
+  $command = Get-ServiceUpdateCommand $Source (Get-ExpectedChecksum $Checksums 'gsv-windows-x64.exe') (Get-ExpectedChecksum $Checksums 'gsvd-windows-x64.exe')
+  $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($command))
+  $powershell = Join-Path ([Environment]::SystemDirectory) 'WindowsPowerShell\v1.0\powershell.exe'
+  $process = Start-Process -FilePath $powershell -Verb RunAs -ArgumentList ('-NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand ' + $encoded) -Wait -PassThru
+  if ($process.ExitCode -ne 0) { throw 'Administrator service update failed; the previous daemon was retained or restored' }
 }
 
 function Install-MicrosoftRuntime([string]$Url, [string]$Name, [string[]]$Arguments) {
@@ -235,8 +273,6 @@ function Install-GsvHost {
     $assets = [ordered]@{ "gsv-$Platform.exe" = "gsv.exe"; "gsvd-$Platform.exe" = "gsvd.exe" }
   }
   $serviceExisted = $false
-  $serviceWasRunning = $false
-  $serviceBinary = ""
   $installed = @()
   $rollbackNeeded = $false
   New-Item -ItemType Directory -Force -Path $tempDir | Out-Null
@@ -252,28 +288,6 @@ function Install-GsvHost {
 
     $service = Get-CimInstance Win32_Service -Filter "Name='gsvd'" -ErrorAction Stop
     $serviceExisted = $null -ne $service
-    $serviceWasRunning = $serviceExisted -and $service.State -eq 'Running'
-    if ($serviceExisted) {
-      if ($service.PathName -match '^"([^"\r\n]+)"\s+--windows-service$') {
-        $serviceBinary = $Matches[1]
-      } elseif ($service.PathName -match '^([^"\s]+)\s+--windows-service$') {
-        $serviceBinary = $Matches[1]
-      } else { throw 'Unrecognized GSV service registration' }
-      $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
-      $admin = ([Security.Principal.WindowsPrincipal]::new($identity)).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
-      if (-not $admin) {
-        # Download and verify this release's installer before requesting elevation.
-        Download-VerifiedAsset $releaseRef 'install.ps1' (Join-Path $tempDir 'install.ps1') $checksums
-        [IO.File]::WriteAllText((Join-Path $tempDir 'checksums.txt'), $checksums)
-        $quote = { param($value) '"' + $value.Replace('"', '\"') + '"' }
-        $arguments = '-NoProfile -ExecutionPolicy Bypass -File ' + (& $quote (Join-Path $tempDir 'install.ps1')) + ' -Destination ' + (& $quote $InstallDir) + ' -AssetDirectory ' + (& $quote $tempDir) + ' -UserConfigDirectory ' + (& $quote $ConfigDir) + ' -SkipUserSetup'
-        if ($SkipRuntimeSetup) { $arguments += ' -SkipRuntimeSetup' }
-        if ($Headless) { $arguments += ' -Headless' }
-        $elevated = Start-Process -FilePath "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -Verb RunAs -ArgumentList $arguments -Wait -PassThru
-        if ($elevated.ExitCode -ne 0) { throw 'Administrator installation failed' }
-        return
-      }
-    }
     $busy = Get-Process -Name gsv-desktop,gsv-transcribe,gsv-vision -ErrorAction SilentlyContinue
     if ($busy) { throw 'Close GSV Desktop and its input helpers, then run the installer again.' }
     Ensure-HostRuntimes
@@ -281,7 +295,6 @@ function Install-GsvHost {
     New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
     $rollbackNeeded = $true
     try {
-      if ($serviceExisted) { Stop-GsvService }
       foreach ($entry in $assets.GetEnumerator()) {
         $target = Join-Path $InstallDir $entry.Value
         $staged = "$target.new.$PID"
@@ -299,27 +312,16 @@ function Install-GsvHost {
         }
       }
 
-      if ($serviceExisted -and $serviceBinary -ne (Join-Path $InstallDir 'gsvd.exe')) {
-        $backup = "$serviceBinary.backup.$PID"
-        Move-Item -LiteralPath $serviceBinary -Destination $backup
-        $installed += [PSCustomObject]@{ Target = $serviceBinary; Backup = $backup }
-        Copy-Item -LiteralPath (Join-Path $tempDir "gsvd-$Platform.exe") -Destination $serviceBinary
-      }
-
       # The config must be complete before the replacement daemon starts.
       Ensure-ConfigFile
       if ($Version -eq $DevReleaseTag) { Set-ReleaseChannelInConfig "dev" }
 
       if ($serviceExisted) {
-        Start-Service -Name gsvd
-        if (-not (Wait-GsvdHealthy)) { throw 'The updated gsvd service did not become healthy' }
-        if (-not $serviceWasRunning) { Stop-GsvService }
+        Update-GsvService $tempDir $checksums
         Write-Success 'Updated and verified the gsvd Windows service'
       }
     } catch {
-      if ($serviceExisted) { Stop-GsvService }
       Restore-Binaries $installed
-      if ($serviceWasRunning) { Start-Service -Name gsvd }
       $rollbackNeeded = $false
       throw "Installation failed; previous binaries were restored: $($_.Exception.Message)"
     }
@@ -330,9 +332,7 @@ function Install-GsvHost {
     }
   } finally {
     if ($rollbackNeeded) {
-      if ($serviceExisted) { Stop-GsvService }
       Restore-Binaries $installed
-      if ($serviceWasRunning) { Start-Service -Name gsvd }
     }
     Remove-Item -Recurse -Force $tempDir -ErrorAction SilentlyContinue
   }

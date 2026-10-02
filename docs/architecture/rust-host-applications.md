@@ -74,7 +74,9 @@ file before requesting UAC approval. The elevated child reads from that locked
 file, verifies its pinned SHA-256 digest against an owned byte snapshot, and
 writes that snapshot; it never executes a candidate
 to discover its version. A changed or unbundled candidate fails before altering
-the existing service.
+the existing service. A complete replacement is staged and synced before SCM
+stops the daemon, then atomically replaces the executable. Registration failures
+restore the previous image, enrollment configuration, and running state.
 
 `%ProgramData%\GSV\daemon` holds the daemon-only enrollment and
 logs. CLI and Desktop login credentials are not copied there. The local pipe
@@ -228,7 +230,11 @@ licenses, checksums and the PowerShell installer in a ZIP and an NSIS setup
 executable. Setup creates a Start-menu shortcut and an Apps uninstall entry.
 The installer verifies every asset before mutation, requests elevation for an
 existing boot service, checks its health, and rolls back binaries if that check
-fails. `-Headless` installs only the CLI and daemon without WebView2.
+fails. The elevated updater receives fixed code and pinned release hashes through
+its command line, copies verified byte snapshots into an administrator-owned
+staging directory, and runs only that protected CLI. User application files and
+configuration stay in the original installer process. Setup upgrades reuse the
+previously selected installation directory. `-Headless` installs only the CLI and daemon without WebView2.
 WebView2 and the Visual C++ runtime are downloaded from Microsoft when needed;
 their Authenticode signatures are verified before execution.
 

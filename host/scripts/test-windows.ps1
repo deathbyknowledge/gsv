@@ -85,6 +85,19 @@ try {
   if ($service.State -ne 'Running' -or $service.ProcessId -ne $installedPid -or (Get-FileHash $serviceBinary).Hash -ne $installedHash) {
     throw 'Rejected daemon changed the existing service'
   }
+  # Replacement must recover even after SCM stops or enrollment writing fails.
+  Copy-Item $daemonSource $changedDaemon -Force
+  $image = [IO.File]::Open($changedDaemon, [IO.FileMode]::Append)
+  try { $image.WriteByte(0) } finally { $image.Dispose() }
+  $replacementHash = (Get-FileHash $changedDaemon).Hash
+  foreach ($lockedPath in @($serviceBinary, (Join-Path $env:ProgramData 'GSV/daemon/config.toml'))) {
+    $locked = [IO.File]::Open($lockedPath, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::Read)
+    try {
+      & (Join-Path $changedPackage 'gsv.exe') daemon windows-install --config $config --owner-sid $owner --workspace $workspace --daemon-source $changedDaemon --daemon-sha256 $replacementHash
+      if (-not $LASTEXITCODE) { throw 'Reinstallation unexpectedly replaced a locked file' }
+    } finally { $locked.Dispose() }
+    if ((Get-FileHash $serviceBinary).Hash -ne $installedHash -or (Get-Service gsvd).Status -ne 'Running') { throw 'Failed reinstall did not restore the previous running daemon' }
+  }
   foreach ($action in @('doctor', 'status', 'diagnostics', 'reload', 'restart', 'stop', 'start')) {
     & $cli daemon $action
     if ($LASTEXITCODE) { throw "daemon $action failed" }
@@ -119,6 +132,32 @@ try {
   }
   Write-Checksums
   $installer = Join-Path $PSScriptRoot '../../install.ps1'
+  # Exercise exactly the code sent across UAC, with files changed afterwards.
+  $parseTokens = $null
+  $parseErrors = $null
+  $ast = [Management.Automation.Language.Parser]::ParseFile($installer, [ref]$parseTokens, [ref]$parseErrors)
+  if ($parseErrors.Count) { throw ($parseErrors | Out-String) }
+  $definition = $ast.Find({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'Get-ServiceUpdateCommand' }, $false)
+  . ([scriptblock]::Create($definition.Extent.Text))
+  $pinnedCliHash = (Get-FileHash (Join-Path $assets 'gsv-windows-x64.exe')).Hash
+  $pinnedDaemonHash = (Get-FileHash (Join-Path $assets 'gsvd-windows-x64.exe')).Hash
+  $updateCommand = Get-ServiceUpdateCommand $assets $pinnedCliHash $pinnedDaemonHash
+  $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($updateCommand))
+  if ($encoded.Length -gt 30000) { throw 'Service bootstrap exceeds the Windows command-line budget' }
+  $beforePid = (Get-CimInstance Win32_Service -Filter "Name='gsvd'").ProcessId
+  foreach ($asset in @('gsv-windows-x64.exe', 'gsvd-windows-x64.exe')) {
+    $path = Join-Path $assets $asset
+    $original = [IO.File]::ReadAllBytes($path)
+    try {
+      [IO.File]::WriteAllText($path, 'changed during UAC')
+      [IO.File]::WriteAllText((Join-Path $assets 'install.ps1'), "throw 'Untrusted installer executed'")
+      Write-Checksums
+      & (Join-Path ([Environment]::SystemDirectory) 'WindowsPowerShell/v1.0/powershell.exe') -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand $encoded
+      if (-not $LASTEXITCODE) { throw 'Elevated bootstrap accepted bytes or checksums replaced during UAC' }
+      if ((Get-CimInstance Win32_Service -Filter "Name='gsvd'").ProcessId -ne $beforePid) { throw 'Rejected update stopped the running daemon' }
+    } finally { [IO.File]::WriteAllBytes($path, $original) }
+  }
+  Write-Checksums
   & $installer -Destination $destination -AssetDirectory $assets -UserConfigDirectory (Join-Path $root 'user-config') -Headless -SkipUserSetup
   if (-not (Test-Path (Join-Path $destination 'gsv.exe'))) { throw 'Installer did not install the CLI' }
   if ((Get-Service gsvd).Status -ne 'Running') { throw 'Installer did not restore the service' }

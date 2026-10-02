@@ -172,6 +172,12 @@ pub(crate) enum LegacyDeviceAction {
 pub(crate) enum DaemonAction {
     #[cfg(windows)]
     #[command(hide = true)]
+    WindowsUpdate {
+        #[arg(long)]
+        daemon_sha256: String,
+    },
+    #[cfg(windows)]
+    #[command(hide = true)]
     WindowsInstall {
         #[arg(long)]
         config: PathBuf,

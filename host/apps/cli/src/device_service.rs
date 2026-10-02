@@ -954,7 +954,7 @@ mod windows_service;
 #[cfg(target_os = "windows")]
 use windows_service::WindowsServiceManager;
 #[cfg(target_os = "windows")]
-pub use windows_service::{install_elevated, sync_configuration};
+pub use windows_service::{install_elevated, sync_configuration, update_elevated};
 
 #[cfg(test)]
 mod tests {

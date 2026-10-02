@@ -14,7 +14,7 @@ use windows_host::{
             service::{
                 ServiceAccess, ServiceAction, ServiceActionType, ServiceErrorControl,
                 ServiceFailureActions, ServiceFailureResetPeriod, ServiceInfo, ServiceSidType,
-                ServiceStartType, ServiceType,
+                ServiceStartType, ServiceState, ServiceType,
             },
             service_manager::{ServiceManager, ServiceManagerAccess},
         },
@@ -29,6 +29,10 @@ use windows_sys::Win32::{
     },
     System::Services::SetServiceObjectSecurity,
 };
+
+#[path = "windows_service/transaction.rs"]
+mod transaction;
+use transaction::ServiceReplacement;
 
 pub(super) struct WindowsServiceManager;
 
@@ -363,99 +367,136 @@ pub fn install_elevated(
             return Err("This machine has enrollment owned by another Windows user. An administrator must explicitly retire its saved enrollment before replacing it.".into());
         }
     }
-    if installed {
-        service::stop()?;
-    }
-    if executable.canonicalize().ok().as_ref() != Some(&daemon.path) {
-        let mut destination = File::create(&executable)?;
-        destination.write_all(&daemon_bytes)?;
-        destination.sync_all()?;
-    }
-    let info = ServiceInfo {
-        name: service::NAME.into(),
-        display_name: "GSV machine daemon".into(),
-        service_type: ServiceType::OWN_PROCESS,
-        start_type: ServiceStartType::AutoStart,
-        error_control: ServiceErrorControl::Normal,
-        executable_path: executable,
-        launch_arguments: vec!["--windows-service".into()],
-        dependencies: vec![],
-        account_name: if installed {
-            None
+    // Stage and sync the complete image before stopping the existing service.
+    // The guard restores its executable, configuration and running state if
+    // registration or enrollment fails after the replacement.
+    let mut replacement = ServiceReplacement::stage(&daemon_bytes)?;
+    replacement.apply()?;
+    let result = (|| {
+        let info = ServiceInfo {
+            name: service::NAME.into(),
+            display_name: "GSV machine daemon".into(),
+            service_type: ServiceType::OWN_PROCESS,
+            start_type: ServiceStartType::AutoStart,
+            error_control: ServiceErrorControl::Normal,
+            executable_path: executable,
+            launch_arguments: vec!["--windows-service".into()],
+            dependencies: vec![],
+            account_name: if installed {
+                None
+            } else {
+                Some(service::ACCOUNT.into())
+            },
+            account_password: None,
+        };
+        let svc = if installed {
+            let svc = service::open(ServiceAccess::ALL_ACCESS)?;
+            svc.change_config(&info)?;
+            svc
         } else {
-            Some(service::ACCOUNT.into())
-        },
-        account_password: None,
-    };
-    let svc = if installed {
-        let svc = service::open(ServiceAccess::ALL_ACCESS)?;
-        svc.change_config(&info)?;
-        svc
-    } else {
-        manager.create_service(&info, ServiceAccess::ALL_ACCESS)?
-    };
-    svc.set_config_service_sid_info(ServiceSidType::Unrestricted)?;
-    run_command_capture(
-        Command::new(system_tool("icacls.exe"))
-            .arg(&bin)
-            .args(["/grant", "NT SERVICE\\gsvd:(OI)(CI)RX"]),
-        "Could not grant service executable access",
-    )?;
-    svc.set_description("Connects this machine to its owner's GSV space before Windows login.")?;
-    svc.update_failure_actions(ServiceFailureActions {
-        reset_period: ServiceFailureResetPeriod::After(Duration::from_secs(86400)),
-        reboot_msg: None,
-        command: None,
-        actions: Some(
-            vec![10, 30, 60]
-                .into_iter()
-                .map(|seconds| ServiceAction {
-                    action_type: ServiceActionType::Restart,
-                    delay: Duration::from_secs(seconds),
-                })
-                .collect(),
-        ),
-    })?;
-    svc.set_failure_actions_on_non_crash_failures(true)?;
-    // The enrolling user may inspect, start, stop and remove their service, but
-    // cannot change its privileged registration or executable through this ACL.
-    let descriptor = SecurityDescriptor::from_sddl(&format!(
-        "D:P(A;;GA;;;SY)(A;;GA;;;BA)(A;;CCLCSWRPWPLOCRRCSD;;;{owner})"
-    ))?;
-    // SAFETY: the live service handle has WRITE_DAC and the descriptor remains valid.
-    if unsafe {
-        SetServiceObjectSecurity(
-            svc.raw_handle(),
-            DACL_SECURITY_INFORMATION,
-            descriptor.pointer,
-        )
-    } == 0
-    {
-        return Err(std::io::Error::last_os_error().into());
+            manager.create_service(&info, ServiceAccess::ALL_ACCESS)?
+        };
+        svc.set_config_service_sid_info(ServiceSidType::Unrestricted)?;
+        run_command_capture(
+            Command::new(system_tool("icacls.exe"))
+                .arg(&bin)
+                .args(["/grant", "NT SERVICE\\gsvd:(OI)(CI)RX"]),
+            "Could not grant service executable access",
+        )?;
+        svc.set_description(
+            "Connects this machine to its owner's GSV space before Windows login.",
+        )?;
+        svc.update_failure_actions(ServiceFailureActions {
+            reset_period: ServiceFailureResetPeriod::After(Duration::from_secs(86400)),
+            reboot_msg: None,
+            command: None,
+            actions: Some(
+                vec![10, 30, 60]
+                    .into_iter()
+                    .map(|seconds| ServiceAction {
+                        action_type: ServiceActionType::Restart,
+                        delay: Duration::from_secs(seconds),
+                    })
+                    .collect(),
+            ),
+        })?;
+        svc.set_failure_actions_on_non_crash_failures(true)?;
+        // The enrolling user may inspect, start, stop and remove their service, but
+        // cannot change its privileged registration or executable through this ACL.
+        let descriptor = SecurityDescriptor::from_sddl(&format!(
+            "D:P(A;;GA;;;SY)(A;;GA;;;BA)(A;;CCLCSWRPWPLOCRRCSD;;;{owner})"
+        ))?;
+        // SAFETY: the live service handle has WRITE_DAC and the descriptor remains valid.
+        if unsafe {
+            SetServiceObjectSecurity(
+                svc.raw_handle(),
+                DACL_SECURITY_INFORMATION,
+                descriptor.pointer,
+            )
+        } == 0
+        {
+            return Err(std::io::Error::last_os_error().into());
+        }
+        // Resolve the service SID through its registered account, then install an
+        // exact DACL rather than retaining permissions from a pre-existing folder.
+        protect_directory(
+            &data,
+            &format!("O:BAD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;0x1301bf;;;{owner})"),
+        )?;
+        run_command_capture(
+            Command::new(system_tool("icacls.exe"))
+                .arg(&data)
+                .args(["/grant", "NT SERVICE\\gsvd:(OI)(CI)M"]),
+            "Could not grant service state access",
+        )?;
+        save_owner_sid(owner)?;
+        replacement.save_config(&machine)?;
+        println!(
+            "Registered boot service gsvd. Workspace: {}. Account: {}",
+            workspace.display(),
+            svc.query_config()?
+                .account_name
+                .unwrap_or_default()
+                .to_string_lossy()
+        );
+        Ok(())
+    })();
+    replacement.finish(result)
+}
+
+/// Called only by the installer's protected, checksum-pinned CLI snapshot.
+pub async fn update_elevated(daemon_sha256: &str) -> Result<(), DynError> {
+    if !service::installed()? {
+        return Err("The Windows service is no longer installed".into());
     }
-    // Resolve the service SID through its registered account, then install an
-    // exact DACL rather than retaining permissions from a pre-existing folder.
-    protect_directory(
-        &data,
-        &format!("O:BAD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;0x1301bf;;;{owner})"),
-    )?;
-    run_command_capture(
-        Command::new(system_tool("icacls.exe"))
-            .arg(&data)
-            .args(["/grant", "NT SERVICE\\gsvd:(OI)(CI)M"]),
-        "Could not grant service state access",
-    )?;
-    save_owner_sid(owner)?;
-    ConfigFile::new(data.join("config.toml")).save(&machine)?;
-    println!(
-        "Registered boot service gsvd. Workspace: {}. Account: {}",
-        workspace.display(),
-        svc.query_config()?
-            .account_name
-            .unwrap_or_default()
-            .to_string_lossy()
-    );
-    Ok(())
+    let mut daemon = PinnedDaemon::open(&packaged_daemon_path()?)?;
+    let bytes = daemon.verified_bytes(daemon_sha256)?;
+    let mut replacement = ServiceReplacement::stage(&bytes)?;
+    replacement.apply()?;
+    let result = async {
+        service::start()?;
+        let client = daemon_protocol::DaemonControlClient::new(
+            daemon_protocol::DaemonControlEndpoint::current_user()?,
+            daemon_protocol::ClientOptions::default(),
+        );
+        let mut healthy = false;
+        for _ in 0..15 {
+            if client.diagnostics().await.is_ok() {
+                healthy = true;
+                break;
+            }
+            tokio::time::sleep(Duration::from_secs(1)).await;
+        }
+        if !healthy {
+            return Err("The updated gsvd service did not become healthy".into());
+        }
+        if !replacement.was_running() {
+            service::stop()?;
+        }
+        Ok(())
+    }
+    .await;
+    replacement.finish(result)
 }
 
 pub fn sync_configuration() -> Result<(), DynError> {
