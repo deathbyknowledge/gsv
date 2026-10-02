@@ -12,6 +12,9 @@ on:
       - 'package*.json'
 permissions:
   contents: read
+concurrency:
+  group: windows-host-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
   core:
     runs-on: windows-2022
@@ -70,9 +73,6 @@ jobs:
       - name: Transcribe recorded speech
         run: python host/scripts/check-transcription.py
   windows:
-    concurrency:
-      group: windows-host-${{ github.ref }}
-      cancel-in-progress: false
     runs-on: windows-2022
     timeout-minutes: 90
     env:
