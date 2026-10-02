@@ -9,6 +9,7 @@ import { parseBaseDomain } from "./domain";
 const secret = z.string().regex(/^[a-f0-9]{64}$/);
 const challenge = z.strictObject({ challengeId: z.string().uuid(), browserSecret: secret, email: z.string().max(254), resend: z.boolean().optional() });
 const verification = z.strictObject({ challengeId: z.string().uuid(), browserSecret: secret, sessionSecret: secret, code: z.string().regex(/^\d{6}$/) });
+const handle = z.string().trim().toLowerCase().max(63);
 const cors = { "access-control-allow-origin": "*", "access-control-allow-methods": "GET, POST, OPTIONS",
   "access-control-allow-headers": "Authorization, Content-Type", "cache-control": "no-store" };
 type OwnerApiReply = Awaited<ReturnType<typeof sendOwnerVerification>>
@@ -60,11 +61,11 @@ export class InstallationOwnerApi {
         return json(ownedInvite(await this.invites.claim(input.code, session.principalId)));
       }
       if (request.method === "GET" && url.pathname === "/owner/api/handle") {
-        return json({ available: await this.invites.available(url.searchParams.get("value") ?? "") });
+        return json({ available: await this.invites.available(handle.parse(url.searchParams.get("value") ?? "")) });
       }
       const prepare = /^\/owner\/api\/invites\/([A-Za-z0-9_-]{1,128})\/space$/.exec(url.pathname);
       if (request.method === "POST" && prepare) {
-        const input = z.strictObject({ handle: z.string().max(63) }).parse(await readJsonObject(request));
+        const input = z.strictObject({ handle }).parse(await readJsonObject(request));
         const result = await this.invites.prepare(prepare[1], session.principalId, input.handle);
         return json({ invite: ownedInvite(result.invite), origin: result.space.canonicalOrigin,
           handle: result.space.handle, onboardingToken: result.onboardingToken, expiresAt: result.expiresAt });
@@ -76,6 +77,9 @@ export class InstallationOwnerApi {
           : error.code === "rate_limited" ? "Wait before requesting another code." : error.code === "locked" ? "Too many attempts. Request a new code."
           : error.code === "credential_unavailable" ? "Use your existing sign-in method." : "Could not verify. Try again.";
         return json({ error: message, code: error.code, retryAt: error.retryAt }, error.code === "rate_limited" ? 429 : 400);
+      }
+      if (error instanceof Error && error.message === "handle is invalid") {
+        return json({ error: "Use letters, numbers or hyphens. Start and end with a letter or number." }, 400);
       }
       const message = error instanceof Error && /^(Invite is unavailable|handle is |Space setup is temporarily)/.test(error.message)
         ? error.message : error instanceof z.ZodError ? "Check the details and try again." : "Could not complete setup. Try again.";

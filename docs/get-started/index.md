@@ -19,6 +19,8 @@ If you were given an **invite code** instead, open the operator's signup page
 confirm that you are 18 or older, agree to the Terms of Service, and acknowledge
 the Privacy Policy before requesting a verification code. Verify your email with
 the six-digit code it sends, then choose the handle your space will live at.
+Handles use lowercase letters, numbers and hyphens; uppercase input is converted
+automatically. Validation and availability feedback appears beside the field.
 The same code resumes the same space if the browser or app is interrupted, and
 it works once. The signup page also links to the beta Desktop app for macOS and
 Linux; see [Install host apps](/how-to/install-host-apps) for the download and

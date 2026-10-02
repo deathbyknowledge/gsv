@@ -218,8 +218,13 @@ describe("owner welcome", () => {
       origin: "https://accounts.example.com", flow: "create", sessionSecret: "a".repeat(64),
       challenge: null, inviteCode: null, inviteId: invite.id, handle: null,
     } };
-    const fetcher = vi.fn(async () => Response.json({ email: "owner@example.com", expiresAt: Date.now() + 60_000,
-      spaceDomain: "example.com", spaces: [], invites: [invite] }));
+    const fetcher = vi.fn(async (url: string) => {
+      if (url.includes("/handle?")) return url.includes("not_a_handle")
+        ? Response.json({ error: "Use letters, numbers or hyphens." }, { status: 400 })
+        : Response.json({ available: true });
+      return Response.json({ email: "owner@example.com", expiresAt: Date.now() + 60_000,
+        spaceDomain: "example.com", spaces: [], invites: [invite] });
+    });
     const load = async () => new OwnerWelcome(snapshot, { save: async (revision, value) => {
       expect(revision).toBe(snapshot.revision);
       snapshot = { revision: crypto.randomUUID(), value };
@@ -244,6 +249,16 @@ describe("owner welcome", () => {
       await vi.waitFor(() => expect(collectNodes(tree).find((node) => node.type === TextInput && node.props.label === "Handle")?.props)
         .toMatchObject({ suffix: ".example.com" }));
       expect(fetcher).toHaveBeenCalledWith("https://accounts.example.com/owner/api/session", expect.objectContaining({ method: "GET" }));
+      const field = () => collectNodes(tree).find((node) => node.type === TextInput && node.props.label === "Handle")!;
+      await act(() => { field().props.onChange?.("Xamenace"); });
+      expect(field().props.value).toBe("xamenace");
+      await vi.waitFor(() => expect(field().props.status).toBe("success"));
+      expect(fetcher).toHaveBeenCalledWith("https://accounts.example.com/owner/api/handle?value=xamenace", expect.anything());
+      await act(() => { field().props.onChange?.("not_a_handle"); });
+      await vi.waitFor(() => expect(field().props).toMatchObject({ status: "error", message: "Use letters, numbers or hyphens." }));
+      await act(() => { field().props.onChange?.("a-valid-handle"); });
+      expect(field().props.message).toBe("");
+      await vi.waitFor(() => expect(field().props.status).toBe("success"));
       // Desktop renders this screen too; the beta app link belongs to the browser signup entry alone.
       expect(collectNodes(tree).some((node) => node.type === "a")).toBe(false);
     } finally { await root.unmount(); }
