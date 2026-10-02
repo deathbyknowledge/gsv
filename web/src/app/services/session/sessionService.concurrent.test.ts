@@ -195,11 +195,13 @@ describe("remembered sessions across windows", () => {
     session.dispose?.();
   });
 
-  it("serializes sign-out after another tab's in-flight renewal and revokes the new credential", async () => {
+  it.each(["creation", "revocation"])("signs out without waiting for another tab's stalled token %s", async (stage) => {
     changeToken(token("old", 29));
     const renewing = clientFixture("renewing"), signingOut = clientFixture("signing-out");
     const pending = deferred<Awaited<ReturnType<SessionClient["sys"]["token"]["create"]>>>();
-    renewing.client.sys.token.create.mockReturnValueOnce(pending.promise);
+    const revocation = deferred<{ revoked: boolean }>();
+    if (stage === "creation") renewing.client.sys.token.create.mockReturnValueOnce(pending.promise);
+    else renewing.client.sys.token.revoke.mockReturnValueOnce(revocation.promise);
     const first = createSessionService(renewing.client), second = createSessionService(signingOut.client);
     await first.start();
     await vi.advanceTimersByTimeAsync(1000);
@@ -208,15 +210,44 @@ describe("remembered sessions across windows", () => {
 
     const locked = second.lock();
     expect(second.snapshot().phase).toBe("locked");
+    await locked;
+    expect(persisted()).toBeNull();
+    expect(signingOut.client.disconnect).toHaveBeenCalledOnce();
+    expect(signingOut.client.sys.token.revoke).toHaveBeenCalledWith({
+      tokenId: stage === "creation" ? "old" : "renewed-renewing", reason: "ui session lock",
+    });
+    notifyStorage();
     pending.resolve({ token: { tokenId: "renewed", token: "new-secret", expiresAt: Date.now() + 30 * DAY,
       uid: 1, tokenPrefix: "new", createdAt: Date.now(), label: "session", kind: "human", peerId: null } });
-    await locked;
-    notifyStorage();
+    revocation.resolve({ revoked: true });
+    await vi.advanceTimersByTimeAsync(0);
 
-    expect(signingOut.client.sys.token.revoke).toHaveBeenCalledWith({ tokenId: "renewed", reason: "ui session lock" });
     expect(persisted()).toBeNull();
     expect(first.snapshot().phase).toBe("locked");
     expect(second.snapshot().phase).toBe("locked");
+    first.dispose?.(); second.dispose?.();
+  });
+
+  it("keeps the winning renewal when two tabs create tokens concurrently", async () => {
+    changeToken(token("old", 29));
+    const a = clientFixture("a"), b = clientFixture("b");
+    const late = deferred<Awaited<ReturnType<SessionClient["sys"]["token"]["create"]>>>();
+    a.client.sys.token.create.mockReturnValueOnce(late.promise);
+    const first = createSessionService(a.client), second = createSessionService(b.client);
+    await Promise.all([first.start(), second.start()]);
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(a.client.sys.token.create).toHaveBeenCalledOnce();
+    expect(b.client.sys.token.create).toHaveBeenCalledOnce();
+    expect(persisted()?.tokenId).toBe("renewed-b");
+    late.resolve({ token: { tokenId: "late-a", token: "late-secret", expiresAt: Date.now() + 30 * DAY,
+      uid: 1, tokenPrefix: "late", createdAt: Date.now(), label: "session", kind: "human", peerId: null } });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(persisted()?.tokenId).toBe("renewed-b");
+    expect(a.client.sys.token.revoke).toHaveBeenCalledWith({ tokenId: "late-a", reason: "ui session rotated" });
+    expect(a.client.sys.token.revoke).not.toHaveBeenCalledWith(expect.objectContaining({ tokenId: "renewed-b" }));
+    notifyStorage();
+    expect(first.snapshot().phase).toBe("ready");
+    expect(second.snapshot().phase).toBe("ready");
     first.dispose?.(); second.dispose?.();
   });
 

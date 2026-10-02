@@ -386,47 +386,47 @@ export function createSessionService(client: SessionClient, options: SessionServ
     }, delayMs);
   };
 
-  const withSessionTokenLock = async (action: () => Promise<void>): Promise<void> => {
+  const withSessionTokenLock = async (action: () => void): Promise<void> => {
     // Browser tabs share one remembered credential. Native sessions have their own storage.
+    // Only synchronous storage changes belong here; network I/O must never block sign-out.
     if (!storage && window.navigator?.locks) {
       await window.navigator.locks.request(STORAGE_SESSION_TOKEN, action);
     } else {
-      await action();
+      action();
     }
   };
 
   const refreshSessionToken = async (reason: "post-login" | "scheduled"): Promise<void> => {
     const generation = reconnectGeneration;
-    const rotate = async (): Promise<void> => {
-      if (disposed || generation !== reconnectGeneration || snapshot.phase !== "ready" || !client.isConnected()) return;
-      const username = snapshot.username;
-      if (!username) return;
-      const previousToken = readPersistedToken(storage);
-      if (reason === "scheduled") {
-        if (!syncStoredSession() || !currentSessionToken) return;
-        const refreshAt = currentSessionToken.expiresAt === null ? Infinity
-          : currentSessionToken.expiresAt - SESSION_TOKEN_TTL_MS + SESSION_TOKEN_REFRESH_INTERVAL_MS;
-        if (refreshAt > Date.now()) {
-          scheduleRefresh(currentSessionToken);
-          return;
-        }
-      }
-
-      let nextToken: UserSessionToken;
-      try {
-        nextToken = await createUserSessionToken(client, Date.now() + SESSION_TOKEN_TTL_MS);
-      } catch {
-        if (disposed || generation !== reconnectGeneration) return;
-        clearRefreshTimer();
-        refreshTimerId = window.setTimeout(() => { void refreshSessionToken(reason); }, SESSION_TOKEN_REFRESH_RETRY_MS);
+    if (disposed || snapshot.phase !== "ready" || !client.isConnected()) return;
+    const username = snapshot.username;
+    if (!username) return;
+    const previousToken = readPersistedToken(storage);
+    if (reason === "scheduled") {
+      if (!syncStoredSession() || !currentSessionToken) return;
+      const refreshAt = currentSessionToken.expiresAt === null ? Infinity
+        : currentSessionToken.expiresAt - SESSION_TOKEN_TTL_MS + SESSION_TOKEN_REFRESH_INTERVAL_MS;
+      if (refreshAt > Date.now()) {
+        scheduleRefresh(currentSessionToken);
         return;
       }
+    }
 
+    let nextToken: UserSessionToken;
+    try {
+      nextToken = await createUserSessionToken(client, Date.now() + SESSION_TOKEN_TTL_MS);
+    } catch {
+      if (disposed || generation !== reconnectGeneration) return;
+      clearRefreshTimer();
+      refreshTimerId = window.setTimeout(() => { void refreshSessionToken(reason); }, SESSION_TOKEN_REFRESH_RETRY_MS);
+      return;
+    }
+
+    await withSessionTokenLock(() => {
       // A sign-out or account switch in another tab must win over an in-flight renewal.
       if (disposed || generation !== reconnectGeneration || snapshot.phase !== "ready"
         || readPersistedToken(storage)?.tokenId !== previousToken?.tokenId) {
         queueRevoke(nextToken.tokenId);
-        await drainPendingRevokes("ui session superseded");
         return;
       }
       const persisted = toPersistedToken(username, nextToken);
@@ -434,10 +434,8 @@ export function createSessionService(client: SessionClient, options: SessionServ
       storePersistedToken(persisted, storage);
       scheduleRefresh(persisted);
       if (previousToken && previousToken.tokenId !== nextToken.tokenId) queueRevoke(previousToken.tokenId);
-      await drainPendingRevokes("ui session rotated");
-    };
-
-    await withSessionTokenLock(rotate);
+    });
+    await drainPendingRevokes("ui session rotated");
   };
 
   const setLockedAfterDisconnect = (message: string): void => {
@@ -766,19 +764,21 @@ export function createSessionService(client: SessionClient, options: SessionServ
       message: reason,
     });
 
-    await withSessionTokenLock(async () => {
+    const clearing = withSessionTokenLock(() => {
       if (disposed || reconnectGeneration !== lockGeneration) return;
       const stored = readPersistedToken(storage);
       if (stored?.username === snapshot.username) currentSessionToken = stored;
       const previousTokenId = currentSessionToken?.username === snapshot.username ? currentSessionToken.tokenId : null;
       if (previousTokenId) queueRevoke(previousTokenId);
       clearStoredSessionToken();
-
-      await Promise.race([
-        drainPendingRevokes("ui session lock"),
-        waitFor(LOCK_REVOKE_WAIT_MS),
-      ]);
     });
+    // Native storage clears synchronously, preserving its immediate revocation path.
+    if (!storage && window.navigator?.locks) await clearing;
+    await Promise.race([
+      drainPendingRevokes("ui session lock"),
+      waitFor(LOCK_REVOKE_WAIT_MS),
+    ]);
+    await clearing;
 
     if (!disposed && reconnectGeneration === lockGeneration && snapshot.phase === "locked") {
       client.disconnect();
