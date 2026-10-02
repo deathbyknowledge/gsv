@@ -76,13 +76,18 @@ writes that snapshot; it never executes a candidate
 to discover its version. A changed or unbundled candidate fails before altering
 the existing service.
 
-`%ProgramData%\GSV\daemon` holds the daemon-only enrollment, owner SID and
+`%ProgramData%\GSV\daemon` holds the daemon-only enrollment and
 logs. CLI and Desktop login credentials are not copied there. The local pipe
 ACL admits the enrolled owner and service account, rejects remote clients,
 and clients authenticate the server against the process registered in SCM.
 Desktop and audio/camera helpers remain in the interactive user's session.
 Windows updates are administrator-managed because the service cannot replace
 its protected executable. Legacy scheduled tasks are not migrated.
+
+The authoritative owner SID lives separately at `%ProgramData%\GSV\owner.sid`,
+under the administrator-protected parent directory. The enrolling user and
+daemon can read it but cannot rewrite it or replace it through a writable parent.
+Daemon-writable configuration never selects the service pipe's owner.
 
 ## `gsv`
 

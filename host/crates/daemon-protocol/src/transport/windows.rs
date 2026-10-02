@@ -110,7 +110,7 @@ fn create_pipe(
     first_instance: bool,
 ) -> io::Result<NamedPipeServer> {
     let descriptor = if endpoint.is_service() {
-        let owner = std::fs::read_to_string(windows_host::service::data_dir().join("owner.sid"))?;
+        let owner = std::fs::read_to_string(windows_host::service::owner_sid_path())?;
         windows_host::security::SecurityDescriptor::from_sddl(&format!(
             "D:P(A;;GA;;;{current_sid})(A;;GA;;;BA)(A;;GA;;;{})",
             owner.trim()

@@ -41,10 +41,26 @@ try {
   if ($LASTEXITCODE) { throw 'Service registration failed' }
   if ((Get-Acl $protectedWorkspace).Sddl -ne $protectedSddl) { throw 'Elevated registration changed the protected workspace ACL' }
   if ((Get-Service gsvd).Status -ne 'Stopped') { throw 'Elevated registration started the service before the caller granted workspace access' }
+  $ownerPath = Join-Path $env:ProgramData 'GSV/owner.sid'
+  if ([IO.File]::ReadAllText($ownerPath).Trim() -ne $owner) { throw 'Missing protected enrollment owner' }
+  foreach ($protectedPath in @($ownerPath, (Split-Path -Parent $ownerPath))) {
+    $acl = Get-Acl $protectedPath
+    if ($acl.GetOwner([Security.Principal.SecurityIdentifier]).Value -notin @('S-1-5-18', 'S-1-5-32-544')) { throw 'Enrollment owner path is not administrator-owned' }
+    $rules = $acl.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier])
+    if (-not $rules.Count) { throw 'Enrollment owner path has no protective ACL' }
+    foreach ($rule in $rules) {
+      # Write, delete, owner/DACL changes, and generic write/all rights.
+      if ($rule.AccessControlType -eq 'Allow' -and $rule.IdentityReference.Value -notin @('S-1-5-18', 'S-1-5-32-544') -and ([int]$rule.FileSystemRights -band 0x500D0156)) {
+        throw 'An unprivileged identity can modify or replace the enrollment owner'
+      }
+    }
+  }
   & $cli daemon install
   if ($LASTEXITCODE) { throw 'Service installation failed' }
   if (Test-Path $marker) { throw 'Service installation executed the inherited daemon override' }
   $env:GSV_GSVD_PATH = $previousOverride
+  # Daemon-writable lookalikes must not select the service control-pipe owner.
+  [IO.File]::WriteAllText((Join-Path $env:ProgramData 'GSV/daemon/owner.sid'), 'S-1-5-7')
   $service = Get-CimInstance Win32_Service -Filter "Name='gsvd'"
   if ($service.StartMode -ne 'Auto' -or $service.StartName -ne 'NT SERVICE\gsvd') { throw 'Service must boot under its own account' }
   $serviceBinary = Join-Path $env:ProgramFiles 'GSV/service/gsvd.exe'

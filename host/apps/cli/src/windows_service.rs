@@ -1,7 +1,11 @@
 use super::*;
 use host_config::{CliConfig, ConfigFile};
 use sha2::{Digest, Sha256};
-use std::os::windows::fs::{MetadataExt, OpenOptionsExt};
+use std::os::windows::{
+    ffi::OsStrExt,
+    fs::{MetadataExt, OpenOptionsExt},
+    io::FromRawHandle,
+};
 use windows_host::{
     security::{current_user_sid_string, protect_directory, SecurityDescriptor},
     service::{
@@ -17,10 +21,11 @@ use windows_host::{
     },
 };
 use windows_sys::Win32::{
-    Security::DACL_SECURITY_INFORMATION,
+    Foundation::{GENERIC_WRITE, INVALID_HANDLE_VALUE},
+    Security::{DACL_SECURITY_INFORMATION, SECURITY_ATTRIBUTES},
     Storage::FileSystem::{
-        FILE_ATTRIBUTE_REPARSE_POINT, FILE_FLAG_BACKUP_SEMANTICS, FILE_SHARE_READ,
-        FILE_SHARE_WRITE, READ_CONTROL, WRITE_DAC,
+        CreateFileW, CREATE_NEW, FILE_ATTRIBUTE_NORMAL, FILE_ATTRIBUTE_REPARSE_POINT,
+        FILE_FLAG_BACKUP_SEMANTICS, FILE_SHARE_READ, FILE_SHARE_WRITE, READ_CONTROL, WRITE_DAC,
     },
     System::Services::SetServiceObjectSecurity,
 };
@@ -163,6 +168,48 @@ fn workspace_acl_access(path: &Path) -> Result<File, DynError> {
             )
             .into()
         })
+}
+
+fn save_owner_sid(owner: &str) -> Result<(), DynError> {
+    let path = service::owner_sid_path();
+    let temporary = path.with_file_name(format!(".owner-{}.sid", uuid::Uuid::new_v4()));
+    let descriptor = SecurityDescriptor::from_sddl("O:BAD:P(A;;FA;;;SY)(A;;FA;;;BA)(A;;GR;;;BU)")?;
+    let attributes = SECURITY_ATTRIBUTES {
+        nLength: std::mem::size_of::<SECURITY_ATTRIBUTES>() as u32,
+        lpSecurityDescriptor: descriptor.pointer,
+        bInheritHandle: 0,
+    };
+    let name: Vec<u16> = temporary.as_os_str().encode_wide().chain(Some(0)).collect();
+    // SAFETY: the path is terminated and the descriptor remains live. Creating
+    // with the final owner/DACL avoids a window where the enrolling user could
+    // control a new file through the administrator token's default owner policy.
+    let handle = unsafe {
+        CreateFileW(
+            name.as_ptr(),
+            GENERIC_WRITE,
+            FILE_SHARE_READ,
+            &attributes,
+            CREATE_NEW,
+            FILE_ATTRIBUTE_NORMAL,
+            std::ptr::null_mut(),
+        )
+    };
+    if handle == INVALID_HANDLE_VALUE {
+        return Err(std::io::Error::last_os_error().into());
+    }
+    // SAFETY: CreateFileW returned a newly owned file handle.
+    let mut file = unsafe { File::from_raw_handle(handle) };
+    let result = file
+        .write_all(owner.as_bytes())
+        .and_then(|()| file.sync_all());
+    drop(file);
+    // Both names are inside the already protected parent. Atomic replacement
+    // never follows or writes through an existing owner marker's file identity.
+    let result = result.and_then(|()| fs::rename(&temporary, path));
+    if result.is_err() {
+        let _ = fs::remove_file(temporary);
+    }
+    Ok(result?)
 }
 
 fn service_workspace(path: &Path) -> Result<PathBuf, DynError> {
@@ -309,8 +356,9 @@ pub fn install_elevated(
     protect_directory(data_root, protected)?;
     let executable = bin.join("gsvd.exe");
     let installed = service::installed()?;
-    if data.join("owner.sid").exists() {
-        let existing_owner = fs::read_to_string(data.join("owner.sid"))?;
+    let owner_path = service::owner_sid_path();
+    if owner_path.exists() {
+        let existing_owner = fs::read_to_string(&owner_path)?;
         if existing_owner.trim() != owner {
             return Err("This machine has enrollment owned by another Windows user. An administrator must explicitly retire its saved enrollment before replacing it.".into());
         }
@@ -397,7 +445,7 @@ pub fn install_elevated(
             .args(["/grant", "NT SERVICE\\gsvd:(OI)(CI)M"]),
         "Could not grant service state access",
     )?;
-    fs::write(data.join("owner.sid"), owner)?;
+    save_owner_sid(owner)?;
     ConfigFile::new(data.join("config.toml")).save(&machine)?;
     println!(
         "Registered boot service gsvd. Workspace: {}. Account: {}",
@@ -415,7 +463,7 @@ pub fn sync_configuration() -> Result<(), DynError> {
         return Ok(());
     }
     let data = service::data_dir();
-    if fs::read_to_string(data.join("owner.sid"))?.trim() != current_user_sid_string()? {
+    if fs::read_to_string(service::owner_sid_path())?.trim() != current_user_sid_string()? {
         return Err("Only the enrolled Windows owner may change daemon configuration".into());
     }
     let mut source = CliConfig::load();

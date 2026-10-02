@@ -50,6 +50,12 @@ pub fn data_dir() -> PathBuf {
         .join("daemon")
 }
 
+pub fn owner_sid_path() -> PathBuf {
+    known_folder(&windows_sys::Win32::UI::Shell::FOLDERID_ProgramData)
+        .join("GSV")
+        .join("owner.sid")
+}
+
 pub fn binary_dir() -> PathBuf {
     known_folder(&windows_sys::Win32::UI::Shell::FOLDERID_ProgramFilesX64)
         .join("GSV")
