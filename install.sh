@@ -243,6 +243,7 @@ play_animation() {
     local frames=() record size cols rows width height left top picture status index frame=0
     while true; do
         if [ "$resized" -eq 1 ]; then
+            resized=0
             size="$(stty size <&3 2>/dev/null)" || return 0
             read -r rows cols <<< "$size"
             frames=(); width=0; height=0
@@ -263,7 +264,6 @@ play_animation() {
             top=$(((rows - height - 6) / 2 + 1))
             if [ "$top" -lt 1 ]; then top=1; fi
             printf '\033[2J'
-            resized=0
         fi
         printf '\033[%d;1H%sGSV\033[K\n\n' "$top" "$left"
         if [ "${#frames[@]}" -gt 0 ]; then
