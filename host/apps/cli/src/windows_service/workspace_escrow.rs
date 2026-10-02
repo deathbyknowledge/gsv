@@ -2,8 +2,8 @@ use super::*;
 use std::os::windows::io::{AsRawHandle, OwnedHandle};
 use windows_sys::Win32::{
     Foundation::{
-        DuplicateHandle, DUPLICATE_SAME_ACCESS, ERROR_NO_DATA, ERROR_PIPE_CONNECTED,
-        ERROR_PIPE_LISTENING, WAIT_OBJECT_0, WAIT_TIMEOUT,
+        DuplicateHandle, DUPLICATE_SAME_ACCESS, ERROR_PIPE_CONNECTED, ERROR_PIPE_LISTENING,
+        WAIT_OBJECT_0, WAIT_TIMEOUT,
     },
     Storage::FileSystem::{
         FILE_FLAG_FIRST_PIPE_INSTANCE, PIPE_ACCESS_DUPLEX, SECURITY_IDENTIFICATION,
@@ -11,8 +11,7 @@ use windows_sys::Win32::{
     System::{
         Pipes::{
             ConnectNamedPipe, CreateNamedPipeW, GetNamedPipeClientProcessId,
-            GetNamedPipeServerProcessId, SetNamedPipeHandleState, PIPE_NOWAIT,
-            PIPE_REJECT_REMOTE_CLIENTS,
+            GetNamedPipeServerProcessId, PeekNamedPipe, PIPE_NOWAIT, PIPE_REJECT_REMOTE_CLIENTS,
         },
         Threading::{
             GetCurrentProcess, OpenProcess, WaitForSingleObject, PROCESS_DUP_HANDLE,
@@ -210,19 +209,6 @@ impl WorkspaceRollback {
         let workspace =
             duplicate(handles[..8].try_into()?)?.ok_or("Missing workspace authority")?;
         let previous = duplicate(handles[8..].try_into()?)?;
-        let mode = PIPE_NOWAIT;
-        // SAFETY: the connected client owns this pipe; the mode pointer is live.
-        if unsafe {
-            SetNamedPipeHandleState(
-                pipe.as_raw_handle(),
-                &mode,
-                std::ptr::null(),
-                std::ptr::null(),
-            )
-        } == 0
-        {
-            return Err(std::io::Error::last_os_error().into());
-        }
         Ok(Self {
             parent,
             pipe,
@@ -267,13 +253,28 @@ impl WorkspaceRollback {
 }
 
 fn read_signal(pipe: &mut File) -> Result<Option<u8>, DynError> {
-    let mut signal = [0];
-    match pipe.read(&mut signal) {
-        Ok(0) => Err("Enrollment control pipe closed before completion".into()),
-        Ok(_) => Ok(Some(signal[0])),
-        Err(error) if error.raw_os_error() == Some(ERROR_NO_DATA as i32) => Ok(None),
-        Err(error) => Err(error.into()),
+    let mut available = 0;
+    // SAFETY: this is the sole reader of the connected pipe. Peek distinguishes
+    // an empty pipe from closure without changing the client's blocking mode.
+    if unsafe {
+        PeekNamedPipe(
+            pipe.as_raw_handle(),
+            std::ptr::null_mut(),
+            0,
+            std::ptr::null_mut(),
+            &mut available,
+            std::ptr::null_mut(),
+        )
+    } == 0
+    {
+        return Err(std::io::Error::last_os_error().into());
     }
+    if available == 0 {
+        return Ok(None);
+    }
+    let mut signal = [0];
+    pipe.read_exact(&mut signal)?;
+    Ok(Some(signal[0]))
 }
 
 #[cfg(test)]
@@ -297,19 +298,6 @@ mod tests {
             .ready(std::process::id().wrapping_add(1))
             .unwrap_err();
         assert!(error.to_string().contains("launched elevated installer"));
-        let mode = PIPE_NOWAIT;
-        assert_ne!(
-            // SAFETY: the test owns this connected pipe and mode remains live.
-            unsafe {
-                SetNamedPipeHandleState(
-                    impostor.as_raw_handle(),
-                    &mode,
-                    std::ptr::null(),
-                    std::ptr::null(),
-                )
-            },
-            0
-        );
         assert_eq!(read_signal(&mut impostor).unwrap(), None);
     }
 
