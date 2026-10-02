@@ -21,6 +21,10 @@ pub struct DeviceLoggingGuard {
 }
 
 pub fn device_log_dir() -> Result<PathBuf, Box<dyn std::error::Error>> {
+    #[cfg(windows)]
+    if !windows_host::service::is_service_process() {
+        return Ok(host_config::gsv_home().join("logs"));
+    }
     Ok(host_config::device_log_dir())
 }
 

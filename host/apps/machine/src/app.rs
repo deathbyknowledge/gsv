@@ -34,13 +34,31 @@ struct Args {
     /// service managers provide detachment and restart policy.
     #[arg(long)]
     foreground: bool,
+
+    #[cfg(windows)]
+    #[arg(long, hide = true)]
+    windows_service: bool,
 }
 
 pub(crate) async fn run() -> Result<(), Box<dyn std::error::Error>> {
+    run_with_shutdown(CancellationToken::new(), || {}).await
+}
+
+pub(crate) async fn run_with_shutdown(
+    shutdown: CancellationToken,
+    ready: impl FnOnce(),
+) -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
     let mut settings = resolve_settings(&args, &CliConfig::load())?;
     let _logging_guard = machine::logger::init_device_logging()?;
     let (runtime, mut actions) = DaemonRuntime::new(settings.device_id.clone());
+    #[cfg(windows)]
+    let endpoint = if windows_host::service::is_service_process() {
+        DaemonControlEndpoint::current_user()?
+    } else {
+        DaemonControlEndpoint::foreground_user()?
+    };
+    #[cfg(not(windows))]
     let endpoint = DaemonControlEndpoint::current_user()?;
     let server_shutdown = CancellationToken::new();
     let server = DaemonControlServer::bind(&endpoint, runtime.clone(), ServerOptions::default())?;
@@ -48,7 +66,13 @@ pub(crate) async fn run() -> Result<(), Box<dyn std::error::Error>> {
         let server_shutdown = server_shutdown.clone();
         async move { server.run_until(server_shutdown.cancelled()).await }
     });
-    let signal = wait_for_shutdown_signal();
+    ready();
+    let signal = async {
+        tokio::select! {
+            _ = wait_for_shutdown_signal() => {},
+            _ = shutdown.cancelled() => {},
+        }
+    };
     tokio::pin!(signal);
 
     let result = loop {
@@ -186,6 +210,10 @@ async fn wait_for_shutdown_signal() {
 
 #[cfg(not(unix))]
 async fn wait_for_shutdown_signal() {
+    #[cfg(windows)]
+    if windows_host::service::is_service_process() {
+        std::future::pending::<()>().await;
+    }
     tokio::signal::ctrl_c()
         .await
         .expect("Failed to subscribe to Ctrl+C");
@@ -210,6 +238,8 @@ mod tests {
             id: None,
             workspace: None,
             foreground: true,
+            #[cfg(windows)]
+            windows_service: false,
         }
     }
 

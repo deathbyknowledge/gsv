@@ -156,6 +156,16 @@ against the device workspace, but absolute paths are used as-is on the device.
 Run device daemons as an unprivileged account and point their workspace at the
 smallest useful directory.
 
+Windows follows this same trust boundary: the SCM daemon and agent commands
+share the configured service account. That identity can access its own daemon
+state, device credential and control pipe. Those are private from other OS
+users, not isolated from authorized machine commands. The default virtual
+account is not an administrator, and SCM retains only `SeChangeNotifyPrivilege`
+for directory traversal. Administrator elevation is limited to registration and
+updates. Under the default account, commands cannot rewrite the administrator-owned
+executable or owner identity. Choosing a different service logon account also chooses its filesystem
+and network authority.
+
 Tool approval is a policy layer, not an isolation layer. Profiles can auto,
 deny, or ask for matching syscalls. The default policy automatically permits
 native `gsv` work and reading/searching connected targets. It asks before file

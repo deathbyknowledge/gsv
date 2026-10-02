@@ -26,7 +26,7 @@ function process(pid: string, parentPid: string | null, overrides: Partial<Conso
 describe("Ship pending approvals", () => {
   it("follows a mounted Ship replacement without redirecting a deleted helper or mixing owners", async () => {
     vi.stubGlobal("document", {});
-    vi.stubGlobal("window", { location: { protocol: "https:", host: "example.com" },
+    vi.stubGlobal("window", { addEventListener: vi.fn(), removeEventListener: vi.fn(), location: { protocol: "https:", host: "example.com" },
       sessionStorage: { getItem: () => null, setItem: () => {} } });
     vi.spyOn(GSVClient.prototype, "getStatus").mockReturnValue({ state: "connected", url: null, username: null, connectionId: null, message: null });
     vi.spyOn(GSVClient.prototype, "onStatus").mockImplementation(() => () => {});
@@ -98,7 +98,7 @@ describe("Ship pending approvals", () => {
 
   it("shows and clears a child's approval in mounted Ship from owner registry signals alone", async () => {
     vi.stubGlobal("document", {});
-    vi.stubGlobal("window", { location: { protocol: "https:", host: "example.com" },
+    vi.stubGlobal("window", { addEventListener: vi.fn(), removeEventListener: vi.fn(), location: { protocol: "https:", host: "example.com" },
       sessionStorage: { getItem: () => null, setItem: () => {} } });
     vi.spyOn(GSVClient.prototype, "getStatus").mockReturnValue({ state: "connected", url: null, username: null, connectionId: null, message: null });
     vi.spyOn(GSVClient.prototype, "onStatus").mockImplementation(() => () => {});

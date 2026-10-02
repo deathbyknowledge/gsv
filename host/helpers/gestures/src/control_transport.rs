@@ -17,9 +17,12 @@ use std::time::Duration;
 use crossbeam_channel::{bounded, Receiver, Sender, TryRecvError, TrySendError};
 use gesture_protocol::{
     read_frame, write_frame, ControlStatus, DesktopCommand, GestureContext, GestureIntent,
-    HelperEvent, LifecycleState, ScrollState, SessionId, EVENT_CHANNEL_CONTRACT_MARKER, EVENT_FD,
+    HelperEvent, LifecycleState, ScrollState, SessionId, EVENT_CHANNEL_CONTRACT_MARKER,
     EVENT_FD_MARKER_ENV, PROTOCOL_VERSION, SESSION_HIGH_ENV, SESSION_LOW_ENV,
 };
+
+#[cfg(unix)]
+use gesture_protocol::EVENT_FD;
 
 const EVENT_QUEUE_CAPACITY: usize = 4;
 const SNAPSHOT_QUEUE_CAPACITY: usize = 1;
@@ -338,7 +341,19 @@ fn inherited_event_output() -> Result<File, ControlTransportError> {
     Ok(unsafe { File::from_raw_fd(EVENT_FD) })
 }
 
-#[cfg(not(unix))]
+#[cfg(windows)]
+fn inherited_event_output() -> Result<File, ControlTransportError> {
+    let name = env::var_os(gesture_protocol::EVENT_PIPE_ENV)
+        .ok_or(ControlTransportError::InvalidEnvironment)?;
+    let pid = env::var(gesture_protocol::PARENT_PID_ENV)
+        .ok()
+        .and_then(|value| value.parse().ok())
+        .ok_or(ControlTransportError::InvalidEnvironment)?;
+    windows_host::pipe::connect(&name, pid)
+        .map_err(|_| ControlTransportError::EventChannelUnavailable)
+}
+
+#[cfg(not(any(unix, windows)))]
 fn inherited_event_output() -> Result<File, ControlTransportError> {
     Err(ControlTransportError::EventChannelUnavailable)
 }

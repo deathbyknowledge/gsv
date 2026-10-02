@@ -13,10 +13,9 @@ refuses to manage a mismatched daemon.
 | Linux ARM64 | yes | yes | yes | yes | yes |
 | macOS Intel | yes | yes | yes | yes | yes |
 | macOS Apple Silicon | yes | yes | yes | yes | yes |
-| Windows x64 | yes | yes | not yet | not yet | not yet |
+| Windows 10+ x64 | yes | yes | yes | yes | yes |
 
-Windows ARM64 can run the Windows x64 CLI and daemon through emulation, but it
-is not a native release target. Other operating systems and architectures are
+Windows ARM64 is not a supported release target. Other operating systems and architectures are
 not currently published.
 
 ## Install
@@ -27,11 +26,31 @@ On Linux or macOS:
 curl -fsSL https://install.gsv.space | bash
 ```
 
-On Windows PowerShell:
+On Windows, download `gsv-desktop-windows-x64-setup.exe` from the release and
+run it, or use PowerShell:
 
 ```powershell
 irm https://install.gsv.space/install.ps1 | iex
 ```
+
+The setup executable installs all five applications, adds a Start-menu shortcut,
+and registers an Apps uninstall entry. Setup upgrades reuse the installation
+directory selected during the previous setup. The ZIP contains the same payload with
+`install.ps1`; extract it and run `./install.ps1 -AssetDirectory .`.
+Desktop needs WebView2 and the Visual C++ x64 runtime; the installer downloads
+and verifies Microsoft's installers when either is missing. Internet access is
+needed for missing runtimes even when the GSV payload is already downloaded.
+
+For a Windows server without Desktop:
+
+```powershell
+Invoke-WebRequest -UseBasicParsing https://install.gsv.space/install.ps1 -OutFile install.ps1
+./install.ps1 -Headless
+```
+
+This installs only `gsv.exe` and `gsvd.exe`, plus the Visual C++ runtime if needed.
+It does not install WebView2. Pair the computer with the invitation
+from Fleet, then inspect it with `gsv daemon status`.
 
 Use `GSV_CHANNEL=dev` for the moving development channel, or set
 `GSV_VERSION=vX.Y.Z` to install an immutable release tag.
@@ -42,11 +61,23 @@ the real installation runs and restores the terminal, including the install
 log, on completion or interruption. Small terminals, redirected output and CI
 keep ordinary text output. Set `GSV_NO_ANIMATION=1` to use text explicitly.
 
+## Sign-in and multiple windows
+
+Desktop and browser windows can stay connected to the same space at once. They
+receive new conversation messages live and refresh server state after a
+reconnect. A remembered space sign-in lasts 30 days and renews during use.
+Browser tabs share renewal and sign-out; Desktop has its own stored session.
+A temporary network interruption reconnects without asking you to sign in again.
+An incompatible client or rejected connection shows the gateway's error instead
+of retrying indefinitely.
+
 ## Install location
 
 New installations go to a per-user directory: `~/.gsv/bin` on Linux and macOS,
-`%LOCALAPPDATA%\Programs\gsv\bin` on Windows. No `sudo` is involved, the
-daemon can update itself there, and `~/.gsv` holds the host tools, logs and model cache. Desktop keeps its
+`%LOCALAPPDATA%\Programs\gsv\bin` on Windows. On Linux and macOS, no `sudo`
+is involved, the daemon can update itself there, and `~/.gsv` holds the host
+tools, logs and model cache. Windows service registration and updates require
+administrator approval; its protected copy is described below. Desktop keeps its
 private session and webview state in the platform application data directory. The installer
 puts the directory on `PATH` for new shells: one marked, guarded line in
 `~/.profile`, plus `~/.bash_profile`, `~/.bashrc`, `~/.zshrc`, and
@@ -55,10 +86,10 @@ Windows it is the user `Path` in the registry. Set `GSV_NO_MODIFY_PATH=1` to
 skip that and add it yourself. The daemon service never depends on `PATH`; it
 is registered with the absolute path of `gsvd`.
 
-`GSV_INSTALL_DIR` overrides the destination. A directory this user cannot write
-is installed with `sudo`, and the daemon there cannot update itself.
+`GSV_INSTALL_DIR` overrides the destination. On Unix, a directory this user cannot
+write is installed with `sudo`, and the daemon there cannot update itself.
 
-An existing installation stays where it is. When `GSV_INSTALL_DIR` is unset the
+On Unix, an existing installation stays where it is. When `GSV_INSTALL_DIR` is unset the
 installer updates the directory the `gsvd` service runs from, or a previous
 `/usr/local/bin` installation, in place, and prints how to move if that
 directory is not user-writable. A daemon that Desktop enrolled from inside its
@@ -77,9 +108,52 @@ Every artifact is checked against the release's `checksums.txt` before an
 installed binary is changed. The installer preserves the existing config and
 keeps user, Desktop, and driver credentials separate.
 
+## Windows service and permissions
+
+Connecting a Windows computer requests administrator approval to install the
+`gsvd` SCM service. It starts at boot, reconnects when networking is available,
+and keeps running through sign-out or Desktop exit. No interactive login is
+needed to reach an enrolled server after reboot.
+
+By default commands run as `NT SERVICE\gsvd`, a dedicated virtual account,
+with read/write access to the selected workspace. The default is
+`%USERPROFILE%\GSV`. Choose a folder whose permissions your user can change
+without administrator elevation. Approval installs the boot service; it does not
+grant agents extra access to protected application or system folders.
+This identity does not inherit your personal SSH keys,
+user-installed tools, mapped drives, or browser sessions. Configure credentials
+and tools for the service account, or choose its Log On account in Windows
+Services. Use UNC paths for network shares and grant that account access.
+Reinstallation and upgrades preserve administrator-configured service settings,
+including its account, startup mode, recovery policy and state-directory access.
+A conflicting `gsvd`
+registration must be resolved by an administrator before GSV can replace it.
+
+The protected executable lives at `%ProgramFiles%\GSV\service\gsvd.exe`.
+Daemon enrollment and logs live at `%ProgramData%\GSV\daemon`; CLI and Desktop
+credentials stay in your profile. Only the enrolling user and administrators
+can manage this service. One machine service has one enrolled owner; another
+Windows user cannot silently replace it. `gsv daemon uninstall` stops and
+removes the service and its workspace access grant while retaining enrollment,
+logs, protected service binaries and workspace data. Removing GSV through Apps
+also removes the user applications, shortcut and PATH entry. Saved service
+state remains available for reinstall by the same owner.
+Uninstall still removes the stopped service if its configuration is damaged or
+workspace access cannot be revoked. It reports that the remaining workspace
+grant needs manual removal. A fresh installation then uses the enrolling user's
+configuration, even if the retained daemon configuration is damaged.
+
+Windows automatic daemon updates are disabled. Rerun setup or the PowerShell
+installer to update; it requests administrator approval for the existing boot
+service and restores the previous binaries if the updated service cannot start. Desktop must be
+closed before replacing its executables. There is no scheduled-task migration.
+Setup authenticates its extracted installer script and release manifest against
+hashes embedded in the setup executable before running them or requesting
+service-update approval.
+
 ## Existing device daemon
 
-When the `gsvd` user service already exists, the installer:
+On Unix, when the `gsvd` user service already exists, the installer:
 
 1. records whether it is installed and running;
 2. stops it before replacing its executable;
@@ -94,7 +168,7 @@ enrolled; run `gsv daemon install` after configuring a driver credential.
 
 ## Automatic daemon updates
 
-A connected machine keeps itself current. When the gateway is redeployed,
+On Linux and macOS, a connected machine keeps itself current. When the gateway is redeployed,
 `gsvd` learns about it the next time it connects: a gateway that requires a
 newer protocol rejects the handshake and names the release it needs, and a
 gateway that merely runs a newer release reports it on a successful connect.
@@ -109,8 +183,7 @@ running `gsvd`, which the per-user default guarantees. Only a pre-existing
 system-wide installation, such as one under `/usr/local/bin`, updates manually
 until it is migrated, and a daemon inside the Desktop application bundle is
 updated by Desktop. The daemon also
-only updates itself when a service manager runs it (systemd, launchd, or the
-Windows scheduled task), since something has to restart it afterwards; a
+only updates itself when a service manager runs it (systemd or launchd), since something has to restart it afterwards; a
 `gsvd --foreground` started by hand reports the newer release and leaves the
 update to you. The daemon makes at most one attempt per hour and only
 ever moves to a release the gateway named. Installer output is written to `~/.gsv/logs/auto-update.log`,
@@ -130,7 +203,7 @@ update them.
 
 ## Desktop
 
-On Linux and macOS, start or focus the installed app with:
+Start or focus the installed app with:
 
 ```bash
 gsv desktop
@@ -170,7 +243,12 @@ macOS releases also include `gsv-desktop-darwin-arm64.zip` and
 `gsv-desktop-darwin-x64.zip`, each containing `GSV.app` with the CLI, daemon and
 helpers. The developer app is ad-hoc signed and unnotarized. After the first
 blocked launch, use System Settings → Privacy & Security → Open Anyway.
-Replace the bundle to update it. Windows receives only the CLI and daemon.
+Replace the bundle to update it. Windows includes both local helpers; microphone
+and camera access require an interactive session and permission in Windows
+Privacy settings.
+The Windows helpers use CPU inference. Local voice requires AVX2 with FMA/F16C;
+Desktop explains when a CPU does not support it. This requirement applies only
+to voice. Gesture inference selects supported CPU instructions at runtime.
 
 ## Manual verification
 
@@ -187,3 +265,11 @@ After installing the daemon service, inspect it with:
 gsv daemon doctor
 gsv daemon status
 ```
+
+From a source checkout, `python host/scripts/check-transcription.py` verifies
+streaming speech inference against a pinned public recording without opening a
+microphone. Its first run downloads the same verified model used by Desktop.
+
+Windows release artifacts are unsigned unless the release runner has a signing
+certificate configured. SmartScreen may show an unknown-publisher warning.
+The installer still checks every GSV asset against the release manifest.

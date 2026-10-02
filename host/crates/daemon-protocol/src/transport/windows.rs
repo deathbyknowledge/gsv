@@ -1,10 +1,4 @@
-use std::{
-    ffi::{c_void, OsStr},
-    io, mem,
-    os::windows::{ffi::OsStrExt, io::AsRawHandle},
-    ptr,
-    time::Duration,
-};
+use std::{ffi::c_void, io, mem, os::windows::io::AsRawHandle, ptr, time::Duration};
 
 use tokio::net::windows::named_pipe::{
     ClientOptions as PipeClientOptions, NamedPipeClient, NamedPipeServer,
@@ -15,12 +9,8 @@ use windows_sys::Win32::{
         CloseHandle, GetLastError, LocalFree, ERROR_ACCESS_DENIED, ERROR_PIPE_BUSY, HANDLE, HLOCAL,
     },
     Security::{
-        Authorization::{
-            ConvertSidToStringSidW, ConvertStringSecurityDescriptorToSecurityDescriptorW,
-            SDDL_REVISION_1,
-        },
-        GetTokenInformation, TokenUser, PSECURITY_DESCRIPTOR, SECURITY_ATTRIBUTES, TOKEN_QUERY,
-        TOKEN_USER,
+        Authorization::ConvertSidToStringSidW, GetTokenInformation, TokenUser, SECURITY_ATTRIBUTES,
+        TOKEN_QUERY, TOKEN_USER,
     },
     System::{
         Pipes::{GetNamedPipeClientProcessId, GetNamedPipeServerProcessId},
@@ -67,7 +57,11 @@ impl BoundListener {
         waiting.connect().await.map_err(Error::Io)?;
         self.waiting =
             Some(create_pipe(&self.endpoint, &self.current_sid, false).map_err(Error::Io)?);
-        verify_client_identity(&waiting, &self.current_sid)?;
+        // The service pipe ACL admits only its execution identity and enrolling
+        // owner. Windows checks that identity while opening the local pipe.
+        if !self.endpoint.is_service() {
+            verify_client_identity(&waiting, &self.current_sid)?;
+        }
         Ok(waiting)
     }
 }
@@ -93,7 +87,20 @@ pub(crate) async fn connect(
             stage: TimeoutStage::Connect,
             duration: timeout,
         })??;
-    verify_server_identity(&client, &current_user_sid_string()?)?;
+    if endpoint.is_service() {
+        let mut pid = 0;
+        // SAFETY: client is connected and pid is valid output storage.
+        if unsafe { GetNamedPipeServerProcessId(client.as_raw_handle().cast(), &mut pid) } == 0 {
+            return Err(last_windows_error());
+        }
+        let expected = windows_host::service::process_id()
+            .map_err(|error| Error::Io(io::Error::other(error)))?;
+        if expected != Some(pid) {
+            return Err(Error::PeerIdentity);
+        }
+    } else {
+        verify_server_identity(&client, &current_user_sid_string()?)?;
+    }
     Ok(client)
 }
 
@@ -102,7 +109,15 @@ fn create_pipe(
     current_sid: &str,
     first_instance: bool,
 ) -> io::Result<NamedPipeServer> {
-    let descriptor = CurrentUserSecurityDescriptor::new(current_sid)?;
+    let descriptor = if endpoint.is_service() {
+        let owner = std::fs::read_to_string(windows_host::service::owner_sid_path())?;
+        windows_host::security::SecurityDescriptor::from_sddl(&format!(
+            "D:P(A;;GA;;;{current_sid})(A;;GA;;;BA)(A;;GA;;;{})",
+            owner.trim()
+        ))?
+    } else {
+        windows_host::security::SecurityDescriptor::new(current_sid)?
+    };
     let mut attributes = SECURITY_ATTRIBUTES {
         nLength: u32::try_from(mem::size_of::<SECURITY_ATTRIBUTES>())
             .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "attributes too large"))?,
@@ -123,41 +138,6 @@ fn create_pipe(
             endpoint.pipe_name(),
             (&mut attributes as *mut SECURITY_ATTRIBUTES).cast::<c_void>(),
         )
-    }
-}
-
-struct CurrentUserSecurityDescriptor {
-    pointer: PSECURITY_DESCRIPTOR,
-}
-
-impl CurrentUserSecurityDescriptor {
-    fn new(current_sid: &str) -> io::Result<Self> {
-        let encoded = wide_null(OsStr::new(&format!("D:P(A;;GA;;;{current_sid})")));
-        let mut pointer = ptr::null_mut();
-        // SAFETY: encoded is NUL-terminated and pointer is a valid out pointer.
-        if unsafe {
-            ConvertStringSecurityDescriptorToSecurityDescriptorW(
-                encoded.as_ptr(),
-                SDDL_REVISION_1,
-                &mut pointer,
-                ptr::null_mut(),
-            )
-        } == 0
-        {
-            return Err(io::Error::last_os_error());
-        }
-        Ok(Self { pointer })
-    }
-}
-
-impl Drop for CurrentUserSecurityDescriptor {
-    fn drop(&mut self) {
-        if !self.pointer.is_null() {
-            // SAFETY: Windows allocated this descriptor with LocalAlloc.
-            unsafe {
-                LocalFree(self.pointer.cast::<c_void>() as HLOCAL);
-            }
-        }
     }
 }
 
@@ -272,10 +252,6 @@ fn last_windows_error() -> Error {
     Error::Io(io::Error::from_raw_os_error(
         unsafe { GetLastError() } as i32
     ))
-}
-
-fn wide_null(value: &OsStr) -> Vec<u16> {
-    value.encode_wide().chain(Some(0)).collect()
 }
 
 struct OwnedHandle(HANDLE);

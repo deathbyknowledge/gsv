@@ -11,7 +11,7 @@ describe("installation onboarding capability", () => {
   beforeEach(() => {
     let location = new URL("https://local.gsv.space/");
     const values = new Map<string, string>();
-    vi.stubGlobal("window", {
+    vi.stubGlobal("window", { addEventListener: vi.fn(), removeEventListener: vi.fn(),
       get location() {
         return location;
       },

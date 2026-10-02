@@ -7,6 +7,9 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/archives")
+foreach(config DEBUG RELEASE RELWITHDEBINFO MINSIZEREL)
+  set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY_${config} "${CMAKE_BINARY_DIR}/archives")
+endforeach()
 set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
 set(TFLITE_ENABLE_INSTALL OFF CACHE BOOL "" FORCE)
 set(TFLITE_ENABLE_GPU OFF CACHE BOOL "" FORCE)
@@ -14,6 +17,11 @@ set(TFLITE_ENABLE_METAL OFF CACHE BOOL "" FORCE)
 set(TFLITE_ENABLE_NNAPI OFF CACHE BOOL "" FORCE)
 set(TFLITE_ENABLE_EXTERNAL_DELEGATE OFF CACHE BOOL "" FORCE)
 set(TFLITE_ENABLE_XNNPACK ON CACHE BOOL "" FORCE)
+if(WIN32)
+  # The pinned TensorFlow allocation implementation uses POSIX mmap. Our
+  # checksum-pinned embedded models already use VerifyAndBuildFromBuffer.
+  set(TFLITE_ENABLE_MMAP OFF CACHE BOOL "" FORCE)
+endif()
 set(XNNPACK_ENABLE_KLEIDIAI OFF CACHE BOOL "" FORCE)
 set(CPUINFO_LOG_LEVEL none CACHE STRING "" FORCE)
 set(CMAKE_POLICY_VERSION_MINIMUM 3.5)
@@ -45,7 +53,11 @@ add_library(gsv_litert_bridge STATIC bridge.cc
   "${litert_SOURCE_DIR}/tflite/profiling/memory_info.cc"
 )
 target_link_libraries(gsv_litert_bridge PRIVATE tensorflow-lite)
-target_compile_options(gsv_litert_bridge PRIVATE -Wall -Wextra)
+if(MSVC)
+  target_compile_options(gsv_litert_bridge PRIVATE /W4 /EHsc)
+else()
+  target_compile_options(gsv_litert_bridge PRIVATE -Wall -Wextra)
+endif()
 
 # Rust needs the complete static archive, including the CPU kernel libraries.
 # Building this target builds only its dependency closure into archives/.
@@ -53,5 +65,6 @@ install(CODE "
   set(ARCHIVE_DIR \"${CMAKE_ARCHIVE_OUTPUT_DIRECTORY}\")
   set(AR \"${CMAKE_AR}\")
   set(APPLE \"${APPLE}\")
+  set(MSVC \"${MSVC}\")
   include(\"${CMAKE_CURRENT_SOURCE_DIR}/bundle.cmake\")
 ")

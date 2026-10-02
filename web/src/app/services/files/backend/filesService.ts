@@ -60,7 +60,7 @@ function isOkPayload(payload: GatewayPayload): boolean {
 
 async function readRawPathWithFallback(client: FilesClient, target: string, path: string): Promise<{ path: string; payload: unknown }> {
   const payload = await requestFsRead(client, targetArgs(target, { path }));
-  if (isOkPayload(payload) || target === "gsv") {
+  if (isOkPayload(payload) || target === "gsv" || /^[a-z]:\//i.test(path) || path.startsWith("//")) {
     return { path, payload };
   }
 

@@ -26,7 +26,13 @@ pub(crate) fn resolve_device_id(cli_device_id: Option<String>, cfg: &CliConfig) 
 pub(crate) fn resolve_device_workspace(cli_workspace: Option<PathBuf>, cfg: &CliConfig) -> PathBuf {
     cli_workspace
         .or_else(|| cfg.default_device_workspace())
-        .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")))
+        .unwrap_or_else(|| {
+            #[cfg(windows)]
+            if let Some(path) = host_config::default_machine_workspace() {
+                return path;
+            }
+            std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
+        })
 }
 
 fn persist_device_defaults(
@@ -36,6 +42,10 @@ fn persist_device_defaults(
 ) -> Result<(String, PathBuf, bool), Box<dyn std::error::Error>> {
     let device_id = resolve_device_id(device_id, cfg);
     let workspace = resolve_device_workspace(workspace, cfg);
+    #[cfg(windows)]
+    if Some(&workspace) == host_config::default_machine_workspace().as_ref() {
+        std::fs::create_dir_all(&workspace)?;
+    }
     let workspace = workspace.canonicalize().unwrap_or(workspace);
 
     let config_path = CliConfig::config_path().ok_or("Could not determine config directory")?;
@@ -165,10 +175,7 @@ pub(crate) fn run_daemon_service(
             let (device_id, workspace, defaults_changed) =
                 persist_device_defaults(cfg, id, workspace)?;
             let was_legacy = device_service::device_service_needs_migration()?;
-            device_service::install_device_service()?;
-            if (gateway_changed || defaults_changed) && !was_legacy {
-                device_service::restart_device_service()?;
-            }
+            device_service::install_device_service(gateway_changed || defaults_changed)?;
 
             println!("gsvd installed and started.");
             if was_legacy {
@@ -196,9 +203,11 @@ pub(crate) fn run_daemon_service(
                 gateway_token_override,
             )?;
             if device_service::device_service_needs_migration()? {
-                device_service::install_device_service()?;
+                device_service::install_device_service(false)?;
                 println!("Migrated the service to the `gsvd` executable.");
             } else if gateway_changed {
+                #[cfg(windows)]
+                device_service::sync_configuration()?;
                 device_service::restart_device_service()?;
             } else {
                 device_service::start_device_service()?;
@@ -215,9 +224,13 @@ pub(crate) fn run_daemon_service(
                 gateway_token_override,
             )?;
             if device_service::device_service_needs_migration()? {
-                device_service::install_device_service()?;
+                device_service::install_device_service(false)?;
                 println!("Migrated the service to the `gsvd` executable.");
             } else {
+                #[cfg(windows)]
+                if gateway_changed {
+                    device_service::sync_configuration()?;
+                }
                 device_service::restart_device_service()?;
             }
             if gateway_changed {
@@ -270,6 +283,8 @@ pub(crate) async fn show_daemon_live_status() -> Result<(), Box<dyn std::error::
 }
 
 pub(crate) async fn reload_daemon() -> Result<(), Box<dyn std::error::Error>> {
+    #[cfg(windows)]
+    device_service::sync_configuration()?;
     daemon_control_client()?.reload().await?;
     println!("gsvd accepted the configuration reload.");
     Ok(())

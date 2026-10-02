@@ -1,8 +1,11 @@
-#![cfg(unix)]
+#![cfg(any(unix, windows))]
 
+#[cfg(unix)]
 use std::fs::File;
 use std::io;
+#[cfg(unix)]
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd, RawFd};
+#[cfg(unix)]
 use std::os::unix::process::CommandExt as _;
 use std::process::{Child, Command, ExitStatus, Stdio};
 use std::sync::mpsc;
@@ -10,9 +13,12 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use gesture_protocol::{
-    read_frame, HelperEvent, SessionId, EVENT_CHANNEL_CONTRACT_MARKER, EVENT_FD,
-    EVENT_FD_MARKER_ENV, PROTOCOL_VERSION, SESSION_HIGH_ENV, SESSION_LOW_ENV,
+    read_frame, HelperEvent, SessionId, EVENT_CHANNEL_CONTRACT_MARKER, EVENT_FD_MARKER_ENV,
+    PROTOCOL_VERSION, SESSION_HIGH_ENV, SESSION_LOW_ENV,
 };
+
+#[cfg(unix)]
+use gesture_protocol::EVENT_FD;
 
 const PARENT_STDIN_WATCHDOG: &str = "GSV_VISION_PARENT_STDIN";
 const ENABLED_MARKER: &str = "1";
@@ -25,10 +31,14 @@ fn runnable_helper_uses_the_current_event_channel_contract() {
     assert_eq!(PROTOCOL_VERSION, 1);
     assert_ne!(EVENT_CHANNEL_CONTRACT_MARKER, ENABLED_MARKER);
 
+    #[cfg(unix)]
     let (mut event_input, event_output) = anonymous_pipe().expect("event pipe is available");
+    #[cfg(unix)]
     let event_output_fd = event_output.as_raw_fd();
     let install = tempfile::tempdir().expect("isolated helper installation");
-    let executable = install.path().join("gsv-vision");
+    let executable = install
+        .path()
+        .join(format!("gsv-vision{}", std::env::consts::EXE_SUFFIX));
     std::fs::copy(env!("CARGO_BIN_EXE_gsv-vision"), &executable).expect("relocated helper");
     let mut command = Command::new(&executable);
     command
@@ -47,11 +57,31 @@ fn runnable_helper_uses_the_current_event_channel_contract() {
         .stdout(Stdio::null())
         .stderr(Stdio::null());
     // SAFETY: the callback performs only async-signal-safe descriptor operations.
+    #[cfg(unix)]
     unsafe {
         command.pre_exec(move || map_event_fd(event_output_fd));
     }
 
+    #[cfg(windows)]
+    let mut event_input = {
+        let name = format!(r"\\.\pipe\gsv-vision-test-{}", std::process::id());
+        let pipe = windows_host::pipe::create(std::ffi::OsStr::new(&name)).expect("private pipe");
+        command.env(gesture_protocol::EVENT_PIPE_ENV, name).env(
+            gesture_protocol::PARENT_PID_ENV,
+            std::process::id().to_string(),
+        );
+        for name in ["SystemRoot", "WINDIR", "PATH", "TEMP", "TMP"] {
+            if let Some(value) = std::env::var_os(name) {
+                command.env(name, value);
+            }
+        }
+        pipe
+    };
     let child = command.spawn().expect("runnable helper starts");
+    #[cfg(windows)]
+    windows_host::pipe::accept(&event_input, child.id(), HANDSHAKE_TIMEOUT)
+        .expect("owned helper connection");
+    #[cfg(unix)]
     drop(event_output);
     let mut child = ChildGuard::new(child);
     let parent_input = child
@@ -136,6 +166,7 @@ impl Drop for ChildGuard {
     }
 }
 
+#[cfg(unix)]
 fn anonymous_pipe() -> io::Result<(File, OwnedFd)> {
     let mut descriptors = [-1; 2];
     #[cfg(any(target_os = "linux", target_os = "android"))]
@@ -179,6 +210,7 @@ fn anonymous_pipe() -> io::Result<(File, OwnedFd)> {
     Ok((File::from(reader), writer))
 }
 
+#[cfg(unix)]
 fn map_event_fd(parent_fd: RawFd) -> io::Result<()> {
     if parent_fd == EVENT_FD {
         // SAFETY: EVENT_FD is inherited and F_GETFD has no pointer arguments.
