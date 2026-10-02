@@ -60,6 +60,14 @@ The service SID receives access to its state and selected workspace; agent
 commands inherit the service account's permissions, never the installer's.
 The default Windows workspace is `%USERPROFILE%\GSV`.
 
+Workspace permission changes remain in the enrolling process at its original
+privilege level. Before requesting elevation, it must be able to read and change
+the selected directory's ACL. The elevated child only registers the protected
+service; it never grants or revokes workspace access. The enrolling process grants
+the service access, revokes any previous workspace grant, and starts the service.
+Administrator approval cannot make an otherwise inaccessible directory writable
+by agent commands.
+
 Service installation selects only the bundled `gsvd.exe` beside the CLI, without
 consulting `GSV_GSVD_PATH` or `PATH`. The enrolling process locks and checks that
 file before requesting UAC approval. The elevated child reads from that locked

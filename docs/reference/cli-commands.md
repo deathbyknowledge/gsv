@@ -505,6 +505,9 @@ Device identity resolves as `--id`, then local `device.id`, then
 `device-<hostname>`. Workspace resolves as `--workspace`, then
 `device.workspace`, then the current directory for a foreground daemon.
 Windows pairing and service installation default to `%USERPROFILE%\GSV`.
+The enrolling user must already be able to change the workspace's permissions.
+Workspace grants and removal run at that user's original privilege level;
+administrator approval only authorizes the protected service registration.
 A persistent daemon should have
 `gateway.username` and `device.token` configured, usually from
 the device invitation flow, or

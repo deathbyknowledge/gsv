@@ -18,7 +18,10 @@ use windows_host::{
 };
 use windows_sys::Win32::{
     Security::DACL_SECURITY_INFORMATION,
-    Storage::FileSystem::{FILE_ATTRIBUTE_REPARSE_POINT, FILE_SHARE_READ},
+    Storage::FileSystem::{
+        FILE_ATTRIBUTE_REPARSE_POINT, FILE_FLAG_BACKUP_SEMANTICS, FILE_SHARE_READ,
+        FILE_SHARE_WRITE, READ_CONTROL, WRITE_DAC,
+    },
     System::Services::SetServiceObjectSecurity,
 };
 
@@ -38,6 +41,31 @@ impl DeviceServiceManager for WindowsServiceManager {
         let owner = current_user_sid_string()?;
         let source =
             CliConfig::config_path().ok_or("Could not find the enrolling user's configuration")?;
+        let config: CliConfig = ConfigFile::new(&source).load()?;
+        let workspace = service_workspace(
+            config
+                .device
+                .workspace
+                .as_deref()
+                .ok_or("Configure a workspace before installing the service")?,
+        )?;
+        // Workspace authority belongs to the enrolling process. Never delegate
+        // these ACL operations to the elevated service-registration child.
+        let _workspace_access = workspace_acl_access(&workspace)?;
+        let saved_config = service::data_dir().join("config.toml");
+        let previous_workspace = if saved_config.exists() {
+            ConfigFile::<CliConfig>::new(saved_config)
+                .load()?
+                .device
+                .workspace
+                .filter(|path| path != &workspace && path.exists())
+        } else {
+            None
+        };
+        let _previous_access = previous_workspace
+            .as_deref()
+            .map(workspace_acl_access)
+            .transpose()?;
         let executable = std::env::current_exe()?;
         let args = windows_arguments_string(&[
             "daemon".into(),
@@ -46,6 +74,8 @@ impl DeviceServiceManager for WindowsServiceManager {
             source.to_string_lossy().into_owned(),
             "--owner-sid".into(),
             owner,
+            "--workspace".into(),
+            workspace.to_string_lossy().into_owned(),
             "--daemon-source".into(),
             daemon.path.to_string_lossy().into_owned(),
             "--daemon-sha256".into(),
@@ -60,7 +90,22 @@ impl DeviceServiceManager for WindowsServiceManager {
         run_windows_powershell_script(
             &script,
             "Administrator approval is required to install the boot service",
-        )
+        )?;
+        run_command_capture(
+            Command::new(system_tool("icacls.exe"))
+                .arg(&workspace)
+                .args(["/grant", "NT SERVICE\\gsvd:(OI)(CI)M"]),
+            "Could not grant access to the selected workspace using your existing permissions",
+        )?;
+        if let Some(previous) = previous_workspace {
+            run_command_capture(
+                Command::new(system_tool("icacls.exe"))
+                    .arg(previous)
+                    .args(["/remove:g", "NT SERVICE\\gsvd"]),
+                "Could not remove access to the previous workspace using your existing permissions",
+            )?;
+        }
+        service::start()
     }
     fn uninstall(&self) -> Result<(), DynError> {
         service::stop()?;
@@ -103,6 +148,54 @@ impl DeviceServiceManager for WindowsServiceManager {
     fn needs_migration(&self, _spec: &DeviceServiceInstallSpec) -> Result<bool, DynError> {
         Ok(false)
     }
+}
+
+fn workspace_acl_access(path: &Path) -> Result<File, DynError> {
+    fs::OpenOptions::new()
+        .access_mode(READ_CONTROL | WRITE_DAC)
+        .custom_flags(FILE_FLAG_BACKUP_SEMANTICS)
+        .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE)
+        .open(path)
+        .map_err(|error| {
+            format!(
+                "Choose a workspace whose permissions you can change without elevation: {}: {error}",
+                path.display()
+            )
+            .into()
+        })
+}
+
+fn service_workspace(path: &Path) -> Result<PathBuf, DynError> {
+    if !path.is_dir() {
+        return Err("The service workspace must be an existing directory".into());
+    }
+    let workspace = path.canonicalize()?;
+    let normalize = |path: &Path| {
+        path.to_string_lossy()
+            .trim_start_matches(r"\\?\")
+            .trim_end_matches('\\')
+            .to_ascii_lowercase()
+    };
+    let normalized = normalize(&workspace);
+    let system = system_tool("..").canonicalize()?;
+    let data = service::data_dir();
+    let bin = service::binary_dir();
+    let protected_roots = [
+        system.as_path(),
+        bin.parent().expect("service binary directory has a parent"),
+        data.parent().expect("service data directory has a parent"),
+    ];
+    if normalized.len() == 2 && normalized.ends_with(':')
+        || protected_roots.iter().any(|root| {
+            let root = normalize(root);
+            normalized == root || normalized.starts_with(&format!("{root}\\"))
+        })
+    {
+        return Err(
+            "Choose a dedicated workspace outside Windows and GSV service directories".into(),
+        );
+    }
+    Ok(workspace)
 }
 
 pub(super) fn packaged_daemon_path() -> Result<PathBuf, DynError> {
@@ -173,10 +266,13 @@ impl PinnedDaemon {
     }
 }
 
-/// Runs only in the administrator process. Configuration contents never enter arguments.
+/// Registers the protected service without changing workspace ACLs or starting
+/// it. The enrolling process owns those operations at its original privilege.
+/// Device credentials never enter arguments.
 pub fn install_elevated(
     source: &Path,
     owner: &str,
+    workspace: &Path,
     daemon_source: &Path,
     daemon_sha256: &str,
 ) -> Result<(), DynError> {
@@ -201,40 +297,11 @@ pub fn install_elevated(
     machine.device.gateway_username = config.device_gateway_username();
     machine.device.auto_update = Some(false);
     machine.release = config.release;
-    let workspace = machine
-        .device
-        .workspace
-        .clone()
-        .ok_or("Configure a workspace before installing the service")?;
-    if !workspace.is_dir() {
-        return Err("The service workspace must be an existing directory".into());
-    }
-    let workspace = workspace.canonicalize()?;
-    let normalize = |path: &Path| {
-        path.to_string_lossy()
-            .trim_start_matches(r"\\?\")
-            .trim_end_matches('\\')
-            .to_ascii_lowercase()
-    };
-    let normalized = normalize(&workspace);
-    let system = system_tool("..").canonicalize()?;
+    let workspace = service_workspace(workspace)?;
     let data = service::data_dir();
     let bin = service::binary_dir();
     let binary_root = bin.parent().expect("service binary directory has a parent");
     let data_root = data.parent().expect("service data directory has a parent");
-    let protected_roots = [system.as_path(), binary_root];
-    if normalized.len() == 2 && normalized.ends_with(':')
-        || protected_roots.iter().any(|root| {
-            let root = normalize(root);
-            normalized == root || normalized.starts_with(&format!("{root}\\"))
-        })
-        || normalized == normalize(data_root)
-        || normalized.starts_with(&format!("{}\\", normalize(data_root)))
-    {
-        return Err(
-            "Choose a dedicated workspace outside Windows and GSV service directories".into(),
-        );
-    }
     machine.device.workspace = Some(workspace.clone());
     let protected = "O:BAD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;GRGX;;;BU)";
     protect_directory(binary_root, protected)?;
@@ -248,14 +315,6 @@ pub fn install_elevated(
             return Err("This machine has enrollment owned by another Windows user. An administrator must explicitly retire its saved enrollment before replacing it.".into());
         }
     }
-    let previous_workspace = if data.join("config.toml").exists() {
-        ConfigFile::<CliConfig>::new(data.join("config.toml"))
-            .load()?
-            .device
-            .workspace
-    } else {
-        None
-    };
     if installed {
         service::stop()?;
     }
@@ -340,23 +399,8 @@ pub fn install_elevated(
     )?;
     fs::write(data.join("owner.sid"), owner)?;
     ConfigFile::new(data.join("config.toml")).save(&machine)?;
-    run_command_capture(
-        Command::new(system_tool("icacls.exe"))
-            .arg(&workspace)
-            .args(["/grant", "NT SERVICE\\gsvd:(OI)(CI)M"]),
-        "Could not grant access to the selected workspace",
-    )?;
-    if let Some(previous) = previous_workspace.filter(|path| path != &workspace && path.exists()) {
-        run_command_capture(
-            Command::new(system_tool("icacls.exe"))
-                .arg(previous)
-                .args(["/remove:g", "NT SERVICE\\gsvd"]),
-            "Could not remove access to the previous workspace",
-        )?;
-    }
-    service::start()?;
     println!(
-        "Installed boot service gsvd. Workspace: {}. Account: {}",
+        "Registered boot service gsvd. Workspace: {}. Account: {}",
         workspace.display(),
         svc.query_config()?
             .account_name
@@ -426,6 +470,78 @@ pub(super) fn registered_executable() -> Result<PathBuf, DynError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn workspace_acl_access_uses_the_callers_existing_authority() {
+        use std::{
+            os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle},
+            ptr,
+        };
+        use windows_sys::Win32::{
+            Security::{
+                CreateRestrictedToken, ImpersonateLoggedOnUser, RevertToSelf,
+                DISABLE_MAX_PRIVILEGE, LUA_TOKEN, TOKEN_DUPLICATE, TOKEN_QUERY,
+            },
+            System::Threading::{GetCurrentProcess, OpenProcessToken},
+        };
+
+        let workspace = tempfile::tempdir().expect("user workspace");
+        let protected = service::binary_dir()
+            .parent()
+            .and_then(Path::parent)
+            .expect("Program Files contains the GSV service directory")
+            .to_path_buf();
+        let mut process_token = ptr::null_mut();
+        // SAFETY: GetCurrentProcess is live and the output pointer is writable.
+        assert_ne!(
+            unsafe {
+                OpenProcessToken(
+                    GetCurrentProcess(),
+                    TOKEN_DUPLICATE | TOKEN_QUERY,
+                    &mut process_token,
+                )
+            },
+            0
+        );
+        // SAFETY: OpenProcessToken returned a newly owned handle.
+        let process_token = unsafe { OwnedHandle::from_raw_handle(process_token) };
+        let mut restricted = ptr::null_mut();
+        // SAFETY: the source handle is live, empty SID lists are null, and the
+        // output is writable. LUA_TOKEN removes the caller's administrator grant.
+        assert_ne!(
+            unsafe {
+                CreateRestrictedToken(
+                    process_token.as_raw_handle(),
+                    DISABLE_MAX_PRIVILEGE | LUA_TOKEN,
+                    0,
+                    ptr::null(),
+                    0,
+                    ptr::null(),
+                    0,
+                    ptr::null(),
+                    &mut restricted,
+                )
+            },
+            0
+        );
+        // SAFETY: CreateRestrictedToken returned a newly owned handle.
+        let restricted = unsafe { OwnedHandle::from_raw_handle(restricted) };
+        struct Revert;
+        impl Drop for Revert {
+            fn drop(&mut self) {
+                // SAFETY: only this test thread is impersonating the token.
+                assert_ne!(unsafe { RevertToSelf() }, 0);
+            }
+        }
+        // SAFETY: the restricted primary token has QUERY and DUPLICATE access.
+        assert_ne!(
+            unsafe { ImpersonateLoggedOnUser(restricted.as_raw_handle()) },
+            0
+        );
+        let _revert = Revert;
+        workspace_acl_access(workspace.path()).expect("user controls the workspace ACL");
+        assert!(workspace_acl_access(&protected).is_err());
+    }
 
     #[test]
     fn pinned_daemon_prevents_replacement_until_installation_finishes() {

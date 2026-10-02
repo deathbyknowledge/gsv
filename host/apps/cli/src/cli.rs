@@ -178,6 +178,8 @@ pub(crate) enum DaemonAction {
         #[arg(long)]
         owner_sid: String,
         #[arg(long)]
+        workspace: PathBuf,
+        #[arg(long)]
         daemon_source: PathBuf,
         #[arg(long)]
         daemon_sha256: String,

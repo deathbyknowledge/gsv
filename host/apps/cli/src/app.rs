@@ -167,6 +167,7 @@ pub(crate) async fn run() -> Result<(), Box<dyn std::error::Error>> {
             DaemonAction::WindowsInstall {
                 config,
                 owner_sid,
+                workspace,
                 daemon_source,
                 daemon_sha256,
                 job,
@@ -177,6 +178,7 @@ pub(crate) async fn run() -> Result<(), Box<dyn std::error::Error>> {
                 gsv::device_service::install_elevated(
                     &config,
                     &owner_sid,
+                    &workspace,
                     &daemon_source,
                     &daemon_sha256,
                 )

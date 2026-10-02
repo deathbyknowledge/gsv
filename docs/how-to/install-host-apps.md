@@ -100,7 +100,10 @@ needed to reach an enrolled server after reboot.
 
 By default commands run as `NT SERVICE\gsvd`, a dedicated virtual account,
 with read/write access to the selected workspace. The default is
-`%USERPROFILE%\GSV`. This identity does not inherit your personal SSH keys,
+`%USERPROFILE%\GSV`. Choose a folder whose permissions your user can change
+without administrator elevation. Approval installs the boot service; it does not
+grant agents extra access to protected application or system folders.
+This identity does not inherit your personal SSH keys,
 user-installed tools, mapped drives, or browser sessions. Configure credentials
 and tools for the service account, or choose its Log On account in Windows
 Services. Use UNC paths for network shares and grant that account access.

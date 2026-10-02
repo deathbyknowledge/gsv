@@ -114,4 +114,4 @@ allow_attributes_without_reason = "warn"
 [target.'cfg(windows)'.dependencies]
 sha2 = "0.10"
 windows-host = { path = "../../crates/windows-host" }
-windows-sys = { version = "0.61", features = ["Win32_Security", "Win32_Storage_FileSystem", "Win32_System_Services"] }
+windows-sys = { version = "0.61", features = ["Win32_Security", "Win32_Storage_FileSystem", "Win32_System_Services", "Win32_System_Threading"] }
