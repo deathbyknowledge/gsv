@@ -37,6 +37,14 @@ def main():
         raise SystemExit(f"unexpected voice helper handshake: {events!r}")
 
     if sys.platform == "linux":
+        sections = subprocess.check_output(
+            ["readelf", "--sections", "--wide", str(binary)], text=True
+        )
+        if re.search(r"\]\s+\.(?:ctors|dtors)\s", sections):
+            raise SystemExit(
+                "voice helper contains legacy constructors that may never run; "
+                "link with GNU ld so static OpenBLAS is initialized"
+            )
         dynamic = subprocess.check_output(["readelf", "--dynamic", str(binary)], text=True)
         dependencies = re.findall(r"\(NEEDED\).*\[([^\]]+)\]", dynamic)
         external_math = [

@@ -171,6 +171,11 @@ the helpers. Both features start only when explicitly enabled. The helper
 protocol carries bounded, session-scoped semantic intents and feedback.
 The frontend acknowledges pushed updates; it does not poll conversation state.
 
+Linux transcription releases bundle OpenBLAS and use GNU ld to register its
+native initializers. The artifact check rejects unconverted legacy constructor
+sections as well as external math-library dependencies, so voice needs no
+additional BLAS installation on the user's machine.
+
 Hands-free has Off, Ready and Listening states. One finger starts or pauses
 listening; two sends, three deletes, four clears dictated text, and both fists
 exits hands-free. The thumb counts independently and any finger combination

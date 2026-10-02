@@ -734,6 +734,9 @@ jobs:
           cargo build --manifest-path host/Cargo.toml --locked --package transcriber
           python3 host/scripts/check-transcriber.py host/target/debug/gsv-transcribe
 
+      - name: Transcribe recorded speech
+        run: python3 host/scripts/check-transcription.py
+
       - name: Check public gesture fixtures and tracking recovery
         working-directory: host
         run: >-
