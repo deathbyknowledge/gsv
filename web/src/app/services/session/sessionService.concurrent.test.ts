@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { GsvClientStatus } from "@humansandmachines/gsv/client";
+import { GsvClientError, type GsvClientStatus } from "@humansandmachines/gsv/client";
 import type { ConnectResult } from "@humansandmachines/gsv/protocol";
 import { createSessionService, type SessionClient, type SessionStorage } from "./sessionService";
 
@@ -156,6 +156,68 @@ describe("remembered sessions across windows", () => {
     expect(persisted()).toBeNull();
     expect(session.snapshot()).toMatchObject({ phase: "locked", message: "Session expired. Sign in again." });
     session.dispose?.();
+  });
+
+  it.each([
+    { code: 102, message: "Update the client to use protocol 4" },
+    { code: 103, message: "Peer id is required" },
+    { code: 403, message: "Access denied" },
+    { code: 409, message: "Connection configuration conflict" },
+    { code: 503, message: "Service permanently disabled", retryable: false },
+  ])("surfaces a terminal handshake error: $message", async (error) => {
+    changeToken(token("saved"));
+    const { client } = clientFixture("browser");
+    client.connect.mockRejectedValue(new GsvClientError(error));
+    const session = createSessionService(client);
+    await session.start();
+    await vi.advanceTimersByTimeAsync(45_000);
+    expect(client.connect).toHaveBeenCalledOnce();
+    expect(session.snapshot()).toMatchObject({ phase: "locked", message: error.message });
+    expect(persisted()?.tokenId).toBe("saved");
+    session.dispose?.();
+  });
+
+  it.each([
+    { code: 408, message: "Request timed out" },
+    { code: 429, message: "Try again later" },
+    { code: 503, message: "Space provisioning is incomplete" },
+    { code: 409, message: "Temporary conflict", retryable: true },
+  ])("retries a temporary handshake error: $message", async (error) => {
+    changeToken(token("saved"));
+    const { client } = clientFixture("browser");
+    client.connect.mockRejectedValueOnce(new GsvClientError(error));
+    const session = createSessionService(client);
+    await session.start();
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(client.connect).toHaveBeenCalledTimes(2);
+    expect(session.snapshot().phase).toBe("ready");
+    expect(persisted()?.tokenId).toBe("saved");
+    session.dispose?.();
+  });
+
+  it("serializes sign-out after another tab's in-flight renewal and revokes the new credential", async () => {
+    changeToken(token("old", 29));
+    const renewing = clientFixture("renewing"), signingOut = clientFixture("signing-out");
+    const pending = deferred<Awaited<ReturnType<SessionClient["sys"]["token"]["create"]>>>();
+    renewing.client.sys.token.create.mockReturnValueOnce(pending.promise);
+    const first = createSessionService(renewing.client), second = createSessionService(signingOut.client);
+    await first.start();
+    await vi.advanceTimersByTimeAsync(1000);
+    await second.start();
+    expect(renewing.client.sys.token.create).toHaveBeenCalledOnce();
+
+    const locked = second.lock();
+    expect(second.snapshot().phase).toBe("locked");
+    pending.resolve({ token: { tokenId: "renewed", token: "new-secret", expiresAt: Date.now() + 30 * DAY,
+      uid: 1, tokenPrefix: "new", createdAt: Date.now(), label: "session", kind: "human", peerId: null } });
+    await locked;
+    notifyStorage();
+
+    expect(signingOut.client.sys.token.revoke).toHaveBeenCalledWith({ tokenId: "renewed", reason: "ui session lock" });
+    expect(persisted()).toBeNull();
+    expect(first.snapshot().phase).toBe("locked");
+    expect(second.snapshot().phase).toBe("locked");
+    first.dispose?.(); second.dispose?.();
   });
 
   it("signs other browser tabs out without touching a separate desktop session", async () => {

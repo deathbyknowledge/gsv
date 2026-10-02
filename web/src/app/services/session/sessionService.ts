@@ -43,6 +43,7 @@ const persistedSessionTokenSchema = z.object({
 const persistedRevokesSchema = z.array(z.string().min(1)).catch([]);
 const sessionErrorSchema = z.object({
   code: z.number().optional(),
+  retryable: z.boolean().optional(),
   details: z.object({ setupMode: z.literal(true).optional() }).optional(),
 });
 const sessionWireSchema = z.unknown();
@@ -178,6 +179,13 @@ function isSetupRequiredError(value: SessionWireValue): boolean {
 function isAuthenticationRejectedError(value: SessionWireValue): boolean {
   const error = sessionErrorSchema.safeParse(value);
   return error.success && error.data.code === 401;
+}
+
+function isRetryableConnectError(value: SessionWireValue): boolean {
+  const error = sessionErrorSchema.safeParse(value);
+  if (!error.success) return true;
+  const { code, retryable } = error.data;
+  return retryable ?? (code === undefined || code === 408 || code === 429 || code >= 500);
 }
 
 function isTokenExpired(token: PersistedSessionToken): boolean {
@@ -378,6 +386,15 @@ export function createSessionService(client: SessionClient, options: SessionServ
     }, delayMs);
   };
 
+  const withSessionTokenLock = async (action: () => Promise<void>): Promise<void> => {
+    // Browser tabs share one remembered credential. Native sessions have their own storage.
+    if (!storage && window.navigator?.locks) {
+      await window.navigator.locks.request(STORAGE_SESSION_TOKEN, action);
+    } else {
+      await action();
+    }
+  };
+
   const refreshSessionToken = async (reason: "post-login" | "scheduled"): Promise<void> => {
     const generation = reconnectGeneration;
     const rotate = async (): Promise<void> => {
@@ -420,12 +437,7 @@ export function createSessionService(client: SessionClient, options: SessionServ
       await drainPendingRevokes("ui session rotated");
     };
 
-    // Browser tabs share one remembered credential. Native sessions have their own storage.
-    if (!storage && window.navigator?.locks) {
-      await window.navigator.locks.request(STORAGE_SESSION_TOKEN, rotate);
-    } else {
-      await rotate();
-    }
+    await withSessionTokenLock(rotate);
   };
 
   const setLockedAfterDisconnect = (message: string): void => {
@@ -534,9 +546,14 @@ export function createSessionService(client: SessionClient, options: SessionServ
         return;
       }
 
-      if (isAuthenticationRejectedError(error) && currentSessionToken?.tokenId === token.tokenId) {
-        clearStoredSessionToken();
-        finishSilentReconnectFailure("Session expired. Sign in again.");
+      if (isAuthenticationRejectedError(error)) {
+        if (currentSessionToken?.tokenId === token.tokenId) {
+          clearStoredSessionToken();
+          finishSilentReconnectFailure("Session expired. Sign in again.");
+          return;
+        }
+      } else if (!isRetryableConnectError(error)) {
+        finishSilentReconnectFailure(normalizeMessage(error));
         return;
       }
 
@@ -740,15 +757,7 @@ export function createSessionService(client: SessionClient, options: SessionServ
   const lock = async (reason = "Session locked"): Promise<void> => {
     cancelSilentReconnect();
     const lockGeneration = reconnectGeneration;
-    const stored = readPersistedToken(storage);
-    if (stored?.username === snapshot.username) currentSessionToken = stored;
-    const previousTokenId = currentSessionToken?.username === snapshot.username ? currentSessionToken.tokenId : null;
-
-    if (previousTokenId) {
-      queueRevoke(previousTokenId);
-    }
-    clearStoredSessionToken();
-
+    clearRefreshTimer();
     setSnapshot({
       phase: "locked",
       url: gatewayUrl(),
@@ -757,10 +766,19 @@ export function createSessionService(client: SessionClient, options: SessionServ
       message: reason,
     });
 
-    await Promise.race([
-      drainPendingRevokes("ui session lock"),
-      waitFor(LOCK_REVOKE_WAIT_MS),
-    ]);
+    await withSessionTokenLock(async () => {
+      if (disposed || reconnectGeneration !== lockGeneration) return;
+      const stored = readPersistedToken(storage);
+      if (stored?.username === snapshot.username) currentSessionToken = stored;
+      const previousTokenId = currentSessionToken?.username === snapshot.username ? currentSessionToken.tokenId : null;
+      if (previousTokenId) queueRevoke(previousTokenId);
+      clearStoredSessionToken();
+
+      await Promise.race([
+        drainPendingRevokes("ui session lock"),
+        waitFor(LOCK_REVOKE_WAIT_MS),
+      ]);
+    });
 
     if (!disposed && reconnectGeneration === lockGeneration && snapshot.phase === "locked") {
       client.disconnect();

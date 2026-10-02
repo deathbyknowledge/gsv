@@ -43,6 +43,8 @@ receive new conversation messages live and refresh server state after a
 reconnect. A remembered space sign-in lasts 30 days and renews during use.
 Browser tabs share renewal and sign-out; Desktop has its own stored session.
 A temporary network interruption reconnects without asking you to sign in again.
+An incompatible client or rejected connection shows the gateway's error instead
+of retrying indefinitely.
 
 ## Install location
 
