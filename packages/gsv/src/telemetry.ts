@@ -25,6 +25,13 @@ const httpStatusCodeSchema = z.number().check(
   z.lte(599),
 );
 
+/** Ephemeral correlation for metadata RPCs, independent of Process/run identity. */
+export const inferenceModelLookupSchema = z.strictObject({
+  installationId: installationIdSchema,
+  lookupId: z.string().check(z.uuid()),
+});
+export type InferenceModelLookup = z.infer<typeof inferenceModelLookupSchema>;
+
 export const inferenceWorkloadSchema = z.enum([
   "interactive",
   "background",
@@ -279,6 +286,17 @@ const delegationCompletedSchema = z.strictObject({
 
 export const telemetryEventSchema = z.discriminatedUnion("name", [
   z.strictObject({
+    stream: z.literal("operational"), name: z.literal("inference.metadata.finished"),
+    properties: z.strictObject({
+      lookupId: z.string().check(z.uuid()),
+      outcome: z.enum(["ok", "error", "timeout"]),
+      durationMs: nonNegativeIntegerSchema,
+      cache: z.optional(z.enum(["hit", "miss"])),
+      sqlDurationMs: z.optional(nonNegativeNumberSchema),
+      queryAttempts: z.optional(positiveIntegerSchema),
+    }),
+  }),
+  z.strictObject({
     stream: z.literal("operational"), name: z.literal("process.compaction.failed"),
     properties: z.strictObject({
       trigger: z.enum(["manual", "auto-preflight", "auto-provider-overflow"]),
@@ -345,6 +363,7 @@ export const telemetryEventSchema = z.discriminatedUnion("name", [
 // The owning component is part of the allowlist, not a claim made by an arbitrary producer.
 export type TelemetryEventOwnership = Record<z.infer<typeof telemetryEventSchema>["name"], readonly z.infer<typeof telemetryComponentSchema>[]>;
 export const telemetryEventComponents = {
+  "inference.metadata.finished": ["gateway", "inference", "accounts"],
   "entitlements.refresh.finished": ["inference", "search", "mail"],
   "web_search.request.finished": ["search"],
   "mail.intake.finished": ["mail"],

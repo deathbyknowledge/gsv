@@ -16,6 +16,7 @@ import {
   handleFsWrite,
 } from "./fs";
 import * as inferenceService from "../../inference/execution-client";
+import { ModelMetadataResolver } from "../../inference/model-metadata";
 import * as federationService from "../../kernel/federation";
 import type { InferenceExecutor, InferenceMediaRequest } from "@humansandmachines/gsv/services/inference-execution";
 import * as sharedUtils from "../../shared/utils";
@@ -257,6 +258,7 @@ function makeContext(options?: {
   return focusedFixture<KernelContext>({
     broadcastToUserUid: vi.fn(),
     env: testEnv,
+    modelMetadata: new ModelMetadataResolver(testEnv, installationIdentity.installationId),
     installationId: installationIdentity.installationId,
     installationIdentity,
     auth: focusedFixture<KernelContext["auth"]>({

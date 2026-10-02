@@ -8,6 +8,7 @@ import type {
   AiTranscriptionCreateResult,
 } from "../protocol/syscalls/ai";
 import type { JsonObject } from "../protocol/json";
+import type { InferenceModelLookup } from "../telemetry";
 import type {
   ManagedInferenceAbortReason,
   ManagedInferenceActor,
@@ -124,5 +125,5 @@ export type InferenceModelMetadata = {
 /** Required public execution service, independent of commercial funding. */
 export interface InferenceExecutionService {
   getExecutor(installationId: string): Promise<InferenceExecutor>;
-  resolveModel(provider: string, model: string): Promise<InferenceModelMetadata>;
+  resolveModel(provider: string, model: string, lookup?: InferenceModelLookup): Promise<InferenceModelMetadata>;
 }

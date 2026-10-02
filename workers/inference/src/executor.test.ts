@@ -1,11 +1,14 @@
 import { env, exports } from "cloudflare:workers";
-import { listDurableObjectIds, runInDurableObject, runDurableObjectAlarm } from "cloudflare:test";
+import { createExecutionContext, listDurableObjectIds, runInDurableObject, runDurableObjectAlarm } from "cloudflare:test";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { type JsonValue, decodeInferenceExecutionStream } from "@humansandmachines/gsv/protocol";
 import type { InferenceExecutionRequest, InferenceExecutionService } from "@humansandmachines/gsv/services/inference-execution";
 import { RoutedInferenceTransport } from "../../gateway/src/inference/transport";
 import { ExecutorStore } from "../../../packages/inference/src/executor/store";
 import { executorLimits } from "../../../packages/inference/src/executor/config";
+import { InferenceService } from "./index";
+import { telemetryRecordSchema } from "@humansandmachines/gsv/telemetry";
+import type { InferenceServiceEnvironment } from "@humansandmachines/gsv-inference/executor";
 
 const serviceBinding: unknown = exports.default;
 // SAFETY: The configured entrypoint implements the public execution service.
@@ -61,6 +64,27 @@ function transportedRequest(id: string): InferenceExecutionRequest {
 }
 
 describe("public inference executor RPC", () => {
+  it("reports metadata outcomes with optional lookup correlation", async () => {
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    const bindings: unknown = env;
+    // SAFETY: vitest.config.ts supplies the typed directory RPC behind the generated Fetcher binding.
+    const configured = bindings as InferenceServiceEnvironment;
+    const local = new InferenceService(createExecutionContext(), { ...configured, GSV_TELEMETRY_ENABLED: true });
+    const lookup = { installationId: "inst_metadata", lookupId: crypto.randomUUID() };
+    try {
+      await expect(local.resolveModel("gsv", "default", lookup)).resolves.toMatchObject({ contextWindowTokens: 1_310_720 });
+      expect(telemetryRecordSchema.parse(log.mock.calls[0][0])).toMatchObject({
+        component: "inference", installationId: lookup.installationId,
+        event: { name: "inference.metadata.finished", properties: { lookupId: lookup.lookupId, outcome: "ok" } },
+      });
+      await expect(local.resolveModel("x".repeat(201), "private-model", lookup)).rejects.toThrow("Invalid inference model");
+      expect(log.mock.calls[1][0].event.properties.outcome).toBe("error");
+      expect(JSON.stringify(log.mock.calls)).not.toContain("private-model");
+      await local.resolveModel("gsv", "default", { ...lookup, lookupId: "invalid" });
+      expect(log).toHaveBeenCalledTimes(2);
+      await expect(service.resolveModel("gsv", "default", lookup)).resolves.toMatchObject({ contextWindowTokens: 1_310_720 });
+    } finally { log.mockRestore(); }
+  });
   it.each(["default", "InferenceService"] as const)("serves execution through the %s entrypoint", async (entrypoint) => {
     const binding: unknown = exports[entrypoint];
     // SAFETY: Both real Worker entrypoints implement the public execution contract.
