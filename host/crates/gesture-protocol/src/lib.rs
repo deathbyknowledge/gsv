@@ -13,6 +13,8 @@ use serde::{de, de::DeserializeOwned, Deserialize, Deserializer, Serialize};
 pub const PROTOCOL_VERSION: u16 = 1;
 pub const MAX_FRAME_BYTES: usize = 4 * 1024;
 pub const EVENT_FD: i32 = 3;
+pub const EVENT_PIPE_ENV: &str = "GSV_VISION_EVENT_PIPE";
+pub const PARENT_PID_ENV: &str = "GSV_VISION_PARENT_PID";
 pub const EVENT_FD_MARKER_ENV: &str = "GSV_VISION_EVENT_FD";
 /// Exact private launch contract. Rotate this on an incompatible unshipped
 /// helper/Desktop cutover so a stale sibling fails before semantic traffic.

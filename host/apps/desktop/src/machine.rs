@@ -405,16 +405,18 @@ where
     }
 }
 
-struct CliProcess(Child);
+struct CliProcess(Child, #[cfg(windows)] windows_host::process::ProcessTree);
 
 impl Drop for CliProcess {
     fn drop(&mut self) {
-        if let Some(id) = self.0.id() {
+        #[cfg(windows)]
+        self.1.terminate();
+        if let Some(_id) = self.0.id() {
             #[cfg(unix)]
             // SAFETY: the child was placed in its own process group. Kill only
             // that owned group, including a service-control subprocess on cancel.
             unsafe {
-                libc::kill(-(id as i32), libc::SIGKILL);
+                libc::kill(-(_id as i32), libc::SIGKILL);
             }
             let _ = self.0.start_kill();
         }
@@ -444,10 +446,25 @@ async fn run_cli(
         .kill_on_drop(true);
     #[cfg(unix)]
     command.process_group(0);
+    #[cfg(windows)]
+    command.creation_flags(0x08000000 | 0x00000004);
+    let process = command
+        .spawn()
+        .map_err(|_| "Install the complete GSV desktop release to connect this computer.")?;
+    #[cfg(windows)]
+    let tree = {
+        let tree = windows_host::process::ProcessTree::new()
+            .map_err(|_| "Could not own the enrollment process.")?;
+        let pid = process.id().ok_or("Enrollment process exited.")?;
+        tree.assign(pid)
+            .and_then(|()| windows_host::process::resume(pid))
+            .map_err(|_| "Could not start the enrollment process.")?;
+        tree
+    };
     let mut child = CliProcess(
-        command
-            .spawn()
-            .map_err(|_| "Install the complete GSV desktop release to connect this computer.")?,
+        process,
+        #[cfg(windows)]
+        tree,
     );
     let work = async {
         if let Some(input) = input {

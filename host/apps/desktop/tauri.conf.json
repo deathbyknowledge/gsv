@@ -27,7 +27,7 @@
   },
   "bundle": {
     "active": false,
-    "icon": ["../../../web/public/icons/gsv-192.png"],
+    "icon": ["icons/icon.ico", "../../../web/public/icons/gsv-192.png"],
     "macOS": { "infoPlist": "Info.plist" }
   }
 }

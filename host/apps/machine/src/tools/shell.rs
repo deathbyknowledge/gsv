@@ -29,6 +29,8 @@ struct ProcessHandle {
     state: Arc<AsyncMutex<ProcessState>>,
     stdin: Arc<AsyncMutex<Option<ChildStdin>>>,
     cancellation: CancellationToken,
+    #[cfg(windows)]
+    tree: Arc<windows_host::process::ProcessTree>,
 }
 
 #[derive(Clone)]
@@ -49,6 +51,7 @@ struct ProcessSnapshot {
 
 struct ProcessState {
     session_id: String,
+    #[cfg(not(windows))]
     pid: Option<u32>,
     started_at: i64,
     ended_at: Option<i64>,
@@ -296,11 +299,18 @@ fn resolve_shell_program() -> ShellProgram {
     #[cfg(windows)]
     {
         ShellProgram {
-            executable: "powershell.exe".to_string(),
+            executable: windows_host::service::system_tool(
+                r"WindowsPowerShell\v1.0\powershell.exe",
+            )
+            .to_string_lossy()
+            .into_owned(),
             launch_args: vec![
                 "-NoLogo".to_string(),
                 "-NoProfile".to_string(),
-                "-Command".to_string(),
+                "-NonInteractive".to_string(),
+                "-OutputFormat".to_string(),
+                "Text".to_string(),
+                "-EncodedCommand".to_string(),
             ],
         }
     }
@@ -333,13 +343,14 @@ fn format_shell_spawn_error(_shell: &str, error: &std::io::Error) -> String {
         if _shell.eq_ignore_ascii_case("powershell.exe")
             && error.kind() == std::io::ErrorKind::NotFound
         {
-            return "Failed to execute: powershell.exe not found. Ensure Windows PowerShell is available on PATH.".to_string();
+            return "Failed to execute: Windows PowerShell is unavailable in the Windows system directory.".to_string();
         }
     }
 
     format!("Failed to execute: {}", error)
 }
 
+#[cfg(not(windows))]
 async fn terminate_pid(pid: u32, force: bool) {
     #[cfg(unix)]
     {
@@ -350,15 +361,6 @@ async fn terminate_pid(pid: u32, force: bool) {
         // SAFETY: the negative, checked PID targets only the child-owned process group.
         let _ = unsafe { libc::kill(-group, signal) };
     }
-    #[cfg(windows)]
-    {
-        let mut command = Command::new("taskkill");
-        command.arg("/PID").arg(pid.to_string()).arg("/T");
-        if force {
-            command.arg("/F");
-        }
-        let _ = command.status().await;
-    }
     #[cfg(not(any(unix, windows)))]
     {
         let _ = pid;
@@ -366,6 +368,7 @@ async fn terminate_pid(pid: u32, force: bool) {
     }
 }
 
+#[cfg(not(windows))]
 fn force_terminate_pid(pid: u32) {
     #[cfg(unix)]
     {
@@ -375,14 +378,6 @@ fn force_terminate_pid(pid: u32) {
         // SAFETY: the negative, checked PID targets only the child-owned process group.
         let _ = unsafe { libc::kill(-group, libc::SIGKILL) };
     }
-    #[cfg(windows)]
-    {
-        let _ = std::process::Command::new("taskkill")
-            .arg("/PID")
-            .arg(pid.to_string())
-            .args(["/T", "/F"])
-            .status();
-    }
     #[cfg(not(any(unix, windows)))]
     {
         let _ = pid;
@@ -390,26 +385,42 @@ fn force_terminate_pid(pid: u32) {
 }
 
 async fn terminate_process(handle: &ProcessHandle) {
-    let pid = {
-        let state = handle.state.lock().await;
-        state.ended_at.is_none().then_some(state.pid).flatten()
-    };
-    let Some(pid) = pid else {
-        return;
-    };
-    terminate_pid(pid, false).await;
-    tokio::time::sleep(Duration::from_millis(250)).await;
-    terminate_pid(pid, true).await;
+    #[cfg(windows)]
+    handle.tree.terminate();
+    #[cfg(not(windows))]
+    {
+        let pid = {
+            let state = handle.state.lock().await;
+            state.ended_at.is_none().then_some(state.pid).flatten()
+        };
+        let Some(pid) = pid else {
+            return;
+        };
+        terminate_pid(pid, false).await;
+        tokio::time::sleep(Duration::from_millis(250)).await;
+        terminate_pid(pid, true).await;
+    }
 }
 
 struct ForegroundProcessGuard {
+    #[cfg(windows)]
+    tree: Arc<windows_host::process::ProcessTree>,
     pid: Option<u32>,
     session_id: String,
 }
 
 impl ForegroundProcessGuard {
-    fn new(pid: Option<u32>, session_id: String) -> Self {
-        Self { pid, session_id }
+    fn new(
+        pid: Option<u32>,
+        session_id: String,
+        #[cfg(windows)] tree: Arc<windows_host::process::ProcessTree>,
+    ) -> Self {
+        Self {
+            pid,
+            session_id,
+            #[cfg(windows)]
+            tree,
+        }
     }
 
     fn disarm(&mut self) {
@@ -422,7 +433,13 @@ impl Drop for ForegroundProcessGuard {
         let Some(pid) = self.pid.take() else {
             return;
         };
+        #[cfg(not(windows))]
         force_terminate_pid(pid);
+        #[cfg(windows)]
+        {
+            let _ = pid;
+            self.tree.terminate();
+        }
         let session_id = self.session_id.clone();
         if let Ok(runtime) = tokio::runtime::Handle::try_current() {
             runtime.spawn(async move {
@@ -432,20 +449,55 @@ impl Drop for ForegroundProcessGuard {
     }
 }
 
+fn decode_output(pending: &mut Vec<u8>, eof: bool) -> String {
+    let mut consumed = 0;
+    let mut text = String::new();
+    while consumed < pending.len() {
+        match std::str::from_utf8(&pending[consumed..]) {
+            Ok(valid) => {
+                text.push_str(valid);
+                consumed = pending.len();
+            }
+            Err(error) => {
+                let valid_end = consumed + error.valid_up_to();
+                text.push_str(
+                    std::str::from_utf8(&pending[consumed..valid_end])
+                        .expect("UTF-8 validator identified a valid prefix"),
+                );
+                consumed = valid_end;
+                if let Some(length) = error.error_len() {
+                    text.push('\u{fffd}');
+                    consumed += length;
+                } else if eof {
+                    text.push('\u{fffd}');
+                    consumed = pending.len();
+                } else {
+                    break;
+                }
+            }
+        }
+    }
+    pending.drain(..consumed);
+    text
+}
+
 async fn pump_stream<R>(mut reader: R, state: Arc<AsyncMutex<ProcessState>>, stream: OutputStream)
 where
     R: AsyncRead + Unpin + Send + 'static,
 {
     let mut buf = vec![0u8; 4096];
+    let mut pending = Vec::new();
     loop {
-        match reader.read(&mut buf).await {
-            Ok(0) => return,
-            Ok(count) => {
-                let chunk = String::from_utf8_lossy(&buf[..count]).to_string();
-                let mut lock = state.lock().await;
-                append_output(&mut lock, &chunk, stream);
-            }
-            Err(_) => return,
+        let count = reader.read(&mut buf).await.unwrap_or(0);
+        pending.extend_from_slice(&buf[..count]);
+        // Preserve a UTF-8 character split across pipe reads. Invalid bytes still
+        // use the text contract's replacement character; EOF flushes a short tail.
+        let chunk = decode_output(&mut pending, count == 0);
+        if !chunk.is_empty() {
+            append_output(&mut *state.lock().await, &chunk, stream);
+        }
+        if count == 0 {
+            return;
         }
     }
 }
@@ -501,6 +553,16 @@ async fn launch_managed_process(
     }
     let shell = resolve_shell_program();
     let mut cmd = Command::new(&shell.executable);
+    #[cfg(windows)]
+    let command = {
+        use base64::Engine;
+        // Let PowerShell report its final statement's success (0/1). LASTEXITCODE
+        // can belong to an earlier native command; explicit `exit N` still
+        // preserves N through PowerShell's normal process exit behavior.
+        let code = format!("[Console]::InputEncoding = [Console]::OutputEncoding = $OutputEncoding = [System.Text.UTF8Encoding]::new($false);\n{command}");
+        let bytes: Vec<u8> = code.encode_utf16().flat_map(u16::to_le_bytes).collect();
+        base64::engine::general_purpose::STANDARD.encode(bytes)
+    };
     cmd.args(&shell.launch_args).arg(&command);
     cmd.current_dir(&cwd);
     cmd.stdin(Stdio::piped());
@@ -509,11 +571,26 @@ async fn launch_managed_process(
     #[cfg(unix)]
     cmd.process_group(0);
 
+    #[cfg(windows)]
+    cmd.creation_flags(0x08000000 | 0x00000004)
+        .kill_on_drop(true);
+    #[cfg(windows)]
+    let tree = Arc::new(
+        windows_host::process::ProcessTree::new()
+            .map_err(|error| format!("Could not own shell process tree: {error}"))?,
+    );
     let mut child = cmd
         .spawn()
         .map_err(|e| format_shell_spawn_error(&shell.executable, &e))?;
 
     let pid = child.id();
+    #[cfg(windows)]
+    {
+        let child_pid = pid.ok_or("Shell process has no Windows process ID")?;
+        tree.assign(child_pid)
+            .and_then(|()| windows_host::process::resume(child_pid))
+            .map_err(|error| format!("Could not start owned shell process: {error}"))?;
+    }
     let stdin = child.stdin.take();
     let stdout = child.stdout.take();
     let stderr = child.stderr.take();
@@ -521,6 +598,7 @@ async fn launch_managed_process(
 
     let state = Arc::new(AsyncMutex::new(ProcessState {
         session_id: session_id.clone(),
+        #[cfg(not(windows))]
         pid,
         started_at,
         ended_at: None,
@@ -541,8 +619,15 @@ async fn launch_managed_process(
         state: state.clone(),
         stdin: Arc::new(AsyncMutex::new(stdin)),
         cancellation: CancellationToken::new(),
+        #[cfg(windows)]
+        tree: tree.clone(),
     };
-    let foreground = ForegroundProcessGuard::new(pid, session_id.clone());
+    let foreground = ForegroundProcessGuard::new(
+        pid,
+        session_id.clone(),
+        #[cfg(windows)]
+        tree.clone(),
+    );
 
     let mut output_tasks = Vec::new();
     if let Some(stdout) = stdout {
@@ -588,6 +673,8 @@ async fn launch_managed_process(
                 child.wait().await
             }
         };
+        #[cfg(windows)]
+        handle_for_wait.tree.terminate();
         for mut task in output_tasks {
             if tokio::time::timeout(Duration::from_secs(1), &mut task)
                 .await
@@ -1262,5 +1349,125 @@ mod tests {
         assert!(process_exists(pid));
 
         terminate_process(&handle).await;
+    }
+}
+
+#[cfg(all(test, windows))]
+mod windows_tests {
+    use super::*;
+
+    async fn terminal_result(tool: &ShellTool, mut result: ToolOutput) -> ToolOutput {
+        tokio::time::timeout(Duration::from_secs(35), async {
+            while result.data["status"] == "running" {
+                result = tool
+                    .execute(json!({
+                        "sessionId": result.data["sessionId"],
+                        "input": "",
+                        "yieldMs": 10_000,
+                    }))
+                    .await
+                    .unwrap();
+            }
+            result
+        })
+        .await
+        .expect("PowerShell did not finish within the bounded session timeout")
+    }
+
+    #[tokio::test]
+    async fn powershell_preserves_unicode_cwd_stdin_and_exit_code() {
+        let root = tempfile::tempdir().unwrap();
+        let cwd = root.path().join("space 日本語");
+        std::fs::create_dir(&cwd).unwrap();
+        let tool = ShellTool::new(cwd);
+        let result = tool
+            .execute(
+                json!({ "input": "[Console]::Write('héllo 日本語'); exit 7", "yieldMs": 10_000, "timeout": 30_000 }),
+            )
+            .await
+            .unwrap();
+        let result = terminal_result(&tool, result).await;
+        assert_eq!(result.data["stdout"], "héllo 日本語", "{}", result.data);
+        assert_eq!(result.data["exitCode"], 7);
+        let id = Uuid::new_v4().to_string();
+        tool.execute(json!({ "sessionId": id, "start": true, "input": "[Console]::Write([Console]::ReadLine())", "timeout": 30_000 })).await.unwrap();
+        let result = tool
+            .execute(json!({ "sessionId": id, "input": "hello 日本語\n", "yieldMs": 10_000 }))
+            .await
+            .unwrap();
+        let result = terminal_result(&tool, result).await;
+        assert_eq!(result.data["stdout"], "hello 日本語", "{}", result.data);
+        assert_eq!(result.data["status"], "completed");
+        let result = tool
+            .execute(json!({ "sessionId": id, "input": "" }))
+            .await
+            .unwrap();
+        assert_eq!(result.data["output"], "");
+    }
+
+    #[tokio::test]
+    async fn powershell_reports_the_final_statement_status() {
+        let root = tempfile::tempdir().unwrap();
+        let tool = ShellTool::new(root.path().to_path_buf());
+        for (command, expected) in [
+            ("cmd /c exit 0; Get-Item missing", 1),
+            ("cmd /c exit 7; Write-Output ok", 0),
+            ("cmd /c exit 7; Get-Item missing", 1),
+            ("Write-Output ok; cmd /c exit 7", 1),
+            ("cmd /c exit 7; exit $LASTEXITCODE", 7),
+        ] {
+            let result = tool
+                .execute(json!({"input": command, "yieldMs": 10_000, "timeout": 30_000}))
+                .await
+                .unwrap();
+            let result = terminal_result(&tool, result).await;
+            assert_eq!(
+                result.data["exitCode"], expected,
+                "{command}: {}",
+                result.data
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn windows_named_sessions_reject_duplicate_starts_and_remain_cancellable() {
+        let tool = ShellTool::new(std::env::temp_dir());
+        let id = Uuid::new_v4().to_string();
+        let args = json!({ "sessionId": id, "start": true, "input": "Start-Sleep -Seconds 60" });
+        let (first, second) = tokio::join!(tool.execute(args.clone()), tool.execute(args));
+        assert_ne!(first.is_ok(), second.is_ok());
+        ShellCancelTool
+            .execute(json!({ "sessionId": id }))
+            .await
+            .unwrap();
+        let result = tool
+            .execute(json!({ "sessionId": id, "input": "" }))
+            .await
+            .unwrap();
+        assert_eq!(result.data["status"], "failed");
+        let timed = tool
+            .execute(json!({ "input": "Start-Sleep -Seconds 60", "timeout": 250 }))
+            .await
+            .unwrap();
+        assert_eq!(timed.data["status"], "failed");
+        assert_eq!(timed.data["error"], "Command timed out");
+    }
+}
+
+#[cfg(test)]
+mod output_encoding_tests {
+    use super::decode_output;
+
+    #[test]
+    fn unicode_survives_pipe_boundaries_and_malformed_bytes() {
+        let mut pending = vec![b'a', 0xff, 0xe6];
+        assert_eq!(decode_output(&mut pending, false), "a�");
+        pending.extend_from_slice(&[0x97, 0xa5, 0xf0, 0x9f]);
+        assert_eq!(decode_output(&mut pending, false), "日");
+        pending.extend_from_slice(&[0x98, 0x80]);
+        assert_eq!(decode_output(&mut pending, false), "😀");
+        pending.extend_from_slice(&[0xe6]);
+        assert_eq!(decode_output(&mut pending, true), "�");
+        assert!(pending.is_empty());
     }
 }

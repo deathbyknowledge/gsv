@@ -1,6 +1,8 @@
 #![cfg_attr(test, allow(clippy::unwrap_used))]
 
 mod app;
+#[cfg(windows)]
+mod windows_service;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     #[cfg(feature = "rustls")]
@@ -13,6 +15,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
+    #[cfg(windows)]
+    if std::env::args_os().any(|arg| arg == "--windows-service") {
+        return windows_service::run();
+    }
     tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()?

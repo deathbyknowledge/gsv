@@ -39,6 +39,19 @@ Run `python3 host/scripts/check-transcriber.py path/to/gsv-transcribe` to check 
 artifact's handshake, shutdown and runtime linkage without microphone capture or model setup.
 macOS continues to use the system Accelerate framework.
 
+Windows CI and releases set
+`TRANSCRIBE_CMAKE_ARGS="-UGGML_* -DTRANSCRIBE_X86_CONSERVATIVE=ON -DGGML_AVX=ON -DGGML_AVX2=ON -DGGML_FMA=ON -DGGML_F16C=ON"` so the speech
+runtime targets AVX2 with FMA/F16C instead of the build runner's instruction set.
+Desktop checks these CPU features before launching voice. The cache reset prevents
+a previous native build from retaining newer instructions such as AVX-512.
+
+Run `python host/scripts/check-transcription.py` to exercise actual streaming CPU inference
+without a microphone. It downloads and verifies a pinned public JFK speech fixture from
+[whisper.cpp](https://github.com/ggml-org/whisper.cpp/blob/b0a11594aec50892a02cd8d129eee2dfe93a8bb8/samples/jfk.wav),
+loads the production model through the usual verified cache, and checks the final transcript.
+The first run downloads the same 534 MiB model as Desktop. Windows CI runs this separately
+from the fast helper handshake check. Ordinary unit tests leave this network-dependent test ignored.
+
 Place `gsv-transcribe` beside `gsv-desktop`, or set `GSV_TRANSCRIBE_HELPER` to its absolute path for
 development. Debug app builds also discover either a release or debug helper in the workspace
 `target` directory. Ship `THIRD_PARTY.md` beside the helper in standalone distributions;

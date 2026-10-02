@@ -490,12 +490,7 @@ fn run_stream(
         language: normalize_locale(&request.locale),
         ..RunOptions::default()
     };
-    let stream_options = StreamOptions {
-        family: Some(StreamExtension::ParakeetStream(ParakeetStreamOptions {
-            att_context_right: Some(3),
-        })),
-        ..StreamOptions::default()
-    };
+    let stream_options = streaming_options();
     let mut mute_revision = 0_u64;
     let mut pending = VecDeque::<f32>::with_capacity(FEED_SAMPLES * 2);
     let mut converted = Vec::with_capacity(FEED_SAMPLES * 2);
@@ -845,6 +840,15 @@ fn audio_error_code(error: AudioError) -> ErrorCode {
     }
 }
 
+fn streaming_options() -> StreamOptions {
+    StreamOptions {
+        family: Some(StreamExtension::ParakeetStream(ParakeetStreamOptions {
+            att_context_right: Some(3),
+        })),
+        ..StreamOptions::default()
+    }
+}
+
 fn finish_stream(
     stream: &mut Stream<'_>,
     pending: &mut VecDeque<f32>,
@@ -895,6 +899,47 @@ fn lower_process_priority() {}
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    #[ignore = "run with python host/scripts/check-transcription.py; downloads the pinned model"]
+    fn transcribes_recorded_audio() {
+        let fixture = std::env::var_os("GSV_TRANSCRIBE_TEST_AUDIO")
+            .expect("the transcription check supplies 16 kHz mono signed 16-bit PCM");
+        let bytes = std::fs::read(fixture).expect("read recorded speech");
+        let (samples, remainder) = bytes.as_chunks::<2>();
+        assert!(remainder.is_empty());
+        assert_eq!(samples.len(), 176_000);
+        let mut engine = Engine::load(&AtomicBool::new(false), |_, _| {})
+            .expect("load the production speech model");
+        let mut stream = engine
+            .session
+            .stream(&RunOptions::default(), &streaming_options())
+            .expect("start streaming inference");
+        let mut pending = VecDeque::with_capacity(FEED_SAMPLES);
+        for sample in samples {
+            pending.push_back(i16::from_le_bytes(*sample) as f32 / 32768.0);
+            if pending.len() == FEED_SAMPLES {
+                stream
+                    .feed(&pending.drain(..).collect::<Vec<_>>())
+                    .expect("transcribe a recorded audio frame");
+            }
+        }
+        let transcript = finish_stream(&mut stream, &mut pending).expect("finalize transcription");
+        let normalized = transcript
+            .to_lowercase()
+            .split(|character: char| !character.is_alphabetic())
+            .filter(|word| !word.is_empty())
+            .collect::<Vec<_>>()
+            .join(" ");
+        assert!(
+            normalized.contains("ask not what your country can do for you"),
+            "recorded speech was not recognized: {transcript}"
+        );
+        assert!(
+            normalized.contains("ask what you can do for your country"),
+            "the final audio was not recognized: {transcript}"
+        );
+    }
 
     fn wait_for_discovery(discovery: &mut Option<DeviceDiscovery>) -> DeviceDiscoveryCompletion {
         let deadline = Instant::now() + Duration::from_secs(1);
