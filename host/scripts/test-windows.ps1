@@ -352,6 +352,35 @@ class FailedService {
   if ($LASTEXITCODE) { throw 'Service uninstall failed' }
   Start-Sleep -Seconds 1
   if (Get-Service gsvd -ErrorAction SilentlyContinue) { throw 'Service still registered' }
+  foreach ($damage in @('malformed', 'unreadable')) {
+    & $cli daemon install
+    if ($LASTEXITCODE) { throw 'Could not reinstall the service for the damaged-state teardown test' }
+    $stateConfig = Join-Path $env:ProgramData 'GSV/daemon/config.toml'
+    $original = [IO.File]::ReadAllBytes($stateConfig)
+    $locked = $null
+    try {
+      if ($damage -eq 'malformed') {
+        [IO.File]::WriteAllText($stateConfig, '[broken configuration')
+      } else {
+        $locked = [IO.File]::Open($stateConfig, [IO.FileMode]::Open, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None)
+      }
+      & $cli daemon uninstall
+      if ($LASTEXITCODE) { throw "Service teardown failed with $damage configuration" }
+      Start-Sleep -Seconds 1
+      if (Get-Service gsvd -ErrorAction SilentlyContinue) { throw "Service remains installed with $damage configuration" }
+      if ($damage -eq 'malformed') {
+        & $cli daemon install
+        if ($LASTEXITCODE) { throw 'Retained damaged state prevented a fresh installation' }
+        if ((Get-Service gsvd).Status -ne 'Running') { throw 'Fresh installation did not start after damaged-state teardown' }
+        & $cli daemon uninstall
+        if ($LASTEXITCODE) { throw 'Recovered service could not be removed' }
+        Start-Sleep -Seconds 1
+      }
+    } finally {
+      if ($locked) { $locked.Dispose() }
+      [IO.File]::WriteAllBytes($stateConfig, $original)
+    }
+  }
   $tokens = $null
   $errors = $null
   [Management.Automation.Language.Parser]::ParseFile((Join-Path $PSScriptRoot '../../install.ps1'), [ref]$tokens, [ref]$errors) | Out-Null

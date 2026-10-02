@@ -76,7 +76,7 @@ impl DeviceServiceManager for WindowsServiceManager {
         // already-authorized handles may cross elevation for later rollback.
         let workspace_access = workspace_acl_access(&workspace)?;
         let saved_config = service::data_dir().join("config.toml");
-        let previous_workspace = if saved_config.exists() {
+        let previous_workspace = if service::installed()? && saved_config.exists() {
             ConfigFile::<CliConfig>::new(saved_config)
                 .load()?
                 .device
@@ -129,13 +129,20 @@ impl DeviceServiceManager for WindowsServiceManager {
     }
     fn uninstall(&self) -> Result<(), DynError> {
         service::stop()?;
-        let config: CliConfig = ConfigFile::new(service::data_dir().join("config.toml")).load()?;
-        if let Some(workspace) = config.device.workspace {
-            if workspace.exists() {
-                change_workspace_grant(&workspace_acl_access(&workspace)?, false)?;
+        let cleanup = (|| -> Result<(), DynError> {
+            let config: CliConfig =
+                ConfigFile::new(service::data_dir().join("config.toml")).load()?;
+            if let Some(workspace) = config.device.workspace {
+                if workspace.exists() {
+                    change_workspace_grant(&workspace_acl_access(&workspace)?, false)?;
+                }
             }
-        }
+            Ok(())
+        })();
         service::open(ServiceAccess::DELETE)?.delete()?;
+        if cleanup.is_err() {
+            eprintln!("Could not revoke workspace access. An administrator can remove the NT SERVICE\\gsvd grant from the previous workspace manually.");
+        }
         println!(
             "Service removed. Enrollment and workspace remain at {}",
             service::data_dir().display()

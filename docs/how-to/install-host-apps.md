@@ -122,6 +122,10 @@ removes the service and its workspace access grant while retaining enrollment,
 logs, protected service binaries and workspace data. Removing GSV through Apps
 also removes the user applications, shortcut and PATH entry. Saved service
 state remains available for reinstall by the same owner.
+Uninstall still removes the stopped service if its configuration is damaged or
+workspace access cannot be revoked. It reports that the remaining workspace
+grant needs manual removal. A fresh installation then uses the enrolling user's
+configuration, even if the retained daemon configuration is damaged.
 
 Windows automatic daemon updates are disabled. Rerun setup or the PowerShell
 installer to update; it requests administrator approval for the existing boot
