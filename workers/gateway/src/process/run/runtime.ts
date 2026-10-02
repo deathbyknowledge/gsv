@@ -629,11 +629,20 @@ export class ProcessRun {
   }
 
   async failWithRuntimeEvent(runId: string, payload: ProcHistoryEventPayload<"runtime.failed">): Promise<void> {
-    if (this.host.handleRunStopped(runId)) return;
     const event = { kind: "runtime.failed", payload, severity: "error", audience: "both" } as const;
     const message = renderHistoryEvent(event);
-    await this.host.history.appendSystemMessage(runId, message, { kind: "event", payload: event });
-    await this.finishRun(runId, { reason: payload.reason, status: "error", resultText: null, error: message });
+    const transition = this.host.ctx.storage.transactionSync(() => {
+      const run = this.host.runs.active;
+      if (!run || this.host.handleRunStopped(runId)) return null;
+      this.host.store.messages.appendMessage("system", message, { runId, record: { kind: "event", payload: event } });
+      return this.commitRunFinishState(run, { reason: payload.reason, status: "error", resultText: null, error: message });
+    });
+    if (!transition) return;
+    this.host.startBackground(
+      `run failure history notification for ${runId}`,
+      this.host.signals.changed(["messages"], { runId, role: "system", content: message }),
+    );
+    await this.completeRunTransition(transition);
   }
 
   commitRunFinishState(run: RunState, options: RunFinishOptions): CompletedRunTransition {

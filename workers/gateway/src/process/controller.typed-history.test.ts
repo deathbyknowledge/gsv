@@ -49,6 +49,29 @@ describe("typed controller history producers", () => {
     });
   });
 
+  it("commits a failure before its history notification can race with abort", async () => {
+    const stub = await initProcess("typed-failure-abort-race", ROOT_IDENTITY);
+    await runInProcess(stub, async (process: Process) => {
+      isolateAdmission(process);
+      process.runs.active = { runId: "failed-run" };
+      const finishes = vi.spyOn(process.finishDelivery, "record");
+      const aborts: boolean[] = [];
+      vi.spyOn(process.signals, "changed").mockImplementation(async (fields) => {
+        if (fields.includes("messages")) {
+          const aborted = await process.controller.handleProcAbort({ runId: "failed-run" });
+          if (aborted.ok) aborts.push(aborted.aborted);
+        }
+      });
+      await process.run.failWithRuntimeEvent("failed-run", {
+        reason: "tick.error", error: "Model metadata unavailable", prefix: "Process run failed",
+      });
+      await vi.waitFor(() => expect(aborts).toEqual([false]));
+      expect(finishes).toHaveBeenCalledOnce();
+      expect(finishes).toHaveBeenCalledWith(expect.objectContaining({ runId: "failed-run", status: "error" }));
+      expect(storedRecords(process)).toMatchObject([{ kind: "event", payload: { kind: "runtime.failed" } }]);
+    });
+  });
+
   it.each([false, true])("persists each responsibility wake once across reload with active run=%s", async (busy) => {
     const stub = await initProcess(`typed-responsibility-ready-${busy}`, ROOT_IDENTITY);
     const input = {
