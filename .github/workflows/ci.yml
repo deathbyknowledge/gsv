@@ -67,6 +67,7 @@ jobs:
               - 'scripts/version.mjs'
               - 'scripts/test-host-installer.sh'
               - 'scripts/test-installer-animation.py'
+              - 'host/scripts/test-windows-downloads.py'
               - 'tools/installer-animation/**'
               - 'install.sh'
               - 'install.ps1'
@@ -298,6 +299,14 @@ jobs:
             $errors | ForEach-Object { Write-Error $_.Message }
             exit 1
           }
+
+      - name: Test Windows installer downloads in PowerShell 7
+        if: runner.os == 'Windows'
+        run: python host/scripts/test-windows-downloads.py --powershell pwsh
+
+      - name: Test Windows installer downloads in Windows PowerShell
+        if: runner.os == 'Windows'
+        run: python host/scripts/test-windows-downloads.py --powershell powershell
 
   workspace-check:
     name: Workspace Checks
