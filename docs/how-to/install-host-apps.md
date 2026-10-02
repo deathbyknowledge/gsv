@@ -34,7 +34,8 @@ irm https://install.gsv.space/install.ps1 | iex
 ```
 
 The setup executable installs all five applications, adds a Start-menu shortcut,
-and registers an Apps uninstall entry. The ZIP contains the same payload with
+and registers an Apps uninstall entry. Setup upgrades reuse the installation
+directory selected during the previous setup. The ZIP contains the same payload with
 `install.ps1`; extract it and run `./install.ps1 -AssetDirectory .`.
 Desktop needs WebView2 and the Visual C++ x64 runtime; the installer downloads
 and verifies Microsoft's installers when either is missing. Internet access is

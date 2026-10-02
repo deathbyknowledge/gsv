@@ -6,6 +6,7 @@ Unicode true
 Name "GSV"
 OutFile "${OUTPUT}\gsv-desktop-windows-x64-setup.exe"
 InstallDir "$LOCALAPPDATA\Programs\gsv\bin"
+InstallDirRegKey HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\GSV" "InstallLocation"
 RequestExecutionLevel user
 SetCompressor /SOLID lzma
 VIProductVersion "${VERSION}.0"
