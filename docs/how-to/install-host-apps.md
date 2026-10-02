@@ -109,7 +109,8 @@ user-installed tools, mapped drives, or browser sessions. Configure credentials
 and tools for the service account, or choose its Log On account in Windows
 Services. Use UNC paths for network shares and grant that account access.
 Reinstallation and upgrades preserve administrator-configured service settings,
-including its account, startup mode and recovery policy. A conflicting `gsvd`
+including its account, startup mode, recovery policy and state-directory access.
+A conflicting `gsvd`
 registration must be resolved by an administrator before GSV can replace it.
 
 The protected executable lives at `%ProgramFiles%\GSV\service\gsvd.exe`.

@@ -249,6 +249,34 @@ class FailedService {
 
 
 
+  # Administrators may give a custom execution account explicit state access.
+  $stateDirectory = Join-Path $env:ProgramData 'GSV/daemon'
+  $stateAcl = Get-Acl $stateDirectory
+  $stateAcl.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new(
+    [Security.Principal.SecurityIdentifier]::new('S-1-5-19'),
+    [Security.AccessControl.FileSystemRights]::Modify,
+    [Security.AccessControl.InheritanceFlags]'ContainerInherit, ObjectInherit',
+    [Security.AccessControl.PropagationFlags]::None,
+    [Security.AccessControl.AccessControlType]::Allow))
+  Set-Acl -LiteralPath $stateDirectory -AclObject $stateAcl
+  $statePermissions = Get-WorkspacePermissions $stateDirectory
+  & $cli daemon stop
+  if ($LASTEXITCODE) { throw 'Could not stop the service to configure its custom account' }
+  & $sc config gsvd obj= 'NT AUTHORITY\LocalService'
+  if ($LASTEXITCODE) { throw 'Could not configure the custom service account' }
+  & $cli daemon start
+  if ($LASTEXITCODE) { throw 'Custom service account cannot start the daemon' }
+  $registration = Get-ServiceRegistration
+  & $cli daemon install
+  if ($LASTEXITCODE) { throw 'Custom service account reinstallation failed' }
+  if ((Get-ServiceRegistration) -ne $registration -or (Get-WorkspacePermissions $stateDirectory) -ne $statePermissions) { throw 'Reinstallation changed the custom service account or its state permissions' }
+  & (Join-Path $changedPackage 'gsv.exe') daemon install
+  if (-not $LASTEXITCODE) { throw 'Custom service account accepted a daemon that cannot start' }
+  if ((Get-ServiceRegistration) -ne $registration -or (Get-WorkspacePermissions $stateDirectory) -ne $statePermissions) { throw 'Failed reinstallation changed the custom service account or its state permissions' }
+  if ((Get-Service gsvd).Status -ne 'Running' -or (Get-FileHash $serviceBinary).Hash -ne $installedHash) { throw 'Custom service account rollback did not recover the daemon' }
+  & $cli daemon diagnostics --json *> $null
+  if ($LASTEXITCODE) { throw 'Custom service account lost access to its daemon state after rollback' }
+
   $assets = Join-Path $root 'assets'
   $destination = Join-Path $root 'installed with spaces 日本語'
   New-Item -ItemType Directory -Path $assets | Out-Null

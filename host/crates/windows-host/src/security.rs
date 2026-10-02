@@ -150,15 +150,14 @@ impl Drop for OwnedHandle {
 /// Creates a managed directory atomically with its final ACL. Existing paths
 /// must be administrator-owned ordinary directories, never junctions or links.
 pub fn protect_directory(path: &std::path::Path, sddl: &str) -> io::Result<()> {
-    use std::os::windows::fs::MetadataExt;
     use windows_sys::Win32::{
         Foundation::ERROR_ALREADY_EXISTS,
         Security::{
-            Authorization::{GetNamedSecurityInfoW, SetNamedSecurityInfoW, SE_FILE_OBJECT},
+            Authorization::{SetNamedSecurityInfoW, SE_FILE_OBJECT},
             GetSecurityDescriptorDacl, GetSecurityDescriptorOwner, DACL_SECURITY_INFORMATION,
             OWNER_SECURITY_INFORMATION, PROTECTED_DACL_SECURITY_INFORMATION, SECURITY_ATTRIBUTES,
         },
-        Storage::FileSystem::{CreateDirectoryW, FILE_ATTRIBUTE_REPARSE_POINT},
+        Storage::FileSystem::CreateDirectoryW,
     };
     let descriptor = SecurityDescriptor::from_sddl(sddl)?;
     let name = wide_null(path.as_os_str());
@@ -174,40 +173,8 @@ pub fn protect_directory(path: &std::path::Path, sddl: &str) -> io::Result<()> {
             return Err(error);
         }
     }
-    let metadata = std::fs::symlink_metadata(path)?;
-    if !metadata.is_dir() || metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
-        return Err(io::Error::new(
-            io::ErrorKind::PermissionDenied,
-            "Managed service paths cannot be links or junctions",
-        ));
-    }
+    validate_service_directory(path)?;
     let mut owner = ptr::null_mut();
-    let mut existing = ptr::null_mut();
-    // SAFETY: valid path and output pointers; existing owns the returned allocation.
-    let result = unsafe {
-        GetNamedSecurityInfoW(
-            name.as_ptr(),
-            SE_FILE_OBJECT,
-            OWNER_SECURITY_INFORMATION,
-            &mut owner,
-            ptr::null_mut(),
-            ptr::null_mut(),
-            ptr::null_mut(),
-            &mut existing,
-        )
-    };
-    if result != 0 {
-        return Err(io::Error::from_raw_os_error(result as i32));
-    }
-    let existing = SecurityDescriptor { pointer: existing };
-    let owner_sid = sid_to_string(owner)?;
-    if owner_sid != "S-1-5-32-544" && owner_sid != "S-1-5-18" {
-        return Err(io::Error::new(
-            io::ErrorKind::PermissionDenied,
-            "An administrator must remove the existing untrusted GSV service directory",
-        ));
-    }
-    drop(existing);
     let mut dacl = ptr::null_mut();
     let mut present = 0;
     let mut defaulted = 0;
@@ -244,5 +211,53 @@ pub fn protect_directory(path: &std::path::Path, sddl: &str) -> io::Result<()> {
             return Err(io::Error::from_raw_os_error(result as i32));
         }
     }
+    Ok(())
+}
+
+/// Checks a managed directory without replacing administrator-configured access.
+pub fn validate_service_directory(path: &std::path::Path) -> io::Result<()> {
+    use std::os::windows::fs::MetadataExt;
+    use windows_sys::Win32::{
+        Security::{
+            Authorization::{GetNamedSecurityInfoW, SE_FILE_OBJECT},
+            OWNER_SECURITY_INFORMATION,
+        },
+        Storage::FileSystem::FILE_ATTRIBUTE_REPARSE_POINT,
+    };
+    let name = wide_null(path.as_os_str());
+    let metadata = std::fs::symlink_metadata(path)?;
+    if !metadata.is_dir() || metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "Managed service paths cannot be links or junctions",
+        ));
+    }
+    let mut owner = ptr::null_mut();
+    let mut existing = ptr::null_mut();
+    // SAFETY: valid path and output pointers; existing owns the returned allocation.
+    let result = unsafe {
+        GetNamedSecurityInfoW(
+            name.as_ptr(),
+            SE_FILE_OBJECT,
+            OWNER_SECURITY_INFORMATION,
+            &mut owner,
+            ptr::null_mut(),
+            ptr::null_mut(),
+            ptr::null_mut(),
+            &mut existing,
+        )
+    };
+    if result != 0 {
+        return Err(io::Error::from_raw_os_error(result as i32));
+    }
+    let existing = SecurityDescriptor { pointer: existing };
+    let owner_sid = sid_to_string(owner)?;
+    if owner_sid != "S-1-5-32-544" && owner_sid != "S-1-5-18" {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "An administrator must remove the existing untrusted GSV service directory",
+        ));
+    }
+    drop(existing);
     Ok(())
 }

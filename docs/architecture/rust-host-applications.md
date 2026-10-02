@@ -57,7 +57,10 @@ to `%ProgramFiles%\GSV\service`, and defaults to the passwordless virtual
 account `NT SERVICE\gsvd`. Administrators may configure a different service
 logon account through Windows Services. Reinstallation and upgrades preserve the
 existing SCM configuration, including the account, startup and recovery settings,
-token privileges, service SID policy, description, and service DACL. Only a new
+token privileges, service SID policy, description, and service DACL. Existing
+state-directory access rules are retained, including grants for a custom account;
+the installer still verifies the directory is ordinary and administrator-owned.
+Only a new
 registration receives the defaults. A conflicting `gsvd` executable or service
 type is rejected before replacement; an administrator must resolve it explicitly.
 The service SID receives access to its state and selected workspace; agent

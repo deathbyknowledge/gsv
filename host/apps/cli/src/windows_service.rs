@@ -7,7 +7,9 @@ use std::os::windows::{
     io::FromRawHandle,
 };
 use windows_host::{
-    security::{current_user_sid_string, protect_directory, SecurityDescriptor},
+    security::{
+        current_user_sid_string, protect_directory, validate_service_directory, SecurityDescriptor,
+    },
     service::{
         self,
         windows_service::{
@@ -369,6 +371,7 @@ pub fn install_elevated(
     let installed = service::installed()?;
     if installed {
         validate_registration(&service::open(ServiceAccess::QUERY_CONFIG)?.query_config()?)?;
+        validate_service_directory(&data)?;
     }
     let binary_root = bin.parent().expect("service binary directory has a parent");
     let data_root = data.parent().expect("service data directory has a parent");
@@ -471,18 +474,20 @@ pub fn install_elevated(
                 .args(["/grant", "NT SERVICE\\gsvd:(OI)(CI)RX"]),
             "Could not grant service executable access",
         )?;
-        // Resolve the service SID through its registered account, then install an
-        // exact DACL rather than retaining permissions from a pre-existing folder.
-        protect_directory(
-            &data,
-            &format!("O:BAD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;0x1301bf;;;{owner})"),
-        )?;
-        run_command_capture(
-            Command::new(system_tool("icacls.exe"))
-                .arg(&data)
-                .args(["/grant", "NT SERVICE\\gsvd:(OI)(CI)M"]),
-            "Could not grant service state access",
-        )?;
+        if !installed {
+            // Resolve the service SID through its registered account, then install an
+            // exact DACL rather than retaining permissions from a pre-existing folder.
+            protect_directory(
+                &data,
+                &format!("O:BAD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;0x1301bf;;;{owner})"),
+            )?;
+            run_command_capture(
+                Command::new(system_tool("icacls.exe"))
+                    .arg(&data)
+                    .args(["/grant", "NT SERVICE\\gsvd:(OI)(CI)M"]),
+                "Could not grant service state access",
+            )?;
+        }
         save_owner_sid(owner)?;
         replacement.save_config(&machine)?;
         println!(
