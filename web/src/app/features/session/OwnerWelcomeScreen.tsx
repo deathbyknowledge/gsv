@@ -1,15 +1,16 @@
-import { useEffect, useRef, useState } from "preact/hooks";
+import { useEffect, useId, useRef, useState } from "preact/hooks";
 import type { ComponentChildren } from "preact";
 import { AuthLayout } from "./AuthLayout";
 import { Button } from "../../components/ui/Button";
 import { TextInput } from "../../components/ui/TextInput";
 import { Spinner } from "../../components/ui/Spinner";
 import { WelcomeIllustration } from "./backgrounds/WelcomeIllustration";
+import { PrivacyPolicyLink, TermsOfServiceLink } from "./PolicyLinks";
 import { OwnerWelcome, OwnerApiError, type OwnerSession, type OwnedInvite } from "../../services/session/ownerWelcome";
 import "./LoginScreen.css";
 import "./OwnerWelcomeScreen.css";
 
-type Step = "welcome" | "invite" | "email" | "code" | "spaces" | "handle";
+type Step = "welcome" | "invite" | "email" | "code" | "spaces" | "consent" | "handle";
 type Props = {
   ready: boolean;
   resume: boolean;
@@ -29,6 +30,9 @@ export function OwnerWelcomeScreen({ ready, resume, load, onConnect, addressPane
   const [loadError, setLoadError] = useState("");
   const [inviteCode, setInviteCode] = useState("");
   const [email, setEmail] = useState("");
+  const [consent, setConsent] = useState(false);
+  const [consentTouched, setConsentTouched] = useState(false);
+  const consentId = useId();
   const [code, setCode] = useState("");
   const [handle, setHandle] = useState("");
   const [availability, setAvailability] = useState<"idle" | "checking" | "available" | "unavailable">("idle");
@@ -44,6 +48,7 @@ export function OwnerWelcomeScreen({ ready, resume, load, onConnect, addressPane
   };
   const openInvite = async (client: OwnerWelcome, invite: OwnedInvite) => {
     await client.save({ flow: "create", inviteId: invite.id, handle: invite.handle });
+    if (!consent) { setStep("consent"); return; }
     if (!invite.handle) { setHandle(""); setStep("handle"); return; }
     const prepared = await client.prepare(invite.id, invite.handle);
     await onConnect(prepared.origin, prepared.onboardingToken);
@@ -54,6 +59,8 @@ export function OwnerWelcomeScreen({ ready, resume, load, onConnect, addressPane
     if (!session) { setStep(client.state.challenge ? "code" : "email"); return; }
     if (client.state.challenge) await client.save({ challenge: null });
     if (client.state.flow === "create" && client.state.inviteCode) {
+      // Signing in or restoring a session does not imply agreement to create a space.
+      if (!consent) { setStep("consent"); return; }
       setStep("invite");
       await openInvite(client, await client.claim());
     } else if (client.state.flow === "create" && client.state.inviteId) {
@@ -93,9 +100,12 @@ export function OwnerWelcomeScreen({ ready, resume, load, onConnect, addressPane
   }, [step, handle, flow]);
 
   const titles = {
-    welcome: "Welcome to GSV", invite: "Create your space", email: "Your email", code: "Check your email", spaces: "Your spaces", handle: "Choose your handle",
+    welcome: "Welcome to GSV", invite: "Create your space", email: "Your email", code: "Check your email", spaces: "Your spaces", consent: "Before you begin", handle: "Choose your handle",
   } satisfies Record<Step, string>;
+  const requiresConsent = step === "consent" || (step === "email" && flow?.state.flow === "create");
+  const consentError = requiresConsent && consentTouched && !consent;
   const start = (intent: "open" | "create") => void run(async () => {
+    setConsent(false); setConsentTouched(false);
     if (intent === "open") setStep("email");
     if (!flow) return;
     await flow.save({ flow: intent, inviteCode: null, inviteId: null, handle: null });
@@ -104,6 +114,7 @@ export function OwnerWelcomeScreen({ ready, resume, load, onConnect, addressPane
   });
   const submit = (event: Event) => {
     event.preventDefault();
+    if (requiresConsent && !consent) { setConsentTouched(true); return; }
     void run(async () => {
       if (!flow) return;
       if (step === "invite") {
@@ -113,7 +124,10 @@ export function OwnerWelcomeScreen({ ready, resume, load, onConnect, addressPane
         await flow.sendCode(email.trim().toLowerCase()); setStep("code");
       } else if (step === "code") {
         await flow.verify(code); setCode(""); await advance(flow);
+      } else if (step === "consent") {
+        await advance(flow);
       } else if (step === "handle" && flow.state.inviteId) {
+        if (!consent) { setStep("consent"); return; }
         const prepared = await flow.prepare(flow.state.inviteId, handle.trim());
         await onConnect(prepared.origin, prepared.onboardingToken);
       }
@@ -125,7 +139,8 @@ export function OwnerWelcomeScreen({ ready, resume, load, onConnect, addressPane
   const split = opening && !!addressPanel;
   const back = () => {
     setError("");
-    setStep(step === "code" ? "email" : step === "email" && flow?.state.flow === "create" ? "invite" : "welcome");
+    setStep(step === "consent" ? flow?.state.inviteCode ? "invite" : "spaces"
+      : step === "code" ? "email" : step === "email" && flow?.state.flow === "create" ? "invite" : "welcome");
   };
 
   return <AuthLayout visible surfaceClass="gsv-auth-surface-login"><section class={`desktop-welcome${step === "welcome" || split ? " desktop-welcome-wide" : ""}`}>
@@ -150,6 +165,18 @@ export function OwnerWelcomeScreen({ ready, resume, load, onConnect, addressPane
           placeholder="Paste your code" inputProps={{ autoFocus: true, autoComplete: "off", spellcheck: false, maxLength: 128 }} />}
         {step === "email" && <TextInput label="Email" value={email} onChange={setEmail} disabled={busy} placeholder="you@example.com"
           inputProps={{ autoFocus: true, type: "email", autoComplete: "email", maxLength: 254, required: true }} />}
+        {requiresConsent && <div class={`gsv-owner-consent${consentError ? " is-error" : ""}`}>
+          <div class="gsv-owner-consent-row">
+            <input id={consentId} type="checkbox" required checked={consent} disabled={busy} autoFocus={step === "consent"}
+              aria-labelledby={`${consentId}-label`} aria-invalid={consentError ? true : undefined}
+              aria-describedby={consentError ? `${consentId}-error` : undefined}
+              onInvalid={() => setConsentTouched(true)}
+              onChange={(event) => { setConsent(event.currentTarget.checked); setConsentTouched(true); }} />
+            <span id={`${consentId}-label`}><label for={consentId}>I confirm that I’m 18 or older and agree to the </label>
+              <TermsOfServiceLink /> <label for={consentId}>and acknowledge the </label><PrivacyPolicyLink />.</span>
+          </div>
+          {consentError && <p class="gsv-owner-consent-error" id={`${consentId}-error`} role="alert">Confirm your age and agreement to continue.</p>}
+        </div>}
         {step === "code" && <>
           <p class="desktop-welcome-detail">{flow?.state.challenge?.email}</p>
           <TextInput label="Code" value={code} onChange={(value) => setCode(value.replace(/\D/g, "").slice(0, 6))} disabled={busy}
@@ -185,7 +212,7 @@ export function OwnerWelcomeScreen({ ready, resume, load, onConnect, addressPane
           <button type="button" class="gsv-auth-link" disabled={busy} onClick={() => { setError(""); setCode(""); setStep("email"); }}>Change email</button>
         </div>}
         {owner && <button type="button" class="gsv-auth-link" disabled={busy} onClick={() => void run(async () => {
-          await flow!.signOut(); setOwner(null); setEmail(""); setCode(""); setInviteCode(""); setStep("welcome");
+          await flow!.signOut(); setOwner(null); setEmail(""); setCode(""); setInviteCode(""); setConsent(false); setConsentTouched(false); setStep("welcome");
         })}>Sign out</button>}
       </form>
       </div>

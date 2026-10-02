@@ -42,3 +42,6 @@
   --ascii-foreground: var(--accent-bright);
   --ascii-stars: var(--text-hi);
 }
+@media (max-width: 600px) {
+  .gsv-auth-scene.gsv-auth-surface-setup .gsv-auth-illustration { width: 160px; justify-self: center; }
+}
