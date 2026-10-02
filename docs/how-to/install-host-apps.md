@@ -27,7 +27,7 @@ curl -fsSL https://install.gsv.space | bash
 ```
 
 On Windows, download `gsv-desktop-windows-x64-setup.exe` from the release and
-run it, or use PowerShell:
+run it, or use Windows PowerShell 5.1 or PowerShell 7:
 
 ```powershell
 irm https://install.gsv.space/install.ps1 | iex
