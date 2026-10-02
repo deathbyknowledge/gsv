@@ -4,6 +4,7 @@ import { DeliveryLedger, fingerprintOutboundDelivery } from "../../shared/src/de
 import { binaryBodyFromOwnedBytes } from "../../shared/src/media-body";
 import type { ManagedWhatsAppPeerEnv } from "../src/managed-peer";
 import type { ManagedWhatsAppPeerState } from "../src/managed-peer-state";
+import { whatsAppDeliveryToken, type ManagedWhatsAppPeerEvent } from "../src/whatsapp-webhook";
 
 // SAFETY: the managed test configuration binds these Workers and namespaces.
 const bindings = env as ManagedWhatsAppPeerEnv & { WHATSAPP_API: Fetcher };
@@ -131,6 +132,69 @@ it("keeps a new delivery behind held output rejected with a retryable status", a
   using retried = await peer.sendMessage(route.installationId, message);
   expect(retried).toMatchObject({ ok: true });
   expect((await messages(actorId)).map((record) => record.body.text?.body)).toEqual([older, message.text]);
+});
+
+it.each(["release", "message", "approval"] as const)("retries held output from an inbound %s without another webhook", async (kind) => {
+  const actorId = `3469021333${kind === "release" ? 1 : kind === "message" ? 2 : 3}`;
+  const { peer, route } = await seed(actorId);
+  const interactionId = `wamid.retry.${kind}`;
+  const heldText = `held-until-${kind}-retry`;
+  await runInDurableObject(peer, async (instance) => {
+    await instance["held"].hold({ deliveryId: interactionId, owner: route, markdown: heldText });
+  });
+  const event: ManagedWhatsAppPeerEvent = kind === "release"
+    ? { kind, tap: { actorId, surfaceId: actorId, interactionId, timestamp: Date.now() } }
+    : kind === "approval"
+      ? { kind, reply: { actorId, surfaceId: actorId, interactionId, providerMessageId: "wamid.old", data: "expired-button", timestamp: Date.now() } }
+      : { kind, inbound: { actorId, surfaceId: actorId, messageId: interactionId, deliveryId: interactionId, text: "hello", timestamp: Date.now(), unsupportedContent: false } };
+  const receiptId = kind === "message" ? interactionId : `${kind === "release" ? "release" : "interactive"}:${whatsAppDeliveryToken(interactionId)}`;
+  await bindings.WHATSAPP_API.fetch("https://graph.test/throttle", { method: "POST", body: heldText });
+  try {
+    await peer.handleWebhook(event);
+    await vi.waitFor(async () => {
+      const rejected = await (await bindings.WHATSAPP_API.fetch("https://graph.test/rejected")).json<Array<{ body: { to?: string } }>>();
+      expect(rejected.some((record) => record.body.to === actorId)).toBe(true);
+      await runInDurableObject(peer, async (instance, state) => {
+        await instance["drainInbound"]();
+        expect(await state.storage.get(`managed_whatsapp_peer:v1:inbound:${receiptId}`)).toMatchObject({ state: "provider" });
+        expect(await state.storage.getAlarm()).not.toBeNull();
+      });
+    });
+    expect(await messages(actorId)).toEqual([]);
+  } finally {
+    await bindings.WHATSAPP_API.fetch("https://graph.test/throttle", { method: "POST", body: "" });
+  }
+  await runInDurableObject(peer, async (instance, state) => {
+    await instance.alarm();
+    expect(await state.storage.get(`managed_whatsapp_peer:v1:inbound:${receiptId}`)).toMatchObject({ state: "completed" });
+    expect(await instance["held"].list(route)).toEqual([]);
+  });
+  expect((await messages(actorId))[0]?.body.text?.body).toBe(heldText);
+  expect((await messages(actorId)).filter((record) => record.body.text?.body === heldText)).toHaveLength(1);
+});
+
+it("retries a reopened-window race without keeping a duplicate held copy", async () => {
+  const actorId = "34690214444";
+  const { peer, route, message } = await seed(actorId, true);
+  message.text = "long reply ".repeat(300).trimEnd();
+  await runInDurableObject(peer, async (instance, state) => {
+    const claim = instance["claimPendingTemplate"];
+    instance["claimPendingTemplate"] = async (observed) => {
+      const current = (await state.storage.get<ManagedWhatsAppPeerState>(stateKey))!;
+      await state.storage.put(stateKey, { ...current, lastInboundAt: Date.now() });
+      return await claim.call(instance, observed);
+    };
+    try {
+      expect(await instance.sendMessage(route.installationId, message)).toMatchObject({ ok: false, retryable: true });
+      expect(await instance["held"].list(route)).toEqual([]);
+    } finally {
+      instance["claimPendingTemplate"] = claim;
+    }
+  });
+  expect(await messages(actorId)).toEqual([]);
+  using retried = await peer.sendMessage(route.installationId, message);
+  expect(retried).toMatchObject({ ok: true });
+  expect((await messages(actorId)).map((record) => record.body.text?.body)).toEqual([message.text]);
 });
 
 it("retries an unsent suffix after a local failure before the next provider call", async () => {

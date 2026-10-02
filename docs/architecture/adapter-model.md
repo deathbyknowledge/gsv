@@ -337,6 +337,9 @@ retained across retry-safe failures. Only failures known to be safe are
 retryable. Multipart receipts retain the accepted part count and partition
 format, so an update cannot reinterpret that count and repeat earlier
 paragraphs. Unversioned partial receipts retain the first staging format.
+WhatsApp keeps a blocked held-message release pending on the triggering
+inbound receipt or Kernel delivery, so its existing retry owner can resume
+without another user message. Explicit pairing commands retain priority.
 Outcomes that may already have reached a provider are reported as
 ambiguous and are not replayed; Discord can additionally reuse an
 enforced deterministic nonce, while Telegram conservatively uses at-most-once

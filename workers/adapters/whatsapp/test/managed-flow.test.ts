@@ -1110,13 +1110,14 @@ describe("managed WhatsApp clean-instance flow", () => {
     const { peer, route } = await linkedPeer("open");
     const templatesBefore = (await templateMessages()).length;
     await pauseGraphSend("window-rejection");
-    const sending = peer.sendMessage(route.installationId, {
+    const message = {
       deliveryId: "outbound-window-reopened",
-      surface: { kind: "dm", id: ACTOR },
+      surface: { kind: "dm" as const, id: ACTOR },
       actorId: ACTOR,
       routeGeneration: route.generation,
       text: "reopen before template admission",
-    });
+    };
+    const sending = peer.sendMessage(route.installationId, message);
     try {
       await vi.waitFor(async () => {
         expect(await pausedGraphSend()).toMatchObject({ type: "text" });
@@ -1131,9 +1132,10 @@ describe("managed WhatsApp clean-instance flow", () => {
     } finally {
       await resumeGraphSend();
     }
-    await expect(sending).resolves.toMatchObject({ ok: true });
+    await expect(sending).resolves.toMatchObject({ ok: false, retryable: true });
+    await expect(peer.sendMessage(route.installationId, message)).resolves.toMatchObject({ ok: true });
     expect(await templateMessages()).toHaveLength(templatesBefore);
-    expect((await sentMessages()).some((record) => record.body.text?.body === "reopen before template admission")).toBe(true);
+    expect((await sentMessages()).filter((record) => record.body.text?.body === message.text)).toHaveLength(1);
   });
 });
 

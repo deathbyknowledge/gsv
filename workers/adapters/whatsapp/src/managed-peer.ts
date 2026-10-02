@@ -518,8 +518,7 @@ export class ManagedWhatsAppPeer extends DurableObject<ManagedWhatsAppPeerEnv> {
       }
       // The tap only reopens the window; the person hears nothing but the held messages.
       await this.markRead(payload.tap.interactionId, route);
-      await this.releaseHeld(route);
-      return { terminal: true };
+      return { terminal: await this.releaseHeld(route) };
     }
     if (payload.kind === "approval") {
       const state = await this.requireState();
@@ -527,7 +526,7 @@ export class ManagedWhatsAppPeer extends DurableObject<ManagedWhatsAppPeerEnv> {
       if (!route || this.retirement.retired(route) || !payload.routeGeneration || route.generation !== payload.routeGeneration) {
         return { terminal: true };
       }
-      await this.releaseHeld(route);
+      if (!await this.releaseHeld(route)) return { terminal: false };
       const status = await handleWhatsAppApprovalReply(
         this.ctx.storage,
         this.env.GATEWAY,
@@ -567,8 +566,9 @@ export class ManagedWhatsAppPeer extends DurableObject<ManagedWhatsAppPeerEnv> {
     const linked: ResponseContext = { kind: "installation", installationId: route.installationId, generation: route.generation };
     await this.markRead(inbound.messageId, route);
     // The person's message reopened the window: held replies go out first, then theirs is relayed.
-    await this.releaseHeld(route);
+    const released = await this.releaseHeld(route);
     if (isManagedWhatsAppPairCommand(inbound.text)) return await this.pairingResponse(inbound, route.generation);
+    if (!released) return { terminal: false };
     if (inbound.unsupportedContent) {
       return platformResponse(inbound, `managed-unsupported:${inbound.deliveryId}`, UNSUPPORTED_TEXT, linked);
     }
@@ -990,13 +990,18 @@ export class ManagedWhatsAppPeer extends DurableObject<ManagedWhatsAppPeerEnv> {
     // The pending marker is claimed durably before provider I/O, so of two
     // concurrent deliveries only one sends a template; the other waits behind it.
     const claimedAt = await this.claimPendingTemplate(observed);
-    if (claimedAt === null || claimedAt === "window-open") {
+    if (claimedAt === "window-open") {
+      // Nothing reached Meta. Let the Kernel retry through the now-open window
+      // without a second held copy or an acknowledgement that loses retry ownership.
+      await this.held.remove(message.deliveryId);
+      return await fail("retryable", "WhatsApp window reopened before delivery");
+    }
+    if (claimedAt === null) {
       if (complete) {
         const refused = await hold();
         if (refused) return refused;
       }
       await this.deliveries.succeed(message.deliveryId, claim.attemptId);
-      if (claimedAt === "window-open") await this.releaseHeld(owner);
       return { ok: true };
     }
     const attempt = (async (): Promise<AdapterSendResult> => {
