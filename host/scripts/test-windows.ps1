@@ -316,7 +316,24 @@ class FailedService {
     } finally { [IO.File]::WriteAllBytes($path, $original) }
   }
   Write-Checksums
-  & $installer -Destination $destination -AssetDirectory $assets -UserConfigDirectory (Join-Path $root 'user-config') -Headless -SkipUserSetup
+  $setupChecksums = Get-Content -Raw -LiteralPath (Join-Path $assets 'checksums.txt')
+  $assetPath = Join-Path $assets 'gsv-windows-x64.exe'
+  $original = [IO.File]::ReadAllBytes($assetPath)
+  try {
+    [IO.File]::WriteAllText($assetPath, 'payload changed after setup authenticated its manifest')
+    Write-Checksums
+    $rejected = $false
+    try {
+      & $installer -Destination $destination -AssetDirectory $assets -ExpectedChecksums $setupChecksums -UserConfigDirectory (Join-Path $root 'user-config') -Headless -SkipUserSetup
+    } catch {
+      if ($_.Exception.Message -notmatch 'Checksum verification failed') { throw }
+      $rejected = $true
+    }
+    if (-not $rejected) { throw 'Setup trusted an attacker-replaced payload and checksum manifest' }
+    if ((Get-CimInstance Win32_Service -Filter "Name='gsvd'").ProcessId -ne $beforePid) { throw 'Rejected setup payload changed the running daemon' }
+  } finally { [IO.File]::WriteAllBytes($assetPath, $original) }
+  [IO.File]::WriteAllText((Join-Path $assets 'checksums.txt'), 'manifest replaced after setup verification')
+  & $installer -Destination $destination -AssetDirectory $assets -ExpectedChecksums $setupChecksums -UserConfigDirectory (Join-Path $root 'user-config') -Headless -SkipUserSetup
   if (-not (Test-Path (Join-Path $destination 'gsv.exe'))) { throw 'Installer did not install the CLI' }
   if ((Get-Service gsvd).Status -ne 'Running') { throw 'Installer did not restore the service' }
   if ((Get-ServiceRegistration) -ne $registration) { throw 'Installer changed SCM configuration' }

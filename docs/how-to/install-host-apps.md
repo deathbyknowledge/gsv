@@ -127,6 +127,9 @@ Windows automatic daemon updates are disabled. Rerun setup or the PowerShell
 installer to update; it requests administrator approval for the existing boot
 service and restores the previous binaries if the updated service cannot start. Desktop must be
 closed before replacing its executables. There is no scheduled-task migration.
+Setup authenticates its extracted installer script and release manifest against
+hashes embedded in the setup executable before running them or requesting
+service-update approval.
 
 ## Existing device daemon
 

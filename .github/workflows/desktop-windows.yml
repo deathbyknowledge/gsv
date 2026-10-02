@@ -43,6 +43,9 @@ jobs:
       - name: Smoke test SCM and transactional installer
         if: ${{ !cancelled() && steps.core_build.outcome == 'success' }}
         run: ./host/scripts/test-windows.ps1 -BinDir host/target/debug
+      - name: Test setup content authentication
+        if: ${{ !cancelled() }}
+        run: ./host/scripts/test-windows-setup.ps1
   voice-inference:
     runs-on: windows-2022
     timeout-minutes: 25

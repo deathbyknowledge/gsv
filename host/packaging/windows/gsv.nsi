@@ -3,6 +3,7 @@ Unicode true
 !include "LogicLib.nsh"
 !include "x64.nsh"
 !include "WinVer.nsh"
+!include "${STAGE}\setup-bootstrap.nsh"
 Name "GSV"
 OutFile "${OUTPUT}\gsv-desktop-windows-x64-setup.exe"
 InstallDir "$LOCALAPPDATA\Programs\gsv\bin"
@@ -41,9 +42,13 @@ FunctionEnd
 Section "GSV"
   InitPluginsDir
   SetOutPath "$PLUGINSDIR\payload"
-  File "${STAGE}\*"
-  nsExec::ExecToLog '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File "$PLUGINSDIR\payload\install.ps1" -Destination "$INSTDIR" -AssetDirectory "$PLUGINSDIR\payload"'
+  File /x setup-bootstrap.nsh "${STAGE}\*"
+  System::Call 'kernel32::SetEnvironmentVariableW(w "GSV_SETUP_SOURCE", w "$PLUGINSDIR\payload")'
+  System::Call 'kernel32::SetEnvironmentVariableW(w "GSV_SETUP_DESTINATION", w "$INSTDIR")'
+  nsExec::ExecToLog `"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "${GSV_SETUP_CODE}"`
   Pop $0
+  System::Call 'kernel32::SetEnvironmentVariableW(w "GSV_SETUP_SOURCE", p 0)'
+  System::Call 'kernel32::SetEnvironmentVariableW(w "GSV_SETUP_DESTINATION", p 0)'
   ${If} $0 != 0
     MessageBox MB_ICONSTOP "Installation failed. Close GSV Desktop and retry. See the installer details for the error."
     SetErrorLevel 1

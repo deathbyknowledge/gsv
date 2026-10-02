@@ -25,6 +25,12 @@ try {
   [IO.File]::WriteAllText((Join-Path $stage 'checksums.txt'), $manifest + "`n", [Text.UTF8Encoding]::new($false))
   Compress-Archive -Path (Join-Path $stage '*') -DestinationPath (Join-Path $outputDir 'gsv-desktop-windows-x64.zip') -Force
   if (-not $ZipOnly) {
+    . (Join-Path $root 'host/packaging/windows/setup-bootstrap.ps1')
+    $bootstrap = Get-SetupBootstrap (Get-FileHash (Join-Path $stage 'install.ps1')).Hash (Get-FileHash (Join-Path $stage 'checksums.txt')).Hash
+    # Reserve space for the trusted PowerShell path and its command-line flags.
+    if ($bootstrap.Length -gt 650) { throw 'Setup bootstrap exceeds the NSIS string budget' }
+    $definition = '!define GSV_SETUP_CODE `' + $bootstrap.Replace('$', '$$') + '`'
+    [IO.File]::WriteAllText((Join-Path $stage 'setup-bootstrap.nsh'), $definition, [Text.UTF8Encoding]::new($false))
     $makensis = Get-Command makensis.exe -ErrorAction SilentlyContinue
     $compiler = if ($makensis) { $makensis.Source } else { Join-Path ${env:ProgramFiles(x86)} 'NSIS/makensis.exe' }
     if (-not (Test-Path $compiler)) { throw 'Install NSIS to build the Windows setup executable' }

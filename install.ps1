@@ -1,6 +1,7 @@
 param(
   [string]$Destination = "",
   [string]$AssetDirectory = "",
+  [string]$ExpectedChecksums = "",
   [string]$UserConfigDirectory = "",
   [switch]$SkipUserSetup,
   [switch]$SkipRuntimeSetup,
@@ -280,7 +281,7 @@ function Install-GsvHost {
   try {
     Write-Info "Downloading release manifest ($releaseRef)"
     $checksumUrl = Add-CacheBustIfMutable $releaseRef (Release-AssetUrl $releaseRef "checksums.txt")
-    $checksums = if ($AssetDirectory) { Get-Content -Raw -LiteralPath (Join-Path $AssetDirectory "checksums.txt") } else { (Invoke-WebRequest -UseBasicParsing -Uri $checksumUrl).Content }
+    $checksums = if ($ExpectedChecksums) { $ExpectedChecksums } elseif ($AssetDirectory) { Get-Content -Raw -LiteralPath (Join-Path $AssetDirectory "checksums.txt") } else { (Invoke-WebRequest -UseBasicParsing -Uri $checksumUrl).Content }
     foreach ($asset in $assets.Keys) {
       Download-VerifiedAsset $releaseRef $asset (Join-Path $tempDir $asset) $checksums
     }

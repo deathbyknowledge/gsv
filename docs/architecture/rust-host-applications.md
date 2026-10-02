@@ -247,6 +247,10 @@ credentials are not configured in the repository.
 On Windows, `host/scripts/package-windows.ps1` packages all five executables,
 licenses, checksums and the PowerShell installer in a ZIP and an NSIS setup
 executable. Setup creates a Start-menu shortcut and an Apps uninstall entry.
+Setup embeds hashes of its installer script and checksum manifest in the
+executable. A fixed command verifies owned in-memory snapshots against those
+hashes before executing the script; the installer receives the verified manifest
+directly. Replacing extracted files cannot choose code or hashes across UAC.
 The installer verifies every asset before mutation, requests elevation for an
 existing boot service, checks its health, and rolls back binaries if that check
 fails. The elevated updater receives fixed code and pinned release hashes through
