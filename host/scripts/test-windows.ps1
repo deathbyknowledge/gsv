@@ -126,8 +126,17 @@ try {
   # complete public install, including both workspace grants and prior config.
   $failedWorkspace = Join-Path $root 'workspace for failed startup'
   New-Item -ItemType Directory -Path $failedWorkspace | Out-Null
-  $failedAcl = (Get-Acl $failedWorkspace).Sddl
-  $priorAcl = (Get-Acl $nextWorkspace).Sddl
+  function Get-WorkspacePermissions([string]$Path) {
+    $acl = Get-Acl $Path
+    # SetSecurityInfo can mark an ACL as auto-inherited without changing access.
+    # Compare owner/group, inheritance protection, and every ordered ACE instead.
+    $rules = $acl.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier]) | ForEach-Object {
+      "$($_.IdentityReference.Value):$($_.AccessControlType):$([int]$_.FileSystemRights):$($_.InheritanceFlags):$($_.PropagationFlags):$($_.IsInherited)"
+    }
+    return "$($acl.GetOwner([Security.Principal.SecurityIdentifier]).Value);$($acl.GetGroup([Security.Principal.SecurityIdentifier]).Value);$($acl.AreAccessRulesProtected);$($rules -join ';')"
+  }
+  $failedAcl = Get-WorkspacePermissions $failedWorkspace
+  $priorAcl = Get-WorkspacePermissions $nextWorkspace
   $fixtureSource = Join-Path $root 'failed-service.cs'
   $fixtureCode = @"
 class FailedService {
@@ -149,7 +158,11 @@ class FailedService {
   & (Join-Path $changedPackage 'gsv.exe') daemon install
   if (-not $LASTEXITCODE) { throw 'Installation accepted a daemon that failed to start' }
   if ((Get-Service gsvd).Status -ne 'Running' -or (Get-FileHash $serviceBinary).Hash -ne $installedHash) { throw 'Startup failure did not restore the running daemon' }
-  if ((Get-Acl $failedWorkspace).Sddl -ne $failedAcl -or (Get-Acl $nextWorkspace).Sddl -ne $priorAcl) { throw 'Startup failure did not restore workspace permissions' }
+  $restoredFailedAcl = Get-WorkspacePermissions $failedWorkspace
+  $restoredPriorAcl = Get-WorkspacePermissions $nextWorkspace
+  if ($restoredFailedAcl -ne $failedAcl -or $restoredPriorAcl -ne $priorAcl) {
+    throw "Startup failure did not restore workspace permissions. Selected before: $failedAcl; after: $restoredFailedAcl. Prior before: $priorAcl; after: $restoredPriorAcl"
+  }
   # TOML serialization may normalize formatting; the persisted workspace must match.
   & $cli daemon diagnostics --json *> $null
   if ($LASTEXITCODE) { throw 'Rolled-back daemon control is unavailable' }
