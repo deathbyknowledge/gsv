@@ -145,6 +145,7 @@ class FailedService {
       System.Console.WriteLine("$version");
       return 0;
     }
+    System.Threading.Thread.Sleep(5000);
     return 1;
   }
 }
@@ -169,6 +170,39 @@ class FailedService {
   Copy-Item $config (Join-Path $cliConfig 'config.toml') -Force
   & $cli daemon reload
   if ($LASTEXITCODE) { throw 'Startup rollback did not restore the previous enrollment workspace' }
+  # Kill the real enrolling CLI after both ACL mutations and before commit.
+  # The elevated transaction must retain the caller's original ACL authority.
+  [IO.File]::WriteAllText((Join-Path $cliConfig 'config.toml'), "[device]`nid = 'windows-ci'`nworkspace = '$failedWorkspace'`n", [Text.UTF8Encoding]::new($false))
+  $enrolling = Start-Process -FilePath (Join-Path $changedPackage 'gsv.exe') -ArgumentList 'daemon install' -PassThru -WindowStyle Hidden -RedirectStandardOutput (Join-Path $root 'cancelled-install.out') -RedirectStandardError (Join-Path $root 'cancelled-install.err')
+  try {
+    $deadline = [DateTime]::UtcNow.AddSeconds(30)
+    do {
+      $enrolling.Refresh()
+      if ($enrolling.HasExited) { throw 'Enrollment exited before the cancellation test reached its ACL changes' }
+      $granted = (Get-Acl $failedWorkspace).GetAccessRules($true, $false, [Security.Principal.SecurityIdentifier]) | Where-Object { $_.IdentityReference.Value -eq $serviceSid }
+      $oldGrant = (Get-Acl $nextWorkspace).GetAccessRules($true, $false, [Security.Principal.SecurityIdentifier]) | Where-Object { $_.IdentityReference.Value -eq $serviceSid }
+      if ($granted -and -not $oldGrant) { break }
+      if ([DateTime]::UtcNow -gt $deadline) { throw 'Enrollment did not reach the cancellation boundary' }
+      Start-Sleep -Milliseconds 50
+    } while ($true)
+    $enrolling.Kill()
+    $enrolling.WaitForExit()
+    $deadline = [DateTime]::UtcNow.AddSeconds(30)
+    do {
+      $restored = (Get-Service gsvd).Status -eq 'Running' -and (Get-FileHash $serviceBinary).Hash -eq $installedHash -and (Get-WorkspacePermissions $failedWorkspace) -eq $failedAcl -and (Get-WorkspacePermissions $nextWorkspace) -eq $priorAcl
+      if ($restored) { break }
+      if ([DateTime]::UtcNow -gt $deadline) { throw 'Caller exit did not restore the running daemon and both workspace ACLs' }
+      Start-Sleep -Milliseconds 100
+    } while ($true)
+  } finally {
+    $enrolling.Refresh()
+    if (-not $enrolling.HasExited) { $enrolling.Kill(); $enrolling.WaitForExit() }
+    $enrolling.Dispose()
+  }
+  Copy-Item $config (Join-Path $cliConfig 'config.toml') -Force
+  & $cli daemon reload
+  if ($LASTEXITCODE) { throw 'Caller-exit rollback did not restore enrollment configuration' }
+
 
   $assets = Join-Path $root 'assets'
   $destination = Join-Path $root 'installed with spaces 日本語'

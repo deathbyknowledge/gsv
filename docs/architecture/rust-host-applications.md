@@ -62,13 +62,19 @@ The default Windows workspace is `%USERPROFILE%\GSV`.
 
 Workspace permission changes remain in the enrolling process at its original
 privilege level. Before requesting elevation, it must be able to read and change
-the selected directory's ACL. The elevated child only registers the protected
-service; it never grants or revokes workspace access. The enrolling process grants
+the selected directory's ACL. New grants and revocations remain in the enrolling
+process. Before registration, it transfers copies of its already-authorized
+directory handles over a local pipe. The elevated child checks the pipe's actual
+server PID and duplicates those handles with identical access rights; it cannot
+use an argument to borrow another process's authority. These handles and ACL
+snapshots survive caller exit and authorize only restoration of the prior ACLs.
+The enrolling process grants
 the service access, revokes any previous workspace grant, and starts the service.
 The elevated replacement guard remains active throughout those caller-side steps.
 A failed grant or startup restores the original workspace ACLs before rolling
-back the daemon and enrollment. Caller exit signals rollback in the surviving
-elevated process; it never commits solely because registration completed.
+back the daemon and enrollment. Caller exit signals the same rollback in the
+surviving elevated process, using the transferred handles. It never commits
+solely because registration completed.
 Administrator approval cannot make an otherwise inaccessible directory writable
 by agent commands.
 

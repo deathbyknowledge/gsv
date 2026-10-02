@@ -25,7 +25,8 @@ use windows_sys::Win32::{
     Security::{DACL_SECURITY_INFORMATION, SECURITY_ATTRIBUTES},
     Storage::FileSystem::{
         CreateFileW, CREATE_NEW, FILE_ATTRIBUTE_NORMAL, FILE_ATTRIBUTE_REPARSE_POINT,
-        FILE_FLAG_BACKUP_SEMANTICS, FILE_SHARE_READ, FILE_SHARE_WRITE, READ_CONTROL, WRITE_DAC,
+        FILE_FLAG_BACKUP_SEMANTICS, FILE_READ_ATTRIBUTES, FILE_SHARE_READ, FILE_SHARE_WRITE,
+        READ_CONTROL, WRITE_DAC,
     },
     System::Services::{
         ChangeServiceConfig2W, SetServiceObjectSecurity, SERVICE_CONFIG_REQUIRED_PRIVILEGES_INFO,
@@ -35,7 +36,10 @@ use windows_sys::Win32::{
 
 #[path = "windows_service/enrollment.rs"]
 mod enrollment;
-use enrollment::{Enrollment, WorkspaceAcl};
+use enrollment::Enrollment;
+#[path = "windows_service/workspace_escrow.rs"]
+mod workspace_escrow;
+use workspace_escrow::{WorkspaceEscrow, WorkspaceRollback};
 
 #[path = "windows_service/transaction.rs"]
 mod transaction;
@@ -63,9 +67,9 @@ impl DeviceServiceManager for WindowsServiceManager {
                 .as_deref()
                 .ok_or("Configure a workspace before installing the service")?,
         )?;
-        // Workspace authority belongs to the enrolling process. Never delegate
-        // these ACL operations to the elevated service-registration child.
-        let mut workspace_acl = WorkspaceAcl::capture(&workspace)?;
+        // New workspace grants belong to the enrolling process. Only these
+        // already-authorized handles may cross elevation for later rollback.
+        let workspace_access = workspace_acl_access(&workspace)?;
         let saved_config = service::data_dir().join("config.toml");
         let previous_workspace = if saved_config.exists() {
             ConfigFile::<CliConfig>::new(saved_config)
@@ -76,11 +80,17 @@ impl DeviceServiceManager for WindowsServiceManager {
         } else {
             None
         };
-        let mut previous_acl = previous_workspace
+        let previous_access = previous_workspace
             .as_deref()
-            .map(WorkspaceAcl::capture)
+            .map(workspace_acl_access)
             .transpose()?;
         let enrollment = Enrollment::create(&owner)?;
+        let escrow = WorkspaceEscrow::create(
+            &enrollment.id,
+            &owner,
+            &workspace_access,
+            previous_access.as_ref(),
+        )?;
         let executable = std::env::current_exe()?;
         let args = windows_arguments_string(&[
             "daemon".into(),
@@ -104,43 +114,23 @@ impl DeviceServiceManager for WindowsServiceManager {
             "$ErrorActionPreference = 'Stop'\n$p = Start-Process -FilePath {} -ArgumentList {} -Verb RunAs -Wait -PassThru\nif ($p.ExitCode -ne 0) {{ throw 'GSV service installation failed; run gsv daemon install from an administrator terminal for details.' }}",
             powershell_single_quote(&executable.to_string_lossy()), powershell_single_quote(&args),
         );
-        let mut workspace_changed = false;
-        let result = enrollment.run(script, || {
-            workspace_changed = true;
-            let result = (|| {
+        enrollment.run(script, escrow, || {
+            run_command_capture(
+                Command::new(system_tool("icacls.exe"))
+                    .arg(&workspace)
+                    .args(["/grant", "NT SERVICE\\gsvd:(OI)(CI)M"]),
+                "Could not grant access to the selected workspace using your existing permissions",
+            )?;
+            if let Some(previous) = &previous_workspace {
                 run_command_capture(
                     Command::new(system_tool("icacls.exe"))
-                        .arg(&workspace)
-                        .args(["/grant", "NT SERVICE\\gsvd:(OI)(CI)M"]),
-                    "Could not grant access to the selected workspace using your existing permissions",
+                        .arg(previous)
+                        .args(["/remove:g", "NT SERVICE\\gsvd"]),
+                    "Could not remove access to the previous workspace using your existing permissions",
                 )?;
-                if let Some(previous) = &previous_workspace {
-                    run_command_capture(
-                        Command::new(system_tool("icacls.exe"))
-                            .arg(previous)
-                            .args(["/remove:g", "NT SERVICE\\gsvd"]),
-                        "Could not remove access to the previous workspace using your existing permissions",
-                    )?;
-                }
-                service::start()
-            })();
-            if result.is_err() {
-                // Restore workspace access before the elevated child restarts
-                // the prior daemon. These handles retain the caller's authority.
-                let current = workspace_acl.restore();
-                let previous = previous_acl.as_mut().map(WorkspaceAcl::restore).transpose();
-                current?;
-                previous?;
             }
-            result
-        });
-        if result.is_err() && workspace_changed {
-            let current = workspace_acl.restore();
-            let previous = previous_acl.as_mut().map(WorkspaceAcl::restore).transpose();
-            current?;
-            previous?;
-        }
-        result
+            service::start()
+        })
     }
     fn uninstall(&self) -> Result<(), DynError> {
         service::stop()?;
@@ -187,7 +177,7 @@ impl DeviceServiceManager for WindowsServiceManager {
 
 fn workspace_acl_access(path: &Path) -> Result<File, DynError> {
     fs::OpenOptions::new()
-        .access_mode(READ_CONTROL | WRITE_DAC)
+        .access_mode(READ_CONTROL | WRITE_DAC | FILE_READ_ATTRIBUTES)
         .custom_flags(FILE_FLAG_BACKUP_SEMANTICS)
         .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE)
         .open(path)
@@ -376,6 +366,11 @@ pub fn install_elevated(
     machine.device.auto_update = Some(false);
     machine.release = config.release;
     let workspace = service_workspace(workspace)?;
+    // Import rollback authority before mutating the installation. These exact
+    // handles were opened by the original caller, and survive that caller's exit.
+    let mut workspace_rollback = transaction
+        .map(|(id, pid)| WorkspaceRollback::receive(id, pid))
+        .transpose()?;
     let data = service::data_dir();
     let bin = service::binary_dir();
     let binary_root = bin.parent().expect("service binary directory has a parent");
@@ -507,8 +502,13 @@ pub fn install_elevated(
         Ok(())
     })();
     let result = result.and_then(|()| {
-        if let Some((id, parent_pid)) = transaction {
-            Enrollment::wait_for_caller(id, parent_pid)?;
+        if let (Some((id, _)), Some(rollback)) = (transaction, workspace_rollback.as_mut()) {
+            if let Err(error) = Enrollment::wait_for_caller(id, &rollback.parent) {
+                // Restore caller-authorized ACLs before the previous daemon is
+                // restarted, including when the original caller no longer exists.
+                rollback.restore()?;
+                return Err(error);
+            }
         }
         Ok(())
     });

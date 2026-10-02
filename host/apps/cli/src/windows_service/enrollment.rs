@@ -9,9 +9,8 @@ use windows_sys::Win32::{
         UNPROTECTED_DACL_SECURITY_INFORMATION,
     },
     System::Threading::{
-        CreateEventW, OpenEventW, OpenProcess, SetEvent, WaitForMultipleObjects,
-        WaitForSingleObject, EVENT_MODIFY_STATE, INFINITE, PROCESS_SYNCHRONIZE,
-        SYNCHRONIZATION_SYNCHRONIZE,
+        CreateEventW, OpenEventW, SetEvent, WaitForMultipleObjects, WaitForSingleObject,
+        EVENT_MODIFY_STATE, INFINITE, SYNCHRONIZATION_SYNCHRONIZE,
     },
 };
 
@@ -87,6 +86,7 @@ impl Enrollment {
     pub(super) fn run(
         &self,
         script: String,
+        mut escrow: WorkspaceEscrow,
         complete: impl FnOnce() -> Result<(), DynError>,
     ) -> Result<(), DynError> {
         let worker = std::thread::spawn(move || {
@@ -97,6 +97,7 @@ impl Enrollment {
             .map_err(|error| error.to_string())
         });
         loop {
+            escrow.send_if_connected()?;
             // SAFETY: the event handle is live throughout the bounded wait.
             match unsafe { WaitForSingleObject(self.ready.as_raw_handle(), 100) } {
                 WAIT_OBJECT_0 => break,
@@ -130,15 +131,8 @@ impl Enrollment {
         }
     }
 
-    pub(super) fn wait_for_caller(id: &str, parent_pid: u32) -> Result<(), DynError> {
+    pub(super) fn wait_for_caller(id: &str, parent: &OwnedHandle) -> Result<(), DynError> {
         let events = Self::events(id, None)?;
-        // SAFETY: SYNCHRONIZE grants only waiting for the caller to exit.
-        let parent = unsafe { OpenProcess(PROCESS_SYNCHRONIZE, 0, parent_pid) };
-        if parent.is_null() {
-            return Err(std::io::Error::last_os_error().into());
-        }
-        // SAFETY: OpenProcess returned a newly owned handle.
-        let parent = unsafe { OwnedHandle::from_raw_handle(parent) };
         signal(&events.ready)?;
         let handles = [
             events.abort.as_raw_handle(),
@@ -174,8 +168,7 @@ pub(super) struct WorkspaceAcl {
 }
 
 impl WorkspaceAcl {
-    pub(super) fn capture(path: &Path) -> Result<Self, DynError> {
-        let file = workspace_acl_access(path)?;
+    pub(super) fn capture(file: File) -> Result<Self, DynError> {
         let mut pointer = std::ptr::null_mut();
         // SAFETY: the file has READ_CONTROL and the output pointer is writable.
         let error = unsafe {
@@ -255,9 +248,19 @@ mod tests {
                 .spawn()
                 .unwrap();
             let id = enrollment.id.clone();
-            let pid = caller.id();
+            // SAFETY: the test child is alive; only synchronize access is requested.
+            let parent = unsafe {
+                windows_sys::Win32::System::Threading::OpenProcess(
+                    windows_sys::Win32::System::Threading::PROCESS_SYNCHRONIZE,
+                    0,
+                    caller.id(),
+                )
+            };
+            assert!(!parent.is_null());
+            // SAFETY: OpenProcess returned a newly owned handle.
+            let parent = unsafe { OwnedHandle::from_raw_handle(parent) };
             let child = std::thread::spawn(move || {
-                Enrollment::wait_for_caller(&id, pid).map_err(|error| error.to_string())
+                Enrollment::wait_for_caller(&id, &parent).map_err(|error| error.to_string())
             });
             // SAFETY: the event handle remains live throughout the bounded wait.
             assert_eq!(

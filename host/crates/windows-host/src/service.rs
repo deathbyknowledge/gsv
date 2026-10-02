@@ -108,11 +108,23 @@ pub fn wait(service: &Service, state: ServiceState) -> Result<(), Box<dyn std::e
 }
 pub fn stop() -> Result<(), Box<dyn std::error::Error>> {
     let service = open(ServiceAccess::STOP | ServiceAccess::QUERY_STATUS)?;
-    let state = service.query_status()?.current_state;
-    if state != ServiceState::Stopped && state != ServiceState::StopPending {
-        service.stop()?;
+    // SCM cannot deliver STOP until a starting service accepts controls. Keep
+    // ownership while startup settles so cancellation can restore its old image.
+    let deadline = Instant::now() + Duration::from_secs(30);
+    loop {
+        let state = service.query_status()?.current_state;
+        if state == ServiceState::StartPending {
+            if Instant::now() >= deadline {
+                return Err("gsvd startup did not settle before stopping".into());
+            }
+            std::thread::sleep(Duration::from_millis(100));
+            continue;
+        }
+        if state != ServiceState::Stopped && state != ServiceState::StopPending {
+            service.stop()?;
+        }
+        return wait(&service, ServiceState::Stopped);
     }
-    wait(&service, ServiceState::Stopped)
 }
 pub fn start() -> Result<(), Box<dyn std::error::Error>> {
     let service = open(ServiceAccess::START | ServiceAccess::QUERY_STATUS)?;
