@@ -10,6 +10,7 @@ import type { TestHarness } from "wrangler";
 import { DEFAULT_WORKERS_AI_MODEL } from "../src/inference/default-models";
 import { createGatewayTestHarness, webSocketUrl } from "./harness";
 import { startOpenAiFixture, type OpenAiFixture } from "./openai-fixture";
+import type { IntegrationState } from "./fixtures/dependencies";
 
 const USERNAME = "process-runtime-user";
 const PASSWORD = "process-runtime-password";
@@ -41,6 +42,7 @@ export type ProcessRuntimeHarness = {
 
 export async function startProcessRuntimeHarness(options: {
   workersAi?: boolean;
+  managedMailQueue?: string;
 } = {}): Promise<ProcessRuntimeHarness> {
   const ai = await startOpenAiFixture();
   let harness: TestHarness | undefined;
@@ -50,6 +52,12 @@ export async function startProcessRuntimeHarness(options: {
   try {
     harness = createGatewayTestHarness(options);
     const { url } = await harness.listen();
+    if (options.managedMailQueue) {
+      const { INTEGRATION_STATE } = await harness.getWorker<{
+        INTEGRATION_STATE: DurableObjectNamespace<IntegrationState>;
+      }>("gsv-test-dependencies").getEnv();
+      await INTEGRATION_STATE.getByName("integration-recorder").setDefaultOrigin("https://default.gsv.space");
+    }
     gatewayUrl = webSocketUrl(url);
     const setupClient = new GSVClient();
     await setupClient.requestOnce(webSocketUrl(url), "sys.setup", { onboardingToken: "integration-onboarding-default",

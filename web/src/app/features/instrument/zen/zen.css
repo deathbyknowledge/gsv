@@ -14,7 +14,7 @@
   grid-template-rows: minmax(0, 1fr);
   overflow: hidden;
 }
-@media (max-width: 720px) {
+@container instrument (max-width: 720px) {
   .zen-body { grid-template-columns: 18px 1fr 18px; }
 }
 .zen-timeline {
@@ -56,6 +56,7 @@
 }
 /* short transcripts sit at the bottom; long ones scroll all the way up (end-aligned flex cannot) */
 .zen-content > :first-child { margin-top: auto; }
+.zen-content.has-approval { padding-bottom: 0; }
 .zen-moments::-webkit-scrollbar { display: none; }
 .zen-history-status { display: flex; justify-content: center; gap: 16px; font-size: 11px; color: var(--text-dim); }
 .zen-history-status.is-err { color: var(--error); }
@@ -68,6 +69,7 @@
 }
 .zen-moment.is-older { opacity: 0.55; }
 .zen-moment.is-work { padding-block: 1vh; }
+.zen-moment.is-approval { padding-block: 0; }
 .zen-moment > .who {
   font-size: 11px;
   letter-spacing: 0.2em;
@@ -354,7 +356,7 @@
 }
 .zen-composer { position: relative; }
 .zen-delegated-approvals {
-  max-height: 40vh;
+  max-height: calc((var(--instrument-height) / var(--type-scale) - var(--instrument-header-height)) * .4);
   overflow-y: auto;
   margin-bottom: 14px;
 }
@@ -410,7 +412,7 @@
 }
 .zen-feedback .is-warn { color: var(--update); }
 .zen-feedback .is-err { color: var(--error); }
-@media (max-width: 720px) {
+@container instrument (max-width: 720px) {
   .zen-bottom { padding: 0 18px 14px; }
   .prompt-line { font-size: 15px; }
   .prompt-line .dir { display: none; }
