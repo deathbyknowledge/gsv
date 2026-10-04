@@ -120,6 +120,7 @@ type AdapterIngressProcessRecovery = {
 };
 
 type AdapterIngressRecovery =
+  | { kind: "reply_preference"; uid: number; order: number }
   | AdapterIngressProcessRecovery
   | AdapterIngressWorkReturnRecovery;
 
@@ -151,6 +152,11 @@ const adapterInteractionOriginSchema = z.object({
 });
 
 const adapterIngressRecoverySchema = z.discriminatedUnion("kind", [
+  z.object({
+    kind: z.literal("reply_preference"),
+    uid: z.number().check(z.int(), z.nonnegative()),
+    order: z.number(),
+  }),
   z.object({
     kind: z.literal("process_delivery"),
     uid: z.number().check(z.int(), z.nonnegative()),
@@ -434,7 +440,11 @@ async function resolveClaimedAdapterInbound(input: {
   if (!userIdentity) {
     return { ok: false, error: `Unknown local user uid=${uid}` };
   }
-  const replyPreferenceOrder = recovery ? undefined : ctx.shipReplies.reserveOrder(uid);
+  if (recovery && recovery.uid !== uid) {
+    return { ok: false, error: "Adapter ingress owner changed during recovery" };
+  }
+  const replyPreferenceOrder = recovery?.kind === "reply_preference"
+    ? recovery.order : recovery ? undefined : ctx.shipReplies.reserveOrder(uid);
 
   if (recovery === null && message.surface.kind === "dm") {
     const existingLink = ctx.adapters.identityLinks.get(adapter, accountId, actorId);
@@ -457,10 +467,13 @@ async function resolveClaimedAdapterInbound(input: {
     }
   }
 
+  if (!recovery) {
+    ctx.adapters.ingressReceipts.checkpoint(receiptId, claimToken, {
+      kind: "reply_preference", uid, order: replyPreferenceOrder!,
+    });
+  }
+
   if (recovery?.kind === "process_delivery") {
-    if (recovery.uid !== uid) {
-      return { ok: false, error: "Adapter ingress owner changed during recovery" };
-    }
     if (recovery.routeGeneration !== routeGeneration) {
       return { ok: true, droppedReason: "stale_route_generation" };
     }
@@ -476,9 +489,6 @@ async function resolveClaimedAdapterInbound(input: {
     });
   }
   if (recovery?.kind === "work_return") {
-    if (recovery.uid !== uid) {
-      return { ok: false, error: "Adapter ingress owner changed during recovery" };
-    }
     const personalPid = await deliverAdapterWorkReturnedEvent(
       recovery,
       receiptId,

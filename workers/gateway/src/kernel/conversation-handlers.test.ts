@@ -77,7 +77,7 @@ function context(ownerUid = 1000): KernelContext {
       recordSequence: vi.fn(),
       recordContactMessage: vi.fn(),
     },
-    shipReplies: { reserveOrder: vi.fn(() => 1), recordClientMessage: vi.fn() },
+    shipReplies: { recordClientInput: vi.fn() },
     runRoutes: {
       setConnectionRoute: vi.fn(),
       delete: vi.fn(),
@@ -193,7 +193,7 @@ describe("conversation handlers", () => {
     });
   });
 
-  it.each([false, true])("selects the newer overlapping send regardless of completion order, newer first=%s", async (newerFirst) => {
+  it.each([[false, false], [true, false], [false, true]])("selects the newer overlapping send, newer first=%s, concurrent retry=%s", async (newerFirst, retryWhilePreparing) => {
     await runWithRealKernelSql(async (sql, storage) => {
       const first = context();
       const second = context();
@@ -212,13 +212,24 @@ describe("conversation handlers", () => {
         data: { ok: true, runId: `run:${frame.args.interaction.messageId}`, queued: false, status: "started" },
       }));
       try {
-        const pending = [first, second].map((ctx, i) => handleConversationSend({
-          conversationId: SHIP.id, text: `Message ${i}`, idempotencyKey: `overlap-${i}`,
-        }, ctx));
+        const inputs = [0, 1].map((i) => ({ conversationId: SHIP.id, text: `Message ${i}`, idempotencyKey: `overlap-${i}` }));
+        const pending = [first, second].map((ctx, i) => handleConversationSend(inputs[i], ctx));
         await vi.waitFor(() => expect(release.size).toBe(2));
-        for (const index of newerFirst ? [1, 0] : [0, 1]) {
-          release.get(`connection-${index + 1}`)!();
-          await pending[index];
+        if (retryWhilePreparing) {
+          const original = release.get("connection-1")!;
+          release.get("connection-2")!();
+          await pending[1];
+          const retry = handleConversationSend(inputs[0], first);
+          await vi.waitFor(() => expect(release.get("connection-1")).not.toBe(original));
+          release.get("connection-1")!();
+          await retry;
+          original();
+          await pending[0];
+        } else {
+          for (const index of newerFirst ? [1, 0] : [0, 1]) {
+            release.get(`connection-${index + 1}`)!();
+            await pending[index];
+          }
         }
         expect(storage.kv.get<{ connectionId: string }>("ship-reply:1000")?.connectionId).toBe("connection-2");
       } finally {

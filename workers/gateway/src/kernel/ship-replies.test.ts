@@ -77,12 +77,11 @@ describe("Ship reply preference", () => {
       const routes = new RunRouteStore(sql);
       const web = humanConnection("web");
       const connections = new Map([[web.id, web]]);
-      const earlier = replies.reserveOrder(1000);
+      replies.recordClientInput(1000, web.id, "ship", "input", routes);
       const later = replies.reserveOrder(1000);
-      replies.recordClientMessage(1000, web.id, "client-input", earlier, routes);
       replies.recordAdapter(1000, later);
       expect(replies.activeConnection(1000, connections)).toBeNull();
-      replies.recordClientMessage(1000, web.id, "client-input", replies.reserveOrder(1000), routes);
+      replies.recordClientInput(1000, web.id, "ship", "input", routes);
       expect(replies.activeConnection(1000, connections)).toBeNull();
       replies.recordClient(1000, web.id);
       new ShipReplies(storage).recordAdapter(1000, later);

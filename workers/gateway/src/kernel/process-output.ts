@@ -423,13 +423,13 @@ async commitProcessMessage(
       createdAt: Date.now(),
     };
     if (args.media?.length) appendInput.media = args.media;
+    let route = this.host.runRoutes.pinMessageRoute(messageId, () =>
+      this.resolveRunRoute(processId, args.runId, process.ownerUid, conversation.id));
     const appended = await stub.append(appendInput);
     const { message } = appended;
     this.host.conversations.recordSequence(conversation.id, message.sequence);
     this.host.runRoutes.deleteMessageRoute(processMessageDraftId(args.runId, args.actionId));
 
-    let route = this.host.runRoutes.pinMessageRoute(message.id, () =>
-      this.resolveRunRoute(processId, args.runId, process.ownerUid, conversation.id));
     if (route?.uid !== process.ownerUid || route?.processId !== processId) {
       if (route) this.host.runRoutes.delete(args.runId);
       route = null;

@@ -2080,6 +2080,30 @@ describe("adapter lifecycle handlers", () => {
     });
   });
 
+  it("retains adapter input order when preparation fails before the Process delivery checkpoint", async () => {
+    await runWithRealKernelSql(async (_sql, storage) => {
+      const ctx = makeContext({}, { upsert: vi.fn() });
+      ctx.shipReplies = new ShipReplies(storage);
+      ensurePersonalControllerMock.mockRejectedValueOnce(new Error("route preparation failed"));
+      sendFrameToProcessMock.mockImplementation(async (_installationId: string, _pid: string, frame: any) => ({
+        type: "res", id: frame.id, ok: true,
+        data: frame.call === "proc.history" ? { pendingHil: null } : {
+          ok: true, status: "started", runId: frame.args.runId, queued: false,
+        },
+      }));
+      const inbound = {
+        adapter: "telegram", accountId: "bot", deliveryId: "recover-preparation",
+        message: { messageId: "recover-preparation", surface: { kind: "dm" as const, id: "chat-42" },
+          actor: { id: "telegram:user:42" }, text: "Continue here." },
+      };
+      await expect(handleAdapterInbound(inbound, ctx)).rejects.toThrow("route preparation failed");
+      ctx.shipReplies = new ShipReplies(storage);
+      ctx.shipReplies.recordClient(1000, "desktop");
+      await expect(handleAdapterInbound(inbound, ctx)).resolves.toMatchObject({ ok: true });
+      expect(storage.kv.get<{ connectionId: string | null }>("ship-reply:1000")?.connectionId).toBe("desktop");
+    });
+  });
+
   it("upgrades an in-flight legacy Process delivery checkpoint", async () => {
     const legacyRecovery = {
       kind: "process_delivery",
@@ -2944,7 +2968,10 @@ describe("adapter lifecycle handlers", () => {
     const recovered = await handleAdapterInbound(inbound, ctx);
     expect(recovered.reply?.text).toContain("[SHIP]");
     expect(recovered.reply?.text).toContain(replacementPersonal.processId.slice(0, 13));
-    expect(ctx.adapters.ingressReceipts.checkpoint).toHaveBeenCalledTimes(1);
+    expect(ctx.adapters.ingressReceipts.checkpoint).toHaveBeenCalledTimes(2);
+    expect(ctx.adapters.ingressReceipts.checkpoint).toHaveBeenLastCalledWith(
+      expect.any(String), expect.any(String), expect.objectContaining({ kind: "work_return" }),
+    );
     expect(ctx.adapters.surfaceRoutes.clearRouteIfMatches).toHaveBeenCalledTimes(2);
     expect(sendFrameToProcessMock).toHaveBeenNthCalledWith(
       1,

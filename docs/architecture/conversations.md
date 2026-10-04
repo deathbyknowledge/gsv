@@ -120,8 +120,8 @@ contact destinations remain fixed. Personal Ship replies follow the owner's curr
   fallback. Accepted inputs preserve their preference decision across retries without replacing
   newer activity. The Kernel orders input before asynchronous preparation, so overlapping sends
   select the newest input regardless of which preparation finishes first.
-- Each committed message retains its delivery decision for retry deduplication. Retrying that
-  message does not notify a different endpoint after the preference changes. Receipts expire after
+- Each outgoing message records its delivery decision before the canonical append. Retrying an
+  uncertain append does not notify a different endpoint after the preference changes. Receipts expire after
   30 days, independently of the lifetime of canonical conversation history.
 
 Streaming begins before the Send call is complete. As the model writes the call's arguments, the

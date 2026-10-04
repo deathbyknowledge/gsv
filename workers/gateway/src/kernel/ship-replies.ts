@@ -16,12 +16,13 @@ export class ShipReplies {
     this.record(uid, connectionId, this.reserveOrder(uid));
   }
 
-  recordClientMessage(
-    uid: number, connectionId: string, messageId: string, order: number,
+  recordClientInput(
+    uid: number, connectionId: string, conversationId: string, idempotencyKey: string,
     routes: RunRouteStore,
   ): void {
-    this.storage.transactionSync(() => routes.pinMessageRoute(messageId, () => {
-      this.record(uid, connectionId, order);
+    const receiptId = `client-input:${JSON.stringify([conversationId, idempotencyKey])}`;
+    this.storage.transactionSync(() => routes.pinMessageRoute(receiptId, () => {
+      this.recordClient(uid, connectionId);
       return null;
     }));
   }

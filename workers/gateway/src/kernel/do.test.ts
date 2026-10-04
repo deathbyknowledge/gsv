@@ -8,6 +8,7 @@ import * as personalController from "./personal-controller";
 import type { AdapterService } from "../adapter-interface";
 import { runWithRealKernelSql } from "../test-support/real-kernel-sql";
 import { IdentityLinkStore } from "./identity-links";
+import { RunRouteStore } from "./run-routes";
 const getConversationByIdMock = vi.spyOn(utils, "getConversationById");
 
 import { Kernel, kernelRuntimes } from "./do";
@@ -1579,6 +1580,31 @@ describe("Kernel canonical message commits", () => {
     });
 
     expect(kernel.runRoutes.delete).not.toHaveBeenCalled();
+  });
+
+  it("keeps the delivery decision when a committed append loses its response", async () => {
+    await runWithRealKernelSql(async (sql) => {
+      const kernel = buildCommitKernel(null);
+      kernel.runRoutes = new RunRouteStore(sql);
+      const input = { processId: "proc-1", runId: "run-uncertain", uid: 1000, connectionId: "origin" };
+      kernel.runRoutes.setConnectionRoute(input);
+      const send = vi.spyOn(kernel.connectionRuntime, "sendSignalToConnection");
+      const stub = conversationStub();
+      const append = stub.append.getMockImplementation()!;
+      let committed: Awaited<ReturnType<typeof append>>;
+      stub.append.mockImplementationOnce(async (input) => {
+        committed = await append(input);
+        throw new Error("lost append response");
+      }).mockImplementation(async () => ({ ...committed, created: false }));
+      getConversationByIdMock.mockReset();
+      getConversationByIdMock.mockReturnValue(stub);
+      const args = { runId: input.runId, actionId: "send", conversationId: conversation.id, text: "hello" };
+      await expect(kernel.processOutput.commitProcessMessage("proc-1", args)).rejects.toThrow("lost append response");
+      kernel.runRoutes = new RunRouteStore(sql);
+      kernel.runRoutes.setConnectionRoute({ ...input, connectionId: "newer-client" });
+      await kernel.processOutput.commitProcessMessage("proc-1", args);
+      expect(send).toHaveBeenCalledExactlyOnceWith("origin", "message.committed", expect.objectContaining({ directed: true }));
+    });
   });
 
   it("uses the last authorized private destination only for an explicit Personal message", async () => {
