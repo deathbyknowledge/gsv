@@ -276,12 +276,6 @@ jobs:
             cp host/helpers/gestures/THIRD_PARTY.md release/gsv-vision-THIRD_PARTY.md
           fi
 
-      - name: Package transcription runtime
-        run: >-
-          python3 host/scripts/package-transcriber.py
-          --binary-dir host/target/${{ matrix.target }}/release
-          --platform ${{ matrix.platform }} --output release
-
       - name: Package macOS app
         if: runner.os == 'macOS'
         env:
@@ -306,6 +300,12 @@ jobs:
           }
           ./host/scripts/package-windows.ps1 -BinDir host/target/${{ matrix.target }}/release -Output release
           ./host/scripts/sign-windows.ps1 -Directory release
+
+      - name: Package transcription runtime
+        run: >-
+          python3 host/scripts/package-transcriber.py
+          --binary-dir host/target/${{ matrix.target }}/release
+          --platform ${{ matrix.platform }} --output release
 
       - name: Upload Desktop
         uses: actions/upload-artifact@v4
