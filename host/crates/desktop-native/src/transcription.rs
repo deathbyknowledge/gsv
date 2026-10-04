@@ -787,7 +787,7 @@ struct HelperProcess {
 
 impl HelperProcess {
     fn spawn() -> Result<Self, VoiceErrorCode> {
-        #[cfg(all(windows, target_arch = "x86_64"))]
+        #[cfg(target_arch = "x86_64")]
         if !(std::is_x86_feature_detected!("avx2")
             && std::is_x86_feature_detected!("fma")
             && std::is_x86_feature_detected!("f16c"))

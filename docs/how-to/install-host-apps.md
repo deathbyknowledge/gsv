@@ -246,8 +246,9 @@ blocked launch, use System Settings → Privacy & Security → Open Anyway.
 Replace the bundle to update it. Windows includes both local helpers; microphone
 and camera access require an interactive session and permission in Windows
 Privacy settings.
-The Windows helpers use CPU inference. Local voice requires AVX2 with FMA/F16C;
-Desktop explains when a CPU does not support it. This requirement applies only
+The Windows helpers use CPU inference. On x86-64 Linux, macOS and Windows, local voice
+requires AVX2 with FMA/F16C; AVX-512 is not required. Desktop explains when a CPU does
+not support it. This requirement applies only
 to voice. Gesture inference selects supported CPU instructions at runtime.
 
 ## Manual verification

@@ -176,6 +176,12 @@ native initializers. The artifact check rejects unconverted legacy constructor
 sections as well as external math-library dependencies, so voice needs no
 additional BLAS installation on the user's machine.
 
+x86-64 voice builds use an explicit AVX2/FMA/F16C baseline on Linux, macOS and Windows
+instead of the build runner's native CPU features. Release and CI builds clear cached
+ggml CPU options before setting that baseline, and Desktop checks those features before
+starting the helper. This prevents an AVX-512-capable runner from producing a helper that
+crashes on supported AVX2 computers.
+
 Hands-free has Off, Ready and Listening states. One finger starts or pauses
 listening; two sends, three deletes, four clears dictated text, and both fists
 exits hands-free. The thumb counts independently and any finger combination

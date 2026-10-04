@@ -46,11 +46,13 @@ macOS continues to use the system Accelerate framework.
 inference with a pinned public speech recording and the production model.
 Linux CI and every native release run it without opening a microphone.
 
-Windows CI and releases set
+x86-64 CI and releases on Linux, macOS and Windows set
 `TRANSCRIBE_CMAKE_ARGS="-UGGML_* -DTRANSCRIBE_X86_CONSERVATIVE=ON -DGGML_AVX=ON -DGGML_AVX2=ON -DGGML_FMA=ON -DGGML_F16C=ON"` so the speech
 runtime targets AVX2 with FMA/F16C instead of the build runner's instruction set.
-Desktop checks these CPU features before launching voice. The cache reset prevents
+Desktop checks these CPU features before launching voice on each x86-64 platform. The cache reset prevents
 a previous native build from retaining newer instructions such as AVX-512.
+Linux adds its static BLAS settings to these CPU settings. ARM64 builds retain their own
+architecture settings.
 
 Run `python host/scripts/check-transcription.py` to exercise actual streaming CPU inference
 without a microphone. It downloads and verifies a pinned public JFK speech fixture from
