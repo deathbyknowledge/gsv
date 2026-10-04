@@ -371,7 +371,7 @@ describe("gateway runtime integration", () => {
     second.sendSignal("client.activity");
     await second.proc.list({});
     held.release();
-    await waitFor(() => received[1]!.some(message => message.text === "Reply in the active window."), "active window reply");
+    await waitFor(() => received.every(messages => messages.some(message => message.text === "Reply in the active window.")), "reply synchronized to both windows");
     expect(received[1]).toContainEqual({ text: "Reply in the active window.", directed: true });
     expect(received[0]).toContainEqual({ text: "Reply in the active window.", directed: false });
     expect(await listOutbound(harness, ACCOUNT_ID)).toHaveLength(1);
