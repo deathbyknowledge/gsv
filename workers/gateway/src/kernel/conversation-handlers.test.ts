@@ -73,6 +73,7 @@ function context(ownerUid = 1000): KernelContext {
       recordSequence: vi.fn(),
       recordContactMessage: vi.fn(),
     },
+    shipReplies: { recordClient: vi.fn() },
     runRoutes: {
       setConnectionRoute: vi.fn(),
       delete: vi.fn(),
@@ -232,6 +233,7 @@ describe("conversation handlers", () => {
       }),
     );
     expect(ctx.runRoutes.setConnectionRoute).toHaveBeenCalledWith({
+      followsShip: true,
       runId: result.runId,
       processId: PROCESS.processId,
       uid: 1000,

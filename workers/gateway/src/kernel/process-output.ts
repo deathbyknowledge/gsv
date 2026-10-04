@@ -15,6 +15,7 @@ import {
 } from "./processes";
 import {
   RunRouteStore,
+  type RunRoute,
 } from "./run-routes";
 import {
   getConversationById,
@@ -89,6 +90,26 @@ export class ProcessOutput {
 
 readonly pendingProcessSignals = new Map<string, Promise<void>>();
 
+  resolveRunRoute(processId: string, runId: string, uid: number, conversationId?: string): RunRoute | null {
+    const route = this.host.runRoutes.get(runId);
+    if (route && (route.processId !== processId || route.uid !== uid)) {
+      this.host.runRoutes.delete(runId);
+      return null;
+    }
+    const process = this.host.procs.get(processId);
+    if (!process?.isPersonalController || process.ownerUid !== uid || (route && !route.followsShip)) return route;
+    if (conversationId && this.host.conversations.get(conversationId)?.kind !== "ship") return route;
+    const connectionId = this.host.shipReplies.activeConnection(uid, this.host.connections);
+    if (connectionId) {
+      if (route?.kind === "connection" && route.connectionId === connectionId) return route;
+      return this.host.runRoutes.setConnectionRoute({ runId, processId, uid, connectionId, followsShip: true });
+    }
+    const fallback = this.host.adapterDelivery.materializePersonalAdapterFallback(processId, runId, uid);
+    if (!fallback && route) this.host.runRoutes.delete(runId);
+    return fallback;
+  }
+
+
 /**
    * Relay process signals using deterministic run route lookups.
    */
@@ -107,16 +128,15 @@ readonly pendingProcessSignals = new Map<string, Promise<void>>();
 
     if (!userFrame) return;
 
-    let route = runId ? this.host.runRoutes.get(runId) : null;
+    let route = runId ? (frame.signal === "proc.run.finished"
+      ? this.host.runRoutes.get(runId)
+      : this.resolveRunRoute(processId, runId, ownerUid, userFrame.payload?.conversationId)) : null;
     if (!route && runId && frame.signal === "proc.run.hil.requested") {
       route = this.host.runRoutes.materializeProcessApprovalRoute({
         processId,
         runId,
         uid: ownerUid,
       });
-      if (!route && !userFrame.payload?.conversationId) {
-        route = this.host.adapterDelivery.materializePersonalAdapterFallback(processId, runId, ownerUid);
-      }
     }
 
     this.broadcastProcessSignal(ownerUid, processId, route, userFrame);
@@ -392,10 +412,8 @@ async commitProcessMessage(
     const { message } = appended;
     this.host.conversations.recordSequence(conversation.id, message.sequence);
 
-    let route = this.host.runRoutes.get(args.runId);
-    if (!route && !args.conversationId) {
-      route = this.host.adapterDelivery.materializePersonalAdapterFallback(processId, args.runId, process.ownerUid);
-    }
+    let route = this.host.runRoutes.pinMessageRoute(message.id, () =>
+      this.resolveRunRoute(processId, args.runId, process.ownerUid, conversation.id));
     if (route?.uid !== process.ownerUid || route?.processId !== processId) {
       if (route) this.host.runRoutes.delete(args.runId);
       route = null;
@@ -466,7 +484,7 @@ async deliverProcessMessageStream(
     ) {
       return;
     }
-    const route = this.host.runRoutes.get(payload.runId);
+    const route = this.resolveRunRoute(processId, payload.runId, process.ownerUid, payload.conversationId);
     if (
       !route
       || route.processId !== processId

@@ -50,3 +50,5 @@ export * from "./json";
 export * from "./events";
 export * from "./history";
 export type * from "./wire-frame";
+
+export * from "./client-activity";

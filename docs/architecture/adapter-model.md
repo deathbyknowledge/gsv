@@ -194,12 +194,13 @@ The canonical outbound path is:
 
 1. A process sends through the `Send` tool, or `message send` through Shell. Ordinary assistant
    text remains raw Process activity; a bare `yield` finishes without another Message.
-2. The Kernel commits the Message to the canonical conversation and looks up the
-   exact directed endpoint created during admission.
-3. If no conversation identity or exact route exists and this is a background run
-   in the canonical personal controller, the Kernel may materialize an adapter route
-   from the owner's last-active linked private destination. A disconnected client
-   conversation never jumps to an adapter, and other processes never use the fallback.
+2. The Kernel commits the Message to the canonical conversation and selects its
+   directed endpoint. Explicit Work, group and contact routes remain fixed.
+3. Personal Ship replies follow the owner's latest human origin or foreground client
+   activity across runs. If that client disconnects or is inactive for five minutes,
+   the Kernel uses the owner's last-active linked private messenger destination.
+   Other processes do not use this fallback. Each committed message keeps its chosen
+   destination through retries, even if the owner's preference changes.
 4. The Kernel rechecks the linked actor's destination authority.
 5. If the endpoint is an adapter, the Kernel schedules the delivery and sends one
    correlated `adapter.send` request with the exact route, content, and optional

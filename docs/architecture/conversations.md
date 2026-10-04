@@ -97,17 +97,25 @@ human delivery cannot erase a caller result.
 
 ## Directed endpoints and synchronization
 
-The run route identifies the endpoint that caused the interaction. It controls immediate delivery,
-not conversation ownership:
+The run route controls immediate delivery, not conversation ownership. Explicit Work, group and
+contact destinations remain fixed. Personal Ship replies follow the owner's current reply preference:
 
-- The originating Web/Desktop/CLI connection receives `message.started` and `message.delta` while
+- The selected Web/Desktop/CLI connection receives `message.started` and `message.delta` while
   the model is still writing the message, then `message.committed`.
 - Other signed-in clients receive only the committed canonical message as synchronization. They do
   not play a notification or act as though the response was directed to them.
 - Adapters buffer Process output and deliver only the committed message. Provider-specific reply
   threading remains transport metadata.
-- A background Personal run without a conversation-origin route may use the last authorized private
-  adapter destination. A disconnected client-origin conversation never falls back to an adapter.
+- A human message to Ship selects its originating endpoint. Real foreground input in Web or Desktop
+  also selects that client, at most once every 30 seconds; connecting, focusing a window, history
+  reads and keepalives do not. This preference survives the end of a run and Process replacement.
+- When the selected client disconnects or has been inactive for five minutes, Ship uses the owner's
+  last authorized linked private messenger destination. A new messenger message selects that
+  messenger; returning to interact with the app selects the app again. Without a usable destination,
+  the message remains in canonical history.
+- Each committed message retains its delivery decision for retry deduplication. Retrying that
+  message does not notify a different endpoint after the preference changes. Receipts expire after
+  30 days, independently of the lifetime of canonical conversation history.
 
 Streaming begins before the Send call is complete. As the model writes the call's arguments, the
 Process reads the `text` string out of the partial JSON and appends each newly completed run of
@@ -119,8 +127,9 @@ the client drops the preview and shows the committed message. A Send that fails 
 generation that fails or retries, and a run that is interrupted, superseded, reset or killed also abort
 their projections, so no partial text outlives its message. Adapters never see the projection.
 
-The same rule applies to approvals: a client-origin HIL request does not jump to Telegram if its
-connection disappears, while a background Personal event may use the authorized private fallback.
+New Ship approval notifications use the same reply preference and authorized messenger fallback.
+Delegated Work retains its inherited approval route. An already queued adapter delivery keeps its
+chosen destination through retries; changing activity does not replay old notifications.
 
 In Web and Desktop, new approval requests scroll into view without moving the composer cursor or
 changing its draft. Use the buttons to decide, or `y` / `n` when not typing. The request has its own

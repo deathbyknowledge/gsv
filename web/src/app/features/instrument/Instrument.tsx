@@ -20,6 +20,7 @@ import { useTabAttention } from "./shared/useTabAttention";
 import { RetainedView } from "../../services/navigation/ViewActivity";
 import { ClientControlError, useClientControl } from "../../services/platform/ClientControl";
 import { useGateway } from "../../services/gateway/GatewayProvider";
+import { trackClientActivity } from "../../services/gateway/clientActivity";
 import "./instrument.css";
 
 /** The three distances of the instrument. Zen is near, Fleet is far, the first day is Zen's empty state. */
@@ -70,6 +71,13 @@ export function Instrument({ initialPath }: { initialPath: string }) {
 function InstrumentReady({ initialPath }: { initialPath: string }) {
   const { service: session } = useSession();
   const { client, status } = useGateway();
+  useEffect(() => {
+    if (status.state !== "connected") return;
+    return trackClientActivity(document, (signal) => {
+      // Activity is disposable if the socket closes before the next render.
+      try { client.sendSignal(signal); } catch { /* The next input after reconnect reports activity. */ }
+    });
+  }, [client, status.state]);
   const [distance, setDistance] = useState<Distance>(() => distanceForPath(initialPath));
   const [fleetRequest, setFleetRequest] = useState<FleetProps["openRequest"]>(null);
   const [zenPrefill, setZenPrefill] = useState<string | null>(null);

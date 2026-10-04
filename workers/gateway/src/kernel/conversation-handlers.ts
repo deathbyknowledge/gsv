@@ -160,6 +160,9 @@ export async function handleConversationSend(
   const { message } = appended;
   ctx.conversations.recordSequence(conversation.id, message.sequence);
   if (appended.created) {
+    if (conversation.kind === "ship" && ctx.connection && principalOf(ctx)?.account.uid === conversation.ownerUid) {
+      ctx.shipReplies.recordClient(conversation.ownerUid, ctx.connection.id);
+    }
     ctx.broadcastToUserUid(conversation.ownerUid, "message.committed", {
       message,
       directed: false,
@@ -193,6 +196,7 @@ export async function handleConversationSend(
       processId: conversation.handlerPid,
       uid: conversation.ownerUid,
       connectionId: ctx.connection.id,
+      followsShip: conversation.kind === "ship" && principalOf(ctx)?.account.uid === conversation.ownerUid,
     });
   }
   let result: Extract<ProcSendResult, { ok: true }>;

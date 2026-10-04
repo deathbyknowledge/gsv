@@ -674,6 +674,7 @@ async function deliverAdapterInboundToProcess(input: {
   );
   ctx.conversations.recordSequence(conversation.id, appended.message.sequence);
   if (appended.created) {
+    if (conversation.kind === "ship") ctx.shipReplies.recordAdapter(uid);
     ctx.broadcastToUserUid(uid, "message.committed", {
       message: appended.message,
       directed: false,
@@ -698,6 +699,7 @@ async function deliverAdapterInboundToProcess(input: {
     });
   }
   ctx.runRoutes.setAdapterRoute({
+    followsShip: conversation.kind === "ship",
     runId,
     processId: pid,
     uid,

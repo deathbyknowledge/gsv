@@ -1,3 +1,4 @@
+import { KERNEL_V064_SHIP_REPLY_ROUTES } from "./v064_ship_reply_routes";
 import { runSqlMigrations, type SqlMigration } from "../../schema/runner";
 import { KERNEL_V001_INITIAL_SCHEMA } from "./v001_initial";
 import { KERNEL_V002_REMOVE_DEVICE_LIFECYCLE } from "./v002_remove_device_lifecycle";
@@ -178,6 +179,7 @@ export const KERNEL_MIGRATIONS: readonly SqlMigration[] = [
   KERNEL_V061_BOUND_APPROACH_INVITES,
   KERNEL_V062_PRIVATE_CONVERSATION_VIEWS,
   KERNEL_V063_CONTACT_REPLY_CONTINUATIONS,
+  KERNEL_V064_SHIP_REPLY_ROUTES,
 ];
 
 export function runKernelSqlMigrations(storage: DurableObjectStorage): void {

@@ -580,6 +580,7 @@ function makeContext(
       isEnabled: vi.fn(() => false),
     },
     reconcileResponsibilityWake: vi.fn(async () => undefined),
+    shipReplies: { recordAdapter: vi.fn() },
     runRoutes: {
       setAdapterRoute: vi.fn(),
       get: vi.fn(() => options.runRoute ?? null),
@@ -1914,6 +1915,7 @@ describe("adapter lifecycle handlers", () => {
         admittedRunId = frame.args.runId;
         expect(ctx.runRoutes.setAdapterRoute).toHaveBeenCalledWith({
           runId: admittedRunId,
+          followsShip: false,
           processId: "pid-1",
           uid: 1000,
           destination: {

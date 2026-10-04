@@ -26,6 +26,7 @@ import {
 // SAFETY: tests assign the exact collaborators each scenario asserts on.
 const bareKernel = (): any => {
   const kernel = Object.create(Kernel.prototype);
+  kernel.shipReplies = { activeConnection: vi.fn(() => null), recordClient: vi.fn(), recordAdapter: vi.fn() };
   kernel.manual = { ensureCurrent: vi.fn(async () => {}) };
   kernel.retirement = { assertActive: vi.fn(), state: undefined };
   Object.assign(kernel, kernelRuntimes(kernel));
@@ -1485,6 +1486,7 @@ describe("Kernel canonical message commits", () => {
     kernel.runRoutes = {
       get: vi.fn(() => route),
       delete: vi.fn(),
+      pinMessageRoute: vi.fn((_id, choose) => choose()),
     };
     kernel.adapterDelivery.materializePersonalAdapterFallback = vi.fn(() => null);
     kernel.adapterDelivery.queueAdapterRouteDelivery = vi.fn(async () => undefined);
@@ -1622,7 +1624,7 @@ describe("Kernel canonical message commits", () => {
     });
   });
 
-  it("does not redirect a disconnected client conversation to an adapter", async () => {
+  it("checks messenger fallback for a disconnected Ship conversation", async () => {
     const kernel = buildCommitKernel(null);
     kernel.connections = new Map();
     getConversationByIdMock.mockReset();
@@ -1635,7 +1637,7 @@ describe("Kernel canonical message commits", () => {
       text: "stays in Ship",
     });
 
-    expect(kernel.adapterDelivery.materializePersonalAdapterFallback).not.toHaveBeenCalled();
+    expect(kernel.adapterDelivery.materializePersonalAdapterFallback).toHaveBeenCalledWith("proc-1", "run-disconnected-client", 1000);
     expect(kernel.adapterDelivery.queueAdapterRouteDelivery).not.toHaveBeenCalled();
   });
 
@@ -1729,6 +1731,7 @@ describe("Kernel process signal routing", () => {
       queuedCount: 0,
     };
     kernel.procs.get.mockReturnValue(process);
+    kernel.conversations = { get: vi.fn(() => ({ kind: "ship" })) };
     const preferred = options.preferred === undefined
       ? preferredDestination
       : options.preferred;
@@ -2117,7 +2120,7 @@ describe("Kernel process signal routing", () => {
     );
   });
 
-  it("does not redirect a disconnected client approval to an adapter", async () => {
+  it("routes a disconnected Ship approval to the authorized private destination", async () => {
     const { kernel, setAdapterRoute } = buildPersonalFallbackKernel();
     const frame = {
       type: "sig",
@@ -2130,8 +2133,10 @@ describe("Kernel process signal routing", () => {
 
     await kernel.processOutput.handleProcessSignal("proc-1", frame, frame);
 
-    expect(setAdapterRoute).not.toHaveBeenCalled();
-    expect(kernel.adapterDelivery.queueAdapterRouteDelivery).not.toHaveBeenCalled();
+    expect(setAdapterRoute).toHaveBeenCalledOnce();
+    expect(kernel.adapterDelivery.queueAdapterRouteDelivery).toHaveBeenCalledWith(
+      expect.objectContaining({ destination: preferredDestination }), frame, 1,
+    );
     expect(kernel.connectionRuntime.broadcastToUserUid).toHaveBeenCalledOnce();
   });
 

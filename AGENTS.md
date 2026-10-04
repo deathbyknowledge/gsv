@@ -143,7 +143,7 @@ OS service privilege must never become an agent shell privilege by accident.
 - Filesystem, shell, and network behavior must remain consistent between local gateway and device implementations.
 - Adapters receive stable actor and surface semantics; channel-specific identifiers do not leak into generic RPCs.
 - Private user surfaces default to the personal process. Direct access to another process is an explicit, visibly labeled work session; opening one surface must not silently redefine the user's personal intelligence elsewhere.
-- A run route directs immediate message streaming and delivery to one originating endpoint; it does not own the canonical conversation. Other clients synchronize committed messages without inheriting that endpoint's delivery behavior.
+- A run route directs immediate message streaming and delivery to one endpoint; it does not own the canonical conversation. Personal Ship follows the owner's latest human origin or foreground client activity across runs, falling back to the last authorized private messenger when the selected client disconnects or is inactive for five minutes. Opening a client or keepalives do not claim activity. Explicit Work, group and contact routes stay fixed. Each committed message retains its chosen route through retries; other clients synchronize it without another notification.
 
 ### Data and security
 

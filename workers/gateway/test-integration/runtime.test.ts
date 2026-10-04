@@ -333,6 +333,68 @@ describe("gateway runtime integration", () => {
     );
   });
 
+  it("remembers Ship client activity and falls back to the linked messenger after disconnect", async () => {
+    const first = await setupClient();
+    const challenge = inboundResult(await sendServiceFrame(harness, inboundFrame({
+      id: "reply-link", deliveryId: "reply-link", messageId: "reply-link", text: "connect",
+    })));
+    if (!challenge.challenge) throw new Error("Missing link challenge");
+    await first.sys.link.consume({ code: challenge.challenge.code });
+    const { conversation } = await first.conversation.ship({});
+    if (!conversation.handlerPid) throw new Error("Missing Ship");
+    const pid = conversation.handlerPid;
+    await configureDeterministicAi(first, pid, ai.baseUrl);
+    ai.enqueue({ kind: "message", text: "Messenger ready." });
+    await sendServiceFrame(harness, inboundFrame({
+      id: "reply-seed", deliveryId: "reply-seed", messageId: "reply-seed", text: "Hello Ship",
+    }));
+    await waitForOutbound(harness, ACCOUNT_ID, 1);
+    await waitFor(async () => {
+      const history = await first.proc.history({ pid });
+      return history.ok && history.activeRunId === null;
+    }, "messenger run to finish");
+
+    const second = new GSVClient({ url: webSocketUrl(baseUrl), username: USERNAME, password: PASSWORD,
+      peer: { id: "second-ui", version: "test", platform: "desktop" } });
+    clients.add(second);
+    const committed = z.object({ message: z.object({ text: z.string() }), directed: z.boolean() });
+    const received: { text: string; directed: boolean }[][] = [[], []];
+    [first, second].forEach((client, index) => client.onSignal((signal, payload) => {
+      if (signal !== "message.committed") return;
+      const message = committed.parse(payload);
+      received[index]!.push({ text: message.message.text, directed: message.directed });
+    }));
+    await second.connect();
+    const held = ai.hold({ kind: "message", text: "Reply in the active window." });
+    await first.conversation.send({ conversationId: conversation.id, text: "Continue here." });
+    await held.started;
+    second.sendSignal("client.activity");
+    await second.proc.list({});
+    held.release();
+    await waitFor(() => received[1]!.some(message => message.text === "Reply in the active window."), "active window reply");
+    expect(received[1]).toContainEqual({ text: "Reply in the active window.", directed: true });
+    expect(received[0]).toContainEqual({ text: "Reply in the active window.", directed: false });
+    expect(await listOutbound(harness, ACCOUNT_ID)).toHaveLength(1);
+    await waitFor(async () => {
+      const history = await first.proc.history({ pid });
+      return history.ok && history.activeRunId === null;
+    }, "client run to finish");
+
+    const delayed = ai.hold({ kind: "message", text: "Reply after closing the window." });
+    const sent = await first.conversation.send({ conversationId: conversation.id, text: "Keep working while I leave." });
+    await delayed.started;
+    first.close();
+    const storage = await harness.getWorker("gsv").getDurableObjectStorage("KERNEL", { name: INTEGRATION_INSTALLATION_ID });
+    await waitFor(async () => (await storage.exec("SELECT run_id FROM run_routes WHERE run_id = ?", sent.runId)).length === 0, "origin socket to close");
+    delayed.release();
+    const outbound = await waitForOutbound(harness, ACCOUNT_ID, 2);
+    expect(outbound.at(-1)?.message.text).toContain("Reply after closing the window.");
+    await waitFor(() => received[1]!.some(message => message.text === "Reply after closing the window."), "observer to sync fallback reply");
+    expect(received[1]).toContainEqual({ text: "Reply after closing the window.", directed: false });
+    expect((await second.conversation.history({ conversationId: conversation.id })).messages.at(-1)?.text)
+      .toBe("Reply after closing the window.");
+  });
+
   it("routes reciprocal adapter ingress, durable commands, and automatic replies", async () => {
     const client = await setupClient();
     const beforeChallenge = await processHistoryCounts(client);
