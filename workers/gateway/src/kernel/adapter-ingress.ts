@@ -116,6 +116,7 @@ type AdapterIngressProcessRecovery = {
   conversationId?: string;
   inputMessageId?: string;
   messageCreatedAt?: number;
+  replyPreferenceRevision?: string | null;
 };
 
 type AdapterIngressRecovery =
@@ -161,6 +162,7 @@ const adapterIngressRecoverySchema = z.discriminatedUnion("kind", [
     conversationId: z.optional(z.string()),
     inputMessageId: z.optional(z.string()),
     messageCreatedAt: z.optional(z.number().check(z.int(), z.positive())),
+    replyPreferenceRevision: z.optional(z.nullable(z.string())),
   }),
   z.object({
     kind: z.literal("work_return"),
@@ -432,6 +434,7 @@ async function resolveClaimedAdapterInbound(input: {
   if (!userIdentity) {
     return { ok: false, error: `Unknown local user uid=${uid}` };
   }
+  const replyPreferenceRevision = ctx.shipReplies.revision(uid);
 
   if (recovery === null && message.surface.kind === "dm") {
     const existingLink = ctx.adapters.identityLinks.get(adapter, accountId, actorId);
@@ -529,6 +532,7 @@ async function resolveClaimedAdapterInbound(input: {
     routeGeneration,
     uid,
     pid,
+    replyPreferenceRevision,
     ctx,
     checkpoint: { receiptId, claimToken },
   });
@@ -544,6 +548,7 @@ async function deliverAdapterInboundToProcess(input: {
   routeGeneration?: string;
   uid?: number;
   pid?: string;
+  replyPreferenceRevision?: string | null;
   recovery?: AdapterIngressProcessRecovery;
   checkpoint?: { receiptId: string; claimToken: string };
 }): Promise<AdapterInboundDisposition> {
@@ -595,6 +600,7 @@ async function deliverAdapterInboundToProcess(input: {
       conversationId: conversation.id,
       inputMessageId,
       messageCreatedAt: normalizeAdapterMessageCreatedAt(message.timestamp),
+      ...(input.replyPreferenceRevision === undefined ? undefined : { replyPreferenceRevision: input.replyPreferenceRevision }),
     };
     ctx.adapters.ingressReceipts.checkpoint(
       input.checkpoint.receiptId,
@@ -673,8 +679,10 @@ async function deliverAdapterInboundToProcess(input: {
     appendRequest,
   );
   ctx.conversations.recordSequence(conversation.id, appended.message.sequence);
+  if (conversation.kind === "ship" && (recovery.replyPreferenceRevision !== undefined || appended.created)) {
+    ctx.shipReplies.recordAdapter(uid, recovery.replyPreferenceRevision);
+  }
   if (appended.created) {
-    if (conversation.kind === "ship") ctx.shipReplies.recordAdapter(uid);
     ctx.broadcastToUserUid(uid, "message.committed", {
       message: appended.message,
       directed: false,
@@ -1069,4 +1077,3 @@ function replyToAdapterCommand(message: AdapterInboundMessage, text: string): Ad
     },
   };
 }
-

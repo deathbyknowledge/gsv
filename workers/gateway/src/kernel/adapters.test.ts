@@ -40,6 +40,7 @@ import {
 } from "@humansandmachines/gsv/protocol";
 import { runWithRealKernelSql } from "../test-support/real-kernel-sql";
 import { PrivateAdapterDestinationStore } from "./private-adapter-destinations";
+import { ShipReplies } from "./ship-replies";
 import type {
   AdapterService,
   AdapterServiceDescriptor,
@@ -580,7 +581,7 @@ function makeContext(
       isEnabled: vi.fn(() => false),
     },
     reconcileResponsibilityWake: vi.fn(async () => undefined),
-    shipReplies: { recordAdapter: vi.fn() },
+    shipReplies: { revision: vi.fn(() => null), recordAdapter: vi.fn() },
     runRoutes: {
       setAdapterRoute: vi.fn(),
       get: vi.fn(() => options.runRoute ?? null),
@@ -2049,6 +2050,34 @@ describe("adapter lifecycle handlers", () => {
       deliveredRunIds[0],
     ]);
     expect(adapterSetActivity).not.toHaveBeenCalled();
+  });
+
+  it.each([false, true])("recovers a committed Ship input without replacing newer client activity=%s", async (newerActivity) => {
+    await runWithRealKernelSql(async (_sql, storage) => {
+      const ctx = makeContext({}, { upsert: vi.fn() });
+      ctx.shipReplies = new ShipReplies(storage);
+      ctx.shipReplies.recordClient(1000, "web");
+      vi.spyOn(ctx.shipReplies, "recordAdapter").mockImplementationOnce(() => {
+        throw new Error("lost preference write after conversation commit");
+      });
+      sendFrameToProcessMock.mockImplementation(async (_installationId: string, _pid: string, frame: any) => ({
+        type: "res", id: frame.id, ok: true,
+        data: frame.call === "proc.history" ? { pendingHil: null } : {
+          ok: true, status: "started", runId: frame.args.runId, queued: false,
+        },
+      }));
+      const inbound = {
+        adapter: "telegram", accountId: "bot", deliveryId: "recover-preference",
+        message: { messageId: "recover-preference", surface: { kind: "dm" as const, id: "chat-42" },
+          actor: { id: "telegram:user:42" }, text: "Continue here." },
+      };
+      await expect(handleAdapterInbound(inbound, ctx)).rejects.toThrow("lost preference write");
+      ctx.shipReplies = new ShipReplies(storage);
+      if (newerActivity) ctx.shipReplies.recordClient(1000, "desktop");
+      await expect(handleAdapterInbound(inbound, ctx)).resolves.toMatchObject({ ok: true });
+      expect(storage.kv.get<{ connectionId: string | null }>("ship-reply:1000")?.connectionId)
+        .toBe(newerActivity ? "desktop" : null);
+    });
   });
 
   it("upgrades an in-flight legacy Process delivery checkpoint", async () => {
