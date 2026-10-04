@@ -71,6 +71,25 @@ describe("Ship reply preference", () => {
     });
   });
 
+  it("orders overlapping client and adapter inputs without allowing a replay to reclaim the destination", async () => {
+    await runWithRealKernelSql((sql, storage) => {
+      const replies = new ShipReplies(storage);
+      const routes = new RunRouteStore(sql);
+      const web = humanConnection("web");
+      const connections = new Map([[web.id, web]]);
+      const earlier = replies.reserveOrder(1000);
+      const later = replies.reserveOrder(1000);
+      replies.recordClientMessage(1000, web.id, "client-input", earlier, routes);
+      replies.recordAdapter(1000, later);
+      expect(replies.activeConnection(1000, connections)).toBeNull();
+      replies.recordClientMessage(1000, web.id, "client-input", replies.reserveOrder(1000), routes);
+      expect(replies.activeConnection(1000, connections)).toBeNull();
+      replies.recordClient(1000, web.id);
+      new ShipReplies(storage).recordAdapter(1000, later);
+      expect(replies.activeConnection(1000, connections)).toBe(web.id);
+    });
+  });
+
   it("carries Ship replies across runs and switches endpoints without changing explicit routes or retry destinations", async () => {
     await runWithRealKernelSql(async (sql, storage) => {
       const clock = vi.spyOn(Date, "now").mockReturnValue(1_000);

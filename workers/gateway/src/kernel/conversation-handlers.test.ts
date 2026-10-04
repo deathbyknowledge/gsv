@@ -13,6 +13,7 @@ import { RunRouteStore } from "./run-routes";
 
 import * as utils from "../shared/utils";
 import * as personalController from "./personal-controller";
+import * as targets from "./targets";
 const getConversationByIdMock = vi.spyOn(utils, "getConversationById");
 const sendFrameToProcessMock = vi.spyOn(utils, "sendFrameToProcess");
 const ensurePersonalControllerMock = vi.spyOn(personalController, "ensurePersonalController");
@@ -76,7 +77,7 @@ function context(ownerUid = 1000): KernelContext {
       recordSequence: vi.fn(),
       recordContactMessage: vi.fn(),
     },
-    shipReplies: { revision: vi.fn(() => null), recordClientMessage: vi.fn() },
+    shipReplies: { reserveOrder: vi.fn(() => 1), recordClientMessage: vi.fn() },
     runRoutes: {
       setConnectionRoute: vi.fn(),
       delete: vi.fn(),
@@ -189,6 +190,40 @@ describe("conversation handlers", () => {
       await expect(handleConversationSend(input, ctx)).resolves.toMatchObject({ runId: message!.runId });
       expect(storage.kv.get<{ connectionId: string }>("ship-reply:1000")?.connectionId)
         .toBe(newerActivity ? "newer-window" : "connection-1");
+    });
+  });
+
+  it.each([false, true])("selects the newer overlapping send regardless of completion order, newer first=%s", async (newerFirst) => {
+    await runWithRealKernelSql(async (sql, storage) => {
+      const first = context();
+      const second = context();
+      second.connection!.id = "connection-2";
+      first.shipReplies = second.shipReplies = new ShipReplies(storage);
+      first.runRoutes = second.runRoutes = new RunRouteStore(sql);
+      const release = new Map<string, () => void>();
+      const target = vi.spyOn(targets, "resolveSelectedMessageTarget").mockImplementation(
+        (ctx) => new Promise((resolve) => release.set(ctx.connection!.id, () => resolve("gsv"))),
+      );
+      getConversationByIdMock.mockReturnValue({
+        append: vi.fn(async (input: any) => ({ created: true, message: canonicalMessage(input) })),
+      });
+      sendFrameToProcessMock.mockImplementation(async (_installationId, _pid, frame) => ({
+        type: "res", id: frame.id, ok: true,
+        data: { ok: true, runId: `run:${frame.args.interaction.messageId}`, queued: false, status: "started" },
+      }));
+      try {
+        const pending = [first, second].map((ctx, i) => handleConversationSend({
+          conversationId: SHIP.id, text: `Message ${i}`, idempotencyKey: `overlap-${i}`,
+        }, ctx));
+        await vi.waitFor(() => expect(release.size).toBe(2));
+        for (const index of newerFirst ? [1, 0] : [0, 1]) {
+          release.get(`connection-${index + 1}`)!();
+          await pending[index];
+        }
+        expect(storage.kv.get<{ connectionId: string }>("ship-reply:1000")?.connectionId).toBe("connection-2");
+      } finally {
+        target.mockRestore();
+      }
     });
   });
 

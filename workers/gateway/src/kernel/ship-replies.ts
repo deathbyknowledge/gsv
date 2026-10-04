@@ -6,33 +6,42 @@ import type { RunRouteStore } from "./run-routes";
 // Allow one reporting interval so throttled input never expires a client early.
 export const SHIP_CLIENT_IDLE_MS = 5 * 60 * 1000 + CLIENT_ACTIVITY_INTERVAL_MS;
 
-type ClientPreference = { connectionId: string | null; activeAt: number; revision: string };
+type ClientPreference = { connectionId: string | null; activeAt: number; order: number; appliedOrder: number };
 
 /** One private preference per owner, independent of Process and run lifetimes. */
 export class ShipReplies {
   constructor(private readonly storage: DurableObjectStorage) {}
 
   recordClient(uid: number, connectionId: string): void {
-    this.storage.kv.put(`ship-reply:${uid}`, { connectionId, activeAt: Date.now(), revision: crypto.randomUUID() } satisfies ClientPreference);
+    this.record(uid, connectionId, this.reserveOrder(uid));
   }
 
   recordClientMessage(
-    uid: number, connectionId: string, messageId: string, expectedRevision: string | null,
+    uid: number, connectionId: string, messageId: string, order: number,
     routes: RunRouteStore,
   ): void {
     this.storage.transactionSync(() => routes.pinMessageRoute(messageId, () => {
-      if (this.revision(uid) === expectedRevision) this.recordClient(uid, connectionId);
+      this.record(uid, connectionId, order);
       return null;
     }));
   }
 
-  revision(uid: number): string | null {
-    return this.storage.kv.get<ClientPreference>(`ship-reply:${uid}`)?.revision ?? null;
+  reserveOrder(uid: number): number {
+    const current = this.storage.kv.get<ClientPreference>(`ship-reply:${uid}`)
+      ?? { connectionId: null, activeAt: 0, order: 0, appliedOrder: 0 };
+    const order = current.order + 1;
+    this.storage.kv.put(`ship-reply:${uid}`, { ...current, order });
+    return order;
   }
 
-  recordAdapter(uid: number, expectedRevision?: string | null): void {
-    if (expectedRevision !== undefined && this.revision(uid) !== expectedRevision) return;
-    this.storage.kv.put(`ship-reply:${uid}`, { connectionId: null, activeAt: Date.now(), revision: crypto.randomUUID() } satisfies ClientPreference);
+  recordAdapter(uid: number, order = this.reserveOrder(uid)): void {
+    this.record(uid, null, order);
+  }
+
+  private record(uid: number, connectionId: string | null, order: number): void {
+    const current = this.storage.kv.get<ClientPreference>(`ship-reply:${uid}`)!;
+    if (order <= current.appliedOrder) return;
+    this.storage.kv.put(`ship-reply:${uid}`, { ...current, connectionId, activeAt: Date.now(), appliedOrder: order });
   }
 
   activeConnection(

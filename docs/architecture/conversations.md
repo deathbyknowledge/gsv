@@ -118,7 +118,8 @@ contact destinations remain fixed. Personal Ship replies follow the owner's curr
   the message remains in canonical history.
 - Idle expiry includes 30 seconds of reporting grace so throttled input cannot cause an early
   fallback. Accepted inputs preserve their preference decision across retries without replacing
-  newer activity.
+  newer activity. The Kernel orders input before asynchronous preparation, so overlapping sends
+  select the newest input regardless of which preparation finishes first.
 - Each committed message retains its delivery decision for retry deduplication. Retrying that
   message does not notify a different endpoint after the preference changes. Receipts expire after
   30 days, independently of the lifetime of canonical conversation history.

@@ -581,7 +581,7 @@ function makeContext(
       isEnabled: vi.fn(() => false),
     },
     reconcileResponsibilityWake: vi.fn(async () => undefined),
-    shipReplies: { revision: vi.fn(() => null), recordAdapter: vi.fn() },
+    shipReplies: { reserveOrder: vi.fn(() => 1), recordAdapter: vi.fn() },
     runRoutes: {
       setAdapterRoute: vi.fn(),
       get: vi.fn(() => options.runRoute ?? null),
