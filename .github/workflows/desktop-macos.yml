@@ -44,7 +44,7 @@ jobs:
             platform: darwin-arm64
     env:
       MACOSX_DEPLOYMENT_TARGET: '12.0'
-      TRANSCRIBE_CMAKE_ARGS: ${{ matrix.platform == 'darwin-x64' && '-UGGML_* -DTRANSCRIBE_X86_CONSERVATIVE=ON -DGGML_AVX=ON -DGGML_AVX2=ON -DGGML_FMA=ON -DGGML_F16C=ON' || '' }}
+      TRANSCRIBE_CMAKE_ARGS: ${{ matrix.platform == 'darwin-x64' && '-UGGML_* -DGGML_CPU_ALL_VARIANTS=ON -DTRANSCRIBE_X86_CONSERVATIVE=ON' || '' }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4

@@ -157,11 +157,11 @@ function Restore-Binaries([array]$Installed) {
     $record = $Installed[$index]
     if ($record.Backup) {
       if (Test-Path $record.Backup) {
-        Remove-Item -Force $record.Target -ErrorAction SilentlyContinue
+        Remove-Item -Recurse -Force $record.Target -ErrorAction SilentlyContinue
         Move-Item -Force $record.Backup $record.Target
       }
     } else {
-      Remove-Item -Force $record.Target -ErrorAction SilentlyContinue
+      Remove-Item -Recurse -Force $record.Target -ErrorAction SilentlyContinue
     }
   }
 }
@@ -279,6 +279,7 @@ function Install-GsvHost {
     "gsv-vision-LICENSE.apache-2.0" = "gsv-vision-LICENSE.apache-2.0"
     "gsv-vision-PROVENANCE.md" = "gsv-vision-PROVENANCE.md"
     "gsv-vision-THIRD_PARTY.md" = "gsv-vision-THIRD_PARTY.md"
+    "gsv-transcribe-runtime-$Platform.zip" = "gsv-transcribe-runtime"
   }
   if ($Headless) {
     $assets = [ordered]@{ "gsv-$Platform.exe" = "gsv.exe"; "gsvd-$Platform.exe" = "gsvd.exe" }
@@ -295,6 +296,12 @@ function Install-GsvHost {
       Download-VerifiedAsset $releaseRef $asset (Join-Path $tempDir $asset) $checksums
     }
     Write-Success "Verified $($assets.Count) release artifacts"
+    if (-not $Headless) {
+      Expand-Archive -LiteralPath (Join-Path $tempDir "gsv-transcribe-runtime-$Platform.zip") -DestinationPath $tempDir
+      if (-not (Test-Path (Join-Path $tempDir 'gsv-transcribe-runtime/transcribe.dll'))) {
+        throw 'Transcription runtime is missing'
+      }
+    }
 
     $service = Get-CimInstance Win32_Service -Filter "Name='gsvd'" -ErrorAction Stop
     $serviceExisted = $null -ne $service
@@ -312,13 +319,16 @@ function Install-GsvHost {
         $record = [PSCustomObject]@{ Target = $target; Backup = $backup }
         $installed += $record
         try {
-          Copy-Item -Force (Join-Path $tempDir $entry.Key) $staged
+          $source = if ($entry.Value -eq 'gsv-transcribe-runtime') {
+            Join-Path $tempDir $entry.Value
+          } else { Join-Path $tempDir $entry.Key }
+          Copy-Item -Recurse -Force $source $staged
           if ($backup) {
             Move-Item -Force $target $backup
           }
           Move-Item -Force $staged $target
         } finally {
-          Remove-Item -Force $staged -ErrorAction SilentlyContinue
+          Remove-Item -Recurse -Force $staged -ErrorAction SilentlyContinue
         }
       }
 
@@ -338,7 +348,7 @@ function Install-GsvHost {
 
     $rollbackNeeded = $false
     foreach ($record in $installed) {
-      if ($record.Backup) { Remove-Item -Force $record.Backup -ErrorAction SilentlyContinue }
+      if ($record.Backup) { Remove-Item -Recurse -Force $record.Backup -ErrorAction SilentlyContinue }
     }
   } finally {
     if ($rollbackNeeded) {

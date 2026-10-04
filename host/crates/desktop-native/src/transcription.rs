@@ -70,7 +70,6 @@ pub enum VoicePhase {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum VoiceErrorCode {
     NotInstalled,
-    UnsupportedCpu,
     HelperUnavailable,
     MicrophoneUnavailable,
     MicrophoneSilent,
@@ -787,19 +786,21 @@ struct HelperProcess {
 
 impl HelperProcess {
     fn spawn() -> Result<Self, VoiceErrorCode> {
-        #[cfg(target_arch = "x86_64")]
-        if !(std::is_x86_feature_detected!("avx2")
-            && std::is_x86_feature_detected!("fma")
-            && std::is_x86_feature_detected!("f16c"))
-        {
-            return Err(VoiceErrorCode::UnsupportedCpu);
-        }
         let executable = helper_executable()?;
         let mut command = Command::new(&executable);
         #[cfg(windows)]
         {
             use std::os::windows::process::CommandExt;
             command.creation_flags(0x08000000);
+            if let Some(directory) = executable.parent() {
+                let runtime = directory.join("gsv-transcribe-runtime");
+                let inherited = std::env::var_os("PATH").unwrap_or_default();
+                let search = std::iter::once(runtime).chain(std::env::split_paths(&inherited));
+                command.env(
+                    "PATH",
+                    std::env::join_paths(search).map_err(|_| VoiceErrorCode::HelperUnavailable)?,
+                );
+            }
         }
         let mut child = command
             .env("OPENBLAS_NUM_THREADS", "1")

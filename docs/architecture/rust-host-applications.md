@@ -176,11 +176,15 @@ native initializers. The artifact check rejects unconverted legacy constructor
 sections as well as external math-library dependencies, so voice needs no
 additional BLAS installation on the user's machine.
 
-x86-64 voice builds use an explicit AVX2/FMA/F16C baseline on Linux, macOS and Windows
-instead of the build runner's native CPU features. Release and CI builds clear cached
-ggml CPU options before setting that baseline, and Desktop checks those features before
-starting the helper. This prevents an AVX-512-capable runner from producing a helper that
-crashes on supported AVX2 computers.
+Voice builds use the speech library's dynamic backend selection. The portable core
+loads a compatible CPU variant at runtime, including a baseline x86-64 backend for
+computers without AVX2. Release and CI builds clear cached ggml CPU options before
+building all x86-64 variants, so the runner's CPU does not determine compatibility.
+Cargo stages the shared libraries and backends in `gsv-transcribe-runtime`; release
+archives, installers and the macOS app bundle carry that directory with the helper.
+Installers verify it and replace or roll it back with the binaries. The artifact
+check validates relocated libraries as well as the helper, and recorded-speech
+checks exercise both automatic selection and the baseline backend.
 
 Hands-free has Off, Ready and Listening states. One finger starts or pauses
 listening; two sends, three deletes, four clears dictated text, and both fists

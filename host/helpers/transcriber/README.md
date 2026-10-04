@@ -46,13 +46,20 @@ macOS continues to use the system Accelerate framework.
 inference with a pinned public speech recording and the production model.
 Linux CI and every native release run it without opening a microphone.
 
+The `dynamic-backends` feature builds a portable core and loadable CPU backends.
 x86-64 CI and releases on Linux, macOS and Windows set
-`TRANSCRIBE_CMAKE_ARGS="-UGGML_* -DTRANSCRIBE_X86_CONSERVATIVE=ON -DGGML_AVX=ON -DGGML_AVX2=ON -DGGML_FMA=ON -DGGML_F16C=ON"` so the speech
-runtime targets AVX2 with FMA/F16C instead of the build runner's instruction set.
-Desktop checks these CPU features before launching voice on each x86-64 platform. The cache reset prevents
-a previous native build from retaining newer instructions such as AVX-512.
-Linux adds its static BLAS settings to these CPU settings. ARM64 builds retain their own
-architecture settings.
+`TRANSCRIBE_CMAKE_ARGS="-UGGML_* -DGGML_CPU_ALL_VARIANTS=ON -DTRANSCRIBE_X86_CONSERVATIVE=ON"`.
+This clears stale CMake settings and builds the baseline x86-64 backend alongside
+optimized variants. The runtime selects a compatible variant using CPU and OS
+feature detection; AVX2 and AVX-512 are optional. Linux also includes its static
+BLAS settings. ARM64 uses its portable CPU backend.
+
+Cargo stages the shared libraries and backends in `gsv-transcribe-runtime` beside
+the helper. Release packaging, installers and macOS bundles include that directory;
+users do not select a backend or install these libraries separately. The helper
+locates its libraries relative to itself, including after installation elsewhere.
+The recorded-speech check runs from a temporary installation and, on x86-64,
+repeats with only the baseline CPU backend available.
 
 Run `python host/scripts/check-transcription.py` to exercise actual streaming CPU inference
 without a microphone. It downloads and verifies a pinned public JFK speech fixture from
@@ -61,7 +68,7 @@ loads the production model through the usual verified cache, and checks the fina
 The first run downloads the same 534 MiB model as Desktop. Windows CI runs this separately
 from the fast helper handshake check. Ordinary unit tests leave this network-dependent test ignored.
 
-Place `gsv-transcribe` beside `gsv-desktop`, or set `GSV_TRANSCRIBE_HELPER` to its absolute path for
+Place `gsv-transcribe` and its `gsv-transcribe-runtime` directory beside `gsv-desktop`, or set `GSV_TRANSCRIBE_HELPER` to its absolute path for
 development. Debug app builds also discover either a release or debug helper in the workspace
 `target` directory. Ship `THIRD_PARTY.md` beside the helper in standalone distributions;
 macOS app bundles keep it in `Contents/Resources/licenses/transcriber/`.

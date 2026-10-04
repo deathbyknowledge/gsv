@@ -52,7 +52,7 @@ def check(case, animated=True, exit_code=0):
             service.write_text(service_text)
             copier = root / "bin/cp"
             copier.write_text(f'''#!/bin/sh
-case "$2" in
+case "$3" in
   */.gsvd.new.*) touch '{root}/replacement-started'; sleep 10 ;;
 esac
 exec /usr/bin/cp "$@"
