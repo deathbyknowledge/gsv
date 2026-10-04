@@ -597,6 +597,7 @@ jobs:
             release/gsv-transcribe-darwin-x64
             release/gsv-transcribe-darwin-arm64
             release/gsv-transcribe-THIRD_PARTY.md
+            release/gsv-transcribe-runtime-*
             release/gsv-vision-linux-x64
             release/gsv-vision-linux-arm64
             release/gsv-vision-darwin-x64
