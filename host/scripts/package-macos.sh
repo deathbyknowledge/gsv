@@ -154,7 +154,8 @@ plutil -lint "$app/Contents/Info.plist" >/dev/null
   || die "bundle gesture-runtime notices staging failed"
 
 # Sign nested tools before the outer bundle signs its main executable.
-for library in "$runtime_dir/"*.dylib; do
+for library in "$runtime_dir/"*.dylib "$runtime_dir/"*.so; do
+  [[ -f "$library" ]] || continue
   codesign --force --sign - "$library"
 done
 for binary in "${binaries[@]}"; do

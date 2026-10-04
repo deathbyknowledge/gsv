@@ -40,6 +40,9 @@ done
 
 mkdir -p "$binary_dir/gsv-transcribe-runtime"
 printf 'int transcribe_fixture(void) { return 0; }\n' | clang -dynamiclib -x c - -o "$binary_dir/gsv-transcribe-runtime/libtranscribe.dylib"
+printf 'int backend_fixture(void) { return 0; }\n' | clang -bundle -x c - -o "$binary_dir/gsv-transcribe-runtime/libggml-cpu-x64.so"
+codesign --force --sign - "$binary_dir/gsv-transcribe-runtime/libggml-cpu-x64.so"
+codesign --remove-signature "$binary_dir/gsv-transcribe-runtime/libggml-cpu-x64.so"
 
 output="$scratch/packaged app"
 bash "$fixture/host/scripts/package-macos.sh" --release --skip-build --output "$output"
@@ -56,4 +59,5 @@ for binary in gsv-desktop gsv gsvd gsv-vision gsv-transcribe; do
   codesign --verify --strict "$app/Contents/MacOS/$binary"
 done
 codesign --verify --strict "$app/Contents/MacOS/gsv-transcribe-runtime/libtranscribe.dylib"
+codesign --verify --strict "$app/Contents/MacOS/gsv-transcribe-runtime/libggml-cpu-x64.so"
 printf 'macOS bundle and ZIP signing checks passed\n'
