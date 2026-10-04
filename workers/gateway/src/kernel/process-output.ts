@@ -100,13 +100,27 @@ readonly pendingProcessSignals = new Map<string, Promise<void>>();
     if (!process?.isPersonalController || process.ownerUid !== uid || (route && !route.followsShip)) return route;
     if (conversationId && this.host.conversations.get(conversationId)?.kind !== "ship") return route;
     const connectionId = this.host.shipReplies.activeConnection(uid, this.host.connections);
+    let next: RunRoute | null;
     if (connectionId) {
       if (route?.kind === "connection" && route.connectionId === connectionId) return route;
-      return this.host.runRoutes.setConnectionRoute({ runId, processId, uid, connectionId, followsShip: true });
+      next = this.host.runRoutes.setConnectionRoute({ runId, processId, uid, connectionId, followsShip: true });
+    } else {
+      next = this.host.adapterDelivery.materializePersonalAdapterFallback(processId, runId, uid);
+      if (!next && route) this.host.runRoutes.delete(runId);
     }
-    const fallback = this.host.adapterDelivery.materializePersonalAdapterFallback(processId, runId, uid);
-    if (!fallback && route) this.host.runRoutes.delete(runId);
-    return fallback;
+    if (route?.kind === "adapter" && (next?.kind !== "adapter"
+      || JSON.stringify(route.destination) !== JSON.stringify(next.destination)
+      || route.routeGeneration !== next.routeGeneration)) {
+      this.host.ctx.waitUntil(setAdapterActivityForKernel(
+        this.host.bindings,
+        this.host.installationId,
+        route.destination.adapter,
+        route.destination.accountId,
+        route.destination.surface,
+        adapterTypingActivity(route, false),
+      ).catch(() => undefined));
+    }
+    return next;
   }
 
 

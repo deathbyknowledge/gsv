@@ -70,19 +70,25 @@ describe("Ship reply preference", () => {
   });
 
   it("carries Ship replies across runs and switches endpoints without changing explicit routes or retry destinations", async () => {
-    await runWithRealKernelSql((sql, storage) => {
+    await runWithRealKernelSql(async (sql, storage) => {
       const clock = vi.spyOn(Date, "now").mockReturnValue(1_000);
       const shipReplies = new ShipReplies(storage);
       const runRoutes = new RunRouteStore(sql);
       const web = humanConnection("web");
       const connections = new Map([[web.id, web]]);
       const destination = { kind: "adapter" as const, adapter: "whatsapp", accountId: "managed", actorId: "person", surface: { kind: "dm" as const, id: "private" } };
+      let fallbackDestination: typeof destination | null = destination;
+      const adapterSetActivity = vi.fn(async () => ({ ok: true }));
+      const pending: Promise<unknown>[] = [];
       // SAFETY: this fixture supplies the complete route-selection boundary; stores and connection identity are real.
       const host = {
         shipReplies, runRoutes, connections,
+        installationId: "inst-replies",
+        bindings: { CHANNEL_WHATSAPP: { adapterSetActivity } },
+        ctx: { waitUntil: (promise: Promise<unknown>) => pending.push(promise) },
         procs: { get: (pid: string) => ({ ownerUid: 1000, isPersonalController: pid === "ship" }) },
         adapterDelivery: { materializePersonalAdapterFallback: (processId: string, runId: string, uid: number) =>
-          runRoutes.setAdapterRoute({ processId, runId, uid, followsShip: true, destination }) },
+          fallbackDestination ? runRoutes.setAdapterRoute({ processId, runId, uid, followsShip: true, destination: fallbackDestination }) : null },
       } as Kernel;
       const output = new ProcessOutput(host);
       shipReplies.recordClient(1000, web.id);
@@ -95,11 +101,25 @@ describe("Ship reply preference", () => {
       expect(runRoutes.pinMessageRoute("committed", () => output.resolveRunRoute("ship", "followup", 1000))).toEqual(chosen);
       shipReplies.recordClient(1000, web.id);
       expect(output.resolveRunRoute("ship", "followup", 1000)).toMatchObject({ kind: "connection", connectionId: "web" });
+      await Promise.all(pending);
+      expect(adapterSetActivity).toHaveBeenCalledExactlyOnceWith(
+        { installationId: "inst-replies" }, "managed", destination.surface, { kind: "typing", active: false },
+      );
       shipReplies.recordAdapter(1000);
       expect(output.resolveRunRoute("ship", "followup", 1000)).toMatchObject({ kind: "adapter", destination });
       shipReplies.recordClient(1000, web.id);
       connections.delete(web.id);
       expect(output.resolveRunRoute("ship", "followup", 1000)).toMatchObject({ kind: "adapter", destination });
+      expect(adapterSetActivity).toHaveBeenCalledTimes(1);
+      fallbackDestination = { ...destination, surface: { kind: "dm", id: "another-private" } };
+      output.resolveRunRoute("ship", "followup", 1000);
+      fallbackDestination = null;
+      expect(output.resolveRunRoute("ship", "followup", 1000)).toBeNull();
+      await Promise.all(pending);
+      expect(adapterSetActivity).toHaveBeenCalledTimes(3);
+      expect(adapterSetActivity).toHaveBeenLastCalledWith(
+        { installationId: "inst-replies" }, "managed", { kind: "dm", id: "another-private" }, { kind: "typing", active: false },
+      );
       for (const kind of ["dm", "group"] as const) {
         const exact = runRoutes.setAdapterRoute({ runId: kind, processId: "ship", uid: 1000, destination: { ...destination, surface: { kind, id: "explicit" } } });
         expect(output.resolveRunRoute("ship", kind, 1000)).toEqual(exact);
