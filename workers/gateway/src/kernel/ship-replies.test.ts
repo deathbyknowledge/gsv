@@ -42,7 +42,7 @@ describe("Ship reply preference", () => {
     });
   });
 
-  it("remembers the latest client across store reconstruction, expires after five minutes, and ignores other owners", async () => {
+  it("remembers the latest client across reconstruction, allows reporting grace, and ignores other owners", async () => {
     await runWithRealKernelSql((_sql, storage) => {
       const clock = vi.spyOn(Date, "now").mockReturnValue(1_000);
       const replies = new ShipReplies(storage);
@@ -54,6 +54,8 @@ describe("Ship reply preference", () => {
       expect(new ShipReplies(storage).activeConnection(1000, connections)).toBe(web.id);
       expect(replies.activeConnection(2000, connections)).toBeNull();
       replies.recordClient(1000, desktop.id);
+      expect(replies.activeConnection(1000, connections)).toBe(desktop.id);
+      clock.mockReturnValue(1_000 + 5 * 60 * 1000);
       expect(replies.activeConnection(1000, connections)).toBe(desktop.id);
       clock.mockReturnValue(1_000 + SHIP_CLIENT_IDLE_MS - 1);
       expect(replies.activeConnection(1000, connections)).toBe(desktop.id);

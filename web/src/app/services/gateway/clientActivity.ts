@@ -1,6 +1,4 @@
-import { CLIENT_ACTIVITY_SIGNAL } from "@humansandmachines/gsv/protocol";
-
-const ACTIVITY_INTERVAL_MS = 30_000;
+import { CLIENT_ACTIVITY_INTERVAL_MS, CLIENT_ACTIVITY_SIGNAL } from "@humansandmachines/gsv/protocol";
 
 /** Event driven: mounting, focusing and socket keepalives never claim a reply destination. */
 export function trackClientActivity(
@@ -11,7 +9,7 @@ export function trackClientActivity(
   const active = (event: Event) => {
     if (!event.isTrusted || document.hidden || !document.hasFocus()) return;
     const now = Date.now();
-    if (now - lastSent < ACTIVITY_INTERVAL_MS) return;
+    if (now - lastSent < CLIENT_ACTIVITY_INTERVAL_MS) return;
     sendSignal(CLIENT_ACTIVITY_SIGNAL);
     lastSent = now;
   };

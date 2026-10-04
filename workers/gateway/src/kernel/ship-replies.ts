@@ -1,7 +1,10 @@
 import type { KernelConnection, KernelConnectionState } from "./connection";
 import { hasCapability } from "./capabilities";
+import { CLIENT_ACTIVITY_INTERVAL_MS } from "@humansandmachines/gsv/protocol";
+import type { RunRouteStore } from "./run-routes";
 
-export const SHIP_CLIENT_IDLE_MS = 5 * 60 * 1000;
+// Allow one reporting interval so throttled input never expires a client early.
+export const SHIP_CLIENT_IDLE_MS = 5 * 60 * 1000 + CLIENT_ACTIVITY_INTERVAL_MS;
 
 type ClientPreference = { connectionId: string | null; activeAt: number; revision: string };
 
@@ -11,6 +14,16 @@ export class ShipReplies {
 
   recordClient(uid: number, connectionId: string): void {
     this.storage.kv.put(`ship-reply:${uid}`, { connectionId, activeAt: Date.now(), revision: crypto.randomUUID() } satisfies ClientPreference);
+  }
+
+  recordClientMessage(
+    uid: number, connectionId: string, messageId: string, expectedRevision: string | null,
+    routes: RunRouteStore,
+  ): void {
+    this.storage.transactionSync(() => routes.pinMessageRoute(messageId, () => {
+      if (this.revision(uid) === expectedRevision) this.recordClient(uid, connectionId);
+      return null;
+    }));
   }
 
   revision(uid: number): string | null {

@@ -408,6 +408,7 @@ callers cannot supply an owner, destination or timestamp. Machine, service, expi
 credential and unauthenticated peers cannot change this preference. The signal
 updates only Ship's private reply preference: it admits no Process work, enters no
 model context and does not fetch or rerender conversation history.
+The idle window includes one reporting interval of grace to account for throttled input.
 
 ### Machine peers
 

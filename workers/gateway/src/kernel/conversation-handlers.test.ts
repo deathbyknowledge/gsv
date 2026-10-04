@@ -7,6 +7,9 @@ import {
   type ResourceBlock,
 } from "@humansandmachines/gsv/protocol";
 import type { KernelContext } from "./context";
+import { runWithRealKernelSql } from "../test-support/real-kernel-sql";
+import { ShipReplies } from "./ship-replies";
+import { RunRouteStore } from "./run-routes";
 
 import * as utils from "../shared/utils";
 import * as personalController from "./personal-controller";
@@ -73,7 +76,7 @@ function context(ownerUid = 1000): KernelContext {
       recordSequence: vi.fn(),
       recordContactMessage: vi.fn(),
     },
-    shipReplies: { recordClient: vi.fn() },
+    shipReplies: { revision: vi.fn(() => null), recordClientMessage: vi.fn() },
     runRoutes: {
       setConnectionRoute: vi.fn(),
       delete: vi.fn(),
@@ -159,6 +162,34 @@ describe("conversation handlers", () => {
       directed: false,
     });
     expect(ctx.runRoutes.delete).toHaveBeenCalledWith(expect.stringMatching(/^run:msg:/));
+  });
+
+  it.each([false, true])("keeps a replayed input preference without replacing newer activity=%s", async (newerActivity) => {
+    await runWithRealKernelSql(async (sql, storage) => {
+      const ctx = context();
+      ctx.shipReplies = new ShipReplies(storage);
+      ctx.runRoutes = new RunRouteStore(sql);
+      ctx.shipReplies.recordAdapter(1000);
+      let message: ConversationMessage | undefined;
+      const append = vi.fn(async (input: any) => {
+        if (message) return { created: false, message };
+        message = canonicalMessage(input);
+        throw new Error("lost append response after commit");
+      });
+      getConversationByIdMock.mockReturnValue({ append });
+      sendFrameToProcessMock.mockImplementation(async (_installationId, _pid, frame) => ({
+        type: "res", id: frame.id, ok: true,
+        data: { ok: true, runId: message!.runId, queued: false, status: "started" },
+      }));
+      const input = { conversationId: SHIP.id, text: "Reply here", idempotencyKey: "same-input" };
+      await expect(handleConversationSend(input, ctx)).rejects.toThrow("lost append response");
+      ctx.shipReplies = new ShipReplies(storage);
+      ctx.runRoutes = new RunRouteStore(sql);
+      if (newerActivity) ctx.shipReplies.recordClient(1000, "newer-window");
+      await expect(handleConversationSend(input, ctx)).resolves.toMatchObject({ runId: message!.runId });
+      expect(storage.kv.get<{ connectionId: string }>("ship-reply:1000")?.connectionId)
+        .toBe(newerActivity ? "newer-window" : "connection-1");
+    });
   });
 
   it("lets the canonical Ship read history but keeps client mutations direct", async () => {

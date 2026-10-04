@@ -131,6 +131,9 @@ export async function handleConversationSend(
   if (conversation.kind === "ship" && !handler.isPersonalController) {
     throw new Error("Ship conversation handler is not the personal intelligence");
   }
+  const replyPreferenceRevision = conversation.kind === "ship" && ctx.connection
+    && principalOf(ctx)?.account.uid === conversation.ownerUid
+    ? ctx.shipReplies.revision(conversation.ownerUid) : undefined;
   const idempotencyKey = normalizeOptionalId(args.idempotencyKey) ?? crypto.randomUUID();
   const messageId = await conversationSendMessageId(conversation.id, idempotencyKey);
   const runId = `run:${messageId}`;
@@ -144,6 +147,11 @@ export async function handleConversationSend(
     messageId,
   );
   ctx.requestSignal?.throwIfAborted();
+  if (replyPreferenceRevision !== undefined && ctx.connection) {
+    ctx.shipReplies.recordClientMessage(
+      conversation.ownerUid, ctx.connection.id, messageId, replyPreferenceRevision, ctx.runRoutes,
+    );
+  }
   const appended = await getConversationById(ctx.installationId, conversation.id).append({
     messageId,
     idempotencyKey,
@@ -160,9 +168,6 @@ export async function handleConversationSend(
   const { message } = appended;
   ctx.conversations.recordSequence(conversation.id, message.sequence);
   if (appended.created) {
-    if (conversation.kind === "ship" && ctx.connection && principalOf(ctx)?.account.uid === conversation.ownerUid) {
-      ctx.shipReplies.recordClient(conversation.ownerUid, ctx.connection.id);
-    }
     ctx.broadcastToUserUid(conversation.ownerUid, "message.committed", {
       message,
       directed: false,

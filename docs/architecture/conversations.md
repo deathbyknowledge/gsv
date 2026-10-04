@@ -116,6 +116,9 @@ contact destinations remain fixed. Personal Ship replies follow the owner's curr
   last authorized linked private messenger destination. A new messenger message selects that
   messenger; returning to interact with the app selects the app again. Without a usable destination,
   the message remains in canonical history.
+- Idle expiry includes 30 seconds of reporting grace so throttled input cannot cause an early
+  fallback. Accepted inputs preserve their preference decision across retries without replacing
+  newer activity.
 - Each committed message retains its delivery decision for retry deduplication. Retrying that
   message does not notify a different endpoint after the preference changes. Receipts expire after
   30 days, independently of the lifetime of canonical conversation history.
