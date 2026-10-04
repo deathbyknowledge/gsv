@@ -312,7 +312,7 @@ describe("live conversation attachments", () => {
 });
 
 describe("live conversation drafts", () => {
-  it("reconciles a streamed message and withdraws an aborted follow-up in the same run", async () => {
+  it.each([true, false])("reconciles a streamed message with directed=%s and withdraws an aborted follow-up", async (directed) => {
     vi.stubGlobal("document", {});
     const summary = conversation("conv:draft", "proc:draft");
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -341,9 +341,9 @@ describe("live conversation drafts", () => {
       expect(observed.current?.rows).toEqual([
         expect.objectContaining({ id: "conversation-draft:draft:run:send-1", text: "Hello, world", streaming: true, delivery: "directed" }),
       ]);
-      await act(() => { listener?.("message.committed", { message, directed: true }); });
+      await act(() => { listener?.("message.committed", { message, directed }); });
       expect(observed.current?.rows).toEqual([
-        expect.objectContaining({ id: "conversation:message:sent", text: "Hello, world", status: "done", delivery: "directed" }),
+        expect.objectContaining({ id: "conversation:message:sent", text: "Hello, world", status: "done", delivery: directed ? "directed" : "sync" }),
       ]);
       const followup = { ...draft, messageId: "draft:run:send-2", timestamp: 7 };
       await act(() => {

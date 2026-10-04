@@ -127,4 +127,40 @@ describe("Ship reply preference", () => {
       expect(output.resolveRunRoute("work", "unrouted", 1000)).toBeNull();
     });
   });
+
+  it("keeps a partial stream and its abort on the starting client after Ship moves to another client", async () => {
+    await runWithRealKernelSql(async (sql, storage) => {
+      const shipReplies = new ShipReplies(storage);
+      const runRoutes = new RunRouteStore(sql);
+      const web = humanConnection("web");
+      const desktop = humanConnection("desktop");
+      const sendSignalToConnection = vi.fn();
+      // SAFETY: these are the complete collaborators for stream routing; route persistence is real.
+      const host = {
+        shipReplies, runRoutes, connections: new Map([[web.id, web], [desktop.id, desktop]]),
+        procs: { get: () => ({ ownerUid: 1000, isPersonalController: true }) },
+        connectionRuntime: { sendSignalToConnection },
+      } as Kernel;
+      const output = new ProcessOutput(host);
+      const payload = { pid: "ship", runId: "streaming", messageId: "draft:streaming:send", timestamp: 1 };
+      shipReplies.recordClient(1000, web.id);
+      await output.deliverProcessMessageStream("ship", {
+        type: "sig", signal: "proc.message.stream", payload: { ...payload, phase: "started" },
+      });
+      shipReplies.recordClient(1000, desktop.id);
+      expect(output.resolveRunRoute("ship", payload.runId, 1000)).toMatchObject({ connectionId: desktop.id });
+      host.runRoutes = new RunRouteStore(sql);
+      for (const phase of ["delta", "aborted", "delta"] as const) {
+        await new ProcessOutput(host).deliverProcessMessageStream("ship", {
+          type: "sig", signal: "proc.message.stream", payload: { ...payload, phase, delta: "text" },
+        });
+      }
+      expect(sendSignalToConnection.mock.calls.map(([connection, signal]) => [connection, signal])).toEqual([
+        [web.id, "message.started"], [web.id, "message.delta"], [web.id, "message.aborted"],
+      ]);
+      expect(runRoutes.getMessageRoute(payload.messageId)).toBeUndefined();
+      expect(runRoutes.pinMessageRoute("committed", () => output.resolveRunRoute("ship", payload.runId, 1000)))
+        .toMatchObject({ connectionId: desktop.id });
+    });
+  });
 });

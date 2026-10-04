@@ -220,6 +220,15 @@ export class RunRouteStore {
   pinMessageRoute(messageId: string, choose: () => RunRoute | null): RunRoute | null {
     const now = Date.now();
     this.sql.exec("DELETE FROM message_reply_routes WHERE expires_at <= ?", now);
+    const existing = this.getMessageRoute(messageId);
+    if (existing !== undefined) return existing;
+    const route = choose();
+    this.sql.exec("INSERT INTO message_reply_routes (message_id, route_json, expires_at) VALUES (?, ?, ?)",
+      messageId, route ? JSON.stringify(route) : null, now + DEFAULT_TTL_MS);
+    return route;
+  }
+
+  getMessageRoute(messageId: string): RunRoute | null | undefined {
     const existing = this.sql.exec<{ route_json: string | null }>(
       "SELECT route_json FROM message_reply_routes WHERE message_id = ?", messageId,
     ).toArray()[0];
@@ -227,10 +236,11 @@ export class RunRouteStore {
       // SAFETY: only this store serializes these internal route records.
       return existing.route_json ? JSON.parse(existing.route_json) as RunRoute : null;
     }
-    const route = choose();
-    this.sql.exec("INSERT INTO message_reply_routes (message_id, route_json, expires_at) VALUES (?, ?, ?)",
-      messageId, route ? JSON.stringify(route) : null, now + DEFAULT_TTL_MS);
-    return route;
+    return undefined;
+  }
+
+  deleteMessageRoute(messageId: string): void {
+    this.sql.exec("DELETE FROM message_reply_routes WHERE message_id = ?", messageId);
   }
 
   delete(runId: string): void {

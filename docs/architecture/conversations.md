@@ -102,6 +102,9 @@ contact destinations remain fixed. Personal Ship replies follow the owner's curr
 
 - The selected Web/Desktop/CLI connection receives `message.started` and `message.delta` while
   the model is still writing the message, then `message.committed`.
+- A started stream stays on its original connection through its deltas and abort. Switching clients
+  changes the committed reply's destination; it does not hand over a partial stream. A commit
+  replaces that draft through the ordinary conversation synchronization.
 - Other signed-in clients receive only the committed canonical message as synchronization. They do
   not play a notification or act as though the response was directed to them.
 - Adapters buffer Process output and deliver only the committed message. Provider-specific reply

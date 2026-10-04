@@ -1487,6 +1487,7 @@ describe("Kernel canonical message commits", () => {
       get: vi.fn(() => route),
       delete: vi.fn(),
       pinMessageRoute: vi.fn((_id, choose) => choose()),
+      deleteMessageRoute: vi.fn(),
     };
     kernel.adapterDelivery.materializePersonalAdapterFallback = vi.fn(() => null);
     kernel.adapterDelivery.queueAdapterRouteDelivery = vi.fn(async () => undefined);
@@ -1551,6 +1552,7 @@ describe("Kernel canonical message commits", () => {
       payload: { message: { id: message.id, text: "hello" }, directed: false },
     });
     expect(kernel.runRoutes.delete).not.toHaveBeenCalled();
+    expect(kernel.runRoutes.deleteMessageRoute).toHaveBeenCalledWith("draft:run-1:send-1");
   });
 
   it("keeps a silenced client route until the terminal run signal", async () => {

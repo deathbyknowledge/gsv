@@ -367,7 +367,7 @@ Current principal defaults from `buildSignalList()`:
   - Begins the directed endpoint's transient projection of a Process Message.
 - `message.delta`
   - Appends text to that transient projection. It is sent only to the connection
-    selected for the reply; other clients synchronize the committed Message.
+    selected when the stream started; other clients synchronize the committed Message.
 - `message.committed`
   - Carries a canonical `ConversationMessage`. `directed` is true only for the
     connection selected for the reply; other connected clients receive

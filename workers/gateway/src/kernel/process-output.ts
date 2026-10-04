@@ -33,6 +33,7 @@ import type {
   ProcessMessageCommitArgs,
   ProcessMessageStreamSignal,
 } from "../protocol/process-frames";
+import { processMessageDraftId } from "../protocol/process-frames";
 import type {
   UserProcessSignalFrame,
 } from "./do-shared";
@@ -425,6 +426,7 @@ async commitProcessMessage(
     const appended = await stub.append(appendInput);
     const { message } = appended;
     this.host.conversations.recordSequence(conversation.id, message.sequence);
+    this.host.runRoutes.deleteMessageRoute(processMessageDraftId(args.runId, args.actionId));
 
     let route = this.host.runRoutes.pinMessageRoute(message.id, () =>
       this.resolveRunRoute(processId, args.runId, process.ownerUid, conversation.id));
@@ -498,14 +500,15 @@ async deliverProcessMessageStream(
     ) {
       return;
     }
-    const route = this.resolveRunRoute(processId, payload.runId, process.ownerUid, payload.conversationId);
-    if (
-      !route
-      || route.processId !== processId
-      || route.uid !== process.ownerUid
-    ) {
-      return;
-    }
+    const route = payload.phase === "started"
+      ? this.host.runRoutes.pinMessageRoute(payload.messageId, () =>
+        this.resolveRunRoute(processId, payload.runId, process.ownerUid, payload.conversationId))
+      : payload.phase === "silenced"
+        ? this.resolveRunRoute(processId, payload.runId, process.ownerUid, payload.conversationId)
+        : this.host.runRoutes.getMessageRoute(payload.messageId);
+    if (route && (route.processId !== processId || route.uid !== process.ownerUid)) return;
+    if (payload.phase === "aborted") this.host.runRoutes.deleteMessageRoute(payload.messageId);
+    if (!route) return;
     if (payload.phase === "silenced") {
       if (route.kind === "adapter") {
         await setAdapterActivityForKernel(
