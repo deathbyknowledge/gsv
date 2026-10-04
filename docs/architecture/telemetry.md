@@ -23,6 +23,10 @@ metadata field. Records may contain:
   pseudonym; and
 - a random event id and occurrence time for idempotent export.
 
+Model-metadata lookups also carry a fresh random lookup id solely to correlate
+the Gateway, Inference and Accounts timings for that lookup. It is not a Process,
+run, message or inference-generation identifier.
+
 Records must never contain prompts, messages, file paths, URLs, tool arguments,
 media, credentials, contact or channel identifiers, raw exception text, or
 other user content. Invalid records are rejected without affecting user work.
@@ -38,6 +42,16 @@ and mail-intake reliability without exposing a process or request identifier.
 Retryable provider attempts that fail before a fallback route takes over are
 reported separately, so a recovered outage or rate limit remains observable
 without turning the logical request into a failure.
+
+`inference.metadata.finished` measures configuration lookup separately from
+generation: each participating component emits its own elapsed time and outcome.
+Gateway distinguishes cache hits, misses and deadline expiry; Accounts can also
+report D1 SQL execution time and automatic retry attempts when provided by D1.
+The difference between these timings helps locate waiting between components;
+it does not by itself prove a platform fault. No provider/model names or error
+text are included. Lookup correlation is optional on the RPC contract so older
+clients and services remain compatible during rolling deployments. Missing or
+invalid diagnostic context never prevents metadata resolution.
 
 Operational telemetry and product analytics are separate purposes. A managed
 consumer derives unrelated pseudonyms for the two streams with different HMAC
@@ -77,6 +91,8 @@ producer switch and tail consumer; schema support alone does not export anything
   steps intentionally do not invent an installation identity or export addresses.
 - Inference: logical terminal outcomes, cost/tokens, provider attempt failures,
   workload and failure stage, plus entitlement-refresh health.
+- Gateway, Inference and Accounts: correlated model-metadata lookup outcomes and
+  timings, including failed lookups before generation admission.
 - Search: admission rejection, cancellation, provider/settlement failure and
   completion, latency, result count and whether the provider confirmed cost.
 - Mail: accepted, duplicate and rejected intake; terminal outbound acceptance,

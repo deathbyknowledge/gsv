@@ -6,6 +6,7 @@
  */
 
 import type { ManualUpdater } from "./sys/manual";
+import type { ModelMetadataResolver } from "../inference/model-metadata";
 import type { LedgerStore } from "./ledger";
 import type { McpClientManager } from "./mcp-client";
 import type {
@@ -62,6 +63,7 @@ export type KernelContext = {
   invalidateAccountConnections: (uid: number) => void;
   caps: CapabilityStore;
   config: ConfigStore;
+  modelMetadata: ModelMetadataResolver;
   manual: ManualUpdater;
   targets: TargetRegistry;
   procs: ProcessRegistry;
