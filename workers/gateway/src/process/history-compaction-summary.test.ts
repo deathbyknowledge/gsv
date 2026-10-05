@@ -194,7 +194,9 @@ describe("compaction summary completion", () => {
       const provider = installCompactionProvider(process, pid, "process", respond);
       return { ...(await compact(process)), seeded, calls: provider.calls };
     });
-    expect(outcome.result).toEqual({ ok: false, error: `Failed to generate compaction summary: ${failure}` });
+    expect(outcome.result).toEqual({ ok: false, error: label === "failed"
+      ? expect.stringMatching(/^Failed to generate compaction summary: Inference reference: [0-9a-f-]{36} upstream connect error$/)
+      : `Failed to generate compaction summary: ${failure}` });
     expect(outcome.calls).toBe(attempts);
     expect(outcome.history).toEqual(outcome.seeded);
     expect(outcome.segments).toBe(0);

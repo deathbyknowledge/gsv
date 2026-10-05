@@ -1292,7 +1292,9 @@ export class ProcessRun {
     }
     return {
       kind: "complete",
-      result: await this.generationFailure(runId, control, "generation.empty", message, response),
+      result: await this.generationFailure(runId, control,
+        response.stopReason === "error" || response.stopReason === "aborted" ? "generation.error" : "generation.empty",
+        message, response),
     };
   }
 

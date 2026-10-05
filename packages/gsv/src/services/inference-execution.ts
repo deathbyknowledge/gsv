@@ -35,6 +35,8 @@ export type InferenceExecutionRequest = {
   version: 1;
   installationId: string;
   logicalRequestId: string;
+  /** Optional during rolling upgrades; independent of durable request identity. */
+  diagnosticId?: string;
   actor: ManagedInferenceActor;
   workload?: ManagedInferenceWorkload;
   connection: InferenceConnection;

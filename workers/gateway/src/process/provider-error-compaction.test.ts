@@ -60,7 +60,7 @@ describe("ambiguous provider errors preserve history", () => {
     expect(result.emitted).toEqual(expect.arrayContaining([{
       signal: "proc.run.finished",
       payload: expect.objectContaining({
-        status: "error", reason: mode === "thrown" ? "generation.error" : "generation.empty", runId,
+        status: "error", reason: "generation.error", runId,
       }),
     }]));
   });

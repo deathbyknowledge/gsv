@@ -1,10 +1,13 @@
 import * as Cloudflare from "alchemy/Cloudflare";
 import * as Effect from "effect/Effect";
+import * as Config from "effect/Config";
+import * as Schema from "effect/Schema";
 import * as Output from "alchemy/Output";
 import * as Redacted from "effect/Redacted";
 import { beforeEach, describe, expect, it } from "vitest";
 import { GsvDeployment, type GsvDeploymentProps } from "../src/installation.ts";
 import { GsvRuntime, type GsvRuntimeDependencies } from "../src/runtime.ts";
+import { GsvAdapterWorker } from "../src/adapter.ts";
 import type { OperatorResourceCatalog } from "../src/deletion-bindings.ts";
 
 type RecordedWorker = { id: string; props: Cloudflare.Workers.WorkerProps<Cloudflare.Workers.WorkerBindingProps> };
@@ -43,6 +46,18 @@ function run<A, E, R>(effect: Effect.Effect<A, E, R>): Promise<A> {
   return Effect.runPromise(effect as Effect.Effect<A, E>);
 }
 beforeEach(() => { recorded.workers.length = 0; recorded.databases.length = 0; recorded.bindings.length = 0; recorded.routes.length = 0; });
+
+it("attaches the operator tail to both runtime Workers and explicitly configured adapters", async () => {
+  await run(GsvDeployment({ ...input, telemetry: { tailConsumers: ["test-tail"] } }, dependencies));
+  for (const id of ["FixtureGateway", "FixtureRipgit"]) {
+    expect(recorded.workers.find((worker) => worker.id === id)?.props.tailConsumers).toEqual(["test-tail"]);
+  }
+  const deployment = { main: "adapter.js", bundle: true, gatewayEntrypoint: "Adapter", adapterEntrypoint: "Adapter", durableObjects: [], requiredSecrets: [] };
+  await run(GsvAdapterWorker({ logicalId: "Adapter", workerName: "adapter", tailConsumers: ["test-tail"],
+    adapter: { id: "test", displayName: "Test", gatewayBinding: "CHANNEL_TEST", deployment }, deployment,
+  }, { Cloudflare: dependencies.Cloudflare, Config, Schema, retain: dependencies.retain }));
+  expect(recorded.workers.find((worker) => worker.id === "Adapter")?.props.tailConsumers).toEqual(["test-tail"]);
+});
 
 const input: GsvDeploymentProps = {
   logicalPrefix: "Fixture", domain: "example.com", adminOrigin: "https://accounts.example.com", access: { kind: "operator" },

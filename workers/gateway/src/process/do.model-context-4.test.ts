@@ -591,7 +591,7 @@ describe("model context", () => {
       ?.payload as any;
     expect(finished).toMatchObject({
       status: "error",
-      reason: "generation.empty",
+      reason: "generation.error",
       error: "Generation failed: Workers AI binding is not configured for this worker",
     });
   });

@@ -4,6 +4,7 @@ import type { ManagedInferenceWorkload } from "@humansandmachines/gsv/protocol";
 export type InferenceAttribution = {
   installationId: string;
   logicalRequestId: string;
+  diagnosticId?: string;
   actor: {
     localUid: number;
     processId?: string;

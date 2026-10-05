@@ -32,6 +32,9 @@ import type {
 import { DEFAULT_TEXT_GENERATION_MAX_TOKENS } from "./default-models";
 import { createGenerationAbort, TimeoutError } from "../shared/timeout";
 import { raceWithAbort } from "../shared/abort";
+import type { TelemetryEnvironment } from "@humansandmachines/gsv/telemetry";
+import { inferenceDiagnosticId, inferenceErrorMetadata, reportInferenceClientResult } from "@humansandmachines/gsv/services/inference-diagnostics";
+import { errorMessageFromUnknown, formatProviderErrorDiagnostic } from "./errors";
 
 const GSV_INFERENCE_API = "gsv-inference";
 
@@ -53,7 +56,7 @@ export const GSV_INFERENCE_MODEL_METADATA: Model<typeof GSV_INFERENCE_API> = {
   maxTokens: DEFAULT_TEXT_GENERATION_MAX_TOKENS,
 };
 
-type ManagedInferenceAccess = { kind: "service"; service: ManagedInferenceService };
+type ManagedInferenceAccess = { kind: "service"; service: ManagedInferenceService; telemetry?: TelemetryEnvironment };
 
 type DisposableManagedInferenceTarget = ManagedInferenceTarget & {
   [Symbol.dispose]?(): void;
@@ -71,8 +74,9 @@ type AppliedManagedInferenceEvent = {
 
 export function createGsvInferenceProviderFactory(
   service: ManagedInferenceService,
+  telemetry?: TelemetryEnvironment,
 ): InferenceProviderFactory {
-  return createGsvInferenceProviderFactoryForAccess({ kind: "service", service });
+  return createGsvInferenceProviderFactoryForAccess({ kind: "service", service, telemetry });
 }
 
 function createGsvInferenceProviderFactoryForAccess(
@@ -159,6 +163,7 @@ function buildManagedInferenceRequest(
     version: 1,
     installationId: attribution.installationId,
     logicalRequestId: attribution.logicalRequestId,
+    diagnosticId: inferenceDiagnosticId(attribution.diagnosticId),
     actor: attribution.actor,
     model: GSV_INFERENCE_PRODUCT_MODEL,
     messages,
@@ -182,6 +187,12 @@ async function pumpGsvInference(
   stream: AssistantMessageEventStream,
   signal?: AbortSignal,
 ): Promise<void> {
+  const startedAt = Date.now();
+  const diagnosticId = inferenceDiagnosticId(request.diagnosticId);
+  let phase: "acquisition" | "request" | "stream" = "acquisition";
+  let failed = false;
+  let cancelledRemotely = false;
+  let failure: ReturnType<typeof inferenceErrorMetadata> | undefined;
   let target: ManagedInferenceTarget | undefined;
   let acquisitionDisposesLateTarget = false;
   let generationStarted = false;
@@ -195,7 +206,12 @@ async function pumpGsvInference(
           } else {
             await target.abort(request.logicalRequestId);
           }
-        } catch {}
+        } catch (error) {
+          reportInferenceClientResult(access.telemetry, request, {
+            diagnosticId, boundary: "managed", phase: "abort", outcome: "failed",
+            durationMs: Date.now() - startedAt, ...inferenceErrorMetadata(error),
+          });
+        }
       })();
     }
   };
@@ -225,6 +241,7 @@ async function pumpGsvInference(
       stream.push(gsvInferenceErrorEvent(true, signal));
       return;
     }
+    phase = "request";
     const bodyPromise = target.generateStream(request);
     generationStarted = true;
     if (signal?.aborted) abortGeneration();
@@ -240,11 +257,17 @@ async function pumpGsvInference(
     });
     let partial: AssistantMessage | undefined;
     let terminal = false;
+    phase = "stream";
     for await (const raw of decodeManagedInferenceStream(body, signal)) {
       if (signal?.aborted) break;
       const applied = applyManagedInferenceEvent(raw, partial);
       partial = applied.partial;
       terminal = applied.terminal;
+      if (applied.event.type === "error") {
+        failed = applied.event.reason === "error";
+        cancelledRemotely = applied.event.reason === "aborted";
+        failure = inferenceErrorMetadata(new Error(applied.event.error.errorMessage));
+      }
       stream.push(applied.event);
       if (terminal) break;
     }
@@ -253,10 +276,20 @@ async function pumpGsvInference(
       return;
     }
     if (!terminal) throw new Error("Managed inference stream ended early");
-  } catch {
+  } catch (error) {
+    failed = true;
+    failure = inferenceErrorMetadata(error);
     abortGeneration();
-    stream.push(gsvInferenceErrorEvent(signal?.aborted === true, signal));
+    stream.push(gsvInferenceErrorEvent(signal?.aborted === true, signal,
+      `Inference reference: ${diagnosticId}\nManaged inference ${phase} failed: ${formatProviderErrorDiagnostic(errorMessageFromUnknown(error))}`,
+    ));
   } finally {
+    reportInferenceClientResult(access.telemetry, request, {
+      diagnosticId, boundary: "managed", phase,
+      outcome: signal?.aborted ? signal.reason instanceof TimeoutError ? "timed_out" : "cancelled" : cancelledRemotely ? "cancelled" : failed ? "failed" : "completed",
+      durationMs: Date.now() - startedAt,
+      ...failure,
+    });
     signal?.removeEventListener("abort", abortGeneration);
     disposeManagedInferenceTarget(target);
   }
@@ -475,6 +508,7 @@ function requirePartial(
 function gsvInferenceErrorEvent(
   aborted: boolean,
   abortSignal?: AbortSignal,
+  failure?: string,
 ): Extract<AssistantMessageEvent, { type: "error" }> {
   const timedOut = aborted && abortSignal?.reason instanceof TimeoutError;
   const cancelled = aborted && !timedOut;
@@ -501,7 +535,7 @@ function gsvInferenceErrorEvent(
       stopReason: cancelled ? "aborted" : "error",
       errorMessage: aborted
         ? abortMessage || "GSV inference cancelled"
-        : "GSV inference is unavailable",
+        : failure ?? "Managed inference failed without an error detail",
       timestamp: Date.now(),
     },
   };
