@@ -17,6 +17,7 @@ import { RoutedInferenceTransport } from "./transport";
 import { applyManagedInferenceEvent } from "./stream-projection";
 import { extractCompletedText } from "./generated-text";
 import { errorMessageFromUnknown } from "./errors";
+import { inferenceDiagnosticId, inferenceErrorMetadata, reportInferenceClientResult } from "@humansandmachines/gsv/services/inference-diagnostics";
 
 type GenerateRequest = {
   config: AiConfigResult;
@@ -51,6 +52,12 @@ async function pump(
   streaming: boolean,
   output: AssistantMessageEventStream,
 ): Promise<void> {
+  const diagnosticId = inferenceDiagnosticId();
+  const startedAt = Date.now();
+  let phase: "acquisition" | "request" | "stream" = "acquisition";
+  let failed = false;
+  let cancelledRemotely = false;
+  let failure: unknown;
   const timeoutMs = request.options?.timeoutMs ?? request.config.generationTimeoutMs;
   const abort = createGenerationAbort(request.signal, timeoutMs);
   let target: InferenceExecutor | undefined;
@@ -63,7 +70,12 @@ async function pump(
     void target.abort(
       request.attribution!.logicalRequestId,
       abort.signal.reason instanceof TimeoutError ? "timeout" : "cancelled",
-    ).catch(() => {});
+    ).catch((error) => {
+      if (request.attribution) reportInferenceClientResult(env, request.attribution, {
+        diagnosticId, boundary: "execution", phase: "abort", outcome: "failed",
+        durationMs: Date.now() - startedAt, ...inferenceErrorMetadata(error),
+      });
+    });
   };
   abort.signal.addEventListener("abort", abortGeneration, { once: true });
   try {
@@ -77,14 +89,21 @@ async function pump(
       onLateResolve: (late) => { if (!acquisitionDisposed) disposeRpc(late); },
     });
     abort.signal.throwIfAborted();
-    const input = executionRequest(request, timeoutMs, abort.deadlineAt);
+    const input = { ...executionRequest(request, timeoutMs, abort.deadlineAt), diagnosticId };
     transport = request.fetch ? new RoutedInferenceTransport(request.fetch) : undefined;
     started = true;
+    phase = "request";
     if (!streaming) {
       const generation = target.generate(input, transport);
       const result = await raceWithAbort(generation, abort.signal, {
         onAbort: () => { abortGeneration(); disposeRpc(generation); },
       });
+      failed = result.stopReason === "error";
+      cancelledRemotely = result.stopReason === "aborted";
+      if (failed) {
+        failure = new Error(result.errorMessage);
+        result.errorMessage = withReference(result.errorMessage, diagnosticId);
+      }
       output.push(result.stopReason === "error" || result.stopReason === "aborted"
         ? { type: "error", reason: result.stopReason, error: result }
         : { type: "done", reason: result.stopReason, message: result });
@@ -97,9 +116,16 @@ async function pump(
     });
     let partial: AssistantMessage | undefined;
     let terminal = false;
+    phase = "stream";
     for await (const event of decodeInferenceExecutionStream(body, abort.signal)) {
       abort.signal.throwIfAborted();
       const projected = applyManagedInferenceEvent(event, partial);
+      if (projected.event.type === "error" && projected.event.reason === "aborted") cancelledRemotely = true;
+      if (projected.event.type === "error" && projected.event.reason === "error") {
+        failed = true;
+        failure = new Error(projected.event.error.errorMessage);
+        projected.event.error.errorMessage = withReference(projected.event.error.errorMessage, diagnosticId);
+      }
       partial = projected.partial;
       output.push(projected.event);
       terminal = projected.terminal;
@@ -107,6 +133,8 @@ async function pump(
     }
     if (!terminal) throw new Error("Inference stream ended before its terminal result");
   } catch (error) {
+    failed = true;
+    failure = error;
     abortGeneration();
     const cancelled = abort.signal.aborted && !(abort.signal.reason instanceof TimeoutError);
     output.push({
@@ -116,18 +144,29 @@ async function pump(
         role: "assistant", content: [], api: "gsv-inference",
         provider: request.config.provider, model: request.config.model,
         stopReason: cancelled ? "aborted" : "error",
-        errorMessage: errorMessageFromUnknown(abort.signal.aborted ? abort.signal.reason : error),
+        errorMessage: withReference(errorMessageFromUnknown(abort.signal.aborted ? abort.signal.reason : error), diagnosticId),
         timestamp: Date.now(),
         usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0,
           cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
       },
     });
   } finally {
+    if (request.attribution) reportInferenceClientResult(env, request.attribution, {
+      diagnosticId, boundary: "execution", phase,
+      outcome: abort.signal.aborted ? abort.signal.reason instanceof TimeoutError ? "timed_out" : "cancelled" : cancelledRemotely ? "cancelled" : failed ? "failed" : "completed",
+      durationMs: Date.now() - startedAt,
+      ...(failure === undefined ? {} : inferenceErrorMetadata(failure)),
+    });
     abort.signal.removeEventListener("abort", abortGeneration);
     abort.clear();
     transport?.close();
     disposeRpc(target);
   }
+}
+
+function withReference(message: string | undefined, diagnosticId: string): string {
+  const detail = message || "Inference failed without an error detail";
+  return detail.includes(diagnosticId) ? detail : `Inference reference: ${diagnosticId}\n${detail}`;
 }
 
 function executionRequest(request: GenerateRequest, timeoutMs: number, deadlineAt: number): InferenceExecutionRequest {

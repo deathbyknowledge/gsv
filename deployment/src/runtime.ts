@@ -122,6 +122,7 @@ export const GsvRuntime = (props: GsvRuntimeProps, dependencies = gsvRuntimeDepe
           enabled: true,
           logs: { enabled: true, invocationLogs: true },
         },
+        tailConsumers: props.telemetry ? [...props.telemetry.tailConsumers] : undefined,
         env: {
           REPOSITORY: Cloudflare.DurableObject("REPOSITORY", {
             className: "Repository",

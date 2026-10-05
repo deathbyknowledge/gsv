@@ -34,6 +34,8 @@ export type ManagedInferenceRequest = {
   version: 1;
   installationId: string;
   logicalRequestId: string;
+  /** Ephemeral, content-free correlation across execution and managed transport. */
+  diagnosticId?: string;
   actor: ManagedInferenceActor;
   /** Additive for rolling deployments; omitted callers are reported as unknown. */
   workload?: ManagedInferenceWorkload;

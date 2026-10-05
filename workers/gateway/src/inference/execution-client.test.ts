@@ -3,6 +3,7 @@ import { encodeInferenceExecutionStreamEvent, type AiAssistantMessage, type AiCo
 import type { InferenceExecutor } from "@humansandmachines/gsv/services/inference-execution";
 import type { GatewayEnv } from "../runtime-env";
 import { createGenerationService } from "./execution-client";
+import { telemetryRecordSchema } from "@humansandmachines/gsv/telemetry";
 
 const config: AiConfigResult = {
   executor: { kind: "kernel" }, provider: "openai-codex", model: "gpt-6-astra",
@@ -18,7 +19,7 @@ const message: AiAssistantMessage = {
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
   usageCostSource: "model-pricing",
 };
-function fixture() {
+function fixture(telemetry = false) {
   const target = {
     generate: vi.fn(async () => message),
     generateStream: vi.fn(async () => new Response(encodeInferenceExecutionStreamEvent({ type: "done", reason: "stop", message })).body!),
@@ -26,13 +27,31 @@ function fixture() {
   };
   const getExecutor = vi.fn(async (_space: string): Promise<InferenceExecutor> => target);
   // SAFETY: These tests exercise only the required inference binding.
-  const env = { INFERENCE_EXECUTION: { getExecutor } } as GatewayEnv;
+  const env = { INFERENCE_EXECUTION: { getExecutor }, GSV_TELEMETRY_ENABLED: telemetry } as GatewayEnv;
   const request = { config, context: { systemPrompt: "system", messages: [{ role: "user" as const, content: "hello", timestamp: 0 }] }, attribution };
   return { target, getExecutor, service: createGenerationService(env), request };
 }
 afterEach(() => vi.useRealTimers());
 
 describe("gateway inference execution boundary", () => {
+  it("correlates failures before execution admission without exporting the exception message", async () => {
+    const { getExecutor, service, request } = fixture(true);
+    getExecutor.mockRejectedValue(Object.assign(new Error("private RPC detail"), { remote: true, overloaded: true }));
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      const result = await service.generate(request);
+      expect(result).toMatchObject({ stopReason: "error", errorMessage: expect.stringContaining("private RPC detail") });
+      const record = telemetryRecordSchema.parse(log.mock.calls[0]?.[0]);
+      if (record.event.name !== "inference.client.finished") throw new Error("Missing inference client telemetry");
+      expect(record).toMatchObject({ component: "gateway", event: {
+        name: "inference.client.finished", properties: {
+          phase: "acquisition", boundary: "execution", outcome: "failed", rpcRemote: true, rpcOverloaded: true,
+        },
+      } });
+      expect(result.errorMessage).toContain(record.event.properties.diagnosticId);
+      expect(JSON.stringify(record)).not.toContain("private RPC detail");
+    } finally { log.mockRestore(); }
+  });
   it("preserves model identity and ordered generic events without forwarding Kernel configuration", async () => {
     const { target, getExecutor, service, request } = fixture();
     target.generateStream.mockImplementation(async () => new Response([
@@ -61,7 +80,7 @@ describe("gateway inference execution boundary", () => {
     getExecutor.mockImplementation(() => new Promise((done) => { resolve = done; }));
     const pending = service.generate(request);
     await vi.advanceTimersByTimeAsync(1001);
-    expect(await pending).toMatchObject({ stopReason: "error", errorMessage: "Model generation timed out after 1000ms" });
+    expect(await pending).toMatchObject({ stopReason: "error", errorMessage: expect.stringContaining("Model generation timed out after 1000ms") });
     resolve(target);
     await Promise.resolve();
     expect(target.generate).not.toHaveBeenCalled();
@@ -76,7 +95,7 @@ describe("gateway inference execution boundary", () => {
     const stream = service.stream({ ...request, signal: controller.signal });
     await vi.waitFor(() => expect(target.generateStream).toHaveBeenCalledOnce());
     controller.abort(new Error("user stopped run"));
-    expect(await stream.result()).toMatchObject({ stopReason: "aborted", errorMessage: "user stopped run" });
+    expect(await stream.result()).toMatchObject({ stopReason: "aborted", errorMessage: expect.stringContaining("user stopped run") });
     expect(target.abort).toHaveBeenCalledExactlyOnceWith("generation-a", "cancelled");
     expect(cancel).toHaveBeenCalledOnce();
   });

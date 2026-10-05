@@ -12,6 +12,37 @@ const requestRows = z.array(z.object({
 }));
 
 describe("Process inference attempts across the execution service", () => {
+  it("retains provider and terminal fallback failures with diagnostic references", async () => {
+    const runtime = await startProcessRuntimeHarness({ workersAi: false });
+    runtime.ai.enqueue({ kind: "error", status: 400, message: "Fixture rejected the inference request" });
+    try {
+      const process = await runtime.spawn("executor failure diagnostics");
+      await runtime.configureAi(process.pid);
+      await runtime.client.proc.observe({ pid: process.pid });
+      const sent = await runtime.client.proc.send({ pid: process.pid, message: "Exercise a provider error." });
+      if (!sent.ok) throw new Error(sent.error);
+      await runtime.waitFor(() => runtime.signals.some(({ signal, payload }) =>
+        signal === "proc.run.finished" && payload.runId === sent.runId), "the failed generation to finish");
+      const finished = runtime.signals.find(({ signal, payload }) =>
+        signal === "proc.run.finished" && payload.runId === sent.runId)!.payload;
+      expect(finished).toMatchObject({ status: "error", reason: "generation.error" });
+      const retry = runtime.signals.find(({ signal, payload }) =>
+        signal === "proc.run.retrying" && payload.runId === sent.runId)!.payload;
+      expect(retry.reason).toContain("Fixture rejected the inference request");
+      expect(retry.reason).toMatch(/Inference reference: [0-9a-f-]{36}/);
+      expect(finished.error).toContain("Unknown model provider: gsv");
+      expect(finished.error).toMatch(/Inference reference: [0-9a-f-]{36}/);
+      const history = await runtime.client.proc.history({ pid: process.pid });
+      if (!history.ok) throw new Error(history.error);
+      expect(history.messages).toEqual(expect.arrayContaining([
+        expect.objectContaining({ role: "system", content: finished.error }),
+      ]));
+      expect(runtime.ai.requests).toHaveLength(1);
+    } finally {
+      await runtime.close();
+    }
+  });
+
   it("retries an empty generation without reopening or cancelling its completed predecessor", async () => {
     const runtime = await startProcessRuntimeHarness();
     const first = runtime.ai.hold({ kind: "text", chunks: [] });

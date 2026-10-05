@@ -27,6 +27,12 @@ Model-metadata lookups also carry a fresh random lookup id solely to correlate
 the Gateway, Inference and Accounts timings for that lookup. It is not a Process,
 run, message or inference-generation identifier.
 
+Inference clients similarly create a fresh diagnostic id, independent of durable
+request and Process identities. The same id follows Gateway → execution → funded
+inference, appears in retained failure details, and joins client outcomes to
+managed request and provider-attempt telemetry. It is optional across RPC for
+rolling upgrades; invalid diagnostic input never prevents inference.
+
 Records must never contain prompts, messages, file paths, URLs, tool arguments,
 media, credentials, contact or channel identifiers, raw exception text, or
 other user content. Invalid records are rejected without affecting user work.
@@ -38,7 +44,7 @@ and stage rather than exception text. The provider HTTP status is included when
 one was observed; network, timeout, policy, admission, protocol, and settlement
 failures remain distinguishable when no response existed. Workload classes let
 operators separate interactive, background, delegated IPC, compaction, Kernel,
-and mail-intake reliability without exposing a process or request identifier.
+and mail-intake reliability without exposing a durable process or request identifier.
 Retryable provider attempts that fail before a fallback route takes over are
 reported separately, so a recovered outage or rate limit remains observable
 without turning the logical request into a failure.
@@ -66,7 +72,10 @@ Producers emit one structured record only when `GSV_TELEMETRY_ENABLED` is set by
 their deployment. A deployment-owned log consumer may accept those records and
 export them to a backend. It must validate the shared schema,
 verify that the producing Worker is allowed to emit the claimed component, and
-discard every surrounding log, request, header, exception, and trace field.
+discard surrounding application logs, request bodies, headers, raw exceptions
+and traces. A consumer may separately extract closed platform failure categories,
+timings and keyed exception fingerprints from invocation metadata; raw exception
+text must not leave that consumer.
 Because the transport record carries an installation ID until the consumer
 pseudonymizes it, a telemetry-enabled deployment must not persist producer
 console or invocation logs. `GsvRuntime` applies that non-persistent
@@ -85,6 +94,10 @@ Event ownership is validated as well as the producing Worker: a mail producer
 cannot emit an inference or activation event. The deployment must wire both the
 producer switch and tail consumer; schema support alone does not export anything.
 
+`GsvRuntime` attaches an enabled tail consumer to Gateway and ripgit.
+`GsvAdapterWorker.tailConsumers` lets operators include adapter platform failures
+without granting those adapters ownership of another component's application events.
+
 - Gateway: terminal runs, compaction completion and failure stage, delegation,
   committed messages, target/adapter connection and adapter transport outcomes.
 - Accounts: activation. This is not a full signup funnel; anonymous invite/email
@@ -93,6 +106,12 @@ producer switch and tail consumer; schema support alone does not export anything
   workload and failure stage, plus entitlement-refresh health.
 - Gateway, Inference and Accounts: correlated model-metadata lookup outcomes and
   timings, including failed lookups before generation admission.
+- Gateway and Inference: `inference.client.finished` records service acquisition,
+  request dispatch and stream completion, including pre-admission exceptions,
+  cancellation, deadlines and failed abort RPCs. Error names and Cloudflare RPC
+  flags are closed diagnostic fields. Exception text stays in the owning Process
+  history; it is never included in these telemetry records. Returned generation
+  errors are recorded as `generation.error`, separately from empty model output.
 - Search: admission rejection, cancellation, provider/settlement failure and
   completion, latency, result count and whether the provider confirmed cost.
 - Mail: accepted, duplicate and rejected intake; terminal outbound acceptance,
@@ -109,9 +128,16 @@ errors remain in its operator logs. Producer console/invocation logs are not
 persisted. Public records remain vendor-neutral; backend credentials and export
 translation remain wholly in infrastructure.
 
+The managed consumer also records `runtime.invocation.failed` for failed platform
+invocations and uncaught exceptions from configured producer Workers, even when
+no application record was emitted. These service-level records contain the
+platform outcome, exception type/count, timings, Worker version and a keyed error
+fingerprint. They contain neither installation identity nor exception text,
+request data, paths or headers. Export failures retain their HTTP status in the
+consumer's own operator logs.
+
 This pipeline is best effort. It is not a durable event bus, quota counter or
 billing ledger. Services persist their own usage before invoking providers and
-settle it independently of telemetry availability. Runtime crashes before a
-terminal event, exporter outages, and anonymous signup progress require separate
-platform monitoring or an explicitly designed additional event contract; they
-must not be "fixed" by forwarding raw exceptions or arbitrary logs.
+settle it independently of telemetry availability. Exporter outages and anonymous
+signup progress still require separate monitoring; forwarding arbitrary logs or
+raw exceptions would violate the privacy contract.

@@ -22,6 +22,7 @@ export type GsvAdapterWorkerProps = {
   compatibility?: typeof GSV_WORKER_COMPATIBILITY;
   workersDev?: boolean | Cloudflare.Workers.WorkersDevConfig;
   observability?: Cloudflare.Workers.WorkerObservability;
+  tailConsumers?: readonly (string | Cloudflare.Workers.Worker)[];
 };
 
 export type GsvAdapterWorkerRuntime = {
@@ -88,6 +89,7 @@ export const GsvAdapterWorker = (
     workersDev: props.workersDev ?? false,
     crons: props.deployment.crons,
     observability: props.observability ?? { enabled: true },
+    tailConsumers: props.tailConsumers ? [...props.tailConsumers] : undefined,
     env: workerEnv,
   }).pipe(runtime.retain(props.allowResourceDeletion !== true));
 };

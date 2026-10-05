@@ -323,7 +323,7 @@ export class InferenceExecutor<Environment extends ExecutorEnvironment = Executo
       signal: request.controller.signal,
       deadlineAt: request.deadline,
       sessionAffinityKey: input.sessionAffinityKey,
-      attribution: { installationId: this.installationId, logicalRequestId: request.id, actor: input.actor, workload: input.workload },
+      attribution: { installationId: this.installationId, logicalRequestId: request.id, diagnosticId: input.diagnosticId, actor: input.actor, workload: input.workload },
     };
   }
 
