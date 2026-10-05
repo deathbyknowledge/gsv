@@ -1,5 +1,5 @@
 import { GSVClient, type GsvClientStatus } from "@humansandmachines/gsv/client";
-import type { ConversationMessage, ConversationSendArgs, ConversationSendResult, ConversationSummary, ProcContextState, ProcHistoryRecord, SysTargetSummary } from "@humansandmachines/gsv/protocol";
+import type { ConversationMessage, ConversationSendArgs, ConversationSendResult, ConversationSummary, ProcContextState, ProcHilArgs, ProcHistoryRecord, SysTargetSummary } from "@humansandmachines/gsv/protocol";
 import { conversationSendMessageId } from "@humansandmachines/gsv/protocol/stable-id";
 import { QueryClient, QueryClientProvider } from "@tanstack/preact-query";
 import type { ComponentChildren, ComponentProps, ComponentType } from "preact";
@@ -19,7 +19,7 @@ import { ConnectPlace } from "../fleet/ConnectPlace";
 import { FleetDialog } from "../fleet/FleetDialog";
 import { ZenText } from "./ZenText";
 import { ThinkingMark } from "./ThinkingMark";
-import { ApprovalCard } from "./ApprovalCard";
+import { ApprovalCard } from "../shared/ApprovalCard";
 
 let storage: Map<string, string>;
 let messages: ConversationMessage[];
@@ -89,6 +89,7 @@ beforeEach(() => {
       activeRunId, context: runContext, contextRevision: runContext?.revision ?? 0,
       historyRevision: 1, historyGeneration: 1, historyResetRevision: 0 } };
     if (call === "proc.observe" || call === "proc.unobserve") return { data: { ok: true, pid: shipPid } };
+    if (call === "proc.hil") return { data: { ok: true, pid: shipPid, ...args, resumed: true } };
     if (call === "conversation.send") return { data: await send(sendArgs.parse(args)) };
     if (call === "shell.exec") return { data: { status: "completed", output: "/home/algo\n", stderr: "", exitCode: 0 } };
     throw new Error(`Unexpected request ${call}`);
@@ -125,6 +126,25 @@ async function mountedZen(pid?: string, initialTarget?: string) {
 }
 
 describe("Zen conversation entry", () => {
+  it.each([false, true])("sends the exact Ship approval with an explicit remember choice: %s", async (remember) => {
+    activeRunId = "shell-run";
+    const zen = await mountedZen();
+    try {
+      await act(() => {
+        for (const listener of signals) listener("proc.run.hil.requested", {
+          pid: shipPid, requestId: "shell-approval", runId: activeRunId, callId: "shell-call",
+          toolName: "Shell", syscall: "shell.exec", target: "laptop",
+          args: { target: "laptop", input: "pwd" }, createdAt: 2,
+        });
+      });
+      await vi.waitFor(() => expect(zen.props(ApprovalCard).request.requestId).toBe("shell-approval"));
+      await act(() => zen.props(ApprovalCard).onDecide("approve", remember));
+      const expected: ProcHilArgs = { pid: shipPid, requestId: "shell-approval", decision: "approve" };
+      if (remember) expected.remember = true;
+      expect(GSVClient.prototype.request).toHaveBeenCalledWith("proc.hil", expected);
+    } finally { await zen.unmount(); }
+  });
+
   // Regression coverage for the former interaction:
   /* an approval takes the keys: the prompt lets go so y and n reach the decision */
   it.each([false, true])("shows a mail approval without interrupting a draft, with a newer event: %s", async (newerEvent) => {

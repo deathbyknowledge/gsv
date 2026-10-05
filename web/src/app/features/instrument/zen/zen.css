@@ -308,42 +308,6 @@
 .work-code .work-output { padding-left: 12px; }
 .work-output-label { margin: 8px 0 4px; font-size: 10px; color: var(--faint); letter-spacing: 0.12em; text-transform: uppercase; }
 
-/* approvals: a boxed question with keys, as the TUI does it */
-.zen-approval {
-  margin: 16px 0 4px;
-  border: 1px solid var(--update);
-  padding: 12px 16px;
-  font-family: var(--gsv-font-mono);
-  font-size: 13px;
-  color: var(--text);
-  max-width: 720px;
-  box-shadow: 0 0 18px rgba(255, 210, 77, 0.12);
-}
-.zen-approval .q {
-  color: var(--update);
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-  font-size: 11px;
-  margin-bottom: 8px;
-}
-.zen-approval .keys {
-  margin-top: 10px;
-  color: var(--text-dim);
-  display: flex;
-  flex-wrap: wrap;
-  gap: 12px;
-  align-items: baseline;
-}
-.zen-approval kbd {
-  color: var(--text-hi);
-  padding: 0 6px;
-}
-.zen-approval.is-decided {
-  border-color: var(--border);
-  color: var(--text-dim);
-  box-shadow: none;
-}
-.zen-approval.is-decided .q { color: var(--text-dim); }
 
 .zen-bottom {
   min-width: 0;
@@ -361,7 +325,6 @@
   margin-bottom: 14px;
 }
 .zen-delegated-approvals .zen-approval { margin: 8px 0; }
-.zen-delegated-approvals .fleet-approval { margin-top: 10px; }
 .zen-place-section { margin-top: 12px; }
 .zen-places {
   display: flex;
@@ -462,40 +425,6 @@
 .zen-moment .text ol {
   padding-left: 1.2em;
 }
-.zen-approval .keys .ibtn {
-  padding: 6px 12px;
-}
-.zen-approval .keys .ibtn kbd {
-  color: inherit;
-  border-color: currentColor;
-  margin-right: 6px;
-}
-/* what Ship wants to do, in the person's words; the raw request folds beneath it */
-.zen-approval .ask {
-  margin: 0;
-  font-family: var(--gsv-font-prose);
-  font-size: clamp(17px, 1.6vw, 22px);
-  line-height: 1.3;
-  color: var(--text-hi);
-  text-wrap: pretty;
-  max-width: var(--measure-prose);
-}
-.zen-approval .fold { margin-top: 10px; }
-.zen-approval .fold summary {
-  list-style: none;
-  display: inline-block;
-  cursor: pointer;
-  font-size: 11px;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-  color: var(--text-dim);
-}
-.zen-approval .fold summary::-webkit-details-marker { display: none; }
-.zen-approval .fold summary::before { content: "▸ "; color: var(--faint); }
-.zen-approval .fold[open] summary::before { content: "▾ "; color: var(--accent); }
-.zen-approval .fold summary:hover { color: var(--accent); }
-.zen-approval .fold summary:focus-visible { outline: none; text-decoration: underline; color: var(--accent); }
-.zen-approval .fold .machine-rail { margin: 8px 0 0; }
 
 /* a folded note: the ship's memory, one line unless opened */
 .zen-timeline i.is-note { background: transparent; border: 1px solid var(--faint); }

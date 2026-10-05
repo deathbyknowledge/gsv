@@ -1,5 +1,5 @@
 import type { Activity, ActivityCall } from "./zenModel";
-import { commandLine } from "./commandLine";
+import { commandLine } from "../shared/commandLine";
 import { Spinner } from "../../../components/ui/Spinner";
 
 export function ActivityWorking({ activity, who }: { activity: Activity; who: string }) {

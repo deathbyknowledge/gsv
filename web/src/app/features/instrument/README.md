@@ -74,8 +74,14 @@ and sends its decision to that child. Registry signals remove completed work,
 and reload or reconnect recovers pending approvals from durable Process state.
 An approval card leads with what Ship wants to do in the person's words: the
 request's `purpose` when the model wrote one, otherwise a sentence built from the
-request shape. The raw command or path stays under a closed fold; Fleet's
-inspector shows the sentence above the syscall, target and arguments.
+request shape. Ship, delegated work and Fleet use the same card, with the command
+or path under a closed fold. Delegated cards identify the work asking for approval;
+each decision still applies only to that exact pending request.
+Full request details remain available inside the fold, including structured
+arguments that the readable command or path does not show.
+Shell approvals also expose the existing `proc.hil` remember option for a concrete
+target. A hover/focus tooltip explains its process and target scope; it never
+changes another process's policy or remembers a denial.
 
 Zen owns the conversation. A fresh conversation shows the welcome ("Welcome to the ship." / "I am the ship. Who are you?") and the ordinary composer; the CLI and messengers have no such greeting. The person's first message answers that question and goes through normal conversation sending; entering the space never sends an introduction on their behalf. Existing messages and drafts keep their ordinary behavior. Ship's durable onboarding responsibility owns the introduction and any guidance after that first message. Helpers have a simple empty conversation state.
 
