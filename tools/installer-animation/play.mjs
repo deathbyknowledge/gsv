@@ -6,9 +6,14 @@ function scale(frame, sourceWidth, sourceHeight, width, height) {
   let color = "\x1b[0m";
   const lines = frame.split("\n").map(line => {
     const cells = [];
-    for (const run of line.matchAll(/(\x1b\[[0-9;]*m)|([^\x1b]+)/g)) {
-      if (run[1]) color = run[1];
-      else for (const glyph of run[2]) cells.push({ glyph, color });
+    for (const [index, run] of line.split("\x1b[").entries()) {
+      let text = run;
+      if (index > 0) {
+        const end = run.indexOf("m");
+        color = "\x1b[" + run.slice(0, end + 1);
+        text = run.slice(end + 1);
+      }
+      for (const glyph of text) cells.push({ glyph, color });
     }
     return cells;
   });
