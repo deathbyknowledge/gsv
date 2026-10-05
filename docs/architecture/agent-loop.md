@@ -161,6 +161,11 @@ for shell and low-level callers.
 The process calls the configured generation service with `sessionAffinityKey`
 set to the PID.
 
+Empty responses, reasoning without a final answer, and malformed tool-call text
+use the existing three-attempt retry budget before trying the next configured
+model. A normal provider stop does not make an unusable response successful.
+Cancelled or superseded runs do not start fallback requests.
+
 After classifying a generation failure and selecting a fallback, the Process
 limits the new fallback diagnostic to 4,096 characters (UTF-16 code units),
 including a truncation marker that records the original length. The same preview

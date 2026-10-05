@@ -1285,11 +1285,9 @@ export class ProcessRun {
         ? { kind: "retry", advanceAttempt: true }
         : { kind: "complete", result: null };
     }
-    if (response.stopReason === "error" || response.stopReason === "aborted") {
-      const fallback = await this.switchRunTickFallback(runId, control, message, response);
-      if (fallback === "switched") return { kind: "fallback" };
-      if (fallback === "stopped") return { kind: "complete", result: null };
-    }
+    const fallback = await this.switchRunTickFallback(runId, control, message, response);
+    if (fallback === "switched") return { kind: "fallback" };
+    if (fallback === "stopped") return { kind: "complete", result: null };
     return {
       kind: "complete",
       result: await this.generationFailure(runId, control,
