@@ -71,9 +71,13 @@ a provider is selected use `gsv` rather than naming a provider that was not call
 
 `getExecutor()` validates the installation and forwards a restricted RPC target
 created inside its executor Durable Object. That target owns generation, media
-and cancellation calls without exposing installation lifecycle methods. Keep the
-target in the Durable Object: a Worker-owned wrapper would receive and re-export
-each response stream, adding an intermediate execution context to its lifetime.
+and cancellation calls without exposing installation lifecycle methods. The
+Worker remains an RPC proxy until the forwarded target is disposed and its calls
+finish; forwarding does not bypass its execution context. Creating the target
+in the Durable Object keeps JavaScript stream handling there, instead of having
+a Worker-owned wrapper receive and re-export each response stream. See
+[Cloudflare's RPC forwarding](https://developers.cloudflare.com/workers/runtime-apis/rpc/#forwarding-rpc-stubs)
+and [lifecycle rules](https://developers.cloudflare.com/workers/runtime-apis/rpc/lifecycle/).
 
 ## Inference deadlines
 

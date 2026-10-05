@@ -15,6 +15,7 @@ export async function getInferenceExecutor<Executor extends DurableObject<Execut
   const installationId = opaqueId(id);
   await requireActiveInstallation(env, installationId);
   const stub: unknown = env.INFERENCE_EXECUTORS.getByName(installationId);
+  // Forward the target itself; a Worker-owned wrapper would re-export every stream.
   // SAFETY: the exported executor implements this contract; avoid recursively expanding RPC mapped types.
   return (stub as { getTarget(): Promise<ExecutorContract> }).getTarget();
 }
