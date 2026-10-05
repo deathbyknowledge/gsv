@@ -235,7 +235,7 @@ async function probeSetupMode(client: SessionClient, url: string): Promise<boole
       protocol: 4,
       peer: {
         id: "gsv-ui-setup-probe",
-        version: "0.6.5",
+        version: "0.6.6",
         platform: "browser",
       },
     });
