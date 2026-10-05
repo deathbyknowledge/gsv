@@ -234,38 +234,99 @@ verify_asset() {
     fi
 }
 
+# Resample character cells, not escape bytes; keep the foreground style of
+# each sampled cell. Geometry stays in the release asset, not the installer.
+scale_animation() {
+    LC_ALL=C awk -v width="$1" -v height="$2" '
+        BEGIN { RS="\f"; ORS="\f"; escape=sprintf("%c", 27); best=-1 }
+        NF {
+            header=index($0, "\n")
+            split(substr($0, 1, header - 1), dimensions, " ")
+            if (dimensions[1] != previous) {
+                previous=dimensions[1]
+                distance=log(dimensions[1] / width)
+                if (distance < 0) distance=-distance
+                selected=(best < 0 || distance < best)
+                if (selected) {
+                    best=distance; count=0
+                    source_width=dimensions[1]; source_height=dimensions[2]
+                }
+            }
+            if (selected) frames[++count]=substr($0, header + 1)
+        }
+        END {
+            for (x=1; x<=width; x++) sample[x]=int((x - 0.5) * source_width / width) + 1
+            for (frame=1; frame<=count; frame++) {
+                split(frames[frame], lines, "\n")
+                color=escape "[0m"; output=""; next_row=1
+                for (y=1; y<=source_height; y++) {
+                    runs=split(lines[y], parts, escape "\\[")
+                    plain=""; offset=0
+                    for (run=1; run<=runs; run++) {
+                        part=parts[run]
+                        if (run > 1) {
+                            end=index(part, "m")
+                            color=escape "[" substr(part, 1, end)
+                            part=substr(part, end + 1)
+                        }
+                        for (x=1; x<=length(part); x++) colors[offset + x]=color
+                        offset+=length(part); plain=plain part
+                    }
+                    if (next_row > height || int((next_row - 0.5) * source_height / height) + 1 != y) continue
+                    line=""; last=""
+                    for (x=1; x<=width; x++) {
+                        color_at=colors[sample[x]]
+                        if (color_at != last) { line=line color_at; last=color_at }
+                        line=line substr(plain, sample[x], 1)
+                    }
+                    while (next_row <= height && int((next_row - 0.5) * source_height / height) + 1 == y) {
+                        output=output (next_row > 1 ? "\n" : "") line
+                        next_row++
+                    }
+                }
+                print output escape "[0m"
+            }
+        }
+    ' "$TMP_DIR/animation.frames"
+}
+
 # Playback reads cached frames; no model rendering or extra runtime is needed.
 play_animation() {
     trap - EXIT
     trap 'exit 0' INT TERM HUP
     local resized=1
     trap 'resized=1' WINCH
-    local frames=() record size cols rows width height left top picture status index frame=0
+    local frames=() record size cols rows width height left top picture status index frame=0 title="GSV"
     while true; do
         if [ "$resized" -eq 1 ]; then
             resized=0
             size="$(stty size <&3 2>/dev/null)" || return 0
             read -r rows cols <<< "$size"
+            if [ "$rows" -lt 1 ]; then rows=1; fi
+            if [ "$cols" -lt 1 ]; then cols=1; fi
             frames=(); width=0; height=0
-            while IFS= read -r -d $'\f' record; do
-                local frame_cols frame_rows
-                read -r frame_cols frame_rows <<< "${record%%$'\n'*}"
-                if [ "$width" -eq 0 ] && [ "$frame_cols" -lt "$cols" ] && [ "$((frame_rows + 8))" -lt "$rows" ]; then
-                    width="$frame_cols"; height="$frame_rows"
+            printf '\033[2J'
+            if [ "$cols" -gt 56 ] && [ "$rows" -gt 30 ]; then
+                width=$((cols - 1)); height=$((width * 36 / 96))
+                if [ "$height" -gt "$((rows - 9))" ]; then
+                    height=$((rows - 9)); width=$((height * 96 / 36))
                 fi
-                if [ "$frame_cols" -eq "$width" ]; then
-                    frames+=("${record#*$'\n'}")
-                    if [ "${#frames[@]}" -eq 240 ]; then break; fi
-                fi
-            done < "$TMP_DIR/animation.frames"
-            if [ "$width" -eq 0 ]; then width=20; fi
-            if [ "$cols" -lt "$width" ]; then width="$cols"; fi
+                while IFS= read -r -d $'\f' record; do frames+=("$record"); done < <(scale_animation "$width" "$height")
+                if [ "$resized" -eq 1 ]; then continue; fi
+            else
+                width=20
+                if [ "$cols" -le "$width" ]; then width=$((cols > 1 ? cols - 1 : 0)); fi
+            fi
             printf -v left '%*s' "$(((cols - width) / 2))" ''
             top=$(((rows - height - 6) / 2 + 1))
             if [ "$top" -lt 1 ]; then top=1; fi
-            printf '\033[2J'
         fi
-        printf '\033[%d;1H%sGSV\033[K\n\n' "$top" "$left"
+        if [ "$rows" -gt 3 ]; then
+            printf '\033[%d;1H%s%s\033[K\n\n' "$top" "$left" "${title:0:width}"
+        else
+            printf '\033[1;1H'
+            left=""
+        fi
         if [ "${#frames[@]}" -gt 0 ]; then
             index="$frame"
             if [ "$index" -ge 240 ]; then index=$((48 + (frame - 240) % 192)); fi
@@ -273,7 +334,7 @@ play_animation() {
             printf '%s%s\n\n' "$left" "${picture//$'\n'/$'\n'$left}"
         fi
         status="$(< "$TMP_DIR/animation.status")"
-        printf '%s%s\033[K\033[J' "$left" "$status"
+        printf '%s%s\033[K\033[J' "$left" "${status:0:cols-${#left}-1}"
         frame=$((frame + 1))
         sleep 0.083
     done
@@ -285,7 +346,7 @@ start_animation() {
     local size cols rows asset="gsv-installer-animation.gz" url
     size="$(stty size <&2 2>/dev/null)" || return 0
     read -r rows cols <<< "$size"
-    [ "$cols" -gt 56 ] && [ "$rows" -gt 30 ] || return 0
+    [ "$cols" -gt 0 ] && [ "$rows" -gt 0 ] || return 0
     # Older releases and failed optional downloads keep the ordinary installer.
     awk -v name="$asset" '$2 == name || $2 == "*" name { found=1 } END { exit !found }' "$TMP_DIR/checksums.txt" || return 0
     url="$(cache_bust_url_if_mutable "$1" "$(release_asset_url "$1" "$asset")")"
@@ -429,6 +490,16 @@ configure_path() {
     fi
     if [ -n "$PATH_FILES_UPDATED" ]; then
         success "Added $INSTALL_DIR to PATH in $PATH_FILES_UPDATED"
+    fi
+}
+
+open_desktop() {
+    [ "${GSV_NO_LAUNCH:-0}" != 1 ] && [ -z "${CI:-}${SSH_CONNECTION:-}${SSH_TTY:-}" ] || return 0
+    [ -t 1 ] && [ -t 2 ] || return 0
+    if [ "$OS" = linux ] && [ -z "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ]; then return 0; fi
+    info "Opening GSV Desktop"
+    if ! "$INSTALL_DIR/gsv" desktop; then
+        warn "Desktop could not open. Installation succeeded; retry with: \"$INSTALL_DIR/gsv\" desktop"
     fi
 }
 
@@ -750,9 +821,15 @@ main() {
     INSTALL_IN_PROGRESS=0
     remove_backups
     configure_path
+    local shell_needs_path=0
+    if ! path_already_configured; then
+        shell_needs_path=1
+        if [ "${GSV_NO_MODIFY_PATH:-0}" != 1 ]; then export PATH="$INSTALL_DIR:$PATH"; fi
+    fi
+    stop_animation
     success "Installed gsv, gsvd, Desktop, and local helpers to $INSTALL_DIR"
     echo ""
-    if [ "$INSTALL_DIR_SOURCE" = "default" ] && ! path_already_configured; then
+    if [ "$INSTALL_DIR_SOURCE" = "default" ] && [ "$shell_needs_path" -eq 1 ]; then
         echo "  Open a new shell, or run now: export PATH=\"\$HOME/.gsv/bin:\$PATH\""
     fi
     echo "  Next: finish setting up your space in your browser."
@@ -764,6 +841,7 @@ main() {
         echo "  Setup: https://github.com/deathbyknowledge/gsv/blob/main/docs/how-to/install-host-apps.md#desktop"
     fi
     echo ""
+    open_desktop
 }
 
 main "$@"

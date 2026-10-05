@@ -393,3 +393,14 @@ Write-Host "  Next: finish setting up your space in your browser."
 Write-Host "  CLI login: gsv --url wss://your-space.example/ws auth login"
 Write-Host "  Connect this computer: create an invitation in Fleet, then run gsv pair CODE"
 Write-Host ""
+if (-not $Headless -and $env:GSV_NO_LAUNCH -ne "1" -and -not $env:CI -and
+    -not $env:SSH_CONNECTION -and -not $env:SSH_TTY -and [Environment]::UserInteractive -and
+    -not [Console]::IsOutputRedirected -and -not [Console]::IsErrorRedirected) {
+  Write-Info "Opening GSV Desktop"
+  try {
+    & (Join-Path $InstallDir "gsv.exe") desktop
+    if ($LASTEXITCODE -ne 0) { throw "gsv desktop exited with status $LASTEXITCODE" }
+  } catch {
+    Write-Warn "Desktop could not open: $($_.Exception.Message). Installation succeeded; retry with gsv desktop."
+  }
+}
