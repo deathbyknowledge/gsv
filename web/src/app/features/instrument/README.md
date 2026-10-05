@@ -77,6 +77,8 @@ request's `purpose` when the model wrote one, otherwise a sentence built from th
 request shape. Ship, delegated work and Fleet use the same card, with the command
 or path under a closed fold. Delegated cards identify the work asking for approval;
 each decision still applies only to that exact pending request.
+Full request details remain available inside the fold, including structured
+arguments that the readable command or path does not show.
 Shell approvals also expose the existing `proc.hil` remember option for a concrete
 target. A hover/focus tooltip explains its process and target scope; it never
 changes another process's policy or remembers a denial.

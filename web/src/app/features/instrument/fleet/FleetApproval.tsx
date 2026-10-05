@@ -1,4 +1,5 @@
 import { useMutation, useQueryClient } from "@tanstack/preact-query";
+import type { ProcHilArgs } from "@humansandmachines/gsv/protocol";
 import { useQuery } from "../../../services/navigation/viewQueries";
 import { useEffect, useRef } from "preact/hooks";
 import { useViewActive } from "../../../services/navigation/ViewActivity";
@@ -35,7 +36,7 @@ export function FleetApproval({ pid, who, label, requestId, runId, placeLabelFor
   const pendingRequest = referencedApproval(pending.data, pid, requestId);
   const request = pendingRequest && (!runId || pendingRequest.runId === runId) ? pendingRequest : null;
   const decide = useMutation({
-    mutationFn: (input: { requestId: string; decision: "approve" | "deny"; remember?: boolean }) => decideChatHil(client, { pid, ...input }),
+    mutationFn: (input: Omit<ProcHilArgs, "pid">) => decideChatHil(client, { pid, ...input }),
     onSettled: () => {
       void queryClient.invalidateQueries({ queryKey: ["fleet", "pending-hil", pid] });
       void queryClient.invalidateQueries({ queryKey: INSTRUMENT_PROCESSES_KEY });
@@ -66,7 +67,12 @@ export function FleetApproval({ pid, who, label, requestId, runId, placeLabelFor
         shortcuts={false}
         approveRef={approve}
         onInspect={onInspect}
-        onDecide={(decision, remember) => { if (ready) decide.mutate({ requestId: request.requestId, decision, ...(remember ? { remember: true } : {}) }); }}
+        onDecide={(decision, remember) => {
+          if (!ready) return;
+          const input: Omit<ProcHilArgs, "pid"> = { requestId: request.requestId, decision };
+          if (remember) input.remember = true;
+          decide.mutate(input);
+        }}
       />}
     {decide.isSuccess && decisionApplies ? <p class="note" role="status">Decision recorded.</p> : null}
     {decide.error && decisionApplies ? <p class="error" role="alert">Could not record the decision: {decide.error.message}</p> : null}

@@ -67,7 +67,8 @@
 }
 .zen-approval .fold summary::-webkit-details-marker { display: none; }
 .zen-approval .fold summary::before { content: "▸ "; color: var(--faint); }
-.zen-approval .fold[open] summary::before { content: "▾ "; color: var(--accent); }
+.zen-approval .fold[open] > summary::before { content: "▾ "; color: var(--accent); }
 .zen-approval .fold summary:hover { color: var(--accent); }
 .zen-approval .fold summary:focus-visible { outline: none; text-decoration: underline; color: var(--accent); }
 .zen-approval .fold .machine-rail { margin: 8px 0 0; }
+.zen-approval .approval-exact { margin: 8px 0 0; font: inherit; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; max-height: min(24rem, 50vh); overflow: auto; }

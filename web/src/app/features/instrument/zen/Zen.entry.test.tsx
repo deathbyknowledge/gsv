@@ -1,5 +1,5 @@
 import { GSVClient, type GsvClientStatus } from "@humansandmachines/gsv/client";
-import type { ConversationMessage, ConversationSendArgs, ConversationSendResult, ConversationSummary, ProcContextState, ProcHistoryRecord, SysTargetSummary } from "@humansandmachines/gsv/protocol";
+import type { ConversationMessage, ConversationSendArgs, ConversationSendResult, ConversationSummary, ProcContextState, ProcHilArgs, ProcHistoryRecord, SysTargetSummary } from "@humansandmachines/gsv/protocol";
 import { conversationSendMessageId } from "@humansandmachines/gsv/protocol/stable-id";
 import { QueryClient, QueryClientProvider } from "@tanstack/preact-query";
 import type { ComponentChildren, ComponentProps, ComponentType } from "preact";
@@ -139,9 +139,9 @@ describe("Zen conversation entry", () => {
       });
       await vi.waitFor(() => expect(zen.props(ApprovalCard).request.requestId).toBe("shell-approval"));
       await act(() => zen.props(ApprovalCard).onDecide("approve", remember));
-      expect(GSVClient.prototype.request).toHaveBeenCalledWith("proc.hil", {
-        pid: shipPid, requestId: "shell-approval", decision: "approve", ...(remember ? { remember: true } : {}),
-      });
+      const expected: ProcHilArgs = { pid: shipPid, requestId: "shell-approval", decision: "approve" };
+      if (remember) expected.remember = true;
+      expect(GSVClient.prototype.request).toHaveBeenCalledWith("proc.hil", expected);
     } finally { await zen.unmount(); }
   });
 

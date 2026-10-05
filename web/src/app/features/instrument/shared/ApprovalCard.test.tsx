@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import type { JsonObject } from "@humansandmachines/gsv/protocol";
 import { Hint } from "../../../components/ui/Tooltip";
 import { collectNodes, collectText } from "../../../testing/testHarness";
 import { ApprovalCard } from "./ApprovalCard";
@@ -45,7 +46,7 @@ describe("approval card", () => {
     const fold = collectNodes(tree).find((node) => node.type === "details");
     expect(fold).toBeDefined();
     expect(fold?.props).not.toHaveProperty("open");
-    const foldText = collectText(fold);
+    const foldText = collectText(collectNodes(fold).find((node) => node.props.class === "machine-rail"));
     for (const part of ["jessicat", "my-mac", "$", "pgrep -fl Granola"]) expect(foldText).toContain(part);
     expect(foldText).not.toContain("shell.exec");
   });
@@ -58,26 +59,43 @@ describe("approval card", () => {
   });
 
   it("offers details rather than a command for a file request", () => {
-    const text = collectText(ApprovalCard({
+    const tree = ApprovalCard({
       ...props,
       request: { ...request, toolName: "Read", syscall: "fs.read", args: { path: "/Users/jessicat/notes.md" } },
-    }));
+    });
+    const text = collectText(tree);
     expect(text).toContain("Read a file on my mac");
     expect(text).toContain("show the details");
     expect(text).toContain("read /Users/jessicat/notes.md");
     expect(text).toContain("my-mac");
-    expect(text).not.toContain("fs.read");
+    expect(collectText(collectNodes(tree).find((node) => node.props.class === "machine-rail"))).not.toContain("fs.read");
     expect(text).not.toContain("$");
   });
 
   it("names the recipient and subject for mail without faking a prompt", () => {
-    const text = collectText(ApprovalCard({
+    const tree = ApprovalCard({
       ...props,
       request: { ...request, toolName: "mail.send", syscall: "mail.send", target: "gsv", args: { to: "mike@example.com", subject: "Contract follow-up", text: "private" } },
-    }));
+    });
+    const text = collectText(collectNodes(tree).find((node) => node.props.class === "machine-rail"));
     expect(text).toContain("to mike@example.com · Contract follow-up");
     expect(text).not.toContain("mail.send");
     expect(text).not.toContain("private");
     expect(text).not.toContain("$");
+  });
+
+  it.each<{ syscall: string; args: JsonObject }>([
+    { syscall: "sys.mcp.call", args: { serverId: "calendar", name: "update_event", arguments: { attendees: ["guest@example.com"], notify: false, retries: 0, location: null } } },
+    { syscall: "shell.exec", args: { input: "python task.py", cwd: "/home/user/project", env: { MODE: "write" }, timeout: 60 } },
+    { syscall: "mail.send", args: { to: "guest@example.com", subject: "Update", text: "Complete mail body", attachments: [{ path: "/report.pdf" }] } },
+    { syscall: "shell.exec", args: { sessionId: "pending-command", stdin: "yes\n" } },
+  ])("keeps every $syscall argument inspectable in closed details", ({ syscall, args }) => {
+    const pending = { ...request, syscall, args };
+    const nodes = collectNodes(ApprovalCard({ ...props, request: pending }));
+    const folds = nodes.filter((node) => node.type === "details");
+    expect(folds.length).toBeGreaterThan(0);
+    for (const fold of folds) expect(fold.props).not.toHaveProperty("open");
+    const exact = nodes.find((node) => node.type === "pre" && node.props.class === "approval-exact");
+    expect(JSON.parse(collectText(exact))).toEqual({ syscall, target: pending.target, args });
   });
 });

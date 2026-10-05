@@ -143,6 +143,9 @@ changing its draft. Use the buttons to decide, or `y` / `n` when not typing. The
 transcript row, independent of messages and runtime activity. Approvals from delegated work appear
 above the composer. Ship, delegated work and Fleet share one approval card: the
 action's purpose comes first, with command or request details folded underneath.
+The **full request** fold preserves every argument, including structured MCP
+parameters, mail bodies and execution options. Requests without a readable
+summary still expose their complete request in the details fold.
 Shell approvals on a specific target also offer **always allow**. Its tooltip
 explains that this remembers all shell commands on that target for the requesting
 process, not just the displayed command. Other processes and targets still use

@@ -3,6 +3,7 @@ import type { ComponentChildren, VNode } from "preact";
 import { act } from "preact/test-utils";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { GSVClient } from "@humansandmachines/gsv/client";
+import type { ProcHilArgs } from "@humansandmachines/gsv/protocol";
 import { GatewayProvider } from "../../../services/gateway/GatewayProvider";
 import { collectNodes, collectText, createTestRoot } from "../../../testing/testHarness";
 import { FleetApproval } from "./FleetApproval";
@@ -35,6 +36,7 @@ describe("pending child approval controls", () => {
       function Harness() { tree = FleetApproval({ pid: "child", runId, who: "crew", label: "Read the example page" }); return null; }
       await root.render(<GatewayProvider><QueryClientProvider client={cache}><Harness /></QueryClientProvider></GatewayProvider>);
       const card = () => {
+        // SAFETY: The VNode is selected by the exact component whose props type is ApprovalCardProps.
         const node = collectNodes(tree).find((node) => node.type === ApprovalCard) as VNode<ApprovalCardProps> | undefined;
         return node ? ApprovalCard(node.props) : null;
       };
@@ -52,7 +54,9 @@ describe("pending child approval controls", () => {
       const button = remember ? "always allow" : "run it";
       await vi.waitFor(() => expect(view.buttons().find((node) => collectText(node).trim() === button)?.props.disabled).toBe(false));
       await act(async () => { await view.buttons().find((node) => collectText(node).trim() === button)?.props.onClick?.(); });
-      await vi.waitFor(() => expect(request).toHaveBeenCalledWith("proc.hil", { pid: "child", requestId: "child-request", decision: "approve", ...(remember ? { remember: true } : {}) }));
+      const expected: ProcHilArgs = { pid: "child", requestId: "child-request", decision: "approve" };
+      if (remember) expected.remember = true;
+      await vi.waitFor(() => expect(request).toHaveBeenCalledWith("proc.hil", expected));
       await vi.waitFor(() => expect(view.text()).toContain("Decision recorded"));
       expect(request.mock.calls.filter(([call]) => call === "proc.history").every(([, args]) => args?.includeMessages === false)).toBe(true);
     } finally { await view.close(); }

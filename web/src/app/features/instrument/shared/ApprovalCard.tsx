@@ -23,23 +23,28 @@ export type ApprovalCardProps = {
 export function ApprovalCard({ request, who, place, label, disabled = false, shortcuts = true, approveRef, onInspect, onDecide }: ApprovalCardProps) {
   const line = hilRequestLine(request);
   const heading = <>{label ?? "approval"} · {place}</>;
+  const exactDetails = <pre class="approval-exact">{JSON.stringify({ syscall: request.syscall, target: request.target, args: request.args }, null, 2)}</pre>;
   return (
     <div class="zen-approval">
       <div class="q">
         {onInspect ? <button type="button" onClick={onInspect} title="Inspect this approval in Fleet">{heading}</button> : heading}
       </div>
       <p class="ask">{hilRequestSentence(request, place)}</p>
-      {line ? (
-        <details class="fold">
-          <summary>{hilDetailLabel(request)}</summary>
+      <details class="fold">
+        <summary>{hilDetailLabel(request)}</summary>
+        {line ? <>
           <div class="machine-rail">
             {line.lead === "prompt" ? commandLine(who, request.target, line.text) : <span class="cmd">
               {line.lead === "place" ? <><span class="where">{request.target}</span> · </> : null}
               {line.text}
             </span>}
           </div>
-        </details>
-      ) : null}
+          <details class="fold">
+            <summary>full request</summary>
+            {exactDetails}
+          </details>
+        </> : exactDetails}
+      </details>
       <div class="keys">
         <button ref={approveRef} type="button" class="ibtn is-primary" disabled={disabled} onClick={() => { if (!disabled) onDecide("approve"); }}>
           {shortcuts ? <kbd>y</kbd> : null} run it

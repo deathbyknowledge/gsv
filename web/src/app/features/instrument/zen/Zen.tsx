@@ -5,7 +5,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import { memo } from "preact/compat";
 import { useQuery } from "../../../services/navigation/viewQueries";
 import type { JSX } from "preact";
-import type { ProcHilRequest } from "@humansandmachines/gsv/protocol";
+import type { ProcHilArgs, ProcHilRequest } from "@humansandmachines/gsv/protocol";
 import { useGateway } from "../../../services/gateway/GatewayProvider";
 import { useSession } from "../../../services/session/SessionProvider";
 import { LoadingState, Spinner } from "../../../components/ui/Spinner";
@@ -699,7 +699,9 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
     async (decision: "approve" | "deny", remember?: boolean) => {
       if (!pid || !pendingHil) return;
       try {
-        await decideChatHil(client, { pid, requestId: pendingHil.requestId, decision, ...(remember ? { remember: true } : {}) });
+        const args: ProcHilArgs = { pid, requestId: pendingHil.requestId, decision };
+        if (remember) args.remember = true;
+        await decideChatHil(client, args);
       } catch (error) {
         setNote(error instanceof Error ? error.message : "The decision did not go through.");
       }
