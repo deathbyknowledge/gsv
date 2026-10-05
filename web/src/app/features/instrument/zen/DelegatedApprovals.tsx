@@ -29,7 +29,11 @@ export function delegatedApprovalProcesses(processes: readonly ConsoleProcess[],
 }
 
 /** Ship recovers the owner's pending work from the registry after reload or process replacement. */
-export function DelegatedApprovals({ pid, onFleet }: { pid: string; onFleet: (reference: FleetReference) => void }) {
+export function DelegatedApprovals({ pid, onFleet, placeLabelFor }: {
+  pid: string;
+  onFleet: (reference: FleetReference) => void;
+  placeLabelFor?: (target: string) => string;
+}) {
   const { client, connected } = useGateway();
   const processes = useQuery({
     queryKey: INSTRUMENT_PROCESSES_KEY,
@@ -39,12 +43,8 @@ export function DelegatedApprovals({ pid, onFleet }: { pid: string; onFleet: (re
   const waiting = delegatedApprovalProcesses(processes.data ?? [], pid);
   if (waiting.length === 0) return null;
   return <div class="zen-delegated-approvals" aria-label="Delegated work approvals">
-    {waiting.map((process) => <section key={`${process.pid}:${process.activeRunId}`} class="zen-approval">
-      <div class="q">
-        <button type="button" onClick={() => onFleet(`proc:${process.pid}`)}>{process.label || process.pid}</button>
-        {" is waiting for your approval"}
-      </div>
-      <FleetApproval pid={process.pid} runId={process.activeRunId!} />
-    </section>)}
+    {waiting.map((process) => <FleetApproval key={`${process.pid}:${process.activeRunId}`}
+      pid={process.pid} runId={process.activeRunId!} who={process.username} label={process.label || process.pid}
+      placeLabelFor={placeLabelFor} onInspect={() => onFleet(`proc:${process.pid}`)} />)}
   </div>;
 }

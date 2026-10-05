@@ -141,7 +141,12 @@ chosen destination through retries; changing activity does not replay old notifi
 In Web and Desktop, new approval requests scroll into view without moving the composer cursor or
 changing its draft. Use the buttons to decide, or `y` / `n` when not typing. The request has its own
 transcript row, independent of messages and runtime activity. Approvals from delegated work appear
-above the composer.
+above the composer. Ship, delegated work and Fleet share one approval card: the
+action's purpose comes first, with command or request details folded underneath.
+Shell approvals on a specific target also offer **always allow**. Its tooltip
+explains that this remembers all shell commands on that target for the requesting
+process, not just the displayed command. Other processes and targets still use
+their own approval rules; ordinary approval and denial never remember a rule.
 
 Opening a Process activity inspector calls `proc.observe`. Raw Process signals then reach that
 specific client in addition to any connection that owns the active run. Closing the inspector calls

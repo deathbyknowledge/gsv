@@ -68,8 +68,8 @@ describe("Ship pending approvals", () => {
         ...createSessionService(client), start: async () => {},
       })}><TerminalProvider><QueryClientProvider client={cache}><WireSync /><Harness /></QueryClientProvider></TerminalProvider></SessionProvider></GatewayProvider>);
       await vi.waitFor(() => expect(shipPid).toBe("ship"));
-      expect(collectText(shipTree)).toMatch(/child\s+is waiting for your approval/);
-      expect(collectText(helperTree)).toMatch(/helper-child\s+is waiting for your approval/);
+      expect(collectNodes(shipTree).filter((node) => node.type === FleetApproval).map((node) => node.props.label)).toEqual(["child", "helper-child"]);
+      expect(collectNodes(helperTree).filter((node) => node.type === FleetApproval).map((node) => node.props.label)).toEqual(["helper-child"]);
       await act(async () => {
         for (const listener of listeners) {
           listener("process.exit", { pid: "ship" });
@@ -88,7 +88,6 @@ describe("Ship pending approvals", () => {
       await vi.waitFor(() => expect(shipPid).toBe("replacement"));
       expect(collectNodes(shipTree).filter((node) => node.type === FleetApproval).map((node) => node.props))
         .toMatchObject([{ pid: "child", runId: "child-run" }, { pid: "helper-child", runId: "helper-child-run" }]);
-      expect(collectText(shipTree)).not.toContain("foreign-child");
       expect(helperPid).toBe("helper");
       expect(collectText(helperTree)).toBe("");
       expect(request.mock.calls.map(([call]) => call)).toEqual(["proc.list"]);
@@ -126,9 +125,8 @@ describe("Ship pending approvals", () => {
           state: "waiting_hil", activeRunId: "child-run", queuedCount: 0, lastActiveAt: 10,
         } });
       });
-      await vi.waitFor(() => expect(collectText(tree)).toMatch(/child\s+is waiting for your approval/));
-      expect(collectNodes(tree).find((node) => node.type === FleetApproval)?.props)
-        .toMatchObject({ pid: "child", runId: "child-run" });
+      await vi.waitFor(() => expect(collectNodes(tree).find((node) => node.type === FleetApproval)?.props)
+        .toMatchObject({ pid: "child", runId: "child-run", label: "child", who: "algo" }));
       expect(cache.getQueryData<ConsoleProcess[]>(INSTRUMENT_PROCESSES_KEY)?.[0]).toMatchObject({ state: "idle", activeRunId: null });
       await act(async () => {
         for (const listener of listeners) listener("proc.changed", { pid: "child", changes: ["state"], runtime: {

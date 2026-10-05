@@ -1,4 +1,5 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import { Hint } from "../../../components/ui/Tooltip";
 import { collectNodes, collectText } from "../../../testing/testHarness";
 import { ApprovalCard } from "./ApprovalCard";
 
@@ -9,6 +10,33 @@ const request = {
 const props = { who: "jessicat", place: "my mac", onInspect: () => {}, onDecide: () => {} };
 
 describe("approval card", () => {
+  it("remembers only an explicit always-allow action and explains its scope", () => {
+    const onDecide = vi.fn();
+    const tree = ApprovalCard({ ...props, request, onDecide });
+    const nodes = collectNodes(tree);
+    const hint = nodes.find((node) => node.type === Hint);
+    expect(hint?.props.text).toBe("Allow this process to run any shell command on my mac without asking again. Other processes still ask.");
+    nodes.find((node) => node.type === "button" && collectText(node) === "always allow")?.props.onClick?.();
+    expect(onDecide).toHaveBeenLastCalledWith("approve", true);
+    nodes.find((node) => node.type === "button" && collectText(node).includes("run it"))?.props.onClick?.();
+    expect(onDecide).toHaveBeenLastCalledWith("approve");
+    nodes.find((node) => node.type === "button" && collectText(node).includes("don't"))?.props.onClick?.();
+    expect(onDecide).toHaveBeenLastCalledWith("deny");
+    onDecide.mockClear();
+    const disabled = ApprovalCard({ ...props, request, onDecide, disabled: true });
+    const remember = collectNodes(disabled).find((node) => node.type === "button" && collectText(node) === "always allow");
+    expect(remember?.props.disabled).toBe(true);
+    remember?.props.onClick?.();
+    expect(onDecide).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { ...request, target: "targets/*" },
+    { ...request, syscall: "mail.send" },
+  ])("does not offer shell permission for $syscall on $target", (pending) => {
+    expect(collectText(ApprovalCard({ ...props, request: pending }))).not.toContain("always allow");
+  });
+
   it("leads with the model's purpose and folds the command away", () => {
     const tree = ApprovalCard({ ...props, request: { ...request, purpose: "check whether Granola is running" } });
     const text = collectText(tree);

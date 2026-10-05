@@ -5,11 +5,19 @@ import { useViewActive } from "../../../services/navigation/ViewActivity";
 import { LoadingState } from "../../../components/ui/Spinner";
 import { useGateway } from "../../../services/gateway/GatewayProvider";
 import { decideChatHil, getChatHistory } from "../../../services/chat/backend/chatService";
-import { hilRequestSentence } from "../../../services/chat/domain/hil";
+import { ApprovalCard } from "../shared/ApprovalCard";
 import { INSTRUMENT_LEDGER_KEY, INSTRUMENT_PROCESSES_KEY } from "../wire/queryKeys";
 import { referencedApproval } from "./fleetModel";
 
-export function FleetApproval({ pid, requestId, runId }: { pid: string; requestId?: string; runId?: string }) {
+export function FleetApproval({ pid, who, label, requestId, runId, placeLabelFor = (target) => target, onInspect }: {
+  pid: string;
+  who: string;
+  label?: string;
+  requestId?: string;
+  runId?: string;
+  placeLabelFor?: (target: string) => string;
+  onInspect?: () => void;
+}) {
   const active = useViewActive();
   const { client, connected } = useGateway();
   const queryClient = useQueryClient();
@@ -27,7 +35,7 @@ export function FleetApproval({ pid, requestId, runId }: { pid: string; requestI
   const pendingRequest = referencedApproval(pending.data, pid, requestId);
   const request = pendingRequest && (!runId || pendingRequest.runId === runId) ? pendingRequest : null;
   const decide = useMutation({
-    mutationFn: (input: { requestId: string; decision: "approve" | "deny" }) => decideChatHil(client, { pid, ...input }),
+    mutationFn: (input: { requestId: string; decision: "approve" | "deny"; remember?: boolean }) => decideChatHil(client, { pid, ...input }),
     onSettled: () => {
       void queryClient.invalidateQueries({ queryKey: ["fleet", "pending-hil", pid] });
       void queryClient.invalidateQueries({ queryKey: INSTRUMENT_PROCESSES_KEY });
@@ -44,21 +52,22 @@ export function FleetApproval({ pid, requestId, runId }: { pid: string; requestI
   const ready = connected && !!request && !pending.isError && !pending.isFetching && !decide.isPending && !(decide.isSuccess && decisionApplies);
 
   return <section class="fleet-approval" ref={region} tabIndex={-1} aria-label="Approval request">
-    <h4>Approval</h4>
-    {requestId ? <div class="full-id">{requestId}</div> : null}
     {!connected ? <p class="note" role="status">Connecting…</p>
       : pending.isPending ? <p class="note"><LoadingState>Loading approval…</LoadingState></p>
       : pending.isError ? <p class="error" role="alert">Could not load this approval: {pending.error.message}</p>
       : !request ? <p class="note" role="status">{requestId ? "This approval is no longer pending." : "No approval is pending."}{pending.data && requestId ? " A different request is now waiting; open its approval from Zen." : ""}</p>
-      : <>
-        <p class="ask">{hilRequestSentence(request, request.target)}</p>
-        <p class="note">The process is held on <strong>{request.syscall}</strong> on <strong>{request.target}</strong>. Approving runs exactly what it asked for, nothing else.</p>
-        <pre class="line-detail">{JSON.stringify(request.args, null, 2)}</pre>
-        <div class="fleet-actions">
-          <button ref={approve} type="button" class="ibtn is-primary" disabled={!ready} onClick={() => { if (ready) decide.mutate({ requestId: request.requestId, decision: "approve" }); }}>approve</button>
-          <button type="button" class="ibtn is-danger" disabled={!ready} onClick={() => { if (ready) decide.mutate({ requestId: request.requestId, decision: "deny" }); }}>deny</button>
-        </div>
-      </>}
+      : <ApprovalCard
+        key={request.requestId}
+        request={request}
+        who={who}
+        place={placeLabelFor(request.target)}
+        label={label}
+        disabled={!ready}
+        shortcuts={false}
+        approveRef={approve}
+        onInspect={onInspect}
+        onDecide={(decision, remember) => { if (ready) decide.mutate({ requestId: request.requestId, decision, ...(remember ? { remember: true } : {}) }); }}
+      />}
     {decide.isSuccess && decisionApplies ? <p class="note" role="status">Decision recorded.</p> : null}
     {decide.error && decisionApplies ? <p class="error" role="alert">Could not record the decision: {decide.error.message}</p> : null}
   </section>;

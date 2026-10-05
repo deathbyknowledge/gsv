@@ -33,7 +33,7 @@ import { PromptLine, type PromptLineHandle, type PromptPlace } from "../shared/P
 import { SHELL_KEYS } from "../shared/shellKeys";
 import { useDismissOnOutsideClick } from "../shared/useDismissOnOutsideClick";
 import { ActivityWorking } from "./ActivityWorking";
-import { ApprovalCard } from "./ApprovalCard";
+import { ApprovalCard } from "../shared/ApprovalCard";
 import { DelegatedApprovals } from "./DelegatedApprovals";
 import { useZenScroll } from "./useZenScroll";
 import { useZenProcess } from "./useZenProcess";
@@ -696,10 +696,10 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
 
   /* approvals */
   const decide = useCallback(
-    async (decision: "approve" | "deny") => {
+    async (decision: "approve" | "deny", remember?: boolean) => {
       if (!pid || !pendingHil) return;
       try {
-        await decideChatHil(client, { pid, requestId: pendingHil.requestId, decision });
+        await decideChatHil(client, { pid, requestId: pendingHil.requestId, decision, ...(remember ? { remember: true } : {}) });
       } catch (error) {
         setNote(error instanceof Error ? error.message : "The decision did not go through.");
       }
@@ -1002,7 +1002,7 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
                     onInspect={() => {
                       if (pid) onFleet({ kind: "approval", pid, requestId: pendingHil.requestId });
                     }}
-                    onDecide={(decision) => void decide(decision)}
+                    onDecide={(decision, remember) => void decide(decision, remember)}
                   />
                 </div>
               ) : null}
@@ -1013,7 +1013,7 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
       </div>
 
       <div class="zen-bottom">
-        {pid ? <DelegatedApprovals pid={pid} onFleet={onFleet} /> : null}
+        {pid ? <DelegatedApprovals pid={pid} onFleet={onFleet} placeLabelFor={(target) => placeLabel(target, places)} /> : null}
 
         <div class="zen-composer">
           {pickerOpen ? (

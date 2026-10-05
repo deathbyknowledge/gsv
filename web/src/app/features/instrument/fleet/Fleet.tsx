@@ -782,7 +782,9 @@ export function ProcessInspector({ client, process, requestedApprovalId, model, 
           {process.username} · {process.cwd}
         </dd>
       </dl>
-      {requestedApprovalId || process.state === "waiting_hil" ? <FleetApproval key={requestedApprovalId ?? "pending"} pid={process.pid} requestId={requestedApprovalId} /> : null}
+      {requestedApprovalId || process.state === "waiting_hil" ? <FleetApproval key={requestedApprovalId ?? "pending"}
+        pid={process.pid} who={process.username} label={process.personal ? undefined : process.label}
+        requestId={requestedApprovalId} placeLabelFor={placeLabelFor} /> : null}
       <div class="fleet-actions">
         {process.interactive && (
           <button type="button" class="fleet-text-action is-primary" onClick={() => onZen(undefined, process.personal ? undefined : process.pid)}>
