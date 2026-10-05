@@ -49,6 +49,45 @@ describe("Process inference retry identity", () => {
     },
   );
 
+  it.each([
+    { name: "empty", content: [], stopReason: "stop" },
+    { name: "reasoning-only", content: [{ type: "thinking", thinking: "No final output" }], stopReason: "stop" },
+    { name: "malformed", content: [{ type: "text", text: "<tool_call>Shell</tool_call>" }], stopReason: "stop" },
+    { name: "output-limit", content: [], stopReason: "length" },
+  ])("uses the next model after exhausting $name responses", async ({ name, content, stopReason }) => {
+    const pid = `inference-empty-fallback-${name}`;
+    const runId = `run-${pid}`;
+    const stub = await initProcess(pid, ROOT_IDENTITY);
+    const result = await runInProcess(stub, async (process: Process) => {
+      const signals = captureSignals(process);
+      const requests: Array<{ model: string; id: string }> = [];
+      mockGeneration(process, async (request: Parameters<Process["generation"]["generate"]>[0]) => {
+        if (!request.attribution) throw new Error("Missing inference attribution");
+        requests.push({ model: request.config.model, id: request.attribution.logicalRequestId });
+        return assistantResponse(request.config.model === "primary" ? content
+          : [messageAction("Fallback completed", "fallback-success")], {
+          model: request.config.model,
+          stopReason: request.config.model === "primary" ? stopReason : "stop",
+          usage: testUsage(10, 1),
+        });
+      }, async () => "unused");
+      process.store.messages.appendMessage("user", "Use the next model if needed");
+      const fallback = processTestConfig(pid, { model: "backup", generationStreaming: "off", generationTimeoutMs: 180_000 });
+      process.runs.active = runStateSchema.parse(generationRun(runId, processTestConfig(pid, {
+        model: "primary", generationStreaming: "off", fallbacks: [fallback],
+      })));
+      await process.run.runTick(runId);
+      return { requests, signals, usage: process.store.state.getHistoryUsage() };
+    });
+    expect(result.requests.map(({ model }) => model)).toEqual(["primary", "primary", "primary", "backup"]);
+    expect(new Set(result.requests.map(({ id }) => id)).size).toBe(4);
+    expect(result.signals.filter(({ signal }) => signal === "proc.run.retrying").at(-1)?.payload).toMatchObject({
+      fallback: { from: { model: "primary" }, to: { model: "backup" } },
+    });
+    expect(result.signals.findLast(({ signal }) => signal === "proc.run.finished")?.payload).toMatchObject({ status: "ok" });
+    expect(result.usage).toMatchObject({ generations: 4, inputTokens: 40, outputTokens: 4 });
+  });
+
   it("persists a deliberate retry before notification and keeps its identity across eviction", async () => {
     const pid = "inference-retry-eviction";
     const runId = `run-${pid}`;
@@ -112,17 +151,20 @@ describe("Process inference retry identity", () => {
       const config = { ...processTestConfig(pid), generationTimeoutMs: 180_000, capabilities: [] };
       process.runs.active = { runId };
       const first = await process.run.buildInferenceAttribution(config, "run", runId);
-      await process.run.beginGenerationFallback({ runId, reason: "try another credential", from: config,
-        to: { ...config, apiKey: "synthetic-other-key" }, fallbackIndex: 1, fallbackCount: 1 });
+      const fallbackOptions = { runId, reason: "try another credential", from: config,
+        to: { ...config, apiKey: "synthetic-other-key" }, fallbackIndex: 1, fallbackCount: 1 };
+      await process.run.beginGenerationFallback(fallbackOptions);
       const fallback = await process.run.buildInferenceAttribution(config, "run", runId);
       expect(fallback.logicalRequestId).not.toBe(first.logicalRequestId);
       process.runs.active = { runId: "replacement" };
       const saved = process.store.state.getValue("currentRun");
       expect(await process.run.beginGenerationRetry({ runId, attempt: 1, maxAttempts: 3, reason: "empty", cause: "empty" })).toBe("stopped");
+      expect(await process.run.beginGenerationFallback(fallbackOptions)).toBe("stopped");
       expect(process.store.state.getValue("currentRun")).toBe(saved);
       process.run.runAbortSignal("replacement");
       process.runAbortControllers.get("replacement")!.abort();
       expect(await process.run.beginGenerationRetry({ runId: "replacement", attempt: 1, maxAttempts: 3, reason: "empty", cause: "empty" })).toBe("stopped");
+      expect(await process.run.beginGenerationFallback({ ...fallbackOptions, runId: "replacement" })).toBe("stopped");
       expect(process.store.state.getValue("currentRun")).toBe(saved);
     });
   });
