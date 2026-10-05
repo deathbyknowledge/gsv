@@ -33,6 +33,12 @@ run it, or use Windows PowerShell 5.1 or PowerShell 7:
 irm https://install.gsv.space/install.ps1 | iex
 ```
 
+After a successful installation in a local graphical terminal, the script opens
+GSV Desktop automatically. Set `GSV_NO_LAUNCH=1` to skip opening it. Headless,
+SSH, CI and redirected sessions do not launch Desktop. A launch failure leaves
+the installation intact and prints the error so you can fix it and run
+`gsv desktop` again.
+
 The setup executable installs all five applications, adds a Start-menu shortcut,
 and registers an Apps uninstall entry. Setup upgrades reuse the installation
 directory selected during the previous setup. The ZIP contains the same payload with
@@ -56,10 +62,13 @@ Use `GSV_CHANNEL=dev` for the moving development channel, or set
 `GSV_VERSION=vX.Y.Z` to install an immutable release tag.
 
 The Linux and macOS installer shows a satellite animation in a terminal with
-enough space, using the terminal's current font. It plays cached frames while
-the real installation runs and restores the terminal, including the install
-log, on completion or interruption. Small terminals, redirected output and CI
-keep ordinary text output. Set `GSV_NO_ANIMATION=1` to use text explicitly.
+enough space, using the terminal's current font. It scales the cached frames to
+the current terminal dimensions, preserves their proportions, and responds to
+resizing while the real installation runs. Below 57 columns or 31 rows it shows
+only text; growing the terminal brings the satellite back, even when it started
+small. Completion or interruption restores the terminal and the install log.
+Redirected output and CI keep ordinary text output. Set `GSV_NO_ANIMATION=1`
+to use text explicitly.
 
 ## Sign-in and multiple windows
 
@@ -85,6 +94,13 @@ puts the directory on `PATH` for new shells: one marked, guarded line in
 Windows it is the user `Path` in the registry. Set `GSV_NO_MODIFY_PATH=1` to
 skip that and add it yourself. The daemon service never depends on `PATH`; it
 is registered with the absolute path of `gsvd`.
+
+Unless `GSV_NO_MODIFY_PATH=1`, the installer also exports the updated `PATH`
+for its own process and Desktop.
+On Unix, a script piped into `bash` cannot change its parent terminal's
+environment. To use `gsv` in that same terminal afterward, open a new shell or
+run `export PATH="$HOME/.gsv/bin:$PATH"`. Desktop opens without this extra step.
+The PowerShell `iex` command updates the current session's `PATH` directly.
 
 `GSV_INSTALL_DIR` overrides the destination. On Unix, a directory this user cannot
 write is installed with `sudo`, and the daemon there cannot update itself.

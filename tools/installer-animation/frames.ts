@@ -23,6 +23,6 @@ function render(cols: number, rows: number) {
   }
   return { cols, rows, frames };
 }
-const variants = [render(96, 36), render(76, 28), render(56, 22)];
+const variants = [render(192, 72), render(96, 36), render(76, 28), render(56, 22)];
 const release = variants.flatMap(({ cols, rows, frames }) => frames.map(frame => `${cols} ${rows}\n${frame}\f`)).join("");
 writeFileSync(process.argv[2], process.argv.includes("--release") ? gzipSync(release, { level: 9 }) : JSON.stringify(variants));

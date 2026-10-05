@@ -27,6 +27,16 @@ make_fixture() {
     {
         printf '#!/usr/bin/env sh\n'
         printf 'if [ "${1:-}" = "daemon" ] && [ "${2:-}" = "start" ]; then systemctl --user start gsvd.service; fi\n'
+        cat <<'SH'
+if [ "${1:-}" = desktop ]; then
+    printf 'desktop launched\n'
+    printf '%s\n' "$0" "$PATH" >> "${GSV_TEST_DESKTOP_LOG:-/dev/null}"
+    if [ "${GSV_TEST_DESKTOP_FAIL:-0}" = 1 ]; then
+        printf 'fixture desktop launch failed\n' >&2
+        exit 1
+    fi
+fi
+SH
         printf 'printf "%%s\\n" "%s"\n' "$marker"
     } > "$FIXTURES/$name"
     chmod 0755 "$FIXTURES/$name"
