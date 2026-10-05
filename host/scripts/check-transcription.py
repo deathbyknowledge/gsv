@@ -43,7 +43,7 @@ def main():
     if args.release:
         command.append("--release")
     command.extend(["--package", "transcriber", "--no-run", "--message-format=json"])
-    build = subprocess.run(command, check=True, timeout=600, stdout=subprocess.PIPE, text=True)
+    build = subprocess.run(command, check=True, timeout=1800, stdout=subprocess.PIPE, text=True)
     artifacts = [json.loads(line) for line in build.stdout.splitlines() if line.startswith("{")]
     executable = next(
         Path(artifact["executable"])
