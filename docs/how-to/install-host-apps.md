@@ -246,9 +246,12 @@ blocked launch, use System Settings → Privacy & Security → Open Anyway.
 Replace the bundle to update it. Windows includes both local helpers; microphone
 and camera access require an interactive session and permission in Windows
 Privacy settings.
-The Windows helpers use CPU inference. Local voice requires AVX2 with FMA/F16C;
-Desktop explains when a CPU does not support it. This requirement applies only
-to voice. Gesture inference selects supported CPU instructions at runtime.
+The Windows helpers use CPU inference. Local voice includes a baseline CPU backend
+and automatically selects faster instructions when supported. AVX2 and AVX-512 are
+optional. The installer and app bundle include the required speech libraries in
+`gsv-transcribe-runtime` beside the helper; no separate installation or CPU setting
+is needed. Keep that directory with the helper when moving a manual installation.
+Gesture inference also selects supported CPU instructions at runtime.
 
 ## Manual verification
 

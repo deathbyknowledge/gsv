@@ -512,14 +512,14 @@ rollback_binaries() {
         local target="${INSTALL_DIR}/${TARGETS[$index]}"
         local backup="${BACKUPS[$index]:-}"
         local staged="${INSTALL_DIR}/.${TARGETS[$index]}.new.$$"
-        as_installer rm -f "$staged" || true
+        as_installer rm -rf "$staged" || true
         if [ -n "$backup" ]; then
             if as_installer test -e "$backup"; then
-                as_installer rm -f "$target" || true
+                as_installer rm -rf "$target" || true
                 as_installer mv "$backup" "$target" || true
             fi
         else
-            as_installer rm -f "$target" || true
+            as_installer rm -rf "$target" || true
         fi
     done
 }
@@ -531,33 +531,37 @@ replace_binaries() {
         local target="${INSTALL_DIR}/${TARGETS[$index]}"
         local staged="${INSTALL_DIR}/.${TARGETS[$index]}.new.$$"
         local backup=""
+        local source="$TMP_DIR/${ASSETS[$index]}"
+        if [ "${TARGETS[$index]}" = "gsv-transcribe-runtime" ]; then
+            source="$TMP_DIR/gsv-transcribe-runtime"
+        fi
         if as_installer test -e "$target"; then
             backup="${INSTALL_DIR}/.${TARGETS[$index]}.backup.$$"
         fi
         BACKUPS+=("$backup")
-        as_installer cp "$TMP_DIR/${ASSETS[$index]}" "$staged" || {
-            as_installer rm -f "$staged" || true
+        as_installer cp -R "$source" "$staged" || {
+            as_installer rm -rf "$staged" || true
             return 1
         }
-        if [ "${EXECUTABLES[$index]}" -eq 1 ]; then
+        if [ "${EXECUTABLES[$index]}" -eq 1 ] || [ -d "$source" ]; then
             as_installer chmod 0755 "$staged" || {
-                as_installer rm -f "$staged" || true
+                as_installer rm -rf "$staged" || true
                 return 1
             }
         else
             as_installer chmod 0644 "$staged" || {
-                as_installer rm -f "$staged" || true
+                as_installer rm -rf "$staged" || true
                 return 1
             }
         fi
         if [ -n "$backup" ]; then
             as_installer mv "$target" "$backup" || {
-                as_installer rm -f "$staged" || true
+                as_installer rm -rf "$staged" || true
                 return 1
             }
         fi
         if ! as_installer mv "$staged" "$target"; then
-            as_installer rm -f "$staged" || true
+            as_installer rm -rf "$staged" || true
             return 1
         fi
     done
@@ -566,7 +570,7 @@ replace_binaries() {
 remove_backups() {
     local backup
     for backup in "${BACKUPS[@]}"; do
-        if [ -n "$backup" ]; then as_installer rm -f "$backup"; fi
+        if [ -n "$backup" ]; then as_installer rm -rf "$backup"; fi
     done
 }
 
@@ -674,6 +678,7 @@ main() {
         "gsv-vision-LICENSE.apache-2.0"
         "gsv-vision-PROVENANCE.md"
         "gsv-vision-THIRD_PARTY.md"
+        "gsv-transcribe-runtime-${PLATFORM}.tar.gz"
     )
     TARGETS=(
         "gsv"
@@ -685,8 +690,9 @@ main() {
         "gsv-vision-LICENSE.apache-2.0"
         "gsv-vision-PROVENANCE.md"
         "gsv-vision-THIRD_PARTY.md"
+        "gsv-transcribe-runtime"
     )
-    EXECUTABLES=(1 1 1 1 1 0 0 0 0)
+    EXECUTABLES=(1 1 1 1 1 0 0 0 0 0)
 
     echo ""
     echo -e "  ${BOLD}GSV host installer${NC} · ${PLATFORM} · ${release_ref}"
@@ -706,6 +712,11 @@ main() {
         verify_asset "$asset" "$TMP_DIR/$asset" "$TMP_DIR/checksums.txt"
     done
     success "Verified ${#ASSETS[@]} release artifacts"
+    local runtime_archive="$TMP_DIR/gsv-transcribe-runtime-${PLATFORM}.tar.gz"
+    tar -tzf "$runtime_archive" | awk '
+        !/^gsv-transcribe-runtime\/[A-Za-z0-9._-]+$/ { exit 1 }
+    ' || { error "Invalid transcription runtime archive"; exit 1; }
+    tar -xzf "$runtime_archive" -C "$TMP_DIR"
     if [ "${ANIMATION_ACTIVE:-0}" -eq 1 ]; then printf 'Installing' > "$TMP_DIR/animation.status"; fi
 
     explain_existing_install_dir

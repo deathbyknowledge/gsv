@@ -14,6 +14,8 @@ try {
   foreach ($name in @('gsv', 'gsvd', 'gsv-desktop', 'gsv-transcribe', 'gsv-vision')) {
     Copy-Item (Join-Path $bin "$name.exe") (Join-Path $stage "$name-windows-x64.exe")
   }
+  & python (Join-Path $root 'host/scripts/package-transcriber.py') --binary-dir $bin --platform windows-x64 --output $stage
+  if ($LASTEXITCODE) { throw 'Transcription runtime packaging failed' }
   Copy-Item (Join-Path $root 'install.ps1') $stage
   Copy-Item (Join-Path $root 'host/helpers/transcriber/THIRD_PARTY.md') (Join-Path $stage 'gsv-transcribe-THIRD_PARTY.md')
   Copy-Item (Join-Path $root 'host/helpers/gestures/models/LICENSE.apache-2.0') (Join-Path $stage 'gsv-vision-LICENSE.apache-2.0')

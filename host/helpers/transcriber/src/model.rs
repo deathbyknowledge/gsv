@@ -2,6 +2,7 @@ use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::OnceLock;
 use std::time::Duration;
 
 use sha2::{Digest, Sha256};
@@ -37,6 +38,10 @@ impl Engine {
         let model_path = ensure_model(cancelled, &mut report)?;
         check_cancelled(cancelled)?;
         report(Phase::Loading, None);
+        static BACKENDS_READY: OnceLock<bool> = OnceLock::new();
+        if !BACKENDS_READY.get_or_init(|| transcribe_cpp::init_backends_default().is_ok()) {
+            return Err(LoadError::Failed(ErrorCode::EngineFailed));
+        }
         let backend = if cfg!(target_os = "macos")
             && std::env::var("GSV_TRANSCRIBE_ACCELERATION").as_deref() == Ok("1")
         {

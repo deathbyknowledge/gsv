@@ -4,8 +4,10 @@
 import argparse
 import hashlib
 import io
+import json
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import tempfile
 import urllib.request
@@ -40,17 +42,42 @@ def main():
     command = ["cargo", "test", "--locked", "--manifest-path", str(host / "Cargo.toml")]
     if args.release:
         command.append("--release")
-    command.extend(["--package", "transcriber", "transcribes_recorded_audio", "--", "--ignored"])
+    command.extend(["--package", "transcriber", "--no-run", "--message-format=json"])
+    build = subprocess.run(command, check=True, timeout=600, stdout=subprocess.PIPE, text=True)
+    artifacts = [json.loads(line) for line in build.stdout.splitlines() if line.startswith("{")]
+    executable = next(
+        Path(artifact["executable"])
+        for artifact in artifacts
+        if artifact.get("reason") == "compiler-artifact"
+        and artifact.get("executable")
+        and artifact["profile"]["test"]
+        and artifact["target"]["name"] == "gsv-transcribe"
+    )
+    runtime = next(
+        parent / "gsv-transcribe-runtime"
+        for parent in executable.parents
+        if (parent / "gsv-transcribe-runtime").is_dir()
+    )
     with tempfile.TemporaryDirectory(prefix="gsv-transcription-") as directory:
         fixture = Path(directory) / "speech.pcm"
         fixture.write_bytes(pcm)
-        subprocess.run(
-            command,
-            check=True,
-            timeout=600,
-            env={**os.environ, "GSV_TRANSCRIBE_TEST_AUDIO": str(fixture)},
-        )
-    print("Recorded speech inference and final transcript passed")
+        installed = Path(directory) / executable.name
+        shutil.copy2(executable, installed)
+        libraries = Path(directory) / runtime.name
+        shutil.copytree(runtime, libraries)
+        environment = {**os.environ, "GSV_TRANSCRIBE_TEST_AUDIO": str(fixture)}
+        for key in ["LD_LIBRARY_PATH", "DYLD_LIBRARY_PATH", "GGML_BACKEND_PATH"]:
+            environment.pop(key, None)
+        environment["PATH"] = str(libraries) + os.pathsep + environment.get("PATH", "")
+        command = [str(installed), "transcribes_recorded_audio", "--ignored", "--nocapture"]
+        subprocess.run(command, check=True, timeout=600, env=environment, cwd=directory)
+        if any("ggml-cpu-x64." in path.name for path in libraries.iterdir()):
+            for path in libraries.iterdir():
+                if "ggml-cpu-" in path.name and "ggml-cpu-x64." not in path.name:
+                    path.unlink()
+            subprocess.run(command, check=True, timeout=600, env=environment, cwd=directory)
+            print("Baseline CPU inference and final transcript passed")
+    print("Relocated speech inference and final transcript passed")
 
 
 if __name__ == "__main__":

@@ -32,6 +32,16 @@ make_fixture() {
     chmod 0755 "$FIXTURES/$name"
 }
 
+make_runtime() {
+    local platform="$1"
+    local marker="$2"
+    mkdir -p "$TEST_ROOT/runtime/gsv-transcribe-runtime"
+    printf '%s\n' "$marker" > "$TEST_ROOT/runtime/gsv-transcribe-runtime/libtranscribe.so"
+    printf 'baseline\n' > "$TEST_ROOT/runtime/gsv-transcribe-runtime/libggml-cpu-x64.so"
+    python3 "$REPOSITORY_ROOT/host/scripts/package-transcriber.py" \
+        --binary-dir "$TEST_ROOT/runtime" --platform "$platform" --output "$FIXTURES" >/dev/null
+}
+
 write_checksums() {
     (
         cd "$FIXTURES"
@@ -43,6 +53,7 @@ make_fixture gsv-linux-x64 gsv-v1
 make_fixture gsvd-linux-x64 gsvd-v1
 make_fixture gsv-desktop-linux-x64 desktop-v1
 make_fixture gsv-transcribe-linux-x64 transcribe-v1
+make_runtime linux-x64 runtime-v1
 make_fixture gsv-vision-linux-x64 vision-v1
 printf 'license-v1\n' > "$FIXTURES/gsv-transcribe-THIRD_PARTY.md"
 printf 'vision-license-v1\n' > "$FIXTURES/gsv-vision-LICENSE.apache-2.0"
@@ -151,6 +162,7 @@ test "$("$INSTALL_DIR/gsv")" = "gsv-v1"
 test "$("$INSTALL_DIR/gsvd")" = "gsvd-v1"
 test "$("$INSTALL_DIR/gsv-desktop")" = "desktop-v1"
 test "$("$INSTALL_DIR/gsv-transcribe")" = "transcribe-v1"
+test "$(cat "$INSTALL_DIR/gsv-transcribe-runtime/libtranscribe.so")" = "runtime-v1"
 test "$("$INSTALL_DIR/gsv-vision")" = "vision-v1"
 test "$(cat "$INSTALL_DIR/gsv-transcribe-THIRD_PARTY.md")" = "license-v1"
 test "$(cat "$INSTALL_DIR/gsv-vision-LICENSE.apache-2.0")" = "vision-license-v1"
@@ -168,11 +180,13 @@ make_fixture gsv-linux-x64 gsv-v2
 make_fixture gsvd-linux-x64 gsvd-v2
 make_fixture gsv-desktop-linux-x64 desktop-v2
 make_fixture gsv-transcribe-linux-x64 transcribe-v2
+make_runtime linux-x64 runtime-v2
 make_fixture gsv-vision-linux-x64 vision-v2
 make_fixture gsv-darwin-x64 gsv-mac
 make_fixture gsvd-darwin-x64 gsvd-mac
 make_fixture gsv-desktop-darwin-x64 desktop-mac
 make_fixture gsv-transcribe-darwin-x64 transcribe-mac
+make_runtime darwin-x64 runtime-mac
 make_fixture gsv-vision-darwin-x64 vision-mac
 printf 'license-v2\n' > "$FIXTURES/gsv-transcribe-THIRD_PARTY.md"
 printf 'vision-license-v2\n' > "$FIXTURES/gsv-vision-LICENSE.apache-2.0"
@@ -196,6 +210,7 @@ test "$("$INSTALL_DIR/gsv")" = "gsv-v1"
 test "$("$INSTALL_DIR/gsvd")" = "gsvd-v1"
 test "$("$INSTALL_DIR/gsv-desktop")" = "desktop-v1"
 test "$("$INSTALL_DIR/gsv-transcribe")" = "transcribe-v1"
+test "$(cat "$INSTALL_DIR/gsv-transcribe-runtime/libtranscribe.so")" = "runtime-v1"
 test "$("$INSTALL_DIR/gsv-vision")" = "vision-v1"
 test "$(cat "$INSTALL_DIR/gsv-transcribe-THIRD_PARTY.md")" = "license-v1"
 test "$(cat "$INSTALL_DIR/gsv-vision-LICENSE.apache-2.0")" = "vision-license-v1"
@@ -221,6 +236,7 @@ run_default_installer() {
 }
 DEFAULT_OUTPUT="$(run_default_installer env)"
 test "$("$DEFAULT_HOME/.gsv/bin/gsv")" = "gsv-v2"
+test "$(cat "$DEFAULT_HOME/.gsv/bin/gsv-transcribe-runtime/libtranscribe.so")" = "runtime-v2"
 test "$("$DEFAULT_HOME/.gsv/bin/gsvd")" = "gsvd-v2"
 grep -q "Added $DEFAULT_HOME/.gsv/bin to PATH in ~/.profile, ~/.bashrc" <<< "$DEFAULT_OUTPUT"
 grep -q 'Open a new shell, or run now: export PATH="$HOME/.gsv/bin:$PATH"' <<< "$DEFAULT_OUTPUT"

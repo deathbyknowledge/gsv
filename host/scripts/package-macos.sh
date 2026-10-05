@@ -108,6 +108,9 @@ printf 'APPL????' > "$app/Contents/PkgInfo"
 for binary in "${binaries[@]}"; do
   install -m 0755 "$binary_dir/$binary" "$macos_dir/$binary"
 done
+runtime_dir="$macos_dir/gsv-transcribe-runtime"
+[[ -d "$binary_dir/gsv-transcribe-runtime" ]] || die "missing transcription runtime"
+ditto "$binary_dir/gsv-transcribe-runtime" "$runtime_dir"
 install -m 0644 "$repository_root/LICENSE" "$resources_dir/LICENSE"
 transcriber_license_dir="$resources_dir/licenses/transcriber"
 mkdir -p "$transcriber_license_dir"
@@ -151,6 +154,10 @@ plutil -lint "$app/Contents/Info.plist" >/dev/null
   || die "bundle gesture-runtime notices staging failed"
 
 # Sign nested tools before the outer bundle signs its main executable.
+for library in "$runtime_dir/"*.dylib "$runtime_dir/"*.so; do
+  [[ -f "$library" ]] || continue
+  codesign --force --sign - "$library"
+done
 for binary in "${binaries[@]}"; do
   [[ "$binary" == "gsv-desktop" ]] && continue
   codesign --force --sign - --entitlements "$host_root/apps/desktop/Entitlements.plist" "$macos_dir/$binary"
