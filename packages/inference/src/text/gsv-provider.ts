@@ -192,7 +192,7 @@ async function pumpGsvInference(
   let phase: "acquisition" | "request" | "stream" = "acquisition";
   let failed = false;
   let cancelledRemotely = false;
-  let failure: unknown;
+  let failure: ReturnType<typeof inferenceErrorMetadata> | undefined;
   let target: ManagedInferenceTarget | undefined;
   let acquisitionDisposesLateTarget = false;
   let generationStarted = false;
@@ -266,7 +266,7 @@ async function pumpGsvInference(
       if (applied.event.type === "error") {
         failed = applied.event.reason === "error";
         cancelledRemotely = applied.event.reason === "aborted";
-        failure = new Error(applied.event.error.errorMessage);
+        failure = inferenceErrorMetadata(new Error(applied.event.error.errorMessage));
       }
       stream.push(applied.event);
       if (terminal) break;
@@ -278,7 +278,7 @@ async function pumpGsvInference(
     if (!terminal) throw new Error("Managed inference stream ended early");
   } catch (error) {
     failed = true;
-    failure = error;
+    failure = inferenceErrorMetadata(error);
     abortGeneration();
     stream.push(gsvInferenceErrorEvent(signal?.aborted === true, signal,
       `Inference reference: ${diagnosticId}\nManaged inference ${phase} failed: ${formatProviderErrorDiagnostic(errorMessageFromUnknown(error))}`,
@@ -288,7 +288,7 @@ async function pumpGsvInference(
       diagnosticId, boundary: "managed", phase,
       outcome: signal?.aborted ? signal.reason instanceof TimeoutError ? "timed_out" : "cancelled" : cancelledRemotely ? "cancelled" : failed ? "failed" : "completed",
       durationMs: Date.now() - startedAt,
-      ...(failure === undefined ? {} : inferenceErrorMetadata(failure)),
+      ...failure,
     });
     signal?.removeEventListener("abort", abortGeneration);
     disposeManagedInferenceTarget(target);

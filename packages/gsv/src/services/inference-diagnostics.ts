@@ -1,5 +1,5 @@
 import * as z from "zod/mini";
-import { emitTelemetry, inferenceWorkloadSchema, type TelemetryEnvironment, type TelemetryEvent } from "../telemetry";
+import { emitTelemetry, inferenceWorkloadSchema, type TelemetryEnvironment, type TelemetryEvent } from "../telemetry.js";
 
 type ClientResult = Extract<TelemetryEvent, { name: "inference.client.finished" }>["properties"];
 const diagnosticIdSchema = z.string().check(z.uuid());
@@ -19,18 +19,19 @@ export function inferenceDiagnosticId(value?: string): string {
 }
 
 /** Only explicitly enumerated exception metadata crosses the telemetry boundary. */
-export function inferenceErrorMetadata(error: unknown): Pick<ClientResult, "errorType" | "httpStatus" | "rpcRemote" | "rpcRetryable" | "rpcOverloaded"> {
-  const parsed = errorFieldsSchema.safeParse(error);
+export function inferenceErrorMetadata(cause: unknown): Pick<ClientResult, "errorType" | "httpStatus" | "rpcRemote" | "rpcRetryable" | "rpcOverloaded"> {
+  const parsed = errorFieldsSchema.safeParse(cause);
   if (!parsed.success) return { errorType: "unknown" };
   const fields = parsed.data;
-  return {
+  const metadata: ReturnType<typeof inferenceErrorMetadata> = {
     // SAFETY: Membership in the closed set above matches the telemetry enum.
     errorType: fields.name && errorTypes.has(fields.name) ? fields.name as ClientResult["errorType"] : "unknown",
-    ...(typeof fields.status === "number" && Number.isInteger(fields.status) && fields.status >= 100 && fields.status <= 599 ? { httpStatus: fields.status } : {}),
-    ...(fields.remote === undefined ? {} : { rpcRemote: fields.remote }),
-    ...(fields.retryable === undefined ? {} : { rpcRetryable: fields.retryable }),
-    ...(fields.overloaded === undefined ? {} : { rpcOverloaded: fields.overloaded }),
   };
+  if (fields.status !== undefined && Number.isInteger(fields.status) && fields.status >= 100 && fields.status <= 599) metadata.httpStatus = fields.status;
+  if (fields.remote !== undefined) metadata.rpcRemote = fields.remote;
+  if (fields.retryable !== undefined) metadata.rpcRetryable = fields.retryable;
+  if (fields.overloaded !== undefined) metadata.rpcOverloaded = fields.overloaded;
+  return metadata;
 }
 
 export function reportInferenceClientResult(

@@ -57,7 +57,7 @@ async function pump(
   let phase: "acquisition" | "request" | "stream" = "acquisition";
   let failed = false;
   let cancelledRemotely = false;
-  let failure: unknown;
+  let failure: ReturnType<typeof inferenceErrorMetadata> | undefined;
   const timeoutMs = request.options?.timeoutMs ?? request.config.generationTimeoutMs;
   const abort = createGenerationAbort(request.signal, timeoutMs);
   let target: InferenceExecutor | undefined;
@@ -101,7 +101,7 @@ async function pump(
       failed = result.stopReason === "error";
       cancelledRemotely = result.stopReason === "aborted";
       if (failed) {
-        failure = new Error(result.errorMessage);
+        failure = inferenceErrorMetadata(new Error(result.errorMessage));
         result.errorMessage = withReference(result.errorMessage, diagnosticId);
       }
       output.push(result.stopReason === "error" || result.stopReason === "aborted"
@@ -123,7 +123,7 @@ async function pump(
       if (projected.event.type === "error" && projected.event.reason === "aborted") cancelledRemotely = true;
       if (projected.event.type === "error" && projected.event.reason === "error") {
         failed = true;
-        failure = new Error(projected.event.error.errorMessage);
+        failure = inferenceErrorMetadata(new Error(projected.event.error.errorMessage));
         projected.event.error.errorMessage = withReference(projected.event.error.errorMessage, diagnosticId);
       }
       partial = projected.partial;
@@ -134,7 +134,7 @@ async function pump(
     if (!terminal) throw new Error("Inference stream ended before its terminal result");
   } catch (error) {
     failed = true;
-    failure = error;
+    failure = inferenceErrorMetadata(error);
     abortGeneration();
     const cancelled = abort.signal.aborted && !(abort.signal.reason instanceof TimeoutError);
     output.push({
@@ -155,7 +155,7 @@ async function pump(
       diagnosticId, boundary: "execution", phase,
       outcome: abort.signal.aborted ? abort.signal.reason instanceof TimeoutError ? "timed_out" : "cancelled" : cancelledRemotely ? "cancelled" : failed ? "failed" : "completed",
       durationMs: Date.now() - startedAt,
-      ...(failure === undefined ? {} : inferenceErrorMetadata(failure)),
+      ...failure,
     });
     abort.signal.removeEventListener("abort", abortGeneration);
     abort.clear();
