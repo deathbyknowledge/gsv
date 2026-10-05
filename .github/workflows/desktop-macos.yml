@@ -60,7 +60,6 @@ jobs:
         with:
           workspaces: host -> target
           key: desktop-macos-${{ matrix.target }}
-          cache-on-failure: true
       - name: Install frontend dependencies
         run: |
           npm ci --ignore-scripts --workspace web --workspace packages/gsv --include-workspace-root=false
