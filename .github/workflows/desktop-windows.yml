@@ -66,7 +66,6 @@ jobs:
         with:
           workspaces: host -> target
           key: windows-voice
-          cache-on-failure: true
       - name: Build speech inference test
         working-directory: host
         run: cargo test --locked --package transcriber --no-run
@@ -98,7 +97,6 @@ jobs:
         with:
           workspaces: host -> target
           key: windows-host-native-v1
-          cache-on-failure: true
           cache-workspace-crates: true
       - name: Build shared frontend
         run: |
