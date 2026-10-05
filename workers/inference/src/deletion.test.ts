@@ -84,6 +84,7 @@ describe("inference application deletion", () => {
     expect(await lifecycle.eraseInstallation(input)).toMatchObject({ phase: "live-erased", outcome: "retention-pending", pendingResources: 0 });
     await executor.abort("late-abort");
     await expect(Promise.resolve(executor.generate(request(input)))).rejects.toThrow("retired");
+    await expect(Promise.resolve(env.INFERENCE_EXECUTORS.getByName(input.installationId).getTarget())).rejects.toThrow("retired");
     await expect(Promise.resolve(lifecycle.eraseInstallation({ ...input, operationId: "different" }))).rejects.toThrow("immutable");
     await runInDurableObject(env.INFERENCE_EXECUTORS.getByName(input.installationId), async (_instance, state) => {
       const restarted = new InferenceExecutor(state, { INSTALLATION_DIRECTORY: directory });

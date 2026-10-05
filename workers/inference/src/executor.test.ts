@@ -2,7 +2,7 @@ import { env, exports } from "cloudflare:workers";
 import { createExecutionContext, listDurableObjectIds, runInDurableObject, runDurableObjectAlarm } from "cloudflare:test";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { type JsonValue, decodeInferenceExecutionStream } from "@humansandmachines/gsv/protocol";
-import type { InferenceExecutionRequest, InferenceExecutionService } from "@humansandmachines/gsv/services/inference-execution";
+import type { InferenceExecutionRequest, InferenceExecutionService, InferenceExecutor } from "@humansandmachines/gsv/services/inference-execution";
 import { RoutedInferenceTransport } from "../../gateway/src/inference/transport";
 import { ExecutorStore } from "../../../packages/inference/src/executor/store";
 import { executorLimits } from "../../../packages/inference/src/executor/config";
@@ -173,6 +173,29 @@ describe("public inference executor RPC", () => {
     for await (const event of decodeInferenceExecutionStream(stream)) events.push(event);
     expect(events.some((event) => event.type === "text_delta" && event.delta === "hello")).toBe(true);
     expect(events.at(-1)).toMatchObject({ type: "done", message: { provider: "workers-ai", stopReason: "stop" } });
+  });
+
+  it("preserves completed requests when the client releases each stream and target at its terminal event", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => completion()));
+    const id = "space_stream_release";
+    for (let index = 0; index < 2; index++) {
+      // SAFETY: The real RPC result owns the platform's target disposer.
+      using executor = await service.getExecutor(id) as InferenceExecutor & Disposable;
+      const stream = await executor.generateStream(request(id));
+      let completed = false;
+      for await (const event of decodeInferenceExecutionStream(stream)) {
+        if (event.type === "error") throw new Error(event.error.errorMessage);
+        if (event.type === "done") {
+          completed = true;
+          break;
+        }
+      }
+      expect(completed).toBe(true);
+    }
+    const settled = await rows(id);
+    expect(settled.requests).toHaveLength(2);
+    expect(settled.requests.map((row) => row.state)).toEqual(["completed", "completed"]);
+    expect(settled.usage[0]).toMatchObject({ requests: 2, output_tokens: 2, reserved_tokens: 0 });
   });
 
   it("rechecks restriction at admission while allowing cancellation", async () => {
