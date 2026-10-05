@@ -1,3 +1,4 @@
+import { hasCapability } from "./capabilities";
 import {
   z,
 } from "zod";
@@ -28,6 +29,7 @@ import type {
 } from "@humansandmachines/gsv/protocol";
 import {
   BinaryBodyChannel,
+  CLIENT_ACTIVITY_SIGNAL,
   REQUEST_CANCEL_SIGNAL,
   type BinaryFrameDescriptor,
   type OutgoingBinaryBody,
@@ -435,6 +437,17 @@ handleSig(
     frame: SignalFrame,
   ): void {
     const state = connection.state;
+    if (frame.signal === CLIENT_ACTIVITY_SIGNAL) {
+      const peer = state?.peer;
+      if (frame.payload === undefined && state.step === "connected"
+        && peer?.principal.kind === "human"
+        && hasCapability(peer.grant.calls, "conversation.send")
+        && !this.host.auth.isAccountDisabled(peer.principal.account.uid)
+        && (state.credentialEpoch ?? 0) === this.host.auth.credentialEpoch(peer.principal.account.uid)) {
+        this.host.shipReplies.recordClient(peer.principal.account.uid, connection.id);
+      }
+      return;
+    }
     const targetId = state?.peer && peerProvidesOperations(state.peer)
       ? state.peer.id
       : null;

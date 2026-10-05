@@ -1,3 +1,4 @@
+import { ShipReplies } from "./ship-replies";
 import {
   cancelUnlockedBody,
 } from "./do-shared";
@@ -418,6 +419,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
   readonly conversations: ConversationRegistry;
   readonly adapters: AdapterStore;
   readonly runRoutes: RunRouteStore;
+  readonly shipReplies: ShipReplies;
   readonly signalWatches: SignalWatchStore;
   readonly ipcCalls: IpcCallStore;
   readonly schedules: ScheduleStore;
@@ -510,6 +512,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
     this.adapters = new AdapterStore(sql);
 
     this.runRoutes = new RunRouteStore(sql);
+    this.shipReplies = new ShipReplies(ctx.storage);
 
     this.signalWatches = new SignalWatchStore(sql);
 
@@ -1484,6 +1487,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
       mcpServers: this.mcpServers,
       adapters: this.adapters,
       runRoutes: this.runRoutes,
+      shipReplies: this.shipReplies,
       shellSessions: this.shellSessions,
       signalWatches: this.signalWatches,
       ipcCalls: this.ipcCalls,

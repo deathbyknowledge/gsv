@@ -1,3 +1,4 @@
+import type { ShipReplies } from "./ship-replies";
 /**
  * KernelContext — the single shape passed to all syscall handlers.
  *
@@ -73,6 +74,7 @@ export type KernelContext = {
   mcpServers: McpServerStore;
   adapters: AdapterStore;
   runRoutes: RunRouteStore;
+  shipReplies: ShipReplies;
   shellSessions: ShellSessionStore;
   signalWatches: SignalWatchStore;
   ipcCalls: IpcCallStore;

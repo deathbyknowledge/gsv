@@ -8,6 +8,7 @@ import * as personalController from "./personal-controller";
 import type { AdapterService } from "../adapter-interface";
 import { runWithRealKernelSql } from "../test-support/real-kernel-sql";
 import { IdentityLinkStore } from "./identity-links";
+import { RunRouteStore } from "./run-routes";
 const getConversationByIdMock = vi.spyOn(utils, "getConversationById");
 
 import { Kernel, kernelRuntimes } from "./do";
@@ -26,6 +27,7 @@ import {
 // SAFETY: tests assign the exact collaborators each scenario asserts on.
 const bareKernel = (): any => {
   const kernel = Object.create(Kernel.prototype);
+  kernel.shipReplies = { activeConnection: vi.fn(() => null), revision: vi.fn(() => null), recordClient: vi.fn(), recordAdapter: vi.fn() };
   kernel.manual = { ensureCurrent: vi.fn(async () => {}) };
   kernel.retirement = { assertActive: vi.fn(), state: undefined };
   Object.assign(kernel, kernelRuntimes(kernel));
@@ -1485,6 +1487,8 @@ describe("Kernel canonical message commits", () => {
     kernel.runRoutes = {
       get: vi.fn(() => route),
       delete: vi.fn(),
+      pinMessageRoute: vi.fn((_id, choose) => choose()),
+      deleteMessageRoute: vi.fn(),
     };
     kernel.adapterDelivery.materializePersonalAdapterFallback = vi.fn(() => null);
     kernel.adapterDelivery.queueAdapterRouteDelivery = vi.fn(async () => undefined);
@@ -1549,6 +1553,7 @@ describe("Kernel canonical message commits", () => {
       payload: { message: { id: message.id, text: "hello" }, directed: false },
     });
     expect(kernel.runRoutes.delete).not.toHaveBeenCalled();
+    expect(kernel.runRoutes.deleteMessageRoute).toHaveBeenCalledWith("draft:run-1:send-1");
   });
 
   it("keeps a silenced client route until the terminal run signal", async () => {
@@ -1575,6 +1580,31 @@ describe("Kernel canonical message commits", () => {
     });
 
     expect(kernel.runRoutes.delete).not.toHaveBeenCalled();
+  });
+
+  it("keeps the delivery decision when a committed append loses its response", async () => {
+    await runWithRealKernelSql(async (sql) => {
+      const kernel = buildCommitKernel(null);
+      kernel.runRoutes = new RunRouteStore(sql);
+      const input = { processId: "proc-1", runId: "run-uncertain", uid: 1000, connectionId: "origin" };
+      kernel.runRoutes.setConnectionRoute(input);
+      const send = vi.spyOn(kernel.connectionRuntime, "sendSignalToConnection");
+      const stub = conversationStub();
+      const append = stub.append.getMockImplementation()!;
+      let committed: Awaited<ReturnType<typeof append>>;
+      stub.append.mockImplementationOnce(async (input) => {
+        committed = await append(input);
+        throw new Error("lost append response");
+      }).mockImplementation(async () => ({ ...committed, created: false }));
+      getConversationByIdMock.mockReset();
+      getConversationByIdMock.mockReturnValue(stub);
+      const args = { runId: input.runId, actionId: "send", conversationId: conversation.id, text: "hello" };
+      await expect(kernel.processOutput.commitProcessMessage("proc-1", args)).rejects.toThrow("lost append response");
+      kernel.runRoutes = new RunRouteStore(sql);
+      kernel.runRoutes.setConnectionRoute({ ...input, connectionId: "newer-client" });
+      await kernel.processOutput.commitProcessMessage("proc-1", args);
+      expect(send).toHaveBeenCalledExactlyOnceWith("origin", "message.committed", expect.objectContaining({ directed: true }));
+    });
   });
 
   it("uses the last authorized private destination only for an explicit Personal message", async () => {
@@ -1622,7 +1652,7 @@ describe("Kernel canonical message commits", () => {
     });
   });
 
-  it("does not redirect a disconnected client conversation to an adapter", async () => {
+  it("checks messenger fallback for a disconnected Ship conversation", async () => {
     const kernel = buildCommitKernel(null);
     kernel.connections = new Map();
     getConversationByIdMock.mockReset();
@@ -1635,7 +1665,7 @@ describe("Kernel canonical message commits", () => {
       text: "stays in Ship",
     });
 
-    expect(kernel.adapterDelivery.materializePersonalAdapterFallback).not.toHaveBeenCalled();
+    expect(kernel.adapterDelivery.materializePersonalAdapterFallback).toHaveBeenCalledWith("proc-1", "run-disconnected-client", 1000);
     expect(kernel.adapterDelivery.queueAdapterRouteDelivery).not.toHaveBeenCalled();
   });
 
@@ -1729,6 +1759,7 @@ describe("Kernel process signal routing", () => {
       queuedCount: 0,
     };
     kernel.procs.get.mockReturnValue(process);
+    kernel.conversations = { get: vi.fn(() => ({ kind: "ship" })) };
     const preferred = options.preferred === undefined
       ? preferredDestination
       : options.preferred;
@@ -2117,7 +2148,7 @@ describe("Kernel process signal routing", () => {
     );
   });
 
-  it("does not redirect a disconnected client approval to an adapter", async () => {
+  it("routes a disconnected Ship approval to the authorized private destination", async () => {
     const { kernel, setAdapterRoute } = buildPersonalFallbackKernel();
     const frame = {
       type: "sig",
@@ -2130,8 +2161,10 @@ describe("Kernel process signal routing", () => {
 
     await kernel.processOutput.handleProcessSignal("proc-1", frame, frame);
 
-    expect(setAdapterRoute).not.toHaveBeenCalled();
-    expect(kernel.adapterDelivery.queueAdapterRouteDelivery).not.toHaveBeenCalled();
+    expect(setAdapterRoute).toHaveBeenCalledOnce();
+    expect(kernel.adapterDelivery.queueAdapterRouteDelivery).toHaveBeenCalledWith(
+      expect.objectContaining({ destination: preferredDestination }), frame, 1,
+    );
     expect(kernel.connectionRuntime.broadcastToUserUid).toHaveBeenCalledOnce();
   });
 

@@ -367,11 +367,13 @@ Current principal defaults from `buildSignalList()`:
   - Begins the directed endpoint's transient projection of a Process Message.
 - `message.delta`
   - Appends text to that transient projection. It is sent only to the connection
-    that admitted the run; other clients synchronize the committed Message.
+    selected when the stream started; other clients synchronize the committed Message.
 - `message.committed`
   - Carries a canonical `ConversationMessage`. `directed` is true only for the
-    connection whose input admitted the run; other connected clients receive
-    the same committed Message with `directed: false`.
+    connection selected for the reply; other connected clients receive
+    the same committed Message with `directed: false`. Personal Ship selects the
+    latest human origin or active client and falls back to a linked messenger
+    when that client disconnects or is inactive for five minutes.
 - `message.aborted`
   - Discards the directed endpoint's transient projection when a Message cannot
     be committed or the run is superseded.
@@ -394,6 +396,19 @@ Current principal defaults from `buildSignalList()`:
     signal grant, and `contact.request.list`. Clients refresh that contact’s
     requests and recover missed notifications on reconnect.
 - `peer.pong`
+
+### Client activity
+
+A connected human peer with `conversation.send` may send a payload-free
+`client.activity` signal after real foreground input. Web and Desktop send it for
+trusted pointer, key and scroll events, at most once every 30 seconds. Opening or
+focusing a window, reconnecting and keepalives send no activity signal. The Kernel
+derives the owner and connection from the authenticated peer and timestamps receipt;
+callers cannot supply an owner, destination or timestamp. Machine, service, expired
+credential and unauthenticated peers cannot change this preference. The signal
+updates only Ship's private reply preference: it admits no Process work, enters no
+model context and does not fetch or rerender conversation history.
+The idle window includes one reporting interval of grace to account for throttled input.
 
 ### Machine peers
 

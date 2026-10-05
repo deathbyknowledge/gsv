@@ -6,6 +6,7 @@ import type {
 export type ConnectionRunRoute = {
   kind: "connection";
   runId: string;
+  followsShip?: boolean;
   processId: string;
   uid: number;
   connectionId: string;
@@ -16,6 +17,7 @@ export type ConnectionRunRoute = {
 export type AdapterRunRoute = {
   kind: "adapter";
   runId: string;
+  followsShip?: boolean;
   processId: string;
   uid: number;
   destination: AdapterMessageDestination;
@@ -41,6 +43,7 @@ export class RunRouteStore {
   setConnectionRoute(
     input: {
       runId: string;
+      followsShip?: boolean;
       processId: string;
       uid: number;
       connectionId: string;
@@ -67,6 +70,7 @@ export class RunRouteStore {
   setAdapterRoute(
     input: {
       runId: string;
+      followsShip?: boolean;
       processId: string;
       uid: number;
       destination: AdapterMessageDestination;
@@ -80,6 +84,7 @@ export class RunRouteStore {
     const { destination } = input;
     this.upsert({
       runId: input.runId,
+      followsShip: input.followsShip,
       processId: input.processId,
       uid: input.uid,
       routeKind: "adapter",
@@ -98,6 +103,7 @@ export class RunRouteStore {
     const route: AdapterRunRoute = {
       kind: "adapter",
       runId: input.runId,
+      followsShip: input.followsShip,
       processId: input.processId,
       uid: input.uid,
       destination,
@@ -115,7 +121,7 @@ export class RunRouteStore {
     const rows = this.sql.exec<RunRouteRow>(
       `SELECT run_id, route_kind, process_id, uid, connection_id, adapter, account_id,
               actor_id, surface_kind, surface_id, thread_id, reply_to_id, route_generation,
-              created_at, expires_at
+              created_at, expires_at, follows_ship
        FROM run_routes
        WHERE run_id = ?
        LIMIT 1`,
@@ -209,6 +215,32 @@ export class RunRouteStore {
         ? undefined
         : { routeGeneration: source.routeGeneration }),
     }, ttlMs);
+  }
+
+  pinMessageRoute(messageId: string, choose: () => RunRoute | null): RunRoute | null {
+    const now = Date.now();
+    this.sql.exec("DELETE FROM message_reply_routes WHERE expires_at <= ?", now);
+    const existing = this.getMessageRoute(messageId);
+    if (existing !== undefined) return existing;
+    const route = choose();
+    this.sql.exec("INSERT INTO message_reply_routes (message_id, route_json, expires_at) VALUES (?, ?, ?)",
+      messageId, route ? JSON.stringify(route) : null, now + DEFAULT_TTL_MS);
+    return route;
+  }
+
+  getMessageRoute(messageId: string): RunRoute | null | undefined {
+    const existing = this.sql.exec<{ route_json: string | null }>(
+      "SELECT route_json FROM message_reply_routes WHERE message_id = ?", messageId,
+    ).toArray()[0];
+    if (existing) {
+      // SAFETY: only this store serializes these internal route records.
+      return existing.route_json ? JSON.parse(existing.route_json) as RunRoute : null;
+    }
+    return undefined;
+  }
+
+  deleteMessageRoute(messageId: string): void {
+    this.sql.exec("DELETE FROM message_reply_routes WHERE message_id = ?", messageId);
   }
 
   delete(runId: string): void {
@@ -306,6 +338,7 @@ export class RunRouteStore {
 
   private upsert(input: {
     runId: string;
+    followsShip?: boolean;
     routeKind: "connection" | "adapter";
     processId: string;
     uid: number;
@@ -323,8 +356,8 @@ export class RunRouteStore {
   }): void {
     this.sql.exec(
       `INSERT OR REPLACE INTO run_routes
-       (run_id, route_kind, process_id, uid, connection_id, adapter, account_id, actor_id, surface_kind, surface_id, thread_id, reply_to_id, route_generation, created_at, expires_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       (run_id, route_kind, process_id, uid, connection_id, adapter, account_id, actor_id, surface_kind, surface_id, thread_id, reply_to_id, route_generation, created_at, expires_at, follows_ship)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       input.runId,
       input.routeKind,
       input.processId,
@@ -340,6 +373,7 @@ export class RunRouteStore {
       input.routeGeneration ?? null,
       input.createdAt,
       input.expiresAt,
+      input.followsShip ? 1 : 0,
     );
   }
 
@@ -385,6 +419,7 @@ export class RunRouteStore {
 
 type RunRouteRow = {
   run_id: string;
+  follows_ship: number;
   route_kind: string;
   process_id: string | null;
   uid: number;
@@ -401,7 +436,7 @@ type RunRouteRow = {
   expires_at: number;
 };
 
-type ProcessApprovalRouteRow = Omit<RunRouteRow, "run_id" | "process_id"> & {
+type ProcessApprovalRouteRow = Omit<RunRouteRow, "run_id" | "process_id" | "follows_ship"> & {
   process_id: string;
 };
 
@@ -410,6 +445,7 @@ function toRoute(row: RunRouteRow): RunRoute {
     return {
       kind: "adapter",
       runId: row.run_id,
+      ...(row.follows_ship ? { followsShip: true } : undefined),
       processId: row.process_id ?? "",
       uid: row.uid,
       destination: adapterDestinationFromColumns({
@@ -431,6 +467,7 @@ function toRoute(row: RunRouteRow): RunRoute {
   return {
     kind: "connection",
     runId: row.run_id,
+    ...(row.follows_ship ? { followsShip: true } : undefined),
     processId: row.process_id ?? "",
     uid: row.uid,
     connectionId: row.connection_id ?? "",

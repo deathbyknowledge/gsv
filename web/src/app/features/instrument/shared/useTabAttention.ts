@@ -13,6 +13,7 @@ const committedMessageSchema = z.object({
     z.object({ kind: z.literal("process"), pid: z.string() }),
     z.object({ kind: z.literal("contact") }),
   ]) }),
+  directed: z.boolean().optional(),
   attention: z.enum(["notify", "quiet"]).optional(),
 });
 
@@ -61,7 +62,7 @@ export function useTabAttention(): void {
       if (!committed.success) return;
       const author = committed.data.message.author;
       // People messages additionally use the Kernel's private attention policy.
-      if (author.kind === "contact" ? committed.data.attention !== "notify" : author.pid !== shipPid) return;
+      if (author.kind === "contact" ? committed.data.attention !== "notify" : (author.pid !== shipPid || committed.data.directed !== true)) return;
       attention.current?.arrived(committed.data.message.id);
     });
   }, [client, connected, shipPid, processes.isPending]);

@@ -132,6 +132,11 @@ export async function handleConversationSend(
     throw new Error("Ship conversation handler is not the personal intelligence");
   }
   const idempotencyKey = normalizeOptionalId(args.idempotencyKey) ?? crypto.randomUUID();
+  if (conversation.kind === "ship" && ctx.connection && principalOf(ctx)?.account.uid === conversation.ownerUid) {
+    ctx.shipReplies.recordClientInput(
+      conversation.ownerUid, ctx.connection.id, conversation.id, idempotencyKey, ctx.runRoutes,
+    );
+  }
   const messageId = await conversationSendMessageId(conversation.id, idempotencyKey);
   const runId = `run:${messageId}`;
   const origin = conversationOrigin(ctx);
@@ -193,6 +198,7 @@ export async function handleConversationSend(
       processId: conversation.handlerPid,
       uid: conversation.ownerUid,
       connectionId: ctx.connection.id,
+      followsShip: conversation.kind === "ship" && principalOf(ctx)?.account.uid === conversation.ownerUid,
     });
   }
   let result: Extract<ProcSendResult, { ok: true }>;
