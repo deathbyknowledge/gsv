@@ -272,7 +272,7 @@ function makeContext(options?: {
     config: focusedFixture<KernelContext["config"]>({
       get(key: string) {
         if (key === "config/server/name") return "gsv";
-        if (key === "config/server/version") return "0.6.4";
+        if (key === "config/server/version") return "0.6.5";
         return configValues.get(key) ?? SYSTEM_CONFIG_DEFAULTS[key] ?? null;
       },
       getExplicit(key: string) {
@@ -348,7 +348,7 @@ function makeContext(options?: {
     processId: options?.processId === null ? undefined : options?.processId ?? "task:shell",
     processRunId: options?.processRunId,
     requestSignal: options?.requestSignal,
-    serverVersion: "0.6.4",
+    serverVersion: "0.6.5",
     scheduleIpcCallTimeout: options?.scheduleIpcCallTimeout,
     scheduleScheduleWake: options?.scheduleScheduleWake,
     reconcileResponsibilityWake: options?.reconcileResponsibilityWake,
