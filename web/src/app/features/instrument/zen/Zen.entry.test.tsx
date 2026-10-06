@@ -364,7 +364,7 @@ describe("Zen conversation entry", () => {
       expect(zen.props(PromptLine).allowEmpty).toBe(true);
       expect(zen.dirty()).toBe(true);
       await act(() => { expect(zen.props(PromptLine).onSubmit("$ pwd")).toBe(false); });
-      expect(zen.text()).toContain("Remove attachments and pasted text before running a command");
+      expect(zen.props(FeedbackNote).note).toEqual({ kind: "notice", text: "Remove attachments and pasted text before running a command, or send them to your Ship in plain words." });
       await act(() => { zen.props(ZenDraftPaste).onRemove?.(); });
       expect(pastes()).toHaveLength(1);
       expect(zen.props(ZenDraftPaste).paste.text).toBe(log);
