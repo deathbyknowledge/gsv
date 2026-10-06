@@ -2,14 +2,14 @@ import type { ComponentChildren, JSX, VNode } from "preact";
 import { act } from "preact/test-utils";
 import { QueryClient, QueryClientProvider } from "@tanstack/preact-query";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { collectNodes, createTestRoot } from "../../../testing/testHarness";
+import { collectNodes, collectText, createTestRoot } from "../../../testing/testHarness";
 import { MediaPreviewProvider } from "../../../services/platform/MediaPreview";
 import { GatewayProvider } from "../../../services/gateway/GatewayProvider";
 import { chatProcessMediaQueryKey } from "../../../services/chat/hooks/useChatProcesses";
-import { ZenMedia } from "./ZenMedia";
+import { ZenDraftPaste, ZenMedia } from "./ZenMedia";
 
-let root: ReturnType<typeof createTestRoot>;
-afterEach(async () => { await root?.unmount(); vi.unstubAllGlobals(); });
+let root: ReturnType<typeof createTestRoot> | undefined;
+afterEach(async () => { await root?.unmount(); root = undefined; vi.unstubAllGlobals(); });
 
 async function links(desktop: boolean, type: "image" | "document", mimeType: string, url?: string) {
   let tree: ComponentChildren;
@@ -65,5 +65,27 @@ describe("attachment opening", () => {
       expect(anchor.props.onClick).toBeUndefined();
     }
     expect(preview).not.toHaveBeenCalled();
+  });
+});
+
+describe("pasted text chip", () => {
+  it("shows the size of the paste in place of its text, and removes it on request", () => {
+    const onRemove = vi.fn();
+    const text = `${"x".repeat(434)}!`;
+    const tree = ZenDraftPaste({ paste: { id: "paste", text, characters: 435 }, onRemove });
+    expect(collectText(tree)).toBe("pasted text 435 characters ×");
+    expect(collectText(tree)).not.toContain("xxx");
+    const remove = collectNodes(tree).find((node) => node.type === "button");
+    expect(remove?.props["aria-label"]).toBe("Remove pasted text");
+    remove?.props.onClick?.();
+    expect(onRemove).toHaveBeenCalledOnce();
+  });
+
+  it("previews how a long paste begins and groups large counts", () => {
+    const tree = ZenDraftPaste({ paste: { id: "paste", text: "y".repeat(1234), characters: 1234 } });
+    expect(collectText(tree)).toBe("pasted text 1,234 characters");
+    expect(collectNodes(tree).some((node) => node.type === "button")).toBe(false);
+    // SAFETY: ZenDraftPaste returns an <li> VNode; the generic harness omits its title attribute.
+    expect((tree as VNode<{ title: string }>).props.title).toBe(`${"y".repeat(280)}…`);
   });
 });

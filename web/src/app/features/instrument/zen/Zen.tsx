@@ -41,8 +41,8 @@ import { ZenText } from "./ZenText";
 import { ThinkingMark, THINKING_MARK } from "./ThinkingMark";
 import { ReceiptTimeline, RECEIPT_LAYOUT } from "./ReceiptTimeline";
 import { receiptsForMoments, type RunReceipt } from "./runReceipts";
-import { ZenDraftAttachment, ZenMedia } from "./ZenMedia";
-import { zenAttachment, type ZenAttachment } from "./zenAttachments";
+import { ZenDraftAttachment, ZenDraftPaste, ZenMedia } from "./ZenMedia";
+import { longPaste, zenAttachment, zenDraftMessage, type ZenAttachment, type ZenPaste } from "./zenAttachments";
 import {
   activityDuration,
   answerAttribution,
@@ -339,11 +339,13 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
   const [places, setPlaces] = useState<Place[]>([]);
   const [where, setWhere] = useState<string | null>(initialTarget ?? null);
   const [attachments, setAttachments] = useState<ZenAttachment[]>([]);
+  const [pastes, setPastes] = useState<ZenPaste[]>([]);
   const [hasDraft, setHasDraft] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
   const dragDepth = useRef(0);
   const [draggingFiles, setDraggingFiles] = useState(false);
-  const dirty = hasDraft || attachments.length > 0 || outbox.messages.length > 0;
+  const extras = attachments.length > 0 || pastes.length > 0;
+  const dirty = hasDraft || extras || outbox.messages.length > 0;
   useLayoutEffect(() => { onDraftChange?.(dirty); }, [dirty, onDraftChange]);
   useLayoutEffect(() => () => onDraftChange?.(false), [onDraftChange]);
   useEffect(() => {
@@ -622,6 +624,15 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
     setNote(accepted.length < files.length ? "Each attachment must be 25 MiB or smaller." : null);
     promptRef.current?.focus();
   }, []);
+  /* a long paste waits beside the prompt as a chip; a command keeps its paste inline, since it runs as typed */
+  const foldPaste = useCallback((text: string) => {
+    if (/^\s*[$!]/.test(promptRef.current?.selection().value ?? "")) return false;
+    const paste = longPaste(text);
+    if (!paste) return false;
+    setPastes((current) => [...current, paste]);
+    promptRef.current?.focus();
+    return true;
+  }, []);
   const say = useCallback(
     (text: string) => {
       if (!pid) {
@@ -629,15 +640,16 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
         return false;
       }
       const accepted = outbox.send({
-        pid, conversationId: conversation.conversation?.id, message: text,
+        pid, conversationId: conversation.conversation?.id, message: zenDraftMessage(text, pastes),
         media: [...attachments], selectedTarget: where ?? defaultPlace(),
       });
       if (!accepted) return false;
       scrolling.follow();
       setAttachments([]);
+      setPastes([]);
       return true;
     },
-    [attachments, conversation.conversation?.id, outbox.send, pid, scrolling.follow, where],
+    [attachments, conversation.conversation?.id, outbox.send, pastes, pid, scrolling.follow, where],
   );
 
   const nativeVoice = useRef<NativeVoiceHandle>(null);
@@ -667,7 +679,7 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
       if (raw) setInputHistory((current) => [...current.filter((entry) => entry !== raw), raw].slice(-50));
       setHistoryIndex(null);
       const intent = parsePromptInput(raw);
-      if (!intent) return !raw.trim() && attachments.length > 0 ? say("") : false;
+      if (!intent) return !raw.trim() && extras ? say("") : false;
       if (intent.kind === "switch") {
         const id = resolvePlace(intent.name, places);
         if (id) setWhere(id);
@@ -675,12 +687,12 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
         return true;
       }
       if (intent.kind === "run") {
-        if (attachments.length > 0) { setNote("Remove attachments before running a command, or send them to your Ship in plain words."); return false; }
+        if (extras) { setNote("Remove attachments and pasted text before running a command, or send them to your Ship in plain words."); return false; }
         return runDirectly(intent.command);
       }
       return say(intent.text);
     },
-    [attachments.length, outbox.sending, places, runDirectly, say],
+    [extras, outbox.sending, places, runDirectly, say],
   );
 
   const onHistory = useCallback(
@@ -715,6 +727,7 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
     if (!input || input.disabled) return;
     setWhere(initialTarget ?? null);
     setAttachments([]);
+    setPastes([]);
     input.setValue(prefill);
     input.focus();
     onPrefillUsed?.();
@@ -809,11 +822,11 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
       if (files.length === 0 && !text) return;
       event.preventDefault();
       if (files.length > 0) addFiles(files);
-      else input.append(text);
+      else if (!foldPaste(text)) input.append(text);
     };
     window.addEventListener("paste", onPaste);
     return () => window.removeEventListener("paste", onPaste);
-  }, [active, addFiles, pendingHil]);
+  }, [active, addFiles, foldPaste, pendingHil]);
 
   /* references to places inside ship text */
   const onTextClick = useCallback(
@@ -1045,9 +1058,11 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
             </div>
           ) : null}
 
-          {attachments.length > 0 && <ul class="zen-draft-attachments" aria-label="Attachments to send">
+          {extras && <ul class="zen-draft-attachments" aria-label="Attachments to send">
             {attachments.map((attachment) => <ZenDraftAttachment key={attachment.id} attachment={attachment}
               onRemove={() => setAttachments((current) => current.filter((file) => file.id !== attachment.id))} />)}
+            {pastes.map((paste) => <ZenDraftPaste key={paste.id} paste={paste}
+              onRemove={() => setPastes((current) => current.filter((entry) => entry.id !== paste.id))} />)}
           </ul>}
           {showFeedback && <div class="zen-feedback">
             {activeRun !== null && pendingHil === null && <span role="status">
@@ -1077,8 +1092,9 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
             }
             disabled={!connected || !pid}
             onSubmit={onSubmit}
-            allowEmpty={attachments.length > 0}
+            allowEmpty={extras}
             onFiles={addFiles}
+            onPasteText={foldPaste}
             onHistory={onHistory}
           />
           <div class="zen-compose-actions">
@@ -1087,7 +1103,7 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
             }} />
             <button type="button" onClick={() => fileInput.current?.click()}>attach</button>
             <button type="button" disabled={!connected || !conversation.conversation} title="Search conversation (Ctrl/Cmd+F)" onClick={() => setSearchOpen(true)}>search</button>
-            {attachments.length > 0 && <button type="button" disabled={!connected || !pid || outbox.sending} onClick={() => promptRef.current?.submit()}>send</button>}
+            {extras && <button type="button" disabled={!connected || !pid || outbox.sending} onClick={() => promptRef.current?.submit()}>send</button>}
             <span class="zen-connection-status" role="status">{connected ? "" : "Reconnecting..."}</span>
             <NativeVoiceControls ref={nativeVoice} prompt={promptRef} panelHost={nativePanels}
               scope={`${snapshot.url}:${snapshot.username}:${pid ?? ""}:${where ?? ""}`}
