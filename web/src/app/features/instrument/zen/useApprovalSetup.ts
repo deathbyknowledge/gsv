@@ -120,11 +120,14 @@ export function useApprovalSetup({ client, policyUid, pending, editable, inherit
     setError(null);
   }, [inherited, override]);
 
-  /* composed against the current snapshot: after a failed save that snapshot is reloaded, so revised picks compose against what is saved now */
-  const write = useCallback((picks: ApprovalChoices) => {
+  /* composed against the current snapshot: after a failed save that snapshot is reloaded, so revised picks compose against what is saved now.
+     A preset speaks for everything, so it also sets the default; the per-kind list only touches its rows. */
+  const write = useCallback((picks: ApprovalChoices, everything = false) => {
     if (savingRef.current || policyUid === null) return;
     const base: ApprovalPolicyValue | null = override ? parseApprovalPolicy(override) : null;
-    const next = serializeApprovalPolicy(composeApprovalChoices(parseApprovalPolicy(inherited), base, picks));
+    /* the default flips first, so a kind kept on "ask" is written as an explicit rule rather than resting on a default that no longer asks */
+    const open = (policy: ApprovalPolicyValue): ApprovalPolicyValue => everything ? { ...policy, default: "auto" } : policy;
+    const next = serializeApprovalPolicy(composeApprovalChoices(open(parseApprovalPolicy(inherited)), base ? open(base) : null, picks));
     if (normalizedApprovalPolicy(next) === normalizedApprovalPolicy(override || inherited)) { setStage(null); return; }
     setSaving(true);
     setError(null);
@@ -145,11 +148,11 @@ export function useApprovalSetup({ client, policyUid, pending, editable, inherit
 
   const allowAll = useCallback(() => {
     if (stageRef.current !== "ask") return;
-    write(everyCategory(() => "auto"));
+    write(everyCategory(() => "auto"), true);
   }, [write]);
   const limit = useCallback(() => {
     if (stageRef.current !== "ask") return;
-    write(everyCategory((id) => KEEP_ASKING.includes(id) ? "ask" : "auto"));
+    write(everyCategory((id) => KEEP_ASKING.includes(id) ? "ask" : "auto"), true);
   }, [write]);
   const save = useCallback(() => {
     if (stageRef.current !== "detail") return;

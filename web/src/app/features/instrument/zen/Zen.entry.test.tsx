@@ -550,7 +550,8 @@ describe("Zen conversation entry", () => {
       } finally { await zen.unmount(); }
     });
 
-    it("turns on auto-approve for everything, then approves the pending request it now allows", async () => {
+    it("turns on auto-approve for everything, including the default, then approves the pending request it now allows", async () => {
+      configEntries = [{ key: "config/ai/tools/approval", value: '{"default":"ask","rules":[]}' }];
       const zen = await mountedZen();
       try {
         await askApproval();
@@ -559,14 +560,16 @@ describe("Zen conversation entry", () => {
         await vi.waitFor(() => expect(hilDecisions).toEqual(approved));
         expect(configWrites.map((write) => write.key)).toEqual(["users/1000/ai/tools/approval"]);
         const policy = configWrites[0].value;
-        for (const [syscall, target] of [["shell.exec", "laptop"], ["fs.write", "laptop"], ["fs.delete", "laptop"], ["fs.delete", "gsv"], ["net.fetch", "laptop"], ["sys.mcp.call", "gsv"], ["mail.send", "gsv"]]) {
+        for (const [syscall, target] of [["shell.exec", "laptop"], ["fs.write", "laptop"], ["fs.delete", "laptop"], ["fs.delete", "gsv"], ["net.fetch", "laptop"], ["sys.mcp.call", "gsv"], ["mail.send", "gsv"], ["web.search", "gsv"], ["fs.read", "gsv"]]) {
           expect(actionOf(policy, syscall, target), `${syscall} on ${target}`).toBe("auto");
         }
+        expect(JSON.parse(policy).default).toBe("auto");
         await vi.waitFor(() => expect(setupCard(zen)).toBeNull());
       } finally { await zen.unmount(); }
     });
 
     it("keeps asking only before deleting or contacting someone, and approves the pending shell request", async () => {
+      configEntries = [{ key: "config/ai/tools/approval", value: '{"default":"ask","rules":[]}' }];
       const zen = await mountedZen();
       try {
         await askApproval();
@@ -574,7 +577,7 @@ describe("Zen conversation entry", () => {
         await act(() => { setup(zen).onLimit(); });
         await vi.waitFor(() => expect(hilDecisions).toEqual(approved));
         const policy = configWrites[0].value;
-        for (const [syscall, target] of [["shell.exec", "laptop"], ["fs.write", "laptop"], ["net.fetch", "laptop"], ["sys.mcp.call", "gsv"]]) {
+        for (const [syscall, target] of [["shell.exec", "laptop"], ["fs.write", "laptop"], ["net.fetch", "laptop"], ["sys.mcp.call", "gsv"], ["web.search", "gsv"]]) {
           expect(actionOf(policy, syscall, target), `${syscall} on ${target}`).toBe("auto");
         }
         for (const [syscall, target] of [["fs.delete", "laptop"], ["fs.delete", "gsv"], ["mail.send", "gsv"]]) {
