@@ -335,8 +335,7 @@ function pairing(current: ExtensionUiState): string {
   return `
     <section class="say">
       <h1>Connect this browser to your GSV.</h1>
-      <p>Chrome grants this extension browser access when you install it. Once paired, your GSV can work in tabs and signed-in sites, and use browser data such as history, bookmarks, cookies, downloads, and network traffic.</p>
-      <p>It may act without asking at every step. You can see recent activity here and pause access anytime. Recording a tab still needs a separate action in Chrome.</p>
+      <p>Pair this browser when you're ready, and your GSV can help with tasks here, including on sites you're signed into. You can see recent activity and pause access anytime. If it needs to record a tab, you'll be asked to allow that separately.</p>
     </section>
     <form class="pair" data-form="pair">
       <ol>
