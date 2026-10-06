@@ -43,6 +43,8 @@ import { ReceiptTimeline, RECEIPT_LAYOUT } from "./ReceiptTimeline";
 import { receiptsForMoments, type RunReceipt } from "./runReceipts";
 import { ZenDraftAttachment, ZenMedia } from "./ZenMedia";
 import { zenAttachment, type ZenAttachment } from "./zenAttachments";
+import { FeedbackNote, NoteMoment, zenFailure, zenNotice, type ZenNote } from "./ZenNotes";
+import type { ChatErrorContext } from "../../../services/chat/domain/errorPresentation";
 import {
   activityDuration,
   answerAttribution,
@@ -58,7 +60,6 @@ import {
   PLACE_REFERENCE_PREFIX,
   placeLabel,
   resolvePlace,
-  noteSummary,
   receiptSummary,
   startsWriting,
   CLOUD_PLACE_ID,
@@ -96,6 +97,10 @@ const SETTLE_STAGGER_MS = 6;
 /** Keys Zen answers in browse mode. Together with the shell's, they are the keys that never start writing; y and n are claimed only while an approval is pending. */
 const BROWSE_KEYS: ReadonlySet<string> = new Set(["j", "k", "g", "G", "o"]);
 const CLAIMED_KEYS: ReadonlySet<string> = new Set([...BROWSE_KEYS, ...SHELL_KEYS]);
+/* what each status-line failure was attempting, for causes the client cannot name */
+const SHIP_UNREACHABLE: ChatErrorContext = { summary: "Could not reach your ship.", action: "Check your connection, then reload the page." };
+const ACTIVITY_UNAVAILABLE: ChatErrorContext = { summary: "Could not load the work behind this conversation.", action: "Reload the page to try again." };
+const DECISION_FAILED: ChatErrorContext = { summary: "The decision did not go through.", action: "Try again in a moment." };
 
 /** The element a key or paste would already edit, or null when it would reach nothing. */
 function editableElement(target: EventTarget | null): HTMLElement | null {
@@ -276,38 +281,6 @@ const Receipt = memo(function Receipt({ receipt, who, places, collections, open,
   );
 });
 
-function NoteMoment({
-  moment,
-  open,
-  focus,
-  index,
-  phase,
-  onToggle,
-}: {
-  moment: Moment;
-  open: boolean;
-  focus: boolean;
-  index: number;
-  /** Where the note is in the load cascade: waiting its turn, taking it, or settled. */
-  phase: "pending" | "materialising" | "settled";
-  onToggle: () => void;
-}) {
-  return (
-    <div
-      data-index={index}
-      data-moment-id={moment.id}
-      class={`zen-moment is-note${open ? " is-open" : ""}${focus ? " is-focus" : ""}${phase === "pending" ? " is-pending" : phase === "materialising" ? " is-materialising" : ""}`}
-    >
-      <div class="who">{moment.event && moment.event.kind !== "history.compacted" ? moment.event.severity === "error" ? "error" : "event" : "memory"}</div>
-      <button type="button" class="note-line" aria-expanded={open} onClick={onToggle}>
-        <span class="tri">{open ? "▾" : "▸"}</span>
-        <span class="note-summary">{noteSummary(moment.text)}</span>
-      </button>
-      {open ? <div class="note-text">{moment.text}</div> : null}
-    </div>
-  );
-}
-
 export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, pid: pidProp, onDraftChange }: ZenProps) {
   const active = useViewActive();
   const { client, connected } = useGateway();
@@ -326,11 +299,12 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
     return () => window.clearTimeout(timer);
   }, [active, today, timeZone]);
 
-  const [note, setNote] = useState<string | null>(null);
+  const [note, setNote] = useState<ZenNote | null>(null);
   const [searchOpen, setSearchOpen] = useState(false);
   const closeSearch = useCallback(() => setSearchOpen(false), []);
   useEffect(() => { if (!active) setSearchOpen(false); }, [active]);
-  const pid = useZenProcess(pidProp, setNote);
+  const reportShipError = useCallback((message: string) => setNote(zenFailure(message, SHIP_UNREACHABLE)), []);
+  const pid = useZenProcess(pidProp, reportShipError);
   /* the conversation is what was actually said, both ways; the process transcript is what the ship did */
   const conversation = useChatConversation({ processId: pid ?? "", enabled: pid !== null });
   const outbox = useChatOutbox(conversation.acceptMessage);
@@ -451,7 +425,7 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
   /* both halves of the transcript, what was said and what was done, are shown together or not yet */
   const ready = historyLoaded && conversation.loaded;
   useEffect(() => {
-    if (processRuntime.history.error) setNote(processRuntime.history.error.message);
+    if (processRuntime.history.error) setNote(zenFailure(processRuntime.history.error.message, ACTIVITY_UNAVAILABLE));
   }, [processRuntime.history.error]);
 
   /* the run clock and the resolve animation */
@@ -619,13 +593,13 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
   const addFiles = useCallback((files: File[]) => {
     const accepted = files.filter((file) => file.size <= MAX_CHAT_PROCESS_MEDIA_BYTES);
     setAttachments((current) => [...current, ...accepted.map(zenAttachment)]);
-    setNote(accepted.length < files.length ? "Each attachment must be 25 MiB or smaller." : null);
+    setNote(accepted.length < files.length ? zenNotice("Each attachment must be 25 MiB or smaller.") : null);
     promptRef.current?.focus();
   }, []);
   const say = useCallback(
     (text: string) => {
       if (!pid) {
-        setNote("Your ship is still starting.");
+        setNote(zenNotice("Your ship is still starting."));
         return false;
       }
       const accepted = outbox.send({
@@ -653,7 +627,7 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
         setOpenActivities((current) => new Set([...current, id]));
         return true;
       } catch (error) {
-        setNote(error instanceof Error ? error.message : "The command did not run.");
+        setNote(zenNotice(error instanceof Error ? error.message : "The command did not run."));
         return false;
       }
     },
@@ -671,11 +645,11 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
       if (intent.kind === "switch") {
         const id = resolvePlace(intent.name, places);
         if (id) setWhere(id);
-        else setNote(`No place called ${intent.name}.`);
+        else setNote(zenNotice(`No place called ${intent.name}.`));
         return true;
       }
       if (intent.kind === "run") {
-        if (attachments.length > 0) { setNote("Remove attachments before running a command, or send them to your Ship in plain words."); return false; }
+        if (attachments.length > 0) { setNote(zenNotice("Remove attachments before running a command, or send them to your Ship in plain words.")); return false; }
         return runDirectly(intent.command);
       }
       return say(intent.text);
@@ -703,7 +677,7 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
         if (remember) args.remember = true;
         await decideChatHil(client, args);
       } catch (error) {
-        setNote(error instanceof Error ? error.message : "The decision did not go through.");
+        setNote(zenFailure(error instanceof Error ? error.message : "", DECISION_FAILED));
       }
     },
     [client, pendingHil, pid],
@@ -1050,7 +1024,7 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
               {currentModel && <>{currentModel} · </>}
               {currentPlace.label} {currentPlace.online ? "ready" : "offline"}
             </span>}
-            {note ? <span class="is-err" role="alert">{note}</span> : null}
+            {note ? <FeedbackNote note={note} /> : null}
           </div>}
           <PromptLine
             ref={promptRef}

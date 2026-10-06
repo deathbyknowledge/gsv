@@ -151,6 +151,11 @@ explains that this remembers all shell commands on that target for the requestin
 process, not just the displayed command. Other processes and targets still use
 their own approval rules; ordinary approval and denial never remember a rule.
 
+Web and Desktop present a failed run, and a failure reported above the composer, as a plain-language
+summary with a recommended next step, such as trying again, waiting a few minutes or restarting the
+process. The client derives that summary from the event kind and error text; the gateway's original
+error stays under **details** for diagnosis.
+
 Opening a Process activity inspector calls `proc.observe`. Raw Process signals then reach that
 specific client in addition to any connection that owns the active run. Closing the inspector calls
 `proc.unobserve`. Observation is explicit so every connected client does not receive every model
