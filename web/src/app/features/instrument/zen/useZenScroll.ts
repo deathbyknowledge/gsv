@@ -3,6 +3,8 @@ import { useViewActive } from "../../../services/navigation/ViewActivity";
 
 type Moment = { id: string };
 type Anchor = { id: string; offset: number };
+/** An element held at a distance from the viewport's top through the next layout change. */
+type Pin = { element: HTMLElement; offset: number };
 const key = (id: string) => id.replace(/^conversation-draft:/, "conversation:");
 const atBottom = (element: HTMLElement) => element.scrollHeight - element.clientHeight - element.scrollTop < 24;
 
@@ -20,6 +22,7 @@ export function useZenScroll({ moments, ready, promptFocused, hasOlder, loadingO
   const content = useRef<HTMLDivElement>(null);
   const following = useRef(true);
   const anchors = useRef<Anchor[]>([]);
+  const pinned = useRef<Pin | null>(null);
   const writtenTop = useRef<number | null>(null);
   const loading = useRef(false);
   const nodes = useRef<{ ordered: HTMLElement[]; byId: Map<string, HTMLElement> }>({ ordered: [], byId: new Map() });
@@ -56,8 +59,15 @@ export function useZenScroll({ moments, ready, promptFocused, hasOlder, loadingO
   const sync = useCallback(() => {
     const element = viewport.current;
     if (!element || !current.current.active || !current.current.ready) return;
+    const pin = pinned.current;
+    pinned.current = null;
     if (following.current) write(element.scrollHeight);
-    else {
+    else if (pin?.element.isConnected) {
+      // Rectangles are in zoomed pixels; scrollTop is in the viewport's own.
+      const bounds = element.getBoundingClientRect();
+      const scale = bounds.height / element.offsetHeight || 1;
+      write(element.scrollTop + (pin.element.getBoundingClientRect().top - bounds.top - pin.offset) / scale);
+    } else {
       for (const anchor of anchors.current) {
         const node = nodes.current.byId.get(anchor.id);
         if (!node) continue;
@@ -70,6 +80,14 @@ export function useZenScroll({ moments, ready, promptFocused, hasOlder, loadingO
   const stopFollowing = useCallback(() => {
     following.current = false;
     capture();
+  }, [capture]);
+  /** Keep an element where the reader sees it while the layout around it changes, as when a long message folds or opens. */
+  const pin = useCallback((target: HTMLElement) => {
+    const element = viewport.current;
+    if (!element || !current.current.active) return;
+    following.current = false;
+    capture();
+    pinned.current = { element: target, offset: target.getBoundingClientRect().top - element.getBoundingClientRect().top };
   }, [capture]);
   const follow = useCallback(() => {
     following.current = true;
@@ -165,5 +183,5 @@ export function useZenScroll({ moments, ready, promptFocused, hasOlder, loadingO
 
   const selectedIndex = selected === null ? -1 : moments.findIndex((moment) => key(moment.id) === selected);
   const browse = promptFocused || moments.length === 0 ? null : selectedIndex < 0 ? moments.length - 1 : selectedIndex;
-  return { viewport, content, browse, select, page, follow, stopFollowing, readOlder, move };
+  return { viewport, content, browse, select, page, follow, stopFollowing, pin, readOlder, move };
 }

@@ -15,6 +15,10 @@ Web and Desktop render Ship's Markdown code blocks at a readable monospace size 
 Long lines scroll inside the block. Copy preserves indentation and internal line breaks without
 adding the renderer's final newline to the clipboard.
 
+A very long message in Zen folds behind **read more** once it has finished arriving, and **show
+less** folds it again. A reply the user watched stream in stays open. Opening or folding keeps the
+reading position, and the message text itself is unchanged.
+
 ## Conversation kinds
 
 The Kernel owns the conversation directory and membership:

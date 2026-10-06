@@ -370,6 +370,8 @@ describe("Zen conversation entry", () => {
     const zen = await mountedZen();
     try {
       await vi.waitFor(() => expect(zen.props(ZenText).text).toBe("Your machine is online."));
+      // History was not watched arriving, so a long message from it folds.
+      expect(zen.props(ZenText).opened).toBe(false);
       expect(zen.text()).not.toContain("I am the ship. Who are you?");
       expect(send).not.toHaveBeenCalled();
     } finally { await zen.unmount(); }
