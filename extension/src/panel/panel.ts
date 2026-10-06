@@ -316,6 +316,7 @@ function main(current: ExtensionUiState): string {
     <section class="say">
       <h1>${escapeHtml(title)}</h1>
       <p class="${detailClass}">${detail}</p>
+      ${connected ? `<p>You can close this ${isPage ? "page" : "sidebar"}. The extension will keep working.</p>` : ""}
       ${grantLine}
     </section>
     ${actions.length ? `<div class="actions">${actions.join("")}</div>` : ""}
