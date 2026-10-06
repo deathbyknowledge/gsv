@@ -23,7 +23,9 @@ printf 'Listening on 127.0.0.1 only; administration uses the configured localhos
 printf 'State: %s\n\n' "$DEV_STATE_DIR"
 
 cd "$ROOT_DIR/workers/ripgit"
-exec env CLOUDFLARE_INCLUDE_PROCESS_ENV=false "$ROOT_DIR/node_modules/.bin/wrangler" dev \
+exec env CLOUDFLARE_INCLUDE_PROCESS_ENV=false node \
+  --import "$ROOT_DIR/tools/instances/dev-browser-version.mjs" \
+  "$ROOT_DIR/node_modules/.bin/wrangler" dev \
   --config "$ROOT_DIR/workers/gateway/wrangler.dev.jsonc" \
   --config "$ROOT_DIR/workers/installations/wrangler.dev.jsonc" \
   --config "$ROOT_DIR/workers/inference/wrangler.dev.jsonc" \

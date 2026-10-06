@@ -149,13 +149,27 @@ the normal Durable Object backup retention receipt. Reset uses a new installatio
 identity and does not inherit these profiles.
 
 Run `npm run dev`, then open `http://localhost:8976/admin` to create a local
-space. Wrangler runs Chromium locally. No paid remote browser is required for
-the development flow. After the server is ready, `npm run smoke:browser` creates
+space. Wrangler runs Chrome for Testing 145.0.7632.6 locally, matching the browser
+version supported by the installed Cloudflare Playwright package. The first
+start downloads and caches that browser. No paid remote browser is required for
+the development flow.
+
+Wrangler currently pins Chrome 126, which cannot position some modern calendar
+popovers correctly. `npm run dev` loads a development-only shim that replaces that
+version in Wrangler's Miniflare module without editing installed dependencies.
+It fails explicitly if that internal declaration changes. To test another Chrome
+for Testing build, set `GSV_DEV_BROWSER_VERSION` to its full version and restart
+the stack. Existing browser sessions do not survive that restart; saved logins
+remain in the local state directory. This setting does not change remote Browser
+Run or the extension's browser.
+
+After the server is ready, `npm run smoke:browser` creates
 a clean local space and exercises concurrent start reuse, automatic saved logins,
 cookie/local-storage/IndexedDB restoration, passive viewing, cursor reporting,
 human input alongside agent work, input revocation, stop and saved-state deletion. Browser
 artifact checks also cover screenshots, binary shell operations and file
-transfers in both directions between the browser and `gsv`. Browser
+transfers in both directions between the browser and `gsv`, nested web components,
+calendar controls, and popovers positioned with CSS anchors. Browser
 sessions can be lost when the Worker reloads, so finish builds before the smoke.
 
 The local test does not establish that every real website accepts Cloudflare's

@@ -6,6 +6,7 @@
   #cover { position: fixed; inset: 0; z-index: 10; background: #ddd; padding: 80px; }
 </style>
 <trip-planner></trip-planner>
+<anchored-calendar></anchored-calendar>
 <button id="block">Show blocking dialog</button>
 <div id="cover" role="dialog" aria-label="Loading overlay"><button id="dismiss">Dismiss overlay</button></div>
 <script>
@@ -61,6 +62,33 @@
     constructor() {
       super();
       this.attachShadow({ mode: "open" }).innerHTML = "<trip-fields></trip-fields>";
+    }
+  });
+  customElements.define("anchored-calendar", class extends HTMLElement {
+    constructor() {
+      super();
+      const root = this.attachShadow({ mode: "open" });
+      root.innerHTML = `
+        <style>
+          :host { display: block; }
+          button { padding: 16px; }
+          #trigger { anchor-name: --calendar; }
+          #popup {
+            position: fixed; inset: unset; margin: 0;
+            position-anchor: --calendar; position-area: span-right bottom;
+            position-try-fallbacks: flip-block;
+          }
+          #spacer { height: 3000px; }
+        </style>
+        <button id="trigger">Open anchored calendar</button>
+        <div id="spacer"></div>
+        <div id="popup" popover><button>Pick anchored day</button></div>`;
+      const popup = root.querySelector("#popup");
+      root.querySelector("#trigger").onclick = () => popup.showPopover();
+      popup.querySelector("button").onclick = () => {
+        window.anchoredDaySelected = true;
+        popup.hidePopover();
+      };
     }
   });
   document.querySelector("#dismiss").onclick = () => {

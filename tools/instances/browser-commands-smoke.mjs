@@ -34,10 +34,14 @@ export async function checkBrowserCommands(run) {
   assert.ok(day.observed.mutationCount > 0);
   const before = await shell(`page js '({ ...window.testState, value: document.querySelector("trip-planner").shadowRoot.querySelector("trip-fields").shadowRoot.querySelector("input").value })'`);
   assert.deepEqual(before.js.result, { selected: 1, day: "10", value: "Amsterdam " });
+  await shell(`page click ${ref(initial, "button", "Open anchored calendar")}`);
+  const anchored = await shell("page snapshot --json");
+  await shell(`page click ${ref(anchored, "button", "Pick anchored day")}`);
+  assert.equal((await shell("page js 'window.anchoredDaySelected'")).js.result, true);
   await shell("page click '#block'");
   const blocked = await run(`page click ${ref(calendar, "button", "October 11")}`);
   assert.equal(blocked.exitCode, 1);
   assert.match(blocked.error ?? blocked.output, /occluded by dialog.*Blocking dialog/);
   assert.deepEqual((await shell("page js 'window.testState'")).js.result, { selected: 1, day: "10" });
-  console.log("PASS: nested/slotted controls, calendar day references, shadow focus/mutations, Space, transient overlay wait, and blocked input");
+  console.log("PASS: nested/slotted controls, calendar day references, anchored popovers, shadow focus/mutations, Space, transient overlay wait, and blocked input");
 }
