@@ -53,6 +53,16 @@ describe("instance admission", () => {
     expect(store.rows()).toHaveLength(0);
     expect(store.admit({ ownerUid: 1001, human: true }, { requestId: "late-start", templateId: "browser", lifetimeSeconds: 60 }, limits).state).toBe("starting");
   }));
+  it("adds provider recovery state without changing existing sessions or leases", () => inStore(store => {
+    const first = store.admit(actor, { requestId: "before-health-upgrade", templateId: "browser", lifetimeSeconds: 300 }, limits);
+    store.sql.exec("UPDATE instances SET session_id = ? WHERE id = ?", "surviving-session", first.instanceId);
+    store.sql.exec("ALTER TABLE instances DROP COLUMN provider_failed_at");
+    store.sql.exec("DELETE FROM instance_schema WHERE id = 5");
+    migrate(store.storage);
+    expect(store.byId(first.instanceId)).toMatchObject({ session_id: "surviving-session", provider_failed_at: null });
+    expect(instance(store.byId(first.instanceId))).toEqual(first);
+    expect(profile(store.ownedProfile(actor, first.profileId!)!).activeInstanceId).toBe(first.instanceId);
+  }));
   it("keeps a start receipt terminal and rejects reusing it with other arguments", () => inStore(store => {
     const args = { requestId: "start", templateId: "browser", lifetimeSeconds: 300 };
     const first = store.admit(actor, args, limits);

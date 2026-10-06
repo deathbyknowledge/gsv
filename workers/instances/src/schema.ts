@@ -36,6 +36,9 @@ const migrations = [{
       instance_id TEXT NOT NULL, fingerprint TEXT NOT NULL, PRIMARY KEY(owner_uid, request_id))`,
     `INSERT INTO start_requests SELECT owner_uid, request_id, id, json_insert(fingerprint, '$[#]', json('false')) FROM instances`,
   ],
+}, {
+  id: 5,
+  statements: ["ALTER TABLE instances ADD COLUMN provider_failed_at INTEGER"],
 }];
 
 export function migrate(storage: DurableObjectStorage): void {

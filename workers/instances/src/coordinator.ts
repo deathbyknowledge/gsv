@@ -14,9 +14,11 @@ import { instance, InstanceStore, profile, type InstanceRow } from "./store";
 import { ProfileStorage } from "./profiles";
 import { BrowserProvider } from "./provider";
 import { InstanceRetirement } from "./retirement";
+import { within } from "./browser-operation";
 import type { InstallationDeletionRequest } from "@humansandmachines/gsv/services/lifecycle";
 
 const QUIET_ALLOCATION_MS = 180_000;
+const PROVIDER_RECOVERY_MS = 60_000;
 const humanInputSchema = z.discriminatedUnion("kind", [
   z.strictObject({ kind: z.literal("tab"), tabId: z.number().int().positive() }),
   z.strictObject({ kind: z.literal("click"), x: z.number().min(0).max(1280), y: z.number().min(0).max(800) }),
@@ -315,9 +317,13 @@ export class InstanceCoordinator extends DurableObject<Environment> implements I
       const state = await within((await this.browser(id)).save(), 10000);
       await this.#profiles.save(value, state, limits.profileStorageBytes);
     } catch (error) {
-      const row = this.#store.ownedProfile({ ownerUid: value.ownerUid, human: false }, value.profileId);
-      if (row && profile(row).state === "active") this.#store.putProfile({ ...profile(row), revision: profile(row).revision + 1, saveStatus: "failed", diagnosticRef: this.#store.diagnostic(id, error) });
+      this.profileSaveFailed(id, this.#store.diagnostic(id, error));
     }
+  }
+  private profileSaveFailed(id: string, diagnosticRef: string): void {
+    const value = instance(this.#store.byId(id));
+    const row = value.profileId ? this.#store.ownedProfile({ ownerUid: value.ownerUid, human: false }, value.profileId) : null;
+    if (row && profile(row).state === "active") this.#store.putProfile({ ...profile(row), revision: profile(row).revision + 1, saveStatus: "failed", diagnosticRef });
   }
   private fenceStop(value: CloudInstance, reason: string): void {
     if (value.state === "stopped" || value.state === "failed") return;
@@ -403,14 +409,21 @@ export class InstanceCoordinator extends DurableObject<Environment> implements I
       if (value.state === "ready") {
         const browser = await this.browser(id);
         // A metadata command keeps this exact session alive; it never creates one.
-        await within(browser.listTabs(), 10000);
+        await within(browser.heartbeat(), 10000, "Browser health check");
+        row = this.#store.byId(id);
+        if (instance(row).state !== "ready") return;
+        if (row.provider_failed_at !== null) {
+          this.#store.sql.exec("UPDATE instances SET provider_failed_at = NULL WHERE id = ?", id);
+          const current = instance(row);
+          this.#store.update({ ...current, diagnosticRef: undefined, revision: current.revision + 1 });
+        }
         if (!this.#store.handoffs(id).some(liveHandoff) && !(this.#operations.get(id)?.size)) {
           const pending = this.#saves.get(id);
-          if (pending) await within(pending, 10000);
+          if (pending) await within(pending, 10000, "Browser profile save").catch(error => this.profileSaveFailed(id, this.#store.diagnostic(id, error)));
           else {
             const save = this.save(id).finally(() => { if (this.#saves.get(id) === save) this.#saves.delete(id); });
             this.#saves.set(id, save);
-            await within(save, 10000);
+            await within(save, 10000, "Browser profile save").catch(error => this.profileSaveFailed(id, this.#store.diagnostic(id, error)));
           }
         }
       }
@@ -418,6 +431,14 @@ export class InstanceCoordinator extends DurableObject<Environment> implements I
     } catch (error) {
       const value = instance(this.#store.byId(id));
       this.#store.update({ ...value, diagnosticRef: this.#store.diagnostic(id, error), revision: value.revision + 1 });
+      if (value.state === "ready") {
+        this.#store.sql.exec("UPDATE instances SET provider_failed_at = COALESCE(provider_failed_at, ?) WHERE id = ?", Date.now(), id);
+        const failed = this.#store.byId(id);
+        let exists = true;
+        try { exists = Boolean(failed.session_id) && await within(this.#provider.exists(failed.session_id!), 5000, "Browser recovery lookup"); }
+        catch (lookupError) { this.#store.diagnostic(id, lookupError); }
+        if (exists && Date.now() - failed.provider_failed_at! < PROVIDER_RECOVERY_MS) return;
+      }
       this.fenceStop(instance(this.#store.byId(id)), "Browser provider failed");
     }
   }
@@ -480,14 +501,5 @@ async function boundedSettlement(work: Promise<unknown>[], timeoutMs: number): P
       Promise.allSettled(work).then(() => true),
       new Promise<false>(resolve => { timer = setTimeout(() => resolve(false), timeoutMs); }),
     ]);
-  } finally { clearTimeout(timer); }
-}
-
-async function within<T>(work: Promise<T>, timeoutMs: number): Promise<T> {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  try {
-    return await Promise.race([work, new Promise<never>((_resolve, reject) => {
-      timer = setTimeout(() => reject(new Error("Browser provider operation timed out")), timeoutMs);
-    })]);
   } finally { clearTimeout(timer); }
 }

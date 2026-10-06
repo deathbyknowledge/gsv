@@ -5,6 +5,7 @@ import { browserTemplate, type BrowserLimits } from "./config";
 export type InstanceRow = {
   id: string; owner_uid: number; request_id: string; fingerprint: string; record: string; active: number;
   period_start: number; reservation: number; charged: number; session_id: string | null; acquire_at: number | null; runtime: string | null;
+  provider_failed_at: number | null;
 };
 export type ProfileRow = { id: string; owner_uid: number; request_id: string; record: string; key: ArrayBuffer | null; object_key: string | null; saved_revision: number };
 export function period(now: number) {

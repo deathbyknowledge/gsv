@@ -13,6 +13,7 @@ import type { StoredFsEntry } from "@humansandmachines/gsv-browser/fs-persistenc
 import type { BrowserCommand, TargetFileSystem } from "@humansandmachines/gsv-browser/types";
 import { BrowserRuntimeFiles } from "./runtime-files";
 import { instance, type InstanceStore } from "./store";
+import { within } from "./browser-operation";
 
 export type StorageState = Awaited<ReturnType<BrowserContext["storageState"]>>;
 type RuntimeState = { contextId: string; nextTabId: number; activeTabId: number; tabs: Record<string, string> };
@@ -24,6 +25,7 @@ export class CloudBrowser implements BrowserPageBackend, BrowserTabsBackend, Deb
   readonly shell: BrowserTargetShell;
   private readonly debuggers = new Map<Page, CDPSession>();
   private readonly tabs = new Map<number, Page>();
+  private readonly tabMetadata = new Map<number, { title: string; url: string }>();
   private readonly references = new PageReferenceStore();
   private refresh: Promise<void> | undefined;
   private readonly inputQueue = new BrowserInputQueue();
@@ -118,13 +120,14 @@ export class CloudBrowser implements BrowserPageBackend, BrowserTabsBackend, Deb
       for (const page of this.context.pages()) {
         if (page.isClosed()) continue;
         const cdp = await this.debuggerFor(page);
-        const { targetInfo } = await cdp.send("Target.getTargetInfo");
+        const { targetInfo } = await within(cdp.send("Target.getTargetInfo"), 5000, "Browser tab metadata");
         let id = Number(Object.keys(this.state.tabs).find(key => this.state.tabs[key] === targetInfo.targetId));
         if (!id) { id = this.state.nextTabId++; this.state.tabs[String(id)] = targetInfo.targetId; }
         this.tabs.set(id, page);
+        this.tabMetadata.set(id, { title: targetInfo.title, url: targetInfo.url });
         found.add(id);
       }
-      for (const [id, page] of this.tabs) if (!found.has(id)) { this.tabs.delete(id); this.debuggers.delete(page); }
+      for (const [id, page] of this.tabs) if (!found.has(id)) { this.tabs.delete(id); this.tabMetadata.delete(id); this.debuggers.delete(page); }
       if (!found.has(this.state.activeTabId)) this.state.activeTabId = found.values().next().value ?? 0;
       this.persist();
     })().finally(() => { this.refresh = undefined; });
@@ -133,7 +136,7 @@ export class CloudBrowser implements BrowserPageBackend, BrowserTabsBackend, Deb
   private async debuggerFor(page: Page): Promise<CDPSession> {
     const existing = this.debuggers.get(page);
     if (existing) return existing;
-    const cdp = await this.context.newCDPSession(page);
+    const cdp = await within(this.context.newCDPSession(page), 5000, "Browser tab connection");
     this.debuggers.set(page, cdp);
     return cdp;
   }
@@ -163,7 +166,12 @@ export class CloudBrowser implements BrowserPageBackend, BrowserTabsBackend, Deb
   };
   private async summary(id: number, page: Page, index = 0): Promise<TabSummary> {
     return { id, windowId: 1, index, active: id === this.state.activeTabId, highlighted: id === this.state.activeTabId,
-      pinned: false, audible: false, muted: false, status: "complete", title: await page.title(), url: page.url(), favIconUrl: null };
+      pinned: false, audible: false, muted: false, status: "complete", title: this.tabMetadata.get(id)?.title ?? "", url: page.url(), favIconUrl: null };
+  }
+  async heartbeat(): Promise<void> {
+    const cdp = await within(this.browser.newBrowserCDPSession(), 5000, "Browser health connection");
+    try { await within(cdp.send("Browser.getVersion"), 5000, "Browser health check"); }
+    finally { await within(cdp.detach(), 5000, "Browser health disconnect"); }
   }
   async listTabs(): Promise<TabSummary[]> { await this.refreshTabs(); return Promise.all([...this.tabs].map(([id, page], index) => this.summary(id, page, index))); }
   async activeTab(): Promise<TabSummary | null> { await this.refreshTabs(); return this.state.activeTabId ? this.getTab(this.state.activeTabId) : null; }
@@ -194,11 +202,11 @@ export class CloudBrowser implements BrowserPageBackend, BrowserTabsBackend, Deb
   async save(): Promise<StorageState> { return this.context.storageState({ indexedDB: true }); }
   async documentId(id: number): Promise<string> {
     const cdp = await this.debuggerFor(await this.page(id));
-    return (await cdp.send("Page.getFrameTree")).frameTree.frame.loaderId;
+    return (await within(cdp.send("Page.getFrameTree"), 5000, "Browser document identity")).frameTree.frame.loaderId;
   }
   async humanFrame(id: number): Promise<{ bytes: Uint8Array; documentId: string }> {
     const documentId = await this.documentId(id);
-    const bytes = await (await this.page(id)).screenshot({ type: "jpeg", quality: 75, timeout: 10000 });
+    const bytes = await within((await this.page(id)).screenshot({ type: "jpeg", quality: 75, timeout: 10000 }), 11000, "Browser live frame");
     if (documentId !== await this.documentId(id)) throw new Error("The page changed; refreshing the view");
     return { bytes, documentId };
   }

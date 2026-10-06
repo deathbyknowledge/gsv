@@ -12,10 +12,11 @@ const actor = { ownerUid: 1000, human: true };
 const limits = { enabled: true, concurrentInstances: 2, periodSeconds: 36000, maxInstanceSeconds: 1800, savedProfiles: 5, profileStorageBytes: 5242880 };
 const namespace = env.INSTANCES;
 afterEach(() => { vi.restoreAllMocks(); vi.useRealTimers(); });
-async function fixture(work: (object: InstanceCoordinator, store: InstanceStore, id: string, installationId: string) => Promise<void>, humanInput = vi.fn(async () => {})) {
+async function fixture(work: (object: InstanceCoordinator, store: InstanceStore, id: string, installationId: string, browser: Partial<CloudBrowser>) => Promise<void>, humanInput = vi.fn(async () => {})) {
   vi.spyOn(InstancePolicy.prototype, "requireActive").mockResolvedValue();
   const shell: Partial<CloudBrowser["shell"]> = { idle: async () => {}, exec: async () => ({ status: "completed", output: "ok", exitCode: 0 }) };
   const browser: Partial<CloudBrowser> = {
+    heartbeat: vi.fn(async () => {}),
     getTab: async () => ({ id: 1, url: "https://example.com/login" }),
     listTabs: async () => [{ id: 1, title: "Login", url: "https://example.com/login", active: true }],
     humanInput, humanFrame: async () => ({ bytes: new Uint8Array([1, 2]), documentId: "document" }),
@@ -32,7 +33,7 @@ async function fixture(work: (object: InstanceCoordinator, store: InstanceStore,
     const value = store.admit(actor, { requestId: "start", templateId: "browser", lifetimeSeconds: 300 }, limits);
     store.update({ ...value, state: "ready", readyAt: Date.now() });
     store.sql.exec("UPDATE instances SET session_id = ? WHERE id = ?", "test-session", value.instanceId);
-    await work(object, store, value.instanceId, installationId);
+    await work(object, store, value.instanceId, installationId, browser);
   });
 }
 
@@ -102,6 +103,46 @@ describe("human browser control", () => {
     vi.spyOn(InstancePolicy.prototype, "limits").mockResolvedValue({ ...limits, enabled: false });
     expect((await object.catalog(actor)).templates).toEqual([]);
     expect((await object.get(actor, { instanceId })).instance?.implements).toContain("shell.exec");
+  }));
+});
+
+describe("browser health", () => {
+  it("checks browser liveness without waiting for a page title or frame", () => fixture(async (object, _store, instanceId, _installationId, browser) => {
+    browser.listTabs = vi.fn(() => new Promise(() => {}));
+    await object.alarm();
+    expect(browser.heartbeat).toHaveBeenCalledOnce();
+    expect(browser.listTabs).not.toHaveBeenCalled();
+    expect((await object.get(actor, { instanceId })).instance?.state).toBe("ready");
+  }));
+
+  it("preserves the session during a transient failure and clears recovery state when it answers", () => fixture(async (object, store, instanceId, _installationId, browser) => {
+    const heartbeat = vi.fn().mockRejectedValueOnce(new Error("Health timed out")).mockResolvedValue(undefined);
+    browser.heartbeat = heartbeat;
+    vi.spyOn(BrowserProvider.prototype, "exists").mockResolvedValue(true);
+    const close = vi.spyOn(BrowserProvider.prototype, "close").mockResolvedValue();
+    await object.alarm();
+    expect(store.byId(instanceId).provider_failed_at).not.toBeNull();
+    expect((await object.get(actor, { instanceId })).instance?.state).toBe("ready");
+    await object.alarm();
+    expect(store.byId(instanceId).provider_failed_at).toBeNull();
+    expect((await object.get(actor, { instanceId })).instance?.diagnosticRef).toBeUndefined();
+    expect(close).not.toHaveBeenCalled();
+  }));
+
+  it("bounds persistent failures with a durable recovery deadline", () => fixture(async (object, store, instanceId, _installationId, browser) => {
+    browser.heartbeat = vi.fn().mockRejectedValue(new Error("Health timed out"));
+    vi.spyOn(BrowserProvider.prototype, "exists").mockResolvedValue(true);
+    await object.alarm();
+    store.sql.exec("UPDATE instances SET provider_failed_at = ? WHERE id = ?", Date.now() - 60001, instanceId);
+    await object.alarm();
+    expect((await object.get(actor, { instanceId })).instance?.state).toBe("stopping");
+  }));
+
+  it("stops immediately when the provider confirms the session is gone", () => fixture(async (object, _store, instanceId, _installationId, browser) => {
+    browser.heartbeat = vi.fn().mockRejectedValue(new Error("Disconnected"));
+    vi.spyOn(BrowserProvider.prototype, "exists").mockResolvedValue(false);
+    await object.alarm();
+    expect((await object.get(actor, { instanceId })).instance?.state).toBe("stopping");
   }));
 });
 

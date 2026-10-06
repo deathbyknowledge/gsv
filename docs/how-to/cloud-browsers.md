@@ -47,6 +47,12 @@ with a new eight-character ID. Export useful files before stopping: temporary
 files disappear. Stopped browsers leave the ordinary Fleet list, but their
 records remain available through `instance list --all`.
 
+A slow page or failed live frame does not by itself stop the browser. Health
+checks run independently of page JavaScript, and temporary provider failures
+have a one-minute recovery window within the original lifetime. A confirmed
+missing session or a persistent failure stops the instance. Recovery never
+repeats an agent action. Diagnostics identify the operation that timed out.
+
 Ship can request an additional isolated browser with `--new`. It has a distinct
 name and ID and is temporary: it does not share your saved logins or replace your
 ordinary browser. Advanced `browser profile` commands remain available for
