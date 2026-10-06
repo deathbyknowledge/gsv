@@ -87,6 +87,19 @@ describe("ConnectionSupervisor", () => {
     expect(endpoint.connectOptions).toHaveLength(1);
   });
 
+  it("keeps access paused when connection settings change", async () => {
+    const endpoint = new FakeEndpoint(async () => {});
+    const supervisor = new ConnectionSupervisor(endpoint);
+
+    await supervisor.reconcile(CONFIG);
+    supervisor.setReconnectSuppressed(true);
+    await supervisor.reconcile({ ...CONFIG, token: "token-two" });
+
+    expect(endpoint.disconnectReasons).toEqual(["reconnect paused by user"]);
+    expect(endpoint.connectOptions).toHaveLength(1);
+    expect(supervisor.getState().reconnectSuppressed).toBe(true);
+  });
+
   it("reconnects after an established socket closes", async () => {
     vi.useFakeTimers();
     const endpoint = new FakeEndpoint(async () => {});

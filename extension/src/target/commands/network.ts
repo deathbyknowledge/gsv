@@ -98,6 +98,7 @@ async function runStart(args: string[], ctx: CommandContext): Promise<CommandRes
   const status = await startNetworkCapture({
     ...parsed.value,
     fs: ctx.fs,
+    abortSignal: ctx.abortSignal,
   });
   return commandJson(status);
 }

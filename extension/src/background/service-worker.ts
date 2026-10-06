@@ -15,6 +15,7 @@ import { loadRuntimeState, saveRuntimeState } from "../shared/runtime-state";
 import { isNumber } from "../shared/schemas";
 import type { ActivityEntry, ExtensionUiState, RuntimeMessage, RuntimeResponse } from "../shared/ui-state";
 import {
+  clearMediaCaptureGrant,
   grantMediaCapture,
   mediaCaptureGrantStatus,
   mediaRecordingStatus,
@@ -24,6 +25,7 @@ import { networkStatus, stopNetworkCapture } from "../target/network-recorder";
 import { ConnectionSupervisor } from "./connection-supervisor";
 import { BrowserPairing } from "./pairing";
 import { createBrowserTargetDriver, type BrowserTargetActivity } from "./driver";
+import { pauseBrowserResources } from "./pause-access";
 
 const client = new GSVClient();
 const endpoint = client.endpoint({
@@ -130,13 +132,9 @@ async function handleRuntimeMessage(message: RuntimeMessage): Promise<RuntimeRes
         await setManualReconnectSuppressed(false);
         await connectNow();
         return await stateResponse();
-      case "disconnect":
+      case "pause":
         browserPairing.stop();
-        await setManualReconnectSuppressed(true);
-        return await stateResponse();
-      case "stop-all":
-        browserPairing.stop();
-        return await stopAll();
+        return await pauseBrowserAccess();
       case "grant-media-capture":
         return await grantMediaCaptureAccess(message.tabId);
       case "clear-diagnostics":
@@ -150,7 +148,6 @@ async function handleRuntimeMessage(message: RuntimeMessage): Promise<RuntimeRes
           detail: `${config.deviceId} (${gatewayHost(config.gatewayUrl)})`,
           status: "info",
         });
-        await setManualReconnectSuppressed(false);
         await connectionSupervisor.reconcile(config);
         return await stateResponse();
       }
@@ -200,36 +197,26 @@ async function connectNow(config?: ExtensionConfig): Promise<void> {
   await connectionSupervisor.reconcile(config, { manual: true });
 }
 
-async function stopAll(): Promise<RuntimeResponse> {
-  const cleanupErrors: string[] = [];
-  const stoppedCaptures = await stopNetworkCapture().catch((error) => {
-    // SAFETY: rejected browser operations expose Error-compatible values here.
-    cleanupErrors.push(`network: ${errorMessage(error as Error)}`);
-    return [];
-  });
-  const stoppedRecordings = await stopAllMediaRecordings().catch((error) => {
-    // SAFETY: rejected browser operations expose Error-compatible values here.
-    cleanupErrors.push(`media: ${errorMessage(error as Error)}`);
-    return [];
-  });
-  const detachedTabs = await releaseAllDebuggers().catch((error) => {
-    // SAFETY: rejected browser operations expose Error-compatible values here.
-    cleanupErrors.push(`debugger: ${errorMessage(error as Error)}`);
-    return [];
-  });
-  await setManualReconnectSuppressed(true, "stop all").catch((error) => {
-    // SAFETY: rejected browser operations expose Error-compatible values here.
-    cleanupErrors.push(`runtime state: ${errorMessage(error as Error)}`);
+async function pauseBrowserAccess(): Promise<RuntimeResponse> {
+  const result = await pauseBrowserResources({
+    disconnect: async () => await setManualReconnectSuppressed(true, "access paused by user"),
+    revokeMediaGrant: clearMediaCaptureGrant,
+    stopNetwork: stopNetworkCapture,
+    stopRecordings: stopAllMediaRecordings,
+    releaseDebuggers: releaseAllDebuggers,
   });
   addActivity({
-    kind: cleanupErrors.length > 0 ? "error" : "sensitive",
-    label: "stop all",
+    kind: result.errors.length > 0 ? "error" : "sensitive",
+    label: "access paused",
     detail: [
-      `stopped ${stoppedCaptures.length} network capture(s), ${stoppedRecordings.length} media recording(s), detached ${detachedTabs.length} debugger tab(s)`,
-      ...cleanupErrors.map((error) => `cleanup error: ${error}`),
+      `stopped ${result.stoppedCaptures} network capture(s), ${result.stoppedRecordings} media recording(s), detached ${result.detachedTabs} debugger tab(s)`,
+      ...result.errors.map((error) => `cleanup error: ${error}`),
     ].join("; "),
-    status: cleanupErrors.length > 0 ? "error" : "info",
+    status: result.errors.length > 0 ? "error" : "info",
   });
+  if (result.errors.length > 0) {
+    return { ok: false, error: `Access may not be fully paused: ${result.errors.join("; ")}`, state: await buildUiState() };
+  }
   return await stateResponse();
 }
 
@@ -256,6 +243,9 @@ async function clearAttentionBadge(): Promise<void> {
 }
 
 async function grantMediaCaptureAccess(tabId?: number): Promise<RuntimeResponse> {
+  if (connectionSupervisor.getState().reconnectSuppressed || client.getStatus().state !== "connected") {
+    throw new Error("Resume browser access before allowing recording");
+  }
   void clearAttentionBadge();
   const grant = await grantMediaCapture(tabId);
   addActivity({
@@ -329,6 +319,7 @@ async function buildUiState(): Promise<ExtensionUiState> {
     connection,
     targetId: config.deviceId,
     gatewayHost: gatewayHost(config.gatewayUrl),
+    activeRequests: browserTarget.activeRequests().map(({ label, detail }) => ({ label, detail })),
     activity: activity.slice(0, 80),
     sensitive: {
       connected: connection.state === "connected",

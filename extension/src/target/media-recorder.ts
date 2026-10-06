@@ -42,9 +42,11 @@ export type StartMediaRecordingOptions = {
   maxDurationMs: number;
   maxBytes: number;
   monitor: boolean;
+  abortSignal?: AbortSignal;
 };
 
 export async function startMediaRecording(options: StartMediaRecordingOptions): Promise<MediaRecordingStatus> {
+  throwIfAborted(options.abortSignal);
   const tabId = options.tabId ?? await activeTabId();
   const tab = await getTab(tabId);
   if (!tab) {
@@ -64,22 +66,33 @@ export async function startMediaRecording(options: StartMediaRecordingOptions): 
   await assertLocalWritableFile(options.fs, output.localPath);
 
   await ensureOffscreenDocument();
+  throwIfAborted(options.abortSignal);
   const streamId = takeGrantedMediaStreamId(tabId) ?? await getTabMediaStreamId(tabId);
-  return await sendOffscreenMessage<MediaRecordingStatus>({
-    target: OFFSCREEN_MEDIA_RECORDER_TARGET,
-    type: "start",
-    recordingId,
-    tabId,
-    streamId,
-    mode: options.mode,
-    path: output.localPath,
-    requestedPath: output.requestedPath,
-    destination: output.destination,
-    maxBytes: options.maxBytes,
-    maxDurationMs: options.maxDurationMs,
-    monitor: options.monitor,
-    startedAt,
-  });
+  throwIfAborted(options.abortSignal);
+  try {
+    const status = await sendOffscreenMessage<MediaRecordingStatus>({
+      target: OFFSCREEN_MEDIA_RECORDER_TARGET,
+      type: "start",
+      recordingId,
+      tabId,
+      streamId,
+      mode: options.mode,
+      path: output.localPath,
+      requestedPath: output.requestedPath,
+      destination: output.destination,
+      maxBytes: options.maxBytes,
+      maxDurationMs: options.maxDurationMs,
+      monitor: options.monitor,
+      startedAt,
+    });
+    throwIfAborted(options.abortSignal);
+    return status;
+  } catch (error) {
+    if (options.abortSignal?.aborted) {
+      await stopAllMediaRecordings();
+    }
+    throw error;
+  }
 }
 
 export async function grantMediaCapture(tabId?: number): Promise<MediaCaptureGrantStatus> {
@@ -109,6 +122,10 @@ export function mediaCaptureGrantStatus(now = Date.now()): MediaCaptureGrantStat
     return null;
   }
   return publicMediaCaptureGrant(mediaCaptureGrant);
+}
+
+export function clearMediaCaptureGrant(): void {
+  mediaCaptureGrant = null;
 }
 
 export async function stopMediaRecording(

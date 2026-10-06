@@ -17,6 +17,7 @@ export type BrowserTargetActivityObserver = (activity: BrowserTargetActivity) =>
 
 export type BrowserTargetDriver = {
   handle: GsvEndpointHandler;
+  activeRequests(): BrowserTargetActivity[];
 };
 
 export function createBrowserTargetDriver(
@@ -25,11 +26,14 @@ export function createBrowserTargetDriver(
   const fs = new BrowserTargetFileSystem(createRuntimeFileSystem());
   const fsDriver = new BrowserFsDriver(fs, async () => (await loadConfig()).deviceId);
   const shell = new BrowserTargetShell(fs, createBrowserCommands());
+  const activeRequests = new Map<string, BrowserTargetActivity>();
 
   return {
+    activeRequests: () => [...activeRequests.values()].reverse(),
     async handle(request, context): Promise<GsvResponse> {
       const startedAt = Date.now();
       const baseActivity = activityForFrame(request);
+      activeRequests.set(request.id, baseActivity);
       try {
         let response: GsvResponse;
         if (request.call === "shell.exec") {
@@ -70,6 +74,8 @@ export function createBrowserTargetDriver(
           durationMs: Date.now() - startedAt,
         });
         throw error;
+      } finally {
+        activeRequests.delete(request.id);
       }
     },
   };

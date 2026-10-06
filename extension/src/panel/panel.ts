@@ -106,10 +106,7 @@ async function runAction(action: string): Promise<void> {
         apply(await sendUiMessage({ type: "connect" }));
         break;
       case "pause":
-        apply(await sendUiMessage({ type: "disconnect" }));
-        break;
-      case "stop":
-        apply(await sendUiMessage({ type: "stop-all" }));
+        apply(await sendUiMessage({ type: "pause" }));
         break;
       case "allow-recording":
         apply(await sendUiMessage({ type: "grant-media-capture" }));
@@ -234,10 +231,14 @@ function keepFormState(): () => void {
   const focused: FocusedField | null = (active instanceof HTMLInputElement || active instanceof HTMLTextAreaElement) && active.form && appEl.contains(active)
     ? { form: active.form.dataset.form ?? "", name: active.name, start: active.selectionStart, end: active.selectionEnd }
     : null;
+  const focusKey = active instanceof HTMLElement && appEl.contains(active) ? active.dataset.focusKey : undefined;
   const invitation = appEl.querySelector<HTMLTextAreaElement>(INVITATION)?.value ?? "";
   return () => {
     const textarea = appEl.querySelector<HTMLTextAreaElement>(INVITATION);
     if (textarea && invitation && !textarea.value) textarea.value = invitation;
+    if (focusKey) {
+      appEl.querySelector<HTMLElement>(`[data-focus-key="${CSS.escape(focusKey)}"]`)?.focus({ preventScroll: true });
+    }
     if (!focused) return;
     const field = appEl.querySelector<HTMLInputElement | HTMLTextAreaElement>(`form[data-form='${focused.form}'] [name='${focused.name}']`);
     if (!field) return;
@@ -254,10 +255,11 @@ function keepFormState(): () => void {
 function header(current: ExtensionUiState, paired: boolean): string {
   const mood = paired ? tone(current) : "idle";
   const label = !paired ? "not paired"
+    : current.connection.reconnectSuppressed && liveAccessCount(current) > 0 ? "attention"
+    : current.connection.reconnectSuppressed ? "paused"
     : liveAccessCount(current) > 0 ? "working"
     : current.connection.state === "connected" ? "ready"
     : current.connection.state === "connecting" ? "connecting"
-    : current.connection.reconnectSuppressed ? "paused"
     : "offline";
   return `
     <header class="top">
@@ -278,34 +280,38 @@ function main(current: ExtensionUiState): string {
   let detailClass = "";
   const actions: string[] = [];
 
-  if (live > 0) {
+  if (paused && live > 0) {
+    title = "Some browser activity remains.";
+    detail = "Access is paused, but some work may still be active. Try stopping it again.";
+    actions.push(button("pause", "stop remaining activity", "ibtn"));
+  } else if (paused) {
+    title = "Paused.";
+    detail = "Your GSV can't use this browser until you resume.";
+    actions.push(button("resume", "resume", "ibtn is-primary"));
+  } else if (live > 0) {
     const site = workingSite(current);
     title = "Your GSV is working here.";
     detail = site ? `It's using <span class="site">${escapeHtml(site)}</span> right now. ${liveSentence(current)}` : liveSentence(current);
-    actions.push(button("stop", "stop", "ibtn"));
   } else if (connected) {
     title = "Ready.";
     detail = "Your GSV can use this browser, signed in as you. Ask it from anywhere.";
   } else if (connecting) {
     title = "Connecting to your GSV…";
     detail = "This usually takes a moment.";
-  } else if (paused) {
-    title = "Paused.";
-    detail = "Your GSV can't use this browser until you resume.";
-    actions.push(button("resume", "resume", "ibtn is-primary"));
   } else {
     title = "Can't reach your GSV.";
     detail = current.connection.message || "The connection dropped. It will retry on its own; you can also try now.";
     detailClass = "is-err";
     actions.push(button("retry", "try again", "ibtn is-primary"));
   }
+  if (!paused) actions.push(button("pause", "pause access", "ibtn"));
 
   const grantLine = grant
     ? `<p>Recording is allowed on <span class="site">${escapeHtml(grant.title || grant.url || `tab ${grant.tabId}`)}</span> for ${escapeHtml(timeUntil(grant.expiresAt))}.</p>`
     : "";
   // Chrome only lets an extension record a tab after a person has invoked it there, so the ask
   // appears in the moment: right after your GSV tried to record and was refused.
-  const recordingAsk = !grant && wantsRecording(current)
+  const recordingAsk = connected && !paused && !grant && wantsRecording(current)
     ? `<div class="note"><p>Your GSV wants to record this tab. Chrome needs you to allow that here, once per recording.</p><div class="actions">${button("allow-recording", "allow recording", "ibtn is-primary")}</div></div>`
     : "";
   const bannerNote = showBannerNote
@@ -339,7 +345,7 @@ function pairing(current: ExtensionUiState): string {
       </ol>
       <textarea name="invitation" placeholder="gsv-pair1_…" autocomplete="off" spellcheck="false" ${pending ? "disabled" : ""}></textarea>
       <div class="actions">
-        <button type="submit" class="ibtn is-primary" ${pending ? "disabled" : ""}>${pending ? "pairing…" : "pair this browser"}</button>
+        <button type="submit" class="ibtn is-primary" data-focus-key="pair-submit" ${pending ? "disabled" : ""}>${pending ? "pairing…" : "pair this browser"}</button>
         ${current.connection.message ? `<span class="tbtn" aria-hidden="true">${escapeHtml(truncateMiddle(current.connection.message, 48))}</span>` : ""}
       </div>
     </form>`;
@@ -379,10 +385,9 @@ function row(entry: ActivityEntry): string {
 
 function advanced(current: ExtensionUiState): string {
   const config = draft ?? current.config;
-  const paused = current.connection.reconnectSuppressed;
   return `
     <details class="advanced" ${advancedOpen ? "open" : ""}>
-      <summary>advanced</summary>
+      <summary data-focus-key="advanced-summary">advanced</summary>
       <div class="body">
         <section>
           <h3>connection</h3>
@@ -397,8 +402,7 @@ function advanced(current: ExtensionUiState): string {
             ${field("deviceId", "this browser's name", config.deviceId, "text", "laptop:chrome")}
             <label class="check"><input name="autoConnect" type="checkbox" ${config.autoConnect ? "checked" : ""}> connect when Chrome starts</label>
             <div class="actions">
-              <button type="submit" class="ibtn" ${busy === "save" ? "disabled" : ""}>${busy === "save" ? "saving…" : "save"}</button>
-              ${paused ? textButton("resume", "resume") : textButton("pause", "pause")}
+              <button type="submit" class="ibtn" data-focus-key="connection-submit" ${busy === "save" ? "disabled" : ""}>${busy === "save" ? "saving…" : "save"}</button>
             </div>
           </form>
         </section>
@@ -435,7 +439,7 @@ function footer(current: ExtensionUiState, paired: boolean): string {
     <footer class="foot">
       ${textButton("toggle-theme", effectiveTheme() === "light" ? "dark" : "light")}
       ${website
-        ? `<a class="host" href="${escapeHtml(website.toString())}" target="_blank" rel="noopener noreferrer" title="Open your GSV">${escapeHtml(current.gatewayHost)}</a>`
+        ? `<a class="host" href="${escapeHtml(website.toString())}" target="_blank" rel="noopener noreferrer" title="Open your GSV" data-focus-key="space-link">${escapeHtml(current.gatewayHost)}</a>`
         : `<span class="host">not paired yet</span>`}
     </footer>`;
 }
@@ -443,10 +447,10 @@ function footer(current: ExtensionUiState, paired: boolean): string {
 /* ---------- pieces ---------- */
 
 function button(action: string, label: string, className: string): string {
-  return `<button type="button" class="${className}" data-action="${escapeHtml(action)}" ${busy === action ? "disabled" : ""}>${escapeHtml(label)}</button>`;
+  return `<button type="button" class="${className}" data-action="${escapeHtml(action)}" data-focus-key="main-${escapeHtml(action)}" ${busy === action ? "disabled" : ""}>${escapeHtml(label)}</button>`;
 }
 function textButton(action: string, label: string, extra = ""): string {
-  return `<button type="button" class="tbtn ${extra}" data-action="${escapeHtml(action)}" ${busy === action ? "disabled" : ""}>${escapeHtml(label)}</button>`;
+  return `<button type="button" class="tbtn ${extra}" data-action="${escapeHtml(action)}" data-focus-key="${escapeHtml(action)}" ${busy === action ? "disabled" : ""}>${escapeHtml(label)}</button>`;
 }
 function field(name: ConfigField, label: string, value: string, type: string, placeholder = ""): string {
   return `<label class="field" data-field="${name}"><span>${escapeHtml(label)}</span><input name="${name}" type="${type}" value="${escapeHtml(value)}" placeholder="${escapeHtml(placeholder)}" autocomplete="off"><small data-error></small></label>`;
@@ -456,10 +460,10 @@ function fact(label: string, value: string): string {
 }
 
 function tone(current: ExtensionUiState): string {
+  if (current.connection.reconnectSuppressed) return liveAccessCount(current) > 0 ? "is-warn" : "";
   if (liveAccessCount(current) > 0) return "is-live";
   if (current.connection.state === "connected") return "is-on";
   if (current.connection.state === "connecting") return "is-live";
-  if (current.connection.reconnectSuppressed) return "";
   return "is-err";
 }
 
@@ -471,8 +475,7 @@ function wantsRecording(current: ExtensionUiState): boolean {
 
 /** The site your GSV is in, from the newest active row that names one. */
 function workingSite(current: ExtensionUiState): string | null {
-  for (const entry of current.activity) {
-    if (entry.kind === "connection") continue;
+  for (const entry of current.activeRequests) {
     const match = entry.detail.match(/https?:\/\/([^/\s]+)/);
     if (match) return match[1];
   }
@@ -481,13 +484,15 @@ function workingSite(current: ExtensionUiState): string | null {
 
 function liveSentence(current: ExtensionUiState): string {
   const parts: string[] = [];
+  const activeRequests = current.activeRequests.length;
+  if (activeRequests > 0) parts.push(activeRequests === 1 ? "it's working on a task" : `it's working on ${activeRequests} tasks`);
   const tabs = current.sensitive.debuggerTabs.length;
   if (tabs > 0) parts.push(tabs === 1 ? "one tab is in use" : `${tabs} tabs are in use`);
   if (current.sensitive.networkCaptures > 0) parts.push("it's watching network traffic");
   if (current.sensitive.mediaRecordings > 0) parts.push("it's recording");
-  if (parts.length === 0) return "Stop ends everything it's doing here.";
+  if (parts.length === 0) return "Pause access ends this work.";
   const sentence = parts.join(", ");
-  return `${sentence.charAt(0).toUpperCase()}${sentence.slice(1)}. Stop ends all of it.`;
+  return `${sentence.charAt(0).toUpperCase()}${sentence.slice(1)}. Pause access ends this work.`;
 }
 
 /** What an activity row did, in the person's words. */

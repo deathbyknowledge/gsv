@@ -1,6 +1,9 @@
 import type { ExtensionUiState } from "./ui-state";
 
 export function browserTargetHeadline(state: ExtensionUiState): string {
+  if (state.connection.reconnectSuppressed) {
+    return liveAccessCount(state) > 0 ? "Browser activity remains" : "Paused by user";
+  }
   if (liveAccessCount(state) > 0) {
     return "Agent using this browser";
   }
@@ -9,9 +12,6 @@ export function browserTargetHeadline(state: ExtensionUiState): string {
   }
   if (state.connection.state === "connecting") {
     return "Connecting";
-  }
-  if (state.connection.reconnectSuppressed) {
-    return "Paused by user";
   }
   return "Offline";
 }
@@ -24,7 +24,8 @@ export function browserTargetTone(state: ExtensionUiState): string {
 }
 
 export function liveAccessCount(state: ExtensionUiState): number {
-  return state.sensitive.networkCaptures
+  return state.activeRequests.length
+    + state.sensitive.networkCaptures
     + state.sensitive.mediaRecordings
     + state.sensitive.debuggerTabs.length;
 }

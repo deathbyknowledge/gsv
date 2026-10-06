@@ -7,6 +7,7 @@ import {
   sendDebuggerCommand,
 } from "../shared/debugger";
 import type { TargetFileSystem } from "./types";
+import { throwIfAborted } from "./abort";
 
 type HeaderMap = Record<string, string>;
 
@@ -16,6 +17,7 @@ export type NetworkCaptureOptions = {
   persist: boolean;
   bodyLimit: number;
   fs: TargetFileSystem;
+  abortSignal?: AbortSignal;
 };
 
 export type NetworkBodyRecord = {
@@ -160,6 +162,7 @@ let removeDebuggerDetachListener: (() => void) | null = null;
 let removeTabRemovedListener: (() => void) | null = null;
 
 export async function startNetworkCapture(options: NetworkCaptureOptions): Promise<NetworkCaptureStatus> {
+  throwIfAborted(options.abortSignal);
   ensureNetworkListener();
   const existing = captures.get(options.tabId);
   if (existing) {
@@ -191,14 +194,17 @@ export async function startNetworkCapture(options: NetworkCaptureOptions): Promi
   };
 
   try {
+    throwIfAborted(options.abortSignal);
     if (state.sessionPath) {
       await options.fs.mkdir(`${state.sessionPath}/requests`);
       await options.fs.write(`${state.sessionPath}/status.json`, jsonBytes(captureStatus(state)));
     }
+    throwIfAborted(options.abortSignal);
     await sendDebuggerCommand(target, "Network.enable", {
       maxResourceBufferSize: options.bodyLimit,
       maxTotalBufferSize: Math.max(options.bodyLimit * 4, options.bodyLimit),
     });
+    throwIfAborted(options.abortSignal);
     captures.set(options.tabId, state);
     recordEvent(state, { type: "captureStarted" });
     return captureStatus(state);
