@@ -212,6 +212,9 @@ function render(): void {
     paired ? main(state) : pairing(state),
     noticeBlock(),
     paired ? recent(state) : "",
+    paired && !state.connection.reconnectSuppressed
+      ? `<div class="access-control">${button("pause", "pause access", "ibtn")}</div>`
+      : "",
     paired ? advanced(state) : "",
     footer(state, paired),
   ].join("");
@@ -304,8 +307,6 @@ function main(current: ExtensionUiState): string {
     detailClass = "is-err";
     actions.push(button("retry", "try again", "ibtn is-primary"));
   }
-  if (!paused) actions.push(button("pause", "pause access", "ibtn"));
-
   const grantLine = grant
     ? `<p>Recording is allowed on <span class="site">${escapeHtml(grant.title || grant.url || `tab ${grant.tabId}`)}</span> for ${escapeHtml(timeUntil(grant.expiresAt))}.</p>`
     : "";
@@ -315,7 +316,7 @@ function main(current: ExtensionUiState): string {
     ? `<div class="note"><p>Your GSV wants to record this tab. Chrome needs you to allow that here, once per recording.</p><div class="actions">${button("allow-recording", "allow recording", "ibtn is-primary")}</div></div>`
     : "";
   const bannerNote = showBannerNote
-    ? `<div class="note"><p>Chrome shows a banner at the top of a tab while your GSV works in it. That's normal, and it goes when it's done.</p><div class="actions">${textButton("dismiss-note", "got it")}</div></div>`
+    ? `<div class="note"><p>Chrome shows a banner at the top of a tab while your GSV works in it. That's normal, and it goes away when it's done!</p><div class="actions">${textButton("dismiss-note", "got it")}</div></div>`
     : "";
 
   return `
@@ -335,7 +336,7 @@ function pairing(current: ExtensionUiState): string {
   return `
     <section class="say">
       <h1>Connect this browser to your GSV.</h1>
-      <p>Pair this browser when you're ready, and your GSV can help with tasks here, including on sites you're signed into. You can see recent activity and pause access anytime. If it needs to record a tab, you'll be asked to allow that separately.</p>
+      <p>Pair it to let your GSV help with tasks you give it on sites you're signed into. You can see recent activity here and pause access anytime.</p>
     </section>
     <form class="pair" data-form="pair">
       <ol>

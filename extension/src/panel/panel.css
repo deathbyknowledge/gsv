@@ -93,8 +93,11 @@ a { color: var(--accent); text-decoration: none; }
 .row.is-err .what { color: var(--error); }
 .empty { font-family: var(--gsv-font-prose); font-size: 13px; color: var(--text-dim); padding: 6px 0; }
 
+.access-control { display: flex; margin-top: auto; }
+
 /* ── advanced: folded, as the first day's rows ── */
-.advanced { margin-top: auto; padding-top: 6px; }
+.advanced { padding-top: 6px; }
+.recent + .advanced { margin-top: auto; }
 .advanced summary { cursor: pointer; list-style: none; font-size: 10.5px; letter-spacing: .14em; text-transform: uppercase; color: var(--text-dim); user-select: none; }
 .advanced summary::-webkit-details-marker { display: none; }
 .advanced summary::before { content: ""; display: inline-block; width: 0; height: 0; margin-right: 8px; border-top: 4px solid transparent; border-bottom: 4px solid transparent; border-left: 6px solid var(--faint); vertical-align: 1px; transition: transform var(--dur-fast); }
