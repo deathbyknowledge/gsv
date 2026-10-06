@@ -21,6 +21,17 @@ const INPUT = {
 };
 
 describe("telemetry contract", () => {
+  it("reports setup recovery failures without accepting raw diagnostics", () => {
+    const event = {
+      stream: "operational", name: "installation.setup_recovery.failed",
+      properties: { diagnosticId: "11111111-1111-4111-8111-111111111111", outcome: "failed", errorType: "TypeError", durationMs: 12 },
+    };
+    assert.ok(telemetryRecordSchema.safeParse(createTelemetryRecord({ ...INPUT, event })).success);
+    assert.throws(() => createTelemetryRecord({ ...INPUT, component: "accounts", event }));
+    for (const extra of [{ cause: "private" }, { errorType: "private-provider-value" }, { diagnosticId: "private" }]) {
+      assert.throws(() => createTelemetryRecord({ ...INPUT, event: { ...event, properties: { ...event.properties, ...extra } } }));
+    }
+  });
   it("allows correlated metadata timings only from the three lookup owners", () => {
     const event = {
       stream: "operational", name: "inference.metadata.finished",

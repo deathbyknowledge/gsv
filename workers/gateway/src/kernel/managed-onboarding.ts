@@ -31,8 +31,10 @@ import {
   type KernelConnectionState as ConnectionState,
 } from "./connection";
 import type { Kernel } from "./do";
+import { emitTelemetry, telemetryErrorTypeSchema } from "@humansandmachines/gsv/telemetry";
 import {
   MANAGED_ONBOARDING_COMPLETION_KEY,
+  MANAGED_SETUP_RECOVERY_FAILURE_KEY,
 } from "./do-shared";
 import type {
   PendingManagedOnboardingCompletion,
@@ -213,11 +215,23 @@ async handleManagedSysSetup(
   }
 
 private async sendSetupRecoveryError(connection: KernelConnection<ConnectionState>, requestId: string): Promise<void> {
+    const startedAt = Date.now();
     let installation: Awaited<ReturnType<typeof resolveManagedInstallationById>>;
     try {
       installation = await resolveManagedInstallationById(this.host.env, this.host.installationId);
-    } catch {
-      this.host.transport.sendError(connection, requestId, 503, "Installation setup is unavailable");
+    } catch (error) {
+      const diagnosticId = crypto.randomUUID();
+      const errorType = telemetryErrorTypeSchema.safeParse(error instanceof Error ? error.name : undefined).data ?? "unknown";
+      this.host.ctx.storage.kv.put(MANAGED_SETUP_RECOVERY_FAILURE_KEY, {
+        diagnosticId, recordedAt: Date.now(),
+        cause: (error instanceof Error ? error.stack ?? error.message : String(error)).slice(0, 8192),
+      });
+      emitTelemetry(this.host.env, {
+        installationId: this.host.installationId, component: "gateway",
+        event: { stream: "operational", name: "installation.setup_recovery.failed",
+          properties: { diagnosticId, outcome: "failed", errorType, durationMs: Math.max(0, Date.now() - startedAt) } },
+      });
+      this.host.transport.sendError(connection, requestId, 503, "Installation setup is unavailable", { diagnosticId });
       return;
     }
     this.host.transport.sendError(connection, requestId, 401, "Installation setup link is invalid or expired",
