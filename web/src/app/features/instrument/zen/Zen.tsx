@@ -776,14 +776,16 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
         }
         return;
       }
+      /* while a rule is being written the card holds its buttons; the keys hold too, so a stray n cannot deny what is about to be allowed */
+      const held = approval.pending?.saving === true || setup.saving;
       if (pendingHil && !typing && (event.key === "y" || event.key === "n")) {
         event.preventDefault();
-        void decide(event.key === "y" ? "approve" : "deny");
+        if (!held) void decide(event.key === "y" ? "approve" : "deny");
         return;
       }
       if (pendingHil && !typing && event.key === "a" && approval.editable) {
         event.preventDefault();
-        void allowAlways();
+        if (!held) void allowAlways();
         return;
       }
       if (typing) return;
@@ -824,7 +826,7 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [active, allowAlways, approval.editable, browse, decide, latest, moments, receipts, pendingHil, scrolling.page, scrolling.select, scrolling.stopFollowing, toggleActivity]);
+  }, [active, allowAlways, approval.editable, approval.pending?.saving, browse, decide, latest, moments, receipts, pendingHil, scrolling.page, scrolling.select, scrolling.stopFollowing, setup.saving, toggleActivity]);
 
   /* a paste outside the prompt lands in it too: files attach, text joins the draft */
   useEffect(() => {

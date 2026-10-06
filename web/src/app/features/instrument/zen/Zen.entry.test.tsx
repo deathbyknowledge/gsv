@@ -721,6 +721,42 @@ describe("Zen conversation entry", () => {
       } finally { await zen.unmount(); }
     });
 
+    it("holds y and n while the always-allow rule is being written, then approves once it is", async () => {
+      const keys = new Set<(event: KeyboardEvent) => void>();
+      vi.stubGlobal("Element", class {});
+      vi.stubGlobal("HTMLElement", class {});
+      vi.stubGlobal("window", { ...window,
+        addEventListener: (type: string, listener: (event: KeyboardEvent) => void) => { if (type === "keydown") keys.add(listener); },
+        removeEventListener: (type: string, listener: (event: KeyboardEvent) => void) => { if (type === "keydown") keys.delete(listener); },
+      });
+      const press = (key: string) => act(() => {
+        const event: Pick<KeyboardEvent, "key" | "target" | "preventDefault"> = { key, target: null, preventDefault: () => {} };
+        // SAFETY: The handler reads only key, target, modifier flags and preventDefault; a null target means "not typing".
+        const keyboardEvent = event as KeyboardEvent;
+        for (const listener of keys) listener(keyboardEvent);
+      });
+      let release!: () => void;
+      const zen = await mountedZen();
+      try {
+        await askApproval();
+        await expectCard(zen);
+        await vi.waitFor(() => expect(card(zen).onAlwaysAllow).toBeDefined());
+        configReads = new Promise<never>((_, reject) => { release = () => reject(new Error("released")); });
+        await press("a");
+        await vi.waitFor(() => expect(card(zen).alwaysAllowSaving).toBe(true));
+        await press("n");
+        await press("y");
+        await press("a");
+        expect(hilDecisions).toEqual([]);
+        configReads = null;
+        release();
+        await vi.waitFor(() => expect(card(zen).alwaysAllowError).toBe("released"));
+        await press("n");
+        await vi.waitFor(() => expect(hilDecisions).toEqual([{ requestId: "hil-1", decision: "deny" }]));
+        expect(configWrites).toEqual([]);
+      } finally { await zen.unmount(); }
+    });
+
     it("refuses always allow when the inherited policy changed after the snapshot loaded", async () => {
       const zen = await mountedZen();
       try {
