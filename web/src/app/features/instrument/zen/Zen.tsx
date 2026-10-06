@@ -91,6 +91,8 @@ export type ZenProps = {
   peopleActivity?: PeopleActivityState;
   /** Open a contact's conversation in People, for a message that arrived while here. */
   onPeopleActivity?: (request?: PeopleOpenRequest) => void;
+  searchRequested?: boolean;
+  onSearchRequestHandled?: () => void;
 };
 
 const HISTORY_LIMIT = 400;
@@ -319,7 +321,7 @@ function NoteMoment({
   );
 }
 
-export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, onPrefillUsed, pid: pidProp, onDraftChange, contactReplies, peopleActivity, onPeopleActivity }: ZenProps) {
+export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, onPrefillUsed, pid: pidProp, onDraftChange, contactReplies, peopleActivity, onPeopleActivity, searchRequested, onSearchRequestHandled }: ZenProps) {
   const active = useViewActive();
   const browserControl = useBrowserControl();
   const { client, connected } = useGateway();
@@ -344,6 +346,11 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
   const [searchOpen, setSearchOpen] = useState(false);
   const closeSearch = useCallback(() => setSearchOpen(false), []);
   useEffect(() => { if (!active) setSearchOpen(false); }, [active]);
+  useEffect(() => {
+    if (!active || !searchRequested) return;
+    setSearchOpen(true);
+    onSearchRequestHandled?.();
+  }, [active, searchRequested, onSearchRequestHandled]);
   const pid = useZenProcess(pidProp, setNote);
   /* the conversation is what was actually said, both ways; the process transcript is what the ship did */
   const conversation = useChatConversation({ processId: pid ?? "", enabled: pid !== null });
@@ -1115,7 +1122,6 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
               addFiles(Array.from(event.currentTarget.files ?? [])); event.currentTarget.value = "";
             }} />
             <button type="button" onClick={() => fileInput.current?.click()}>attach</button>
-            <button type="button" disabled={!connected || !conversation.conversation} title="Search conversation (Ctrl/Cmd+F)" onClick={() => setSearchOpen(true)}>search</button>
             {attachments.length > 0 && <button type="button" disabled={!connected || !pid || outbox.sending} onClick={() => promptRef.current?.submit()}>send</button>}
             <span class="zen-connection-status" role="status">{connected ? "" : "Reconnecting..."}</span>
             {nativeInput ? <NativeVoiceControls ref={voiceInput} prompt={promptRef} panelHost={nativePanels}

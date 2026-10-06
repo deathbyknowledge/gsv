@@ -85,9 +85,10 @@ Ship can use cloud browsers without per-action approval by default. To change
 that, select **Cloud browsers** under **Settings → permissions** and choose
 **Ask** or **Block**; personal computers and browsers keep their existing rules.
 
-In Chat, **search** or `Ctrl/Cmd+F` finds earlier messages; `/` opens it in browse
-mode. Open a match to read the surrounding conversation. Closing search returns
-to your place and draft.
+Click **search** beside Chat or press `Ctrl+K` to find earlier messages. In Chat,
+`/` opens search in browse mode, and `Ctrl/Cmd+F` also works while typing. Open
+a match to read the surrounding conversation. Closing search returns to your
+place and draft.
 
 The composer starts on **your cloud** (`gsv`). Choose another place explicitly
 when you want a message or command to target it; that choice stays while you

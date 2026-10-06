@@ -105,6 +105,7 @@ function InstrumentReady({ initialPath }: { initialPath: string }) {
   useTabAttention();
   const [scale, setScale] = useState<Scale>(() => storedScale());
   const [help, setHelp] = useState(false);
+  const [searchRequested, setSearchRequested] = useState(false);
   const helpRef = useRef<HTMLElement>(null);
   const helpButtonRef = useRef<HTMLButtonElement>(null);
   const cycleScale = useCallback(() => {
@@ -176,6 +177,13 @@ function InstrumentReady({ initialPath }: { initialPath: string }) {
     [distance, fleetDirty],
   );
 
+  const openSearch = useCallback(() => {
+    if (status.state !== "connected") return;
+    move("zen");
+    setHelp(false);
+    setSearchRequested(true);
+  }, [move, status.state]);
+
   useLayoutEffect(() => {
     if (!help) return;
     const dismissHelp = (event: KeyboardEvent) => {
@@ -196,8 +204,15 @@ function InstrumentReady({ initialPath }: { initialPath: string }) {
       const typing =
         target instanceof HTMLElement &&
         (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.tagName === "SELECT" || target.isContentEditable);
+      if (event.defaultPrevented || event.isComposing) return;
+      if (target instanceof HTMLElement && target.closest(".zen-search-dialog")) return;
+      if (event.key === "k" && event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey && status.state === "connected") {
+        event.preventDefault();
+        openSearch();
+        return;
+      }
       if (target instanceof HTMLElement && target.closest(".fleet-connection, .settings-model-editor")) return;
-      if (event.defaultPrevented || typing || event.metaKey || event.ctrlKey || event.altKey) return;
+      if (typing || event.metaKey || event.ctrlKey || event.altKey) return;
       if (!SHELL_KEYS.has(event.key)) return;
       if (event.key === "c") {
         event.preventDefault();
@@ -234,7 +249,7 @@ function InstrumentReady({ initialPath }: { initialPath: string }) {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [cycleScale, distance, move, toggleTheme]);
+  }, [cycleScale, move, openSearch, status.state, toggleTheme]);
 
   return (
     <div class={`instrument${theme === "light" ? " is-light" : ""}${scale === 1.5 ? " is-scale-15" : scale === 2 ? " is-scale-2" : ""}`}>
@@ -244,7 +259,7 @@ function InstrumentReady({ initialPath }: { initialPath: string }) {
       <InstrumentHeader distance={distance} onNavigate={move} peopleWaiting={peopleActivity.conversations.length > 0 || peopleActivity.requests.length > 0} helper={distance === "zen" && zenPid !== null}
         onShip={() => {
           if (!zenDirty || window.confirm("Discard your unsent message and attachments?")) setZenPid(null);
-        }} help={help} onHelp={() => setHelp((open) => !open)} helpButtonRef={helpButtonRef} />
+        }} onSearch={openSearch} searchEnabled={status.state === "connected"} help={help} onHelp={() => setHelp((open) => !open)} helpButtonRef={helpButtonRef} />
       {help ? (
         <aside id="instrument-help" class="instrument-help" aria-label="Keys" ref={helpRef}>
           <h4>Views & appearance</h4>
@@ -255,6 +270,7 @@ function InstrumentReady({ initialPath }: { initialPath: string }) {
             <dt>m</dt><dd>Memory</dd>
             <dt>p</dt><dd>People</dd>
             <dt>s</dt><dd>Settings</dd>
+            <dt>Ctrl+K</dt><dd>Search Chat</dd>
             <dt>l</dt><dd>Switch between light and dark</dd>
             <dt>x</dt><dd>Cycle text size</dd>
             <dt>?</dt><dd>Show or hide these shortcuts</dd>
@@ -266,7 +282,7 @@ function InstrumentReady({ initialPath }: { initialPath: string }) {
               <dt>j / k</dt><dd>Next / previous message or activity</dd>
               <dt>gg / G</dt><dd>Earlier history / latest messages and follow</dd>
               <dt>o</dt><dd>Show or hide the selected message’s activity</dd>
-              <dt>/</dt><dd>Search conversation · Ctrl/Cmd+F also works while typing</dd>
+              <dt>/</dt><dd>Search in browse mode · Ctrl/Cmd+F also works</dd>
               <dt>y / n</dt><dd>Approve or deny a pending request</dd>
               <dt>other keys</dt><dd>Start writing; the keystroke lands in the prompt</dd>
             </dl>
@@ -322,7 +338,7 @@ function InstrumentReady({ initialPath }: { initialPath: string }) {
       <div class="distance" data-view={distance}>
         <BrowserControlOverlay />
         <RetainedView active={distance === "zen"}>
-          <Zen key={zenPid ?? "ship"} onDraftChange={setZenDirty} onFleet={(reference) => move("fleet", reference ?? null)} onMemory={(page) => {
+          <Zen key={zenPid ?? "ship"} searchRequested={searchRequested} onSearchRequestHandled={() => setSearchRequested(false)} onDraftChange={setZenDirty} onFleet={(reference) => move("fleet", reference ?? null)} onMemory={(page) => {
             if (page && memoryDirty && !window.confirm("Discard your unsaved page changes and open this page?")) return;
             if (!move("memory")) return;
             if (page) setSelectedMemoryPage({ ...page });

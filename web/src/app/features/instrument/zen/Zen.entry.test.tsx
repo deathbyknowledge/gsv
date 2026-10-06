@@ -23,6 +23,7 @@ import { FleetDialog } from "../fleet/FleetDialog";
 import { ZenText } from "./ZenText";
 import { ThinkingMark } from "./ThinkingMark";
 import { ApprovalCard } from "../shared/ApprovalCard";
+import { ConversationSearch } from "../shared/ConversationSearch";
 
 let storage: Map<string, string>;
 let messages: ConversationMessage[];
@@ -102,7 +103,7 @@ beforeEach(() => {
 });
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
-async function mountedZen(pid?: string, initialTarget?: string, native = false) {
+async function mountedZen(pid?: string, initialTarget?: string, native = false, searchRequested = false) {
   const root = createTestRoot("Zen entry");
   const cache = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
   let tree: ComponentChildren;
@@ -112,7 +113,8 @@ async function mountedZen(pid?: string, initialTarget?: string, native = false) 
     subscribe: () => { throw new Error("Zen entry tests inspect controls without mounting them"); },
     acknowledge: async () => {}, command: async () => {},
   };
-  function Harness() { tree = Zen({ pid, initialTarget, onFleet, onDraftChange: draftChange }); return null; }
+  const searchHandled = vi.fn();
+  function Harness() { tree = Zen({ pid, initialTarget, onFleet, onDraftChange: draftChange, searchRequested, onSearchRequestHandled: searchHandled }); return null; }
   const render = () => root.render(<GatewayProvider><SessionProvider createService={(client) => {
     const service = createSessionService(client);
     return { ...service, start: async () => {}, subscribe: () => () => {},
@@ -129,7 +131,7 @@ async function mountedZen(pid?: string, initialTarget?: string, native = false) 
     // SAFETY: The VNode was selected by the exact component whose props type P describes.
     return node.props as P;
   };
-  return { render, props, onFleet, text: () => collectText(tree), dirty: () => draftChange.mock.lastCall?.[0] === true,
+  return { render, props, onFleet, searchHandled, text: () => collectText(tree), dirty: () => draftChange.mock.lastCall?.[0] === true,
     nodes: () => collectNodes(tree),
     async unmount() { await root.unmount(); cache.clear(); },
     async refreshHistory() { await act(async () => { await cache.invalidateQueries({ queryKey: chatConversationHistoryKey("canonical-ship") }); }); },
@@ -181,6 +183,14 @@ describe("Zen conversation entry", () => {
     const zen = await mountedZen(pid);
     try {
       expect(zen.nodes().some(node => node.type === BrowserRequests)).toBe(pid === undefined);
+    } finally { await zen.unmount(); }
+  });
+
+  it("opens conversation search requested from the header", async () => {
+    const zen = await mountedZen(undefined, undefined, false, true);
+    try {
+      await vi.waitFor(() => expect(zen.nodes().some((node) => node.type === ConversationSearch)).toBe(true));
+      expect(zen.searchHandled).toHaveBeenCalledOnce();
     } finally { await zen.unmount(); }
   });
 
