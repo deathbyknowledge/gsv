@@ -327,8 +327,8 @@ describe("Zen conversation entry", () => {
   });
 
   it.each([
-    { target: "gsv", readiness: "your cloud ready", status: "completed", queuedCount: 0 },
-    { target: "laptop", readiness: "laptop offline", status: "aborted", queuedCount: 1 },
+    { target: "gsv", readiness: "your cloud is ready", status: "completed", queuedCount: 0 },
+    { target: "laptop", readiness: "laptop is offline", status: "aborted", queuedCount: 1 },
   ])("shows run feedback before streaming and clears it when $status", async ({ target, readiness, status, queuedCount }) => {
     runContext = {
       revision: 1, runId: "previous-run", provider: "openai", model: "previous-model",
@@ -340,8 +340,12 @@ describe("Zen conversation entry", () => {
     send.mockResolvedValueOnce({ message: message("user", "Keep working"), handlerPid: shipPid, runId: "active-run" });
     const zen = await mountedZen(undefined, target);
     const text = () => zen.text().replace(/\s+/g, " ");
+    const feedbackText = () => {
+      const feedback = zen.nodes().find((node) => node.type === "span" && node.props.role === "status" && !node.props.class);
+      return feedback ? collectText(feedback).replace(/\s+/g, " ") : "";
+    };
     try {
-      expect(text()).not.toContain(readiness);
+      expect(feedbackText()).not.toContain(readiness);
       expect(text()).not.toContain("attempting");
       await act(() => { zen.props(PromptLine).onSubmit("Keep working"); });
       await vi.waitFor(() => expect(send).toHaveBeenCalledOnce());
@@ -349,7 +353,7 @@ describe("Zen conversation entry", () => {
 
       activeRunId = "active-run";
       await act(() => { for (const listener of signals) listener("proc.run.started", { pid: shipPid, runId: activeRunId }); });
-      await vi.waitFor(() => expect(text()).toContain(readiness));
+      await vi.waitFor(() => expect(feedbackText()).toContain(readiness));
       expect(zen.nodes().some((node) => node.type === ThinkingMark)).toBe(true);
       expect(text()).not.toContain("previous-model");
 
@@ -357,11 +361,11 @@ describe("Zen conversation entry", () => {
       await act(() => { for (const listener of signals) listener("proc.changed", { pid: shipPid, changes: ["context"], context: runContext }); });
       await vi.waitFor(() => expect(text()).toContain("active-model"));
       expect(text()).not.toContain("attempting");
-      expect(text()).toContain(readiness);
+      expect(feedbackText()).toContain(readiness);
 
       activeRunId = null;
       await act(() => { for (const listener of signals) listener("proc.run.finished", { pid: shipPid, runId: "active-run", status, queuedCount }); });
-      await vi.waitFor(() => expect(text()).not.toContain(readiness));
+      await vi.waitFor(() => expect(feedbackText()).not.toContain(readiness));
       expect(zen.nodes().some((node) => node.type === ThinkingMark)).toBe(false);
       expect(text()).not.toContain("attempting");
     } finally { await zen.unmount(); }

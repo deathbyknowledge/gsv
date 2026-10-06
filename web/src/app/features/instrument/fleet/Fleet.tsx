@@ -737,7 +737,7 @@ function PlaceInspector({ place, uid, focusPair, runsToday, now, onRun, onBrowse
         ? <CloudBrowserActions targetId={place.id} allowed={uid === place.ownerUid} />
         : <PlaceActions place={place} uid={uid} focusPair={focusPair} />}
       <p class="note">
-        Run a command opens Zen on this place. Commands run directly and appear in Logs.
+        Run a command opens Chat on this place. Commands run directly and appear in Logs.
       </p>
     </div>
   );

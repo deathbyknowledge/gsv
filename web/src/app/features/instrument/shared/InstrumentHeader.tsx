@@ -21,7 +21,7 @@ export function InstrumentHeader({ distance, onNavigate, peopleWaiting, helper, 
   return (
     <header class="instrument-top instrument-header">
       <div class="instrument-identity">
-        <button type="button" aria-label="GSV · Open Zen" onClick={() => onNavigate("zen")}>
+        <button type="button" aria-label="GSV · Open Chat" onClick={() => onNavigate("zen")}>
           <Wordmark />
         </button>
         <Feedback view={distance} />
@@ -29,18 +29,21 @@ export function InstrumentHeader({ distance, onNavigate, peopleWaiting, helper, 
         {helper && <span class="instrument-helper">helper · <button type="button" onClick={onShip}>back to your Ship</button></span>}
       </div>
       <nav class="keys" aria-label="Views">
-        <button type="button" onClick={() => onNavigate(distance === "fleet" ? "zen" : "fleet")}>
-          <kbd>z</kbd>{distance === "fleet" ? "zen" : "fleet"}
+        <button type="button" aria-current={distance === "zen" ? "page" : undefined} aria-keyshortcuts="c" onClick={() => onNavigate("zen")}>
+          <kbd>c</kbd>chat
         </button>
-        <button type="button" onClick={() => onNavigate(distance === "memory" ? "zen" : "memory")}>
-          <kbd>m</kbd>{distance === "memory" ? "zen" : "memory"}
+        <button type="button" aria-current={distance === "fleet" ? "page" : undefined} aria-keyshortcuts="f" onClick={() => onNavigate("fleet")}>
+          <kbd>f</kbd>fleet
         </button>
-        <button type="button" onClick={() => onNavigate(distance === "people" ? "zen" : "people")}>
-          <kbd>p</kbd>{distance === "people" ? "zen" : "people"}
+        <button type="button" aria-current={distance === "memory" ? "page" : undefined} aria-keyshortcuts="m" onClick={() => onNavigate("memory")}>
+          <kbd>m</kbd>memory
+        </button>
+        <button type="button" aria-current={distance === "people" ? "page" : undefined} aria-keyshortcuts="p" onClick={() => onNavigate("people")}>
+          <kbd>p</kbd>people
           {distance !== "people" && peopleWaiting && <span class="instrument-people-waiting" aria-label="Unread messages or requests">•</span>}
         </button>
-        <button type="button" onClick={() => onNavigate(distance === "settings" ? "zen" : "settings")}>
-          <kbd>,</kbd>{distance === "settings" ? "zen" : "settings"}
+        <button type="button" aria-current={distance === "settings" ? "page" : undefined} aria-keyshortcuts="s" onClick={() => onNavigate("settings")}>
+          <kbd>s</kbd>settings
         </button>
         <button type="button" ref={helpButtonRef} aria-expanded={help} aria-controls="instrument-help" onClick={onHelp}><kbd>?</kbd>keys</button>
       </nav>

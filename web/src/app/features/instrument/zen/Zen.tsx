@@ -952,7 +952,7 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
   const empty = ready && moments.length === 0 && pid !== null && pendingHil === null;
 
   return (
-    <main class={`zen${!promptFocused ? " is-browse" : ""}${draggingFiles ? " is-file-drop" : ""}`} aria-label="Zen"
+    <main class={`zen${!promptFocused ? " is-browse" : ""}${draggingFiles ? " is-file-drop" : ""}`} aria-label="Chat"
       onDragEnter={(event) => { if (event.dataTransfer?.types.includes("Files")) { event.preventDefault(); dragDepth.current++; setDraggingFiles(true); } }}
       onDragOver={(event) => { if (event.dataTransfer?.types.includes("Files")) { event.preventDefault(); event.dataTransfer.dropEffect = "copy"; } }}
       onDragLeave={(event) => { if (event.dataTransfer?.types.includes("Files") && --dragDepth.current <= 0) { dragDepth.current = 0; setDraggingFiles(false); } }}
@@ -1078,7 +1078,7 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
           {showFeedback && <div class="zen-feedback">
             {activeRun !== null && pendingHil === null && <span role="status">
               {currentModel && <>{currentModel} · </>}
-              {currentPlace.label} {currentPlace.online ? "ready" : "offline"}
+              {currentPlace.label} is {currentPlace.online ? "ready" : "offline"}
             </span>}
             {note ? <span class="is-err" role="alert">{note}</span> : null}
           </div>}

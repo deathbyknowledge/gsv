@@ -63,7 +63,7 @@ Existing standalone deployments should read the
 
 The web console is called **Instrument** and has five views:
 
-- **Zen** is your Ship conversation, and where you inspect what a run did.
+- **Chat** is your Ship conversation, and where you inspect what a run did.
 - **Fleet** lists your places, processes and responsibilities, and recently touched files.
 - **Memory** shows your personal knowledge pages.
 - **People** holds conversations, message requests and private contacts across GSV spaces.
@@ -85,7 +85,7 @@ Ship can use cloud browsers without per-action approval by default. To change
 that, select **Cloud browsers** under **Settings → permissions** and choose
 **Ask** or **Block**; personal computers and browsers keep their existing rules.
 
-In Zen, **search** or `Ctrl/Cmd+F` finds earlier messages; `/` opens it in browse
+In Chat, **search** or `Ctrl/Cmd+F` finds earlier messages; `/` opens it in browse
 mode. Open a match to read the surrounding conversation. Closing search returns
 to your place and draft.
 

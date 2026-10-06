@@ -203,7 +203,7 @@ exits hands-free. The thumb counts independently and any finger combination
 is accepted. A control palm and action fist scroll together. The tutorial uses
 lesson-scoped observations and accepts only its current gesture. Voice events
 retain request and segment identity so stale output cannot change a later draft.
-The input lease expires on suspension and is released when leaving Zen.
+The input lease expires on suspension and is released when leaving Chat.
 
 Local control supports activation, redacted status, new Process creation,
 selection of an accessible Process, and microphone discovery and selection.
@@ -212,7 +212,7 @@ and attachment paths never cross this channel. Requests are correlated through
 a frontend channel. Cancellation, timeout, disconnect and reload invalidate
 pending work before UI mutations. If a Process spawn has already committed when
 cancelled, the Process remains durable and inspectable, without being selected.
-Microphone commands use the active Zen input owner and never start capture.
+Microphone commands use the active Chat input owner and never start capture.
 
 Closing the window follows the same unsent-work guard and credential flush as
 Quit, stops local control, waits for helper shutdown and exits. A second launch
