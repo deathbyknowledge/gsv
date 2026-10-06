@@ -299,7 +299,14 @@ export const PromptLine = forwardRef<PromptLineHandle, PromptLineProps>(function
             const files = Array.from(event.clipboardData?.files ?? []);
             if (onFiles && files.length > 0) { event.preventDefault(); onFiles(files); return; }
             const text = event.clipboardData?.getData("text/plain") ?? "";
-            if (text && onPasteText?.(text)) event.preventDefault();
+            if (!text || !onPasteText?.(text)) return;
+            event.preventDefault();
+            // The paste went to a chip; a selection the person meant to replace still goes away.
+            const input = event.currentTarget;
+            if (input.selectionStart !== input.selectionEnd) {
+              input.setRangeText("", input.selectionStart, input.selectionEnd, "end");
+              changed();
+            }
           }}
           onFocus={() => {
             scheduleMeasure(true);
