@@ -188,9 +188,10 @@ was performed.
 
 Desktop keeps voice and hands-free controls at the right edge beneath the prompt. Reconnect feedback
 appears beside the attachment actions, without reserving blank space to the right of the input controls.
-The outgoing-message spinner lasts until delivery is acknowledged. Ship's activity mark follows the
-active run independently of its transcript, including context preparation and reasoning before any
-visible work arrives. A streaming reply takes over that feedback; a run that continues after sending
+An outgoing message reads as sending until delivery is acknowledged, then carries a quiet delivered
+check, as does every committed user message; a failed send shows retry and dismiss instead. Ship's
+activity mark follows the active run independently of its transcript, including context preparation
+and reasoning before any visible work arrives. A streaming reply takes over that feedback; a run that continues after sending
 shows activity again until it ends. The model label identifies the run's selected model, not whether
 the provider has started returning tokens.
 
