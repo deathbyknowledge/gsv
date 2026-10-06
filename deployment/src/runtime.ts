@@ -36,6 +36,7 @@ export type GsvRuntimeServices = {
   entitlements?: Cloudflare.Workers.WorkerEntrypointBinding;
   mailOutbound?: Cloudflare.Queues.Queue;
   webSearch?: Cloudflare.Workers.WorkerBindingProps[string];
+  feedback?: Cloudflare.Workers.WorkerBindingProps[string];
   adapters?: readonly GsvAdapterBinding[];
   extraBindings?: Cloudflare.Workers.WorkerBindingProps;
 };
@@ -121,6 +122,7 @@ export const GsvRuntime = (props: GsvRuntimeProps, dependencies = gsvRuntimeDepe
           enabled: true,
           logs: { enabled: true, invocationLogs: true },
         },
+        tailConsumers: props.telemetry ? [...props.telemetry.tailConsumers] : undefined,
         env: {
           REPOSITORY: Cloudflare.DurableObject("REPOSITORY", {
             className: "Repository",
@@ -143,6 +145,7 @@ export const GsvRuntime = (props: GsvRuntimeProps, dependencies = gsvRuntimeDepe
       serviceBindings.MANAGED_MAIL_OUTBOUND = props.services.mailOutbound;
     }
     if (props.services.webSearch) serviceBindings.WEB_SEARCH = props.services.webSearch;
+    if (props.services.feedback) serviceBindings.FEEDBACK = props.services.feedback;
     const gatewayEnv: Cloudflare.Workers.WorkerBindingProps = {
       KERNEL: Cloudflare.DurableObject("KERNEL", {
         className: "Kernel",

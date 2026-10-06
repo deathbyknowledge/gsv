@@ -25,6 +25,13 @@ const httpStatusCodeSchema = z.number().check(
   z.lte(599),
 );
 
+/** Ephemeral correlation for metadata RPCs, independent of Process/run identity. */
+export const inferenceModelLookupSchema = z.strictObject({
+  installationId: installationIdSchema,
+  lookupId: z.string().check(z.uuid()),
+});
+export type InferenceModelLookup = z.infer<typeof inferenceModelLookupSchema>;
+
 export const inferenceWorkloadSchema = z.enum([
   "interactive",
   "background",
@@ -163,11 +170,12 @@ const inferenceRequestFinishedSchema = z.strictObject({
   stream: z.literal("operational"),
   name: z.literal("inference.request.finished"),
   properties: z.strictObject({
+    diagnosticId: z.optional(z.string().check(z.uuid())),
     outcome: z.enum(["completed", "failed", "aborted", "abandoned"]),
     purpose: z.enum(["agent", "mail-intake"]),
     // Optional only for compatibility with producers during rolling upgrades.
     workload: z.optional(inferenceWorkloadSchema),
-    provider: z.literal("workers-ai"),
+    provider: z.enum(["workers-ai", "modal", "gsv"]),
     model: z.optional(modelNameSchema),
     stopReason: z.optional(z.enum([
       "stop",
@@ -196,9 +204,10 @@ const inferenceProviderAttemptFailedSchema = z.strictObject({
   stream: z.literal("operational"),
   name: z.literal("inference.provider_attempt.failed"),
   properties: z.strictObject({
+    diagnosticId: z.optional(z.string().check(z.uuid())),
     purpose: z.enum(["agent", "mail-intake"]),
     workload: inferenceWorkloadSchema,
-    provider: z.literal("workers-ai"),
+    provider: z.enum(["workers-ai", "modal", "gsv"]),
     model: modelNameSchema,
     attempt: positiveIntegerSchema,
     durationMs: nonNegativeIntegerSchema,
@@ -279,6 +288,33 @@ const delegationCompletedSchema = z.strictObject({
 
 export const telemetryEventSchema = z.discriminatedUnion("name", [
   z.strictObject({
+    stream: z.literal("operational"), name: z.literal("inference.client.finished"),
+    properties: z.strictObject({
+      diagnosticId: z.string().check(z.uuid()),
+      boundary: z.enum(["execution", "managed"]),
+      phase: z.enum(["acquisition", "request", "stream", "abort"]),
+      outcome: z.enum(["completed", "failed", "cancelled", "timed_out"]),
+      workload: inferenceWorkloadSchema,
+      durationMs: nonNegativeIntegerSchema,
+      errorType: z.optional(z.enum(["Error", "TypeError", "RangeError", "SyntaxError", "ReferenceError", "AbortError", "TimeoutError", "AggregateError", "unknown"])),
+      httpStatus: z.optional(httpStatusCodeSchema),
+      rpcRemote: z.optional(z.boolean()),
+      rpcRetryable: z.optional(z.boolean()),
+      rpcOverloaded: z.optional(z.boolean()),
+    }),
+  }),
+  z.strictObject({
+    stream: z.literal("operational"), name: z.literal("inference.metadata.finished"),
+    properties: z.strictObject({
+      lookupId: z.string().check(z.uuid()),
+      outcome: z.enum(["ok", "error", "timeout"]),
+      durationMs: nonNegativeIntegerSchema,
+      cache: z.optional(z.enum(["hit", "miss"])),
+      sqlDurationMs: z.optional(nonNegativeNumberSchema),
+      queryAttempts: z.optional(positiveIntegerSchema),
+    }),
+  }),
+  z.strictObject({
     stream: z.literal("operational"), name: z.literal("process.compaction.failed"),
     properties: z.strictObject({
       trigger: z.enum(["manual", "auto-preflight", "auto-provider-overflow"]),
@@ -345,6 +381,8 @@ export const telemetryEventSchema = z.discriminatedUnion("name", [
 // The owning component is part of the allowlist, not a claim made by an arbitrary producer.
 export type TelemetryEventOwnership = Record<z.infer<typeof telemetryEventSchema>["name"], readonly z.infer<typeof telemetryComponentSchema>[]>;
 export const telemetryEventComponents = {
+  "inference.client.finished": ["gateway", "inference"],
+  "inference.metadata.finished": ["gateway", "inference", "accounts"],
   "entitlements.refresh.finished": ["inference", "search", "mail"],
   "web_search.request.finished": ["search"],
   "mail.intake.finished": ["mail"],

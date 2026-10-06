@@ -19,3 +19,6 @@ unwrap_used = "warn"
 panic = "warn"
 todo = "warn"
 dbg_macro = "warn"
+
+[target.'cfg(windows)'.dependencies]
+windows-host = { path = "../windows-host" }

@@ -83,14 +83,15 @@ Bring your own. You can connect your own model provider with your own API key, o
 
 See [Bring Your Own Model](/how-to/bring-your-own-model) for setup instructions.
 
-### Can I use it from Telegram, Discord, or Slack?
+### Can I use it from Telegram, Discord, Slack, or WhatsApp?
 
 Yes, when your operator enables the adapter and supplies its application
 credentials. Link your own identity from Settings → Messengers. One external
 identity has one active space for each private-message adapter route.
 
-The previous WhatsApp linked-device adapter is removed. WhatsApp Business is
-planned separately. See [Messengers](/how-to/messengers) for the supported flows.
+WhatsApp works through an operator-owned WhatsApp Business number where Meta
+permits it; the previous linked-device adapter is removed. See
+[Messengers](/how-to/messengers) for the supported flows.
 
 ### What can it actually do today?
 

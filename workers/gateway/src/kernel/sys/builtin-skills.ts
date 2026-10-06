@@ -63,10 +63,34 @@ export const BUILTIN_SKILL_FILES = [
   {
     path: "browser-target/SKILL.md",
     content: browserTargetSkill,
+    previousSha256s: [
+      // Every untouched browser-target skill revision shipped before the
+      // signed-in reach guidance, oldest first (commit on main).
+      "fa5f18130664bcb6019961aa3d936f16d81c518bc08f7ad17aeb3117b8626d34", // daca691f2
+      "5060094769ea048212d968e3fb56123f376dca0a9f22e6dee2e84b8fe980524a", // 2828350db
+      "523aff049f7b9fe5de7f45df0aefaecb7ae2a740f64359e39f538a5dd7b4509c", // 6e207c701
+      "9ceec71863f092e24a59e4ece199c6848fd7704798bcc6d3b2d5b64a74730a7f", // 4a7a8b05b
+      "5a56d71191e09e83ec08a220a556e2f0cc8d667cb4c378a640826a2f7b2e66fb", // 72c85896d
+      "ca2db6a7ac6b009e0c2e7d05080d280b311c3b8d7dca3e157c118cd0109f4f41", // ec3d0ce4c
+      "987f00c42200eff78671bcb0266e764bc83e28faf632f5d3f314e3fbb946a516", // 63bd5fa7a
+      "d0d9a6aa62fa95f0966965be8641920c3fdd82025f9c2d9ae353936773bcbb06", // d315f6967
+      "5f3f4d73656a79e7a304f583571068497ffa62309c2aae750ad2529589414feb", // 174351779
+      "0b7f67fbf30c0b1f22d57cda25678bcbd78d4c15cd052f0b59815e6ec09f496e", // eed4685c0
+      "14a49e723679cbb145170c6888f117dfd53dc25a37ed7c38683ad5a0d2933f56", // eedc54d1d
+    ],
   },
   {
     path: "gsv-manual/SKILL.md",
     content: gsvManualSkill,
+    previousSha256s: [
+      // Every untouched manual skill revision shipped before the
+      // consult-before-refusing guidance, oldest first (commit on main).
+      "c1a11191d4be6e4ea02bdd083774a64a34ccf441197217a46c013da6054e41e9", // 8f320d64d
+      "5813fb7fac8a490befe23d6bd8bc989e1c04596ef9e3f6e489517d95b3102a33", // ce3f337ec
+      "ea066cdfef003f95cb6e305e0b407d24afd6f5ce8534c6a7f0a9c892446d7199", // 1cc4db350
+      "d3ee5f1b99eb6a9a8853d65fc24869f844699aa9d717c161abcaac55a166d6c2", // 713d4180a
+      "030dbc4de9d9672f08ea0a54bf02d175906a8594eba6fe65329a71c28141315d", // 8e073726e
+    ],
   },
   {
     path: "image-reading/SKILL.md",

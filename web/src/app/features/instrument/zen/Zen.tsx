@@ -1,10 +1,9 @@
 import { NativeVoiceControls, type NativeVoiceHandle } from "../../../services/platform/NativeVoiceControls";
-import { ZenSearch } from "./ZenSearch";
+import { ConversationSearch } from "../shared/ConversationSearch";
 import { useViewActive } from "../../../services/navigation/ViewActivity";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "preact/hooks";
 import { memo } from "preact/compat";
 import { useQuery } from "../../../services/navigation/viewQueries";
-import { useQueryClient } from "@tanstack/preact-query";
 import type { JSX } from "preact";
 import type { ProcHilRequest } from "@humansandmachines/gsv/protocol";
 import { useGateway } from "../../../services/gateway/GatewayProvider";
@@ -17,12 +16,10 @@ import {
 import { useChatConversation } from "../../../services/chat/hooks/useChatConversation";
 import { useChatOutbox } from "../../../services/chat/hooks/useChatOutbox";
 import { useChatRuntime } from "../../../services/chat/hooks/useChatRuntime";
-import { loadConsoleProcesses, loadConsoleTargets } from "../../../services/system/consoleService";
-import { consoleConfigQueryKey, useConsoleAccounts, useConsoleConfig } from "../../../services/system/useConsoleData";
-import { accountApprovalKey, approvalSetupKey, saveAccountApprovalPolicy } from "../../../services/system/approvalPolicyService";
-import { approvalPolicyAccount, approvalRuleForRequest, currentApprovalChoices, protectManagedMailApproval, upsertApprovalRule } from "../../../domain/agentApproval";
-import { GLOBAL_APPROVAL_CONFIG_KEY, defaultApprovalPolicyForConfig, parseApprovalPolicy, serializeApprovalPolicy } from "../../../domain/system/consoleAgentBehavior";
-import { canConfigure, readSettingsPolicy } from "../settings/settingsModel";
+import { loadConsoleTargets } from "../../../services/system/consoleService";
+import { useConsoleAccounts, useConsoleConfig } from "../../../services/system/useConsoleData";
+import { currentApprovalChoices } from "../../../domain/agentApproval";
+import { parseApprovalPolicy } from "../../../domain/system/consoleAgentBehavior";
 import { listLibraryCollections } from "../../../services/memory/libraryService";
 import { libraryTitleFromPath } from "../../../services/memory/libraryModel";
 import type { LibraryCollection } from "../../../services/memory/libraryTypes";
@@ -30,13 +27,16 @@ import { useTerminalSessions } from "../../../services/terminal/TerminalProvider
 import { terminalFinished } from "../../../services/terminal/terminalSessions";
 import { TerminalControls } from "./TerminalControls";
 import { orderPlaces, type FleetReference } from "../fleet/fleetModel";
-import { INSTRUMENT_MEMORY_KEY, INSTRUMENT_PROCESSES_KEY, INSTRUMENT_TARGETS_KEY } from "../wire/queryKeys";
+import { ConnectPlace } from "../fleet/ConnectPlace";
+import { FleetDialog } from "../fleet/FleetDialog";
+import { INSTRUMENT_MEMORY_KEY, INSTRUMENT_TARGETS_KEY } from "../wire/queryKeys";
 import type { MemoryPageRef } from "../shared/navigation";
 import { PromptLine, type PromptLineHandle, type PromptPlace } from "../shared/PromptLine";
 import { SHELL_KEYS } from "../shared/shellKeys";
 import { useDismissOnOutsideClick } from "../shared/useDismissOnOutsideClick";
 import { ActivityWorking } from "./ActivityWorking";
-import { ApprovalCard } from "./ApprovalCard";
+import { ApprovalCard } from "../shared/ApprovalCard";
+import { useAccountApproval } from "../shared/useAccountApproval";
 import { ApprovalSetup } from "./ApprovalSetup";
 import { useApprovalSetup } from "./useApprovalSetup";
 import { DelegatedApprovals } from "./DelegatedApprovals";
@@ -322,7 +322,8 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
   /* message times follow the owner's zone; `today` moves once at that zone's midnight so a clock label gains its date */
   const config = useConsoleConfig();
   const accounts = useConsoleAccounts();
-  const timeZone = ownerTimeZone(config.data, accounts.data?.find((account) => account.relation === "self")?.uid);
+  const viewer = accounts.data?.find((account) => account.relation === "self");
+  const timeZone = ownerTimeZone(config.data, viewer?.uid);
   const [today, setToday] = useState(Date.now);
   useEffect(() => {
     if (!active) return;
@@ -365,6 +366,8 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
   const firstGoKey = useRef<number | null>(null);
   /* the place picker: shown while the prompt holds only "@" and a prefix; filtered as you type */
   const [pickerQuery, setPickerQuery] = useState<string | null>(null);
+  /* connecting a place from the selector, when the cloud is the only place; the dialog outlives a trip to Fleet and back */
+  const [connectingPlace, setConnectingPlace] = useState(false);
   const [pickerIndex, setPickerIndex] = useState(0);
   const pickerPlaces = useMemo(() => {
     if (pickerQuery === null) return [];
@@ -604,6 +607,9 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
 
   const latest = moments[moments.length - 1];
   const pendingHil: ProcHilRequest | null = runtime.pendingHil;
+  useLayoutEffect(() => {
+    if (active && pendingHil) scrolling.follow();
+  }, [active, pendingHil?.requestId, scrolling.follow]);
 
   const toggleActivity = useCallback((key: string) => {
     setOpenActivities((current) => {
@@ -706,61 +712,21 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
     [client, pendingHil, pid],
   );
 
-  /* an approval takes the keys: the prompt lets go so y and n reach the decision */
-  useEffect(() => {
-    if (active && pendingHil) promptRef.current?.blur();
-  }, [active, pendingHil]);
-
-  /* the first approval opens the Ship's walkthrough instead; its choices and the always-allow key write the account policy */
-  const cache = useQueryClient();
-  const self = accounts.data?.find((account) => account.relation === "self") ?? null;
-  const configEntry = (key: string) => config.data?.find((entry) => entry.key === key)?.value ?? "";
-  /* a persistent rule goes to the account the pending process actually reads; until that account is
-     known (the process list is still loading or failed) the walkthrough explains only and offers no always allow */
-  const processes = useQuery({ queryKey: INSTRUMENT_PROCESSES_KEY, queryFn: () => loadConsoleProcesses(client), enabled: connected });
-  /* a process entry's uid is its owner; the policy the Kernel resolves first belongs to the run-as account,
-     found by username in the accounts list (unknown there means no safe target yet) */
-  const approvalProcess = processes.data?.find((process) => process.pid === pid);
-  const processUsername = approvalProcess?.username ?? null;
-  const processUid = processUsername === null ? null
-    : accounts.data?.find((account) => account.username === processUsername)?.uid ?? null;
-  const policyUid = approvalProcess?.uid == null ? null : approvalPolicyAccount({
-    ownerUid: approvalProcess.uid, processUid, processOverride: processUid === null ? "" : configEntry(accountApprovalKey(processUid)),
-  });
-  const policyOverride = policyUid === null ? "" : configEntry(accountApprovalKey(policyUid));
-  const policyInherited = defaultApprovalPolicyForConfig(config.data ?? []);
-  const inheritedSource = { key: GLOBAL_APPROVAL_CONFIG_KEY, value: configEntry(GLOBAL_APPROVAL_CONFIG_KEY) };
-  /* nothing persistent is written until the settings snapshot has loaded, and a policy Settings cannot
-     edit losslessly is never rewritten from here either */
-  const policyEditable = config.data !== undefined && self !== null && policyUid !== null && canConfigure(self, "sys.config.set")
-    && (policyOverride === "" || readSettingsPolicy(policyOverride) !== null)
-    && readSettingsPolicy(policyInherited) !== null;
-  const setupDue = config.data !== undefined && self !== null && configEntry(approvalSetupKey(self.uid)) === "";
-  const refreshConfig = useCallback(() => cache.invalidateQueries({ queryKey: consoleConfigQueryKey }), [cache]);
+  /* always allow and the explanation's choices write the account policy the pending process reads */
+  const approval = useAccountApproval({ pid, enabled: connected });
   const setup = useApprovalSetup({
-    client, uid: self?.uid ?? null, policyUid, due: setupDue, pending: pendingHil !== null, editable: policyEditable,
-    inherited: policyInherited, override: policyOverride, inheritedSource, onSaved: refreshConfig,
+    client, policyUid: approval.policyUid, pending: pendingHil !== null, editable: approval.editable,
+    inherited: approval.inherited, override: approval.override, inheritedSource: approval.inheritedSource, onSaved: approval.refresh,
   });
-  const [alwaysAllow, setAlwaysAllow] = useState<{ requestId: string; saving: boolean; error: string | null } | null>(null);
+  /* the explanation opens below the card: bring it into view like a new request */
+  useLayoutEffect(() => {
+    if (active && setup.open) scrolling.follow();
+  }, [active, setup.open, scrolling.follow]);
   const allowAlways = useCallback(async () => {
-    if (!pid || !pendingHil || !self || policyUid === null) return;
-    const request = pendingHil;
-    setAlwaysAllow({ requestId: request.requestId, saving: true, error: null });
-    try {
-      const base = parseApprovalPolicy(policyOverride || policyInherited);
-      const next = protectManagedMailApproval(upsertApprovalRule(base, approvalRuleForRequest(request.syscall, request.target)));
-      await saveAccountApprovalPolicy(client, policyUid, policyOverride, serializeApprovalPolicy(next), inheritedSource);
-      await refreshConfig();
-    } catch (error) {
-      await refreshConfig().catch(() => {});
-      setAlwaysAllow({ requestId: request.requestId, saving: false, error: error instanceof Error ? error.message : "The rule did not save." });
-      return;
-    }
-    setAlwaysAllow(null);
-    /* a plain approval: a remembered one would persist a Process override that Settings cannot revoke.
-       The saved account rule applies from the next run; this run keeps its policy snapshot. */
-    await decide("approve");
-  }, [client, decide, inheritedSource, pendingHil, pid, policyInherited, policyOverride, policyUid, refreshConfig, self]);
+    if (!pendingHil || approval.pending?.saving) return;
+    /* a plain approval follows: the saved account rule applies from the next run, and this run keeps its policy snapshot */
+    if (await approval.allowAlways(pendingHil)) await decide("approve");
+  }, [approval, decide, pendingHil]);
 
   useEffect(() => {
     if (!active || !prefill || !connected || !pid) return;
@@ -784,6 +750,7 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
     if (!active) { firstGoKey.current = null; return; }
     const onKey = (event: KeyboardEvent) => {
       if (event.defaultPrevented || event.isComposing) return;
+      if (event.target instanceof Element && event.target.closest(".fleet-dialog")) return;
       const editing = editableElement(event.target);
       const typing = editing !== null;
       if (!event.altKey && (event.key === "f" && (event.ctrlKey || event.metaKey) || event.key === "/" && !typing && !event.ctrlKey && !event.metaKey)) {
@@ -807,15 +774,15 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
       if (setup.open && !typing && (event.key === "c" || event.key === "s")) {
         event.preventDefault();
         if (event.key === "c") setup.continueFlow();
-        else setup.skip();
+        else setup.close();
         return;
       }
-      if (pendingHil && !setup.open && !typing && (event.key === "y" || event.key === "n")) {
+      if (pendingHil && !typing && (event.key === "y" || event.key === "n")) {
         event.preventDefault();
         void decide(event.key === "y" ? "approve" : "deny");
         return;
       }
-      if (pendingHil && !setup.open && !typing && event.key === "a" && policyEditable && !alwaysAllow?.saving) {
+      if (pendingHil && !typing && event.key === "a" && approval.editable) {
         event.preventDefault();
         void allowAlways();
         return;
@@ -858,7 +825,7 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [active, allowAlways, alwaysAllow?.saving, browse, decide, latest, moments, receipts, pendingHil, policyEditable, scrolling.page, scrolling.select, scrolling.stopFollowing, setup.continueFlow, setup.open, setup.skip, toggleActivity]);
+  }, [active, allowAlways, approval.editable, browse, decide, latest, moments, receipts, pendingHil, scrolling.page, scrolling.select, scrolling.stopFollowing, setup.close, setup.continueFlow, setup.open, toggleActivity]);
 
   /* a paste outside the prompt lands in it too: files attach, text joins the draft */
   useEffect(() => {
@@ -971,39 +938,13 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
     receipts, memoryCollections.data, onMemory, pendingHil, settling, tick, onTextClick,
     pid, connected, outbox.sending, outbox.cancelUpload, outbox.retry, outbox.discard]);
 
-  /* the approval slot sits under the latest moment, outside the memo: its buttons write policy and must never go stale */
-  const approvalSlot = pendingHil && setup.open ? (
-    <ApprovalSetup
-      step={setup.step}
-      choices={setup.choices}
-      current={currentApprovalChoices(parseApprovalPolicy(policyOverride || policyInherited))}
-      editable={policyEditable}
-      saving={setup.saving}
-      error={setup.error}
-      onChoose={setup.choose}
-      onContinue={setup.continueFlow}
-      onSkip={setup.skip}
-    />
-  ) : pendingHil ? (
-    <ApprovalCard
-      request={pendingHil}
-      who={who}
-      place={placeLabel(pendingHil.target, places)}
-      onInspect={() => {
-        if (pid) onFleet({ kind: "approval", pid, requestId: pendingHil.requestId });
-      }}
-      onDecide={(decision) => void decide(decision)}
-      onAlwaysAllow={policyEditable ? () => void allowAlways() : undefined}
-      alwaysAllowSaving={alwaysAllow?.requestId === pendingHil.requestId && alwaysAllow.saving}
-      alwaysAllowError={alwaysAllow?.requestId === pendingHil.requestId ? alwaysAllow.error : null}
-    />
-  ) : null;
-
   /* the status line */
   const selectorPlaces = useMemo(() => orderPlaces(targetsQuery.data ?? []), [targetsQuery.data]);
+  /* the cloud is always listed; once places are known and it is alone, it is not a choice, so it reads as plain text and offers to connect a place */
+  const cloudAlone = !!targetsQuery.data && !targetsQuery.isError && selectorPlaces.length === 1;
   const activeRun = connected ? runtime.activeRunId : null;
   const currentModel = runtime.context?.runId === activeRun ? runtime.context.model : null;
-  const showFeedback = note !== null || pendingHil !== null || activeRun !== null;
+  const showFeedback = note !== null || (pendingHil === null && activeRun !== null);
 
   const latestMessageIndex = useMemo(() => moments.reduce((latest, moment, index) =>
     moment.role === "human" || (moment.role === "ship" && (moment.text !== "" || moment.media?.length || moment.streaming)) ? index : latest, -1), [moments]);
@@ -1013,7 +954,7 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
       <button type="button" disabled={!connected || conversation.historyFetching} onClick={() => void conversation.retryHistory()}>retry</button>
     </div>
   ) : null;
-  const empty = ready && moments.length === 0 && pid !== null;
+  const empty = ready && moments.length === 0 && pid !== null && pendingHil === null;
 
   return (
     <main class={`zen${!promptFocused ? " is-browse" : ""}${draggingFiles ? " is-file-drop" : ""}`} aria-label="Zen"
@@ -1036,8 +977,8 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
         {empty ? (
           <div class="zen-empty">
             {pidProp ? <p>This helper has no messages yet.</p> : <>
-              <h1>What would you like to do?</h1>
-              <p class="zen-welcome-copy">Start with a question, an idea, or something you want to get done. Your Ship will take it from there.</p>
+              <h1>Welcome to the ship.</h1>
+              <p class="zen-welcome-copy">I am the ship. Who are you?</p>
             </>}
           </div>
         ) : !ready ? (
@@ -1046,7 +987,7 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
           </div>
         ) : (
           <div class="zen-moments" ref={momentsRef}>
-            <div class="zen-content" ref={contentRef}>
+            <div class={`zen-content${pendingHil ? " has-approval" : ""}`} ref={contentRef}>
               {historyFailure}
               {(conversation.loadingOlder || processRuntime.loadingOlderHistory) && <div class="zen-history-status"><LoadingState>loading earlier messages</LoadingState></div>}
               {(conversation.error || processRuntime.historyError) && <div class="zen-history-status is-err" role="alert">
@@ -1080,10 +1021,40 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
                 return (
                   <div key={moment.id} data-index={index} data-moment-id={moment.id} class={`zen-moment ${moment.role === "human" ? "is-human" : "is-ship"}${!moment.text && !moment.media?.length && !moment.streaming ? " is-work" : ""}${pending ? " is-pending" : ""}${materialising ? " is-materialising" : ""}${index < latestMessageIndex ? " is-older" : ""}${browse === index ? " is-focus" : ""}`}>
                     {messageBodies[index]}
-                    {index === moments.length - 1 ? approvalSlot : null}
                   </div>
                 );
               })}
+              {pendingHil ? (
+                <div class="zen-moment is-approval">
+                  <ApprovalCard
+                    key={pendingHil.requestId}
+                    request={pendingHil}
+                    who={who}
+                    place={placeLabel(pendingHil.target, places)}
+                    onInspect={() => {
+                      if (pid) onFleet({ kind: "approval", pid, requestId: pendingHil.requestId });
+                    }}
+                    onDecide={(decision) => void decide(decision)}
+                    onAlwaysAllow={approval.editable ? () => void allowAlways() : undefined}
+                    alwaysAllowSaving={approval.pending?.requestId === pendingHil.requestId && approval.pending.saving}
+                    alwaysAllowError={approval.pending?.requestId === pendingHil.requestId ? approval.pending.error : null}
+                    onExplain={setup.open ? undefined : setup.show}
+                  />
+                  {setup.open ? (
+                    <ApprovalSetup
+                      step={setup.step}
+                      choices={setup.choices}
+                      current={currentApprovalChoices(parseApprovalPolicy(approval.override || approval.inherited))}
+                      editable={approval.editable}
+                      saving={setup.saving}
+                      error={setup.error}
+                      onChoose={setup.choose}
+                      onContinue={setup.continueFlow}
+                      onClose={setup.close}
+                    />
+                  ) : null}
+                </div>
+              ) : null}
             </div>
           </div>
         )}
@@ -1091,7 +1062,7 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
       </div>
 
       <div class="zen-bottom">
-        {pid ? <DelegatedApprovals pid={pid} onFleet={onFleet} /> : null}
+        {pid ? <DelegatedApprovals pid={pid} onFleet={onFleet} placeLabelFor={(target) => placeLabel(target, places)} /> : null}
 
         <div class="zen-composer">
           {pickerOpen ? (
@@ -1122,11 +1093,10 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
               onRemove={() => setAttachments((current) => current.filter((file) => file.id !== attachment.id))} />)}
           </ul>}
           {showFeedback && <div class="zen-feedback">
-            {activeRun !== null && <span role="status">
+            {activeRun !== null && pendingHil === null && <span role="status">
               {currentModel && <>{currentModel} · </>}
               {currentPlace.label} {currentPlace.online ? "ready" : "offline"}
             </span>}
-            {pendingHil && <span class="is-warn" role="status">Waiting for your approval</span>}
             {note ? <span class="is-err" role="alert">{note}</span> : null}
           </div>}
           <PromptLine
@@ -1141,7 +1111,7 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
             dir="~"
             placeholder={
               pendingHil
-                ? setup.open ? "one moment" : "answer the approval first"
+                ? "answer the approval first"
                 : !promptFocused
                   ? "Start chatting, or click here to chat"
                   : currentPlace.online
@@ -1164,7 +1134,7 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
             <span class="zen-connection-status" role="status">{connected ? "" : "Reconnecting..."}</span>
             <NativeVoiceControls ref={nativeVoice} prompt={promptRef} panelHost={nativePanels}
               scope={`${snapshot.url}:${snapshot.username}:${pid ?? ""}:${where ?? ""}`}
-              enabled={active && connected && pid !== null && pendingHil === null && !searchOpen}
+              enabled={active && connected && pid !== null && pendingHil === null && !searchOpen && !connectingPlace}
               send={onSubmit} scroll={scrolling.move} />
           </div>
           <div class="zen-place-section">
@@ -1178,7 +1148,7 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
                 const label = target.id === CLOUD_PLACE_ID ? CLOUD_PLACE_LABEL : target.label;
                 return (
                   <li key={target.id}>
-                    <button type="button" class={`zen-place${target.id === currentPlace.id ? " is-selected" : ""}`}
+                    <button type="button" class={`zen-place${cloudAlone ? " is-alone" : target.id === currentPlace.id ? " is-selected" : ""}`}
                       aria-label={target.online ? `Use ${label} for the next message or command` : `${label} is offline`}
                       aria-pressed={target.id === currentPlace.id}
                       disabled={!target.online}
@@ -1186,6 +1156,7 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
                       <span class={`zen-place-status${target.online ? " is-online" : ""}`} aria-hidden="true" />
                       <span>{label}</span>
                     </button>
+                    {cloudAlone && <button type="button" class="zen-connect-place" onClick={() => setConnectingPlace(true)}>+ connect place</button>}
                   </li>
                 );
               })}
@@ -1194,7 +1165,12 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
         </div>
       </div>
       <div class="zen-input-panels" ref={nativePanels} />
-      {active && searchOpen && conversation.conversation && <ZenSearch key={conversation.conversation.id}
+      <FleetDialog open={active && connectingPlace} title="Connect a place" onClose={() => setConnectingPlace(false)}>
+        <ConnectPlace account={viewer} targets={targetsQuery.data ?? []} ready={!!targetsQuery.data && !targetsQuery.isError}
+          onClose={() => setConnectingPlace(false)}
+          onConnected={(id) => { setConnectingPlace(false); setWhere(id); setPickerQuery(null); }} />
+      </FleetDialog>
+      {active && searchOpen && conversation.conversation && <ConversationSearch key={conversation.conversation.id}
         conversationId={conversation.conversation.id} timeZone={timeZone} onClose={closeSearch} />}
     </main>
   );

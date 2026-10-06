@@ -116,9 +116,11 @@ type AdapterIngressProcessRecovery = {
   conversationId?: string;
   inputMessageId?: string;
   messageCreatedAt?: number;
+  replyPreferenceOrder?: number;
 };
 
 type AdapterIngressRecovery =
+  | { kind: "reply_preference"; uid: number; order: number }
   | AdapterIngressProcessRecovery
   | AdapterIngressWorkReturnRecovery;
 
@@ -151,6 +153,11 @@ const adapterInteractionOriginSchema = z.object({
 
 const adapterIngressRecoverySchema = z.discriminatedUnion("kind", [
   z.object({
+    kind: z.literal("reply_preference"),
+    uid: z.number().check(z.int(), z.nonnegative()),
+    order: z.number(),
+  }),
+  z.object({
     kind: z.literal("process_delivery"),
     uid: z.number().check(z.int(), z.nonnegative()),
     pid: z.string(),
@@ -161,6 +168,7 @@ const adapterIngressRecoverySchema = z.discriminatedUnion("kind", [
     conversationId: z.optional(z.string()),
     inputMessageId: z.optional(z.string()),
     messageCreatedAt: z.optional(z.number().check(z.int(), z.positive())),
+    replyPreferenceOrder: z.optional(z.number()),
   }),
   z.object({
     kind: z.literal("work_return"),
@@ -432,6 +440,11 @@ async function resolveClaimedAdapterInbound(input: {
   if (!userIdentity) {
     return { ok: false, error: `Unknown local user uid=${uid}` };
   }
+  if (recovery && recovery.uid !== uid) {
+    return { ok: false, error: "Adapter ingress owner changed during recovery" };
+  }
+  const replyPreferenceOrder = recovery?.kind === "reply_preference"
+    ? recovery.order : recovery ? undefined : ctx.shipReplies.reserveOrder(uid);
 
   if (recovery === null && message.surface.kind === "dm") {
     const existingLink = ctx.adapters.identityLinks.get(adapter, accountId, actorId);
@@ -454,10 +467,13 @@ async function resolveClaimedAdapterInbound(input: {
     }
   }
 
+  if (!recovery) {
+    ctx.adapters.ingressReceipts.checkpoint(receiptId, claimToken, {
+      kind: "reply_preference", uid, order: replyPreferenceOrder!,
+    });
+  }
+
   if (recovery?.kind === "process_delivery") {
-    if (recovery.uid !== uid) {
-      return { ok: false, error: "Adapter ingress owner changed during recovery" };
-    }
     if (recovery.routeGeneration !== routeGeneration) {
       return { ok: true, droppedReason: "stale_route_generation" };
     }
@@ -473,9 +489,6 @@ async function resolveClaimedAdapterInbound(input: {
     });
   }
   if (recovery?.kind === "work_return") {
-    if (recovery.uid !== uid) {
-      return { ok: false, error: "Adapter ingress owner changed during recovery" };
-    }
     const personalPid = await deliverAdapterWorkReturnedEvent(
       recovery,
       receiptId,
@@ -529,6 +542,7 @@ async function resolveClaimedAdapterInbound(input: {
     routeGeneration,
     uid,
     pid,
+    replyPreferenceOrder,
     ctx,
     checkpoint: { receiptId, claimToken },
   });
@@ -544,6 +558,7 @@ async function deliverAdapterInboundToProcess(input: {
   routeGeneration?: string;
   uid?: number;
   pid?: string;
+  replyPreferenceOrder?: number;
   recovery?: AdapterIngressProcessRecovery;
   checkpoint?: { receiptId: string; claimToken: string };
 }): Promise<AdapterInboundDisposition> {
@@ -595,6 +610,7 @@ async function deliverAdapterInboundToProcess(input: {
       conversationId: conversation.id,
       inputMessageId,
       messageCreatedAt: normalizeAdapterMessageCreatedAt(message.timestamp),
+      ...(input.replyPreferenceOrder === undefined ? undefined : { replyPreferenceOrder: input.replyPreferenceOrder }),
     };
     ctx.adapters.ingressReceipts.checkpoint(
       input.checkpoint.receiptId,
@@ -673,6 +689,9 @@ async function deliverAdapterInboundToProcess(input: {
     appendRequest,
   );
   ctx.conversations.recordSequence(conversation.id, appended.message.sequence);
+  if (conversation.kind === "ship" && (recovery.replyPreferenceOrder !== undefined || appended.created)) {
+    ctx.shipReplies.recordAdapter(uid, recovery.replyPreferenceOrder);
+  }
   if (appended.created) {
     ctx.broadcastToUserUid(uid, "message.committed", {
       message: appended.message,
@@ -698,6 +717,7 @@ async function deliverAdapterInboundToProcess(input: {
     });
   }
   ctx.runRoutes.setAdapterRoute({
+    followsShip: conversation.kind === "ship",
     runId,
     processId: pid,
     uid,
@@ -1067,4 +1087,3 @@ function replyToAdapterCommand(message: AdapterInboundMessage, text: string): Ad
     },
   };
 }
-

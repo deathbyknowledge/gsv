@@ -1,6 +1,6 @@
 import type { AssistantMessageEvent } from "@humansandmachines/gsv/services/inference-context";
 import type { SignalFrame } from "../protocol/frames";
-import type { ProcessMessageStreamSignal } from "../protocol/process-frames";
+import { processMessageDraftId, type ProcessMessageStreamSignal } from "../protocol/process-frames";
 import { encodeProcessRunStreamFrame } from "../protocol/process-run-stream";
 import { attachProcessRunStream, sendFrameToKernel } from "../shared/utils";
 import type { Process } from "./do";
@@ -152,7 +152,7 @@ export class ProcessMessageStreamService {
     let projection = this.projections.get(key);
     if (!projection) {
       projection = {
-        id: `draft:${runId}:${actionId}`,
+        id: processMessageDraftId(runId, actionId),
         started: false,
         text: "",
         aborted: false,

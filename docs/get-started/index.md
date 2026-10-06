@@ -6,18 +6,30 @@ You can use a hosting operator or run the same stack in your own Cloudflare acco
 ## Get a space
 
 If an operator has created a space for you, open its setup invitation and choose
-the username and password you'll use inside that space. Creating your account
-signs you in and opens **Ship**, your conversation with your personal agent.
+the username and password you'll use inside that space. Continue to review the
+early-access disclosure and confirm the age, Terms of Service and Privacy Policy
+agreement before creating your account. This checkbox is required inside the space
+as well as on the signup email step. **Back** lets you revise your credentials.
+Creating your account signs you in and opens **Ship**, your conversation with your personal agent.
 Start with what you want to do. You can connect devices from **Fleet** and
 configure models and other connections from **Settings** when you need them.
 
 If you were given an **invite code** instead, open the operator's signup page
-(or **Create a space** in the Desktop app), enter the code, verify your email
-with the six-digit code it sends, and choose the handle your space will live at.
+(or **Create a space** in the Desktop app) and enter the code. On the email step,
+confirm that you are 18 or older, agree to the Terms of Service, and acknowledge
+the Privacy Policy before requesting a verification code. Verify your email with
+the six-digit code it sends, then choose the handle your space will live at.
+Handles use lowercase letters, numbers and hyphens; uppercase input is converted
+automatically. Validation and availability feedback appears beside the field.
 The same code resumes the same space if the browser or app is interrupted, and
 it works once. The signup page also links to the beta Desktop app for macOS and
 Linux; see [Install host apps](/how-to/install-host-apps) for the download and
 first-launch steps.
+
+If you are already signed in and choose **Use an invite**, confirm the same age,
+Terms and Privacy agreement on **Before you begin** before the invite is claimed.
+Resuming signup after reopening the browser or app also requires confirmation
+before claiming an invite or continuing space creation.
 
 Owner sign-in on **My spaces** lists spaces you own. It is separate from your
 account inside each space. Signing in alone does not create a space or grant
@@ -43,12 +55,15 @@ Existing standalone deployments should read the
 
 ## Look around
 
-The web console is called **Instrument** and has four views:
+The web console is called **Instrument** and has five views:
 
-- **Zen** is your Ship conversation, and where you inspect what a run did. The first time your Ship needs your approval it walks you through what it does on its own and lets you decide, once per kind of action, whether it should ask; you can bring that back from **Settings → permissions**.
-- **Fleet** lists your places, processes, contacts and responsibilities, and recently touched files.
+- **Zen** is your Ship conversation, and where you inspect what a run did. An approval card's **why am I being asked?** link explains what your Ship asks about, and anything you **always allow** can be undone from **Settings → permissions**.
+- **Fleet** lists your places, processes and responsibilities, and recently touched files.
 - **Memory** shows your personal knowledge pages.
+- **People** holds conversations, message requests and private contacts across GSV spaces.
 - **Settings** holds preferences (models), permissions, instructions, messengers, MCP connections and **Logs** for actions and their outcomes. The **people** and **sign-in** sections appear only for the root account.
+
+The Settings sidebar highlights the section you're viewing.
 
 In Zen, **search** or `Ctrl/Cmd+F` finds earlier messages; `/` opens it in browse
 mode. Open a match to read the surrounding conversation. Closing search returns

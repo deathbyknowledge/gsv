@@ -141,6 +141,12 @@ Error:
 3. Wait for a normal success response or a structured error.
 4. After connect succeeds, exchange syscall requests, responses, and signals until the socket closes.
 
+Ordinary UI clients can use the same application peer name across browser tabs
+and Desktop. Each WebSocket has its own server-issued connection identity and
+receives the account's authorized signals. A reconnecting operation provider
+replaces the older provider connection with the same peer name, account and
+principal kind; it does not replace ordinary UI connections.
+
 The gateway rejects setup-mode connections with error code `425` and details:
 
 ```json
@@ -361,11 +367,13 @@ Current principal defaults from `buildSignalList()`:
   - Begins the directed endpoint's transient projection of a Process Message.
 - `message.delta`
   - Appends text to that transient projection. It is sent only to the connection
-    that admitted the run; other clients synchronize the committed Message.
+    selected when the stream started; other clients synchronize the committed Message.
 - `message.committed`
   - Carries a canonical `ConversationMessage`. `directed` is true only for the
-    connection whose input admitted the run; other connected clients receive
-    the same committed Message with `directed: false`.
+    connection selected for the reply; other connected clients receive
+    the same committed Message with `directed: false`. Personal Ship selects the
+    latest human origin or active client and falls back to a linked messenger
+    when that client disconnects or is inactive for five minutes.
 - `message.aborted`
   - Discards the directed endpoint's transient projection when a Message cannot
     be committed or the run is superseded.
@@ -388,6 +396,19 @@ Current principal defaults from `buildSignalList()`:
     signal grant, and `contact.request.list`. Clients refresh that contact’s
     requests and recover missed notifications on reconnect.
 - `peer.pong`
+
+### Client activity
+
+A connected human peer with `conversation.send` may send a payload-free
+`client.activity` signal after real foreground input. Web and Desktop send it for
+trusted pointer, key and scroll events, at most once every 30 seconds. Opening or
+focusing a window, reconnecting and keepalives send no activity signal. The Kernel
+derives the owner and connection from the authenticated peer and timestamps receipt;
+callers cannot supply an owner, destination or timestamp. Machine, service, expired
+credential and unauthenticated peers cannot change this preference. The signal
+updates only Ship's private reply preference: it admits no Process work, enters no
+model context and does not fetch or rerender conversation history.
+The idle window includes one reporting interval of grace to account for throttled input.
 
 ### Machine peers
 
@@ -548,6 +569,7 @@ The current body-bearing syscalls are:
 
 | Syscall | Request body | Response body |
 |---|---|---|
+| `sys.feedback` | Required UTF-8 JSON report (message and optional activity), at most 512 KiB | No |
 | `fs.read` | No | Raw UTF-8 text, or image bytes when `representation` is `content`. Resource-mode image reads, directory listings, and operation errors are JSON-only. |
 | `fs.transfer.receive` | Required file bytes | No |
 | `fs.transfer.send` | No | Successful file bytes |

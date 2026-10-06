@@ -145,6 +145,28 @@
       ]
     },
     {
+      "id": "instrument-people",
+      "paths": [
+        "web/src/app/features/instrument/people/**",
+        "web/src/app/features/instrument/settings/Profile.tsx",
+        "web/src/public/profile.ts",
+        "web/public/social/**",
+        "workers/gateway/src/kernel/approach*",
+        "workers/gateway/src/kernel/approaches/**",
+        "workers/gateway/src/kernel/profile*",
+        "workers/gateway/src/public-profile*"
+      ],
+      "docs": [
+        "docs/how-to/contact-people.md",
+        "docs/architecture/conversations.md",
+        "docs/reference/syscalls.md"
+      ],
+      "manual": [
+        "pages/apps-desktop/",
+        "pages/integrations/contacts.md"
+      ]
+    },
+    {
       "id": "instrument-memory",
       "paths": [
         "web/src/app/features/instrument/memory/**"
@@ -163,7 +185,8 @@
       ],
       "docs": [
         "docs/architecture/conversations.md",
-        "docs/architecture/agent-loop.md"
+        "docs/architecture/agent-loop.md",
+        "docs/how-to/connect-devices.md"
       ],
       "manual": [
         "pages/agents-assistants/"

@@ -2,6 +2,7 @@ import { useLayoutEffect, useMemo, useRef } from "preact/hooks";
 import { memo } from "preact/compat";
 import type { JSX } from "preact";
 import { renderMarkdownHtml, renderPlainTextHtml } from "../shared/markdown";
+import { enhanceCodeBlocks } from "../shared/codeBlocks";
 import { createGlyphReveal, type GlyphReveal } from "./glyphReveal";
 import { linkPlaceReferences, type Place } from "./zenModel";
 
@@ -38,11 +39,12 @@ export const ZenText = memo(function ZenText({ text, markdown, places, progress,
       if (last) last.after(caret);
       else element.append(caret);
     }
+    if (markdown) enhanceCodeBlocks(element);
     return () => {
       reveal.current?.dispose();
       reveal.current = null;
     };
-  }, [html, streaming]);
+  }, [html, markdown, streaming]);
   useLayoutEffect(() => {
     const element = ref.current;
     if (!element || !content.current) return;

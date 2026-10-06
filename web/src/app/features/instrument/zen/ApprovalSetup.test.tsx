@@ -8,19 +8,20 @@ const current = {
 } satisfies Record<ApprovalCategoryId, ApprovalPolicyAction>;
 const props: ApprovalSetupProps = {
   step: 1, choices: {}, current, editable: true, saving: false, error: null,
-  onChoose: () => {}, onContinue: () => {}, onSkip: () => {},
+  onChoose: () => {}, onContinue: () => {}, onClose: () => {},
 };
 const buttons = (tree: ReturnType<typeof ApprovalSetup>) => collectNodes(tree).filter((node) => node.type === "button");
 
 describe("approval setup card", () => {
-  it("opens with what runs on its own, then offers to go on or skip", () => {
+  it("opens with what runs on its own and what it asks about, then offers to go on or close", () => {
     const tree = ApprovalSetup(props);
     const text = collectText(tree);
-    expect(text).toContain("approval · setup");
+    expect(text).toContain("approval · why I ask");
     expect(text).toContain("In the ship I read and write files, run commands");
     expect(text).toContain("receipt under each answer");
+    expect(text).toContain("Before these, I ask: running commands on your machines · changing files on your machines · fetching web pages through your machines · connected tools · sending email.");
     expect(text).toContain("go on");
-    expect(text).toContain("skip and nothing changes");
+    expect(text).toContain("close and nothing changes");
     expect(text).not.toContain("Pick a side");
     for (const category of APPROVAL_CATEGORIES) expect(text).not.toContain(category.example);
   });
@@ -61,14 +62,19 @@ describe("approval setup card", () => {
     expect(onChoose).toHaveBeenCalledExactlyOnceWith("shell", "ask");
   });
 
-  it("explains without offering picks when the account cannot edit its policy", () => {
-    const tree = ApprovalSetup({ ...props, editable: false });
+  it("explains without offering picks when the account cannot edit its policy, and got it closes", () => {
+    const onClose = vi.fn();
+    const onContinue = vi.fn();
+    const tree = ApprovalSetup({ ...props, editable: false, onClose, onContinue });
     const text = collectText(tree);
-    expect(text).toContain("Right now I ask before: running commands on your machines · changing files on your machines · fetching web pages through your machines · connected tools · sending email.");
+    expect(text).toContain("Before these, I ask: running commands on your machines · changing files on your machines · fetching web pages through your machines · connected tools · sending email.");
     expect(text).toContain("needs an account that can edit settings");
     expect(text).toContain("got it");
-    expect(text).not.toContain("skip");
+    expect(text).not.toContain("close");
     expect(buttons(tree)).toHaveLength(1);
+    buttons(tree)[0].props.onClick?.();
+    expect(onClose).toHaveBeenCalledOnce();
+    expect(onContinue).not.toHaveBeenCalled();
   });
 
   it("holds the controls while saving and offers a retry after a failed save", () => {

@@ -1,23 +1,40 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/preact-query";
-import type { ComponentChildren } from "preact";
+import type { ComponentChildren, VNode } from "preact";
 import { act } from "preact/test-utils";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { z } from "zod";
 import { GSVClient } from "@humansandmachines/gsv/client";
+import type { ProcHilArgs } from "@humansandmachines/gsv/protocol";
 import { GatewayProvider } from "../../../services/gateway/GatewayProvider";
 import { collectNodes, collectText, createTestRoot } from "../../../testing/testHarness";
 import { FleetApproval } from "./FleetApproval";
+import { ApprovalCard, type ApprovalCardProps } from "../shared/ApprovalCard";
 
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 describe("pending child approval controls", () => {
-  it("restores the original child request on reload, approves it exactly, and rejects a stale run", async () => {
+  it.each([false, true])("restores the original child request on reload, approves it exactly, and rejects a stale run (always allow: %s)", async (alwaysAllow) => {
     vi.stubGlobal("document", {});
     vi.spyOn(GSVClient.prototype, "getStatus").mockReturnValue({ state: "connected", url: null, username: null, connectionId: null, message: null });
     vi.spyOn(GSVClient.prototype, "onStatus").mockImplementation(() => () => {});
-    const original = { pid: "child", runId: "child-run", requestId: "child-request", callId: "fetch", toolName: "net.fetch",
-      syscall: "net.fetch", target: "gsv", args: { url: "https://example.com" }, purpose: "fetch the example page", createdAt: 1 };
+    const original = { pid: "child", runId: "child-run", requestId: "child-request", callId: "fetch", toolName: "Shell",
+      syscall: "shell.exec", target: "laptop", args: { input: "curl https://example.com", target: "laptop" }, purpose: "fetch the example page", createdAt: 1 };
     let pending: typeof original | null = original;
+    const configWrites: Array<{ key: string; value: string }> = [];
     const request = vi.spyOn(GSVClient.prototype, "request").mockImplementation(async (call, args) => {
+      if (call === "proc.list") return { data: { processes: [{ pid: "child", uid: 1000, username: "crew", label: "Read the example page",
+        personal: false, interactive: false, parentPid: "ship", state: "waiting_hil", activeRunId: pending?.runId ?? null, queuedCount: 0,
+        createdAt: 1, lastActiveAt: 1, cwd: "/home/crew" }] } };
+      if (call === "account.list") return { data: { accounts: [
+        { uid: 1000, username: "hank", displayName: "Hank", relation: "self", runnable: false, capabilities: ["*"] },
+        { uid: 1002, username: "crew", displayName: "Crew", relation: "agent", runnable: true, capabilities: [] },
+      ] } };
+      if (call === "sys.config.get") return { data: { entries: configWrites } };
+      if (call === "sys.config.set") {
+        const write = z.object({ key: z.string(), value: z.string() }).parse(args);
+        configWrites.push(write);
+        return { data: { ok: true } };
+      }
       if (call === "proc.history") return { data: { ok: true, pid: "child", format: 2, messages: [], records: [], messageCount: 0,
         historyRevision: 0, historyGeneration: 1, historyResetRevision: 0, reset: false, hasMore: false,
         activeRunId: pending?.runId ?? null, pendingHil: pending } };
@@ -31,20 +48,34 @@ describe("pending child approval controls", () => {
       const cache = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
       const root = createTestRoot("Child approval");
       let tree: ComponentChildren;
-      function Harness() { tree = FleetApproval({ pid: "child", runId }); return null; }
+      function Harness() { tree = FleetApproval({ pid: "child", runId, who: "crew", label: "Read the example page" }); return null; }
       await root.render(<GatewayProvider><QueryClientProvider client={cache}><Harness /></QueryClientProvider></GatewayProvider>);
-      return { text: () => collectText(tree), buttons: () => collectNodes(tree).filter((node) => node.type === "button"),
+      const card = () => {
+        // SAFETY: The VNode is selected by the exact component whose props type is ApprovalCardProps.
+        const node = collectNodes(tree).find((node) => node.type === ApprovalCard) as VNode<ApprovalCardProps> | undefined;
+        return node ? ApprovalCard(node.props) : null;
+      };
+      return { text: () => collectText([tree, card()]), buttons: () => collectNodes(card()).filter((node) => node.type === "button"),
         close: async () => { await root.unmount(); cache.clear(); } };
     }
     let view = await mount("child-run");
-    await vi.waitFor(() => expect(view.text()).toContain("net.fetch"));
+    await vi.waitFor(() => expect(view.text()).toContain("https://example.com"));
     expect(view.text()).toContain("Fetch the example page");
+    expect(view.text()).toContain("Read the example page");
+    expect(view.text()).not.toContain("The process is held");
     await view.close();
     view = await mount("child-run");
     try {
-      await vi.waitFor(() => expect(view.buttons().find((button) => collectText(button) === "approve")?.props.disabled).toBe(false));
-      await act(async () => { await view.buttons().find((button) => collectText(button) === "approve")?.props.onClick?.(); });
-      await vi.waitFor(() => expect(request).toHaveBeenCalledWith("proc.hil", { pid: "child", requestId: "child-request", decision: "approve" }));
+      const button = alwaysAllow ? "always allow" : "run it";
+      await vi.waitFor(() => expect(view.buttons().find((node) => collectText(node).trim() === button)?.props.disabled).toBe(false));
+      await act(async () => { await view.buttons().find((node) => collectText(node).trim() === button)?.props.onClick?.(); });
+      const expected: ProcHilArgs = { pid: "child", requestId: "child-request", decision: "approve" };
+      await vi.waitFor(() => expect(request).toHaveBeenCalledWith("proc.hil", expected));
+      expect(request.mock.calls.some(([call, args]) => call === "proc.hil" && args !== undefined && "remember" in args)).toBe(false);
+      if (alwaysAllow) {
+        expect(configWrites.map((write) => write.key)).toEqual(["users/1000/ai/tools/approval"]);
+        expect(JSON.parse(configWrites[0].value).rules).toContainEqual({ match: "shell.exec", target: "laptop", action: "auto" });
+      } else expect(configWrites).toEqual([]);
       await vi.waitFor(() => expect(view.text()).toContain("Decision recorded"));
       expect(request.mock.calls.filter(([call]) => call === "proc.history").every(([, args]) => args?.includeMessages === false)).toBe(true);
     } finally { await view.close(); }

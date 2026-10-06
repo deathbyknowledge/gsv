@@ -7,9 +7,13 @@ import {
   type ResourceBlock,
 } from "@humansandmachines/gsv/protocol";
 import type { KernelContext } from "./context";
+import { runWithRealKernelSql } from "../test-support/real-kernel-sql";
+import { ShipReplies } from "./ship-replies";
+import { RunRouteStore } from "./run-routes";
 
 import * as utils from "../shared/utils";
 import * as personalController from "./personal-controller";
+import * as targets from "./targets";
 const getConversationByIdMock = vi.spyOn(utils, "getConversationById");
 const sendFrameToProcessMock = vi.spyOn(utils, "sendFrameToProcess");
 const ensurePersonalControllerMock = vi.spyOn(personalController, "ensurePersonalController");
@@ -71,7 +75,9 @@ function context(ownerUid = 1000): KernelContext {
       get: vi.fn((id: string) => id === SHIP.id ? SHIP : null),
       list: vi.fn(() => [SHIP]),
       recordSequence: vi.fn(),
+      recordContactMessage: vi.fn(),
     },
+    shipReplies: { recordClientInput: vi.fn() },
     runRoutes: {
       setConnectionRoute: vi.fn(),
       delete: vi.fn(),
@@ -98,6 +104,14 @@ function canonicalMessage(input: any): ConversationMessage {
 }
 
 describe("conversation handlers", () => {
+  it("does not turn a message to a contact into input for Ship, including a legacy handler record", async () => {
+    const ctx = context();
+    vi.mocked(ctx.conversations.get).mockReturnValue({ ...SHIP, kind: "contact" });
+    await expect(handleConversationSend({ conversationId: SHIP.id, text: "Hello Alice" }, ctx))
+      .rejects.toThrow("Use contact.send");
+    expect(sendFrameToProcessMock).not.toHaveBeenCalled();
+  });
+
   beforeEach(() => {
     getConversationByIdMock.mockReset();
     sendFrameToProcessMock.mockReset();
@@ -149,6 +163,79 @@ describe("conversation handlers", () => {
       directed: false,
     });
     expect(ctx.runRoutes.delete).toHaveBeenCalledWith(expect.stringMatching(/^run:msg:/));
+  });
+
+  it.each([false, true])("keeps a replayed input preference without replacing newer activity=%s", async (newerActivity) => {
+    await runWithRealKernelSql(async (sql, storage) => {
+      const ctx = context();
+      ctx.shipReplies = new ShipReplies(storage);
+      ctx.runRoutes = new RunRouteStore(sql);
+      ctx.shipReplies.recordAdapter(1000);
+      let message: ConversationMessage | undefined;
+      const append = vi.fn(async (input: any) => {
+        if (message) return { created: false, message };
+        message = canonicalMessage(input);
+        throw new Error("lost append response after commit");
+      });
+      getConversationByIdMock.mockReturnValue({ append });
+      sendFrameToProcessMock.mockImplementation(async (_installationId, _pid, frame) => ({
+        type: "res", id: frame.id, ok: true,
+        data: { ok: true, runId: message!.runId, queued: false, status: "started" },
+      }));
+      const input = { conversationId: SHIP.id, text: "Reply here", idempotencyKey: "same-input" };
+      await expect(handleConversationSend(input, ctx)).rejects.toThrow("lost append response");
+      ctx.shipReplies = new ShipReplies(storage);
+      ctx.runRoutes = new RunRouteStore(sql);
+      if (newerActivity) ctx.shipReplies.recordClient(1000, "newer-window");
+      await expect(handleConversationSend(input, ctx)).resolves.toMatchObject({ runId: message!.runId });
+      expect(storage.kv.get<{ connectionId: string }>("ship-reply:1000")?.connectionId)
+        .toBe(newerActivity ? "newer-window" : "connection-1");
+    });
+  });
+
+  it.each([[false, false], [true, false], [false, true]])("selects the newer overlapping send, newer first=%s, concurrent retry=%s", async (newerFirst, retryWhilePreparing) => {
+    await runWithRealKernelSql(async (sql, storage) => {
+      const first = context();
+      const second = context();
+      second.connection!.id = "connection-2";
+      first.shipReplies = second.shipReplies = new ShipReplies(storage);
+      first.runRoutes = second.runRoutes = new RunRouteStore(sql);
+      const release = new Map<string, () => void>();
+      const target = vi.spyOn(targets, "resolveSelectedMessageTarget").mockImplementation(
+        (ctx) => new Promise((resolve) => release.set(ctx.connection!.id, () => resolve("gsv"))),
+      );
+      getConversationByIdMock.mockReturnValue({
+        append: vi.fn(async (input: any) => ({ created: true, message: canonicalMessage(input) })),
+      });
+      sendFrameToProcessMock.mockImplementation(async (_installationId, _pid, frame) => ({
+        type: "res", id: frame.id, ok: true,
+        data: { ok: true, runId: `run:${frame.args.interaction.messageId}`, queued: false, status: "started" },
+      }));
+      try {
+        const inputs = [0, 1].map((i) => ({ conversationId: SHIP.id, text: `Message ${i}`, idempotencyKey: `overlap-${i}` }));
+        const pending = [first, second].map((ctx, i) => handleConversationSend(inputs[i], ctx));
+        await vi.waitFor(() => expect(release.size).toBe(2));
+        if (retryWhilePreparing) {
+          const original = release.get("connection-1")!;
+          release.get("connection-2")!();
+          await pending[1];
+          const retry = handleConversationSend(inputs[0], first);
+          await vi.waitFor(() => expect(release.get("connection-1")).not.toBe(original));
+          release.get("connection-1")!();
+          await retry;
+          original();
+          await pending[0];
+        } else {
+          for (const index of newerFirst ? [1, 0] : [0, 1]) {
+            release.get(`connection-${index + 1}`)!();
+            await pending[index];
+          }
+        }
+        expect(storage.kv.get<{ connectionId: string }>("ship-reply:1000")?.connectionId).toBe("connection-2");
+      } finally {
+        target.mockRestore();
+      }
+    });
   });
 
   it("lets the canonical Ship read history but keeps client mutations direct", async () => {
@@ -223,6 +310,7 @@ describe("conversation handlers", () => {
       }),
     );
     expect(ctx.runRoutes.setConnectionRoute).toHaveBeenCalledWith({
+      followsShip: true,
       runId: result.runId,
       processId: PROCESS.processId,
       uid: 1000,

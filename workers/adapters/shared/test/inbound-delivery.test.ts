@@ -429,7 +429,9 @@ describe("InboundDeliveryLedger", () => {
     const clock = vi.spyOn(Date, "now").mockReturnValue(10_000);
     try {
       const first = retainedLedger(storage);
+      expect(await first.isRecorded("update:0003")).toBe(false);
       await first.enqueueAndArm("update:0003", { providerMessageId: "original" }, 100);
+      expect(await first.isRecorded("update:0003")).toBe(true);
       const deliver = vi.fn(async () => ({ terminal: true }));
       await expect(first.attempt("update:0003", deliver)).resolves.toEqual({
         state: "completed",
@@ -445,8 +447,10 @@ describe("InboundDeliveryLedger", () => {
         state: "completed",
       });
       expect(replay).not.toHaveBeenCalled();
+      expect(await retainedLedger(storage).isRecorded("update:0003")).toBe(true);
 
       clock.mockReturnValue(11_001);
+      expect(await retainedLedger(storage).isRecorded("update:0003")).toBe(false);
       await retainedLedger(storage).enqueueAndArm(
         "update:0003",
         { providerMessageId: "after-expiry" },

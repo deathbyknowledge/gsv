@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ProcHistoryResult } from "@humansandmachines/gsv/protocol";
+import { decodeDevicePairingCode } from "@humansandmachines/gsv/protocol";
 import { z } from "zod";
 import {
   startProcessRuntimeHarness,
@@ -22,6 +23,26 @@ type HilCase = {
 };
 
 describe("gateway process controls integration", () => {
+  it("creates an owner's invitation from an agent Shell tool with the default approval policy", async () => {
+    await withRuntime(async (runtime) => {
+      runtime.ai.enqueue(
+        { kind: "tool-calls", calls: [{ id: "pair", name: "Shell", arguments: { target: "gsv", input: "targets pair --name Laptop --platform mac" } }] },
+        { kind: "message", text: "The invitation is ready." },
+      );
+      const process = await runtime.spawn("connect a laptop", { runAs: "process-runtime-agent" });
+      await runtime.configureAi(process.pid);
+      const sent = await runtime.client.proc.send({ pid: process.pid, message: "Connect my Mac and call it Laptop." });
+      if (!sent.ok) throw new Error(sent.error);
+      await waitForFinished(runtime, sent.runId);
+      const history = await processHistory(runtime, process.pid);
+      const result = history.messages.find(({ role, content }) => role === "toolResult" && JSON.stringify(content).includes("gsv-pair1_"));
+      const output = shellResultSchema.parse(result?.content).output ?? "";
+      const invite = decodeDevicePairingCode(output.match(/gsv-pair1_[A-Za-z0-9_-]+/)?.[0] ?? "");
+      expect(invite).toMatchObject({ username: "process-runtime-user", targetId: "laptop", label: "Laptop" });
+      expect((await runtime.client.sys.pair.list({})).pairings).toContainEqual(expect.objectContaining({ id: invite.id, state: "pending" }));
+    });
+  });
+
   it("uses spawn-time model and effort for its first task and applies later edits to the next run", async () => {
     await withRuntime(async (runtime) => {
       const parent = await runtime.spawn("model catalog setup");

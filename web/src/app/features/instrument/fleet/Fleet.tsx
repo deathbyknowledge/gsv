@@ -4,11 +4,8 @@ import { FleetDialog } from "./FleetDialog";
 import { assignedTo, ResponsibilityInspector, RoutineInspector, StandingResponsibilities, useFleetWork, WorkSections } from "./Work";
 import { RoutineEditor } from "./RoutineEditor";
 import { useDraftGuard } from "../shared/useDraftGuard";
-import { EMPTY_CONTACT_DRAFT, useContactDrafts } from "./useContactDrafts";
-import { contactDisplayName } from "@humansandmachines/gsv/protocol";
 import type { GSVClient } from "@humansandmachines/gsv/client";
 import { ConnectPlace } from "./ConnectPlace";
-import { AddContact, ContactInspector, useFleetContacts } from "./Contacts";
 import { LoadingState } from "../../../components/ui/Spinner";
 import { useMutation, useQueryClient } from "@tanstack/preact-query";
 import { useQuery } from "../../../services/navigation/viewQueries";
@@ -79,18 +76,16 @@ function useNow(active: boolean): number {
 }
 
 /** The Fleet distance: places, processes, the ledger, and files, with an inspector for the selected row. */
-const ROW_PREFIXES = ["target:", "proc:", "contact:", "work:", "routine:", "more:", "dir:", "file:"];
+const ROW_PREFIXES = ["target:", "proc:", "work:", "routine:", "more:", "dir:", "file:"];
 function isFleetRow(value: string | undefined): value is FleetRow {
   return value !== undefined && ROW_PREFIXES.some((prefix) => value.startsWith(prefix));
 }
 
 export function Fleet({ openRequest, onZen, onCommand, onDirtyChange }: FleetProps) {
   const active = useViewActive();
-  const [contactDirty, setContactDirty] = useState(false);
   const [fileDirty, setFileDirty] = useState(false);
   const [workDirty, setWorkDirty] = useState(false);
-  useDraftGuard(contactDirty || fileDirty || workDirty, onDirtyChange);
-  const contactDrafts = useContactDrafts(setContactDirty);
+  useDraftGuard(fileDirty || workDirty, onDirtyChange);
   const { client, connected } = useGateway();
   const now = useNow(active);
   const initialReference = openRequest?.reference ?? null;
@@ -121,9 +116,6 @@ export function Fleet({ openRequest, onZen, onCommand, onDirtyChange }: FleetPro
   const work = useFleetWork(viewer);
   const [workPanel, setWorkPanel] = useState<"new" | "sources" | null>(null);
 
-  const contactsQuery = useFleetContacts(viewer);
-  const contacts = contactsQuery.data ?? [];
-
   const places = useMemo(() => orderPlaces(targetsQuery.data ?? []), [targetsQuery.data]);
   const processes = useMemo(() => orderProcesses(processesQuery.data ?? []), [processesQuery.data]);
   const sysLedgerQuery = useLedger(!!viewer && canConfigure(viewer, "sys.ledger.list"));
@@ -142,7 +134,7 @@ export function Fleet({ openRequest, onZen, onCommand, onDirtyChange }: FleetPro
   const [selected, setSelected] = useState<FleetRow | null>(initialRow);
   const [inspectorOpen, setInspectorOpen] = useState(Boolean(initialRow || initialConnect));
   const [creatingProcess, setCreatingProcess] = useState(false);
-  const [connecting, setConnecting] = useState<"place" | "contact" | null>(initialConnect);
+  const [connecting, setConnecting] = useState<"place" | null>(initialConnect);
   useLayoutEffect(() => {
     setSelected(initialRow);
     setOpenFile(null);
@@ -153,8 +145,6 @@ export function Fleet({ openRequest, onZen, onCommand, onDirtyChange }: FleetPro
     setInspectorOpen(Boolean(initialRow || initialConnect));
     if (initialRow) focusedRow.current = initialRow;
   }, [openRequest]);
-
-  const selectedContact = selected?.startsWith("contact:") ? contacts.find((contact) => `contact:${contact.id}` === selected) : undefined;
 
   const selectedPlace = useMemo(
     () => (selected?.startsWith("target:") ? places.find((place) => targetRow(place.id) === selected) ?? null : null),
@@ -255,7 +245,7 @@ export function Fleet({ openRequest, onZen, onCommand, onDirtyChange }: FleetPro
     return () => window.removeEventListener("keydown", onKey);
   }, [active, inspectorOpen, expandedFile, places, onCommand]);
 
-  const connect = (to: "place" | "contact") => {
+  const connect = (to: "place") => {
     if (workDirty && !window.confirm("Discard this unsaved routine?")) return;
     setWorkPanel(null);
     setSelected(null);
@@ -296,9 +286,9 @@ export function Fleet({ openRequest, onZen, onCommand, onDirtyChange }: FleetPro
     });
   };
   const inspectorTitle = workPanel === "new" ? "New routine" : workPanel === "sources" ? "Standing responsibilities"
-    : connecting === "place" ? "Connect a place" : connecting === "contact" ? "Add a contact"
+    : connecting === "place" ? "Connect a place"
       : creatingProcess ? "New process" : openFile ? "File" : selected?.startsWith("work:") ? "Responsibility"
-        : selected?.startsWith("routine:") ? "Routine" : selected?.startsWith("contact:") ? "Contact"
+        : selected?.startsWith("routine:") ? "Routine"
           : selected?.startsWith("proc:") ? "Process" : "Place";
 
   return (
@@ -425,24 +415,6 @@ export function Fleet({ openRequest, onZen, onCommand, onDirtyChange }: FleetPro
             </div>
           </section>
 
-          <section class="fleet-block" aria-label="Contacts">
-            <h2>
-              <i /> Contacts
-              <button type="button" class="fleet-heading-action" disabled={!connected || !viewer || (!canConfigure(viewer, "contact.invite.create") && !canConfigure(viewer, "contact.invite.accept"))} onClick={() => connect("contact")}>add contact</button>
-              <span class="count">{contacts.filter((contact) => contact.state === "active").length}</span>
-            </h2>
-            {contactsQuery.error && <p class="error" role="alert">Could not list contacts: {contactsQuery.error.message}</p>}
-            {viewer && !canConfigure(viewer, "contact.list") ? <p class="fleet-empty">Your account cannot list contacts.</p>
-              : contactsQuery.isPending ? <p class="fleet-empty"><LoadingState>Loading contacts…</LoadingState></p>
-              : contacts.length === 0 ? <p class="fleet-empty">Connect with someone who has their own Ship.</p>
-              : <div class="tablewrap"><table>
-                <thead><tr><th>Contact</th><th>Ship</th><th>State</th></tr></thead>
-                <tbody>{contacts.map((contact) => <tr key={contact.id} data-row={`contact:${contact.id}`} tabIndex={0} onClick={() => selectRow(`contact:${contact.id}`)}>
-                  <td><span class={`dot ${contact.state === "active" ? "is-on" : "is-idle"}`} />{contactDisplayName(contact)}</td><td class="dim">{contact.remoteOrigin}</td><td class="dim">{contact.state === "active" ? "connected" : "revoked"}</td>
-                </tr>)}</tbody>
-              </table></div>}
-          </section>
-
           <WorkSections work={work} account={viewer} processes={processes} onSelect={selectRow} onCreate={() => openWorkPanel("new")} onSources={() => openWorkPanel("sources")} now={now} />
 
           <section class="fleet-block">
@@ -478,13 +450,6 @@ export function Fleet({ openRequest, onZen, onCommand, onDirtyChange }: FleetPro
             <RoutineInspector key={selectedRoutine.id} schedule={selectedRoutine} account={viewer} onDirty={setWorkDirty} onSelect={(id) => setSelected(`routine:${id}`)} />
           ) : connecting === "place" ? (
             <ConnectPlace account={viewer} targets={targetsQuery.data ?? []} ready={!!targetsQuery.data && !targetsQuery.isError} onClose={closeInspector} onConnected={(id) => selectConnected(targetRow(id))} />
-          ) : connecting === "contact" ? (
-            <AddContact account={viewer} onClose={closeInspector} onAdded={(id) => selectConnected(`contact:${id}`)} />
-          ) : selectedContact && !openFile ? (
-            <ContactInspector key={selectedContact.id} contact={selectedContact} account={viewer}
-                  draft={contactDrafts.drafts.get(selectedContact.id) ?? EMPTY_CONTACT_DRAFT}
-                  onDraft={(change) => contactDrafts.update(selectedContact.id, change)}
-                  onSend={() => void contactDrafts.send(selectedContact.id)} />
           ) : creatingProcess ? (
             <NewProcess onCreated={(pid) => onZen(undefined, pid)} onCancel={() => { setCreatingProcess(false); closeInspector(); }} />
           ) : openFile ? (
@@ -817,7 +782,9 @@ export function ProcessInspector({ client, process, requestedApprovalId, model, 
           {process.username} · {process.cwd}
         </dd>
       </dl>
-      {requestedApprovalId || process.state === "waiting_hil" ? <FleetApproval key={requestedApprovalId ?? "pending"} pid={process.pid} requestId={requestedApprovalId} /> : null}
+      {requestedApprovalId || process.state === "waiting_hil" ? <FleetApproval key={requestedApprovalId ?? "pending"}
+        pid={process.pid} who={process.username} label={process.personal ? undefined : process.label}
+        requestId={requestedApprovalId} placeLabelFor={placeLabelFor} /> : null}
       <div class="fleet-actions">
         {process.interactive && (
           <button type="button" class="fleet-text-action is-primary" onClick={() => onZen(undefined, process.personal ? undefined : process.pid)}>

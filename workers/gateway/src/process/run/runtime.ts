@@ -628,6 +628,23 @@ export class ProcessRun {
     });
   }
 
+  async failWithRuntimeEvent(runId: string, payload: ProcHistoryEventPayload<"runtime.failed">): Promise<void> {
+    const event = { kind: "runtime.failed", payload, severity: "error", audience: "both" } as const;
+    const message = renderHistoryEvent(event);
+    const transition = this.host.ctx.storage.transactionSync(() => {
+      const run = this.host.runs.active;
+      if (!run || this.host.handleRunStopped(runId)) return null;
+      this.host.store.messages.appendMessage("system", message, { runId, record: { kind: "event", payload: event } });
+      return this.commitRunFinishState(run, { reason: payload.reason, status: "error", resultText: null, error: message });
+    });
+    if (!transition) return;
+    this.host.startBackground(
+      `run failure history notification for ${runId}`,
+      this.host.signals.changed(["messages"], { runId, role: "system", content: message }),
+    );
+    await this.completeRunTransition(transition);
+  }
+
   commitRunFinishState(run: RunState, options: RunFinishOptions): CompletedRunTransition {
     const shouldQueueRuntimeWake =
       (run.pendingRuntimeEvents ?? 0) > 0 && this.host.store.queue.queueSize() === 0;
@@ -1268,14 +1285,14 @@ export class ProcessRun {
         ? { kind: "retry", advanceAttempt: true }
         : { kind: "complete", result: null };
     }
-    if (response.stopReason === "error" || response.stopReason === "aborted") {
-      const fallback = await this.switchRunTickFallback(runId, control, message, response);
-      if (fallback === "switched") return { kind: "fallback" };
-      if (fallback === "stopped") return { kind: "complete", result: null };
-    }
+    const fallback = await this.switchRunTickFallback(runId, control, message, response);
+    if (fallback === "switched") return { kind: "fallback" };
+    if (fallback === "stopped") return { kind: "complete", result: null };
     return {
       kind: "complete",
-      result: await this.generationFailure(runId, control, "generation.empty", message, response),
+      result: await this.generationFailure(runId, control,
+        response.stopReason === "error" || response.stopReason === "aborted" ? "generation.error" : "generation.empty",
+        message, response),
     };
   }
 
@@ -2004,11 +2021,10 @@ export class ProcessRun {
       await this.runTick(runId);
     } catch (error) {
       if (!this.host.handleRunStopped(runId)) {
-        await this.finishRun(runId, {
+        await this.failWithRuntimeEvent(runId, {
           reason: "tick.error",
-          status: "error",
-          resultText: null,
-          error: `Process run failed: ${errorMessageFromUnknown(error)}`,
+          prefix: "Process run failed",
+          error: errorMessageFromUnknown(error),
         });
       }
     } finally {
@@ -2017,11 +2033,10 @@ export class ProcessRun {
         try {
           await this.scheduleTick(runId);
         } catch (error) {
-          await this.finishRun(runId, {
+          await this.failWithRuntimeEvent(runId, {
             reason: "schedule.error",
-            status: "error",
-            resultText: null,
-            error: `Failed to schedule deferred process run: ${errorMessageFromUnknown(error)}`,
+            prefix: "Failed to schedule deferred process run",
+            error: errorMessageFromUnknown(error),
           });
         }
       }

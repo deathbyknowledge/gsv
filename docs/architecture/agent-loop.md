@@ -161,6 +161,11 @@ for shell and low-level callers.
 The process calls the configured generation service with `sessionAffinityKey`
 set to the PID.
 
+Empty responses, reasoning without a final answer, and malformed tool-call text
+use the existing three-attempt retry budget before trying the next configured
+model. A normal provider stop does not make an unusable response successful.
+Cancelled or superseded runs do not start fallback requests.
+
 After classifying a generation failure and selecting a fallback, the Process
 limits the new fallback diagnostic to 4,096 characters (UTF-16 code units),
 including a truncation marker that records the original length. The same preview
@@ -279,13 +284,16 @@ Approval outcomes are:
 The run pauses while a HIL request is pending. Web, Desktop, and CLI receive
 `proc.run.hil.requested`; an exact adapter route receives the same structured
 request in `adapter.send`. Decisions resume through `proc.hil` with the exact
-pending `requestId`. Each peer owns presentation. Zen shows the request as a
-card with the model's `purpose` and the raw request folded beneath; the first
-approval an account sees there opens the Ship's one-time walkthrough of what
-runs on its own and what to ask about, which writes ordinary rules into the
-account policy, and the card's always-allow control writes a rule for exactly
-that syscall and resolved target before approving. Messenger controls that
-approve "always" remember the call for that Process only.
+pending `requestId`. Each peer owns presentation. Web and Desktop show the
+request as a card with the model's `purpose` and the raw request folded beneath.
+The card's always-allow control, offered when the person holds
+`sys.config.set`, writes an `auto` rule for exactly that syscall and resolved
+target into the policy of the account the Process resolves, then approves once
+with an ordinary `proc.hil`. The current run keeps its policy snapshot, so the
+rule applies from the next run. The card's **why am I being asked?** link opens a
+short explanation of what runs on its own and the per-kind allow-or-ask choices,
+which also save as ordinary account rules. Messenger controls that approve "always" send `proc.hil` with
+`remember: true`, which keeps a rule for that Process only.
 Telegram and Slack render native controls; adapters without controls use a
 safe handoff that shows the action and directs the user to Chat. A native
 callback is bound durably to the exact request, linked actor, route generation,

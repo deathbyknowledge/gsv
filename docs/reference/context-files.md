@@ -46,7 +46,8 @@ occasionally relevant personal information belongs in the human-owned
 `personal` wiki, where agents retrieve it deliberately. Unresolved work belongs
 in the Kernel `r12y` responsibility ledger rather than either context or memory
 layer. Initial onboarding is likewise an `r12y` responsibility, not a generated
-context file.
+context file; the system responsibilities context tells the Ship to put it first
+while it is unresolved.
 
 The default personal account for new installations is `ship`. Personal-agent
 provisioning also creates an ordinary owned `crew` account for delegated work

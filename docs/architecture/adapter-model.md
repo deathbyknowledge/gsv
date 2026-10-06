@@ -2,7 +2,7 @@
 
 Use this page when you want to understand how GSV connects an open-ended set of
 external messaging systems to the same durable process model used by the CLI
-and Desktop. Discord, Telegram, and Slack are bundled adapter
+and Desktop. Discord, Telegram, Slack, and WhatsApp are bundled adapter
 implementations, not a closed list of transports recognized by the Kernel.
 
 ## Why adapters exist
@@ -139,6 +139,8 @@ one peer Durable Object from the authenticated private Telegram identity. Slack
 admits the signed event through its installed workspace record, then derives a
 peer from that workspace and human author. Discord uses a shared application
 connection plus a separate peer for the author's direct-message or server route.
+WhatsApp derives one peer from the sender's number after verifying Meta's
+webhook signature for the operator's WhatsApp Business number.
 Each peer owns an exclusive route containing the installation, local uid, and a
 fresh generation. Inbound records and queued replies retain that generation and
 recheck it immediately before crossing the Gateway or provider boundary, so
@@ -192,12 +194,13 @@ The canonical outbound path is:
 
 1. A process sends through the `Send` tool, or `message send` through Shell. Ordinary assistant
    text remains raw Process activity; a bare `yield` finishes without another Message.
-2. The Kernel commits the Message to the canonical conversation and looks up the
-   exact directed endpoint created during admission.
-3. If no conversation identity or exact route exists and this is a background run
-   in the canonical personal controller, the Kernel may materialize an adapter route
-   from the owner's last-active linked private destination. A disconnected client
-   conversation never jumps to an adapter, and other processes never use the fallback.
+2. The Kernel commits the Message to the canonical conversation and selects its
+   directed endpoint. Explicit Work, group and contact routes remain fixed.
+3. Personal Ship replies follow the owner's latest human origin or foreground client
+   activity across runs. If that client disconnects or is inactive for five minutes,
+   the Kernel uses the owner's last-active linked private messenger destination.
+   Other processes do not use this fallback. Each committed message keeps its chosen
+   destination through retries, even if the owner's preference changes.
 4. The Kernel rechecks the linked actor's destination authority.
 5. If the endpoint is an adapter, the Kernel schedules the delivery and sends one
    correlated `adapter.send` request with the exact route, content, and optional
@@ -332,7 +335,16 @@ binds the id to a fingerprint of its exact destination, reply context, text,
 media metadata, and binary media bytes. Reusing an id with different content is
 rejected instead of being mistaken for a successful replay, and that binding is
 retained across retry-safe failures. Only failures known to be safe are
-retryable. Outcomes that may already have reached a provider are reported as
+retryable. Multipart receipts retain the accepted part count and partition
+format, so an update cannot reinterpret that count and repeat earlier
+paragraphs. Unversioned partial receipts retain the first staging format.
+WhatsApp keeps a blocked held-message release pending on the triggering
+inbound receipt or Kernel delivery, so its existing retry owner can resume
+without another user message. Explicit pairing commands retain response
+priority and persist a separate release attempt in the same inbound ledger.
+Delayed receipts that do not open the 24-hour window leave pending templates
+and held messages intact.
+Outcomes that may already have reached a provider are reported as
 ambiguous and are not replayed; Discord can additionally reuse an
 enforced deterministic nonce, while Telegram conservatively uses at-most-once
 delivery for ambiguous outcomes. The Kernel retains retry-safe delivery as scheduled work,
@@ -482,6 +494,8 @@ Examples:
 - Telegram verifies a webhook secret and supports private-message pairing.
 - Slack separates workspace installation, personal OAuth visibility, and human pairing.
 - Discord uses a bot token and long-lived gateway connection behavior.
+- WhatsApp accepts a free-form reply only within 24 hours of the person's last
+  message and needs approved templates after that.
 - Platforms differ in media support, typing indicators, group semantics, and peer identity shapes.
 
 Those quirks belong inside the adapter worker, not in the Kernel or process

@@ -10,6 +10,7 @@ export type TestNodeProps = {
   "aria-pressed"?: boolean;
   boxed?: boolean;
   children?: ComponentChildren;
+  class?: string;
   disabled?: boolean;
   href?: string;
   label?: string;

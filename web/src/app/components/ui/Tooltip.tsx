@@ -443,7 +443,7 @@ export function Tooltip({
       >
         {bare ? children : trigger}
       </button>
-      <span class="gsv-tt-desc" id={bubbleId} role="tooltip">{text}</span>
+      <span class="gsv-tt-desc" id={bubbleId} role="tooltip" aria-hidden="true">{text}</span>
       <TooltipBubble
         open={open}
         shown={shown}
@@ -486,7 +486,7 @@ export function Hint({ text, position = "top", children }: HintProps) {
   return (
     <span ref={wrapRef} class={`gsv-tt ${POS_CLASS[position]} gsv-hint`}>
       {child}
-      <span class="gsv-tt-desc" id={bubbleId} role="tooltip">{text}</span>
+      <span class="gsv-tt-desc" id={bubbleId} role="tooltip" aria-hidden="true">{text}</span>
       <TooltipBubble
         open={open}
         shown={shown}

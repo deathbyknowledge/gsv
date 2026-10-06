@@ -18,6 +18,7 @@ import {
 } from "../../src/text/gsv-provider";
 import { createGenerationService } from "../../src/text/service";
 import { createWorkersAiGeneration } from "../../src/workers-ai";
+import { telemetryRecordSchema } from "@humansandmachines/gsv/telemetry";
 
 const ATTRIBUTION = {
   installationId: "inst_test",
@@ -50,6 +51,34 @@ const RESULT: ManagedInferenceResult = {
 
 describe("GSV inference provider", () => {
   afterEach(() => vi.useRealTimers());
+
+  it.each(["acquisition", "request", "stream"])("preserves %s failures and exports only safe diagnostics", async (phase) => {
+    const failure = Object.assign(new TypeError("synthetic private failure detail"), { remote: true, retryable: true });
+    const { service, target } = managedService(async () => {
+      if (phase === "request") throw failure;
+      return new ReadableStream({ start(controller) { controller.error(failure); } });
+    });
+    if (phase === "acquisition") service.getInstallation.mockRejectedValue(failure);
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      const factory = createGsvInferenceProviderFactory(service, { GSV_TELEMETRY_ENABLED: true });
+      const result = await providerStreamFromFactory(factory, new AbortController().signal).result();
+      expect(result.stopReason).toBe("error");
+      expect(result.errorMessage).toContain(`Managed inference ${phase} failed: synthetic private failure detail`);
+      const records = log.mock.calls.map(([record]) => telemetryRecordSchema.parse(record));
+      expect(records).toHaveLength(1);
+      if (records[0]!.event.name !== "inference.client.finished") throw new Error("Missing inference client telemetry");
+      expect(records[0]).toMatchObject({ component: "inference", event: {
+        name: "inference.client.finished", properties: {
+          boundary: "managed", phase, outcome: "failed", workload: "ipc",
+          errorType: "TypeError", rpcRemote: true, rpcRetryable: true,
+        },
+      } });
+      expect(result.errorMessage).toContain(records[0]!.event.properties.diagnosticId);
+      expect(JSON.stringify(records)).not.toContain("synthetic private failure detail");
+      expect(target.abort).toHaveBeenCalledTimes(phase === "acquisition" ? 0 : 1);
+    } finally { log.mockRestore(); }
+  });
 
   it("advertises the default 32k output budget", () => {
     const service: ManagedInferenceService = {

@@ -194,6 +194,10 @@ export type InternalResponseFrame<S extends InternalSyscallName = InternalSyscal
 /** Internal calls the Kernel sends to a Process. */
 export type ProcessInternalCall = Exclude<InternalSyscallName, "proc.message.commit">;
 
+export function processMessageDraftId(runId: string, actionId: string): string {
+  return `draft:${runId}:${actionId}`;
+}
+
 export type ProcessMessageStreamSignal = SignalFrame<{
   pid: string;
   runId: string;

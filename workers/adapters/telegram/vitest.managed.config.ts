@@ -76,6 +76,9 @@ export default defineConfig({
             script: `
               const messages = [];
               let nextMessageId = 100;
+              // The first text carrying this marker is answered with 429, the
+              // way Telegram throttles a chat, so tests can watch a delivery resume.
+              const rateLimitedChats = new Set();
               export default {
                 async fetch(request) {
                   const url = new URL(request.url);
@@ -118,15 +121,20 @@ export default defineConfig({
                     });
                   }
                   if (method === "sendMessage" || method === "sendRichMessage") {
+                    const text = body.text ?? body.rich_message?.markdown ?? "";
+                    if (text.includes("__rate_limit_once__") && !rateLimitedChats.has(String(body.chat_id))) {
+                      rateLimitedChats.add(String(body.chat_id));
+                      return Response.json(
+                        { ok: false, error_code: 429, description: "Too Many Requests: retry after 1", parameters: { retry_after: 1 } },
+                        { status: 429 },
+                      );
+                    }
+                    if (text === "__missing_send_result__") {
+                      messages.push({ method, body: { ...body, text }, result: null });
+                      return Response.json({ ok: true });
+                    }
                     const result = { message_id: nextMessageId++ };
-                    messages.push({
-                      method,
-                      body: {
-                        ...body,
-                        text: body.text ?? body.rich_message?.markdown ?? "",
-                      },
-                      result,
-                    });
+                    messages.push({ method, body: { ...body, text }, result });
                     return Response.json({ ok: true, result });
                   }
                   if (["sendPhoto", "sendVideo", "sendAudio", "sendDocument"].includes(method)) {
@@ -140,6 +148,7 @@ export default defineConfig({
                     return Response.json({ ok: true, result });
                   }
                   if (method === "sendChatAction") {
+                    messages.push({ method, body, result: true });
                     return Response.json({ ok: true, result: true });
                   }
                   if (method === "answerCallbackQuery" || method === "editMessageText") {
@@ -156,6 +165,8 @@ export default defineConfig({
     }),
   ],
   test: {
-    include: ["test/managed-flow.test.ts", "test/retirement.test.ts", "test/recovery.test.ts"],
+    include: ["test/managed-flow.test.ts", "test/retirement.test.ts", "test/recovery.test.ts", "test/delivery.test.ts"],
+    // Paragraph messages are paced one second apart, so one flow spans several seconds.
+    testTimeout: 30_000,
   },
 });

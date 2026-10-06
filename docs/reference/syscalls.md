@@ -229,6 +229,11 @@ type NetworkSyscalls = {
 
 `shell.exec` starts, polls, or writes to a shell command on the selected target. Use `gsv` for the Worker sandbox shell, or a device id for local source trees, private networks, OS packages, credentials, or hardware.
 
+Windows machine targets use Windows PowerShell. Its final statement determines
+success: implicit completion returns 0 or 1, and `exit N` returns N. To preserve a
+native program's exact code, end the command with `exit $LASTEXITCODE`. An earlier
+native command's exit code does not override a later cmdlet's result.
+
 The native `gsv` shell exposes the immutable installation identity as
 `GSV_INSTALLATION_ID` and its persisted canonical HTTP(S) origin as `GSV_URL`.
 It does not derive either value from an agent-supplied hostname.
@@ -697,9 +702,15 @@ create, accept, cancel, or revoke Contact trust.
 | `contact.invite.cancel` | Cancels one unaccepted invitation. |
 | `contact.list` | Lists the caller's active contacts; `includeRevoked` includes terminal relationships. |
 | `contact.alias.set` | Sets or clears the owner's local name for a Contact without changing or federating its authenticated remote identity. |
+| `contact.preferences.update` | Human-only, revision-checked changes to saved, muted and standing Ship handling preferences. |
+| `contact.block.set` | Human-only block or unblock of one remote actor; blocking also ends its active connection and pending first-contact requests. |
+| `contact.block.list` | Reads private blocks, optionally filtered by `actor`, with cursor paging. |
+| `contact.notice.dismiss` | Dismisses the one-time notice that global contact auto-wake has been retired. |
 | `contact.revoke` | Revokes the local relationship immediately, withdraws its resource grants, terminates pending deliveries, and durably notifies the other Ship. |
 | `contact.send` | Commits one local Contact message and queues an authenticated delivery. Reusing an `idempotencyKey` with the same input returns the same logical delivery; changed input is rejected. |
 | `contact.delivery.get` | Reads the owner-scoped queued, delivered, or failed state of one retained Contact delivery. |
+| `contact.delivery.list` | Reads retained delivery status for selected messages in a contact conversation. |
+| `contact.delivery.retry` | Resumes the original recoverable delivery without appending a second message. |
 | `contact.request.list` | Lists structured incoming and outgoing cross-GSV requests. |
 | `contact.request.create` | Offers a typed request with a title and optional JSON details. |
 | `contact.request.update` | Applies a participant-authorized state transition using an optional expected revision. The requester may withdraw an unaccepted offer; the performer accepts, rejects, starts, completes, or confirms cancellation. |
@@ -764,6 +775,8 @@ type ContactSummary = {
   remoteSubject: FederationSubject;
   remoteOrigin: string;
   localAlias?: string;
+  preferences?: { revision: number; saved: boolean; muted: boolean; shipHandlesMessages: boolean };
+  blocked?: boolean;
   conversationId: string;
   createdAtMs: number;
   updatedAtMs: number;
@@ -830,6 +843,8 @@ type ContactSyscalls = {
       text: string;
       media?: ResourceBlock[];
       idempotencyKey?: string;
+      replyTo?: { actor: { shipId: string; subjectId: string }; messageId: string };
+      responsibilityId?: string;
     };
     result: {
       deliveryId: string;
@@ -873,6 +888,26 @@ type ContactSyscalls = {
     };
     result: { request: ContactRequestRecord; deliveryId: string };
   };
+  "contact.preferences.update": {
+    args: {
+      contactId: string;
+      expectedRevision: number;
+      patch: { saved?: boolean; muted?: boolean; shipHandlesMessages?: boolean };
+    };
+    result: { contact: ContactSummary };
+  };
+  "contact.block.set": {
+    args: { actor: ActorRef; blocked: boolean };
+    result: { block: ContactBlock | null };
+  };
+  "contact.block.list": {
+    args: { actor?: ActorRef; cursor?: ActorRef; limit?: number };
+    result: { blocks: ContactBlock[]; nextCursor?: ActorRef };
+  };
+  "contact.notice.dismiss": {
+    args: Record<string, never>;
+    result: Record<string, never>;
+  };
 };
 ```
 
@@ -886,6 +921,128 @@ message, idempotency key and contact generation. `expectedUpdatedAtMs` prevents
 retrying an outdated status; a retry epoch fences outcomes from earlier attempts.
 The original seven-day delivery window, backlog limits and rate limits still
 apply. Permanent refusal, revocation and expired delivery cannot be bypassed.
+
+Setting `patch.shipHandlesMessages` to `true` through `contact.preferences.update` allows Ship to handle new incoming
+messages. The preference change itself creates no responsibility, wakes no Process and does
+not replay existing history. Disabling it cancels ongoing standing handling.
+
+`contact.send.responsibilityId` binds replies to an existing, nonterminal Ship responsibility
+owned by the caller. Only the signed-in human or canonical Ship can bind that work. It does not
+enable standing `shipHandlesMessages`. An exact `replyTo` selects its existing association;
+without one, a reply may continue only one unambiguous active responsibility for that contact.
+Completed responsibilities, old contact generations, duplicates and delivery receipts never
+admit fresh agent work. New conversation messages alone do not create commitments.
+
+Federation v2 messages preserve human/Process authorship and immutable origin/reply references.
+Private pairing also supports v1 peers; old messages have no fabricated authorship or reply
+metadata. Each queued delivery retains the wire version chosen when it was created.
+
+### Public profiles and first messages
+
+Profiles are opt-in, owner-authenticated snapshots at `https://SPACE/@alias`. Reading the same
+address with `Accept: application/json` returns its signed document. Publication is atomic;
+draft changes stay private until the next explicit publish. Aliases remain reserved to their
+owner after unpublishing. All profile mutations and first-contact decisions require the direct
+signed-in human; Ship may resolve a public profile but cannot publish or accept on their behalf.
+
+```ts
+type ProfileAndApproachSyscalls = {
+  "profile.get": {
+    args: Record<string, never>;
+    result: { profile: ProfileState };
+  };
+  "profile.update": {
+    args: { expectedRevision: number; draft: ProfileFields };
+    result: { profile: ProfileState };
+  };
+  "profile.publish": {
+    args: { expectedRevision: number };
+    result: { profile: ProfileState };
+  };
+  "profile.unpublish": {
+    args: { expectedRevision: number };
+    result: { profile: ProfileState };
+  };
+  "profile.resolve": {
+    args: { url: string };
+    result: { profile: PublicProfile };
+  };
+  "approach.create": {
+    args: {
+      profileUrl: string;
+      recipient: ActorRef;
+      profileRevision: number;
+      displayName: string;
+      text: string;
+      idempotencyKey: string;
+    };
+    result: { approach: ApproachSummary };
+  };
+  "approach.list": {
+    args: {
+      direction: "incoming" | "outgoing";
+      status?: "active" | "history";
+      before?: { createdAtMs: number; id: string };
+      limit?: number;
+    };
+    result: { approaches: ApproachSummary[]; next?: { createdAtMs: number; id: string } };
+  };
+  "approach.get": {
+    args: { approachId: string };
+    result: { approach: ApproachSummary };
+  };
+  "approach.decide": {
+    args: { approachId: string; expectedRevision: number; decision: "accept" | "decline" | "withdraw" };
+    result: { approach: ApproachSummary };
+  };
+  "approach.retry": {
+    args: { approachId: string; expectedRevision: number };
+    result: { approach: ApproachSummary };
+  };
+};
+```
+
+`ProfileFields` contains `alias`, `displayName`, `about`, `contactPolicy`
+(`requests`, `invitation` or `closed`) and `representation` (`human` or `human-and-ship`).
+`ProfileState` returns those fields as `draft`, a revision and optional published URL/revision.
+`profile.resolve` verifies the signed identity and checks existing contact pins.
+Creating a first message binds it to the exact recipient and profile revision the sender reviewed.
+
+First-contact messages expire after 30 days and accept text only, up to 32 KiB. Acceptance promotes
+the same conversation and first message through a durable, peer-bound pairing operation. Neither
+arrival nor acceptance starts Ship. Declining is private. Blocking denies future requests from that
+actor independently of whether a contact was ever accepted. Unblocking does not revive an old request.
+
+### Private conversation inbox
+
+```ts
+type ConversationInboxSyscalls = {
+  "conversation.inbox": {
+    args: { archived?: boolean; before?: { updatedAt: number; conversationId: string }; limit?: number };
+    result: { entries: ConversationInboxEntry[]; next?: { updatedAt: number; conversationId: string } };
+  };
+  "conversation.view.get": {
+    args: { conversationId: string };
+    result: { entry: ConversationInboxEntry };
+  };
+  "conversation.view.update": {
+    args: { conversationId: string; readThroughSequence?: number; archived?: boolean; expectedRevision?: number };
+    result: { entry: ConversationInboxEntry };
+  };
+};
+```
+
+`conversation.inbox` lists accepted contact conversations, optionally filtered by `archived`, with
+`before` and `limit` paging. Entries contain the contact ID, conversation, latest preview, unread
+state and private view state. `conversation.view.get` reads one entry; `conversation.view.update`
+advances `readThroughSequence` monotonically or sets `archived`. Both use `conversationId`.
+Changing `archived` requires `expectedRevision` from the current view to avoid overwriting a newer change.
+The read sequence cannot pass the latest committed message. New incoming messages unarchive a
+conversation unless muted. These states and preview changes never send a read receipt to the peer.
+
+People reuses `conversation.history` and `conversation.search`; no separate social search index
+or archive backfill exists. Contact conversations have no `handlerPid`. Other conversation kinds
+retain their ordinary handler requirement.
 
 ## Processes: `proc.*`
 
@@ -905,7 +1062,7 @@ Runtime behavior:
 | `proc.abort` | Process DO | Cancels the active run. Converts outstanding tool calls to error results, sends `request.cancel` for active tool, CodeMode, and routed provider requests, clears pending HIL and current run, emits `proc.run.finished` with `status: "aborted"`, and may promote the next queued run. Cancellation is nonblocking and late results cannot mutate the successor run. An optional `runId` prevents a stale abort from stopping a successor. |
 | `proc.hil` | Process DO | Resolves a pending human-in-the-loop request. `approve` dispatches the original syscall; `deny` appends a synthetic error tool result. `remember: true` with `approve` stores a process-local allow override for the syscall and target class. |
 | `proc.kill` | Process DO | Optionally archives the process history under the run-as agent's home, promotes referenced media into immutable archive objects, clears live process media, and wipes Process DO state. After success the Kernel removes the process registry entry. |
-| `proc.history` | Process DO | Returns paged Process activity, message count, pending HIL, and context pressure. `format: 2` adds typed records and durable revision/reset metadata; `since` returns complete changed groups from an opaque cursor. Offset paging reads from the beginning; `tail`, `beforeMessageId`, and `afterMessageId` select bounded pages. `includeMessages: false` returns status only. Historical/status pages never advance a synchronization cursor. The original `messages` projection remains available for older clients. See [Process History](../architecture/process-history.md). |
+| `proc.history` | Process DO | Returns paged Process activity, message count, pending HIL, and context pressure. `format: 2` adds typed records and durable revision/reset metadata; `since` returns complete changed groups from an opaque cursor. Unexpected run or scheduling failures persist a `runtime.failed` event with reason `tick.error` or `schedule.error`, including failures before any model response. Offset paging reads from the beginning; `tail`, `beforeMessageId`, and `afterMessageId` select bounded pages. `includeMessages: false` returns status only. Historical/status pages never advance a synchronization cursor. The original `messages` projection remains available for older clients. See [Process History](../architecture/process-history.md). |
 | `proc.trace` | Process DO | Returns the bounded wall-clock span tree for recent runs. Run, context assembly, inference, reasoning, model output, tool execution, approval, and Message delivery spans carry timing plus references into `proc.history`; the trace does not duplicate private payloads. Trace state is cleared with Process history and removed by `proc.kill`. |
 | `proc.history.policy.get` | Process DO | Returns the process context-overflow policy. The default is `auto-compact` at 90% pressure with a 40% post-compaction target. |
 | `proc.history.policy.set` | Process DO | Sets the process context-overflow policy. Supported `overflow` values are `auto-compact` and `fail`; the policy is applied during run preflight and after a provider-confirmed overflow. Provider overflow does not advance the main generation fallback chain. |
@@ -1180,7 +1337,7 @@ and their ancestor records, and may update only its own assignment.
 | Syscall | Behavior |
 |---|---|
 | `r12y.list` | Lists current records, optionally filtered by exact ids, state, assignee, or parent. Terminal records are hidden unless requested. |
-| `r12y.get` | Reads one visible record and the owner's current ledger revision. |
+| `r12y.get` | Reads one visible record and the owner's current ledger revision. Ids are `r12y:<uuid>`; every `r12y.*` id argument also accepts the bare UUID and restores the prefix. |
 | `r12y.create` | Creates an open responsibility, or returns the existing record for the same stable dedupe key. |
 | `r12y.update` | Applies an optimistic revision-checked state or metadata transition and appends it to the ordered journal. |
 | `r12y.changes` | Pages ordered transitions after a known revision for context recovery. |
@@ -1212,8 +1369,6 @@ type ResponsibilitySourcePolicy =
   | {
       id:
         | "mail.received"
-        | "federation.received"
-        | "contact.added"
         | "machine.added"
         | "adapter.connected"
         | "adapter.auth_required";
@@ -1282,8 +1437,6 @@ type ResponsibilitySyscalls = {
     args: {
       id:
         | "mail.received"
-        | "federation.received"
-        | "contact.added"
         | "machine.added"
         | "adapter.connected"
         | "adapter.auth_required";
@@ -1410,6 +1563,7 @@ Runtime behavior:
 | `sys.bootstrap` | `handleSysBootstrap` | Imports `root/gsv-manual`, registers it as a public system repository, and seeds the gateway's bundled skills into the caller's home without replacing existing files. `GSV_MANUAL_BOOTSTRAP_UPSTREAM` accepts `owner/repo`, a git URL, or either form with `#ref`; `GSV_MANUAL_BOOTSTRAP_REF` overrides its ref. The default is the compatible immutable revision in `workers/gateway/src/kernel/sys/manual-version.json`. Existing installations refresh on authenticated activity when that revision changes; failures retain the installed copy and local edits are preserved. `wiki refresh gsv-manual` refreshes only the Manual, without seeding skills. Requires `RIPGIT`. |
 | `sys.config.get` | `handleSysConfigGet` | Reads exact config key or visible prefix. Root sees all; non-root sees own `users/<uid>/` keys and non-sensitive `config/` keys. Sensitive names such as password, token, secret, and api key are hidden from non-root. |
 | `sys.config.set` | `handleSysConfigSet` | Writes a config value. Root can write any key; non-root can write only own user-overridable keys, currently under `users/<uid>/ai/`. Values are coerced with `String(value)`. |
+| `sys.feedback` | `handleSysFeedback` | Sends an explicit report to the optional operator `FEEDBACK` service. Requires authentication and `sys.feedback`. Arguments contain an optional UUID `id` for retry correlation and optional `context` with `view`, `platform`, and app `version`. A required UTF-8 JSON body carries `message` (1–8,000 characters) and optional `activity` (at most 20 message groups and 64,000 characters); the body is limited to 512 KiB. Report content stays out of syscall ledger arguments, and service exceptions become a generic delivery error. Kernel attaches the trusted installation, space origin, caller's human owner and server version. Returns `{ id }` after the service accepts it. Delivery has a ten-second deadline; timeout or caller cancellation disposes the remote call. Reuse the report ID when retrying an uncertain delivery. |
 | `sys.target.list` | `handleSysTargetList` | Lists targets accessible by owner uid or group ACL. Root sees all. Defaults to online devices only unless `includeOffline` is true. |
 | `sys.target.get` | `handleSysTargetGet` | Reads one target descriptor. Missing or inaccessible targets return `target: null` rather than a permission error. |
 | `sys.target.update` | `handleSysTargetUpdate` | Updates owner-managed target metadata. Root or the device owner may update the process-visible `description`; group-only device access can use the device but cannot edit its metadata. Missing or inaccessible targets return `target: null`. |
@@ -1426,7 +1580,7 @@ Runtime behavior:
 | `sys.token.create` | `handleSysTokenCreate` | Creates a hashed human, machine, or service token; the kind is the principal kind the token authenticates as. Root may target any uid. Machine tokens must bind to one `peerId`. Raw token is returned only once. |
 | `sys.token.list` | `handleSysTokenList` | Lists token metadata, including revoked tokens, never raw token values. Non-root is scoped to self; root can list all or one uid. |
 | `sys.token.revoke` | `handleSysTokenRevoke` | Revokes a token by id with optional reason. Non-root can revoke only own tokens. Missing or inaccessible token returns `revoked: false`. |
-| `sys.pair.create` | `handleSysPairCreate` | A signed-in human creates an idempotent, ten-minute device invitation for a free target ID. The Kernel retains its secret hashed and creates no device credential yet. |
+| `sys.pair.create` | `handleSysPairCreate` | A signed-in human or permitted process creates an idempotent, ten-minute device invitation for a free target ID. Processes act for their human owner. The Kernel retains its secret hashed and creates no device credential yet. |
 | `sys.pair.list` | `handleSysPairList` | Lists the caller's recent invitations and their pending, paired, cancelled or expired state, without secrets. |
 | `sys.pair.cancel` | `handleSysPairCancel` | Cancels an unused caller-owned invitation; an already-paired device and its credential remain intact. |
 | `sys.pair.redeem` | `handleSysPairRedeem` | Pre-connect enrollment. Consumes one invitation and atomically registers the receiving client's persisted random machine credential for the invitation's account and target. The same credential may recover an acknowledgement; another cannot reuse the invitation. |
@@ -1456,6 +1610,16 @@ metadata document advertises the same URL as its `client_id`.
 
 ```ts
 type SystemSyscalls = {
+  "sys.feedback": {
+    args: {
+      id?: string;
+      context?: { view?: "zen" | "fleet" | "memory" | "people" | "settings"; platform?: "web" | "desktop"; version?: string };
+    };
+    // Required UTF-8 JSON request body:
+    body: { message: string; activity?: { pid: string; messageCount: number; text: string; truncated: boolean } };
+    result: { id: string };
+  };
+
   "sys.pair.create": {
     args: { id: string; secret: string; targetId: string; label: string; replace?: boolean };
     result: { pairing: DevicePairing };

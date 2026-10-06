@@ -823,7 +823,7 @@ checksum = "52560adf09603e58c9a7ee1fe1dcb95a16927b17c127f0ac02d6e768a0e25bc1"
 
 [[package]]
 name = "daemon-protocol"
-version = "0.6.2"
+version = "0.6.6"
 dependencies = [
  "async-trait",
  "libc",
@@ -834,6 +834,7 @@ dependencies = [
  "tokio",
  "tokio-util",
  "uuid",
+ "windows-host",
  "windows-sys 0.61.2",
 ]
 
@@ -957,7 +958,7 @@ dependencies = [
 
 [[package]]
 name = "desktop"
-version = "0.6.2"
+version = "0.6.6"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -978,11 +979,12 @@ dependencies = [
  "url",
  "uuid",
  "webkit2gtk",
+ "windows-host",
 ]
 
 [[package]]
 name = "desktop-native"
-version = "0.6.2"
+version = "0.6.6"
 dependencies = [
  "gesture-protocol",
  "libc",
@@ -990,11 +992,12 @@ dependencies = [
  "tempfile",
  "tokio",
  "uuid",
+ "windows-host",
 ]
 
 [[package]]
 name = "desktop-protocol"
-version = "0.6.2"
+version = "0.6.6"
 dependencies = [
  "async-trait",
  "libc",
@@ -1467,7 +1470,7 @@ dependencies = [
 
 [[package]]
 name = "gateway-client"
-version = "0.6.2"
+version = "0.6.6"
 dependencies = [
  "futures-util",
  "serde",
@@ -1589,7 +1592,7 @@ dependencies = [
 
 [[package]]
 name = "gesture-protocol"
-version = "0.6.2"
+version = "0.6.6"
 dependencies = [
  "serde",
  "serde_json",
@@ -1597,7 +1600,7 @@ dependencies = [
 
 [[package]]
 name = "gestures"
-version = "0.6.2"
+version = "0.6.6"
 dependencies = [
  "cameras",
  "cmake",
@@ -1612,6 +1615,7 @@ dependencies = [
  "serde_json",
  "sha2",
  "tempfile",
+ "windows-host",
 ]
 
 [[package]]
@@ -1751,7 +1755,7 @@ dependencies = [
 
 [[package]]
 name = "gsv"
-version = "0.6.2"
+version = "0.6.6"
 dependencies = [
  "base64 0.22.1",
  "chrono",
@@ -1769,6 +1773,7 @@ dependencies = [
  "rustls",
  "serde",
  "serde_json",
+ "sha2",
  "tempfile",
  "tokio",
  "tokio-tungstenite",
@@ -1776,6 +1781,8 @@ dependencies = [
  "url",
  "uuid",
  "whoami",
+ "windows-host",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -1871,7 +1878,7 @@ dependencies = [
 
 [[package]]
 name = "host-config"
-version = "0.6.2"
+version = "0.6.6"
 dependencies = [
  "chrono",
  "dirs 5.0.1",
@@ -1879,6 +1886,7 @@ dependencies = [
  "serde",
  "tempfile",
  "toml 0.8.23",
+ "windows-host",
 ]
 
 [[package]]
@@ -2579,9 +2587,10 @@ checksum = "dae608c151f68243f2b000364e1f7b186d9c29845f7d2d85bd31b9ad77ad552b"
 
 [[package]]
 name = "machine"
-version = "0.6.2"
+version = "0.6.6"
 dependencies = [
  "async-trait",
+ "base64 0.22.1",
  "clap",
  "daemon-protocol",
  "dirs 5.0.1",
@@ -2605,6 +2614,7 @@ dependencies = [
  "tracing-subscriber",
  "uuid",
  "walkdir",
+ "windows-host",
 ]
 
 [[package]]
@@ -5449,7 +5459,7 @@ dependencies = [
 
 [[package]]
 name = "transcriber"
-version = "0.6.2"
+version = "0.6.6"
 dependencies = [
  "cpal",
  "crossbeam-channel",
@@ -6089,6 +6099,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "widestring"
+version = "1.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "72069c3113ab32ab29e5584db3c6ec55d416895e60715417b5b883a357c3e471"
+
+[[package]]
 name = "winapi"
 version = "0.3.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6249,6 +6265,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "windows-host"
+version = "0.6.6"
+dependencies = [
+ "tempfile",
+ "windows-service",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
 name = "windows-implement"
 version = "0.58.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6349,6 +6374,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7781fa89eaf60850ac3d2da7af8e5242a5ea78d1a11c49bf2910bb5a73853eb5"
 dependencies = [
  "windows-link 0.2.1",
+]
+
+[[package]]
+name = "windows-service"
+version = "0.8.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "857224b3b211c6f3616921f081ee54721ee3ad2ace2fac6a6337e032f7b4dcf2"
+dependencies = [
+ "bitflags 2.13.1",
+ "widestring",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

@@ -77,6 +77,8 @@ Canonical user-facing conversations are not Process histories. Conversations ret
 
 Process history uses typed message, note, call, result, and event records. Storage owns legacy inference; model context, compaction, and client presentation each render those records at their owning boundary. Preserve the captured provider-context contract when changing rendering. Person-only events remain inspectable without entering provider context or summary input. Format-2 history synchronization replaces complete message groups, including late companions and media changes; reset and compaction invalidate earlier cursors. See `docs/architecture/process-history.md`.
 
+Contact conversations have no mandatory Process handler. Pairing and first-message acceptance create no agent commitment. A human may hand a contact generation to Ship through one ordinary responsibility, or bind replies to existing Ship work when sending for a specific task. Human and Process authorship remain visible but do not choose the local handler. Duplicates and delivery receipts never admit new agent work. People owns social presentation; the Kernel owns contact authority, private inbox state, public profile publication and first-contact admission.
+
 ### Prefer fewer mechanisms
 
 - Consolidate duplicate paths and delete obsolete ones when behavior remains clear.
@@ -104,12 +106,18 @@ Process history uses typed message, note, call, result, and event records. Stora
 - `host/apps/cli/`: user, deployment, administration, and OS service-control commands.
 - `host/apps/machine/`: the `gsvd` machine driver, concrete tools, transfer ownership, reconnect, logging, and shutdown.
 - `host/helpers/`: separately supervised local transcription and gesture processes.
-- `host/crates/`: shared gateway transport, host configuration, Desktop IPC, and gesture protocol contracts. `host/` owns their Cargo workspace and build artifacts.
+- `host/crates/`: shared gateway transport, host configuration, Desktop IPC, gesture protocol contracts, and Windows SCM/process ownership primitives. `host/` owns their Cargo workspace and build artifacts.
 - `workers/adapters/`: platform-specific messaging workers and identity normalization.
 - `extension/`: browser-backed target and browser integration.
 - `workers/ripgit/`: git-backed repositories and filesystem storage operations.
 
 Keep platform-specific identity and delivery behavior in its adapter. Keep visual presentation in the web and Desktop clients. Keep target selection below stable syscall contracts.
+
+Windows uses an automatic SCM service for `gsvd`, with a dedicated execution
+account, protected executable, and daemon-only enrollment in ProgramData.
+CLI and Desktop remain user processes. The service control pipe authorizes its
+enrolling owner explicitly; Desktop and input helper IPC remain same-user.
+OS service privilege must never become an agent shell privilege by accident.
 
 ## Runtime invariants
 
@@ -135,7 +143,7 @@ Keep platform-specific identity and delivery behavior in its adapter. Keep visua
 - Filesystem, shell, and network behavior must remain consistent between local gateway and device implementations.
 - Adapters receive stable actor and surface semantics; channel-specific identifiers do not leak into generic RPCs.
 - Private user surfaces default to the personal process. Direct access to another process is an explicit, visibly labeled work session; opening one surface must not silently redefine the user's personal intelligence elsewhere.
-- A run route directs immediate message streaming and delivery to one originating endpoint; it does not own the canonical conversation. Other clients synchronize committed messages without inheriting that endpoint's delivery behavior.
+- A run route directs immediate message streaming and delivery to one endpoint; it does not own the canonical conversation. Personal Ship follows the owner's latest human origin or foreground client activity across runs, falling back to the last authorized private messenger when the selected client disconnects or is inactive for five minutes. Opening a client or keepalives do not claim activity. Explicit Work, group and contact routes stay fixed. Each committed message retains its chosen route through retries; other clients synchronize it without another notification.
 
 ### Data and security
 
@@ -143,11 +151,12 @@ Keep platform-specific identity and delivery behavior in its adapter. Keep visua
 - Agent approval follows the actual destination through native commands and CodeMode. The Kernel retains the owning tool and the Process applies its run policy before nested machine, mail, or MCP effects; a cancelled or superseded owner cannot authorize dispatch. Future shell schedules require their own approval by default.
 - Managed onboarding capabilities authorize only first-boot setup for one installation. Store them hashed in accounts, keep them out of URLs after the browser reads the fragment, and let only the Kernel create local credentials.
 - Accounts owns hashed, single-use space-creation invites. A verified owner claims an invite and resumes one durable creation operation; private policy prepares its allowance before setup authorization. Desktop owner sessions use explicit bearer authentication and never grant Kernel login or root recovery.
-- A signed-in human issues device enrollment invitations scoped to the installation, account and exact target. Invitations expire, are single-use, and store only hashed authorization. Receivers persist their credential before redemption; the Kernel commits its hash and the redemption receipt atomically. Closing or cancelling an invitation never revokes an already-paired device.
+- A signed-in human or a permitted process acting for its human owner issues device enrollment invitations scoped to the installation, owner account and exact target. Invitations expire, are single-use, and store only hashed authorization. Receivers persist their credential before redemption; the Kernel commits its hash and the redemption receipt atomically. Closing or cancelling an invitation never revokes an already-paired device.
 - Never hardcode or log secrets, raw authentication material, QR payloads, prompts, tool arguments, or private file contents.
 - Persist file and media references in history, retain durable content once as immutable media under the run-as agent home, and scope temporary keys to the owning process. Hydrate bytes only while building model context or resolving an explicit resource read.
 - Canonical Messages store immutable resource references rather than duplicating bytes. A Process must retain an exact source revision before committing a reference whose source lifetime is not already durable.
 - Telemetry uses an explicit allowlist and records timings and outcomes rather than user content.
+- Unexpected failures must remain diagnosable at the owning boundary. Preserve the cause for authorized inspection and emit a closed failure record, including failures before admission. Never replace an exception with a generic message or empty result without retaining a diagnostic reference. Keep raw errors and private content out of telemetry.
 
 ## Schema migrations
 
@@ -221,7 +230,7 @@ npm run dev
 
 Validate only the surfaces affected by the change:
 
-Before Desktop Rust checks, build its shared frontend with `npm run gsv:build && npm run build --workspace web -- --config vite.desktop.config.ts`.
+Before Desktop Rust checks, build its shared frontend with `npm run gsv:build && npm run build:desktop --workspace web`.
 
 - Managed service implementations: validate them in their owning deployment repository against `packages/gsv/src/services/`
 - Gateway: `cd workers/gateway && npx tsc --noEmit && npm run test:run`

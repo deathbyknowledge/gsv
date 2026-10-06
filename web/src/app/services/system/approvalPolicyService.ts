@@ -6,13 +6,6 @@ export function accountApprovalKey(uid: number): string {
   return `users/${uid}/ai/tools/approval`;
 }
 
-/** Whether the first-approval walkthrough has been done or skipped; blank means not yet. */
-export function approvalSetupKey(uid: number): string {
-  return `users/${uid}/ui/approval-setup`;
-}
-
-export type ApprovalSetupMark = "done" | "skipped";
-
 /** The configuration a draft was composed against: its raw value when the draft was built. */
 export type ApprovalPolicySource = { key: string; value: string };
 
@@ -35,9 +28,4 @@ export async function saveAccountApprovalPolicy(
     }
   }
   await client.sys.config.set({ key, value });
-}
-
-/** Record the walkthrough outcome; blank clears the mark so it shows again at the next approval. */
-export async function markApprovalSetup(client: Pick<GSVClient, "sys">, uid: number, mark: ApprovalSetupMark | ""): Promise<void> {
-  await client.sys.config.set({ key: approvalSetupKey(uid), value: mark });
 }

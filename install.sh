@@ -187,14 +187,20 @@ cache_bust_url_if_mutable() {
 download_file() {
     local url="$1"
     local output="$2"
+    local downloader options
     if command -v curl >/dev/null 2>&1; then
-        curl -fsSL -o "$output" "$url"
+        downloader=curl
+        options=(-fsSL -o "$output")
+        if [ -n "${3:-}" ]; then options+=(--max-time "$3"); fi
     elif command -v wget >/dev/null 2>&1; then
-        wget -q -O "$output" "$url"
+        downloader=wget
+        options=(-q -O "$output")
+        if [ -n "${3:-}" ]; then options+=(--timeout="$3" --tries=1); fi
     else
         error "curl or wget is required"
         return 1
     fi
+    "$downloader" "${options[@]}" "$url"
 }
 
 sha256_file() {
@@ -226,6 +232,146 @@ verify_asset() {
         error "Checksum verification failed for $asset"
         return 1
     fi
+}
+
+# Resample character cells, not escape bytes; keep the foreground style of
+# each sampled cell. Geometry stays in the release asset, not the installer.
+scale_animation() {
+    LC_ALL=C awk -v width="$1" -v height="$2" '
+        BEGIN { RS="\f"; ORS="\f"; escape=sprintf("%c", 27); best=-1 }
+        NF {
+            header=index($0, "\n")
+            split(substr($0, 1, header - 1), dimensions, " ")
+            if (dimensions[1] != previous) {
+                previous=dimensions[1]
+                distance=log(dimensions[1] / width)
+                if (distance < 0) distance=-distance
+                selected=(best < 0 || distance < best)
+                if (selected) {
+                    best=distance; count=0
+                    source_width=dimensions[1]; source_height=dimensions[2]
+                }
+            }
+            if (selected) frames[++count]=substr($0, header + 1)
+        }
+        END {
+            for (x=1; x<=width; x++) sample[x]=int((x - 0.5) * source_width / width) + 1
+            for (frame=1; frame<=count; frame++) {
+                split(frames[frame], lines, "\n")
+                color=escape "[0m"; output=""; next_row=1
+                for (y=1; y<=source_height; y++) {
+                    runs=split(lines[y], parts, escape "\\[")
+                    plain=""; offset=0
+                    for (run=1; run<=runs; run++) {
+                        part=parts[run]
+                        if (run > 1) {
+                            end=index(part, "m")
+                            color=escape "[" substr(part, 1, end)
+                            part=substr(part, end + 1)
+                        }
+                        for (x=1; x<=length(part); x++) colors[offset + x]=color
+                        offset+=length(part); plain=plain part
+                    }
+                    if (next_row > height || int((next_row - 0.5) * source_height / height) + 1 != y) continue
+                    line=""; last=""
+                    for (x=1; x<=width; x++) {
+                        color_at=colors[sample[x]]
+                        if (color_at != last) { line=line color_at; last=color_at }
+                        line=line substr(plain, sample[x], 1)
+                    }
+                    while (next_row <= height && int((next_row - 0.5) * source_height / height) + 1 == y) {
+                        output=output (next_row > 1 ? "\n" : "") line
+                        next_row++
+                    }
+                }
+                print output escape "[0m"
+            }
+        }
+    ' "$TMP_DIR/animation.frames"
+}
+
+# Playback reads cached frames; no model rendering or extra runtime is needed.
+play_animation() {
+    trap - EXIT
+    trap 'exit 0' INT TERM HUP
+    local resized=1
+    trap 'resized=1' WINCH
+    local frames=() record size cols rows width height left top picture status index frame=0 title="GSV"
+    while true; do
+        if [ "$resized" -eq 1 ]; then
+            resized=0
+            size="$(stty size <&3 2>/dev/null)" || return 0
+            read -r rows cols <<< "$size"
+            if [ "$rows" -lt 1 ]; then rows=1; fi
+            if [ "$cols" -lt 1 ]; then cols=1; fi
+            frames=(); width=0; height=0
+            printf '\033[2J'
+            if [ "$cols" -gt 56 ] && [ "$rows" -gt 30 ]; then
+                width=$((cols - 1)); height=$((width * 36 / 96))
+                if [ "$height" -gt "$((rows - 9))" ]; then
+                    height=$((rows - 9)); width=$((height * 96 / 36))
+                fi
+                while IFS= read -r -d $'\f' record; do frames+=("$record"); done < <(scale_animation "$width" "$height")
+                if [ "$resized" -eq 1 ]; then continue; fi
+            else
+                width=20
+                if [ "$cols" -le "$width" ]; then width=$((cols > 1 ? cols - 1 : 0)); fi
+            fi
+            printf -v left '%*s' "$(((cols - width) / 2))" ''
+            top=$(((rows - height - 6) / 2 + 1))
+            if [ "$top" -lt 1 ]; then top=1; fi
+        fi
+        if [ "$rows" -gt 3 ]; then
+            printf '\033[%d;1H%s%s\033[K\n\n' "$top" "$left" "${title:0:width}"
+        else
+            printf '\033[1;1H'
+            left=""
+        fi
+        if [ "${#frames[@]}" -gt 0 ]; then
+            index="$frame"
+            if [ "$index" -ge 240 ]; then index=$((48 + (frame - 240) % 192)); fi
+            picture="${frames[$index]}"
+            printf '%s%s\n\n' "$left" "${picture//$'\n'/$'\n'$left}"
+        fi
+        status="$(< "$TMP_DIR/animation.status")"
+        printf '%s%s\033[K\033[J' "$left" "${status:0:cols-${#left}-1}"
+        frame=$((frame + 1))
+        sleep 0.083
+    done
+}
+
+start_animation() {
+    [ -t 1 ] && [ -t 2 ] && [ "${TERM:-dumb}" != dumb ] && [ "${GSV_NO_ANIMATION:-0}" != 1 ] && [ -z "${CI:-}" ] || return 0
+    command -v gzip >/dev/null && command -v stty >/dev/null || return 0
+    local size cols rows asset="gsv-installer-animation.gz" url
+    size="$(stty size <&2 2>/dev/null)" || return 0
+    read -r rows cols <<< "$size"
+    [ "$cols" -gt 0 ] && [ "$rows" -gt 0 ] || return 0
+    # Older releases and failed optional downloads keep the ordinary installer.
+    awk -v name="$asset" '$2 == name || $2 == "*" name { found=1 } END { exit !found }' "$TMP_DIR/checksums.txt" || return 0
+    url="$(cache_bust_url_if_mutable "$1" "$(release_asset_url "$1" "$asset")")"
+    download_file "$url" "$TMP_DIR/$asset" 3 >/dev/null 2>&1 && \
+        verify_asset "$asset" "$TMP_DIR/$asset" "$TMP_DIR/checksums.txt" >/dev/null 2>&1 && \
+        gzip -dc "$TMP_DIR/$asset" > "$TMP_DIR/animation.frames" 2>/dev/null || return 0
+    printf 'Downloading GSV' > "$TMP_DIR/animation.status"
+    exec 3>&1 4>&2
+    ANIMATION_ACTIVE=1
+    exec > "$TMP_DIR/install.log" 2>&1
+    printf '\033[?1049h\033[?25l\033[2J' >&3
+    play_animation </dev/null >&3 &
+    ANIMATION_PID=$!
+}
+
+stop_animation() {
+    [ "${ANIMATION_ACTIVE:-0}" -eq 1 ] || return 0
+    if [ -n "${ANIMATION_PID:-}" ]; then
+        kill "$ANIMATION_PID" 2>/dev/null || true
+        wait "$ANIMATION_PID" 2>/dev/null || true
+    fi
+    printf '\033[0m\033[?25h\033[?1049l' >&3 2>/dev/null || true
+    exec 1>&3 2>&4 3>&- 4>&-
+    ANIMATION_ACTIVE=0
+    cat "$TMP_DIR/install.log" || true
 }
 
 delegate_to_pinned_installer() {
@@ -274,6 +420,7 @@ prepare_install_dir() {
         error "Cannot write $INSTALL_DIR and sudo is unavailable"
         exit 1
     fi
+    stop_animation
     sudo mkdir -p "$INSTALL_DIR"
     USE_SUDO=1
 }
@@ -343,6 +490,16 @@ configure_path() {
     fi
     if [ -n "$PATH_FILES_UPDATED" ]; then
         success "Added $INSTALL_DIR to PATH in $PATH_FILES_UPDATED"
+    fi
+}
+
+open_desktop() {
+    [ "${GSV_NO_LAUNCH:-0}" != 1 ] && [ -z "${CI:-}${SSH_CONNECTION:-}${SSH_TTY:-}" ] || return 0
+    [ -t 1 ] && [ -t 2 ] || return 0
+    if [ "$OS" = linux ] && [ -z "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ]; then return 0; fi
+    info "Opening GSV Desktop"
+    if ! "$INSTALL_DIR/gsv" desktop; then
+        warn "Desktop could not open. Installation succeeded; retry with: \"$INSTALL_DIR/gsv\" desktop"
     fi
 }
 
@@ -426,14 +583,14 @@ rollback_binaries() {
         local target="${INSTALL_DIR}/${TARGETS[$index]}"
         local backup="${BACKUPS[$index]:-}"
         local staged="${INSTALL_DIR}/.${TARGETS[$index]}.new.$$"
-        as_installer rm -f "$staged" || true
+        as_installer rm -rf "$staged" || true
         if [ -n "$backup" ]; then
             if as_installer test -e "$backup"; then
-                as_installer rm -f "$target" || true
+                as_installer rm -rf "$target" || true
                 as_installer mv "$backup" "$target" || true
             fi
         else
-            as_installer rm -f "$target" || true
+            as_installer rm -rf "$target" || true
         fi
     done
 }
@@ -445,33 +602,37 @@ replace_binaries() {
         local target="${INSTALL_DIR}/${TARGETS[$index]}"
         local staged="${INSTALL_DIR}/.${TARGETS[$index]}.new.$$"
         local backup=""
+        local source="$TMP_DIR/${ASSETS[$index]}"
+        if [ "${TARGETS[$index]}" = "gsv-transcribe-runtime" ]; then
+            source="$TMP_DIR/gsv-transcribe-runtime"
+        fi
         if as_installer test -e "$target"; then
             backup="${INSTALL_DIR}/.${TARGETS[$index]}.backup.$$"
         fi
         BACKUPS+=("$backup")
-        as_installer cp "$TMP_DIR/${ASSETS[$index]}" "$staged" || {
-            as_installer rm -f "$staged" || true
+        as_installer cp -R "$source" "$staged" || {
+            as_installer rm -rf "$staged" || true
             return 1
         }
-        if [ "${EXECUTABLES[$index]}" -eq 1 ]; then
+        if [ "${EXECUTABLES[$index]}" -eq 1 ] || [ -d "$source" ]; then
             as_installer chmod 0755 "$staged" || {
-                as_installer rm -f "$staged" || true
+                as_installer rm -rf "$staged" || true
                 return 1
             }
         else
             as_installer chmod 0644 "$staged" || {
-                as_installer rm -f "$staged" || true
+                as_installer rm -rf "$staged" || true
                 return 1
             }
         fi
         if [ -n "$backup" ]; then
             as_installer mv "$target" "$backup" || {
-                as_installer rm -f "$staged" || true
+                as_installer rm -rf "$staged" || true
                 return 1
             }
         fi
         if ! as_installer mv "$staged" "$target"; then
-            as_installer rm -f "$staged" || true
+            as_installer rm -rf "$staged" || true
             return 1
         fi
     done
@@ -480,7 +641,7 @@ replace_binaries() {
 remove_backups() {
     local backup
     for backup in "${BACKUPS[@]}"; do
-        if [ -n "$backup" ]; then as_installer rm -f "$backup"; fi
+        if [ -n "$backup" ]; then as_installer rm -rf "$backup"; fi
     done
 }
 
@@ -549,7 +710,10 @@ persist_release_channel() {
 
 cleanup() {
     local status=$?
-    trap - EXIT INT TERM
+    trap - EXIT
+    trap '' INT TERM HUP
+    set +e
+    stop_animation
     if [ "$status" -ne 0 ] && [ "${INSTALL_IN_PROGRESS:-0}" -eq 1 ]; then
         stop_existing_service || true
         rollback_binaries || true
@@ -570,7 +734,10 @@ main() {
     TMP_DIR="$(mktemp -d)"
     INSTALL_IN_PROGRESS=0
     BACKUPS=()
-    trap cleanup EXIT INT TERM
+    trap cleanup EXIT
+    trap 'exit 130' INT
+    trap 'exit 143' TERM
+    trap 'exit 129' HUP
 
     ASSETS=(
         "gsv-${PLATFORM}"
@@ -582,6 +749,7 @@ main() {
         "gsv-vision-LICENSE.apache-2.0"
         "gsv-vision-PROVENANCE.md"
         "gsv-vision-THIRD_PARTY.md"
+        "gsv-transcribe-runtime-${PLATFORM}.tar.gz"
     )
     TARGETS=(
         "gsv"
@@ -593,8 +761,9 @@ main() {
         "gsv-vision-LICENSE.apache-2.0"
         "gsv-vision-PROVENANCE.md"
         "gsv-vision-THIRD_PARTY.md"
+        "gsv-transcribe-runtime"
     )
-    EXECUTABLES=(1 1 1 1 1 0 0 0 0)
+    EXECUTABLES=(1 1 1 1 1 0 0 0 0 0)
 
     echo ""
     echo -e "  ${BOLD}GSV host installer${NC} · ${PLATFORM} · ${release_ref}"
@@ -603,6 +772,7 @@ main() {
     local checksum_url
     checksum_url="$(cache_bust_url_if_mutable "$release_ref" "$(release_asset_url "$release_ref" checksums.txt)")"
     download_file "$checksum_url" "$TMP_DIR/checksums.txt"
+    start_animation "$release_ref"
 
     local asset
     for asset in "${ASSETS[@]}"; do
@@ -613,6 +783,12 @@ main() {
         verify_asset "$asset" "$TMP_DIR/$asset" "$TMP_DIR/checksums.txt"
     done
     success "Verified ${#ASSETS[@]} release artifacts"
+    local runtime_archive="$TMP_DIR/gsv-transcribe-runtime-${PLATFORM}.tar.gz"
+    tar -tzf "$runtime_archive" | awk '
+        !/^gsv-transcribe-runtime\/[A-Za-z0-9._-]+$/ { exit 1 }
+    ' || { error "Invalid transcription runtime archive"; exit 1; }
+    tar -xzf "$runtime_archive" -C "$TMP_DIR"
+    if [ "${ANIMATION_ACTIVE:-0}" -eq 1 ]; then printf 'Installing' > "$TMP_DIR/animation.status"; fi
 
     explain_existing_install_dir
     prepare_install_dir
@@ -645,9 +821,15 @@ main() {
     INSTALL_IN_PROGRESS=0
     remove_backups
     configure_path
+    local shell_needs_path=0
+    if ! path_already_configured; then
+        shell_needs_path=1
+        if [ "${GSV_NO_MODIFY_PATH:-0}" != 1 ]; then export PATH="$INSTALL_DIR:$PATH"; fi
+    fi
+    stop_animation
     success "Installed gsv, gsvd, Desktop, and local helpers to $INSTALL_DIR"
     echo ""
-    if [ "$INSTALL_DIR_SOURCE" = "default" ] && ! path_already_configured; then
+    if [ "$INSTALL_DIR_SOURCE" = "default" ] && [ "$shell_needs_path" -eq 1 ]; then
         echo "  Open a new shell, or run now: export PATH=\"\$HOME/.gsv/bin:\$PATH\""
     fi
     echo "  Next: finish setting up your space in your browser."
@@ -659,6 +841,7 @@ main() {
         echo "  Setup: https://github.com/deathbyknowledge/gsv/blob/main/docs/how-to/install-host-apps.md#desktop"
     fi
     echo ""
+    open_desktop
 }
 
 main "$@"

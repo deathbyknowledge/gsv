@@ -24,6 +24,29 @@ the cached session token from `gsv auth login`, or prompt/login when needed.
 
 ## Chat and Shell
 
+When the operator enables feedback, the Instrument header has a **feedback** action.
+Reports include the text you submit, your space, account, and app/server versions.
+The optional **Include last 20 Ship messages** checkbox starts unchecked. It
+captures recent messages, thinking, tool inputs/results and runtime events through
+your existing history permissions. Review the snapshot before sending: tool results
+can contain private content. No files or media are fetched for the report, and
+oversized activity is visibly shortened to 64,000 characters. Unchecking removes it. A failed submission keeps your draft
+and the exact selected snapshot for retry.
+The same report can be sent from the `gsv` target shell:
+
+```bash
+feedback < report.txt
+```
+
+Use a report file rather than inline text, `printf`, or a heredoc: shell command
+text is recorded in Logs.
+
+Ship can use this command when asked to report an issue. Send only the details the
+user wants shared. `feedback --id UUID < report.txt` keeps the same report identity on a retry.
+Reports go to the operator's configured inbox; the public runtime has no default
+destination. The header action appears only when `sys.connect` advertises
+`operator-feedback` for the caller.
+
 ```bash
 gsv chat [MESSAGE] [--pid PID]
 gsv shell
@@ -71,7 +94,7 @@ message search QUERY [--with CONTACT_OR_CONVERSATION] [--before SEQUENCE] [--lim
 message delivery show DELIVERY_ID [--json]
 message send [--message TEXT]
 yield
-message send --to DESTINATION [--message TEXT] [--attach PATH]... [--mime TYPE] [--delivery-id ID] [--also]
+message send --to DESTINATION [--message TEXT] [--attach PATH]... [--mime TYPE] [--delivery-id ID] [--responsibility ID] [--also]
 contact identity
 contact list [--all] [--json]
 contact alias CONTACT_ID NAME|--clear
@@ -278,6 +301,11 @@ never a recoverable code. `message history --with contact:...` reads the Contact
 conversation. A Contact send reports durable local acceptance separately from
 remote confirmation; use `message delivery show` with its delivery id.
 
+When Ship contacts someone for an existing task, pass `--responsibility ID` to
+associate replies with that open Ship responsibility. A reply continues the same
+work without enabling permanent handling of that contact. Acceptance and new
+messages stay in People unless the person chooses **Let Ship handle this**.
+
 Use `contact request create` and `contact request update` when the exchange has
 a durable lifecycle rather than being only a message. Request revisions prevent
 a stale client from overwriting a newer decision. The requester may cancel an
@@ -408,6 +436,12 @@ preference, and process-switch fencing.
 
 ## Daemon Commands
 
+Ship can create an invitation from Shell on `gsv` with
+`targets pair --name "My laptop" --platform mac`. Supported platforms are `mac`,
+`linux`, `windows` and `browser`. The result contains setup instructions for the
+space's release. `targets pair list` and `targets pair cancel INVITATION_ID`
+manage the human owner's invitations. See [Connect devices](../how-to/connect-devices.md).
+
 Open **Fleet**, click **connect** beside Places, name the computer and create an invitation.
 After installing GSV, paste the provided command:
 
@@ -449,11 +483,13 @@ The driver runtime is the separate `gsvd` executable. The hidden legacy command
 `gsv device run` transfers process ownership to the sibling
 `gsvd --foreground`; the CLI never embeds the driver. `install` creates and
 starts a launchd agent on
-macOS, a systemd user unit on Linux, or a scheduled task on Windows. Reinstalling
+macOS, a systemd user unit on Linux, or an automatic SCM service on Windows. Windows installation requests administrator
+approval and uses a dedicated service account. On Unix, reinstalling
 or starting an old definition migrates `gsv device run` to the direct `gsvd`
 entrypoint without changing the existing service identity. `doctor` checks the
 installed executable and definition. The daemon writes daily rotated JSONL logs
-under `~/.gsv/logs/device.log*`; `logs` tails the latest file with `-l, --lines`
+under `~/.gsv/logs/device.log*` (Windows service logs use
+`%ProgramData%\GSV\daemon\logs`); `logs` tails the latest file with `-l, --lines`
 defaulting to `100`. Foreground logs use compact text by default; set
 `GSV_DEVICE_CONSOLE_FORMAT=json` or `GSV_DEVICE_CONSOLE_FORMAT=quiet` to change that.
 
@@ -461,16 +497,24 @@ defaulting to `100`. Foreground logs use compact text by default; set
 current settings. `diagnostics` reports bounded, redacted runtime notices,
 including the daemon's latest automatic-update decision; the installer it
 starts logs to `~/.gsv/logs/auto-update.log`, and `device.auto_update`
-turns automatic updates off.
+turns automatic updates off. Windows boot services always use administrator-managed
+installer updates. On Windows, `reload` copies the enrolled owner's device settings
+to the protected service configuration; changing its workspace requires `install`
+to update filesystem permissions. `reconnect` only reconnects.
 `status` combines the operating-system service state with the live daemon's
 version, PID, machine id, connection phase, uptime, and reconnect count. These
 live operations use a versioned same-user Unix socket on macOS/Linux and a
-current-user Windows named pipe. They do not expose credentials or gateway
+Windows named pipe restricted to the enrolled service owner and execution account. They do not expose credentials or gateway
 traffic.
 
 Device identity resolves as `--id`, then local `device.id`, then
 `device-<hostname>`. Workspace resolves as `--workspace`, then
-`device.workspace`, then the current directory. A persistent daemon should have
+`device.workspace`, then the current directory for a foreground daemon.
+Windows pairing and service installation default to `%USERPROFILE%\GSV`.
+The enrolling user must already be able to change the workspace's permissions.
+Workspace grants and removal run at that user's original privilege level;
+administrator approval only authorizes the protected service registration.
+A persistent daemon should have
 `gateway.username` and `device.token` configured, usually from
 the device invitation flow, or
 `gsv auth token create --kind machine --peer ...` followed by
@@ -488,6 +532,12 @@ The verified host installer ships `gsv` and `gsvd` as a matching pair and
 migrates an existing legacy service definition during upgrade. See
 [Install Host Applications](/how-to/install-host-apps) for the release matrix,
 checksum verification, and rollback contract.
+
+Windows service installation requires the bundled `gsvd.exe` beside `gsv.exe`;
+`GSV_GSVD_PATH` and `PATH` do not override that selection. The CLI checks the
+daemon before administrator approval and verifies the same bytes before copying
+them to the protected service directory. Reinstall the complete distribution if
+the bundled daemon is missing or has changed during approval.
 
 ## Auth Commands
 

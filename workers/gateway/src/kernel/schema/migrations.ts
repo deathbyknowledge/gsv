@@ -1,3 +1,4 @@
+import { KERNEL_V064_SHIP_REPLY_ROUTES } from "./v064_ship_reply_routes";
 import { runSqlMigrations, type SqlMigration } from "../../schema/runner";
 import { KERNEL_V001_INITIAL_SCHEMA } from "./v001_initial";
 import { KERNEL_V002_REMOVE_DEVICE_LIFECYCLE } from "./v002_remove_device_lifecycle";
@@ -94,6 +95,24 @@ import { KERNEL_V053_TRACK_REQUEST_EXCHANGES } from "./v053_track_request_exchan
 import { KERNEL_V054_RETRY_CONTACT_MESSAGES } from "./v054_retry_contact_messages";
 
 // Used by Kernel DO startup before the individual stores initialize.
+import { KERNEL_V055_DETACH_CONTACT_HANDLERS } from "./v055_detach_contact_handlers";
+
+import { KERNEL_V056_VERSION_FEDERATION_DELIVERY } from "./v056_version_federation_delivery";
+
+import { KERNEL_V057_SEPARATE_SOCIAL_ATTENTION } from "./v057_separate_social_attention";
+
+import { KERNEL_V058_CONTACT_PREFERENCES_AND_BLOCKS } from "./v058_contact_preferences_and_blocks";
+
+import { KERNEL_V059_PUBLIC_PROFILES } from "./v059_public_profiles";
+
+import { KERNEL_V060_FIRST_CONTACT_REQUESTS } from "./v060_first_contact_requests";
+
+import { KERNEL_V061_BOUND_APPROACH_INVITES } from "./v061_bound_approach_invites";
+
+import { KERNEL_V062_PRIVATE_CONVERSATION_VIEWS } from "./v062_private_conversation_views";
+
+import { KERNEL_V063_CONTACT_REPLY_CONTINUATIONS } from "./v063_contact_reply_continuations";
+
 export const KERNEL_SCHEMA_COMPONENT = "kernel";
 
 export const KERNEL_MIGRATIONS: readonly SqlMigration[] = [
@@ -151,6 +170,16 @@ export const KERNEL_MIGRATIONS: readonly SqlMigration[] = [
   KERNEL_V052_ADD_LEDGER_PURPOSE,
   KERNEL_V053_TRACK_REQUEST_EXCHANGES,
   KERNEL_V054_RETRY_CONTACT_MESSAGES,
+  KERNEL_V055_DETACH_CONTACT_HANDLERS,
+  KERNEL_V056_VERSION_FEDERATION_DELIVERY,
+  KERNEL_V057_SEPARATE_SOCIAL_ATTENTION,
+  KERNEL_V058_CONTACT_PREFERENCES_AND_BLOCKS,
+  KERNEL_V059_PUBLIC_PROFILES,
+  KERNEL_V060_FIRST_CONTACT_REQUESTS,
+  KERNEL_V061_BOUND_APPROACH_INVITES,
+  KERNEL_V062_PRIVATE_CONVERSATION_VIEWS,
+  KERNEL_V063_CONTACT_REPLY_CONTINUATIONS,
+  KERNEL_V064_SHIP_REPLY_ROUTES,
 ];
 
 export function runKernelSqlMigrations(storage: DurableObjectStorage): void {

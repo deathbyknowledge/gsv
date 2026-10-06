@@ -787,7 +787,22 @@ struct HelperProcess {
 impl HelperProcess {
     fn spawn() -> Result<Self, VoiceErrorCode> {
         let executable = helper_executable()?;
-        let mut child = Command::new(&executable)
+        let mut command = Command::new(&executable);
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            command.creation_flags(0x08000000);
+            if let Some(directory) = executable.parent() {
+                let runtime = directory.join("gsv-transcribe-runtime");
+                let inherited = std::env::var_os("PATH").unwrap_or_default();
+                let search = std::iter::once(runtime).chain(std::env::split_paths(&inherited));
+                command.env(
+                    "PATH",
+                    std::env::join_paths(search).map_err(|_| VoiceErrorCode::HelperUnavailable)?,
+                );
+            }
+        }
+        let mut child = command
             .env("OPENBLAS_NUM_THREADS", "1")
             .env("OMP_NUM_THREADS", "1")
             .stdin(Stdio::piped())

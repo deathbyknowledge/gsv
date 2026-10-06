@@ -30,7 +30,7 @@ function listedProcess(pid: string, personal: boolean) {
 function committed(author: ConversationMessage["author"], id: string, conversationId: string) {
   const message: ConversationMessage = { id, conversationId, sequence: 1, author, text: "Done.",
     origin: { kind: "client", clientId: "web" }, createdAt: 1 };
-  return { message, directed: false };
+  return { message, directed: true };
 }
 
 beforeEach(() => {
@@ -74,6 +74,14 @@ describe("tab attention on the wire", () => {
     } finally {
       await tab.unmount();
     }
+  });
+
+  it("syncs messages delivered elsewhere without another notification", async () => {
+    const tab = await mounted();
+    try {
+      await tab.commit({ ...committed({ kind: "process", pid: SHIP_PID, uid: AGENT_UID }, "ship-sync", "canonical-ship"), directed: false });
+      expect(page.title).toBe("GSV");
+    } finally { await tab.unmount(); }
   });
 
   it("counts a Ship message, and not the person's own", async () => {

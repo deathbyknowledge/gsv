@@ -28,6 +28,7 @@ export const binaryBodySchema = z.custom<BinaryBody>(
 const MAX_PREALLOCATED_BODY_BYTES = 64 * 1024 * 1024;
 
 export const BODY_SYSCALL_NAMES = [
+  "sys.feedback",
   "fs.read",
   "fs.transfer.send",
   "fs.transfer.receive",

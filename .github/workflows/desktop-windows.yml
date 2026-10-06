@@ -1,0 +1,142 @@
+name: Windows host
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - '.github/workflows/desktop-windows.yml'
+      - '.github/workflows/release.yml'
+      - 'host/**'
+      - 'install.ps1'
+      - 'web/**'
+      - 'packages/gsv/**'
+      - 'package*.json'
+permissions:
+  contents: read
+concurrency:
+  group: windows-host-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+jobs:
+  core:
+    runs-on: windows-2022
+    timeout-minutes: 20
+    env:
+      CARGO_PROFILE_DEV_DEBUG: 0
+      CARGO_PROFILE_TEST_DEBUG: 0
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
+        with:
+          workspaces: host -> target
+          key: windows-core
+          cache-on-failure: true
+      - name: Test service, IPC and process ownership
+        working-directory: host
+        run: cargo test --locked --package windows-host --package host-config --package gateway-client --package daemon-protocol --package gsv --package machine
+      - name: Lint Windows service-control library
+        working-directory: host
+        run: cargo clippy --locked --package gsv --lib -- -D warnings
+      - name: Build CLI and daemon
+        id: core_build
+        if: ${{ !cancelled() }}
+        working-directory: host
+        run: cargo build --locked --package gsv --package machine
+      - name: Smoke test SCM and transactional installer
+        if: ${{ !cancelled() && steps.core_build.outcome == 'success' }}
+        run: ./host/scripts/test-windows.ps1 -BinDir host/target/debug
+      - name: Test setup content authentication
+        if: ${{ !cancelled() }}
+        run: ./host/scripts/test-windows-setup.ps1
+  voice-inference:
+    runs-on: windows-2022
+    timeout-minutes: 25
+    env:
+      CARGO_PROFILE_DEV_DEBUG: 0
+      CARGO_PROFILE_TEST_DEBUG: 0
+      TRANSCRIBE_CMAKE_ARGS: '-UGGML_* -DGGML_CPU_ALL_VARIANTS=ON -DTRANSCRIBE_X86_CONSERVATIVE=ON'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
+        with:
+          workspaces: host -> target
+          key: windows-voice
+      - name: Build speech inference test
+        working-directory: host
+        run: cargo test --locked --package transcriber --no-run
+      - name: Transcribe recorded speech
+        run: python host/scripts/check-transcription.py
+  windows:
+    runs-on: windows-2022
+    timeout-minutes: 90
+    env:
+      CARGO_PROFILE_DEV_DEBUG: 0
+      CARGO_PROFILE_TEST_DEBUG: 0
+      CMAKE_BUILD_PARALLEL_LEVEL: 4
+      TRANSCRIBE_CMAKE_ARGS: '-UGGML_* -DGGML_CPU_ALL_VARIANTS=ON -DTRANSCRIBE_X86_CONSERVATIVE=ON'
+      # Test, build and clippy share the same optimized C++ runtime on this runner.
+      GSV_VISION_CMAKE_DIR: ${{ github.workspace }}/host/target/gesture-native
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
+        with:
+          workspaces: host -> target
+          key: windows-host-native-v1
+          cache-workspace-crates: true
+      - name: Build shared frontend
+        run: |
+          npm ci --ignore-scripts --workspace web --workspace packages/gsv --include-workspace-root=false
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          npm run gsv:build
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          npm run build:desktop --workspace web
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+      - name: Test Windows host and native helpers
+        working-directory: host
+        run: cargo test --locked --package desktop-protocol --package desktop-native --package desktop --package transcriber --package gestures --package gesture-protocol
+      - name: Build distribution
+        id: distribution
+        if: ${{ !cancelled() }}
+        working-directory: host
+        run: cargo build --locked --package gsv --package machine --package desktop --package transcriber --package gestures
+      - name: Check voice helper
+        if: ${{ !cancelled() && steps.distribution.outcome == 'success' }}
+        run: python host/scripts/check-transcriber.py host/target/debug/gsv-transcribe.exe
+      - name: Check gesture fixture parity
+        if: ${{ !cancelled() && steps.distribution.outcome == 'success' }}
+        shell: bash
+        run: scripts/vision-native/parity.sh --package gestures
+      - name: Package Windows installer
+        if: ${{ !cancelled() && steps.distribution.outcome == 'success' }}
+        run: ./host/scripts/package-windows.ps1 -BinDir host/target/debug -Output release
+      - name: Lint Windows host
+        if: ${{ !cancelled() && steps.distribution.outcome == 'success' }}
+        working-directory: host
+        run: cargo clippy --locked --package windows-host --package host-config --package daemon-protocol --package desktop-protocol --package desktop-native --package machine --package desktop --package transcriber --package gestures --package gesture-protocol --all-targets -- -D warnings
+      - name: Collect test binaries
+        if: ${{ !cancelled() && steps.distribution.outcome == 'success' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: gsv-windows-x64-test
+          path: |
+            host/target/debug/gsv.exe
+            host/target/debug/gsvd.exe
+            host/target/debug/gsv-desktop.exe
+            host/target/debug/gsv-transcribe.exe
+            host/target/debug/gsv-vision.exe
+            release/*

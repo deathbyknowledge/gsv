@@ -22,6 +22,11 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  # Keep reusable and manually dispatched builds independent of PR validation.
+  group: desktop-macos-${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
+
 jobs:
   bundle:
     name: macOS app (${{ matrix.platform }})
@@ -39,6 +44,7 @@ jobs:
             platform: darwin-arm64
     env:
       MACOSX_DEPLOYMENT_TARGET: '12.0'
+      TRANSCRIBE_CMAKE_ARGS: ${{ matrix.platform == 'darwin-x64' && '-UGGML_* -DGGML_CPU_ALL_VARIANTS=ON -DTRANSCRIBE_X86_CONSERVATIVE=ON' || '' }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -54,7 +60,6 @@ jobs:
         with:
           workspaces: host -> target
           key: desktop-macos-${{ matrix.target }}
-          cache-on-failure: true
       - name: Install frontend dependencies
         run: |
           npm ci --ignore-scripts --workspace web --workspace packages/gsv --include-workspace-root=false

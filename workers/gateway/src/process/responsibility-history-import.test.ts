@@ -3,7 +3,7 @@ import { evictDurableObject } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
 import type { Process } from "./do";
 import { initProcess, ROOT_IDENTITY, runInProcess } from "./do-test-harness";
-import { formatResponsibilityBaseline } from "./internal/events";
+import { renderResponsibilityBaseline } from "../prompts/responsibility-events";
 
 type ResponsibilityEvent = Extract<ProcHistoryRecordData, { kind: "event" }> & {
   payload: Extract<Extract<ProcHistoryRecordData, { kind: "event" }>["payload"], { kind: "responsibility.revision" }>;
@@ -29,10 +29,11 @@ describe("responsibility history import", () => {
           blocker: "Awaiting access", dueAtMs: 10_000, revision: 1, createdAtMs: 100, updatedAtMs: 100,
         };
         const ledger = { responsibilities: [baseline], count: 1, revision: 1 };
+        const rendered = renderResponsibilityBaseline(ledger, process.pid);
         const epoch = process.store.epochs.createContextEpoch({
-          id: "source-epoch", generation: 1, systemPrompt: formatResponsibilityBaseline(ledger),
+          id: "source-epoch", generation: 1, systemPrompt: rendered.text,
           r12yRevision: 1, r12yCount: 1, r12yBaseline: [baseline],
-          sourceManifest: { r12yBaselineRendered: true }, observedProjection: {}, now: 100,
+          sourceManifest: { r12yBaselineRendered: true, r12yBaselineDetailIds: rendered.detailIds }, observedProjection: {}, now: 100,
         });
         const activeRecord: ResponsibilityRecord = { ...baseline, state: "active", revision: 2, updatedAtMs: 200 };
         delete activeRecord.blocker;

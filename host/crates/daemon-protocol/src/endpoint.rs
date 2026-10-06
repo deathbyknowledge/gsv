@@ -37,14 +37,30 @@ impl DaemonControlEndpoint {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DaemonControlEndpoint {
     pipe_name: std::ffi::OsString,
+    service: bool,
 }
 
 #[cfg(windows)]
 impl DaemonControlEndpoint {
     pub fn current_user() -> Result<Self, Error> {
+        if windows_host::service::is_service_process()
+            || windows_host::service::installed()
+                .map_err(|error| Error::Io(std::io::Error::other(error)))?
+        {
+            return Ok(Self {
+                pipe_name: r"\\.\pipe\gsv-daemon-service-v1".into(),
+                service: true,
+            });
+        }
+        Self::foreground_user()
+    }
+
+    /// A foreground daemon never claims the SCM service endpoint.
+    pub fn foreground_user() -> Result<Self, Error> {
         let sid = crate::transport::windows::current_user_sid_string()?;
         Ok(Self {
             pipe_name: format!(r"\\.\pipe\gsv-daemon-control-v1-{sid}").into(),
+            service: false,
         })
     }
 
@@ -52,7 +68,12 @@ impl DaemonControlEndpoint {
     pub fn from_pipe_name(name: impl Into<std::ffi::OsString>) -> Self {
         Self {
             pipe_name: name.into(),
+            service: false,
         }
+    }
+
+    pub(crate) fn is_service(&self) -> bool {
+        self.service
     }
 
     #[must_use]

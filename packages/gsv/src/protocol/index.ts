@@ -28,6 +28,10 @@ export { orderAiModelIds } from "./syscalls/ai";
 export type * from "./syscalls/mail";
 export type * from "./syscalls/conversation";
 export * from "./syscalls/contact";
+export * from "./syscalls/profile";
+export * from "./syscalls/approach";
+export * from "./social";
+export * from "./approaches";
 export type * from "./syscalls/map";
 export * from "./adapters";
 export * from "./adapter-media-body";
@@ -46,3 +50,5 @@ export * from "./json";
 export * from "./events";
 export * from "./history";
 export type * from "./wire-frame";
+
+export * from "./client-activity";

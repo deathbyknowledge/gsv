@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { markApprovalSetup, saveAccountApprovalPolicy } from "./approvalPolicyService";
+import { saveAccountApprovalPolicy } from "./approvalPolicyService";
 import { GSVClient } from "@humansandmachines/gsv/client";
 
 describe("permission policy replacement", () => {
@@ -45,13 +45,5 @@ describe("permission policy replacement", () => {
     await expect(saveAccountApprovalPolicy(client, 1000, "", legacy)).rejects.toThrow("not valid");
     expect(get).not.toHaveBeenCalled();
     expect(save).not.toHaveBeenCalled();
-  });
-
-  it("marks the walkthrough on the account's ui key and clears it with a blank", async () => {
-    const client = new GSVClient();
-    const save = vi.spyOn(client.sys.config, "set").mockResolvedValue({ ok: true });
-    await markApprovalSetup(client, 1000, "skipped");
-    await markApprovalSetup(client, 1000, "");
-    expect(save.mock.calls).toEqual([[{ key: "users/1000/ui/approval-setup", value: "skipped" }], [{ key: "users/1000/ui/approval-setup", value: "" }]]);
   });
 });

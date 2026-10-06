@@ -1,4 +1,4 @@
-import { DurableObject } from "cloudflare:workers";
+import { DurableObject, RpcTarget } from "cloudflare:workers";
 import type { Context } from "@earendil-works/pi-ai";
 import { encodeInferenceExecutionStreamEvent as encodeManagedInferenceStreamEvent } from "@humansandmachines/gsv/protocol";
 import type { InferenceExecutionRequest, InferenceExecutor as ExecutorContract, InferenceTransport, InferenceMediaRequest, InferenceMediaResult } from "@humansandmachines/gsv/services/inference-execution";
@@ -50,6 +50,11 @@ export class InferenceExecutor<Environment extends ExecutorEnvironment = Executo
   }
 
   protected providerFactories(): readonly InferenceProviderFactory[] { return []; }
+
+  getTarget(): ExecutorTarget {
+    this.retirement.requireLive();
+    return new ExecutorTarget(this);
+  }
 
   async generate(input: InferenceExecutionRequest, transport?: InferenceTransport): Promise<ManagedInferenceResult> {
     const request = this.open(input, transport);
@@ -323,7 +328,7 @@ export class InferenceExecutor<Environment extends ExecutorEnvironment = Executo
       signal: request.controller.signal,
       deadlineAt: request.deadline,
       sessionAffinityKey: input.sessionAffinityKey,
-      attribution: { installationId: this.installationId, logicalRequestId: request.id, actor: input.actor, workload: input.workload },
+      attribution: { installationId: this.installationId, logicalRequestId: request.id, diagnosticId: input.diagnosticId, actor: input.actor, workload: input.workload },
     };
   }
 
@@ -355,6 +360,16 @@ function dispose(value: InferenceTransport | undefined): void {
   // SAFETY: Cloudflare RPC arguments may expose optional disposal; this executor owns the argument.
   const disposable = value as (InferenceTransport & { [Symbol.dispose]?: () => void }) | undefined;
   disposable?.[Symbol.dispose]?.();
+}
+
+/** The gateway receives execution authority; lifecycle RPCs remain private. */
+class ExecutorTarget extends RpcTarget implements ExecutorContract {
+  readonly #owner: ExecutorContract;
+  constructor(owner: ExecutorContract) { super(); this.#owner = owner; }
+  generate(...args: Parameters<ExecutorContract["generate"]>) { return this.#owner.generate(...args); }
+  generateStream(...args: Parameters<ExecutorContract["generateStream"]>) { return this.#owner.generateStream(...args); }
+  media(...args: Parameters<ExecutorContract["media"]>) { return this.#owner.media(...args); }
+  abort(...args: Parameters<ExecutorContract["abort"]>) { return this.#owner.abort(...args); }
 }
 
 function retainTransport(value: InferenceTransport | undefined): InferenceTransport | undefined {

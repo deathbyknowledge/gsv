@@ -17,6 +17,7 @@ uuid = { version = "1", features = ["serde", "v4"] }
 libc = "0.2"
 
 [target.'cfg(windows)'.dependencies]
+windows-host = { path = "../windows-host" }
 windows-sys = { version = "0.61", features = [
     "Win32_Foundation",
     "Win32_Security",

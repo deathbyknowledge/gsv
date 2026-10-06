@@ -1,3 +1,4 @@
+import type { ShipReplies } from "./ship-replies";
 /**
  * KernelContext — the single shape passed to all syscall handlers.
  *
@@ -6,10 +7,11 @@
  */
 
 import type { ManualUpdater } from "./sys/manual";
+import type { ModelMetadataResolver } from "../inference/model-metadata";
 import type { LedgerStore } from "./ledger";
 import type { McpClientManager } from "./mcp-client";
 import type {
-  FederationDeliveryReceipt,
+  FederationTransportReceipt,
   JsonObject,
   JsonValue,
   PeerPrincipalKind,
@@ -40,6 +42,8 @@ import type { ResponsibilityStore } from "./responsibility-store";
 import type { ResponsibilitySourcePolicyStore } from "./responsibility-source-policies";
 import type { FederationStore } from "./federation-store";
 import type { FederationIdentity } from "./federation-crypto";
+import type { ProfileStore } from "./profile-store";
+import type { ApproachStore } from "./approach-store";
 import type { McpAddConnectionInput, McpAddConnectionResult } from "./sys/mcp";
 import type { InstallationIdentity } from "../installation/identity";
 import type { KernelConnection, KernelConnectionState } from "./connection";
@@ -60,6 +64,7 @@ export type KernelContext = {
   invalidateAccountConnections: (uid: number) => void;
   caps: CapabilityStore;
   config: ConfigStore;
+  modelMetadata: ModelMetadataResolver;
   manual: ManualUpdater;
   targets: TargetRegistry;
   procs: ProcessRegistry;
@@ -69,6 +74,7 @@ export type KernelContext = {
   mcpServers: McpServerStore;
   adapters: AdapterStore;
   runRoutes: RunRouteStore;
+  shipReplies: ShipReplies;
   shellSessions: ShellSessionStore;
   signalWatches: SignalWatchStore;
   ipcCalls: IpcCallStore;
@@ -78,6 +84,9 @@ export type KernelContext = {
   responsibilitySources: ResponsibilitySourcePolicyStore;
   federation: FederationStore;
   federationIdentity: FederationIdentity;
+  profiles: ProfileStore;
+  approaches: ApproachStore;
+  scheduleApproachMaintenance: () => Promise<void>;
   connection: KernelConnection<KernelConnectionState> | null;
   peer?: PeerContext;
   processId?: string;
@@ -122,8 +131,8 @@ export type KernelContext = {
   ) => Promise<void>;
   coordinateFederationInbound: (
     key: string,
-    operation: () => Promise<FederationDeliveryReceipt>,
-  ) => Promise<FederationDeliveryReceipt>;
+    operation: () => Promise<FederationTransportReceipt>,
+  ) => Promise<FederationTransportReceipt>;
   coordinateFederationContact: <Value>(
     contactId: string,
     operation: () => Value | Promise<Value>,

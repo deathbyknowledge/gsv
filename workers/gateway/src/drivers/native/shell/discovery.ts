@@ -38,6 +38,7 @@ function defineNativeCommandDescriptors<T extends NativeCommandDescriptorMap>(va
 }
 
 const NATIVE_COMMAND_DESCRIPTORS = defineNativeCommandDescriptors({
+  feedback: command("Send feedback to the space operator.", "Read a report from a file when the user asks you to share it. Keep report text out of the logged shell command.", ["feedback", "bug", "report", "suggestion", "support"], [], ["feedback [--id UUID] < report.txt"], ["sys.feedback"]),
   whoami: command("Print the current program account name.", "Identify which user or agent account the shell is running as.", ["identity", "account", "username"]),
   id: command("Print the current uid, gid, and supplementary groups.", "Inspect the current program identity and group membership.", ["identity", "permissions", "groups"]),
   hostname: command("Print the native GSV server name.", "Identify the GSV instance running the native shell.", ["server", "instance", "machine"]),
@@ -94,7 +95,7 @@ const NATIVE_COMMAND_DESCRIPTORS = defineNativeCommandDescriptors({
     "message search QUERY [--with CONTACT_OR_CONVERSATION] [--before SEQUENCE] [--limit N] [--json]",
     "message delivery show DELIVERY_ID [--json]",
     "message send [--message TEXT]",
-    "message send --to DESTINATION [--message TEXT] [--attach PATH]... [--mime TYPE] [--delivery-id ID] [--also]",
+    "message send --to DESTINATION [--message TEXT] [--attach PATH]... [--mime TYPE] [--delivery-id ID] [--responsibility ID] [--also]",
   ]),
   yield: command("Finish the active agent run.", "Yield control after the current work is complete while keeping the durable Process available for future input.", ["finish", "complete", "done", "stop", "silent"], [], ["yield"]),
   mail: command("Read, send, reply to, and inspect managed email.", "Read an inbox message, search received email, send email, reply to a message, or check whether a queued email was accepted.", ["email", "inbox", "read", "message", "search", "send", "reply", "status", "delivery"], [], [
@@ -120,7 +121,7 @@ const NATIVE_COMMAND_DESCRIPTORS = defineNativeCommandDescriptors({
     "sched run <id> [--force]",
   ]),
   signal: command("Watch target connections.", "Receive a notice when an accessible laptop or browser target connects or disconnects.", ["signal", "watch", "notify", "notice", "connection", "laptop", "browser", "events"], [], ["signal watch --json JSON", "signal unwatch --json JSON"]),
-  targets: command("Discover connected execution targets.", "Find where work can run, including a laptop, phone, or browser profile.", ["device", "machine", "laptop", "browser", "phone", "hardware", "target"], ["devices"]),
+  targets: command("Discover targets and pair computers or browsers.", "Find where work can run or create a device invitation with installation instructions.", ["device", "machine", "laptop", "browser", "phone", "hardware", "target", "pair", "connect", "install"], ["devices"], ["targets pair --name NAME --platform mac|linux|windows|browser", "targets pair list", "targets pair cancel INVITATION_ID"]),
   devices: command("Alias for connected-target discovery.", "Find a connected machine, browser profile, or other execution target.", ["device", "machine", "laptop", "browser", "hardware", "target"], ["targets"]),
   web: command("Search the web and return source links and excerpts.", "Find current information and sources through gsv or an accessible target implementing web.search.", ["web", "internet", "search", "sources", "research", "news"], [], ["web search [--target TARGET] [--limit 1..10] [--include-domain HOST] [--exclude-domain HOST] [--json] QUERY..."], ["web.search"]),
   net: command("Make a streamed HTTP request through GSV or another target.", "Fetch a URL or call an HTTP API with explicit request and response control.", ["http", "network", "url", "download", "api", "fetch"]),
@@ -178,6 +179,7 @@ export class ShellDiscoveryCatalog {
       const missing = requirements.filter((capability) =>
         !hasCapability(principalOf(this.ctx)?.calls ?? [], capability)
       );
+      if (registered.name === "feedback" && !this.ctx.env.FEEDBACK) missing.push("configured feedback inbox");
       const entry: ShellDiscoveryEntry = {
         kind: "command",
         name: registered.name,
@@ -225,7 +227,7 @@ export class ShellDiscoveryCatalog {
       "SYNOPSIS",
       ...synopsis.map((line) => `  ${line}`),
       ...(entry.requirements?.length
-        ? ["", "CURRENT AVAILABILITY", `  Missing capabilities: ${entry.requirements.join(", ")}`]
+        ? ["", "CURRENT AVAILABILITY", `  Missing requirements: ${entry.requirements.join(", ")}`]
         : []),
       "",
       "DISCOVERY",

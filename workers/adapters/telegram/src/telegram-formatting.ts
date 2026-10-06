@@ -10,6 +10,9 @@ type TelegramApiCall<T> = (
   payload: TelegramApiPayload,
 ) => Promise<T>;
 
+/** Telegram's limit for one text message, in code points, after entities are parsed. */
+export const TELEGRAM_TEXT_LIMIT = 4096;
+
 const telegramFormattingErrorSchema = z.object({
   telegramStatus: z.literal(400),
   telegramDescription: z.string(),

@@ -21,6 +21,22 @@ const INPUT = {
 };
 
 describe("telemetry contract", () => {
+  it("allows correlated metadata timings only from the three lookup owners", () => {
+    const event = {
+      stream: "operational", name: "inference.metadata.finished",
+      properties: {
+        lookupId: "11111111-1111-4111-8111-111111111111", outcome: "ok",
+        durationMs: 250, sqlDurationMs: 0.3, queryAttempts: 2,
+      },
+    };
+    for (const component of ["gateway", "inference", "accounts"]) {
+      assert.ok(telemetryRecordSchema.safeParse(createTelemetryRecord({ ...INPUT, component, event })).success);
+    }
+    assert.throws(() => createTelemetryRecord({ ...INPUT, component: "mail", event }));
+    for (const extra of [{ error: "private" }, { model: "private-model" }, { lookupId: "process-id" }]) {
+      assert.throws(() => createTelemetryRecord({ ...INPUT, event: { ...event, properties: { ...event.properties, ...extra } } }));
+    }
+  });
   it("creates a strict, versioned record", () => {
     const record = createTelemetryRecord(
       INPUT,
@@ -87,6 +103,11 @@ describe("telemetry contract", () => {
     });
 
     assert.equal(telemetryRecordSchema.safeParse(failure).success, true);
+    for (const provider of ["modal", "gsv"]) {
+      assert.equal(telemetryRecordSchema.safeParse({
+        ...failure, event: { ...failure.event, properties: { ...failure.event.properties, provider } },
+      }).success, true);
+    }
     assert.equal(telemetryRecordSchema.safeParse({
       ...failure,
       event: {
@@ -122,6 +143,9 @@ describe("telemetry contract", () => {
     });
 
     assert.equal(telemetryRecordSchema.safeParse(failure).success, true);
+    assert.equal(telemetryRecordSchema.safeParse({
+      ...failure, event: { ...failure.event, properties: { ...failure.event.properties, provider: "modal" } },
+    }).success, true);
     assert.equal(telemetryRecordSchema.safeParse({
       ...failure,
       event: {

@@ -3,7 +3,7 @@ import { useQuery } from "../../../services/navigation/viewQueries";
 import { useState } from "preact/hooks";
 import { useGateway } from "../../../services/gateway/GatewayProvider";
 import { loadConsoleConfig, loadConsoleTargets } from "../../../services/system/consoleService";
-import { accountApprovalKey, approvalSetupKey, markApprovalSetup, saveAccountApprovalPolicy } from "../../../services/system/approvalPolicyService";
+import { accountApprovalKey, saveAccountApprovalPolicy } from "../../../services/system/approvalPolicyService";
 import { APPROVAL_ACTIONS, actionLabel, humanToolCapabilityLabel } from "../../../components/ui/agentToolApprovalOptions";
 import { LoadingState } from "../../../components/ui/Spinner";
 import { defaultApprovalPolicyForConfig } from "../../../domain/system/consoleAgentBehavior";
@@ -36,21 +36,11 @@ export function Permissions({ account, active, onDirty }: SettingsSectionProps) 
     onSuccess: async () => { await cache.invalidateQueries({ queryKey: SETTINGS_CONFIG_KEY }); setDraft(null); setSaved(true); },
   });
   const update = (next: SettingsPolicy) => { setDraft({ inherited: false, policy: next, base: draft?.base ?? original }); setSaved(false); setError(null); };
-  const walkthroughDone = (config.data?.find((entry) => entry.key === approvalSetupKey(account.uid))?.value ?? "") !== "";
-  const replay = useMutation({
-    mutationFn: () => markApprovalSetup(client, account.uid, ""),
-    onSuccess: () => cache.invalidateQueries({ queryKey: SETTINGS_CONFIG_KEY }),
-  });
   return <section aria-labelledby="settings-permissions-title">
     <h1 id="settings-permissions-title">Permissions</h1>
     <p class="settings-intro">Choose when your agents ask before using a capability. More specific targets win, then more specific capabilities; list order breaks ties. Account capability grants still set the outer limit.</p>
     <p class="settings-muted">Mail needs an explicit Allow rule to send without asking, even when the default is Allow.</p>
-    <p class="settings-muted">Your Ship offers a short walkthrough of these choices at your first approval.{" "}
-      {walkthroughDone
-        ? <button class="settings-text-action" type="button" disabled={!connected || !canConfigure(account, "sys.config.set") || replay.isPending} onClick={() => replay.mutate()}>show it again</button>
-        : <span role="status">it will come up at your next approval</span>}
-      {replay.error && <span class="settings-error" role="alert"> {replay.error.message}</span>}
-    </p>
+    <p class="settings-muted"><strong>Always allow</strong> on an approval card adds an Allow rule here for exactly that capability and place.</p>
     <SettingsError error={config.error ?? error ?? save.error} />
     {config.isPending && connected && <LoadingState variant="panel">Loading permissions…</LoadingState>}
     {targetQuery.error && <p class="settings-muted" role="status">Target names could not be loaded. Stored target IDs remain available.</p>}

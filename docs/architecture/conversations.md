@@ -11,18 +11,39 @@ Conversation messages do not belong to a Process. A Process handles an interacti
 canonical message records the relevant PID and run ID, but killing that Process does not delete the
 conversation. Users can inspect the referenced Process while it exists or read its archive later.
 
+Web and Desktop render Ship's Markdown code blocks at a readable monospace size with a copy action.
+Long lines scroll inside the block. Copy preserves indentation and internal line breaks without
+adding the renderer's final newline to the clipboard.
+
 ## Conversation kinds
 
 The Kernel owns the conversation directory and membership:
 
 - **Ship** is the stable conversation with the user's personal intelligence. Web, Desktop, CLI,
   Telegram, Slack, and other private surfaces all contribute to the same Ship message stream.
-  The current personal Process is replaceable; the Ship conversation is not.
+  The current personal Process is replaceable; the Ship conversation is not. In the web and
+  Desktop clients an empty Ship conversation shows the interface greeting ("Welcome to the ship."
+  / "I am the ship. Who are you?"); the CLI and messengers show none. Nothing is sent on the
+  user's behalf, and the Ship's onboarding responsibility tells it which surfaces saw the greeting
+  so it can treat the first message as the answer or introduce itself first.
 - **Work** is a conversation handled by one explicit interactive work Process. Opening Work does not
   replace Ship or redefine the personal intelligence.
 - **Group** is tied to one normalized adapter surface and can retain multiple account and Process
   members. Current authorization remains owner-scoped, while the membership schema can represent
   later multi-user and multi-Process conversations.
+- **Contact** is a conversation with an authenticated person on another space. It has no mandatory
+  Process handler. People owns its presentation; accepting a contact alone starts no agent work.
+
+The Kernel separately admits contact messages to Ship attention. A human can enable standing
+handling for one contact generation. Enabling it does not create work or wake Ship; the next
+incoming message creates a responsibility and later messages reuse that active record. After
+handling is disabled or completed, new work starts only on another incoming message while
+the preference is enabled; terminal records stay terminal. An outgoing message
+can instead bind to an existing owned Ship responsibility awaiting a reply. Exact reply references
+select that responsibility; without a reference, only one active task can be selected unambiguously.
+Both human and Process-authored replies may continue authorized work. A receipt or duplicate message
+never creates another responsibility. Revocation ends standing handling and returns unfinished tasks
+to Ship with the disconnection recorded. A replacement contact generation requires a fresh handoff.
 
 Delegated Process work is not copied into Ship. A child returns a typed Process event to its caller;
 the personal intelligence decides whether the result should become a canonical Message, cause more
@@ -76,17 +97,32 @@ human delivery cannot erase a caller result.
 
 ## Directed endpoints and synchronization
 
-The run route identifies the endpoint that caused the interaction. It controls immediate delivery,
-not conversation ownership:
+The run route controls immediate delivery, not conversation ownership. Explicit Work, group and
+contact destinations remain fixed. Personal Ship replies follow the owner's current reply preference:
 
-- The originating Web/Desktop/CLI connection receives `message.started` and `message.delta` while
+- The selected Web/Desktop/CLI connection receives `message.started` and `message.delta` while
   the model is still writing the message, then `message.committed`.
+- A started stream stays on its original connection through its deltas and abort. Switching clients
+  changes the committed reply's destination; it does not hand over a partial stream. A commit
+  replaces that draft through the ordinary conversation synchronization.
 - Other signed-in clients receive only the committed canonical message as synchronization. They do
   not play a notification or act as though the response was directed to them.
 - Adapters buffer Process output and deliver only the committed message. Provider-specific reply
   threading remains transport metadata.
-- A background Personal run without a conversation-origin route may use the last authorized private
-  adapter destination. A disconnected client-origin conversation never falls back to an adapter.
+- A human message to Ship selects its originating endpoint. Real foreground input in Web or Desktop
+  also selects that client, at most once every 30 seconds; connecting, focusing a window, history
+  reads and keepalives do not. This preference survives the end of a run and Process replacement.
+- When the selected client disconnects or has been inactive for five minutes, Ship uses the owner's
+  last authorized linked private messenger destination. A new messenger message selects that
+  messenger; returning to interact with the app selects the app again. Without a usable destination,
+  the message remains in canonical history.
+- Idle expiry includes 30 seconds of reporting grace so throttled input cannot cause an early
+  fallback. Accepted inputs preserve their preference decision across retries without replacing
+  newer activity. The Kernel orders input before asynchronous preparation, so overlapping sends
+  select the newest input regardless of which preparation finishes first.
+- Each outgoing message records its delivery decision before the canonical append. Retrying an
+  uncertain append does not notify a different endpoint after the preference changes. Receipts expire after
+  30 days, independently of the lifetime of canonical conversation history.
 
 Streaming begins before the Send call is complete. As the model writes the call's arguments, the
 Process reads the `text` string out of the partial JSON and appends each newly completed run of
@@ -98,8 +134,27 @@ the client drops the preview and shows the committed message. A Send that fails 
 generation that fails or retries, and a run that is interrupted, superseded, reset or killed also abort
 their projections, so no partial text outlives its message. Adapters never see the projection.
 
-The same rule applies to approvals: a client-origin HIL request does not jump to Telegram if its
-connection disappears, while a background Personal event may use the authorized private fallback.
+New Ship approval notifications use the same reply preference and authorized messenger fallback.
+Delegated Work retains its inherited approval route. An already queued adapter delivery keeps its
+chosen destination through retries; changing activity does not replay old notifications.
+
+In Web and Desktop, new approval requests scroll into view without moving the composer cursor or
+changing its draft. Use the buttons to decide, or `y` / `n` (and `a` in Zen for always allow) when not typing. The request has its own
+transcript row, independent of messages and runtime activity. Approvals from delegated work appear
+above the composer. Ship, delegated work and Fleet share one approval card: the
+action's purpose comes first, with command or request details folded underneath.
+The **full request** fold preserves every argument, including structured MCP
+parameters, mail bodies and execution options. Requests without a readable
+summary still expose their complete request in the details fold.
+Each card also offers **always allow** when the signed-in person can change settings and the
+requesting account's approval policy can be edited without loss. It writes one Allow rule for that
+syscall on that target, such as running commands on a machine, into the approval policy of the
+account the requesting process uses, then approves the request once. Its tooltip names that scope.
+The rule appears in **Settings → permissions**, where it can be removed, and applies from the next
+run; the current run keeps the policy it started with. Ordinary approval and denial are one-time
+decisions. The card's **why am I being asked?** link opens a short explanation below the live
+request: what the Ship does on its own, then an allow-or-ask choice for each kind of action, saved to
+the same account policy. It never opens on its own.
 
 Opening a Process activity inspector calls `proc.observe`. Raw Process signals then reach that
 specific client in addition to any connection that owns the active run. Closing the inspector calls
@@ -112,8 +167,9 @@ owner and are resolved only when a user inspects a span.
 
 ## Storage and retention
 
-The Kernel Durable Object stores only the conversation directory, membership, handler, surface
-mapping, and latest sequence. Each conversation has its own installation-scoped Conversation Durable
+The Kernel Durable Object stores the conversation directory, membership, optional handler, surface
+mapping, latest sequence and private inbox projection. Contact previews, read positions and archive
+state stay in that projection; canonical messages have one owner. Each conversation has its own installation-scoped Conversation Durable
 Object:
 
 - SQLite retains the newest 1,000 canonical messages for indexed, strongly consistent access.
@@ -121,6 +177,8 @@ Object:
   segment in installation-scoped R2.
 - SQLite retains the segment index and idempotency receipts, so history paging and retried appends
   remain stable across the hot/archive boundary.
+- Contact messages retain authenticated origin, authorship and reply references. Their origin index
+  maps an immutable remote message identity to the local sequence even after archival.
 - Conversation messages store immutable resource references. The Process retains an exact source
   revision in the run-as agent archive before committing it, so the bytes remain readable after
   temporary Process cleanup without a second conversation-owned copy.
@@ -152,7 +210,8 @@ native saves apply to the attachment blobs resolved by the authenticated fronten
 
 ## Search
 
-Zen opens conversation search with `/` in browse mode or `Ctrl/Cmd+F`. Selecting a result shows the
+Zen opens conversation search with `/` in browse mode or `Ctrl/Cmd+F`; People uses the same search
+dialog and syscall for the selected contact conversation. Selecting a result shows the
 original message and surrounding messages in the dialog, preserving the conversation position and
 any draft when the dialog closes.
 

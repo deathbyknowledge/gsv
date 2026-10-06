@@ -11,7 +11,7 @@
     "build": "npm run clean && npm run build:types && npm run build:js",
     "build:js": "node ./scripts/build-js.mjs",
     "build:types": "tsc -p tsconfig.build.json",
-    "clean": "rm -rf dist",
+    "clean": "node --input-type=module -e \"import { rmSync } from 'node:fs'; rmSync('dist', { recursive: true, force: true });\"",
     "prepublishOnly": "npm run build",
     "test": "npm run build && node --test test/*.test.mjs",
     "typecheck": "tsc --noEmit -p tsconfig.json"
@@ -20,6 +20,10 @@
     ".": {
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
+    },
+    "./device-setup": {
+      "types": "./dist/device-setup.d.ts",
+      "default": "./dist/device-setup.js"
     },
     "./protocol": {
       "types": "./dist/protocol.d.ts",

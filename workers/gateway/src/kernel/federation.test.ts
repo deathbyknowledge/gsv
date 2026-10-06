@@ -27,6 +27,7 @@ import {
   handleContactAliasSet,
   handleContactInviteCancel,
   handleContactInviteAccept,
+  handleContactNoticeDismiss,
   handleContactRequestCreate,
   handleContactRequestUpdate,
   handleContactResourceRead,
@@ -76,6 +77,17 @@ describe("federation outbound boundary", () => {
       .rejects.toThrow("This participant cannot change");
     expect(enqueue).not.toHaveBeenCalled();
     expect(updateRequest).not.toHaveBeenCalled();
+  });
+
+  it("lets only the signed-in human dismiss their own social upgrade notice", () => {
+    const dismissAttentionNotice = vi.fn(() => true);
+    const broadcastToUserUid = vi.fn();
+    const ctx = focusedContext({ federation: focusedFixture({ dismissAttentionNotice }), broadcastToUserUid });
+    expect(() => handleContactNoticeDismiss({ ...ctx, processId: "proc:ship" })).toThrow("requires a signed-in human");
+    expect(dismissAttentionNotice).not.toHaveBeenCalled();
+    expect(handleContactNoticeDismiss(ctx)).toEqual({});
+    expect(dismissAttentionNotice).toHaveBeenCalledExactlyOnceWith(OWNER.uid);
+    expect(broadcastToUserUid).toHaveBeenCalledExactlyOnceWith(OWNER.uid, "contact.changed");
   });
 
   it("notifies the owner after a saved alias change, but not for a no-op or failed write", () => {
@@ -334,6 +346,7 @@ describe("federation outbound boundary", () => {
     }) => {
       outbox = {
         deliveryId: input.deliveryId,
+        wireVersion: 1,
         ownerUid: input.ownerUid,
         contactId: input.contactId,
         contactGeneration: input.contactGeneration,
@@ -477,6 +490,7 @@ describe("federation outbound boundary", () => {
     }) => {
       outbox = {
         deliveryId: input.deliveryId,
+        wireVersion: 1,
         ownerUid: input.ownerUid,
         contactId: input.contactId,
         contactGeneration: input.contactGeneration,
@@ -667,6 +681,8 @@ describe("federation outbound boundary", () => {
 
 function activeContact(): FederationContactRecord {
   return {
+    preferences: { saved: true, muted: false, shipHandlesMessages: false, revision: 1 },
+    blocked: false,
     id: "contact:remote",
     ownerUid: OWNER.uid,
     state: "active",
@@ -674,6 +690,7 @@ function activeContact(): FederationContactRecord {
     remoteShipId: "ship:remote",
     remoteSubject: { id: "subject:remote", displayName: "Remote" },
     remoteOrigin: "https://remote.example",
+    protocol: { version: 1, features: [], checkedAtMs: Date.now() },
     remotePublicKey: { kty: "EC", crv: "P-256", x: "remote-x", y: "remote-y" },
     sharedSecret: randomBase64Url(32),
     conversationId: "conversation:remote",
@@ -688,6 +705,7 @@ function pendingDelivery(contact: FederationContactRecord): FederationOutboxReco
     retryable: false,
     retryEpoch: 0,
     deliveryId: "delivery:remote",
+    wireVersion: 1,
     ownerUid: OWNER.uid,
     contactId: contact.id,
     contactGeneration: contact.generation,
@@ -736,7 +754,9 @@ function focusedContext(overrides: Partial<KernelContext>): KernelContext {
       isPersonalAgentUid: () => false,
     },
     procs: {},
+    coordinateFederationContact: async <T>(_id: string, operation: () => T | Promise<T>) => operation(),
     broadcastToUserUid: vi.fn(),
+    approaches: focusedFixture({ pendingConnection: () => false }),
     ...overrides,
   };
   // SAFETY: each test exercises only the KernelContext members supplied by its focused fixture.

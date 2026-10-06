@@ -27,9 +27,29 @@ make_fixture() {
     {
         printf '#!/usr/bin/env sh\n'
         printf 'if [ "${1:-}" = "daemon" ] && [ "${2:-}" = "start" ]; then systemctl --user start gsvd.service; fi\n'
+        cat <<'SH'
+if [ "${1:-}" = desktop ]; then
+    printf 'desktop launched\n'
+    printf '%s\n' "$0" "$PATH" >> "${GSV_TEST_DESKTOP_LOG:-/dev/null}"
+    if [ "${GSV_TEST_DESKTOP_FAIL:-0}" = 1 ]; then
+        printf 'fixture desktop launch failed\n' >&2
+        exit 1
+    fi
+fi
+SH
         printf 'printf "%%s\\n" "%s"\n' "$marker"
     } > "$FIXTURES/$name"
     chmod 0755 "$FIXTURES/$name"
+}
+
+make_runtime() {
+    local platform="$1"
+    local marker="$2"
+    mkdir -p "$TEST_ROOT/runtime/gsv-transcribe-runtime"
+    printf '%s\n' "$marker" > "$TEST_ROOT/runtime/gsv-transcribe-runtime/libtranscribe.so"
+    printf 'baseline\n' > "$TEST_ROOT/runtime/gsv-transcribe-runtime/libggml-cpu-x64.so"
+    python3 "$REPOSITORY_ROOT/host/scripts/package-transcriber.py" \
+        --binary-dir "$TEST_ROOT/runtime" --platform "$platform" --output "$FIXTURES" >/dev/null
 }
 
 write_checksums() {
@@ -43,12 +63,14 @@ make_fixture gsv-linux-x64 gsv-v1
 make_fixture gsvd-linux-x64 gsvd-v1
 make_fixture gsv-desktop-linux-x64 desktop-v1
 make_fixture gsv-transcribe-linux-x64 transcribe-v1
+make_runtime linux-x64 runtime-v1
 make_fixture gsv-vision-linux-x64 vision-v1
 printf 'license-v1\n' > "$FIXTURES/gsv-transcribe-THIRD_PARTY.md"
 printf 'vision-license-v1\n' > "$FIXTURES/gsv-vision-LICENSE.apache-2.0"
 printf 'vision-provenance-v1\n' > "$FIXTURES/gsv-vision-PROVENANCE.md"
 printf 'vision-runtime-v1\n' > "$FIXTURES/gsv-vision-THIRD_PARTY.md"
 cp "$REPOSITORY_ROOT/install.sh" "$FIXTURES/install.sh"
+cp "$REPOSITORY_ROOT/tools/installer-animation/gsv-installer-animation.gz" "$FIXTURES/"
 write_checksums
 
 cat > "$FAKE_BIN/curl" <<'SH'
@@ -65,6 +87,7 @@ while [ "$#" -gt 0 ]; do
 done
 asset="${url%%\?*}"
 asset="${asset##*/}"
+if [ "$asset" = gsv-linux-x64 ]; then sleep "${GSV_TEST_DOWNLOAD_DELAY:-0}"; fi
 cp "$GSV_TEST_RELEASE_DIR/$asset" "$output"
 SH
 chmod 0755 "$FAKE_BIN/curl"
@@ -149,6 +172,7 @@ test "$("$INSTALL_DIR/gsv")" = "gsv-v1"
 test "$("$INSTALL_DIR/gsvd")" = "gsvd-v1"
 test "$("$INSTALL_DIR/gsv-desktop")" = "desktop-v1"
 test "$("$INSTALL_DIR/gsv-transcribe")" = "transcribe-v1"
+test "$(cat "$INSTALL_DIR/gsv-transcribe-runtime/libtranscribe.so")" = "runtime-v1"
 test "$("$INSTALL_DIR/gsv-vision")" = "vision-v1"
 test "$(cat "$INSTALL_DIR/gsv-transcribe-THIRD_PARTY.md")" = "license-v1"
 test "$(cat "$INSTALL_DIR/gsv-vision-LICENSE.apache-2.0")" = "vision-license-v1"
@@ -166,11 +190,13 @@ make_fixture gsv-linux-x64 gsv-v2
 make_fixture gsvd-linux-x64 gsvd-v2
 make_fixture gsv-desktop-linux-x64 desktop-v2
 make_fixture gsv-transcribe-linux-x64 transcribe-v2
+make_runtime linux-x64 runtime-v2
 make_fixture gsv-vision-linux-x64 vision-v2
 make_fixture gsv-darwin-x64 gsv-mac
 make_fixture gsvd-darwin-x64 gsvd-mac
 make_fixture gsv-desktop-darwin-x64 desktop-mac
 make_fixture gsv-transcribe-darwin-x64 transcribe-mac
+make_runtime darwin-x64 runtime-mac
 make_fixture gsv-vision-darwin-x64 vision-mac
 printf 'license-v2\n' > "$FIXTURES/gsv-transcribe-THIRD_PARTY.md"
 printf 'vision-license-v2\n' > "$FIXTURES/gsv-vision-LICENSE.apache-2.0"
@@ -194,6 +220,7 @@ test "$("$INSTALL_DIR/gsv")" = "gsv-v1"
 test "$("$INSTALL_DIR/gsvd")" = "gsvd-v1"
 test "$("$INSTALL_DIR/gsv-desktop")" = "desktop-v1"
 test "$("$INSTALL_DIR/gsv-transcribe")" = "transcribe-v1"
+test "$(cat "$INSTALL_DIR/gsv-transcribe-runtime/libtranscribe.so")" = "runtime-v1"
 test "$("$INSTALL_DIR/gsv-vision")" = "vision-v1"
 test "$(cat "$INSTALL_DIR/gsv-transcribe-THIRD_PARTY.md")" = "license-v1"
 test "$(cat "$INSTALL_DIR/gsv-vision-LICENSE.apache-2.0")" = "vision-license-v1"
@@ -219,6 +246,7 @@ run_default_installer() {
 }
 DEFAULT_OUTPUT="$(run_default_installer env)"
 test "$("$DEFAULT_HOME/.gsv/bin/gsv")" = "gsv-v2"
+test "$(cat "$DEFAULT_HOME/.gsv/bin/gsv-transcribe-runtime/libtranscribe.so")" = "runtime-v2"
 test "$("$DEFAULT_HOME/.gsv/bin/gsvd")" = "gsvd-v2"
 grep -q "Added $DEFAULT_HOME/.gsv/bin to PATH in ~/.profile, ~/.bashrc" <<< "$DEFAULT_OUTPUT"
 grep -q 'Open a new shell, or run now: export PATH="$HOME/.gsv/bin:$PATH"' <<< "$DEFAULT_OUTPUT"
@@ -465,4 +493,6 @@ DEFAULT_HOME="$DEV_SERVICE_HOME" run_default_installer env GSV_VERSION=dev >/dev
 grep -qF -- '--user start gsvd.service channel=channel = "dev"' "$SYSTEMCTL_LOG"
 test "$(grep -c '^channel = "dev"$' "$DEV_SERVICE_HOME/.config/gsv/config.toml")" = "1"
 
-echo "host installer checksum, replacement, default directory, PATH, bundle, launcher, encoded-path, and dev-channel smoke passed"
+python3 "$REPOSITORY_ROOT/scripts/test-installer-animation.py" "$REPOSITORY_ROOT" "$FIXTURES" "$FAKE_BIN"
+
+echo "host installer checksum, replacement, default directory, PATH, bundle, launcher, encoded-path, dev-channel, and terminal animation smoke passed"

@@ -85,6 +85,15 @@ An agent, Process, or the owner may prefer an entry from any layer by its stable
 | `config/ai/generation/timeout_ms` | `users/{uid}/ai/generation/timeout_ms` | `180000` | Maximum time to wait for one model generation before the run is released. |
 | `config/ai/generation/streaming` | `users/{uid}/ai/generation/streaming` | `auto` | `auto` streams when the provider supports it; `off` forces final-output only. |
 
+Without an explicit `contextWindowTokens`, the Kernel resolves the model's
+context limit through the inference service. Each lookup waits at most ten
+seconds, capped by a shorter generation timeout. Successful metadata is cached
+in that Kernel for one minute (up to 64 provider/model pairs); failures and
+late replies are not cached. A routing change can therefore take up to a minute
+to appear in newly resolved configuration. An active run retains its resolved
+configuration. Generation admission, permissions, credentials and usage checks
+remain independent of this metadata cache.
+
 Image generation, transcription, and speech each own a separate complete configuration under `config/ai/{capability}` or `users/{uid}/ai/{capability}`. Setting any user-scoped provider, model, credential, or speaker selects that whole scope; provider and model must both be present, and missing values are not borrowed from the text stack or system capability configuration. Their `api_key` values belong only to that capability configuration.
 
 Legacy per-field text-model keys and `model_profiles` are not read. Move each connection into the ordered `models` stack before upgrading.
@@ -115,13 +124,6 @@ first, or is refused. Two keys hold it:
 | `users/{uid}/ai/tools/approval` | One account's override, layered over the default | **Settings → permissions** in the web console, or `/sys/users/{uid}/ai/tools/approval` |
 
 Policy shape:
-
-Zen's first-approval walkthrough applies category choices to matching
-machine-specific rules too. Selecting the displayed choice again preserves any
-mixed machine-specific settings. Existing denials stay blocked. File-change choices
-preserve separate read, transfer and explicit deletion rules. **Always allow
-this** saves the exact capability and target to the policy used by that process,
-including when root is inspecting another person's work.
 
 ```json
 {
@@ -158,14 +160,16 @@ Mail is guarded separately. When `default` is `auto` and no rule covers `mail.se
 
 Every capability tool also accepts a `purpose` argument: one sentence written for the person, shown in the approval prompt and recorded in the ledger. It is stripped before the syscall runs; see [Tool purpose](./syscalls.md#tool-purpose).
 
-### The first-approval walkthrough and always allow
+### Always allow and the approval explanation
 
-The web console writes the account override in two more places, both as ordinary rules of the shape above:
+The web console writes an account override from the approval card in two ways, both as ordinary rules of the shape above. Each writes the policy of the account the requesting process resolves: the run-as account's own override when it has one, else its owner's. That holds when root is looking at another person's work. Neither is offered unless the person can change settings (`sys.config.set`) and **Settings → permissions** can edit the policy without loss.
 
-- The first time an approval reaches a person in Zen, the Ship explains what it does on its own and offers one choice, **allow** or **ask**, for each kind of action it asks about: running commands on your machines (`shell.exec` on `targets/*`), changing files on your machines (`fs.*` on `targets/*`; reads and searches keep their own rules), deleting files (`fs.delete` on `gsv` and on `targets/*`), fetching web pages through your machines (`net.fetch` on `targets/*`), connected tools (`sys.mcp.call`) and sending email (`mail.send` on `gsv`). Each row starts on what the account's policy does today. Saving writes rules only for the rows the person changed, starting from the current override, or the inherited policy when there is none; `default` is never changed. Skipping writes nothing.
-- The approval card's **always allow this** control writes `{ "match": "<syscall>", "target": "<resolved target>", "action": "auto" }` for exactly the call being asked about, then approves it. A rule for one machine wins over `targets/*`.
+- **Always allow** writes `{ "match": "<syscall>", "target": "<resolved target>", "action": "auto" }` for exactly the call being asked about, then approves that request once. Its tooltip names the scope, such as *run commands on my mac*. A rule for one machine wins over `targets/*`. On `mail.send` it is the explicit Allow rule that lets mail send without asking.
+- **why am I being asked?** opens a two-step explanation below the request. The first step says what the Ship does on its own and what it asks about. The second offers one choice, **allow** or **ask**, for each kind of action: running commands on your machines (`shell.exec` on `targets/*`), changing files on your machines (`fs.*` on `targets/*`), deleting files (`fs.delete` on `gsv` and on `targets/*`), fetching web pages through your machines (`net.fetch` on `targets/*`), connected tools (`sys.mcp.call`) and sending email (`mail.send` on `gsv`). Each row starts on what the policy does today. Saving writes rules only for the rows the person changed, starting from the current override, or the inherited policy when there is none. A choice also updates matching rules for one machine; picking the choice already shown keeps mixed per-machine settings. Existing Block rules stay blocked, file-change choices keep separate read, transfer and delete rules, and `default` is never changed.
 
-Whether the walkthrough has run is held at `users/{uid}/ui/approval-setup` as `done` or `skipped`; **Settings → permissions** can clear it with *show it again*, which changes no rule. Because the override replaces the installation default rather than layering over it, an account that has saved either way keeps the rules it composed even if the installation default changes later.
+Ordinary approve and deny decide one request only. A saved rule shows in **Settings → permissions**, where it can be changed or removed, and takes effect from the process's next run; the current run keeps the policy it started with. Because the override replaces the installation default rather than layering over it, an account that has saved keeps the rules it composed even if the installation default changes later.
+
+The `remember` field of `proc.hil` still exists for other clients: it keeps an Allow rule for that call in the requesting process only, never in an account policy. The web console does not send it.
 
 ## Runtime Config Keys
 

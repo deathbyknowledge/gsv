@@ -14,7 +14,7 @@
   grid-template-rows: minmax(0, 1fr);
   overflow: hidden;
 }
-@media (max-width: 720px) {
+@container instrument (max-width: 720px) {
   .zen-body { grid-template-columns: 18px 1fr 18px; }
 }
 .zen-timeline {
@@ -56,6 +56,7 @@
 }
 /* short transcripts sit at the bottom; long ones scroll all the way up (end-aligned flex cannot) */
 .zen-content > :first-child { margin-top: auto; }
+.zen-content.has-approval { padding-bottom: 0; }
 .zen-moments::-webkit-scrollbar { display: none; }
 .zen-history-status { display: flex; justify-content: center; gap: 16px; font-size: 11px; color: var(--text-dim); }
 .zen-history-status.is-err { color: var(--error); }
@@ -68,6 +69,7 @@
 }
 .zen-moment.is-older { opacity: 0.55; }
 .zen-moment.is-work { padding-block: 1vh; }
+.zen-moment.is-approval { padding-block: 0; }
 .zen-moment > .who {
   font-size: 11px;
   letter-spacing: 0.2em;
@@ -122,12 +124,13 @@
 }
 .zen-moment .text p { margin: 0 0 0.6em; }
 .zen-moment .text p:last-child { margin-bottom: 0; }
-.zen-moment .text code {
+.zen-moment .text :not(pre) > code {
   font-family: var(--gsv-font-mono);
   font-size: 0.72em;
   color: var(--label);
   background: var(--panel-2);
   padding: 0.05em 0.3em;
+  overflow-wrap: anywhere;
 }
 .zen-moment .text a.ref {
   color: var(--target);
@@ -305,45 +308,6 @@
 .work-code .work-output { padding-left: 12px; }
 .work-output-label { margin: 8px 0 4px; font-size: 10px; color: var(--faint); letter-spacing: 0.12em; text-transform: uppercase; }
 
-/* approvals: a boxed question with keys, as the TUI does it */
-.zen-approval {
-  margin: 16px 0 4px;
-  border: 1px solid var(--update);
-  padding: 12px 16px;
-  font-family: var(--gsv-font-mono);
-  font-size: 13px;
-  color: var(--text);
-  max-width: 720px;
-  box-shadow: 0 0 18px rgba(255, 210, 77, 0.12);
-}
-.zen-approval .q {
-  color: var(--update);
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-  font-size: 11px;
-  margin-bottom: 8px;
-}
-.zen-approval .keys {
-  margin-top: 10px;
-  color: var(--text-dim);
-  display: flex;
-  flex-wrap: wrap;
-  gap: 12px;
-  align-items: baseline;
-}
-.zen-approval kbd {
-  color: var(--text-hi);
-  padding: 0 6px;
-}
-.zen-approval.is-decided {
-  border-color: var(--border);
-  color: var(--text-dim);
-  box-shadow: none;
-}
-.zen-approval.is-decided .q { color: var(--text-dim); }
-.zen-approval .consequence { margin: 8px 0 0; color: var(--text-dim); }
-.zen-approval .consequence.is-err { color: var(--error, var(--update)); }
-
 /* the setup card: the same box, with a row per kind of action and a pick on each */
 .zen-approval.is-setup .ask + .ask { margin-top: 8px; }
 .zen-approval .rows { list-style: none; margin: 10px 0 0; padding: 0; display: grid; gap: 6px; }
@@ -354,7 +318,7 @@
 .zen-approval .row-pick .ibtn[aria-pressed="true"] { color: var(--text-hi); border-color: var(--update); }
 .zen-approval .row-pick .ibtn[aria-pressed="false"] { color: var(--text-dim); }
 .zen-approval .row-pick .row-blocked { align-self: center; color: var(--text-dim); font-size: 11px; }
-@media (max-width: 560px) {
+@container instrument (max-width: 560px) {
   .zen-approval .rows li { grid-template-columns: 1fr; grid-template-areas: "label" "example" "pick"; row-gap: 4px; }
 }
 
@@ -369,12 +333,11 @@
 }
 .zen-composer { position: relative; }
 .zen-delegated-approvals {
-  max-height: 40vh;
+  max-height: calc((var(--instrument-height) / var(--type-scale) - var(--instrument-header-height)) * .4);
   overflow-y: auto;
   margin-bottom: 14px;
 }
 .zen-delegated-approvals .zen-approval { margin: 8px 0; }
-.zen-delegated-approvals .fleet-approval { margin-top: 10px; }
 .zen-place-section { margin-top: 12px; }
 .zen-places {
   display: flex;
@@ -401,6 +364,13 @@
 .zen-place:enabled:hover, .zen-place:focus-visible { color: var(--text); }
 .zen-place.is-selected { color: var(--text); text-decoration: underline; text-underline-offset: 5px; }
 .zen-place:disabled { color: var(--text-dim); cursor: default; }
+/* the only place reads as plain text; hovering or focusing its row underlines it and reveals the offer to connect another */
+.zen-place.is-alone { color: var(--text-dim); text-decoration: none; }
+.zen-places li:hover .zen-place.is-alone, .zen-places li:focus-within .zen-place.is-alone { color: var(--text); text-decoration: underline; text-underline-offset: 5px; }
+.zen-connect-place { visibility: hidden; white-space: nowrap; color: var(--text-dim); }
+.zen-places li:hover .zen-connect-place, .zen-places li:focus-within .zen-connect-place { visibility: visible; }
+.zen-connect-place:hover, .zen-connect-place:focus-visible { color: var(--accent); }
+@media (hover: none) { .zen-connect-place { visibility: visible; } }
 .zen-place-status {
   flex: none;
   width: 7px;
@@ -418,7 +388,7 @@
 }
 .zen-feedback .is-warn { color: var(--update); }
 .zen-feedback .is-err { color: var(--error); }
-@media (max-width: 720px) {
+@container instrument (max-width: 720px) {
   .zen-bottom { padding: 0 18px 14px; }
   .prompt-line { font-size: 15px; }
   .prompt-line .dir { display: none; }
@@ -464,54 +434,10 @@
   color: var(--target);
   border-bottom: 1px solid rgba(151, 170, 255, 0.35);
 }
-.zen-moment .text pre {
-  font-family: var(--gsv-font-mono);
-  font-size: 0.6em;
-  line-height: 1.5;
-  color: var(--label);
-  border-left: 2px solid var(--border);
-  padding-left: 14px;
-  overflow-x: auto;
-  white-space: pre;
-}
 .zen-moment .text ul,
 .zen-moment .text ol {
   padding-left: 1.2em;
 }
-.zen-approval .keys .ibtn {
-  padding: 6px 12px;
-}
-.zen-approval .keys .ibtn kbd {
-  color: inherit;
-  border-color: currentColor;
-  margin-right: 6px;
-}
-/* what Ship wants to do, in the person's words; the raw request folds beneath it */
-.zen-approval .ask {
-  margin: 0;
-  font-family: var(--gsv-font-prose);
-  font-size: clamp(17px, 1.6vw, 22px);
-  line-height: 1.3;
-  color: var(--text-hi);
-  text-wrap: pretty;
-  max-width: var(--measure-prose);
-}
-.zen-approval .fold { margin-top: 10px; }
-.zen-approval .fold summary {
-  list-style: none;
-  display: inline-block;
-  cursor: pointer;
-  font-size: 11px;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-  color: var(--text-dim);
-}
-.zen-approval .fold summary::-webkit-details-marker { display: none; }
-.zen-approval .fold summary::before { content: "▸ "; color: var(--faint); }
-.zen-approval .fold[open] summary::before { content: "▾ "; color: var(--accent); }
-.zen-approval .fold summary:hover { color: var(--accent); }
-.zen-approval .fold summary:focus-visible { outline: none; text-decoration: underline; color: var(--accent); }
-.zen-approval .fold .machine-rail { margin: 8px 0 0; }
 
 /* a folded note: the ship's memory, one line unless opened */
 .zen-timeline i.is-note { background: transparent; border: 1px solid var(--faint); }

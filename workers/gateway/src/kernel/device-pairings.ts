@@ -36,8 +36,9 @@ export class DevicePairingStore {
     this.sql = storage.sql;
   }
 
-  async create(ownerUid: number, args: SysPairCreateArgs): Promise<DevicePairing> {
+  async create(ownerUid: number, args: SysPairCreateArgs, signal?: AbortSignal): Promise<DevicePairing> {
     const secretHash = await hashToken(args.secret);
+    signal?.throwIfAborted();
     return this.storage.transactionSync(() => {
       this.prune();
       const existing = this.row(args.id);

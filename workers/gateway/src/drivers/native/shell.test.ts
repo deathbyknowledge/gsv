@@ -16,6 +16,8 @@ import {
   handleFsWrite,
 } from "./fs";
 import * as inferenceService from "../../inference/execution-client";
+import { ModelMetadataResolver } from "../../inference/model-metadata";
+import * as federationService from "../../kernel/federation";
 import type { InferenceExecutor, InferenceMediaRequest } from "@humansandmachines/gsv/services/inference-execution";
 import * as sharedUtils from "../../shared/utils";
 import type { KernelContext } from "../../kernel/context";
@@ -149,6 +151,8 @@ function makeProcess(
 
 function makeContact(): FederationContactRecord {
   return {
+    preferences: { saved: true, muted: false, shipHandlesMessages: false, revision: 1 },
+    blocked: false,
     id: "contact:friend",
     ownerUid: IDENTITY.uid,
     state: "active",
@@ -254,6 +258,7 @@ function makeContext(options?: {
   return focusedFixture<KernelContext>({
     broadcastToUserUid: vi.fn(),
     env: testEnv,
+    modelMetadata: new ModelMetadataResolver(testEnv, installationIdentity.installationId),
     installationId: installationIdentity.installationId,
     installationIdentity,
     auth: focusedFixture<KernelContext["auth"]>({
@@ -267,7 +272,7 @@ function makeContext(options?: {
     config: focusedFixture<KernelContext["config"]>({
       get(key: string) {
         if (key === "config/server/name") return "gsv";
-        if (key === "config/server/version") return "0.6.2";
+        if (key === "config/server/version") return "0.6.6";
         return configValues.get(key) ?? SYSTEM_CONFIG_DEFAULTS[key] ?? null;
       },
       getExplicit(key: string) {
@@ -332,6 +337,7 @@ function makeContext(options?: {
     ),
     federation: focusedFixture<KernelContext["federation"]>({
       list: vi.fn(() => []),
+      attentionNotice: vi.fn(() => undefined),
       ...options?.federation,
     }),
     conversations: focusedFixture<KernelContext["conversations"]>(
@@ -342,7 +348,7 @@ function makeContext(options?: {
     processId: options?.processId === null ? undefined : options?.processId ?? "task:shell",
     processRunId: options?.processRunId,
     requestSignal: options?.requestSignal,
-    serverVersion: "0.6.2",
+    serverVersion: "0.6.6",
     scheduleIpcCallTimeout: options?.scheduleIpcCallTimeout,
     scheduleScheduleWake: options?.scheduleScheduleWake,
     reconcileResponsibilityWake: options?.reconcileResponsibilityWake,
@@ -1095,7 +1101,7 @@ describe("native shell capability discovery", () => {
     expect(result.ok).toBe(true);
     expect(result.stdout).toContain("MESSAGE(1)");
     expect(result.stdout).toContain("message current [--json]");
-    expect(result.stdout).toContain("[--delivery-id ID] [--also]");
+    expect(result.stdout).toContain("[--delivery-id ID] [--responsibility ID] [--also]");
     expect(result.stdout).toContain("message send [--message TEXT]");
     expect(result.stdout).toContain("append `&& yield`");
     expect(result.stdout).toContain("message send --to DESTINATION");
@@ -2092,8 +2098,10 @@ describe("proc native command", () => {
     );
   });
 
-  it("schedules supervision before assigning and admitting delegated work", async () => {
+  it("schedules supervision before assigning and admitting delegated work, keyed by the record's canonical id", async () => {
     const responsibilityId = "r12y:11111111-1111-4111-8111-111111111111";
+    // The command is given the bare uuid; everything persisted or printed must carry the `r12y:` form.
+    const bareResponsibilityId = responsibilityId.slice("r12y:".length);
     const parent = makeProcess({
       processId: "task:shell",
       isPersonalController: true,
@@ -2185,7 +2193,7 @@ describe("proc native command", () => {
     });
 
     const result = await handleShellExec({
-      input: `proc delegate --responsibility ${responsibilityId} --label planning analyze schema`,
+      input: `proc delegate --responsibility ${bareResponsibilityId} --label planning analyze schema`,
     }, ctx);
 
     expect(result.ok).toBe(true);
@@ -4380,6 +4388,7 @@ describe("native administration shell commands", () => {
     ctx.conversations = focusedFixture<KernelContext["conversations"]>({
       get: vi.fn(() => conversation),
       recordSequence: vi.fn(),
+      recordContactMessage: vi.fn(),
     });
 
     const history = await handleShellExec({
@@ -4389,6 +4398,27 @@ describe("native administration shell commands", () => {
     expect(history.stdout).toContain(`conversation=${conversation.id}`);
     expect(history.stdout).toContain("Flynn (contact:friend)");
     expect(history.stdout).toContain("hello from Flynn");
+  });
+
+  it("links a contact send to Ship work and rejects that option for other destinations", async () => {
+    const send = vi.spyOn(federationService, "handleContactSend").mockResolvedValue({
+      deliveryId: "delivery:work", conversationId: "conversation:friend", state: "queued",
+    });
+    try {
+      const ctx = makeContext({ capabilities: ["shell.exec", "contact.send"] });
+      const sent = await handleShellExec({
+        input: 'message send --to contact:friend --message "Friday?" --responsibility r12y:friday --delivery-id delivery:work --also',
+      }, ctx);
+      expect(sent).toMatchObject({ status: "completed", exitCode: 0 });
+      expect(send).toHaveBeenCalledWith({ contactId: "contact:friend", text: "Friday?",
+        responsibilityId: "r12y:friday", idempotencyKey: "delivery:work" }, expect.anything());
+      const rejected = await handleShellExec({
+        input: 'message send --to adapter:destination --message "Friday?" --responsibility r12y:friday --also',
+      }, ctx);
+      expect(rejected.exitCode).toBe(1);
+      expect(rejected.stderr).toContain("--responsibility requires a contact destination");
+      expect(send).toHaveBeenCalledTimes(1);
+    } finally { send.mockRestore(); }
   });
 
   it("lets Ship search its conversation through the shared syscall and enforces the capability", async () => {

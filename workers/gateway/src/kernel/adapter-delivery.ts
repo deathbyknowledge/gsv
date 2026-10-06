@@ -158,8 +158,14 @@ materializePersonalAdapterFallback(
     const routeGeneration = link
       ? identityLinkRouteGeneration(link, preferred.destination.surface)
       : undefined;
+    const existing = this.host.runRoutes.get(runId);
+    if (existing?.kind === "adapter" && existing.followsShip
+      && existing.uid === ownerUid && existing.processId === processId
+      && JSON.stringify(existing.destination) === JSON.stringify(preferred.destination)
+      && existing.routeGeneration === routeGeneration) return existing;
     return this.host.runRoutes.setAdapterRoute({
       runId,
+      followsShip: true,
       processId,
       uid: ownerUid,
       destination: preferred.destination,

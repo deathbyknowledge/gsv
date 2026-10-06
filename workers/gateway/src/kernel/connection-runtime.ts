@@ -149,7 +149,9 @@ activateConnection(
     connection.setState(state);
     this.host.connections.set(connection.id, connection);
 
-    if (!state.clientId) {
+    // A client name identifies the application; each UI window already has
+    // its own connection id. Only operation providers replace an older transport.
+    if (!state.clientId || !peerProvidesOperations(state.peer)) {
       return;
     }
     for (const [connectionId, existing] of this.host.connections) {
@@ -159,7 +161,8 @@ activateConnection(
         existingState?.step === "connected" &&
         existingState.peer?.principal.account.uid === state.peer.principal.account.uid &&
         existingState.peer.principal.kind === state.peer.principal.kind &&
-        existingState.clientId === state.clientId
+        existingState.clientId === state.clientId &&
+        peerProvidesOperations(existingState.peer)
       ) {
         existing.setState({ ...existingState, step: "superseded" });
         this.host.connections.delete(connectionId);
@@ -316,6 +319,8 @@ disconnectTargetConnections(targetId: string, reason: string): void {
     const json = JSON.stringify(frame);
     const contactRead = signal === "contact.changed" ? "contact.list"
       : signal === "contact.delivery.changed" ? "contact.delivery.list"
+      : signal === "profile.changed" ? "profile.get"
+      : signal === "approach.changed" ? "approach.list"
       : signal === "contact.invite.changed" ? "contact.invite.list"
       : signal === "contact.request.changed" ? "contact.request.list"
       : signal === "r12y.changed" ? "r12y.list"

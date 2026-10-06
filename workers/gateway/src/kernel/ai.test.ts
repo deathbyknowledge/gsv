@@ -7,6 +7,7 @@ import type { KernelContext } from "./context";
 import type { TargetRecord } from "./target-registry";
 import { OAuthStore, type OAuthAccountRecord } from "./oauth-store";
 import { ConfigStore } from "./config";
+import { ModelMetadataResolver } from "../inference/model-metadata";
 import { runWithRealKernelSql } from "../test-support/real-kernel-sql";
 import { handleSysOAuthDeviceStart, handleSysOAuthDevicePoll, handleSysOAuthForget, handleSysOAuthList } from "./sys/oauth";
 import { refreshOpenAICodexAccount } from "./sys/openai-codex-oauth";
@@ -406,6 +407,7 @@ describe("handleAiConfig", () => {
           cwd: uid === 2000 ? "/home/friday" : "/home/sam",
         }, calls: options.capabilities ?? ["*"] }),
       config: makeTestConfig(config),
+      modelMetadata: new ModelMetadataResolver(env, TEST_INSTALLATION_ID),
       auth: {
         getPasswdByUid: vi.fn((lookupUid: number) => lookupUid === ownerUid
           ? {
@@ -2034,7 +2036,7 @@ describe("handleAiConfig", () => {
     const completed = vi.fn();
     const failed = vi.fn();
     const pending = handleAiConfig({ modelConfig: { provider: "openai", model: "gpt-4.1-mini", apiKey: "request-key" } }, ctx).then(completed, failed);
-    const timeoutMs = Math.min(generationTimeoutMs, 5000);
+    const timeoutMs = Math.min(generationTimeoutMs, 10_000);
     try {
       await vi.advanceTimersByTimeAsync(timeoutMs - 1);
       expect(resolveModel).toHaveBeenCalledOnce();

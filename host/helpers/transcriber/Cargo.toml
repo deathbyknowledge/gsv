@@ -10,7 +10,7 @@ crossbeam-channel = "0.5"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.10"
-transcribe-cpp = { version = "=0.2.2", default-features = false }
+transcribe-cpp = { version = "=0.2.2", default-features = false, features = ["dynamic-backends"] }
 ureq = { version = "2.12", default-features = false, features = ["tls"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
