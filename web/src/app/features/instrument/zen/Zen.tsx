@@ -1036,6 +1036,7 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
                       onInspect={() => {
                         if (pid) onFleet({ kind: "approval", pid, requestId: pendingHil.requestId });
                       }}
+                      disabled={setup.saving}
                       onDecide={(decision) => void decide(decision)}
                       onAlwaysAllow={approval.editable ? () => void allowAlways() : undefined}
                       alwaysAllowSaving={approval.pending?.requestId === pendingHil.requestId && approval.pending.saving}

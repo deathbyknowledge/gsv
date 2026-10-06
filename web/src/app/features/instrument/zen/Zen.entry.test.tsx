@@ -751,6 +751,20 @@ describe("Zen conversation entry", () => {
         configReads = null;
         release();
         await vi.waitFor(() => expect(card(zen).alwaysAllowError).toBe("released"));
+        /* the explanation's own save holds the card the same way */
+        await openSetup(zen);
+        await act(() => { setup(zen).onDetail(); });
+        await act(() => { setup(zen).onChoose("mail", "auto"); });
+        configReads = new Promise<never>((_, reject) => { release = () => reject(new Error("released again")); });
+        await act(() => { setup(zen).onSave(); });
+        await vi.waitFor(() => expect(setup(zen).saving).toBe(true));
+        expect(card(zen).disabled).toBe(true);
+        await press("n");
+        expect(hilDecisions).toEqual([]);
+        configReads = null;
+        release();
+        await vi.waitFor(() => expect(setup(zen).error).toBe("released again"));
+        expect(card(zen).disabled).toBe(false);
         await press("n");
         await vi.waitFor(() => expect(hilDecisions).toEqual([{ requestId: "hil-1", decision: "deny" }]));
         expect(configWrites).toEqual([]);
