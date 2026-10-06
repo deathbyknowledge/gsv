@@ -3,8 +3,10 @@ import { abortableDelay, throwIfAborted } from "./abort";
 import { keyEvent, parsePageKey as parseKey, scrollChanged, scrollDeltas, scrollSummary, createPageInput, type InputPoint, type PageScrollTarget, type ScrollState } from "./page-input";
 import { createPageObservation, type ObservationPoint } from "./page-observation";
 import { createPageSemantics, PageReferenceStore, type PageElementReference } from "./page-semantics";
+import { pageActiveElement, pageInputTargetsRelated } from "./page-composed-dom";
 
 const ACTION_SETTLE_MS = 100;
+const INPUT_READY_TIMEOUT_MS = 2_000;
 const BOUNDARY_SCROLL_STEP_SETTLE_MS = 16;
 const MAX_BOUNDARY_SCROLL_EVENTS = 240;
 
@@ -137,15 +139,9 @@ export function createPageActions<Target>(debuggerBackend: DebuggerBackend<Targe
         element.reference,
       );
       throwIfAborted(signal);
-      await sendDebuggerCommand(target, "DOM.scrollIntoViewIfNeeded", {
-        backendNodeId: element.backendNodeId,
-      });
-      const point = await clickablePoint(target, element.backendNodeId);
-      const receiverId = await hitTest(target, point);
-      if (!await nodesRelated(target, element.backendNodeId, receiverId)) {
-        const receiver = await summarizeElement(target, tabId, receiverId, store);
-        throw new Error(`Click target is occluded by ${formatElement(receiver)}`);
-      }
+      const { point, receiverId } = await waitForHitTarget(
+        target, tabId, element, document.documentId, "Click", store, signal,
+      );
 
       const beforeState = await readElementState(target, element.backendNodeId);
       if (beforeState.disabled) {
@@ -242,15 +238,9 @@ export function createPageActions<Target>(debuggerBackend: DebuggerBackend<Targe
         throw new Error("Editable element is read-only");
       }
 
-      await sendDebuggerCommand(target, "DOM.scrollIntoViewIfNeeded", {
-        backendNodeId: editable.backendNodeId,
-      });
-      const point = await clickablePoint(target, editable.backendNodeId);
-      const hitReceiverId = await hitTest(target, point);
-      if (!await nodesRelated(target, editable.backendNodeId, hitReceiverId)) {
-        const hitReceiver = await summarizeElement(target, tabId, hitReceiverId, store);
-        throw new Error(`Editable target is occluded by ${formatElement(hitReceiver)}`);
-      }
+      const { point } = await waitForHitTarget(
+        target, tabId, editable, document.documentId, "Editable", store, signal,
+      );
       await sendDebuggerCommand(target, "DOM.focus", {
         backendNodeId: editable.backendNodeId,
       });
@@ -708,6 +698,39 @@ export function createPageActions<Target>(debuggerBackend: DebuggerBackend<Targe
     return result.backendNodeId;
   }
 
+  async function waitForHitTarget(
+    target: Target,
+    tabId: number,
+    element: ResolvedElement,
+    documentId: string,
+    label: string,
+    store: PageReferenceStore,
+    signal?: AbortSignal,
+  ): Promise<{ point: Point; receiverId: number }> {
+    const deadline = Date.now() + INPUT_READY_TIMEOUT_MS;
+    // Only readiness is retried. Once input is dispatched, it must never be replayed.
+    while (true) {
+      throwIfAborted(signal);
+      await sendDebuggerCommand(target, "DOM.scrollIntoViewIfNeeded", {
+        backendNodeId: element.backendNodeId,
+      });
+      const point = await clickablePoint(target, element.backendNodeId);
+      const receiverId = await hitTest(target, point);
+      if (await nodesRelated(target, element.backendNodeId, receiverId)) {
+        return { point, receiverId };
+      }
+      if (Date.now() >= deadline) {
+        const receiver = await summarizeElement(target, tabId, receiverId, store);
+        throw new Error(`${label} target is occluded by ${formatElement(receiver)}. Run page snapshot to inspect the obstruction.`);
+      }
+      await abortableDelay(100, signal);
+      if (await hasDocumentChanged(target, documentId)) {
+        throw new Error("The page navigated while waiting for input. Run page snapshot again.");
+      }
+      await validateElementReference(target, element);
+    }
+  }
+
   async function nodesRelated(
     target: Target,
     leftBackendNodeId: number,
@@ -726,11 +749,12 @@ export function createPageActions<Target>(debuggerBackend: DebuggerBackend<Targe
       }
       const result = await sendDebuggerCommand<RuntimeResult>(target, "Runtime.callFunctionOn", {
         objectId: left.objectId,
-        functionDeclaration: "function(other) { return this === other || this.contains(other) || other.contains(this); }",
+        functionDeclaration: pageInputTargetsRelated.toString(),
         arguments: [{ objectId: right.objectId }],
         returnByValue: true,
         silent: true,
       });
+      if (result.exceptionDetails) throw new Error(runtimeError(result));
       return result.result?.value === true;
     } finally {
       await Promise.all([
@@ -832,7 +856,7 @@ export function createPageActions<Target>(debuggerBackend: DebuggerBackend<Targe
         return {
           connected: Boolean(this.isConnected),
           tag: String(this.tagName || this.nodeName || "element").toLowerCase(),
-          focused: document.activeElement === this,
+          focused: this.getRootNode().activeElement === this,
           disabled: Boolean(this.disabled || this.getAttribute?.("aria-disabled") === "true"),
           readOnly: Boolean(this.readOnly || this.getAttribute?.("aria-readonly") === "true"),
           editable,
@@ -859,7 +883,7 @@ export function createPageActions<Target>(debuggerBackend: DebuggerBackend<Targe
     target: Target,
   ): Promise<ResolvedElement | null> {
     const result = await sendDebuggerCommand<RuntimeResult>(target, "Runtime.evaluate", {
-      expression: "document.activeElement",
+      expression: `(${pageActiveElement.toString()})()`,
       returnByValue: false,
       silent: true,
     });
@@ -939,7 +963,8 @@ export function createPageActions<Target>(debuggerBackend: DebuggerBackend<Targe
   }
 
   function formatElement(element: ElementSummary): string {
-    return [element.role || element.tag, element.ref, element.name ? JSON.stringify(element.name) : ""]
+    const role = element.role && !["none", "generic"].includes(element.role) ? element.role : element.tag;
+    return [role, element.ref, element.name ? JSON.stringify(element.name) : ""]
       .filter(Boolean)
       .join(" ");
   }

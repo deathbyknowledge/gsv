@@ -32,8 +32,9 @@ support background jobs or resumable shell sessions.
 ## Agent-Visible Tools
 
 Optional [cloud browsers](/how-to/cloud-browsers) expose the same browser command
-core as the extension. `instance start` on `gsv` admits a new instance; its target
-becomes online only when ready. Target summaries include its instance state,
+core as the extension. `instance start browser` on `gsv` reuses the account's
+starting or ready browser by default; `--new` requests a separate temporary
+browser. A new target becomes online only when ready. Target summaries include its instance state,
 deadline and optional saved profile ID. Stopped targets are never restarted by
 routing a command. `instance stop` retains the terminal receipt while releasing
 the running resource and its temporary files after confirmed cleanup.
@@ -104,6 +105,25 @@ The extension's page and tab commands, semantic element references, shell, and
 filesystem driver use the shared browser package. Browser backends supply their
 own CDP transport, tab operations, and file persistence. Each browser keeps its
 own references and command state; a reference from another browser is invalid.
+
+`page snapshot` exposes references for individual controls, including buttons
+inside calendar rows, list items, and web components. Use the desired control's
+reference with `page click @ref` or `page type @ref 'text'`; a reference addresses
+one element and takes no selector index. Take another snapshot after navigation
+or when a reference is reported stale.
+
+Click and type check which element would receive input, including nested shadow
+DOM, slotted content, and CSS pseudo-elements. They wait up to two seconds for a
+temporary obstruction to clear before failing. This wait only retries the
+readiness check; it never repeats dispatched input. A persistent dialog or
+overlay still blocks the action.
+
+`page key` sends keys to the focused control, including controls inside open
+shadow roots. Supported examples include `Enter`, `Tab`, `Space`, `ArrowDown`,
+`Escape`, `Ctrl+a`, and `Shift+Tab`; a quoted literal space also works. Action
+results report focus and observed changes inside open shadow roots as well as
+the main document. Delivery alone does not prove the intended website outcome;
+inspect the resulting page when that outcome matters.
 
 External targets currently register with the Gateway through the device driver
 compatibility path. Its descriptor records identity, online state, and

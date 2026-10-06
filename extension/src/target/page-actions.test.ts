@@ -64,6 +64,43 @@ describe("CDP page actions", () => {
     expect(inputMethods(fixture.sendCommand)).toEqual([]);
   });
 
+  it("waits for a transient overlay before delivering exactly one click", async () => {
+    const fixture = stubCdp({ receiverIds: [999, 999, 101] });
+    const { store, reference } = referencedElement();
+
+    await clickPageElement(42, { kind: "reference", reference }, undefined, store);
+
+    expect(inputMethods(fixture.sendCommand)).toEqual([
+      ["Input.dispatchMouseEvent", "mouseMoved"],
+      ["Input.dispatchMouseEvent", "mousePressed"],
+      ["Input.dispatchMouseEvent", "mouseReleased"],
+    ]);
+    expect(fixture.sendCommand.mock.calls.filter((call) => call[1] === "DOM.getNodeForLocation")).toHaveLength(3);
+  });
+
+  it("cancels an occluded action without delivering input", async () => {
+    const fixture = stubCdp({ receiverId: 999 });
+    const { store, reference } = referencedElement();
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 50);
+    try {
+      await expect(clickPageElement(42, { kind: "reference", reference }, controller.signal, store))
+        .rejects.toThrow(/abort/i);
+    } finally {
+      clearTimeout(timer);
+    }
+    expect(inputMethods(fixture.sendCommand)).toEqual([]);
+  });
+
+  it("does not deliver pending input after navigation while an overlay clears", async () => {
+    const fixture = stubCdp({ receiverId: 999, navigateAfterHit: true });
+    const { store, reference } = referencedElement();
+
+    await expect(clickPageElement(42, { kind: "reference", reference }, undefined, store))
+      .rejects.toThrow("page navigated while waiting");
+    expect(inputMethods(fixture.sendCommand)).toEqual([]);
+  });
+
   it("keeps CSS selectors as a native-input fallback", async () => {
     const fixture = stubCdp({
       states: [elementState(), elementState({ focused: true })],
@@ -320,6 +357,8 @@ function elementState(overrides: Partial<State> = {}): State {
 
 function stubCdp(options: {
   receiverId?: number;
+  receiverIds?: number[];
+  navigateAfterHit?: boolean;
   relatedReceiver?: boolean;
   states?: State[];
   mutations?: number;
@@ -332,6 +371,7 @@ function stubCdp(options: {
   let stateIndex = 0;
   let objectIndex = 0;
   let observationIndex = 0;
+  let hitIndex = 0;
   const sendCommand = vi.fn(async (
     _target: chrome.debugger.DebuggerSession,
     method: string,
@@ -339,7 +379,7 @@ function stubCdp(options: {
   ): Promise<object> => {
     switch (method) {
       case "Page.getFrameTree":
-        return { frameTree: { frame: { id: "frame-1", loaderId: "loader-1", url: "https://web.whatsapp.test/" } } };
+        return { frameTree: { frame: { id: "frame-1", loaderId: options.navigateAfterHit && hitIndex > 0 ? "loader-2" : "loader-1", url: "https://web.whatsapp.test/" } } };
       case "DOM.describeNode": {
         const backendNodeId = Number(params?.backendNodeId ?? params?.nodeId ?? (params?.objectId ? 101 : 101));
         const overlay = backendNodeId === 999;
@@ -379,8 +419,11 @@ function stubCdp(options: {
         return { nodeIds: [101] };
       case "DOM.getContentQuads":
         return { quads: [[0, 40, 300, 40, 300, 100, 0, 100]] };
-      case "DOM.getNodeForLocation":
-        return { backendNodeId: receiverId, frameId: "frame-1" };
+      case "DOM.getNodeForLocation": {
+        const currentReceiver = options.receiverIds?.[hitIndex] ?? receiverId;
+        hitIndex += 1;
+        return { backendNodeId: currentReceiver, frameId: "frame-1" };
+      }
       case "DOM.resolveNode":
         objectIndex += 1;
         return { object: { objectId: `node-${objectIndex}`, subtype: "node" } };
@@ -401,7 +444,7 @@ function stubCdp(options: {
       }
       case "Runtime.evaluate": {
         const expression = String(params?.expression ?? "");
-        if (expression === "document.activeElement") {
+        if (params?.returnByValue === false && expression.includes("document.activeElement")) {
           return { result: { objectId: "active-node", subtype: "node" } };
         }
         observationIndex += 1;

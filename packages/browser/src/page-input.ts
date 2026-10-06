@@ -47,7 +47,7 @@ export type ParsedKey = {
 };
 
 export function parsePageKey(raw: string): ParsedKey {
-  const parts = raw.split("+").map((part) => part.trim()).filter(Boolean);
+  const parts = (raw === " " ? "Space" : raw).split("+").map((part) => part.trim()).filter(Boolean);
   const keyPart = parts.pop() ?? "";
   if (!keyPart) {
     throw new Error("Key is required");
@@ -86,7 +86,10 @@ export function parsePageKey(raw: string): ParsedKey {
   };
   const mapped = named[normalized];
   if (mapped) {
-    return { ...mapped, windowsVirtualKeyCode: mapped.virtual, modifiers, modifierNames };
+    return {
+      ...mapped, windowsVirtualKeyCode: mapped.virtual, modifiers, modifierNames,
+      ...(mapped.code === "Space" && !(modifiers & (1 | 2 | 4)) ? { text: " " } : {}),
+    };
   }
   if (keyPart.length !== 1) {
     throw new Error(`Unsupported key: ${keyPart}`);

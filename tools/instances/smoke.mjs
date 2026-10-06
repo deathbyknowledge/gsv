@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
 import http from "node:http";
 import { once } from "node:events";
+import { readFileSync } from "node:fs";
 import WebSocket from "ws";
 import { GSVClient } from "../../packages/gsv/dist/client.js";
 import { bodyFromText, bodyToBytes } from "../../packages/gsv/dist/protocol.js";
+import { checkBrowserCommands } from "./browser-commands-smoke.mjs";
 
 // Intentionally local: this fixture never creates a paid remote browser.
 const origin = new URL(process.env.GSV_BROWSER_SMOKE_ORIGIN ?? "http://localhost:8976");
@@ -15,6 +17,7 @@ class LocalSocket extends WebSocket {
   }
 }
 const client = new GSVClient({ WebSocket: LocalSocket, defaultRequestTimeoutMs: 60000 });
+const components = readFileSync(new URL("./fixtures/components.html", import.meta.url), "utf8");
 const login = `<!doctype html><title>GSV sign-in fixture</title><style>body{font:20px system-ui;padding:40px}input,button{display:block;margin:20px 0;padding:12px;width:300px}</style><h1>Test sign-in</h1><form action="/session" method="post"><input name="email" placeholder="Email"><input type="password" name="password" placeholder="Password"><button>Sign in</button></form>`;
 let stored;
 const storageReady = new Promise(resolve => { stored = resolve; });
@@ -28,7 +31,8 @@ const server = http.createServer((request, response) => {
   } else if (request.url === "/probe") {
     const cookie = request.headers.cookie?.includes("gsv_test_session=valid") ? "kept" : "missing";
     response.end(`<body><input id="coedit" oninput="this.dataset.done='yes'"><script>const open=indexedDB.open("profile-test",1);open.onupgradeneeded=()=>open.result.createObjectStore("state");open.onsuccess=()=>{const request=open.result.transaction("state").objectStore("state").get("session");request.onsuccess=()=>{document.body.insertAdjacentHTML('beforeend','<pre id="restored">cookie=${cookie};local='+localStorage.getItem("profile-test")+';indexed='+request.result+'</pre>')}}</script></body>`);
-  } else response.end(login);
+  } else if (request.url === "/components") response.end(components);
+  else response.end(login);
 });
 server.listen(0, "127.0.0.1"); await once(server, "listening");
 const website = `http://127.0.0.1:${server.address().port}`;
@@ -146,6 +150,8 @@ try {
   await shell({ targetId: "gsv" }, `cp ${second.targetId}:/tmp/import.png ${second.targetId}:/tmp/remote-copy.png`);
   assert.deepEqual(await fileBytes(second.targetId, "/tmp/remote-copy.png"), png, "Routed copy changed screenshot bytes");
   console.log("PASS: screenshot, browser copy/overwrite, binary redirection/piping, export to gsv, import, and routed copy preserve every byte");
+  await shell(second, `tabs open --active ${website}/components`);
+  await checkBrowserCommands(input => client.shell.exec({ target: second.targetId, input }));
 } catch (error) { console.error("Smoke failed:", error); throw error; }
 finally {
   try {

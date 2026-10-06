@@ -40,7 +40,11 @@ const PAGE_TYPE_USAGE = [
   "Usage: page type [--tab <tabId>] <@ref|selector> <text>",
   "Snapshot refs canonically start with @; the bare generated form is also accepted.",
 ].join("\n");
-const PAGE_KEY_USAGE = "Usage: page key [--tab <tabId>] <key>";
+const PAGE_KEY_USAGE = [
+  "Usage: page key [--tab <tabId>] <key>",
+  "Examples: Enter, Tab, Space, ArrowDown, Escape, Ctrl+a, Shift+Tab.",
+  "Keys go to the focused element; page click or page type focuses a control.",
+].join("\n");
 const PAGE_SCROLL_USAGE = [
   "Usage: page scroll [--tab <tabId>] [@ref] <up|down|top|bottom|x,y>",
   "Snapshot refs canonically start with @; the bare generated form is also accepted.",

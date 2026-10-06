@@ -1,0 +1,77 @@
+<!doctype html>
+<title>Browser command regression fixture</title>
+<style>
+  body { font: 18px system-ui; padding: 30px; }
+  button { padding: 16px; }
+  #cover { position: fixed; inset: 0; z-index: 10; background: #ddd; padding: 80px; }
+</style>
+<trip-planner></trip-planner>
+<button id="block">Show blocking dialog</button>
+<div id="cover" role="dialog" aria-label="Loading overlay"><button id="dismiss">Dismiss overlay</button></div>
+<script>
+  window.testState = { selected: 0, day: null };
+  customElements.define("station-option", class extends HTMLElement {
+    constructor() {
+      super();
+      this.attachShadow({ mode: "open" }).innerHTML = `
+        <style>
+          :host { display: block; padding: 20px; width: 280px; border: 1px solid; }
+          div { position: relative; }
+          div::before { content: ""; position: absolute; inset: 0; }
+        </style>
+        <div><slot></slot><span>Railway station</span></div>`;
+    }
+  });
+  customElements.define("date-label", class extends HTMLElement {
+    constructor() {
+      super();
+      this.attachShadow({ mode: "open" }).innerHTML = "<span>Choose date</span>";
+    }
+  });
+  customElements.define("trip-fields", class extends HTMLElement {
+    constructor() {
+      super();
+      const root = this.attachShadow({ mode: "open" });
+      root.innerHTML = `
+        <style>input,button { display: block; padding: 20px; margin: 10px; }</style>
+        <input aria-label="From" role="combobox">
+        <station-option role="option" aria-label="Amsterdam Centraal" tabindex="0"><span>Amsterdam Centraal</span></station-option>
+        <button aria-label="Choose date"><date-label></date-label></button>
+        <div id="calendar" role="grid" aria-label="October" hidden>
+          <div role="row" aria-label="10 11">
+            <div role="gridcell" aria-label="10"><button aria-label="October 10">10</button></div>
+            <div role="gridcell" aria-label="11"><button aria-label="October 11">11</button></div>
+          </div>
+        </div>
+        <span id="status" role="status"></span>`;
+      root.querySelector("station-option").onclick = () => {
+        window.testState.selected += 1;
+        root.querySelector("#status").textContent = "Station selected";
+      };
+      root.querySelector("button").onclick = () => { root.querySelector("#calendar").hidden = false; };
+      for (const button of root.querySelectorAll("#calendar button")) {
+        button.onclick = () => {
+          window.testState.day = button.textContent;
+          root.querySelector("#status").textContent = `Day ${button.textContent} selected`;
+        };
+      }
+    }
+  });
+  customElements.define("trip-planner", class extends HTMLElement {
+    constructor() {
+      super();
+      this.attachShadow({ mode: "open" }).innerHTML = "<trip-fields></trip-fields>";
+    }
+  });
+  document.querySelector("#dismiss").onclick = () => {
+    setTimeout(() => document.querySelector("#cover").remove(), 600);
+  };
+  document.querySelector("#block").onclick = () => {
+    const overlay = document.createElement("div");
+    overlay.id = "cover";
+    overlay.setAttribute("role", "dialog");
+    overlay.setAttribute("aria-label", "Blocking dialog");
+    overlay.textContent = "This overlay must block input";
+    document.body.append(overlay);
+  };
+</script>

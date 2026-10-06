@@ -1,6 +1,7 @@
 import type { DebuggerCommand } from "./backend";
 import { createPageSemantics } from "./page-semantics";
 import type { ScrollState } from "./page-input";
+import { observePageMutations, pageActiveElement } from "./page-composed-dom";
 
 type RemoteObject = {
   value?: unknown;
@@ -54,8 +55,9 @@ export function createPageObservation<Target>(sendDebuggerCommand: DebuggerComma
     const key = `__gsvObservation_${randomObservationToken()}`;
     const before = await evaluateValue<ObservationPoint>(target, `(() => {
       const key = ${JSON.stringify(key)};
+      const activeElement = ${pageActiveElement.toString()};
       const focus = () => {
-        const element = document.activeElement;
+        const element = activeElement();
         if (!element) return null;
         const name = element.getAttribute?.("aria-label")
           || element.getAttribute?.("name")
@@ -69,7 +71,7 @@ export function createPageObservation<Target>(sendDebuggerCommand: DebuggerComma
         };
       };
       const selection = () => {
-        const element = document.activeElement;
+        const element = activeElement();
         if (element && typeof element.selectionStart === "number") {
           return ["control", element.selectionStart, element.selectionEnd, element.selectionDirection].join(":");
         }
@@ -96,13 +98,7 @@ export function createPageObservation<Target>(sendDebuggerCommand: DebuggerComma
         ].join(":");
       };
       const record = { mutations: 0, observer: null };
-      record.observer = new MutationObserver((entries) => { record.mutations += entries.length; });
-      record.observer.observe(document, {
-        subtree: true,
-        childList: true,
-        attributes: true,
-        characterData: true
-      });
+      record.observer = (${observePageMutations.toString()})((count) => { record.mutations += count; });
       globalThis[key] = record;
       return { url: location.href, focus: focus(), mutations: 0, selection: selection() };
     })()`);
@@ -117,9 +113,10 @@ export function createPageObservation<Target>(sendDebuggerCommand: DebuggerComma
       return await evaluateValue<ObservationPoint>(target, `(() => {
         const key = ${JSON.stringify(session.key)};
         const record = globalThis[key];
+        if (record?.observer) record.mutations += record.observer.takeRecords().length;
         record?.observer?.disconnect();
         delete globalThis[key];
-        const element = document.activeElement;
+        const element = (${pageActiveElement.toString()})();
         const name = element?.getAttribute?.("aria-label")
           || element?.getAttribute?.("name")
           || element?.getAttribute?.("placeholder")

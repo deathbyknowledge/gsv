@@ -572,6 +572,25 @@ export function createPageSemantics<Target>(sendDebuggerCommand: DebuggerCommand
     let nodeCount = 0;
     let truncated = false;
 
+    const interactiveSubtrees = new Map<AxNode, boolean>();
+    const hasInteractiveDescendant = (node: AxNode): boolean => {
+      const cached = interactiveSubtrees.get(node);
+      if (cached !== undefined) return cached;
+      const result = (node.childIds ?? []).some((childId) => {
+        const child = nodesById.get(childId);
+        if (!child) return false;
+        const states = collectStates(child.properties);
+        if (states.hidden === true) return false;
+        const backendId = child.backendDOMNodeId;
+        return (typeof backendId === "number"
+          && (isReferenceable(normalizeRole(stringValue(child.role)), states, undefined)
+            || Boolean(domNodes.get(backendId)?.scroll)))
+          || hasInteractiveDescendant(child);
+      });
+      interactiveSubtrees.set(node, result);
+      return result;
+    };
+
     const render = (node: AxNode, depth: number): SemanticSnapshotNode[] => {
       if (nodeCount >= MAX_SNAPSHOT_NODES || depth > MAX_SNAPSHOT_DEPTH) {
         truncated = true;
@@ -646,7 +665,8 @@ export function createPageSemantics<Target>(sendDebuggerCommand: DebuggerCommand
       if (dom?.bounds) {
         output.bounds = dom.bounds;
       }
-      const suppressChildren = Boolean(displayedName) && LEAF_ROLES.has(renderedRole);
+      const suppressChildren = Boolean(displayedName) && LEAF_ROLES.has(renderedRole)
+        && !hasInteractiveDescendant(node);
       const children = suppressChildren
         ? []
         : (node.childIds ?? []).flatMap((childId) => {

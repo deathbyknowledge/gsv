@@ -71,6 +71,34 @@ describe("semantic page snapshots", () => {
     expect(firstTextbox?.ref).not.toBe(secondTextbox?.ref);
     expect(store.resolve(firstTextbox!.ref!)).toMatchObject({ backendNodeId: 201 });
   });
+
+  it("preserves actionable descendants of named calendar rows and list items", async () => {
+    stubDebugger(vi.fn(async (_target: chrome.debugger.DebuggerSession, method: string) => {
+      if (method === "Accessibility.getFullAXTree") {
+        return { nodes: [
+          ax("root", "RootWebArea", "Planner", undefined, ["row", "item"]),
+          { ...ax("row", "row", "October 10", 301, ["cell"]), parentId: "root" },
+          { ...ax("cell", "gridcell", "October 10", 302, ["day"]), parentId: "row" },
+          { ...ax("day", "button", "October 10", 303, ["text"]), parentId: "cell" },
+          { ...ax("text", "StaticText", "October 10", 304), parentId: "day" },
+          { ...ax("item", "listitem", "Route details", 305, ["link"]), parentId: "root" },
+          { ...ax("link", "link", "Route details", 306), parentId: "item" },
+        ] };
+      }
+      if (method === "DOMSnapshot.captureSnapshot") return { documents: [] };
+      return fixtureResponse(method);
+    }));
+    const store = new PageReferenceStore();
+
+    const snapshot = await captureSemanticSnapshot({ tabId: 42 }, tab(), store);
+    const references = collectRefs(snapshot.nodes).map((ref) => store.resolve(ref));
+
+    expect(references).toEqual(expect.arrayContaining([
+      expect.objectContaining({ role: "button", name: "October 10", backendNodeId: 303 }),
+      expect.objectContaining({ role: "link", name: "Route details", backendNodeId: 306 }),
+    ]));
+    expect(formatSemanticSnapshot(snapshot)).not.toContain('text "October 10"');
+  });
 });
 
 function collectRefs(nodes: Array<{ ref?: string; children?: unknown[] }>): string[] {
