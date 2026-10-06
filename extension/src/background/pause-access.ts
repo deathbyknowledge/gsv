@@ -15,11 +15,11 @@ export type PauseAccessResult = {
 
 export async function pauseBrowserResources(operations: PauseAccessOperations): Promise<PauseAccessResult> {
   const errors: string[] = [];
+  operations.revokeMediaGrant();
   await operations.disconnect().catch((error: unknown) => {
     // SAFETY: rejected browser operations expose Error-compatible values here.
     errors.push(`runtime state: ${String(error)}`);
   });
-  operations.revokeMediaGrant();
   const stoppedCaptures = await operations.stopNetwork().catch((error: unknown) => {
     // SAFETY: rejected browser operations expose Error-compatible values here.
     errors.push(`network: ${String(error)}`);

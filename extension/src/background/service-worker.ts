@@ -17,6 +17,7 @@ import type { ActivityEntry, ExtensionUiState, RuntimeMessage, RuntimeResponse }
 import {
   clearMediaCaptureGrant,
   grantMediaCapture,
+  mediaCaptureGrantGeneration,
   mediaCaptureGrantStatus,
   mediaRecordingStatus,
   stopAllMediaRecordings,
@@ -38,6 +39,7 @@ const endpoint = client.endpoint({
 });
 const connectionSupervisor = new ConnectionSupervisor(endpoint);
 const browserPairing = new BrowserPairing();
+let pauseOperations = 0;
 let diagnostics: ExtensionDiagnostics = emptyDiagnostics();
 const diagnosticsReady = loadDiagnostics().then((stored) => {
   diagnostics = mergeDiagnostics(stored, diagnostics);
@@ -198,26 +200,31 @@ async function connectNow(config?: ExtensionConfig): Promise<void> {
 }
 
 async function pauseBrowserAccess(): Promise<RuntimeResponse> {
-  const result = await pauseBrowserResources({
-    disconnect: async () => await setManualReconnectSuppressed(true, "access paused by user"),
-    revokeMediaGrant: clearMediaCaptureGrant,
-    stopNetwork: stopNetworkCapture,
-    stopRecordings: stopAllMediaRecordings,
-    releaseDebuggers: releaseAllDebuggers,
-  });
-  addActivity({
-    kind: result.errors.length > 0 ? "error" : "sensitive",
-    label: "access paused",
-    detail: [
-      `stopped ${result.stoppedCaptures} network capture(s), ${result.stoppedRecordings} media recording(s), detached ${result.detachedTabs} debugger tab(s)`,
-      ...result.errors.map((error) => `cleanup error: ${error}`),
-    ].join("; "),
-    status: result.errors.length > 0 ? "error" : "info",
-  });
-  if (result.errors.length > 0) {
-    return { ok: false, error: `Access may not be fully paused: ${result.errors.join("; ")}`, state: await buildUiState() };
+  pauseOperations += 1;
+  try {
+    const result = await pauseBrowserResources({
+      disconnect: async () => await setManualReconnectSuppressed(true, "access paused by user"),
+      revokeMediaGrant: clearMediaCaptureGrant,
+      stopNetwork: stopNetworkCapture,
+      stopRecordings: stopAllMediaRecordings,
+      releaseDebuggers: releaseAllDebuggers,
+    });
+    addActivity({
+      kind: result.errors.length > 0 ? "error" : "sensitive",
+      label: "access paused",
+      detail: [
+        `stopped ${result.stoppedCaptures} network capture(s), ${result.stoppedRecordings} media recording(s), detached ${result.detachedTabs} debugger tab(s)`,
+        ...result.errors.map((error) => `cleanup error: ${error}`),
+      ].join("; "),
+      status: result.errors.length > 0 ? "error" : "info",
+    });
+    if (result.errors.length > 0) {
+      return { ok: false, error: `Access may not be fully paused: ${result.errors.join("; ")}`, state: await buildUiState() };
+    }
+    return await stateResponse();
+  } finally {
+    pauseOperations -= 1;
   }
-  return await stateResponse();
 }
 
 // Chrome will not open the side panel without a person's gesture, so an ask from your GSV cannot
@@ -243,11 +250,15 @@ async function clearAttentionBadge(): Promise<void> {
 }
 
 async function grantMediaCaptureAccess(tabId?: number): Promise<RuntimeResponse> {
-  if (connectionSupervisor.getState().reconnectSuppressed || client.getStatus().state !== "connected") {
+  if (pauseOperations > 0 || connectionSupervisor.getState().reconnectSuppressed || client.getStatus().state !== "connected") {
     throw new Error("Resume browser access before allowing recording");
   }
+  const grantGeneration = mediaCaptureGrantGeneration();
   void clearAttentionBadge();
   const grant = await grantMediaCapture(tabId);
+  if (pauseOperations > 0 || grantGeneration !== mediaCaptureGrantGeneration()) {
+    throw new Error("Browser access was paused before recording was allowed");
+  }
   addActivity({
     kind: "sensitive",
     label: "recording access",

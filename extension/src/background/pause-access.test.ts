@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { pauseBrowserResources } from "./pause-access";
 
 describe("pausing browser access", () => {
-  it("disconnects before releasing browser resources and continues after a cleanup error", async () => {
+  it("revokes recording allowance before disconnecting and continues after a cleanup error", async () => {
     const calls: string[] = [];
     const result = await pauseBrowserResources({
       async disconnect() { calls.push("disconnect"); },
@@ -21,7 +21,7 @@ describe("pausing browser access", () => {
       },
     });
 
-    expect(calls).toEqual(["disconnect", "revoke grant", "stop network", "stop recordings", "release debuggers"]);
+    expect(calls).toEqual(["revoke grant", "disconnect", "stop network", "stop recordings", "release debuggers"]);
     expect(result).toEqual({
       stoppedCaptures: 0,
       stoppedRecordings: 1,
@@ -43,7 +43,7 @@ describe("pausing browser access", () => {
       async releaseDebuggers() { calls.push("release debuggers"); return []; },
     });
 
-    expect(calls).toEqual(["disconnect", "revoke grant", "stop network", "stop recordings", "release debuggers"]);
+    expect(calls).toEqual(["revoke grant", "disconnect", "stop network", "stop recordings", "release debuggers"]);
     expect(result.errors).toEqual(["runtime state: Error: storage unavailable"]);
   });
 });
