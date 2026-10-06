@@ -50,7 +50,7 @@ export function InstrumentHeader({ distance, onNavigate, peopleWaiting, onSearch
         <button type="button" aria-current={distance === "settings" ? "page" : undefined} aria-keyshortcuts="s" onClick={() => onNavigate("settings")}>
           <kbd>s</kbd><span class="view-label">settings</span>
         </button>
-        <button type="button" ref={helpButtonRef} aria-expanded={help} aria-controls="instrument-help" onClick={onHelp}><kbd>?</kbd>keys</button>
+        <button type="button" ref={helpButtonRef} aria-expanded={help} aria-controls="instrument-help" onClick={onHelp}><kbd>?</kbd>help</button>
       </nav>
     </header>
   );

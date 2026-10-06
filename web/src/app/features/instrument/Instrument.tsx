@@ -261,7 +261,7 @@ function InstrumentReady({ initialPath }: { initialPath: string }) {
           if (!zenDirty || window.confirm("Discard your unsent message and attachments?")) setZenPid(null);
         }} onSearch={openSearch} searchEnabled={status.state === "connected"} help={help} onHelp={() => setHelp((open) => !open)} helpButtonRef={helpButtonRef} />
       {help ? (
-        <aside id="instrument-help" class="instrument-help" aria-label="Keys" ref={helpRef}>
+        <aside id="instrument-help" class="instrument-help" aria-label="Help" ref={helpRef}>
           <h4>Views & appearance</h4>
           <p>Navigation shortcuts work outside text fields and setup forms.</p>
           <dl>

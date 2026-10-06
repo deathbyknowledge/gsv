@@ -28,7 +28,7 @@ describe("Instrument header search", () => {
     "hides Search while %s is open",
     (distance: Distance) => {
       const buttons = headerButtons(distance);
-      expect(buttons.map(collectText)).toEqual(["c chat", "f fleet", "m memory", "p people", "s settings", "? keys"]);
+      expect(buttons.map(collectText)).toEqual(["c chat", "f fleet", "m memory", "p people", "s settings", "? help"]);
     },
   );
 
