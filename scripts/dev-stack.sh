@@ -8,6 +8,7 @@ DEV_STATE_DIR="$(cd "$DEV_STATE_DIR" && pwd -P)"
 
 cd "$ROOT_DIR"
 npm run gsv:build
+npm run browser:build
 npm run build --workspace web
 
 (

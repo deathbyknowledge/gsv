@@ -382,7 +382,8 @@
     {
       "id": "browser-extension",
       "paths": [
-        "extension/**"
+        "extension/**",
+        "packages/browser/**"
       ],
       "docs": [
         "docs/how-to/browse-web.md",

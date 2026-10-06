@@ -101,6 +101,7 @@ Contact conversations have no mandatory Process handler. Pairing and first-messa
 - `workers/gateway/src/inference/`: inference coordination and the authorized callback into machine model transport. Gateway owns credentials, request admission, cancellation and stale-result fences; it does not execute provider SDKs or use an AI binding directly.
 - `workers/inference/` and `packages/inference/`: required inference execution Worker, durable request execution, shared provider integration, model transport, media processing and the public reference provider policy. An operator can deploy this independently of Gateway; commercial implementations consume the same execution runtime.
 - `packages/gsv/`: public client and protocol types.
+- `packages/browser/`: shared browser commands, semantic page references, shell, and filesystem driver. Backends supply CDP, tab operations, and persistence; browser state belongs to the backend instance.
 - `web/`: Instrument web UI, setup/login, shared browser-side gateway services, and the development design catalog.
 - `host/apps/desktop/`: desktop host for the shared Instrument UI, native input, local control, machine enrollment through the CLI, and window lifecycle.
 - `host/apps/cli/`: user, deployment, administration, and OS service-control commands.
@@ -242,6 +243,7 @@ Before Desktop Rust checks, build its shared frontend with `npm run gsv:build &&
 - Machine: `cd host && cargo fmt --package machine --check && cargo test --package machine`
 - ripgit: `cd workers/ripgit && npm test`
 - Browser extension: `cd extension && npm run check && npm run test:run && npm run build`
+- Shared browser core: `npm run browser:build`, then the browser extension checks above and checks for each provider that consumes it.
 - Discord, Telegram, Slack, or test adapter: `cd workers/adapters/<name> && npm run typecheck`
 
 Protocol or client changes may affect gateway, web, CLI, devices, and adapters even when only one type definition changed. Validate each actual consumer.

@@ -1,0 +1,23 @@
+{
+  "name": "@humansandmachines/gsv-browser",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./*": {
+      "types": "./dist/*.d.ts",
+      "default": "./dist/*.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "check": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "@humansandmachines/gsv": "file:../gsv",
+    "just-bash": "^3.4.2"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3"
+  }
+}

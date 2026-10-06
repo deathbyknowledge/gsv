@@ -93,6 +93,11 @@ Use `man <command>` after discovery for command-specific guidance.
 
 ## Registered Target Descriptors
 
+The extension's page and tab commands, semantic element references, shell, and
+filesystem driver use the shared browser package. Browser backends supply their
+own CDP transport, tab operations, and file persistence. Each browser keeps its
+own references and command state; a reference from another browser is invalid.
+
 External targets currently register with the Gateway through the device driver
 compatibility path. Its descriptor records identity, online state, and
 implemented syscall patterns.

@@ -13,7 +13,7 @@
     "packages/*"
   ],
   "scripts": {
-    "postinstall": "npm run gsv:build",
+    "postinstall": "npm run gsv:build && npm run browser:build",
     "setup": "bash ./scripts/setup-deps.sh",
     "dev": "bash ./scripts/dev-stack.sh",
     "dev:managed": "bash ./scripts/dev-managed-stack.sh",
@@ -44,7 +44,8 @@
     "version:bump": "node ./scripts/version.mjs bump",
     "release:build:cloudflare": "bash ./scripts/build-cloudflare-bundles.sh",
     "release:show:stable-tag": "node ./scripts/release.mjs stable-tag",
-    "release:cut:stable": "node ./scripts/release.mjs cut-stable"
+    "release:cut:stable": "node ./scripts/release.mjs cut-stable",
+    "browser:build": "npm run build --workspace packages/browser"
   },
   "devDependencies": {
     "@effect/platform-node": "4.0.0-beta.107",

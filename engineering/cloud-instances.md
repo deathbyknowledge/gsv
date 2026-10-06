@@ -260,6 +260,13 @@ trusted part of the deployment.
 
 ## Human browser interaction contract
 
+The first login path is direct entry in the live browser. A messenger request
+opens an authenticated GSV action for the specific site and browser; the person
+completes login there and returns control. Ordinary chat keeps its normal
+routing. A future field-input feature would need an explicitly selected request
+and destination, rather than intercepting the next message. It would also need
+to account for the messenger's own retention of anything typed into chat.
+
 Browser interaction is a durable request attached to an instance and the work
 that needs it. It shares GSV's human-facing surfaces, but does not reuse
 `proc.hil`'s approve/deny payload: signing in is a different action from granting
