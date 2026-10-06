@@ -833,16 +833,18 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
       return <>
         {moment.role === "human" || moment.text || moment.media?.length || moment.streaming ? <div class="who">
           {moment.role === "human" ? who : "ship"}
-          {/* whether your message reached GSV: in flight until acknowledged, then a quiet check; a failure speaks below the message */}
+          {moment.timestamp !== null ? <MomentTime timestamp={moment.timestamp} today={today} timeZone={timeZone} /> : null}
+          {/* whether your message reached GSV, after the time: in flight until acknowledged, then a check; a failure speaks below the message */}
           {moment.role !== "human" || moment.outgoing?.status === "failed" ? null : moment.outgoing ? (
             <span class="zen-send-status" role="status" aria-label={moment.outgoing.status === "uploading" ? "Uploading attachments" : "Sending message"}>
               <Spinner size={12} />
               <span aria-hidden="true">{moment.outgoing.status === "uploading" ? "uploading" : "sending"}</span>
             </span>
           ) : (
-            <span class="zen-send-status is-delivered" role="img" aria-label="Delivered" title="Delivered to GSV">✓</span>
+            <span class="zen-send-status is-delivered" role="img" aria-label="Delivered" title="Delivered to GSV">
+              <svg viewBox="0 0 12 12" aria-hidden="true"><path d="M2 6.4l2.7 2.7L10 3.2" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" /></svg>
+            </span>
           )}
-          {moment.timestamp !== null ? <MomentTime timestamp={moment.timestamp} today={today} timeZone={timeZone} /> : null}
         </div> : null}
         {moment.activities
           .filter((activity) => activity.you)
