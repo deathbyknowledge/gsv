@@ -77,14 +77,9 @@
   color: var(--text-dim);
   margin-bottom: 8px;
 }
-/* when it was sent, with the delivered check for your messages: kept in the row so nothing moves,
-   always visible on the latest message, otherwise on hover, focus or under the browse cursor */
+/* when it was sent: kept in the row so nothing moves, visible on hover, focus or under the browse cursor */
 .zen-moment > .who .when {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
   margin-left: 12px;
-  vertical-align: middle;
   font-family: var(--gsv-font-mono);
   font-size: 10.5px;
   letter-spacing: 0.1em;
@@ -94,7 +89,6 @@
   opacity: 0;
   transition: opacity var(--dur-fast);
 }
-.zen-moment:not(.is-older) > .who .when,
 .zen-moment:hover > .who .when,
 .zen-moment:focus-within > .who .when,
 .zen-moment.is-focus > .who .when { opacity: 1; }
@@ -588,21 +582,7 @@
   .zen-search-dialog .zen-search-hit { padding: 16px 12px; }
   .zen-search-excerpt { padding: 12px; }
 }
-/* whether your message reached GSV: sending while in flight, a check once delivered; quiet like the timestamp */
-.zen-send-status {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  margin-left: 10px;
-  vertical-align: middle;
-  font-family: var(--gsv-font-mono);
-  font-size: 10.5px;
-  letter-spacing: 0.1em;
-  text-transform: none;
-  color: var(--faint);
-}
-.zen-send-status.is-delivered { margin-left: 0; color: inherit; }
-.zen-send-status.is-delivered svg { width: 11px; height: 11px; display: block; }
+.zen-send-status { display: inline-flex; margin-left: 10px; vertical-align: middle; }
 .zen-send-actions { display: flex; flex-wrap: wrap; align-items: baseline; gap: 1rem; margin-top: .65rem; font-size: .75rem; color: var(--text-dim); }
 .zen-send-actions .is-err { color: var(--error); }
 .zen-send-actions button { padding: .25rem 0; background: none; border: 0; color: var(--text-dim); font: inherit; cursor: pointer; }

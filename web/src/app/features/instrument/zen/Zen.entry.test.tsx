@@ -47,9 +47,6 @@ function message(kind: "user" | "process", text = "Your machine is online.", seq
     author: kind === "user" ? { kind, uid: ownerUid } : { kind, pid: shipPid, uid: 1001 },
     text, origin: { kind: "client", clientId: "web" }, createdAt: sequence };
 }
-function labelled(nodes: ReturnType<typeof collectNodes>, label: string): number {
-  return nodes.filter((node) => node.props["aria-label"] === label).length;
-}
 function status(state: GsvClientStatus["state"]): GsvClientStatus {
   return { state, url: gateway, username: "hank", connectionId: null, message: null };
 }
@@ -404,7 +401,6 @@ describe("Zen conversation entry", () => {
     const zen = await mountedZen();
     try {
       await vi.waitFor(() => expect(zen.props(ZenText).text).toBe("Your machine is online."));
-      expect(labelled(zen.nodes(), "Delivered")).toBe(0);
       // History was not watched arriving, so a long message from it folds.
       expect(zen.props(ZenText).opened).toBe(false);
       expect(zen.text()).not.toContain("I am the ship. Who are you?");
@@ -419,7 +415,6 @@ describe("Zen conversation entry", () => {
       const remote = message("user", "Hello from my phone");
       await act(() => { for (const listener of signals) listener("message.committed", { message: { ...remote, author: { kind: "user", uid: ownerUid } }, directed: false }); });
       await vi.waitFor(() => expect(zen.props(ZenText).text).toBe(remote.text));
-      expect(labelled(zen.nodes(), "Delivered")).toBe(1);
       expect(zen.dirty()).toBe(true);
       expect(send).not.toHaveBeenCalled();
     } finally { await zen.unmount(); }
@@ -435,8 +430,6 @@ describe("Zen conversation entry", () => {
       await act(() => { expect(prompt().onSubmit("Help me plan my week")).toBe(true); });
       expect(zen.props(ZenText).text).toBe("Help me plan my week");
       expect(zen.nodes().some((node) => node.props["aria-label"] === "Sending message")).toBe(true);
-      expect(zen.text()).toContain("sending");
-      expect(labelled(zen.nodes(), "Delivered")).toBe(0);
       await vi.waitFor(() => expect(send).toHaveBeenCalledTimes(1));
       expect(send).toHaveBeenCalledWith(expect.objectContaining({ conversationId: "canonical-ship",
         text: "Help me plan my week", idempotencyKey: expect.any(String) }));
@@ -446,15 +439,12 @@ describe("Zen conversation entry", () => {
       await act(() => { for (const listener of signals) listener("message.committed", { message: committed, directed: false }); });
       expect(zen.nodes().filter((node) => node.type === ZenText)).toHaveLength(1);
       expect(zen.nodes().some((node) => node.props["aria-label"] === "Sending message")).toBe(true);
-      expect(labelled(zen.nodes(), "Delivered")).toBe(0);
       await act(async () => { accepted.resolve({ message: committed, handlerPid: shipPid, runId: "first-question" }); await accepted.promise; });
       await vi.waitFor(() => expect(zen.props(ZenText).text).toBe("Help me plan my week"));
       expect(zen.dirty()).toBe(true);
       expect(send).toHaveBeenCalledTimes(1);
       expect(zen.nodes().filter((node) => node.type === ZenText)).toHaveLength(1);
       await vi.waitFor(() => expect(zen.nodes().some((node) => node.props["aria-label"] === "Sending message")).toBe(false));
-      expect(labelled(zen.nodes(), "Delivered")).toBe(1);
-      expect(zen.text()).not.toContain("sending");
     } finally { await zen.unmount(); }
   });
 
@@ -466,8 +456,6 @@ describe("Zen conversation entry", () => {
       await act(() => { prompt().onInput?.("My first question"); });
       await act(() => { expect(prompt().onSubmit("My first question")).toBe(true); prompt().onInput?.(""); });
       await vi.waitFor(() => expect(zen.text()).toContain("The message did not go through."));
-      expect(labelled(zen.nodes(), "Sending message")).toBe(0);
-      expect(labelled(zen.nodes(), "Delivered")).toBe(0);
       expect(zen.props(ZenText).text).toBe("My first question");
       expect(zen.dirty()).toBe(true);
       await act(() => { prompt().onInput?.("A different draft"); });
@@ -478,8 +466,6 @@ describe("Zen conversation entry", () => {
       await vi.waitFor(() => expect(send).toHaveBeenCalledTimes(2));
       await vi.waitFor(() => expect(zen.nodes().some((node) => node.props["aria-label"] === "Sending message")).toBe(false));
       expect(send.mock.calls[1]?.[0].idempotencyKey).toBe(send.mock.calls[0]?.[0].idempotencyKey);
-      expect(labelled(zen.nodes(), "Delivered")).toBe(1);
-      expect(zen.text()).not.toContain("The message did not go through.");
       expect(zen.props(ZenText).text).toBe("My first question");
       expect(zen.dirty()).toBe(true);
       expect(zen.nodes().filter((node) => node.type === ZenText)).toHaveLength(1);

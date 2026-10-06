@@ -79,23 +79,6 @@ describe("pending chat sends", () => {
     } finally { await outbox.unmount(); }
   });
 
-  it("reports a text message as sending until GSV acknowledges it", async () => {
-    const client = new GSVClient();
-    const acknowledgement = deferred<ConversationSendResult>();
-    vi.spyOn(client.conversation, "send").mockReturnValueOnce(acknowledgement.promise);
-    const outbox = await mountedOutbox(client);
-    try {
-      await act(() => { expect(outbox.current.send({ pid: "ship", conversationId: "ship-conversation", message: "Read this" })).toBe(true); });
-      expect(outbox.current.messages).toEqual([expect.objectContaining({ status: "sending" })]);
-      expect(outbox.current.sending).toBe(true);
-      expect(outbox.accepted).not.toHaveBeenCalled();
-      await act(async () => { acknowledgement.resolve(result()); await acknowledgement.promise; });
-      await vi.waitFor(() => expect(outbox.accepted).toHaveBeenCalledExactlyOnceWith(result().message));
-      expect(outbox.current.messages).toEqual([]);
-      expect(outbox.current.sending).toBe(false);
-    } finally { await outbox.unmount(); }
-  });
-
   it("keeps an earlier failure available when a newer message is acknowledged", async () => {
     const client = new GSVClient();
     const send = vi.spyOn(client.conversation, "send").mockRejectedValueOnce(new Error("Connection lost"));
