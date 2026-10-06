@@ -11,6 +11,16 @@ describe("browser signup handoff", () => {
     expect(signupDestination("https://new.gsv.space", null)).toBe("https://new.gsv.space/");
   });
 
+  it("proposes the chosen username in the query beside the fragment", () => {
+    const token = `onboard_${"x".repeat(43)}`;
+    const destination = new URL(signupDestination("https://new.gsv.space", token, "new"));
+    expect(destination.pathname).toBe("/onboarding");
+    expect(destination.search).toBe("?username=new");
+    expect(destination.hash).toBe(`#${token}`);
+    expect(signupDestination("https://new.gsv.space", null, "new")).toBe("https://new.gsv.space/");
+    expect(() => signupDestination("https://new.gsv.space", token, "42labs")).toThrow("Invalid username.");
+  });
+
   it.each(["javascript:alert(1)", "https://user:secret@gsv.space", "https://gsv.space/path", "https://gsv.space#token", "http://space.example"])("rejects an invalid destination %s", (origin) => {
     expect(() => signupDestination(origin)).toThrow();
   });

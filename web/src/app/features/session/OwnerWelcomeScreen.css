@@ -37,3 +37,11 @@
   .desktop-welcome-choices { min-height: 0; gap: 0; }
   .desktop-welcome-choice { padding-block: 32px; }
 }
+.gsv-owner-option { font-family: var(--gsv-font-prose); font-size: 14px; line-height: 1.55; }
+.gsv-owner-option-row { display: flex; align-items: flex-start; gap: 10px; color: var(--text); }
+.gsv-owner-option label { cursor: pointer; }
+.gsv-owner-option input { flex: none; width: 16px; height: 16px; margin: 2px 0 0; accent-color: var(--accent); cursor: pointer; }
+.gsv-owner-option input:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.gsv-owner-option input:disabled { cursor: not-allowed; }
+.gsv-owner-option input:disabled + label { cursor: default; color: var(--text-dim); }
+.gsv-owner-option-note { margin: 6px 0 0 26px; color: var(--warn); }

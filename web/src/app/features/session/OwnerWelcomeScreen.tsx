@@ -7,6 +7,7 @@ import { Spinner } from "../../components/ui/Spinner";
 import { WelcomeIllustration } from "./backgrounds/WelcomeIllustration";
 import { PrivacyPolicyLink, TermsOfServiceLink } from "./PolicyLinks";
 import { OwnerWelcome, OwnerApiError, type OwnerSession, type OwnedInvite } from "../../services/session/ownerWelcome";
+import { handleUsernameProblem } from "./sessionDomain";
 import "./LoginScreen.css";
 import "./OwnerWelcomeScreen.css";
 
@@ -15,10 +16,14 @@ type Props = {
   ready: boolean;
   resume: boolean;
   load(): Promise<OwnerWelcome>;
-  onConnect(origin: string, onboardingToken?: string | null): Promise<void>;
+  onConnect(origin: string, onboardingToken?: string | null, username?: string): Promise<void>;
   addressPanel?: (options: { disabled: boolean; connect(origin: string): Promise<void> }) => ComponentChildren;
   initialStep?: "welcome" | "invite";
 };
+
+function usernameFor(handle: string, opted: boolean): string | undefined {
+  return opted && !handleUsernameProblem(handle) ? handle : undefined;
+}
 
 export function OwnerWelcomeScreen({ ready, resume, load, onConnect, addressPanel, initialStep = "welcome" }: Props) {
   const [flow, setFlow] = useState<OwnerWelcome | null>(null);
@@ -36,6 +41,8 @@ export function OwnerWelcomeScreen({ ready, resume, load, onConnect, addressPane
   const [code, setCode] = useState("");
   const [handle, setHandle] = useState("");
   const [handleError, setHandleError] = useState("");
+  const [useHandleAsUsername, setUseHandleAsUsername] = useState(true);
+  const usernameId = useId();
   const [availability, setAvailability] = useState<"idle" | "checking" | "available" | "unavailable">("idle");
 
   const run = async (operation: () => Promise<void>) => {
@@ -52,7 +59,7 @@ export function OwnerWelcomeScreen({ ready, resume, load, onConnect, addressPane
     if (!consent) { setStep("consent"); return; }
     if (!invite.handle) { setHandle(""); setStep("handle"); return; }
     const prepared = await client.prepare(invite.id, invite.handle);
-    await onConnect(prepared.origin, prepared.onboardingToken);
+    await onConnect(prepared.origin, prepared.onboardingToken, usernameFor(invite.handle, true));
   };
   const advance = async (client: OwnerWelcome) => {
     const session = await client.session();
@@ -105,6 +112,9 @@ export function OwnerWelcomeScreen({ ready, resume, load, onConnect, addressPane
     return () => { active = false; clearTimeout(timer); };
   }, [step, handle, flow]);
 
+  // The handle doubles as the owner's username by default. A handle the Kernel would reject as a username stays
+  // opted in but disabled, so the person reads why and picks a username on the next screen instead.
+  const usernameProblem = handle.trim() ? handleUsernameProblem(handle.trim()) : null;
   const titles = {
     welcome: "Welcome to GSV", invite: "Create your space", email: "Your email", code: "Check your email", spaces: "Your spaces", consent: "Before you begin", handle: "Choose your handle",
   } satisfies Record<Step, string>;
@@ -136,7 +146,7 @@ export function OwnerWelcomeScreen({ ready, resume, load, onConnect, addressPane
       } else if (step === "handle" && flow.state.inviteId) {
         if (!consent) { setStep("consent"); return; }
         const prepared = await flow.prepare(flow.state.inviteId, handle.trim());
-        await onConnect(prepared.origin, prepared.onboardingToken);
+        await onConnect(prepared.origin, prepared.onboardingToken, usernameFor(handle.trim(), useHandleAsUsername));
       }
     });
   };
@@ -193,6 +203,15 @@ export function OwnerWelcomeScreen({ ready, resume, load, onConnect, addressPane
           placeholder="your-name" status={handleError || availability === "unavailable" ? "error" : availability === "available" ? "success" : "none"}
           message={handleError || (availability === "available" ? "Available" : availability === "unavailable" ? "Already taken" : "")}
           inputProps={{ autoFocus: true, autoCapitalize: "none", spellcheck: false, maxLength: 63 }} />}
+        {step === "handle" && <div class="gsv-owner-option">
+          <div class="gsv-owner-option-row">
+            <input id={usernameId} type="checkbox" checked={!!usernameProblem || useHandleAsUsername} disabled={busy || !!usernameProblem}
+              aria-describedby={usernameProblem ? `${usernameId}-note` : undefined}
+              onChange={(event) => setUseHandleAsUsername(event.currentTarget.checked)} />
+            <label for={usernameId}>Also use this as my username</label>
+          </div>
+          {usernameProblem && <p class="gsv-owner-option-note" id={`${usernameId}-note`} role="status">{usernameProblem}</p>}
+        </div>}
         {step === "spaces" && <>
           <p class="desktop-welcome-detail">{owner?.email}</p>
           {owner?.spaces.map((space) => <Button key={space.canonicalOrigin} label={space.handle} variant="secondary" block disabled={busy}

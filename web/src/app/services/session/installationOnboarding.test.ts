@@ -2,6 +2,7 @@ import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   clearInstallationOnboardingToken,
   readInstallationOnboardingToken,
+  readInstallationOnboardingUsername,
 } from "./installationOnboarding";
 import { createSessionService, type SessionClient } from "./sessionService";
 
@@ -51,6 +52,26 @@ describe("installation onboarding capability", () => {
     expect(readInstallationOnboardingToken()).toBe(TOKEN);
     expect(window.location.pathname).toBe("/onboarding");
     expect(window.location.hash).toBe("");
+  });
+
+  it("reads the proposed username from the onboarding query and keeps it across the fragment move", () => {
+    window.history.replaceState(null, "", `/onboarding?username=alice#${TOKEN}`);
+
+    expect(readInstallationOnboardingUsername()).toBe("alice");
+    expect(readInstallationOnboardingToken()).toBe(TOKEN);
+    expect(window.location.search).toBe("?username=alice");
+    expect(readInstallationOnboardingUsername()).toBe("alice");
+
+    clearInstallationOnboardingToken();
+    expect(window.location.href).toBe("https://local.gsv.space/");
+    expect(readInstallationOnboardingUsername()).toBeNull();
+  });
+
+  it.each(["42labs", "Alice", "a".repeat(33), ""])("ignores the proposed username %j", (username) => {
+    window.history.replaceState(null, "", `/onboarding?username=${encodeURIComponent(username)}#${TOKEN}`);
+    expect(readInstallationOnboardingUsername()).toBeNull();
+    window.history.replaceState(null, "", "/?username=alice");
+    expect(readInstallationOnboardingUsername()).toBeNull();
   });
 
   it("rejects malformed fragments", () => {

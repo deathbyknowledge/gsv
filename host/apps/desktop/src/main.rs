@@ -68,11 +68,12 @@ async fn desktop_configure(
     host: State<'_, Host>,
     origin: Option<String>,
     onboarding_token: Option<String>,
+    username: Option<String>,
 ) -> Result<Session, String> {
     main_window(&window)?;
     let mut session = host.session.lock().await;
     let next = if onboarding_token.is_some() {
-        session.configure_onboarding(origin, onboarding_token)?
+        session.configure_onboarding(origin, onboarding_token, username)?
     } else {
         session.configure(origin)?
     };

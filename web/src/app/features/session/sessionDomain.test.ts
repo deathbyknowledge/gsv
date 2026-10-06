@@ -1,5 +1,23 @@
 import { describe, expect, it } from "vitest";
-import { USERNAME_FORMAT_DESCRIPTION, validateSetupAccount } from "./sessionDomain";
+import { USERNAME_FORMAT_DESCRIPTION, handleUsernameProblem, validateSetupAccount } from "./sessionDomain";
+
+describe("handle as username", () => {
+  const next = "Change your handle, or choose a different username on the next screen.";
+
+  it.each(["alice", "my-space", "a".repeat(32), "x1"])("accepts %j", (handle) => {
+    expect(handleUsernameProblem(handle)).toBeNull();
+  });
+
+  it.each([
+    ["42labs", "Usernames can't start with a number."],
+    ["a".repeat(33), "Usernames can't be longer than 32 characters."],
+    ["ship", "This name belongs to your Ship."],
+    ["root", "This name is reserved inside your space."],
+    ["users", "This name is reserved inside your space."],
+  ])("explains why %j cannot be a username and what to do next", (handle, reason) => {
+    expect(handleUsernameProblem(handle)).toBe(`${reason} ${next}`);
+  });
+});
 
 describe("setup account validation", () => {
   it("accepts local credentials without optional configuration", () => {

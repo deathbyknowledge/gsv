@@ -5,7 +5,7 @@ import { loadDesktopWelcome } from "./welcome";
 export function DesktopWelcome(props: {
   ready: boolean;
   resume: boolean;
-  onConnect(origin: string, onboardingToken?: string | null): Promise<void>;
+  onConnect(origin: string, onboardingToken?: string | null, username?: string): Promise<void>;
 }) {
   return <OwnerWelcomeScreen {...props} load={loadDesktopWelcome}
     addressPanel={({ connect, disabled }) => <DesktopConnect ready={props.ready} disabled={disabled} onConnect={connect} />} />;
