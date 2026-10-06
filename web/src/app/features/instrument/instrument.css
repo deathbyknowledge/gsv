@@ -145,7 +145,8 @@
 .instrument-helper { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .instrument-helper button { color: var(--accent); }
 .instrument-header .keys { display: flex; align-items: center; gap: 14px; justify-self: end; margin-right: -8px; }
-.instrument-header .keys [aria-current="page"] { color: var(--text-hi); text-decoration: underline; text-underline-offset: 4px; }
+.instrument-header .keys [aria-current="page"] { color: var(--text-hi); }
+.instrument-header .keys [aria-current="page"] .view-label { text-decoration: underline; text-underline-offset: 4px; }
 @container instrument (max-width: 900px) {
   .instrument-header { padding-inline: 18px; gap: 8px; }
   .instrument-header .keys { gap: 8px; }

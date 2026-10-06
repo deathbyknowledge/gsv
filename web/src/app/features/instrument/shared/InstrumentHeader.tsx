@@ -31,24 +31,24 @@ export function InstrumentHeader({ distance, onNavigate, peopleWaiting, onSearch
         {helper && <span class="instrument-helper">helper · <button type="button" onClick={onShip}>back to your Ship</button></span>}
       </div>
       <nav class="keys" aria-label="Views">
-        <button type="button" aria-current={distance === "zen" ? "page" : undefined} aria-keyshortcuts="c" onClick={() => onNavigate("zen")}>
-          <kbd>c</kbd>chat
-        </button>
-        <button type="button" disabled={!searchEnabled} title="Search conversation (Ctrl+K)" aria-keyshortcuts="Control+K" onClick={onSearch}>
+        {distance === "zen" && <button type="button" disabled={!searchEnabled} title="Search conversation (Ctrl+K)" aria-keyshortcuts="Control+K" onClick={onSearch}>
           <kbd>Ctrl+K</kbd>search
+        </button>}
+        <button type="button" aria-current={distance === "zen" ? "page" : undefined} aria-keyshortcuts="c" onClick={() => onNavigate("zen")}>
+          <kbd>c</kbd><span class="view-label">chat</span>
         </button>
         <button type="button" aria-current={distance === "fleet" ? "page" : undefined} aria-keyshortcuts="f" onClick={() => onNavigate("fleet")}>
-          <kbd>f</kbd>fleet
+          <kbd>f</kbd><span class="view-label">fleet</span>
         </button>
         <button type="button" aria-current={distance === "memory" ? "page" : undefined} aria-keyshortcuts="m" onClick={() => onNavigate("memory")}>
-          <kbd>m</kbd>memory
+          <kbd>m</kbd><span class="view-label">memory</span>
         </button>
         <button type="button" aria-current={distance === "people" ? "page" : undefined} aria-keyshortcuts="p" onClick={() => onNavigate("people")}>
-          <kbd>p</kbd>people
+          <kbd>p</kbd><span class="view-label">people</span>
           {distance !== "people" && peopleWaiting && <span class="instrument-people-waiting" aria-label="Unread messages or requests">•</span>}
         </button>
         <button type="button" aria-current={distance === "settings" ? "page" : undefined} aria-keyshortcuts="s" onClick={() => onNavigate("settings")}>
-          <kbd>s</kbd>settings
+          <kbd>s</kbd><span class="view-label">settings</span>
         </button>
         <button type="button" ref={helpButtonRef} aria-expanded={help} aria-controls="instrument-help" onClick={onHelp}><kbd>?</kbd>keys</button>
       </nav>
