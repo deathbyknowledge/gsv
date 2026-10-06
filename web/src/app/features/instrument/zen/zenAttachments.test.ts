@@ -17,6 +17,11 @@ describe("Zen long pastes", () => {
     expect(longPaste(" \n\t\n ")).toBeNull();
   });
 
+  it("never folds whitespace alone, however long, since a chip of it would send nothing", () => {
+    expect(longPaste(" ".repeat(LONG_PASTE_CHARACTERS + 1))).toBeNull();
+    expect(longPaste("\n".repeat(LONG_PASTE_LINES + 1))).toBeNull();
+  });
+
   it("folds a paste over the character threshold, counting characters as people see them", () => {
     expect(longPaste("a".repeat(LONG_PASTE_CHARACTERS + 1))).toMatchObject({ characters: LONG_PASTE_CHARACTERS + 1 });
     expect(longPaste("🚀".repeat(LONG_PASTE_CHARACTERS + 1))?.characters).toBe(LONG_PASTE_CHARACTERS + 1);
@@ -38,6 +43,7 @@ describe("Zen long pastes", () => {
     const first = { id: "first", text: "first block", characters: 11 };
     const second = { id: "second", text: "second\nblock", characters: 12 };
     expect(zenDraftMessage("What is wrong here?", [first, second])).toBe("What is wrong here?\n\nfirst block\n\nsecond\nblock");
+    expect(zenDraftMessage("  ", [first])).toBe("first block");
     expect(zenDraftMessage("", [first, second])).toBe("first block\n\nsecond\nblock");
     expect(zenDraftMessage("Only words", [])).toBe("Only words");
   });

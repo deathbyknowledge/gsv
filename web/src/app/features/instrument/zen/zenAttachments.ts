@@ -22,6 +22,8 @@ export function longPaste(raw: string): ZenPaste | null {
   // The textarea would normalize line endings; everything else is kept, since blank lines and trailing
   // spaces can carry meaning in Markdown, patches and data blocks.
   const text = raw.replace(/\r\n?/g, "\n");
+  // Whitespace alone has nothing to show in a chip and nothing to send; it stays in the prompt.
+  if (!text.trim()) return null;
   const characters = Array.from(text).length;
   const lines = text.split("\n").length;
   if (characters <= LONG_PASTE_CHARACTERS && lines <= LONG_PASTE_LINES) return null;
@@ -30,5 +32,7 @@ export function longPaste(raw: string): ZenPaste | null {
 
 /** What is sent: the typed words first, then each pasted block in paste order, separated by blank lines. */
 export function zenDraftMessage(typed: string, pastes: readonly ZenPaste[]): string {
-  return [typed, ...pastes.map((paste) => paste.text)].filter((part) => part.trim()).join("\n\n");
+  const parts = pastes.map((paste) => paste.text);
+  if (typed.trim()) parts.unshift(typed);
+  return parts.join("\n\n");
 }
