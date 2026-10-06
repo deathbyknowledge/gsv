@@ -86,7 +86,7 @@
   --label: #4a4677;
   --node-label: #4a4677;
   --text-dim: #6d6899;
-  --online: #1e8a55;
+  --online: #167346; /* AA on every light surface (was #1e8a55, 4.4:1 on white) */
   --error: #c0364f;
   --idle: #9d98c6;
   --update: #a46b00;
@@ -94,7 +94,7 @@
   --primary-hi: #4a43a0;
   --danger: #a8324a;
   --danger-hi: #c0364f;
-  --warn: #a46b00;
+  --warn: #8a5a00; /* AA on every light surface (was #a46b00, 4.1:1 on paper) */
 }
 .gsv-auth-theme.is-light :is(.gsv-login-panel, .gsv-setup-panel) {
   box-shadow: 0 12px 40px rgba(37, 29, 84, 0.08);
@@ -138,6 +138,8 @@
 .gsv-auth-scene .gsv-fld-req { font-size: 10px; letter-spacing: 0; }
 .gsv-auth-scene .gsv-fld.is-error .gsv-fld-msg { color: var(--error); letter-spacing: 0; }
 .gsv-auth-scene .gsv-fld.is-error .gsv-fld-dot { background: var(--error); box-shadow: none; }
+.gsv-auth-scene .gsv-fld.is-success .gsv-fld-msg { color: var(--online); letter-spacing: 0; }
+.gsv-auth-scene .gsv-fld.is-success .gsv-fld-dot { background: var(--online); box-shadow: none; }
 .gsv-auth-scene :is(.gsv-ti-btn, .gsv-ti-x):hover { color: var(--accent); }
 .gsv-auth-scene .gsv-ti-btn { min-height: 24px; }
 .gsv-auth-scene .gsv-btn-primary { background: var(--primary-hi); border-color: var(--primary-hi); color: #fff; box-shadow: none; }
