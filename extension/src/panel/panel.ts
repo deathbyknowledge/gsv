@@ -424,10 +424,19 @@ function advanced(current: ExtensionUiState): string {
 }
 
 function footer(current: ExtensionUiState, paired: boolean): string {
+  const website = paired ? new URL(current.config.gatewayUrl) : null;
+  if (website) {
+    website.protocol = website.protocol === "wss:" ? "https:" : "http:";
+    website.pathname = "/";
+    website.search = "";
+    website.hash = "";
+  }
   return `
     <footer class="foot">
       ${textButton("toggle-theme", effectiveTheme() === "light" ? "dark" : "light")}
-      <span class="host" title="${escapeHtml(current.config.gatewayUrl)}">${escapeHtml(paired ? current.gatewayHost : "not paired yet")}</span>
+      ${website
+        ? `<a class="host" href="${escapeHtml(website.toString())}" target="_blank" rel="noopener noreferrer" title="Open your GSV">${escapeHtml(current.gatewayHost)}</a>`
+        : `<span class="host">not paired yet</span>`}
     </footer>`;
 }
 

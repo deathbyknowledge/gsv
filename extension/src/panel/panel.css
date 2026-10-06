@@ -119,4 +119,5 @@ a { color: var(--accent); text-decoration: none; }
 .foot { display: flex; justify-content: space-between; gap: 12px; font-size: 10.5px; letter-spacing: .1em; text-transform: uppercase; color: var(--faint); padding-top: 10px; border-top: 1px solid var(--rule-inner); }
 .foot .tbtn { font-size: 10.5px; }
 .foot .host { color: var(--text-dim); text-transform: none; letter-spacing: .04em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.foot a.host:hover { color: var(--accent); text-decoration: underline; text-underline-offset: 3px; }
 .loading { font-family: var(--gsv-font-prose); color: var(--text-dim); padding: 24px 0; }
