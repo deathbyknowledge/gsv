@@ -357,6 +357,8 @@ describe("Zen conversation entry", () => {
     try {
       const pastes = () => zen.nodes().filter((node) => node.type === ZenDraftPaste);
       await act(() => { expect(zen.props(PromptLine).onPasteText?.("a short paste")).toBe(false); });
+      // A long paste that is itself a command stays inline so it runs directly, even into an empty prompt.
+      await act(() => { expect(zen.props(PromptLine).onPasteText?.(`$ ${"x".repeat(500)}`)).toBe(false); });
       expect(pastes()).toHaveLength(0);
       await act(() => { expect(zen.props(PromptLine).onPasteText?.("z".repeat(500))).toBe(true); });
       await act(() => { expect(zen.props(PromptLine).onPasteText?.(log)).toBe(true); });

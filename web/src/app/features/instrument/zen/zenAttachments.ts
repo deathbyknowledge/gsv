@@ -19,8 +19,9 @@ export type ZenPaste = { id: string; text: string; characters: number };
 
 /** The paste as a draft chip, or null when it is short enough to type into the prompt as usual. */
 export function longPaste(raw: string): ZenPaste | null {
-  // The textarea would normalize line endings; leading blank lines and trailing whitespace carry nothing.
-  const text = raw.replace(/\r\n?/g, "\n").replace(/^\s*\n/, "").trimEnd();
+  // The textarea would normalize line endings; everything else is kept, since blank lines and trailing
+  // spaces can carry meaning in Markdown, patches and data blocks.
+  const text = raw.replace(/\r\n?/g, "\n");
   const characters = Array.from(text).length;
   const lines = text.split("\n").length;
   if (characters <= LONG_PASTE_CHARACTERS && lines <= LONG_PASTE_LINES) return null;

@@ -596,9 +596,12 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
     setNote(accepted.length < files.length ? zenNotice("Each attachment must be 25 MiB or smaller.") : null);
     promptRef.current?.focus();
   }, []);
-  /* a long paste waits beside the prompt as a chip; a command keeps its paste inline, since it runs as typed */
+  /* a long paste waits beside the prompt as a chip; a command keeps its paste inline, since it runs as typed,
+     whether the prompt already starts with one or the paste itself would */
   const foldPaste = useCallback((text: string) => {
-    if (/^\s*[$!]/.test(promptRef.current?.selection().value ?? "")) return false;
+    const selection = promptRef.current?.selection();
+    const prospective = selection ? selection.value.slice(0, selection.start) + text : text;
+    if (/^\s*[$!]/.test(prospective)) return false;
     const paste = longPaste(text);
     if (!paste) return false;
     setPastes((current) => [...current, paste]);

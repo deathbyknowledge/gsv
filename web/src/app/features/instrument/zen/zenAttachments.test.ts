@@ -14,7 +14,6 @@ describe("Zen long pastes", () => {
   it("leaves pastes at or under both thresholds to the prompt", () => {
     expect(longPaste("a".repeat(LONG_PASTE_CHARACTERS))).toBeNull();
     expect(longPaste(Array.from({ length: LONG_PASTE_LINES }, (_, index) => `line ${index}`).join("\n"))).toBeNull();
-    expect(longPaste(`short\n\n\n${" ".repeat(LONG_PASTE_CHARACTERS)}\n\n`)).toBeNull();
     expect(longPaste(" \n\t\n ")).toBeNull();
   });
 
@@ -29,9 +28,10 @@ describe("Zen long pastes", () => {
     expect(longPaste(text)).toMatchObject({ text, characters: text.length });
   });
 
-  it("normalizes line endings and drops leading blank lines and trailing whitespace, keeping indentation", () => {
-    const body = Array.from({ length: LONG_PASTE_LINES + 1 }, () => "  indented").join("\r\n");
-    expect(longPaste(`\r\n\r\n${body}\r\n  \r\n`)?.text).toBe(body.replaceAll("\r\n", "\n"));
+  it("normalizes line endings and keeps everything else, including blank lines and trailing spaces", () => {
+    const body = Array.from({ length: LONG_PASTE_LINES + 1 }, () => "  indented  ").join("\r\n");
+    const raw = `\r\n\r\n${body}\r\n  \r\n`;
+    expect(longPaste(raw)?.text).toBe(raw.replaceAll("\r\n", "\n"));
   });
 
   it("sends typed words first, then pasted blocks in paste order, separated by blank lines", () => {
