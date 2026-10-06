@@ -82,10 +82,13 @@ An ordinary connection to a provisioning space returns `details.setupRecovery`
 instead of presenting it as a ready account. Expired setup authorization returns
 the same recovery signal. The operator may bind `GSV_OWNER_SIGNUP_URL` to its
 owner signup page with `?resume=1`; the public composition supplies it when owner
-email sign-in is configured. This link carries no authority. A verified owner
-resumes the claimed invitation and receives a fresh setup capability for the
-same installation. Without owner sign-in, the UI directs the person back to
-their invitation; the operator can reissue it.
+email sign-in is configured. Accounts sets `ownerSetupRecovery` in the directory
+only when the installation belongs to a claimed creation invitation. The Kernel
+includes the recovery URL only for those spaces; this link carries no authority.
+A verified owner resumes the same invitation and receives fresh setup
+authorization if it is still needed. Clients clear rejected capabilities so an
+already activated space returns to ordinary sign-in. Operator-issued setup links
+instead direct the person to request a replacement from the operator.
 
 The directory's `memberships` rows are ownership records, with an
 installation id, principal id, state, and creation time. They are not Kernel

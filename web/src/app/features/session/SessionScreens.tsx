@@ -23,7 +23,7 @@ export function SessionScreens({ session, snapshot }: SessionScreensProps) {
         <div class="gsv-login-panel">
           <SectionHeader title="Finish setting up your space" titleSize="title" divider />
           <div class="gsv-login-body">
-            <p>{snapshot.setupRecoveryUrl ? "Sign in with the email you used to claim it." : "Return to your invitation to continue setup."}</p>
+            <p>{snapshot.setupRecoveryUrl ? "Sign in with the email you used to claim it." : "Ask the person who invited you for a new setup link."}</p>
             {snapshot.setupRecoveryUrl && (session.resumeSetup
               ? <Button label="Continue setup" variant="primary" block onClick={() => session.resumeSetup!(snapshot.setupRecoveryUrl!)} />
               : <a class="gsv-btn gsv-btn-primary gsv-btn-block" href={snapshot.setupRecoveryUrl}>Continue setup</a>)}

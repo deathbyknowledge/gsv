@@ -100,7 +100,7 @@ export type SessionStorage = Pick<Storage, "getItem" | "setItem" | "removeItem">
 export type SessionServiceOptions = {
   url?: string;
   storage?: SessionStorage;
-  onboarding?: false | { token: string; complete(): Promise<void> };
+  onboarding?: false | { token: string; discard(): Promise<void>; complete(): Promise<void> };
   resumeSetup?: (url: string) => void;
 };
 
@@ -749,13 +749,26 @@ export function createSessionService(client: SessionClient, options: SessionServ
       });
     } catch (error) {
       if (setupGeneration === reconnectGeneration) {
+        const recovery = setupRecovery(error);
+        if (recovery && installationOnboardingToken) {
+          try {
+            if (options.onboarding) await options.onboarding.discard();
+            else clearInstallationOnboardingToken();
+            installationOnboardingToken = null;
+          } catch (storageError) {
+            if (setupGeneration === reconnectGeneration) setSnapshot({ phase: "setup", url,
+              username: username || snapshot.username, connectionId: null, message: normalizeMessage(storageError) });
+            throw storageError;
+          }
+        }
+        if (setupGeneration !== reconnectGeneration) throw error;
         setSnapshot({
           phase: "setup",
           url,
           username: username || snapshot.username,
           connectionId: null,
           message: normalizeMessage(error),
-          ...setupRecovery(error),
+          ...recovery,
         });
       }
       throw error;

@@ -12,7 +12,7 @@ import { DesktopMachineSetup } from "./DesktopMachineSetup";
 import { DesktopWelcome } from "./DesktopWelcome";
 import { DesktopAttachments } from "./DesktopAttachments";
 import { ONBOARDING_KEY } from "../app/services/session/ownerWelcome";
-import { accountsOrigin, completeDesktopOnboarding } from "./welcome";
+import { accountsOrigin, clearDesktopOnboardingToken, completeDesktopOnboarding } from "./welcome";
 import { ClientControlProvider } from "../app/services/platform/ClientControl";
 import { desktopControl } from "./control";
 import { useDesktopQuit } from "./useDesktopQuit";
@@ -47,7 +47,7 @@ function ConnectedDesktop({ session, storage, mock, onError, onQuit, onResumeSet
       if (new URL(url).origin === accountsOrigin) onResumeSetup();
       else void openInBrowser(url).catch(() => onError("Could not open your browser."));
     }, onboarding: token ? {
-      token, complete: () => completeDesktopOnboarding(storage),
+      token, discard: () => clearDesktopOnboardingToken(storage), complete: () => completeDesktopOnboarding(storage),
     } : false });
     // The service is created while App renders. Defer the parent's presentation update.
     queueMicrotask(() => setService(instance));

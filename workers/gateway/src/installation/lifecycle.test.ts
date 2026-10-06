@@ -20,9 +20,18 @@ describe("managed installation lifecycle", () => {
     await expect(managedInstallationWorkGate({
       GSV_OWNER_SIGNUP_URL: setupUrl,
       INSTALLATION_DIRECTORY: directory({ found: true, installationId: "inst_setup", handle: "setup",
-        canonicalOrigin: "https://setup.example", state: "provisioning" }),
+        canonicalOrigin: "https://setup.example", state: "provisioning", ownerSetupRecovery: true }),
     }, "inst_setup")).resolves.toEqual({ allowed: false, code: 503, message: "Finish setting up your space",
       details: { setupRecovery: true, setupUrl } });
+  });
+
+  it("does not offer owner-email recovery for an operator-issued installation", async () => {
+    await expect(managedInstallationWorkGate({
+      GSV_OWNER_SIGNUP_URL: "https://accounts.example/owner/signup/?resume=1",
+      INSTALLATION_DIRECTORY: directory({ found: true, installationId: "inst_operator", handle: "operator",
+        canonicalOrigin: "https://operator.example", state: "provisioning" }),
+    }, "inst_operator")).resolves.toEqual({ allowed: false, code: 503, message: "Finish setting up your space",
+      details: { setupRecovery: true } });
   });
 
   it("fails closed without an installation directory", async () => {

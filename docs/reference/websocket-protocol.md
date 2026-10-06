@@ -163,6 +163,13 @@ complete. `sys.setup` and `sys.setup.assist` must include the one-time
 token before invoking the ordinary setup implementation and activates routing
 only after setup succeeds.
 
+Provisioning connections and rejected setup tokens return
+`details.setupRecovery: true`. For owner-claimed spaces, `details.setupUrl` points
+to the operator's configured owner verification page. Operator-issued links omit
+that URL and require reissue by the operator. Clients discard rejected setup
+tokens before resuming; an active space then opens ordinary sign-in, while an
+unfinished space receives fresh setup authorization after owner verification.
+
 ---
 
 ## `sys.connect`

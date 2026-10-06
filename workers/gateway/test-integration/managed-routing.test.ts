@@ -136,10 +136,22 @@ describe("managed installation routing integration", () => {
       ok: false, error: { code: 503, details: { setupRecovery: true, setupUrl: "https://accounts.example/owner/signup/?resume=1" } },
     });
     await expect(managedRpc(socket, "expired-setup", "sys.setup", { username: credentials.username, password: credentials.password,
-      onboardingToken: "invalid" })).resolves.toMatchObject({ ok: false, error: { code: 401, details: { setupRecovery: true } } });
+      onboardingToken: "invalid" })).resolves.toMatchObject({ ok: false, error: { code: 401,
+        details: { setupRecovery: true, setupUrl: "https://accounts.example/owner/signup/?resume=1" } } });
     await expectManagedRpcOk(socket, "recovered-setup", "sys.setup", { username: credentials.username, password: credentials.password,
       onboardingToken: "integration-onboarding-first" });
     await expectManagedRpcOk(socket, "login-after-setup", "sys.connect", connect);
+    socket.close(1000, "test complete");
+  });
+
+  it("requires a replacement operator link rather than offering owner-email recovery", async () => {
+    await beginProvisioning(harness, "second");
+    const socket = await openManagedSocket(harness, "second");
+    const response = await managedRpc(socket, "operator-expired-setup", "sys.setup", {
+      username: "second-owner", password: "test-password123", onboardingToken: "expired",
+    });
+    expect(response).toMatchObject({ ok: false, error: { code: 401, details: { setupRecovery: true } } });
+    expect(response).not.toHaveProperty("error.details.setupUrl");
     socket.close(1000, "test complete");
   });
 

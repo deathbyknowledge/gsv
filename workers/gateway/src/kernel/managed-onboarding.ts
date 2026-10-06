@@ -20,6 +20,7 @@ import {
 } from "./sys/setup-assist";
 import {
   managedInstallationWorkGate,
+  resolveManagedInstallationById,
   setupRecoveryDetails,
 } from "../installation/lifecycle";
 import type {
@@ -94,13 +95,7 @@ async handleSysSetupAssist(
       return;
     }
     if (!authorization.ok) {
-      this.host.transport.sendError(
-        connection,
-        frame.id,
-        401,
-        "Installation setup link is invalid or expired",
-        setupRecoveryDetails(this.host.env),
-      );
+      await this.sendSetupRecoveryError(connection, frame.id);
       return;
     }
     const { onboardingToken: _onboardingToken, ...args } = frame.args;
@@ -153,13 +148,7 @@ async handleManagedSysSetup(
           this.host.transport.sendOk(connection, frame.id, recovered);
           return;
         }
-        this.host.transport.sendError(
-          connection,
-          frame.id,
-          401,
-          "Installation setup link is invalid or expired",
-          setupRecoveryDetails(this.host.env),
-        );
+        await this.sendSetupRecoveryError(connection, frame.id);
         return;
       }
 
@@ -221,6 +210,18 @@ async handleManagedSysSetup(
     } finally {
       this.managedOnboardingInProgress = false;
     }
+  }
+
+private async sendSetupRecoveryError(connection: KernelConnection<ConnectionState>, requestId: string): Promise<void> {
+    let installation: Awaited<ReturnType<typeof resolveManagedInstallationById>>;
+    try {
+      installation = await resolveManagedInstallationById(this.host.env, this.host.installationId);
+    } catch {
+      this.host.transport.sendError(connection, requestId, 503, "Installation setup is unavailable");
+      return;
+    }
+    this.host.transport.sendError(connection, requestId, 401, "Installation setup link is invalid or expired",
+      setupRecoveryDetails(this.host.env, installation));
   }
 
 async authorizeManagedInstallationOnboarding(

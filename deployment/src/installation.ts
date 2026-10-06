@@ -195,12 +195,14 @@ export const GsvDeployment = (props: GsvDeploymentProps, dependencies = gsvRunti
     }).pipe(retain(props.allowResourceDeletion !== true));
     inference = inferenceWorker;
   }
+  const extraBindings: Cloudflare.Workers.WorkerBindingProps = {};
+  if (props.installations.ownerEmail) {
+    extraBindings.GSV_OWNER_SIGNUP_URL = new URL("/owner/signup/?resume=1", props.adminOrigin).href;
+  }
+  Object.assign(extraBindings, props.services?.extraBindings);
   const runtime = yield* GsvRuntime({ ...props, compatibility,
     services: { ...props.services, installationDirectory: directory, inferenceExecution: inference,
-      extraBindings: {
-        ...(props.installations.ownerEmail ? { GSV_OWNER_SIGNUP_URL: new URL("/owner/signup/?resume=1", props.adminOrigin).href } : {}),
-        ...props.services?.extraBindings,
-      } } }, dependencies);
+      extraBindings } }, dependencies);
   const inferenceLifecycle = props.services?.inferenceLifecycle ?? {
     worker: inferenceWorker!, entrypoint: "InferenceLifecycleEntrypoint",
     namespaces: [{ className: "InferenceExecutor", kind: "inference-executor" as const }],

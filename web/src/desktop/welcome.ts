@@ -10,9 +10,13 @@ export async function loadDesktopWelcome(): Promise<OwnerWelcome> {
   }, accountsOrigin);
 }
 
+export async function clearDesktopOnboardingToken(storage: NativeSessionStorage): Promise<void> {
+  storage.removeItem(ONBOARDING_KEY);
+  await storage.flush();
+}
+
 export async function completeDesktopOnboarding(storage: NativeSessionStorage): Promise<void> {
   const welcome = await loadDesktopWelcome();
   await welcome.completeCreation();
-  storage.removeItem(ONBOARDING_KEY);
-  await storage.flush();
+  await clearDesktopOnboardingToken(storage);
 }
