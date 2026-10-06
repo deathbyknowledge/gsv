@@ -845,11 +845,15 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
       return <>
         {moment.role === "human" || moment.text || moment.media?.length || moment.streaming ? <div class="who">
           {moment.role === "human" ? who : "ship"}
-          {moment.outgoing && moment.outgoing.status !== "failed" ? (
+          {/* whether your message reached GSV: in flight until acknowledged, then a quiet check; a failure speaks below the message */}
+          {moment.role !== "human" || moment.outgoing?.status === "failed" ? null : moment.outgoing ? (
             <span class="zen-send-status" role="status" aria-label={moment.outgoing.status === "uploading" ? "Uploading attachments" : "Sending message"}>
-              <Spinner size={14} />
+              <Spinner size={12} />
+              <span aria-hidden="true">{moment.outgoing.status === "uploading" ? "uploading" : "sending"}</span>
             </span>
-          ) : null}
+          ) : (
+            <span class="zen-send-status is-delivered" role="img" aria-label="Delivered" title="Delivered to GSV">✓</span>
+          )}
           {moment.timestamp !== null ? <MomentTime timestamp={moment.timestamp} today={today} timeZone={timeZone} /> : null}
         </div> : null}
         {moment.activities
