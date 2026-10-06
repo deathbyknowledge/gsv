@@ -1,6 +1,22 @@
 # Cloud instances and saved browser profiles
 
-Status: proposed. Provider documentation checked on 6 October 2026.
+Status: browser slice implemented locally; Linux template and remote provider
+acceptance remain planned. Provider documentation checked on 6 October 2026.
+
+The current browser slice includes shared extension commands, explicit instance
+lifecycle, encrypted saved profiles, human control inside Instrument, usage
+reservations, and installation deletion ownership. See the
+[cloud browser guide](../docs/how-to/cloud-browsers.md) for its actual interface.
+The sections below retain the broader design, including work not shipped yet.
+
+Local Wrangler implements Browser Run's fetch/CDP transport, but did not implement
+the native `acquire()` binding method during the feasibility test. The provider
+uses `@cloudflare/playwright` acquisition and the documented session endpoints.
+The initial viewer is a small GSV image/input surface: hosted Cloudflare Live View
+does not expose the immediate revocation needed when returning control, and its
+hosted page restricts the WebSocket endpoints it can connect to. Human input and
+images use authenticated human-only syscall bodies. This reuses GSV's ownership,
+responsibilities and navigation instead of introducing a second handoff runtime.
 
 Ship should be able to start a cloud browser or Linux machine, use it as an
 ordinary GSV target, and stop it when the work is finished. A saved browser
@@ -451,6 +467,7 @@ does not carry these resources into a replacement installation ID. Track retaine
 copies using the existing
 [installation lifecycle contract](../packages/gsv/src/services/lifecycle.ts).
 
-This proposal does not change current runtime behavior or production prompts.
-Schema changes, public documentation, and clean-instance execution tests belong
-to the implementation batches above.
+The browser implementation changes runtime behavior only when the optional
+instance binding is present. Production prompts remain unchanged. Real remote
+website acceptance, provider billing reconciliation, and the Linux template need
+their own validation before release.

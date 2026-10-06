@@ -14,6 +14,7 @@ Step-by-step guides for common tasks. Each page focuses on one concrete goal —
 - [Bring Your Own Model](/how-to/bring-your-own-model) — use your own provider key for better speed and model choice
 - [Integrations (MCP)](/how-to/integrations) — wire in MCP servers to give GSV new tools
 - [Browse the Web](/how-to/browse-web) — pair the browser extension so GSV can act in your logged-in browser
+- [Cloud Browsers](/how-to/cloud-browsers) — start an on-demand browser and remember website logins
 
 ## See also
 

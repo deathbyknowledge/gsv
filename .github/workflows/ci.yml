@@ -28,6 +28,7 @@ jobs:
       gateway: ${{ steps.filter.outputs.gateway }}
       installations: ${{ steps.filter.outputs.installations }}
       inference: ${{ steps.filter.outputs.inference }}
+      instances: ${{ steps.filter.outputs.instances }}
       deployment: ${{ steps.filter.outputs.deployment }}
       deletion_stack: ${{ steps.filter.outputs.deletion_stack }}
       adapters: ${{ steps.filter.outputs.adapters }}
@@ -115,6 +116,7 @@ jobs:
               - 'package.json'
               - 'package-lock.json'
               - 'packages/gsv/**'
+              - 'packages/browser/**'
               - 'extension/**'
             gateway:
               - '.github/workflows/ci.yml'
@@ -136,6 +138,13 @@ jobs:
               - 'packages/gsv/**'
               - 'packages/inference/**'
               - 'workers/inference/**'
+            instances:
+              - '.github/workflows/ci.yml'
+              - 'package.json'
+              - 'package-lock.json'
+              - 'packages/gsv/**'
+              - 'packages/browser/**'
+              - 'workers/instances/**'
             installations:
               - '.github/workflows/ci.yml'
               - 'package.json'
@@ -327,6 +336,7 @@ jobs:
       needs.changes.outputs.extension == 'true' ||
       needs.changes.outputs.installations == 'true' ||
       needs.changes.outputs.inference == 'true' ||
+      needs.changes.outputs.instances == 'true' ||
       needs.changes.outputs.deployment == 'true' ||
       needs.changes.outputs.source_review == 'true' ||
       needs.changes.outputs.deletion_stack == 'true'
@@ -374,6 +384,18 @@ jobs:
       - name: Test public inference Worker
         if: needs.changes.outputs.inference == 'true'
         run: npm test --workspace @humansandmachines/gsv-inference-worker
+
+      - name: Check cloud instances
+        if: needs.changes.outputs.instances == 'true'
+        run: npm run typecheck --workspace workers/instances
+
+      - name: Test cloud instances
+        if: needs.changes.outputs.instances == 'true'
+        run: npm test --workspace workers/instances
+
+      - name: Bundle cloud instances
+        if: needs.changes.outputs.instances == 'true'
+        run: npm exec --workspace workers/instances -- wrangler deploy --dry-run --outdir dist/worker
 
       - name: Check installation services
         if: needs.changes.outputs.installations == 'true'
@@ -437,6 +459,10 @@ jobs:
       - name: Build browser extension
         if: needs.changes.outputs.extension == 'true'
         run: npm run extension:build
+
+      - name: Test browser extension
+        if: needs.changes.outputs.extension == 'true'
+        run: npm run test:run --workspace extension
 
   gateway-test:
     name: Gateway Tests

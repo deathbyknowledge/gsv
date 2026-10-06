@@ -90,6 +90,7 @@
     ]
   },
   "services": [
+    { "binding": "INSTANCES", "service": "gsv-instances-dev" },
     {
       "binding": "ACCOUNT_HTTP",
       "service": "gsv-installations-dev"

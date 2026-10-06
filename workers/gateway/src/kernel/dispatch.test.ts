@@ -57,6 +57,7 @@ function operationPeer(
 function makeContext(): KernelContext {
   // SAFETY: test fixture is constructed with the asserted kernel domain shape.
   return {
+    env: {},
     peer: testPeer({ kind: "human", account: {
         uid: 1000,
         gid: 1000,

@@ -1015,6 +1015,7 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
       </div>
 
       <div class="zen-bottom">
+        {!pid && <BrowserRequests />}
         {pid ? <DelegatedApprovals pid={pid} onFleet={onFleet} placeLabelFor={(target) => placeLabel(target, places)} /> : null}
 
         <div class="zen-composer">
@@ -1128,3 +1129,4 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
     </main>
   );
 }
+import { BrowserRequests } from "../browser/BrowserControl";

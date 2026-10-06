@@ -267,6 +267,17 @@ describe("public operator composition", () => {
     });
   });
 
+  it("requires and binds an instance cleanup owner", async () => {
+    const instances = await run(dependencies.Cloudflare.Worker("Instances", { name: "instances-provider", main: "instances.js" }));
+    await expect(run(GsvDeployment({ ...input, services: { instances } }, dependencies))).rejects.toThrow("owned lifecycle");
+    await run(GsvDeployment({ ...input, services: { instances, instancesLifecycle: {
+      worker: instances, entrypoint: "InstanceLifecycleEntrypoint", namespaces: [{ className: "InstanceCoordinator", kind: "instance-installation" }],
+    } } }, dependencies));
+    expect(recorded.workers.find(worker => worker.id === "FixtureGateway")?.props.env?.INSTANCES).toBe(instances);
+    expect(recorded.bindings).toContainEqual({ id: "FixtureDirectoryInstancesDeletionBinding", bindings: [{ type: "service",
+      name: "DELETION_OWNER_INSTANCES", service: "instances-provider", entrypoint: "InstanceLifecycleEntrypoint", props: { authority: "installation-deletion" } }] });
+  });
+
   it("rejects incomplete search ownership before creating deployment resources", async () => {
     const search = await run(dependencies.Cloudflare.Worker("Search", { name: "search-provider", main: "search.js" }));
     recorded.workers.length = 0;

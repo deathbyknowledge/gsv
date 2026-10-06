@@ -65,6 +65,10 @@ The web console is called **Instrument** and has five views:
 
 The Settings sidebar highlights the section you're viewing.
 
+If your operator enables cloud browsers, Fleet also offers **start browser**.
+You can [sign in and save website logins](/how-to/cloud-browsers) there so Ship
+can use those sites while your personal devices are offline.
+
 In Zen, **search** or `Ctrl/Cmd+F` finds earlier messages; `/` opens it in browse
 mode. Open a match to read the surrounding conversation. Closing search returns
 to your place and draft.

@@ -34,6 +34,11 @@ While your GSV works in a tab, Chrome shows a banner at the top of that tab.
 That is Chrome's notice that an extension is driving the page; it goes when the
 work is done.
 
+For websites you need while personal devices are offline, an enabled operator
+can also provide [cloud browsers](/how-to/cloud-browsers). Start one from Fleet
+and sign in directly in its browser view. Ship can show a browser request in Zen
+when it needs your help; finishing that request returns control to Ship.
+
 ## Try it
 
 With the machine connected, ask your agent things like:

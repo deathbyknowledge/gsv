@@ -438,6 +438,22 @@ export type SyscallDomains = {
   "sys.setup": { args: SysSetupArgs; result: SysSetupResult };
   "sys.bootstrap": { args: SysBootstrapArgs; result: SysBootstrapResult };
   "sys.feedback": { args: SysFeedbackArgs; result: SysFeedbackResult };
+  "sys.instance.catalog": { args: Instance.SysInstanceCatalogArgs; result: Instance.SysInstanceCatalogResult };
+  "sys.instance.start": { args: Instance.SysInstanceStartArgs; result: Instance.SysInstanceStartResult };
+  "sys.instance.list": { args: Instance.SysInstanceListArgs; result: Instance.SysInstanceListResult };
+  "sys.instance.get": { args: Instance.SysInstanceGetArgs; result: Instance.SysInstanceGetResult };
+  "sys.instance.stop": { args: Instance.SysInstanceStopArgs; result: Instance.SysInstanceStopResult };
+  "sys.browser.profile.create": { args: Instance.SysBrowserProfileCreateArgs; result: Instance.SysBrowserProfileCreateResult };
+  "sys.browser.profile.list": { args: Instance.SysBrowserProfileListArgs; result: Instance.SysBrowserProfileListResult };
+  "sys.browser.profile.get": { args: Instance.SysBrowserProfileGetArgs; result: Instance.SysBrowserProfileGetResult };
+  "sys.browser.profile.delete": { args: Instance.SysBrowserProfileDeleteArgs; result: Instance.SysBrowserProfileDeleteResult };
+  "sys.browser.handoff.request": { args: Instance.SysBrowserHandoffRequestArgs; result: Instance.SysBrowserHandoffRequestResult };
+  "sys.browser.handoff.get": { args: Instance.SysBrowserHandoffGetArgs; result: Instance.SysBrowserHandoffGetResult };
+  "sys.browser.handoff.cancel": { args: Instance.SysBrowserHandoffCancelArgs; result: Instance.SysBrowserHandoffCancelResult };
+  "sys.browser.handoff.open": { args: Instance.SysBrowserHandoffOpenArgs; result: Instance.SysBrowserHandoffOpenResult };
+  "sys.browser.handoff.finish": { args: Instance.SysBrowserHandoffFinishArgs; result: Instance.SysBrowserHandoffFinishResult };
+  "sys.browser.handoff.frame": { args: Instance.SysBrowserHandoffFrameArgs; result: Instance.SysBrowserHandoffFrameResult };
+  "sys.browser.handoff.input": { args: Instance.SysBrowserHandoffInputArgs; result: Instance.SysBrowserHandoffInputResult };
   "sys.config.get": { args: SysConfigGetArgs; result: SysConfigGetResult };
   "sys.config.set": { args: SysConfigSetArgs; result: SysConfigSetResult };
   "sys.target.list": { args: SysTargetListArgs; result: SysTargetListResult };
@@ -524,3 +540,4 @@ export type SyscallDomains = {
 export type SyscallName = keyof SyscallDomains;
 export type ArgsOf<S extends SyscallName> = SyscallDomains[S]["args"];
 export type ResultOf<S extends SyscallName> = SyscallDomains[S]["result"];
+import type * as Instance from "./instance";

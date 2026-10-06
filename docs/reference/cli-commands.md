@@ -65,6 +65,14 @@ intelligence process. Set `GSV_CLIENT_DEBUG=1` to trace run-signal matching.
 Commands run inside the gateway OS context, not directly on your local machine.
 Use `:quit`, `:exit`, or `:q` to leave.
 
+With the optional cloud instance service enabled, the gateway shell also exposes
+`instance catalog`, `instance start browser --request-id ID`, `instance list`,
+`instance get ID`, and `instance stop ID`. Use `browser profile` for remembered
+logins and `browser handoff` to request direct human control. These are native
+target commands, available to Ship through Shell as well. See
+[cloud browsers](/how-to/cloud-browsers) for profile selection, recovery after a
+lost response, and the complete sign-in flow.
+
 Inside the gateway shell, `proc` is the process IPC userland command.
 `message` inspects and uses external chat reply routes. `sched add --ship`
 creates recurring or one-shot Ship responsibilities; `sched add --here`

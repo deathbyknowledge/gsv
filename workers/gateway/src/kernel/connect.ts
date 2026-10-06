@@ -185,6 +185,7 @@ export async function handleConnect(
   };
 
   const serverFeatures = gsvInferenceFeaturesFromEnv(ctx.env);
+  if (ctx.env.INSTANCES && hasCapability(capabilities, "sys.instance.list")) serverFeatures.push("cloud-instances");
   if (ctx.env.FEEDBACK && hasCapability(capabilities, "sys.feedback")) serverFeatures.push(FEEDBACK_FEATURE);
   const result: ConnectResult = {
     protocol: PROTOCOL_VERSION,

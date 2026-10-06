@@ -1,0 +1,17 @@
+{
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  "name": "gsv-instances-dev",
+  "main": "src/index.ts",
+  // Page callbacks must stay self-contained when serialized into Chromium.
+  "keep_names": false,
+  "compatibility_date": "2026-08-22",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": false,
+  "preview_urls": false,
+  "browser": { "binding": "BROWSER" },
+  "durable_objects": { "bindings": [{ "name": "INSTANCES", "class_name": "InstanceCoordinator" }] },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["InstanceCoordinator"] }],
+  "r2_buckets": [{ "binding": "PROFILES", "bucket_name": "gsv-browser-profiles-dev" }],
+  "services": [{ "binding": "INSTALLATION_DIRECTORY", "service": "gsv-installations-dev" }],
+  "vars": { "BROWSER_LIMITS": { "enabled": true, "concurrentInstances": 2, "periodSeconds": 36000, "maxInstanceSeconds": 1800, "savedProfiles": 5, "profileStorageBytes": 5242880 } }
+}

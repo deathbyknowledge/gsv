@@ -7,6 +7,7 @@ import { TerminalProvider } from "../../services/terminal/TerminalProvider";
 import { DevicePairingProvider } from "../../services/machines/DevicePairingProvider";
 import { Zen } from "./zen/Zen";
 import { Fleet, type FleetProps } from "./fleet/Fleet";
+import { BrowserControlProvider, BrowserControlOverlay } from "./browser/BrowserControl";
 import { Memory } from "./memory/Memory";
 import { Settings } from "./settings/Settings";
 import { People } from "./people/People";
@@ -65,7 +66,7 @@ export function Instrument({ initialPath }: { initialPath: string }) {
   if (snapshot.phase !== "ready") {
     return <SessionScreens session={service} snapshot={snapshot} />;
   }
-  return <TerminalProvider key={JSON.stringify([snapshot.url, snapshot.username])}><DevicePairingProvider><InstrumentReady initialPath={initialPath} /></DevicePairingProvider></TerminalProvider>;
+  return <TerminalProvider key={JSON.stringify([snapshot.url, snapshot.username])}><DevicePairingProvider><BrowserControlProvider><InstrumentReady initialPath={initialPath} /></BrowserControlProvider></DevicePairingProvider></TerminalProvider>;
 }
 
 function InstrumentReady({ initialPath }: { initialPath: string }) {
@@ -296,6 +297,7 @@ function InstrumentReady({ initialPath }: { initialPath: string }) {
         </aside>
       ) : null}
       <div class="distance" data-view={distance}>
+        <BrowserControlOverlay />
         <RetainedView active={distance === "zen"}>
           <Zen key={zenPid ?? "ship"} onDraftChange={setZenDirty} onFleet={(reference) => move("fleet", reference ?? null)} onMemory={(page) => {
             if (page && memoryDirty && !window.confirm("Discard your unsaved page changes and open this page?")) return;

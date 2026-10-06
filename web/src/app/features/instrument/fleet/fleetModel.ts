@@ -43,6 +43,7 @@ export type Place = {
   version: string;
   description: string;
   ownerUid: number | null;
+  instance?: ConsoleTarget["instance"];
 };
 
 type PlaceActions = { pair: boolean; forget: boolean };
@@ -84,6 +85,7 @@ export function placeFromTarget(target: ConsoleTarget): Place {
     version: target.version,
     description: target.description,
     ownerUid: target.ownerUid,
+    instance: target.instance,
   };
 }
 
@@ -128,6 +130,7 @@ export function planetVariantForKind(kind: PlaceKind): AsciiPlanetVariant {
 }
 
 export function placeStateLabel(place: Place): string {
+  if (place.instance) return place.instance.state;
   return place.online ? "connected" : "offline";
 }
 

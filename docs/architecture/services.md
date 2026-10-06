@@ -15,6 +15,7 @@ The current contracts are:
 - `inference`: streamed model inference and cancellation
 - `mail`: Gateway mail transport and operational mail inspection
 - `web-search`: optional provider-neutral search implementation for the `gsv` target
+- `instances`: optional provisioned browser targets, saved profiles and human browser control
 - `adapters`: external messaging transport discovery and operations
 
 [Installation directory and onboarding](./installation-directory.md)

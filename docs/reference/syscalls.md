@@ -1549,6 +1549,51 @@ type RepoSyscalls = {
 };
 ```
 
+## Cloud instances and browser control
+
+The optional instance service owns browser starts, deadlines, stop, profiles and
+usage. Kernel derives installation and human owner scope. Management calls are
+available through native `instance` and `browser` shell commands; ordinary browser
+commands run on the returned target. See [cloud browsers](/how-to/cloud-browsers).
+
+A start requires a persisted request ID. Repeating the same ID and arguments
+returns the same instance, including after it becomes terminal. Stop may use the
+instance ID or the original start request ID; a stop received before admission
+fences that start. Instance reservations and concurrency are space-wide, while
+access to instances, profiles and human requests is owner-scoped.
+
+`handoff.open`, `finish`, `frame` and `input` require a directly signed-in human.
+Processes cannot use them. A process's handoff request requires a writable
+responsibility ID. `frame` returns a JPEG in its binary body; `input` accepts a
+bounded JSON body describing a click, key, text, scroll or tab selection. Images
+and typed input are not syscall arguments or agent history. Automation on the
+instance is fenced while a human request is pending or active. Completion closes
+input admission and waits for accepted input before resuming automation.
+
+The following argument and result types are exported from
+`@humansandmachines/gsv/protocol`:
+
+```ts
+type InstanceSyscalls = {
+  "sys.instance.catalog": { args: SysInstanceCatalogArgs; result: SysInstanceCatalogResult };
+  "sys.instance.start": { args: SysInstanceStartArgs; result: SysInstanceStartResult };
+  "sys.instance.list": { args: SysInstanceListArgs; result: SysInstanceListResult };
+  "sys.instance.get": { args: SysInstanceGetArgs; result: SysInstanceGetResult };
+  "sys.instance.stop": { args: SysInstanceStopArgs; result: SysInstanceStopResult };
+  "sys.browser.profile.create": { args: SysBrowserProfileCreateArgs; result: SysBrowserProfileCreateResult };
+  "sys.browser.profile.list": { args: SysBrowserProfileListArgs; result: SysBrowserProfileListResult };
+  "sys.browser.profile.get": { args: SysBrowserProfileGetArgs; result: SysBrowserProfileGetResult };
+  "sys.browser.profile.delete": { args: SysBrowserProfileDeleteArgs; result: SysBrowserProfileDeleteResult };
+  "sys.browser.handoff.request": { args: SysBrowserHandoffRequestArgs; result: SysBrowserHandoffRequestResult };
+  "sys.browser.handoff.get": { args: SysBrowserHandoffGetArgs; result: SysBrowserHandoffGetResult };
+  "sys.browser.handoff.cancel": { args: SysBrowserHandoffCancelArgs; result: SysBrowserHandoffCancelResult };
+  "sys.browser.handoff.open": { args: SysBrowserHandoffOpenArgs; result: SysBrowserHandoffOpenResult };
+  "sys.browser.handoff.finish": { args: SysBrowserHandoffFinishArgs; result: SysBrowserHandoffFinishResult };
+  "sys.browser.handoff.frame": { args: SysBrowserHandoffFrameArgs; result: SysBrowserHandoffFrameResult };
+  "sys.browser.handoff.input": { args: SysBrowserHandoffInputArgs; result: SysBrowserHandoffInputResult };
+};
+```
+
 ## System: `sys.*`
 
 `sys.*` covers setup, configuration, devices, workspaces, tokens, and account links.

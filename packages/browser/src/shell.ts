@@ -40,6 +40,9 @@ export class BrowserTargetShell {
     private readonly commands: BrowserCommand[],
   ) {}
 
+  /** Wait until cancelled commands have relinquished their underlying browser work. */
+  async idle(): Promise<void> { await this.execQueue; }
+
   async exec(args: unknown, context: BrowserShellExecContext = {}): Promise<ShellResult> {
     const previous = this.execQueue;
     let release!: () => void;

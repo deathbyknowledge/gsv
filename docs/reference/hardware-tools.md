@@ -31,6 +31,13 @@ support background jobs or resumable shell sessions.
 
 ## Agent-Visible Tools
 
+Optional [cloud browsers](/how-to/cloud-browsers) expose the same browser command
+core as the extension. `instance start` on `gsv` admits a new instance; its target
+becomes online only when ready. Target summaries include its instance state,
+deadline and optional saved profile ID. Stopped targets are never restarted by
+routing a command. `instance stop` retains the terminal receipt while releasing
+the running resource and its temporary files after confirmed cleanup.
+
 | Tool | Syscall | Description |
 |---|---|---|
 | `Read` | `fs.read` | Read a file or list a directory. |

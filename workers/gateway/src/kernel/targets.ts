@@ -7,6 +7,7 @@ import { hasCapability } from "./capabilities";
 import type { KernelContext } from "./context";
 import { principalOf } from "./context";
 import type { TargetRecord } from "./target-registry";
+import { discoverInstanceTargets, type InstanceTargetRoute } from "./instance-targets";
 import {
   discoverVisibleAdapterTargets,
   type AdapterTargetRoute,
@@ -35,7 +36,8 @@ export type TargetDescriptor = {
   lastSeenAt: number;
   connectedAt: number | null;
   disconnectedAt: number | null;
-  route: { kind: "machine"; targetId: string } | AdapterTargetRoute;
+  instance?: SysTargetSummary["instance"];
+  route: { kind: "machine"; targetId: string } | AdapterTargetRoute | InstanceTargetRoute;
 };
 
 export type TargetListOptions = {
@@ -78,10 +80,10 @@ export async function discoverVisibleTargets(
   ctx: KernelContext,
   options: TargetListOptions = {},
 ): Promise<TargetDiscovery> {
-  const discovery = await discoverVisibleAdapterTargets(ctx, options);
+  const [discovery, instances] = await Promise.all([discoverVisibleAdapterTargets(ctx, options), discoverInstanceTargets(ctx, options)]);
   return {
-    targets: [...listVisibleTargets(ctx, options), ...discovery.targets],
-    complete: discovery.complete,
+    targets: [...listVisibleTargets(ctx, options), ...discovery.targets, ...instances.targets],
+    complete: discovery.complete && instances.complete,
   };
 }
 
@@ -108,11 +110,10 @@ export async function resolveVisibleTarget(
   targetId: string,
   options: TargetListOptions = {},
 ): Promise<TargetDescriptor | null> {
-  return getVisibleTarget(ctx, targetId, options)
-    ?? (await discoverVisibleAdapterTargets(ctx, options)).targets.find(
-      (target) => target.targetId === targetId,
-    )
-    ?? null;
+  const local = getVisibleTarget(ctx, targetId, options);
+  if (local) return local;
+  const [adapters, instances] = await Promise.all([discoverVisibleAdapterTargets(ctx, options), discoverInstanceTargets(ctx, options)]);
+  return [...adapters.targets, ...instances.targets].find(target => target.targetId === targetId) ?? null;
 }
 
 export async function resolveSelectedMessageTarget(ctx: KernelContext, targetId: string | undefined): Promise<string | undefined> {
@@ -174,6 +175,7 @@ export function targetToSummary(target: TargetDescriptor): SysTargetSummary {
     version: target.version,
     online: target.online,
     lastSeenAt: target.lastSeenAt,
+    instance: target.instance,
   };
 }
 

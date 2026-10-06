@@ -49,6 +49,8 @@ import {
 import { handleAccountCreate, handleAccountList } from "./agents";
 import { handleSysConfigGet, handleSysConfigSet } from "./sys/config";
 import { handleSysTargetDelete, handleSysTargetGet, handleSysTargetList, handleSysTargetUpdate } from "./sys/target";
+import { handleInstanceRequest } from "./sys/instance";
+import { requestInstanceTarget } from "./instance-targets";
 import { handleSysLedgerList } from "./sys/ledger";
 import { normalizeNetFetchTimeoutMs } from "./net";
 import { handleSysBootstrap } from "./sys/bootstrap";
@@ -580,6 +582,23 @@ async function dispatchKernel(
       case "sys.feedback":
         data = await handleSysFeedback(frame.args, ctx, frame.body);
         break;
+      case "sys.instance.catalog":
+      case "sys.instance.start":
+      case "sys.instance.list":
+      case "sys.instance.get":
+      case "sys.instance.stop":
+      case "sys.browser.profile.create":
+      case "sys.browser.profile.list":
+      case "sys.browser.profile.get":
+      case "sys.browser.profile.delete":
+      case "sys.browser.handoff.request":
+      case "sys.browser.handoff.get":
+      case "sys.browser.handoff.cancel":
+      case "sys.browser.handoff.open":
+      case "sys.browser.handoff.finish":
+      case "sys.browser.handoff.frame":
+      case "sys.browser.handoff.input":
+        return await handleInstanceRequest(frame, ctx);
       case "sys.config.get":
         data = handleSysConfigGet(frame.args, ctx);
         break;
@@ -587,16 +606,16 @@ async function dispatchKernel(
         data = handleSysConfigSet(frame.args, ctx);
         break;
       case "sys.target.list":
-        data = handleSysTargetList(frame.args, ctx);
+        data = await handleSysTargetList(frame.args, ctx);
         break;
       case "sys.target.get":
-        data = handleSysTargetGet(frame.args, ctx);
+        data = await handleSysTargetGet(frame.args, ctx);
         break;
       case "sys.target.update":
         data = handleSysTargetUpdate(frame.args, ctx);
         break;
       case "sys.target.delete":
-        data = handleSysTargetDelete(frame.args, ctx);
+        data = await handleSysTargetDelete(frame.args, ctx);
         break;
       case "sys.ledger.list":
         data = await handleSysLedgerList(frame.args, ctx);
@@ -933,6 +952,9 @@ async function routeToTarget(
   }
 
   const ttlMs = routedFrameTtlMs(frame);
+  if (target.route.kind === "instance") {
+    return { handled: true, response: await requestInstanceTarget(frame, target, Date.now() + ttlMs, ctx) };
+  }
   if (target.route.kind === "adapter") {
     return {
       handled: true,

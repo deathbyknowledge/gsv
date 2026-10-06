@@ -1,0 +1,20 @@
+.browser-requests { max-width: 56rem; margin: 0 auto; padding: .75rem 1rem; }
+.browser-request { display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding: .6rem 0; border-bottom: 1px solid var(--line, #333); }
+.browser-request span, .browser-viewer header span { display: block; font-size: .85em; opacity: .65; margin-top: .3rem; }
+.browser-viewer { width: min(1340px, 96vw); max-width: 96vw; max-height: 95vh; padding: 1rem; font: 13px/1.5 var(--gsv-font-mono); color: var(--text); background: var(--panel-2); border: 1px solid var(--border); }
+.browser-viewer::backdrop { background: #000a; }
+.browser-viewer header { display: flex; align-items: center; gap: 1rem; }
+.browser-viewer header > div { flex: 1; }
+.browser-viewer button { color: inherit; background: transparent; padding: .55rem .8rem; border: 1px solid currentColor; cursor: pointer; }
+.browser-viewer button:disabled { opacity: .45; cursor: default; }
+.browser-screen { position: relative; width: 100%; min-height: 12rem; background: white; }
+.browser-tabs { display: flex; align-items: center; gap: .75rem; margin: .75rem 0; }
+.browser-tabs select { max-width: 100%; color: inherit; background: var(--panel-2); }
+.browser-screen img { display: block; width: 100%; height: auto; touch-action: manipulation; }
+.browser-keyboard { position: absolute; width: 1px; height: 1px; opacity: .01; left: 0; bottom: 0; padding: 0; border: 0; font-size: 16px; }
+.browser-start label, .browser-actions label { display: grid; gap: .4rem; margin: .8rem 0; }
+.browser-start select, .browser-actions select { width: 100%; }
+.browser-profile-create, .browser-actions form { display: flex; gap: .5rem; margin: .8rem 0; }
+.browser-profile-create input, .browser-actions form input { min-width: 0; flex: 1; }
+.browser-actions { border-top: 1px solid var(--line, #333); padding-top: 1rem; margin-top: 1rem; }
+@media (max-width: 600px) { .browser-viewer { padding: .5rem; } .browser-viewer header { flex-wrap: wrap; gap: .5rem; } .browser-viewer header > div { flex-basis: 100%; } }

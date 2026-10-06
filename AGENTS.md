@@ -110,6 +110,7 @@ Contact conversations have no mandatory Process handler. Pairing and first-messa
 - `host/crates/`: shared gateway transport, host configuration, Desktop IPC, gesture protocol contracts, and Windows SCM/process ownership primitives. `host/` owns their Cargo workspace and build artifacts.
 - `workers/adapters/`: platform-specific messaging workers and identity normalization.
 - `extension/`: browser-backed target and browser integration.
+- `workers/instances/`: optional cloud browser provisioning, profiles, human control, metering, and instance-owned cleanup.
 - `workers/ripgit/`: git-backed repositories and filesystem storage operations.
 
 Keep platform-specific identity and delivery behavior in its adapter. Keep visual presentation in the web and Desktop clients. Keep target selection below stable syscall contracts.
@@ -243,6 +244,7 @@ Before Desktop Rust checks, build its shared frontend with `npm run gsv:build &&
 - Machine: `cd host && cargo fmt --package machine --check && cargo test --package machine`
 - ripgit: `cd workers/ripgit && npm test`
 - Browser extension: `cd extension && npm run check && npm run test:run && npm run build`
+- Cloud instances: `npm run typecheck --workspace workers/instances && npm test --workspace workers/instances`; after starting the local stack, `npm run smoke:browser`
 - Shared browser core: `npm run browser:build`, then the browser extension checks above and checks for each provider that consumes it.
 - Discord, Telegram, Slack, or test adapter: `cd workers/adapters/<name> && npm run typecheck`
 

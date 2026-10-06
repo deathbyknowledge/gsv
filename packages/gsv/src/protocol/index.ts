@@ -1,4 +1,5 @@
 export type * from "./syscalls/system";
+export type * from "./syscalls/instance";
 export type * from "./syscalls/pairing";
 export * from "./pairing";
 export * from "./tool-approval";
