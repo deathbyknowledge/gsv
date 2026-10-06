@@ -156,6 +156,8 @@ describe("public operator composition", () => {
     expect(accounts.GSV_OWNER_AUTH_SECRET).toBe(authSecret);
     expect(JSON.stringify(accounts.GSV_OWNER_AUTH_SECRET)).not.toContain("synthetic-stable-owner-secret");
     expect(accounts.GSV_OWNER_OIDC_CLIENT_ID).toBe("owner-client");
+    expect(recorded.workers.find((worker) => worker.id === "FixtureGateway")?.props.env?.GSV_OWNER_SIGNUP_URL)
+      .toBe("https://accounts.example.com/owner/signup/?resume=1");
     if (!Effect.isEffect(accounts.OWNER_EMAIL)) throw new Error("Expected native email binding");
     expect(await run(accounts.OWNER_EMAIL)).toMatchObject({
       kind: "Cloudflare.Email.SendEmail", name: "OWNER_EMAIL",
@@ -173,6 +175,8 @@ describe("public operator composition", () => {
     expect(accounts).not.toHaveProperty("OWNER_EMAIL");
     expect(accounts).not.toHaveProperty("GSV_OWNER_EMAIL_FROM");
     expect(accounts).not.toHaveProperty("GSV_OWNER_AUTH_SECRET");
+    expect(recorded.workers.find((worker) => worker.id === "FixtureGateway")?.props.env)
+      .not.toHaveProperty("GSV_OWNER_SIGNUP_URL");
   });
 
   it("provisions a fresh directory and executor with the exact recovery authority bindings", async () => {

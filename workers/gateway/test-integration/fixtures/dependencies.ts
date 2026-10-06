@@ -384,7 +384,7 @@ export default class TestDependencies
     if (handle !== "first" && handle !== "second" && handle !== "suspended") {
       return { found: false };
     }
-    return {
+    const result: InstallationDirectoryResult = {
       found: true,
       installationId: `inst_integration_${handle}`,
       handle,
@@ -393,6 +393,8 @@ export default class TestDependencies
         ? "deleted"
         : await this.integrationState().getInstallationState(handle),
     };
+    if (handle === "first") result.ownerSetupRecovery = true;
+    return result;
   }
 
   async resolveInstallation(

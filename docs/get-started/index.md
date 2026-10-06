@@ -26,6 +26,12 @@ it works once. The signup page also links to the beta Desktop app for macOS and
 Linux; see [Install host apps](/how-to/install-host-apps) for the download and
 first-launch steps.
 
+If setup is interrupted or its link expires, opening the unfinished space shows
+**Continue setup** instead of the ordinary sign-in form. Sign in with the email
+you used to claim the space, then select **Continue** beside its handle. This
+renews setup authorization for the same space; you do not need another invite.
+For a setup invitation issued directly by an operator, ask the operator to renew it.
+
 If you are already signed in and choose **Use an invite**, confirm the same age,
 Terms and Privacy agreement on **Before you begin** before the invite is claimed.
 Resuming signup after reopening the browser or app also requires confirmation

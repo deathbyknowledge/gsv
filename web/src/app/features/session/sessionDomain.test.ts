@@ -2,6 +2,9 @@ import { describe, expect, it } from "vitest";
 import { USERNAME_FORMAT_DESCRIPTION, validateSetupAccount } from "./sessionDomain";
 
 describe("setup account validation", () => {
+  it("accepts underscores in the account username", () => {
+    expect(validateSetupAccount({ username: "sample_user", password: "password123", passwordConfirm: "password123" })).toEqual({});
+  });
   it("accepts local credentials without optional configuration", () => {
     expect(validateSetupAccount({ username: "alice", password: "password123", passwordConfirm: "password123" })).toEqual({});
   });

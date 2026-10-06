@@ -45,7 +45,7 @@ export function SetupScreen({ visible, busy, space, step, username, password, pa
           <TextInput label="Username" value={username} disabled={busy} info={USERNAME_FORMAT_DESCRIPTION}
             status={fieldErrors.username ? "error" : "none"} message={fieldErrors.username}
             placeholder="Choose a username" onChange={onUsername}
-            inputProps={{ autoComplete: "username", maxLength: 32, "data-setup-username": true, onBlur: (event) => onFieldBlur("username", event.relatedTarget) }} />
+            inputProps={{ autoComplete: "username", autoCapitalize: "none", autoCorrect: "off", spellcheck: false, maxLength: 32, "data-setup-username": true, onBlur: (event) => onFieldBlur("username", event.relatedTarget) }} />
           <TextInput label="Password" type="password" value={password} disabled={busy} clearable={false}
             status={fieldErrors.password ? "error" : "none"} message={fieldErrors.password}
             placeholder="At least 8 characters" onChange={onPassword}

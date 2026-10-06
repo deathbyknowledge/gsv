@@ -3,7 +3,7 @@ import { createSessionService, type SessionClient } from "../app/services/sessio
 import { deferred } from "../app/testing/testHarness";
 import { disconnectSpace, nativeSessionStorage, type DesktopSession } from "./bridge";
 import { ONBOARDING_KEY, type WelcomeSnapshot, type WelcomeState } from "../app/services/session/ownerWelcome";
-import { completeDesktopOnboarding, loadDesktopWelcome } from "./welcome";
+import { clearDesktopOnboardingToken, completeDesktopOnboarding, loadDesktopWelcome } from "./welcome";
 
 const tokenKey = "gsv.ui.session.token.v1";
 const pendingKey = "gsv.ui.session.pending-revokes.v1";
@@ -65,7 +65,7 @@ function sessionHarness(connected = true, restoredValues?: Record<string, string
   } satisfies SessionClient;
   const onboardingToken = storage.getItem(ONBOARDING_KEY);
   const service = createSessionService(client, { url: "wss://first.example/ws", storage,
-    onboarding: onboardingToken ? { token: onboardingToken, complete: () => completeDesktopOnboarding(storage) } : false });
+    onboarding: onboardingToken ? { token: onboardingToken, discard: () => clearDesktopOnboardingToken(storage), complete: () => completeDesktopOnboarding(storage) } : false });
   return { service, storage, client, invoke, onError, revocation, unsubscribe,
     stored: () => stored, forgotten: () => forgotten,
     blockWrites: (promise: Promise<void>) => { writeGate = promise; },
@@ -114,6 +114,31 @@ describe("desktop session persistence", () => {
     await disconnectSpace(h.service, h.storage);
     expect(h.forgotten()).not.toBeNull();
     expect((await loadDesktopWelcome()).state).toEqual({ ...pendingWelcome, flow: "open", inviteId: null, handle: null });
+  });
+
+  it("discards rejected setup credentials without clearing the unfinished invitation", async () => {
+    const h = sessionHarness(false, { [ONBOARDING_KEY]: `onboard_${"a".repeat(43)}` }, pendingWelcome);
+    const failure = { code: 401, details: { setupRecovery: true, setupUrl: "https://accounts.example.com/owner/signup/?resume=1" } };
+    h.client.requestOnce.mockRejectedValueOnce(failure).mockRejectedValueOnce({ code: 503, details: failure.details });
+    await expect(h.service.setup({ username: "alice", password: "fixture-password" })).rejects.toEqual(failure);
+    expect(h.service.snapshot().phase).toBe("setup-recovery");
+    expect(h.stored()[ONBOARDING_KEY]).toBeUndefined();
+    expect((await loadDesktopWelcome()).state).toEqual(pendingWelcome);
+    expect(h.client.connect).not.toHaveBeenCalled();
+    h.service.dispose?.();
+  });
+
+  it("offers sign-in without restarting Desktop when an operator-issued setup has already completed", async () => {
+    const h = sessionHarness(false, { [ONBOARDING_KEY]: `onboard_${"a".repeat(43)}` });
+    const failure = { code: 401, details: { setupRecovery: true } };
+    h.client.requestOnce.mockRejectedValueOnce(failure).mockRejectedValueOnce({ code: 401 });
+    await expect(h.service.setup({ username: "alice", password: "fixture-password" })).rejects.toEqual(failure);
+    expect(h.stored()[ONBOARDING_KEY]).toBeUndefined();
+    expect(h.service.snapshot()).toMatchObject({ phase: "locked", username: "alice", message: null });
+    expect(h.client.requestOnce).toHaveBeenLastCalledWith("wss://first.example/ws", "sys.connect", expect.objectContaining({
+      peer: expect.objectContaining({ id: "gsv-ui-setup-probe" }),
+    }));
+    h.service.dispose?.();
   });
 
   it("retains setup recovery until the completed creation flow is durably cleared", async () => {

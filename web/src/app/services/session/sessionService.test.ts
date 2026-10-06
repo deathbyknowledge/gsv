@@ -66,6 +66,92 @@ describe("account setup", () => {
     } satisfies SessionClient;
   }
 
+  it("offers owner-verified recovery when another tab has no setup capability", async () => {
+    installWindow();
+    const client = createSetupClient();
+    const setupUrl = "https://accounts.example/owner/signup/?resume=1";
+    client.requestOnce.mockRejectedValueOnce({ code: 503, message: "Finish setting up your space",
+      details: { setupRecovery: true, setupUrl } });
+    const service = createSessionService(client);
+    await service.start();
+    expect(service.snapshot()).toMatchObject({ phase: "setup-recovery", setupRecoveryUrl: setupUrl });
+    expect(client.connect).not.toHaveBeenCalled();
+    expect(client.requestOnce).toHaveBeenCalledOnce();
+  });
+
+  it("offers recovery for an expired setup capability without treating the account as created", async () => {
+    installWindow();
+    const client = createSetupClient();
+    const complete = vi.fn();
+    const discard = vi.fn();
+    const failure = { code: 401, message: "Installation setup link is invalid or expired",
+      details: { setupRecovery: true, setupUrl: "https://accounts.example/owner/signup/?resume=1" } };
+    client.requestOnce.mockRejectedValueOnce(failure).mockRejectedValueOnce({ code: 503, details: failure.details });
+    const service = createSessionService(client, { onboarding: { token: onboardingToken, discard, complete } });
+    await service.start();
+    await expect(service.setup({ username: "alice", password: "password123" })).rejects.toEqual(failure);
+    expect(service.snapshot().phase).toBe("setup-recovery");
+    expect(complete).not.toHaveBeenCalled();
+    expect(discard).toHaveBeenCalledOnce();
+    expect(client.connect).not.toHaveBeenCalled();
+  });
+
+  it("moves an active operator-issued space to sign-in after rejecting its consumed setup capability", async () => {
+    installWindow();
+    window.sessionStorage.setItem(onboardingStorageKey, onboardingToken);
+    const client = createSetupClient();
+    const failure = { code: 401, details: { setupRecovery: true } };
+    client.requestOnce.mockRejectedValueOnce(failure).mockRejectedValueOnce({ code: 401 });
+    const service = createSessionService(client);
+    await service.start();
+    expect(service.snapshot().phase).toBe("setup");
+    await expect(service.setup({ username: "alice", password: "password123" })).rejects.toEqual(failure);
+    expect(window.sessionStorage.getItem(onboardingStorageKey)).toBeNull();
+    expect(service.snapshot()).toMatchObject({ phase: "locked", username: "alice", message: null });
+    expect(client.requestOnce).toHaveBeenLastCalledWith("wss://example.test/ws", "sys.connect", expect.objectContaining({
+      peer: expect.objectContaining({ id: "gsv-ui-setup-probe" }),
+    }));
+    service.dispose?.();
+    client.requestOnce.mockRejectedValueOnce({ code: 401 });
+    const reopened = createSessionService(client);
+    await reopened.start();
+    expect(reopened.snapshot().phase).toBe("locked");
+    reopened.dispose?.();
+  });
+
+  it("accepts a replacement setup capability after rejecting an expired one", async () => {
+    installWindow();
+    window.sessionStorage.setItem(onboardingStorageKey, onboardingToken);
+    const client = createSetupClient();
+    client.requestOnce.mockRejectedValueOnce({ code: 401, details: { setupRecovery: true } })
+      .mockRejectedValueOnce({ code: 503, details: { setupRecovery: true } });
+    const service = createSessionService(client);
+    await expect(service.setup({ username: "alice", password: "password123" })).rejects.toMatchObject({ code: 401 });
+    service.dispose?.();
+    const replacement = `onboard_${"b".repeat(43)}`;
+    window.location.pathname = "/onboarding";
+    window.location.hash = `#${replacement}`;
+    const resumed = createSessionService(client);
+    await resumed.start();
+    expect(resumed.snapshot().phase).toBe("setup");
+    await resumed.setup({ username: "alice", password: "password123" });
+    expect(client.requestOnce).toHaveBeenLastCalledWith("wss://example.test/ws", "sys.setup", {
+      username: "alice", password: "password123", onboardingToken: replacement,
+    });
+    expect(resumed.snapshot().phase).toBe("ready");
+    resumed.dispose?.();
+  });
+
+  it("preserves provisioning recovery when sign-in reaches the lifecycle gate", async () => {
+    installWindow();
+    const client = createSetupClient();
+    const failure = { code: 503, details: { setupRecovery: true, setupUrl: "javascript:alert(1)" } };
+    client.connect.mockRejectedValueOnce(failure);
+    const service = createSessionService(client);
+    await expect(service.login({ username: "alice", password: "password123" })).rejects.toEqual(failure);
+    expect(service.snapshot()).toMatchObject({ phase: "setup-recovery", setupRecoveryUrl: undefined });
+  });
+
   it("signs in immediately with the credentials created by setup", async () => {
     installWindow();
     window.sessionStorage.setItem(onboardingStorageKey, onboardingToken);
@@ -94,7 +180,7 @@ describe("account setup", () => {
     window.sessionStorage.setItem(onboardingStorageKey, "unrelated-browser-capability");
     const client = createSetupClient();
     const complete = vi.fn(async () => { expect(client.connect).not.toHaveBeenCalled(); });
-    const service = createSessionService(client, { onboarding: { token: onboardingToken, complete } });
+    const service = createSessionService(client, { onboarding: { token: onboardingToken, discard: vi.fn(), complete } });
     await service.start();
     expect(service.snapshot().phase).toBe("setup");
     client.requestOnce.mockRejectedValueOnce(new Error("interrupted"));
@@ -130,7 +216,7 @@ describe("account setup", () => {
   it("offers sign-in if native completion could not be saved after creating the account", async () => {
     installWindow();
     const client = createSetupClient();
-    const service = createSessionService(client, { onboarding: { token: onboardingToken, complete: async () => { throw new Error("Disk full"); } } });
+    const service = createSessionService(client, { onboarding: { token: onboardingToken, discard: vi.fn(), complete: async () => { throw new Error("Disk full"); } } });
     await expect(service.setup({ username: "alice", password: "setup password" })).rejects.toThrow("Disk full");
     expect(service.snapshot().phase).toBe("locked");
     await service.login({ username: "alice", password: "setup password" });

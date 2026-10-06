@@ -3,6 +3,10 @@ import * as z from "zod/mini";
 export const GSV_TELEMETRY_MARKER = "gsv.telemetry";
 export const GSV_TELEMETRY_VERSION = 1;
 
+export const telemetryErrorTypeSchema = z.enum([
+  "Error", "TypeError", "RangeError", "SyntaxError", "ReferenceError", "AbortError", "TimeoutError", "AggregateError", "unknown",
+]);
+
 const installationIdSchema = z.string().check(
   z.regex(/^[A-Za-z0-9](?:[A-Za-z0-9._:-]{0,126}[A-Za-z0-9])?$/),
 );
@@ -288,6 +292,16 @@ const delegationCompletedSchema = z.strictObject({
 
 export const telemetryEventSchema = z.discriminatedUnion("name", [
   z.strictObject({
+    stream: z.literal("operational"), name: z.literal("installation.setup.failed"),
+    properties: z.strictObject({
+      diagnosticId: z.string().check(z.uuid()),
+      outcome: z.literal("failed"),
+      stage: z.enum(["authorization", "recovery", "activation"]),
+      errorType: telemetryErrorTypeSchema,
+      durationMs: nonNegativeIntegerSchema,
+    }),
+  }),
+  z.strictObject({
     stream: z.literal("operational"), name: z.literal("inference.client.finished"),
     properties: z.strictObject({
       diagnosticId: z.string().check(z.uuid()),
@@ -296,7 +310,7 @@ export const telemetryEventSchema = z.discriminatedUnion("name", [
       outcome: z.enum(["completed", "failed", "cancelled", "timed_out"]),
       workload: inferenceWorkloadSchema,
       durationMs: nonNegativeIntegerSchema,
-      errorType: z.optional(z.enum(["Error", "TypeError", "RangeError", "SyntaxError", "ReferenceError", "AbortError", "TimeoutError", "AggregateError", "unknown"])),
+      errorType: z.optional(telemetryErrorTypeSchema),
       httpStatus: z.optional(httpStatusCodeSchema),
       rpcRemote: z.optional(z.boolean()),
       rpcRetryable: z.optional(z.boolean()),
@@ -381,6 +395,7 @@ export const telemetryEventSchema = z.discriminatedUnion("name", [
 // The owning component is part of the allowlist, not a claim made by an arbitrary producer.
 export type TelemetryEventOwnership = Record<z.infer<typeof telemetryEventSchema>["name"], readonly z.infer<typeof telemetryComponentSchema>[]>;
 export const telemetryEventComponents = {
+  "installation.setup.failed": ["gateway"],
   "inference.client.finished": ["gateway", "inference"],
   "inference.metadata.finished": ["gateway", "inference", "accounts"],
   "entitlements.refresh.finished": ["inference", "search", "mail"],

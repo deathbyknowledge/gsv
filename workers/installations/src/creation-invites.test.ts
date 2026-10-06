@@ -46,13 +46,17 @@ describe("space creation invites", () => {
   it("keeps an invite usable after an unavailable handle and never creates two spaces", async () => {
     const principalId = await owner();
     const name = handle();
-    await accounts.reserveInstallation({ principalId, operationId: crypto.randomUUID(), handle: name });
+    const operatorSpace = await accounts.reserveInstallation({ principalId, operationId: crypto.randomUUID(), handle: name });
+    expect(await accounts.resolveInstallation(operatorSpace.installationId)).not.toHaveProperty("ownerSetupRecovery");
+    expect(await accounts.resolveHostname(`${name}.example.com`)).not.toHaveProperty("ownerSetupRecovery");
     const issued = await invites.create({});
     await invites.claim(issued.code, principalId);
     await expect(invites.prepare(issued.invite.id, principalId, name)).rejects.toThrow("unavailable");
     expect((await invites.owned(principalId))[0].state).toBe("claimed");
     const available = handle();
     const prepared = await invites.prepare(issued.invite.id, principalId, available);
+    expect(await accounts.resolveInstallation(prepared.space.installationId)).toMatchObject({ ownerSetupRecovery: true });
+    expect(await accounts.resolveHostname(`${available}.example.com`)).toMatchObject({ ownerSetupRecovery: true });
     const resumed = await new InstallationCreationInvites(db, accounts, onboarding).prepare(issued.invite.id, principalId, available);
     expect(resumed.space.installationId).toBe(prepared.space.installationId);
     expect((await db.prepare("SELECT COUNT(*) AS count FROM provisioning_operations WHERE operation_id = ?").bind(issued.invite.id).first())?.count).toBe(1);
