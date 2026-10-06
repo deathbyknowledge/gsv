@@ -21,6 +21,7 @@ import { ZenText } from "./ZenText";
 import { ThinkingMark } from "./ThinkingMark";
 import { ApprovalCard } from "../shared/ApprovalCard";
 import { ZenDraftPaste } from "./ZenMedia";
+import { FeedbackNote } from "./ZenNotes";
 
 let storage: Map<string, string>;
 let messages: ConversationMessage[];
@@ -331,7 +332,7 @@ describe("Zen conversation entry", () => {
       await act(() => { expect(zen.props(NativeVoiceControls).send("@cloud")).toBe(true); });
       expect(zen.props(PromptLine).place.id).toBe("gsv");
       await act(() => { zen.props(NativeVoiceControls).send("@missing"); });
-      expect(zen.text()).toContain("No place called missing.");
+      expect(zen.props(FeedbackNote).note).toEqual({ kind: "notice", text: "No place called missing." });
       expect(send).not.toHaveBeenCalled();
     } finally { await zen.unmount(); }
   });
