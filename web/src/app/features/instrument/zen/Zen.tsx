@@ -119,7 +119,7 @@ function placesFromTargets(targets: Awaited<ReturnType<typeof loadConsoleTargets
 /** When the moment was sent, read in the owner's zone. Always in the label row so nothing moves; the stylesheet reveals it on hover, focus or the browse cursor. */
 const MomentTime = memo(function MomentTime({ timestamp, today, timeZone }: { timestamp: number; today: number; timeZone: string }) {
   const when = momentTime(timestamp, timeZone, today);
-  return <time class="when" dateTime={new Date(timestamp).toISOString()} title={when.title}>{when.label}</time>;
+  return <time dateTime={new Date(timestamp).toISOString()} title={when.title}>{when.label}</time>;
 });
 
 const ActivityLine = memo(function ActivityLine({
@@ -830,21 +830,26 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
     return moments.map((moment) => {
       if (moment.role === "note") return null;
       const receipt = receipts.get(moment.id);
+      const delivered = moment.role === "human" && !moment.outgoing;
       return <>
         {moment.role === "human" || moment.text || moment.media?.length || moment.streaming ? <div class="who">
           {moment.role === "human" ? who : "ship"}
-          {moment.timestamp !== null ? <MomentTime timestamp={moment.timestamp} today={today} timeZone={timeZone} /> : null}
-          {/* whether your message reached GSV, after the time: in flight until acknowledged, then a check; a failure speaks below the message */}
-          {moment.role !== "human" || moment.outgoing?.status === "failed" ? null : moment.outgoing ? (
+          {/* when it was sent and, for your messages, that it reached GSV: one unit, shown on the latest message and on hover or selection */}
+          {moment.timestamp !== null || delivered ? <span class="when">
+            {moment.timestamp !== null ? <MomentTime timestamp={moment.timestamp} today={today} timeZone={timeZone} /> : null}
+            {delivered ? (
+              <span class="zen-send-status is-delivered" role="img" aria-label="Delivered" title="Delivered to GSV">
+                <svg viewBox="0 0 12 12" aria-hidden="true"><path d="M2 6.4l2.7 2.7L10 3.2" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" /></svg>
+              </span>
+            ) : null}
+          </span> : null}
+          {/* still on its way: always visible while in flight; a failure speaks below the message */}
+          {moment.role === "human" && moment.outgoing && moment.outgoing.status !== "failed" ? (
             <span class="zen-send-status" role="status" aria-label={moment.outgoing.status === "uploading" ? "Uploading attachments" : "Sending message"}>
               <Spinner size={12} />
               <span aria-hidden="true">{moment.outgoing.status === "uploading" ? "uploading" : "sending"}</span>
             </span>
-          ) : (
-            <span class="zen-send-status is-delivered" role="img" aria-label="Delivered" title="Delivered to GSV">
-              <svg viewBox="0 0 12 12" aria-hidden="true"><path d="M2 6.4l2.7 2.7L10 3.2" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" /></svg>
-            </span>
-          )}
+          ) : null}
         </div> : null}
         {moment.activities
           .filter((activity) => activity.you)
