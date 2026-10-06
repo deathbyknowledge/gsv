@@ -87,10 +87,15 @@ resolves (its run-as account's own override, else the owner's), then approves th
 request once. A hover/focus tooltip names that scope. The rule is visible and
 removable in Settings → permissions and applies from the next run. The card never
 sends `proc.hil` with `remember`, and approve and deny stay one-time decisions.
-Its "why am I being asked?" link opens a two-step explanation inside the same
-row, below the live request: what the Ship does on its own, then the per-kind
-allow/ask choices, which save to that same account policy. Nothing opens on its
-own and nothing records that the explanation was seen.
+Its "why am I being asked?" link renders client-authored Ship messages below the
+live request (ordinary `zen-moment is-ship` rows without a timestamp, since nothing
+was sent) and a box of choices: auto-approve everything, ask only before deleting
+or contacting someone, "What are sensitive tasks?" for the list with per-kind
+allow/ask picks, or keep asking. Every answer saves to the same account policy; a save that now allows
+the pending call also approves it. An account that cannot write settings sees an
+apology with "got it" / "why?", the reason being hardcoded by cause (capability
+or a policy that cannot be rewritten losslessly). Nothing opens on its own, the
+model is not involved, and nothing records that the explanation was seen.
 
 Zen owns the conversation. A fresh conversation shows the welcome ("Welcome to the ship." / "I am the ship. Who are you?") and the ordinary composer; the CLI and messengers have no such greeting. The person's first message answers that question and goes through normal conversation sending; entering the space never sends an introduction on their behalf. Existing messages and drafts keep their ordinary behavior. Ship's durable onboarding responsibility owns the introduction and any guidance after that first message. Helpers have a simple empty conversation state.
 

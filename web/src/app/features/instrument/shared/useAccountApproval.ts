@@ -11,6 +11,9 @@ import { GLOBAL_APPROVAL_CONFIG_KEY, defaultApprovalPolicyForConfig, parseApprov
 import { canConfigure, readSettingsPolicy } from "../settings/settingsModel";
 import { INSTRUMENT_PROCESSES_KEY } from "../wire/queryKeys";
 
+/** Why no rule can be written from a card: the viewer lacks the settings capability, or the saved policy cannot be rewritten losslessly. */
+export type AccountApprovalBlock = "capability" | "policy";
+
 export type AccountApproval = {
   /** The account whose approval override a persistent choice writes; null until the process and its account are known. */
   policyUid: number | null;
@@ -20,6 +23,8 @@ export type AccountApproval = {
   inheritedSource: ApprovalPolicySource;
   /** A persistent rule may be written: the settings snapshot is loaded, the viewer may edit it, and the policy round-trips losslessly. */
   editable: boolean;
+  /** Set once the snapshot and process are known but nothing may be written; null while loading or when editable. */
+  blocked: AccountApprovalBlock | null;
   /** Save an allow rule for exactly this request's capability and place. Resolves true once the rule is stored. */
   allowAlways: (request: ProcHilRequest) => Promise<boolean>;
   /** The request whose rule is being written or failed to write, so a card shows its own state only. */
@@ -50,9 +55,10 @@ export function useAccountApproval({ pid, enabled = true }: { pid: string | null
   const inherited = defaultApprovalPolicyForConfig(config.data ?? []);
   const inheritedValue = configEntry(GLOBAL_APPROVAL_CONFIG_KEY);
   const inheritedSource = useMemo(() => ({ key: GLOBAL_APPROVAL_CONFIG_KEY, value: inheritedValue }), [inheritedValue]);
-  const editable = config.data !== undefined && self !== null && policyUid !== null && canConfigure(self, "sys.config.set")
-    && (override === "" || readSettingsPolicy(override) !== null)
-    && readSettingsPolicy(inherited) !== null;
+  const known = config.data !== undefined && self !== null && policyUid !== null;
+  const lossless = (override === "" || readSettingsPolicy(override) !== null) && readSettingsPolicy(inherited) !== null;
+  const editable = known && canConfigure(self, "sys.config.set") && lossless;
+  const blocked: AccountApprovalBlock | null = !known || editable ? null : !canConfigure(self, "sys.config.set") ? "capability" : "policy";
 
   const refresh = useCallback(async () => { await cache.invalidateQueries({ queryKey: consoleConfigQueryKey }); }, [cache]);
   const [pending, setPending] = useState<AccountApproval["pending"]>(null);
@@ -74,5 +80,5 @@ export function useAccountApproval({ pid, enabled = true }: { pid: string | null
     return true;
   }, [client, inherited, inheritedSource, override, policyUid, refresh]);
 
-  return { policyUid, inherited, override, inheritedSource, editable, allowAlways, pending, refresh };
+  return { policyUid, inherited, override, inheritedSource, editable, blocked, allowAlways, pending, refresh };
 }

@@ -18,7 +18,7 @@ import { useChatOutbox } from "../../../services/chat/hooks/useChatOutbox";
 import { useChatRuntime } from "../../../services/chat/hooks/useChatRuntime";
 import { loadConsoleTargets } from "../../../services/system/consoleService";
 import { useConsoleAccounts, useConsoleConfig } from "../../../services/system/useConsoleData";
-import { currentApprovalChoices } from "../../../domain/agentApproval";
+import { currentApprovalChoices, resolveApprovalAction } from "../../../domain/agentApproval";
 import { parseApprovalPolicy } from "../../../domain/system/consoleAgentBehavior";
 import { listLibraryCollections } from "../../../services/memory/libraryService";
 import { libraryTitleFromPath } from "../../../services/memory/libraryModel";
@@ -714,14 +714,19 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
 
   /* always allow and the explanation's choices write the account policy the pending process reads */
   const approval = useAccountApproval({ pid, enabled: connected });
+  /* a saved choice that now allows the pending call approves it, so the person is not asked twice for one answer */
+  const policySaved = useCallback(async (policy: string | null) => {
+    await approval.refresh();
+    if (policy !== null && pendingHil && resolveApprovalAction(parseApprovalPolicy(policy), pendingHil.syscall, pendingHil.target) === "auto") await decide("approve");
+  }, [approval, decide, pendingHil]);
   const setup = useApprovalSetup({
     client, policyUid: approval.policyUid, pending: pendingHil !== null, editable: approval.editable,
-    inherited: approval.inherited, override: approval.override, inheritedSource: approval.inheritedSource, onSaved: approval.refresh,
+    inherited: approval.inherited, override: approval.override, inheritedSource: approval.inheritedSource, onSaved: policySaved,
   });
   /* the explanation opens below the card: bring it into view like a new request */
   useLayoutEffect(() => {
-    if (active && setup.open) scrolling.follow();
-  }, [active, setup.open, scrolling.follow]);
+    if (active && setup.stage !== null) scrolling.follow();
+  }, [active, setup.stage, setup.revealed, scrolling.follow]);
   const allowAlways = useCallback(async () => {
     if (!pendingHil || approval.pending?.saving) return;
     /* a plain approval follows: the saved account rule applies from the next run, and this run keeps its policy snapshot */
@@ -769,12 +774,6 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
           event.preventDefault();
           scrolling.page(event.key === "u" ? "up" : "down");
         }
-        return;
-      }
-      if (setup.open && !typing && (event.key === "c" || event.key === "s")) {
-        event.preventDefault();
-        if (event.key === "c") setup.continueFlow();
-        else setup.close();
         return;
       }
       if (pendingHil && !typing && (event.key === "y" || event.key === "n")) {
@@ -825,7 +824,7 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [active, allowAlways, approval.editable, browse, decide, latest, moments, receipts, pendingHil, scrolling.page, scrolling.select, scrolling.stopFollowing, setup.close, setup.continueFlow, setup.open, toggleActivity]);
+  }, [active, allowAlways, approval.editable, browse, decide, latest, moments, receipts, pendingHil, scrolling.page, scrolling.select, scrolling.stopFollowing, toggleActivity]);
 
   /* a paste outside the prompt lands in it too: files attach, text joins the draft */
   useEffect(() => {
@@ -1025,35 +1024,43 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
                 );
               })}
               {pendingHil ? (
-                <div class="zen-moment is-approval">
-                  <ApprovalCard
-                    key={pendingHil.requestId}
-                    request={pendingHil}
-                    who={who}
-                    place={placeLabel(pendingHil.target, places)}
-                    onInspect={() => {
-                      if (pid) onFleet({ kind: "approval", pid, requestId: pendingHil.requestId });
-                    }}
-                    onDecide={(decision) => void decide(decision)}
-                    onAlwaysAllow={approval.editable ? () => void allowAlways() : undefined}
-                    alwaysAllowSaving={approval.pending?.requestId === pendingHil.requestId && approval.pending.saving}
-                    alwaysAllowError={approval.pending?.requestId === pendingHil.requestId ? approval.pending.error : null}
-                    onExplain={setup.open ? undefined : setup.show}
-                  />
-                  {setup.open ? (
+                <>
+                  <div class="zen-moment is-approval">
+                    <ApprovalCard
+                      key={pendingHil.requestId}
+                      request={pendingHil}
+                      who={who}
+                      place={placeLabel(pendingHil.target, places)}
+                      onInspect={() => {
+                        if (pid) onFleet({ kind: "approval", pid, requestId: pendingHil.requestId });
+                      }}
+                      onDecide={(decision) => void decide(decision)}
+                      onAlwaysAllow={approval.editable ? () => void allowAlways() : undefined}
+                      alwaysAllowSaving={approval.pending?.requestId === pendingHil.requestId && approval.pending.saving}
+                      alwaysAllowError={approval.pending?.requestId === pendingHil.requestId ? approval.pending.error : null}
+                      onExplain={setup.stage === null && (approval.editable || approval.blocked !== null) ? setup.show : undefined}
+                    />
+                  </div>
+                  {setup.stage !== null ? (
                     <ApprovalSetup
-                      step={setup.step}
+                      stage={setup.stage}
+                      who={who}
+                      revealed={setup.revealed}
                       choices={setup.choices}
                       current={currentApprovalChoices(parseApprovalPolicy(approval.override || approval.inherited))}
-                      editable={approval.editable}
+                      blocked={approval.blocked}
                       saving={setup.saving}
                       error={setup.error}
+                      onAllowAll={setup.allowAll}
+                      onLimit={setup.limit}
+                      onDetail={setup.detail}
                       onChoose={setup.choose}
-                      onContinue={setup.continueFlow}
+                      onSave={setup.save}
+                      onWhy={setup.why}
                       onClose={setup.close}
                     />
                   ) : null}
-                </div>
+                </>
               ) : null}
             </div>
           </div>

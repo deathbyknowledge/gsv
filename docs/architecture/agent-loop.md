@@ -290,9 +290,10 @@ The card's always-allow control, offered when the person holds
 `sys.config.set`, writes an `auto` rule for exactly that syscall and resolved
 target into the policy of the account the Process resolves, then approves once
 with an ordinary `proc.hil`. The current run keeps its policy snapshot, so the
-rule applies from the next run. The card's **why am I being asked?** link opens a
-short explanation of what runs on its own and the per-kind allow-or-ask choices,
-which also save as ordinary account rules. Messenger controls that approve "always" send `proc.hil` with
+rule applies from the next run. The card's **why am I being asked?** link adds a
+client-authored Ship message and a box of choices (auto-approve everything, ask
+only before deleting or contacting someone, or a per-kind allow-or-ask list),
+which also save as ordinary account rules without involving the model. Messenger controls that approve "always" send `proc.hil` with
 `remember: true`, which keeps a rule for that Process only.
 Telegram and Slack render native controls; adapters without controls use a
 safe handoff that shows the action and directs the user to Chat. A native

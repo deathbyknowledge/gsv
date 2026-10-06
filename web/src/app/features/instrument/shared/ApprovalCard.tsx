@@ -39,6 +39,7 @@ export function ApprovalCard({
         {onInspect ? <button type="button" onClick={onInspect} title="Inspect this approval in Fleet">{heading}</button> : heading}
       </div>
       <p class="ask">{hilRequestSentence(request, place)}</p>
+      <p class="hold">{alwaysAllowSaving ? "saving the rule…" : "nothing runs until you answer"}</p>
       <details class="fold">
         <summary>{hilDetailLabel(request)}</summary>
         {line ? <>
@@ -63,14 +64,13 @@ export function ApprovalCard({
         </button>
         {onAlwaysAllow ? (
           <Hint text={`Always ${hilAlwaysAllowSentence(request, place)} without asking. The rule is saved in Settings → permissions, where you can change it.`}>
-            <button type="button" class="remember" disabled={held} onClick={() => { if (!held) onAlwaysAllow(); }}>
+            <button type="button" class="ibtn" disabled={held} onClick={() => { if (!held) onAlwaysAllow(); }}>
               {shortcuts ? <kbd>a</kbd> : null} always allow
             </button>
           </Hint>
         ) : null}
-        <span>{alwaysAllowSaving ? "saving the rule…" : "nothing runs until you answer"}</span>
-        {onExplain ? <button type="button" class="remember" onClick={onExplain}>why am I being asked?</button> : null}
       </div>
+      {onExplain ? <p class="explain"><button type="button" class="remember" onClick={onExplain}>why am I being asked?</button></p> : null}
       {alwaysAllowError ? (
         <p class="consequence is-err" role="alert">{`the rule was not saved: ${alwaysAllowError}. You can still run it once.`}</p>
       ) : null}

@@ -40,8 +40,8 @@
 }
 .zen-approval .remember { color: var(--text-dim); text-decoration: underline; text-underline-offset: 3px; }
 .zen-approval .remember:hover, .zen-approval .remember:focus-visible { color: var(--accent); }
-.zen-approval .remember:disabled { color: var(--faint); text-decoration: none; }
-.zen-approval .remember kbd { margin-right: 4px; }
+.zen-approval .hold { margin: 4px 0 8px; color: var(--text-dim); }
+.zen-approval .explain { margin: 10px 0 0; }
 .zen-approval .consequence { margin: 8px 0 0; color: var(--text-dim); }
 .zen-approval .consequence.is-err { color: var(--error, var(--update)); }
 .zen-approval .keys .ibtn kbd {

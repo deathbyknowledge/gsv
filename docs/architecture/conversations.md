@@ -152,9 +152,13 @@ syscall on that target, such as running commands on a machine, into the approval
 account the requesting process uses, then approves the request once. Its tooltip names that scope.
 The rule appears in **Settings → permissions**, where it can be removed, and applies from the next
 run; the current run keeps the policy it started with. Ordinary approval and denial are one-time
-decisions. The card's **why am I being asked?** link opens a short explanation below the live
-request: what the Ship does on its own, then an allow-or-ask choice for each kind of action, saved to
-the same account policy. It never opens on its own.
+decisions. The card's **why am I being asked?** link adds a client-authored Ship message below the
+live request: for most of what it does it need not ask, and it only asks before sensitive tasks. A
+box then asks whether to stop asking, with auto-approve for everything, asking only before deleting
+or contacting someone, a list of the sensitive tasks with an allow-or-ask pick for each, or keeping
+things as they are. Every answer saves ordinary rules to the same account policy; one that now allows
+the pending call approves it. Nothing is sent to the Ship, nothing is recorded, and it never opens on
+its own. An account that cannot change settings is told so instead, with **why?** for the reason.
 
 Opening a Process activity inspector calls `proc.observe`. Raw Process signals then reach that
 specific client in addition to any connection that owns the active run. Closing the inspector calls

@@ -1,6 +1,7 @@
 import type { GSVClient } from "@humansandmachines/gsv/client";
 import { useCallback, useEffect, useRef, useState } from "preact/hooks";
 import {
+  APPROVAL_CATEGORIES,
   composeApprovalChoices,
   currentApprovalChoices,
   type ApprovalCategoryId,
@@ -11,7 +12,8 @@ import {
 import { normalizedApprovalPolicy, parseApprovalPolicy, serializeApprovalPolicy } from "../../../domain/system/consoleAgentBehavior";
 import { saveAccountApprovalPolicy, type ApprovalPolicySource } from "../../../services/system/approvalPolicyService";
 
-type Stage = "idle" | "step1" | "step2" | "saving";
+/** Where the explanation stands: the Ship's word and its question, the list with per-kind picks, or why nothing can change. */
+export type ApprovalSetupStage = "ask" | "detail" | "blocked" | "why";
 
 export type ApprovalSetupInput = {
   client: Pick<GSVClient, "sys">;
@@ -25,47 +27,86 @@ export type ApprovalSetupInput = {
   override: string;
   /** The raw inherited source the snapshot was read from, so a save refuses a newer one. */
   inheritedSource: ApprovalPolicySource;
-  /** Called after the policy is written, so cached config reads catch up. */
-  onSaved: () => Promise<void>;
+  /** Called with the policy that was written, so cached config reads catch up and the pending request can follow it;
+   *  null after a failed write, so the snapshot reloads without anything having changed. */
+  onSaved: (policy: string | null) => Promise<void>;
 };
 
 export type ApprovalSetupState = {
-  open: boolean;
-  step: 1 | 2;
+  stage: ApprovalSetupStage | null;
+  /** The stage's second part (the box after a Ship message, or the Ship's answer after "why?") has had its reading pause. */
+  revealed: boolean;
   choices: ApprovalChoices;
   saving: boolean;
   error: string | null;
-  /** Open the explanation at its first step; a no-op while it is already open. */
+  /** Open the explanation; a no-op while it is already open. */
   show: () => void;
+  /** Every kind the Ship asks about becomes allowed. */
+  allowAll: () => void;
+  /** Everything is allowed except deleting and contacting someone. */
+  limit: () => void;
+  /** List what the Ship asks about, with a pick for each. */
+  detail: () => void;
   choose: (id: ApprovalCategoryId, choice: ApprovalChoice) => void;
-  continueFlow: () => void;
+  /** Write the picks made on the list. */
+  save: () => void;
+  /** Say why this account cannot change the rules. */
+  why: () => void;
   close: () => void;
 };
 
+const KEEP_ASKING: readonly ApprovalCategoryId[] = ["delete", "mail"];
+
+/** How long the person gets to read the Ship's message before what follows it appears. */
+const READING_PAUSE_MS = { ask: 2400, detail: 2000, why: 700, blocked: 0 } satisfies Record<ApprovalSetupStage, number>;
+
+function everyCategory(choice: (id: ApprovalCategoryId) => ApprovalChoice): ApprovalChoices {
+  const picks: ApprovalChoices = {};
+  for (const category of APPROVAL_CATEGORIES) picks[category.id] = choice(category.id);
+  return picks;
+}
+
 /** The explanation's stage machine: opens on request beside a pending approval, writes the policy, then closes. */
 export function useApprovalSetup({ client, policyUid, pending, editable, inherited, override, inheritedSource, onSaved }: ApprovalSetupInput): ApprovalSetupState {
-  const [stage, setStage] = useState<Stage>("idle");
+  const [stage, setStage] = useState<ApprovalSetupStage | null>(null);
   const [choices, setChoices] = useState<ApprovalChoices>({});
+  const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const stageRef = useRef(stage);
   stageRef.current = stage;
+  const savingRef = useRef(saving);
+  savingRef.current = saving;
+
+  /* a message lands first and its box follows, as the Ship would pace it */
+  const [revealed, setRevealed] = useState(false);
+  useEffect(() => {
+    if (stage === null) return;
+    const pause = READING_PAUSE_MS[stage];
+    if (pause === 0) { setRevealed(true); return; }
+    setRevealed(false);
+    const timer = setTimeout(() => setRevealed(true), pause);
+    return () => clearTimeout(timer);
+  }, [stage]);
 
   /* the explanation belongs to the pending approval: once that is answered or expires, an unfinished one closes */
   useEffect(() => {
-    if (!pending && stage !== "idle" && stage !== "saving") setStage("idle");
-  }, [pending, stage]);
+    if (!pending && stage !== null && !saving) setStage(null);
+  }, [pending, saving, stage]);
 
   const show = useCallback(() => {
-    if (stageRef.current !== "idle" || !pending) return;
+    if (stageRef.current !== null || !pending) return;
     setChoices({});
     setError(null);
-    setStage("step1");
-  }, [pending]);
+    setStage(editable ? "ask" : "blocked");
+  }, [editable, pending]);
 
   const close = useCallback(() => {
-    if (stageRef.current === "saving") return;
-    setStage("idle");
+    if (savingRef.current) return;
+    setStage(null);
   }, []);
+
+  const detail = useCallback(() => { if (stageRef.current === "ask") { setError(null); setStage("detail"); } }, []);
+  const why = useCallback(() => { if (stageRef.current === "blocked") setStage("why"); }, []);
 
   /* picking what the policy already does is not a choice, so unchanged picks write no override */
   const choose = useCallback((id: ApprovalCategoryId, choice: ApprovalChoice) => {
@@ -79,43 +120,41 @@ export function useApprovalSetup({ client, policyUid, pending, editable, inherit
     setError(null);
   }, [inherited, override]);
 
-  const continueFlow = useCallback(() => {
-    const current = stageRef.current;
-    if (current === "step1") {
-      if (!editable) { setStage("idle"); return; }
-      setStage("step2");
-      return;
-    }
-    if (current !== "step2" || policyUid === null) return;
-    /* composed against the current snapshot: after a failed save that snapshot is reloaded, so revised picks compose against what is saved now */
+  /* composed against the current snapshot: after a failed save that snapshot is reloaded, so revised picks compose against what is saved now */
+  const write = useCallback((picks: ApprovalChoices) => {
+    if (savingRef.current || policyUid === null) return;
     const base: ApprovalPolicyValue | null = override ? parseApprovalPolicy(override) : null;
-    const next = serializeApprovalPolicy(composeApprovalChoices(parseApprovalPolicy(inherited), base, choices));
-    if (normalizedApprovalPolicy(next) === normalizedApprovalPolicy(override || inherited)) { setStage("idle"); return; }
-    setStage("saving");
+    const next = serializeApprovalPolicy(composeApprovalChoices(parseApprovalPolicy(inherited), base, picks));
+    if (normalizedApprovalPolicy(next) === normalizedApprovalPolicy(override || inherited)) { setStage(null); return; }
+    setSaving(true);
     setError(null);
     void (async () => {
       try {
         await saveAccountApprovalPolicy(client, policyUid, override, next, inheritedSource);
-        await onSaved();
+        await onSaved(next);
       } catch (failure) {
-        await onSaved().catch(() => {});
+        await onSaved(null).catch(() => {});
         setError(failure instanceof Error ? failure.message : "The policy did not save.");
-        setStage("step2");
+        setSaving(false);
         return;
       }
-      setStage("idle");
+      setSaving(false);
+      setStage(null);
     })();
-  }, [choices, client, editable, inherited, inheritedSource, onSaved, override, policyUid]);
+  }, [client, inherited, inheritedSource, onSaved, override, policyUid]);
 
-  return {
-    open: stage !== "idle",
-    step: stage === "step1" ? 1 : 2,
-    choices,
-    saving: stage === "saving",
-    error,
-    show,
-    choose,
-    continueFlow,
-    close,
-  };
+  const allowAll = useCallback(() => {
+    if (stageRef.current !== "ask") return;
+    write(everyCategory(() => "auto"));
+  }, [write]);
+  const limit = useCallback(() => {
+    if (stageRef.current !== "ask") return;
+    write(everyCategory((id) => KEEP_ASKING.includes(id) ? "ask" : "auto"));
+  }, [write]);
+  const save = useCallback(() => {
+    if (stageRef.current !== "detail") return;
+    write(choices);
+  }, [choices, write]);
+
+  return { stage, revealed, choices, saving, error, show, allowAll, limit, detail, choose, save, why, close };
 }
