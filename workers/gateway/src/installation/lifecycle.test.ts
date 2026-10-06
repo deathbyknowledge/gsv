@@ -15,6 +15,16 @@ function directory(
 }
 
 describe("managed installation lifecycle", () => {
+  it("keeps unfinished setup closed and directs the client to owner verification", async () => {
+    const setupUrl = "https://accounts.example/owner/signup/?resume=1";
+    await expect(managedInstallationWorkGate({
+      GSV_OWNER_SIGNUP_URL: setupUrl,
+      INSTALLATION_DIRECTORY: directory({ found: true, installationId: "inst_setup", handle: "setup",
+        canonicalOrigin: "https://setup.example", state: "provisioning" }),
+    }, "inst_setup")).resolves.toEqual({ allowed: false, code: 503, message: "Finish setting up your space",
+      details: { setupRecovery: true, setupUrl } });
+  });
+
   it("fails closed without an installation directory", async () => {
     await expect(
       managedInstallationWorkGate({}, "inst_missing_directory"),

@@ -196,7 +196,11 @@ export const GsvDeployment = (props: GsvDeploymentProps, dependencies = gsvRunti
     inference = inferenceWorker;
   }
   const runtime = yield* GsvRuntime({ ...props, compatibility,
-    services: { ...props.services, installationDirectory: directory, inferenceExecution: inference } }, dependencies);
+    services: { ...props.services, installationDirectory: directory, inferenceExecution: inference,
+      extraBindings: {
+        ...(props.installations.ownerEmail ? { GSV_OWNER_SIGNUP_URL: new URL("/owner/signup/?resume=1", props.adminOrigin).href } : {}),
+        ...props.services?.extraBindings,
+      } } }, dependencies);
   const inferenceLifecycle = props.services?.inferenceLifecycle ?? {
     worker: inferenceWorker!, entrypoint: "InferenceLifecycleEntrypoint",
     namespaces: [{ className: "InferenceExecutor", kind: "inference-executor" as const }],

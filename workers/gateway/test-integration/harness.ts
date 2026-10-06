@@ -53,7 +53,7 @@ export function integrationGatewayConfig(options: {
     main: config.main,
     compatibility_date: config.compatibility_date,
     compatibility_flags: config.compatibility_flags,
-    vars: { GSV_FEDERATION_LOCAL_DEVELOPMENT: "1" },
+    vars: { GSV_FEDERATION_LOCAL_DEVELOPMENT: "1", GSV_OWNER_SIGNUP_URL: "https://accounts.example/owner/signup/?resume=1" },
     define: config.define,
     rules: config.rules,
     migrations: lifecycleConfig.migrations,

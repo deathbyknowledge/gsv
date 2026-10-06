@@ -1,7 +1,7 @@
 import { ONBOARDING_KEY, OwnerWelcome } from "../app/services/session/ownerWelcome";
 import { invoke, type NativeSessionStorage } from "./bridge";
 
-const accountsOrigin = import.meta.env.VITE_GSV_ACCOUNTS_ORIGIN || "https://gsv.space";
+export const accountsOrigin = import.meta.env.VITE_GSV_ACCOUNTS_ORIGIN || "https://gsv.space";
 
 export async function loadDesktopWelcome(): Promise<OwnerWelcome> {
   const snapshot = await invoke("desktop_welcome");

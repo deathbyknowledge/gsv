@@ -20,6 +20,7 @@ import {
 } from "./sys/setup-assist";
 import {
   managedInstallationWorkGate,
+  setupRecoveryDetails,
 } from "../installation/lifecycle";
 import type {
   GatewayEnv,
@@ -98,6 +99,7 @@ async handleSysSetupAssist(
         frame.id,
         401,
         "Installation setup link is invalid or expired",
+        setupRecoveryDetails(this.host.env),
       );
       return;
     }
@@ -156,6 +158,7 @@ async handleManagedSysSetup(
           frame.id,
           401,
           "Installation setup link is invalid or expired",
+          setupRecoveryDetails(this.host.env),
         );
         return;
       }

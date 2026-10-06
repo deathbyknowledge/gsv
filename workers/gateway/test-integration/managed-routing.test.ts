@@ -127,6 +127,22 @@ describe("managed installation routing integration", () => {
     socket.close(1000, "test complete");
   });
 
+  it("recovers a lost setup link and activates an underscore account only with setup authority", async () => {
+    await beginProvisioning(harness, "first");
+    const socket = await openManagedSocket(harness, "first");
+    const credentials = { username: "sample_user", password: "test-password123" };
+    const connect = { protocol: 4, peer: { id: "setup-recovery-test", version: "test", platform: "browser" }, auth: credentials };
+    await expect(managedRpc(socket, "login-before-setup", "sys.connect", connect)).resolves.toMatchObject({
+      ok: false, error: { code: 503, details: { setupRecovery: true, setupUrl: "https://accounts.example/owner/signup/?resume=1" } },
+    });
+    await expect(managedRpc(socket, "expired-setup", "sys.setup", { username: credentials.username, password: credentials.password,
+      onboardingToken: "invalid" })).resolves.toMatchObject({ ok: false, error: { code: 401, details: { setupRecovery: true } } });
+    await expectManagedRpcOk(socket, "recovered-setup", "sys.setup", { username: credentials.username, password: credentials.password,
+      onboardingToken: "integration-onboarding-first" });
+    await expectManagedRpcOk(socket, "login-after-setup", "sys.connect", connect);
+    socket.close(1000, "test complete");
+  });
+
   it("retries accounts activation after setup completes locally", async () => {
     await beginProvisioning(harness, "first");
     await failNextOnboardingCompletion(harness, "first", "before-activation");

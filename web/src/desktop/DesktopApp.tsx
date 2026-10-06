@@ -12,14 +12,14 @@ import { DesktopMachineSetup } from "./DesktopMachineSetup";
 import { DesktopWelcome } from "./DesktopWelcome";
 import { DesktopAttachments } from "./DesktopAttachments";
 import { ONBOARDING_KEY } from "../app/services/session/ownerWelcome";
-import { completeDesktopOnboarding } from "./welcome";
+import { accountsOrigin, completeDesktopOnboarding } from "./welcome";
 import { ClientControlProvider } from "../app/services/platform/ClientControl";
 import { desktopControl } from "./control";
 import { useDesktopQuit } from "./useDesktopQuit";
 import "./desktop.css";
 
-function ConnectedDesktop({ session, storage, mock, onError, onQuit }: {
-  session: DesktopSession; storage: NativeSessionStorage; mock: boolean; onError(message: string): void; onQuit(): void;
+function ConnectedDesktop({ session, storage, mock, onError, onQuit, onResumeSetup }: {
+  session: DesktopSession; storage: NativeSessionStorage; mock: boolean; onError(message: string): void; onQuit(): void; onResumeSetup(): void;
 }) {
   const [service, setService] = useState<SessionService | null>(null);
   const [locked, setLocked] = useState(true);
@@ -43,7 +43,10 @@ function ConnectedDesktop({ session, storage, mock, onError, onQuit }: {
     const ws = new URL("/ws", origin);
     ws.protocol = ws.protocol === "https:" ? "wss:" : "ws:";
     const token = storage.getItem(ONBOARDING_KEY);
-    const instance = createSessionService(client, { url: ws.href, storage, onboarding: token ? {
+    const instance = createSessionService(client, { url: ws.href, storage, resumeSetup: (url) => {
+      if (new URL(url).origin === accountsOrigin) onResumeSetup();
+      else void openInBrowser(url).catch(() => onError("Could not open your browser."));
+    }, onboarding: token ? {
       token, complete: () => completeDesktopOnboarding(storage),
     } : false });
     // The service is created while App renders. Defer the parent's presentation update.
@@ -147,7 +150,7 @@ export function DesktopApp() {
       <button type="button" onClick={quit}>quit</button>
     </dialog>
     {error && <div class="desktop-error" role="alert">{error}<button type="button" onClick={() => setError(null)}>dismiss</button></div>}
-    {session && storage && !resumeSetup && (session.origin || mock) ? <ConnectedDesktop key={`${session.generation}:${mock}`} session={session} storage={storage} mock={mock} onError={setError} onQuit={requestQuit} /> :
+    {session && storage && !resumeSetup && (session.origin || mock) ? <ConnectedDesktop key={`${session.generation}:${mock}`} session={session} storage={storage} mock={mock} onError={setError} onQuit={requestQuit} onResumeSetup={() => setResumeSetup(true)} /> :
       <PlatformIdentityProvider identity={<button type="button" onClick={requestQuit}>quit</button>}>
       <AuthScene layout="welcome"><DesktopWelcome ready={!!session} resume={resumeSetup} onConnect={async (origin, onboardingToken) => {
         setError(null);

@@ -69,12 +69,12 @@ describe("owner welcome", () => {
     } finally { await root.unmount(); }
   });
 
-  it.each(["sign-in", "saved-code", "saved-invite", "saved-handle", "listed-invite"])("requires agreement before claiming or preparing a space through %s", async (entry) => {
+  it.each(["sign-in", "resume-empty", "saved-code", "saved-invite", "saved-handle", "listed-invite"])("requires agreement before claiming or preparing a space through %s", async (entry) => {
     const invite: OwnedInvite = { id: "invite_fixture", state: "claimed",
-      handle: ["saved-handle", "listed-invite"].includes(entry) ? "my-space" : null, origin: null, lastError: null };
-    const hasInvite = ["saved-invite", "saved-handle", "listed-invite"].includes(entry);
+      handle: ["saved-handle", "listed-invite", "resume-empty"].includes(entry) ? "my-space" : null, origin: null, lastError: null };
+    const hasInvite = ["saved-invite", "saved-handle", "listed-invite", "resume-empty"].includes(entry);
     const invites = hasInvite ? [invite] : [];
-    let snapshot: WelcomeSnapshot = { revision: "initial", value: entry === "sign-in" ? null : {
+    let snapshot: WelcomeSnapshot = { revision: "initial", value: ["sign-in", "resume-empty"].includes(entry) ? null : {
       origin: "https://accounts.example.com", flow: entry === "listed-invite" ? "open" : "create", sessionSecret: "a".repeat(64),
       challenge: null, inviteCode: entry === "saved-code" ? "invite_fixture" : null,
       inviteId: hasInvite && entry !== "listed-invite" ? invite.id : null, handle: invite.handle,
@@ -98,7 +98,7 @@ describe("owner welcome", () => {
     const root = createTestRoot("Owner invite consent");
     let tree: ComponentChildren;
     function Harness() {
-      tree = OwnerWelcomeScreen({ ready: true, resume: entry !== "sign-in", load: async () => client, onConnect });
+      tree = OwnerWelcomeScreen({ ready: true, resume: entry !== "sign-in", initialStep: entry === "resume-empty" ? "email" : "welcome", load: async () => client, onConnect });
       return null;
     }
     const field = (label: string) => collectNodes(tree).find((node) => node.type === TextInput && node.props.label === label);
@@ -110,9 +110,11 @@ describe("owner welcome", () => {
     const creationRequests = () => fetcher.mock.calls.filter(([url]) => url.includes("/invites/"));
     try {
       await root.render(<Harness />);
-      if (entry === "sign-in") {
-        await vi.waitFor(() => expect(button("Open your space")?.props.disabled).toBe(false));
-        await act(() => { button("Open your space").props.onClick?.(); });
+      if (entry === "sign-in" || entry === "resume-empty") {
+        if (entry === "sign-in") {
+          await vi.waitFor(() => expect(button("Open your space")?.props.disabled).toBe(false));
+          await act(() => { button("Open your space").props.onClick?.(); });
+        }
         await vi.waitFor(() => expect(field("Email")?.props.disabled).toBe(false));
         expect(checkbox()).toBeUndefined();
         await act(() => { field("Email")!.props.onChange?.("owner@example.com"); });
@@ -121,11 +123,16 @@ describe("owner welcome", () => {
         await act(() => { field("Code")!.props.onChange?.("123456"); });
         await act(() => form().props.onSubmit(new Event("submit")));
         await vi.waitFor(() => expect(button("Use an invite")?.props.disabled).toBe(false));
-        expect(collectText(tree)).toContain("No spaces yet.");
-        await act(() => { button("Use an invite").props.onClick?.(); });
-        await vi.waitFor(() => expect(field("Invite code")?.props.disabled).toBe(false));
-        await act(() => { field("Invite code")!.props.onChange?.("invite_fixture"); });
-        await act(() => form().props.onSubmit(new Event("submit")));
+        if (entry === "resume-empty") {
+          await act(() => { button("Continue my-space").props.onClick?.(); });
+          expect(field("Invite code")).toBeUndefined();
+        } else {
+          expect(collectText(tree)).toContain("No spaces yet.");
+          await act(() => { button("Use an invite").props.onClick?.(); });
+          await vi.waitFor(() => expect(field("Invite code")?.props.disabled).toBe(false));
+          await act(() => { field("Invite code")!.props.onChange?.("invite_fixture"); });
+          await act(() => form().props.onSubmit(new Event("submit")));
+        }
       } else if (entry === "listed-invite") {
         await vi.waitFor(() => expect(button("Continue my-space")?.props.disabled).toBe(false));
         await act(() => { button("Continue my-space").props.onClick?.(); });

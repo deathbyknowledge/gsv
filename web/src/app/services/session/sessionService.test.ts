@@ -66,6 +66,44 @@ describe("account setup", () => {
     } satisfies SessionClient;
   }
 
+  it("offers owner-verified recovery when another tab has no setup capability", async () => {
+    installWindow();
+    const client = createSetupClient();
+    const setupUrl = "https://accounts.example/owner/signup/?resume=1";
+    client.requestOnce.mockRejectedValueOnce({ code: 503, message: "Finish setting up your space",
+      details: { setupRecovery: true, setupUrl } });
+    const service = createSessionService(client);
+    await service.start();
+    expect(service.snapshot()).toMatchObject({ phase: "setup-recovery", setupRecoveryUrl: setupUrl });
+    expect(client.connect).not.toHaveBeenCalled();
+    expect(client.requestOnce).toHaveBeenCalledOnce();
+  });
+
+  it("offers recovery for an expired setup capability without treating the account as created", async () => {
+    installWindow();
+    const client = createSetupClient();
+    const complete = vi.fn();
+    const failure = { code: 401, message: "Installation setup link is invalid or expired",
+      details: { setupRecovery: true, setupUrl: "https://accounts.example/owner/signup/?resume=1" } };
+    client.requestOnce.mockRejectedValueOnce(failure);
+    const service = createSessionService(client, { onboarding: { token: onboardingToken, complete } });
+    await service.start();
+    await expect(service.setup({ username: "alice", password: "password123" })).rejects.toEqual(failure);
+    expect(service.snapshot().phase).toBe("setup-recovery");
+    expect(complete).not.toHaveBeenCalled();
+    expect(client.connect).not.toHaveBeenCalled();
+  });
+
+  it("preserves provisioning recovery when sign-in reaches the lifecycle gate", async () => {
+    installWindow();
+    const client = createSetupClient();
+    const failure = { code: 503, details: { setupRecovery: true, setupUrl: "javascript:alert(1)" } };
+    client.connect.mockRejectedValueOnce(failure);
+    const service = createSessionService(client);
+    await expect(service.login({ username: "alice", password: "password123" })).rejects.toEqual(failure);
+    expect(service.snapshot()).toMatchObject({ phase: "setup-recovery", setupRecoveryUrl: undefined });
+  });
+
   it("signs in immediately with the credentials created by setup", async () => {
     installWindow();
     window.sessionStorage.setItem(onboardingStorageKey, onboardingToken);
