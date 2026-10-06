@@ -77,6 +77,12 @@ receive new conversation messages live and refresh server state after a
 reconnect. A remembered space sign-in lasts 30 days and renews during use.
 Browser tabs share renewal and sign-out; Desktop has its own stored session.
 A temporary network interruption reconnects without asking you to sign in again.
+
+If account setup was interrupted, **Continue setup** returns to owner email
+sign-in and the existing claimed space. For the Desktop app's configured operator,
+this stays inside the app; another operator's recovery page opens in the browser.
+The owner signs in with the email used to claim the invitation, then continues
+setup with fresh authorization instead of claiming another space.
 An incompatible client or rejected connection shows the gateway's error instead
 of retrying indefinitely.
 
