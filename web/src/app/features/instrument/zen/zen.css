@@ -601,7 +601,7 @@
   text-transform: none;
   color: var(--faint);
 }
-.zen-send-status.is-delivered { margin-left: 0; color: var(--text-dim); }
+.zen-send-status.is-delivered { margin-left: 0; color: inherit; }
 .zen-send-status.is-delivered svg { width: 11px; height: 11px; display: block; }
 .zen-send-actions { display: flex; flex-wrap: wrap; align-items: baseline; gap: 1rem; margin-top: .65rem; font-size: .75rem; color: var(--text-dim); }
 .zen-send-actions .is-err { color: var(--error); }
