@@ -93,11 +93,8 @@ a { color: var(--accent); text-decoration: none; }
 .row.is-err .what { color: var(--error); }
 .empty { font-family: var(--gsv-font-prose); font-size: 13px; color: var(--text-dim); padding: 6px 0; }
 
-.access-control { display: flex; margin-top: auto; }
-
 /* ── advanced: folded, as the first day's rows ── */
-.advanced { padding-top: 6px; }
-.recent + .advanced { margin-top: auto; }
+.advanced { margin-top: auto; padding-top: 6px; }
 .advanced summary { cursor: pointer; list-style: none; font-size: 10.5px; letter-spacing: .14em; text-transform: uppercase; color: var(--text-dim); user-select: none; }
 .advanced summary::-webkit-details-marker { display: none; }
 .advanced summary::before { content: ""; display: inline-block; width: 0; height: 0; margin-right: 8px; border-top: 4px solid transparent; border-bottom: 4px solid transparent; border-left: 6px solid var(--faint); vertical-align: 1px; transition: transform var(--dur-fast); }
@@ -117,6 +114,10 @@ a { color: var(--accent); text-decoration: none; }
 .facts { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 4px 14px; font-size: 11px; }
 .facts dt { color: var(--faint); letter-spacing: .08em; text-transform: uppercase; font-size: 10.5px; }
 .facts dd { color: var(--label); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; letter-spacing: .02em; }
+
+.panel-bottom { display: flex; flex-direction: column; gap: 12px; position: sticky; bottom: 0; z-index: 1; padding-top: 8px; background: var(--void); }
+.access-control { display: flex; }
+.access-control .ibtn { width: 100%; }
 
 /* ── footer line ── */
 .foot { display: flex; justify-content: space-between; gap: 12px; font-size: 10.5px; letter-spacing: .1em; text-transform: uppercase; color: var(--faint); padding-top: 10px; border-top: 1px solid var(--rule-inner); }

@@ -96,6 +96,8 @@ function apply(response: RuntimeResponse): void {
 
 async function runAction(action: string): Promise<void> {
   if (busy) return;
+  const accessWasFocused = document.activeElement instanceof HTMLElement
+    && document.activeElement.dataset.focusKey === "browser-access";
   busy = action;
   render();
   try {
@@ -151,6 +153,9 @@ async function runAction(action: string): Promise<void> {
   } finally {
     busy = null;
     render();
+    if (accessWasFocused) {
+      appEl.querySelector<HTMLElement>('[data-focus-key="browser-access"]')?.focus({ preventScroll: true });
+    }
   }
 }
 
@@ -212,11 +217,8 @@ function render(): void {
     paired ? main(state) : pairing(state),
     noticeBlock(),
     paired ? recent(state) : "",
-    paired && !state.connection.reconnectSuppressed
-      ? `<div class="access-control">${button("pause", "pause access", "ibtn")}</div>`
-      : "",
     paired ? advanced(state) : "",
-    footer(state, paired),
+    paired ? `<div class="panel-bottom">${accessControl(state)}${footer(state, paired)}</div>` : footer(state, paired),
   ].join("");
   const form = appEl.querySelector<HTMLFormElement>("form[data-form='connection']");
   if (form) paintValidation(form);
@@ -286,11 +288,9 @@ function main(current: ExtensionUiState): string {
   if (paused && live > 0) {
     title = "Some browser activity remains.";
     detail = "Access is paused, but some work may still be active. Try stopping it again.";
-    actions.push(button("pause", "stop remaining activity", "ibtn"));
   } else if (paused) {
     title = "Paused.";
     detail = "Your GSV can't use this browser until you resume.";
-    actions.push(button("resume", "resume", "ibtn is-primary"));
   } else if (live > 0) {
     const site = workingSite(current);
     title = "Your GSV is working here.";
@@ -428,6 +428,14 @@ function advanced(current: ExtensionUiState): string {
     </details>`;
 }
 
+function accessControl(current: ExtensionUiState): string {
+  const paused = current.connection.reconnectSuppressed;
+  const activityRemains = liveAccessCount(current) > 0;
+  const action = paused && !activityRemains ? "resume" : "pause";
+  const label = !paused ? "pause access" : activityRemains ? "stop remaining activity" : "resume access";
+  return `<div class="access-control">${button(action, label, paused && !activityRemains ? "ibtn is-primary" : "ibtn", "browser-access")}</div>`;
+}
+
 function footer(current: ExtensionUiState, paired: boolean): string {
   const website = paired ? new URL(current.config.gatewayUrl) : null;
   if (website) {
@@ -447,8 +455,8 @@ function footer(current: ExtensionUiState, paired: boolean): string {
 
 /* ---------- pieces ---------- */
 
-function button(action: string, label: string, className: string): string {
-  return `<button type="button" class="${className}" data-action="${escapeHtml(action)}" data-focus-key="main-${escapeHtml(action)}" ${busy === action ? "disabled" : ""}>${escapeHtml(label)}</button>`;
+function button(action: string, label: string, className: string, focusKey = `main-${action}`): string {
+  return `<button type="button" class="${className}" data-action="${escapeHtml(action)}" data-focus-key="${escapeHtml(focusKey)}" ${busy === action ? "disabled" : ""}>${escapeHtml(label)}</button>`;
 }
 function textButton(action: string, label: string, extra = ""): string {
   return `<button type="button" class="tbtn ${extra}" data-action="${escapeHtml(action)}" data-focus-key="${escapeHtml(action)}" ${busy === action ? "disabled" : ""}>${escapeHtml(label)}</button>`;
