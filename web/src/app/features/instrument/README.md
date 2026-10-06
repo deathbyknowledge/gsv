@@ -95,7 +95,11 @@ The receipt has three levels: work between messages, action purpose, evidence. C
 
 Fleet owns places, processes, responsibilities, routines, files and their inspectors. Places offers Connect, subject to the signed-in account's permissions. A new place can be a computer or browser. People owns contact conversations and private invitations. Opening either connection form never creates a credential or invitation.
 
-Cloud browser rows open their live view directly. Watching follows Ship's active
+Cloud browser rows, Zen's browser place chips and browser links in work receipts
+open their live view directly without navigating to Fleet or changing the next
+message's target. The view uses browser chrome: tabs, a slim address strip, and
+page content edge to edge. Expansion and close are window controls; stopping is
+in its secondary menu. Watching follows Ship's active
 tab and cursor without pausing its work. Direct input needs no control-mode
 switch; clicking pins the viewed tab, and input is sent against the document
 actually displayed. Closing the view leaves work running. Only an explicit Ship

@@ -10,7 +10,11 @@ Ask Ship to use a browser. GSV reuses your account's current cloud browser,
 including one that is still starting. More work can use another tab. Fleet's
 **browser** action follows the same rule and opens the view immediately.
 
-Click a running browser in Fleet to watch Ship work. The view follows Ship's
+Click the browser below Zen's prompt, a browser link in its work receipt, or a
+running browser in Fleet to watch Ship work. Zen stays open behind the view.
+The browser window has tabs and an address bar, with the page filling its width.
+Use the window menu for **stop browser**; closing the view keeps it running.
+The view follows Ship's
 active tab and shows its cursor and clicks. You can click, scroll, paste and type
 directly in that view. Clicking pins the view to that tab; choose **Follow Ship**
 to follow again. Watching leaves Ship running. Your input gets brief priority

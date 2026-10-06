@@ -7,6 +7,7 @@ import { useSession } from "../../../services/session/SessionProvider";
 import { browserFrame, sendBrowserInput } from "../../../services/instances/browserControl";
 import type { BrowserHumanInput, SysBrowserFrameResult } from "@humansandmachines/gsv/protocol";
 import { INSTRUMENT_TARGETS_KEY } from "../wire/queryKeys";
+import { Icon } from "../../../components/ui/Icon";
 import "./browser.css";
 
 export const INSTANCE_QUERY_KEY = ["cloud-instances"];
@@ -75,6 +76,7 @@ export function BrowserViewer({ request, onClose }: { request: BrowserSelection;
   const [error, setError] = useState("");
   const [frameError, setFrameError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [expanded, setExpanded] = useState(false);
   const inputQueue = useRef<Promise<void>>(Promise.resolve());
   const inputEpoch = useRef(0);
   const live = useRef(false);
@@ -148,20 +150,42 @@ export function BrowserViewer({ request, onClose }: { request: BrowserSelection;
   const data = view?.data;
   const tab = data?.tabs.find(tab => tab.id === data.tabId);
   const pointer = data?.pointer?.tabId === data?.tabId ? data?.pointer : undefined;
-  return <dialog ref={dialog} class="browser-viewer" aria-label="Live cloud browser" onCancel={event => { event.preventDefault(); close(); }} onKeyDown={event => event.stopPropagation()}>
-    <header><div><strong>{instance?.label ?? data?.instance.label ?? "Opening browser…"}</strong><span>{tab?.url === "about:blank" ? "New tab" : tab?.url}</span></div>
-      <button type="button" onClick={() => void stop()} disabled={busy || !connected}>stop browser</button>
-      <button type="button" onClick={close}>close</button>
+  return <dialog ref={dialog} class={`browser-viewer${expanded ? " is-expanded" : ""}`} aria-label="Live cloud browser" onCancel={event => { event.preventDefault(); close(); }} onKeyDown={event => event.stopPropagation()}>
+    <header class="browser-chrome">
+      <span class="browser-identity" title={instance?.label ?? data?.instance.label ?? "Browser"}><Icon name="chrome" family="doticons" size={16} /></span>
+      <div class="browser-tabs" role="tablist" aria-label="Browser tabs">
+        {data?.tabs.map((item, index) => <button type="button" role="tab" aria-selected={item.id === data.tabId} tabIndex={item.id === data.tabId ? 0 : -1} key={item.id}
+          onKeyDown={event => {
+            const next = event.key === "ArrowRight" ? (index + 1) % data.tabs.length : event.key === "ArrowLeft" ? (index + data.tabs.length - 1) % data.tabs.length
+              : event.key === "Home" ? 0 : event.key === "End" ? data.tabs.length - 1 : undefined;
+            if (next === undefined) return;
+            event.preventDefault();
+            setSelectedTab(data.tabs[next]!.id);
+            const button = event.currentTarget.parentElement?.children[next];
+            if (button instanceof HTMLButtonElement) button.focus();
+          }}
+          title={item.url} onClick={() => setSelectedTab(item.id)}>{item.title || (item.url === "about:blank" ? "New tab" : item.url)}</button>)}
+        {!data && <span class="browser-tab-loading">{instance?.label ?? "Opening browser…"}</span>}
+      </div>
+      <div class="browser-window-actions">
+        <details class="browser-menu"><summary aria-label="Browser actions" title="Browser actions"><Icon name="circleDots" family="doticons" size={16} /></summary>
+          <div><span>{instance?.label ?? "Browser"}</span><button type="button" onClick={() => void stop()} disabled={busy || !connected}>stop browser</button></div>
+        </details>
+        <button type="button" aria-label={expanded ? "Restore browser view" : "Expand browser view"} title={expanded ? "Restore" : "Expand"} onClick={() => setExpanded(value => !value)}><Icon name="windows" family="doticons" size={16} /></button>
+        <button type="button" aria-label="Close browser view" title="Close view · browser keeps running" onClick={close}><Icon name="close" family="doticons" size={16} /><span class="browser-sr-only">close</span></button>
+      </div>
     </header>
-    {data && data.tabs.length > 1 && <label class="browser-tabs">Tab<select aria-label="Browser tab" value={selectedTab ?? ""} onChange={event => setSelectedTab(event.currentTarget.value ? Number(event.currentTarget.value) : undefined)}>
-      <option value="">Follow Ship</option>{data.tabs.map(tab => <option value={tab.id}>{tab.title || tab.url || "New tab"}</option>)}
-    </select></label>}
+    <div class="browser-toolbar">
+      <div class="browser-address" title={tab?.url}><Icon name="weblink" family="doticons" size={14} /><span>{tab?.url === "about:blank" ? "New tab" : tab?.url ?? "Connecting…"}</span></div>
+      <button type="button" class={`browser-follow${selectedTab === undefined ? " is-following" : ""}`} aria-pressed={selectedTab === undefined}
+        title="Follow Ship’s active tab" onClick={() => setSelectedTab(undefined)}><span class="browser-live-dot" />{selectedTab === undefined ? "following Ship" : "follow Ship"}</button>
+    </div>
     {data?.handoff && <div class="browser-help"><span>{data.handoff.purpose}</span><button type="button" onClick={() => void finish()} disabled={busy || !connected}>continue</button></div>}
     {error && <p class="error" role="alert">{error}</p>}
     {instanceQuery.error && <p class="error" role="alert">{String(instanceQuery.error)}</p>}
-    {frameError && ready && <p class="error" role="alert">{frameError}</p>}
-    {instance && !ready && <p role="status">{instance.state === "starting" ? "Starting browser…" : instance.state === "stopping" ? "Stopping browser…" : "This browser has stopped."}</p>}
-    {!connected && <p class="error" role="alert">Disconnected. Reconnect before entering anything.</p>}
+    {frameError && ready && <p class="browser-notice" role="status" title={frameError}>View interrupted. Reconnecting…</p>}
+    {instance && !ready && <p class="browser-notice" role="status">{instance.state === "starting" ? "Starting browser…" : instance.state === "stopping" ? "Stopping browser…" : "This browser has stopped."}</p>}
+    {!connected && <p class="browser-notice" role="alert">Disconnected. Reconnecting…</p>}
     <div class="browser-screen" onClick={event => { if (image.current) { input({ kind: "click", ...point(event) }); keyboard.current?.focus({ preventScroll: true }); } }}
       onWheel={event => { event.preventDefault(); if (image.current) input({ kind: "scroll", ...point(event), deltaX: event.deltaX, deltaY: event.deltaY }); }}>
       {view ? <img ref={image} src={view.source} onLoad={() => { displayed.current = view.data; }} alt="Live cloud browser page" draggable={false} /> : ready && <p>Connecting to the browser…</p>}
