@@ -23,8 +23,8 @@ const INPUT = {
 describe("telemetry contract", () => {
   it("reports setup recovery failures without accepting raw diagnostics", () => {
     const event = {
-      stream: "operational", name: "installation.setup_recovery.failed",
-      properties: { diagnosticId: "11111111-1111-4111-8111-111111111111", outcome: "failed", errorType: "TypeError", durationMs: 12 },
+      stream: "operational", name: "installation.setup.failed",
+      properties: { diagnosticId: "11111111-1111-4111-8111-111111111111", stage: "recovery", outcome: "failed", errorType: "TypeError", durationMs: 12 },
     };
     assert.ok(telemetryRecordSchema.safeParse(createTelemetryRecord({ ...INPUT, event })).success);
     assert.throws(() => createTelemetryRecord({ ...INPUT, component: "accounts", event }));

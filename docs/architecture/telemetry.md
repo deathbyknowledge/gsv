@@ -89,10 +89,10 @@ can leave the seam disabled or attach a consumer for their own backend.
 
 ## Coverage and failure boundaries
 
-If the setup-recovery directory lookup fails, Gateway emits
-`installation.setup_recovery.failed` with a diagnostic ID, an allowed error type,
-and duration. The response includes that ID. The latest cause is retained only
-in the Kernel's private `managed_setup_recovery_failure` KV record, bounded to
+If an Accounts call fails during setup authorization, activation, or recovery,
+Gateway emits `installation.setup.failed` with a diagnostic ID, the stage,
+an allowed error type, and duration. The response includes that ID. The latest
+cause is retained only in the Kernel's private `managed_setup_failure` KV record, bounded to
 8,192 characters for operator inspection; exception text never enters the response or
 telemetry.
 

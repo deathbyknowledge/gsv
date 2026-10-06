@@ -292,10 +292,11 @@ const delegationCompletedSchema = z.strictObject({
 
 export const telemetryEventSchema = z.discriminatedUnion("name", [
   z.strictObject({
-    stream: z.literal("operational"), name: z.literal("installation.setup_recovery.failed"),
+    stream: z.literal("operational"), name: z.literal("installation.setup.failed"),
     properties: z.strictObject({
       diagnosticId: z.string().check(z.uuid()),
       outcome: z.literal("failed"),
+      stage: z.enum(["authorization", "recovery", "activation"]),
       errorType: telemetryErrorTypeSchema,
       durationMs: nonNegativeIntegerSchema,
     }),
@@ -394,7 +395,7 @@ export const telemetryEventSchema = z.discriminatedUnion("name", [
 // The owning component is part of the allowlist, not a claim made by an arbitrary producer.
 export type TelemetryEventOwnership = Record<z.infer<typeof telemetryEventSchema>["name"], readonly z.infer<typeof telemetryComponentSchema>[]>;
 export const telemetryEventComponents = {
-  "installation.setup_recovery.failed": ["gateway"],
+  "installation.setup.failed": ["gateway"],
   "inference.client.finished": ["gateway", "inference"],
   "inference.metadata.finished": ["gateway", "inference", "accounts"],
   "entitlements.refresh.finished": ["inference", "search", "mail"],

@@ -34,7 +34,7 @@ import type { Kernel } from "./do";
 import { emitTelemetry, telemetryErrorTypeSchema } from "@humansandmachines/gsv/telemetry";
 import {
   MANAGED_ONBOARDING_COMPLETION_KEY,
-  MANAGED_SETUP_RECOVERY_FAILURE_KEY,
+  MANAGED_SETUP_FAILURE_KEY,
 } from "./do-shared";
 import type {
   PendingManagedOnboardingCompletion,
@@ -87,17 +87,18 @@ async handleSysSetupAssist(
     const ctx = this.host.buildContext(connection);
     await ensureKernelBootstrapped(ctx);
 
+    const startedAt = Date.now();
     let authorization: InstallationOnboardingAuthorization;
     try {
       authorization = await this.authorizeManagedInstallationOnboarding(
         frame.args.onboardingToken,
       );
-    } catch {
-      this.host.transport.sendError(connection, frame.id, 503, "Installation setup is unavailable");
+    } catch (error) {
+      this.reportSetupFailure(connection, frame.id, error, "authorization", startedAt);
       return;
     }
     if (!authorization.ok) {
-      await this.sendSetupRecoveryError(connection, frame.id);
+      await this.sendSetupRecoveryError(connection, frame.id, startedAt);
       return;
     }
     const { onboardingToken: _onboardingToken, ...args } = frame.args;
@@ -126,6 +127,7 @@ async handleManagedSysSetup(
       return;
     }
     this.managedOnboardingInProgress = true;
+    const startedAt = Date.now();
 
     try {
       const { onboardingToken: _onboardingToken, ...setupArgs } = frame.args;
@@ -134,23 +136,23 @@ async handleManagedSysSetup(
         authorization = await this.authorizeManagedInstallationOnboarding(
           frame.args.onboardingToken,
         );
-      } catch {
-        this.host.transport.sendError(connection, frame.id, 503, "Installation setup is unavailable");
+      } catch (error) {
+        this.reportSetupFailure(connection, frame.id, error, "authorization", startedAt);
         return;
       }
       if (!authorization.ok) {
         let recovered: SysSetupResult | null;
         try {
           recovered = await this.recoverActivatedManagedSetup(setupArgs);
-        } catch {
-          this.host.transport.sendError(connection, frame.id, 503, "Installation setup is unavailable");
+        } catch (error) {
+          this.reportSetupFailure(connection, frame.id, error, "recovery", startedAt);
           return;
         }
         if (recovered) {
           this.host.transport.sendOk(connection, frame.id, recovered);
           return;
         }
-        await this.sendSetupRecoveryError(connection, frame.id);
+        await this.sendSetupRecoveryError(connection, frame.id, startedAt);
         return;
       }
 
@@ -201,37 +203,37 @@ async handleManagedSysSetup(
         this.pendingManagedOnboarding = undefined;
         this.host.ctx.storage.kv.delete(MANAGED_ONBOARDING_COMPLETION_KEY);
         this.host.transport.sendOk(connection, frame.id, data);
-      } catch {
-        this.host.transport.sendError(
-          connection,
-          frame.id,
-          503,
-          "Installation setup could not be activated",
-        );
+      } catch (error) {
+        this.reportSetupFailure(connection, frame.id, error, "activation", startedAt);
       }
     } finally {
       this.managedOnboardingInProgress = false;
     }
   }
 
-private async sendSetupRecoveryError(connection: KernelConnection<ConnectionState>, requestId: string): Promise<void> {
-    const startedAt = Date.now();
+private reportSetupFailure(connection: KernelConnection<ConnectionState>, requestId: string, cause: unknown,
+    stage: "authorization" | "recovery" | "activation", startedAt: number): void {
+    const diagnosticId = crypto.randomUUID();
+    const errorType = telemetryErrorTypeSchema.safeParse(cause instanceof Error ? cause.name : undefined).data ?? "unknown";
+    this.host.ctx.storage.kv.put(MANAGED_SETUP_FAILURE_KEY, {
+      diagnosticId, stage, recordedAt: Date.now(),
+      cause: (cause instanceof Error ? cause.stack ?? cause.message : String(cause)).slice(0, 8192),
+    });
+    emitTelemetry(this.host.env, {
+      installationId: this.host.installationId, component: "gateway",
+      event: { stream: "operational", name: "installation.setup.failed",
+        properties: { diagnosticId, stage, outcome: "failed", errorType, durationMs: Math.max(0, Date.now() - startedAt) } },
+    });
+    this.host.transport.sendError(connection, requestId, 503,
+      stage === "activation" ? "Installation setup could not be activated" : "Installation setup is unavailable", { diagnosticId });
+  }
+
+private async sendSetupRecoveryError(connection: KernelConnection<ConnectionState>, requestId: string, startedAt: number): Promise<void> {
     let installation: Awaited<ReturnType<typeof resolveManagedInstallationById>>;
     try {
       installation = await resolveManagedInstallationById(this.host.env, this.host.installationId);
     } catch (error) {
-      const diagnosticId = crypto.randomUUID();
-      const errorType = telemetryErrorTypeSchema.safeParse(error instanceof Error ? error.name : undefined).data ?? "unknown";
-      this.host.ctx.storage.kv.put(MANAGED_SETUP_RECOVERY_FAILURE_KEY, {
-        diagnosticId, recordedAt: Date.now(),
-        cause: (error instanceof Error ? error.stack ?? error.message : String(error)).slice(0, 8192),
-      });
-      emitTelemetry(this.host.env, {
-        installationId: this.host.installationId, component: "gateway",
-        event: { stream: "operational", name: "installation.setup_recovery.failed",
-          properties: { diagnosticId, outcome: "failed", errorType, durationMs: Math.max(0, Date.now() - startedAt) } },
-      });
-      this.host.transport.sendError(connection, requestId, 503, "Installation setup is unavailable", { diagnosticId });
+      this.reportSetupFailure(connection, requestId, error, "recovery", startedAt);
       return;
     }
     this.host.transport.sendError(connection, requestId, 401, "Installation setup link is invalid or expired",
