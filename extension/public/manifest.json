@@ -17,12 +17,10 @@
     "activeTab",
     "alarms",
     "bookmarks",
-    "clipboardRead",
     "clipboardWrite",
     "cookies",
     "debugger",
     "downloads",
-    "downloads.open",
     "history",
     "offscreen",
     "sidePanel",
@@ -30,8 +28,7 @@
     "storage",
     "tabCapture",
     "tabs",
-    "unlimitedStorage",
-    "webNavigation"
+    "unlimitedStorage"
   ],
   "host_permissions": [
     "<all_urls>"
