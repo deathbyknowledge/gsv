@@ -9,6 +9,14 @@ The browser extension gives GSV control over your browser — navigate, read pag
 3. Click its toolbar icon, paste the invitation from GSV, and choose **Pair this browser**.
 4. The panel says **Ready** once it's connected. Chrome shows a banner in a tab while your GSV works there; that's normal.
 
+You can close the sidebar after pairing. The extension keeps working while Chrome is open.
+
+## Pause browser access
+
+Open the extension's sidebar and choose **Pause access** near the bottom. This disconnects this browser from GSV, cancels current browser requests, stops tab recordings and network captures, and releases tabs the extension is debugging. It also clears any pending tab-recording allowance. Actions already completed on a website are not undone.
+
+The browser stays paused until you choose **Resume access** in the same place. Your pairing is saved, so you do not need a new invitation. If the panel says browser activity remains, choose **Stop remaining activity** to try the cleanup again.
+
 ## Try it
 
 Ask your agent: *What can you do with my browser extension?*
