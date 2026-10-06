@@ -116,7 +116,11 @@ Click and type check which element would receive input, including nested shadow
 DOM, slotted content, and CSS pseudo-elements. They wait up to two seconds for a
 temporary obstruction to clear before failing. This wait only retries the
 readiness check; it never repeats dispatched input. A persistent dialog or
-overlay still blocks the action.
+overlay still blocks the action. Click coordinates use the visible portion of
+large or partially visible controls. Hit testing accounts for document scrolling
+while mouse input stays relative to the visible viewport. If a control remains
+outside the viewport after scrolling, the command reports that no input was sent. Inspect a screenshot
+for a misplaced popup or other layout problem instead of repeating the click.
 
 `page key` sends keys to the focused control, including controls inside open
 shadow roots. Supported examples include `Enter`, `Tab`, `Space`, `ArrowDown`,

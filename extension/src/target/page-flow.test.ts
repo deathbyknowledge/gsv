@@ -144,6 +144,8 @@ function stubWhatsAppLikePage() {
       case "DOM.scrollIntoViewIfNeeded":
       case "Runtime.releaseObject":
         return {};
+      case "Page.getLayoutMetrics":
+        return { cssLayoutViewport: { clientWidth: 1280, clientHeight: 800, pageX: 0, pageY: 0 } };
       case "DOM.getContentQuads": {
         lastGeometryNode = Number(params?.backendNodeId ?? 103);
         return { quads: lastGeometryNode === 104

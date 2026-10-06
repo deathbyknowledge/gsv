@@ -50,6 +50,10 @@ type ContentQuadsResult = {
   quads?: number[][];
 };
 
+type LayoutViewportResult = {
+  cssLayoutViewport: { clientWidth: number; clientHeight: number; pageX: number; pageY: number };
+};
+
 type NodeForLocationResult = {
   backendNodeId?: number;
   frameId?: string;
@@ -118,7 +122,7 @@ export type { PageScrollTarget } from "./page-input";
 export function createPageActions<Target>(debuggerBackend: DebuggerBackend<Target>, pageReferences = new PageReferenceStore()) {
   const { acquireDebugger, releaseDebugger, sendDebuggerCommand } = debuggerBackend;
   const { currentDocumentIdentity } = createPageSemantics(sendDebuggerCommand, pageReferences);
-  const { readPageScrollState, viewportCenter } = createPageInput(sendDebuggerCommand);
+  const { readPageScrollState } = createPageInput(sendDebuggerCommand);
   const { beginPageObservation: beginObservation, endPageObservation: endObservation, pageDocumentChanged: hasDocumentChanged, summarizeActionObservation: actionObservation } = createPageObservation(sendDebuggerCommand);
 
   async function clickPageElement(
@@ -390,10 +394,8 @@ export function createPageActions<Target>(debuggerBackend: DebuggerBackend<Targe
         });
       }
       const document = await currentDocumentIdentity(target);
-      const point = element
-        ? await clickablePoint(target, element.backendNodeId)
-        : await viewportCenter(target);
-      const receiverId = await hitTest(target, point);
+      const { viewportPoint: point, documentPoint } = await inputLocation(target, element?.backendNodeId);
+      const receiverId = await hitTest(target, documentPoint);
       if (element && !await nodesRelated(target, element.backendNodeId, receiverId)) {
         const receiver = await summarizeElement(target, tabId, receiverId, store);
         throw new Error(`Scroll target is occluded by ${formatElement(receiver)}`);
@@ -663,26 +665,41 @@ export function createPageActions<Target>(debuggerBackend: DebuggerBackend<Targe
     }
   }
 
-  async function clickablePoint(
+  async function inputLocation(
     target: Target,
-    backendNodeId: number,
-  ): Promise<Point> {
-    const result = await sendDebuggerCommand<ContentQuadsResult>(target, "DOM.getContentQuads", {
-      backendNodeId,
-    });
-    const candidates = (result.quads ?? [])
-      .filter((quad) => quad.length >= 8 && quad.every(Number.isFinite))
-      .map((quad) => ({ quad, area: quadArea(quad) }))
-      .filter((candidate) => candidate.area > 1)
-      .sort((left, right) => right.area - left.area);
-    const quad = candidates[0]?.quad;
-    if (!quad) {
-      throw new Error("Element has no visible clickable area");
+    backendNodeId?: number,
+  ): Promise<{ viewportPoint: Point; documentPoint: Point }> {
+    const [result, { cssLayoutViewport: viewport }] = await Promise.all([
+      backendNodeId === undefined ? undefined
+        : sendDebuggerCommand<ContentQuadsResult>(target, "DOM.getContentQuads", { backendNodeId }),
+      sendDebuggerCommand<LayoutViewportResult>(target, "Page.getLayoutMetrics"),
+    ]);
+    let point = { x: viewport.clientWidth / 2, y: viewport.clientHeight / 2 };
+    if (result) {
+      const quads = (result.quads ?? [])
+        .filter((quad) => quad.length >= 8 && quad.every(Number.isFinite))
+        .filter((quad) => quadArea(quad) > 1);
+      if (quads.length === 0) {
+        throw new Error("Element has no visible clickable area");
+      }
+      const candidates = quads
+        .map((quad) => quad.map((coordinate, index) => Math.max(0, Math.min(
+          coordinate, index % 2 === 0 ? viewport.clientWidth : viewport.clientHeight,
+        ))))
+        .map((quad) => ({ quad, area: quadArea(quad) }))
+        .filter((candidate) => candidate.area > 1)
+        .sort((left, right) => right.area - left.area);
+      const quad = candidates[0]?.quad;
+      if (!quad) {
+        throw new Error("Element remains outside the visible viewport after scrolling. It may be a fixed popup or a browser layout problem. Use page screenshot to inspect the layout; no input was sent.");
+      }
+      point = {
+        x: ((quad[0] ?? 0) + (quad[2] ?? 0) + (quad[4] ?? 0) + (quad[6] ?? 0)) / 4,
+        y: ((quad[1] ?? 0) + (quad[3] ?? 0) + (quad[5] ?? 0) + (quad[7] ?? 0)) / 4,
+      };
     }
-    return {
-      x: ((quad[0] ?? 0) + (quad[2] ?? 0) + (quad[4] ?? 0) + (quad[6] ?? 0)) / 4,
-      y: ((quad[1] ?? 0) + (quad[3] ?? 0) + (quad[5] ?? 0) + (quad[7] ?? 0)) / 4,
-    };
+    // CDP input and quads use viewport coordinates; DOM hit testing uses document coordinates.
+    return { viewportPoint: point, documentPoint: { x: point.x + viewport.pageX, y: point.y + viewport.pageY } };
   }
 
   async function hitTest(target: Target, point: Point): Promise<number> {
@@ -714,8 +731,8 @@ export function createPageActions<Target>(debuggerBackend: DebuggerBackend<Targe
       await sendDebuggerCommand(target, "DOM.scrollIntoViewIfNeeded", {
         backendNodeId: element.backendNodeId,
       });
-      const point = await clickablePoint(target, element.backendNodeId);
-      const receiverId = await hitTest(target, point);
+      const { viewportPoint: point, documentPoint } = await inputLocation(target, element.backendNodeId);
+      const receiverId = await hitTest(target, documentPoint);
       if (await nodesRelated(target, element.backendNodeId, receiverId)) {
         return { point, receiverId };
       }

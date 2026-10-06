@@ -121,6 +121,36 @@ describe("CDP page actions", () => {
     expect(result).toMatchObject({ action: "click", delivered: { method: "cdp" } });
   });
 
+  it("clicks the visible part of an oversized element", async () => {
+    const fixture = stubCdp({ quads: [[0, 700, 300, 700, 300, 1700, 0, 1700]] });
+    const { store, reference } = referencedElement();
+
+    const result = await clickPageElement(42, { kind: "reference", reference }, undefined, store);
+
+    expect(result).toMatchObject({ delivered: { point: { x: 150, y: 750 } } });
+    expect(fixture.sendCommand).toHaveBeenCalledWith({ tabId: 42 }, "DOM.getNodeForLocation", expect.objectContaining({ x: 150, y: 750 }));
+  });
+
+  it("hit tests in document coordinates while dispatching input in viewport coordinates", async () => {
+    const fixture = stubCdp({ pageOffset: { x: 100, y: 2700 } });
+    const { store, reference } = referencedElement();
+
+    await clickPageElement(42, { kind: "reference", reference }, undefined, store);
+
+    expect(fixture.sendCommand).toHaveBeenCalledWith({ tabId: 42 }, "DOM.getNodeForLocation", expect.objectContaining({ x: 250, y: 2770 }));
+    expect(fixture.sendCommand).toHaveBeenCalledWith({ tabId: 42 }, "Input.dispatchMouseEvent", expect.objectContaining({ type: "mousePressed", x: 150, y: 70 }));
+  });
+
+  it("diagnoses an offscreen fixed control without hit testing or dispatching input", async () => {
+    const fixture = stubCdp({ quads: [[200, 4076, 251, 4076, 251, 4124, 200, 4124]] });
+    const { store, reference } = referencedElement();
+
+    await expect(clickPageElement(42, { kind: "reference", reference }, undefined, store))
+      .rejects.toThrow("outside the visible viewport after scrolling");
+    expect(fixture.sendCommand.mock.calls.some((call) => call[1] === "DOM.getNodeForLocation")).toBe(false);
+    expect(inputMethods(fixture.sendCommand)).toEqual([]);
+  });
+
   it("uses CDP for text, key, and nested scrolling actions", async () => {
     const typedFixture = stubCdp({
       states: [elementState({ editable: true, valueLength: 0 }), elementState({ editable: true, valueLength: 5 })],
@@ -359,6 +389,8 @@ function stubCdp(options: {
   receiverId?: number;
   receiverIds?: number[];
   navigateAfterHit?: boolean;
+  quads?: number[][];
+  pageOffset?: { x: number; y: number };
   relatedReceiver?: boolean;
   states?: State[];
   mutations?: number;
@@ -418,7 +450,9 @@ function stubCdp(options: {
       case "DOM.querySelectorAll":
         return { nodeIds: [101] };
       case "DOM.getContentQuads":
-        return { quads: [[0, 40, 300, 40, 300, 100, 0, 100]] };
+        return { quads: options.quads ?? [[0, 40, 300, 40, 300, 100, 0, 100]] };
+      case "Page.getLayoutMetrics":
+        return { cssLayoutViewport: { clientWidth: 1280, clientHeight: 800, pageX: options.pageOffset?.x ?? 0, pageY: options.pageOffset?.y ?? 0 } };
       case "DOM.getNodeForLocation": {
         const currentReceiver = options.receiverIds?.[hitIndex] ?? receiverId;
         hitIndex += 1;
