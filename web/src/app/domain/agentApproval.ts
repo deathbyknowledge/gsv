@@ -189,10 +189,11 @@ export function composeApprovalChoices(
         policy = upsertApprovalRule(policy, { ...rule, action });
       }
     }
-    // File reads and transfers are separate from changes. Keep explicit delete
-    // choices too; that row owns them even when a machine has a broad fs rule.
+    // File reads and transfers are separate from changes. Deletes keep what they
+    // resolved to as well: that row owns them, and its own pick, applied after
+    // this one, is the only thing that moves them.
     const preserved = (category.keepsAuto ?? []).map((rule) => rule.match);
-    if (category.id === "machine-files" && before.rules.some((rule) => rule.match === "fs.delete")) preserved.push("fs.delete");
+    if (category.id === "machine-files") preserved.push("fs.delete");
     for (const scope of new Set(rules.map((rule) => rule.target))) {
       for (const match of preserved) {
         const previous = resolveApprovalAction(before, match, scope ?? "gsv");

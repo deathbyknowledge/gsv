@@ -25,12 +25,22 @@ describe("approval categories", () => {
     expect(resolveApprovalAction(shipped, "shell.exec", "gsv")).toBe("auto");
   });
 
-  it("reads deletes as allowed once machine file changes are, until the delete row is chosen", () => {
+  it("keeps deletes where they were when machine file changes open up, until the delete row is chosen", () => {
     const machinesOpen = composeApprovalChoices(shipped, null, { shell: "auto", "machine-files": "auto", web: "auto" });
-    expect(currentApprovalChoices(machinesOpen)).toMatchObject({ shell: "auto", "machine-files": "auto", web: "auto", delete: "auto" });
-    expect(askingCategories(machinesOpen)).toEqual(["tools", "mail"]);
+    expect(currentApprovalChoices(machinesOpen)).toMatchObject({ shell: "auto", "machine-files": "auto", web: "auto", delete: "ask" });
+    expect(askingCategories(machinesOpen)).toEqual(["delete", "tools", "mail"]);
+    expect(resolveApprovalAction(machinesOpen, "fs.write", "my-mac")).toBe("auto");
+    expect(resolveApprovalAction(machinesOpen, "fs.delete", "my-mac")).toBe("ask");
+    const deletesToo = composeApprovalChoices(shipped, null, { "machine-files": "auto", delete: "auto" });
+    expect(resolveApprovalAction(deletesToo, "fs.delete", "my-mac")).toBe("auto");
     const deletesAsk = composeApprovalChoices(shipped, null, { "machine-files": "auto", delete: "ask" });
     expect(askingCategories(deletesAsk)).toEqual(["shell", "delete", "web", "tools", "mail"]);
+    /* a custom wildcard with no exact delete rule: opening it still leaves deletes asking on every machine */
+    const wildcard: ApprovalPolicyValue = { default: "auto", rules: [{ match: "fs.*", target: "targets/*", action: "ask" }] };
+    const opened = composeApprovalChoices(wildcard, null, { "machine-files": "auto" });
+    expect(resolveApprovalAction(opened, "fs.write", "my-mac")).toBe("auto");
+    expect(resolveApprovalAction(opened, "fs.delete", "my-mac")).toBe("ask");
+    expect(currentApprovalChoices(opened).delete).toBe("ask");
   });
 
   it("reads a denied rule as blocked rather than allowed, even when the other scope only asks", () => {
