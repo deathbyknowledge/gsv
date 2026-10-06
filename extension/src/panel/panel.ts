@@ -328,8 +328,8 @@ function pairing(current: ExtensionUiState): string {
   const pending = busy === "pair";
   return `
     <section class="say">
-      <h1>Let your GSV use this browser.</h1>
-      <p>Once paired, it can work the sites you're signed into, from wherever you ask.</p>
+      <h1>You're in control of this browser.</h1>
+      <p>Pair it to let your GSV help with tasks you give it on sites you're signed into. You can see recent activity here and pause access anytime.</p>
     </section>
     <form class="pair" data-form="pair">
       <ol>
