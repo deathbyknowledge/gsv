@@ -10,7 +10,7 @@ export type InstanceRequest = Extract<RequestFrame, { call: `sys.instance.${stri
 
 export async function handleInstanceRequest(frame: InstanceRequest, ctx: KernelContext): Promise<ResponseFrame> {
   const actor = instanceActor(ctx);
-  if (["sys.browser.handoff.open", "sys.browser.handoff.finish", "sys.browser.handoff.frame", "sys.browser.handoff.input"].includes(frame.call) && !actor.human) {
+  if (["sys.browser.handoff.open", "sys.browser.handoff.finish", "sys.browser.frame", "sys.browser.input"].includes(frame.call) && !actor.human) {
     await cancelBinaryBody(frame.body, "Human browser input cannot be requested by a process");
     throw new Error("This browser action requires the signed-in human owner");
   }
@@ -54,20 +54,20 @@ export async function handleInstanceRequest(frame: InstanceRequest, ctx: KernelC
         const result = await service.finishHandoff(owner, frame.args);
         await completeResponsibility(result.handoff, ctx); data = result; break;
       }
-      case "sys.browser.handoff.frame": {
-        const result = await service.handoffFrame(owner, frame.args);
+      case "sys.browser.frame": {
+        const result = await service.frame(owner, frame.args);
         // Materialize this bounded image before releasing its remote RPC capability.
         const bytes = await bodyToBytes(result.body, 4 * 1024 * 1024, ctx.requestSignal);
         return { type: "res", id: frame.id, ok: true, data: result.data, body: bodyFromBytes(bytes) };
       }
-      case "sys.browser.handoff.input": {
+      case "sys.browser.input": {
         if (!frame.body) throw new Error("Browser input requires a body");
         try {
           const text = await bodyToText(frame.body, 128 * 1024, ctx.requestSignal);
           // The owning instance service validates this private, bounded input body.
           // SAFETY: This assertion only transports the value to that validation boundary; Kernel does not interpret it.
           const input = JSON.parse(text) as BrowserHumanInput;
-          data = await service.handoffInput(owner, frame.args, input);
+          data = await service.input(owner, frame.args, input);
         } finally { await cancelBinaryBody(frame.body, "Browser input consumed"); }
         break;
       }

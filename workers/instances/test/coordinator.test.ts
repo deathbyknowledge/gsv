@@ -17,7 +17,9 @@ async function fixture(work: (object: InstanceCoordinator, store: InstanceStore,
   const shell: Partial<CloudBrowser["shell"]> = { idle: async () => {}, exec: async () => ({ status: "completed", output: "ok", exitCode: 0 }) };
   const browser: Partial<CloudBrowser> = {
     getTab: async () => ({ id: 1, url: "https://example.com/login" }),
-    listTabs: async () => [], humanInput, humanFrame: async () => new Uint8Array([1, 2]),
+    listTabs: async () => [{ id: 1, title: "Login", url: "https://example.com/login", active: true }],
+    humanInput, humanFrame: async () => ({ bytes: new Uint8Array([1, 2]), documentId: "document" }),
+    documentId: async () => "document", runInput: async work => work(), focusTab: async () => ({ id: 1 }),
     save: async () => ({ cookies: [], origins: [] }),
     // SAFETY: These coordinator tests exercise only shell execution and its idle barrier.
     shell: shell as CloudBrowser["shell"],
@@ -35,6 +37,19 @@ async function fixture(work: (object: InstanceCoordinator, store: InstanceStore,
 }
 
 describe("human browser control", () => {
+  it("lets the owner watch and input while automation continues, without creating a handoff", () => fixture(async (object, store, instanceId) => {
+    const frame = await object.frame(actor, { instanceId });
+    expect(frame.data).toMatchObject({ tabId: 1, documentId: "document", instance: { instanceId } });
+    expect(frame.data.handoff).toBeUndefined();
+    await frame.body.stream.cancel();
+    await object.input(actor, { instanceId, tabId: 1, documentId: "document" }, { kind: "text", text: "hello" });
+    expect(store.handoffs(instanceId)).toEqual([]);
+    expect(await object.execute(actor, instanceId, { type: "req", id: "watching", call: "shell.exec", args: { input: "page snapshot" } }, Date.now() + 10000)).toMatchObject({ ok: true });
+    await expect(object.frame({ ownerUid: 1001, human: true }, { instanceId })).rejects.toThrow("not found");
+    await expect(object.input(actor, { instanceId, tabId: 1, documentId: "previous-page" }, { kind: "click", x: 1, y: 2 })).rejects.toThrow("page changed");
+    await object.stop(actor, { instanceId });
+    await expect(object.input(actor, { instanceId, tabId: 1, documentId: "document" }, { kind: "text", text: "late" })).rejects.toThrow("not ready");
+  }));
   it("cancels request bodies rejected before admission", () => fixture(async (object, _store, instanceId) => {
     const cancelled = vi.fn();
     const command = { type: "req", id: "write", call: "fs.write", args: { path: "/tmp/file" }, body: { stream: new ReadableStream<Uint8Array>({ cancel: cancelled }) } } as const;
@@ -55,11 +70,11 @@ describe("human browser control", () => {
     await expect(object.openHandoff({ ...actor, human: false, processId: "agent" }, selector)).rejects.toThrow("human owner");
     await expect(object.openHandoff({ ownerUid: 1001, human: true }, selector)).rejects.toThrow("not found");
     await object.openHandoff(actor, selector);
-    await expect(object.handoffFrame({ ...actor, human: false }, selector)).rejects.toThrow("human owner");
-    await expect(object.handoffInput({ ...actor, human: false }, selector, { kind: "text", text: "secret" })).rejects.toThrow("human owner");
-    await object.handoffInput(actor, selector, { kind: "text", text: "test" });
+    await expect(object.frame({ ...actor, human: false }, selector)).rejects.toThrow("human owner");
+    await expect(object.input({ ...actor, human: false }, { instanceId, tabId: 1, documentId: "document", handoffRequestId: "login" }, { kind: "text", text: "secret" })).rejects.toThrow("human owner");
+    await object.input(actor, { instanceId, tabId: 1, documentId: "document", handoffRequestId: "login" }, { kind: "text", text: "test" });
     await object.finishHandoff(actor, selector);
-    await expect(object.handoffInput(actor, selector, { kind: "text", text: "late" })).rejects.toThrow("no longer active");
+    await expect(object.input(actor, { instanceId, tabId: 1, documentId: "document", handoffRequestId: "login" }, { kind: "text", text: "late" })).rejects.toThrow("no longer active");
     expect(await object.execute(actor, instanceId, command, Date.now() + 10000)).toMatchObject({ ok: true });
   }));
 
@@ -70,9 +85,9 @@ describe("human browser control", () => {
       const selector = { instanceId, requestId: "login" };
       await object.requestHandoff(actor, { ...selector, tabId: 1, purpose: "Sign in" });
       await object.openHandoff(actor, selector);
-      const first = object.handoffInput(actor, selector, { kind: "text", text: "first" });
+      const first = object.input(actor, { instanceId, tabId: 1, documentId: "document", handoffRequestId: "login" }, { kind: "text", text: "first" });
       await vi.waitFor(() => expect(input).toHaveBeenCalledTimes(1));
-      const second = object.handoffInput(actor, selector, { kind: "text", text: "queued" });
+      const second = object.input(actor, { instanceId, tabId: 1, documentId: "document", handoffRequestId: "login" }, { kind: "text", text: "queued" });
       const rejected = expect(second).rejects.toThrow("no longer active");
       let returned = false;
       const done = object.finishHandoff(actor, selector).then(() => { returned = true; });

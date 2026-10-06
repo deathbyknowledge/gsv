@@ -67,11 +67,13 @@ Use `:quit`, `:exit`, or `:q` to leave.
 
 With the optional cloud instance service enabled, the gateway shell also exposes
 `instance catalog`, `instance start browser --request-id ID`, `instance list`,
-`instance get ID`, and `instance stop ID`. Use `browser profile` for remembered
-logins and `browser handoff` to request direct human control. These are native
-target commands, available to Ship through Shell as well. See
-[cloud browsers](/how-to/cloud-browsers) for profile selection, recovery after a
-lost response, and the complete sign-in flow.
+`instance get ID`, and `instance stop ID`. Starting reuses the account's current
+browser; `--new` explicitly creates a separate temporary one. Ordinary browsers
+remember logins automatically. Use `browser handoff` when Ship needs a human to
+complete a sign-in; opening Fleet's browser view otherwise leaves Ship running
+and accepts direct input. These are native target commands, available to Ship
+through Shell as well. See [cloud browsers](/how-to/cloud-browsers) for saved
+logins, recovery after a lost response, and the complete sign-in flow.
 
 Inside the gateway shell, `proc` is the process IPC userland command.
 `message` inspects and uses external chat reply routes. `sched add --ship`

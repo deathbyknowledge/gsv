@@ -6,11 +6,13 @@ import { BrowserTargetShell } from "@humansandmachines/gsv-browser/shell";
 import { PageReferenceStore } from "@humansandmachines/gsv-browser/page-semantics";
 import { createPageCommands } from "@humansandmachines/gsv-browser/commands/page";
 import { createTabCommands } from "@humansandmachines/gsv-browser/commands/tabs";
-import type { BrowserHumanInput, CloudInstance } from "@humansandmachines/gsv/protocol";
+import type { BrowserHumanInput, BrowserPointer, CloudInstance } from "@humansandmachines/gsv/protocol";
+import { z } from "zod";
+import { BrowserInputQueue } from "./input-queue";
 import type { StoredFsEntry } from "@humansandmachines/gsv-browser/fs-persistence";
 import type { BrowserCommand, TargetFileSystem } from "@humansandmachines/gsv-browser/types";
 import { BrowserRuntimeFiles } from "./runtime-files";
-import type { InstanceStore } from "./store";
+import { instance, type InstanceStore } from "./store";
 
 export type StorageState = Awaited<ReturnType<BrowserContext["storageState"]>>;
 type RuntimeState = { contextId: string; nextTabId: number; activeTabId: number; tabs: Record<string, string> };
@@ -24,6 +26,8 @@ export class CloudBrowser implements BrowserPageBackend, BrowserTabsBackend, Deb
   private readonly tabs = new Map<number, Page>();
   private readonly references = new PageReferenceStore();
   private refresh: Promise<void> | undefined;
+  private readonly inputQueue = new BrowserInputQueue();
+  pointer: BrowserPointer | undefined;
 
   private constructor(
     readonly browser: Browser,
@@ -40,9 +44,11 @@ export class CloudBrowser implements BrowserPageBackend, BrowserTabsBackend, Deb
       ...pageBackend, listTabs: () => this.listTabs(), createTab: (url, active) => this.createTab(url, active),
       focusTab: id => this.focusTab(id), closeTab: id => this.closeTab(id), reloadTab: id => this.reloadTab(id),
       viewerUrlFor: (path, type, label, fs) => this.viewerUrlFor(path, type, label, fs),
+      runInput: (work, signal) => this.runInput(work, signal),
     };
     const debuggerBackend: DebuggerBackend<CDPSession> = {
       acquireDebugger: id => this.acquireDebugger(id), releaseDebugger: id => this.releaseDebugger(id), sendDebuggerCommand: this.sendDebuggerCommand,
+      runInput: (work, signal) => this.runInput(work, signal),
     };
     const commands: BrowserCommand[] = [...createTabCommands(tabBackend).tabCommands, ...createPageCommands(pageBackend, debuggerBackend, this.references).pageCommands];
     this.fs = new BrowserTargetFileSystem(new BrowserRuntimeFiles(this, record, commands), async () => ({
@@ -137,12 +143,22 @@ export class CloudBrowser implements BrowserPageBackend, BrowserTabsBackend, Deb
     if (!page || page.isClosed()) throw new Error(`Browser tab ${id} is closed`);
     return page;
   }
-  async acquireDebugger(tabId: number): Promise<CDPSession> { return this.debuggerFor(await this.page(tabId)); }
+  async acquireDebugger(tabId: number): Promise<CDPSession> {
+    const page = await this.page(tabId);
+    this.state.activeTabId = tabId;
+    this.persist();
+    return this.debuggerFor(page);
+  }
   async releaseDebugger(_tabId: number): Promise<void> { /* The instance owns its CDP sessions until stop. */ }
   readonly sendDebuggerCommand: DebuggerCommand<CDPSession> = async <T extends object | undefined>(target: CDPSession, method: string, params?: Record<string, BrowserValue>): Promise<T> => {
     // The shared browser core validates and owns its CDP methods. Playwright's generated overloads cannot express this portable boundary.
     // SAFETY: The shared CDP adapter pairs each supported command with its response type.
     const send = target.send.bind(target) as (method: string, params?: Record<string, BrowserValue>) => Promise<T>;
+    if (method === "Input.dispatchMouseEvent") {
+      const point = z.object({ x: z.number(), y: z.number(), type: z.string() }).parse(params);
+      const tabId = [...this.tabs].find(([, page]) => this.debuggers.get(page) === target)?.[0];
+      if (tabId !== undefined) this.pointer = { tabId, x: point.x, y: point.y, actor: "ship", clickedAt: point.type === "mousePressed" ? Date.now() : this.pointer?.clickedAt };
+    }
     return send(method, params);
   };
   private async summary(id: number, page: Page, index = 0): Promise<TabSummary> {
@@ -176,10 +192,29 @@ export class CloudBrowser implements BrowserPageBackend, BrowserTabsBackend, Deb
     return `data:${contentType};base64,${Buffer.from(await fs.read(path)).toString("base64")}`;
   }
   async save(): Promise<StorageState> { return this.context.storageState({ indexedDB: true }); }
-  async humanFrame(id: number): Promise<Uint8Array> { return (await this.page(id)).screenshot({ type: "jpeg", quality: 75, timeout: 10000 }); }
+  async documentId(id: number): Promise<string> {
+    const cdp = await this.debuggerFor(await this.page(id));
+    return (await cdp.send("Page.getFrameTree")).frameTree.frame.loaderId;
+  }
+  async humanFrame(id: number): Promise<{ bytes: Uint8Array; documentId: string }> {
+    const documentId = await this.documentId(id);
+    const bytes = await (await this.page(id)).screenshot({ type: "jpeg", quality: 75, timeout: 10000 });
+    if (documentId !== await this.documentId(id)) throw new Error("The page changed; refreshing the view");
+    return { bytes, documentId };
+  }
+  runInput<T>(work: () => Promise<T>, signal?: AbortSignal, owner: "ship" | "human" = "ship"): Promise<T> {
+    return this.inputQueue.run(async () => {
+      const value = instance(this.store.byId(this.record.instanceId));
+      if (value.state !== "ready" || value.expiresAt <= Date.now()) throw new Error("Browser is no longer ready");
+      return work();
+    }, signal, owner);
+  }
   async humanInput(id: number, input: Exclude<BrowserHumanInput, { kind: "tab" }>): Promise<void> {
     const page = await this.page(id);
-    if (input.kind === "click") await page.mouse.click(input.x, input.y);
+    if (input.kind === "click") {
+      this.pointer = { tabId: id, x: input.x, y: input.y, actor: "human", clickedAt: Date.now() };
+      await page.mouse.click(input.x, input.y);
+    }
     else if (input.kind === "text") await page.keyboard.insertText(input.text);
     else if (input.kind === "key") {
       const modifiers = input.modifiers ?? 0;

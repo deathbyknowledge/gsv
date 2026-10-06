@@ -1,7 +1,11 @@
 import type { TargetFileSystem } from "./types";
 export type BrowserValue = string | number | boolean | null | undefined | BrowserValue[] | object;
 export type DebuggerCommand<Target> = <T extends object | undefined = object | undefined>(target: Target, method: string, params?: Record<string, BrowserValue>) => Promise<T>;
-export type DebuggerBackend<Target> = {
+export type BrowserInputBackend = {
+  /** Keep one complete input action together when several actors share a browser. */
+  runInput?<T>(work: () => Promise<T>, signal?: AbortSignal): Promise<T>;
+};
+export type DebuggerBackend<Target> = BrowserInputBackend & {
   acquireDebugger(tabId: number): Promise<Target>;
   releaseDebugger(tabId: number): Promise<void>;
   sendDebuggerCommand: DebuggerCommand<Target>;
@@ -26,7 +30,7 @@ export type BrowserPageBackend = {
   captureTabPng(tabId: number): Promise<Uint8Array>;
   executeInTab<T>(tabId: number, func: (...args: BrowserValue[]) => T, args?: BrowserValue[]): Promise<T>;
 };
-export type BrowserTabsBackend = Pick<BrowserPageBackend, "activeTab" | "getTab"> & {
+export type BrowserTabsBackend = BrowserInputBackend & Pick<BrowserPageBackend, "activeTab" | "getTab"> & {
   listTabs(): Promise<TabSummary[]>;
   createTab(url: string, active: boolean): Promise<TabSummary>;
   focusTab(tabId: number): Promise<TabSummary>;

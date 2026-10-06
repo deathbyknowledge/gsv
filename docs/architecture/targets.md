@@ -78,7 +78,11 @@ GSV currently projects these environments:
   instance service binding. Native file commands use ordinary target dispatch
   to reach them, including copying screenshots into `gsv` and reading images for
   `img2txt`. Their owner-scoped inventory supplies visibility; they do not need
-  a machine registry entry or a driver WebSocket.
+  a machine registry entry or a driver WebSocket. Ordinary starts reuse the
+  owner's current instance atomically, including during provisioning. Explicit
+  separate starts create another target. Each instance keeps its own lifetime
+  and terminal identity; saved login state belongs to the account across
+  successive ordinary instances.
 - Slack projects a personally authorized workspace as a service-backed
   target implementing `fs.read`, `fs.search`, and `shell.exec`. Its read-only
   filesystem exposes conversations, exact messages, bounded history and thread

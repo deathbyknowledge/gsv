@@ -1560,15 +1560,23 @@ available through native `instance` and `browser` shell commands; ordinary brows
 commands run on the returned target. See [cloud browsers](/how-to/cloud-browsers).
 
 A start requires a persisted request ID. Repeating the same ID and arguments
-returns the same instance, including after it becomes terminal. Stop may use the
+returns the same instance, including after it becomes terminal. With a new request
+ID, ordinary starts reuse the owner's current ready or starting browser without
+extending its lifetime or reserving more usage. `fresh: true` explicitly creates
+a separate temporary browser. Ordinary new browsers automatically use the
+account's saved logins. Every start request retains its own receipt, including
+when it reused an instance. Stop may use the
 instance ID or the original start request ID; a stop received before admission
 fences that start. Instance reservations and concurrency are space-wide, while
 access to instances, profiles and human requests is owner-scoped.
 
-`handoff.open`, `finish`, `frame` and `input` require a directly signed-in human.
+`handoff.open`, `handoff.finish`, `browser.frame` and `browser.input` require a directly signed-in human.
 Processes cannot use them. A process's handoff request requires a writable
 responsibility ID. `frame` returns a JPEG in its binary body; `input` accepts a
-bounded JSON body describing a click, key, text, scroll or tab selection. Images
+bounded JSON body describing a click, key, text, scroll or tab selection. Viewing
+does not create a handoff or pause automation. Input names the displayed tab and
+document, and rejects a changed document before dispatch. Human and agent input
+actions are serialized; recent human activity gets priority automatically. Images
 and typed input are not syscall arguments or agent history. Automation on the
 instance is fenced while a human request is pending or active. Completion closes
 input admission and waits for accepted input before resuming automation.
@@ -1592,8 +1600,8 @@ type InstanceSyscalls = {
   "sys.browser.handoff.cancel": { args: SysBrowserHandoffCancelArgs; result: SysBrowserHandoffCancelResult };
   "sys.browser.handoff.open": { args: SysBrowserHandoffOpenArgs; result: SysBrowserHandoffOpenResult };
   "sys.browser.handoff.finish": { args: SysBrowserHandoffFinishArgs; result: SysBrowserHandoffFinishResult };
-  "sys.browser.handoff.frame": { args: SysBrowserHandoffFrameArgs; result: SysBrowserHandoffFrameResult };
-  "sys.browser.handoff.input": { args: SysBrowserHandoffInputArgs; result: SysBrowserHandoffInputResult };
+  "sys.browser.frame": { args: SysBrowserFrameArgs; result: SysBrowserFrameResult };
+  "sys.browser.input": { args: SysBrowserInputArgs; result: SysBrowserInputResult };
 };
 ```
 

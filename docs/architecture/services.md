@@ -122,6 +122,24 @@ disposes the acquired target; the service must enforce the supplied deadline.
 Connected providers can advertise `web.search` without this binding or a messaging
 adapter. See [Web search](../reference/web-search.md).
 
+## Cloud instances
+
+The optional instance service owns browser provisioning, owner-scoped saved
+login state, metering and cleanup. Ordinary starts atomically reuse the owner's
+current browser; independent request receipts point to that same instance.
+An explicit separate start admits another temporary browser under the same
+concurrency and usage limits. Reuse neither extends a lifetime nor makes a
+second reservation.
+
+The Kernel derives the human owner and routes ordinary target syscalls to this
+service. Human-only `sys.browser.frame` and `sys.browser.input` expose the same
+browser through GSV's authenticated transport. Viewing does not create a handoff
+or pause automation. Complete browser actions share an input queue; human input
+gets brief priority and is bound to the tab and document that were displayed.
+Explicit login-help requests retain a durable handoff and completion barrier.
+The Instrument owns the viewer, tab selection and cursor presentation; the
+service owns input ordering, browser state and lifecycle.
+
 ## Feedback
 
 Operators can supply `GsvRuntime.services.feedback`, exposed to the Gateway as

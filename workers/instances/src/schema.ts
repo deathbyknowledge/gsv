@@ -29,6 +29,13 @@ const migrations = [{
     "CREATE TABLE retirement (singleton INTEGER PRIMARY KEY CHECK (singleton = 1), operation_id TEXT NOT NULL, phase TEXT NOT NULL, updated_at INTEGER NOT NULL)",
     `UPDATE instances SET record = json_set(record, '$.implements', json('["shell.exec","fs.read","fs.write","fs.edit","fs.delete","fs.search","fs.copy","fs.transfer.stat","fs.transfer.send","fs.transfer.receive"]')) WHERE json_extract(record, '$.implements') IS NULL`,
   ],
+}, {
+  id: 4,
+  statements: [
+    `CREATE TABLE start_requests (owner_uid INTEGER NOT NULL, request_id TEXT NOT NULL,
+      instance_id TEXT NOT NULL, fingerprint TEXT NOT NULL, PRIMARY KEY(owner_uid, request_id))`,
+    `INSERT INTO start_requests SELECT owner_uid, request_id, id, json_insert(fingerprint, '$[#]', json('false')) FROM instances`,
+  ],
 }];
 
 export function migrate(storage: DurableObjectStorage): void {

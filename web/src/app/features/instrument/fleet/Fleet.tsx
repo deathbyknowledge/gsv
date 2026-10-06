@@ -48,7 +48,7 @@ import {
 } from "./fleetModel";
 import { PlaceActions } from "./PlaceActions";
 import { CloudBrowserActions, StartCloudBrowser } from "../browser/CloudInstances";
-import { useCloudInstances } from "../browser/BrowserControl";
+import { useBrowserControl, useCloudInstances } from "../browser/BrowserControl";
 import { FleetApproval } from "./FleetApproval";
 import { NewProcess, ProcessAiControls } from "./ProcessControls";
 import { canConfigure } from "../settings/settingsModel";
@@ -157,6 +157,13 @@ export function Fleet({ openRequest, onZen, onCommand, onDirtyChange }: FleetPro
     () => (selected?.startsWith("proc:") ? processes.find((process) => processRow(process.pid) === selected) ?? null : null),
     [selected, processes],
   );
+  const browserControl = useBrowserControl();
+  useLayoutEffect(() => {
+    if (inspectorOpen && selectedPlace?.instance && ["starting", "ready"].includes(selectedPlace.instance.state)) {
+      setInspectorOpen(false);
+      browserControl.open({ instanceId: selectedPlace.instance.instanceId });
+    }
+  }, [inspectorOpen, selectedPlace?.instance?.instanceId, selectedPlace?.instance?.state]);
   const missingRequestedRow = selected !== null && selected === initialRow && (
     (selected.startsWith("proc:") && !selectedProcess) || (selected.startsWith("target:") && !selectedPlace)
   );

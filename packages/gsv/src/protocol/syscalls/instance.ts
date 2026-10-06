@@ -15,6 +15,7 @@ export type CloudInstance = {
   state: CloudInstanceState;
   revision: number;
   profileId?: string;
+  isolated?: boolean;
   createdAt: number;
   readyAt?: number;
   expiresAt: number;
@@ -53,6 +54,8 @@ export type SysInstanceStartArgs = {
   label?: string;
   lifetimeSeconds?: number;
   profileId?: string;
+  /** Create a separate instance instead of reusing the account's current browser. */
+  fresh?: boolean;
 };
 export type SysInstanceStartResult = { instance: CloudInstance };
 export type SysInstanceListArgs = { includeTerminal?: boolean };
@@ -119,17 +122,22 @@ export type SysBrowserHandoffOpenArgs = SysBrowserHandoffGetArgs;
 export type SysBrowserHandoffOpenResult = { handoff: BrowserHandoff };
 export type SysBrowserHandoffFinishArgs = SysBrowserHandoffGetArgs;
 export type SysBrowserHandoffFinishResult = { handoff: BrowserHandoff };
-export type SysBrowserHandoffFrameArgs = SysBrowserHandoffGetArgs;
+export type SysBrowserFrameArgs = { instanceId: string; tabId?: number };
+export type BrowserPointer = { tabId: number; x: number; y: number; actor: "ship" | "human"; clickedAt?: number };
 /** The image travels in the response body, never in history or a provider URL. */
-export type SysBrowserHandoffFrameResult = {
-  handoff: BrowserHandoff;
+export type SysBrowserFrameResult = {
+  instance: CloudInstance;
+  handoff?: BrowserHandoff;
+  tabId: number;
+  documentId: string;
+  pointer?: BrowserPointer;
   tabs: Array<{ id: number; title: string; url: string }>;
   width: number;
   height: number;
   contentType: "image/jpeg";
 };
-export type SysBrowserHandoffInputArgs = SysBrowserHandoffGetArgs;
-export type SysBrowserHandoffInputResult = { accepted: true };
+export type SysBrowserInputArgs = { instanceId: string; tabId: number; documentId: string; handoffRequestId?: string };
+export type SysBrowserInputResult = { accepted: true };
 /** Human-only input travels as a JSON body, outside syscall argument ledgers. */
 export type BrowserHumanInput =
   | { kind: "tab"; tabId: number }

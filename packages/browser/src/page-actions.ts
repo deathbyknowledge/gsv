@@ -541,16 +541,19 @@ export function createPageActions<Target>(debuggerBackend: DebuggerBackend<Targe
     signal: AbortSignal | undefined,
     use: (target: Target) => Promise<T>,
   ): Promise<T> {
-    throwIfAborted(signal);
-    const target = await acquireDebugger(tabId);
-    try {
+    const action = async () => {
       throwIfAborted(signal);
-      return await use(target);
-    } finally {
-      await releaseDebugger(tabId).catch((error: unknown) => {
-        console.warn("GSV browser target failed to detach debugger", error);
-      });
-    }
+      const target = await acquireDebugger(tabId);
+      try {
+        throwIfAborted(signal);
+        return await use(target);
+      } finally {
+        await releaseDebugger(tabId).catch((error: unknown) => {
+          console.warn("GSV browser target failed to detach debugger", error);
+        });
+      }
+    };
+    return debuggerBackend.runInput ? debuggerBackend.runInput(action, signal) : action();
   }
 
   async function resolveElement(
@@ -696,7 +699,7 @@ export function createPageActions<Target>(debuggerBackend: DebuggerBackend<Targe
     const result = await sendDebuggerCommand<NodeForLocationResult>(target, "DOM.getNodeForLocation", {
       x: Math.round(point.x),
       y: Math.round(point.y),
-      includeUserAgentShadowDOM: true,
+      includeUserAgentShadowDOM: false,
       ignorePointerEventsNone: false,
     });
     if (typeof result.backendNodeId !== "number") {

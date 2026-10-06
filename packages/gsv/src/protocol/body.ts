@@ -29,8 +29,8 @@ const MAX_PREALLOCATED_BODY_BYTES = 64 * 1024 * 1024;
 
 export const BODY_SYSCALL_NAMES = [
   "sys.feedback",
-  "sys.browser.handoff.frame",
-  "sys.browser.handoff.input",
+  "sys.browser.frame",
+  "sys.browser.input",
   "fs.read",
   "fs.transfer.send",
   "fs.transfer.receive",

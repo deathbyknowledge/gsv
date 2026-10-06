@@ -7,12 +7,14 @@ import { requireCommandCapability, requireShellOptionValue } from "./common";
 
 const INSTANCE_HELP = `Usage:
   instance catalog
-  instance start browser --request-id ID [--profile ID] [--name NAME] [--seconds N]
+  instance start browser --request-id ID [--new] [--profile ID] [--name NAME] [--seconds N]
   instance list [--all]
   instance get ID | instance get --request-id ID
   instance stop ID | instance stop --request-id ID
 
 Keep the request ID before starting. If the response is lost, get by that ID; do not start again with a new ID.
+Start reuses your current browser, including one still starting, without extending its lifetime. Use another tab for additional work.
+--new explicitly starts a separate, temporary browser. Ordinary starts remember logins for your account automatically.
 Instances have a fixed lifetime. Stop them when finished. A stopped instance never restarts.
 `;
 const BROWSER_HELP = `Usage:
@@ -34,7 +36,7 @@ function parseOptions(args: string[], allowed: string[]) {
     const arg = args[i];
     if (!arg.startsWith("--")) { words.push(arg); continue; }
     if (!allowed.includes(arg) || options[arg] !== undefined) throw new Error(`Unexpected option: ${arg}`);
-    options[arg] = arg === "--all" ? "true" : requireShellOptionValue(args[++i], arg);
+    options[arg] = arg === "--all" || arg === "--new" ? "true" : requireShellOptionValue(args[++i], arg);
   }
   return { words, options };
 }
@@ -47,7 +49,7 @@ export function buildInstanceCommands(ctx: KernelContext, request?: NativeShellC
       let frame: RequestFrame;
       const id = crypto.randomUUID();
       if (name === "instance") {
-        const { words, options } = parseOptions(argv, ["--request-id", "--profile", "--name", "--seconds", "--all"]);
+        const { words, options } = parseOptions(argv, ["--request-id", "--profile", "--name", "--seconds", "--all", "--new"]);
         const [verb, target] = words;
         if (verb === "catalog" && words.length === 1) frame = { type: "req", id, call: "sys.instance.catalog", args: {} };
         else if (verb === "list" && words.length === 1) frame = { type: "req", id, call: "sys.instance.list", args: { includeTerminal: options["--all"] === "true" } };
@@ -59,6 +61,7 @@ export function buildInstanceCommands(ctx: KernelContext, request?: NativeShellC
           frame = { type: "req", id, call: "sys.instance.start", args: {
             requestId: options["--request-id"], templateId: target, profileId: options["--profile"], label: options["--name"],
             lifetimeSeconds: options["--seconds"] ? Number(options["--seconds"]) : undefined,
+            fresh: options["--new"] === "true" || undefined,
           } };
         } else throw new Error(help);
       } else {

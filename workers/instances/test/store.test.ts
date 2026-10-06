@@ -14,6 +14,39 @@ function inStore<T>(work: (store: InstanceStore) => T | Promise<T>) {
 }
 
 describe("instance admission", () => {
+  it("reuses a starting browser, remembers every request, and keeps one allowance and login store", () => inStore(store => {
+    const first = store.admit(actor, { requestId: "human", templateId: "browser", lifetimeSeconds: 300 }, limits);
+    const second = store.admit({ ...actor, human: false, processId: "ship" }, { requestId: "ship", templateId: "browser" }, limits);
+    expect(second.instanceId).toBe(first.instanceId);
+    expect(first.targetId).toMatch(/^[0-9a-f]{8}$/);
+    expect(first.profileId).toBeDefined();
+    expect(store.profiles(actor.ownerUid)).toHaveLength(1);
+    expect(store.usage(limits)).toMatchObject({ activeInstances: 1, reservedSeconds: 300 });
+    expect(store.owned(actor, { startRequestId: "ship" })?.id).toBe(first.instanceId);
+    store.terminal(first.instanceId, false);
+    expect(store.admit(actor, { requestId: "ship", templateId: "browser" }, limits).state).toBe("stopped");
+    const next = store.admit(actor, { requestId: "later", templateId: "browser", lifetimeSeconds: 300 }, limits);
+    expect(next.instanceId).not.toBe(first.instanceId);
+    expect(next.profileId).toBe(first.profileId);
+  }));
+  it("creates an explicit isolated browser without replacing the default or sharing its logins", () => inStore(store => {
+    const primary = store.admit(actor, { requestId: "primary", templateId: "browser", lifetimeSeconds: 300 }, limits);
+    const isolated = store.admit(actor, { requestId: "isolated", templateId: "browser", fresh: true, lifetimeSeconds: 300 }, limits);
+    expect(isolated.instanceId).not.toBe(primary.instanceId);
+    expect(isolated.label).not.toBe(primary.label);
+    expect(isolated.profileId).toBeUndefined();
+    expect(store.admit(actor, { requestId: "ordinary", templateId: "browser", lifetimeSeconds: 300 }, limits).instanceId).toBe(primary.instanceId);
+  }));
+  it("migrates original start receipts without changing their replay semantics", () => inStore(store => {
+    const args = { requestId: "before-upgrade", templateId: "browser", lifetimeSeconds: 300 };
+    const first = store.admit(actor, args, limits);
+    store.sql.exec("DROP TABLE start_requests");
+    store.sql.exec("DELETE FROM instance_schema WHERE id = 4");
+    store.sql.exec("UPDATE instances SET fingerprint = json_remove(fingerprint, '$[4]')");
+    migrate(store.storage);
+    expect(store.admit(actor, args, limits).instanceId).toBe(first.instanceId);
+    expect(() => store.admit(actor, { ...args, fresh: true }, limits)).toThrow("different arguments");
+  }));
   it("fences a stop that arrives before its start request", () => inStore(store => {
     store.cancelStart(actor, "late-start");
     expect(() => store.admit(actor, { requestId: "late-start", templateId: "browser" }, limits)).toThrow("cancelled before admission");
@@ -31,8 +64,8 @@ describe("instance admission", () => {
   it("reserves allowance and concurrency across owners before provisioning", () => inStore(store => {
     store.admit(actor, { requestId: "one", templateId: "browser", lifetimeSeconds: 600 }, limits);
     expect(() => store.admit({ ownerUid: 1001, human: true }, { requestId: "two", templateId: "browser", lifetimeSeconds: 600 }, limits)).toThrow("allowance");
-    store.admit(actor, { requestId: "two", templateId: "browser", lifetimeSeconds: 300 }, limits);
-    expect(() => store.admit(actor, { requestId: "three", templateId: "browser", lifetimeSeconds: 60 }, limits)).toThrow("concurrency");
+    store.admit(actor, { requestId: "two", templateId: "browser", fresh: true, lifetimeSeconds: 300 }, limits);
+    expect(() => store.admit(actor, { requestId: "three", templateId: "browser", fresh: true, lifetimeSeconds: 60 }, limits)).toThrow("concurrency");
     expect(store.usage(limits)).toMatchObject({ reservedSeconds: 900, activeInstances: 2 });
   }));
   it("charges a confirmed lifetime once and retains another owner's isolation", () => inStore(store => {
@@ -53,9 +86,9 @@ describe("instance admission", () => {
   it("serializes saved profile leases and never releases a newer lease", () => inStore(store => {
     const saved = store.createProfile(actor, "saved", "Personal", limits);
     const first = store.admit(actor, { requestId: "one", templateId: "browser", profileId: saved.profileId, lifetimeSeconds: 300 }, limits);
-    expect(() => store.admit(actor, { requestId: "two", templateId: "browser", profileId: saved.profileId, lifetimeSeconds: 300 }, limits)).toThrow("already in use");
+    expect(() => store.admit(actor, { requestId: "two", templateId: "browser", fresh: true, profileId: saved.profileId, lifetimeSeconds: 300 }, limits)).toThrow("already in use");
     store.terminal(first.instanceId, false);
-    const second = store.admit(actor, { requestId: "two", templateId: "browser", profileId: saved.profileId, lifetimeSeconds: 300 }, limits);
+    const second = store.admit(actor, { requestId: "two", templateId: "browser", fresh: true, profileId: saved.profileId, lifetimeSeconds: 300 }, limits);
     store.terminal(first.instanceId, false);
     expect(profile(store.ownedProfile(actor, saved.profileId)!)).toMatchObject({ activeInstanceId: second.instanceId });
   }));

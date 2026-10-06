@@ -4,46 +4,54 @@ A cloud browser lets Ship use websites while your personal devices are offline.
 It appears in Fleet alongside your connected browsers and computers. Your
 operator must enable cloud browsers; the local development stack enables them.
 
-## Start and sign in
+## Watch and use the browser
 
-1. Open **Fleet → start browser**.
-2. Choose a saved profile, or create one to remember website logins. A temporary
-   browser forgets its logins when it stops.
-3. Start the browser, select it in Fleet, and open a website.
-4. Choose **use browser**. Sign in directly in the browser view, including any
-   verification code the website requests. The tab selector includes login popups.
-5. Choose **Done — return to Ship** when finished.
+Ask Ship to use a browser. GSV reuses your account's current cloud browser,
+including one that is still starting. More work can use another tab. Fleet's
+**browser** action follows the same rule and opens the view immediately.
 
-Ship can also request your help with a particular website. Open the browser
-request shown in Ship, or follow its link from your messenger and sign in to GSV.
-The link identifies a request; it does not grant access without your GSV login.
-Your next chat message still goes to Ship. Website passwords and verification
-codes belong in the browser view.
+Click a running browser in Fleet to watch Ship work. The view follows Ship's
+active tab and shows its cursor and clicks. You can click, scroll, paste and type
+directly in that view. Clicking pins the view to that tab; choose **Follow Ship**
+to follow again. Watching leaves Ship running. Your input gets brief priority
+while you are interacting, and browser actions run in sequence so a human click
+cannot split an agent's click or typing action. Closing the view leaves the
+browser and Ship running.
 
-Automation on this browser pauses while you control it. Other GSV work can
-continue. Done closes human input before the browser resumes automation. Cancel
-ends the handoff without claiming that you completed the requested sign-in.
+Sign in directly on the website in this view, including any verification code.
+Ship can also request your help with a particular website. Open the request in
+Ship, or follow its link from your messenger and sign in to GSV. For these
+explicit requests, automation pauses until you choose **continue**, Ship cancels
+the request, or it expires. Closing the viewer leaves the request available.
 Requests expire after fifteen minutes or when the browser stops, whichever comes
-first. Closing the viewer with Cancel ends the request; closing the whole GSV
-tab leaves it available until you reopen it or it expires.
+first. The link identifies a request; it never grants access without your GSV
+login. Your next chat message still goes to Ship. Website passwords and
+verification codes belong in the browser view.
 
 ## Remembered logins and lifetime
 
-A saved profile stores website cookies, local storage and IndexedDB. It is
-separate from any one running browser. Only one browser can use a profile at a
-time. Fleet shows whether its most recent save succeeded. Choose the same
-profile when starting the next browser to restore the saved state.
+GSV automatically keeps website cookies, local storage and IndexedDB for your
+local account in this space. The next ordinary browser restores that saved
+state; there is no profile picker. Saved state is encrypted and separate from
+the running browser. Only one instance can use the same saved state at a time.
 
 This does not copy your personal browser's passwords, extensions or passkeys.
 Websites can expire a session or require another login. Device-bound sign-in,
 security keys, downloads/uploads through the viewer, browser permission dialogs
 and sites that reject cloud browsers may require a connected personal browser.
 
-Every instance has a fixed lifetime. Ship or you can stop it sooner with
-**stop browser**. A stopped or failed instance stays terminal; another start
-creates another target. Temporary files and unsaved website state disappear.
-Export useful files before stopping. Deleting a saved profile removes its stored
-login state and stops any browser using it.
+Every instance has a fixed lifetime. Reusing it does not extend that lifetime
+or reserve more time. Ship or you can stop it sooner with **stop browser**.
+A stopped or failed instance stays terminal; another start creates another target
+with a new eight-character ID. Export useful files before stopping: temporary
+files disappear. Stopped browsers leave the ordinary Fleet list, but their
+records remain available through `instance list --all`.
+
+Ship can request an additional isolated browser with `--new`. It has a distinct
+name and ID and is temporary: it does not share your saved logins or replace your
+ordinary browser. Advanced `browser profile` commands remain available for
+inspecting saved-state status and deleting saved logins. Deleting a profile
+removes that state and stops any browser using it.
 
 Starting reserves the requested lifetime against the space's monthly browser
 allowance and concurrent instance limit. Usage counts from readiness until
@@ -57,16 +65,23 @@ These are commands on the native `gsv` target:
 
 ```bash
 instance catalog
-browser profile create Personal --request-id <saved-request-id>
-instance start browser --request-id <saved-request-id> --profile <profile-id> --seconds 900
+instance start browser --request-id <saved-request-id> --seconds 900
 instance get <instance-id>
 instance list
 instance stop <instance-id>
 ```
 
+The ordinary start reuses the current browser. Use tabs for additional work.
+When an independent temporary browser is needed, request it explicitly:
+
+```bash
+instance start browser --new --name 'Separate research' --request-id <saved-request-id>
+```
+
 Persist a fresh start request ID before sending it. After a lost response, query
 `instance get --request-id <saved-request-id>` or retry the same start with the
-same arguments. To stop even if the start response was lost, use
+same arguments. Each request keeps its receipt even when it reused a browser.
+To stop even if the start response was lost, use
 `instance stop --request-id <saved-request-id>`. Never silently create a fresh
 start after an uncertain response. Cancelling a tool's wait does not stop an
 already admitted instance.
@@ -136,8 +151,9 @@ identity and does not inherit these profiles.
 Run `npm run dev`, then open `http://localhost:8976/admin` to create a local
 space. Wrangler runs Chromium locally. No paid remote browser is required for
 the development flow. After the server is ready, `npm run smoke:browser` creates
-a clean local space and exercises sign-in, cookie/local-storage/IndexedDB
-restoration, human control revocation, stop and profile deletion. Browser
+a clean local space and exercises concurrent start reuse, automatic saved logins,
+cookie/local-storage/IndexedDB restoration, passive viewing, cursor reporting,
+human input alongside agent work, input revocation, stop and saved-state deletion. Browser
 artifact checks also cover screenshots, binary shell operations and file
 transfers in both directions between the browser and `gsv`. Browser
 sessions can be lost when the Worker reloads, so finish builds before the smoke.

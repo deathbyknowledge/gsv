@@ -63,8 +63,8 @@ describe("instance gateway boundary", () => {
 
   it("derives owner and installation scope and rejects human input from processes before acquiring a service", async () => {
     const { ctx, getInstallation } = context({}, "crew-process");
-    for (const call of ["sys.browser.handoff.open", "sys.browser.handoff.finish", "sys.browser.handoff.frame", "sys.browser.handoff.input"] as const) {
-      await expect(handleInstanceRequest({ type: "req", id: "private-input", call, args: { instanceId: "instance", requestId: "login" } }, ctx)).rejects.toThrow("human owner");
+    for (const call of ["sys.browser.handoff.open", "sys.browser.handoff.finish", "sys.browser.frame", "sys.browser.input"] as const) {
+      await expect(handleInstanceRequest({ type: "req", id: "private-input", call, args: call === "sys.browser.input" ? { instanceId: "instance", tabId: 1, documentId: "document" } : { instanceId: "instance", requestId: "login" } }, ctx)).rejects.toThrow("human owner");
     }
     expect(getInstallation).not.toHaveBeenCalled();
     const instance: CloudInstance = {

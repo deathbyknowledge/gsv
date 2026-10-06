@@ -614,8 +614,8 @@ async function dispatchKernel(
       case "sys.browser.handoff.cancel":
       case "sys.browser.handoff.open":
       case "sys.browser.handoff.finish":
-      case "sys.browser.handoff.frame":
-      case "sys.browser.handoff.input":
+      case "sys.browser.frame":
+      case "sys.browser.input":
         return await handleInstanceRequest(frame, ctx);
       case "sys.config.get":
         data = handleSysConfigGet(frame.args, ctx);

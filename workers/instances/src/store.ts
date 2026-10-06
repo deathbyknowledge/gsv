@@ -13,7 +13,9 @@ export function period(now: number) {
 }
 export function instance(row: InstanceRow): CloudInstance {
   // SAFETY: This private column is written only from admitted CloudInstance records and versioned migrations.
-  return JSON.parse(row.record) as CloudInstance;
+  const value = JSON.parse(row.record) as CloudInstance;
+  if (value.label === "Cloud browser") value.label = `Browser ${value.instanceId.slice(0, 8)}`;
+  return value;
 }
 export function profile(row: ProfileRow): BrowserProfile {
   // SAFETY: The profile owner serializes BrowserProfile records into this private column.
@@ -24,7 +26,9 @@ export class InstanceStore {
   get sql(): SqlStorage { return this.storage.sql; }
   rows(activeOnly = false): InstanceRow[] { return this.sql.exec<InstanceRow>(`SELECT * FROM instances ${activeOnly ? "WHERE active = 1" : ""} ORDER BY rowid DESC`).toArray(); }
   owned(actor: InstanceActor, selector: InstanceSelector): InstanceRow | null {
-    return this.sql.exec<InstanceRow>(`SELECT * FROM instances WHERE owner_uid = ? AND ${selector.instanceId ? "id" : "request_id"} = ?`, actor.ownerUid, selector.instanceId ?? selector.startRequestId!).toArray()[0] ?? null;
+    return selector.instanceId
+      ? this.sql.exec<InstanceRow>("SELECT * FROM instances WHERE owner_uid = ? AND id = ?", actor.ownerUid, selector.instanceId).toArray()[0] ?? null
+      : this.sql.exec<InstanceRow>("SELECT i.* FROM instances i JOIN start_requests r ON r.instance_id = i.id AND r.owner_uid = i.owner_uid WHERE r.owner_uid = ? AND r.request_id = ?", actor.ownerUid, selector.startRequestId!).toArray()[0] ?? null;
   }
   byId(id: string): InstanceRow {
     const row = this.sql.exec<InstanceRow>("SELECT * FROM instances WHERE id = ?", id).toArray()[0];
@@ -43,30 +47,47 @@ export class InstanceStore {
   }
   admit(actor: InstanceActor, args: SysInstanceStartArgs, limits: BrowserLimits, now = Date.now()): CloudInstance {
     return this.storage.transactionSync(() => {
-      const fingerprint = JSON.stringify([args.templateId, args.label ?? null, args.lifetimeSeconds ?? null, args.profileId ?? null]);
-      const existing = this.owned(actor, { startRequestId: args.requestId });
+      const fingerprint = JSON.stringify([args.templateId, args.label ?? null, args.lifetimeSeconds ?? null, args.profileId ?? null, args.fresh ?? false]);
+      const existing = this.sql.exec<{ instance_id: string; fingerprint: string }>("SELECT instance_id, fingerprint FROM start_requests WHERE owner_uid = ? AND request_id = ?", actor.ownerUid, args.requestId).toArray()[0];
       if (existing) {
         if (existing.fingerprint !== fingerprint) throw new Error("Start requestId has already been used with different arguments");
-        return instance(existing);
+        return instance(this.byId(existing.instance_id));
       }
       if (this.sql.exec("SELECT 1 FROM cancelled_starts WHERE owner_uid = ? AND request_id = ?", actor.ownerUid, args.requestId).toArray().length) throw new Error("This start request was cancelled before admission; use a fresh requestId for new work");
       if (args.templateId !== "browser" || !limits.enabled) throw new Error("Browser instances are not enabled");
       const lifetime = args.lifetimeSeconds ?? browserTemplate(limits).defaultLifetimeSeconds;
       if (lifetime < 60 || lifetime > limits.maxInstanceSeconds) throw new Error("Requested browser lifetime is outside the allowed range");
+      if (!args.fresh) {
+        const current = this.rows(true).map(instance).reverse().find(value => value.ownerUid === actor.ownerUid
+          && (value.state === "ready" || value.state === "starting") && value.expiresAt > now
+          && !value.isolated
+          && (!args.profileId || value.profileId === args.profileId));
+        if (current) {
+          this.sql.exec("INSERT INTO start_requests VALUES (?, ?, ?, ?)", actor.ownerUid, args.requestId, current.instanceId, fingerprint);
+          return current;
+        }
+      }
       const usage = this.usage(limits, now);
       if (usage.activeInstances >= limits.concurrentInstances) throw new Error("Browser concurrency limit reached");
       if (usage.usedSeconds + usage.reservedSeconds + lifetime > limits.periodSeconds) throw new Error("Browser time allowance exhausted");
-      const saved = args.profileId ? this.ownedProfile(actor, args.profileId) : null;
+      const defaultProfile = !args.profileId && !args.fresh
+        ? this.profiles(actor.ownerUid).map(profile).reverse().find(value => value.state === "active")
+          ?? this.createProfile(actor, crypto.randomUUID(), "Browser", limits)
+        : null;
+      const profileId = args.profileId ?? defaultProfile?.profileId;
+      const saved = profileId ? this.ownedProfile(actor, profileId) : null;
       if (args.profileId && (!saved || profile(saved).state !== "active")) throw new Error("Saved browser profile is unavailable");
       if (saved && profile(saved).activeInstanceId) throw new Error(`Profile is already in use by ${profile(saved).activeInstanceId}`);
-      const id = crypto.randomUUID();
+      let id = crypto.randomUUID();
+      while (this.sql.exec("SELECT 1 FROM instances WHERE json_extract(record, '$.targetId') = ?", id.slice(0, 8)).toArray().length) id = crypto.randomUUID();
       const value: CloudInstance = {
-        instanceId: id, targetId: `cloud-browser-${id}`, startRequestId: args.requestId,
+        instanceId: id, targetId: id.slice(0, 8), startRequestId: args.requestId,
         ownerUid: actor.ownerUid, templateId: "browser", templateRevision: "1", kind: "browser", implements: browserTemplate(limits).implements,
-        label: args.label ?? "Cloud browser", state: "starting", revision: 1, profileId: args.profileId,
+        label: args.label ?? `Browser ${id.slice(0, 8)}`, state: "starting", revision: 1, profileId, isolated: args.fresh === true && !profileId,
         createdAt: now, expiresAt: now + lifetime * 1000,
       };
       this.sql.exec("INSERT INTO instances (id, owner_uid, request_id, fingerprint, record, active, period_start, reservation) VALUES (?, ?, ?, ?, ?, 1, ?, ?)", id, actor.ownerUid, args.requestId, fingerprint, JSON.stringify(value), period(now).start, lifetime);
+      this.sql.exec("INSERT INTO start_requests VALUES (?, ?, ?, ?)", actor.ownerUid, args.requestId, id, fingerprint);
       if (saved) this.putProfile({ ...profile(saved), activeInstanceId: id, revision: profile(saved).revision + 1 });
       return value;
     });

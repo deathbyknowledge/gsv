@@ -27,7 +27,7 @@ const server = http.createServer((request, response) => {
     response.end(`<h1>Signed in</h1><script>localStorage.setItem("profile-test","kept");const open=indexedDB.open("profile-test",1);open.onupgradeneeded=()=>open.result.createObjectStore("state");open.onsuccess=()=>{const tx=open.result.transaction("state","readwrite");tx.objectStore("state").put("kept","session");tx.oncomplete=()=>fetch("/stored")}</script>`);
   } else if (request.url === "/probe") {
     const cookie = request.headers.cookie?.includes("gsv_test_session=valid") ? "kept" : "missing";
-    response.end(`<body><script>const open=indexedDB.open("profile-test",1);open.onupgradeneeded=()=>open.result.createObjectStore("state");open.onsuccess=()=>{const request=open.result.transaction("state").objectStore("state").get("session");request.onsuccess=()=>{document.body.innerHTML='<pre id="restored">cookie=${cookie};local='+localStorage.getItem("profile-test")+';indexed='+request.result+'</pre>'}}</script></body>`);
+    response.end(`<body><input id="coedit" oninput="this.dataset.done='yes'"><script>const open=indexedDB.open("profile-test",1);open.onupgradeneeded=()=>open.result.createObjectStore("state");open.onsuccess=()=>{const request=open.result.transaction("state").objectStore("state").get("session");request.onsuccess=()=>{document.body.insertAdjacentHTML('beforeend','<pre id="restored">cookie=${cookie};local='+localStorage.getItem("profile-test")+';indexed='+request.result+'</pre>')}}</script></body>`);
   } else response.end(login);
 });
 server.listen(0, "127.0.0.1"); await once(server, "listening");
@@ -46,9 +46,9 @@ async function state(id, desired) {
 }
 async function start() {
   const requestId = crypto.randomUUID();
-  const result = await client.sys.instance.start({ requestId, templateId: "browser", lifetimeSeconds: 300, profileId });
+  const result = await client.sys.instance.start({ requestId, templateId: "browser", lifetimeSeconds: 300 });
   startedIds.push(result.instance.instanceId);
-  assert.equal((await client.sys.instance.start({ requestId, templateId: "browser", lifetimeSeconds: 300, profileId })).instance.instanceId, result.instance.instanceId);
+  assert.equal((await client.sys.instance.start({ requestId, templateId: "browser", lifetimeSeconds: 300 })).instance.instanceId, result.instance.instanceId);
   return state(result.instance.instanceId, "ready");
 }
 async function shell(instance, input) {
@@ -70,17 +70,29 @@ try {
   await client.requestOnce(url, "sys.setup", { ...credentials, timezone: "UTC", onboardingToken: new URL(setup.onboarding.onboardingUrl).hash.slice(1) });
   await client.connect({ url, ...credentials });
   console.log("Clean local space is ready");
-  profileId = (await client.sys.browser.profile.create({ requestId: crypto.randomUUID(), label: "Smoke profile" })).profile.profileId;
   const first = await start();
+  profileId = first.profileId;
+  assert.ok(profileId, "Ordinary browser start did not create saved logins");
+  assert.match(first.targetId, /^[0-9a-f]{8}$/);
+  const before = (await client.sys.instance.list({})).usage;
+  const repeats = await Promise.all(Array.from({ length: 3 }, () => client.sys.instance.start({ requestId: crypto.randomUUID(), templateId: "browser" })));
+  assert.ok(repeats.every(value => value.instance.instanceId === first.instanceId));
+  assert.equal((await client.sys.instance.list({})).usage.reservedSeconds, before.reservedSeconds);
+  console.log("PASS: independent start requests reuse one browser and reservation; saved logins are automatic");
   const opened = await shell(first, `tabs open --active ${website}/login`);
   const { tab } = JSON.parse(opened.slice(opened.indexOf("\n") + 1));
   const { handoff } = await client.sys.browser.handoff.request({ instanceId: first.instanceId, requestId: crypto.randomUUID(), tabId: tab.id, purpose: "Test persistent sign-in" });
   const selector = { instanceId: first.instanceId, requestId: handoff.requestId };
   await client.sys.browser.handoff.open(selector);
   await assert.rejects(client.shell.exec({ target: first.targetId, input: "page snapshot" }), /human_control/);
-  const frame = await client.request("sys.browser.handoff.frame", selector);
+  const frame = await client.request("sys.browser.frame", { instanceId: first.instanceId });
   assert.ok((await bodyToBytes(frame.body)).byteLength > 1000);
-  const input = value => client.request("sys.browser.handoff.input", selector, { body: bodyFromText(JSON.stringify(value)) });
+  const input = async value => {
+    const current = await client.request("sys.browser.frame", { instanceId: first.instanceId });
+    await bodyToBytes(current.body);
+    return client.request("sys.browser.input", { instanceId: first.instanceId, handoffRequestId: handoff.requestId,
+      tabId: current.data.tabId, documentId: current.data.documentId }, { body: bodyFromText(JSON.stringify(value)) });
+  };
   for (const id of [frame.data.tabs[0].id, tab.id]) await input({ kind: "tab", tabId: id });
   await input({ kind: "click", x: 180, y: 175 });
   await input({ kind: "text", text: "tester@example.invalid" });
@@ -99,6 +111,22 @@ try {
   const restored = await shell(second, `tabs open --active ${website}/probe && page wait '#restored' && page text`);
   assert.match(restored, /cookie=kept;local=kept;indexed=kept/);
   console.log("PASS: clean setup, idempotent start, human control, tab selection, input revocation, and cookie/localStorage/IndexedDB restoration");
+
+  await shell(second, "page click '#coedit'");
+  const watching = await client.request("sys.browser.frame", { instanceId: second.instanceId });
+  assert.ok((await bodyToBytes(watching.body)).byteLength > 1000);
+  assert.equal(watching.data.handoff, undefined);
+  assert.equal(watching.data.pointer.actor, "ship");
+  assert.ok(watching.data.pointer.clickedAt);
+  let finished = false;
+  const waiting = shell(second, "page wait '#coedit[data-done=yes]' --timeout 10000").then(() => { finished = true; });
+  await sleep(150); assert.equal(finished, false);
+  await client.request("sys.browser.input", { instanceId: second.instanceId, tabId: watching.data.tabId, documentId: watching.data.documentId }, {
+    body: bodyFromText(JSON.stringify({ kind: "text", text: "Human and Ship together" })),
+  });
+  await waiting;
+  assert.equal((await client.sys.instance.list({})).handoffs.length, 0);
+  console.log("PASS: passive viewing, Ship cursor/clicks, and human input alongside agent work without a handoff");
 
   const shot = JSON.parse(await shell(second, "page screenshot"));
   const png = await fileBytes(second.targetId, shot.path);

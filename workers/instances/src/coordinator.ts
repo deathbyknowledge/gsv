@@ -3,7 +3,7 @@ import { bodyFromBytes, cancelBinaryBody } from "@humansandmachines/gsv/protocol
 import type { BrowserHandoff, BrowserHumanInput, CloudInstance, InstanceSelector, SysBrowserHandoffGetArgs } from "@humansandmachines/gsv/protocol";
 import {
   browserHandoffRequestSchema, browserHandoffSelectorSchema, browserProfileCreateSchema,
-  instanceActorSchema, instanceListSchema, instanceSelectorSchema, instanceStartSchema,
+  instanceActorSchema, instanceListSchema, instanceSelectorSchema, instanceStartSchema, browserFrameSchema, browserInputSchema,
 } from "@humansandmachines/gsv/services/instances";
 import type { InstallationInstances, InstanceActor, InstanceTargetRequest, InstanceTargetResponse } from "@humansandmachines/gsv/services/instances";
 import { z } from "zod";
@@ -195,39 +195,48 @@ export class InstanceCoordinator extends DurableObject<Environment> implements I
     try { await barrier; } finally { if (this.#saves.get(args.instanceId) === barrier) this.#saves.delete(args.instanceId); }
     return { handoff: terminal };
   }
-  async handoffFrame(actor: InstanceActor, args: SysBrowserHandoffGetArgs) {
+  async frame(actor: InstanceActor, rawArgs: Parameters<InstallationInstances["frame"]>[1]) {
     this.human(actor);
-    const value = this.handoff(actor, args, true);
+    const args = browserFrameSchema.parse(rawArgs);
+    this.requireInstance(actor, args.instanceId, true);
     const browser = await this.browser(args.instanceId);
-    this.handoff(actor, args, true);
     const tabs = await browser.listTabs();
-    const tab = tabs.find(tab => tab.id === (value.activeTabId ?? value.tabId)) ?? tabs.find(tab => tab.id === value.tabId) ?? tabs[0];
+    const handoff = this.#store.handoffs(args.instanceId).find(liveHandoff);
+    const tab = tabs.find(tab => tab.id === (args.tabId ?? handoff?.activeTabId ?? handoff?.tabId))
+      ?? tabs.find(tab => tab.active) ?? tabs[0];
     if (!tab) throw new Error("This browser has no open tabs");
-    if (tab.id !== (value.activeTabId ?? value.tabId)) {
-      value.activeTabId = tab.id; value.revision++;
-      this.#store.putHandoff(value);
-    }
-    const bytes = await browser.humanFrame(tab.id);
-    this.handoff(actor, args, true);
-    const url = new URL(tab.url ?? "about:blank");
-    const current = { ...value, site: url.origin === "null" ? url.href : url.origin };
-    return { data: { handoff: current, tabs: tabs.map(({ id, title, url }) => ({ id, title: title ?? "", url: url ?? "about:blank" })), width: 1280, height: 800, contentType: "image/jpeg" as const }, body: bodyFromBytes(bytes) };
+    const { bytes, documentId } = await browser.humanFrame(tab.id);
+    const row = this.requireInstance(actor, args.instanceId, true);
+    return { data: { instance: instance(row), handoff, tabId: tab.id, documentId, pointer: browser.pointer,
+      tabs: tabs.map(({ id, title, url }) => ({ id, title: title ?? "", url: url ?? "about:blank" })),
+      width: 1280, height: 800, contentType: "image/jpeg" as const }, body: bodyFromBytes(bytes) };
   }
-  async handoffInput(actor: InstanceActor, args: SysBrowserHandoffGetArgs, rawInput: BrowserHumanInput) {
+  async input(actor: InstanceActor, rawArgs: Parameters<InstallationInstances["input"]>[1], rawInput: BrowserHumanInput) {
     this.human(actor);
-    const input = humanInputSchema.parse(rawInput);
-    this.handoff(actor, args, true);
+    const args = browserInputSchema.parse(rawArgs), input = humanInputSchema.parse(rawInput);
+    const check = () => {
+      this.requireInstance(actor, args.instanceId, true);
+      if (args.handoffRequestId) this.handoff(actor, { instanceId: args.instanceId, requestId: args.handoffRequestId }, true);
+      else if (this.#store.handoffs(args.instanceId).some(liveHandoff)) throw new Error("Open the pending browser request before entering input");
+    };
+    check();
+    const deadline = AbortSignal.timeout(10000);
     const previous = this.#humanInputs.get(args.instanceId);
     const operation = (async () => {
       await previous;
       const browser = await this.browser(args.instanceId);
-      const value = this.handoff(actor, args, true);
-      if (input.kind === "tab") {
-        const tab = await browser.getTab(input.tabId);
-        if (!tab) throw new Error("Browser tab no longer exists");
-        const current = this.handoff(actor, args, true);
-        this.#store.putHandoff({ ...current, activeTabId: tab.id, revision: current.revision + 1 });
-      } else await browser.humanInput(value.activeTabId ?? value.tabId, input);
+      await browser.runInput(async () => {
+        check();
+        if (await browser.documentId(args.tabId) !== args.documentId) throw new Error("The page changed. Check the refreshed view before trying again.");
+        check(); deadline.throwIfAborted();
+        if (input.kind === "tab") {
+          await browser.focusTab(input.tabId);
+          if (args.handoffRequestId) {
+            const value = this.handoff(actor, { instanceId: args.instanceId, requestId: args.handoffRequestId }, true);
+            this.#store.putHandoff({ ...value, activeTabId: input.tabId, revision: value.revision + 1 });
+          }
+        } else await browser.humanInput(args.tabId, input);
+      }, deadline, "human");
     })();
     this.#humanInputs.set(args.instanceId, operation);
     try { await operation; return { accepted: true as const }; }
@@ -357,7 +366,7 @@ export class InstanceCoordinator extends DurableObject<Environment> implements I
     if (listed.objects.length) await this.env.PROFILES.delete(listed.objects.map(object => object.key));
     if (listed.truncated) return this.installationDeletionStatus(input);
     this.ctx.storage.transactionSync(() => {
-      for (const table of ["files", "handoffs", "profiles", "instances", "diagnostics", "cancelled_starts"]) this.#store.sql.exec(`DELETE FROM ${table}`);
+      for (const table of ["files", "handoffs", "profiles", "instances", "diagnostics", "cancelled_starts", "start_requests"]) this.#store.sql.exec(`DELETE FROM ${table}`);
       this.#retirement.phase("erased");
     });
     await this.ctx.storage.deleteAlarm();
@@ -456,8 +465,8 @@ class InstanceCapability extends RpcTarget implements InstallationInstances {
   openHandoff(...args: Parameters<InstallationInstances["openHandoff"]>) { return this.#owner.openHandoff(...args); }
   cancelHandoff(...args: Parameters<InstallationInstances["cancelHandoff"]>) { return this.#owner.cancelHandoff(...args); }
   finishHandoff(...args: Parameters<InstallationInstances["finishHandoff"]>) { return this.#owner.finishHandoff(...args); }
-  handoffFrame(...args: Parameters<InstallationInstances["handoffFrame"]>) { return this.#owner.handoffFrame(...args); }
-  handoffInput(...args: Parameters<InstallationInstances["handoffInput"]>) { return this.#owner.handoffInput(...args); }
+  frame(...args: Parameters<InstallationInstances["frame"]>) { return this.#owner.frame(...args); }
+  input(...args: Parameters<InstallationInstances["input"]>) { return this.#owner.input(...args); }
   execute(...args: Parameters<InstallationInstances["execute"]>) { return this.#owner.execute(...args); }
   cancel(...args: Parameters<InstallationInstances["cancel"]>) { return this.#owner.cancel(...args); }
 }

@@ -64,6 +64,7 @@ export function createTabCommands(backend: BrowserTabsBackend) {
       return commandOk(`${tabsUsageFor(subcommand)}\n`);
     }
 
+    const input = (action: () => Promise<CommandResult>) => backend.runInput ? backend.runInput(action, ctx.abortSignal) : action();
     try {
       switch (subcommand) {
         case "list":
@@ -73,13 +74,13 @@ export function createTabCommands(backend: BrowserTabsBackend) {
         case "get":
           return await runGet(args);
         case "open":
-          return await runOpen(args, ctx);
+          return await input(() => runOpen(args, ctx));
         case "focus":
-          return await runFocus(args);
+          return await input(() => runFocus(args));
         case "close":
-          return await runClose(args);
+          return await input(() => runClose(args));
         case "reload":
-          return await runReload(args);
+          return await input(() => runReload(args));
         default:
           return commandError(`Unknown tabs command: ${subcommand}\n${TABS_USAGE}`);
       }

@@ -95,6 +95,14 @@ The receipt has three levels: work between messages, action purpose, evidence. C
 
 Fleet owns places, processes, responsibilities, routines, files and their inspectors. Places offers Connect, subject to the signed-in account's permissions. A new place can be a computer or browser. People owns contact conversations and private invitations. Opening either connection form never creates a credential or invitation.
 
+Cloud browser rows open their live view directly. Watching follows Ship's active
+tab and cursor without pausing its work. Direct input needs no control-mode
+switch; clicking pins the viewed tab, and input is sent against the document
+actually displayed. Closing the view leaves work running. Only an explicit Ship
+sign-in request shows a completion action. The Fleet browser action reuses the
+account's current instance, and saved logins are automatic rather than exposed
+as profile setup. Stopped instances leave the ordinary place list.
+
 The Fleet overview uses the full width with modest side gutters on wide screens.
 Browsing with j/k or the arrow keys only
 moves browser focus: it does not change inspection, mount detail queries or read

@@ -9,7 +9,7 @@ import type {
   SysBrowserProfileListResult, SysBrowserProfileGetResult,
   SysBrowserHandoffRequestArgs, SysBrowserHandoffRequestResult,
   SysBrowserHandoffGetArgs, SysBrowserHandoffGetResult,
-  SysBrowserHandoffFrameResult, BrowserHumanInput,
+  SysBrowserFrameArgs, SysBrowserFrameResult, SysBrowserInputArgs, BrowserHumanInput,
 } from "../protocol/syscalls/instance";
 
 const id = z.string().trim().min(1).max(160);
@@ -25,6 +25,7 @@ export const instanceStartSchema = z.strictObject({
   label: z.string().trim().min(1).max(100).optional(),
   lifetimeSeconds: z.number().int().positive().optional(),
   profileId: id.optional(),
+  fresh: z.boolean().optional(),
 }) satisfies z.ZodType<SysInstanceStartArgs>;
 export const instanceSelectorSchema = z.union([
   z.strictObject({ instanceId: id }),
@@ -38,6 +39,8 @@ export const browserHandoffRequestSchema = z.strictObject({
   purpose: z.string().trim().min(1).max(500), responsibilityId: id.optional(),
 }) satisfies z.ZodType<SysBrowserHandoffRequestArgs>;
 export const browserHandoffSelectorSchema = z.strictObject({ instanceId: id, requestId: id });
+export const browserFrameSchema = z.strictObject({ instanceId: id, tabId: z.number().int().positive().optional() });
+export const browserInputSchema = z.strictObject({ instanceId: id, tabId: z.number().int().positive(), documentId: id, handoffRequestId: id.optional() });
 export type InstanceTargetRequest = TypedRequest<SyscallDomains, SyscallName, BinaryBody>;
 export type InstanceTargetResponse = TypedResponse<SyscallDomains, SyscallName, BinaryBody>;
 
@@ -57,8 +60,8 @@ export interface InstallationInstances {
   cancelHandoff(actor: InstanceActor, args: SysBrowserHandoffGetArgs): Promise<SysBrowserHandoffGetResult>;
   openHandoff(actor: InstanceActor, args: SysBrowserHandoffGetArgs): Promise<SysBrowserHandoffRequestResult>;
   finishHandoff(actor: InstanceActor, args: SysBrowserHandoffGetArgs): Promise<SysBrowserHandoffGetResult>;
-  handoffFrame(actor: InstanceActor, args: SysBrowserHandoffGetArgs): Promise<{ data: SysBrowserHandoffFrameResult; body: BinaryBody }>;
-  handoffInput(actor: InstanceActor, args: SysBrowserHandoffGetArgs, input: BrowserHumanInput): Promise<{ accepted: true }>;
+  frame(actor: InstanceActor, args: SysBrowserFrameArgs): Promise<{ data: SysBrowserFrameResult; body: BinaryBody }>;
+  input(actor: InstanceActor, args: SysBrowserInputArgs, input: BrowserHumanInput): Promise<{ accepted: true }>;
   execute(actor: InstanceActor, instanceId: string, frame: InstanceTargetRequest, deadlineAt: number): Promise<InstanceTargetResponse>;
   cancel(actor: InstanceActor, instanceId: string, requestId: string): Promise<void>;
   [Symbol.dispose]?(): void;
