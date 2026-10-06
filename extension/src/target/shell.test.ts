@@ -2,10 +2,44 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { pageCommand } from "./commands/page";
 import { BrowserTargetShell, DEFAULT_BROWSER_SHELL_TIMEOUT_MS } from "./shell";
 import type { BrowserCommand, CommandResult, TargetFileSystem } from "./types";
+import { BrowserTargetFileSystem } from "./fs";
 
 afterEach(() => vi.unstubAllGlobals());
 
 describe("BrowserTargetShell", () => {
+  it("copies across directories and over existing files while rejecting a copy onto itself", async () => {
+    const fs = new BrowserTargetFileSystem(directoryOnlyFileSystem());
+    const shell = new BrowserTargetShell(fs, []);
+    const bytes = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0, 0xff, 0x80]);
+    await fs.write("/home/browser/screenshots/shot.png", bytes);
+    for (let attempt = 0; attempt < 2; attempt++) {
+      expect(await shell.exec({ input: "cp /home/browser/screenshots/shot.png /tmp/shot.png" })).toMatchObject({ status: "completed", exitCode: 0 });
+      expect(await fs.read("/tmp/shot.png")).toEqual(bytes);
+    }
+    expect(await shell.exec({ input: "cp /tmp/shot.png /tmp/../tmp/shot.png" })).toMatchObject({ status: "failed", error: expect.stringContaining("are the same file") });
+    expect(await fs.read("/tmp/shot.png")).toEqual(bytes);
+  });
+
+  it("preserves binary bytes through redirection, pipes and append, including stderr to /dev/null", async () => {
+    const fs = new BrowserTargetFileSystem(directoryOnlyFileSystem());
+    const shell = new BrowserTargetShell(fs, []);
+    const bytes = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0, 0xff, 0x80]);
+    await fs.write("/home/browser/shot.png", bytes);
+    expect(await shell.exec({ input: "cat /home/browser/shot.png > /tmp/shot.png 2>/dev/null" })).toMatchObject({ status: "completed", exitCode: 0 });
+    expect(await fs.read("/tmp/shot.png")).toEqual(bytes);
+    expect(await shell.exec({ input: "cat /home/browser/shot.png | cat >> /tmp/shot.png" })).toMatchObject({ status: "completed", exitCode: 0 });
+    expect(await fs.read("/tmp/shot.png")).toEqual(new Uint8Array([...bytes, ...bytes]));
+  });
+
+  it("discards /dev/null writes without making the runtime filesystem writable", async () => {
+    const fs = new BrowserTargetFileSystem(directoryOnlyFileSystem());
+    const shell = new BrowserTargetShell(fs, []);
+    expect(await shell.exec({ input: "printf discarded > /dev/null && cat /dev/null" })).toMatchObject({ status: "completed", output: "", exitCode: 0 });
+    expect(await fs.read("/dev/null")).toEqual(new Uint8Array());
+    expect(await fs.list("/dev")).toEqual({ files: ["null"], directories: [] });
+    await expect(fs.write("/dev/other", new Uint8Array([1]))).rejects.toThrow("Read-only path");
+  });
+
   it("uses a two-minute default runtime", () => {
     expect(DEFAULT_BROWSER_SHELL_TIMEOUT_MS).toBe(120_000);
   });

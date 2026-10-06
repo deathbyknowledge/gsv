@@ -8,7 +8,6 @@ import type {
   RmOptions,
 } from "just-bash/browser";
 import type { TargetFileSystem } from "./types";
-import { dirname } from "./paths";
 
 type ReadFileOptions = { encoding?: BufferEncoding | null };
 type WriteFileOptions = { encoding?: BufferEncoding };
@@ -18,9 +17,13 @@ export class JustBashFileSystemAdapter implements IFileSystem {
 
   async readFile(path: string, options?: ReadFileOptions | BufferEncoding): Promise<string> {
     const bytes = await this.fs.read(path);
-    const encoding = typeof options === "string" ? options : options?.encoding;
+    const encoding = isEncodingOption(options) ? options : options?.encoding;
     if (encoding === "base64") {
       return bytesToBase64(bytes);
+    }
+    if (encoding === "hex") return Array.from(bytes, byte => byte.toString(16).padStart(2, "0")).join("");
+    if (encoding === "binary" || encoding === "latin1" || encoding === "ascii") {
+      return Array.from(bytes, byte => String.fromCharCode(encoding === "ascii" ? byte & 0x7f : byte)).join("");
     }
     return new TextDecoder().decode(bytes);
   }
@@ -29,14 +32,12 @@ export class JustBashFileSystemAdapter implements IFileSystem {
     return await this.fs.read(path);
   }
 
-  async writeFile(path: string, content: FileContent, _options?: WriteFileOptions | BufferEncoding): Promise<void> {
-    await this.fs.mkdir(dirname(path));
-    await this.fs.write(path, fileContentToBytes(content));
+  async writeFile(path: string, content: FileContent, options?: WriteFileOptions | BufferEncoding): Promise<void> {
+    await this.fs.write(path, fileContentToBytes(content, isEncodingOption(options) ? options : options?.encoding));
   }
 
-  async appendFile(path: string, content: FileContent, _options?: WriteFileOptions | BufferEncoding): Promise<void> {
-    await this.fs.mkdir(dirname(path));
-    await this.fs.append(path, fileContentToBytes(content));
+  async appendFile(path: string, content: FileContent, options?: WriteFileOptions | BufferEncoding): Promise<void> {
+    await this.fs.append(path, fileContentToBytes(content, isEncodingOption(options) ? options : options?.encoding));
   }
 
   async exists(path: string): Promise<boolean> {
@@ -44,6 +45,7 @@ export class JustBashFileSystemAdapter implements IFileSystem {
   }
 
   async stat(path: string): Promise<FsStat> {
+    if (!await this.fs.exists(path)) throw new Error(`ENOENT: no such file or directory: ${path}`);
     const stat = await this.fs.stat(path);
     return {
       isFile: stat.isFile,
@@ -52,6 +54,8 @@ export class JustBashFileSystemAdapter implements IFileSystem {
       mode: stat.isDirectory ? 0o755 : 0o644,
       size: stat.size,
       mtime: new Date(),
+      // Browser filesystems have no hard links or symlinks, so canonical paths identify files.
+      identity: this.fs.resolvePath("/", path),
     };
   }
 
@@ -118,21 +122,18 @@ export class JustBashFileSystemAdapter implements IFileSystem {
   async utimes(): Promise<void> {}
 }
 
-function fileContentToBytes(content: FileContent): Uint8Array {
-  const value = content as unknown;
-  if (typeof value === "string") {
-    return new TextEncoder().encode(value);
+function isEncodingOption(options?: ReadFileOptions | BufferEncoding): options is BufferEncoding {
+  return typeof options === "string";
+}
+
+function fileContentToBytes(content: FileContent, encoding?: BufferEncoding): Uint8Array {
+  if (content instanceof Uint8Array) return content;
+  if (encoding === "binary" || encoding === "latin1" || encoding === "ascii") {
+    return Uint8Array.from(content, char => char.charCodeAt(0) & 0xff);
   }
-  if (value instanceof Uint8Array) {
-    return value;
-  }
-  if (value instanceof ArrayBuffer) {
-    return new Uint8Array(value);
-  }
-  if (ArrayBuffer.isView(value)) {
-    return new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
-  }
-  return new TextEncoder().encode(String(value));
+  if (encoding === "base64") return Uint8Array.from(atob(content), char => char.charCodeAt(0));
+  if (encoding === "hex") return Uint8Array.from(content.match(/.{2}/g) ?? [], byte => parseInt(byte, 16));
+  return new TextEncoder().encode(content);
 }
 
 function bytesToBase64(bytes: Uint8Array): string {

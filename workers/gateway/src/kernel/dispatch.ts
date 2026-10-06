@@ -25,6 +25,7 @@ import type { ShellSessionStore } from "./shell-sessions";
 import { jsonObjectSchema, type NetFetchArgs } from "@humansandmachines/gsv/protocol";
 import { authorizeNestedOperation, nestedToolOwner } from "./tool-approval";
 import { dispatchGsvTarget } from "../drivers/native/target";
+import type { FsDeviceTransport } from "../drivers/native/fs";
 import { WEB_SEARCH_TIMEOUT_MS, webSearchArgsSchema } from "@humansandmachines/gsv/services/web-search";
 import {
   handleAiContext,
@@ -337,9 +338,26 @@ async function dispatchLocal(
       throw error;
     }
   };
-  const fsTransport = {
-    ...deps,
-    requestTarget,
+  const fsTransport: FsDeviceTransport = {
+    requestTarget: async (targetId, call, args, options) => {
+      let signal = options?.signal ?? nativeContext.requestSignal;
+      if (options?.ttlMs !== undefined) {
+        const deadline = AbortSignal.timeout(options.ttlMs);
+        signal = signal ? AbortSignal.any([signal, deadline]) : deadline;
+      }
+      // SAFETY: Native filesystem operations construct the matching syscall arguments;
+      // dispatch owns grants, target resolution, approval, cancellation and body cleanup.
+      const request = {
+        type: "req",
+        id: crypto.randomUUID(),
+        call,
+        args: { ...args, target: targetId },
+        body: options?.body,
+      } as RequestFrame;
+      const response = await deps.request(request, nativeContext, signal);
+      if (!response.ok) throw new Error(response.error.message);
+      return response;
+    },
     openContactSource: async (source: Parameters<typeof openContactResourceSource>[0], signal?: AbortSignal) => {
       const contactContext = { ...nativeContext, requestSignal: signal ?? nativeContext.requestSignal };
       await authorizeNestedOperation(contactContext, "fs.transfer.send", { ...source });
@@ -1019,6 +1037,7 @@ async function routeToTarget(
 
 export function routedFrameTtlMs(frame: RequestFrame): number {
   if (frame.call === "web.search") return WEB_SEARCH_TIMEOUT_MS;
+  if (frame.call === "fs.transfer.send" || frame.call === "fs.transfer.receive") return 120_000;
   if (frame.call === "shell.exec") {
     const requested = frame.args.timeout;
     if (requested === undefined || !Number.isFinite(requested) || requested <= 0) {

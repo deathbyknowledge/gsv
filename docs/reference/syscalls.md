@@ -169,7 +169,10 @@ type FilesystemSyscalls = {
 ```
 
 `fs.copy` copies one file between two endpoints, each on `gsv` or on a target
-machine, so a machine-to-`gsv` copy needs no client in the middle. The
+that implements file transfers, including connected machines and cloud
+browsers. A target-to-`gsv` copy needs no client in the middle. Native commands
+such as `cp` and `img2txt` resolve their file sources through the same target
+discovery, authorization and routing as direct filesystem calls. The
 `fs.transfer.*` calls are the body-bearing transport: `fs.transfer.send`
 answers with the bytes as a response body, `fs.transfer.receive` takes them as
 a request body, and `fs.transfer.stat` reports size and revision without a

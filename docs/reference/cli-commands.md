@@ -261,7 +261,8 @@ default.
 `IMAGE` accepts the same target-qualified source forms as `cp`: a local path,
 `gsv:/path`, `target:/path`, or `[target-with-colons]:/path`. A target image is
 streamed directly through the filesystem transfer boundary into image reading;
-the command does not stage a temporary GSV copy.
+the command does not stage a temporary GSV copy. Cloud browser screenshots use
+the same source forms and ownership checks as files on connected devices.
 
 Query and OCR structured output accepts `text`, `json`, `xml`, `markdown`, or
 `csv`. A JSON `--schema` is added to the caller's instruction, then the result

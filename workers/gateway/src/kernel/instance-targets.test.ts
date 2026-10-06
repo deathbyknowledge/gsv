@@ -7,6 +7,7 @@ import type { TargetDescriptor } from "./targets";
 import { discoverInstanceTargets, requestInstanceTarget } from "./instance-targets";
 import { handleInstanceRequest } from "./sys/instance";
 import { testPeer } from "../test-support/peers";
+import { openFsSource } from "../drivers/native/fs";
 
 function context(service: Partial<InstallationInstances>, processId?: string) {
   const dispose = vi.fn(), deferred: Promise<unknown>[] = [];
@@ -16,6 +17,8 @@ function context(service: Partial<InstallationInstances>, processId?: string) {
     installationId: "trusted-installation", env: { INSTANCES: { getInstallation } },
     peer: testPeer({ account: { uid: processId ? 2000 : 1000, username: processId ? "crew" : "owner", gids: [] } }),
     processId, procs: { getOwnerUid: () => 1000 }, auth: { getPasswdByUid: () => ({ username: "owner" }) },
+    targets: { canAccess: () => false, get: () => null },
+    adapters: { identityLinks: { list: () => [] } },
     ledger,
     defer: (promise: Promise<unknown>) => { deferred.push(promise); },
   };
@@ -30,6 +33,34 @@ const target: TargetDescriptor = {
 };
 
 describe("instance gateway boundary", () => {
+  it("opens owned browser artifacts through the same target discovery as direct calls", async () => {
+    const instance: CloudInstance = {
+      instanceId: "instance", targetId: "browser", startRequestId: "start", ownerUid: 1000,
+      templateId: "browser", templateRevision: "1", kind: "browser", implements: ["fs.transfer.stat", "fs.transfer.send"], label: "Browser",
+      state: "ready", revision: 1, createdAt: Date.now(), expiresAt: Date.now() + 60000,
+    };
+    const list = vi.fn(async () => ({ instances: [instance], handoffs: [], usage: { periodStartsAt: 0, periodEndsAt: 1, usedSeconds: 0, reservedSeconds: 60, limitSeconds: 3600, activeInstances: 1, concurrentLimit: 2 } }));
+    const { ctx } = context({ list }, "crew-process");
+    const bytes = new Uint8Array([0x89, 0x50, 0, 0xff]);
+    const requestTarget = vi.fn(async (_id: string, call: string) => ({
+      type: "res" as const, id: call, ok: true as const,
+      data: { ok: true as const, path: "/tmp/shot.png", size: bytes.byteLength, isFile: true, isDirectory: false, contentType: "image/png" },
+      body: call === "fs.transfer.send" ? bodyFromBytes(bytes) : undefined,
+    }));
+    const opened = await openFsSource({ target: "browser", path: "/tmp/shot.png" }, ctx, { transport: { requestTarget } });
+    expect(await bodyToBytes(opened.body)).toEqual(bytes);
+    expect(list).toHaveBeenCalledWith({ ownerUid: 1000, human: false, processId: "crew-process" }, { includeTerminal: true });
+
+    requestTarget.mockClear();
+    instance.implements = ["fs.read"];
+    await expect(openFsSource({ target: "browser", path: "/tmp/shot.png" }, ctx, { transport: { requestTarget } })).rejects.toThrow("does not implement fs.transfer.stat");
+    expect(requestTarget).not.toHaveBeenCalled();
+
+    list.mockResolvedValue({ ...(await list()), instances: [] });
+    await expect(openFsSource({ target: "browser", path: "/tmp/shot.png" }, ctx, { transport: { requestTarget } })).rejects.toThrow("Access denied to target");
+    expect(requestTarget).not.toHaveBeenCalled();
+  });
+
   it("derives owner and installation scope and rejects human input from processes before acquiring a service", async () => {
     const { ctx, getInstallation } = context({}, "crew-process");
     for (const call of ["sys.browser.handoff.open", "sys.browser.handoff.finish", "sys.browser.handoff.frame", "sys.browser.handoff.input"] as const) {

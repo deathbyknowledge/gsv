@@ -56,6 +56,11 @@ async function shell(instance, input) {
   assert.equal(result.status, "completed", result.error ?? result.output); assert.equal(result.exitCode, 0, result.error);
   return result.output;
 }
+async function fileBytes(target, path) {
+  const response = await client.request("fs.transfer.send", { target, path });
+  assert.equal(response.data.ok, true, response.data.error);
+  return bodyToBytes(response.body);
+}
 try {
   const created = await fetch(new URL("/admin/api/installations", origin), { method: "POST", headers: { Origin: origin.origin, "Content-Type": "application/json" }, body: JSON.stringify({ operationId: crypto.randomUUID(), handle: `browser-smoke-${crypto.randomUUID().slice(0, 8)}` }) });
   assert.equal(created.status, 201, "Local Accounts did not create a test installation");
@@ -94,6 +99,25 @@ try {
   const restored = await shell(second, `tabs open --active ${website}/probe && page wait '#restored' && page text`);
   assert.match(restored, /cookie=kept;local=kept;indexed=kept/);
   console.log("PASS: clean setup, idempotent start, human control, tab selection, input revocation, and cookie/localStorage/IndexedDB restoration");
+
+  const shot = JSON.parse(await shell(second, "page screenshot"));
+  const png = await fileBytes(second.targetId, shot.path);
+  assert.equal(png.byteLength, shot.byteLength);
+  assert.deepEqual(png.slice(0, 8), new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10]));
+  await shell(second, `cp ${shot.path} /tmp/copy.png && cp ${shot.path} /tmp/copy.png`);
+  await shell(second, `cat ${shot.path} > /tmp/redirect.png 2>/dev/null`);
+  await shell(second, `cat ${shot.path} | cat >> /tmp/append.png`);
+  for (const path of ["/tmp/copy.png", "/tmp/redirect.png", "/tmp/append.png"]) {
+    assert.deepEqual(await fileBytes(second.targetId, path), png, `${path} changed screenshot bytes`);
+  }
+  const savedPath = "/home/browser-tester/browser-smoke.png";
+  await shell({ targetId: "gsv" }, `cp ${second.targetId}:${shot.path} ${savedPath}`);
+  assert.deepEqual(await fileBytes("gsv", savedPath), png, "Export changed screenshot bytes");
+  await shell({ targetId: "gsv" }, `cp ${savedPath} ${second.targetId}:/tmp/import.png`);
+  assert.deepEqual(await fileBytes(second.targetId, "/tmp/import.png"), png, "Import changed screenshot bytes");
+  await shell({ targetId: "gsv" }, `cp ${second.targetId}:/tmp/import.png ${second.targetId}:/tmp/remote-copy.png`);
+  assert.deepEqual(await fileBytes(second.targetId, "/tmp/remote-copy.png"), png, "Routed copy changed screenshot bytes");
+  console.log("PASS: screenshot, browser copy/overwrite, binary redirection/piping, export to gsv, import, and routed copy preserve every byte");
 } catch (error) { console.error("Smoke failed:", error); throw error; }
 finally {
   try {

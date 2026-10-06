@@ -83,6 +83,7 @@ const textDecoder = new TextDecoder();
 const MAX_SEARCH_MATCHES = 200;
 const DEFAULT_DIRECTORIES = [
   "/",
+  "/dev",
   "/home",
   "/home/browser",
   "/home/browser/recordings",
@@ -105,6 +106,7 @@ export class BrowserTargetFileSystem implements TargetFileSystem {
   async read(path: string): Promise<Uint8Array> {
     await this.ensureLoaded();
     const normalized = normalizePath(path);
+    if (normalized === "/dev/null") return new Uint8Array();
     if (await this.runtime.exists(normalized)) {
       return await this.runtime.read(normalized);
     }
@@ -119,6 +121,7 @@ export class BrowserTargetFileSystem implements TargetFileSystem {
   async write(path: string, content: Uint8Array, contentType?: string): Promise<void> {
     await this.ensureLoaded();
     const normalized = normalizePath(path);
+    if (normalized === "/dev/null") return;
     this.assertWritable(normalized);
     await this.assertNotDirectory(normalized);
     await this.ensureDirectory(dirname(normalized));
@@ -217,6 +220,7 @@ export class BrowserTargetFileSystem implements TargetFileSystem {
     const normalized = normalizePath(path);
     const mergedFiles = new Set<string>();
     const mergedDirectories = new Set<string>();
+    if (normalized === "/dev") mergedFiles.add("null");
 
     if (await this.runtime.exists(normalized)) {
       const runtimeEntries = await this.runtime.list(normalized);
@@ -251,6 +255,7 @@ export class BrowserTargetFileSystem implements TargetFileSystem {
   async stat(path: string): Promise<FileStat> {
     await this.ensureLoaded();
     const normalized = normalizePath(path);
+    if (normalized === "/dev/null") return { path: normalized, isFile: true, isDirectory: false, size: 0, contentType: "application/octet-stream" };
     if (await this.runtime.exists(normalized)) {
       return await this.runtime.stat(normalized);
     }
@@ -274,6 +279,7 @@ export class BrowserTargetFileSystem implements TargetFileSystem {
   async exists(path: string): Promise<boolean> {
     await this.ensureLoaded();
     const normalized = normalizePath(path);
+    if (normalized === "/dev/null") return true;
     if (this.files.has(normalized) || this.directories.has(normalized) || await this.runtime.exists(normalized)) {
       return true;
     }
@@ -331,6 +337,7 @@ export class BrowserTargetFileSystem implements TargetFileSystem {
     await this.ensureLoaded();
     await this.refreshPersistedEntries();
     return Array.from(new Set([
+      "/dev/null",
       ...this.directories,
       ...this.files.keys(),
       ...await this.runtime.getAllPaths(),

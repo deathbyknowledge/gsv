@@ -80,6 +80,12 @@ function makeContext(): KernelContext {
 }
 
 describe("routed frame deadlines", () => {
+  it("preserves the two-minute file transfer deadline through ordinary dispatch", () => {
+    for (const call of ["fs.transfer.send", "fs.transfer.receive"] as const) {
+      expect(routedFrameTtlMs({ type: "req", id: call, call, args: { path: "/tmp/shot.png" } })).toBe(120_000);
+    }
+  });
+
   it("leaves enough time for browser shell waits", () => {
     expect(routedFrameTtlMs({
       type: "req",
@@ -101,6 +107,28 @@ function sendFrame(connection: { send(message: string): void }, frame: KernelTes
 }
 
 describe("dispatch", () => {
+  it.each([true, false])("routes native file copies through ordinary dispatch and propagates admission: %s", async (allowed) => {
+    const ctx = makeContext();
+    ctx.requestSignal = new AbortController().signal;
+    vi.mocked(ctx.targets.get).mockReturnValue(deviceRecord("browser", true));
+    const source = { target: "browser", path: "/tmp/shot.png" };
+    const destination = { target: "browser", path: "/tmp/copy.png" };
+    const request: DispatchDeps["request"] = vi.fn(async frame => allowed
+      ? { type: "res", id: frame.id, ok: true, data: { ok: true, source, destination, size: 4 } }
+      : { type: "res", id: frame.id, ok: false, error: { code: 403, message: "Permission denied: fs.copy" } });
+    const requestTarget = vi.fn();
+    // SAFETY: A same-target native copy uses only these dispatch dependencies.
+    const deps = { request, requestTarget } as DispatchDeps;
+    const result = await dispatch({ type: "req", id: "copy", call: "fs.copy", args: { source, destination } }, { type: "kernel", id: "copy" }, ctx, deps);
+    expect(request).toHaveBeenCalledWith(expect.objectContaining({
+      call: "fs.copy", args: { target: "browser", source, destination },
+    }), expect.objectContaining({ peer: ctx.peer }), ctx.requestSignal);
+    expect(requestTarget).not.toHaveBeenCalled();
+    expect(result).toMatchObject({ handled: true, response: { ok: true, data: allowed
+      ? { ok: true, source, destination, size: 4 }
+      : { ok: false, error: "Permission denied: fs.copy" } } });
+  });
+
   it("routes web search to its selected provider without leaking routing metadata", async () => {
     const ctx = makeContext();
     vi.mocked(ctx.targets.get).mockReturnValue(deviceRecord("search-provider", true, ["web.search"]));

@@ -74,6 +74,11 @@ GSV currently projects these environments:
   implements `fs.*` and `shell.exec` over a virtual filesystem and
   browser-specific commands even though the browser is not an operating-system
   machine.
+- Cloud browsers expose the shared browser filesystem and shell through the
+  instance service binding. Native file commands use ordinary target dispatch
+  to reach them, including copying screenshots into `gsv` and reading images for
+  `img2txt`. Their owner-scoped inventory supplies visibility; they do not need
+  a machine registry entry or a driver WebSocket.
 - Slack projects a personally authorized workspace as a service-backed
   target implementing `fs.read`, `fs.search`, and `shell.exec`. Its read-only
   filesystem exposes conversations, exact messages, bounded history and thread

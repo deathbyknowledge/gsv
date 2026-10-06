@@ -76,6 +76,17 @@ The cloud browser shares the extension's `tabs`, `page`, screenshots and
 temporary filesystem commands. For example, run `tabs list` and `page snapshot`
 on that target. It does not implement an operating-system shell.
 
+`page screenshot` returns the path of a PNG on the browser target. To keep it
+after the browser stops, run this on `gsv`, using the returned target and path:
+
+```bash
+cp <browser-target-id>:<screenshot-path> ~/screenshot.png
+```
+
+The saved file can then be inspected or attached like other files in your home.
+Browser-local `cp`, pipes and redirection preserve binary file contents;
+`/dev/null` discards output.
+
 When login is needed, associate the request with the existing responsibility for
 the task and yield after presenting the returned action link:
 
@@ -127,6 +138,8 @@ space. Wrangler runs Chromium locally. No paid remote browser is required for
 the development flow. After the server is ready, `npm run smoke:browser` creates
 a clean local space and exercises sign-in, cookie/local-storage/IndexedDB
 restoration, human control revocation, stop and profile deletion. Browser
+artifact checks also cover screenshots, binary shell operations and file
+transfers in both directions between the browser and `gsv`. Browser
 sessions can be lost when the Worker reloads, so finish builds before the smoke.
 
 The local test does not establish that every real website accepts Cloudflare's
