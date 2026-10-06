@@ -1089,7 +1089,12 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
             </span>}
             {note ? <span class="is-err" role="alert">{note}</span> : null}
           </div>}
-          <div hidden={recordingVoice}>
+          <div class="zen-compose-line" hidden={recordingVoice}>
+            <input ref={fileInput} type="file" multiple hidden aria-label="Choose attachments" onChange={(event) => {
+              addFiles(Array.from(event.currentTarget.files ?? [])); event.currentTarget.value = "";
+            }} />
+            <button type="button" class="zen-attach" aria-label="Attach files" title="Attach files"
+              onClick={() => fileInput.current?.click()}>+</button>
             <PromptLine
               ref={promptRef}
               onFocusChange={onPromptFocus}
@@ -1118,10 +1123,6 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
           </div>
           <div ref={voiceSurface} />
           <div class="zen-compose-actions">
-            <input ref={fileInput} type="file" multiple hidden aria-label="Choose attachments" onChange={(event) => {
-              addFiles(Array.from(event.currentTarget.files ?? [])); event.currentTarget.value = "";
-            }} />
-            <button type="button" onClick={() => fileInput.current?.click()}>attach</button>
             {attachments.length > 0 && <button type="button" disabled={!connected || !pid || outbox.sending} onClick={() => promptRef.current?.submit()}>send</button>}
             <span class="zen-connection-status" role="status">{connected ? "" : "Reconnecting..."}</span>
             {nativeInput ? <NativeVoiceControls ref={voiceInput} prompt={promptRef} panelHost={nativePanels}

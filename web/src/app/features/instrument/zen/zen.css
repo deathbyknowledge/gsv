@@ -335,6 +335,11 @@
   margin-inline: auto;
 }
 .zen-composer { position: relative; }
+.zen-compose-line { display: flex; align-items: flex-start; gap: 8px; border-top: 1px solid var(--border); padding-top: 14px; }
+.zen-compose-line .prompt-line { flex: 1; min-width: 0; border: 0; padding: 0; }
+.zen-attach { flex: 0 0 32px; width: 32px; height: 32px; margin-top: -5px; padding: 0; border: 0; background: none; color: var(--text-dim); font: inherit; font-size: 24px; line-height: 1; cursor: pointer; }
+.zen-attach:hover { color: var(--accent); }
+.zen-attach:focus-visible { outline: 1px solid var(--accent); outline-offset: -2px; }
 .zen-delegated-approvals {
   max-height: calc((var(--instrument-height) / var(--type-scale) - var(--instrument-header-height)) * .4);
   overflow-y: auto;
