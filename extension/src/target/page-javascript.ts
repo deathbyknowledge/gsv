@@ -3,6 +3,7 @@ import {
   releaseDebugger,
   sendDebuggerCommand,
 } from "../shared/debugger";
+import { throwIfAborted } from "./abort";
 
 const DEBUGGER_EVALUATE_TIMEOUT_MS = 30_000;
 
@@ -129,13 +130,17 @@ const DEBUGGER_SERIALIZER_FUNCTION = String.raw`function() {
   return serialize(this, 0, []);
 }`;
 
-export async function evaluatePageJavaScript(tabId: number, source: string): Promise<JavaScriptResult> {
+export async function evaluatePageJavaScript(tabId: number, source: string, signal?: AbortSignal): Promise<JavaScriptResult> {
   let target: chrome.debugger.DebuggerSession | null = null;
   try {
+    throwIfAborted(signal);
     target = await acquireDebugger(tabId);
+    throwIfAborted(signal);
     await sendDebuggerCommand(target, "Runtime.enable");
+    throwIfAborted(signal);
 
     let result = await runtimeEvaluate(target, source);
+    throwIfAborted(signal);
     if (isSyntaxException(result.exceptionDetails)) {
       const syncWrapped = await runtimeEvaluate(target, `(() => {\n${source}\n})()`);
       if (!syncWrapped.exceptionDetails || !isSyntaxException(syncWrapped.exceptionDetails)) {

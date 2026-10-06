@@ -50,6 +50,9 @@ let diagnosticsWrite: Promise<void> = Promise.resolve();
 let lastConnectionStatus = "";
 const runtimeStateReady = loadRuntimeState().then((state) => {
   connectionSupervisor.setReconnectSuppressed(state.manualReconnectSuppressed);
+  if (state.manualReconnectSuppressed) {
+    void browserTarget.pause();
+  }
 }).catch((error) => {
   console.warn("Your GSV: runtime state unavailable", error);
 });
@@ -201,9 +204,11 @@ async function connectNow(config?: ExtensionConfig): Promise<void> {
 
 async function pauseBrowserAccess(): Promise<RuntimeResponse> {
   pauseOperations += 1;
+  const commandsStopped = browserTarget.pause();
   try {
     const result = await pauseBrowserResources({
       disconnect: async () => await setManualReconnectSuppressed(true, "access paused by user"),
+      waitForCommands: async () => await commandsStopped,
       revokeMediaGrant: clearMediaCaptureGrant,
       stopNetwork: stopNetworkCapture,
       stopRecordings: stopAllMediaRecordings,
@@ -270,7 +275,13 @@ async function grantMediaCaptureAccess(tabId?: number): Promise<RuntimeResponse>
 
 async function setManualReconnectSuppressed(value: boolean, reason?: string): Promise<void> {
   await runtimeStateReady;
+  if (!value && pauseOperations > 0) {
+    throw new Error("Wait for browser access to finish pausing");
+  }
   connectionSupervisor.setReconnectSuppressed(value, reason);
+  if (!value) {
+    browserTarget.resume();
+  }
   await saveRuntimeState({ manualReconnectSuppressed: value });
 }
 

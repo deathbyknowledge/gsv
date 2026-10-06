@@ -1,5 +1,6 @@
 type PauseAccessOperations = {
   disconnect(): Promise<void>;
+  waitForCommands(): Promise<void>;
   revokeMediaGrant(): void;
   stopNetwork(): Promise<unknown[]>;
   stopRecordings(): Promise<unknown[]>;
@@ -19,6 +20,9 @@ export async function pauseBrowserResources(operations: PauseAccessOperations): 
   await operations.disconnect().catch((error: unknown) => {
     // SAFETY: rejected browser operations expose Error-compatible values here.
     errors.push(`runtime state: ${String(error)}`);
+  });
+  await operations.waitForCommands().catch((error: unknown) => {
+    errors.push(`browser commands: ${String(error)}`);
   });
   const stoppedCaptures = await operations.stopNetwork().catch((error: unknown) => {
     // SAFETY: rejected browser operations expose Error-compatible values here.

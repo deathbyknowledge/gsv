@@ -161,6 +161,33 @@ describe("BrowserTargetShell", () => {
     expect(laterRuns).toBe(1);
   });
 
+  it("waits for underlying command work after the cancelled shell request settles", async () => {
+    const running = deferred<void>();
+    const started = deferred<void>();
+    const shell = new BrowserTargetShell(directoryOnlyFileSystem(), [{
+      name: "block",
+      summary: "Ignore cancellation until released.",
+      async run() {
+        started.resolve(undefined);
+        await running.promise;
+        return commandResult();
+      },
+    }]);
+    const controller = new AbortController();
+    const execution = shell.exec({ input: "block" }, { abortSignal: controller.signal });
+    await started.promise;
+    controller.abort(new Error("Browser access paused"));
+    await expect(execution).resolves.toMatchObject({ status: "failed" });
+
+    let idle = false;
+    const waiting = shell.waitForIdle().then(() => { idle = true; });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(idle).toBe(false);
+    running.resolve(undefined);
+    await waiting;
+    expect(idle).toBe(true);
+  });
+
   it("stops later pipeline stages and keeps the active stage fenced", async () => {
     const running = deferred<void>();
     const started = deferred<void>();

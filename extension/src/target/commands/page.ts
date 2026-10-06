@@ -119,7 +119,7 @@ async function runPageCommand(args: string[], ctx: CommandContext): Promise<Comm
       case "wait":
         return await runWait(rest, ctx);
       case "js":
-        return await runJavaScript(rest);
+        return await runJavaScript(rest, ctx);
       default:
         return commandError(`Unknown page command: ${subcommand}\n${PAGE_USAGE}`);
     }
@@ -361,7 +361,7 @@ async function runWait(args: string[], ctx: CommandContext): Promise<CommandResu
   }
 }
 
-async function runJavaScript(args: string[]): Promise<CommandResult> {
+async function runJavaScript(args: string[], ctx: CommandContext): Promise<CommandResult> {
   const parsed = parsePageOptions(args, PAGE_JS_USAGE);
   if (!parsed.ok) {
     return commandError(parsed.error);
@@ -373,7 +373,8 @@ async function runJavaScript(args: string[]): Promise<CommandResult> {
   }
 
   const tab = await resolveTab(parsed.value.tabId);
-  const result = await evaluatePageJavaScript(tab.id, source);
+  throwIfAborted(ctx.abortSignal);
+  const result = await evaluatePageJavaScript(tab.id, source, ctx.abortSignal);
   if (!result.ok) {
     return commandError(result.error);
   }

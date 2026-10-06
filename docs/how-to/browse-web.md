@@ -15,6 +15,8 @@ You can close the sidebar after pairing. The extension keeps working while Chrom
 
 Open the extension's sidebar and choose **Pause access** near the bottom. This disconnects this browser from GSV, cancels current browser requests, stops tab recordings and network captures, and releases tabs the extension is debugging. It also clears any pending tab-recording allowance. Actions already completed on a website are not undone.
 
+Pause may take a moment to finish an action already underway before it reports that access has stopped.
+
 The browser stays paused until you choose **Resume access** in the same place. Your pairing is saved, so you do not need a new invitation. If the panel says browser activity remains, choose **Stop remaining activity** to try the cleanup again.
 
 ## Try it

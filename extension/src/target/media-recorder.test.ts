@@ -79,6 +79,7 @@ describe("tab media recording ownership", () => {
     const pendingGrant = grantMediaCapture(42);
     await pauseBrowserResources({
       async disconnect() {},
+      async waitForCommands() {},
       revokeMediaGrant: clearMediaCaptureGrant,
       async stopNetwork() { return []; },
       async stopRecordings() { return []; },

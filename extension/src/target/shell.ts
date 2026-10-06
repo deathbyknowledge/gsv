@@ -40,6 +40,10 @@ export class BrowserTargetShell {
     private readonly commands: BrowserCommand[],
   ) {}
 
+  async waitForIdle(): Promise<void> {
+    await this.execQueue;
+  }
+
   async exec(args: unknown, context: BrowserShellExecContext = {}): Promise<ShellResult> {
     const previous = this.execQueue;
     let release!: () => void;
