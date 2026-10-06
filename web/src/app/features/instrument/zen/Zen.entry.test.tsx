@@ -20,6 +20,7 @@ import { FleetDialog } from "../fleet/FleetDialog";
 import { ZenText } from "./ZenText";
 import { ThinkingMark } from "./ThinkingMark";
 import { ApprovalCard } from "../shared/ApprovalCard";
+import { ZenDraftPaste } from "./ZenMedia";
 
 let storage: Map<string, string>;
 let messages: ConversationMessage[];
@@ -341,6 +342,33 @@ describe("Zen conversation entry", () => {
       }
       expect(zen.props(PromptLine).allowEmpty).toBe(true);
       expect(send).not.toHaveBeenCalled();
+      expect(vi.mocked(GSVClient.prototype.request).mock.calls.some(([call]) => call === "shell.exec")).toBe(false);
+    } finally { await zen.unmount(); }
+  });
+
+  it("folds a long paste into a chip and sends it after the typed words", async () => {
+    send.mockResolvedValueOnce({ message: message("user", "joined"), handlerPid: shipPid, runId: "paste" });
+    const log = Array.from({ length: 12 }, (_, index) => `error ${index}`).join("\n");
+    const zen = await mountedZen();
+    try {
+      const pastes = () => zen.nodes().filter((node) => node.type === ZenDraftPaste);
+      await act(() => { expect(zen.props(PromptLine).onPasteText?.("a short paste")).toBe(false); });
+      expect(pastes()).toHaveLength(0);
+      await act(() => { expect(zen.props(PromptLine).onPasteText?.("z".repeat(500))).toBe(true); });
+      await act(() => { expect(zen.props(PromptLine).onPasteText?.(log)).toBe(true); });
+      expect(pastes()).toHaveLength(2);
+      expect(zen.props(PromptLine).allowEmpty).toBe(true);
+      expect(zen.dirty()).toBe(true);
+      await act(() => { expect(zen.props(PromptLine).onSubmit("$ pwd")).toBe(false); });
+      expect(zen.text()).toContain("Remove attachments and pasted text before running a command");
+      await act(() => { zen.props(ZenDraftPaste).onRemove?.(); });
+      expect(pastes()).toHaveLength(1);
+      expect(zen.props(ZenDraftPaste).paste.text).toBe(log);
+      await act(() => { expect(zen.props(PromptLine).onSubmit("What failed?")).toBe(true); });
+      await vi.waitFor(() => expect(send).toHaveBeenCalledOnce());
+      expect(send.mock.calls[0]?.[0].text).toBe(`What failed?\n\n${log}`);
+      expect(pastes()).toHaveLength(0);
+      expect(zen.props(PromptLine).allowEmpty).toBe(false);
       expect(vi.mocked(GSVClient.prototype.request).mock.calls.some(([call]) => call === "shell.exec")).toBe(false);
     } finally { await zen.unmount(); }
   });
