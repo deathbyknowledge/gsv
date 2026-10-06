@@ -112,6 +112,36 @@ reference with `page click @ref` or `page type @ref 'text'`; a reference address
 one element and takes no selector index. Take another snapshot after navigation
 or when a reference is reported stale.
 
+Use `page fill` to replace a field value, including native date/time controls;
+`page type` inserts text into the current selection. `fill`, `select`, and `check`
+verify the resulting state and fail if the control rejects it. `check` does not
+click a checkbox that already has the requested state. Password values are
+omitted from snapshots and action results.
+
+Actions can locate a control by exact accessible label, or role and name:
+
+```bash
+page fill --label 'From' 'Amsterdam Centraal'
+page fill --role input-time '10:00'
+page select --label 'Class' --option-label 'First'
+page check --label 'Direct only'
+page click --role button --name 'Plan' --within @form-ref --snapshot
+```
+
+Use a real form or dialog reference from a snapshot in place of `@form-ref`.
+Role/label locators read the current accessibility tree and require one match;
+ambiguity returns candidate references. `--within @ref` restricts that lookup
+to a region. `page snapshot --within @ref` inspects the same region before the
+snapshot's size limit is applied. `--snapshot` on an action includes fresh
+state and references afterward; an inspection failure is reported separately
+from the completed action. `page wait` also accepts role/label locators.
+
+Filtering snapshot text with `grep` is useful for reading a large page. It is
+not necessary to extract references from prose to locate a known button or
+field. Start with a snapshot for orientation, then use precise locators or refs.
+Custom dropdowns use `page click --role option --name '…'`; `page select` is for
+native select controls. See `page --help` for syntax.
+
 Click and type check which element would receive input, including nested shadow
 DOM, slotted content, and CSS pseudo-elements. They wait up to two seconds for a
 temporary obstruction to clear before failing. This wait only retries the

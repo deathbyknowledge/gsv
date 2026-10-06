@@ -4,6 +4,8 @@ import { keyEvent, parsePageKey as parseKey, scrollChanged, scrollDeltas, scroll
 import { createPageObservation, type ObservationPoint } from "./page-observation";
 import { createPageSemantics, PageReferenceStore, type PageElementReference } from "./page-semantics";
 import { pageActiveElement, pageInputTargetsRelated } from "./page-composed-dom";
+import { describeSemanticLocator, findSemanticReference, type SemanticLocator } from "./page-locators";
+import { prepareFill, readFormState, selectOption, type FormState } from "./page-forms";
 
 const ACTION_SETTLE_MS = 100;
 const INPUT_READY_TIMEOUT_MS = 2_000;
@@ -115,7 +117,10 @@ type Point = InputPoint;
 
 export type PageLocator =
   | { kind: "reference"; reference: PageElementReference }
-  | { kind: "selector"; selector: string; index: number };
+  | { kind: "selector"; selector: string; index: number }
+  | SemanticLocator;
+
+export type FormChange = { kind: "fill"; value: string } | { kind: "select"; value: string; byLabel: boolean } | { kind: "check"; checked: boolean };
 
 export type { PageScrollTarget } from "./page-input";
 
@@ -132,7 +137,7 @@ export function createPageActions<Target>(debuggerBackend: DebuggerBackend<Targe
     store: PageReferenceStore = pageReferences,
   ): Promise<Record<string, unknown>> {
     return await withDebugger(tabId, signal, async (target) => {
-      const element = await resolveElement(target, tabId, locator);
+      const element = await resolveElement(target, tabId, locator, signal);
       await validateElementReference(target, element);
       const document = await currentDocumentIdentity(target);
       const requested = await summarizeElement(
@@ -220,7 +225,7 @@ export function createPageActions<Target>(debuggerBackend: DebuggerBackend<Targe
     store: PageReferenceStore = pageReferences,
   ): Promise<Record<string, unknown>> {
     return await withDebugger(tabId, signal, async (target) => {
-      const selected = await resolveElement(target, tabId, locator);
+      const selected = await resolveElement(target, tabId, locator, signal);
       await validateElementReference(target, selected);
       const document = await currentDocumentIdentity(target);
       const requested = await summarizeElement(
@@ -231,6 +236,9 @@ export function createPageActions<Target>(debuggerBackend: DebuggerBackend<Targe
         selected.reference,
       );
       const editable = await resolveEditableElement(target, selected);
+      if (["date", "time", "datetime-local", "month", "week"].includes(editable.attributes.type ?? "")) {
+        throw new Error("This native date/time field requires page fill to set its value; page type only inserts text.");
+      }
       const beforeState = await readElementState(target, editable.backendNodeId);
       if (!beforeState.editable) {
         throw new Error(`Element is not editable: ${formatLocator(locator)}`);
@@ -282,6 +290,66 @@ export function createPageActions<Target>(debuggerBackend: DebuggerBackend<Targe
           warning: "Chrome accepted the text input, but the editable value length did not change. Replacing a selection with equal-length text can produce this result.",
         } : {}),
       };
+    });
+  }
+
+  async function changeFormControl(tabId: number, locator: PageLocator, change: FormChange, signal?: AbortSignal) {
+    return withDebugger(tabId, signal, async target => {
+      const element = await resolveElement(target, tabId, locator, signal);
+      await validateElementReference(target, element);
+      const remote = await resolveRemoteNode(target, element.backendNodeId);
+      try {
+        const state = () => callFunctionValue<FormState>(target, remote.objectId!, readFormState.toString(), change.kind === "fill" ? [change.value] : []);
+        const started = Date.now();
+        let before = await state();
+        while (before.connected && (!before.visible || before.disabled || before.readOnly) && Date.now() - started < INPUT_READY_TIMEOUT_MS) {
+          await abortableDelay(100, signal); before = await state();
+        }
+        if (!before.connected || !before.visible || before.disabled || before.readOnly) throw new Error("Form control is detached, hidden, disabled, or read-only; no input was sent.");
+        const requested = await summarizeElement(target, tabId, element.backendNodeId, pageReferences, element.reference);
+        const document = await currentDocumentIdentity(target);
+        throwIfAborted(signal);
+        let selection: Array<{ value: string; label: string }> | undefined;
+        let skipped = false;
+        if (change.kind === "fill") {
+          const method = await callFunctionValue<"insert" | "set">(target, remote.objectId!, prepareFill.toString(), [change.value]);
+          if (method === "insert") {
+            if (change.value) await sendDebuggerCommand(target, "Input.insertText", { text: change.value });
+            else {
+              const key = parseKey("Backspace");
+              // SAFETY: keyEvent produces a JSON debugger command payload.
+              await sendDebuggerCommand(target, "Input.dispatchKeyEvent", keyEvent("down", key) as Record<string, BrowserValue>);
+              await sendDebuggerCommand(target, "Input.dispatchKeyEvent", keyEvent("up", key) as Record<string, BrowserValue>);
+            }
+          }
+        } else if (change.kind === "select") {
+          selection = await callFunctionValue(target, remote.objectId!, selectOption.toString(), [change.value, change.byLabel]);
+        } else {
+          if (before.checked === undefined) throw new Error("Check requires a checkbox, radio button, or an aria-checked control.");
+          if (before.type === "radio" && !change.checked) throw new Error("Choose another radio option instead of unchecking a radio button.");
+          skipped = before.checked === change.checked;
+          if (!skipped) {
+            const { point } = await waitForHitTarget(target, tabId, element, document.documentId, "Check", pageReferences, signal);
+            for (const type of ["mouseMoved", "mousePressed", "mouseReleased"]) {
+              throwIfAborted(signal);
+              await sendDebuggerCommand(target, "Input.dispatchMouseEvent", { type, x: point.x, y: point.y, button: type === "mouseMoved" ? "none" : "left", buttons: type === "mousePressed" ? 1 : 0, clickCount: 1, pointerType: "mouse" });
+            }
+          }
+        }
+        const verificationStarted = Date.now();
+        let after: FormState;
+        while (true) {
+          await abortableDelay(ACTION_SETTLE_MS, signal);
+          if (await hasDocumentChanged(target, document.documentId)) throw new Error("The page navigated after the form action. Inspect the new page; the action was not repeated.");
+          after = await state();
+          const matches = change.kind === "fill" ? after.matches : change.kind === "check" ? after.checked === change.checked
+            : JSON.stringify(after.selected) === JSON.stringify(selection);
+          if (after.connected && matches) break;
+          if (Date.now() - verificationStarted >= INPUT_READY_TIMEOUT_MS) throw new Error("The form control did not retain the requested state. Inspect the page before trying another action.");
+        }
+        const { matches: _matches, ...verified } = after;
+        return { action: change.kind, target: requested, verified: true, state: verified, skipped: skipped ? "already-in-state" : undefined };
+      } finally { await releaseRemoteObject(target, remote.objectId!); }
     });
   }
 
@@ -552,7 +620,12 @@ export function createPageActions<Target>(debuggerBackend: DebuggerBackend<Targe
     target: Target,
     tabId: number,
     locator: PageLocator,
+    signal?: AbortSignal,
   ): Promise<ResolvedElement> {
+    if (locator.kind === "semantic") {
+      const reference = await findSemanticReference(sendDebuggerCommand, pageReferences, target, tabId, locator, signal);
+      return resolveElement(target, tabId, { kind: "reference", reference }, signal);
+    }
     if (locator.kind === "reference") {
       if (locator.reference.tabId !== tabId) {
         throw new Error(`Reference ${locator.reference.ref} belongs to tab ${locator.reference.tabId}, not tab ${tabId}`);
@@ -919,10 +992,12 @@ export function createPageActions<Target>(debuggerBackend: DebuggerBackend<Targe
     target: Target,
     objectId: string,
     functionDeclaration: string,
+    args: BrowserValue[] = [],
   ): Promise<T> {
     const result = await sendDebuggerCommand<RuntimeResult>(target, "Runtime.callFunctionOn", {
       objectId,
       functionDeclaration,
+      ...(args.length ? { arguments: args.map(value => ({ value })) } : {}),
       returnByValue: true,
       silent: true,
     });
@@ -976,7 +1051,7 @@ export function createPageActions<Target>(debuggerBackend: DebuggerBackend<Targe
   }
 
   function formatLocator(locator: PageLocator): string {
-    return locator.kind === "reference" ? locator.reference.ref : locator.selector;
+    return locator.kind === "reference" ? locator.reference.ref : locator.kind === "semantic" ? describeSemanticLocator(locator) : locator.selector;
   }
 
   function formatElement(element: ElementSummary): string {
@@ -985,5 +1060,5 @@ export function createPageActions<Target>(debuggerBackend: DebuggerBackend<Targe
       .filter(Boolean)
       .join(" ");
   }
-  return { clickPageElement, typePageText, sendPageKey, scrollPage };
+  return { clickPageElement, typePageText, changeFormControl, sendPageKey, scrollPage };
 }

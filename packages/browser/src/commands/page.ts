@@ -2,7 +2,8 @@ import type { BrowserPageBackend, DebuggerBackend, TabSummary } from "../backend
 import { abortable, abortableDelay, throwIfAborted } from "../abort";
 import { findPageSelector, readPageText, snapshotDomPage, type InjectedPageResult } from "../page-dom";
 import { createPageActions, type PageLocator, type PageScrollTarget } from "../page-actions";
-import { createPageSemantics, formatSemanticSnapshot, normalizePageReference, PageReferenceStore } from "../page-semantics";
+import { findSemanticReference } from "../page-locators";
+import { createPageSemantics, formatSemanticSnapshot, normalizePageReference, PageReferenceStore, type SemanticSnapshot } from "../page-semantics";
 import { createPageJavaScript } from "../page-javascript";
 import type { BrowserCommand, CommandContext, CommandResult } from "../types";
 import { commandError, commandOk } from "../types";
@@ -10,24 +11,33 @@ import { hasHelpFlag, parseInteger, splitOption } from "./args";
 
 type Parsed<T> = { ok: true; value: T } | { ok: false; error: string };
 type PageOptions = { tabId: number | null; args: string[] };
+type ActionInspection = { snapshot: SemanticSnapshot } | { snapshotError: string };
 
 const PAGE_USAGE = [
-  "Usage: page <snapshot|text|screenshot|click|type|key|scroll|wait|js> [args]",
-  "       page snapshot [--tab <tabId>] [--json]",
+  "Usage: page <snapshot|text|screenshot|click|fill|select|check|type|key|scroll|wait|js> [args]",
+  "       page snapshot [--tab <tabId>] [--within <@ref>] [--json]",
   "       page snapshot [--tab <tabId>] --dom [selector]",
   "       page text [--tab <tabId>] [selector]",
   "       page screenshot [--tab <tabId>]",
   "       page click [--tab <tabId>] <@ref|selector> [index]",
   "       page type [--tab <tabId>] <@ref|selector> <text>",
+  "       page fill [--tab <tabId>] <locator> <value>",
+  "       page select [--tab <tabId>] <locator> <value> | --option-label <label>",
+  "       page check [--tab <tabId>] <locator> [--unchecked]",
   "       page key [--tab <tabId>] <key>",
   "       page scroll [--tab <tabId>] [@ref] <up|down|top|bottom|x,y>",
   "       page wait [--tab <tabId>] <selector> [--timeout ms]",
   "       page js [--tab <tabId>] <source>",
   "Snapshot refs canonically start with @; the bare generated form is also accepted.",
+  "Locators: <@ref|CSS> or --label <field label> or --role <role> [--name <exact name>].",
+  "Use --within <@ref> to scope role/label locators. Ambiguous matches are errors.",
+  "fill replaces a field value (including native dates/times); type inserts text.",
+  "select sets a native dropdown; check sets checked state. Form actions verify the result.",
+  "click/fill/select/check/type accept --snapshot to include the resulting page or scoped form.",
 ].join("\n");
 
 const PAGE_SNAPSHOT_USAGE = [
-  "Usage: page snapshot [--tab <tabId>] [--json]",
+  "Usage: page snapshot [--tab <tabId>] [--within <@ref>] [--json]",
   "       page snapshot [--tab <tabId>] --dom [selector]",
 ].join("\n");
 const PAGE_TEXT_USAGE = "Usage: page text [--tab <tabId>] [selector]";
@@ -35,10 +45,24 @@ const PAGE_SCREENSHOT_USAGE = "Usage: page screenshot [--tab <tabId>]";
 const PAGE_CLICK_USAGE = [
   "Usage: page click [--tab <tabId>] <@ref|selector> [index]",
   "Snapshot refs canonically start with @; the bare generated form is also accepted.",
+  "       page click [--tab <tabId>] --role <role> [--name <name>] [--within <@ref>] [--snapshot]",
 ].join("\n");
 const PAGE_TYPE_USAGE = [
   "Usage: page type [--tab <tabId>] <@ref|selector> <text>",
   "Snapshot refs canonically start with @; the bare generated form is also accepted.",
+  "Locators also accept --label <label> or --role <role> [--name <name>], optionally --within <@ref>.",
+  "type inserts text. Use page fill to replace a value or set a native date/time field.",
+].join("\n");
+const PAGE_FORM_USAGE = [
+  "Usage: page fill <locator> <value>",
+  "       page select <locator> <value> | --option-label <label>",
+  "       page check <locator> [--unchecked]",
+  "Locators: <@ref|CSS>, --label <field label>, or --role <role> [--name <exact name>].",
+  "Options: --tab <id>, --within <@ref> for role/label locators, --snapshot for fresh references after the action.",
+  "fill replaces the entire value; an empty value clears the field. Native dates use YYYY-MM-DD; times use HH:mm.",
+  "select chooses one native dropdown option by value or --option-label. Custom listboxes use page click --role option --name <name>.",
+  "check sets checked state, --unchecked clears it; matching state does not click again.",
+  "Form actions verify the resulting state. Password values are omitted from results.",
 ].join("\n");
 const PAGE_KEY_USAGE = [
   "Usage: page key [--tab <tabId>] <key>",
@@ -49,7 +73,7 @@ const PAGE_SCROLL_USAGE = [
   "Usage: page scroll [--tab <tabId>] [@ref] <up|down|top|bottom|x,y>",
   "Snapshot refs canonically start with @; the bare generated form is also accepted.",
 ].join("\n");
-const PAGE_WAIT_USAGE = "Usage: page wait [--tab <tabId>] <selector> [--timeout ms]";
+const PAGE_WAIT_USAGE = "Usage: page wait [--tab <tabId>] <selector|--label label|--role role [--name name]> [--within <@ref>] [--timeout ms]";
 const PAGE_JS_USAGE = "Usage: page js [--tab <tabId>] <source>";
 
 const DEFAULT_WAIT_TIMEOUT_MS = 5_000;
@@ -59,12 +83,12 @@ export function createPageCommands<Target>(backend: BrowserPageBackend, debugger
   const { activeTab, captureTabPng, executeInTab, getTab } = backend;
   const { acquireDebugger, releaseDebugger } = debuggerBackend;
   const { captureSemanticSnapshot } = createPageSemantics(debuggerBackend.sendDebuggerCommand, pageReferences);
-  const { clickPageElement, scrollPage, sendPageKey, typePageText } = createPageActions(debuggerBackend, pageReferences);
+  const { clickPageElement, scrollPage, sendPageKey, typePageText, changeFormControl } = createPageActions(debuggerBackend, pageReferences);
   const { evaluatePageJavaScript } = createPageJavaScript(debuggerBackend);
 
   const pageCommand: BrowserCommand = {
     name: "page",
-    summary: "Inspect and automate browser pages.",
+    summary: "Inspect pages; click by ref/role/name; fill, select, and check forms with verified results. See page --help.",
     run(args, ctx) {
       return runPageCommand(args, ctx);
     },
@@ -94,6 +118,10 @@ export function createPageCommands<Target>(backend: BrowserPageBackend, debugger
           return await runClick(rest, ctx);
         case "type":
           return await runType(rest, ctx);
+        case "fill":
+        case "select":
+        case "check":
+          return await runForm(subcommand, rest, ctx);
         case "key":
           return await runKey(rest, ctx);
         case "scroll":
@@ -115,15 +143,18 @@ export function createPageCommands<Target>(backend: BrowserPageBackend, debugger
     if (!parsed.ok) {
       return commandError(parsed.error);
     }
-    const json = parsed.value.args.includes("--json");
+    const scoped = splitOption(parsed.value.args, "--within");
+    const scope = scoped.value === null ? undefined : pageReferences.resolve(scoped.value);
+    const json = scoped.rest.includes("--json");
     const dom = parsed.value.args.includes("--dom");
-    const snapshotArgs = parsed.value.args.filter((arg) => arg !== "--json" && arg !== "--dom");
+    const snapshotArgs = scoped.rest.filter((arg) => arg !== "--json" && arg !== "--dom");
     const invalid = firstUnknownOption(snapshotArgs);
     if (invalid) {
       return commandError(`${PAGE_SNAPSHOT_USAGE}\nUnknown option: ${invalid}`);
     }
 
-    const tab = await resolveTab(parsed.value.tabId);
+    const tab = scope ? await resolveReferencedTab(parsed.value.tabId, scope.tabId, scope.ref) : await resolveTab(parsed.value.tabId);
+    if (scope && dom) return commandError("--within scopes semantic snapshots; use a selector with --dom.");
     if (!dom && snapshotArgs.length > 0) {
       return commandError(`${PAGE_SNAPSHOT_USAGE}\nUse --dom when providing a CSS selector.`);
     }
@@ -133,7 +164,7 @@ export function createPageCommands<Target>(backend: BrowserPageBackend, debugger
         throwIfAborted(ctx.abortSignal);
         target = await acquireDebugger(tab.id);
         throwIfAborted(ctx.abortSignal);
-        const snapshot = await captureSemanticSnapshot(target, tab);
+        const snapshot = await captureSemanticSnapshot(target, tab, pageReferences, scope);
         throwIfAborted(ctx.abortSignal);
         return json
           ? commandCompactJson(snapshot)
@@ -216,20 +247,22 @@ export function createPageCommands<Target>(backend: BrowserPageBackend, debugger
     if (!parsed.ok) {
       return commandError(parsed.error);
     }
-    const invalid = firstUnknownOption(parsed.value.args);
+    const options = locatorOptions(parsed.value.args);
+    const invalid = firstUnknownOption(options.args);
     if (invalid) {
       return commandError(`${PAGE_CLICK_USAGE}\nUnknown option: ${invalid}`);
     }
 
-    const click = parseSelectorAndOptionalIndex(parsed.value.args);
+    const click = options.locator ? { ok: true as const, value: { selector: "", index: 0 } } : parseSelectorAndOptionalIndex(options.args);
     if (!click.ok) {
       return commandError(click.error);
     }
 
-    const locator = pageLocator(click.value.selector, click.value.index);
+    if (options.locator && options.args.length) return commandError(PAGE_CLICK_USAGE);
+    const locator = options.locator ?? pageLocator(click.value.selector, click.value.index);
     const tab = await resolveLocatorTab(parsed.value.tabId, locator);
     const result = await clickPageElement(tab.id, locator, ctx.abortSignal);
-    return commandCompactJson({ tabId: tab.id, ...result });
+    return actionResult(tab, result, options, ctx);
   }
 
   async function runType(args: string[], ctx: CommandContext): Promise<CommandResult> {
@@ -237,15 +270,74 @@ export function createPageCommands<Target>(backend: BrowserPageBackend, debugger
     if (!parsed.ok) {
       return commandError(parsed.error);
     }
-    const typed = parseTypeArgs(parsed.value.args);
+    const options = locatorOptions(parsed.value.args);
+    const typed = options.locator ? { ok: true as const, value: { selector: "", text: options.args.join(" ") } } : parseTypeArgs(options.args);
     if (!typed.ok) {
       return commandError(typed.error);
     }
 
-    const locator = pageLocator(typed.value.selector, 0);
+    const locator = options.locator ?? pageLocator(typed.value.selector, 0);
     const tab = await resolveLocatorTab(parsed.value.tabId, locator);
     const result = await typePageText(tab.id, locator, typed.value.text, ctx.abortSignal);
-    return commandCompactJson({ tabId: tab.id, ...result });
+    return actionResult(tab, result, options, ctx);
+  }
+
+  async function runForm(kind: "fill" | "select" | "check", args: string[], ctx: CommandContext): Promise<CommandResult> {
+    const parsed = parsePageOptions(args, PAGE_FORM_USAGE);
+    if (!parsed.ok) return commandError(parsed.error);
+    const option = splitOption(parsed.value.args, "--option-label");
+    const unchecked = option.rest.includes("--unchecked");
+    const options = locatorOptions(option.rest.filter(arg => arg !== "--unchecked"));
+    const remaining = [...options.args];
+    const locator = options.locator ?? pageLocator(remaining.shift() ?? "", 0);
+    if (firstUnknownOption(remaining)) return commandError(PAGE_FORM_USAGE);
+    if ((kind !== "select" && option.value !== null) || (kind !== "check" && unchecked)) return commandError(PAGE_FORM_USAGE);
+    if (kind === "check" ? remaining.length !== 0 : option.value !== null ? remaining.length !== 0 : remaining.length !== 1) return commandError(PAGE_FORM_USAGE);
+    const tab = await resolveLocatorTab(parsed.value.tabId, locator);
+    const result = await changeFormControl(tab.id, locator, kind === "check" ? { kind, checked: !unchecked }
+      : kind === "select" ? { kind, value: option.value ?? remaining[0]!, byLabel: option.value !== null }
+        : { kind, value: remaining[0]! }, ctx.abortSignal);
+    return actionResult(tab, result, options, ctx);
+  }
+
+  function locatorOptions(args: string[]) {
+    let rest = args;
+    const values: Record<string, string> = {};
+    for (const flag of ["role", "name", "label", "within"]) {
+      const split = splitOption(rest, `--${flag}`); rest = split.rest;
+      if (split.value !== null) {
+        if (!split.value || split.value.startsWith("--")) throw new Error(`--${flag} requires a value`);
+        values[flag] = split.value;
+      }
+    }
+    if (values.label && (values.role || values.name)) throw new Error("Choose --label or --role with --name.");
+    if (values.name && !values.role) throw new Error("--name requires --role.");
+    const semantic = values.role || values.label;
+    if (values.within && !semantic) throw new Error("--within requires a role or label locator.");
+    return {
+      args: rest.filter(arg => arg !== "--snapshot"), snapshot: rest.includes("--snapshot"),
+      locator: semantic ? { kind: "semantic" as const, role: values.role, name: values.name, label: values.label,
+        within: values.within ? pageReferences.resolve(values.within) : undefined } : undefined,
+    };
+  }
+
+  async function actionResult(tab: TabSummary, result: Awaited<ReturnType<typeof clickPageElement | typeof typePageText | typeof changeFormControl>>, options: ReturnType<typeof locatorOptions>, ctx: CommandContext): Promise<CommandResult> {
+    if (!options.snapshot) return commandCompactJson({ tabId: tab.id, ...result });
+    let target: Target | null = null;
+    let snapshot: ActionInspection;
+    try {
+      throwIfAborted(ctx.abortSignal);
+      target = await acquireDebugger(tab.id);
+      const scope = options.locator?.kind === "semantic" ? options.locator.within : undefined;
+      snapshot = { snapshot: await captureSemanticSnapshot(target, tab, pageReferences, scope) };
+    } catch (error) {
+      snapshot = { snapshotError: errorMessage(error) };
+    } finally {
+      if (target) await releaseDebugger(tab.id).catch((error) => {
+        console.warn("GSV browser target failed to detach debugger", error);
+      });
+    }
+    return commandCompactJson({ tabId: tab.id, ...result, ...snapshot });
   }
 
   async function runKey(args: string[], ctx: CommandContext): Promise<CommandResult> {
@@ -303,7 +395,17 @@ export function createPageCommands<Target>(backend: BrowserPageBackend, debugger
     if (!parsed.ok) {
       return commandError(parsed.error);
     }
-    const invalid = firstUnknownOption(parsed.value.args);
+    const options = locatorOptions(parsed.value.args);
+    if (options.locator?.kind === "semantic") {
+      if (options.args.length) return commandError(PAGE_WAIT_USAGE);
+      const tab = await resolveLocatorTab(parsed.value.tabId, options.locator);
+      const target = await acquireDebugger(tab.id);
+      try {
+        const reference = await findSemanticReference(debuggerBackend.sendDebuggerCommand, pageReferences, target, tab.id, options.locator, ctx.abortSignal, parsed.value.timeoutMs);
+        return commandCompactJson({ tabId: tab.id, wait: { ref: reference.ref, role: reference.role, name: reference.name } });
+      } finally { await releaseDebugger(tab.id); }
+    }
+    const invalid = firstUnknownOption(options.args);
     if (invalid) {
       return commandError(`${PAGE_WAIT_USAGE}\nUnknown option: ${invalid}`);
     }
@@ -522,6 +624,7 @@ export function createPageCommands<Target>(backend: BrowserPageBackend, debugger
   }
 
   function pageLocator(value: string, index: number): PageLocator {
+    if (!value.trim()) throw new Error("A non-empty locator is required. Use a reference, CSS selector, --label, or --role with --name.");
     const reference = normalizePageReference(value);
     if (!reference) {
       if (value.startsWith("@")) {
@@ -536,7 +639,8 @@ export function createPageCommands<Target>(backend: BrowserPageBackend, debugger
   }
 
   async function resolveLocatorTab(tabId: number | null, locator: PageLocator): Promise<TabSummary> {
-    if (locator.kind === "selector") {
+    if (locator.kind !== "reference") {
+      if (locator.kind === "semantic" && locator.within) return resolveReferencedTab(tabId, locator.within.tabId, locator.within.ref);
       return await resolveTab(tabId);
     }
     return await resolveReferencedTab(tabId, locator.reference.tabId, locator.reference.ref);
@@ -569,6 +673,10 @@ export function createPageCommands<Target>(backend: BrowserPageBackend, debugger
         return PAGE_CLICK_USAGE;
       case "type":
         return PAGE_TYPE_USAGE;
+      case "fill":
+      case "select":
+      case "check":
+        return PAGE_FORM_USAGE;
       case "key":
         return PAGE_KEY_USAGE;
       case "scroll":

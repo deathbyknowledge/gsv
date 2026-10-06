@@ -142,6 +142,9 @@ type StoredSnapshot = {
 };
 
 const ACTIONABLE_ROLES = new Set([
+  "form",
+  "dialog",
+  "alertdialog",
   "button",
   "checkbox",
   "combobox",
@@ -541,6 +544,7 @@ export function createPageSemantics<Target>(sendDebuggerCommand: DebuggerCommand
     target: Target,
     tab: TabSummary,
     store: PageReferenceStore = pageReferences,
+    scope?: PageElementReference,
   ): Promise<SemanticSnapshot> {
     const [frameTree, accessibility, domSnapshot] = await Promise.all([
       sendDebuggerCommand<FrameTreeResult>(target, "Page.getFrameTree"),
@@ -558,6 +562,7 @@ export function createPageSemantics<Target>(sendDebuggerCommand: DebuggerCommand
       throw new Error("Chrome did not return a document identity for the page");
     }
     const rootFrameId = frame.id;
+    if (scope && (scope.tabId !== tab.id || scope.documentId !== documentId)) throw new Error("Snapshot scope belongs to another tab or document. Run page snapshot again.");
 
     const snapshotId = store.allocateSnapshotId();
     const domNodes = collectDomNodeInfo(domSnapshot);
@@ -567,7 +572,9 @@ export function createPageSemantics<Target>(sendDebuggerCommand: DebuggerCommand
         .filter((node): node is AxNode & { nodeId: string } => Boolean(node.nodeId))
         .map((node) => [node.nodeId, node]),
     );
-    const rootNodes = axNodes.filter((node) => !node.parentId || !nodesById.has(node.parentId));
+    const rootNodes = scope ? axNodes.filter(node => node.backendDOMNodeId === scope.backendNodeId)
+      : axNodes.filter((node) => !node.parentId || !nodesById.has(node.parentId));
+    if (scope && !rootNodes.length) throw new Error("Snapshot scope is no longer present. Run page snapshot again.");
     const references: PageElementReference[] = [];
     let nodeCount = 0;
     let truncated = false;
@@ -651,9 +658,10 @@ export function createPageSemantics<Target>(sendDebuggerCommand: DebuggerCommand
       const value = primitiveValue(node.value);
       const password = dom?.attributes.type?.toLowerCase() === "password";
       const editable = states.editable === true || renderedRole === "textbox" || renderedRole === "searchbox";
-      if (value !== undefined && !password && !editable) {
+      if (value !== undefined && !password) {
         output.value = typeof value === "string" ? compact(value, MAX_NAME_LENGTH) : value;
-      } else if (typeof value === "string" && editable && !password) {
+      }
+      if (typeof value === "string" && editable && !password) {
         output.valueLength = value.length;
       }
       if (Object.keys(states).length > 0) {

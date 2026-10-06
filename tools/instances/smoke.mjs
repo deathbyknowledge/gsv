@@ -6,6 +6,7 @@ import WebSocket from "ws";
 import { GSVClient } from "../../packages/gsv/dist/client.js";
 import { bodyFromText, bodyToBytes } from "../../packages/gsv/dist/protocol.js";
 import { checkBrowserCommands } from "./browser-commands-smoke.mjs";
+import { checkFormCommands } from "./form-commands-smoke.mjs";
 
 // Intentionally local: this fixture never creates a paid remote browser.
 const origin = new URL(process.env.GSV_BROWSER_SMOKE_ORIGIN ?? "http://localhost:8976");
@@ -18,6 +19,7 @@ class LocalSocket extends WebSocket {
 }
 const client = new GSVClient({ WebSocket: LocalSocket, defaultRequestTimeoutMs: 60000 });
 const components = readFileSync(new URL("./fixtures/components.html", import.meta.url), "utf8");
+const forms = readFileSync(new URL("./fixtures/forms.html", import.meta.url), "utf8");
 const login = `<!doctype html><title>GSV sign-in fixture</title><style>body{font:20px system-ui;padding:40px}input,button{display:block;margin:20px 0;padding:12px;width:300px}</style><h1>Test sign-in</h1><form action="/session" method="post"><input name="email" placeholder="Email"><input type="password" name="password" placeholder="Password"><button>Sign in</button></form>`;
 let stored;
 const storageReady = new Promise(resolve => { stored = resolve; });
@@ -32,6 +34,7 @@ const server = http.createServer((request, response) => {
     const cookie = request.headers.cookie?.includes("gsv_test_session=valid") ? "kept" : "missing";
     response.end(`<body><input id="coedit" oninput="this.dataset.done='yes'"><script>const open=indexedDB.open("profile-test",1);open.onupgradeneeded=()=>open.result.createObjectStore("state");open.onsuccess=()=>{const request=open.result.transaction("state").objectStore("state").get("session");request.onsuccess=()=>{document.body.insertAdjacentHTML('beforeend','<pre id="restored">cookie=${cookie};local='+localStorage.getItem("profile-test")+';indexed='+request.result+'</pre>')}}</script></body>`);
   } else if (request.url === "/components") response.end(components);
+  else if (request.url === "/forms") response.end(forms);
   else response.end(login);
 });
 server.listen(0, "127.0.0.1"); await once(server, "listening");
@@ -152,6 +155,18 @@ try {
   console.log("PASS: screenshot, browser copy/overwrite, binary redirection/piping, export to gsv, import, and routed copy preserve every byte");
   await shell(second, `tabs open --active ${website}/components`);
   await checkBrowserCommands(input => client.shell.exec({ target: second.targetId, input }));
+  await shell(second, `tabs open --active ${website}/forms`);
+  await checkFormCommands(input => client.shell.exec({ target: second.targetId, input }));
+  await shell(second, `page js 'setTimeout(() => { const until = Date.now() + 25000; while (Date.now() < until) {} }, 500); "scheduled"'`);
+  await sleep(750);
+  const listedAt = Date.now();
+  await shell(second, "tabs list");
+  assert.ok(Date.now() - listedAt < 5000, "Tab metadata waited for busy page JavaScript");
+  await sleep(26000);
+  assert.equal((await client.sys.instance.get({ instanceId: second.instanceId })).instance.state, "ready", "A busy renderer stopped a live browser");
+  const recovered = await client.request("sys.browser.frame", { instanceId: second.instanceId });
+  assert.ok((await bodyToBytes(recovered.body)).byteLength > 1000);
+  console.log("PASS: tab metadata and browser lifetime remain available while page JavaScript is blocked; live frames recover");
 } catch (error) { console.error("Smoke failed:", error); throw error; }
 finally {
   try {

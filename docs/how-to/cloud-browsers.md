@@ -97,6 +97,12 @@ The cloud browser shares the extension's `tabs`, `page`, screenshots and
 temporary filesystem commands. For example, run `tabs list` and `page snapshot`
 on that target. It does not implement an operating-system shell.
 
+Use `page fill` to replace a field value, including dates and times,
+`page select` for native dropdowns, and `page check` for checked state.
+These commands verify the result. Role/label locators, scoped snapshots and
+action `--snapshot` avoid parsing reference IDs from filtered text. See
+[target tools](/reference/hardware-tools) and `page --help` for examples.
+
 `page screenshot` returns the path of a PNG on the browser target. To keep it
 after the browser stops, run this on `gsv`, using the returned target and path:
 
@@ -175,7 +181,9 @@ cookie/local-storage/IndexedDB restoration, passive viewing, cursor reporting,
 human input alongside agent work, input revocation, stop and saved-state deletion. Browser
 artifact checks also cover screenshots, binary shell operations and file
 transfers in both directions between the browser and `gsv`, nested web components,
-calendar controls, and popovers positioned with CSS anchors. Browser
+calendar controls, popovers positioned with CSS anchors, verified form commands,
+strict role/label lookup and scoped snapshots. A busy-page check verifies that
+blocked page JavaScript does not stop the browser or block tab metadata. Browser
 sessions can be lost when the Worker reloads, so finish builds before the smoke.
 
 The local test does not establish that every real website accepts Cloudflare's

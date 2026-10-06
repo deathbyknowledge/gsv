@@ -11,6 +11,21 @@ afterEach(async () => {
 });
 
 describe("semantic page automation flow", () => {
+  it("keeps the accepted action receipt when its optional follow-up snapshot fails", async () => {
+    const fixture = stubWhatsAppLikePage();
+    const initial = await pageCommand.run(["snapshot", "--json"], context());
+    const chat = findNode(JSON.parse(initial.stdout).nodes, "English");
+    const original = fixture.sendCommand.getMockImplementation()!;
+    fixture.sendCommand.mockImplementation(async (target, method, params) => {
+      if (method === "Accessibility.getFullAXTree") throw new Error("Snapshot unavailable");
+      return original(target, method, params);
+    });
+    const result = await pageCommand.run(["click", chat!.ref!, "--snapshot"], context());
+    expect(result.exitCode).toBe(0);
+    expect(JSON.parse(result.stdout)).toMatchObject({ action: "click", delivered: { accepted: true }, snapshotError: "Snapshot unavailable" });
+    expect(fixture.sendCommand.mock.calls.filter(([, method, params]) => method === "Input.dispatchMouseEvent" && params?.type === "mouseReleased")).toHaveLength(1);
+  });
+
   it("opens a virtualized chat by ref and scrolls its nested message region", async () => {
     const fixture = stubWhatsAppLikePage();
 
