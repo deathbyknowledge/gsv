@@ -26,7 +26,7 @@ import { networkStatus, stopNetworkCapture } from "../target/network-recorder";
 import { ConnectionSupervisor } from "./connection-supervisor";
 import { BrowserPairing } from "./pairing";
 import { createBrowserTargetDriver, type BrowserTargetActivity } from "./driver";
-import { pauseBrowserResources } from "./pause-access";
+import { pauseBrowserResources, releaseBrowserResources } from "./pause-access";
 
 const client = new GSVClient();
 const endpoint = client.endpoint({
@@ -40,6 +40,7 @@ const endpoint = client.endpoint({
 const connectionSupervisor = new ConnectionSupervisor(endpoint);
 const browserPairing = new BrowserPairing();
 let pauseOperations = 0;
+let pauseEpoch = 0;
 let diagnostics: ExtensionDiagnostics = emptyDiagnostics();
 const diagnosticsReady = loadDiagnostics().then((stored) => {
   diagnostics = mergeDiagnostics(stored, diagnostics);
@@ -204,6 +205,7 @@ async function connectNow(config?: ExtensionConfig): Promise<void> {
 
 async function pauseBrowserAccess(): Promise<RuntimeResponse> {
   pauseOperations += 1;
+  const epoch = ++pauseEpoch;
   const commandsStopped = browserTarget.pause();
   try {
     const result = await pauseBrowserResources({
@@ -214,6 +216,17 @@ async function pauseBrowserAccess(): Promise<RuntimeResponse> {
       stopRecordings: stopAllMediaRecordings,
       releaseDebuggers: releaseAllDebuggers,
     });
+    if (result.commandsPending) {
+      void commandsStopped.then(async () => {
+        if (epoch !== pauseEpoch || !connectionSupervisor.getState().reconnectSuppressed) return;
+        const late = await releaseBrowserResources({
+          stopNetwork: stopNetworkCapture,
+          stopRecordings: stopAllMediaRecordings,
+          releaseDebuggers: releaseAllDebuggers,
+        });
+        if (late.errors.length > 0) console.warn("Your GSV: late browser cleanup failed", late.errors);
+      }).catch((error) => console.warn("Your GSV: browser commands did not stop", error));
+    }
     addActivity({
       kind: result.errors.length > 0 ? "error" : "sensitive",
       label: "access paused",
@@ -280,6 +293,7 @@ async function setManualReconnectSuppressed(value: boolean, reason?: string): Pr
   }
   connectionSupervisor.setReconnectSuppressed(value, reason);
   if (!value) {
+    pauseEpoch += 1;
     browserTarget.resume();
   }
   await saveRuntimeState({ manualReconnectSuppressed: value });

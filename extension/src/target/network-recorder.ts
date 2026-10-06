@@ -229,16 +229,15 @@ function assertSameCaptureOptions(existing: CaptureState, options: NetworkCaptur
 
 export async function stopNetworkCapture(tabId?: number): Promise<NetworkCaptureStatus[]> {
   const states = captureStates(tabId);
-  const statuses: NetworkCaptureStatus[] = [];
-
-  for (const state of states) {
+  const statuses = states.map((state) => {
     recordEvent(state, { type: "captureStopped" });
     captures.delete(state.tabId);
-    statuses.push({ ...captureStatus(state), active: false });
-    await releaseDebugger(state.tabId).catch(() => undefined);
-  }
-
+    return { ...captureStatus(state), active: false };
+  });
   maybeRemoveNetworkListener();
+  await Promise.all(states.map(async (state) => {
+    await releaseDebugger(state.tabId).catch(() => undefined);
+  }));
   return statuses;
 }
 
@@ -602,6 +601,7 @@ async function fetchAndStoreBody(state: CaptureState, requestId: string): Promis
     const result = await sendDebuggerCommand<ResponseBodyResult>(state.target, "Network.getResponseBody", {
       requestId,
     });
+    if (captures.get(state.tabId) !== state) return;
     const content = result.body ?? "";
     const base64Encoded = Boolean(result.base64Encoded);
     const byteCount = base64Encoded ? base64ByteLength(content) : byteLength(content);
@@ -631,6 +631,7 @@ async function fetchAndStoreBody(state: CaptureState, requestId: string): Promis
       encodedDataLength: byteCount,
     });
   } catch (error) {
+    if (captures.get(state.tabId) !== state) return;
     request.bodyError = errorMessage(error);
     await persistRequestMeta(state, request);
   }
