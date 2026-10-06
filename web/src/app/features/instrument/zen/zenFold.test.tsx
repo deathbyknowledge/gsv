@@ -62,7 +62,7 @@ describe("message folding", () => {
   it("unfolds when the message reflows short enough", async () => {
     const message = await fold(false);
     await act(() => message.get().measured(80));
-    await act(() => message.get().measured(12));
+    await act(() => message.get().measured(FOLD_AFTER_LINES));
     expect(message.get().state).toBe("whole");
   });
 });

@@ -1,9 +1,9 @@
 import { useCallback, useState } from "preact/hooks";
 
 /** A message longer than this many of its own lines folds once it stops arriving. */
-export const FOLD_AFTER_LINES = 24;
+export const FOLD_AFTER_LINES = 6;
 /** How many lines a folded message keeps in view above its fade. */
-export const FOLDED_LINES = 16;
+export const FOLDED_LINES = 4;
 
 export type FoldState = "whole" | "folded" | "open";
 
