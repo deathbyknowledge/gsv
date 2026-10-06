@@ -136,6 +136,26 @@
   color: var(--target);
   border-bottom: 1px solid rgba(151, 170, 255, 0.35);
 }
+/* a very long message folds once it has arrived: its first lines fade out above "read more" */
+.zen-moment .text.is-folded {
+  /* the line count is set inline from zenFold.ts; this holds where lh is unknown */
+  max-height: 60vh;
+  overflow: clip;
+  -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 4em), transparent);
+  mask-image: linear-gradient(to bottom, #000 calc(100% - 4em), transparent);
+}
+.zen-fold-toggle {
+  margin-top: 0.65rem;
+  padding: 0.25rem 0;
+  border: 0;
+  background: none;
+  font-family: var(--gsv-font-mono);
+  font-size: 12px;
+  letter-spacing: 0.02em;
+  color: var(--label);
+  cursor: pointer;
+}
+.zen-fold-toggle:hover { color: var(--accent); }
 .zen-caret {
   display: inline-block;
   width: 0.55em;
