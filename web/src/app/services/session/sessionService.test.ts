@@ -86,7 +86,7 @@ describe("account setup", () => {
     const discard = vi.fn();
     const failure = { code: 401, message: "Installation setup link is invalid or expired",
       details: { setupRecovery: true, setupUrl: "https://accounts.example/owner/signup/?resume=1" } };
-    client.requestOnce.mockRejectedValueOnce(failure);
+    client.requestOnce.mockRejectedValueOnce(failure).mockRejectedValueOnce({ code: 503, details: failure.details });
     const service = createSessionService(client, { onboarding: { token: onboardingToken, discard, complete } });
     await service.start();
     await expect(service.setup({ username: "alice", password: "password123" })).rejects.toEqual(failure);
@@ -96,17 +96,21 @@ describe("account setup", () => {
     expect(client.connect).not.toHaveBeenCalled();
   });
 
-  it("does not re-enter setup after a consumed capability is rejected and the owner returns without a new token", async () => {
+  it("moves an active operator-issued space to sign-in after rejecting its consumed setup capability", async () => {
     installWindow();
     window.sessionStorage.setItem(onboardingStorageKey, onboardingToken);
     const client = createSetupClient();
-    const failure = { code: 401, details: { setupRecovery: true, setupUrl: "https://accounts.example/owner/signup/?resume=1" } };
-    client.requestOnce.mockRejectedValueOnce(failure);
+    const failure = { code: 401, details: { setupRecovery: true } };
+    client.requestOnce.mockRejectedValueOnce(failure).mockRejectedValueOnce({ code: 401 });
     const service = createSessionService(client);
     await service.start();
     expect(service.snapshot().phase).toBe("setup");
     await expect(service.setup({ username: "alice", password: "password123" })).rejects.toEqual(failure);
     expect(window.sessionStorage.getItem(onboardingStorageKey)).toBeNull();
+    expect(service.snapshot()).toMatchObject({ phase: "locked", username: "alice", message: null });
+    expect(client.requestOnce).toHaveBeenLastCalledWith("wss://example.test/ws", "sys.connect", expect.objectContaining({
+      peer: expect.objectContaining({ id: "gsv-ui-setup-probe" }),
+    }));
     service.dispose?.();
     client.requestOnce.mockRejectedValueOnce({ code: 401 });
     const reopened = createSessionService(client);
@@ -119,7 +123,8 @@ describe("account setup", () => {
     installWindow();
     window.sessionStorage.setItem(onboardingStorageKey, onboardingToken);
     const client = createSetupClient();
-    client.requestOnce.mockRejectedValueOnce({ code: 401, details: { setupRecovery: true } });
+    client.requestOnce.mockRejectedValueOnce({ code: 401, details: { setupRecovery: true } })
+      .mockRejectedValueOnce({ code: 503, details: { setupRecovery: true } });
     const service = createSessionService(client);
     await expect(service.setup({ username: "alice", password: "password123" })).rejects.toMatchObject({ code: 401 });
     service.dispose?.();

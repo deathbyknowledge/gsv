@@ -152,6 +152,19 @@ describe("managed installation routing integration", () => {
     });
     expect(response).toMatchObject({ ok: false, error: { code: 401, details: { setupRecovery: true } } });
     expect(response).not.toHaveProperty("error.details.setupUrl");
+    await expectManagedRpcOk(socket, "operator-complete-setup", "sys.setup", {
+      username: "second-owner", password: "test-password123", onboardingToken: "integration-onboarding-second",
+    });
+    expect(await managedRpc(socket, "operator-consumed-setup", "sys.setup", {
+      username: "second-owner", password: "test-password123", onboardingToken: "integration-onboarding-second",
+    })).toMatchObject({ ok: false, error: { code: 401, details: { setupRecovery: true } } });
+    const peer = { id: "gsv-ui-setup-probe", version: "test", platform: "browser" };
+    const probe = await managedRpc(socket, "operator-active-probe", "sys.connect", { protocol: 4, peer });
+    expect(probe).toMatchObject({ ok: false, error: { code: 401 } });
+    expect(probe).not.toHaveProperty("error.details.setupRecovery");
+    await expectManagedRpcOk(socket, "operator-recovered-sign-in", "sys.connect", {
+      protocol: 4, peer, auth: { username: "second-owner", password: "test-password123" },
+    });
     socket.close(1000, "test complete");
   });
 

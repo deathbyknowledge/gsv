@@ -749,7 +749,7 @@ export function createSessionService(client: SessionClient, options: SessionServ
       });
     } catch (error) {
       if (setupGeneration === reconnectGeneration) {
-        const recovery = setupRecovery(error);
+        let recovery = setupRecovery(error);
         if (recovery && installationOnboardingToken) {
           try {
             if (options.onboarding) await options.onboarding.discard();
@@ -761,6 +761,7 @@ export function createSessionService(client: SessionClient, options: SessionServ
             throw storageError;
           }
         }
+        if (recovery) recovery = await probeSetupMode(client, url);
         if (setupGeneration !== reconnectGeneration) throw error;
         setSnapshot({
           phase: "setup",

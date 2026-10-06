@@ -167,7 +167,7 @@ Provisioning connections and rejected setup tokens return
 `details.setupRecovery: true`. For owner-claimed spaces, `details.setupUrl` points
 to the operator's configured owner verification page. Operator-issued links omit
 that URL and require reissue by the operator. Clients discard rejected setup
-tokens before resuming; an active space then opens ordinary sign-in, while an
+tokens and re-probe `sys.connect` before resuming; an active space then opens ordinary sign-in, while an
 unfinished space receives fresh setup authorization after owner verification.
 
 ---

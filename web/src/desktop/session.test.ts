@@ -119,12 +119,25 @@ describe("desktop session persistence", () => {
   it("discards rejected setup credentials without clearing the unfinished invitation", async () => {
     const h = sessionHarness(false, { [ONBOARDING_KEY]: `onboard_${"a".repeat(43)}` }, pendingWelcome);
     const failure = { code: 401, details: { setupRecovery: true, setupUrl: "https://accounts.example.com/owner/signup/?resume=1" } };
-    h.client.requestOnce.mockRejectedValueOnce(failure);
+    h.client.requestOnce.mockRejectedValueOnce(failure).mockRejectedValueOnce({ code: 503, details: failure.details });
     await expect(h.service.setup({ username: "alice", password: "fixture-password" })).rejects.toEqual(failure);
     expect(h.service.snapshot().phase).toBe("setup-recovery");
     expect(h.stored()[ONBOARDING_KEY]).toBeUndefined();
     expect((await loadDesktopWelcome()).state).toEqual(pendingWelcome);
     expect(h.client.connect).not.toHaveBeenCalled();
+    h.service.dispose?.();
+  });
+
+  it("offers sign-in without restarting Desktop when an operator-issued setup has already completed", async () => {
+    const h = sessionHarness(false, { [ONBOARDING_KEY]: `onboard_${"a".repeat(43)}` });
+    const failure = { code: 401, details: { setupRecovery: true } };
+    h.client.requestOnce.mockRejectedValueOnce(failure).mockRejectedValueOnce({ code: 401 });
+    await expect(h.service.setup({ username: "alice", password: "fixture-password" })).rejects.toEqual(failure);
+    expect(h.stored()[ONBOARDING_KEY]).toBeUndefined();
+    expect(h.service.snapshot()).toMatchObject({ phase: "locked", username: "alice", message: null });
+    expect(h.client.requestOnce).toHaveBeenLastCalledWith("wss://first.example/ws", "sys.connect", expect.objectContaining({
+      peer: expect.objectContaining({ id: "gsv-ui-setup-probe" }),
+    }));
     h.service.dispose?.();
   });
 
