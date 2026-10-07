@@ -197,6 +197,7 @@ function makeContext(options?: {
   procs?: Partial<KernelContext["procs"]>;
   targets?: Partial<KernelContext["targets"]>;
   auth?: Partial<KernelContext["auth"]>;
+  mailboxes?: Partial<KernelContext["mailboxes"]>;
   caps?: Partial<KernelContext["caps"]>;
   schedules?: Partial<KernelContext["schedules"]>;
   ipcCalls?: Partial<KernelContext["ipcCalls"]>;
@@ -244,6 +245,19 @@ function makeContext(options?: {
       }
       : null),
     getPersonalAgentUid: vi.fn(() => null),
+    getPasswdEntries: vi.fn(() => [{
+      username: identity.username,
+      uid: identity.uid,
+      gid: identity.gid,
+      gecos: identity.username,
+      home: identity.home,
+      shell: "/bin/init",
+    }]),
+    getShadowByUsername: vi.fn((username: string) => username === identity.username
+      ? { username, hash: "password-hash" }
+      : null),
+    isPersonalAgentUid: vi.fn(() => false),
+    isAccountDisabled: vi.fn(() => false),
     resolveGids: vi.fn(() => [...identity.gids]),
   };
   const testEnv = focusedFixture<Env>({
@@ -264,6 +278,11 @@ function makeContext(options?: {
     auth: focusedFixture<KernelContext["auth"]>({
       ...defaultAuth,
       ...options?.auth,
+    }),
+    mailboxes: focusedFixture<KernelContext["mailboxes"]>({
+      getMailboxForOwner: vi.fn(() => null),
+      getPrimaryMailbox: vi.fn(() => null),
+      ...options?.mailboxes,
     }),
     caps: focusedFixture<KernelContext["caps"]>({
       resolve: vi.fn(() => []),
@@ -947,6 +966,10 @@ describe("native shell capability discovery", () => {
     ["save this workflow for next time", "skills"],
     ["send this file to the chat", "message"],
     ["send an email to this person", "mail"],
+    ["what is my email address", "mail"],
+    ["sign up for a website with an email address", "mail"],
+    ["find the verification email", "mail"],
+    ["track my parcel delivery", "mail"],
     ["start a new chat in this conversation", "message"],
   ])("maps a plain-language task '%s' to %s", async (query, expectedCommand) => {
     const result = await handleShellExec(
@@ -959,6 +982,20 @@ describe("native shell capability discovery", () => {
     expect(result.stdout.split("\n")[2]).toContain(`command\t${expectedCommand}\t`);
     expect(result.stdout).toContain(`command\t${expectedCommand}\t`);
     expect(result.stdout).toContain(`man '${expectedCommand}'`);
+  });
+
+  it("reports mail as available only when the owner has a managed mailbox", async () => {
+    const query = "man --search -- 'what is my email address'";
+    const withMailbox = await handleShellExec({ input: query }, makeContext({ capabilities: ["shell.exec"] }));
+    expect(withMailbox.ok).toBe(true);
+    expect(withMailbox.stdout).toContain("command\tmail\tyes\t");
+
+    const withoutMailbox = await handleShellExec(
+      { input: query },
+      makeContext({ capabilities: ["shell.exec"], auth: { getPasswdEntries: vi.fn(() => []) } }),
+    );
+    expect(withoutMailbox.ok).toBe(true);
+    expect(withoutMailbox.stdout).toContain("command\tmail\tno (managed mailbox)\t");
   });
 
   it("supports the standard man -k search alias", async () => {

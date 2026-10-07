@@ -3,7 +3,8 @@ import type { ProcessIdentity } from "@humansandmachines/gsv/protocol";
 import type { GsvFs } from "../../../fs/gsv-fs";
 import { hasCapability } from "../../../kernel/capabilities";
 import type { KernelContext } from "../../../kernel/context";
-import { principalOf } from "../../../kernel/context";
+import { principalOf, resolveCallerOwnerUid } from "../../../kernel/context";
+import { managedMailAddressForOwner } from "../../../kernel/mailbox";
 import {
   collectFilesystemSkillDocuments,
   collectKernelSkillDocuments,
@@ -98,7 +99,7 @@ const NATIVE_COMMAND_DESCRIPTORS = defineNativeCommandDescriptors({
     "message send --to DESTINATION [--message TEXT] [--attach PATH]... [--mime TYPE] [--delivery-id ID] [--responsibility ID] [--also]",
   ]),
   yield: command("Finish the active agent run.", "Yield control after the current work is complete while keeping the durable Process available for future input.", ["finish", "complete", "done", "stop", "silent"], [], ["yield"]),
-  mail: command("Read, send, reply to, and inspect managed email.", "Read an inbox message, search received email, send email, reply to a message, or check whether a queued email was accepted.", ["email", "inbox", "read", "message", "search", "send", "reply", "status", "delivery"], [], [
+  mail: command("Read, send, reply to, and inspect this GSV's own email.", "Find this GSV's email address for a sign-up, verification code, receipt, parcel tracking or bill, read an inbox message, search received email, send email, reply to a message, or check whether a queued email was accepted.", ["email", "inbox", "address", "signup", "sign-up", "register", "verification", "account", "receipt", "tracking", "read", "message", "search", "send", "reply", "status", "delivery"], [], [
     "mail address",
     "mail list [--limit N] [--offset N]",
     "mail search QUERY [--limit N] [--offset N]",
@@ -180,6 +181,9 @@ export class ShellDiscoveryCatalog {
         !hasCapability(principalOf(this.ctx)?.calls ?? [], capability)
       );
       if (registered.name === "feedback" && !this.ctx.env.FEEDBACK) missing.push("configured feedback inbox");
+      if (registered.name === "mail" && managedMailAddressForOwner(resolveCallerOwnerUid(this.ctx), this.ctx) === null) {
+        missing.push("managed mailbox");
+      }
       const entry: ShellDiscoveryEntry = {
         kind: "command",
         name: registered.name,
