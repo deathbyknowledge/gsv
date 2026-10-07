@@ -166,12 +166,26 @@ try {
   const stopped = JSON.parse(await shell({ targetId: "gsv" }, `instance stop ${first.targetId} --wait`));
   assert.equal(stopped.instance.persistence.saveStatus, "partial");
   assert.equal((await client.sys.instance.get({ instanceId: first.instanceId })).instance.state, "stopped");
+  let reopened = [];
   for (let attempt = 0; attempt < 30; attempt++) {
-    if ((await client.r12y.get({ id: stoppedWork.id })).responsibility.state === "open") break;
+    const { transitions } = await client.r12y.changes({ afterRevision: stoppedWork.revision, limit: 100 });
+    reopened = transitions.filter(change => change.responsibilityId === stoppedWork.id
+      && change.beforeState === "waiting" && change.afterState === "open");
+    if (reopened.length) break;
     await sleep(500);
   }
-  assert.equal((await client.r12y.get({ id: stoppedWork.id })).responsibility.state, "open", "Stopping the browser left its work waiting");
-  await client.r12y.update({ id: stoppedWork.id, patch: { state: "resolved" } });
+  // Ship can act on the resumed work before the stop's final save finishes.
+  assert.equal(reopened.length, 1, "Stopping the browser must release its waiting work exactly once");
+  assert.deepEqual(reopened[0].actor, { kind: "system", component: "browser-handoff" });
+  const { responsibility: currentWork } = await client.r12y.get({ id: stoppedWork.id });
+  if (!["resolved", "cancelled"].includes(currentWork.state)) {
+    try {
+      await client.r12y.update({ id: currentWork.id, expectedRevision: currentWork.revision, patch: { state: "resolved" } });
+    } catch (error) {
+      const { responsibility: settledWork } = await client.r12y.get({ id: stoppedWork.id });
+      if (!["resolved", "cancelled"].includes(settledWork.state)) throw error;
+    }
+  }
   console.log("PASS: stopping a browser releases linked work without waiting for the handoff deadline");
   console.log("PASS: native readiness wait, replay disposition, short-ID get/stop, and unknown-ID rejection");
   console.log("First browser stopped; restoring profile into a new instance");
