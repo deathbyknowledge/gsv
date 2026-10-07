@@ -36,6 +36,13 @@ export async function seedBrowserStorage(shell, client, instance) {
     })()`), "upgraded");
   }
   const tabs = JSON.parse(await shell(instance, "tabs list"));
+  const summaries = await client.sys.browser.profile.list({ offset: 0 });
+  assert.equal(summaries.total, 1);
+  assert.equal(summaries.profiles[0].profileId, instance.profileId);
+  assert.equal(summaries.profiles[0].usage, undefined);
+  assert.equal(summaries.profiles[0].issues, undefined);
+  assert.equal(summaries.nextOffset, undefined);
+  assert.deepEqual(JSON.parse(await shell({ targetId: "gsv" }, "browser profile list --offset 1")), { profiles: [], total: 1 });
   assert.ok(!JSON.stringify(tabs).includes("Browser storage"), "The storage page leaked into the user's tabs");
   const lastGood = (await client.sys.browser.profile.get({ profileId: instance.profileId })).profile.savedAt;
   await run(`(async () => {

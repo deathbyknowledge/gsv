@@ -58,7 +58,7 @@ async function dispatchInstanceRequest(frame: InstanceRequest, ctx: KernelContex
       case "sys.instance.get": data = await service.get(owner, frame.args); break;
       case "sys.instance.stop": data = await service.stop(owner, frame.args); break;
       case "sys.browser.profile.create": data = await service.createProfile(owner, frame.args); break;
-      case "sys.browser.profile.list": data = await service.listProfiles(owner); break;
+      case "sys.browser.profile.list": data = await service.listProfiles(owner, frame.args); break;
       case "sys.browser.profile.save": data = await service.saveProfile(owner, frame.args.instanceId); break;
       case "sys.browser.profile.get": data = await service.getProfile(owner, frame.args.profileId); break;
       case "sys.browser.profile.delete": data = await service.deleteProfile(owner, frame.args.profileId); break;

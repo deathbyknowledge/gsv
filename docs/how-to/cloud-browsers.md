@@ -117,8 +117,14 @@ record counts, and cookie counts/sizes by domain. Database details are capped at
 32 entries and 4 KiB per origin; long names are shortened with an ellipsis.
 `databaseUsageTruncated` marks shortened or omitted details. Cookie-domain
 details are capped at 64 entries and 32 KiB, with `cookieDomainsTruncated` when
-entries are omitted. Byte and record totals still include all measured data.
+entries are omitted. The full usage breakdown is capped at 64 KiB. When it cannot
+fit every site, it keeps the largest contributors, reports `sitesTruncated`, and
+retains the total measured `siteCount`. Byte and record totals still include all
+measured data for the corresponding profile, site or database.
 These limits apply to metadata; website state keeps its ordinary storage allowance.
+`browser profile list [--offset N]` returns at most 32 small summaries, the total
+count and `nextOffset` when more remain. `browser profile get ID` returns that
+profile's storage details and site exceptions.
 These files contain no login
 values. `state.enc` is the opaque encrypted snapshot; its key stays with the
 instance service, so copying the file alone is not a portable backup. The files

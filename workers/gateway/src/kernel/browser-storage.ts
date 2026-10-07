@@ -21,8 +21,17 @@ export function createBrowserStorageBackend(ctx: KernelContext): BrowserStorageM
     profile: async () => {
       requireCapability("sys.browser.profile.list");
       requireCapability("sys.browser.profile.get");
-      const { profiles } = await withInstances(ctx, service => service.listProfiles(actor));
-      return [...profiles].reverse().find(profile => profile.state === "active") ?? null;
+      return withInstances(ctx, async service => {
+        let offset: number | undefined;
+        do {
+          ctx.requestSignal?.throwIfAborted();
+          const page = await service.listProfiles(actor, { offset });
+          const selected = page.profiles.find(profile => profile.state === "active");
+          if (selected) return (await service.getProfile(actor, selected.profileId)).profile;
+          offset = page.nextOffset;
+        } while (offset !== undefined);
+        return null;
+      });
     },
     read: async profileId => {
       requireCapability("sys.browser.profile.get");

@@ -23,7 +23,7 @@ If the whole save fails, the browser stays running. Inspect instance get ID for 
 Instances have a fixed lifetime. Close your task's tabs when finished; do not stop a shared browser just because your task ended. Stop an isolated browser you created when finished. A stopped instance never restarts.
 `;
 const BROWSER_HELP = `Usage:
-  browser profile list
+  browser profile list [--offset N]
   browser profile create NAME --request-id ID
   browser profile get ID
   browser profile save INSTANCE
@@ -35,6 +35,7 @@ const BROWSER_HELP = `Usage:
 Run tabs/page commands on the browser target. Handoffs pause automation until the person finishes in GSV.
 Agent handoffs must reference the responsibility for the waiting work. Send the action URL to the user, then yield.
 Profile save reports saved, partial (inspect issues for affected sites), or failed. Unsupported sites retain their previous saved data while other sites keep saving.
+Profile list returns up to 32 summaries and nextOffset when more remain. Use profile get ID for storage details and save issues.
 `;
 
 function parseOptions(args: string[], allowed: string[]) {
@@ -92,10 +93,15 @@ export function buildInstanceCommands(ctx: KernelContext, request?: NativeShellC
           } };
         } else throw new Error(help);
       } else {
-        const { words, options } = parseOptions(argv, ["--request-id", "--purpose", "--work"]);
+        const { words, options } = parseOptions(argv, ["--request-id", "--purpose", "--work", "--offset"]);
         const [group, verb, value, tabOrRequest] = words;
+        if (options["--offset"] && (group !== "profile" || verb !== "list")) throw new Error("--offset requires browser profile list");
         if (group === "profile") {
-          if (verb === "list" && words.length === 2) frame = { type: "req", id, call: "sys.browser.profile.list", args: {} };
+          if (verb === "list" && words.length === 2) {
+            const offset = options["--offset"] === undefined ? undefined : Number(options["--offset"]);
+            if (offset !== undefined && (!Number.isSafeInteger(offset) || offset < 0)) throw new Error("--offset must be a nonnegative integer");
+            frame = { type: "req", id, call: "sys.browser.profile.list", args: { offset } };
+          }
           else if (verb === "create" && value && options["--request-id"]) frame = { type: "req", id, call: "sys.browser.profile.create", args: { label: words.slice(2).join(" "), requestId: options["--request-id"] } };
           else if (verb === "save" && words.length === 3) frame = { type: "req", id, call: "sys.browser.profile.save", args: { instanceId: value } };
           else if ((verb === "get" || verb === "delete") && words.length === 3) frame = { type: "req", id, call: verb === "get" ? "sys.browser.profile.get" : "sys.browser.profile.delete", args: { profileId: value } };

@@ -2,7 +2,7 @@ import { DurableObject, RpcTarget } from "cloudflare:workers";
 import { bodyFromBytes, cancelBinaryBody } from "@humansandmachines/gsv/protocol";
 import type { BrowserHandoff, BrowserHumanInput, BrowserProfile, BrowserPersistence, CloudInstance, InstanceSelector, SysInstanceStopArgs, SysBrowserHandoffGetArgs } from "@humansandmachines/gsv/protocol";
 import {
-  browserHandoffRequestSchema, browserHandoffSelectorSchema, browserProfileCreateSchema,
+  browserHandoffRequestSchema, browserHandoffSelectorSchema, browserProfileCreateSchema, browserProfileListSchema,
   instanceActorSchema, instanceListSchema, instanceSelectorSchema, instanceStopSchema, instanceStartSchema, browserFrameSchema, browserInputSchema, browserWatchSchema,
 } from "@humansandmachines/gsv/services/instances";
 import type { InstallationInstances, InstanceActor, InstanceTargetRequest, InstanceTargetResponse } from "@humansandmachines/gsv/services/instances";
@@ -133,9 +133,9 @@ export class InstanceCoordinator extends DurableObject<Environment> implements I
     this.#retirement.requireLive();
     return { profile: this.#store.createProfile(actor, args.requestId, args.label, limits) };
   }
-  async listProfiles(raw: InstanceActor) {
-    const actor = instanceActorSchema.parse(raw);
-    return { profiles: this.#store.profiles(actor.ownerUid).map(profile).filter(value => value.state !== "deleted") };
+  async listProfiles(raw: InstanceActor, rawArgs: Parameters<InstallationInstances["listProfiles"]>[1]) {
+    const actor = instanceActorSchema.parse(raw), args = browserProfileListSchema.parse(rawArgs);
+    return this.#store.listProfiles(actor.ownerUid, args.offset);
   }
   async getProfile(raw: InstanceActor, id: string) {
     const row = this.#store.ownedProfile(instanceActorSchema.parse(raw), id);

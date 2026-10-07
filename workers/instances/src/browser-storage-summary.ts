@@ -7,6 +7,30 @@ type StorageSummarySource = {
   indexedDB?: { name: string; stores: { records: JsonValue[] }[] }[];
 };
 
+/** Bounds the entire metadata value independently of the saved state allowance. */
+export function boundBrowserStorageUsage(usage: BrowserStorageUsage): BrowserStorageUsage {
+  const size = (value: JsonValue) => new TextEncoder().encode(JSON.stringify(value)).byteLength;
+  const result: BrowserStorageUsage = {
+    ...usage, sites: [], cookieDomains: [], siteCount: usage.siteCount ?? usage.sites.length,
+    sitesTruncated: usage.sitesTruncated ?? false, cookieDomainsTruncated: usage.cookieDomainsTruncated ?? false,
+  };
+  let remaining = 65536 - size(result);
+  for (const domain of usage.cookieDomains ?? []) {
+    const cost = size(domain) + 1;
+    if (cost > remaining) break;
+    result.cookieDomains!.push(domain); remaining -= cost;
+  }
+  // Keep the largest contributors useful when the detailed breakdown cannot fit.
+  for (const site of [...usage.sites].sort((a, b) => b.bytes - a.bytes || a.origin.localeCompare(b.origin))) {
+    const cost = size(site) + 1;
+    if (cost > remaining) continue;
+    result.sites.push(site); remaining -= cost;
+  }
+  if (result.cookieDomains!.length < (usage.cookieDomains?.length ?? 0)) result.cookieDomainsTruncated = true;
+  if (result.sites.length < result.siteCount!) result.sitesTruncated = true;
+  return result;
+}
+
 /** Serialized into the isolated export page; keep this function self-contained. */
 export function summarizeBrowserStorage(data: StorageSummarySource, bytes: number): BrowserStorageSite {
   const size = (value: JsonValue) => new TextEncoder().encode(JSON.stringify(value)).byteLength;

@@ -3,7 +3,7 @@ import type { BrowserStorageIssue, BrowserStorageSite, BrowserStorageUsage } fro
 import type { StorageState } from "./browser";
 import { storageScriptSource } from "./playwright-storage.generated";
 import { within } from "./browser-operation";
-import { summarizeBrowserCookies, summarizeBrowserStorage } from "./browser-storage-summary";
+import { boundBrowserStorageUsage, summarizeBrowserCookies, summarizeBrowserStorage } from "./browser-storage-summary";
 
 export const MAX_PROFILE_BYTES = 32 * 1024 * 1024;
 export const DEFAULT_PROFILE_BYTES = 16 * 1024 * 1024;
@@ -15,7 +15,11 @@ export type BrowserSnapshot = {
 };
 
 export class BrowserStorageError extends Error {
-  constructor(message: string, readonly usage?: BrowserStorageUsage, options?: ErrorOptions) { super(message, options); }
+  readonly usage?: BrowserStorageUsage;
+  constructor(message: string, usage?: BrowserStorageUsage, options?: ErrorOptions) {
+    super(message, options);
+    this.usage = usage ? boundBrowserStorageUsage(usage) : undefined;
+  }
 }
 
 /** A disposable, intercepted page owns every IndexedDB handle opened by export. */
@@ -81,7 +85,7 @@ export async function exportBrowserStorage(
     if (usage.bytes > Math.min(maxBytes, MAX_PROFILE_BYTES)) {
       throw new BrowserStorageError(`Saved browser data needs ${usage.bytes} bytes; allowance is ${Math.min(maxBytes, MAX_PROFILE_BYTES)} bytes`, usage);
     }
-    return { state, usage, failures };
+    return { state, usage: boundBrowserStorageUsage(usage), failures };
   } catch (cause) {
     if (cause instanceof BrowserStorageError) throw cause;
     if (signal.aborted) throw new BrowserStorageError("Saving browser data timed out. The previous saved state is intact.", usage);

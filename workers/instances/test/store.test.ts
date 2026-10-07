@@ -21,7 +21,7 @@ describe("instance admission", () => {
     expect(second.instanceId).toBe(first.instanceId);
     expect(first.targetId).toMatch(/^[0-9a-f]{8}$/);
     expect(first.profileId).toBeDefined();
-    expect(store.profiles(actor.ownerUid)).toHaveLength(1);
+    expect([...store.profiles(actor.ownerUid)]).toHaveLength(1);
     expect(store.usage(limits)).toMatchObject({ activeInstances: 1, reservedSeconds: 300 });
     expect(store.owned(actor, { startRequestId: "ship" })?.id).toBe(first.instanceId);
     store.terminal(first.instanceId, false);
@@ -113,6 +113,27 @@ describe("instance admission", () => {
 });
 
 describe("saved profile encryption", () => {
+  it("pages small profile summaries and fetches storage detail for only the selected owner", () => inStore(store => {
+    const saved = Array.from({ length: 70 }, (_, index) => store.createProfile(actor, `profile-${index}`, `Browser ${index}`, { ...limits, savedProfiles: 1000 }));
+    const usage = { bytes: 20, cookies: 0, cookieBytes: 2, sites: [{ origin: "https://example.com", bytes: 18, localStorageBytes: 2, indexedDBBytes: 2, localStorageEntries: 0, databases: 0, records: 0 }] };
+    for (const value of saved) store.putProfile({ ...value, usage, issues: [{ origin: "https://example.com", reason: "unavailable", message: "Retry" }] });
+    store.putProfile({ ...saved[2]!, state: "deleted" });
+    store.createProfile({ ownerUid: 1001, human: true }, "other", "Other owner", { ...limits, savedProfiles: 1000 });
+    const first = store.listProfiles(actor.ownerUid);
+    expect(first.total).toBe(69);
+    expect(first.profiles).toHaveLength(32);
+    expect(first.nextOffset).toBe(32);
+    for (const value of first.profiles) {
+      expect(value).not.toHaveProperty("usage"); expect(value).not.toHaveProperty("issues");
+    }
+    const second = store.listProfiles(actor.ownerUid, first.nextOffset);
+    const last = store.listProfiles(actor.ownerUid, second.nextOffset);
+    expect(last.nextOffset).toBeUndefined();
+    expect([...first.profiles, ...second.profiles, ...last.profiles].map(value => value.profileId)).toEqual(saved.filter((_, index) => index !== 2).map(value => value.profileId));
+    expect(profile(store.ownedProfile(actor, saved[0]!.profileId)!)).toMatchObject({ usage, issues: [{ message: "Retry" }] });
+    expect(store.ownedProfile({ ownerUid: 1001, human: true }, saved[0]!.profileId)).toBeNull();
+    expect(store.admit(actor, { requestId: "default", templateId: "browser" }, limits).profileId).toBe(saved[0]!.profileId);
+  }));
   it("saves healthy sites while retaining a failed site's storage, cookies and original save time", () => inStore(async store => {
     const started = store.admit(actor, { requestId: "partial", templateId: "browser" }, limits);
     const storage = new ProfileStorage("partial", bucket, store);

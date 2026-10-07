@@ -1580,6 +1580,13 @@ ID returns `instance: null`, and stopping it fences any future admission of that
 request. Instance reservations and concurrency are space-wide, while
 access to instances, profiles and human requests is owner-scoped.
 
+`sys.browser.profile.list` accepts an optional nonnegative `offset` and returns
+`{ profiles, total, nextOffset? }`. Each page contains at most 32 summaries in
+creation order, excluding storage `usage` and `issues`; `sys.browser.profile.get`
+retrieves those details for one profile. Usage metadata has a 64 KiB aggregate
+budget; `siteCount` and `sitesTruncated` identify omitted site breakdowns while
+byte totals remain exact. These metadata limits never truncate saved state.
+
 Instance `persistence` and browser-profile results distinguish `saved`, `partial`
 and `failed` saves. A partial save commits supported sites and retains the failed
 origins' previous storage and matching cookies. Its `issues` list contains each

@@ -1,10 +1,30 @@
 import { describe, expect, it } from "vitest";
 import type { JsonValue } from "@humansandmachines/gsv/protocol";
 import type { StorageState } from "../src/browser";
-import { summarizeBrowserCookies, summarizeBrowserStorage } from "../src/browser-storage-summary";
+import { boundBrowserStorageUsage, summarizeBrowserCookies, summarizeBrowserStorage } from "../src/browser-storage-summary";
+import { BrowserStorageError } from "../src/browser-storage";
 
 const size = (value: JsonValue) => new TextEncoder().encode(JSON.stringify(value)).byteLength;
 describe("browser storage metadata bounds", () => {
+  it("bounds all origins together, including failure metadata and saved timestamps", () => {
+    const sites = Array.from({ length: 128 }, (_, index) => summarizeBrowserStorage({
+      origin: `https://site-${index}.example.com`, localStorage: [],
+      indexedDB: Array.from({ length: 32 }, (_, db) => ({ name: `${db}-${"😀".repeat(128)}`, stores: [] })),
+    }, 10000 + index));
+    const usage = { bytes: 2000000, cookies: 100, cookieBytes: 10000, complete: true, sites };
+    const bounded = boundBrowserStorageUsage(usage);
+    expect(size(usage)).toBeGreaterThan(65536);
+    expect(size(bounded)).toBeLessThanOrEqual(65536);
+    expect(bounded).toMatchObject({ bytes: usage.bytes, cookies: 100, cookieBytes: 10000, complete: true, siteCount: 128, sitesTruncated: true });
+    expect(bounded.sites[0]?.origin).toBe("https://site-127.example.com");
+    expect(bounded.sites.length).toBeGreaterThan(0);
+    expect(sites).toHaveLength(128);
+    expect(new BrowserStorageError("Too large", usage).usage).toEqual(bounded);
+    const saved = boundBrowserStorageUsage({ ...bounded, sites: bounded.sites.map(site => ({ ...site, savedAt: Date.now() })) });
+    expect(size(saved)).toBeLessThanOrEqual(65536);
+    expect(saved.siteCount).toBe(128);
+    expect(boundBrowserStorageUsage(saved)).toEqual(saved);
+  });
   it.each(["name", "\u0000", "😀"])("bounds database details containing %j while retaining exact totals", text => {
     const data: StorageState["origins"][number] = {
       origin: "https://example.com", localStorage: [{ name: "session", value: "present" }],

@@ -445,7 +445,7 @@ describe("browser health", () => {
     browser.save = vi.fn(async () => { throw new BrowserStorageError("Storage allowance exceeded", usage); });
     await expect(object.stop(actor, { instanceId })).rejects.toThrow(/Storage allowance exceeded.*still running.*Diagnostic:/);
     expect((await object.get(actor, { instanceId })).instance).toMatchObject({ state: "ready", persistence: { saveStatus: "failed", error: "Storage allowance exceeded" } });
-    expect((await object.getProfile(actor, instance(store.byId(instanceId)).profileId!)).profile?.usage).toEqual(usage);
+    expect((await object.getProfile(actor, instance(store.byId(instanceId)).profileId!)).profile?.usage).toMatchObject(usage);
     await object.stop(actor, { instanceId, force: true });
     expect((await object.get(actor, { instanceId })).instance?.state).toBe("stopping");
     expect(browser.save).toHaveBeenCalledOnce();
@@ -578,7 +578,7 @@ describe("installation retirement", () => {
     expect(receipt).toMatchObject({ phase: "live-erased", pendingResources: 0, outcome: "retention-pending" });
     expect(receipt.retainedCopies).toHaveLength(1);
     expect(store.rows()).toEqual([]);
-    expect(store.profiles(actor.ownerUid)).toEqual([]);
+    expect([...store.profiles(actor.ownerUid)]).toEqual([]);
     await expect(object.start(actor, { requestId: "late", templateId: "browser" })).rejects.toThrow("retired");
     await expect(object.eraseInstallation({ ...request, operationId: "other" })).rejects.toThrow("immutable");
   }));

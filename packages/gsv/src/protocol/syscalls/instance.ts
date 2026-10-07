@@ -88,6 +88,8 @@ export type BrowserStorageUsage = {
   cookieDomains?: { domain: string; bytes: number; cookies: number }[];
   cookieDomainsTruncated?: boolean;
   sites: BrowserStorageSite[];
+  siteCount?: number;
+  sitesTruncated?: boolean;
 };
 export type BrowserStorageIssue = {
   origin: string;
@@ -122,8 +124,9 @@ export type BrowserProfile = BrowserPersistence & {
 
 export type SysBrowserProfileCreateArgs = { requestId: string; label: string };
 export type SysBrowserProfileCreateResult = { profile: BrowserProfile };
-export type SysBrowserProfileListArgs = Record<string, never>;
-export type SysBrowserProfileListResult = { profiles: BrowserProfile[] };
+export type BrowserProfileSummary = Omit<BrowserProfile, "usage" | "issues">;
+export type SysBrowserProfileListArgs = { offset?: number };
+export type SysBrowserProfileListResult = { profiles: BrowserProfileSummary[]; total: number; nextOffset?: number };
 export type SysBrowserProfileGetArgs = { profileId: string };
 export type SysBrowserProfileGetResult = { profile: BrowserProfile | null };
 export type SysBrowserProfileDeleteArgs = { profileId: string };

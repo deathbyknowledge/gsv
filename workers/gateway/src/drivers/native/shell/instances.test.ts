@@ -18,6 +18,14 @@ function fixture(request: NonNullable<NativeShellCommandOptions["request"]>, cal
 }
 
 describe("native instance readiness", () => {
+  it("passes profile pagination through the ordinary syscall and rejects invalid offsets", async () => {
+    const request = vi.fn<NonNullable<NativeShellCommandOptions["request"]>>(async frame => ({ type: "res", id: frame.id, ok: true, data: { profiles: [], total: 64 } }));
+    const shell = fixture(request);
+    expect((await shell.exec("browser profile list --offset 32")).exitCode).toBe(0);
+    expect(request).toHaveBeenCalledWith(expect.objectContaining({ call: "sys.browser.profile.list", args: { offset: 32 } }), expect.any(AbortSignal));
+    for (const offset of ["-1", "1.5", "no", "9007199254740992"]) expect((await shell.exec(`browser profile list --offset ${offset}`)).exitCode).toBe(1);
+    expect(request).toHaveBeenCalledOnce();
+  });
   it("keeps partial-save receipts machine-readable and warns separately without forcing stop", async () => {
     const persistence = { saveStatus: "partial" as const, savedAt: 1, issues: [{ origin: "https://unsupported.example", reason: "unsupported" as const, message: "Unsupported CryptoKey" }] };
     const request = vi.fn<NonNullable<NativeShellCommandOptions["request"]>>(async frame => ({ type: "res", id: frame.id, ok: true, data: { instance: { ...instance, state: "stopped", persistence } } }));

@@ -6,7 +6,7 @@ import type {
   SysInstanceCatalogResult, SysInstanceStartArgs, SysInstanceStartResult,
   SysInstanceListArgs, SysInstanceListResult, InstanceSelector, SysInstanceGetResult, SysInstanceStopArgs,
   SysBrowserProfileCreateArgs, SysBrowserProfileCreateResult,
-  SysBrowserProfileListResult, SysBrowserProfileGetResult,
+  SysBrowserProfileListArgs, SysBrowserProfileListResult, SysBrowserProfileGetResult,
   SysBrowserHandoffRequestArgs, SysBrowserHandoffRequestResult,
   SysBrowserHandoffGetArgs, SysBrowserHandoffGetResult,
   SysBrowserFrameArgs, SysBrowserFrameResult, SysBrowserInputArgs, BrowserHumanInput,
@@ -39,6 +39,7 @@ export const instanceStopSchema = z.union([
 ]) satisfies z.ZodType<SysInstanceStopArgs>;
 export const browserProfileCreateSchema = z.strictObject({ requestId: id, label: z.string().trim().min(1).max(100) });
 export const browserProfileSelectorSchema = z.strictObject({ profileId: id });
+export const browserProfileListSchema = z.strictObject({ offset: z.number().int().nonnegative().optional() }) satisfies z.ZodType<SysBrowserProfileListArgs>;
 export const browserHandoffRequestSchema = z.strictObject({
   requestId: id, instanceId: id, tabId: z.number().int().positive(),
   purpose: z.string().trim().min(1).max(500), responsibilityId: id.optional(),
@@ -58,7 +59,7 @@ export interface InstallationInstances {
   get(actor: InstanceActor, selector: InstanceSelector): Promise<SysInstanceGetResult>;
   stop(actor: InstanceActor, selector: SysInstanceStopArgs): Promise<SysInstanceGetResult>;
   createProfile(actor: InstanceActor, args: SysBrowserProfileCreateArgs): Promise<SysBrowserProfileCreateResult>;
-  listProfiles(actor: InstanceActor): Promise<SysBrowserProfileListResult>;
+  listProfiles(actor: InstanceActor, args: SysBrowserProfileListArgs): Promise<SysBrowserProfileListResult>;
   getProfile(actor: InstanceActor, profileId: string): Promise<SysBrowserProfileGetResult>;
   deleteProfile(actor: InstanceActor, profileId: string): Promise<SysBrowserProfileGetResult>;
   saveProfile(actor: InstanceActor, instanceId: string): Promise<SysBrowserProfileGetResult>;

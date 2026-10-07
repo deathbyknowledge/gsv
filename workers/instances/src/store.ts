@@ -1,6 +1,7 @@
-import type { BrowserHandoff, BrowserProfile, CloudInstance, InstanceSelector, InstanceUsage, SysInstanceStartArgs } from "@humansandmachines/gsv/protocol";
+import type { BrowserHandoff, BrowserProfile, BrowserProfileSummary, CloudInstance, InstanceSelector, InstanceUsage, SysBrowserProfileListResult, SysInstanceStartArgs } from "@humansandmachines/gsv/protocol";
 import type { InstanceActor } from "@humansandmachines/gsv/services/instances";
 import { browserTemplate, type BrowserLimits } from "./config";
+import { boundBrowserStorageUsage } from "./browser-storage-summary";
 
 export type InstanceRow = {
   id: string; owner_uid: number; request_id: string; fingerprint: string; record: string; active: number;
@@ -20,7 +21,9 @@ export function instance(row: InstanceRow): CloudInstance {
 }
 export function profile(row: ProfileRow): BrowserProfile {
   // SAFETY: The profile owner serializes BrowserProfile records into this private column.
-  return JSON.parse(row.record) as BrowserProfile;
+  const value = JSON.parse(row.record) as BrowserProfile;
+  if (value.usage) value.usage = boundBrowserStorageUsage(value.usage);
+  return value;
 }
 export class InstanceStore {
   constructor(readonly storage: DurableObjectStorage) {}
@@ -73,7 +76,7 @@ export class InstanceStore {
       if (usage.activeInstances >= limits.concurrentInstances) throw new Error("Browser concurrency limit reached");
       if (usage.usedSeconds + usage.reservedSeconds + lifetime > limits.periodSeconds) throw new Error("Browser time allowance exhausted");
       const defaultProfile = !args.profileId && !args.fresh
-        ? this.profiles(actor.ownerUid).map(profile).reverse().find(value => value.state === "active")
+        ? this.defaultProfile(actor.ownerUid)
           ?? this.createProfile(actor, crypto.randomUUID(), "Browser", limits)
         : null;
       const profileId = args.profileId ?? defaultProfile?.profileId;
@@ -115,17 +118,32 @@ export class InstanceStore {
       return value;
     });
   }
-  profiles(ownerUid: number): ProfileRow[] { return this.sql.exec<ProfileRow>("SELECT * FROM profiles WHERE owner_uid = ? ORDER BY rowid DESC", ownerUid).toArray(); }
-  ownedProfile(actor: InstanceActor, id: string): ProfileRow | null { return this.profiles(actor.ownerUid).find(row => row.id === id) ?? null; }
-  putProfile(value: BrowserProfile): void { this.sql.exec("UPDATE profiles SET record = ? WHERE id = ?", JSON.stringify(value), value.profileId); }
+  profiles(ownerUid: number): Iterable<ProfileRow> { return this.sql.exec<ProfileRow>("SELECT * FROM profiles WHERE owner_uid = ? ORDER BY rowid DESC", ownerUid); }
+  listProfiles(ownerUid: number, offset = 0): SysBrowserProfileListResult {
+    const total = this.sql.exec<{ count: number }>("SELECT count(*) AS count FROM profiles WHERE owner_uid = ? AND json_extract(record, '$.state') != 'deleted'", ownerUid).one().count;
+    const profiles = this.sql.exec<{ record: string }>("SELECT json_remove(record, '$.usage', '$.issues') AS record FROM profiles WHERE owner_uid = ? AND json_extract(record, '$.state') != 'deleted' ORDER BY rowid LIMIT 32 OFFSET ?", ownerUid, offset).toArray().map(row => {
+      // SAFETY: SQL removes the detailed fields from the privately stored BrowserProfile record.
+      return JSON.parse(row.record) as BrowserProfileSummary;
+    });
+    return { profiles, total, nextOffset: offset + profiles.length < total ? offset + profiles.length : undefined };
+  }
+  private defaultProfile(ownerUid: number): BrowserProfile | null {
+    const row = this.sql.exec<ProfileRow>("SELECT * FROM profiles WHERE owner_uid = ? AND json_extract(record, '$.state') = 'active' ORDER BY rowid LIMIT 1", ownerUid).toArray()[0];
+    return row ? profile(row) : null;
+  }
+  ownedProfile(actor: InstanceActor, id: string): ProfileRow | null { return this.sql.exec<ProfileRow>("SELECT * FROM profiles WHERE owner_uid = ? AND id = ?", actor.ownerUid, id).toArray()[0] ?? null; }
+  putProfile(value: BrowserProfile): void {
+    const bounded = value.usage ? { ...value, usage: boundBrowserStorageUsage(value.usage) } : value;
+    this.sql.exec("UPDATE profiles SET record = ? WHERE id = ?", JSON.stringify(bounded), value.profileId);
+  }
   createProfile(actor: InstanceActor, requestId: string, label: string, limits: BrowserLimits): BrowserProfile {
     return this.storage.transactionSync(() => {
-      const existing = this.profiles(actor.ownerUid).find(row => row.request_id === requestId);
+      const existing = this.sql.exec<ProfileRow>("SELECT * FROM profiles WHERE owner_uid = ? AND request_id = ?", actor.ownerUid, requestId).toArray()[0];
       if (existing) {
         if (profile(existing).label !== label) throw new Error("Profile requestId has already been used with another label");
         return profile(existing);
       }
-      const count = this.sql.exec<ProfileRow>("SELECT * FROM profiles").toArray().filter(row => profile(row).state !== "deleted").length;
+      const count = this.sql.exec<{ count: number }>("SELECT count(*) AS count FROM profiles WHERE json_extract(record, '$.state') != 'deleted'").one().count;
       if (!limits.enabled || count >= limits.savedProfiles) throw new Error("Saved browser profile limit reached");
       const value: BrowserProfile = { profileId: crypto.randomUUID(), ownerUid: actor.ownerUid, label, createdAt: Date.now(), revision: 1, state: "active", saveStatus: "empty" };
       this.sql.exec("INSERT INTO profiles (id, owner_uid, request_id, record, key) VALUES (?, ?, ?, ?, ?)", value.profileId, actor.ownerUid, requestId, JSON.stringify(value), crypto.getRandomValues(new Uint8Array(32)).buffer);
