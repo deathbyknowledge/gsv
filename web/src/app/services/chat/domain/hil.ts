@@ -115,6 +115,25 @@ function plainToolName(toolName: string): string {
   return toolName.split(".").at(-1) ?? toolName;
 }
 
+/** What "always allow this" would let through, as a bare phrase after "always": never the syscall id. */
+export function hilAlwaysAllowSentence(request: ProcHilRequest, place: string): string {
+  const where = request.target === "gsv" ? `in ${place}` : `on ${place}`;
+  switch (request.syscall) {
+    case "shell.exec": return `run commands ${where}`;
+    case "fs.read": return `read files ${where}`;
+    case "fs.write": return `write files ${where}`;
+    case "fs.edit": return `edit files ${where}`;
+    case "fs.delete": return `delete files ${where}`;
+    case "fs.search": return `search files ${where}`;
+    case "fs.copy": return `copy files ${where}`;
+    case "net.fetch": return `fetch web addresses ${where}`;
+    case "mail.send": return "send email";
+    // The saved rule is keyed by capability, not server, so the consent names the whole scope.
+    case "sys.mcp.call": return "use any connected tool";
+    default: return `use ${plainToolName(request.toolName)} ${where}`;
+  }
+}
+
 export function hilDetailLabel(request: ProcHilRequest): string {
   return request.syscall === "shell.exec" ? "show the command" : "show the details";
 }

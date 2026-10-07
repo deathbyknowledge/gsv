@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { saveApprovalPolicy } from "./permissionService";
+import { saveAccountApprovalPolicy } from "./approvalPolicyService";
 import { GSVClient } from "@humansandmachines/gsv/client";
 
 describe("permission policy replacement", () => {
@@ -11,7 +11,7 @@ describe("permission policy replacement", () => {
     const client = new GSVClient();
     vi.spyOn(client.sys.config, "get").mockResolvedValue({ entries: [{ key, value: legacy }] });
     const save = vi.spyOn(client.sys.config, "set").mockResolvedValue({ ok: true });
-    await saveApprovalPolicy(client, 1000, legacy, value);
+    await saveAccountApprovalPolicy(client, 1000, legacy, value);
     expect(client.sys.config.get).toHaveBeenCalledWith({ key });
     expect(save).toHaveBeenCalledExactlyOnceWith({ key, value });
   });
@@ -20,15 +20,29 @@ describe("permission policy replacement", () => {
     const client = new GSVClient();
     vi.spyOn(client.sys.config, "get").mockResolvedValue({ entries: [{ key, value: replacement }] });
     const save = vi.spyOn(client.sys.config, "set");
-    await expect(saveApprovalPolicy(client, 1000, legacy, "")).rejects.toThrow("changed elsewhere");
+    await expect(saveAccountApprovalPolicy(client, 1000, legacy, "")).rejects.toThrow("changed elsewhere");
     expect(save).not.toHaveBeenCalled();
+  });
+
+  it("does not write over an inherited policy that changed since the draft was composed", async () => {
+    const client = new GSVClient();
+    const globalKey = "config/ai/tools/approval";
+    vi.spyOn(client.sys.config, "get").mockImplementation(async (args) => ({
+      entries: args?.key === globalKey ? [{ key: globalKey, value: '{"default":"deny","rules":[]}' }] : [],
+    }));
+    const save = vi.spyOn(client.sys.config, "set");
+    await expect(saveAccountApprovalPolicy(client, 1000, "", replacement, { key: globalKey, value: "" })).rejects.toThrow("inherited policy changed");
+    expect(save).not.toHaveBeenCalled();
+    vi.spyOn(client.sys.config, "set").mockResolvedValue({ ok: true });
+    await saveAccountApprovalPolicy(client, 1000, "", replacement, { key: globalKey, value: '{"default":"deny","rules":[]}' });
+    expect(client.sys.config.set).toHaveBeenCalledWith({ key, value: replacement });
   });
 
   it("rejects unsupported replacement fields before issuing a syscall", async () => {
     const client = new GSVClient();
     const get = vi.spyOn(client.sys.config, "get");
     const save = vi.spyOn(client.sys.config, "set");
-    await expect(saveApprovalPolicy(client, 1000, "", legacy)).rejects.toThrow("not valid");
+    await expect(saveAccountApprovalPolicy(client, 1000, "", legacy)).rejects.toThrow("not valid");
     expect(get).not.toHaveBeenCalled();
     expect(save).not.toHaveBeenCalled();
   });

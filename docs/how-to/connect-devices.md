@@ -49,9 +49,12 @@ With the machine connected, ask your agent things like:
 When GSV asks to run a command, Zen and Fleet show the same approval card. Expand
 **show the command** to inspect it, then **full request** for all execution
 arguments. Choose **run it** to approve once or **don't** to decline.
-**Always allow** approves this command and remembers shell access to that
-computer for the requesting process. Its tooltip explains the scope; other
-processes still use their own approval rules.
+**Always allow** approves this command and adds an Allow rule for running
+commands on that computer to your approval policy, so later runs stop asking.
+Its tooltip names that scope. You can see and remove the rule in
+**Settings → permissions**. The link **why am I being asked?** has your Ship
+explain, then asks whether it should stop asking: for everything, for everything
+but deleting or contacting someone, or kind by kind.
 
 Some actions — reading your screen, controlling apps — need extra permissions from your operating system, not just GSV. Your OS will prompt you the first time an agent tries one; grant what you're comfortable with. You can connect a machine and use the basics without granting these.
 

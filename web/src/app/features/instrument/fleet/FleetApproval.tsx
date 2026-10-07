@@ -7,6 +7,7 @@ import { LoadingState } from "../../../components/ui/Spinner";
 import { useGateway } from "../../../services/gateway/GatewayProvider";
 import { decideChatHil, getChatHistory } from "../../../services/chat/backend/chatService";
 import { ApprovalCard } from "../shared/ApprovalCard";
+import { useAccountApproval } from "../shared/useAccountApproval";
 import { INSTRUMENT_LEDGER_KEY, INSTRUMENT_PROCESSES_KEY } from "../wire/queryKeys";
 import { referencedApproval } from "./fleetModel";
 
@@ -51,6 +52,12 @@ export function FleetApproval({ pid, who, label, requestId, runId, placeLabelFor
   }, [active, requestId, pending.isPending, pending.isFetching, pending.isError, request]);
   const decisionApplies = !request || decide.variables?.requestId === request.requestId;
   const ready = connected && !!request && !pending.isError && !pending.isFetching && !decide.isPending && !(decide.isSuccess && decisionApplies);
+  /* always allow writes the account rule the child process reads, then records an ordinary approval */
+  const approval = useAccountApproval({ pid, enabled: connected });
+  const allowAlways = async () => {
+    if (!ready || !request || approval.pending?.saving) return;
+    if (await approval.allowAlways(request)) decide.mutate({ requestId: request.requestId, decision: "approve" });
+  };
 
   return <section class="fleet-approval" ref={region} tabIndex={-1} aria-label="Approval request">
     {!connected ? <p class="note" role="status">Connecting…</p>
@@ -67,12 +74,13 @@ export function FleetApproval({ pid, who, label, requestId, runId, placeLabelFor
         shortcuts={false}
         approveRef={approve}
         onInspect={onInspect}
-        onDecide={(decision, remember) => {
+        onDecide={(decision) => {
           if (!ready) return;
-          const input: Omit<ProcHilArgs, "pid"> = { requestId: request.requestId, decision };
-          if (remember) input.remember = true;
-          decide.mutate(input);
+          decide.mutate({ requestId: request.requestId, decision });
         }}
+        onAlwaysAllow={approval.editable ? () => void allowAlways() : undefined}
+        alwaysAllowSaving={approval.pending?.requestId === request.requestId && approval.pending.saving}
+        alwaysAllowError={approval.pending?.requestId === request.requestId ? approval.pending.error : null}
       />}
     {decide.isSuccess && decisionApplies ? <p class="note" role="status">Decision recorded.</p> : null}
     {decide.error && decisionApplies ? <p class="error" role="alert">Could not record the decision: {decide.error.message}</p> : null}

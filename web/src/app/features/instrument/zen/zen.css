@@ -308,6 +308,23 @@
 .work-code .work-output { padding-left: 12px; }
 .work-output-label { margin: 8px 0 4px; font-size: 10px; color: var(--faint); letter-spacing: 0.12em; text-transform: uppercase; }
 
+/* the explanation: Ship rows the client authors, each followed by a box of choices */
+.zen-moment.is-explain { padding-block: 1vh; }
+.zen-approval .options { display: grid; gap: 6px; justify-items: start; margin-top: 10px; }
+.zen-approval .options .ibtn { text-transform: none; letter-spacing: normal; }
+/* the list box: a row per kind of action and a pick on each */
+.zen-approval.is-setup .ask + .ask { margin-top: 8px; }
+.zen-approval .rows { list-style: none; margin: 10px 0 0; padding: 0; display: grid; gap: 6px; }
+.zen-approval .rows li { display: grid; grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "label pick" "example pick"; column-gap: 12px; align-items: center; }
+.zen-approval .row-label { grid-area: label; color: var(--text-hi); }
+.zen-approval .row-example { grid-area: example; color: var(--text-dim); font-size: 12px; }
+.zen-approval .row-pick { grid-area: pick; display: flex; gap: 6px; }
+.zen-approval .row-pick .ibtn[aria-pressed="true"] { color: var(--text-hi); border-color: var(--update); }
+.zen-approval .row-pick .ibtn[aria-pressed="false"] { color: var(--text-dim); }
+.zen-approval .row-pick .row-blocked { align-self: center; color: var(--text-dim); font-size: 11px; }
+@container instrument (max-width: 560px) {
+  .zen-approval .rows li { grid-template-columns: 1fr; grid-template-areas: "label" "example" "pick"; row-gap: 4px; }
+}
 
 .zen-bottom {
   min-width: 0;

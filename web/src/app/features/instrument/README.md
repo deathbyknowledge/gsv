@@ -79,9 +79,23 @@ or path under a closed fold. Delegated cards identify the work asking for approv
 each decision still applies only to that exact pending request.
 Full request details remain available inside the fold, including structured
 arguments that the readable command or path does not show.
-Shell approvals also expose the existing `proc.hil` remember option for a concrete
-target. A hover/focus tooltip explains its process and target scope; it never
-changes another process's policy or remembers a denial.
+Every card offers always allow when the signed-in account holds `sys.config.set`
+and Settings can edit the relevant policy losslessly; `a` triggers it when the
+composer is not focused. It writes an Allow rule for exactly that syscall and
+resolved target into the approval policy of the account the requesting process
+resolves (its run-as account's own override, else the owner's), then approves the
+request once. A hover/focus tooltip names that scope. The rule is visible and
+removable in Settings → permissions and applies from the next run. The card never
+sends `proc.hil` with `remember`, and approve and deny stay one-time decisions.
+Its "why am I being asked?" link renders client-authored Ship messages below the
+live request (ordinary `zen-moment is-ship` rows without a timestamp, since nothing
+was sent) and a box of choices: auto-approve everything, ask only before deleting
+or contacting someone, "What are sensitive tasks?" for the list with per-kind
+allow/ask picks, or keep asking. Every answer saves to the same account policy; a save that now allows
+the pending call also approves it. An account that cannot write settings sees an
+apology with "got it" / "why?", the reason being hardcoded by cause (capability
+or a policy that cannot be rewritten losslessly). Nothing opens on its own, the
+model is not involved, and nothing records that the explanation was seen.
 
 Zen owns the conversation. A fresh conversation shows the welcome ("Welcome to the ship." / "I am the ship. Who are you?") and the ordinary composer; the CLI and messengers have no such greeting. The person's first message answers that question and goes through normal conversation sending; entering the space never sends an introduction on their behalf. Existing messages and drafts keep their ordinary behavior. Ship's durable onboarding responsibility owns the introduction and any guidance after that first message. Helpers have a simple empty conversation state.
 
@@ -227,7 +241,7 @@ Open the Vite server with `?mock=1` (for example, `http://localhost:5180/?mock=1
 | `/approve` / `/approve-old` | The same shell approval with or without a purpose. |
 | `/approve-mail` / `/approve-file` | Email and file approvals. |
 
-Approvals accept the ordinary controls and shortcuts. A new message or interruption cancels the old scenario; delayed callbacks cannot finish a superseded run. Streamed replies in the mock are an interaction study: production's incremental Send work is tracked separately in HAM-788.
+The card's always allow and the choices under "why am I being asked?" write through `sys.config.set` into this tab's settings, which Settings → permissions then shows. Approvals accept the ordinary controls and shortcuts. A new message or interruption cancels the old scenario; delayed callbacks cannot finish a superseded run. Streamed replies in the mock are an interaction study: production's incremental Send work is tracked separately in HAM-788.
 
 ## Buttons
 

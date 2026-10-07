@@ -11,31 +11,62 @@ const request = {
 const props = { who: "jessicat", place: "my mac", onInspect: () => {}, onDecide: () => {} };
 
 describe("approval card", () => {
-  it("remembers only an explicit always-allow action and explains its scope", () => {
+  it("offers always allow with its exact scope only when a handler is given, and runs once otherwise", () => {
     const onDecide = vi.fn();
-    const tree = ApprovalCard({ ...props, request, onDecide });
+    const onAlwaysAllow = vi.fn();
+    const tree = ApprovalCard({ ...props, request, onDecide, onAlwaysAllow });
     const nodes = collectNodes(tree);
     const hint = nodes.find((node) => node.type === Hint);
-    expect(hint?.props.text).toBe("Allow this process to run any shell command on my mac without asking again. Other processes still ask.");
-    nodes.find((node) => node.type === "button" && collectText(node) === "always allow")?.props.onClick?.();
-    expect(onDecide).toHaveBeenLastCalledWith("approve", true);
+    expect(hint?.props.text).toBe("Always run commands on my mac without asking. The rule is saved in Settings → permissions, where you can change it.");
+    nodes.find((node) => node.type === "button" && collectText(node).includes("always allow"))?.props.onClick?.();
+    expect(onAlwaysAllow).toHaveBeenCalledOnce();
+    expect(onDecide).not.toHaveBeenCalled();
     nodes.find((node) => node.type === "button" && collectText(node).includes("run it"))?.props.onClick?.();
     expect(onDecide).toHaveBeenLastCalledWith("approve");
     nodes.find((node) => node.type === "button" && collectText(node).includes("don't"))?.props.onClick?.();
     expect(onDecide).toHaveBeenLastCalledWith("deny");
-    onDecide.mockClear();
-    const disabled = ApprovalCard({ ...props, request, onDecide, disabled: true });
-    const remember = collectNodes(disabled).find((node) => node.type === "button" && collectText(node) === "always allow");
-    expect(remember?.props.disabled).toBe(true);
-    remember?.props.onClick?.();
-    expect(onDecide).not.toHaveBeenCalled();
+    const plain = ApprovalCard({ ...props, request });
+    expect(collectText(plain)).not.toContain("always allow");
+    expect(collectNodes(plain).some((node) => node.type === Hint)).toBe(false);
   });
 
   it.each([
-    { ...request, target: "targets/*" },
-    { ...request, syscall: "mail.send" },
-  ])("does not offer shell permission for $syscall on $target", (pending) => {
-    expect(collectText(ApprovalCard({ ...props, request: pending }))).not.toContain("always allow");
+    { pending: { ...request, syscall: "mail.send", target: "gsv" }, scope: "Always send email without asking." },
+    { pending: { ...request, syscall: "sys.mcp.call", target: "gsv", args: { serverId: "calendar", name: "update_event" } }, scope: "Always use any connected tool without asking." },
+    { pending: { ...request, syscall: "fs.write", target: "targets/*" }, scope: "Always write files on my mac without asking." },
+  ])("names the whole scope the rule covers for $pending.syscall", ({ pending, scope }) => {
+    const hint = collectNodes(ApprovalCard({ ...props, request: pending, onAlwaysAllow: () => {} })).find((node) => node.type === Hint);
+    expect(hint?.props.text).toContain(scope);
+  });
+
+  it("offers the explanation link only when given, without a shortcut", () => {
+    const onExplain = vi.fn();
+    const tree = ApprovalCard({ ...props, request, onExplain, shortcuts: false });
+    const link = collectNodes(tree).find((node) => node.type === "button" && collectText(node) === "why am I being asked?");
+    expect(link).toBeDefined();
+    link?.props.onClick?.();
+    expect(onExplain).toHaveBeenCalledOnce();
+    expect(collectNodes(tree).some((node) => node.type === "kbd")).toBe(false);
+    expect(collectText(ApprovalCard({ ...props, request }))).not.toContain("why am I being asked?");
+  });
+
+  it("keeps run and deny live when the rule failed to save, and holds everything while it saves", () => {
+    const failed = ApprovalCard({ ...props, request, onAlwaysAllow: () => {}, alwaysAllowError: "offline" });
+    const text = collectText(failed);
+    expect(text).toContain("the rule was not saved: offline");
+    expect(text).toContain("run it once");
+    const buttons = collectNodes(failed).filter((node) => node.type === "button" && node.props.disabled !== undefined);
+    expect(buttons).toHaveLength(3);
+    for (const button of buttons) expect(button.props.disabled).toBe(false);
+    const onDecide = vi.fn();
+    const onAlwaysAllow = vi.fn();
+    const saving = ApprovalCard({ ...props, request, onDecide, onAlwaysAllow, alwaysAllowSaving: true });
+    const held = collectNodes(saving).filter((node) => node.type === "button" && node.props.disabled !== undefined);
+    expect(held).toHaveLength(3);
+    for (const button of held) { expect(button.props.disabled).toBe(true); button.props.onClick?.(); }
+    expect(onDecide).not.toHaveBeenCalled();
+    expect(onAlwaysAllow).not.toHaveBeenCalled();
+    expect(collectText(saving)).toContain("saving the rule");
   });
 
   it("leads with the model's purpose and folds the command away", () => {

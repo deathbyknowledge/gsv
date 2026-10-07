@@ -63,7 +63,7 @@ Existing standalone deployments should read the
 
 The web console is called **Instrument** and has five views:
 
-- **Zen** is your Ship conversation, and where you inspect what a run did.
+- **Zen** is your Ship conversation, and where you inspect what a run did. An approval card's **why am I being asked?** link explains what your Ship asks about, and anything you **always allow** can be undone from **Settings → permissions**.
 - **Fleet** lists your places, processes and responsibilities, and recently touched files.
 - **Memory** shows your personal knowledge pages.
 - **People** holds conversations, message requests and private contacts across GSV spaces.

@@ -139,17 +139,26 @@ Delegated Work retains its inherited approval route. An already queued adapter d
 chosen destination through retries; changing activity does not replay old notifications.
 
 In Web and Desktop, new approval requests scroll into view without moving the composer cursor or
-changing its draft. Use the buttons to decide, or `y` / `n` when not typing. The request has its own
+changing its draft. Use the buttons to decide, or `y` / `n` (and `a` in Zen for always allow) when not typing. The request has its own
 transcript row, independent of messages and runtime activity. Approvals from delegated work appear
 above the composer. Ship, delegated work and Fleet share one approval card: the
 action's purpose comes first, with command or request details folded underneath.
 The **full request** fold preserves every argument, including structured MCP
 parameters, mail bodies and execution options. Requests without a readable
 summary still expose their complete request in the details fold.
-Shell approvals on a specific target also offer **always allow**. Its tooltip
-explains that this remembers all shell commands on that target for the requesting
-process, not just the displayed command. Other processes and targets still use
-their own approval rules; ordinary approval and denial never remember a rule.
+Each card also offers **always allow** when the signed-in person can change settings and the
+requesting account's approval policy can be edited without loss. It writes one Allow rule for that
+syscall on that target, such as running commands on a machine, into the approval policy of the
+account the requesting process uses, then approves the request once. Its tooltip names that scope.
+The rule appears in **Settings → permissions**, where it can be removed, and applies from the next
+run; the current run keeps the policy it started with. Ordinary approval and denial are one-time
+decisions. The card's **why am I being asked?** link adds a client-authored Ship message below the
+live request: for most of what it does it need not ask, and it only asks before sensitive tasks. A
+box then asks whether to stop asking, with auto-approve for everything, asking only before deleting
+or contacting someone, a list of the sensitive tasks with an allow-or-ask pick for each, or keeping
+things as they are. Every answer saves ordinary rules to the same account policy; one that now allows
+the pending call approves it. Nothing is sent to the Ship, nothing is recorded, and it never opens on
+its own. An account that cannot change settings is told so instead, with **why?** for the reason.
 
 Opening a Process activity inspector calls `proc.observe`. Raw Process signals then reach that
 specific client in addition to any connection that owns the active run. Closing the inspector calls

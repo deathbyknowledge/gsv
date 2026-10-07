@@ -1,5 +1,5 @@
 import { GSVClient, type GsvClientStatus } from "@humansandmachines/gsv/client";
-import type { ConversationMessage, ConversationSendArgs, ConversationSendResult, ConversationSummary, ProcContextState, ProcHilArgs, ProcHistoryRecord, SysTargetSummary } from "@humansandmachines/gsv/protocol";
+import type { ConversationMessage, ConversationSendArgs, ConversationSendResult, ConversationSummary, ProcContextState, ProcHistoryRecord, SysTargetSummary } from "@humansandmachines/gsv/protocol";
 import { conversationSendMessageId } from "@humansandmachines/gsv/protocol/stable-id";
 import { QueryClient, QueryClientProvider } from "@tanstack/preact-query";
 import type { ComponentChildren, ComponentProps, ComponentType } from "preact";
@@ -12,8 +12,12 @@ import { createSessionService } from "../../../services/session/sessionService";
 import { TerminalProvider } from "../../../services/terminal/TerminalProvider";
 import { chatConversationHistoryKey } from "../../../services/chat/hooks/useChatConversation";
 import { collectNodes, collectText, createTestRoot, deferred } from "../../../testing/testHarness";
+import { consoleConfigQueryKey } from "../../../services/system/useConsoleData";
 import { PromptLine, type PromptLineHandle } from "../shared/PromptLine";
 import { NativeVoiceControls } from "../../../services/platform/NativeVoiceControls";
+import { ApprovalSetup } from "./ApprovalSetup";
+import { resolveApprovalAction } from "../../../domain/agentApproval";
+import { parseApprovalPolicy } from "../../../domain/system/consoleAgentBehavior";
 import { Zen } from "./Zen";
 import { ConnectPlace } from "../fleet/ConnectPlace";
 import { FleetDialog } from "../fleet/FleetDialog";
@@ -26,10 +30,18 @@ let messages: ConversationMessage[];
 let targets: SysTargetSummary[];
 let hasMore: boolean;
 let ownerUid: number;
+let selfUid: number;
+let shipUid: number;
 let gateway: string;
 let shipPid: string;
 let activeRunId: string | null;
 let runContext: ProcContextState | null;
+let configEntries: Array<{ key: string; value: string }>;
+let selfCapabilities: string[] | null;
+let configReads: Promise<never> | null;
+let rejectWriteOf: string | null;
+const configWrites: Array<{ key: string; value: string }> = [];
+const hilDecisions: Array<{ requestId: string; decision: string }> = [];
 let processRecords: ProcHistoryRecord[];
 const signals = new Set<Parameters<GSVClient["onSignal"]>[0]>();
 const statuses = new Set<Parameters<GSVClient["onStatus"]>[0]>();
@@ -55,10 +67,18 @@ beforeEach(() => {
   targets = [];
   hasMore = false;
   ownerUid = 1000;
+  selfUid = 1000;
+  shipUid = 1000;
   gateway = "wss://space.example/ws";
   shipPid = "ship";
   activeRunId = null;
   runContext = null;
+  configEntries = [];
+  selfCapabilities = ["*"];
+  configReads = null;
+  rejectWriteOf = null;
+  configWrites.length = 0;
+  hilDecisions.length = 0;
   processRecords = [];
   signals.clear();
   statuses.clear();
@@ -80,8 +100,23 @@ beforeEach(() => {
       personal: true, interactive: true, parentPid: null, state: "idle", activeRunId: null, queuedCount: 0,
       createdAt: 1, lastActiveAt: 1, cwd: "/home/algo" }] } };
     if (call === "sys.target.list") return { data: { targets } };
-    if (call === "sys.config.get") return { data: { entries: [] } };
-    if (call === "account.list") return { data: { accounts: [] } };
+    if (call === "sys.config.get") { if (configReads) await configReads; return { data: { entries: configEntries } }; }
+    if (call === "sys.config.set") {
+      const write = z.object({ key: z.string(), value: z.string() }).parse(args);
+      if (write.key === rejectWriteOf) throw new Error("offline");
+      configWrites.push(write);
+      configEntries = [...configEntries.filter((entry) => entry.key !== write.key), ...(write.value ? [write] : [])];
+      return { data: { ok: true } };
+    }
+    if (call === "account.list") return { data: { accounts: selfCapabilities ? [
+      { uid: selfUid, username: "hank", displayName: "Hank", relation: "self", runnable: false, capabilities: selfCapabilities },
+      { uid: shipUid, username: "algo", displayName: "Algo", relation: "personal-agent", runnable: true, capabilities: [] },
+    ] : [] } };
+    if (call === "proc.hil") {
+      const decision = z.object({ requestId: z.string(), decision: z.string() }).parse(args);
+      hilDecisions.push(decision);
+      return { data: { ok: true, pid: shipPid, requestId: decision.requestId, decision: decision.decision, resumed: true, pendingHil: null } };
+    }
     if (call === "conversation.forProcess") return { data: { conversation: conversation(z.object({ pid: z.string() }).parse(args).pid) } };
     if (call === "conversation.history") return { data: { conversation: conversation(), messages, hasMore } };
     if (call === "proc.history") return { data: { ok: true, pid: z.object({ pid: z.string() }).parse(args).pid,
@@ -89,7 +124,6 @@ beforeEach(() => {
       activeRunId, context: runContext, contextRevision: runContext?.revision ?? 0,
       historyRevision: 1, historyGeneration: 1, historyResetRevision: 0 } };
     if (call === "proc.observe" || call === "proc.unobserve") return { data: { ok: true, pid: shipPid } };
-    if (call === "proc.hil") return { data: { ok: true, pid: shipPid, ...args, resumed: true } };
     if (call === "conversation.send") return { data: await send(sendArgs.parse(args)) };
     if (call === "shell.exec") return { data: { status: "completed", output: "/home/algo\n", stderr: "", exitCode: 0 } };
     throw new Error(`Unexpected request ${call}`);
@@ -122,11 +156,12 @@ async function mountedZen(pid?: string, initialTarget?: string) {
     nodes: () => collectNodes(tree),
     async unmount() { await root.unmount(); cache.clear(); },
     async refreshHistory() { await act(async () => { await cache.invalidateQueries({ queryKey: chatConversationHistoryKey("canonical-ship") }); }); },
+    async refreshConfig() { await act(async () => { await cache.invalidateQueries({ queryKey: consoleConfigQueryKey }); }); },
   };
 }
 
 describe("Zen conversation entry", () => {
-  it.each([false, true])("sends the exact Ship approval with an explicit remember choice: %s", async (remember) => {
+  it("sends the exact Ship approval as a one-time decision", async () => {
     activeRunId = "shell-run";
     const zen = await mountedZen();
     try {
@@ -138,10 +173,9 @@ describe("Zen conversation entry", () => {
         });
       });
       await vi.waitFor(() => expect(zen.props(ApprovalCard).request.requestId).toBe("shell-approval"));
-      await act(() => zen.props(ApprovalCard).onDecide("approve", remember));
-      const expected: ProcHilArgs = { pid: shipPid, requestId: "shell-approval", decision: "approve" };
-      if (remember) expected.remember = true;
-      expect(GSVClient.prototype.request).toHaveBeenCalledWith("proc.hil", expected);
+      await act(() => zen.props(ApprovalCard).onDecide("approve"));
+      expect(GSVClient.prototype.request).toHaveBeenCalledWith("proc.hil", { pid: shipPid, requestId: "shell-approval", decision: "approve" });
+      expect(hilDecisions).toEqual([{ requestId: "shell-approval", decision: "approve" }]);
     } finally { await zen.unmount(); }
   });
 
@@ -464,5 +498,377 @@ describe("Zen conversation entry", () => {
       expect(zen.text()).not.toContain("I am the ship. Who are you?");
       expect(send).not.toHaveBeenCalled();
     } finally { await zen.unmount(); }
+  });
+
+  describe("always allow and the approval explanation", () => {
+    const request = {
+      pid: "ship", requestId: "hil-1", runId: "run-1", callId: "call-1", toolName: "Shell", syscall: "shell.exec",
+      target: "laptop", args: { input: "brew upgrade", target: "laptop" }, purpose: "upgrade your packages", createdAt: 1,
+    };
+    type Mounted = Awaited<ReturnType<typeof mountedZen>>;
+    const setupCard = (zen: Mounted) => zen.nodes().find((entry) => entry.type === ApprovalSetup) ?? null;
+    const approvalCard = (zen: Mounted) => zen.nodes().find((entry) => entry.type === ApprovalCard) ?? null;
+    const setup = (zen: Mounted) => zen.props<ComponentProps<typeof ApprovalSetup>>(ApprovalSetup);
+    const card = (zen: Mounted) => zen.props<ComponentProps<typeof ApprovalCard>>(ApprovalCard);
+    const askApproval = () => act(() => { for (const listener of signals) listener("proc.run.hil.requested", request); });
+    const finishRun = () => act(() => { for (const listener of signals) listener("proc.run.finished", { pid: shipPid, runId: "run-1", status: "completed", queuedCount: 0 }); });
+    const expectCard = (zen: Mounted) => vi.waitFor(() => expect(approvalCard(zen)).not.toBeNull());
+    const expectClosed = (zen: Mounted) => vi.waitFor(() => { expect(setupCard(zen)).toBeNull(); expect(approvalCard(zen)).not.toBeNull(); });
+    const openSetup = async (zen: Mounted) => {
+      await vi.waitFor(() => expect(card(zen).onExplain).toBeDefined());
+      await act(() => { card(zen).onExplain?.(); });
+      await vi.waitFor(() => expect(setupCard(zen)).not.toBeNull());
+    };
+    const approved = [{ requestId: "hil-1", decision: "approve" }];
+    const rulesOf = (value: string) => z.object({ default: z.string(), rules: z.array(z.object({ match: z.string(), target: z.string().optional(), action: z.string() })) }).parse(JSON.parse(value)).rules;
+    const actionOf = (value: string, syscall: string, target: string) => resolveApprovalAction(parseApprovalPolicy(value), syscall, target);
+
+    beforeEach(() => {
+      messages = [message("user", "Upgrade my packages")];
+      targets = [{ targetId: "laptop", label: "Laptop", online: true, implements: ["shell.exec"], platform: "linux",
+        ownerUid: 1000, ownerUsername: "hank", description: "", version: "0.6.2", lastSeenAt: 1 }];
+    });
+
+    it("shows the card alone, and opens the Ship's explanation beside it on request without hiding the request", async () => {
+      const zen = await mountedZen();
+      try {
+        await askApproval();
+        await expectCard(zen);
+        expect(setupCard(zen)).toBeNull();
+        await openSetup(zen);
+        expect(approvalCard(zen)).not.toBeNull();
+        expect(card(zen).onExplain).toBeUndefined();
+        expect(setup(zen).stage).toBe("ask");
+        await act(() => { setup(zen).onDetail(); });
+        expect(setup(zen).stage).toBe("detail");
+        expect(setup(zen).current).toMatchObject({ shell: "ask", delete: "ask", tools: "ask" });
+        await act(() => { setup(zen).onSave(); });
+        await expectClosed(zen);
+        expect(configWrites).toEqual([]);
+        expect(hilDecisions).toEqual([]);
+        expect(card(zen).onAlwaysAllow).toBeDefined();
+      } finally { await zen.unmount(); }
+    });
+
+    it("turns on auto-approve for everything, including the default, then approves the pending request it now allows", async () => {
+      configEntries = [{ key: "config/ai/tools/approval", value: '{"default":"ask","rules":[]}' }];
+      const zen = await mountedZen();
+      try {
+        await askApproval();
+        await openSetup(zen);
+        await act(() => { setup(zen).onAllowAll(); });
+        await vi.waitFor(() => expect(hilDecisions).toEqual(approved));
+        expect(configWrites.map((write) => write.key)).toEqual(["users/1000/ai/tools/approval"]);
+        const policy = configWrites[0].value;
+        for (const [syscall, target] of [["shell.exec", "laptop"], ["fs.write", "laptop"], ["fs.delete", "laptop"], ["fs.delete", "gsv"], ["net.fetch", "laptop"], ["sys.mcp.call", "gsv"], ["mail.send", "gsv"], ["web.search", "gsv"], ["fs.read", "gsv"]]) {
+          expect(actionOf(policy, syscall, target), `${syscall} on ${target}`).toBe("auto");
+        }
+        expect(JSON.parse(policy).default).toBe("auto");
+        await vi.waitFor(() => expect(setupCard(zen)).toBeNull());
+      } finally { await zen.unmount(); }
+    });
+
+    it("keeps asking only before deleting or contacting someone, and approves the pending shell request", async () => {
+      configEntries = [{ key: "config/ai/tools/approval", value: '{"default":"ask","rules":[]}' }];
+      const zen = await mountedZen();
+      try {
+        await askApproval();
+        await openSetup(zen);
+        await act(() => { setup(zen).onLimit(); });
+        await vi.waitFor(() => expect(hilDecisions).toEqual(approved));
+        const policy = configWrites[0].value;
+        for (const [syscall, target] of [["shell.exec", "laptop"], ["fs.write", "laptop"], ["net.fetch", "laptop"], ["sys.mcp.call", "gsv"], ["web.search", "gsv"]]) {
+          expect(actionOf(policy, syscall, target), `${syscall} on ${target}`).toBe("auto");
+        }
+        for (const [syscall, target] of [["fs.delete", "laptop"], ["fs.delete", "gsv"], ["mail.send", "gsv"]]) {
+          expect(actionOf(policy, syscall, target), `${syscall} on ${target}`).toBe("ask");
+        }
+      } finally { await zen.unmount(); }
+    });
+
+    it("writes the policy for the rows that changed, and leaves a request it still asks about pending", async () => {
+      const zen = await mountedZen();
+      try {
+        await askApproval();
+        await openSetup(zen);
+        await act(() => { setup(zen).onDetail(); });
+        await act(() => { setup(zen).onChoose("mail", "auto"); });
+        expect(setup(zen).choices).toEqual({ mail: "auto" });
+        await act(() => { setup(zen).onSave(); });
+        await vi.waitFor(() => expect(configWrites).toHaveLength(1));
+        expect(configWrites[0].key).toBe("users/1000/ai/tools/approval");
+        expect(rulesOf(configWrites[0].value)).toContainEqual({ match: "mail.send", target: "gsv", action: "auto" });
+        expect(rulesOf(configWrites[0].value)).toContainEqual({ match: "shell.exec", target: "targets/*", action: "ask" });
+        await expectClosed(zen);
+        expect(hilDecisions).toEqual([]);
+      } finally { await zen.unmount(); }
+    });
+
+    it("approves the pending request once a pick on the list allows it", async () => {
+      const zen = await mountedZen();
+      try {
+        await askApproval();
+        await openSetup(zen);
+        await act(() => { setup(zen).onDetail(); });
+        await act(() => { setup(zen).onChoose("shell", "auto"); });
+        await act(() => { setup(zen).onSave(); });
+        await vi.waitFor(() => expect(hilDecisions).toEqual(approved));
+        expect(rulesOf(configWrites[0].value)).toContainEqual({ match: "shell.exec", target: "targets/*", action: "auto" });
+      } finally { await zen.unmount(); }
+    });
+
+    it("writes nothing when every pick matches what the policy already does", async () => {
+      const zen = await mountedZen();
+      try {
+        await askApproval();
+        await openSetup(zen);
+        await act(() => { setup(zen).onDetail(); });
+        await act(() => { setup(zen).onChoose("shell", "ask"); });
+        expect(setup(zen).choices).toEqual({});
+        await act(() => { setup(zen).onChoose("mail", "auto"); });
+        await act(() => { setup(zen).onChoose("mail", "ask"); });
+        expect(setup(zen).choices).toEqual({});
+        await act(() => { setup(zen).onSave(); });
+        await expectClosed(zen);
+        expect(configWrites).toEqual([]);
+      } finally { await zen.unmount(); }
+    });
+
+    it("leaves mixed machine scopes intact when their displayed choice is selected again", async () => {
+      configEntries = [{ key: "users/1000/ai/tools/approval", value: JSON.stringify({
+        default: "auto", rules: [{ match: "shell.exec", target: "laptop", action: "ask" }],
+      }) }];
+      const zen = await mountedZen();
+      try {
+        await askApproval();
+        await openSetup(zen);
+        await act(() => { setup(zen).onDetail(); });
+        expect(setup(zen).current.shell).toBe("ask");
+        await act(() => { setup(zen).onChoose("shell", "ask"); });
+        expect(setup(zen).choices).toEqual({});
+        await act(() => { setup(zen).onChoose("shell", "auto"); });
+        await act(() => { setup(zen).onChoose("shell", "ask"); });
+        expect(setup(zen).choices).toEqual({});
+        await act(() => { setup(zen).onSave(); });
+        await expectClosed(zen);
+        expect(configWrites).toEqual([]);
+      } finally { await zen.unmount(); }
+    });
+
+    it("keeps the list open with the error when the policy does not save, and saves the revised picks after", async () => {
+      rejectWriteOf = "users/1000/ai/tools/approval";
+      const zen = await mountedZen();
+      try {
+        await askApproval();
+        await openSetup(zen);
+        await act(() => { setup(zen).onDetail(); });
+        await act(() => { setup(zen).onChoose("mail", "auto"); });
+        await act(() => { setup(zen).onSave(); });
+        await vi.waitFor(() => expect(setup(zen).error).toBe("offline"));
+        expect(setup(zen).stage).toBe("detail");
+        expect(setup(zen).saving).toBe(false);
+        expect(configWrites).toEqual([]);
+        expect(approvalCard(zen)).not.toBeNull();
+        rejectWriteOf = null;
+        await act(() => { setup(zen).onSave(); });
+        await expectClosed(zen);
+        expect(configWrites.map((write) => write.key)).toEqual(["users/1000/ai/tools/approval"]);
+        expect(rulesOf(configWrites[0].value)).toContainEqual({ match: "mail.send", target: "gsv", action: "auto" });
+        expect(hilDecisions).toEqual([]);
+      } finally { await zen.unmount(); }
+    });
+
+    it("keeps the question open with the error when auto-approve for everything does not save", async () => {
+      rejectWriteOf = "users/1000/ai/tools/approval";
+      const zen = await mountedZen();
+      try {
+        await askApproval();
+        await openSetup(zen);
+        await act(() => { setup(zen).onAllowAll(); });
+        await vi.waitFor(() => expect(setup(zen).error).toBe("offline"));
+        expect(setup(zen).stage).toBe("ask");
+        expect(hilDecisions).toEqual([]);
+      } finally { await zen.unmount(); }
+    });
+
+    it("closes without writing, and closes on its own once the approval is answered", async () => {
+      const zen = await mountedZen();
+      try {
+        await askApproval();
+        await openSetup(zen);
+        await act(() => { setup(zen).onClose(); });
+        await expectClosed(zen);
+        await openSetup(zen);
+        await act(() => { card(zen).onDecide("approve"); });
+        await vi.waitFor(() => expect(hilDecisions).toEqual(approved));
+        await finishRun();
+        await vi.waitFor(() => expect(setupCard(zen)).toBeNull());
+        expect(approvalCard(zen)).toBeNull();
+        expect(configWrites).toEqual([]);
+      } finally { await zen.unmount(); }
+    });
+
+    it("always allow writes the rule to the account policy before approving once", async () => {
+      const zen = await mountedZen();
+      try {
+        await askApproval();
+        await expectCard(zen);
+        await vi.waitFor(() => expect(card(zen).onAlwaysAllow).toBeDefined());
+        expect(collectText(ApprovalCard(card(zen)))).toContain("always allow");
+        await act(async () => { card(zen).onAlwaysAllow?.(); });
+        await vi.waitFor(() => expect(hilDecisions).toEqual(approved));
+        expect(GSVClient.prototype.request).toHaveBeenCalledWith("proc.hil", { pid: shipPid, requestId: "hil-1", decision: "approve" });
+        expect(configWrites).toHaveLength(1);
+        expect(configWrites[0].key).toBe("users/1000/ai/tools/approval");
+        expect(rulesOf(configWrites[0].value)).toContainEqual({ match: "shell.exec", target: "laptop", action: "auto" });
+      } finally { await zen.unmount(); }
+    });
+
+    it("holds y and n while the always-allow rule is being written, then approves once it is", async () => {
+      const keys = new Set<(event: KeyboardEvent) => void>();
+      vi.stubGlobal("Element", class {});
+      vi.stubGlobal("HTMLElement", class {});
+      vi.stubGlobal("window", { ...window,
+        addEventListener: (type: string, listener: (event: KeyboardEvent) => void) => { if (type === "keydown") keys.add(listener); },
+        removeEventListener: (type: string, listener: (event: KeyboardEvent) => void) => { if (type === "keydown") keys.delete(listener); },
+      });
+      const press = (key: string) => act(() => {
+        const event: Pick<KeyboardEvent, "key" | "target" | "preventDefault"> = { key, target: null, preventDefault: () => {} };
+        // SAFETY: The handler reads only key, target, modifier flags and preventDefault; a null target means "not typing".
+        const keyboardEvent = event as KeyboardEvent;
+        for (const listener of keys) listener(keyboardEvent);
+      });
+      let release!: () => void;
+      const zen = await mountedZen();
+      try {
+        await askApproval();
+        await expectCard(zen);
+        await vi.waitFor(() => expect(card(zen).onAlwaysAllow).toBeDefined());
+        configReads = new Promise<never>((_, reject) => { release = () => reject(new Error("released")); });
+        await press("a");
+        await vi.waitFor(() => expect(card(zen).alwaysAllowSaving).toBe(true));
+        await press("n");
+        await press("y");
+        await press("a");
+        expect(hilDecisions).toEqual([]);
+        configReads = null;
+        release();
+        await vi.waitFor(() => expect(card(zen).alwaysAllowError).toBe("released"));
+        /* the explanation's own save holds the card the same way */
+        await openSetup(zen);
+        await act(() => { setup(zen).onDetail(); });
+        await act(() => { setup(zen).onChoose("mail", "auto"); });
+        configReads = new Promise<never>((_, reject) => { release = () => reject(new Error("released again")); });
+        await act(() => { setup(zen).onSave(); });
+        await vi.waitFor(() => expect(setup(zen).saving).toBe(true));
+        expect(card(zen).disabled).toBe(true);
+        await press("n");
+        expect(hilDecisions).toEqual([]);
+        configReads = null;
+        release();
+        await vi.waitFor(() => expect(setup(zen).error).toBe("released again"));
+        expect(card(zen).disabled).toBe(false);
+        await press("n");
+        await vi.waitFor(() => expect(hilDecisions).toEqual([{ requestId: "hil-1", decision: "deny" }]));
+        expect(configWrites).toEqual([]);
+      } finally { await zen.unmount(); }
+    });
+
+    it("refuses always allow when the inherited policy changed after the snapshot loaded", async () => {
+      const zen = await mountedZen();
+      try {
+        await askApproval();
+        await expectCard(zen);
+        await vi.waitFor(() => expect(card(zen).onAlwaysAllow).toBeDefined());
+        configEntries = [...configEntries, { key: "config/ai/tools/approval", value: '{"default":"deny","rules":[]}' }];
+        await act(async () => { card(zen).onAlwaysAllow?.(); });
+        await vi.waitFor(() => expect(card(zen).alwaysAllowError).toContain("inherited policy changed"));
+        expect(configWrites).toEqual([]);
+        expect(hilDecisions).toEqual([]);
+      } finally { await zen.unmount(); }
+    });
+
+    it("apologises instead of offering choices when the account cannot write settings, and says why on request", async () => {
+      selfCapabilities = ["proc.*"];
+      const zen = await mountedZen();
+      try {
+        await askApproval();
+        await expectCard(zen);
+        await openSetup(zen);
+        expect(setup(zen).stage).toBe("blocked");
+        expect(setup(zen).blocked).toBe("capability");
+        expect(card(zen).onAlwaysAllow).toBeUndefined();
+        await act(() => { setup(zen).onWhy(); });
+        expect(setup(zen).stage).toBe("why");
+        await act(() => { setup(zen).onClose(); });
+        await expectClosed(zen);
+        expect(configWrites).toEqual([]);
+      } finally { await zen.unmount(); }
+    });
+
+    it.each([
+      { key: "users/1000/ai/tools/approval", value: '{"default":"ask","rules":[{"match":"shell.exec","action":"auto","when":"weekdays"}]}' },
+      { key: "config/ai/tools/approval", value: '{"default":"ask","rules":[{"match":"shell.exec","action":"auto","when":"weekdays"}]}' },
+    ])("apologises, and offers no always allow, when $key cannot be edited losslessly", async (entry) => {
+      configEntries = [entry];
+      const zen = await mountedZen();
+      try {
+        await askApproval();
+        await expectCard(zen);
+        await openSetup(zen);
+        expect(setup(zen).stage).toBe("blocked");
+        expect(setup(zen).blocked).toBe("policy");
+        expect(card(zen).onAlwaysAllow).toBeUndefined();
+        await act(() => { setup(zen).onClose(); });
+        await expectClosed(zen);
+        expect(configWrites).toEqual([]);
+      } finally { await zen.unmount(); }
+    });
+
+    it("writes to the process owner's policy when root reviews its approval", async () => {
+      selfUid = 0;
+      shipUid = 1001;
+      const zen = await mountedZen("ship");
+      try {
+        await zen.refreshHistory();
+        await askApproval();
+        await expectCard(zen);
+        await vi.waitFor(() => expect(card(zen).onAlwaysAllow).toBeDefined());
+        await act(async () => { card(zen).onAlwaysAllow?.(); });
+        await vi.waitFor(() => expect(hilDecisions).toEqual(approved));
+        expect(configWrites.map((write) => write.key)).toEqual(["users/1000/ai/tools/approval"]);
+      } finally { await zen.unmount(); }
+    });
+
+    it("writes always allow to the agent's own override when the pending process resolves that one", async () => {
+      shipUid = 1001;
+      configEntries = [
+        { key: "users/1001/ai/tools/approval", value: '{"default":"auto","rules":[{"match":"shell.exec","target":"targets/*","action":"ask"}]}' },
+      ];
+      const zen = await mountedZen();
+      try {
+        await askApproval();
+        await expectCard(zen);
+        await vi.waitFor(() => expect(card(zen).onAlwaysAllow).toBeDefined());
+        await act(async () => { card(zen).onAlwaysAllow?.(); });
+        await vi.waitFor(() => expect(hilDecisions).toEqual(approved));
+        expect(configWrites.map((write) => write.key)).toEqual(["users/1001/ai/tools/approval"]);
+        expect(rulesOf(configWrites[0].value)).toContainEqual({ match: "shell.exec", target: "laptop", action: "auto" });
+      } finally { await zen.unmount(); }
+    });
+
+    it("never holds a decision behind an unread settings read, and offers nothing persistent until it is read", async () => {
+      configReads = new Promise(() => {});
+      const zen = await mountedZen();
+      try {
+        await askApproval();
+        await expectCard(zen);
+        expect(card(zen).onAlwaysAllow).toBeUndefined();
+        expect(card(zen).onExplain).toBeUndefined();
+        await act(() => { card(zen).onDecide("approve"); });
+        await vi.waitFor(() => expect(hilDecisions).toEqual(approved));
+        expect(configWrites).toEqual([]);
+      } finally { await zen.unmount(); }
+    });
   });
 });
