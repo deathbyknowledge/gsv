@@ -57,7 +57,7 @@ describe("contact notices in the ship chat", () => {
       await emit("message.committed", committed(1, { attention: "quiet" }));
       expect(view.current.notices).toEqual([]);
       await emit("message.committed", committed(2));
-      expect(view.current.notices).toMatchObject([{ contactId: "contact:ada", displayName: "Ada Lovelace", sequence: 2, text: "message 2", byShip: true, count: 1 }]);
+      expect(view.current.notices).toMatchObject([{ contactId: "contact:ada", displayName: "Ada Lovelace", messages: [{ sequence: 2, text: "message 2", byShip: true }], replied: false }]);
     } finally { await view.unmount(); }
   });
 
@@ -69,7 +69,7 @@ describe("contact notices in the ship chat", () => {
     } finally { await view.unmount(); }
   });
 
-  it("keeps one notice per contact, counting messages and holding the latest, without double counting a repeat", async () => {
+  it("keeps one notice per contact holding every waiting message in order, without double counting a repeat", async () => {
     const view = await mounted();
     try {
       await emit("message.committed", committed(1));
@@ -77,13 +77,13 @@ describe("contact notices in the ship chat", () => {
       await emit("message.committed", committed(2));
       await emit("message.committed", committed(1, { contactId: "contact:bob" }));
       expect(view.current.notices).toMatchObject([
-        { contactId: "contact:ada", sequence: 2, count: 2, byShip: true },
-        { contactId: "contact:bob", sequence: 1, count: 1 },
+        { contactId: "contact:ada", messages: [{ sequence: 1 }, { sequence: 2, byShip: true }] },
+        { contactId: "contact:bob", messages: [{ sequence: 1 }] },
       ]);
     } finally { await view.unmount(); }
   });
 
-  it("clears a notice once the conversation is read past its message elsewhere", async () => {
+  it("clears a notice once the conversation is read past its newest message elsewhere", async () => {
     const view = await mounted();
     try {
       await emit("message.committed", committed(3));
@@ -107,19 +107,19 @@ describe("contact notices in the ship chat", () => {
     } finally { await view.unmount(); }
   });
 
-  it("keeps an answered notice through a read elsewhere, and starts the count over when the contact writes again", async () => {
+  it("keeps an answered notice through a read elsewhere, and starts a new batch when the contact writes again", async () => {
     const view = await mounted();
     try {
       await emit("message.committed", committed(1));
       await emit("message.committed", committed(2));
       await act(() => view.current.markReplied("contact:ada"));
-      expect(view.current.notices).toMatchObject([{ count: 2, replied: true }]);
+      expect(view.current.notices).toMatchObject([{ messages: [{ sequence: 1 }, { sequence: 2 }], replied: true }]);
       readThrough = 2;
       await emit("conversation.changed", { conversationId: "conversation:contact:ada", latestSequence: 2, viewOnly: true });
       expect(GSVClient.prototype.request).not.toHaveBeenCalled();
-      expect(view.current.notices).toMatchObject([{ count: 2, replied: true }]);
+      expect(view.current.notices).toMatchObject([{ replied: true }]);
       await emit("message.committed", committed(3));
-      expect(view.current.notices).toMatchObject([{ sequence: 3, count: 1, replied: false }]);
+      expect(view.current.notices).toMatchObject([{ messages: [{ sequence: 3 }], replied: false }]);
     } finally { await view.unmount(); }
   });
 

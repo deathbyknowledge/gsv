@@ -5,15 +5,24 @@ import type { ConsoleAccount } from "../../../domain/system/consoleModels";
 import { useGateway } from "../../../services/gateway/GatewayProvider";
 import { randomId } from "../../../services/ids";
 import { canConfigure } from "../settings/settingsModel";
-import type { ContactNotice } from "./useContactNotices";
+import { latestOf, type ContactNotice } from "./useContactNotices";
 import "../shared/senderBadge.css";
 
 /* the same ceiling the People composer applies */
 const MAX_REPLY_BYTES = 32_768;
+/* how much of the newest message the notice line shows */
+const PREVIEW_WORDS = 8;
 
 /** The local alias when the person set one, else the name the peer sent. */
 export function noticeName(notice: ContactNotice, contact: ContactSummary | undefined): string {
   return contact ? contactDisplayName(contact) : notice.displayName;
+}
+
+/** The first words of a message, clipped; an attachment with no text says so. */
+export function preview(text: string): string {
+  const words = text.trim().split(/\s+/).filter(Boolean);
+  if (words.length === 0) return "(an attachment, with no text)";
+  return words.length > PREVIEW_WORDS ? `${words.slice(0, PREVIEW_WORDS).join(" ")}…` : words.join(" ");
 }
 
 /* inline markup rather than a component, so the badge reads in the moment's own tree */
@@ -23,33 +32,35 @@ function senderBadge(byShip: boolean) {
 
 /**
  * A contact wrote while the person was here: their name and badge the way any sender shows,
- * how many messages are waiting, and what to do about it. The reply box, when open, renders
- * as children between the line and the actions.
+ * the start of the newest message, and what to do about it. The opened messages and reply box
+ * render as children between the line and the actions.
  */
-export function ContactNoticeMoment({ notice, contact, open, onReply, onGoToChat, children }: {
+export function ContactNoticeMoment({ notice, contact, open, onShow, onGoToChat, children }: {
   notice: ContactNotice;
   contact: ContactSummary | undefined;
-  /** the reply box is showing, so the reply action steps aside */
+  /** the messages are showing, so the show action steps aside */
   open: boolean;
-  onReply: () => void;
+  onShow: () => void;
   onGoToChat: () => void;
   children?: ComponentChildren;
 }) {
   const name = noticeName(notice, contact);
+  const latest = latestOf(notice);
+  const count = notice.messages.length;
   return (
     <div class="zen-moment is-contact-notice" role="status">
-      <div class="who">{name}{senderBadge(notice.byShip)}</div>
-      <div class="text">{`Sent ${notice.count} ${notice.count === 1 ? "message" : "messages"}`}{notice.replied && <span class="replied">(replied)</span>}</div>
+      <div class="who">{name}{senderBadge(latest.byShip)}</div>
+      <div class="text">{preview(latest.text)}{notice.replied && <span class="replied">(replied)</span>}</div>
       {children}
       <div class="keys">
-        {!notice.replied && !open && <button type="button" class="fleet-text-action" onClick={onReply}>reply</button>}
+        {!notice.replied && !open && <button type="button" class="fleet-text-action" onClick={onShow}>{count === 1 ? "show message" : `show ${count} messages`}</button>}
         <button type="button" class="fleet-text-action" onClick={onGoToChat}>go to chat</button>
       </div>
     </div>
   );
 }
 
-/** The message and a reply box inline under the notice; sending threads the reply to that message. */
+/** The waiting messages in full and a reply box, inline under the notice; sending threads the reply to the newest one. */
 export function ContactReplyBox({ notice, contact, account, onSent }: {
   notice: ContactNotice;
   contact: ContactSummary | undefined;
@@ -70,7 +81,7 @@ export function ContactReplyBox({ notice, contact, account, onSent }: {
     if (!maySend || !body || tooLong || state === "sending") return;
     setState("sending"); setError(null);
     try {
-      await client.contact.send({ contactId: notice.contactId, text: body, idempotencyKey: randomId(), replyTo: notice.reference });
+      await client.contact.send({ contactId: notice.contactId, text: body, idempotencyKey: randomId(), replyTo: latestOf(notice).reference });
       onSent();
     } catch (cause) {
       setState("failed");
@@ -80,7 +91,7 @@ export function ContactReplyBox({ notice, contact, account, onSent }: {
 
   return (
     <div class="reply-box">
-      <p class="ask">{notice.text || "(an attachment, with no text)"}</p>
+      {notice.messages.map((message) => <p key={message.messageId} class="ask">{message.text || "(an attachment, with no text)"}</p>)}
       <textarea class="reply" rows={3} placeholder={`reply to ${name}`} value={text} disabled={!maySend || state === "sending"}
         onInput={(event: JSX.TargetedEvent<HTMLTextAreaElement>) => setText(event.currentTarget.value)} />
       <div class="send">

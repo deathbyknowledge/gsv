@@ -37,7 +37,7 @@ import { ApprovalCard } from "../shared/ApprovalCard";
 import { canConfigure } from "../settings/settingsModel";
 import { useContacts } from "../people/Contacts";
 import { ContactNoticeMoment, ContactReplyBox } from "./ContactNotice";
-import { useContactNotices, type ContactNotice } from "./useContactNotices";
+import { latestOf, useContactNotices, type ContactNotice } from "./useContactNotices";
 import { DelegatedApprovals } from "./DelegatedApprovals";
 import { useZenScroll } from "./useZenScroll";
 import { useZenProcess } from "./useZenProcess";
@@ -337,7 +337,7 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
   const markRead = (notice: ContactNotice) => {
     if (!may("conversation.view.update")) return;
     /* a failed read mark changes nothing the person can see; the notice still clears when they act on it */
-    void client.conversation.view.update({ conversationId: notice.conversationId, readThroughSequence: notice.sequence }).catch(() => undefined);
+    void client.conversation.view.update({ conversationId: notice.conversationId, readThroughSequence: latestOf(notice).sequence }).catch(() => undefined);
   };
   const timeZone = ownerTimeZone(config.data, viewer?.uid);
   const [today, setToday] = useState(Date.now);
@@ -1021,7 +1021,7 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
               })}
               {notices.notices.map((notice) => (
                 <ContactNoticeMoment key={notice.contactId} notice={notice} contact={contactFor(notice.contactId)} open={replying === notice.contactId}
-                  onReply={() => setReplying(notice.contactId)}
+                  onShow={() => setReplying(notice.contactId)}
                   onGoToChat={() => onPeople?.(notice.contactId)}>
                   {replying === notice.contactId && <ContactReplyBox notice={notice} contact={contactFor(notice.contactId)} account={viewer}
                     onSent={() => { notices.markReplied(notice.contactId); markRead(notice); setReplying(null); }} />}
