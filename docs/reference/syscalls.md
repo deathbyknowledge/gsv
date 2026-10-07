@@ -1590,7 +1590,11 @@ discards unsaved changes.
 `handoff.open`, `handoff.finish`, `browser.frame`, `browser.watch`,
 and `browser.input` require a directly signed-in human.
 Processes cannot use them. A process's handoff request requires a writable
-responsibility ID. `frame` returns a JPEG in its binary body; `input` accepts a
+responsibility ID. Only a pending or active handoff puts that work into waiting;
+retrying a terminal request reconciles completion without blocking the work again.
+Cancelling or resolving the linked responsibility releases its human request
+before committing the work's terminal state. Provider cleanup failure leaves the
+work unchanged for retry. `frame` returns a JPEG in its binary body; `input` accepts a
 bounded JSON body describing a click, key, text, scroll or tab selection. Viewing
 does not create a handoff or pause automation. Input names the displayed tab and
 document, and rejects a changed document before dispatch. Human and agent input

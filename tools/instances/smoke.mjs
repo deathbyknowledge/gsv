@@ -112,7 +112,10 @@ try {
   await checkBrowserFollowing(client, first, website);
   const opened = await shell(first, `tabs open --active ${website}/login`);
   const { tab } = JSON.parse(opened.slice(opened.indexOf("\n") + 1));
-  const { handoff } = await client.sys.browser.handoff.request({ instanceId: first.instanceId, requestId: crypto.randomUUID(), tabId: tab.id, purpose: "Test persistent sign-in" });
+  const { responsibility: signInWork } = await client.r12y.create({ title: "Test persistent sign-in" });
+  const handoffArgs = { instanceId: first.instanceId, requestId: crypto.randomUUID(), tabId: tab.id, purpose: "Test persistent sign-in", responsibilityId: signInWork.id };
+  const { handoff } = await client.sys.browser.handoff.request(handoffArgs);
+  assert.equal((await client.r12y.get({ id: signInWork.id })).responsibility.state, "waiting");
   const selector = { instanceId: first.instanceId, requestId: handoff.requestId };
   await client.sys.browser.handoff.open(selector);
   await assert.rejects(client.shell.exec({ target: first.targetId, input: "page snapshot" }), /human_control/);
@@ -132,9 +135,21 @@ try {
   await input({ kind: "key", key: "Enter" });
   await Promise.race([storageReady, sleep(15000).then(() => { throw new Error("Sign-in fixture did not save state"); })]);
   await client.sys.browser.handoff.finish(selector);
+  assert.equal((await client.r12y.get({ id: signInWork.id })).responsibility.state, "open");
+  assert.equal((await client.sys.browser.handoff.request(handoffArgs)).handoff.state, "completed");
+  assert.equal((await client.r12y.get({ id: signInWork.id })).responsibility.state, "open", "A completed retry re-blocked the work");
+  await client.r12y.update({ id: signInWork.id, patch: { state: "resolved" } });
   await assert.rejects(input({ kind: "text", text: "late" }), /no longer active/);
   assert.equal((await client.sys.browser.profile.get({ profileId })).profile.saveStatus, "saved");
   console.log("Human login completed and profile saved; late input rejected");
+  const { responsibility: cancelledWork } = await client.r12y.create({ title: "Test cancelled sign-in" });
+  const cancelledSelector = { instanceId: first.instanceId, requestId: crypto.randomUUID() };
+  await client.sys.browser.handoff.request({ ...cancelledSelector, tabId: tab.id, purpose: "Test cancellation", responsibilityId: cancelledWork.id });
+  await client.sys.browser.handoff.open(cancelledSelector);
+  await client.r12y.update({ id: cancelledWork.id, patch: { state: "cancelled" } });
+  assert.equal((await client.sys.browser.handoff.get(cancelledSelector)).handoff.state, "cancelled");
+  await shell(first, "page snapshot");
+  console.log("PASS: linked work resumes once, terminal handoff retries stay terminal, and cancelling work releases human control");
   await seedBrowserStorage(shell, client, first);
   await seedPartialBrowserStorage(shell, client, first, website);
   // Close the site's tabs: persistence must remember origins independently.

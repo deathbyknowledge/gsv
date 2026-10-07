@@ -1,6 +1,22 @@
 import type { InstallationInstances, InstanceActor } from "@humansandmachines/gsv/services/instances";
 import { principalOf, resolveCallerOwnerUid, type KernelContext } from "./context";
 import { raceWithAbort } from "../shared/abort";
+import type { ResponsibilityRecord } from "@humansandmachines/gsv/protocol";
+import { z } from "zod";
+
+const handoffLinkSchema = z.object({ instanceId: z.string(), requestId: z.string() });
+
+/** Work owns its linked human-control request; release it before committing terminal work. */
+export function cancelResponsibilityHandoff(work: ResponsibilityRecord, ctx: KernelContext): Promise<void> | undefined {
+  const link = handoffLinkSchema.safeParse(work.details?.browserHandoff);
+  if (!link.success) return;
+  return withInstances(ctx, async (service, actor) => {
+    const { handoff } = await service.getHandoff(actor, link.data);
+    // Details are editable. Only the provider's matching responsibility grants cleanup authority.
+    if (handoff?.responsibilityId !== work.id || !["pending", "active"].includes(handoff.state)) return;
+    await service.cancelHandoff(actor, link.data);
+  });
+}
 
 export function instanceActor(ctx: KernelContext): InstanceActor {
   const principal = principalOf(ctx);

@@ -61,13 +61,30 @@ export async function handleInstanceRequest(frame: InstanceRequest, ctx: KernelC
       case "sys.browser.handoff.request": {
         if (ctx.processId && !frame.args.responsibilityId) throw new Error("Agent browser handoffs require the responsibilityId of the waiting work");
         const work = frame.args.responsibilityId ? requireWritableResponsibility(frame.args.responsibilityId, ctx) : undefined;
-        const result = await service.requestHandoff(owner, frame.args);
+        const result = await service.requestHandoff(owner, work ? { ...frame.args, responsibilityId: work.id } : frame.args);
         if (result.handoff.responsibilityId) {
-          await handleResponsibilityUpdate({ id: result.handoff.responsibilityId, patch: {
-            state: "waiting", blocker: `browser handoff ${result.handoff.instanceId}/${result.handoff.requestId}`,
-            nextCheckAtMs: result.handoff.expiresAt,
-            details: { ...work?.details, browserHandoff: { instanceId: result.handoff.instanceId, requestId: result.handoff.requestId } },
-          } }, ctx);
+          const selector = { instanceId: result.handoff.instanceId, requestId: result.handoff.requestId };
+          if (result.handoff.state === "pending" || result.handoff.state === "active") {
+            try {
+              ctx.requestSignal?.throwIfAborted();
+              const current = requireWritableResponsibility(result.handoff.responsibilityId, ctx);
+              if (current.state === "resolved" || current.state === "cancelled") {
+                result.handoff = (await service.cancelHandoff(owner, selector)).handoff!;
+              } else {
+                await handleResponsibilityUpdate({ id: current.id, expectedRevision: current.revision, patch: {
+                  state: "waiting", blocker: `browser handoff ${selector.instanceId}/${selector.requestId}`,
+                  nextCheckAtMs: result.handoff.expiresAt,
+                  details: { ...current.details, browserHandoff: selector },
+                } }, ctx);
+                // Completion may have raced the waiting update. Read the provider again after installing it.
+                result.handoff = (await service.getHandoff(owner, selector)).handoff!;
+              }
+            } catch (error) {
+              await service.cancelHandoff(owner, selector);
+              throw error;
+            }
+          }
+          await completeResponsibility(result.handoff, ctx);
         }
         data = { ...result, actionPath: ctx.installationIdentity?.canonicalOrigin ? new URL(result.actionPath, ctx.installationIdentity.canonicalOrigin).href : result.actionPath }; break;
       }

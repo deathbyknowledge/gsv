@@ -225,6 +225,10 @@ browser handoff get <instance-id> <request-id>
 ```
 
 Human completion or cancellation reopens the matching waiting responsibility.
+Retrying the same completed request does not put the work back into waiting.
+Cancelling or resolving the responsibility also cancels its pending or active
+human request, releasing the browser for automation. If that cleanup fails, the
+work stays unchanged and the update can be retried.
 Its deadline also provides a durable recovery check if completion is interrupted.
 After return, inspect the actual page before continuing. A disconnected browser
 or uncertain click does not authorize repeating that click in another instance.
