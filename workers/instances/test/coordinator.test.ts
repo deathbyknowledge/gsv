@@ -59,6 +59,57 @@ function anotherReadyBrowser(store: InstanceStore): string {
 }
 
 describe("human browser control", () => {
+  it.each(["stop", "delete"])("rejects delayed command admission after %s without allocating runtime state", mode => fixture(async (object, store, instanceId, installationId) => {
+    const entered = deferred(), admitted = deferred(), cancel = vi.fn();
+    vi.spyOn(InstancePolicy.prototype, "requireActive").mockImplementationOnce(async () => { entered.resolve(); await admitted.promise; });
+    const tracked = vi.spyOn(Map.prototype, "set");
+    const command = object.execute(actor, instanceId, {
+      type: "req", id: "delayed", call: "fs.transfer.receive", args: { path: "/tmp/input" },
+      body: { stream: new ReadableStream<Uint8Array>({ cancel }, { highWaterMark: 0 }), length: 1 },
+    }, Date.now() + 10000);
+    const rejected = expect(command).rejects.toThrow(mode === "stop" ? "not ready" : "retired");
+    await entered.promise;
+    vi.spyOn(BrowserProvider.prototype, "exists").mockResolvedValue(false);
+    await object.stop(actor, { instanceId, force: true });
+    await object.alarm();
+    if (mode === "delete") {
+      const deletion = { version: 1 as const, operationId: "delete-space", installationId };
+      await object.quiesceInstallation(deletion);
+      expect((await object.eraseInstallation(deletion)).phase).toBe("live-erased");
+    }
+    tracked.mockClear();
+    admitted.resolve(); await rejected;
+    expect(cancel).toHaveBeenCalledOnce();
+    expect(tracked.mock.calls.some(([key]) => key === instanceId)).toBe(false);
+    expect(store.sql.exec("SELECT id FROM diagnostics").toArray()).toEqual([]);
+  }));
+
+  it.each([false, true])("releases terminal bookkeeping without forgetting pending work (late input: %s)", lateInput => fixture(async (object, _store, instanceId, installationId, browser) => {
+    const started = deferred(), finished = deferred();
+    browser.humanInput = async () => { started.resolve(); await finished.promise; };
+    const tracked = vi.spyOn(Map.prototype, "set");
+    await object.execute(actor, instanceId, { type: "req", id: "command", call: "shell.exec", args: { input: "page snapshot" } }, Date.now() + 10000);
+    const input = object.input(actor, { instanceId, tabId: 1, documentId: "document" }, { kind: "text", text: "typing" });
+    await started.promise;
+    let queued: Promise<void> | undefined;
+    if (lateInput) {
+      queued = expect(object.input(actor, { instanceId, tabId: 1, documentId: "document" }, { kind: "text", text: "queued" })).rejects.toThrow("not ready");
+    } else { finished.resolve(); await input; }
+    vi.spyOn(BrowserProvider.prototype, "exists").mockResolvedValue(false);
+    await object.stop(actor, { instanceId, force: true });
+    await object.alarm();
+    expect((await object.get(actor, { instanceId })).instance?.state).toBe("stopped");
+    const deletion = { version: 1 as const, operationId: "delete-space", installationId };
+    if (lateInput) {
+      expect((await object.quiesceInstallation(deletion)).phase).toBe("quiescing");
+      finished.resolve(); await input; await queued;
+    }
+    expect((await object.quiesceInstallation(deletion)).phase).toBe("quiesced");
+    const maps = tracked.mock.contexts.filter((_map, index) => tracked.mock.calls[index]?.[0] === instanceId);
+    expect(maps.length).toBeGreaterThan(0);
+    expect(maps.some(map => map.has(instanceId))).toBe(false);
+  }));
+
   it("serializes cold attachments and manual snapshots across different browsers", () => fixture(async (object, store, firstId, _installationId, browser) => {
     const secondId = anotherReadyBrowser(store), attached = deferred(), saved = deferred();
     let attaching = 0, peakAttachments = 0, saving = 0, peakSaves = 0;

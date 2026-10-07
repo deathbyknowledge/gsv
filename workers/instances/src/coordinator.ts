@@ -340,9 +340,11 @@ export class InstanceCoordinator extends DurableObject<Environment> implements I
     try { await operation; return { accepted: true as const }; }
     finally {
       if (this.#humanInputs.get(args.instanceId) === operation) this.#humanInputs.delete(args.instanceId);
-      this.#autosaveAfter.set(args.instanceId, Date.now() + 3000);
-      const alarm = await this.ctx.storage.getAlarm();
-      if (alarm === null || alarm > Date.now() + 3000) await this.ctx.storage.setAlarm(Date.now() + 3000);
+      if (this.#store.byId(args.instanceId).active) {
+        this.#autosaveAfter.set(args.instanceId, Date.now() + 3000);
+        const alarm = await this.ctx.storage.getAlarm();
+        if (alarm === null || alarm > Date.now() + 3000) await this.ctx.storage.setAlarm(Date.now() + 3000);
+      }
     }
   }
 
@@ -352,6 +354,7 @@ export class InstanceCoordinator extends DurableObject<Environment> implements I
       if (!isBrowserRequest(frame)) throw new Error("Unsupported browser syscall");
       if (this.#store.liveHandoffs(id).length && !this.#handoffBarriers.has(id)) { await cancelBinaryBody(frame.body, "Human controls browser"); return { type: "res", id: frame.id, ok: false, error: { code: 409, message: "human_control: waiting for the user to return browser control" } }; }
       await this.#policy.requireActive();
+      this.requireInstance(actor, id, true);
       if (this.#stops.has(id)) throw new Error("Browser is preparing to stop");
     } catch (error) {
       await cancelBinaryBody(frame.body, "Browser request was not admitted");
@@ -387,7 +390,10 @@ export class InstanceCoordinator extends DurableObject<Environment> implements I
     })();
     operations.set(frame.id, { abort, done });
     try { return await done; }
-    finally { clearTimeout(timer); operations.delete(frame.id); }
+    finally {
+      clearTimeout(timer); operations.delete(frame.id);
+      if (!operations.size && this.#operations.get(id) === operations) this.#operations.delete(id);
+    }
   }
   async cancel(actor: InstanceActor, id: string, requestId: string): Promise<void> {
     id = this.requireInstance(actor, id).id;
@@ -399,6 +405,7 @@ export class InstanceCoordinator extends DurableObject<Environment> implements I
     return boundedSettlement(operations.map(operation => operation.done), 10000);
   }
   private operationGate(id: string): BrowserOperationGate {
+    if (!this.#store.byId(id).active) throw new Error("Browser is not ready");
     let gate = this.#operationGates.get(id);
     if (!gate) { gate = new BrowserOperationGate(); this.#operationGates.set(id, gate); }
     return gate;
@@ -645,6 +652,7 @@ export class InstanceCoordinator extends DurableObject<Environment> implements I
     this.#browsers.delete(row.id);
     this.#store.terminal(row.id, Boolean(value.diagnosticRef));
     this.#operationGates.delete(row.id);
+    this.#autosaveAfter.delete(row.id);
   }
 }
 
