@@ -1,9 +1,9 @@
-import { useEffect, useMemo, useState } from "preact/hooks";
+import { useEffect, useMemo, useRef, useState } from "preact/hooks";
 import type { GSVClient } from "@humansandmachines/gsv/client";
 import type { BrowserViewFrame, BrowserViewState } from "@humansandmachines/gsv/protocol";
 import { watchBrowser } from "../../../services/instances/browserControl";
 
-export type BrowserImage = { source: string; data: BrowserViewFrame; selection: object; presented: () => void };
+export type BrowserImage = { source: string; data: BrowserViewFrame; selection: object; signal: AbortSignal; presented: () => void };
 
 export function useBrowserStream(client: GSVClient, instanceId: string, tabId: number | undefined, enabled: boolean) {
   const selection = useMemo(() => ({ instanceId, tabId }), [instanceId, tabId]);
@@ -11,8 +11,13 @@ export function useBrowserStream(client: GSVClient, instanceId: string, tabId: n
   const [state, setState] = useState<BrowserViewState>();
   const [error, setError] = useState("");
   const [visible, setVisible] = useState(document.visibilityState !== "hidden");
+  const activeConnection = useRef<AbortController | null>(null);
   useEffect(() => {
-    const change = () => setVisible(document.visibilityState !== "hidden");
+    const change = () => {
+      const visible = document.visibilityState !== "hidden";
+      if (!visible) activeConnection.current?.abort();
+      setVisible(visible);
+    };
     document.addEventListener("visibilitychange", change);
     return () => document.removeEventListener("visibilitychange", change);
   }, []);
@@ -28,6 +33,7 @@ export function useBrowserStream(client: GSVClient, instanceId: string, tabId: n
     };
     const connect = async () => {
       const active = new AbortController(); connection = active;
+      activeConnection.current = active;
       try {
         const stream = await watchBrowser(client, { instanceId, tabId }, active.signal);
         for await (const packet of stream) {
@@ -44,7 +50,7 @@ export function useBrowserStream(client: GSVClient, instanceId: string, tabId: n
               if (cause) reject(cause); else resolve();
             };
             active.signal.addEventListener("abort", abort, { once: true });
-            setFrame({ source, data: metadata, selection, presented: () => {
+            setFrame({ source, data: metadata, selection, signal: active.signal, presented: () => {
               if (active.signal.aborted) return;
               releaseUrls(source);
               const paint = requestAnimationFrame(() => { paints.delete(paint); finish(); });
@@ -57,6 +63,7 @@ export function useBrowserStream(client: GSVClient, instanceId: string, tabId: n
       } catch (cause) { if (!stopped) setError(String(cause)); }
       finally {
         active.abort();
+        if (activeConnection.current === active) activeConnection.current = null;
         if (!stopped) { timer = setTimeout(() => void connect(), retry); retry = Math.min(2000, retry * 2); }
       }
     };

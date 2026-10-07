@@ -24,7 +24,8 @@ while you are interacting, and browser actions run in sequence so a human click
 cannot split an agent's click or typing action. Closing the view leaves the
 browser and Ship running.
 Switching tabs or returning to Follow Ship pauses input until an image from the
-new view has loaded. Unsent input for the previous view is discarded.
+new view has loaded. Reconnection and returning from a hidden view also require
+a fresh image before input resumes. Unsent input for the previous view is discarded.
 
 The view streams page changes as they happen. It drops superseded images when
 the connection is slow, and reconnects after an interruption. Hidden views pause

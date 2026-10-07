@@ -97,13 +97,14 @@ export function BrowserViewer({ request, onClose }: { request: BrowserSelection;
   }, [client, connected, request.instanceId, requestMatches, handoff?.requestId, handoff?.state, handoff?.site]);
 
   const input = (value: BrowserHumanInput) => {
-    const shown = displayed.current?.data;
-    if (!live.current || !requestMatches || busy || !shown || displayed.current?.selection !== selection || (handoff && handoff.state !== "active")) return;
+    const displayedFrame = displayed.current;
+    const shown = displayedFrame?.data;
+    if (!live.current || !requestMatches || busy || !shown || displayedFrame.signal.aborted || displayedFrame.selection !== selection || (handoff && handoff.state !== "active")) return;
     if (value.kind === "click") setSelectedTab(shown.tabId);
     const epoch = inputEpoch.current;
     const args = { instanceId: request.instanceId, tabId: shown.tabId, documentId: shown.documentId, handoffRequestId: handoff?.requestId };
     inputQueue.current = inputQueue.current.then(async () => {
-      if (!live.current || inputEpoch.current !== epoch) return;
+      if (!live.current || inputEpoch.current !== epoch || displayedFrame.signal.aborted) return;
       await sendBrowserInput(client, args, value);
       setError("");
     }).catch(cause => { inputEpoch.current++; setError(`Input could not be confirmed. ${String(cause)}`); });
@@ -209,7 +210,7 @@ export function BrowserViewer({ request, onClose }: { request: BrowserSelection;
         {pointer.clickedAt && <i class="browser-click" key={pointer.clickedAt} />}
       </div>}
       <textarea ref={keyboard} class="browser-keyboard" aria-label="Type in the selected browser field" autoComplete="off" autoCapitalize="off" spellcheck={false}
-        disabled={!requestMatches || busy || view?.selection !== selection || (handoff !== undefined && handoff.state !== "active")}
+        disabled={!requestMatches || busy || !view || view.signal.aborted || view.selection !== selection || (handoff !== undefined && handoff.state !== "active")}
         onInput={event => { if (event.isComposing) return; const value = event.currentTarget.value; event.currentTarget.value = ""; if (value) input({ kind: "text", text: value }); }}
         onCompositionEnd={event => { const value = event.currentTarget.value; event.currentTarget.value = ""; if (value) input({ kind: "text", text: value }); }}
         onKeyDown={event => {

@@ -50,6 +50,7 @@ async function openLinkedViewer(initialState: "pending" | "active" | undefined, 
   const loaded = new Event("load") as JSX.TargetedEvent<HTMLImageElement>;
   await act(() => { image.props.onLoad?.(loaded); });
   return { request, inputResult, push, frame, nodes, text: () => collectText(tree),
+    disconnect() { source.error(new Error("Viewer connection lost")); },
     type(value: string) {
       // SAFETY: The intrinsic textarea handler reads only currentTarget.value and isComposing.
       const keyboard = nodes().find(node => node.type === "textarea") as VNode<JSX.TextareaHTMLAttributes<HTMLTextAreaElement>>;
@@ -61,6 +62,44 @@ async function openLinkedViewer(initialState: "pending" | "active" | undefined, 
 }
 
 describe("live browser viewing", () => {
+  it.each(["disconnect", "hidden"] as const)("requires a new displayed image after the view is %s even when the document ID stays unchanged", async reason => {
+    const viewer = await openLinkedViewer("active", "linked-login", { manualFrames: true });
+    // SAFETY: This selects the intrinsic viewer image and uses its image event props.
+    const image = () => viewer.nodes().find(node => node.type === "img") as VNode<JSX.ImgHTMLAttributes<HTMLImageElement>>;
+    // SAFETY: The image load callback reads no event data.
+    const loaded = new Event("load") as JSX.TargetedEvent<HTMLImageElement>;
+    const inputs = () => viewer.request.mock.calls.filter(([call]) => call === "sys.browser.input");
+    try {
+      const old = image();
+      await act(() => { viewer.type("first"); viewer.type("unsent from old view"); });
+      await vi.waitFor(() => expect(inputs()).toHaveLength(1));
+      await act(() => {
+        if (reason === "disconnect") viewer.disconnect();
+        else {
+          Object.defineProperty(document, "visibilityState", { configurable: true, value: "hidden" });
+          document.dispatchEvent(new Event("visibilitychange"));
+        }
+      });
+      await vi.waitFor(() => expect(viewer.nodes().find(node => node.type === "textarea")?.props.disabled).toBe(true));
+      await act(async () => {
+        viewer.inputResult.resolve({ data: { accepted: true } }); await viewer.inputResult.promise;
+        old.props.onLoad?.(loaded); viewer.type("stale view");
+        if (reason === "hidden") {
+          Object.defineProperty(document, "visibilityState", { configurable: true, value: "visible" });
+          document.dispatchEvent(new Event("visibilitychange"));
+        }
+      });
+      await vi.waitFor(() => expect(viewer.request.mock.calls.filter(([call]) => call === "sys.browser.watch")).toHaveLength(2));
+      await act(() => { viewer.type("before a fresh frame"); viewer.frame(1, 2); });
+      await vi.waitFor(() => expect(image().props.src).not.toBe(old.props.src));
+      await act(() => { viewer.type("before the fresh frame loads"); });
+      expect(inputs()).toHaveLength(1);
+      await act(() => { image().props.onLoad?.(loaded); viewer.type("fresh view"); });
+      await vi.waitFor(() => expect(inputs()).toHaveLength(2));
+      expect(inputs()[0][1]).toEqual(inputs()[1][1]);
+    } finally { await viewer.close(); }
+  });
+
   it("fences immediate, queued and late-image input until the newly selected view has loaded", async () => {
     const viewer = await openLinkedViewer("active", "linked-login", { manualFrames: true });
     // SAFETY: This selects the intrinsic viewer image and uses its image event props.
