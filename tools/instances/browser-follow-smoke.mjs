@@ -44,6 +44,20 @@ export async function checkBrowserFollowing(client, instance, website) {
     pinned = await watch(first);
     await shown(following, first);
     await shown(pinned, first);
+    step = "oversized website title and address";
+    await shell(`page js --tab ${first} 'document.title = "界".repeat(20000); history.replaceState(null, "", "/login?long=" + "x".repeat(20000)); "updated"'`);
+    const metadataDeadline = Date.now() + 5000;
+    while (!following.view.state?.tabs.find(tab => tab.id === first)?.title.endsWith("…")) {
+      if (following.view.error) throw following.view.error;
+      assert.ok(Date.now() < metadataDeadline, "Oversized tab metadata did not reach the live viewer");
+      await delay(25);
+    }
+    const displayed = following.view.state.tabs.find(tab => tab.id === first);
+    assert.ok(displayed.title.length <= 1024);
+    assert.ok(displayed.url.length <= 8192 && displayed.url.endsWith("…"));
+    await shown(pinned, first);
+    await shell(`page js --tab ${first} 'document.title = "GSV sign-in fixture"; history.replaceState(null, "", "/login"); "restored"'`);
+    console.log("PASS: oversized page titles and URLs stay bounded without interrupting live or pinned views");
     for (const [command, active] of [
       [`page text --tab ${second}`, second],
       [`page screenshot --tab ${first}`, first],

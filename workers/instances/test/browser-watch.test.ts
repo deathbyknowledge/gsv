@@ -1,8 +1,9 @@
 import { describe, expect, it, vi, type Mock } from "vitest";
-import { decodeBrowserViewStream, type BrowserViewState } from "@humansandmachines/gsv/protocol";
+import { decodeBrowserViewStream, type BrowserHandoff, type BrowserViewState } from "@humansandmachines/gsv/protocol";
 import type { CloudBrowser } from "../src/browser";
 import type { CapturedBrowserFrame } from "../src/browser-view";
 import { BrowserWatch } from "../src/browser-watch";
+import { browserViewTabs } from "../src/browser-metadata";
 
 type Subscription = {
   frame: (value: CapturedBrowserFrame) => void;
@@ -41,6 +42,28 @@ async function fixture(work: (value: {
 }
 
 describe("browser tab following", () => {
+  it.each(["pinned", "handoff"] as const)("retains a %s tab outside the bounded tab strip", async selection => {
+    const metadata = new Map(Array.from({ length: 1000 }, (_, id) => [id + 1, { title: `Tab ${id + 1}`, url: "about:blank" }]));
+    const handoff: BrowserHandoff = { instanceId: "instance", requestId: "login", tabId: 1000, site: `https://${"a".repeat(20000)}.example`, purpose: "Sign in", state: "active", revision: 1, createdAt: 1, expiresAt: Date.now() + 10000 };
+    const viewState = vi.fn((preferred?: number): BrowserViewState => ({ kind: "state", activeTabId: 999, tabs: browserViewTabs(metadata, 999, preferred) }));
+    const watchTab = vi.fn<CloudBrowser["watchTab"]>(async (id, frame) => { frame(image(id)); return () => {}; });
+    const browser: Pick<CloudBrowser, "listTabs" | "viewState" | "onViewChange" | "watchTab"> = {
+      listTabs: async () => [], viewState, onViewChange: () => () => {}, watchTab,
+    };
+    // SAFETY: BrowserWatch only uses the four browser operations implemented by this fixture.
+    const watch = new BrowserWatch(browser as CloudBrowser, selection === "pinned" ? 1000 : undefined, () => selection === "handoff" ? handoff : undefined, () => {}, cause => new Error("view failed", { cause }), () => {});
+    try {
+      await watch.start();
+      const packets = decodeBrowserViewStream(watch.view.body);
+      const state = (await packets.next()).value?.metadata;
+      expect(state).toMatchObject({ kind: "state", activeTabId: 999, tabs: expect.arrayContaining([expect.objectContaining({ id: 999 }), expect.objectContaining({ id: 1000 })]) });
+      expect((await packets.next()).value?.metadata).toMatchObject({ kind: "frame", tabId: 1000 });
+      expect(viewState).toHaveBeenCalledWith(1000);
+      if (state?.kind === "state" && selection === "handoff") expect(state.handoff?.site.length).toBeLessThanOrEqual(8192);
+      await packets.return();
+    } finally { watch.view.close(); }
+  });
+
   it("ignores a retired tab's late startup failure and frames", () => fixture(async ({ watch, subscriptions, select, failure }) => {
     select(2);
     select(3);

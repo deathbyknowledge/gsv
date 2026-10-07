@@ -17,6 +17,8 @@ import { within } from "./browser-operation";
 import { BrowserScreencast, type CapturedBrowserFrame } from "./browser-view";
 import { exportBrowserStorage, restoreBrowserStorage, type BrowserSnapshot } from "./browser-storage";
 import { cloudBrowserCredentials } from "./browser-credentials";
+import { boundedBrowserOrigins, rememberBrowserOrigin } from "./browser-origins";
+import { browserTabMetadata, browserViewTabs } from "./browser-metadata";
 
 export type StorageState = Awaited<ReturnType<BrowserContext["storageState"]>>;
 type RuntimeState = { contextId: string; nextTabId: number; activeTabId: number; tabs: Record<string, string>; origins?: string[]; storageTargets?: string[] };
@@ -45,12 +47,10 @@ export class CloudBrowser implements BrowserPageBackend, BrowserTabsBackend, Deb
     private readonly record: CloudInstance,
     private readonly store: InstanceStore,
   ) {
-    this.state.origins ??= [];
+    this.state.origins = boundedBrowserOrigins(this.state.origins ?? []);
     const observe = (page: Page) => {
       const remember = (url: string) => {
-        if (this.storagePages.has(page) || !/^https?:\/\//.test(url)) return;
-        const origin = new URL(url).origin;
-        if (!this.state.origins!.includes(origin)) { this.state.origins!.push(origin); this.persist(); }
+        if (!this.storagePages.has(page) && rememberBrowserOrigin(this.state.origins!, url)) this.persist();
       };
       for (const frame of page.frames()) remember(frame.url());
       page.on("framenavigated", frame => remember(frame.url()));
@@ -103,7 +103,7 @@ export class CloudBrowser implements BrowserPageBackend, BrowserTabsBackend, Deb
     if (row.runtime) {
       // SAFETY: persist() is the sole writer of this private runtime record.
       state = JSON.parse(row.runtime) as RuntimeState;
-      state.origins = [...new Set([...(state.origins ?? []), ...(savedState?.origins.map(origin => origin.origin) ?? [])])];
+      state.origins = boundedBrowserOrigins(state.origins ?? [], savedState?.origins.map(origin => origin.origin) ?? []);
       const candidates = await Promise.all(browser.contexts().map(async candidate => {
         const page = candidate.pages()[0];
         if (!page) return null;
@@ -136,7 +136,7 @@ export class CloudBrowser implements BrowserPageBackend, BrowserTabsBackend, Deb
       const { targetInfo } = await cdp.send("Target.getTargetInfo");
       await cdp.detach();
       if (!targetInfo.browserContextId) throw new Error("Browser did not provide an isolated context");
-      state = { contextId: targetInfo.browserContextId, nextTabId: 2, activeTabId: 1, tabs: { "1": targetInfo.targetId }, origins: savedState?.origins.map(origin => origin.origin) ?? [] };
+      state = { contextId: targetInfo.browserContextId, nextTabId: 2, activeTabId: 1, tabs: { "1": targetInfo.targetId }, origins: boundedBrowserOrigins(savedState?.origins.map(origin => origin.origin) ?? []) };
     }
     await context.addInitScript(cloudBrowserCredentials);
     const runtime = new CloudBrowser(browser, context, state, record, store);
@@ -159,7 +159,7 @@ export class CloudBrowser implements BrowserPageBackend, BrowserTabsBackend, Deb
         let id = Number(Object.keys(this.state.tabs).find(key => this.state.tabs[key] === targetInfo.targetId));
         if (!id) { id = this.state.nextTabId++; this.state.tabs[String(id)] = targetInfo.targetId; }
         this.tabs.set(id, page);
-        this.tabMetadata.set(id, { title: targetInfo.title, url: targetInfo.url });
+        this.tabMetadata.set(id, browserTabMetadata(targetInfo.title, targetInfo.url));
         found.add(id);
       }
       for (const [id, page] of this.tabs) if (!found.has(id)) { this.tabs.delete(id); this.tabMetadata.delete(id); this.debuggers.delete(page); }
@@ -256,8 +256,8 @@ export class CloudBrowser implements BrowserPageBackend, BrowserTabsBackend, Deb
     if (documentId !== await this.documentId(id)) throw new Error("The page changed; refreshing the view");
     return { bytes, documentId };
   }
-  viewState(): BrowserViewState {
-    return { kind: "state", tabs: [...this.tabMetadata].map(([id, metadata]) => ({ id, ...metadata })), activeTabId: this.state.activeTabId, pointer: this.pointer };
+  viewState(preferredTabId?: number): BrowserViewState {
+    return { kind: "state", tabs: browserViewTabs(this.tabMetadata, this.state.activeTabId, preferredTabId), activeTabId: this.state.activeTabId, pointer: this.pointer };
   }
   onViewChange(listener: () => void): () => void {
     this.viewListeners.add(listener);

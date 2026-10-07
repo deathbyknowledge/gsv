@@ -45,12 +45,21 @@ prompt that blocks page input. Choose the website's password or another
 supported sign-in method. A site that requires a passkey needs your connected
 personal browser.
 
+The live tab strip shows up to 128 tabs within a bounded metadata budget. It
+always keeps the tab Ship is using and the tab you selected. Very long tab
+titles and addresses are shortened for display; the actual page URL is unchanged.
+
 ## Remembered logins and lifetime
 
 GSV automatically keeps website cookies, local storage and IndexedDB for your
 local account in this space. The next ordinary browser restores that saved
 state; there is no profile picker. Saved state is encrypted and separate from
 the running browser. Only one instance can use the same saved state at a time.
+
+Website storage tracking is limited to 128 distinct HTTP(S) origins, including
+embedded frames. Already tracked origins keep their places; additional origins
+do not expand the save workload or displace earlier sign-ins. Local storage and
+IndexedDB from additional origins are not saved. Cookies are saved separately.
 
 GSV saves periodically, after human input settles, when you finish a login
 handoff, and before an ordinary stop. Closing a website tab does not forget its

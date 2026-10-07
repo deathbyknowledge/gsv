@@ -263,7 +263,7 @@ export class InstanceCoordinator extends DurableObject<Environment> implements I
     const { bytes, documentId } = await browser.humanFrame(tab.id);
     const row = this.requireInstance(actor, args.instanceId, true);
     return { data: { instance: instance(row), handoff, tabId: tab.id, documentId, pointer: browser.pointer,
-      tabs: tabs.map(({ id, title, url }) => ({ id, title: title ?? "", url: url ?? "about:blank" })),
+      tabs: browser.viewState(tab.id).tabs,
       width: 1280, height: 800, contentType: "image/jpeg" as const }, body: bodyFromBytes(bytes) };
   }
   async watch(actor: InstanceActor, rawArgs: Parameters<InstallationInstances["watch"]>[1]) {

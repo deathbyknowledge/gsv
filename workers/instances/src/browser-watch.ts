@@ -1,6 +1,7 @@
 import type { BrowserHandoff } from "@humansandmachines/gsv/protocol";
 import type { CloudBrowser } from "./browser";
 import { BrowserView } from "./browser-view";
+import { browserDisplayUrl } from "./browser-metadata";
 
 /** Owns one viewer, including tab following, liveness checks, and producer subscriptions. */
 export class BrowserWatch {
@@ -47,7 +48,9 @@ export class BrowserWatch {
   private async update(): Promise<void> {
     if (this.closed) return;
     this.check();
-    const state = { ...this.browser.viewState(), handoff: this.handoff() };
+    const handoff = this.handoff();
+    const preferred = this.selectedTab ?? handoff?.activeTabId ?? handoff?.tabId;
+    const state = { ...this.browser.viewState(preferred), handoff: handoff ? { ...handoff, site: browserDisplayUrl(handoff.site) } : undefined };
     const serialized = JSON.stringify(state);
     if (serialized !== this.state || Date.now() - this.lastStateAt >= 10000) {
       this.state = serialized; this.lastStateAt = Date.now(); this.view.state(state);
