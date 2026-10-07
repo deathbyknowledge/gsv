@@ -102,9 +102,9 @@ export class InstanceCoordinator extends DurableObject<Environment> implements I
       if ("instanceId" in selector) throw new Error("Instance not found");
       return { instance: null };
     }
-    if (row.active && instance(row).state !== "stopping") {
+    if (row.active && (force || instance(row).state !== "stopping")) {
       await this.ctx.storage.setAlarm(Date.now() + 1);
-      if (force || instance(row).state === "starting") this.fenceStop(instance(this.#store.byId(row.id)), "Stopped without saving");
+      if (force || instance(row).state === "starting") this.fenceStop(instance(this.#store.byId(row.id)), "Stopped without saving", force);
       else {
         let stopping = this.#stops.get(row.id);
         if (!stopping) {
@@ -499,11 +499,11 @@ export class InstanceCoordinator extends DurableObject<Environment> implements I
   private profileSaving(profileId: string): boolean {
     return [...this.#saves.keys()].some(id => instance(this.#store.byId(id)).profileId === profileId);
   }
-  private fenceStop(value: CloudInstance, reason: string): void {
+  private fenceStop(value: CloudInstance, reason: string, overrideReason = false): void {
     this.#saves.get(value.instanceId)?.abort.abort(new Error(reason));
     for (const item of this.#watches.values()) if (item.instanceId === value.instanceId) item.watch.view.close();
     if (value.state === "stopped" || value.state === "failed") return;
-    if (value.state !== "stopping") this.#store.update({ ...value, state: "stopping", reason, revision: value.revision + 1 });
+    if (value.state !== "stopping" || (overrideReason && value.reason !== reason)) this.#store.update({ ...value, state: "stopping", reason, revision: value.revision + 1 });
     for (const handoff of this.#store.liveHandoffs(value.instanceId)) this.#store.putHandoff({ ...handoff, state: "cancelled", reason, revision: handoff.revision + 1 });
     for (const operation of this.#operations.get(value.instanceId)?.values() ?? []) operation.abort.abort(new Error(reason));
   }
@@ -647,7 +647,6 @@ export class InstanceCoordinator extends DurableObject<Environment> implements I
     }
   }
   private async cleanup(row: InstanceRow): Promise<void> {
-    const value = instance(row);
     if (!row.session_id) {
       if (row.acquire_at && Date.now() < row.acquire_at + QUIET_ALLOCATION_MS) return;
     } else {
@@ -655,7 +654,8 @@ export class InstanceCoordinator extends DurableObject<Environment> implements I
         const settled = await this.settleOperations(row.id);
         const inputs = this.#humanInputs.get(row.id), saving = this.#saves.get(row.id)?.done;
         const quiet = await boundedSettlement([...(inputs ? [inputs] : []), ...(saving ? [saving] : [])], 10000);
-        if (settled && quiet && value.readyAt !== undefined && value.reason === "Browser lifetime expired") {
+        const current = instance(this.#store.byId(row.id));
+        if (settled && quiet && current.state === "stopping" && current.readyAt !== undefined && current.reason === "Browser lifetime expired") {
           // Shutdown may stop waiting, but deletion must still own the actual save.
           await this.save(row.id);
         }
@@ -666,7 +666,7 @@ export class InstanceCoordinator extends DurableObject<Environment> implements I
       }
     }
     this.#browsers.delete(row.id);
-    this.#store.terminal(row.id, Boolean(value.diagnosticRef));
+    this.#store.terminal(row.id, Boolean(instance(this.#store.byId(row.id)).diagnosticRef));
     this.#operationGates.delete(row.id);
     this.#autosaveAfter.delete(row.id);
   }

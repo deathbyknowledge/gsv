@@ -599,6 +599,40 @@ describe("browser save ordering", () => {
 });
 
 describe("browser health", () => {
+  it.each(["save", "command"])("honors force stop after expiry while waiting on %s", stage => fixture(async (object, store, instanceId, installationId, browser) => {
+    const entered = deferred(), released = deferred();
+    const pause = async () => { entered.resolve(); await released.promise; };
+    const originalSave = browser.save!;
+    const save = vi.spyOn(browser, "save").mockImplementation(async (...args) => {
+      if (stage === "save") await pause();
+      return originalSave(...args);
+    });
+    let command: ReturnType<InstanceCoordinator["execute"]> | undefined;
+    if (stage === "command") {
+      vi.spyOn(browser.shell!, "idle").mockImplementation(pause);
+      command = object.execute(actor, instanceId, { type: "req", id: "active", call: "shell.exec", args: { input: "page snapshot" } }, Date.now() + 10000);
+      await entered.promise;
+    }
+    const exists = vi.spyOn(BrowserProvider.prototype, "exists").mockResolvedValue(true);
+    const close = vi.spyOn(BrowserProvider.prototype, "close").mockResolvedValue();
+    store.update({ ...instance(store.byId(instanceId)), expiresAt: Date.now() - 1 });
+    const maintenance = object.alarm();
+    if (stage === "save") await entered.promise;
+    else await vi.waitFor(() => expect(instance(store.byId(instanceId)).state).toBe("stopping"));
+    expect((await object.stop(actor, { instanceId, force: true })).instance).toMatchObject({ state: "stopping", reason: "Stopped without saving" });
+    if (stage === "command") { released.resolve(); await command; }
+    await maintenance;
+    expect(close).toHaveBeenCalledOnce();
+    expect(save).toHaveBeenCalledTimes(stage === "save" ? 1 : 0);
+    exists.mockResolvedValue(false); await object.alarm();
+    const deletion = { version: 1 as const, operationId: "delete-space", installationId };
+    if (stage === "save") {
+      expect((await object.quiesceInstallation(deletion)).phase).toBe("quiescing");
+      released.resolve();
+    }
+    await vi.waitFor(async () => expect((await object.quiesceInstallation(deletion)).phase).toBe("quiesced"));
+  }));
+
   it.each(["heartbeat", "lookup"])("rechecks expiry during failed provider recovery at %s", stage => fixture(async (object, store, instanceId, _installationId, browser) => {
     const entered = deferred(), released = deferred();
     const pause = async () => { entered.resolve(); await released.promise; };
