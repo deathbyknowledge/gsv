@@ -453,6 +453,7 @@ export type SyscallDomains = {
   "sys.browser.handoff.open": { args: Instance.SysBrowserHandoffOpenArgs; result: Instance.SysBrowserHandoffOpenResult };
   "sys.browser.handoff.finish": { args: Instance.SysBrowserHandoffFinishArgs; result: Instance.SysBrowserHandoffFinishResult };
   "sys.browser.frame": { args: Instance.SysBrowserFrameArgs; result: Instance.SysBrowserFrameResult };
+  "sys.browser.watch": { args: Instance.SysBrowserWatchArgs; result: Instance.SysBrowserWatchResult };
   "sys.browser.input": { args: Instance.SysBrowserInputArgs; result: Instance.SysBrowserInputResult };
   "sys.config.get": { args: SysConfigGetArgs; result: SysConfigGetResult };
   "sys.config.set": { args: SysConfigSetArgs; result: SysConfigSetResult };

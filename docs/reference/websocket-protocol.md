@@ -557,9 +557,36 @@ exceeds its window is a protocol violation and is cancelled by the receiver.
 
 The window is the only receive-side bound. A receiver must accept any number
 of frames that fit its granted window, however small they are, so
-implementations must not cap buffered frames separately. Senders should
+implementations must not cap buffered frames separately. Bulk senders should
 coalesce small source reads into full chunks (1 MiB by default) so a window
-carries few frames.
+carries few frames. An in-process `BinaryBody` may instead specify
+`delivery: "realtime"` to flush each source chunk promptly. This optional field
+is preserved in the wire descriptor and through relays. It selects a 32 KiB
+initial and replenishment window on both sides, keeping live streams close to
+the consumer. Omitted delivery retains the 4 MiB initial window and bulk
+coalescing. Chunk limits and cancellation rules apply to both modes.
+
+### Browser view records
+
+`sys.browser.watch` carries a continuous response body on the ordinary gateway
+WebSocket. Version 1 consists of records with two little-endian unsigned 32-bit
+lengths (metadata bytes, image bytes), followed by UTF-8 JSON metadata and raw
+JPEG bytes. Records may span binary transport chunks. Metadata is limited to
+256 KiB and an image to 4 MiB.
+
+`kind: "frame"` metadata contains `sequence`, `capturedAt` (Unix milliseconds),
+`tabId`, `documentId`, and logical `width`/`height`. `kind: "state"` has zero image
+bytes and contains `tabs`, `activeTabId`, optional `pointer` and optional
+`handoff`. Input coordinates use the logical dimensions, independent of image
+pixel density. Clients bind input to the displayed frame's document identity.
+
+Clients read the next image after presenting the current one; ordinary binary
+`WINDOW` credit provides pacing without a per-frame syscall. The provider retains
+only the newest unsent image. A viewer that stops draining a pending image for
+fifteen seconds is closed; quiet pages send state at least every ten seconds.
+Body cancellation releases the viewer and its capture subscription without
+stopping the instance. Images and page text never enter JSON syscall arguments
+or the agent's history.
 
 Flow control governs only body bytes. Cancellation, unrelated frames, and
 peer closure must remain readable while a body consumer is idle; a receiver
@@ -569,6 +596,9 @@ The current body-bearing syscalls are:
 
 | Syscall | Request body | Response body |
 |---|---|---|
+| `sys.browser.watch` | No | Continuous browser image/state records |
+| `sys.browser.frame` | No | One JPEG image |
+| `sys.browser.input` | Bounded UTF-8 JSON input | No |
 | `sys.feedback` | Required UTF-8 JSON report (message and optional activity), at most 512 KiB | No |
 | `fs.read` | No | Raw UTF-8 text, or image bytes when `representation` is `content`. Resource-mode image reads, directory listings, and operation errors are JSON-only. |
 | `fs.transfer.receive` | Required file bytes | No |

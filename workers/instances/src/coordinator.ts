@@ -3,7 +3,7 @@ import { bodyFromBytes, cancelBinaryBody } from "@humansandmachines/gsv/protocol
 import type { BrowserHandoff, BrowserHumanInput, CloudInstance, InstanceSelector, SysBrowserHandoffGetArgs } from "@humansandmachines/gsv/protocol";
 import {
   browserHandoffRequestSchema, browserHandoffSelectorSchema, browserProfileCreateSchema,
-  instanceActorSchema, instanceListSchema, instanceSelectorSchema, instanceStartSchema, browserFrameSchema, browserInputSchema,
+  instanceActorSchema, instanceListSchema, instanceSelectorSchema, instanceStartSchema, browserFrameSchema, browserInputSchema, browserWatchSchema,
 } from "@humansandmachines/gsv/services/instances";
 import type { InstallationInstances, InstanceActor, InstanceTargetRequest, InstanceTargetResponse } from "@humansandmachines/gsv/services/instances";
 import { z } from "zod";
@@ -15,6 +15,7 @@ import { ProfileStorage } from "./profiles";
 import { BrowserProvider } from "./provider";
 import { InstanceRetirement } from "./retirement";
 import { within } from "./browser-operation";
+import { BrowserWatch } from "./browser-watch";
 import type { InstallationDeletionRequest } from "@humansandmachines/gsv/services/lifecycle";
 
 const QUIET_ALLOCATION_MS = 180_000;
@@ -40,6 +41,7 @@ export class InstanceCoordinator extends DurableObject<Environment> implements I
   readonly #operations = new Map<string, Map<string, OwnedOperation>>();
   readonly #saves = new Map<string, Promise<void>>();
   readonly #humanInputs = new Map<string, Promise<unknown>>();
+  readonly #watches = new Map<string, { instanceId: string; ownerUid: number; watch: BrowserWatch }>();
   readonly #installationId: string;
   constructor(ctx: DurableObjectState, env: Environment) {
     super(ctx, env);
@@ -213,6 +215,23 @@ export class InstanceCoordinator extends DurableObject<Environment> implements I
       tabs: tabs.map(({ id, title, url }) => ({ id, title: title ?? "", url: url ?? "about:blank" })),
       width: 1280, height: 800, contentType: "image/jpeg" as const }, body: bodyFromBytes(bytes) };
   }
+  async watch(actor: InstanceActor, rawArgs: Parameters<InstallationInstances["watch"]>[1]) {
+    this.human(actor);
+    const args = browserWatchSchema.parse(rawArgs);
+    this.requireInstance(actor, args.instanceId, true);
+    const browser = await this.browser(args.instanceId);
+    this.requireInstance(actor, args.instanceId, true);
+    if ([...this.#watches.values()].filter(value => value.instanceId === args.instanceId).length >= 4) throw new Error("This browser already has four open viewers");
+    const watchId = crypto.randomUUID();
+    const watch = new BrowserWatch(browser, args.tabId,
+      () => this.#store.handoffs(args.instanceId).find(liveHandoff),
+      () => { this.requireInstance(actor, args.instanceId, true); },
+      cause => new Error(`Browser view interrupted; reference = ${this.#store.diagnostic(args.instanceId, cause)}`),
+      () => { this.#watches.delete(watchId); });
+    this.#watches.set(watchId, { instanceId: args.instanceId, ownerUid: actor.ownerUid, watch });
+    await watch.start();
+    return { data: { watchId, version: 1 as const }, body: watch.view.body };
+  }
   async input(actor: InstanceActor, rawArgs: Parameters<InstallationInstances["input"]>[1], rawInput: BrowserHumanInput) {
     this.human(actor);
     const args = browserInputSchema.parse(rawArgs), input = humanInputSchema.parse(rawInput);
@@ -326,6 +345,7 @@ export class InstanceCoordinator extends DurableObject<Environment> implements I
     if (row && profile(row).state === "active") this.#store.putProfile({ ...profile(row), revision: profile(row).revision + 1, saveStatus: "failed", diagnosticRef });
   }
   private fenceStop(value: CloudInstance, reason: string): void {
+    for (const item of this.#watches.values()) if (item.instanceId === value.instanceId) item.watch.view.close();
     if (value.state === "stopped" || value.state === "failed") return;
     if (value.state !== "stopping") this.#store.update({ ...value, state: "stopping", reason, revision: value.revision + 1 });
     for (const handoff of this.#store.handoffs(value.instanceId).filter(liveHandoff)) this.#store.putHandoff({ ...handoff, state: "cancelled", reason, revision: handoff.revision + 1 });
@@ -487,6 +507,7 @@ class InstanceCapability extends RpcTarget implements InstallationInstances {
   cancelHandoff(...args: Parameters<InstallationInstances["cancelHandoff"]>) { return this.#owner.cancelHandoff(...args); }
   finishHandoff(...args: Parameters<InstallationInstances["finishHandoff"]>) { return this.#owner.finishHandoff(...args); }
   frame(...args: Parameters<InstallationInstances["frame"]>) { return this.#owner.frame(...args); }
+  watch(...args: Parameters<InstallationInstances["watch"]>) { return this.#owner.watch(...args); }
   input(...args: Parameters<InstallationInstances["input"]>) { return this.#owner.input(...args); }
   execute(...args: Parameters<InstallationInstances["execute"]>) { return this.#owner.execute(...args); }
   cancel(...args: Parameters<InstallationInstances["cancel"]>) { return this.#owner.cancel(...args); }

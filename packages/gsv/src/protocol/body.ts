@@ -3,6 +3,8 @@ import * as z from "zod/mini";
 export type BinaryBody = {
   stream: ReadableStream<Uint8Array>;
   length?: number;
+  /** Flush source chunks promptly for live media; bulk bodies retain coalescing. */
+  delivery?: "realtime";
 };
 
 /** Returns a byte-stream-safe view, copying only SharedArrayBuffer-backed input. */
@@ -18,6 +20,7 @@ export function byteStreamChunk(bytes: Uint8Array): Uint8Array<ArrayBuffer> {
 const binaryBodyObjectSchema = z.strictObject({
   stream: z.instanceof(ReadableStream),
   length: z.optional(z.number()),
+  delivery: z.optional(z.literal("realtime")),
 });
 
 /** Validates a transferred body without replacing its identity or stream. */
@@ -30,6 +33,7 @@ const MAX_PREALLOCATED_BODY_BYTES = 64 * 1024 * 1024;
 export const BODY_SYSCALL_NAMES = [
   "sys.feedback",
   "sys.browser.frame",
+  "sys.browser.watch",
   "sys.browser.input",
   "fs.read",
   "fs.transfer.send",

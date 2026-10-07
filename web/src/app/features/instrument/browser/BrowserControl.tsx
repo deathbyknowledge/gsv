@@ -4,9 +4,10 @@ import { useQuery } from "../../../services/navigation/viewQueries";
 import { useQueryClient } from "@tanstack/preact-query";
 import { useGateway } from "../../../services/gateway/GatewayProvider";
 import { useSession } from "../../../services/session/SessionProvider";
-import { browserFrame, sendBrowserInput } from "../../../services/instances/browserControl";
-import type { BrowserHumanInput, SysBrowserFrameResult } from "@humansandmachines/gsv/protocol";
+import { sendBrowserInput } from "../../../services/instances/browserControl";
+import type { BrowserHumanInput, BrowserViewFrame } from "@humansandmachines/gsv/protocol";
 import { INSTRUMENT_TARGETS_KEY } from "../wire/queryKeys";
+import { useBrowserStream } from "./useBrowserStream";
 import "./browser.css";
 
 export const INSTANCE_QUERY_KEY = ["cloud-instances"];
@@ -69,11 +70,10 @@ export function BrowserViewer({ request, onClose }: { request: BrowserSelection;
   const dialog = useRef<HTMLDialogElement>(null);
   const keyboard = useRef<HTMLTextAreaElement>(null);
   const image = useRef<HTMLImageElement>(null);
-  const [view, setView] = useState<{ source: string; data: SysBrowserFrameResult } | null>(null);
-  const displayed = useRef<SysBrowserFrameResult | null>(null);
+  const displayed = useRef<BrowserViewFrame | null>(null);
   const [selectedTab, setSelectedTab] = useState<number>();
   const [error, setError] = useState("");
-  const [frameError, setFrameError] = useState("");
+  const { frame: view, state: viewState, error: frameError } = useBrowserStream(client, request.instanceId, selectedTab, connected && ready);
   const [busy, setBusy] = useState(false);
   const [expanded, setExpanded] = useState(false);
   const inputQueue = useRef<Promise<void>>(Promise.resolve());
@@ -85,35 +85,21 @@ export function BrowserViewer({ request, onClose }: { request: BrowserSelection;
     return () => { live.current = false; inputEpoch.current++; };
   }, [connected, ready, request.instanceId]);
   useEffect(() => {
-    if (!connected || !ready) return;
-    const lifetime = new AbortController();
-    let timer: ReturnType<typeof setTimeout> | undefined, url: string | undefined;
-    const frame = async () => {
-      try {
-        const result = await browserFrame(client, { instanceId: request.instanceId, tabId: selectedTab }, lifetime.signal);
-        if (lifetime.signal.aborted) return;
-        if (result.data.handoff?.state === "pending" && result.data.handoff.site) {
-          await client.sys.browser.handoff.open({ instanceId: request.instanceId, requestId: result.data.handoff.requestId });
-          if (lifetime.signal.aborted) return;
-        }
-        const previous = url;
-        url = URL.createObjectURL(result.image);
-        setView({ source: url, data: result.data });
-        setFrameError("");
-        if (previous) URL.revokeObjectURL(previous);
-      } catch (cause) { if (!lifetime.signal.aborted) setFrameError(String(cause)); }
-      finally { if (!lifetime.signal.aborted) timer = setTimeout(() => void frame(), 250); }
-    };
-    void frame();
-    return () => { lifetime.abort(); clearTimeout(timer); if (url) URL.revokeObjectURL(url); };
-  }, [client, connected, ready, request.instanceId, selectedTab]);
+    const handoff = viewState?.handoff;
+    if (!connected || handoff?.state !== "pending" || !handoff.site) return;
+    let current = true;
+    void client.sys.browser.handoff.open({ instanceId: request.instanceId, requestId: handoff.requestId })
+      .catch(cause => { if (current) setError(String(cause)); });
+    return () => { current = false; };
+  }, [client, connected, request.instanceId, viewState?.handoff?.requestId, viewState?.handoff?.state, viewState?.handoff?.site]);
 
   const input = (value: BrowserHumanInput) => {
     const shown = displayed.current;
-    if (!live.current || busy || !shown || (shown.handoff && shown.handoff.state !== "active")) return;
+    const handoff = viewState?.handoff;
+    if (!live.current || busy || !shown || (handoff && handoff.state !== "active")) return;
     if (value.kind === "click") setSelectedTab(shown.tabId);
     const epoch = inputEpoch.current;
-    const args = { instanceId: request.instanceId, tabId: shown.tabId, documentId: shown.documentId, handoffRequestId: shown.handoff?.requestId };
+    const args = { instanceId: request.instanceId, tabId: shown.tabId, documentId: shown.documentId, handoffRequestId: handoff?.requestId };
     inputQueue.current = inputQueue.current.then(async () => {
       if (!live.current || inputEpoch.current !== epoch) return;
       await sendBrowserInput(client, args, value);
@@ -122,7 +108,7 @@ export function BrowserViewer({ request, onClose }: { request: BrowserSelection;
   };
   const close = () => { live.current = false; inputEpoch.current++; onClose(); };
   const finish = async () => {
-    const handoff = view?.data.handoff;
+    const handoff = viewState?.handoff;
     if (!handoff || busy) return;
     setBusy(true);
     try {
@@ -146,7 +132,7 @@ export function BrowserViewer({ request, onClose }: { request: BrowserSelection;
     const width = displayed.current?.width ?? 1280, height = displayed.current?.height ?? 800;
     return { x: Math.max(0, Math.min(width, (event.clientX - bounds.left) * width / bounds.width)), y: Math.max(0, Math.min(height, (event.clientY - bounds.top) * height / bounds.height)) };
   };
-  const data = view?.data;
+  const data = view && viewState ? { ...viewState, ...view.data } : undefined;
   const tab = data?.tabs.find(tab => tab.id === data.tabId);
   const pointer = data?.pointer?.tabId === data?.tabId ? data?.pointer : undefined;
   return <dialog ref={dialog} class={`browser-viewer${expanded ? " is-expanded" : ""}`} aria-label="Live cloud browser" onCancel={event => { event.preventDefault(); close(); }} onKeyDown={event => event.stopPropagation()}>
@@ -186,7 +172,7 @@ export function BrowserViewer({ request, onClose }: { request: BrowserSelection;
     {!connected && <p class="browser-notice" role="alert">Disconnected. Reconnecting…</p>}
     <div class="browser-screen" onClick={event => { if (image.current) { input({ kind: "click", ...point(event) }); keyboard.current?.focus({ preventScroll: true }); } }}
       onWheel={event => { event.preventDefault(); if (image.current) input({ kind: "scroll", ...point(event), deltaX: event.deltaX, deltaY: event.deltaY }); }}>
-      {view ? <img ref={image} src={view.source} onLoad={() => { displayed.current = view.data; }} alt="Live cloud browser page" draggable={false} /> : ready && <p>Connecting to the browser…</p>}
+      {view ? <img ref={image} src={view.source} onLoad={() => { displayed.current = view.data; view.presented(); }} alt="Live cloud browser page" draggable={false} /> : ready && <p>Connecting to the browser…</p>}
       {pointer && <div class={`browser-pointer is-${pointer.actor}`} style={{ left: `${pointer.x / (data?.width ?? 1280) * 100}%`, top: `${pointer.y / (data?.height ?? 800) * 100}%` }} aria-label={pointer.actor === "ship" ? "Ship cursor" : "Your cursor"}>
         <svg width="20" height="27" viewBox="0 0 20 27" aria-hidden="true"><path d="M2 2V21L7 16L11 25L15 23L11 15H19Z" fill="currentColor" stroke="white" stroke-width="1.5" /></svg>
         <span>{pointer.actor === "ship" ? "Ship" : "You"}</span>

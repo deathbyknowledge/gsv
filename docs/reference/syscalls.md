@@ -1570,7 +1570,8 @@ instance ID or the original start request ID; a stop received before admission
 fences that start. Instance reservations and concurrency are space-wide, while
 access to instances, profiles and human requests is owner-scoped.
 
-`handoff.open`, `handoff.finish`, `browser.frame` and `browser.input` require a directly signed-in human.
+`handoff.open`, `handoff.finish`, `browser.frame`, `browser.watch`,
+and `browser.input` require a directly signed-in human.
 Processes cannot use them. A process's handoff request requires a writable
 responsibility ID. `frame` returns a JPEG in its binary body; `input` accepts a
 bounded JSON body describing a click, key, text, scroll or tab selection. Viewing
@@ -1580,6 +1581,14 @@ actions are serialized; recent human activity gets priority automatically. Image
 and typed input are not syscall arguments or agent history. Automation on the
 instance is fenced while a human request is pending or active. Completion closes
 input admission and waits for accepted input before resuming automation.
+
+`browser.watch({ instanceId, tabId? })` returns `{ watchId, version: 1 }` and an
+open binary body containing image and state records. Omit `tabId` to follow the
+active tab. Clients drain frames as they display them; a small binary receive
+window and replacement of unsent images keep slow viewers from building an
+unbounded backlog. Cancelling the body closes only that viewer. Four viewers
+may share an instance; their capture producer is shared per page.
+See [browser view records](/reference/websocket-protocol#browser-view-records).
 
 The following argument and result types are exported from
 `@humansandmachines/gsv/protocol`:
@@ -1601,6 +1610,7 @@ type InstanceSyscalls = {
   "sys.browser.handoff.open": { args: SysBrowserHandoffOpenArgs; result: SysBrowserHandoffOpenResult };
   "sys.browser.handoff.finish": { args: SysBrowserHandoffFinishArgs; result: SysBrowserHandoffFinishResult };
   "sys.browser.frame": { args: SysBrowserFrameArgs; result: SysBrowserFrameResult };
+  "sys.browser.watch": { args: SysBrowserWatchArgs; result: SysBrowserWatchResult };
   "sys.browser.input": { args: SysBrowserInputArgs; result: SysBrowserInputResult };
 };
 ```

@@ -6,7 +6,7 @@ import { BrowserTargetShell } from "@humansandmachines/gsv-browser/shell";
 import { PageReferenceStore } from "@humansandmachines/gsv-browser/page-semantics";
 import { createPageCommands } from "@humansandmachines/gsv-browser/commands/page";
 import { createTabCommands } from "@humansandmachines/gsv-browser/commands/tabs";
-import type { BrowserHumanInput, BrowserPointer, CloudInstance } from "@humansandmachines/gsv/protocol";
+import type { BrowserHumanInput, BrowserPointer, BrowserViewState, CloudInstance } from "@humansandmachines/gsv/protocol";
 import { z } from "zod";
 import { BrowserInputQueue } from "./input-queue";
 import type { StoredFsEntry } from "@humansandmachines/gsv-browser/fs-persistence";
@@ -14,6 +14,7 @@ import type { BrowserCommand, TargetFileSystem } from "@humansandmachines/gsv-br
 import { BrowserRuntimeFiles } from "./runtime-files";
 import { instance, type InstanceStore } from "./store";
 import { within } from "./browser-operation";
+import { BrowserScreencast, type CapturedBrowserFrame } from "./browser-view";
 
 export type StorageState = Awaited<ReturnType<BrowserContext["storageState"]>>;
 type RuntimeState = { contextId: string; nextTabId: number; activeTabId: number; tabs: Record<string, string> };
@@ -27,6 +28,9 @@ export class CloudBrowser implements BrowserPageBackend, BrowserTabsBackend, Deb
   private readonly tabs = new Map<number, Page>();
   private readonly tabMetadata = new Map<number, { title: string; url: string }>();
   private readonly references = new PageReferenceStore();
+  private readonly screencasts = new Map<number, Promise<BrowserScreencast>>();
+  private readonly closingScreencasts = new Map<number, Promise<void>>();
+  private readonly viewListeners = new Set<() => void>();
   private refresh: Promise<void> | undefined;
   private readonly inputQueue = new BrowserInputQueue();
   pointer: BrowserPointer | undefined;
@@ -113,6 +117,7 @@ export class CloudBrowser implements BrowserPageBackend, BrowserTabsBackend, Deb
 
   private persist(): void {
     this.store.sql.exec("UPDATE instances SET runtime = ? WHERE id = ? AND active = 1 AND json_extract(record, '$.state') IN ('starting', 'ready')", JSON.stringify(this.state), this.record.instanceId);
+    this.notifyView();
   }
   private async refreshTabs(): Promise<void> {
     this.refresh ??= (async () => {
@@ -160,7 +165,10 @@ export class CloudBrowser implements BrowserPageBackend, BrowserTabsBackend, Deb
     if (method === "Input.dispatchMouseEvent") {
       const point = z.object({ x: z.number(), y: z.number(), type: z.string() }).parse(params);
       const tabId = [...this.tabs].find(([, page]) => this.debuggers.get(page) === target)?.[0];
-      if (tabId !== undefined) this.pointer = { tabId, x: point.x, y: point.y, actor: "ship", clickedAt: point.type === "mousePressed" ? Date.now() : this.pointer?.clickedAt };
+      if (tabId !== undefined) {
+        this.pointer = { tabId, x: point.x, y: point.y, actor: "ship", clickedAt: point.type === "mousePressed" ? Date.now() : this.pointer?.clickedAt };
+        this.notifyView();
+      }
     }
     return send(method, params);
   };
@@ -210,6 +218,40 @@ export class CloudBrowser implements BrowserPageBackend, BrowserTabsBackend, Deb
     if (documentId !== await this.documentId(id)) throw new Error("The page changed; refreshing the view");
     return { bytes, documentId };
   }
+  viewState(): BrowserViewState {
+    return { kind: "state", tabs: [...this.tabMetadata].map(([id, metadata]) => ({ id, ...metadata })), activeTabId: this.state.activeTabId, pointer: this.pointer };
+  }
+  onViewChange(listener: () => void): () => void {
+    this.viewListeners.add(listener);
+    return () => { this.viewListeners.delete(listener); };
+  }
+  private notifyView(): void { for (const listener of this.viewListeners) listener(); }
+  async watchTab(id: number, frame: (value: CapturedBrowserFrame) => void, error: (cause: unknown) => void): Promise<() => void> {
+    let pending = this.screencasts.get(id);
+    if (!pending) {
+      pending = (async () => {
+        await this.closingScreencasts.get(id);
+        const page = await this.page(id);
+        const cdp = await within(this.context.newCDPSession(page), 5000, "Browser view connection");
+        const producer = new BrowserScreencast(cdp, id);
+        try { await producer.start(); }
+        catch (cause) { await producer.close(); throw cause; }
+        return producer;
+      })();
+      this.screencasts.set(id, pending);
+    }
+    const owned = pending;
+    const producer = await pending.catch(cause => { if (this.screencasts.get(id) === owned) this.screencasts.delete(id); throw cause; });
+    const unsubscribe = producer.subscribe(frame, error);
+    return () => {
+      unsubscribe();
+      if (!producer.viewers && this.screencasts.get(id) === owned) {
+        this.screencasts.delete(id);
+        const closing = producer.close().finally(() => { if (this.closingScreencasts.get(id) === closing) this.closingScreencasts.delete(id); });
+        this.closingScreencasts.set(id, closing);
+      }
+    };
+  }
   runInput<T>(work: () => Promise<T>, signal?: AbortSignal, owner: "ship" | "human" = "ship"): Promise<T> {
     return this.inputQueue.run(async () => {
       const value = instance(this.store.byId(this.record.instanceId));
@@ -221,6 +263,7 @@ export class CloudBrowser implements BrowserPageBackend, BrowserTabsBackend, Deb
     const page = await this.page(id);
     if (input.kind === "click") {
       this.pointer = { tabId: id, x: input.x, y: input.y, actor: "human", clickedAt: Date.now() };
+      this.notifyView();
       await page.mouse.click(input.x, input.y);
     }
     else if (input.kind === "text") await page.keyboard.insertText(input.text);
@@ -230,7 +273,12 @@ export class CloudBrowser implements BrowserPageBackend, BrowserTabsBackend, Deb
       await page.keyboard.press([...prefix.filter(([mask]) => modifiers & mask).map(([, key]) => key), input.key].join("+"));
     } else { await page.mouse.move(input.x, input.y); await page.mouse.wheel(input.deltaX, input.deltaY); }
   }
-  async close(): Promise<void> { await this.browser.close(); }
+  async close(): Promise<void> {
+    await Promise.allSettled([...this.screencasts.values()].map(async pending => (await pending).close()));
+    await Promise.allSettled(this.closingScreencasts.values());
+    this.screencasts.clear();
+    await this.browser.close();
+  }
 }
 
 function encodeEntry(entry: StoredFsEntry): ArrayBuffer {

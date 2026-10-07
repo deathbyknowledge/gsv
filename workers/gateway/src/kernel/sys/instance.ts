@@ -3,16 +3,37 @@ import type { BrowserHandoff, BrowserHumanInput, JsonObject } from "@humansandma
 import type { KernelContext } from "../context";
 import type { RequestFrame, ResponseFrame } from "../../protocol/frames";
 import { authorizeNestedOperation } from "../tool-approval";
-import { instanceActor, withInstances } from "../instance-service";
+import { acquireInstances, instanceActor, withInstances } from "../instance-service";
 import { handleResponsibilityGet, handleResponsibilityUpdate, requireWritableResponsibility } from "../responsibilities";
+import { raceWithAbort } from "../../shared/abort";
+import { withByteStreamFinalizer } from "../../shared/streams";
 
 export type InstanceRequest = Extract<RequestFrame, { call: `sys.instance.${string}` | `sys.browser.${string}` }>;
 
 export async function handleInstanceRequest(frame: InstanceRequest, ctx: KernelContext): Promise<ResponseFrame> {
   const actor = instanceActor(ctx);
-  if (["sys.browser.handoff.open", "sys.browser.handoff.finish", "sys.browser.frame", "sys.browser.input"].includes(frame.call) && !actor.human) {
+  if (["sys.browser.handoff.open", "sys.browser.handoff.finish", "sys.browser.frame", "sys.browser.watch", "sys.browser.input"].includes(frame.call) && !actor.human) {
     await cancelBinaryBody(frame.body, "Human browser input cannot be requested by a process");
     throw new Error("This browser action requires the signed-in human owner");
+  }
+  if (frame.call === "sys.browser.watch") {
+    await cancelBinaryBody(frame.body, "Browser viewing has no request body");
+    const timeout = AbortSignal.timeout(30000);
+    const signal = ctx.requestSignal ? AbortSignal.any([ctx.requestSignal, timeout]) : timeout;
+    const service = await acquireInstances(ctx, signal);
+    let transferred = false;
+    try {
+      signal.throwIfAborted();
+      const invocation = service.watch(actor, frame.args);
+      const result = await raceWithAbort(invocation, signal, { onAbort: () => {
+        transferred = true;
+        ctx.defer(Promise.allSettled([invocation.then(late => cancelBinaryBody(late.body, "Browser view cancelled before admission"))])
+          .finally(() => service[Symbol.dispose]?.()));
+      } });
+      transferred = true;
+      return { type: "res", id: frame.id, ok: true, data: result.data,
+        body: { ...result.body, stream: withByteStreamFinalizer(result.body.stream, () => service[Symbol.dispose]?.()) } };
+    } finally { if (!transferred) service[Symbol.dispose]?.(); }
   }
   if (["sys.instance.start", "sys.instance.stop", "sys.browser.profile.create", "sys.browser.profile.delete", "sys.browser.handoff.request", "sys.browser.handoff.cancel"].includes(frame.call)) {
     // SAFETY: The protocol validator has admitted these JSON-only syscall arguments.

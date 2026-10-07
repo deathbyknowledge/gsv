@@ -19,6 +19,9 @@ async function fixture(work: (object: InstanceCoordinator, store: InstanceStore,
     heartbeat: vi.fn(async () => {}),
     getTab: async () => ({ id: 1, url: "https://example.com/login" }),
     listTabs: async () => [{ id: 1, title: "Login", url: "https://example.com/login", active: true }],
+    viewState: () => ({ kind: "state", activeTabId: 1, tabs: [{ id: 1, title: "Login", url: "https://example.com/login" }] }),
+    onViewChange: () => () => {},
+    watchTab: async (_id, frame) => { frame({ tabId: 1, documentId: "document", capturedAt: Date.now(), width: 1280, height: 800, image: new Uint8Array([1, 2]) }); return () => {}; },
     humanInput, humanFrame: async () => ({ bytes: new Uint8Array([1, 2]), documentId: "document" }),
     documentId: async () => "document", runInput: async work => work(), focusTab: async () => ({ id: 1 }),
     save: async () => ({ cookies: [], origins: [] }),
@@ -38,6 +41,20 @@ async function fixture(work: (object: InstanceCoordinator, store: InstanceStore,
 }
 
 describe("human browser control", () => {
+  it("scopes and bounds viewers, releases cancelled views, and closes them when the instance stops", () => fixture(async (object, _store, instanceId, _installationId, browser) => {
+    const unsubscribe = vi.fn();
+    browser.watchTab = async () => unsubscribe;
+    await expect(object.watch({ ...actor, human: false }, { instanceId })).rejects.toThrow("human owner");
+    await expect(object.watch({ ownerUid: 1001, human: true }, { instanceId })).rejects.toThrow("not found");
+    const views = await Promise.all(Array.from({ length: 4 }, () => object.watch(actor, { instanceId })));
+    await expect(object.watch(actor, { instanceId })).rejects.toThrow("four open viewers");
+    await views[0]!.body.stream.cancel();
+    expect(unsubscribe).toHaveBeenCalledTimes(1);
+    const reopened = await object.watch(actor, { instanceId });
+    await object.stop(actor, { instanceId });
+    expect(unsubscribe).toHaveBeenCalledTimes(5);
+    for (const item of [...views.slice(1), reopened]) expect(await item.body.stream.getReader().read()).toMatchObject({ done: true });
+  }));
   it("lets the owner watch and input while automation continues, without creating a handoff", () => fixture(async (object, store, instanceId) => {
     const frame = await object.frame(actor, { instanceId });
     expect(frame.data).toMatchObject({ tabId: 1, documentId: "document", instance: { instanceId } });

@@ -1,7 +1,8 @@
 # Cloud instances and saved browser profiles
 
-Status: browser slice implemented locally; Linux template and remote provider
-acceptance remain planned. Provider documentation checked on 6 October 2026.
+Status: browser slice implemented and live viewing validated locally and with
+Cloudflare Browser Run; Linux template remains planned. Provider documentation
+checked on 7 October 2026.
 
 The current browser slice includes shared extension commands, explicit instance
 lifecycle, encrypted saved profiles, human control inside Instrument, usage
@@ -12,11 +13,24 @@ The sections below retain the broader design, including work not shipped yet.
 Local Wrangler implements Browser Run's fetch/CDP transport, but did not implement
 the native `acquire()` binding method during the feasibility test. The provider
 uses `@cloudflare/playwright` acquisition and the documented session endpoints.
-The initial viewer is a small GSV image/input surface: hosted Cloudflare Live View
-does not expose the immediate revocation needed when returning control, and its
-hosted page restricts the WebSocket endpoints it can connect to. Human input and
-images use authenticated human-only syscall bodies. This reuses GSV's ownership,
-responsibilities and navigation instead of introducing a second handoff runtime.
+Instrument owns the viewer so human input uses GSV's existing authorization,
+input ordering and handoff lifetime. Cloudflare's hosted Live View remains an
+alternative, but its documented URL expiry governs new connections and is not
+a documented per-viewer revocation mechanism. We have not established its
+compatibility with a GSV proxy endpoint. The GSV viewer uses CDP screencast,
+authenticated syscall bodies and the existing WebSocket binary transport.
+Capture is shared per page, while small binary windows and replacement of unsent images bound
+each viewer's image backlog. Closing a view cancels its body and subscription without
+stopping the browser. This reuses GSV's ownership, responsibilities and navigation
+instead of introducing a second handoff runtime.
+
+On 7 October, a synthetic page updating every 50 ms displayed about 20 fps in
+Instrument. Local median/p95 image age was 35/52 ms; with a remote Cloudflare
+browser and local gateway it was 118/183 ms. These measure a timestamp painted
+into the image, through image display, rather than only CDP delivery. Site load,
+network path and content change the result. Screencast output remained 1280×800
+regardless of device pixel ratio; JPEG quality is 90. Larger advertised capture
+bounds do not establish higher effective resolution.
 
 Ship should be able to start a cloud browser or Linux machine, use it as an
 ordinary GSV target, and stop it when the work is finished. A saved browser

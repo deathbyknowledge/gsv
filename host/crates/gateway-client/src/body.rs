@@ -1,7 +1,8 @@
 use crate::protocol::{
     build_binary_frame, build_window_frame, parse_binary_frame, parse_window_credit,
-    FrameBodyDescriptor, BINARY_FRAME_CANCEL, BINARY_FRAME_DATA, BINARY_FRAME_END,
-    BINARY_FRAME_ERROR, BINARY_FRAME_WINDOW, BINARY_INITIAL_WINDOW_BYTES,
+    BinaryBodyDelivery, FrameBodyDescriptor, BINARY_FRAME_CANCEL, BINARY_FRAME_DATA,
+    BINARY_FRAME_END, BINARY_FRAME_ERROR, BINARY_FRAME_WINDOW, BINARY_INITIAL_WINDOW_BYTES,
+    BINARY_REALTIME_WINDOW_BYTES,
 };
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::fmt::{self, Display, Formatter};
@@ -123,6 +124,7 @@ impl BinaryBodyLimits {
 }
 
 pub struct BinaryBody {
+    delivery: Option<BinaryBodyDelivery>,
     reader: Pin<Box<dyn AsyncRead + Send>>,
     length: Option<u64>,
     max_bytes: Option<u64>,
@@ -133,6 +135,7 @@ impl BinaryBody {
         let bytes = bytes.into();
         let length = bytes.len() as u64;
         Self {
+            delivery: None,
             reader: Box::pin(Cursor::new(bytes)),
             length: Some(length),
             max_bytes: Some(length),
@@ -141,10 +144,16 @@ impl BinaryBody {
 
     pub fn from_reader(reader: impl AsyncRead + Send + 'static, length: Option<u64>) -> Self {
         Self {
+            delivery: None,
             reader: Box::pin(reader),
             length,
             max_bytes: length,
         }
+    }
+
+    pub fn realtime(mut self) -> Self {
+        self.delivery = Some(BinaryBodyDelivery::Realtime);
+        self
     }
 
     pub fn length(&self) -> Option<u64> {
@@ -177,6 +186,7 @@ struct IncomingState {
     received: u64,
     /// Credit granted to the sender so far, including the initial window.
     granted: u64,
+    window_bytes: u64,
 }
 
 /// Credit the receiver has allowed an outgoing stream to put on the wire.
@@ -301,6 +311,16 @@ impl BinaryBodyChannel {
 
     pub fn receive(&self, descriptor: FrameBodyDescriptor) -> Result<IncomingBody, BodyError> {
         validate_descriptor(descriptor, &self.limits)?;
+        let initial_window = if descriptor.delivery == Some(BinaryBodyDelivery::Realtime) {
+            BINARY_REALTIME_WINDOW_BYTES
+        } else {
+            self.limits.initial_window_bytes
+        };
+        let window_bytes = if descriptor.delivery == Some(BinaryBodyDelivery::Realtime) {
+            BINARY_REALTIME_WINDOW_BYTES.min(self.limits.window_bytes)
+        } else {
+            self.limits.window_bytes
+        };
         let (sender, receiver) = mpsc::unbounded_channel();
         let orphans = {
             let mut state = self.state.lock().map_err(|_| {
@@ -342,7 +362,8 @@ impl BinaryBodyChannel {
                     sender,
                     expected: descriptor.length,
                     received: 0,
-                    granted: self.limits.initial_window_bytes,
+                    granted: initial_window,
+                    window_bytes,
                 },
             );
             orphans
@@ -387,7 +408,11 @@ impl BinaryBodyChannel {
         }
         let token = CancellationToken::new();
         let credit = Arc::new(OutgoingCredit {
-            available: Mutex::new(self.limits.initial_window_bytes),
+            available: Mutex::new(if body.delivery == Some(BinaryBodyDelivery::Realtime) {
+                BINARY_REALTIME_WINDOW_BYTES
+            } else {
+                self.limits.initial_window_bytes
+            }),
             granted: Notify::new(),
         });
         let stream_id = {
@@ -414,6 +439,7 @@ impl BinaryBodyChannel {
         };
         Ok(OutgoingBody {
             descriptor: FrameBodyDescriptor {
+                delivery: body.delivery,
                 stream_id,
                 length: body.length,
             },
@@ -680,10 +706,10 @@ impl BinaryBodyChannel {
             let Some(incoming) = state.incoming.get_mut(&stream_id) else {
                 return;
             };
-            let target = consumed.saturating_add(self.limits.window_bytes);
+            let target = consumed.saturating_add(incoming.window_bytes);
             let increment = target.saturating_sub(incoming.granted);
             let stalled = incoming.granted == incoming.received;
-            if increment == 0 || (!stalled && increment < self.limits.window_bytes.div_ceil(2)) {
+            if increment == 0 || (!stalled && increment < incoming.window_bytes.div_ceil(2)) {
                 return;
             }
             let increment = u32::try_from(increment.min(u64::from(u32::MAX))).unwrap_or(u32::MAX);
@@ -1046,6 +1072,7 @@ mod tests {
             .await;
         let body = channel
             .receive(FrameBodyDescriptor {
+                delivery: None,
                 stream_id: 9,
                 length: Some(5),
             })
@@ -1059,6 +1086,7 @@ mod tests {
         let channel = channel(sent.clone());
         let body = channel
             .receive(FrameBodyDescriptor {
+                delivery: None,
                 stream_id: 7,
                 length: None,
             })
@@ -1076,6 +1104,7 @@ mod tests {
         let channel = channel(sent.clone());
         let mut body = channel
             .receive(FrameBodyDescriptor {
+                delivery: None,
                 stream_id: 17,
                 length: None,
             })
@@ -1103,6 +1132,7 @@ mod tests {
         let channel = channel(sent);
         let mut body = channel
             .receive(FrameBodyDescriptor {
+                delivery: None,
                 stream_id: 18,
                 length: None,
             })
@@ -1120,6 +1150,7 @@ mod tests {
         let channel = channel(sent);
         let body = channel
             .receive(FrameBodyDescriptor {
+                delivery: None,
                 stream_id: 19,
                 length: Some(6),
             })
@@ -1172,6 +1203,7 @@ mod tests {
         let channel = channel(sent.clone());
         let body = channel
             .receive(FrameBodyDescriptor {
+                delivery: None,
                 stream_id: 11,
                 length: Some(64 * 1024),
             })
@@ -1208,6 +1240,7 @@ mod tests {
         .expect("body channel");
         let body = channel
             .receive(FrameBodyDescriptor {
+                delivery: None,
                 stream_id: 12,
                 length: Some(6),
             })
@@ -1319,6 +1352,7 @@ mod tests {
         .expect("body channel");
         let mut body = channel
             .receive(FrameBodyDescriptor {
+                delivery: None,
                 stream_id: 21,
                 length: None,
             })
@@ -1378,9 +1412,57 @@ mod tests {
         assert_eq!(ids(&initiator), vec![1, 3, 5]);
     }
 
+    #[tokio::test]
+    async fn realtime_streams_keep_the_small_window_on_both_sides() {
+        let sent = Arc::new(StdMutex::new(Vec::new()));
+        let channel = BinaryBodyChannel::new(BinaryBodyLimits::default(), {
+            let sent = sent.clone();
+            move |frame| {
+                let sent = sent.clone();
+                async move {
+                    sent.lock().expect("sent frames").push(frame);
+                    Ok(())
+                }
+            }
+        })
+        .expect("body channel");
+        let outgoing = channel
+            .prepare(BinaryBody::from_bytes(vec![1; 65536]).realtime())
+            .expect("outgoing body");
+        let descriptor = outgoing.descriptor();
+        assert_eq!(descriptor.delivery, Some(BinaryBodyDelivery::Realtime));
+        let sending = tokio::spawn(outgoing.send());
+        for _ in 0..8 {
+            tokio::task::yield_now().await;
+        }
+        assert!(!sending.is_finished());
+        let frame = sent.lock().expect("frames")[0].clone();
+        assert_eq!(parse_binary_frame(&frame).expect("data").2.len(), 32768);
+        let mut incoming = channel.receive(descriptor).expect("incoming body");
+        channel.handle_frame(&frame).await;
+        assert_eq!(
+            incoming
+                .recv()
+                .await
+                .expect("received")
+                .expect("chunk")
+                .len(),
+            32768
+        );
+        let credit = sent.lock().expect("frames")[1].clone();
+        let (_, flags, payload) = parse_binary_frame(&credit).expect("window frame");
+        assert_eq!(flags, BINARY_FRAME_WINDOW);
+        assert_eq!(parse_window_credit(&payload), Some(32768));
+        channel
+            .handle_frame(&build_window_frame(descriptor.stream_id, 65536))
+            .await;
+        sending.await.expect("task").expect("complete");
+    }
+
     #[test]
     fn protocol_descriptor_matches_typescript_wire_shape() {
         let descriptor = FrameBodyDescriptor {
+            delivery: None,
             stream_id: 41,
             length: Some(3),
         };

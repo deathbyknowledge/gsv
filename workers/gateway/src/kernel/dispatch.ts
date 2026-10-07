@@ -615,6 +615,7 @@ async function dispatchKernel(
       case "sys.browser.handoff.open":
       case "sys.browser.handoff.finish":
       case "sys.browser.frame":
+      case "sys.browser.watch":
       case "sys.browser.input":
         return await handleInstanceRequest(frame, ctx);
       case "sys.config.get":

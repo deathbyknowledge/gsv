@@ -10,6 +10,7 @@ import type {
   SysBrowserHandoffRequestArgs, SysBrowserHandoffRequestResult,
   SysBrowserHandoffGetArgs, SysBrowserHandoffGetResult,
   SysBrowserFrameArgs, SysBrowserFrameResult, SysBrowserInputArgs, BrowserHumanInput,
+  SysBrowserWatchArgs, SysBrowserWatchResult,
 } from "../protocol/syscalls/instance";
 
 const id = z.string().trim().min(1).max(160);
@@ -40,6 +41,7 @@ export const browserHandoffRequestSchema = z.strictObject({
 }) satisfies z.ZodType<SysBrowserHandoffRequestArgs>;
 export const browserHandoffSelectorSchema = z.strictObject({ instanceId: id, requestId: id });
 export const browserFrameSchema = z.strictObject({ instanceId: id, tabId: z.number().int().positive().optional() });
+export const browserWatchSchema = browserFrameSchema;
 export const browserInputSchema = z.strictObject({ instanceId: id, tabId: z.number().int().positive(), documentId: id, handoffRequestId: id.optional() });
 export type InstanceTargetRequest = TypedRequest<SyscallDomains, SyscallName, BinaryBody>;
 export type InstanceTargetResponse = TypedResponse<SyscallDomains, SyscallName, BinaryBody>;
@@ -61,6 +63,7 @@ export interface InstallationInstances {
   openHandoff(actor: InstanceActor, args: SysBrowserHandoffGetArgs): Promise<SysBrowserHandoffRequestResult>;
   finishHandoff(actor: InstanceActor, args: SysBrowserHandoffGetArgs): Promise<SysBrowserHandoffGetResult>;
   frame(actor: InstanceActor, args: SysBrowserFrameArgs): Promise<{ data: SysBrowserFrameResult; body: BinaryBody }>;
+  watch(actor: InstanceActor, args: SysBrowserWatchArgs): Promise<{ data: SysBrowserWatchResult; body: BinaryBody }>;
   input(actor: InstanceActor, args: SysBrowserInputArgs, input: BrowserHumanInput): Promise<{ accepted: true }>;
   execute(actor: InstanceActor, instanceId: string, frame: InstanceTargetRequest, deadlineAt: number): Promise<InstanceTargetResponse>;
   cancel(actor: InstanceActor, instanceId: string, requestId: string): Promise<void>;

@@ -123,6 +123,8 @@ export type SysBrowserHandoffOpenResult = { handoff: BrowserHandoff };
 export type SysBrowserHandoffFinishArgs = SysBrowserHandoffGetArgs;
 export type SysBrowserHandoffFinishResult = { handoff: BrowserHandoff };
 export type SysBrowserFrameArgs = { instanceId: string; tabId?: number };
+export type SysBrowserWatchArgs = SysBrowserFrameArgs;
+export type SysBrowserWatchResult = { watchId: string; version: 1 };
 export type BrowserPointer = { tabId: number; x: number; y: number; actor: "ship" | "human"; clickedAt?: number };
 /** The image travels in the response body, never in history or a provider URL. */
 export type SysBrowserFrameResult = {

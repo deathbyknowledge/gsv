@@ -23,6 +23,11 @@ while you are interacting, and browser actions run in sequence so a human click
 cannot split an agent's click or typing action. Closing the view leaves the
 browser and Ship running.
 
+The view streams page changes as they happen. It drops superseded images when
+the connection is slow, and reconnects after an interruption. Hidden views pause
+capture; opening the view again resumes watching the same browser. Images use higher JPEG quality for clearer text. Network and website latency
+still affect how quickly an action appears.
+
 Sign in directly on the website in this view, including any verification code.
 Ship can also request your help with a particular website. Open the request in
 Ship, or follow its link from your messenger and sign in to GSV. For these

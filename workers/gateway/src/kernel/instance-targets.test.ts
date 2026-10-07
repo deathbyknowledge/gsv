@@ -88,6 +88,41 @@ describe("instance gateway boundary", () => {
     expect(dispose).toHaveBeenCalledTimes(1);
   });
 
+  it("streams a human browser view until its consumer cancels, then releases the capability", async () => {
+    const cancelled = vi.fn();
+    const watch = vi.fn(async () => ({ data: { watchId: "watch", version: 1 as const }, body: {
+      delivery: "realtime" as const, stream: new ReadableStream<Uint8Array>({ start(c) { c.enqueue(new Uint8Array([1])); }, cancel: cancelled }),
+    } }));
+    const { ctx, dispose } = context({ watch });
+    const response = await handleInstanceRequest({ type: "req", id: "view", call: "sys.browser.watch", args: { instanceId: "instance" } }, ctx);
+    expect(dispose).not.toHaveBeenCalled();
+    if (!response.ok) throw new Error("Expected a view body");
+    expect(response.body?.delivery).toBe("realtime");
+    const reader = response.body!.stream.getReader();
+    expect((await reader.read()).value).toEqual(new Uint8Array([1]));
+    await reader.cancel();
+    expect(cancelled).toHaveBeenCalledOnce(); expect(dispose).toHaveBeenCalledOnce();
+    expect(watch).toHaveBeenCalledWith({ ownerUid: 1000, human: true }, { instanceId: "instance" });
+    const process = context({}, "crew-process");
+    await expect(handleInstanceRequest({ type: "req", id: "view", call: "sys.browser.watch", args: { instanceId: "instance" } }, process.ctx)).rejects.toThrow("human owner");
+    expect(process.getInstallation).not.toHaveBeenCalled();
+  });
+
+  it("cancels a view admitted after the caller disconnects", async () => {
+    let resolve!: (result: Awaited<ReturnType<InstallationInstances["watch"]>>) => void;
+    const { ctx, dispose, deferred } = context({ watch: () => new Promise(done => { resolve = done; }) });
+    const abort = new AbortController(); ctx.requestSignal = abort.signal;
+    const response = handleInstanceRequest({ type: "req", id: "view", call: "sys.browser.watch", args: { instanceId: "instance" } }, ctx);
+    const rejected = expect(response).rejects.toThrow("closed");
+    await vi.waitFor(() => expect(resolve).toBeDefined());
+    abort.abort(new Error("closed")); await rejected;
+    expect(dispose).not.toHaveBeenCalled();
+    const cancelled = vi.fn();
+    resolve({ data: { watchId: "late", version: 1 }, body: { stream: new ReadableStream({ cancel: cancelled }) } });
+    await Promise.all(deferred);
+    expect(cancelled).toHaveBeenCalledOnce(); expect(dispose).toHaveBeenCalledOnce();
+  });
+
   it("cancels once and consumes a late response before releasing its capability", async () => {
     let resolve!: (response: Awaited<ReturnType<InstallationInstances["execute"]>>) => void;
     const cancel = vi.fn(async () => {});
