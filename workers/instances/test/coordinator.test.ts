@@ -170,7 +170,7 @@ describe("human browser control", () => {
       const first = object.input(actor, { instanceId, tabId: 1, documentId: "document", handoffRequestId: "login" }, { kind: "text", text: "first" });
       await vi.waitFor(() => expect(input).toHaveBeenCalledTimes(1));
       const second = object.input(actor, { instanceId, tabId: 1, documentId: "document", handoffRequestId: "login" }, { kind: "text", text: "queued" });
-      const rejected = expect(second).rejects.toThrow("no longer active");
+      const rejected = expect(second).rejects.toThrow("finishing human control");
       let returned = false;
       const done = object.finishHandoff(actor, selector).then(() => { returned = true; });
       const command = object.execute(actor, instanceId, { type: "req", id: "after-handoff", call: "shell.exec", args: { input: "page snapshot" } }, Date.now() + 10000);
@@ -190,6 +190,59 @@ describe("human browser control", () => {
 });
 
 describe("browser save ordering", () => {
+  it.each(["export", "upload"] as const)("keeps human control open after a failed final %s and permits retry", failure => fixture(async (object, store, instanceId, _installationId, browser) => {
+    const selector = { instanceId, requestId: "save-login" };
+    await object.requestHandoff(actor, { ...selector, tabId: 1, purpose: "Sign in" });
+    const { handoff: opened } = await object.openHandoff(actor, selector);
+    if (failure === "export") vi.spyOn(browser, "save").mockRejectedValueOnce(new Error("Export failed"));
+    else vi.spyOn(ProfileStorage.prototype, "save").mockRejectedValueOnce(new Error("Upload failed"));
+    await expect(object.finishHandoff(actor, selector)).rejects.toThrow(/Human control is still active.*Retry Continue.*Diagnostic:/);
+    expect((await object.getHandoff(actor, selector)).handoff).toEqual(opened);
+    expect(new InstanceStore(store.storage).handoffs(instanceId)[0]).toMatchObject({ state: "active" });
+    expect((await object.get(actor, { instanceId })).instance?.persistence?.saveStatus).toBe("failed");
+    expect(await object.execute(actor, instanceId, { type: "req", id: "too-early", call: "shell.exec", args: { input: "page snapshot" } }, Date.now() + 10000)).toMatchObject({ ok: false, error: { code: 409 } });
+    expect(await object.input(actor, { instanceId, tabId: 1, documentId: "document", handoffRequestId: selector.requestId }, { kind: "text", text: "retry" })).toEqual({ accepted: true });
+    expect((await object.finishHandoff(actor, selector)).handoff.state).toBe("completed");
+    expect((await object.get(actor, { instanceId })).instance?.persistence?.saveStatus).toBe("saved");
+  }));
+
+  it("publishes handoff completion only after saving and shares concurrent finish requests", () => fixture(async (object, _store, instanceId, _installationId, browser) => {
+    const selector = { instanceId, requestId: "saving" };
+    await object.requestHandoff(actor, { ...selector, tabId: 1, purpose: "Sign in" });
+    const { handoff: opened } = await object.openHandoff(actor, selector);
+    const waiting = deferred(), original = browser.save!;
+    const save = vi.spyOn(browser, "save").mockImplementation(async (...args) => { await waiting.promise; return original(...args); });
+    const first = object.finishHandoff(actor, selector);
+    await vi.waitFor(() => expect(save).toHaveBeenCalledOnce());
+    const second = object.finishHandoff(actor, selector);
+    expect((await object.getHandoff(actor, selector)).handoff).toEqual(opened);
+    await expect(object.input(actor, { instanceId, tabId: 1, documentId: "document", handoffRequestId: selector.requestId }, { kind: "text", text: "late" })).rejects.toThrow("finishing human control");
+    waiting.resolve();
+    const [a, b] = await Promise.all([first, second]);
+    expect(a).toEqual(b);
+    expect(a.handoff).toMatchObject({ state: "completed", revision: opened.revision + 1 });
+    expect(await object.finishHandoff(actor, selector)).toEqual(a);
+    expect(save).toHaveBeenCalledOnce();
+  }));
+
+  it.each(["cancel", "stop"] as const)("preserves %s while a handoff completion save is still running", action => fixture(async (object, _store, instanceId, _installationId, browser) => {
+    const selector = { instanceId, requestId: "cancel-save" };
+    await object.requestHandoff(actor, { ...selector, tabId: 1, purpose: "Sign in" });
+    await object.openHandoff(actor, selector);
+    const waiting = deferred(), original = browser.save!;
+    const save = vi.spyOn(browser, "save").mockImplementation(async (...args) => { await waiting.promise; return original(...args); });
+    const finishing = object.finishHandoff(actor, selector);
+    await vi.waitFor(() => expect(save).toHaveBeenCalledOnce());
+    if (action === "cancel") {
+      expect((await object.cancelHandoff(actor, selector)).handoff.state).toBe("cancelled");
+      await expect(object.requestHandoff(actor, { instanceId, requestId: "next", tabId: 1, purpose: "Another sign-in" })).rejects.toThrow("finishing human control");
+    } else await object.stop(actor, { instanceId, force: true });
+    waiting.resolve();
+    expect((await finishing).handoff.state).toBe("cancelled");
+    expect((await object.getHandoff(actor, selector)).handoff.state).toBe("cancelled");
+    if (action === "cancel") expect((await object.requestHandoff(actor, { instanceId, requestId: "next", tabId: 1, purpose: "Another sign-in" })).handoff.state).toBe("pending");
+  }));
+
   it("stops after a committed save while slow obsolete-object cleanup retries independently", () => fixture(async (object, store, instanceId, _installationId, browser) => {
     await object.saveProfile(actor, instanceId);
     const oldKey = store.ownedProfile(actor, instance(store.byId(instanceId)).profileId!)!.object_key!;

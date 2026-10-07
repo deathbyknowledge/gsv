@@ -66,6 +66,10 @@ handoff, and before an ordinary stop. Closing a website tab does not forget its
 saved data. Restore completes before the next browser becomes ready. If restore
 fails, that start fails visibly rather than opening an empty replacement.
 
+**Continue** finishes a login handoff only after its save succeeds. If saving
+fails, human control and the waiting Ship task stay open; retry Continue or
+cancel the request. Cancelling remains available while a save is in progress.
+
 A save waits for active browser commands and live-view input to settle. New
 commands and input wait while the save completes, with their usual cancellation
 and time limits. The live view stays open during saving.

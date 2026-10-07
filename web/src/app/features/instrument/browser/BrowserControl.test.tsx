@@ -1,6 +1,6 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/preact-query";
 import { GSVClient } from "@humansandmachines/gsv/client";
-import { encodeBrowserViewPacket, type CloudInstance } from "@humansandmachines/gsv/protocol";
+import { encodeBrowserViewPacket, type BrowserHandoff, type CloudInstance } from "@humansandmachines/gsv/protocol";
 import type { ComponentChildren, JSX, VNode } from "preact";
 import { act } from "preact/test-utils";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -11,6 +11,47 @@ import { BrowserViewer } from "./BrowserControl";
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 describe("live browser viewing", () => {
+  it("keeps Continue available after a save failure and clears the warning after retry", async () => {
+    vi.stubGlobal("document", new EventTarget());
+    vi.stubGlobal("requestAnimationFrame", (callback: () => void) => setTimeout(callback, 0));
+    vi.stubGlobal("cancelAnimationFrame", clearTimeout);
+    vi.spyOn(GSVClient.prototype, "getStatus").mockReturnValue({ state: "connected", url: null, username: null, connectionId: null, message: null });
+    vi.spyOn(GSVClient.prototype, "onStatus").mockImplementation(() => () => {});
+    const instance: CloudInstance = { instanceId: "instance", targetId: "1234abcd", startRequestId: "start", ownerUid: 1000,
+      templateId: "browser", templateRevision: "1", kind: "browser", implements: [], label: "Browser", state: "ready", revision: 1, createdAt: 1, expiresAt: Date.now() + 60000 };
+    const handoff: BrowserHandoff = { instanceId: instance.instanceId, requestId: "login", tabId: 1, site: "https://example.com", purpose: "Sign in", state: "active", revision: 1, createdAt: 1, expiresAt: instance.expiresAt };
+    const finish = vi.fn().mockRejectedValueOnce(new Error("Save failed; retry Continue")).mockResolvedValueOnce({ data: { handoff: { ...handoff, state: "completed" } } });
+    const request = vi.spyOn(GSVClient.prototype, "request").mockImplementation(async call => {
+      if (call === "sys.instance.get") return { data: { instance } };
+      if (call === "sys.browser.watch") return { data: { watchId: "watch", version: 1 }, body: { stream: new ReadableStream<Uint8Array>({ start(controller) {
+        controller.enqueue(encodeBrowserViewPacket({ kind: "state", activeTabId: 1, tabs: [{ id: 1, title: "Login", url: handoff.site }], handoff }));
+        controller.enqueue(encodeBrowserViewPacket({ kind: "frame", tabId: 1, documentId: "document", sequence: 1, capturedAt: Date.now(), width: 1280, height: 800 }, new Uint8Array([1])));
+      } }) } };
+      if (call === "sys.browser.handoff.finish") return finish();
+      throw new Error(`Unexpected request ${call}`);
+    });
+    const cache = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity } } });
+    const root = createTestRoot("Retry handoff"), close = vi.fn();
+    let tree: ComponentChildren;
+    function Harness() { tree = BrowserViewer({ request: { instanceId: instance.instanceId }, onClose: close }); return null; }
+    const button = () => collectNodes(tree).find(node => node.type === "button" && collectText(node) === "continue");
+    try {
+      await root.render(<GatewayProvider><QueryClientProvider client={cache}><Harness /></QueryClientProvider></GatewayProvider>);
+      await vi.waitFor(() => expect(button()).toBeDefined());
+      await act(async () => { button()!.props.onClick?.(); });
+      await vi.waitFor(() => expect(collectText(tree)).toContain("Save failed; retry Continue"));
+      expect(button()!.props.disabled).toBe(false);
+      expect(close).not.toHaveBeenCalled();
+      await act(async () => { button()!.props.onClick?.(); });
+      await vi.waitFor(() => expect(collectText(tree)).not.toContain("Save failed; retry Continue"));
+      expect(finish).toHaveBeenCalledTimes(2);
+      expect(request.mock.calls.filter(([call]) => call === "sys.browser.handoff.finish").map(([, args]) => args)).toEqual([
+        { instanceId: "instance", requestId: "login" }, { instanceId: "instance", requestId: "login" },
+      ]);
+      expect(close).not.toHaveBeenCalled();
+    } finally { await root.unmount(); cache.clear(); }
+  });
+
   it("shows partial saves without treating them as a full failure or forcing shutdown", async () => {
     vi.stubGlobal("document", new EventTarget());
     vi.spyOn(GSVClient.prototype, "getStatus").mockReturnValue({ state: "connected", url: null, username: null, connectionId: null, message: null });

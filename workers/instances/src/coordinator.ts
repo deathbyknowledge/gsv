@@ -194,6 +194,7 @@ export class InstanceCoordinator extends DurableObject<Environment> implements I
       if (existing.tabId !== args.tabId || existing.purpose !== args.purpose || existing.responsibilityId !== args.responsibilityId) throw new Error("Handoff requestId has already been used with different arguments");
       if (existing.site || !liveHandoff(existing)) return { handoff: existing, actionPath: actionPath(existing) };
     }
+    if (this.#handoffBarriers.has(row.id)) throw new Error("Browser is finishing human control; retry the request after it settles");
     if (this.#store.handoffs(row.id).some(value => liveHandoff(value) && value.requestId !== args.requestId)) throw new Error("Browser already has a pending human request");
     const value: BrowserHandoff = existing ?? { ...args, site: "", state: "pending", revision: 1, createdAt: Date.now(), expiresAt: Math.min(instance(row).expiresAt, Date.now() + 15 * 60_000) };
     // Fence before awaiting CDP or cancellation. No new automation can enter now.
@@ -235,6 +236,15 @@ export class InstanceCoordinator extends DurableObject<Environment> implements I
     const value = this.handoff(actor, args);
     args = { ...args, instanceId: value.instanceId };
     if (!liveHandoff(value)) return { handoff: value };
+    const pending = this.#handoffBarriers.get(args.instanceId);
+    if (state !== "completed") {
+      const terminal: BrowserHandoff = { ...value, state, completedAt: Date.now(), revision: value.revision + 1 };
+      this.#store.putHandoff(terminal);
+      if (pending) return { handoff: terminal };
+    } else if (pending) {
+      await pending;
+      return { handoff: this.handoff(actor, args) };
+    }
     // Close admission first. execute() also waits for this barrier before resuming.
     const barrier = (async () => {
       const input = this.#humanInputs.get(args.instanceId);
@@ -242,13 +252,20 @@ export class InstanceCoordinator extends DurableObject<Environment> implements I
         this.fenceStop(instance(this.#store.byId(args.instanceId)), "Human input outcome could not be confirmed");
         throw new Error("Browser input did not settle; the instance is stopping");
       }
-      if (state === "completed") await this.save(args.instanceId);
+      if (state === "completed") {
+        const saved = await this.save(args.instanceId);
+        const current = this.handoff(actor, args);
+        if (!liveHandoff(current)) return;
+        if (!saved) {
+          const persistence = instance(this.#store.byId(args.instanceId)).persistence;
+          throw new Error(`${persistence?.error ?? "Browser data could not be saved."} Human control is still active. Retry Continue or cancel the request.${persistence?.diagnosticRef ? ` Diagnostic: ${persistence.diagnosticRef}.` : ""}`);
+        }
+        this.#store.putHandoff({ ...current, state, completedAt: Date.now(), revision: current.revision + 1 });
+      }
     })();
     this.#handoffBarriers.set(args.instanceId, barrier);
-    const terminal: BrowserHandoff = { ...value, state, completedAt: Date.now(), revision: value.revision + 1 };
-    this.#store.putHandoff(terminal);
     try { await barrier; } finally { if (this.#handoffBarriers.get(args.instanceId) === barrier) this.#handoffBarriers.delete(args.instanceId); }
-    return { handoff: terminal };
+    return { handoff: this.handoff(actor, args) };
   }
   async frame(actor: InstanceActor, rawArgs: Parameters<InstallationInstances["frame"]>[1]) {
     this.human(actor);
@@ -289,6 +306,7 @@ export class InstanceCoordinator extends DurableObject<Environment> implements I
     const check = () => {
       this.requireInstance(actor, args.instanceId, true);
       if (this.#stops.has(args.instanceId)) throw new Error("Browser is preparing to stop");
+      if (this.#handoffBarriers.has(args.instanceId)) throw new Error("Browser is finishing human control; retry input after it settles");
       if (args.handoffRequestId) this.handoff(actor, { instanceId: args.instanceId, requestId: args.handoffRequestId }, true);
       else if (this.#store.handoffs(args.instanceId).some(liveHandoff)) throw new Error("Open the pending browser request before entering input");
     };
@@ -327,7 +345,7 @@ export class InstanceCoordinator extends DurableObject<Environment> implements I
     try {
       id = this.requireInstance(actor, id, true).id;
       if (!isBrowserRequest(frame)) throw new Error("Unsupported browser syscall");
-      if (this.#store.handoffs(id).some(liveHandoff)) { await cancelBinaryBody(frame.body, "Human controls browser"); return { type: "res", id: frame.id, ok: false, error: { code: 409, message: "human_control: waiting for the user to return browser control" } }; }
+      if (this.#store.handoffs(id).some(liveHandoff) && !this.#handoffBarriers.has(id)) { await cancelBinaryBody(frame.body, "Human controls browser"); return { type: "res", id: frame.id, ok: false, error: { code: 409, message: "human_control: waiting for the user to return browser control" } }; }
       await this.#policy.requireActive();
       if (this.#stops.has(id)) throw new Error("Browser is preparing to stop");
     } catch (error) {

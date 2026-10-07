@@ -115,6 +115,7 @@ export function BrowserViewer({ request, onClose }: { request: BrowserSelection;
       await inputQueue.current;
       inputEpoch.current++;
       await client.sys.browser.handoff.finish({ instanceId: request.instanceId, requestId: handoff.requestId });
+      setError("");
       await queryClient.invalidateQueries({ queryKey: INSTANCE_QUERY_KEY });
     } catch (cause) { setError(String(cause)); }
     finally { setBusy(false); }
