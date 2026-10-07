@@ -17,6 +17,7 @@ type DebuggerDetachListener = (
 type DebuggerSessionRecord = {
   target: chrome.debugger.DebuggerSession;
   refCount: number;
+  detaching?: Promise<void>;
 };
 
 const sessions = new Map<number, DebuggerSessionRecord>();
@@ -28,6 +29,10 @@ export async function acquireDebugger(tabId: number): Promise<chrome.debugger.De
   ensureChromeListeners();
   const existing = sessions.get(tabId);
   if (existing) {
+    if (existing.detaching) {
+      await existing.detaching;
+      return await acquireDebugger(tabId);
+    }
     existing.refCount += 1;
     return existing.target;
   }
@@ -44,13 +49,16 @@ export async function releaseDebugger(tabId: number): Promise<void> {
     return;
   }
 
-  existing.refCount -= 1;
-  if (existing.refCount > 0) {
+  if (existing.detaching) {
+    await existing.detaching;
+    return;
+  }
+  if (existing.refCount > 1) {
+    existing.refCount -= 1;
     return;
   }
 
-  sessions.delete(tabId);
-  await requireDebuggerApi().detach(existing.target);
+  await detachSession(tabId, existing);
 }
 
 export async function sendDebuggerCommand<T extends object | undefined = object | undefined>(
@@ -87,16 +95,41 @@ export function debuggerTabs(): number[] {
 }
 
 export async function releaseAllDebuggers(): Promise<number[]> {
-  const tabIds = debuggerTabs();
-  await Promise.all(tabIds.map(async (tabId) => {
-    const existing = sessions.get(tabId);
-    sessions.delete(tabId);
-    if (!existing) {
-      return;
-    }
-    await requireDebuggerApi().detach(existing.target).catch(() => undefined);
+  const entries = [...sessions.entries()];
+  const results = await Promise.allSettled(entries.map(async ([tabId, session]) => {
+    await detachSession(tabId, session);
   }));
-  return tabIds;
+  const failures = results.flatMap((result, index) => result.status === "rejected"
+    ? [`tab ${entries[index][0]}: ${String(result.reason)}`]
+    : []);
+  if (failures.length > 0) {
+    throw new Error(`Could not detach debugger from ${failures.join("; ")}`);
+  }
+  return entries.map(([tabId]) => tabId);
+}
+
+async function detachSession(tabId: number, session: DebuggerSessionRecord): Promise<void> {
+  if (sessions.get(tabId) !== session) {
+    return;
+  }
+  if (session.detaching) {
+    await session.detaching;
+    return;
+  }
+  session.detaching = Promise.resolve(requireDebuggerApi().detach(session.target)).then(
+    () => {
+      if (sessions.get(tabId) === session) sessions.delete(tabId);
+    },
+    (error) => {
+      // Chrome's onDetach event may have confirmed an external detach before the API rejected.
+      if (sessions.get(tabId) === session) throw error;
+    },
+  );
+  try {
+    await session.detaching;
+  } finally {
+    session.detaching = undefined;
+  }
 }
 
 function ensureChromeListeners(): void {
