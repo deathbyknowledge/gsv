@@ -82,6 +82,8 @@ the browser stays running within its original lifetime, and the view offers
 **retry save** and **stop without saving**. The warning shows the last save time.
 Expiry and forced shutdown still close the browser; unsaved changes can be lost.
 The previous successful snapshot survives a failed, oversized or timed-out save.
+Once a new snapshot commits, deleting its predecessor runs separately with durable
+retries. Slow cleanup does not turn a successful save into a failure or block stop.
 
 Saved data is also inspectable on `gsv`, under your account name:
 

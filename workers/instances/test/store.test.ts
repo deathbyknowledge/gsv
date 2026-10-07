@@ -208,7 +208,25 @@ describe("saved profile encryption", () => {
     expect(await storage.restore(store.ownedProfile(actor, row.id)!)).toEqual(state);
     await storage.save(started, state, 10000);
     expect(store.ownedProfile(actor, row.id)?.saved_revision).toBe(2);
+    await storage.cleanup();
     expect(await bucket.get(address)).toBeNull();
+  }));
+  it("retains obsolete snapshot cleanup across reconstruction without changing the committed save", () => inStore(async store => {
+    const started = store.admit(actor, { requestId: "cleanup", templateId: "browser" }, limits);
+    const storage = new ProfileStorage("cleanup", bucket, store);
+    await storage.save(started, { cookies: [], origins: [] }, 10000);
+    const oldKey = store.ownedProfile(actor, started.profileId!)!.object_key!;
+    const state = { cookies: [], origins: [{ origin: "https://example.com", localStorage: [{ name: "login", value: "new" }] }] };
+    await storage.save(started, state, 10000);
+    expect(storage.hasPendingCleanup()).toBe(true);
+    const reopened = new ProfileStorage("cleanup", bucket, new InstanceStore(store.storage));
+    const current = store.ownedProfile(actor, started.profileId!)!;
+    expect(profile(current).saveStatus).toBe("saved");
+    expect(await reopened.restore(current)).toEqual(state);
+    await reopened.cleanup();
+    expect(await bucket.head(oldKey)).toBeNull();
+    expect(await bucket.head(current.object_key!)).not.toBeNull();
+    expect(reopened.hasPendingCleanup()).toBe(false);
   }));
   it("never overwrites or deletes a concurrently committed revision", () => inStore(async store => {
     const saved = store.createProfile(actor, "profile", "Personal", limits);

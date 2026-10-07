@@ -190,6 +190,32 @@ describe("human browser control", () => {
 });
 
 describe("browser save ordering", () => {
+  it("stops after a committed save while slow obsolete-object cleanup retries independently", () => fixture(async (object, store, instanceId, _installationId, browser) => {
+    await object.saveProfile(actor, instanceId);
+    const oldKey = store.ownedProfile(actor, instance(store.byId(instanceId)).profileId!)!.object_key!;
+    const stalled = deferred();
+    const remove = vi.spyOn(env.PROFILES, "delete").mockImplementationOnce(() => stalled.promise);
+    const original = browser.save!;
+    browser.save = async (...args) => ({ ...await original(...args), state: { cookies: [], origins: [{ origin: "https://example.com", localStorage: [] }] } });
+    expect((await object.stop(actor, { instanceId })).instance).toMatchObject({ state: "stopping", persistence: { saveStatus: "saved" } });
+    expect(remove).not.toHaveBeenCalled();
+    vi.spyOn(BrowserProvider.prototype, "exists").mockResolvedValue(false);
+    vi.useFakeTimers();
+    const maintenance = object.alarm();
+    await vi.waitFor(() => expect(remove).toHaveBeenCalledWith([oldKey]));
+    await vi.advanceTimersByTimeAsync(5001);
+    await maintenance;
+    expect(instance(store.byId(instanceId))).toMatchObject({ state: "stopped", persistence: { saveStatus: "saved" } });
+    expect(await store.storage.getAlarm()).not.toBeNull();
+    expect(store.sql.exec("SELECT * FROM obsolete_profile_objects").toArray()).toHaveLength(1);
+    stalled.resolve();
+    remove.mockRestore();
+    await object.alarm();
+    expect(await env.PROFILES.head(oldKey)).toBeNull();
+    expect(store.sql.exec("SELECT * FROM obsolete_profile_objects").toArray()).toHaveLength(0);
+    expect(await store.storage.getAlarm()).toBeNull();
+  }));
+
   it("cancels automation before a handoff waits for the save queued behind it", () => fixture(async (object, _store, instanceId, _installationId, browser) => {
     const started = deferred();
     vi.spyOn(browser.shell!, "exec").mockImplementation(async (_args, context) => {

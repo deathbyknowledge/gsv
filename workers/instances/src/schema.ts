@@ -39,6 +39,9 @@ const migrations = [{
 }, {
   id: 5,
   statements: ["ALTER TABLE instances ADD COLUMN provider_failed_at INTEGER"],
+}, {
+  id: 6,
+  statements: ["CREATE TABLE obsolete_profile_objects (object_key TEXT PRIMARY KEY)"],
 }];
 
 export function migrate(storage: DurableObjectStorage): void {

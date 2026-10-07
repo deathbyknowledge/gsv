@@ -3,6 +3,7 @@ import { gzipSync, gunzipSync } from "node:zlib";
 import type { StorageState } from "./browser";
 import { profile, type InstanceStore, type ProfileRow } from "./store";
 import { BrowserStorageError, MAX_PROFILE_BYTES } from "./browser-storage";
+import { within } from "./browser-operation";
 
 const FORMAT = new Uint8Array([71, 83, 86, 2]);
 
@@ -93,8 +94,23 @@ export class ProfileStorage {
     this.store.storage.transactionSync(() => {
       this.store.sql.exec("UPDATE profiles SET object_key = ?, saved_revision = ? WHERE id = ?", address, revision, row.id);
       this.store.putProfile({ ...profile(current), revision: profile(current).revision + 1, ...persistence, storedBytes: bytes.byteLength, contentHash: hash, usage });
+      if (row.object_key) this.store.sql.exec("INSERT INTO obsolete_profile_objects (object_key) VALUES (?)", row.object_key);
     });
-    if (row.object_key) await this.bucket.delete(row.object_key).catch(cause => this.store.diagnostic(instance.instanceId, cause));
+  }
+  hasPendingCleanup(): boolean {
+    return this.store.sql.exec("SELECT 1 FROM obsolete_profile_objects LIMIT 1").toArray().length > 0;
+  }
+  async cleanup(): Promise<void> {
+    const keys = this.store.sql.exec<{ object_key: string }>("SELECT object_key FROM obsolete_profile_objects LIMIT 100").toArray().map(row => row.object_key);
+    if (!keys.length) return;
+    try {
+      // The committed pointer never references these immutable objects again.
+      // A timed-out delete can finish later; the durable retry remains harmless.
+      await within(this.bucket.delete(keys), 5000, "Obsolete browser snapshot cleanup");
+      this.store.storage.transactionSync(() => {
+        for (const key of keys) this.store.sql.exec("DELETE FROM obsolete_profile_objects WHERE object_key = ?", key);
+      });
+    } catch (cause) { this.store.diagnostic(null, cause); }
   }
   async read(row: ProfileRow): Promise<R2ObjectBody | null> {
     if (!row.object_key) return null;
