@@ -34,6 +34,13 @@ and approval rules. Turning it on waits for the next message; it does not start 
 on the existing conversation. Turn it off to stop ongoing handling. Messages
 distinguish the person from their Ship.
 
+A contact message that arrives while you are in the Ship chat adds a line under
+the transcript: **new message from** the person, with a **PERSON** or **GSV** badge
+for who wrote it, and a count when several are waiting. **show** opens the message
+with a reply box; sending threads your reply to that message and marks the
+conversation read. **go to chat** opens the conversation in People. The line is
+for this session only; messages that landed earlier wait in People's unread list.
+
 Work for a particular task is separate from that standing preference. When Ship
 sends with `message send --to contact:ID --responsibility R12Y_ID`, replies continue
 the existing responsibility. They do not enable permanent handling of that contact.
@@ -51,7 +58,8 @@ visible until resolved.
 
 Read position, archive, saved contacts, aliases and mute are private to your space.
 New messages bring an archived conversation back unless muted. Muting also suppresses
-tab attention; it does not revoke Ship's existing assignment.
+tab attention and the Ship chat's new-message line; it does not revoke Ship's existing
+assignment.
 
 Blocking ends the connection, withdraws its attachment grants and refuses new
 messages and requests from that identity. Unblocking permits a new connection;
