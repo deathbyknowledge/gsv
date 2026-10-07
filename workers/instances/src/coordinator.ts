@@ -77,7 +77,7 @@ export class InstanceCoordinator extends DurableObject<Environment> implements I
     // Install the recovery alarm before claiming an allocation; an extra empty alarm is harmless.
     await this.ctx.storage.setAlarm(Date.now() + 1);
     this.#retirement.requireLive();
-    const value = this.#store.admit(actor, args, limits);
+    const value = this.#store.admit(actor, args, limits, Date.now(), new Set(this.#stops.keys()));
     return { instance: value, disposition: value.startRequestId === args.requestId ? "created" as const : "reused" as const };
   }
   async list(raw: InstanceActor, rawArgs: Parameters<InstallationInstances["list"]>[1]) {

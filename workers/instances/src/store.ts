@@ -46,7 +46,7 @@ export class InstanceStore {
       reservedSeconds: rows.filter(row => row.active).reduce((sum, row) => sum + row.reservation, 0),
     };
   }
-  admit(actor: InstanceActor, args: SysInstanceStartArgs, limits: BrowserLimits, now = Date.now()): CloudInstance {
+  admit(actor: InstanceActor, args: SysInstanceStartArgs, limits: BrowserLimits, now = Date.now(), stopping?: ReadonlySet<string>): CloudInstance {
     return this.storage.transactionSync(() => {
       const fingerprint = JSON.stringify([args.templateId, args.label ?? null, args.lifetimeSeconds ?? null, args.profileId ?? null, args.fresh ?? false]);
       const existing = this.sql.exec<{ instance_id: string; fingerprint: string }>("SELECT instance_id, fingerprint FROM start_requests WHERE owner_uid = ? AND request_id = ?", actor.ownerUid, args.requestId).toArray()[0];
@@ -64,6 +64,7 @@ export class InstanceStore {
           && !value.isolated
           && (!args.profileId || value.profileId === args.profileId));
         if (current) {
+          if (stopping?.has(current.instanceId)) throw new Error("Browser is preparing to stop; retry starting after it settles");
           this.sql.exec("INSERT INTO start_requests VALUES (?, ?, ?, ?)", actor.ownerUid, args.requestId, current.instanceId, fingerprint);
           return current;
         }

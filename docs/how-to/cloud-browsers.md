@@ -178,7 +178,12 @@ Ordinary stop fails if the final save fails. `instance stop <browser-id> --force
 --wait` explicitly discards unsaved changes. `browser profile save` retries a save
 and returns its status; instance results also include compact persistence status.
 
-The ordinary start reuses the current browser. Use tabs for additional work and
+The ordinary start reuses the current browser. Retry a start rejected while
+that browser is preparing to stop; its request ID
+has not been committed to the stopping browser. If the stop's save fails, the
+browser remains usable; after successful termination, a retry creates a new one.
+
+Use tabs for additional work and
 close your task's tabs when finished. Do not stop a shared browser just because
 one task ended. Stop an isolated browser you created when its work is finished.
 When an independent temporary browser is needed, request it explicitly:

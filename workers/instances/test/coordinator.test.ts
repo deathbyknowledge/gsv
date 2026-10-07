@@ -416,6 +416,30 @@ describe("browser save ordering", () => {
 });
 
 describe("browser health", () => {
+  it.each(["saved", "failed"] as const)("does not bind a new start to a pending stop whose final save is %s", outcome => fixture(async (object, store, instanceId, _installationId, browser) => {
+    vi.spyOn(InstancePolicy.prototype, "limits").mockResolvedValue(limits);
+    const exporting = deferred(), release = deferred();
+    const originalSave = browser.save!;
+    browser.save = async (...args) => {
+      exporting.resolve();
+      await release.promise;
+      if (outcome === "failed") throw new Error("Save unavailable");
+      return originalSave(...args);
+    };
+    const stopping = object.stop(actor, { instanceId });
+    const stopped = outcome === "failed" ? expect(stopping).rejects.toThrow("still running") : stopping;
+    await exporting.promise;
+    const request = { requestId: "during-stop", templateId: "browser" };
+    await expect(object.start(actor, request)).rejects.toThrow("preparing to stop");
+    expect(store.owned(actor, { startRequestId: request.requestId })).toBeNull();
+    expect(store.usage(limits).activeInstances).toBe(1);
+    release.resolve(); await stopped;
+    if (outcome === "saved") store.terminal(instanceId, false);
+    const restarted = await object.start(actor, request);
+    expect(restarted.instance.state).toBe(outcome === "saved" ? "starting" : "ready");
+    expect(restarted.instance.instanceId === instanceId).toBe(outcome === "failed");
+  }));
+
   it("keeps a failed final save running, exposes measured usage, and permits force stop", () => fixture(async (object, store, instanceId, _installationId, browser) => {
     const usage = { bytes: 7000000, cookieBytes: 42, cookies: 1, sites: [{ origin: "https://example.com", bytes: 6999958, localStorageBytes: 10, indexedDBBytes: 6999948, localStorageEntries: 1, databases: 1, records: 3 }] };
     browser.save = vi.fn(async () => { throw new BrowserStorageError("Storage allowance exceeded", usage); });
