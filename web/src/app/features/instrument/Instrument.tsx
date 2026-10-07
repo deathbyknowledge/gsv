@@ -143,7 +143,7 @@ function InstrumentReady({ initialPath }: { initialPath: string }) {
   });
 
   /* a contact conversation Zen asked People to open; a fresh object each time so the same contact reopens */
-  const [peopleRequest, setPeopleRequest] = useState<{ contactId: string } | null>(null);
+  const [peopleRequest, setPeopleRequest] = useState<{ contactId: string; draft?: string } | null>(null);
   const move = useCallback(
     (to: Distance, reference: FleetReference | null = null) => {
       if (reference && fleetDirty && !window.confirm("Discard unsaved Fleet edits and open this item?")) return false;
@@ -304,7 +304,7 @@ function InstrumentReady({ initialPath }: { initialPath: string }) {
             if (!move("memory")) return;
             if (page) setSelectedMemoryPage({ ...page });
           }} initialTarget={zenTarget} prefill={zenPrefill} onPrefillUsed={() => setZenPrefill(null)} pid={zenPid}
-          onPeople={(contactId) => { if (move("people")) setPeopleRequest({ contactId }); }} />
+          onPeople={(contactId, draft) => { if (move("people")) setPeopleRequest(draft ? { contactId, draft } : { contactId }); }} />
         </RetainedView>
         <RetainedView active={distance === "memory"}>
           <Memory onDirtyChange={setMemoryDirty} initialPage={selectedMemoryPage} onAsk={(_page, prompt) => {

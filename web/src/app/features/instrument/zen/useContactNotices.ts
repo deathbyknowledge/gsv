@@ -32,6 +32,7 @@ export function latestOf(notice: ContactNotice): ContactNoticeMessage {
 }
 
 const changedSchema = z.object({ conversationId: z.string(), latestSequence: z.number(), viewOnly: z.boolean().optional() });
+const NOBODY: ReadonlySet<string> = new Set();
 
 /**
  * Live notices for contact messages that land while the person is in the Ship chat: one per
@@ -40,16 +41,24 @@ const changedSchema = z.object({ conversationId: z.string(), latestSequence: z.n
  * social metadata and are skipped. Nothing is seeded from history, and nothing is collected
  * while the chat is behind another view: a notice exists only for messages that arrived while
  * the person was here. A notice the person replied to stays, marked as answered, until that
- * contact writes again; messages that arrived during the send stay unanswered.
+ * contact writes again; messages that arrived during the send stay unanswered. A notice whose
+ * contact is in `holding` (the person typed a reply there) is not cleared by a read elsewhere.
  */
-export function useContactNotices({ enabled, listening, mayReadView }: { enabled: boolean; listening: boolean; mayReadView: boolean }) {
+export function useContactNotices({ enabled, listening, holding = NOBODY, mayReadView }: {
+  enabled: boolean;
+  listening: boolean;
+  holding?: ReadonlySet<string>;
+  mayReadView: boolean;
+}) {
   const { client, connected } = useGateway();
   const [notices, setNotices] = useState<ContactNotice[]>([]);
   const held = useRef(notices);
   held.current = notices;
-  /* read at signal time, so a view change neither resubscribes nor drops the read-tracking below */
+  /* read at signal time, so a view or draft change neither resubscribes nor drops the read-tracking below */
   const hearing = useRef(listening);
   hearing.current = listening;
+  const kept = useRef(holding);
+  kept.current = holding;
   const seen = useRef(new Set<string>());
 
   const markReplied = useCallback((contactId: string, throughSequence: number) => {
@@ -94,11 +103,12 @@ export function useContactNotices({ enabled, listening, mayReadView }: { enabled
         const changed = changedSchema.safeParse(payload);
         if (!changed.success || !changed.data.viewOnly || !mayReadView) return;
         const { conversationId } = changed.data;
-        if (!held.current.some((notice) => notice.conversationId === conversationId && !notice.replied)) return;
+        if (!held.current.some((notice) => notice.conversationId === conversationId && !notice.replied && !kept.current.has(notice.contactId))) return;
         /* reading the conversation elsewhere clears an unanswered notice once the read covers its newest message;
-           an answered one stays as the record of the reply. A failed read keeps the notice either way. */
+           an answered one, or one holding a draft, stays. A failed read keeps the notice either way. */
         void client.conversation.view.get({ conversationId }).then(({ entry }) => {
-          setNotices((current) => current.filter((notice) => notice.conversationId !== conversationId || notice.replied || entry.view.readThroughSequence < latestOf(notice).sequence));
+          setNotices((current) => current.filter((notice) =>
+            notice.conversationId !== conversationId || notice.replied || kept.current.has(notice.contactId) || entry.view.readThroughSequence < latestOf(notice).sequence));
         }).catch(() => undefined);
       }
     });

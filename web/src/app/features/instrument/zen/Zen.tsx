@@ -85,7 +85,7 @@ export type ZenProps = {
   pid?: string | null;
   onDraftChange?: (dirty: boolean) => void;
   /** Open a contact's conversation in People, for a message that arrived while here. */
-  onPeople?: (contactId: string) => void;
+  onPeople?: (contactId: string, draft?: string) => void;
 };
 
 const HISTORY_LIMIT = 400;
@@ -329,11 +329,6 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
      and only when the Kernel says the person should hear about it */
   const human = !!viewer && viewer.uid >= 1000;
   const may = (syscall: string) => human && canConfigure(viewer!, syscall);
-  const notices = useContactNotices({ enabled: !pidProp && may("contact.list"), listening: active, mayReadView: may("conversation.view.get") });
-  const contactsQuery = useContacts(human && notices.notices.length > 0 ? viewer : undefined);
-  const contactFor = (contactId: string) => contactsQuery.data?.contacts.find((contact) => contact.id === contactId);
-  /* the contact whose reply box is open under its notice */
-  const [replying, setReplying] = useState<string | null>(null);
   /* what the person typed under each notice, kept while its box is closed so switching notices loses nothing */
   const [replyDrafts, setReplyDrafts] = useState<ReadonlyMap<string, ContactReplyDraft>>(() => new Map());
   const setReplyDraft = (contactId: string, draft: ContactReplyDraft | null) => setReplyDrafts((current) => {
@@ -341,6 +336,13 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
     if (draft) next.set(contactId, draft); else next.delete(contactId);
     return next;
   });
+  /* a notice that still holds typed text stays until the person sends it or takes it to the chat */
+  const holding = useMemo(() => new Set([...replyDrafts].filter(([, draft]) => draft.text.trim() !== "").map(([contactId]) => contactId)), [replyDrafts]);
+  const notices = useContactNotices({ enabled: !pidProp && may("contact.list"), listening: active, holding, mayReadView: may("conversation.view.get") });
+  const contactsQuery = useContacts(human && notices.notices.length > 0 ? viewer : undefined);
+  const contactFor = (contactId: string) => contactsQuery.data?.contacts.find((contact) => contact.id === contactId);
+  /* the contact whose reply box is open under its notice */
+  const [replying, setReplying] = useState<string | null>(null);
   const markRead = (notice: ContactNotice, through: number) => {
     if (!may("conversation.view.update")) return;
     /* a failed read mark changes nothing the person can see; the notice still clears when they act on it */
@@ -956,7 +958,7 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
       <button type="button" disabled={!connected || conversation.historyFetching} onClick={() => void conversation.retryHistory()}>retry</button>
     </div>
   ) : null;
-  const empty = ready && moments.length === 0 && pid !== null && pendingHil === null;
+  const empty = ready && moments.length === 0 && pid !== null && pendingHil === null && notices.notices.length === 0;
 
   return (
     <main class={`zen${!promptFocused ? " is-browse" : ""}${draggingFiles ? " is-file-drop" : ""}`} aria-label="Zen"
@@ -1029,7 +1031,12 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
               {notices.notices.map((notice) => (
                 <ContactNoticeMoment key={notice.contactId} notice={notice} contact={contactFor(notice.contactId)} open={replying === notice.contactId}
                   onShow={() => setReplying(notice.contactId)}
-                  onGoToChat={() => onPeople?.(notice.contactId)}>
+                  onGoToChat={() => {
+                    /* an unsent reply goes along to the chat's composer rather than staying stranded here */
+                    const draft = replyDrafts.get(notice.contactId)?.text.trim();
+                    setReplyDraft(notice.contactId, null);
+                    onPeople?.(notice.contactId, draft || undefined);
+                  }}>
                   {replying === notice.contactId && <ContactReplyBox notice={notice} contact={contactFor(notice.contactId)} account={viewer}
                     draft={replyDrafts.get(notice.contactId) ?? EMPTY_REPLY} onDraft={(draft) => setReplyDraft(notice.contactId, draft)}
                     onSent={(through) => { notices.markReplied(notice.contactId, through); markRead(notice, through); setReplyDraft(notice.contactId, null); setReplying(null); }} />}

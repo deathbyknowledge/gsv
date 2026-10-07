@@ -39,7 +39,7 @@ function committed(sequence: number, overrides: { attention?: "notify" | "quiet"
   return { message, directed: false, attention: overrides.attention ?? "notify" };
 }
 
-async function mounted(options = { enabled: true, listening: true, mayReadView: true }) {
+async function mounted(options: Parameters<typeof useContactNotices>[0] = { enabled: true, listening: true, mayReadView: true }) {
   const root = createTestRoot("contact notices");
   let current!: ReturnType<typeof useContactNotices>;
   function Harness() { current = useContactNotices(options); return null; }
@@ -125,6 +125,17 @@ describe("contact notices in the ship chat", () => {
       expect(view.current.notices).toMatchObject([{ messages: [{ sequence: 2 }], replied: false }]);
       await act(() => view.current.markReplied("contact:ada", 2));
       expect(view.current.notices).toMatchObject([{ messages: [{ sequence: 2 }], replied: true }]);
+    } finally { await view.unmount(); }
+  });
+
+  it("keeps a notice the person is typing a reply under, even once the conversation is read elsewhere", async () => {
+    const view = await mounted({ enabled: true, listening: true, holding: new Set(["contact:ada"]), mayReadView: true });
+    try {
+      await emit("message.committed", committed(1));
+      readThrough = 1;
+      await emit("conversation.changed", { conversationId: "conversation:contact:ada", latestSequence: 1, viewOnly: true });
+      expect(GSVClient.prototype.request).not.toHaveBeenCalled();
+      expect(view.current.notices).toHaveLength(1);
     } finally { await view.unmount(); }
   });
 

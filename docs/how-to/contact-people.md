@@ -41,7 +41,7 @@ the transcript, labelled like any sender: the person's name with a **PERSON** or
 with a reply box inline; sending threads your reply to the newest one, marks the
 conversation read, and leaves the notice marked **(replied)** until that contact
 writes again. **go to chat** opens the
-conversation in People. Notices are for this session only; messages that landed
+conversation in People, taking any reply you had started along. Notices are for this session only; messages that landed
 earlier wait in People's unread list.
 
 Work for a particular task is separate from that standing preference. When Ship
