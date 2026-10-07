@@ -34,6 +34,30 @@ describe("tabs open", () => {
     expect(result.exitCode).toBe(0);
   });
 
+  it("closes a tab returned by Chrome after Pause", async () => {
+    let finishCreate!: (created: chrome.tabs.Tab) => void;
+    const pendingCreate = new Promise<chrome.tabs.Tab>((resolve) => { finishCreate = resolve; });
+    let finishClose!: () => void;
+    const pendingClose = new Promise<void>((resolve) => { finishClose = resolve; });
+    const chromeApi = stubChrome({ create: vi.fn(() => pendingCreate) });
+    chromeApi.tabs.remove = vi.fn(() => pendingClose);
+    const controller = new AbortController();
+
+    const running = runTabs(["open", "https://example.com"], context(vi.fn(), { abortSignal: controller.signal }));
+    controller.abort(new Error("Browser access paused"));
+    finishCreate(tab(false, "https://example.com"));
+
+    await vi.waitFor(() => expect(chromeApi.tabs.remove).toHaveBeenCalledWith(42));
+    let settled = false;
+    void Promise.resolve(running).then(() => { settled = true; });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(settled).toBe(false);
+
+    finishClose();
+    const result = await running;
+    expect(result.exitCode).toBe(1);
+  });
+
   it("passes request cancellation to remote file copies", async () => {
     const controller = new AbortController();
     const copyTargetFile = vi.fn(async () => {
@@ -252,6 +276,7 @@ function stubChrome(overrides: {
     tabs: {
       create: overrides.create ?? vi.fn(),
       get: overrides.get ?? vi.fn(),
+      remove: vi.fn(async () => {}),
       update: vi.fn(),
       captureVisibleTab: vi.fn(),
     },

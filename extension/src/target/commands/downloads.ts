@@ -135,14 +135,29 @@ async function startDownload(args: string[], ctx: CommandContext): Promise<Comma
   }
 
   throwIfAborted(ctx.abortSignal);
-  const downloadId = await requireDownloadsApi().download(parsed.value);
-  throwIfAborted(ctx.abortSignal);
-  const downloads = await requireDownloadsApi().search({ id: downloadId });
-  throwIfAborted(ctx.abortSignal);
-  return commandJson({
-    downloadId,
-    download: downloads[0] ? formatDownload(downloads[0]) : null,
-  });
+  const downloadsApi = requireDownloadsApi();
+  const downloadId = await downloadsApi.download(parsed.value);
+  try {
+    throwIfAborted(ctx.abortSignal);
+    const downloads = await downloadsApi.search({ id: downloadId });
+    throwIfAborted(ctx.abortSignal);
+    return commandJson({
+      downloadId,
+      download: downloads[0] ? formatDownload(downloads[0]) : null,
+    });
+  } catch (error) {
+    if (ctx.abortSignal?.aborted) {
+      try {
+        await downloadsApi.cancel(downloadId);
+      } catch (cancelError) {
+        throw new Error(`Could not cancel download ${downloadId} after Pause: ${errorMessage(cancelError)}`, {
+          cause: cancelError,
+        });
+      }
+      throwIfAborted(ctx.abortSignal);
+    }
+    throw error;
+  }
 }
 
 async function updateDownload(

@@ -59,6 +59,16 @@ export async function getTab(tabId: number): Promise<TabSummary | null> {
 export async function createTab(url: string, active: boolean, signal?: AbortSignal): Promise<TabSummary> {
   signal?.throwIfAborted();
   const tab = await chrome.tabs.create({ url, active });
+  if (signal?.aborted) {
+    if (!isNumber(tab.id)) {
+      throw new Error("Chrome created a tab without an id during Pause; it could not be closed");
+    }
+    try {
+      await chrome.tabs.remove(tab.id);
+    } catch (error) {
+      throw new Error(`Could not close tab ${tab.id} after Pause: ${String(error)}`, { cause: error });
+    }
+  }
   signal?.throwIfAborted();
   if (!hasTabIdentity(tab)) {
     throw new Error("Chrome did not return a tab id");
