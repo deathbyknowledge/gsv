@@ -143,7 +143,6 @@ import {
 } from "./responsibilities";
 import {
   GSV_TARGET_ID,
-  getVisibleTarget,
   resolveVisibleTarget,
   targetCanHandle,
   type TargetDescriptor,
@@ -281,7 +280,7 @@ export async function dispatch(
       };
     }
     if (routingArgs) delete routingArgs.target;
-    const sessionTarget = getVisibleTarget(ctx, session.targetId, { includeOffline: true });
+    const sessionTarget = await resolveVisibleTarget(ctx, session.targetId, { includeOffline: true });
     if (!sessionTarget) {
       return {
         handled: true,

@@ -99,6 +99,10 @@ shell behavior. That driver parses incoming syscall arguments before accessing
 files or executing commands, then uses the public SDK's operation types.
 Backend script execution retains the injected function's argument and result
 types, and file-copy receipts use the ordinary `fs.copy` result contract.
+Both browser providers accept a named `shell.exec` start with `start: true`
+and a fresh UUID `sessionId`. Execution stays in the foreground and ends with
+the request; cancellation or disconnection cancels its work. Browser shells
+do not support polling or writing stdin through that ID.
 
 The persisted registry and compatibility syscalls still use `device` names for
 non-native targets. That is an implementation and upgrade constraint, not the

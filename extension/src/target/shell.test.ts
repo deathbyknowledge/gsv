@@ -71,10 +71,10 @@ describe("BrowserTargetShell", () => {
     });
   });
 
-  it("stops a running command when its request is cancelled", async () => {
+  it.each([false, true])("stops a running command when its request is cancelled (named start: %s)", async (named) => {
     const shell = new BrowserTargetShell(directoryOnlyFileSystem(), []);
     const controller = new AbortController();
-    const execution = shell.exec({ input: "sleep 300" }, { abortSignal: controller.signal });
+    const execution = shell.exec({ input: "sleep 300", ...(named ? { start: true, sessionId: crypto.randomUUID() } : {}) }, { abortSignal: controller.signal });
 
     await new Promise((resolve) => setTimeout(resolve, 10));
     controller.abort(new Error("User interrupted"));
@@ -85,7 +85,7 @@ describe("BrowserTargetShell", () => {
     ])).resolves.toMatchObject({ status: "failed" });
   });
 
-  it("rejects session starts and polls before executing browser side effects", async () => {
+  it("accepts named foreground starts but rejects polls and stdin before executing browser side effects", async () => {
     const run = vi.fn(commandResult);
     const shell = new BrowserTargetShell(directoryOnlyFileSystem(), [{
       name: "side-effect",
@@ -93,16 +93,29 @@ describe("BrowserTargetShell", () => {
       run,
     }]);
     const sessionId = crypto.randomUUID();
-    for (const args of [{ sessionId, start: true }, { start: true }, { sessionId }]) {
-      await expect(shell.exec({ input: "side-effect", ...args })).resolves.toMatchObject({
+    for (const input of ["", "side-effect"]) {
+      await expect(shell.exec({ input, sessionId })).resolves.toMatchObject({
         status: "failed",
-        error: "Browser shell sessions are not supported yet",
+        error: expect.stringContaining("foreground-only"),
       });
     }
     expect(run).not.toHaveBeenCalled();
 
-    await expect(shell.exec({ input: "side-effect" })).resolves.toMatchObject({ status: "completed" });
+    await expect(shell.exec({ input: "side-effect", sessionId, start: true })).resolves.toMatchObject({ status: "completed", exitCode: 0 });
     expect(run).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects malformed named starts before executing commands", async () => {
+    const run = vi.fn(commandResult);
+    const shell = new BrowserTargetShell(directoryOnlyFileSystem(), [{ name: "side-effect", summary: "Record a browser side effect.", run }]);
+    for (const sessionId of [undefined, "", "invalid", crypto.randomUUID().toUpperCase()]) {
+      await expect(shell.exec({ input: "side-effect", start: true, sessionId })).resolves.toMatchObject({
+        status: "failed", error: "Starting a named browser command requires a fresh UUID",
+      });
+    }
+    expect(run).not.toHaveBeenCalled();
+    await expect(shell.exec({ input: "side-effect" })).resolves.toMatchObject({ status: "completed" });
+    expect(run).toHaveBeenCalledOnce();
   });
 
   it("rejects malformed execution settings before commands run and leaves the queue usable", async () => {

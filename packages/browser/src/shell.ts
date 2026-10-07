@@ -86,9 +86,14 @@ export class BrowserTargetShell {
     const sessionId = args.sessionId?.trim() ?? "";
     const timeoutMs = args.timeout ?? DEFAULT_BROWSER_SHELL_TIMEOUT_MS;
 
-    if (sessionId || args.start === true) {
-      return { status: "failed", output: "", error: "Browser shell sessions are not supported yet" };
+    if (args.start === true && !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(sessionId)) {
+      return { status: "failed", output: "", error: "Starting a named browser command requires a fresh UUID" };
     }
+    if (sessionId && args.start !== true) {
+      return { status: "failed", output: "", error: "Browser commands are foreground-only; session polling and stdin are not supported" };
+    }
+    // The Kernel fences reuse of a named start. Its browser work still belongs to
+    // this request and uses the same cancellation and completion path below.
     if (!input.trim()) {
       return { status: "failed", output: "", error: "shell.exec requires input" };
     }

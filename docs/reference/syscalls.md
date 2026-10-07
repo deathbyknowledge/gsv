@@ -291,9 +291,14 @@ rejects reuse of an existing ID. Machines start under that exact ID and detach
 immediately. The start acknowledgement consumes no output; the first poll owns it.
 Recovery polls or cancels the saved ID and never replays the start or stdin.
 Older machines reject the unknown session before executing the command and must
-be updated. Browser targets can accept a named start but remain foreground-only;
-disconnecting their request cancels the operation. The native `gsv` shell also
+be updated. Browser targets accept a named start but remain foreground-only;
+disconnecting their request cancels the operation, and they reject session polls
+and stdin. Their start response contains the terminal result. The native `gsv` shell also
 remains foreground-only and does not accept named sessions.
+
+Follow-up requests resolve the saved target against the caller's current target
+inventory, including cloud instances. A remembered session ID does not grant
+access to a target the caller can no longer see.
 
 When the Kernel rejects a named start before forwarding it, the error includes
 `details: { "shellStart": "rejected" }`. Clients may finish that attempt as failed.

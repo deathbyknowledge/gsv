@@ -9,6 +9,9 @@ import { handleInstanceRequest } from "./sys/instance";
 import { testPeer } from "../test-support/peers";
 import { openFsSource } from "../drivers/native/fs";
 import { createBrowserStorageBackend } from "./browser-storage";
+import { dispatch, type DispatchDeps } from "./dispatch";
+import { ShellSessionStore } from "./shell-sessions";
+import { runWithRealKernelSql } from "../test-support/real-kernel-sql";
 
 function context(service: Partial<InstallationInstances>, processId?: string) {
   const dispose = vi.fn(), deferred: Promise<unknown>[] = [];
@@ -34,6 +37,36 @@ const target: TargetDescriptor = {
 };
 
 describe("instance gateway boundary", () => {
+  it("resolves named shell follow-ups through the owner's current instance inventory", async () => {
+    await runWithRealKernelSql(async sql => {
+      const instance: CloudInstance = {
+        instanceId: "instance", targetId: "browser", startRequestId: "start", ownerUid: 1000,
+        templateId: "browser", templateRevision: "1", kind: "browser", implements: ["shell.exec"], label: "Browser",
+        state: "ready", revision: 1, createdAt: Date.now(), expiresAt: Date.now() + 60000,
+      };
+      const inventory = { instances: [instance], handoffs: [], usage: { periodStartsAt: 0, periodEndsAt: 1, usedSeconds: 0, reservedSeconds: 60, limitSeconds: 3600, activeInstances: 1, concurrentLimit: 2 } };
+      const list = vi.fn(async () => inventory);
+      const execute = vi.fn<InstallationInstances["execute"]>(async (_actor, _id, frame) => ({
+        type: "res", id: frame.id, ok: true, data: { status: "failed", output: "", error: "Browser commands are foreground-only" },
+      }));
+      const { ctx } = context({ list, execute });
+      const sessionId = crypto.randomUUID();
+      const shellSessions = new ShellSessionStore(sql);
+      shellSessions.rememberDeviceSession(sessionId, "browser");
+      // SAFETY: An instance route only uses the session store from the dispatch dependencies.
+      const deps = { shellSessions } as DispatchDeps;
+      const poll = () => dispatch({ type: "req", id: "poll", call: "shell.exec", args: { sessionId, input: "" } }, { type: "app", id: "app" }, ctx, deps);
+      expect(await poll()).toMatchObject({ handled: true, response: { ok: true, data: { status: "failed", error: "Browser commands are foreground-only" } } });
+      expect(list).toHaveBeenCalledWith({ ownerUid: 1000, human: true }, { includeTerminal: true });
+      expect(execute).toHaveBeenCalledOnce();
+      expect(execute).toHaveBeenCalledWith({ ownerUid: 1000, human: true }, "instance", expect.objectContaining({ call: "shell.exec", args: { sessionId, input: "" } }), expect.any(Number));
+
+      list.mockResolvedValue({ ...inventory, instances: [] });
+      expect(await poll()).toMatchObject({ handled: true, response: { ok: false, error: { code: 403 } } });
+      expect(execute).toHaveBeenCalledOnce();
+    });
+  });
+
   it("keeps filesystem browser storage owner-scoped and cannot bypass syscall grants", async () => {
     const saved = { profileId: "saved", ownerUid: 1000, label: "Browser", state: "active" as const, saveStatus: "saved" as const, createdAt: 1, savedAt: 2, storedBytes: 3, revision: 1 };
     const listProfiles = vi.fn(async () => ({ profiles: [saved] }));

@@ -98,6 +98,15 @@ try {
   assert.ok(repeats.every(value => value.instance.instanceId === first.instanceId && value.disposition === "reused"));
   assert.equal((await client.sys.instance.list({})).usage.reservedSeconds, before.reservedSeconds);
   console.log("PASS: independent start requests reuse one browser and reservation; saved logins are automatic");
+  const namedStart = { target: first.targetId, sessionId: crypto.randomUUID(), start: true, input: "printf named-browser-start" };
+  assert.deepEqual(await client.shell.exec(namedStart), { status: "completed", output: "named-browser-start", exitCode: 0 });
+  await assert.rejects(client.shell.exec(namedStart), /already exists/);
+  for (const input of ["", "printf must-not-run"]) {
+    const result = await client.shell.exec({ target: first.targetId, sessionId: namedStart.sessionId, input });
+    assert.equal(result.status, "failed");
+    assert.match(result.error, /foreground-only/);
+  }
+  console.log("PASS: named browser commands complete in the foreground; replay, polling and stdin cannot repeat their effects");
   const missing = await client.shell.exec({ target: "gsv", input: "instance stop unknown-browser" });
   assert.equal(missing.exitCode, 1, "An unknown browser was reported as successfully stopped");
   await checkBrowserFollowing(client, first, website);
