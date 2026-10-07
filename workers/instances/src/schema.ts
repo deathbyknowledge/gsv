@@ -88,6 +88,24 @@ const migrations = [{
       )`,
     "DELETE FROM handoffs WHERE EXISTS (SELECT 1 FROM handoff_receipts r WHERE r.instance_id = handoffs.instance_id AND r.request_id = handoffs.request_id)",
   ],
+}, {
+  id: 11,
+  statements: [
+    "CREATE TABLE instance_usage (instance_id TEXT NOT NULL, period_start INTEGER NOT NULL, charged INTEGER NOT NULL, PRIMARY KEY(instance_id, period_start))",
+    "CREATE INDEX instance_usage_period ON instance_usage(period_start)",
+    "CREATE INDEX instances_active ON instances(active)",
+    // Existing lifetimes are capped at 24 hours, so rounded runtime spans at most two months.
+    `WITH saved AS (SELECT id, charged, json_extract(record, '$.readyAt') AS ready_at FROM instances WHERE active = 0 AND charged > 0)
+      INSERT INTO instance_usage SELECT id, unixepoch(ready_at / 1000, 'unixepoch', 'start of month') * 1000,
+        MIN(charged, (unixepoch(ready_at / 1000, 'unixepoch', 'start of month', '+1 month') * 1000 - ready_at + 999) / 1000)
+      FROM saved WHERE ready_at IS NOT NULL`,
+    `WITH saved AS (SELECT id, charged, json_extract(record, '$.readyAt') AS ready_at FROM instances WHERE active = 0 AND charged > 0),
+      remainder AS (SELECT id, unixepoch(ready_at / 1000, 'unixepoch', 'start of month', '+1 month') * 1000 AS next_month,
+        charged - (unixepoch(ready_at / 1000, 'unixepoch', 'start of month', '+1 month') * 1000 - ready_at + 999) / 1000 AS seconds
+        FROM saved WHERE ready_at IS NOT NULL)
+      INSERT INTO instance_usage SELECT id, next_month, seconds FROM remainder WHERE seconds > 0`,
+    "UPDATE instances SET charged = 0 WHERE active = 0 AND json_extract(record, '$.readyAt') IS NULL",
+  ],
 }];
 
 export function migrate(storage: DurableObjectStorage): void {

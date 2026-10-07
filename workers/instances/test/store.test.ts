@@ -91,6 +91,49 @@ describe("instance admission", () => {
     expect(store.owned({ ownerUid: 1001, human: true }, { instanceId: started.instanceId })).toBeNull();
     expect(store.owned({ ownerUid: 1001, human: true }, { startRequestId: "one" })).toBeNull();
   }));
+  it("settles each UTC month's runtime and debits the new allowance after rollover", () => inStore(store => {
+    const rollover = Date.UTC(2026, 10, 1), began = rollover - 60000;
+    const started = store.admit(actor, { requestId: "rollover", templateId: "browser", lifetimeSeconds: 600 }, limits, began);
+    store.update({ ...started, state: "ready", readyAt: began });
+    expect(store.usage(limits, rollover).reservedSeconds).toBe(600);
+    store.terminal(started.instanceId, false, rollover + 120000);
+    store.terminal(started.instanceId, false, rollover + 600000);
+    expect(store.usage(limits, began).usedSeconds).toBe(60);
+    expect(store.usage(limits, rollover)).toMatchObject({ usedSeconds: 120, reservedSeconds: 0 });
+    expect(store.byId(started.instanceId).charged).toBe(180);
+    const nextLimits = { ...limits, periodSeconds: 600 };
+    expect(() => store.admit(actor, { requestId: "too-much", templateId: "browser", lifetimeSeconds: 600 }, nextLimits, rollover + 120001)).toThrow("allowance");
+    expect(store.admit(actor, { requestId: "remaining", templateId: "browser", lifetimeSeconds: 480 }, nextLimits, rollover + 120001).state).toBe("starting");
+  }));
+  it("uses readiness's month and rounds once within the lifetime cap", () => inStore(store => {
+    const rollover = Date.UTC(2026, 10, 1), began = rollover - 500;
+    const started = store.admit(actor, { requestId: "fractional", templateId: "browser", lifetimeSeconds: 60 }, limits, began);
+    store.update({ ...started, state: "ready", readyAt: began });
+    store.terminal(started.instanceId, false, rollover + 600000);
+    expect(store.usage(limits, began).usedSeconds).toBe(1);
+    expect(store.usage(limits, rollover).usedSeconds).toBe(59);
+    const delayed = store.admit(actor, { requestId: "delayed", templateId: "browser", lifetimeSeconds: 60 }, limits, began);
+    store.update({ ...delayed, state: "ready", readyAt: rollover + 1000 });
+    store.terminal(delayed.instanceId, false, rollover + 31000);
+    expect(store.usage(limits, began).usedSeconds).toBe(1);
+    expect(store.usage(limits, rollover).usedSeconds).toBe(89);
+  }));
+  it("migrates settled charges into their runtime months without retaining failed-start charges", () => inStore(store => {
+    const rollover = Date.UTC(2026, 10, 1), began = rollover - 60000;
+    const started = store.admit(actor, { requestId: "old-rollover", templateId: "browser", lifetimeSeconds: 600 }, limits, began);
+    store.update({ ...started, state: "ready", readyAt: began });
+    store.terminal(started.instanceId, false, rollover + 120000);
+    const failed = store.admit(actor, { requestId: "old-failure", templateId: "browser", lifetimeSeconds: 600 }, limits, began);
+    store.terminal(failed.instanceId, true, began);
+    store.sql.exec("UPDATE instances SET charged = 600 WHERE id = ?", failed.instanceId);
+    store.sql.exec("DROP TABLE instance_usage");
+    store.sql.exec("DROP INDEX instances_active");
+    store.sql.exec("DELETE FROM instance_schema WHERE id = 11");
+    migrate(store.storage); migrate(store.storage);
+    expect(store.usage(limits, began).usedSeconds).toBe(60);
+    expect(store.usage(limits, rollover).usedSeconds).toBe(120);
+    expect(store.byId(failed.instanceId).charged).toBe(0);
+  }));
   it("releases failed startup time after a known allocation is confirmed stopped", () => inStore(store => {
     const value = store.admit(actor, { requestId: "failed-start", templateId: "browser", lifetimeSeconds: 300 }, limits);
     store.sql.exec("UPDATE instances SET acquire_at = ?, session_id = ? WHERE id = ?", Date.now(), "known-session", value.instanceId);

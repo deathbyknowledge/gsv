@@ -199,6 +199,10 @@ after the acquisition attempt, covering its short provider keepalive; the reques
 browser lifetime does not extend that grace period. The acquisition is never replayed.
 A launch that never reaches readiness consumes no browser-time allowance; its
 entire reservation is returned once cleanup completes.
+Runtime spanning a UTC month boundary is settled into each month's allowance.
+Runtime is rounded up once to seconds, capped by the reservation, with each
+started second assigned to its starting month. Active reservations remain held
+across rollover until termination is confirmed.
 
 ## Commands for Ship
 

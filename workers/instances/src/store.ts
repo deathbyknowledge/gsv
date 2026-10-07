@@ -41,12 +41,11 @@ export class InstanceStore {
   }
   usage(limits: BrowserLimits, now = Date.now()): InstanceUsage {
     const { start, end } = period(now);
-    const rows = this.rows();
+    const active = this.sql.exec<{ count: number; reserved: number }>("SELECT COUNT(*) AS count, COALESCE(SUM(reservation), 0) AS reserved FROM instances WHERE active = 1").one();
+    const used = this.sql.exec<{ seconds: number }>("SELECT COALESCE(SUM(charged), 0) AS seconds FROM instance_usage WHERE period_start = ?", start).one();
     return {
       periodStartsAt: start, periodEndsAt: end, limitSeconds: limits.periodSeconds, concurrentLimit: limits.concurrentInstances,
-      activeInstances: rows.filter(row => row.active).length,
-      usedSeconds: rows.filter(row => row.period_start === start).reduce((sum, row) => sum + row.charged, 0),
-      reservedSeconds: rows.filter(row => row.active).reduce((sum, row) => sum + row.reservation, 0),
+      activeInstances: active.count, usedSeconds: used.seconds, reservedSeconds: active.reserved,
     };
   }
   admit(actor: InstanceActor, args: SysInstanceStartArgs, limits: BrowserLimits, now = Date.now(), stopping?: ReadonlySet<string>): CloudInstance {
@@ -108,6 +107,14 @@ export class InstanceStore {
       const value: CloudInstance = { ...previous, state: failed ? "failed" : "stopped", stoppedAt: now, revision: previous.revision + 1 };
       // Cleanup retains the reservation until termination; usage starts only at readiness.
       const charge = previous.readyAt === undefined ? 0 : Math.min(row.reservation, Math.max(0, Math.ceil((now - previous.readyAt) / 1000)));
+      // Round runtime once; each started second belongs to the UTC month where it starts.
+      let remaining = charge, cursor = previous.readyAt ?? now;
+      while (remaining > 0) {
+        const { start, end } = period(cursor);
+        const seconds = Math.min(remaining, Math.ceil((end - cursor) / 1000));
+        this.sql.exec("INSERT INTO instance_usage (instance_id, period_start, charged) VALUES (?, ?, ?)", id, start, seconds);
+        cursor += seconds * 1000; remaining -= seconds;
+      }
       this.sql.exec("UPDATE instances SET record = ?, active = 0, reservation = 0, charged = ? WHERE id = ?", JSON.stringify(value), charge, id);
       if (value.profileId) {
         const saved = this.ownedProfile({ ownerUid: value.ownerUid, human: false }, value.profileId);
