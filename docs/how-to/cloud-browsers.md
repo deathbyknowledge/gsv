@@ -60,6 +60,10 @@ GSV automatically keeps website cookies, local storage and IndexedDB for your
 local account in this space. The next ordinary browser restores that saved
 state; there is no profile picker. Saved state is encrypted and separate from
 the running browser. Only one instance can use the same saved state at a time.
+The account's automatic login store has a durable identity. Explicitly created
+profiles remain separate, even if they are older or have a running browser.
+Forgetting the automatic state makes the next ordinary start fresh; it never
+switches to another saved profile.
 
 Website storage tracking is limited to 128 distinct HTTP(S) origins, including
 embedded frames. Already tracked origins keep their places; additional origins

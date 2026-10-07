@@ -117,6 +117,7 @@ export type BrowserProfile = BrowserPersistence & {
   createdAt: number;
   revision: number;
   state: "active" | "deleting" | "deleted";
+  automatic?: boolean;
   activeInstanceId?: string;
   usage?: BrowserStorageUsage;
   contentHash?: string;

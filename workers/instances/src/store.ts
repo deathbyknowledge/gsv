@@ -60,11 +60,12 @@ export class InstanceStore {
       if (args.templateId !== "browser" || !limits.enabled) throw new Error("Browser instances are not enabled");
       const lifetime = args.lifetimeSeconds ?? browserTemplate(limits).defaultLifetimeSeconds;
       if (lifetime < 60 || lifetime > limits.maxInstanceSeconds) throw new Error("Requested browser lifetime is outside the allowed range");
+      const automatic = !args.profileId && !args.fresh ? this.defaultProfile(actor.ownerUid) : null;
       if (!args.fresh) {
         const current = this.rows(true).map(instance).reverse().find(value => value.ownerUid === actor.ownerUid
           && (value.state === "ready" || value.state === "starting") && value.expiresAt > now
           && !value.isolated
-          && (!args.profileId || value.profileId === args.profileId));
+          && value.profileId === (args.profileId ?? automatic?.profileId));
         if (current) {
           if (stopping?.has(current.instanceId)) throw new Error("Browser is preparing to stop; retry starting after it settles");
           this.sql.exec("INSERT INTO start_requests VALUES (?, ?, ?, ?)", actor.ownerUid, args.requestId, current.instanceId, fingerprint);
@@ -75,8 +76,7 @@ export class InstanceStore {
       if (usage.activeInstances >= limits.concurrentInstances) throw new Error("Browser concurrency limit reached");
       if (usage.usedSeconds + usage.reservedSeconds + lifetime > limits.periodSeconds) throw new Error("Browser time allowance exhausted");
       const defaultProfile = !args.profileId && !args.fresh
-        ? this.defaultProfile(actor.ownerUid)
-          ?? this.createProfile(actor, crypto.randomUUID(), "Browser", limits)
+        ? automatic ?? this.createProfile(actor, crypto.randomUUID(), "Browser", limits, true)
         : null;
       const profileId = args.profileId ?? defaultProfile?.profileId;
       const saved = profileId ? this.ownedProfile(actor, profileId) : null;
@@ -135,7 +135,7 @@ export class InstanceStore {
     return { profiles, total, nextOffset: offset + profiles.length < total ? offset + profiles.length : undefined };
   }
   private defaultProfile(ownerUid: number): BrowserProfile | null {
-    const row = this.sql.exec<ProfileRow>("SELECT * FROM profiles WHERE owner_uid = ? AND json_extract(record, '$.state') = 'active' ORDER BY rowid LIMIT 1", ownerUid).toArray()[0];
+    const row = this.sql.exec<ProfileRow>("SELECT * FROM profiles WHERE owner_uid = ? AND json_extract(record, '$.automatic') = 1 AND json_extract(record, '$.state') = 'active'", ownerUid).toArray()[0];
     return row ? profile(row) : null;
   }
   ownedProfile(actor: InstanceActor, id: string): ProfileRow | null { return this.sql.exec<ProfileRow>("SELECT * FROM profiles WHERE owner_uid = ? AND id = ?", actor.ownerUid, id).toArray()[0] ?? null; }
@@ -143,7 +143,7 @@ export class InstanceStore {
     const bounded = value.usage ? { ...value, usage: boundBrowserStorageUsage(value.usage) } : value;
     this.sql.exec("UPDATE profiles SET record = ? WHERE id = ?", JSON.stringify(bounded), value.profileId);
   }
-  createProfile(actor: InstanceActor, requestId: string, label: string, limits: BrowserLimits): BrowserProfile {
+  createProfile(actor: InstanceActor, requestId: string, label: string, limits: BrowserLimits, automatic = false): BrowserProfile {
     return this.storage.transactionSync(() => {
       const existing = this.sql.exec<ProfileRow>("SELECT * FROM profiles WHERE owner_uid = ? AND request_id = ?", actor.ownerUid, requestId).toArray()[0];
       if (existing) {
@@ -152,7 +152,7 @@ export class InstanceStore {
       }
       const count = this.sql.exec<{ count: number }>("SELECT count(*) AS count FROM profiles WHERE json_extract(record, '$.state') != 'deleted'").one().count;
       if (!limits.enabled || count >= limits.savedProfiles) throw new Error("Saved browser profile limit reached");
-      const value: BrowserProfile = { profileId: crypto.randomUUID(), ownerUid: actor.ownerUid, label, createdAt: Date.now(), revision: 1, state: "active", saveStatus: "empty" };
+      const value: BrowserProfile = { profileId: crypto.randomUUID(), ownerUid: actor.ownerUid, label, createdAt: Date.now(), revision: 1, state: "active", saveStatus: "empty", automatic: automatic || undefined };
       this.sql.exec("INSERT INTO profiles (id, owner_uid, request_id, record, key) VALUES (?, ?, ?, ?, ?)", value.profileId, actor.ownerUid, requestId, JSON.stringify(value), crypto.getRandomValues(new Uint8Array(32)).buffer);
       return value;
     });

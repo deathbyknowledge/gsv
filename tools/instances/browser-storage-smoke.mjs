@@ -216,16 +216,21 @@ export async function checkRestoredBrowserStorage(shell, client, instance) {
 
 export async function checkForgettingBrowserStorage(shell, client, instance, start, wait, website) {
   const root = "/var/lib/gsv/browser/browser-tester";
-  await shell({ targetId: "gsv" }, `rm ${root}/state.enc`);
-  await wait(instance.instanceId, "terminal");
-  await shell({ targetId: "gsv" }, `test ! -e ${root}`);
-  assert.equal((await client.sys.browser.profile.get({ profileId: instance.profileId })).profile.state, "deleted");
-  const fresh = await start();
-  assert.notEqual(fresh.profileId, instance.profileId);
-  const probe = await shell(fresh, `tabs open --active ${website}/probe && page wait '#restored' && page text`);
-  assert.match(probe, /cookie=missing;local=null;indexed=undefined/);
-  await shell({ targetId: "gsv" }, `rm -r ${root}`);
-  await wait(fresh.instanceId, "terminal");
-  assert.equal((await client.sys.browser.profile.get({ profileId: fresh.profileId })).profile.state, "deleted");
-  console.log("PASS: filesystem deletion stops the active browser, erases saved state, and the next start is fresh; recursive deletion follows the same path");
+  const { profile: explicit } = await client.sys.browser.profile.create({ requestId: crypto.randomUUID(), label: "Explicit browser state" });
+  try {
+    await shell({ targetId: "gsv" }, `rm ${root}/state.enc`);
+    await wait(instance.instanceId, "terminal");
+    await shell({ targetId: "gsv" }, `test ! -e ${root}`);
+    assert.equal((await client.sys.browser.profile.get({ profileId: instance.profileId })).profile.state, "deleted");
+    const fresh = await start();
+    assert.notEqual(fresh.profileId, instance.profileId);
+    assert.notEqual(fresh.profileId, explicit.profileId);
+    assert.equal((await client.sys.browser.profile.get({ profileId: explicit.profileId })).profile.state, "active");
+    const probe = await shell(fresh, `tabs open --active ${website}/probe && page wait '#restored' && page text`);
+    assert.match(probe, /cookie=missing;local=null;indexed=undefined/);
+    await shell({ targetId: "gsv" }, `rm -r ${root}`);
+    await wait(fresh.instanceId, "terminal");
+    assert.equal((await client.sys.browser.profile.get({ profileId: fresh.profileId })).profile.state, "deleted");
+    console.log("PASS: filesystem deletion stops the active browser, erases saved state, and the next start is fresh despite another saved profile; recursive deletion follows the same path");
+  } finally { await client.sys.browser.profile.delete({ profileId: explicit.profileId }); }
 }

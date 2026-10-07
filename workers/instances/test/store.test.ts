@@ -18,6 +18,44 @@ function inStore<T>(work: (store: InstanceStore) => T | Promise<T>) {
 }
 
 describe("instance admission", () => {
+  it("keeps explicit profiles and their running browsers separate from automatic state", () => inStore(store => {
+    const explicit = store.createProfile(actor, "explicit", "Other login", limits);
+    const manual = store.admit(actor, { requestId: "manual", templateId: "browser", profileId: explicit.profileId, lifetimeSeconds: 300 }, limits);
+    const automatic = store.admit(actor, { requestId: "ordinary", templateId: "browser", lifetimeSeconds: 300 }, limits);
+    expect(automatic.instanceId).not.toBe(manual.instanceId);
+    expect(automatic.profileId).not.toBe(explicit.profileId);
+    expect(profile(store.ownedProfile(actor, automatic.profileId!)!).automatic).toBe(true);
+    expect(profile(store.ownedProfile(actor, explicit.profileId)!).automatic).not.toBe(true);
+    expect(store.admit(actor, { requestId: "again", templateId: "browser", lifetimeSeconds: 300 }, limits).instanceId).toBe(automatic.instanceId);
+    store.terminal(automatic.instanceId, false);
+    store.putProfile({ ...profile(store.ownedProfile(actor, automatic.profileId!)!), state: "deleted" });
+    const fresh = store.admit(actor, { requestId: "after-forgetting", templateId: "browser", lifetimeSeconds: 300 }, limits);
+    expect(fresh.profileId).not.toBe(automatic.profileId);
+    expect(fresh.profileId).not.toBe(explicit.profileId);
+    expect(profile(store.ownedProfile(actor, explicit.profileId)!).activeInstanceId).toBe(manual.instanceId);
+  }));
+  it("migrates established automatic state and does not select another profile after deletion", () => inStore(store => {
+    const explicit = store.createProfile(actor, "explicit", "Browser", limits);
+    const first = store.admit(actor, { requestId: "ordinary", templateId: "browser", lifetimeSeconds: 300 }, limits);
+    store.terminal(first.instanceId, false);
+    const upgrade = () => {
+      store.sql.exec("DROP INDEX profiles_automatic_owner");
+      store.sql.exec("UPDATE profiles SET record = json_remove(record, '$.automatic')");
+      store.sql.exec("DELETE FROM instance_schema WHERE id = 12");
+      migrate(store.storage); migrate(store.storage);
+    };
+    upgrade();
+    expect(profile(store.ownedProfile(actor, first.profileId!)!).automatic).toBe(true);
+    expect(profile(store.ownedProfile(actor, explicit.profileId)!).automatic).not.toBe(true);
+    const next = store.admit(actor, { requestId: "continued", templateId: "browser", lifetimeSeconds: 300 }, limits);
+    expect(next.profileId).toBe(first.profileId);
+    store.terminal(next.instanceId, false);
+    store.putProfile({ ...profile(store.ownedProfile(actor, next.profileId!)!), state: "deleted" });
+    upgrade();
+    const fresh = store.admit(actor, { requestId: "after-upgrade", templateId: "browser", lifetimeSeconds: 300 }, limits);
+    expect(fresh.profileId).not.toBe(first.profileId);
+    expect(fresh.profileId).not.toBe(explicit.profileId);
+  }));
   it("reuses a starting browser, remembers every request, and keeps one allowance and login store", () => inStore(store => {
     const first = store.admit(actor, { requestId: "human", templateId: "browser", lifetimeSeconds: 300 }, limits);
     const second = store.admit({ ...actor, human: false, processId: "ship" }, { requestId: "ship", templateId: "browser" }, limits);
@@ -213,7 +251,9 @@ describe("saved profile encryption", () => {
     expect([...first.profiles, ...second.profiles, ...last.profiles].map(value => value.profileId)).toEqual(saved.filter((_, index) => index !== 2).map(value => value.profileId));
     expect(profile(store.ownedProfile(actor, saved[0]!.profileId)!)).toMatchObject({ usage, issues: [{ message: "Retry" }] });
     expect(store.ownedProfile({ ownerUid: 1001, human: true }, saved[0]!.profileId)).toBeNull();
-    expect(store.admit(actor, { requestId: "default", templateId: "browser" }, limits).profileId).toBe(saved[0]!.profileId);
+    const automatic = store.admit(actor, { requestId: "default", templateId: "browser" }, { ...limits, savedProfiles: 1000 });
+    expect(saved.some(value => value.profileId === automatic.profileId)).toBe(false);
+    expect(profile(store.ownedProfile(actor, automatic.profileId!)!).automatic).toBe(true);
   }));
   it("saves healthy sites while retaining a failed site's storage, cookies and original save time", () => inStore(async store => {
     const started = store.admit(actor, { requestId: "partial", templateId: "browser" }, limits);

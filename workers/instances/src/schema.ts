@@ -106,6 +106,19 @@ const migrations = [{
       INSERT INTO instance_usage SELECT id, next_month, seconds FROM remainder WHERE seconds > 0`,
     "UPDATE instances SET charged = 0 WHERE active = 0 AND json_extract(record, '$.readyAt') IS NULL",
   ],
+}, {
+  id: 12,
+  statements: [
+    // Preserve established ordinary-browser state, including its deletion, without guessing from labels or profile age.
+    `UPDATE profiles AS p SET record = json_set(record, '$.automatic', json('true')) WHERE p.id = (
+      SELECT json_extract(i.record, '$.profileId') FROM start_requests r
+      JOIN instances i ON i.id = r.instance_id AND i.owner_uid = r.owner_uid
+      WHERE r.owner_uid = p.owner_uid AND json_extract(r.fingerprint, '$[3]') IS NULL
+        AND COALESCE(json_extract(r.fingerprint, '$[4]'), 0) = 0
+      ORDER BY r.rowid DESC LIMIT 1
+    )`,
+    "CREATE UNIQUE INDEX profiles_automatic_owner ON profiles(owner_uid) WHERE json_extract(record, '$.automatic') = 1 AND json_extract(record, '$.state') = 'active'",
+  ],
 }];
 
 export function migrate(storage: DurableObjectStorage): void {

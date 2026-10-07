@@ -1568,10 +1568,13 @@ commands run on the returned target. See [cloud browsers](/how-to/cloud-browsers
 
 A start requires a persisted request ID. Repeating the same ID and arguments
 returns the same instance, including after it becomes terminal. With a new request
-ID, ordinary starts reuse the owner's current ready or starting browser without
+ID, ordinary starts reuse the owner's ready or starting automatic browser without
 extending its lifetime or reserving more usage. `fresh: true` explicitly creates
 a separate temporary browser. Ordinary new browsers automatically use the
-account's saved logins. Every start request retains its own receipt, including
+account's automatic saved-login profile. Its durable `automatic` marker
+distinguishes it from explicitly created profiles. Ordinary starts only reuse a
+browser attached to that automatic profile; deleting it never selects another
+explicit profile. Every start request retains its own receipt, including
 when it reused an instance. The start result is `{ instance, disposition }`,
 where `disposition` is `created` or `reused` and remains stable on replay.
 Instance selectors accept the full instance ID, its exact displayed target ID,

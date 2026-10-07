@@ -26,7 +26,7 @@ export function createBrowserStorageBackend(ctx: KernelContext): BrowserStorageM
         do {
           ctx.requestSignal?.throwIfAborted();
           const page = await service.listProfiles(actor, { offset });
-          const selected = page.profiles.find(profile => profile.state === "active");
+          const selected = page.profiles.find(profile => profile.automatic === true && profile.state === "active");
           if (selected) return (await service.getProfile(actor, selected.profileId)).profile;
           offset = page.nextOffset;
         } while (offset !== undefined);

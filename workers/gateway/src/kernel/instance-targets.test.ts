@@ -223,7 +223,7 @@ describe("instance gateway boundary", () => {
   });
 
   it("keeps filesystem browser storage owner-scoped and cannot bypass syscall grants", async () => {
-    const saved = { profileId: "saved", ownerUid: 1000, label: "Browser", state: "active" as const, saveStatus: "saved" as const, createdAt: 1, savedAt: 2, storedBytes: 3, revision: 1 };
+    const saved = { profileId: "saved", ownerUid: 1000, label: "Browser", automatic: true, state: "active" as const, saveStatus: "saved" as const, createdAt: 1, savedAt: 2, storedBytes: 3, revision: 1 };
     const listProfiles = vi.fn(async () => ({ profiles: [saved], total: 1 }));
     const getProfile = vi.fn(async () => ({ profile: saved }));
     const readProfileState = vi.fn(async () => ({ body: bodyFromBytes(new Uint8Array([1, 2, 3])), size: 3 }));
@@ -244,9 +244,9 @@ describe("instance gateway boundary", () => {
     expect(deleteProfile).not.toHaveBeenCalled();
   });
   it("follows profile summary pages and retrieves only the default profile's detail", async () => {
-    const saved = { profileId: "saved", ownerUid: 1000, label: "Browser", state: "active" as const, saveStatus: "saved" as const, createdAt: 2, revision: 1, usage: { bytes: 123, cookieBytes: 2, cookies: 0, sites: [] } };
+    const saved = { profileId: "saved", ownerUid: 1000, label: "Browser", automatic: true, state: "active" as const, saveStatus: "saved" as const, createdAt: 2, revision: 1, usage: { bytes: 123, cookieBytes: 2, cookies: 0, sites: [] } };
     const listProfiles = vi.fn<InstallationInstances["listProfiles"]>(async (_actor, args) => args.offset === undefined
-      ? { profiles: [{ ...saved, profileId: "old", state: "deleting" }], total: 2, nextOffset: 1 }
+      ? { profiles: [{ ...saved, profileId: "explicit", automatic: undefined }], total: 2, nextOffset: 1 }
       : { profiles: [{ ...saved, usage: undefined }], total: 2 });
     const getProfile = vi.fn(async () => ({ profile: saved }));
     const { ctx } = context({ listProfiles, getProfile });
@@ -256,8 +256,18 @@ describe("instance gateway boundary", () => {
     expect(listProfiles).toHaveBeenNthCalledWith(2, { ownerUid: 1000, human: true }, { offset: 1 });
     expect(getProfile).toHaveBeenCalledExactlyOnceWith({ ownerUid: 1000, human: true }, "saved");
   });
+  it("hides the automatic filesystem view when only an explicit profile remains", async () => {
+    const saved = { profileId: "explicit", ownerUid: 1000, label: "Browser", state: "active" as const, saveStatus: "saved" as const, createdAt: 1, savedAt: 2, revision: 1 };
+    const getProfile = vi.fn(async () => ({ profile: saved })), deleteProfile = vi.fn(async () => ({ profile: saved }));
+    const { ctx } = context({ listProfiles: async () => ({ profiles: [saved], total: 1 }), getProfile, deleteProfile });
+    ctx.peer = testPeer({ account: { uid: 1000, username: "owner", gids: [] }, calls: ["*"] });
+    const mount = createBrowserStorageBackend(ctx)!;
+    expect(await mount.exists("/var/lib/gsv/browser/owner/status.json")).toBe(false);
+    await expect(mount.rm("/var/lib/gsv/browser/owner/state.enc")).rejects.toThrow("ENOENT");
+    expect(getProfile).not.toHaveBeenCalled(); expect(deleteProfile).not.toHaveBeenCalled();
+  });
   it("owns a snapshot arriving after a filesystem read is cancelled", async () => {
-    const saved = { profileId: "saved", ownerUid: 1000, label: "Browser", state: "active" as const, saveStatus: "saved" as const, createdAt: 1, savedAt: 2, revision: 1 };
+    const saved = { profileId: "saved", ownerUid: 1000, label: "Browser", automatic: true, state: "active" as const, saveStatus: "saved" as const, createdAt: 1, savedAt: 2, revision: 1 };
     let deliver!: (result: Awaited<ReturnType<InstallationInstances["readProfileState"]>>) => void;
     const readProfileState = vi.fn(() => new Promise<Awaited<ReturnType<InstallationInstances["readProfileState"]>>>(resolve => { deliver = resolve; }));
     const { ctx, dispose, deferred } = context({ listProfiles: async () => ({ profiles: [saved], total: 1 }), getProfile: async () => ({ profile: saved }), readProfileState });
