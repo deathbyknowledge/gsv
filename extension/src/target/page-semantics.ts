@@ -1,5 +1,6 @@
 import type { TabSummary } from "../shared/chrome";
 import { sendDebuggerCommand } from "../shared/debugger";
+import { throwIfAborted } from "./abort";
 
 const MAX_SNAPSHOTS = 24;
 const MAX_SNAPSHOT_NODES = 600;
@@ -272,7 +273,9 @@ export async function captureSemanticSnapshot(
   target: chrome.debugger.DebuggerSession,
   tab: TabSummary,
   store: PageReferenceStore = pageReferences,
+  signal?: AbortSignal,
 ): Promise<SemanticSnapshot> {
+  throwIfAborted(signal);
   const [frameTree, accessibility, domSnapshot] = await Promise.all([
     sendDebuggerCommand<FrameTreeResult>(target, "Page.getFrameTree"),
     sendDebuggerCommand<AccessibilityTreeResult>(target, "Accessibility.getFullAXTree"),
@@ -282,6 +285,7 @@ export async function captureSemanticSnapshot(
       includeDOMRects: true,
     }),
   ]);
+  throwIfAborted(signal);
 
   const frame = frameTree.frameTree?.frame;
   const documentId = frame?.loaderId;

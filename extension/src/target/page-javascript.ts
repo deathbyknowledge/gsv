@@ -139,18 +139,17 @@ export async function evaluatePageJavaScript(tabId: number, source: string, sign
     await sendDebuggerCommand(target, "Runtime.enable");
     throwIfAborted(signal);
 
-    let result = await runtimeEvaluate(target, source);
-    throwIfAborted(signal);
+    let result = await runtimeEvaluate(target, source, signal);
     if (isSyntaxException(result.exceptionDetails)) {
-      const syncWrapped = await runtimeEvaluate(target, `(() => {\n${source}\n})()`);
+      const syncWrapped = await runtimeEvaluate(target, `(() => {\n${source}\n})()`, signal);
       if (!syncWrapped.exceptionDetails || !isSyntaxException(syncWrapped.exceptionDetails)) {
         result = syncWrapped;
       } else {
-        result = await runtimeEvaluate(target, `(async () => {\n${source}\n})()`);
+        result = await runtimeEvaluate(target, `(async () => {\n${source}\n})()`, signal);
       }
     }
     if (isSyntaxException(result.exceptionDetails)) {
-      const parenthesized = await runtimeEvaluate(target, `(${source})`);
+      const parenthesized = await runtimeEvaluate(target, `(${source})`, signal);
       if (!parenthesized.exceptionDetails) {
         result = parenthesized;
       }
@@ -163,7 +162,7 @@ export async function evaluatePageJavaScript(tabId: number, source: string, sign
     }
     return {
       ok: true,
-      value: { result: await serializeRuntimeRemoteObject(target, result.result) },
+      value: { result: await serializeRuntimeRemoteObject(target, result.result, signal) },
     };
   } catch (error) {
     return { ok: false, error: error instanceof Error ? error.message : String(error) };
@@ -179,8 +178,10 @@ export async function evaluatePageJavaScript(tabId: number, source: string, sign
 async function runtimeEvaluate(
   target: chrome.debugger.DebuggerSession,
   expression: string,
+  signal?: AbortSignal,
 ): Promise<RuntimeEvaluateResult> {
-  return await sendDebuggerCommand<RuntimeEvaluateResult>(target, "Runtime.evaluate", {
+  throwIfAborted(signal);
+  const result = await sendDebuggerCommand<RuntimeEvaluateResult>(target, "Runtime.evaluate", {
     expression,
     awaitPromise: true,
     returnByValue: false,
@@ -189,12 +190,16 @@ async function runtimeEvaluate(
     timeout: DEBUGGER_EVALUATE_TIMEOUT_MS,
     replMode: true,
   });
+  throwIfAborted(signal);
+  return result;
 }
 
 async function serializeRuntimeRemoteObject(
   target: chrome.debugger.DebuggerSession,
   remote: RuntimeRemoteObject,
+  signal?: AbortSignal,
 ): Promise<unknown> {
+  throwIfAborted(signal);
   if (!remote.objectId) {
     return remoteObjectLiteral(remote);
   }
@@ -205,6 +210,7 @@ async function serializeRuntimeRemoteObject(
       returnByValue: true,
       silent: true,
     });
+    throwIfAborted(signal);
     if (raw.exceptionDetails) {
       return {
         type: remote.type ?? "object",

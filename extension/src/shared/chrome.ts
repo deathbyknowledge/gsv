@@ -122,14 +122,17 @@ export async function focusWindow(windowId: number): Promise<WindowSummary> {
   };
 }
 
-export async function captureTabPng(tabId: number): Promise<Uint8Array> {
+export async function captureTabPng(tabId: number, signal?: AbortSignal): Promise<Uint8Array> {
+  signal?.throwIfAborted();
   const target = await acquireDebugger(tabId);
   try {
+    signal?.throwIfAborted();
     const result = await sendDebuggerCommand<{ data: string }>(target, "Page.captureScreenshot", {
       format: "png",
       fromSurface: true,
       captureBeyondViewport: false,
     });
+    signal?.throwIfAborted();
     if (!result?.data) {
       throw new Error("Page.captureScreenshot returned no data");
     }
@@ -145,12 +148,15 @@ export async function executeInTab<T>(
   tabId: number,
   func: (...args: ExtensionBoundaryValue[]) => T,
   args: ExtensionBoundaryValue[] = [],
+  signal?: AbortSignal,
 ): Promise<T> {
+  signal?.throwIfAborted();
   const results = await chrome.scripting.executeScript({
     target: { tabId },
     func,
     args,
   });
+  signal?.throwIfAborted();
   // SAFETY: executeScript returns the function's declared result type T.
   return results[0]?.result as T;
 }

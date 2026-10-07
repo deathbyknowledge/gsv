@@ -9,7 +9,7 @@ import {
   acquireDebugger,
   releaseDebugger,
 } from "../../shared/debugger";
-import { abortable, abortableDelay, throwIfAborted } from "../abort";
+import { abortableDelay, throwIfAborted } from "../abort";
 import {
   findPageSelector,
   readPageText,
@@ -105,7 +105,7 @@ async function runPageCommand(args: string[], ctx: CommandContext): Promise<Comm
       case "snapshot":
         return await runSnapshot(rest, ctx);
       case "text":
-        return await runText(rest);
+        return await runText(rest, ctx);
       case "screenshot":
         return await runScreenshot(rest, ctx);
       case "click":
@@ -141,7 +141,7 @@ async function runSnapshot(args: string[], ctx: CommandContext): Promise<Command
     return commandError(`${PAGE_SNAPSHOT_USAGE}\nUnknown option: ${invalid}`);
   }
 
-  const tab = await resolveTab(parsed.value.tabId);
+  const tab = await resolveTab(parsed.value.tabId, ctx.abortSignal);
   if (!dom && snapshotArgs.length > 0) {
     return commandError(`${PAGE_SNAPSHOT_USAGE}\nUse --dom when providing a CSS selector.`);
   }
@@ -151,7 +151,7 @@ async function runSnapshot(args: string[], ctx: CommandContext): Promise<Command
       throwIfAborted(ctx.abortSignal);
       target = await acquireDebugger(tab.id);
       throwIfAborted(ctx.abortSignal);
-      const snapshot = await captureSemanticSnapshot(target, tab);
+      const snapshot = await captureSemanticSnapshot(target, tab, pageReferences, ctx.abortSignal);
       throwIfAborted(ctx.abortSignal);
       return json
         ? commandCompactJson(snapshot)
@@ -167,7 +167,7 @@ async function runSnapshot(args: string[], ctx: CommandContext): Promise<Command
 
   const selector = joinArgsOrNull(snapshotArgs);
   const result = normalizeInjectedResult<unknown>(
-    await executeInTab<unknown>(tab.id, snapshotDomPage, [selector]),
+    await executeInTab<unknown>(tab.id, snapshotDomPage, [selector], ctx.abortSignal),
     "page snapshot",
   );
   if (!result.ok) {
@@ -176,7 +176,7 @@ async function runSnapshot(args: string[], ctx: CommandContext): Promise<Command
   return commandCompactJson({ tabId: tab.id, selector, snapshot: result.value });
 }
 
-async function runText(args: string[]): Promise<CommandResult> {
+async function runText(args: string[], ctx: CommandContext): Promise<CommandResult> {
   const parsed = parsePageOptions(args, PAGE_TEXT_USAGE);
   if (!parsed.ok) {
     return commandError(parsed.error);
@@ -186,10 +186,10 @@ async function runText(args: string[]): Promise<CommandResult> {
     return commandError(`${PAGE_TEXT_USAGE}\nUnknown option: ${invalid}`);
   }
 
-  const tab = await resolveTab(parsed.value.tabId);
+  const tab = await resolveTab(parsed.value.tabId, ctx.abortSignal);
   const selector = joinArgsOrNull(parsed.value.args);
   const result = normalizeInjectedResult<{ text: string; count: number }>(
-    await executeInTab<unknown>(tab.id, readPageText, [selector]),
+    await executeInTab<unknown>(tab.id, readPageText, [selector], ctx.abortSignal),
     "page text",
   );
   if (!result.ok) {
@@ -207,8 +207,8 @@ async function runScreenshot(args: string[], ctx: CommandContext): Promise<Comma
     return commandError(PAGE_SCREENSHOT_USAGE);
   }
 
-  const tab = await resolveTab(parsed.value.tabId);
-  const png = await captureTabPng(tab.id);
+  const tab = await resolveTab(parsed.value.tabId, ctx.abortSignal);
+  const png = await captureTabPng(tab.id, ctx.abortSignal);
   const capturedAt = new Date(ctx.now()).toISOString();
   const path = [
     "/home/browser/screenshots/tab-",
@@ -217,7 +217,9 @@ async function runScreenshot(args: string[], ctx: CommandContext): Promise<Comma
     capturedAt.replace(/\D/g, "").slice(0, 14),
     ".png",
   ].join("");
+  throwIfAborted(ctx.abortSignal);
   await ctx.fs.write(path, png, "image/png");
+  throwIfAborted(ctx.abortSignal);
 
   return commandCompactJson({
     tabId: tab.id,
@@ -245,7 +247,7 @@ async function runClick(args: string[], ctx: CommandContext): Promise<CommandRes
   }
 
   const locator = pageLocator(click.value.selector, click.value.index);
-  const tab = await resolveLocatorTab(parsed.value.tabId, locator);
+  const tab = await resolveLocatorTab(parsed.value.tabId, locator, ctx.abortSignal);
   const result = await clickPageElement(tab.id, locator, ctx.abortSignal);
   return commandCompactJson({ tabId: tab.id, ...result });
 }
@@ -261,7 +263,7 @@ async function runType(args: string[], ctx: CommandContext): Promise<CommandResu
   }
 
   const locator = pageLocator(typed.value.selector, 0);
-  const tab = await resolveLocatorTab(parsed.value.tabId, locator);
+  const tab = await resolveLocatorTab(parsed.value.tabId, locator, ctx.abortSignal);
   const result = await typePageText(tab.id, locator, typed.value.text, ctx.abortSignal);
   return commandCompactJson({ tabId: tab.id, ...result });
 }
@@ -279,7 +281,7 @@ async function runKey(args: string[], ctx: CommandContext): Promise<CommandResul
     return commandError(PAGE_KEY_USAGE);
   }
 
-  const tab = await resolveTab(parsed.value.tabId);
+  const tab = await resolveTab(parsed.value.tabId, ctx.abortSignal);
   const result = await sendPageKey(tab.id, parsed.value.args[0] ?? "", ctx.abortSignal);
   return commandCompactJson({ tabId: tab.id, ...result });
 }
@@ -310,8 +312,8 @@ async function runScroll(args: string[], ctx: CommandContext): Promise<CommandRe
 
   const reference = normalizedReference ? pageReferences.resolve(normalizedReference) : null;
   const tab = reference
-    ? await resolveReferencedTab(parsed.value.tabId, reference.tabId, reference.ref)
-    : await resolveTab(parsed.value.tabId);
+    ? await resolveReferencedTab(parsed.value.tabId, reference.tabId, reference.ref, ctx.abortSignal)
+    : await resolveTab(parsed.value.tabId, ctx.abortSignal);
   const result = await scrollPage(tab.id, target.value, reference, ctx.abortSignal);
   return commandCompactJson({ tabId: tab.id, ...result });
 }
@@ -331,15 +333,12 @@ async function runWait(args: string[], ctx: CommandContext): Promise<CommandResu
     return commandError(PAGE_WAIT_USAGE);
   }
 
-  const tab = await resolveTab(parsed.value.tabId);
+  const tab = await resolveTab(parsed.value.tabId, ctx.abortSignal);
   const startedAt = ctx.now();
 
   while (true) {
     const result = normalizeInjectedResult<Record<string, unknown> | null>(
-      await abortable(
-        executeInTab<unknown>(tab.id, findPageSelector, [selector]),
-        ctx.abortSignal,
-      ),
+      await executeInTab<unknown>(tab.id, findPageSelector, [selector], ctx.abortSignal),
       "page wait",
     );
     if (!result.ok) {
@@ -372,7 +371,7 @@ async function runJavaScript(args: string[], ctx: CommandContext): Promise<Comma
     return commandError(PAGE_JS_USAGE);
   }
 
-  const tab = await resolveTab(parsed.value.tabId);
+  const tab = await resolveTab(parsed.value.tabId, ctx.abortSignal);
   throwIfAborted(ctx.abortSignal);
   const result = await evaluatePageJavaScript(tab.id, source, ctx.abortSignal);
   if (!result.ok) {
@@ -524,9 +523,11 @@ function parseOptionalTimeout(value: string | null): Parsed<number> {
   return { ok: true, value: parsed };
 }
 
-async function resolveTab(tabId: number | null): Promise<TabSummary> {
+async function resolveTab(tabId: number | null, signal?: AbortSignal): Promise<TabSummary> {
+  throwIfAborted(signal);
   if (tabId !== null) {
     const tab = await getTab(tabId);
+    throwIfAborted(signal);
     if (!tab) {
       throw new Error(`tab not found: ${tabId}`);
     }
@@ -534,6 +535,7 @@ async function resolveTab(tabId: number | null): Promise<TabSummary> {
   }
 
   const tab = await activeTab();
+  throwIfAborted(signal);
   if (!tab) {
     throw new Error("no active tab");
   }
@@ -554,22 +556,25 @@ function pageLocator(value: string, index: number): PageLocator {
   return { kind: "reference", reference: pageReferences.resolve(reference) };
 }
 
-async function resolveLocatorTab(tabId: number | null, locator: PageLocator): Promise<TabSummary> {
+async function resolveLocatorTab(tabId: number | null, locator: PageLocator, signal?: AbortSignal): Promise<TabSummary> {
   if (locator.kind === "selector") {
-    return await resolveTab(tabId);
+    return await resolveTab(tabId, signal);
   }
-  return await resolveReferencedTab(tabId, locator.reference.tabId, locator.reference.ref);
+  return await resolveReferencedTab(tabId, locator.reference.tabId, locator.reference.ref, signal);
 }
 
 async function resolveReferencedTab(
   requestedTabId: number | null,
   referencedTabId: number,
   ref: string,
+  signal?: AbortSignal,
 ): Promise<TabSummary> {
+  throwIfAborted(signal);
   if (requestedTabId !== null && requestedTabId !== referencedTabId) {
     throw new Error(`Reference ${ref} belongs to tab ${referencedTabId}, not tab ${requestedTabId}`);
   }
   const tab = await getTab(referencedTabId);
+  throwIfAborted(signal);
   if (!tab) {
     throw new Error(`tab not found for reference ${ref}: ${referencedTabId}`);
   }

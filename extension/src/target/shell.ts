@@ -163,6 +163,7 @@ export class BrowserTargetShell {
             copyTargetFile: this.activeExecContext.copyTargetFile,
           };
           try {
+            throwIfAborted(commandContext.abortSignal);
             const execution = Promise.resolve(command.run(args, commandContext));
             const completion = execution.then(
               () => undefined,
