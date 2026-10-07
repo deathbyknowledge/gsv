@@ -81,6 +81,10 @@ export class CloudBrowser implements BrowserPageBackend, BrowserTabsBackend, Deb
 
   static async attach(binding: BrowserWorker, sessionId: string, record: CloudInstance, store: InstanceStore, savedState?: StorageState): Promise<CloudBrowser> {
     const browser = await connect(binding, sessionId);
+    return this.fromConnection(browser, record, store, savedState);
+  }
+
+  static async fromConnection(browser: Browser, record: CloudInstance, store: InstanceStore, savedState?: StorageState): Promise<CloudBrowser> {
     const row = store.byId(record.instanceId);
     let state: RuntimeState;
     let context: BrowserContext;
@@ -147,6 +151,7 @@ export class CloudBrowser implements BrowserPageBackend, BrowserTabsBackend, Deb
         found.add(id);
       }
       for (const [id, page] of this.tabs) if (!found.has(id)) { this.tabs.delete(id); this.tabMetadata.delete(id); this.debuggers.delete(page); }
+      for (const id of Object.keys(this.state.tabs)) if (!found.has(Number(id))) delete this.state.tabs[id];
       if (!found.has(this.state.activeTabId)) this.state.activeTabId = found.values().next().value ?? 0;
       this.persist();
     })().finally(() => { this.refresh = undefined; });
