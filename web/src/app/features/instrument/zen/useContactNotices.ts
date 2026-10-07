@@ -43,7 +43,8 @@ const NOBODY: ReadonlySet<string> = new Set();
  * skipped. Nothing is seeded from history, and nothing is collected while the chat is behind
  * another view. A notice the person replied to stays, marked as answered, until that contact
  * writes again; messages that arrived during the send stay unanswered. A notice whose contact
- * is in `holding` (the person typed a reply there) is not cleared by a read elsewhere.
+ * is in `holding` (the person typed a reply there) is not cleared by a read elsewhere; once the
+ * draft goes, the conversation is checked again so an already-read notice does not linger.
  */
 export function useContactNotices({ listening, holding = NOBODY, mayReadView }: {
   listening: boolean;
@@ -68,6 +69,15 @@ export function useContactNotices({ listening, holding = NOBODY, mayReadView }: 
       return later.length > 0 ? { ...notice, messages: later, replied: false } : { ...notice, replied: true };
     }));
   }, []);
+
+  /* an unanswered notice clears once a read elsewhere covers its newest message; an answered one, or one
+     holding a draft, stays. A failed read keeps the notice either way. */
+  const recheck = useCallback((conversationId: string) => {
+    void client.conversation.view.get({ conversationId }).then(({ entry }) => {
+      setNotices((current) => current.filter((notice) =>
+        notice.conversationId !== conversationId || notice.replied || kept.current.has(notice.contactId) || entry.view.readThroughSequence < latestOf(notice).sequence));
+    }).catch(() => undefined);
+  }, [client]);
 
   useEffect(() => {
     if (!connected) return;
@@ -104,15 +114,22 @@ export function useContactNotices({ listening, holding = NOBODY, mayReadView }: 
         if (!changed.success || !changed.data.viewOnly || !mayReadView) return;
         const { conversationId } = changed.data;
         if (!held.current.some((notice) => notice.conversationId === conversationId && !notice.replied && !kept.current.has(notice.contactId))) return;
-        /* reading the conversation elsewhere clears an unanswered notice once the read covers its newest message;
-           an answered one, or one holding a draft, stays. A failed read keeps the notice either way. */
-        void client.conversation.view.get({ conversationId }).then(({ entry }) => {
-          setNotices((current) => current.filter((notice) =>
-            notice.conversationId !== conversationId || notice.replied || kept.current.has(notice.contactId) || entry.view.readThroughSequence < latestOf(notice).sequence));
-        }).catch(() => undefined);
+        recheck(conversationId);
       }
     });
-  }, [client, connected, mayReadView]);
+  }, [client, connected, mayReadView, recheck]);
+
+  /* a read skipped while a draft held the notice is made up for when the draft goes */
+  const previouslyHeld = useRef(holding);
+  useEffect(() => {
+    const released = [...previouslyHeld.current].filter((contactId) => !holding.has(contactId));
+    previouslyHeld.current = holding;
+    if (!connected || !mayReadView) return;
+    for (const contactId of released) {
+      const notice = held.current.find((candidate) => candidate.contactId === contactId && !candidate.replied);
+      if (notice) recheck(notice.conversationId);
+    }
+  }, [holding, connected, mayReadView, recheck]);
 
   return { notices, markReplied };
 }

@@ -39,12 +39,21 @@ function committed(sequence: number, overrides: { attention?: "notify" | "quiet"
   return { message, directed: false, attention: overrides.attention ?? "notify" };
 }
 
-async function mounted(options: Parameters<typeof useContactNotices>[0] = { listening: true, mayReadView: true }) {
+type Options = Parameters<typeof useContactNotices>[0];
+
+async function mounted(initial: Options = { listening: true, mayReadView: true }) {
   const root = createTestRoot("contact notices");
+  let options = initial;
   let current!: ReturnType<typeof useContactNotices>;
   function Harness() { current = useContactNotices(options); return null; }
-  await root.render(h(GatewayProvider, null, h(Harness, null)));
-  return { get current() { return current; }, unmount: () => root.unmount() };
+  const render = () => root.render(h(GatewayProvider, null, h(Harness, null)));
+  await render();
+  return {
+    get current() { return current; },
+    /* the owner re-rendered with different options, as Zen does when a draft appears or goes */
+    rerender: async (next: Options) => { options = next; await render(); },
+    unmount: () => root.unmount(),
+  };
 }
 
 async function emit(signal: string, payload: Payload) {
@@ -128,7 +137,7 @@ describe("contact notices in the ship chat", () => {
     } finally { await view.unmount(); }
   });
 
-  it("keeps a notice the person is typing a reply under, even once the conversation is read elsewhere", async () => {
+  it("keeps a notice the person is typing a reply under through a read elsewhere, then clears it once the draft goes", async () => {
     const view = await mounted({ listening: true, holding: new Set(["contact:ada"]), mayReadView: true });
     try {
       await emit("message.committed", committed(1));
@@ -136,6 +145,9 @@ describe("contact notices in the ship chat", () => {
       await emit("conversation.changed", { conversationId: "conversation:contact:ada", latestSequence: 1, viewOnly: true });
       expect(GSVClient.prototype.request).not.toHaveBeenCalled();
       expect(view.current.notices).toHaveLength(1);
+      await view.rerender({ listening: true, holding: new Set(), mayReadView: true });
+      await vi.waitFor(() => expect(view.current.notices).toEqual([]));
+      expect(GSVClient.prototype.request).toHaveBeenCalledTimes(1);
     } finally { await view.unmount(); }
   });
 
