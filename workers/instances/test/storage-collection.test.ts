@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { collectBrowserStorage, encodeBrowserBinary } from "../../../tools/instances/storage-collection.mjs";
 import { Buffer } from "node:buffer";
 
-type RecordValue = string | Uint8Array | bigint | number[];
+type RecordValue = string | Uint8Array | bigint | number[] | Record<string, Uint8Array> | Error | RegExp;
 type CursorRequest = { result: { key: string; value: RecordValue; continue: () => void } | null; onsuccess?: () => void };
 
 function fixture(values: RecordValue[]) {
@@ -51,6 +51,15 @@ describe("incremental IndexedDB collection", () => {
     await expect(db.collect(4096)).rejects.toMatchObject({ name: "StorageBudgetExceeded" });
     expect(db.serialize.mock.calls.some(([value]) => value === large)).toBe(false);
     expect(db.close).toHaveBeenCalledOnce();
+  });
+  it("counts repeated binary references and non-enumerable encoded fields", async () => {
+    const binary = new Uint8Array(2000);
+    for (const large of [{ first: binary, second: binary }, new Error("\u0000".repeat(1024)), new RegExp("x".repeat(5000))]) {
+      const db = fixture([large]);
+      await expect(db.collect(4096)).rejects.toMatchObject({ name: "StorageBudgetExceeded" });
+      expect(db.serialize.mock.calls.some(([value]) => value === large)).toBe(false);
+      expect(db.close).toHaveBeenCalledOnce();
+    }
   });
   it("collects a fitting database exactly and closes its connection", async () => {
     const db = fixture(["first", "second"]);

@@ -34,14 +34,24 @@ export async function collectBrowserStorage(recordIndexedDB, maxBytes = 32 * 102
       }
       // oxlint-disable-next-line anti-slop/no-runtime-typeof -- Measure structured-clone graphs before the codec allocates their JSON representation.
       else if (item && typeof item === "object") {
-        if (seen.has(item)) return;
-        seen.add(item); minimum += 2;
+        minimum += 2;
+        // The codec emits these atomic values in full at each reference.
         if (item instanceof ArrayBuffer || ArrayBuffer.isView(item)) minimum += 4 * Math.ceil(item.byteLength / 3);
-        else if (item instanceof Map) { for (const [key, value] of item) { visit(key); visit(value); } }
-        else if (item instanceof Set || Array.isArray(item)) { for (const value of item) visit(value); }
-        else for (const key of Object.keys(item)) {
-          if (metadata && item[key] === undefined) continue;
-          visit(key); visit(item[key]);
+        else if (item instanceof Date) visit(item.toJSON());
+        else if (item instanceof URL) visit(item.href);
+        else if (item instanceof RegExp) { visit(item.source); visit(item.flags); }
+        else if (item instanceof Error) {
+          visit(item.name); visit(item.message); visit(item.stack ?? "");
+          if (!item.stack?.startsWith(`${item.name}: ${item.message}`)) { visit(item.name); visit(item.message); }
+        } else {
+          if (seen.has(item)) return;
+          seen.add(item);
+          if (item instanceof Map) { for (const [key, value] of item) { visit(key); visit(value); } }
+          else if (item instanceof Set || Array.isArray(item)) { for (const value of item) visit(value); }
+          else for (const key of Object.keys(item)) {
+            if (metadata && item[key] === undefined) continue;
+            visit(key); visit(item[key]);
+          }
         }
       // oxlint-disable-next-line anti-slop/no-runtime-typeof -- Bound a BigInt's decimal conversion before the structured-clone codec allocates it.
       } else if (typeof item === "bigint") {
