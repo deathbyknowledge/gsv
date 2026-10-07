@@ -39,7 +39,7 @@ function committed(sequence: number, overrides: { attention?: "notify" | "quiet"
   return { message, directed: false, attention: overrides.attention ?? "notify" };
 }
 
-async function mounted(options = { enabled: true, mayReadView: true }) {
+async function mounted(options = { enabled: true, listening: true, mayReadView: true }) {
   const root = createTestRoot("contact notices");
   let current!: ReturnType<typeof useContactNotices>;
   function Harness() { current = useContactNotices(options); return null; }
@@ -108,8 +108,28 @@ describe("contact notices in the ship chat", () => {
     } finally { await view.unmount(); }
   });
 
+  it("collects nothing while the ship chat is behind another view", async () => {
+    const view = await mounted({ enabled: true, listening: false, mayReadView: true });
+    try {
+      await emit("message.committed", committed(1));
+      expect(view.current.notices).toEqual([]);
+    } finally { await view.unmount(); }
+  });
+
+  it("closes a batch only through the message the reply answered, leaving later arrivals unanswered", async () => {
+    const view = await mounted();
+    try {
+      await emit("message.committed", committed(1));
+      await emit("message.committed", committed(2));
+      await act(() => view.current.markReplied("contact:ada", 1));
+      expect(view.current.notices).toMatchObject([{ messages: [{ sequence: 2 }], replied: false }]);
+      await act(() => view.current.markReplied("contact:ada", 2));
+      expect(view.current.notices).toMatchObject([{ messages: [{ sequence: 2 }], replied: true }]);
+    } finally { await view.unmount(); }
+  });
+
   it("ignores reads when the person may not read view state", async () => {
-    const view = await mounted({ enabled: true, mayReadView: false });
+    const view = await mounted({ enabled: true, listening: true, mayReadView: false });
     try {
       await emit("message.committed", committed(1));
       await emit("conversation.changed", { conversationId: "conversation:contact:ada", latestSequence: 1, viewOnly: true });
@@ -123,7 +143,7 @@ describe("contact notices in the ship chat", () => {
     try {
       await emit("message.committed", committed(1));
       await emit("message.committed", committed(2));
-      await act(() => view.current.markReplied("contact:ada"));
+      await act(() => view.current.markReplied("contact:ada", 2));
       expect(view.current.notices).toMatchObject([{ messages: [{ sequence: 1 }, { sequence: 2 }], replied: true }]);
       readThrough = 2;
       await emit("conversation.changed", { conversationId: "conversation:contact:ada", latestSequence: 2, viewOnly: true });
@@ -135,7 +155,7 @@ describe("contact notices in the ship chat", () => {
   });
 
   it("stays silent when disabled", async () => {
-    const view = await mounted({ enabled: false, mayReadView: true });
+    const view = await mounted({ enabled: false, listening: true, mayReadView: true });
     try {
       expect(listeners.size).toBe(0);
       expect(view.current.notices).toEqual([]);

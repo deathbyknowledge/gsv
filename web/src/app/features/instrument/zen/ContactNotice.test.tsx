@@ -1,7 +1,7 @@
 import type { ContactSummary } from "@humansandmachines/gsv/protocol";
 import { describe, expect, it, vi } from "vitest";
 import { collectNodes, collectText } from "../../../testing/testHarness";
-import { ContactNoticeMoment, noticeName, preview } from "./ContactNotice";
+import { ContactNoticeMoment, noticeName, preview, repliedThrough, replyIntentFor } from "./ContactNotice";
 import type { ContactNotice, ContactNoticeMessage } from "./useContactNotices";
 
 function message(sequence: number, text: string, byShip = false): ContactNoticeMessage {
@@ -64,6 +64,18 @@ describe("the contact notice", () => {
     expect(preview("one two three four five six seven eight nine ten")).toBe("one two three four five six seven eight…");
     expect(preview("   ")).toBe("(an empty message)");
     expect(preview("", 2)).toBe("(2 attachments)");
+  });
+
+  it("keeps a retry's submitted intent when the contact writes meanwhile, and answers the newest message otherwise", () => {
+    const first = replyIntentFor(null, notice, "yes, go ahead");
+    expect(first).toMatchObject({ contactId: notice.contactId, text: "yes, go ahead", replyTo: { messageId: "origin:1" } });
+    const grown = { ...notice, messages: [...notice.messages, message(2, "also — can you cc tau?")] };
+    expect(replyIntentFor(first, grown, "yes, go ahead")).toBe(first);
+    expect(repliedThrough(grown, first)).toBe(1);
+    const changed = replyIntentFor(first, grown, "yes, and tau too");
+    expect(changed.idempotencyKey).not.toBe(first.idempotencyKey);
+    expect(changed.replyTo).toMatchObject({ messageId: "origin:2" });
+    expect(repliedThrough(grown, changed)).toBe(2);
   });
 
   it("falls back to the name the peer sent when the contact is not loaded", () => {

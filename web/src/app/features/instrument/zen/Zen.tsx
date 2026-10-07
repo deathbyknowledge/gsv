@@ -37,7 +37,7 @@ import { ApprovalCard } from "../shared/ApprovalCard";
 import { canConfigure } from "../settings/settingsModel";
 import { useContacts } from "../people/Contacts";
 import { ContactNoticeMoment, ContactReplyBox, EMPTY_REPLY, type ContactReplyDraft } from "./ContactNotice";
-import { latestOf, useContactNotices, type ContactNotice } from "./useContactNotices";
+import { useContactNotices, type ContactNotice } from "./useContactNotices";
 import { DelegatedApprovals } from "./DelegatedApprovals";
 import { useZenScroll } from "./useZenScroll";
 import { useZenProcess } from "./useZenProcess";
@@ -329,7 +329,7 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
      and only when the Kernel says the person should hear about it */
   const human = !!viewer && viewer.uid >= 1000;
   const may = (syscall: string) => human && canConfigure(viewer!, syscall);
-  const notices = useContactNotices({ enabled: !pidProp && may("contact.list"), mayReadView: may("conversation.view.get") });
+  const notices = useContactNotices({ enabled: !pidProp && may("contact.list"), listening: active, mayReadView: may("conversation.view.get") });
   const contactsQuery = useContacts(human && notices.notices.length > 0 ? viewer : undefined);
   const contactFor = (contactId: string) => contactsQuery.data?.contacts.find((contact) => contact.id === contactId);
   /* the contact whose reply box is open under its notice */
@@ -341,10 +341,10 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
     if (draft) next.set(contactId, draft); else next.delete(contactId);
     return next;
   });
-  const markRead = (notice: ContactNotice) => {
+  const markRead = (notice: ContactNotice, through: number) => {
     if (!may("conversation.view.update")) return;
     /* a failed read mark changes nothing the person can see; the notice still clears when they act on it */
-    void client.conversation.view.update({ conversationId: notice.conversationId, readThroughSequence: latestOf(notice).sequence }).catch(() => undefined);
+    void client.conversation.view.update({ conversationId: notice.conversationId, readThroughSequence: through }).catch(() => undefined);
   };
   const timeZone = ownerTimeZone(config.data, viewer?.uid);
   const [today, setToday] = useState(Date.now);
@@ -1032,7 +1032,7 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
                   onGoToChat={() => onPeople?.(notice.contactId)}>
                   {replying === notice.contactId && <ContactReplyBox notice={notice} contact={contactFor(notice.contactId)} account={viewer}
                     draft={replyDrafts.get(notice.contactId) ?? EMPTY_REPLY} onDraft={(draft) => setReplyDraft(notice.contactId, draft)}
-                    onSent={() => { notices.markReplied(notice.contactId); markRead(notice); setReplyDraft(notice.contactId, null); setReplying(null); }} />}
+                    onSent={(through) => { notices.markReplied(notice.contactId, through); markRead(notice, through); setReplyDraft(notice.contactId, null); setReplying(null); }} />}
                 </ContactNoticeMoment>
               ))}
               {pendingHil ? (

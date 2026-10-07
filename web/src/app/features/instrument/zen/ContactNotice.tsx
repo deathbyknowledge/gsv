@@ -23,6 +23,21 @@ const NO_MEDIA: readonly ReplyMedia[] = [];
 export type ContactReplyDraft = { text: string; intent: ContactDraftSendIntent<ReplyMedia> | null };
 export const EMPTY_REPLY: ContactReplyDraft = { text: "", intent: null };
 
+/**
+ * The send a reply becomes. A retry of the same text keeps the intent it was submitted with —
+ * its key and the message it answers — even if the contact wrote again meanwhile, so an
+ * uncertain send cannot land twice. New text is a new message, answering the newest one.
+ */
+export function replyIntentFor(previous: ContactDraftSendIntent<ReplyMedia> | null, notice: ContactNotice, body: string): ContactDraftSendIntent<ReplyMedia> {
+  if (previous && previous.contactId === notice.contactId && previous.text === body) return previous;
+  return selectContactSendIntent(null, notice.contactId, body, NO_MEDIA, latestOf(notice).reference);
+}
+
+/** The sequence of the message a reply answers; the newest when the reference is no longer held. */
+export function repliedThrough(notice: ContactNotice, intent: ContactDraftSendIntent<ReplyMedia>): number {
+  return notice.messages.find((message) => message.reference.messageId === intent.replyTo?.messageId)?.sequence ?? latestOf(notice).sequence;
+}
+
 /** The local alias when the person set one, else the name the peer sent. */
 export function noticeName(notice: ContactNotice, contact: ContactSummary | undefined): string {
   return contact ? contactDisplayName(contact) : notice.displayName;
@@ -81,13 +96,13 @@ export function ContactReplyBox({ notice, contact, account, draft, onDraft, onSe
   account: ConsoleAccount | undefined;
   draft: ContactReplyDraft;
   onDraft: (draft: ContactReplyDraft) => void;
-  onSent: () => void;
+  /** the reply went out, answering the batch through this sequence */
+  onSent: (through: number) => void;
 }) {
   const { client, connected } = useGateway();
   const [state, setState] = useState<"idle" | "sending" | "undelivered" | "failed">("idle");
   const [error, setError] = useState<string | null>(null);
   const name = noticeName(notice, contact);
-  const latest = latestOf(notice);
   const maySend = connected && !!account && !!contact && contact.state === "active" && !contact.blocked
     && canConfigure(account, "contact.send") && (account.uid === 0 || account.uid === contact.ownerUid);
   const body = draft.text.trim();
@@ -97,7 +112,7 @@ export function ContactReplyBox({ notice, contact, account, draft, onDraft, onSe
 
   const send = async () => {
     if (!maySend || !body || tooLong || state === "sending" || undelivered) return;
-    const intent = selectContactSendIntent(draft.intent, notice.contactId, body, NO_MEDIA, latest.reference);
+    const intent = replyIntentFor(draft.intent, notice, body);
     onDraft({ text: draft.text, intent });
     setState("sending"); setError(null);
     try {
@@ -107,7 +122,7 @@ export function ContactReplyBox({ notice, contact, account, draft, onDraft, onSe
         setError("not delivered — open the chat to retry");
         return;
       }
-      onSent();
+      onSent(repliedThrough(notice, intent));
     } catch (cause) {
       setState("failed");
       setError(cause instanceof Error ? cause.message : String(cause));
