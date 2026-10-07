@@ -133,6 +133,23 @@ const migrations = [{
     ) UPDATE instances SET retained = 0, record = json_remove(record, '$.persistence', '$.diagnosticRef', '$.reason')
       WHERE id IN (SELECT id FROM ranked WHERE position > 64)`,
   ],
+}, {
+  id: 14,
+  statements: [
+    "DELETE FROM instance_usage WHERE instance_id IN (SELECT id FROM instances WHERE active = 0)",
+    `UPDATE instances SET charged = CASE WHEN json_extract(record, '$.readyAt') IS NULL THEN 0
+      ELSE MIN(charged, MAX(0, (json_extract(record, '$.expiresAt') - json_extract(record, '$.readyAt') + 999) / 1000)) END
+      WHERE active = 0`,
+    `WITH saved AS (SELECT id, charged, json_extract(record, '$.readyAt') AS ready_at FROM instances WHERE active = 0 AND charged > 0)
+      INSERT INTO instance_usage SELECT id, unixepoch(ready_at / 1000, 'unixepoch', 'start of month') * 1000,
+        MIN(charged, (unixepoch(ready_at / 1000, 'unixepoch', 'start of month', '+1 month') * 1000 - ready_at + 999) / 1000)
+      FROM saved`,
+    `WITH saved AS (SELECT id, charged, json_extract(record, '$.readyAt') AS ready_at FROM instances WHERE active = 0 AND charged > 0),
+      remainder AS (SELECT id, unixepoch(ready_at / 1000, 'unixepoch', 'start of month', '+1 month') * 1000 AS next_month,
+        charged - (unixepoch(ready_at / 1000, 'unixepoch', 'start of month', '+1 month') * 1000 - ready_at + 999) / 1000 AS seconds
+        FROM saved)
+      INSERT INTO instance_usage SELECT id, next_month, seconds FROM remainder WHERE seconds > 0`,
+  ],
 }];
 
 export function migrate(storage: DurableObjectStorage): void {

@@ -200,6 +200,31 @@ describe("instance admission", () => {
     expect(() => store.admit(actor, { requestId: "too-much", templateId: "browser", lifetimeSeconds: 600 }, nextLimits, rollover + 120001)).toThrow("allowance");
     expect(store.admit(actor, { requestId: "remaining", templateId: "browser", lifetimeSeconds: 480 }, nextLimits, rollover + 120001).state).toBe("starting");
   }));
+  it.each([false, true])("caps delayed startup usage at expiry and preserves reservations (migration: %s)", upgrade => inStore(store => {
+    const rollover = Date.UTC(2026, 10, 1), began = rollover - 300000;
+    const started = store.admit(actor, { requestId: "slow-start", templateId: "browser", lifetimeSeconds: 300 }, limits, began);
+    store.update({ ...started, state: "ready", readyAt: rollover - 60000 });
+    store.terminal(started.instanceId, false, rollover + 60000);
+    const late = store.admit(actor, { requestId: "expired-before-ready", templateId: "browser", lifetimeSeconds: 300 }, limits, began);
+    store.update({ ...late, state: "ready", readyAt: rollover + 100 });
+    store.terminal(late.instanceId, false, rollover + 60100);
+    const active = store.admit(actor, { requestId: "still-running", templateId: "browser", lifetimeSeconds: 300 }, limits, rollover + 1);
+    if (upgrade) {
+      store.sql.exec("UPDATE instances SET charged = 120 WHERE id = ?", started.instanceId);
+      store.sql.exec("UPDATE instances SET charged = 60 WHERE id = ?", late.instanceId);
+      store.sql.exec("INSERT INTO instance_usage VALUES (?, ?, 60)", started.instanceId, rollover);
+      store.sql.exec("INSERT INTO instance_usage VALUES (?, ?, 60)", late.instanceId, rollover);
+      store.sql.exec("DELETE FROM instance_schema WHERE id = 14");
+      migrate(store.storage); migrate(store.storage);
+    }
+    expect(store.byId(started.instanceId).charged).toBe(60);
+    expect(store.byId(late.instanceId).charged).toBe(0);
+    expect(store.usage(limits, began)).toMatchObject({ usedSeconds: 60, reservedSeconds: 300 });
+    expect(store.usage(limits, rollover)).toMatchObject({ usedSeconds: 0, reservedSeconds: 300, activeInstances: 1 });
+    expect(instance(store.byId(active.instanceId))).toEqual(active);
+    store.terminal(started.instanceId, false, rollover + 600000);
+    expect(store.usage(limits, rollover).usedSeconds).toBe(0);
+  }));
   it("uses readiness's month and rounds once within the lifetime cap", () => inStore(store => {
     const rollover = Date.UTC(2026, 10, 1), began = rollover - 500;
     const started = store.admit(actor, { requestId: "fractional", templateId: "browser", lifetimeSeconds: 60 }, limits, began);

@@ -198,9 +198,11 @@ inspecting saved-state status and deleting saved logins. Deleting a profile
 removes that state and stops any browser using it.
 
 Starting reserves the requested lifetime against the space's monthly browser
-allowance and concurrent instance limit. Usage counts from readiness until
-confirmed termination, including time spent signing in, capped at the reserved
-lifetime. Unused time is returned after termination. An uncertain allocation
+allowance and concurrent instance limit. Usage counts from readiness until the
+earlier of the fixed expiry deadline or confirmed termination, including time
+spent signing in, capped at the reserved lifetime. Slow startup reduces the
+usable time; cleanup after expiry never adds usage. Unused time is returned
+after termination. An uncertain allocation
 retains its reservation until cleanup can establish that it cannot still run.
 When no session ID was received, the concurrency slot is released three minutes
 after the acquisition attempt, covering its short provider keepalive; the requested

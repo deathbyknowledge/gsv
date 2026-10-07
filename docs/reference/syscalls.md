@@ -1593,6 +1593,11 @@ and start-request replay, but discard `persistence`, `reason` and `diagnosticRef
 The private runtime is discarded at termination. Monthly usage and saved
 profiles have independent lifetimes.
 
+Usage starts at readiness and ends at the earlier of fixed `expiresAt` or
+confirmed termination. Settlement rounds up once to seconds, caps by the
+reservation, and assigns each started second to its UTC month. Cleanup retains
+the reservation until termination is confirmed but cannot add usage past expiry.
+
 `sys.browser.profile.list` accepts an optional nonnegative `offset` and returns
 `{ profiles, total, nextOffset? }`. Each page contains at most 32 summaries in
 creation order, excluding storage `usage` and `issues`; `sys.browser.profile.get`
