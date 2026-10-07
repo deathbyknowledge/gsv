@@ -70,6 +70,16 @@ adapter over this loop. Changing a funded provider does not change the
 Managed inference telemetry identifies the executing provider; failures before
 a provider is selected use `gsv` rather than naming a provider that was not called.
 
+The public Workers AI transport allows two retries while acquiring a response,
+using the provider library's cancellable backoff within the original generation
+deadline. Connection failures and transient HTTP rejections can recover before
+output starts; permanent rejections and failures during response streaming do
+not restart that provider request. Each dispatch has its own attempt identity
+under the same executor request. If acquisition still fails, the executor retains
+the underlying binding error in the owner-visible failure instead of losing it
+behind the SDK's generic `Connection error.` message. It does not log request
+bodies or credentials.
+
 `getExecutor()` validates the installation and forwards a restricted RPC target
 created inside its executor Durable Object. That target owns generation, media
 and cancellation calls without exposing installation lifecycle methods. The

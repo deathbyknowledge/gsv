@@ -373,14 +373,15 @@ function resolvePiAiProviderModel(
   return { models, model };
 }
 
-type PiAiTransportOptions = { transport?: "sse"; sessionId?: string };
+type PiAiTransportOptions = { transport?: "sse"; sessionId?: string; maxRetries?: number };
 
 function resolvePiAiTransportOptions(
   provider: string,
   sessionAffinityKey?: string,
 ): PiAiTransportOptions {
   if (isWorkersAiProvider(provider)) {
-    return sessionAffinityKey ? { sessionId: sessionAffinityKey } : {};
+    // pi-ai retries only request acquisition, with abortable backoff inside our deadline.
+    return { maxRetries: 2, sessionId: sessionAffinityKey };
   }
   if (provider !== OPENAI_CODEX_PROVIDER) {
     return {};
