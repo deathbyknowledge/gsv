@@ -2,7 +2,9 @@ import { describe, expect, it, vi } from "vitest";
 import { collectBrowserStorage, encodeBrowserBinary } from "../../../tools/instances/storage-collection.mjs";
 import { Buffer } from "node:buffer";
 
-type RecordValue = string | Uint8Array | bigint | number[] | Record<string, Uint8Array> | Error | RegExp;
+interface NestedRecord { child?: NestedRecord }
+type NumericRecord = Record<string, number>;
+type RecordValue = string | Uint8Array | bigint | number[] | { first: Uint8Array; second: Uint8Array } | NumericRecord | NestedRecord | Map<number, number> | Error | RegExp;
 type CursorRequest = { result: { key: string; value: RecordValue; continue: () => void } | null; onsuccess?: () => void };
 
 function fixture(values: RecordValue[]) {
@@ -60,6 +62,23 @@ describe("incremental IndexedDB collection", () => {
       expect(db.serialize.mock.calls.some(([value]) => value === large)).toBe(false);
       expect(db.close).toHaveBeenCalledOnce();
     }
+  });
+  it("bounds wide and deep codec graphs before constructing their scratch representation", async () => {
+    const pairs = Array.from({ length: 40000 }, (_, i) => [i, 0] as const);
+    let deep: NestedRecord = {};
+    for (let i = 0; i < 130; i++) deep = { child: deep };
+    for (const large of [Object.fromEntries(pairs), new Map(pairs), deep]) {
+      const db = fixture([large]);
+      await expect(db.collect(1024 * 1024)).rejects.toMatchObject({ name: "StorageComplexityExceeded" });
+      expect(db.serialize.mock.calls.some(([value]) => value === large)).toBe(false);
+      expect(db.abort).toHaveBeenCalledOnce(); expect(db.close).toHaveBeenCalledOnce();
+    }
+  });
+  it("bounds aggregate graph overhead across many small records", async () => {
+    const db = fixture(Array.from({ length: 33000 }, () => ""));
+    await expect(db.collect(32 * 1024 * 1024)).rejects.toMatchObject({ name: "StorageComplexityExceeded" });
+    expect(db.reads()).toBeLessThan(33000);
+    expect(db.abort).toHaveBeenCalledOnce(); expect(db.close).toHaveBeenCalledOnce();
   });
   it("collects a fitting database exactly and closes its connection", async () => {
     const db = fixture(["first", "second"]);

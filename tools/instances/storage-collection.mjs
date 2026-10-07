@@ -12,6 +12,7 @@ export async function collectBrowserStorage(recordIndexedDB, maxBytes = 32 * 102
   const size = value => new TextEncoder().encode(JSON.stringify(value)).byteLength;
   const result = { localStorage: [], indexedDB: [] };
   let used = size({ origin: this._global.location.origin, ...result });
+  let entries = 0;
   const exceeded = minimum => {
     const error = new Error("Browser storage exceeds the remaining byte allowance");
     error.name = "StorageBudgetExceeded"; error.minimumBytes = minimum; throw error;
@@ -21,7 +22,12 @@ export async function collectBrowserStorage(recordIndexedDB, maxBytes = 32 * 102
   const preflight = (value, metadata = false) => {
     let minimum = used;
     const seen = new Set();
-    const visit = item => {
+    const visit = (item, depth = 0) => {
+      // Bound codec wrappers and traversal state independently of JSON byte size.
+      if (++entries > 65536 || depth > 128) {
+        const error = new Error("IndexedDB storage exceeds the safe complexity limit");
+        error.name = "StorageComplexityExceeded"; throw error;
+      }
       // oxlint-disable-next-line anti-slop/no-runtime-typeof -- IndexedDB's structured-clone boundary admits strings and object graphs.
       if (typeof item === "string") {
         minimum += 2;
@@ -37,20 +43,21 @@ export async function collectBrowserStorage(recordIndexedDB, maxBytes = 32 * 102
         minimum += 2;
         // The codec emits these atomic values in full at each reference.
         if (item instanceof ArrayBuffer || ArrayBuffer.isView(item)) minimum += 4 * Math.ceil(item.byteLength / 3);
-        else if (item instanceof Date) visit(item.toJSON());
-        else if (item instanceof URL) visit(item.href);
-        else if (item instanceof RegExp) { visit(item.source); visit(item.flags); }
+        else if (item instanceof Date) visit(item.toJSON(), depth + 1);
+        else if (item instanceof URL) visit(item.href, depth + 1);
+        else if (item instanceof RegExp) { visit(item.source, depth + 1); visit(item.flags, depth + 1); }
         else if (item instanceof Error) {
-          visit(item.name); visit(item.message); visit(item.stack ?? "");
-          if (!item.stack?.startsWith(`${item.name}: ${item.message}`)) { visit(item.name); visit(item.message); }
+          visit(item.name, depth + 1); visit(item.message, depth + 1); visit(item.stack ?? "", depth + 1);
+          if (!item.stack?.startsWith(`${item.name}: ${item.message}`)) { visit(item.name, depth + 1); visit(item.message, depth + 1); }
         } else {
           if (seen.has(item)) return;
           seen.add(item);
-          if (item instanceof Map) { for (const [key, value] of item) { visit(key); visit(value); } }
-          else if (item instanceof Set || Array.isArray(item)) { for (const value of item) visit(value); }
-          else for (const key of Object.keys(item)) {
+          if (item instanceof Map) { for (const [key, value] of item) { visit(key, depth + 1); visit(value, depth + 1); } }
+          else if (item instanceof Set || Array.isArray(item)) { for (const value of item) visit(value, depth + 1); }
+          else for (const key in item) {
+            if (!Object.hasOwn(item, key)) continue;
             if (metadata && item[key] === undefined) continue;
-            visit(key); visit(item[key]);
+            visit(key, depth + 1); visit(item[key], depth + 1);
           }
         }
       // oxlint-disable-next-line anti-slop/no-runtime-typeof -- Bound a BigInt's decimal conversion before the structured-clone codec allocates it.

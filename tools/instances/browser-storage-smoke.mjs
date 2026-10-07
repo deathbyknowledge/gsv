@@ -84,6 +84,29 @@ export async function seedBrowserStorage(shell, client, instance) {
   console.log("PASS: repeated 8 MiB saves, compression, no leaked IndexedDB connections, and hidden export pages");
   console.log("PASS: oversized saves retain the previous snapshot, report measured usage, leave the browser running, and recover after retry");
   console.log("PASS: unsupported website keys retain the site's earlier snapshot and clear their warning after recovery");
+  for (const kind of ["object", "map"]) {
+    const before = (await client.sys.browser.profile.get({ profileId: instance.profileId })).profile;
+    await run(`(async () => {
+      const open = indexedDB.open("gsv-fidelity");
+      const db = await new Promise(resolve => { open.onsuccess = () => resolve(open.result); });
+      const tx = db.transaction("records", "readwrite");
+      const pairs = Array.from({ length: 40000 }, (_, i) => [String(i), 0]);
+      tx.objectStore("records").put(${kind === "map" ? "new Map(pairs)" : "Object.fromEntries(pairs)"}, "complex");
+      await new Promise(resolve => { tx.oncomplete = resolve; }); db.close(); return "stored";
+    })()`);
+    const partial = (await client.sys.browser.profile.save({ instanceId: instance.instanceId })).profile;
+    assert.equal(partial.saveStatus, "partial");
+    assert.match(partial.issues[0].message, /too complex/);
+    assert.equal(partial.issues[0].retainedAt, before.savedAt);
+    await run(`(async () => {
+      const open = indexedDB.open("gsv-fidelity");
+      const db = await new Promise(resolve => { open.onsuccess = () => resolve(open.result); });
+      const tx = db.transaction("records", "readwrite"); tx.objectStore("records").delete("complex");
+      await new Promise(resolve => { tx.oncomplete = resolve; }); db.close(); return "recovered";
+    })()`);
+    assert.equal((await client.sys.browser.profile.save({ instanceId: instance.instanceId })).profile.saveStatus, "saved");
+  }
+  console.log("PASS: wide objects and maps stop before codec expansion, retain saved state, and recover after cleanup");
 }
 
 export async function seedPartialBrowserStorage(shell, client, instance, website) {

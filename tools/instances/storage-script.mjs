@@ -44,7 +44,10 @@ export function storageCodec(source) {
     const id = ++visitorInfo.lastId;
     visitorInfo.visited.set(value, id);
     const encode = v => serialize(v, handleSerializer, visitorInfo);
-    return value instanceof Map ? { m: [...value].map(([k, v]) => [encode(k), encode(v)]), id } : { s: [...value].map(encode), id };
+    const items = [];
+    if (value instanceof Map) { for (const [k, v] of value) items.push([encode(k), encode(v)]); return { m: items, id }; }
+    for (const v of value) items.push(encode(v));
+    return { s: items, id };
   }
   if (value && typeof value === "object" && !Array.isArray(value) && Object.getPrototypeOf(value) !== Object.prototype && Object.getPrototypeOf(value) !== null)
     throw new Error("Unsupported IndexedDB value type: " + Object.prototype.toString.call(value));

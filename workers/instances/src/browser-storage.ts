@@ -83,10 +83,11 @@ export async function exportBrowserStorage(
         if (cause instanceof BrowserStorageError) throw cause;
         if (signal.aborted || page.isClosed()) throw cause;
         const unsupported = cause instanceof Error && cause.message.includes("Unsupported IndexedDB value type");
+        const complex = cause instanceof Error && cause.message.includes("IndexedDB storage exceeds the safe complexity limit");
         const type = unsupported && cause instanceof Error ? cause.message.match(/Unsupported IndexedDB value type: \[object (CryptoKey|Blob|File)\]/)?.[1] : undefined;
         failures.push({ issue: {
-          origin, reason: unsupported ? "unsupported" : "unavailable",
-          message: unsupported ? `This site stores ${type ?? "unsupported"} values that cannot be saved by this browser.` : "This site's storage could not be read. Retry saving while the browser is running.",
+          origin, reason: unsupported || complex ? "unsupported" : "unavailable",
+          message: complex ? "This site's storage is too complex to save safely. Earlier saved state is retained when available." : unsupported ? `This site stores ${type ?? "unsupported"} values that cannot be saved by this browser.` : "This site's storage could not be read. Retry saving while the browser is running.",
         }, cause });
       }
     }
