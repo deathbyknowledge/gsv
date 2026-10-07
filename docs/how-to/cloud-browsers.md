@@ -178,8 +178,12 @@ Every instance has a fixed lifetime. Reusing it does not extend that lifetime
 or reserve more time. Ship or you can stop it sooner with **stop browser**.
 A stopped or failed instance stays terminal; another start creates another target
 with a new eight-character ID. Export useful files before stopping: temporary
-files disappear. Stopped browsers leave the ordinary Fleet list, but their
-records remain available through `instance list --all`.
+files disappear. Stopped browsers leave the ordinary Fleet list. `instance list
+--all` includes your 64 most recently created terminal browsers alongside active
+ones. Inventory omits per-site save issues; `instance get ID` retrieves recent
+details. Older instances retain their identity, status and start-request receipts
+for exact lookup and retries, while their runtime and detailed save diagnostics
+are discarded. Saved website state and usage accounting remain separate.
 
 A slow page or failed live frame does not by itself stop the browser. Health
 checks run independently of page JavaScript, and temporary provider failures

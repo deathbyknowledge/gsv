@@ -18,6 +18,63 @@ function inStore<T>(work: (store: InstanceStore) => T | Promise<T>) {
 }
 
 describe("instance admission", () => {
+  it.each([false, true])("bounds terminal inventory while retaining owner-scoped replay receipts (migration: %s)", upgrade => inStore(store => {
+    const other = { ...actor, ownerUid: 1001 };
+    const records = [actor, other].map(owner => Array.from({ length: 70 }, (_, index) => {
+      const started = store.admit(owner, { requestId: `history-${index}`, templateId: "browser", lifetimeSeconds: 300 }, limits);
+      if (index === 0) store.admit(owner, { requestId: "reused-first", templateId: "browser" }, limits);
+      store.update({ ...started, persistence: { saveStatus: "partial", issues: [{ origin: "https://example.com", reason: "unsupported", message: "Unavailable storage" }] } });
+      store.sql.exec("UPDATE instances SET runtime = ? WHERE id = ?", '{"tabs":[1]}', started.instanceId);
+      const terminal = store.terminal(started.instanceId, false);
+      expect(store.byId(started.instanceId).runtime).toBeNull();
+      return terminal;
+    }));
+    const running = store.admit(actor, { requestId: "running", templateId: "browser", lifetimeSeconds: 300 }, limits);
+    if (upgrade) {
+      store.sql.exec("DROP INDEX instances_retained");
+      store.sql.exec("DROP INDEX instances_target");
+      store.sql.exec("DROP INDEX profiles_state");
+      store.sql.exec("DROP INDEX profiles_live");
+      store.sql.exec("ALTER TABLE instances DROP COLUMN retained");
+      for (const record of records.flat()) {
+        store.update(record);
+        store.sql.exec("UPDATE instances SET runtime = ? WHERE id = ?", '{"tabs":[1]}', record.instanceId);
+      }
+      store.sql.exec("DELETE FROM instance_schema WHERE id = 13");
+      migrate(store.storage); migrate(store.storage);
+    }
+    expect(store.inventory(actor.ownerUid).map(value => value.instanceId)).toEqual([running.instanceId]);
+    for (const [index, owner] of [actor, other].entries()) {
+      const inventory = store.inventory(owner.ownerUid, true);
+      expect(inventory).toHaveLength(index === 0 ? 65 : 64);
+      expect(inventory.filter(value => value.state === "stopped").map(value => value.instanceId)).toEqual(records[index]!.slice(-64).reverse().map(value => value.instanceId));
+      expect(inventory.every(value => value.ownerUid === owner.ownerUid && !value.persistence?.issues)).toBe(true);
+      const oldest = records[index]![0]!, latest = records[index]!.at(-1)!;
+      expect(instance(store.owned(owner, { instanceId: oldest.targetId })!)).toMatchObject({ instanceId: oldest.instanceId, state: "stopped", profileId: oldest.profileId });
+      expect(instance(store.byId(oldest.instanceId)).persistence).toBeUndefined();
+      expect(instance(store.byId(latest.instanceId)).persistence?.issues).toHaveLength(1);
+      expect(store.byId(latest.instanceId).runtime).toBeNull();
+      expect(store.admit(owner, { requestId: "reused-first", templateId: "browser" }, limits).instanceId).toBe(oldest.instanceId);
+      expect(store.admit(owner, { requestId: "history-0", templateId: "browser", lifetimeSeconds: 300 }, limits).state).toBe("stopped");
+      expect(() => store.admit(owner, { requestId: "history-0", templateId: "browser", fresh: true }, limits)).toThrow("different arguments");
+    }
+    expect(store.usage(limits)).toMatchObject({ activeInstances: 1, reservedSeconds: 300, usedSeconds: 0 });
+  }));
+
+  it("selects only pending profile cleanup while preserving deleted-profile retry receipts", () => inStore(store => {
+    const deleted = Array.from({ length: 100 }, (_, index) => {
+      const saved = store.createProfile(actor, `deleted-${index}`, "Old browser", limits);
+      store.putProfile({ ...saved, state: "deleted" });
+      return saved.profileId;
+    });
+    const pending = store.createProfile(actor, "deleting", "Forget me", limits);
+    store.putProfile({ ...pending, state: "deleting" });
+    const active = store.createProfile(actor, "active", "Current browser", limits);
+    expect(store.profilesInState("deleting").map(row => row.id)).toEqual([pending.profileId]);
+    expect(store.profilesInState("active").map(row => row.id)).toEqual([active.profileId]);
+    expect(store.createProfile(actor, "deleted-0", "Old browser", limits)).toMatchObject({ profileId: deleted[0], state: "deleted" });
+  }));
+
   it("keeps explicit profiles and their running browsers separate from automatic state", () => inStore(store => {
     const explicit = store.createProfile(actor, "explicit", "Other login", limits);
     const manual = store.admit(actor, { requestId: "manual", templateId: "browser", profileId: explicit.profileId, lifetimeSeconds: 300 }, limits);
@@ -92,7 +149,7 @@ describe("instance admission", () => {
   it("fences a stop that arrives before its start request", () => inStore(store => {
     store.cancelStart(actor, "late-start");
     expect(() => store.admit(actor, { requestId: "late-start", templateId: "browser" }, limits)).toThrow("cancelled before admission");
-    expect(store.rows()).toHaveLength(0);
+    expect(store.activeRows()).toHaveLength(0);
     expect(store.admit({ ownerUid: 1001, human: true }, { requestId: "late-start", templateId: "browser", lifetimeSeconds: 60 }, limits).state).toBe("starting");
   }));
   it("adds provider recovery state without changing existing sessions or leases", () => inStore(store => {
@@ -111,7 +168,7 @@ describe("instance admission", () => {
     store.terminal(first.instanceId, false);
     expect(store.admit(actor, args, limits)).toMatchObject({ instanceId: first.instanceId, state: "stopped" });
     expect(() => store.admit(actor, { ...args, lifetimeSeconds: 301 }, limits)).toThrow("different arguments");
-    expect(store.rows()).toHaveLength(1);
+    expect(store.sql.exec("SELECT id FROM instances").toArray()).toHaveLength(1);
   }));
   it("reserves allowance and concurrency across owners before provisioning", () => inStore(store => {
     store.admit(actor, { requestId: "one", templateId: "browser", lifetimeSeconds: 600 }, limits);

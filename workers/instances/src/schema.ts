@@ -119,6 +119,20 @@ const migrations = [{
     )`,
     "CREATE UNIQUE INDEX profiles_automatic_owner ON profiles(owner_uid) WHERE json_extract(record, '$.automatic') = 1 AND json_extract(record, '$.state') = 'active'",
   ],
+}, {
+  id: 13,
+  statements: [
+    "CREATE INDEX profiles_state ON profiles(json_extract(record, '$.state'))",
+    "CREATE INDEX profiles_live ON profiles(owner_uid) WHERE json_extract(record, '$.state') != 'deleted'",
+    "ALTER TABLE instances ADD COLUMN retained INTEGER NOT NULL DEFAULT 1",
+    "CREATE INDEX instances_retained ON instances(owner_uid, active) WHERE retained = 1",
+    "CREATE UNIQUE INDEX instances_target ON instances(json_extract(record, '$.targetId'))",
+    "UPDATE instances SET runtime = NULL, session_id = NULL, acquire_at = NULL, provider_failed_at = NULL WHERE active = 0",
+    `WITH ranked AS (
+      SELECT id, ROW_NUMBER() OVER (PARTITION BY owner_uid ORDER BY rowid DESC) AS position FROM instances WHERE active = 0
+    ) UPDATE instances SET retained = 0, record = json_remove(record, '$.persistence', '$.diagnosticRef', '$.reason')
+      WHERE id IN (SELECT id FROM ranked WHERE position > 64)`,
+  ],
 }];
 
 export function migrate(storage: DurableObjectStorage): void {

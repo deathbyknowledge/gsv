@@ -1585,6 +1585,14 @@ ID returns `instance: null`, and stopping it fences any future admission of that
 request. Instance reservations and concurrency are space-wide, while
 access to instances, profiles and human requests is owner-scoped.
 
+`sys.instance.list` returns active instances. `includeTerminal: true` also
+includes the owner's 64 most recently created terminal instances. Inventory
+omits `persistence.issues`; use `sys.instance.get` for recent details. Older
+terminal records retain compact identity/status receipts for exact selectors
+and start-request replay, but discard `persistence`, `reason` and `diagnosticRef`.
+The private runtime is discarded at termination. Monthly usage and saved
+profiles have independent lifetimes.
+
 `sys.browser.profile.list` accepts an optional nonnegative `offset` and returns
 `{ profiles, total, nextOffset? }`. Each page contains at most 32 summaries in
 creation order, excluding storage `usage` and `issues`; `sys.browser.profile.get`

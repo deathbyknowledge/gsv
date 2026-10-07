@@ -6,14 +6,14 @@ import { boundBrowserStorageUsage } from "./browser-storage-summary";
 export type InstanceRow = {
   id: string; owner_uid: number; request_id: string; fingerprint: string; record: string; active: number;
   period_start: number; reservation: number; charged: number; session_id: string | null; acquire_at: number | null; runtime: string | null;
-  provider_failed_at: number | null;
+  provider_failed_at: number | null; retained: number;
 };
 export type ProfileRow = { id: string; owner_uid: number; request_id: string; record: string; key: ArrayBuffer | null; object_key: string | null; saved_revision: number };
 export function period(now: number) {
   const date = new Date(now);
   return { start: Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), 1), end: Date.UTC(date.getUTCFullYear(), date.getUTCMonth() + 1, 1) };
 }
-export function instance(row: InstanceRow): CloudInstance {
+export function instance(row: Pick<InstanceRow, "record">): CloudInstance {
   // SAFETY: This private column is written only from admitted CloudInstance records and versioned migrations.
   const value = JSON.parse(row.record) as CloudInstance;
   if (value.label === "Cloud browser") value.label = `Browser ${value.instanceId.slice(0, 8)}`;
@@ -28,7 +28,12 @@ export function profile(row: ProfileRow): BrowserProfile {
 export class InstanceStore {
   constructor(readonly storage: DurableObjectStorage) {}
   get sql(): SqlStorage { return this.storage.sql; }
-  rows(activeOnly = false): InstanceRow[] { return this.sql.exec<InstanceRow>(`SELECT * FROM instances ${activeOnly ? "WHERE active = 1" : ""} ORDER BY rowid DESC`).toArray(); }
+  activeRows(): InstanceRow[] { return this.sql.exec<InstanceRow>("SELECT * FROM instances WHERE active = 1 ORDER BY rowid DESC").toArray(); }
+  inventory(ownerUid: number, includeTerminal = false): CloudInstance[] {
+    return this.sql.exec<Pick<InstanceRow, "record">>(`SELECT json_remove(record, '$.persistence.issues') AS record
+      FROM instances WHERE retained = 1 AND owner_uid = ? ${includeTerminal ? "" : "AND active = 1"}
+      ORDER BY rowid DESC`, ownerUid).toArray().map(instance);
+  }
   owned(actor: InstanceActor, selector: InstanceSelector): InstanceRow | null {
     return selector.instanceId
       ? this.sql.exec<InstanceRow>("SELECT * FROM instances WHERE owner_uid = ? AND (id = ? OR json_extract(record, '$.targetId') = ?)", actor.ownerUid, selector.instanceId, selector.instanceId).toArray()[0] ?? null
@@ -62,7 +67,7 @@ export class InstanceStore {
       if (lifetime < 60 || lifetime > limits.maxInstanceSeconds) throw new Error("Requested browser lifetime is outside the allowed range");
       const automatic = !args.profileId && !args.fresh ? this.defaultProfile(actor.ownerUid) : null;
       if (!args.fresh) {
-        const current = this.rows(true).map(instance).reverse().find(value => value.ownerUid === actor.ownerUid
+        const current = this.activeRows().map(instance).reverse().find(value => value.ownerUid === actor.ownerUid
           && (value.state === "ready" || value.state === "starting") && value.expiresAt > now
           && !value.isolated
           && value.profileId === (args.profileId ?? automatic?.profileId));
@@ -115,7 +120,12 @@ export class InstanceStore {
         this.sql.exec("INSERT INTO instance_usage (instance_id, period_start, charged) VALUES (?, ?, ?)", id, start, seconds);
         cursor += seconds * 1000; remaining -= seconds;
       }
-      this.sql.exec("UPDATE instances SET record = ?, active = 0, reservation = 0, charged = ? WHERE id = ?", JSON.stringify(value), charge, id);
+      this.sql.exec("UPDATE instances SET record = ?, active = 0, reservation = 0, charged = ?, runtime = NULL, session_id = NULL, acquire_at = NULL, provider_failed_at = NULL WHERE id = ?", JSON.stringify(value), charge, id);
+      // Older terminal rows remain compact receipts for exact lookup and start-request replay.
+      this.sql.exec(`UPDATE instances SET retained = 0, record = json_remove(record, '$.persistence', '$.diagnosticRef', '$.reason')
+        WHERE retained = 1 AND active = 0 AND owner_uid = ? AND rowid NOT IN (
+          SELECT rowid FROM instances WHERE retained = 1 AND active = 0 AND owner_uid = ? ORDER BY rowid DESC LIMIT 64
+        )`, value.ownerUid, value.ownerUid);
       if (value.profileId) {
         const saved = this.ownedProfile({ ownerUid: value.ownerUid, human: false }, value.profileId);
         if (saved && profile(saved).activeInstanceId === id) this.putProfile({ ...profile(saved), activeInstanceId: undefined, revision: profile(saved).revision + 1 });
@@ -126,6 +136,9 @@ export class InstanceStore {
     });
   }
   profiles(ownerUid: number): Iterable<ProfileRow> { return this.sql.exec<ProfileRow>("SELECT * FROM profiles WHERE owner_uid = ? ORDER BY rowid DESC", ownerUid); }
+  profilesInState(state: "active" | "deleting"): ProfileRow[] {
+    return this.sql.exec<ProfileRow>("SELECT * FROM profiles WHERE json_extract(record, '$.state') = ?", state).toArray();
+  }
   listProfiles(ownerUid: number, offset = 0): SysBrowserProfileListResult {
     const total = this.sql.exec<{ count: number }>("SELECT count(*) AS count FROM profiles WHERE owner_uid = ? AND json_extract(record, '$.state') != 'deleted'", ownerUid).one().count;
     const profiles = this.sql.exec<{ record: string }>("SELECT json_remove(record, '$.usage', '$.issues') AS record FROM profiles WHERE owner_uid = ? AND json_extract(record, '$.state') != 'deleted' ORDER BY rowid LIMIT 32 OFFSET ?", ownerUid, offset).toArray().map(row => {
@@ -204,7 +217,7 @@ export class InstanceStore {
   pruneDiagnostics(savingInstances: string[] = []): void {
     // In-flight saves may have created site diagnostics whose profile commit is still pending.
     this.sql.exec(`WITH records(record) AS (
-      SELECT json_object('diagnosticRef', json_extract(record, '$.diagnosticRef'), 'persistence', json_extract(record, '$.persistence')) FROM instances
+      SELECT json_object('diagnosticRef', json_extract(record, '$.diagnosticRef'), 'persistence', json_extract(record, '$.persistence')) FROM instances WHERE retained = 1
       UNION ALL SELECT json_remove(record, '$.usage') FROM profiles WHERE json_extract(record, '$.state') != 'deleted'
       UNION ALL SELECT record FROM handoffs
     ), referenced(ref) AS (

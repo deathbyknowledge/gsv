@@ -765,7 +765,7 @@ describe("installation retirement", () => {
     const receipt = await object.eraseInstallation(request);
     expect(receipt).toMatchObject({ phase: "live-erased", pendingResources: 0, outcome: "retention-pending" });
     expect(receipt.retainedCopies).toHaveLength(1);
-    expect(store.rows()).toEqual([]);
+    expect(store.sql.exec("SELECT id FROM instances").toArray()).toEqual([]);
     expect([...store.profiles(actor.ownerUid)]).toEqual([]);
     await expect(object.start(actor, { requestId: "late", templateId: "browser" })).rejects.toThrow("retired");
     await expect(object.eraseInstallation({ ...request, operationId: "other" })).rejects.toThrow("immutable");

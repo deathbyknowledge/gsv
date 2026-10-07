@@ -86,8 +86,8 @@ export class InstanceCoordinator extends DurableObject<Environment> implements I
   async list(raw: InstanceActor, rawArgs: Parameters<InstallationInstances["list"]>[1]) {
     const actor = instanceActorSchema.parse(raw), args = instanceListSchema.parse(rawArgs);
     const limits = await this.#policy.limits();
-    const rows = this.#store.rows(!args.includeTerminal).filter(row => row.owner_uid === actor.ownerUid);
-    return { instances: rows.map(instance), handoffs: rows.flatMap(row => this.#store.liveHandoffs(row.id)), usage: this.#store.usage(limits) };
+    const instances = this.#store.inventory(actor.ownerUid, args.includeTerminal);
+    return { instances, handoffs: instances.flatMap(value => this.#store.liveHandoffs(value.instanceId)), usage: this.#store.usage(limits) };
   }
   async get(raw: InstanceActor, rawSelector: InstanceSelector) {
     const row = this.#store.owned(instanceActorSchema.parse(raw), instanceSelectorSchema.parse(rawSelector));
@@ -519,28 +519,23 @@ export class InstanceCoordinator extends DurableObject<Environment> implements I
       }
     }
     let deleting = false;
-    for (const row of this.#store.sql.exec<{ id: string; owner_uid: number }>("SELECT id, owner_uid FROM profiles").toArray()) {
-      const saved = this.#store.ownedProfile({ ownerUid: row.owner_uid, human: false }, row.id)!;
-      if (profile(saved).state === "deleting") {
-        deleting = true;
-        if (!profile(saved).activeInstanceId && !this.profileSaving(saved.id)) await this.#profiles.erase(saved);
-      }
+    for (const saved of this.#store.profilesInState("deleting")) {
+      deleting = true;
+      if (!profile(saved).activeInstanceId && !this.profileSaving(saved.id)) await this.#profiles.erase(saved);
     }
     await this.#profiles.cleanup();
     this.#store.pruneDiagnostics([...this.#saves.keys()]);
-    if (!this.#store.rows(true).length && !deleting && !this.#attachments.size && !this.#profiles.hasPendingCleanup()) await this.ctx.storage.deleteAlarm();
+    if (!this.#store.activeRows().length && !deleting && !this.#attachments.size && !this.#profiles.hasPendingCleanup()) await this.ctx.storage.deleteAlarm();
   }
   async quiesceInstallation(input: InstallationDeletionRequest) {
     this.#retirement.begin(input);
-    for (const row of this.#store.rows(true)) this.fenceStop(instance(row), "Space deleted");
-    for (const row of this.#store.sql.exec<{ owner_uid: number }>("SELECT DISTINCT owner_uid FROM profiles").toArray()) {
-      for (const saved of this.#store.profiles(row.owner_uid)) {
-        const value = profile(saved);
-        if (value.state === "active") this.#store.putProfile({ ...value, state: "deleting", revision: value.revision + 1 });
-      }
+    for (const row of this.#store.activeRows()) this.fenceStop(instance(row), "Space deleted");
+    for (const saved of this.#store.profilesInState("active")) {
+      const value = profile(saved);
+      this.#store.putProfile({ ...value, state: "deleting", revision: value.revision + 1 });
     }
     await this.ctx.storage.setAlarm(Date.now() + 1);
-    if (!this.#store.rows(true).length && !this.#attachments.size && !this.#saves.size && !this.#humanInputs.size && ![...this.#operations.values()].some(operations => operations.size)) {
+    if (!this.#store.activeRows().length && !this.#attachments.size && !this.#saves.size && !this.#humanInputs.size && ![...this.#operations.values()].some(operations => operations.size)) {
       if (this.#retirement.get()?.phase === "quiescing") this.#retirement.phase("quiesced");
     }
     return this.installationDeletionStatus(input);
@@ -565,7 +560,8 @@ export class InstanceCoordinator extends DurableObject<Environment> implements I
     return this.installationDeletionStatus(input);
   }
   async installationDeletionStatus(input: InstallationDeletionRequest) {
-    return this.#retirement.receipt(input, this.#store.rows().length + this.#store.sql.exec<{ count: number }>("SELECT COUNT(*) AS count FROM profiles").one().count);
+    const count = this.#store.sql.exec<{ count: number }>("SELECT (SELECT COUNT(*) FROM instances) + (SELECT COUNT(*) FROM profiles) AS count").one().count;
+    return this.#retirement.receipt(input, count);
   }
   private async maintain(id: string): Promise<void> {
     try {

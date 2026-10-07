@@ -40,7 +40,7 @@ describe("cloud browser files", () => {
     expect(await recovered.exists("/tmp/overflow")).toBe(false);
     await recovered.delete("/tmp/file-4");
     expect(store.sql.exec("SELECT 1 FROM file_chunks WHERE path = ?", "/tmp/file-4").toArray()).toHaveLength(0);
-    store.terminal(store.rows()[0]!.id, false);
+    store.terminal(store.activeRows()[0]!.id, false);
     expect(store.sql.exec("SELECT 1 FROM file_chunks").toArray()).toHaveLength(0);
     expect(store.sql.exec("SELECT 1 FROM files").toArray()).toHaveLength(0);
   }));
@@ -56,7 +56,7 @@ describe("cloud browser files", () => {
     for (const entry of legacy) {
       if (!entry) throw new Error("Missing fixture entry");
       const encoded = JSON.stringify(entry.kind === "file" ? { ...entry, content: Buffer.from(entry.content).toString("base64") } : entry);
-      store.sql.exec("INSERT INTO files VALUES (?, ?, ?)", store.rows()[0]!.id, entry.path, new TextEncoder().encode(encoded));
+      store.sql.exec("INSERT INTO files VALUES (?, ?, ?)", store.activeRows()[0]!.id, entry.path, new TextEncoder().encode(encoded));
     }
     store.sql.exec("DELETE FROM instance_schema WHERE id IN (7, 8)");
     migrate(store.storage);
