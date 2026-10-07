@@ -12,7 +12,7 @@ export type BrowserStorageAccess = {
   forget(profileId: string): Promise<void>;
 };
 const README = `Saved browser state belongs to this local account and is reused automatically.
-status.json reports the last successful save and the latest attempt.
+status.json reports the last committed save and the latest attempt, including sites that could not be saved.
 sites.json reports storage sizes and counts, never cookies or login values.
 state.enc is the encrypted snapshot. It is opaque and read-only; its key is held by the owning instance service.
 Delete state.enc, or recursively remove this account directory, to forget saved logins.
@@ -49,9 +49,9 @@ export class BrowserStorageMountBackend implements MountBackend {
   }
   private text(name: string, saved: BrowserProfile): string {
     if (name === "README.txt") return README;
-    const { saveStatus, savedAt, attemptedAt, durationMs, bytes, storedBytes, limitBytes, error, diagnosticRef, activeInstanceId } = saved;
-    return `${JSON.stringify(name === "sites.json" ? { measured: Boolean(saved.usage), usage: saved.usage ?? null }
-      : { account: this.access.username, saveStatus, savedAt, attemptedAt, durationMs, bytes, storedBytes, limitBytes, error, diagnosticRef, activeInstanceId }, null, 2)}\n`;
+    const { saveStatus, savedAt, attemptedAt, durationMs, bytes, storedBytes, limitBytes, error, diagnosticRef, activeInstanceId, issues } = saved;
+    return `${JSON.stringify(name === "sites.json" ? { measured: Boolean(saved.usage), usage: saved.usage ?? null, issues }
+      : { account: this.access.username, saveStatus, savedAt, attemptedAt, durationMs, bytes, storedBytes, limitBytes, error, diagnosticRef, activeInstanceId, issues }, null, 2)}\n`;
   }
   async readFileBuffer(path: string): Promise<Uint8Array> {
     const { saved, name, directory } = await this.entry(path);

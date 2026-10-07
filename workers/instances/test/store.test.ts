@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 import { instance, InstanceStore, profile } from "../src/store";
 import { ProfileStorage } from "../src/profiles";
 import { migrate } from "../src/schema";
+import type { StorageState } from "../src/browser";
 
 const limits = { enabled: true, concurrentInstances: 2, periodSeconds: 1000, maxInstanceSeconds: 600, savedProfiles: 2, profileStorageBytes: 5242880 };
 const actor = { ownerUid: 1000, human: true };
@@ -112,6 +113,42 @@ describe("instance admission", () => {
 });
 
 describe("saved profile encryption", () => {
+  it("saves healthy sites while retaining a failed site's storage, cookies and original save time", () => inStore(async store => {
+    const started = store.admit(actor, { requestId: "partial", templateId: "browser" }, limits);
+    const storage = new ProfileStorage("partial", bucket, store);
+    const cookie = (domain: string, value: string): StorageState["cookies"][number] => ({ name: "session", domain, value, path: "/", expires: -1, httpOnly: true, secure: true, sameSite: "Lax" });
+    const site = (origin: string, value: string) => ({ origin, localStorage: [{ name: "session", value }] });
+    const bad = "https://app.example.com", good = "https://shop.example.org";
+    await storage.save(started, { cookies: [cookie(".example.com", "old"), cookie("shop.example.org", "old")], origins: [site(bad, "old"), site(good, "old")] }, 10000);
+    const originalTime = profile(store.ownedProfile(actor, started.profileId!)!).savedAt;
+    const state = { cookies: [cookie(".example.com", "unsafe-new"), cookie("shop.example.org", "new"), cookie("notexample.com", "unrelated")], origins: [site(good, "new")] };
+    const issues = [{ origin: bad, reason: "unsupported" as const, message: "Unsupported CryptoKey", diagnosticRef: "diagnostic" }];
+    await storage.save(started, state, 10000, undefined, undefined, issues);
+    const first = store.ownedProfile(actor, started.profileId!)!;
+    expect(profile(first)).toMatchObject({ saveStatus: "partial", issues: [{ ...issues[0], retainedAt: originalTime }] });
+    const restored = await storage.restore(first);
+    expect(restored?.origins).toEqual([site(bad, "old"), site(good, "new")]);
+    expect(restored?.cookies).toEqual([cookie("shop.example.org", "new"), cookie("notexample.com", "unrelated"), cookie(".example.com", "old")]);
+    await storage.save(started, state, 10000, undefined, undefined, issues);
+    const repeated = store.ownedProfile(actor, started.profileId!)!;
+    expect(repeated.object_key).toBe(first.object_key);
+    expect(profile(repeated).issues?.[0]?.retainedAt).toBe(originalTime);
+    await storage.save(started, restored!, 10000);
+    const recovered = store.ownedProfile(actor, started.profileId!)!;
+    expect(recovered.object_key).toBe(first.object_key);
+    expect(profile(recovered).saveStatus).toBe("saved");
+    expect(profile(recovered).issues).toBeUndefined();
+  }));
+  it("reports a new unsavable site without claiming an older copy exists", () => inStore(async store => {
+    const started = store.admit(actor, { requestId: "new-partial", templateId: "browser" }, limits);
+    const storage = new ProfileStorage("new-partial", bucket, store);
+    const state = { cookies: [], origins: [{ origin: "https://good.example", localStorage: [{ name: "session", value: "new" }] }] };
+    await storage.save(started, state, 10000, undefined, undefined, [{ origin: "https://bad.example", reason: "unavailable", message: "Site storage timed out" }]);
+    const row = store.ownedProfile(actor, started.profileId!)!;
+    expect(profile(row).saveStatus).toBe("partial");
+    expect(profile(row).issues?.[0]?.retainedAt).toBeUndefined();
+    expect(await storage.restore(row)).toEqual(state);
+  }));
   it("removes a late upload after cancellation instead of replacing the last good revision", () => inStore(async store => {
     const started = store.admit(actor, { requestId: "late", templateId: "browser" }, limits);
     const storage = new ProfileStorage("late", bucket, store);

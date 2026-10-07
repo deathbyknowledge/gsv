@@ -72,10 +72,13 @@ browser and reports `created` or `reused`; `--new` explicitly creates a separate
 temporary one. `--wait` waits for readiness for up to 60 seconds by default
 (`--timeout MS`, maximum 120000). Cancelling the wait leaves the instance running.
 Get and stop accept the displayed target ID or full instance ID. Ordinary browsers
-save before stopping; a failed save leaves the browser running. Stop `--wait`
+save before stopping. Partial saves report `persistence.issues` for affected
+sites and permit normal stop; other sites are saved. A whole-save failure leaves
+the browser running and reports its cause and diagnostic. Stop `--wait`
 waits for termination and release of saved state. Retry a save with
 `browser profile save ID`, or explicitly discard unsaved changes with
-`instance stop ID --force --wait`. Inspect save status and per-site usage at
+`instance stop ID --force --wait`. Force is not a persistence test and cannot fix
+unsupported website storage. Inspect save status and per-site usage at
 `/var/lib/gsv/browser/<account>/`; deleting `state.enc` forgets saved logins.
 Ordinary browsers
 remember logins automatically. Use `browser handoff` when Ship needs a human to

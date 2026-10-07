@@ -1,5 +1,4 @@
-import type { CloudInstance } from "@humansandmachines/gsv/protocol";
-import type { BrowserStorageUsage } from "@humansandmachines/gsv/protocol";
+import type { BrowserPersistence, BrowserStorageIssue, BrowserStorageUsage, CloudInstance } from "@humansandmachines/gsv/protocol";
 import { gzipSync, gunzipSync } from "node:zlib";
 import type { StorageState } from "./browser";
 import { profile, type InstanceStore, type ProfileRow } from "./store";
@@ -33,20 +32,46 @@ export class ProfileStorage {
     if (!Array.isArray(state.cookies) || !Array.isArray(state.origins)) throw new Error("Invalid saved browser state");
     return state;
   }
-  async save(instance: CloudInstance, state: StorageState, maxBytes: number, signal?: AbortSignal, usage?: BrowserStorageUsage): Promise<void> {
+  async save(instance: CloudInstance, state: StorageState, maxBytes: number, signal?: AbortSignal, usage?: BrowserStorageUsage, issues: BrowserStorageIssue[] = []): Promise<void> {
     signal?.throwIfAborted();
     if (!instance.profileId) return;
     const actor = { ownerUid: instance.ownerUid, human: false };
     const row = this.store.ownedProfile(actor, instance.profileId);
     if (!row || profile(row).state !== "active" || profile(row).activeInstanceId !== instance.instanceId) return;
+    const previous = profile(row);
+    const savedAt = Date.now();
+    if (usage) usage = { ...usage, sites: usage.sites.map(site => ({ ...site, savedAt })) };
+    if (issues.length) {
+      const prior = await this.restore(row);
+      signal?.throwIfAborted();
+      const failed = new Set(issues.map(issue => issue.origin));
+      const retained = prior?.origins.filter(site => failed.has(site.origin)) ?? [];
+      issues = issues.map(issue => {
+        const earlier = previous.issues?.find(old => old.origin === issue.origin);
+        const retainedAt = retained.some(site => site.origin === issue.origin)
+          ? earlier ? earlier.retainedAt : previous.usage?.sites.find(site => site.origin === issue.origin)?.savedAt ?? previous.savedAt
+          : undefined;
+        return { ...issue, retainedAt };
+      });
+      const hosts = issues.map(issue => new URL(issue.origin).hostname);
+      // Keep cookies usable by a failed origin with its retained storage. Parent
+      // domain cookies may also be shared by that site's other subdomains.
+      const affected = (cookie: StorageState["cookies"][number]) => hosts.some(host => cookie.domain.startsWith(".")
+        ? host === cookie.domain.slice(1) || host.endsWith(cookie.domain) : host === cookie.domain);
+      state = {
+        cookies: [...state.cookies.filter(cookie => !affected(cookie)), ...(prior?.cookies.filter(affected) ?? [])],
+        origins: [...state.origins.filter(site => !failed.has(site.origin)), ...retained].sort((a, b) => a.origin.localeCompare(b.origin)),
+      };
+    }
     const data = new TextEncoder().encode(JSON.stringify(state));
     if (data.byteLength > Math.min(maxBytes, MAX_PROFILE_BYTES)) throw new BrowserStorageError(`Saved browser data needs ${data.byteLength} bytes; allowance is ${Math.min(maxBytes, MAX_PROFILE_BYTES)} bytes`, usage);
     const hash = Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", data)), byte => byte.toString(16).padStart(2, "0")).join("");
     signal?.throwIfAborted();
+    const persistence: BrowserPersistence = { saveStatus: issues.length ? "partial" : "saved", savedAt, bytes: data.byteLength, limitBytes: maxBytes, issues: issues.length ? issues : undefined, error: undefined, diagnosticRef: undefined };
     if (row.object_key && profile(row).contentHash === hash) {
       const current = this.store.ownedProfile(actor, instance.profileId);
       if (current && profile(current).state === "active" && profile(current).activeInstanceId === instance.instanceId && current.saved_revision === row.saved_revision) {
-        this.store.putProfile({ ...profile(current), revision: profile(current).revision + 1, saveStatus: "saved", savedAt: Date.now(), bytes: data.byteLength, limitBytes: maxBytes, usage, error: undefined, diagnosticRef: undefined });
+        this.store.putProfile({ ...profile(current), revision: profile(current).revision + 1, ...persistence, usage });
       }
       return;
     }
@@ -67,7 +92,7 @@ export class ProfileStorage {
     }
     this.store.storage.transactionSync(() => {
       this.store.sql.exec("UPDATE profiles SET object_key = ?, saved_revision = ? WHERE id = ?", address, revision, row.id);
-      this.store.putProfile({ ...profile(current), revision: profile(current).revision + 1, saveStatus: "saved", savedAt: Date.now(), bytes: data.byteLength, storedBytes: bytes.byteLength, limitBytes: maxBytes, contentHash: hash, usage, error: undefined, diagnosticRef: undefined });
+      this.store.putProfile({ ...profile(current), revision: profile(current).revision + 1, ...persistence, storedBytes: bytes.byteLength, contentHash: hash, usage });
     });
     if (row.object_key) await this.bucket.delete(row.object_key).catch(cause => this.store.diagnostic(instance.instanceId, cause));
   }

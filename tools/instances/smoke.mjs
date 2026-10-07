@@ -8,7 +8,7 @@ import { bodyFromText, bodyToBytes } from "../../packages/gsv/dist/protocol.js";
 import { checkBrowserCommands } from "./browser-commands-smoke.mjs";
 import { checkFormCommands } from "./form-commands-smoke.mjs";
 import { checkBrowserFollowing } from "./browser-follow-smoke.mjs";
-import { seedBrowserStorage, checkRestoredBrowserStorage, checkForgettingBrowserStorage } from "./browser-storage-smoke.mjs";
+import { seedBrowserStorage, seedPartialBrowserStorage, checkPartialBrowserStorage, checkRestoredBrowserStorage, checkForgettingBrowserStorage } from "./browser-storage-smoke.mjs";
 
 // Intentionally local: this fixture never creates a paid remote browser.
 const origin = new URL(process.env.GSV_BROWSER_SMOKE_ORIGIN ?? "http://localhost:8976");
@@ -37,6 +37,7 @@ const server = http.createServer((request, response) => {
     response.end(`<body><input id="coedit" oninput="this.dataset.done='yes'"><script>const open=indexedDB.open("profile-test",1);open.onupgradeneeded=()=>open.result.createObjectStore("state");open.onsuccess=()=>{const request=open.result.transaction("state").objectStore("state").get("session");request.onsuccess=()=>{document.body.insertAdjacentHTML('beforeend','<pre id="restored">cookie=${cookie};local='+localStorage.getItem("profile-test")+';indexed='+request.result+'</pre>')}}</script></body>`);
   } else if (request.url === "/components") response.end(components);
   else if (request.url === "/forms") response.end(forms);
+  else if (request.url === "/empty") response.end("<!doctype html><title>Storage fixture</title>");
   else response.end(login);
 });
 server.listen(0, "127.0.0.1"); await once(server, "listening");
@@ -68,7 +69,7 @@ async function start() {
 async function shell(instance, input) {
   const result = await client.shell.exec({ target: instance.targetId, input });
   assert.equal(result.status, "completed", result.error ?? result.output); assert.equal(result.exitCode, 0, result.error);
-  return result.output;
+  return result.stdout ?? result.output;
 }
 async function fileBytes(target, path) {
   const response = await client.request("fs.transfer.send", { target, path });
@@ -123,10 +124,12 @@ try {
   assert.equal((await client.sys.browser.profile.get({ profileId })).profile.saveStatus, "saved");
   console.log("Human login completed and profile saved; late input rejected");
   await seedBrowserStorage(shell, client, first);
+  await seedPartialBrowserStorage(shell, client, first, website);
   // Close the site's tabs: persistence must remember origins independently.
   const closing = JSON.parse(await shell(first, "tabs list"));
   for (const tab of closing.tabs) if (tab.url !== "about:blank") await shell(first, `tabs close ${tab.id}`);
-  await shell({ targetId: "gsv" }, `instance stop ${first.targetId} --wait`);
+  const stopped = JSON.parse(await shell({ targetId: "gsv" }, `instance stop ${first.targetId} --wait`));
+  assert.equal(stopped.instance.persistence.saveStatus, "partial");
   assert.equal((await client.sys.instance.get({ instanceId: first.instanceId })).instance.state, "stopped");
   console.log("PASS: native readiness wait, replay disposition, short-ID get/stop, and unknown-ID rejection");
   console.log("First browser stopped; restoring profile into a new instance");
@@ -135,6 +138,7 @@ try {
   const restored = await shell(second, `tabs open --active ${website}/probe && page wait '#restored' && page text`);
   assert.match(restored, /cookie=kept;local=kept;indexed=kept/);
   await checkRestoredBrowserStorage(shell, client, second);
+  await checkPartialBrowserStorage(shell, second, website);
   console.log("PASS: clean setup, idempotent start, human control, tab selection, input revocation, and cookie/localStorage/IndexedDB restoration");
 
   await shell(second, "page click '#coedit'");

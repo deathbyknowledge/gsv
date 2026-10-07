@@ -1573,6 +1573,15 @@ ID returns `instance: null`, and stopping it fences any future admission of that
 request. Instance reservations and concurrency are space-wide, while
 access to instances, profiles and human requests is owner-scoped.
 
+Instance `persistence` and browser-profile results distinguish `saved`, `partial`
+and `failed` saves. A partial save commits supported sites and retains the failed
+origins' previous storage and matching cookies. Its `issues` list contains each
+origin, `unsupported` or `unavailable` reason, message, diagnostic reference and
+optional `retainedAt` timestamp. Snapshot `savedAt` does not imply those sites
+were updated. Partial saves allow ordinary stop; a whole-save failure preserves
+the previous snapshot and keeps the browser running. `force: true` explicitly
+discards unsaved changes.
+
 `handoff.open`, `handoff.finish`, `browser.frame`, `browser.watch`,
 and `browser.input` require a directly signed-in human.
 Processes cannot use them. A process's handoff request requires a writable

@@ -162,6 +162,7 @@ export function BrowserViewer({ request, onClose }: { request: BrowserSelection;
           <div><span>{instance?.label ?? "Browser"}</span><button type="button" onClick={() => void stop()} disabled={busy || !connected}>stop browser</button></div>
           {instance?.profileId && <small aria-live="polite">{instance.persistence?.saveStatus === "saving" ? "Saving…"
             : instance.persistence?.saveStatus === "failed" ? "Changes haven’t been saved"
+            : instance.persistence?.saveStatus === "partial" ? "Saved with exceptions"
             : instance.persistence?.savedAt ? `Saved ${new Date(instance.persistence.savedAt).toLocaleTimeString()}` : "No saved state yet"}</small>}
         </details>
         <button type="button" aria-label={expanded ? "Restore browser view" : "Expand browser view"} onClick={() => setExpanded(value => !value)}>{expanded ? "restore" : "expand"}</button>
@@ -176,6 +177,10 @@ export function BrowserViewer({ request, onClose }: { request: BrowserSelection;
     {data?.handoff && <div class="browser-help"><span>{data.handoff.purpose}</span><button type="button" onClick={() => void finish()} disabled={busy || !connected}>continue</button></div>}
     {error && <p class="error" role="alert">{error}</p>}
     {instanceQuery.error && <p class="error" role="alert">{String(instanceQuery.error)}</p>}
+    {ready && instance?.persistence?.issues?.length && instance.persistence.saveStatus !== "failed" ? <div class="browser-help" role="status">
+      <span>Changes on {instance.persistence.issues.map(issue => new URL(issue.origin).host).join(", ")} couldn’t be saved. Other sites are saved; these sites may need another login after restarting.</span>
+      {instance.persistence.issues.some(issue => issue.reason === "unavailable") && <button type="button" onClick={() => void save()} disabled={busy || !connected}>retry save</button>}
+    </div> : null}
     {ready && instance?.persistence?.saveStatus === "failed" && <div class="browser-help" role="alert">
       <span>{instance.persistence.error ?? "Changes could not be saved."} {instance.persistence.savedAt ? `Last saved ${new Date(instance.persistence.savedAt).toLocaleTimeString()}.` : "No saved state yet."}</span>
       <button type="button" onClick={() => void save()} disabled={busy || !connected}>retry save</button>

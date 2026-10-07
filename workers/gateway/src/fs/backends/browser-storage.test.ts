@@ -4,12 +4,19 @@ import { bodyFromBytes } from "@humansandmachines/gsv/protocol";
 import { BrowserStorageMountBackend, BROWSER_STORAGE_ROOT } from "./browser-storage";
 
 const saved: BrowserProfile = { profileId: "saved", ownerUid: 1000, label: "Browser", state: "active", revision: 1, createdAt: 1, saveStatus: "saved", savedAt: 2, bytes: 100, storedBytes: 3 };
-function fixture() {
+function fixture(profile = saved) {
   const forget = vi.fn(async () => {});
   const read = vi.fn(async () => ({ body: bodyFromBytes(new Uint8Array([1, 2, 3])), size: 3 }));
-  return { forget, read, fs: new BrowserStorageMountBackend({ uid: 1000, gid: 1000, username: "owner", profile: async () => saved, read, forget }) };
+  return { forget, read, fs: new BrowserStorageMountBackend({ uid: 1000, gid: 1000, username: "owner", profile: async () => profile, read, forget }) };
 }
 describe("browser storage mount", () => {
+  it("exposes partial-save exceptions through both metadata files", async () => {
+    const issues = [{ origin: "https://unsupported.example", reason: "unsupported" as const, message: "Unsupported storage", retainedAt: 2, diagnosticRef: "diagnostic" }];
+    const { fs } = fixture({ ...saved, saveStatus: "partial", issues });
+    const path = `${BROWSER_STORAGE_ROOT}/owner`;
+    expect(JSON.parse(await fs.readFile(`${path}/status.json`))).toMatchObject({ saveStatus: "partial", issues });
+    expect(JSON.parse(await fs.readFile(`${path}/sites.json`))).toMatchObject({ issues });
+  });
   it("exposes metadata and opaque bytes only to the selected account", async () => {
     const { fs, read } = fixture();
     expect(await fs.readdir(BROWSER_STORAGE_ROOT)).toEqual(["owner"]);

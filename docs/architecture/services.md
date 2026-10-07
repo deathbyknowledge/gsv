@@ -146,8 +146,12 @@ checks fence late commits. Website origins survive closed tabs and coordinator
 reattachment. Export uses a temporary intercepted page with closed IndexedDB
 handles; restore uses the same pinned codec and completes before readiness.
 Compressed encrypted snapshots remain in the instance service's R2 bucket.
-An ordinary stop requires a final successful save; force, expiry and deletion
-still terminate resources. The native `/var/lib/gsv/browser/{username}` mount
+An ordinary stop requires a final committed save. A failed site retains its
+previous storage and matching cookies while other sites advance; the committed
+snapshot reports `partial` with per-site reasons, diagnostic references and
+retained timestamps. A partial save permits normal stop. Whole-snapshot failures
+keep the browser running; force, expiry and deletion still terminate resources.
+The native `/var/lib/gsv/browser/{username}` mount
 projects that service's metadata and opaque snapshot, checks the same browser
 capabilities, and routes deletion through the same forget operation.
 

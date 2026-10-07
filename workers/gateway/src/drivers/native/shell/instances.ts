@@ -1,6 +1,6 @@
 import { defineCommand } from "just-bash";
 import { cancelBinaryBody } from "@humansandmachines/gsv/protocol";
-import type { SysInstanceGetResult, SysInstanceStartResult } from "@humansandmachines/gsv/protocol";
+import type { BrowserPersistence, SysBrowserProfileSaveResult, SysInstanceGetResult, SysInstanceStartResult } from "@humansandmachines/gsv/protocol";
 import type { KernelContext } from "../../../kernel/context";
 import type { RequestFrame } from "../../../protocol/frames";
 import type { NativeShellCommandOptions } from "./commands";
@@ -18,7 +18,8 @@ Start reuses your current browser, including one still starting, without extendi
 --wait returns when ready (default timeout 60000 ms, maximum 120000). Cancelling or timing out only stops waiting; get by the saved request ID to recover.
 The result says disposition: created or reused. IDs accept the displayed target ID or full instance ID.
 --new explicitly starts a separate, temporary browser. Ordinary starts remember logins for your account automatically.
-Stop saves before closing. If saving fails the browser stays running; retry or use --force to discard unsaved changes. Stop --wait waits for shutdown and releases the saved login state for the next browser.
+Stop saves before closing. A partial save still stops normally: inspect persistence.issues for sites whose changes were not saved; other sites are saved. Unsupported storage will not be fixed by retrying or --force.
+If the whole save fails, the browser stays running. Inspect instance get ID for the reason before retrying; --force discards unsaved changes and cannot test persistence. Stop --wait waits for shutdown and releases the saved login state for the next browser.
 Instances have a fixed lifetime. Close your task's tabs when finished; do not stop a shared browser just because your task ended. Stop an isolated browser you created when finished. A stopped instance never restarts.
 `;
 const BROWSER_HELP = `Usage:
@@ -33,6 +34,7 @@ const BROWSER_HELP = `Usage:
 
 Run tabs/page commands on the browser target. Handoffs pause automation until the person finishes in GSV.
 Agent handoffs must reference the responsibility for the waiting work. Send the action URL to the user, then yield.
+Profile save reports saved, partial (inspect issues for affected sites), or failed. Unsupported sites retain their previous saved data while other sites keep saving.
 `;
 
 function parseOptions(args: string[], allowed: string[]) {
@@ -137,7 +139,20 @@ export function buildInstanceCommands(ctx: KernelContext, request?: NativeShellC
           if (current && (stopping ? current.state !== "stopped" && current.state !== "failed" : current.state !== "ready")) throw new Error(`Instance ${current.targetId} is ${current.state}${current.reason ? `: ${current.reason}` : ""}${current.diagnosticRef ? `; diagnostic ${current.diagnosticRef}` : ""}`);
           data = { ...receipt, instance: current };
         }
-        return { stdout: `${JSON.stringify(data, null, 2)}\n`, stderr: "", exitCode: 0 };
+        let persistence: BrowserPersistence | undefined;
+        if (frame.call === "sys.browser.profile.save") {
+          // SAFETY: The transport pairs this response with sys.browser.profile.save.
+          persistence = (data as SysBrowserProfileSaveResult).profile ?? undefined;
+        }
+        if (frame.call === "sys.instance.stop" && !frame.args.force) {
+          // SAFETY: The transport pairs this response with sys.instance.stop.
+          persistence = (data as SysInstanceGetResult).instance?.persistence;
+        }
+        const warning = persistence?.saveStatus === "partial"
+          ? `Saved with exceptions: ${persistence.issues?.map(issue => `${issue.origin}: ${issue.message}`).join("; ")}. Other sites were saved. --force cannot recover these changes.`
+          : frame.call === "sys.browser.profile.save" && persistence?.saveStatus === "failed"
+            ? `${persistence.error ?? "Browser data could not be saved"}${persistence.diagnosticRef ? `; diagnostic ${persistence.diagnosticRef}` : ""}` : "";
+        return { stdout: `${JSON.stringify(data, null, 2)}\n`, stderr: warning ? `${name}: ${warning}\n` : "", exitCode: frame.call === "sys.browser.profile.save" && persistence?.saveStatus === "failed" ? 1 : 0 };
       } catch (error) {
         if (signal.aborted && frame.call === "sys.instance.start") {
           const recoveryId = `'${frame.args.requestId.replaceAll("'", "'\\''")}'`;

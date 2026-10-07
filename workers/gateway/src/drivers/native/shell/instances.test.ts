@@ -18,6 +18,23 @@ function fixture(request: NonNullable<NativeShellCommandOptions["request"]>, cal
 }
 
 describe("native instance readiness", () => {
+  it("keeps partial-save receipts machine-readable and warns separately without forcing stop", async () => {
+    const persistence = { saveStatus: "partial" as const, savedAt: 1, issues: [{ origin: "https://unsupported.example", reason: "unsupported" as const, message: "Unsupported CryptoKey" }] };
+    const request = vi.fn<NonNullable<NativeShellCommandOptions["request"]>>(async frame => ({ type: "res", id: frame.id, ok: true, data: { instance: { ...instance, state: "stopped", persistence } } }));
+    const result = await fixture(request).exec("instance stop 12345678 --wait");
+    expect(result.exitCode).toBe(0);
+    expect(JSON.parse(result.stdout).instance.persistence).toEqual(persistence);
+    expect(result.stderr).toContain("https://unsupported.example: Unsupported CryptoKey");
+    expect(result.stderr).toContain("Other sites were saved");
+    expect(request.mock.calls[0][0]).toMatchObject({ args: { force: undefined } });
+  });
+  it("returns a failed save status with its specific cause and diagnostic", async () => {
+    const request: NonNullable<NativeShellCommandOptions["request"]> = async frame => ({ type: "res", id: frame.id, ok: true, data: { profile: { saveStatus: "failed", error: "Storage allowance exceeded", diagnosticRef: "save-diagnostic" } } });
+    const result = await fixture(request).exec("browser profile save 12345678");
+    expect(result.exitCode).toBe(1);
+    expect(JSON.parse(result.stdout).profile.saveStatus).toBe("failed");
+    expect(result.stderr).toContain("Storage allowance exceeded; diagnostic save-diagnostic");
+  });
   it("waits for stop to release the browser and forwards an explicit force request", async () => {
     const request = vi.fn<NonNullable<NativeShellCommandOptions["request"]>>(async frame => ({
       type: "res", id: frame.id, ok: true,

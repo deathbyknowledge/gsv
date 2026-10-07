@@ -64,8 +64,9 @@ export async function seedBrowserStorage(shell, client, instance) {
     await new Promise(resolve => { tx.oncomplete = resolve; }); db.close(); return "key stored";
   })()`);
   const unsupported = (await client.sys.browser.profile.save({ instanceId: instance.instanceId })).profile;
-  assert.equal(unsupported.saveStatus, "failed");
-  assert.match(unsupported.error, /cannot safely preserve/);
+  assert.equal(unsupported.saveStatus, "partial");
+  assert.match(unsupported.issues[0].message, /CryptoKey/);
+  assert.ok(unsupported.issues[0].retainedAt);
   await run(`(async () => {
     const open = indexedDB.open("gsv-fidelity");
     const db = await new Promise(resolve => { open.onsuccess = () => resolve(open.result); });
@@ -75,7 +76,59 @@ export async function seedBrowserStorage(shell, client, instance) {
   assert.equal((await client.sys.browser.profile.save({ instanceId: instance.instanceId })).profile.saveStatus, "saved");
   console.log("PASS: repeated 8 MiB saves, compression, no leaked IndexedDB connections, and hidden export pages");
   console.log("PASS: oversized saves retain the previous snapshot, report measured usage, leave the browser running, and recover after retry");
-  console.log("PASS: non-exportable website keys produce a visible failure instead of corrupting the snapshot");
+  console.log("PASS: unsupported website keys retain the site's earlier snapshot and clear their warning after recovery");
+}
+
+export async function seedPartialBrowserStorage(shell, client, instance, website) {
+  const other = new URL(website); other.hostname = "localhost";
+  await shell(instance, `tabs open --active ${other.origin}/empty`);
+  await evaluate(shell, instance, `(async () => {
+    localStorage.setItem("retained", "before"); document.cookie = "partial_session=before; Path=/";
+    const open = indexedDB.open("unsupported-site", 1);
+    open.onupgradeneeded = () => open.result.createObjectStore("records");
+    const db = await new Promise(resolve => { open.onsuccess = () => resolve(open.result); }); db.close(); return true;
+  })()`);
+  const before = (await client.sys.browser.profile.save({ instanceId: instance.instanceId })).profile;
+  assert.equal(before.saveStatus, "saved");
+  await evaluate(shell, instance, `(async () => {
+    localStorage.setItem("retained", "after"); document.cookie = "partial_session=after; Path=/";
+    const key = await crypto.subtle.generateKey({ name: "AES-GCM", length: 128 }, false, ["encrypt"]);
+    const open = indexedDB.open("unsupported-site");
+    const db = await new Promise(resolve => { open.onsuccess = () => resolve(open.result); });
+    const tx = db.transaction("records", "readwrite"); tx.objectStore("records").put(key, "key");
+    await new Promise(resolve => { tx.oncomplete = resolve; }); db.close(); return true;
+  })()`);
+  await shell(instance, `tabs open --active ${website}/empty`);
+  await evaluate(shell, instance, `(async () => { localStorage.setItem("healthy-after-failure", "saved"); document.cookie = "healthy_session=new; Path=/"; return true; })()`);
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const saved = (await client.sys.browser.profile.save({ instanceId: instance.instanceId })).profile;
+    assert.equal(saved.saveStatus, "partial");
+    assert.equal(saved.issues.length, 1);
+    assert.equal(saved.issues[0].origin, other.origin);
+    assert.equal(saved.issues[0].retainedAt, before.savedAt);
+    assert.ok(saved.issues[0].diagnosticRef);
+  }
+  const status = JSON.parse(await shell({ targetId: "gsv" }, "cat /var/lib/gsv/browser/browser-tester/status.json"));
+  assert.equal(status.saveStatus, "partial");
+  assert.equal(status.issues[0].origin, other.origin);
+  console.log("PASS: one unsupported site leaves another site's updated state saving and reports a stable retained-save time");
+}
+
+export async function checkPartialBrowserStorage(shell, instance, website) {
+  const healthy = JSON.parse(await shell(instance, `page js 'JSON.stringify({local:localStorage.getItem("healthy-after-failure"),cookie:document.cookie.includes("healthy_session=new")})'`));
+  assert.deepEqual(JSON.parse(healthy.js.result), { local: "saved", cookie: true });
+  const other = new URL(website); other.hostname = "localhost";
+  await shell(instance, `tabs open --active ${other.origin}/empty`);
+  const retained = await evaluate(shell, instance, `(async () => {
+    const open = indexedDB.open("unsupported-site");
+    const db = await new Promise(resolve => { open.onsuccess = () => resolve(open.result); });
+    const request = db.transaction("records").objectStore("records").count();
+    const count = await new Promise(resolve => { request.onsuccess = () => resolve(request.result); }); db.close();
+    return { local: localStorage.getItem("retained"), before: document.cookie.includes("partial_session=before"), after: document.cookie.includes("partial_session=after"), count };
+  })()`);
+  assert.deepEqual(retained, { local: "before", before: true, after: false, count: 0 });
+  await shell(instance, `tabs open --active ${website}/probe && page wait '#restored'`);
+  console.log("PASS: normal stop/restart restores the healthy site's new login state and the unsupported site's previous storage and cookies");
 }
 
 export async function checkRestoredBrowserStorage(shell, client, instance) {

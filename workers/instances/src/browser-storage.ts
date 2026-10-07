@@ -1,12 +1,17 @@
 import type { BrowserContext, Page } from "@cloudflare/playwright";
-import type { BrowserStorageSite, BrowserStorageUsage } from "@humansandmachines/gsv/protocol";
+import type { BrowserStorageIssue, BrowserStorageSite, BrowserStorageUsage } from "@humansandmachines/gsv/protocol";
 import type { StorageState } from "./browser";
 import { storageScriptSource } from "./playwright-storage.generated";
+import { within } from "./browser-operation";
 
 export const MAX_PROFILE_BYTES = 32 * 1024 * 1024;
 export const DEFAULT_PROFILE_BYTES = 16 * 1024 * 1024;
 export const SAVE_TIMEOUT_MS = 20_000;
-export type BrowserSnapshot = { state: StorageState; usage: BrowserStorageUsage };
+export type BrowserSnapshot = {
+  state: StorageState;
+  usage: BrowserStorageUsage;
+  failures?: { issue: BrowserStorageIssue; cause: unknown }[];
+};
 
 export class BrowserStorageError extends Error {
   constructor(message: string, readonly usage?: BrowserStorageUsage, options?: ErrorOptions) { super(message, options); }
@@ -22,6 +27,7 @@ export async function exportBrowserStorage(
   const cookies = await context.cookies();
   const bytes = (value: StorageState | StorageState["cookies"]) => new TextEncoder().encode(JSON.stringify(value)).byteLength;
   const state: StorageState = { cookies, origins: [] };
+  const failures: NonNullable<BrowserSnapshot["failures"]> = [];
   const usage: BrowserStorageUsage = { measuredAt: Date.now(), complete: false, bytes: bytes(state), cookieBytes: bytes(cookies), cookies: cookies.length, sites: [] };
   usage.cookieDomains = [...new Set(cookies.map(cookie => cookie.domain))].sort().map(domain => {
     const entries = cookies.filter(cookie => cookie.domain === domain);
@@ -42,45 +48,53 @@ export async function exportBrowserStorage(
     await page.route("**/*", route => route.fulfill({ contentType: "text/html", body: "<!doctype html><title>Browser storage</title>" }));
     for (const origin of [...new Set(origins)].sort()) {
       signal.throwIfAborted();
-      await page.goto(origin, { waitUntil: "domcontentloaded", timeout: 5000 });
-      // Only bounded serialized data crosses CDP. The page computes size metadata
-      // even when an origin exceeds the allowance; values never enter diagnostics.
-      const expression = `(async () => {
-        const module = {};
-        ${storageScriptSource}
-        const script = new (module.exports.StorageScript())(false);
-        const data = { origin: location.origin, ...await script.collect(true) };
-        const json = JSON.stringify(data);
-        const size = value => new TextEncoder().encode(JSON.stringify(value)).byteLength;
-        const summary = {
-          origin: location.origin, bytes: new TextEncoder().encode(json).byteLength,
-          localStorageBytes: size(data.localStorage), indexedDBBytes: size(data.indexedDB),
-          localStorageEntries: data.localStorage.length, databases: data.indexedDB.length,
-          records: data.indexedDB.reduce((n, db) => n + db.stores.reduce((m, store) => m + store.records.length, 0), 0),
-          databaseUsage: data.indexedDB.map(db => ({ name: db.name, bytes: size(db), stores: db.stores.length, records: db.stores.reduce((n, store) => n + store.records.length, 0) }))
-        };
-        return { summary, json: summary.bytes <= ${Math.max(0, Math.min(maxBytes, MAX_PROFILE_BYTES) - usage.bytes)} ? json : undefined };
-      })()`;
-      const exported = await page.evaluate<{ summary: BrowserStorageSite; json?: string }>(expression);
-      usage.sites.push(exported.summary);
-      usage.bytes += exported.summary.bytes + (usage.sites.length > 1 ? 1 : 0);
-      if (exported.json) {
-        // SAFETY: Our pinned browser-side codec produced this exact JSON storage-state entry.
-        state.origins.push(JSON.parse(exported.json) as StorageState["origins"][number]);
+      try {
+        await page.goto(origin, { waitUntil: "domcontentloaded", timeout: 5000 });
+        // Only bounded serialized data crosses CDP. The page computes size metadata
+        // even when an origin exceeds the allowance; values never enter diagnostics.
+        const expression = `(async () => {
+          const module = {};
+          ${storageScriptSource}
+          const script = new (module.exports.StorageScript())(false);
+          const data = { origin: location.origin, ...await script.collect(true) };
+          const json = JSON.stringify(data);
+          const size = value => new TextEncoder().encode(JSON.stringify(value)).byteLength;
+          const summary = {
+            origin: location.origin, bytes: new TextEncoder().encode(json).byteLength,
+            localStorageBytes: size(data.localStorage), indexedDBBytes: size(data.indexedDB),
+            localStorageEntries: data.localStorage.length, databases: data.indexedDB.length,
+            records: data.indexedDB.reduce((n, db) => n + db.stores.reduce((m, store) => m + store.records.length, 0), 0),
+            databaseUsage: data.indexedDB.map(db => ({ name: db.name, bytes: size(db), stores: db.stores.length, records: db.stores.reduce((n, store) => n + store.records.length, 0) }))
+          };
+          return { summary, json: summary.bytes <= ${Math.max(0, Math.min(maxBytes, MAX_PROFILE_BYTES) - usage.bytes)} ? json : undefined };
+        })()`;
+        const exported = await within(page.evaluate<{ summary: BrowserStorageSite; json?: string }>(expression), 5000, "Site storage export", signal);
+        usage.sites.push(exported.summary);
+        usage.bytes += exported.summary.bytes + (usage.sites.length > 1 ? 1 : 0);
+        if (exported.json) {
+          // SAFETY: Our pinned browser-side codec produced this exact JSON storage-state entry.
+          state.origins.push(JSON.parse(exported.json) as StorageState["origins"][number]);
+        }
+      } catch (cause) {
+        if (signal.aborted || page.isClosed()) throw cause;
+        const unsupported = cause instanceof Error && cause.message.includes("Unsupported IndexedDB value type");
+        const type = unsupported && cause instanceof Error ? cause.message.match(/Unsupported IndexedDB value type: \[object (CryptoKey|Blob|File)\]/)?.[1] : undefined;
+        failures.push({ issue: {
+          origin, reason: unsupported ? "unsupported" : "unavailable",
+          message: unsupported ? `This site stores ${type ?? "unsupported"} values that cannot be saved by this browser.` : "This site's storage could not be read. Retry saving while the browser is running.",
+        }, cause });
       }
     }
     signal.throwIfAborted();
-    usage.complete = true;
+    usage.complete = failures.length === 0;
     if (usage.bytes > Math.min(maxBytes, MAX_PROFILE_BYTES)) {
       throw new BrowserStorageError(`Saved browser data needs ${usage.bytes} bytes; allowance is ${Math.min(maxBytes, MAX_PROFILE_BYTES)} bytes`, usage);
     }
-    return { state, usage };
+    return { state, usage, failures };
   } catch (cause) {
     if (cause instanceof BrowserStorageError) throw cause;
     if (signal.aborted) throw new BrowserStorageError("Saving browser data timed out. The previous saved state is intact.", usage);
-    throw new BrowserStorageError(cause instanceof Error && cause.message.includes("Unsupported IndexedDB value type")
-      ? "A website uses storage values this browser cannot safely preserve. The previous saved state is intact."
-      : "Browser website storage could not be exported", usage, { cause });
+    throw new BrowserStorageError("Browser website storage could not be exported", usage, { cause });
   } finally {
     signal.removeEventListener("abort", close);
     if (page && !page.isClosed()) await page.close();

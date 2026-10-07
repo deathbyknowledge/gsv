@@ -108,7 +108,10 @@ export class InstanceCoordinator extends DurableObject<Environment> implements I
               throw new Error("Browser work has not settled. The browser is still running; retry stopping or use force to stop without saving.");
             }
             if (instance(this.#store.byId(row.id)).state !== "ready") return;
-            if (!await this.save(row.id)) throw new Error("Browser data could not be saved. The browser is still running; retry saving or use force to stop without saving.");
+            if (!await this.save(row.id)) {
+              const saved = instance(this.#store.byId(row.id)).persistence;
+              throw new Error(`${saved?.error ?? "Browser data could not be saved."} The browser is still running. Inspect instance get ${instance(row).targetId} before retrying; --force discards unsaved changes.${saved?.diagnosticRef ? ` Diagnostic: ${saved.diagnosticRef}.` : ""}`);
+            }
             this.fenceStop(instance(this.#store.byId(row.id)), "Stopped by owner");
           })().finally(() => { this.#stops.delete(row.id); });
           this.#stops.set(row.id, stopping);
@@ -391,9 +394,10 @@ export class InstanceCoordinator extends DurableObject<Environment> implements I
       const limits = await this.#policy.limits();
       abort.signal.throwIfAborted();
       this.updatePersistence(id, { limitBytes: limits.profileStorageBytes });
-      const { state, usage } = await (await this.browser(id)).save(limits.profileStorageBytes, abort.signal);
+      const { state, usage, failures } = await (await this.browser(id)).save(limits.profileStorageBytes, abort.signal);
       abort.signal.throwIfAborted();
-      await this.#profiles.save(value, state, limits.profileStorageBytes, abort.signal, usage);
+      const issues = failures?.map(({ issue, cause }) => ({ ...issue, diagnosticRef: this.#store.diagnostic(id, cause) }));
+      await this.#profiles.save(value, state, limits.profileStorageBytes, abort.signal, usage, issues);
       abort.signal.throwIfAborted();
     })();
     // Retain the actual operation after a timeout: deletion and later saves must
@@ -427,8 +431,8 @@ export class InstanceCoordinator extends DurableObject<Environment> implements I
     if (!row || profile(row).state !== "active" || profile(row).activeInstanceId !== id) return;
     const saved = { ...profile(row), ...patch, revision: profile(row).revision + 1 };
     this.#store.putProfile(saved);
-    const { saveStatus, savedAt, attemptedAt, durationMs, bytes, storedBytes, limitBytes, error, diagnosticRef } = saved;
-    const persistence: BrowserPersistence = { saveStatus, savedAt, attemptedAt, durationMs, bytes, storedBytes, limitBytes, error, diagnosticRef };
+    const { saveStatus, savedAt, attemptedAt, durationMs, bytes, storedBytes, limitBytes, error, diagnosticRef, issues } = saved;
+    const persistence: BrowserPersistence = { saveStatus, savedAt, attemptedAt, durationMs, bytes, storedBytes, limitBytes, error, diagnosticRef, issues };
     this.#store.update({ ...value, persistence, revision: value.revision + 1 });
   }
   private profileSaving(profileId: string): boolean {

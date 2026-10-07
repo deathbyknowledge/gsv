@@ -157,12 +157,26 @@ describe("browser health", () => {
   it("keeps a failed final save running, exposes measured usage, and permits force stop", () => fixture(async (object, store, instanceId, _installationId, browser) => {
     const usage = { bytes: 7000000, cookieBytes: 42, cookies: 1, sites: [{ origin: "https://example.com", bytes: 6999958, localStorageBytes: 10, indexedDBBytes: 6999948, localStorageEntries: 1, databases: 1, records: 3 }] };
     browser.save = vi.fn(async () => { throw new BrowserStorageError("Storage allowance exceeded", usage); });
-    await expect(object.stop(actor, { instanceId })).rejects.toThrow("still running");
+    await expect(object.stop(actor, { instanceId })).rejects.toThrow(/Storage allowance exceeded.*still running.*Diagnostic:/);
     expect((await object.get(actor, { instanceId })).instance).toMatchObject({ state: "ready", persistence: { saveStatus: "failed", error: "Storage allowance exceeded" } });
     expect((await object.getProfile(actor, instance(store.byId(instanceId)).profileId!)).profile?.usage).toEqual(usage);
     await object.stop(actor, { instanceId, force: true });
     expect((await object.get(actor, { instanceId })).instance?.state).toBe("stopping");
     expect(browser.save).toHaveBeenCalledOnce();
+  }));
+
+  it("stops normally after a partial save and exposes the affected site and diagnostic", () => fixture(async (object, store, instanceId, _installationId, browser) => {
+    browser.save = async () => ({
+      state: { cookies: [], origins: [{ origin: "https://shop.example", localStorage: [{ name: "login", value: "kept" }] }] },
+      usage: { complete: false, bytes: 100, cookieBytes: 2, cookies: 0, sites: [] },
+      failures: [{ issue: { origin: "https://unsupported.example", reason: "unsupported", message: "This site stores CryptoKey values that cannot be saved by this browser." }, cause: new Error("Unsupported IndexedDB value type: [object CryptoKey]") }],
+    });
+    const { instance: stopped } = await object.stop(actor, { instanceId });
+    expect(stopped).toMatchObject({ state: "stopping", persistence: { saveStatus: "partial", issues: [{ origin: "https://unsupported.example", reason: "unsupported", diagnosticRef: expect.any(String) }] } });
+    const row = store.ownedProfile(actor, stopped!.profileId!)!;
+    expect(row.object_key).not.toBeNull();
+    expect((await object.getProfile(actor, row.id)).profile?.issues).toEqual(stopped!.persistence!.issues);
+    expect(store.sql.exec("SELECT id FROM diagnostics WHERE id = ?", stopped!.persistence!.issues![0]!.diagnosticRef!).toArray()).toHaveLength(1);
   }));
 
   it("serializes concurrent saves and retries successfully before stopping", () => fixture(async (object, _store, instanceId, _installationId, browser) => {

@@ -11,6 +11,35 @@ import { BrowserViewer } from "./BrowserControl";
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 describe("live browser viewing", () => {
+  it("shows partial saves without treating them as a full failure or forcing shutdown", async () => {
+    vi.stubGlobal("document", new EventTarget());
+    vi.spyOn(GSVClient.prototype, "getStatus").mockReturnValue({ state: "connected", url: null, username: null, connectionId: null, message: null });
+    vi.spyOn(GSVClient.prototype, "onStatus").mockImplementation(() => () => {});
+    const instance: CloudInstance = { instanceId: "instance", targetId: "1234abcd", startRequestId: "start", ownerUid: 1000,
+      templateId: "browser", templateRevision: "1", kind: "browser", implements: [], label: "Browser", state: "ready", revision: 1, createdAt: 1, expiresAt: Date.now() + 60000,
+      profileId: "profile", persistence: { saveStatus: "partial", savedAt: 1, issues: [{ origin: "https://unsupported.example", reason: "unsupported", message: "Unsupported storage" }] } };
+    const request = vi.spyOn(GSVClient.prototype, "request").mockImplementation(async call => {
+      if (call === "sys.instance.get") return { data: { instance } };
+      if (call === "sys.browser.watch") return { data: { watchId: "watch", version: 1 }, body: { stream: new ReadableStream<Uint8Array>() } };
+      if (call === "sys.instance.stop") return { data: { instance: { ...instance, state: "stopping" } } };
+      throw new Error(`Unexpected request ${call}`);
+    });
+    const cache = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity } } });
+    const root = createTestRoot("Partial save"), close = vi.fn();
+    let tree: ComponentChildren;
+    function Harness() { tree = BrowserViewer({ request: { instanceId: instance.instanceId }, onClose: close }); return null; }
+    try {
+      await root.render(<GatewayProvider><QueryClientProvider client={cache}><Harness /></QueryClientProvider></GatewayProvider>);
+      await vi.waitFor(() => expect(collectText(tree)).toContain("Saved with exceptions"));
+      expect(collectText(tree)).toContain("unsupported.example");
+      expect(collectText(tree)).toContain("Other sites are saved");
+      expect(collectText(tree)).not.toContain("stop without saving");
+      const stop = collectNodes(tree).find(node => node.type === "button" && collectText(node) === "stop browser");
+      await act(async () => { stop!.props.onClick?.(); });
+      await vi.waitFor(() => expect(close).toHaveBeenCalledOnce());
+      expect(request.mock.calls.find(([call]) => call === "sys.instance.stop")?.[1]).toEqual({ instanceId: "instance", force: undefined });
+    } finally { await root.unmount(); cache.clear(); }
+  });
   it("keeps a browser open after a failed stop, retries saving, and requires an explicit force action", async () => {
     vi.stubGlobal("document", new EventTarget());
     vi.spyOn(GSVClient.prototype, "getStatus").mockReturnValue({ state: "connected", url: null, username: null, connectionId: null, message: null });

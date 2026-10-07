@@ -51,9 +51,16 @@ handoff, and before an ordinary stop. Closing a website tab does not forget its
 saved data. Restore completes before the next browser becomes ready. If restore
 fails, that start fails visibly rather than opening an empty replacement.
 
-**Stop browser** saves successfully before closing. If saving fails, the browser
-stays running within its original lifetime, and the view offers **retry save**
-and **stop without saving**. The warning shows the last successful save time.
+**Stop browser** commits saved data before closing. If a website uses unsupported
+storage or its storage cannot be read, GSV saves the other sites and reports
+**saved with exceptions**. It retains that site's previous saved storage and
+associated cookies, when available; cookies shared with its other subdomains
+are retained too. Changes on the affected site may be lost on restart. A partial
+save permits a normal stop and lists the affected sites for Ship and in the view.
+
+If the whole save fails, for example because storage is full or an upload fails,
+the browser stays running within its original lifetime, and the view offers
+**retry save** and **stop without saving**. The warning shows the last save time.
 Expiry and forced shutdown still close the browser; unsaved changes can be lost.
 The previous successful snapshot survives a failed, oversized or timed-out save.
 
@@ -68,6 +75,10 @@ Saved data is also inspectable on `gsv`, under your account name:
 ```
 
 `status.json` reports save status, timestamps, duration and raw/encrypted sizes.
+`saveStatus: "partial"` means a snapshot was committed with site exceptions;
+`issues` identifies each origin, reason, diagnostic and previous save time, if any.
+`savedAt` describes the snapshot commit; an affected site's `retainedAt` describes
+its older retained data. Both metadata files expose the exceptions.
 `sites.json` reports per-origin local storage and IndexedDB sizes, database and
 record counts, and cookie counts/sizes by domain. These files contain no login
 values. `state.enc` is the opaque encrypted snapshot; its key stays with the
@@ -86,7 +97,8 @@ This is a website storage snapshot, not a complete Chrome user-data directory:
 session storage, service-worker caches and filesystem-backed site storage are
 not included. IndexedDB export supports binary buffers/views, dates, maps, sets,
 bigints and cyclic values. Unsupported values, including CryptoKey and Blob
-records, fail the save visibly instead of silently becoming empty objects.
+records, leave that site's previous saved data intact and report an exception.
+They never silently become empty objects or prevent unrelated sites from saving.
 
 Every instance has a fixed lifetime. Reusing it does not extend that lifetime
 or reserve more time. Ship or you can stop it sooner with **stop browser**.

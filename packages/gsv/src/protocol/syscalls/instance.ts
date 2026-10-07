@@ -69,6 +69,7 @@ export type SysInstanceStopResult = { instance: CloudInstance | null };
 
 export type BrowserStorageSite = {
   origin: string;
+  savedAt?: number;
   bytes: number;
   localStorageBytes: number;
   indexedDBBytes: number;
@@ -86,8 +87,15 @@ export type BrowserStorageUsage = {
   cookieDomains?: { domain: string; bytes: number; cookies: number }[];
   sites: BrowserStorageSite[];
 };
+export type BrowserStorageIssue = {
+  origin: string;
+  reason: "unsupported" | "unavailable";
+  message: string;
+  retainedAt?: number;
+  diagnosticRef?: string;
+};
 export type BrowserPersistence = {
-  saveStatus: "empty" | "saving" | "saved" | "failed";
+  saveStatus: "empty" | "saving" | "saved" | "partial" | "failed";
   savedAt?: number;
   attemptedAt?: number;
   durationMs?: number;
@@ -96,6 +104,7 @@ export type BrowserPersistence = {
   limitBytes?: number;
   error?: string;
   diagnosticRef?: string;
+  issues?: BrowserStorageIssue[];
 };
 export type BrowserProfile = BrowserPersistence & {
   profileId: string;
