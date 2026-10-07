@@ -1,4 +1,6 @@
 import { dirname, normalizePath } from "../shared/paths";
+import { loadRuntimeState } from "../shared/runtime-state";
+import { RecordingStartFence } from "./recording-start-fence";
 import {
   bytesToArrayBuffer,
   getPersistedEntry,
@@ -48,6 +50,7 @@ type RecordingState = {
 
 const activeRecordings = new Map<string, RecordingState>();
 const completedRecordings = new Map<string, MediaRecordingStatus>();
+const startFence = new RecordingStartFence();
 const DEFAULT_DIRECTORIES = new Set([
   "/",
   "/home",
@@ -90,14 +93,19 @@ async function handleMessage(message: OffscreenMediaMessage): Promise<ExtensionB
 }
 
 async function startRecording(message: OffscreenMediaStartMessage): Promise<MediaRecordingStatus> {
+  const generation = startFence.generation();
   const existingForTab = Array.from(activeRecordings.values()).find((state) => state.tabId === message.tabId);
   if (existingForTab) {
     throw new Error(`tab media recording already active for tab ${message.tabId}: ${existingForTab.id}`);
   }
   const normalizedPath = normalizePath(message.path);
   await assertWritableRecordingPath(normalizedPath);
-
-  const stream = await navigator.mediaDevices.getUserMedia(tabMediaConstraints(message.streamId, message.mode));
+  const stream = await startFence.acquire(
+    generation,
+    () => navigator.mediaDevices.getUserMedia(tabMediaConstraints(message.streamId, message.mode)),
+    stopStream,
+    async () => (await loadRuntimeState()).manualReconnectSuppressed,
+  );
   let state: RecordingState | null = null;
   try {
     const mimeType = preferredMediaMimeType(message.mode);
@@ -161,6 +169,7 @@ async function stopRecording(message: OffscreenMediaStopMessage): Promise<MediaR
     return [await state.completion];
   }
 
+  startFence.stop();
   const states = Array.from(activeRecordings.values());
   const pendingCompleted = Array.from(completedRecordings.values()).filter((status) => Boolean(status.destination));
   for (const state of states) {
