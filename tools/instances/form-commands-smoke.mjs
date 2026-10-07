@@ -71,6 +71,27 @@ export async function checkFormCommands(run) {
   const unscoped = await run("page snapshot");
   assert.equal(unscoped.exitCode, 0, unscoped.error ?? unscoped.output);
   assert.match(unscoped.output, /textbox @\S+ "From"/);
+  await command("page fill --label 'Sign-in email' tester@example.invalid");
+  await command("page fill --label 'Sign-in password' fixture-secret");
+  await command("page click '#signin-submit'");
+  for (const key of ["Enter", "Return"]) {
+    await command("page click '#signin-password'");
+    await command(`page key ${key}`);
+  }
+  assert.equal((await command("page js 'window.signinSubmissions.length'")).js.result, 3);
+  assert.equal((await command("page js 'window.signinSubmissions.every(event => event.trusted && event.submitter === \"signin-submit\")'")).js.result, true);
+  await command("page key Ctrl+Enter");
+  assert.equal((await command("page js 'window.signinSubmissions.length'")).js.result, 3);
+  await command("page fill --label 'Sign-in password' ''");
+  await command("page click '#signin-password'");
+  await command("page key Enter");
+  assert.equal((await command("page js 'window.signinSubmissions.length'")).js.result, 3, "Enter bypassed native required-field validation");
+  await command("page fill --label Notes ''");
+  await command("page click --label Notes");
+  await command("page key Enter");
+  await command("page key Shift+Enter");
+  assert.equal((await command("page js 'document.querySelector(\"trip-form\").shadowRoot.querySelector(\"#notes\").value'")).js.result, "\n\n");
   console.log("PASS: form values, native dates/times, shadow labels, strict/scoped targeting, readable/JSON action snapshots, checked chaining/pipefail, select/check verification, password redaction, and rejected/reverted actions");
   console.log("PASS: visible dialog context, inaccessible background, scoped dismissal, and restored form content");
+  console.log("PASS: native sign-in clicks, Enter/Return submission, required-field validation, shortcut isolation, and multiline Enter/Shift+Enter");
 }

@@ -168,7 +168,11 @@ for a misplaced popup or other layout problem instead of repeating the click.
 
 `page key` sends keys to the focused control, including controls inside open
 shadow roots. Supported examples include `Enter`, `Tab`, `Space`, `ArrowDown`,
-`Escape`, `Ctrl+a`, and `Shift+Tab`; a quoted literal space also works. Action
+`Escape`, `Ctrl+a`, and `Shift+Tab`; a quoted literal space also works. `Return`
+is an alias for `Enter`. Enter uses native browser behavior: it submits an
+eligible focused form control, respecting validation and page event handlers,
+or inserts a newline in a multiline editor. Modified shortcuts such as
+`Ctrl+Enter` remain available to the page without inserting text. Action
 results report focus and observed changes inside open shadow roots as well as
 the main document. Delivery alone does not prove the intended website outcome;
 inspect the resulting page when that outcome matters.

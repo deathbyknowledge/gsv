@@ -62,14 +62,14 @@ export function parsePageKey(raw: string): ParsedKey {
     else throw new Error(`Unknown key modifier: ${modifier}`);
   }
   const normalized = keyPart.toLowerCase();
-  const named: Record<string, { key: string; code: string; virtual: number }> = {
+  const named: Record<string, { key: string; code: string; virtual: number; text?: string }> = {
     backspace: { key: "Backspace", code: "Backspace", virtual: 8 },
     tab: { key: "Tab", code: "Tab", virtual: 9 },
-    enter: { key: "Enter", code: "Enter", virtual: 13 },
-    return: { key: "Enter", code: "Enter", virtual: 13 },
+    enter: { key: "Enter", code: "Enter", virtual: 13, text: "\r" },
+    return: { key: "Enter", code: "Enter", virtual: 13, text: "\r" },
     escape: { key: "Escape", code: "Escape", virtual: 27 },
     esc: { key: "Escape", code: "Escape", virtual: 27 },
-    space: { key: " ", code: "Space", virtual: 32 },
+    space: { key: " ", code: "Space", virtual: 32, text: " " },
     pageup: { key: "PageUp", code: "PageUp", virtual: 33 },
     pagedown: { key: "PageDown", code: "PageDown", virtual: 34 },
     end: { key: "End", code: "End", virtual: 35 },
@@ -86,9 +86,10 @@ export function parsePageKey(raw: string): ParsedKey {
   };
   const mapped = named[normalized];
   if (mapped) {
+    const { text, ...definition } = mapped;
     return {
-      ...mapped, windowsVirtualKeyCode: mapped.virtual, modifiers, modifierNames,
-      ...(mapped.code === "Space" && !(modifiers & (1 | 2 | 4)) ? { text: " " } : {}),
+      ...definition, windowsVirtualKeyCode: mapped.virtual, modifiers, modifierNames,
+      ...(text && !(modifiers & (1 | 2 | 4)) ? { text } : {}),
     };
   }
   if (keyPart.length !== 1) {

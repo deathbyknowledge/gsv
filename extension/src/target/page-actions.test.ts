@@ -180,7 +180,7 @@ describe("CDP page actions", () => {
     });
     const keyResult = await sendPageKey(42, "Enter", undefined, typed.store);
     expect(inputMethods(keyFixture.sendCommand)).toEqual([
-      ["Input.dispatchKeyEvent", "rawKeyDown"],
+      ["Input.dispatchKeyEvent", "keyDown"],
       ["Input.dispatchKeyEvent", "keyUp"],
     ]);
     expect(keyResult).toMatchObject({
