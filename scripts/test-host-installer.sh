@@ -87,7 +87,13 @@ while [ "$#" -gt 0 ]; do
 done
 asset="${url%%\?*}"
 asset="${asset##*/}"
-if [ "$asset" = gsv-linux-x64 ]; then sleep "${GSV_TEST_DOWNLOAD_DELAY:-0}"; fi
+if [ "$asset" = gsv-linux-x64 ]; then
+    if [ -n "${GSV_TEST_DOWNLOAD_GATE:-}" ]; then
+        while [ ! -e "$GSV_TEST_DOWNLOAD_GATE" ]; do sleep 0.05; done
+    else
+        sleep "${GSV_TEST_DOWNLOAD_DELAY:-0}"
+    fi
+fi
 cp "$GSV_TEST_RELEASE_DIR/$asset" "$output"
 SH
 chmod 0755 "$FAKE_BIN/curl"
