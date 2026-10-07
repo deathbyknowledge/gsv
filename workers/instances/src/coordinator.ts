@@ -502,7 +502,7 @@ export class InstanceCoordinator extends DurableObject<Environment> implements I
     if (listed.objects.length) await this.env.PROFILES.delete(listed.objects.map(object => object.key));
     if (listed.truncated) return this.installationDeletionStatus(input);
     this.ctx.storage.transactionSync(() => {
-      for (const table of ["files", "handoffs", "profiles", "instances", "diagnostics", "cancelled_starts", "start_requests", "obsolete_profile_objects"]) this.#store.sql.exec(`DELETE FROM ${table}`);
+      for (const table of ["file_chunks", "files", "handoffs", "profiles", "instances", "diagnostics", "cancelled_starts", "start_requests", "obsolete_profile_objects"]) this.#store.sql.exec(`DELETE FROM ${table}`);
       this.#retirement.phase("erased");
     });
     await this.ctx.storage.deleteAlarm();

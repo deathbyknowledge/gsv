@@ -4,12 +4,22 @@ export type StoredFsEntry =
   | { path: string; kind: "directory"; updatedAt: number }
   | { path: string; kind: "file"; content: ArrayBuffer; contentType?: string; updatedAt: number };
 
+export type StoredFsMetadata =
+  | { path: string; kind: "directory"; updatedAt: number }
+  | { path: string; kind: "file"; size: number; contentType?: string; updatedAt: number };
+
 export type FilePersistence = {
-  list(): Promise<StoredFsEntry[]>;
+  list(): Promise<StoredFsMetadata[]>;
+  stat(path: string): Promise<StoredFsMetadata | null>;
   get(path: string): Promise<StoredFsEntry | null>;
   put(entry: StoredFsEntry): Promise<void>;
   delete(paths: string[]): Promise<void>;
 };
+
+export function storedFsMetadata(entry: StoredFsEntry): StoredFsMetadata {
+  if (entry.kind === "directory") return { path: entry.path, kind: entry.kind, updatedAt: entry.updatedAt };
+  return { path: entry.path, kind: entry.kind, size: entry.content.byteLength, contentType: entry.contentType, updatedAt: entry.updatedAt };
+}
 
 export function bytesToArrayBuffer(bytes: Uint8Array): ArrayBuffer {
   const copy = new Uint8Array(bytes.byteLength);

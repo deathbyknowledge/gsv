@@ -4,21 +4,45 @@ import { BrowserFsDriver, BrowserTargetFileSystem } from "./fs";
 import { createRuntimeFileSystem } from "./runtime-fs";
 import type { TargetFileSystem } from "./types";
 import { BrowserTargetFileSystem as SharedBrowserFileSystem } from "@humansandmachines/gsv-browser/fs";
-import type { FilePersistence, StoredFsEntry } from "@humansandmachines/gsv-browser/fs-persistence";
+import { storedFsMetadata, type FilePersistence, type StoredFsEntry } from "@humansandmachines/gsv-browser/fs-persistence";
 
 function persistedFileSystem() {
   const entries = new Map<string, StoredFsEntry>();
   const persistence: FilePersistence = {
-    list: async () => [...entries.values()],
-    get: async path => entries.get(path) ?? null,
+    list: async () => [...entries.values()].map(storedFsMetadata),
+    stat: async path => { const entry = entries.get(path); return entry ? storedFsMetadata(entry) : null; },
+    get: vi.fn(async path => entries.get(path) ?? null),
     put: vi.fn(async entry => { entries.set(entry.path, entry); }),
     delete: vi.fn(async paths => { for (const path of paths) entries.delete(path); }),
   };
-  const fs = new SharedBrowserFileSystem(createRuntimeFileSystem(), async () => persistence, 8);
+  const runtime = createRuntimeFileSystem();
+  vi.spyOn(runtime, "getAllPaths").mockResolvedValue([]);
+  const fs = new SharedBrowserFileSystem(runtime, async () => persistence, 8);
   return { fs, persistence, entries };
 }
 
 describe("browser file admission and persistence", () => {
+  it("lists and stats persisted files without loading bodies, and reads fresh bytes only on demand", async () => {
+    const { fs, persistence, entries } = persistedFileSystem();
+    entries.set("/tmp/a", { path: "/tmp/a", kind: "file", content: new Uint8Array([1, 2]).buffer, contentType: "image/png", updatedAt: 1 });
+    entries.set("/tmp/b", { path: "/tmp/b", kind: "file", content: new Uint8Array([3]).buffer, updatedAt: 1 });
+    expect(await fs.list("/tmp")).toEqual({ files: ["a", "b"], directories: [] });
+    expect(await fs.stat("/tmp/a")).toMatchObject({ size: 2, contentType: "image/png" });
+    expect(await fs.exists("/tmp/b")).toBe(true);
+    expect(await fs.getAllPaths()).toContain("/tmp/a");
+    expect(persistence.get).not.toHaveBeenCalled();
+    expect(await fs.read("/tmp/a")).toEqual(new Uint8Array([1, 2]));
+    expect(persistence.get).toHaveBeenCalledExactlyOnceWith("/tmp/a");
+    entries.set("/tmp/a", { path: "/tmp/a", kind: "file", content: new Uint8Array([9]).buffer, updatedAt: 2 });
+    expect(await fs.read("/tmp/a")).toEqual(new Uint8Array([9]));
+    entries.delete("/tmp/a");
+    expect(await fs.exists("/tmp/a")).toBe(false);
+    await expect(fs.read("/tmp/a")).rejects.toThrow("No such file");
+    expect((await fs.list("/tmp")).files).toEqual(["b"]);
+    await fs.delete("/tmp/b");
+    expect(persistence.get).toHaveBeenCalledTimes(3);
+  });
+
   it.each([undefined, -1, 1.5, Number.POSITIVE_INFINITY, Number.NaN, 9])(
     "rejects invalid or oversized declared length %s without reading the body", async length => {
       const { fs } = persistedFileSystem();

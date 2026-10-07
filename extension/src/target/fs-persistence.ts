@@ -2,7 +2,7 @@ const FS_DB_NAME = "gsv-extension-target-fs";
 const FS_DB_VERSION = 1;
 const FS_ENTRY_STORE = "entries";
 
-import type { StoredFsEntry, FilePersistence } from "@humansandmachines/gsv-browser/fs-persistence";
+import { storedFsMetadata, type StoredFsEntry, type StoredFsMetadata, type FilePersistence } from "@humansandmachines/gsv-browser/fs-persistence";
 export { bytesFromStoredContent, bytesToArrayBuffer } from "@humansandmachines/gsv-browser/fs-persistence";
 export type { StoredFsEntry } from "@humansandmachines/gsv-browser/fs-persistence";
 
@@ -37,8 +37,19 @@ export function openFsDatabase(): Promise<IDBDatabase> {
   });
 }
 
-export async function getPersistedEntries(db: IDBDatabase): Promise<StoredFsEntry[]> {
-  return await withStore<StoredFsEntry[]>(db, "readonly", (store) => requestToPromise(store.getAll()));
+async function getPersistedMetadata(db: IDBDatabase): Promise<StoredFsMetadata[]> {
+  return await withStore(db, "readonly", store => new Promise((resolve, reject) => {
+    const entries: StoredFsMetadata[] = [];
+    const request = store.openCursor();
+    request.onerror = () => reject(request.error ?? new Error("Unable to list browser files"));
+    request.onsuccess = () => {
+      const cursor = request.result;
+      if (!cursor) { resolve(entries); return; }
+      // SAFETY: The entries store is written exclusively through putPersistedEntry.
+      entries.push(storedFsMetadata(cursor.value as StoredFsEntry));
+      cursor.continue();
+    };
+  }));
 }
 
 export async function getPersistedEntry(db: IDBDatabase, path: string): Promise<StoredFsEntry | null> {
@@ -95,7 +106,11 @@ export async function openFilePersistence(): Promise<FilePersistence | null> {
   const backend = await openPersistenceBackend();
   if (backend.kind === "memory") return null;
   return {
-    list: () => getPersistedEntries(backend.db),
+    list: () => getPersistedMetadata(backend.db),
+    stat: async (path) => {
+      const entry = await getPersistedEntry(backend.db, path);
+      return entry ? storedFsMetadata(entry) : null;
+    },
     get: (path) => getPersistedEntry(backend.db, path),
     put: (entry) => putPersistedEntry(backend.db, entry),
     delete: (paths) => deletePersistedEntries(backend.db, paths),

@@ -110,6 +110,7 @@ export class InstanceStore {
         if (saved && profile(saved).activeInstanceId === id) this.putProfile({ ...profile(saved), activeInstanceId: undefined, revision: profile(saved).revision + 1 });
       }
       this.sql.exec("DELETE FROM files WHERE instance_id = ?", id);
+      this.sql.exec("DELETE FROM file_chunks WHERE instance_id = ?", id);
       return value;
     });
   }

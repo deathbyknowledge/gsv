@@ -228,6 +228,8 @@ in total. Encoding and metadata count toward these limits. Transfers declaring
 more than 16 MiB are rejected before their bodies are read; received bytes must
 also match the declared length. A failed save leaves existing file contents
 unchanged and does not publish a new file.
+Reconnecting loads the temporary-file inventory without loading file contents;
+bytes are read only when a command needs that file.
 
 When login is needed, associate the request with the existing responsibility for
 the task and yield after presenting the returned action link:

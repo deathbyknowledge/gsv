@@ -27,8 +27,10 @@ import { basename, dirname, joinPath, normalizePath } from "./paths";
 import {
   bytesFromStoredContent,
   bytesToArrayBuffer,
+  storedFsMetadata,
   type FilePersistence,
   type StoredFsEntry,
+  type StoredFsMetadata,
 } from "./fs-persistence";
 import { throwIfAborted } from "./abort";
 import type { BrowserValue } from "./backend";
@@ -73,8 +75,7 @@ const DEFAULT_DIRECTORIES = [
 ];
 
 export class BrowserTargetFileSystem implements TargetFileSystem {
-  private files = new Map<string, Uint8Array>();
-  private contentTypes = new Map<string, string>();
+  private files = new Map<string, { size: number; contentType?: string; content?: Uint8Array }>();
   private directories = new Set<string>(DEFAULT_DIRECTORIES);
   private loadPromise: Promise<void> | null = null;
   private backend: FilePersistence | null = null;
@@ -92,8 +93,14 @@ export class BrowserTargetFileSystem implements TargetFileSystem {
     if (await this.runtime.exists(normalized)) {
       return await this.runtime.read(normalized);
     }
-    await this.refreshPersistedEntry(normalized);
-    const value = this.files.get(normalized);
+    if (this.backend) {
+      const entry = await this.backend.get(normalized);
+      if (entry) this.applyPersistedEntry(storedFsMetadata(entry));
+      else this.files.delete(normalized);
+      if (entry?.kind === "file") return bytesFromStoredContent(entry.content);
+      throw new Error(`No such file: ${normalized}`);
+    }
+    const value = this.files.get(normalized)?.content;
     if (!value) {
       throw new Error(`No such file: ${normalized}`);
     }
@@ -117,8 +124,11 @@ export class BrowserTargetFileSystem implements TargetFileSystem {
       updatedAt: Date.now(),
     };
     await this.persistEntry(entry);
-    this.files.set(normalized, new Uint8Array(entry.content));
-    this.contentTypes.set(normalized, resolvedContentType);
+    this.files.set(normalized, {
+      size: content.byteLength, contentType: resolvedContentType,
+      // Persistent backends own bytes; only the memory fallback retains them here.
+      content: this.backend ? undefined : new Uint8Array(entry.content),
+    });
   }
 
   async append(path: string, content: Uint8Array): Promise<void> {
@@ -144,7 +154,6 @@ export class BrowserTargetFileSystem implements TargetFileSystem {
     if (this.files.has(normalized)) {
       await this.deletePersistedEntries([normalized]);
       this.files.delete(normalized);
-      this.contentTypes.delete(normalized);
       return;
     }
     if (this.directories.has(normalized)) {
@@ -162,7 +171,6 @@ export class BrowserTargetFileSystem implements TargetFileSystem {
       await this.deletePersistedEntries(deletedPaths);
       for (const path of deletedPaths) {
         this.files.delete(path);
-        this.contentTypes.delete(path);
         this.directories.delete(path);
       }
       return;
@@ -246,18 +254,18 @@ export class BrowserTargetFileSystem implements TargetFileSystem {
     if (await this.runtime.exists(normalized)) {
       return await this.runtime.stat(normalized);
     }
+    await this.refreshPersistedEntry(normalized);
     if (this.directories.has(normalized)) {
       return { path: normalized, isFile: false, isDirectory: true, size: 0 };
     }
-    await this.refreshPersistedEntry(normalized);
     const value = this.files.get(normalized);
     if (value !== undefined) {
       return {
         path: normalized,
         isFile: true,
         isDirectory: false,
-        size: value.byteLength,
-        contentType: this.contentTypes.get(normalized) ?? inferFsContentType(normalized),
+        size: value.size,
+        contentType: value.contentType ?? inferFsContentType(normalized),
       };
     }
     throw new Error(`No such file or directory: ${normalized}`);
@@ -267,7 +275,7 @@ export class BrowserTargetFileSystem implements TargetFileSystem {
     await this.ensureLoaded();
     const normalized = normalizePath(path);
     if (normalized === "/dev/null") return true;
-    if (this.files.has(normalized) || this.directories.has(normalized) || await this.runtime.exists(normalized)) {
+    if (await this.runtime.exists(normalized)) {
       return true;
     }
     await this.refreshPersistedEntry(normalized);
@@ -352,11 +360,10 @@ export class BrowserTargetFileSystem implements TargetFileSystem {
       return;
     }
     const entries = await this.backend.list();
+    this.files.clear();
+    this.directories = new Set(DEFAULT_DIRECTORIES);
     for (const entry of entries) {
       this.applyPersistedEntry(entry);
-    }
-    for (const directory of DEFAULT_DIRECTORIES) {
-      this.directories.add(directory);
     }
   }
 
@@ -364,27 +371,22 @@ export class BrowserTargetFileSystem implements TargetFileSystem {
     if (!this.backend) {
       return;
     }
-    const entry = await this.backend.get(normalizePath(path));
+    const entry = await this.backend.stat(normalizePath(path));
     if (entry) {
       this.applyPersistedEntry(entry);
-    }
+    } else this.files.delete(path);
   }
 
-  private applyPersistedEntry(entry: StoredFsEntry): void {
+  private applyPersistedEntry(entry: StoredFsMetadata): void {
     const path = normalizePath(entry.path);
     if (entry.kind === "directory") {
       this.directories.add(path);
       this.files.delete(path);
-      this.contentTypes.delete(path);
       return;
     }
     this.ensureDirectorySync(dirname(path));
-    this.files.set(path, bytesFromStoredContent(entry.content));
-    if (entry.contentType) {
-      this.contentTypes.set(path, entry.contentType);
-    } else {
-      this.contentTypes.delete(path);
-    }
+    this.directories.delete(path);
+    this.files.set(path, { size: entry.size, contentType: entry.contentType });
   }
 
   private async ensureDirectory(path: string): Promise<void> {
