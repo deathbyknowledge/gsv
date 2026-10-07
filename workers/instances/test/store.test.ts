@@ -179,6 +179,42 @@ describe("saved profile encryption", () => {
     expect(store.ownedProfile(actor, started.profileId!)?.object_key).toBe(before.object_key);
     expect((await bucket.list({ prefix: `late/owners/1000/profiles/${started.profileId}/` })).objects.map(object => object.key)).toEqual([before.object_key]);
   }));
+  it.each(["cancelled", "lease-lost", "deleting", "upload-error"] as const)("retains cleanup for a rejected %s upload when deletion fails", reason => inStore(async store => {
+    const started = store.admit(actor, { requestId: "rejected-upload", templateId: "browser" }, limits);
+    const storage = new ProfileStorage("rejected-upload", bucket, store);
+    const prior = { cookies: [], origins: [] };
+    await storage.save(started, prior, 10000);
+    const before = store.ownedProfile(actor, started.profileId!)!;
+    const abort = new AbortController();
+    let uploaded!: string;
+    const put = async (...args: Parameters<R2Bucket["put"]>) => {
+      const result = await bucket.put(...args); uploaded = args[0];
+      if (reason === "cancelled") abort.abort(new Error("Cancelled"));
+      else if (reason === "lease-lost") store.putProfile({ ...profile(before), activeInstanceId: undefined });
+      else if (reason === "deleting") store.putProfile({ ...profile(before), state: "deleting" });
+      else throw new Error("Upload response lost");
+      return result;
+    };
+    const failing: R2Bucket = {
+      // SAFETY: Every put overload delegates to R2 before the fixture rejects the save.
+      put: put as R2Bucket["put"],
+      get: bucket.get.bind(bucket), head: bucket.head.bind(bucket),
+      delete: async () => { throw new Error("Storage deletion unavailable"); }, list: bucket.list.bind(bucket),
+      createMultipartUpload: bucket.createMultipartUpload.bind(bucket), resumeMultipartUpload: bucket.resumeMultipartUpload.bind(bucket),
+    };
+    const saving = new ProfileStorage("rejected-upload", failing, store).save(started,
+      { cookies: [], origins: [{ origin: "https://example.com", localStorage: [] }] }, 10000, abort.signal);
+    if (reason === "cancelled" || reason === "upload-error") await expect(saving).rejects.toThrow(reason === "cancelled" ? "Cancelled" : "Upload response lost");
+    else await saving;
+    expect(store.ownedProfile(actor, started.profileId!)?.object_key).toBe(before.object_key);
+    expect(store.sql.exec("SELECT object_key FROM obsolete_profile_objects").toArray()).toEqual([{ object_key: uploaded }]);
+    expect(await bucket.head(uploaded)).not.toBeNull();
+    const reopened = new ProfileStorage("rejected-upload", bucket, new InstanceStore(store.storage));
+    await reopened.cleanup();
+    expect(reopened.hasPendingCleanup()).toBe(false);
+    expect(await bucket.head(uploaded)).toBeNull();
+    expect(await reopened.restore(store.ownedProfile(actor, started.profileId!)!)).toEqual(prior);
+  }));
   it("compresses large state, skips unchanged uploads, and retains it after an oversized save", () => inStore(async store => {
     const started = store.admit(actor, { requestId: "large", templateId: "browser" }, limits);
     const storage = new ProfileStorage("large", bucket, store);

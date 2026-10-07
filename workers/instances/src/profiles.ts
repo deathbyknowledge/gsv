@@ -84,18 +84,24 @@ export class ProfileStorage {
     const encrypted = new Uint8Array(await crypto.subtle.encrypt({ name: "AES-GCM", iv, additionalData: new TextEncoder().encode(address) }, await this.key(row), payload));
     const bytes = new Uint8Array(12 + encrypted.byteLength); bytes.set(iv); bytes.set(encrypted, 12);
     signal?.throwIfAborted();
-    await this.bucket.put(address, bytes, { httpMetadata: { contentType: "application/octet-stream" } });
-    const current = this.store.ownedProfile(actor, instance.profileId);
-    if (signal?.aborted || !current || profile(current).state !== "active" || profile(current).activeInstanceId !== instance.instanceId || current.saved_revision !== row.saved_revision) {
-      await this.bucket.delete(address);
+    let committed = false;
+    try {
+      await this.bucket.put(address, bytes, { httpMetadata: { contentType: "application/octet-stream" } });
       signal?.throwIfAborted();
-      return;
+      const current = this.store.ownedProfile(actor, instance.profileId);
+      if (!current || profile(current).state !== "active" || profile(current).activeInstanceId !== instance.instanceId || current.saved_revision !== row.saved_revision) return;
+      this.store.storage.transactionSync(() => {
+        this.store.sql.exec("UPDATE profiles SET object_key = ?, saved_revision = ? WHERE id = ?", address, revision, row.id);
+        this.store.putProfile({ ...profile(current), revision: profile(current).revision + 1, ...persistence, storedBytes: bytes.byteLength, contentHash: hash, usage });
+        if (row.object_key) this.store.sql.exec("INSERT INTO obsolete_profile_objects (object_key) VALUES (?)", row.object_key);
+      });
+      committed = true;
+    } finally {
+      if (!committed) {
+        this.store.sql.exec("INSERT INTO obsolete_profile_objects (object_key) VALUES (?)", address);
+        await this.cleanup();
+      }
     }
-    this.store.storage.transactionSync(() => {
-      this.store.sql.exec("UPDATE profiles SET object_key = ?, saved_revision = ? WHERE id = ?", address, revision, row.id);
-      this.store.putProfile({ ...profile(current), revision: profile(current).revision + 1, ...persistence, storedBytes: bytes.byteLength, contentHash: hash, usage });
-      if (row.object_key) this.store.sql.exec("INSERT INTO obsolete_profile_objects (object_key) VALUES (?)", row.object_key);
-    });
   }
   hasPendingCleanup(): boolean {
     return this.store.sql.exec("SELECT 1 FROM obsolete_profile_objects LIMIT 1").toArray().length > 0;

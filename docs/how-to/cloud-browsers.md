@@ -93,6 +93,9 @@ Expiry and forced shutdown still close the browser; unsaved changes can be lost.
 The previous successful snapshot survives a failed, oversized or timed-out save.
 Once a new snapshot commits, deleting its predecessor runs separately with durable
 retries. Slow cleanup does not turn a successful save into a failure or block stop.
+Uploads rejected after cancellation, a lease change, deletion, or an upload
+error enter the same durable cleanup queue. A temporary deletion failure retains
+their addresses for retry while the last committed snapshot stays available.
 
 Saved data is also inspectable on `gsv`, under your account name:
 
