@@ -599,6 +599,35 @@ describe("browser save ordering", () => {
 });
 
 describe("browser health", () => {
+  it.each(["stop", "delete", "expire", "claimed"])("rechecks startup after policy admission when it was %s", mode => fixture(async (object, store, instanceId, installationId) => {
+    store.update({ ...instance(store.byId(instanceId)), state: "starting", readyAt: undefined });
+    store.sql.exec("UPDATE instances SET session_id = NULL WHERE id = ?", instanceId);
+    const entered = deferred(), admitted = deferred();
+    vi.spyOn(InstancePolicy.prototype, "requireActive").mockImplementationOnce(async () => { entered.resolve(); await admitted.promise; });
+    const acquire = vi.spyOn(BrowserProvider.prototype, "acquire").mockResolvedValue("unexpected-session");
+    vi.spyOn(BrowserProvider.prototype, "exists").mockResolvedValue(false);
+    const maintenance = object.alarm();
+    await entered.promise;
+    const deletion = { version: 1 as const, operationId: "delete-space", installationId };
+    if (mode === "stop") await object.stop(actor, { instanceId, force: true });
+    else if (mode === "delete") expect((await object.quiesceInstallation(deletion)).phase).toBe("quiescing");
+    else if (mode === "expire") store.update({ ...instance(store.byId(instanceId)), expiresAt: Date.now() - 1 });
+    else store.sql.exec("UPDATE instances SET acquire_at = ? WHERE id = ?", Date.now(), instanceId);
+    admitted.resolve(); await maintenance;
+    expect(acquire).not.toHaveBeenCalled();
+    expect(CloudBrowser.attach).not.toHaveBeenCalled();
+    if (mode === "claimed") {
+      expect(instance(store.byId(instanceId)).state).toBe("stopping");
+      expect(store.usage(limits).reservedSeconds).toBe(300);
+    } else {
+      expect(store.byId(instanceId).acquire_at).toBeNull();
+      await object.alarm();
+      expect(instance(store.byId(instanceId)).state).toBe("stopped");
+      expect(store.usage(limits)).toMatchObject({ activeInstances: 0, reservedSeconds: 0, usedSeconds: 0 });
+      if (mode === "delete") expect((await object.quiesceInstallation(deletion)).phase).toBe("quiesced");
+    }
+  }));
+
   it.each(["saved", "failed"] as const)("does not bind a new start to a pending stop whose final save is %s", outcome => fixture(async (object, store, instanceId, _installationId, browser) => {
     vi.spyOn(InstancePolicy.prototype, "limits").mockResolvedValue(limits);
     const exporting = deferred(), release = deferred();

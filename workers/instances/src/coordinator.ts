@@ -577,6 +577,13 @@ export class InstanceCoordinator extends DurableObject<Environment> implements I
       value = instance(this.#store.byId(id));
       if (value.state === "starting") {
         await this.#policy.requireActive();
+        if (this.#retirement.get()) return;
+        row = this.#store.byId(id); value = instance(row);
+        if (value.state !== "starting") return;
+        if (value.expiresAt <= Date.now()) {
+          this.fenceStop(value, "Browser lifetime expired");
+          return;
+        }
         if (row.acquire_at && !row.session_id) {
           this.fenceStop(value, "Browser allocation outcome is unknown; a new allocation will not be retried");
         } else if (!row.session_id) {
