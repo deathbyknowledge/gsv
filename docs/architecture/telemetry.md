@@ -107,6 +107,12 @@ without granting those adapters ownership of another component's application eve
 
 - Gateway: terminal runs, compaction completion and failure stage, delegation,
   committed messages, target/adapter connection and adapter transport outcomes.
+  A committed Ship reply also carries a closed `platform` class for the surface
+  that receives it: `web`, `phone`, `tablet`, `desktop`, `cli`, `telegram`,
+  `discord`, `slack`, `background`, or `other`. The Kernel derives it from the
+  reply route pinned for that message, so it names the client or messenger the
+  reply was delivered to; the reported peer platform string and adapter name
+  never leave the Gateway.
 - Accounts: activation. This is not a full signup funnel; anonymous invite/email
   steps intentionally do not invent an installation identity or export addresses.
 - Inference: logical terminal outcomes, cost/tokens, provider attempt failures,

@@ -31,7 +31,7 @@ function createTableStatement(name: string): string {
 describe("kernel schema migrations", () => {
   it("starts the kernel component at a v1 baseline", () => {
     expect(KERNEL_SCHEMA_COMPONENT).toBe("kernel");
-    expect(KERNEL_MIGRATIONS).toHaveLength(64);
+    expect(KERNEL_MIGRATIONS).toHaveLength(65);
     expect(KERNEL_MIGRATIONS[0]).toMatchObject({
       id: 1,
       name: "initial_kernel_schema",
@@ -550,6 +550,13 @@ describe("kernel schema migrations", () => {
       "UPDATE schedules SET one_shot_occurrence_id = 'legacy:' || schedule_id WHERE enabled = 1 AND next_run_at IS NOT NULL AND json_extract(expression_json, '$.kind') IN ('at', 'after')",
     );
     expect(createTableStatement("schedules")).not.toContain("one_shot_occurrence_id");
+  });
+
+  it("records the reporting client platform on connection run routes", () => {
+    expect(normalizedStatements()).toContain(
+      "ALTER TABLE run_routes ADD COLUMN client_platform TEXT",
+    );
+    expect(createTableStatement("run_routes")).not.toContain("client_platform");
   });
 
   it("adds a per-occurrence one-shot attempt counter", () => {
