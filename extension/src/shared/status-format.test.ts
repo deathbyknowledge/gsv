@@ -4,11 +4,32 @@ import type { ExtensionUiState } from "./ui-state";
 
 describe("browser target status", () => {
   it("shows in-flight requests as work even without a capture or debugger tab", () => {
-    const state = {
+    const state: ExtensionUiState = {
+      config: { gatewayUrl: "", username: "", token: "", deviceId: "chrome", autoConnect: false },
       activeRequests: [{ label: "tabs open", detail: "https://example.test/" }],
-      connection: { state: "connected" },
-      sensitive: { networkCaptures: 0, mediaRecordings: 0, debuggerTabs: [] },
-    } as unknown as ExtensionUiState;
+      connection: { state: "connected", connectionId: null, message: null, reconnectSuppressed: false },
+      targetId: "chrome",
+      gatewayHost: "",
+      activity: [],
+      sensitive: { connected: true, networkCaptures: 0, mediaRecordings: 0, debuggerTabs: [], lastSensitiveAt: null },
+      network: { captures: [] },
+      media: { captureGrant: null },
+      artifact: { screenshots: 0, networkSessions: 0, files: 0 },
+      diagnostics: {
+        lastConnectAttemptAt: null,
+        lastConnectedAt: null,
+        lastDisconnectedAt: null,
+        lastSuccessfulConnectionId: null,
+        lastConnectionErrorAt: null,
+        lastConnectionError: null,
+        lastErrorAt: null,
+        lastError: null,
+        activityCount: 0,
+        artifactPathCount: 0,
+        updatedAt: null,
+      },
+      updatedAt: "",
+    };
 
     expect(liveAccessCount(state)).toBe(1);
     expect(browserTargetHeadline(state)).toBe("Agent using this browser");

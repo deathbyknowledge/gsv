@@ -26,7 +26,7 @@ export async function pauseBrowserResources(
 ): Promise<PauseAccessResult> {
   const errors: string[] = [];
   operations.revokeMediaGrant();
-  const disconnected = operations.disconnect().catch((error: unknown) => {
+  const disconnected = operations.disconnect().catch((error) => {
     // SAFETY: rejected browser operations expose Error-compatible values here.
     errors.push(`runtime state: ${String(error)}`);
   });
@@ -34,7 +34,7 @@ export async function pauseBrowserResources(
   await disconnected;
   const commands = operations.waitForCommands().then(
     () => ({ done: true, error: null }),
-    (error: unknown) => ({ done: true, error }),
+    (error) => ({ done: true, error }),
   );
   let timeout: ReturnType<typeof setTimeout> | undefined;
   const outcome = await Promise.race([
@@ -59,17 +59,17 @@ export async function pauseBrowserResources(
 export async function releaseBrowserResources(operations: ResourceCleanupOperations): Promise<Omit<PauseAccessResult, "commandsPending">> {
   const errors: string[] = [];
   // Start every teardown before awaiting a Chrome operation that may be slow to finish.
-  const stoppedCapturesPromise = operations.stopNetwork().catch((error: unknown) => {
+  const stoppedCapturesPromise = operations.stopNetwork().catch((error) => {
     // SAFETY: rejected browser operations expose Error-compatible values here.
     errors.push(`network: ${String(error)}`);
     return [];
   });
-  const detachedTabsPromise = operations.releaseDebuggers().catch((error: unknown) => {
+  const detachedTabsPromise = operations.releaseDebuggers().catch((error) => {
     // SAFETY: rejected browser operations expose Error-compatible values here.
     errors.push(`debugger: ${String(error)}`);
     return [];
   });
-  const stoppedRecordingsPromise = operations.stopRecordings().catch((error: unknown) => {
+  const stoppedRecordingsPromise = operations.stopRecordings().catch((error) => {
     // SAFETY: rejected browser operations expose Error-compatible values here.
     errors.push(`media: ${String(error)}`);
     return [];

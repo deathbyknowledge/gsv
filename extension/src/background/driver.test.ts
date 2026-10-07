@@ -7,15 +7,12 @@ afterEach(() => vi.unstubAllGlobals());
 describe("browser target activity", () => {
   it("counts overlapping requests until they finish", async () => {
     const driver = createBrowserTargetDriver();
+    // SAFETY: this test only executes shell.exec, which reads these context fields.
     const context = {
       abortSignal: new AbortController().signal,
       connection: { peer: { id: "chrome" } },
     } as GsvEndpointContext;
-    const request = (id: string): GsvEndpointRequest => ({
-      id,
-      call: "shell.exec",
-      args: { input: "help" },
-    }) as unknown as GsvEndpointRequest;
+    const request = (id: string): GsvEndpointRequest => shellRequest(id, "help");
 
     const first = driver.handle(request("first"), context);
     const second = driver.handle(request("second"), context);
@@ -30,8 +27,14 @@ describe("browser target activity", () => {
 
   it("clears the count when a request fails", async () => {
     const driver = createBrowserTargetDriver();
+    // SAFETY: unsupported calls fail before the driver reads other context fields.
     const context = { abortSignal: new AbortController().signal } as GsvEndpointContext;
-    const request = { id: "unsupported", call: "unsupported", args: {} } as unknown as GsvEndpointRequest;
+    const request: GsvEndpointRequest = {
+      id: "unsupported",
+      call: "unsupported",
+      args: {},
+      raw: { type: "req", id: "unsupported", call: "unsupported", args: {} },
+    };
 
     await expect(driver.handle(request, context)).rejects.toThrow("Unsupported browser target syscall");
     expect(driver.activeRequests()).toHaveLength(0);
@@ -57,15 +60,12 @@ describe("browser target activity", () => {
       },
     });
     const driver = createBrowserTargetDriver();
+    // SAFETY: this test only executes shell.exec, which reads these context fields.
     const context = {
       abortSignal: new AbortController().signal,
       connection: { peer: { id: "chrome" } },
     } as GsvEndpointContext;
-    const request = {
-      id: "late-js",
-      call: "shell.exec",
-      args: { input: "page js 'document.title = 1'" },
-    } as unknown as GsvEndpointRequest;
+    const request = shellRequest("late-js", "page js 'document.title = 1'");
     const execution = driver.handle(request, context);
     await tabRequested.promise;
 
@@ -120,15 +120,12 @@ describe("browser target activity", () => {
       },
     });
     const driver = createBrowserTargetDriver();
+    // SAFETY: this test only executes shell.exec, which reads these context fields.
     const context = {
       abortSignal: new AbortController().signal,
       connection: { peer: { id: "chrome" } },
     } as GsvEndpointContext;
-    const request = {
-      id: "attaching-js",
-      call: "shell.exec",
-      args: { input: "page js 'document.title = 1'" },
-    } as unknown as GsvEndpointRequest;
+    const request = shellRequest("attaching-js", "page js 'document.title = 1'");
     const execution = driver.handle(request, context);
     await attachStarted.promise;
 
@@ -141,10 +138,12 @@ describe("browser target activity", () => {
   });
 });
 
-function deferred<T>(): {
-  promise: Promise<T>;
-  resolve(value: T): void;
-} {
+function shellRequest(id: string, input: string): GsvEndpointRequest {
+  const args = { input };
+  return { id, call: "shell.exec", args, raw: { type: "req", id, call: "shell.exec", args } };
+}
+
+function deferred<T>() {
   let resolve!: (value: T) => void;
   const promise = new Promise<T>((resolvePromise) => { resolve = resolvePromise; });
   return { promise, resolve };
