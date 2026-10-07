@@ -19,7 +19,8 @@ async function fixture(work: (object: InstanceCoordinator, store: InstanceStore,
   const browser: Partial<CloudBrowser> = {
     heartbeat: vi.fn(async () => {}),
     getTab: async () => ({ id: 1, url: "https://example.com/login" }),
-    listTabs: async () => [{ id: 1, title: "Login", url: "https://example.com/login", active: true }],
+    activeTab: async () => ({ id: 1, url: "https://example.com/login" }),
+    listTabs: async () => ({ tabs: [], total: 0 }),
     viewState: () => ({ kind: "state", activeTabId: 1, tabs: [{ id: 1, title: "Login", url: "https://example.com/login" }] }),
     onViewChange: () => () => {},
     watchTab: async (_id, frame) => { frame({ tabId: 1, documentId: "document", capturedAt: Date.now(), width: 1280, height: 800, image: new Uint8Array([1, 2]) }); return () => {}; },
@@ -121,6 +122,15 @@ describe("human browser control", () => {
     await expect(object.input(actor, { instanceId, tabId: 1, documentId: "previous-page" }, { kind: "click", x: 1, y: 2 })).rejects.toThrow("page changed");
     await object.stop(actor, { instanceId });
     await expect(object.input(actor, { instanceId, tabId: 1, documentId: "document" }, { kind: "text", text: "late" })).rejects.toThrow("not ready");
+  }));
+  it("captures a selected tab without depending on the first inventory page", () => fixture(async (object, _store, instanceId, _installationId, browser) => {
+    browser.getTab = vi.fn(async id => ({ id, url: "https://example.com/login" }));
+    browser.listTabs = vi.fn(async () => ({ tabs: [], total: 1000, nextOffset: 128 }));
+    const frame = await object.frame(actor, { instanceId, tabId: 999 });
+    expect(frame.data.tabId).toBe(999);
+    expect(browser.getTab).toHaveBeenCalledWith(999);
+    expect(browser.listTabs).not.toHaveBeenCalled();
+    await frame.body.stream.cancel();
   }));
   it("cancels request bodies rejected before admission", () => fixture(async (object, _store, instanceId) => {
     const cancelled = vi.fn();

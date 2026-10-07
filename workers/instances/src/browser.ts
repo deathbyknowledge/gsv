@@ -4,6 +4,7 @@ import type { BrowserPageBackend, BrowserTabsBackend, BrowserValue, DebuggerBack
 import { BrowserTargetFileSystem, BrowserFsDriver } from "@humansandmachines/gsv-browser/fs";
 import { BrowserTargetShell } from "@humansandmachines/gsv-browser/shell";
 import { PageReferenceStore } from "@humansandmachines/gsv-browser/page-semantics";
+import { tabSummaryPage, MAX_TAB_PAGE_SIZE, type TabList } from "@humansandmachines/gsv-browser/tab-metadata";
 import { createPageCommands } from "@humansandmachines/gsv-browser/commands/page";
 import { createTabCommands } from "@humansandmachines/gsv-browser/commands/tabs";
 import type { BrowserHumanInput, BrowserPointer, BrowserViewState, CloudInstance } from "@humansandmachines/gsv/protocol";
@@ -62,7 +63,7 @@ export class CloudBrowser implements BrowserPageBackend, BrowserTabsBackend, Deb
       executeInTab: (id, func, args) => this.executeInTab(id, func, args),
     };
     const tabBackend: BrowserTabsBackend = {
-      ...pageBackend, listTabs: () => this.listTabs(), createTab: (url, active) => this.createTab(url, active),
+      ...pageBackend, listTabs: offset => this.listTabs(offset), createTab: (url, active) => this.createTab(url, active),
       focusTab: id => this.focusTab(id), closeTab: id => this.closeTab(id), reloadTab: id => this.reloadTab(id),
       viewerUrlFor: (path, type, label, fs) => this.viewerUrlFor(path, type, label, fs),
       runInput: (work, signal) => this.runInput(work, signal),
@@ -188,16 +189,20 @@ export class CloudBrowser implements BrowserPageBackend, BrowserTabsBackend, Deb
     }
     return send(method, params);
   };
-  private async summary(id: number, page: Page, index = 0): Promise<TabSummary> {
+  private summary(id: number, page: Page, index = 0): TabSummary {
     return { id, windowId: 1, index, active: id === this.state.activeTabId, highlighted: id === this.state.activeTabId,
-      pinned: false, audible: false, muted: false, status: "complete", title: this.tabMetadata.get(id)?.title ?? "", url: page.url(), favIconUrl: null };
+      pinned: false, audible: false, muted: false, status: "complete", ...browserTabMetadata(this.tabMetadata.get(id)?.title ?? "", page.url()), favIconUrl: null };
   }
   async heartbeat(): Promise<void> {
     const cdp = await within(this.browser.newBrowserCDPSession(), 5000, "Browser health connection");
     try { await within(cdp.send("Browser.getVersion"), 5000, "Browser health check"); }
     finally { await within(cdp.detach(), 5000, "Browser health disconnect"); }
   }
-  async listTabs(): Promise<TabSummary[]> { await this.refreshTabs(); return Promise.all([...this.tabs].map(([id, page], index) => this.summary(id, page, index))); }
+  async listTabs(offset = 0): Promise<TabList> {
+    await this.refreshTabs();
+    const candidates = [...this.tabs].slice(offset, offset + MAX_TAB_PAGE_SIZE).map(([id, page], index) => this.summary(id, page, offset + index));
+    return tabSummaryPage(candidates, this.tabs.size, offset);
+  }
   async activeTab(): Promise<TabSummary | null> { await this.refreshTabs(); return this.state.activeTabId ? this.getTab(this.state.activeTabId) : null; }
   async getTab(tabId: number): Promise<TabSummary | null> { await this.refreshTabs(); const page = this.tabs.get(tabId); return page ? this.summary(tabId, page) : null; }
   async createTab(url: string, active: boolean): Promise<TabSummary> {

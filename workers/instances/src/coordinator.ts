@@ -255,10 +255,9 @@ export class InstanceCoordinator extends DurableObject<Environment> implements I
     const args = browserFrameSchema.parse(rawArgs);
     args.instanceId = this.requireInstance(actor, args.instanceId, true).id;
     const browser = await this.browser(args.instanceId);
-    const tabs = await browser.listTabs();
     const handoff = this.#store.handoffs(args.instanceId).find(liveHandoff);
-    const tab = tabs.find(tab => tab.id === (args.tabId ?? handoff?.activeTabId ?? handoff?.tabId))
-      ?? tabs.find(tab => tab.active) ?? tabs[0];
+    const preferred = args.tabId ?? handoff?.activeTabId ?? handoff?.tabId;
+    const tab = (preferred === undefined ? null : await browser.getTab(preferred)) ?? await browser.activeTab();
     if (!tab) throw new Error("This browser has no open tabs");
     const { bytes, documentId } = await browser.humanFrame(tab.id);
     const row = this.requireInstance(actor, args.instanceId, true);

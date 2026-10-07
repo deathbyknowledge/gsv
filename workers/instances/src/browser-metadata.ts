@@ -1,23 +1,11 @@
 import type { BrowserViewState } from "@humansandmachines/gsv/protocol";
+import { browserTabMetadata } from "@humansandmachines/gsv-browser/tab-metadata";
+export { browserTabMetadata, browserDisplayUrl } from "@humansandmachines/gsv-browser/tab-metadata";
 
 export const MAX_BROWSER_VIEW_TABS = 128;
 const MAX_TAB_METADATA_BYTES = 128 * 1024;
 const encoder = new TextEncoder();
 type TabMetadata = { title: string; url: string };
-
-function displayText(value: string, limit: number): string {
-  if (value.length <= limit) return value;
-  let end = limit - 1;
-  const last = value.charCodeAt(end - 1);
-  if (last >= 0xd800 && last <= 0xdbff) end--;
-  return `${value.slice(0, end)}…`;
-}
-
-export function browserTabMetadata(title: string, url: string): TabMetadata {
-  return { title: displayText(title, 1024), url: browserDisplayUrl(url) };
-}
-
-export function browserDisplayUrl(url: string): string { return displayText(url, 8192); }
 
 /** Reserve packet space for handoff and pointer fields, including JSON/UTF-8 expansion. */
 export function browserViewTabs(metadata: ReadonlyMap<number, TabMetadata>, activeTabId: number, preferredTabId?: number): BrowserViewState["tabs"] {

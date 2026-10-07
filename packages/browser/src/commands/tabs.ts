@@ -17,7 +17,7 @@ type OpenOptions = {
 
 const TABS_USAGE = [
   "Usage: tabs <list|active|get|open|focus|close|reload> [args]",
-  "       tabs list",
+  "       tabs list [--offset N]",
   "       tabs active",
   "       tabs get <tabId>",
   "       tabs open [--active] [--mime type] <url|path|->",
@@ -26,7 +26,7 @@ const TABS_USAGE = [
   "       tabs reload <tabId>",
 ].join("\n");
 
-const TABS_LIST_USAGE = "Usage: tabs list";
+const TABS_LIST_USAGE = "Usage: tabs list [--offset N]\nLarge inventories return nextOffset; pass it to --offset for the next page.";
 const TABS_ACTIVE_USAGE = "Usage: tabs active";
 const TABS_GET_USAGE = "Usage: tabs get <tabId>";
 const TABS_OPEN_USAGE = [
@@ -91,12 +91,11 @@ export function createTabCommands(backend: BrowserTabsBackend) {
   }
 
   async function runList(args: string[]): Promise<CommandResult> {
-    if (args.length > 1) {
-      return commandError(TABS_LIST_USAGE);
-    }
-
-    const tabs = await listTabs();
-    return commandJson({ tabs, count: tabs.length });
+    const parsed = splitOption(args.slice(1), "--offset");
+    if (parsed.rest.length) return commandError(TABS_LIST_USAGE);
+    const offset = parsed.value === null ? 0 : requiredInteger(parsed.value, "offset");
+    const page = await listTabs(offset);
+    return commandJson({ ...page, count: page.tabs.length });
   }
 
   async function runActive(args: string[]): Promise<CommandResult> {

@@ -190,6 +190,11 @@ The cloud browser shares the extension's `tabs`, `page`, screenshots and
 temporary filesystem commands. For example, run `tabs list` and `page snapshot`
 on that target. It does not implement an operating-system shell.
 
+`tabs list` returns a bounded page with `count`, `total`, and `nextOffset` when
+more tabs remain. Continue with `tabs list --offset <nextOffset>`. Titles, URLs
+and list size are bounded; an ellipsis marks shortened display text. The cloud
+browser's `/proc/tabs.json` exposes the first page and its pagination metadata.
+
 Use `page fill` to replace a field value, including dates and times,
 `page select` for native dropdowns, and `page check` for checked state.
 These commands verify the result. Role/label locators, scoped snapshots and

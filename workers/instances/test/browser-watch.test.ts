@@ -23,7 +23,7 @@ async function fixture(work: (value: {
   const state: BrowserViewState = { kind: "state", activeTabId: 1, tabs: [1, 2, 3].map(id => ({ id, title: `Tab ${id}`, url: "about:blank" })) };
   const subscriptions = new Map<number, Subscription>();
   let change = () => {};
-  const listTabs = vi.fn<CloudBrowser["listTabs"]>(async () => []);
+  const listTabs = vi.fn<CloudBrowser["listTabs"]>(async () => ({ tabs: [], total: 0 }));
   const browser: Pick<CloudBrowser, "listTabs" | "viewState" | "onViewChange" | "watchTab"> = {
     listTabs,
     viewState: () => state,
@@ -48,7 +48,7 @@ describe("browser tab following", () => {
     const viewState = vi.fn((preferred?: number): BrowserViewState => ({ kind: "state", activeTabId: 999, tabs: browserViewTabs(metadata, 999, preferred) }));
     const watchTab = vi.fn<CloudBrowser["watchTab"]>(async (id, frame) => { frame(image(id)); return () => {}; });
     const browser: Pick<CloudBrowser, "listTabs" | "viewState" | "onViewChange" | "watchTab"> = {
-      listTabs: async () => [], viewState, onViewChange: () => () => {}, watchTab,
+      listTabs: async () => ({ tabs: [], total: 0 }), viewState, onViewChange: () => () => {}, watchTab,
     };
     // SAFETY: BrowserWatch only uses the four browser operations implemented by this fixture.
     const watch = new BrowserWatch(browser as CloudBrowser, selection === "pinned" ? 1000 : undefined, () => selection === "handoff" ? handoff : undefined, () => {}, cause => new Error("view failed", { cause }), () => {});
@@ -95,7 +95,7 @@ describe("browser tab following", () => {
 
   it("refreshes tab ownership when a closing tab fails before its metadata arrives", () => fixture(async ({ watch, subscriptions, select, failure, listTabs }) => {
     select(2);
-    listTabs.mockImplementationOnce(async () => { select(3); return []; });
+    listTabs.mockImplementationOnce(async () => { select(3); return { tabs: [], total: 0 }; });
     subscriptions.get(2)!.reject(new Error("Target page has been closed"));
     await vi.waitFor(() => expect(subscriptions.has(3)).toBe(true));
     subscriptions.get(3)!.resolve(() => {});

@@ -1,4 +1,5 @@
 import type { TargetFileSystem } from "./types";
+import type { TabList } from "./tab-metadata";
 /** Values serialized across the browser backend boundary; absent object fields are omitted. */
 export type BrowserValue = string | number | boolean | null | undefined | BrowserValue[] | { [key: string]: BrowserValue };
 export type DebuggerCommand<Target> = <T extends object | undefined = object | undefined>(target: Target, method: string, params?: Record<string, BrowserValue>) => Promise<T>;
@@ -32,7 +33,7 @@ export type BrowserPageBackend = {
   executeInTab<Args extends BrowserValue[], T>(tabId: number, func: (...args: Args) => T, args: Args): Promise<T>;
 };
 export type BrowserTabsBackend = BrowserInputBackend & Pick<BrowserPageBackend, "activeTab" | "getTab"> & {
-  listTabs(): Promise<TabSummary[]>;
+  listTabs(offset?: number): Promise<TabList>;
   createTab(url: string, active: boolean): Promise<TabSummary>;
   focusTab(tabId: number): Promise<TabSummary>;
   closeTab(tabId: number): Promise<void>;

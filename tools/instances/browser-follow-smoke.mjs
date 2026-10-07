@@ -55,6 +55,18 @@ export async function checkBrowserFollowing(client, instance, website) {
     const displayed = following.view.state.tabs.find(tab => tab.id === first);
     assert.ok(displayed.title.length <= 1024);
     assert.ok(displayed.url.length <= 8192 && displayed.url.endsWith("…"));
+    for (const command of [`tabs get ${first}`, "tabs active", `tabs focus ${first}`]) {
+      const output = await shell(command);
+      const summary = JSON.parse(output.slice(output.indexOf("{"))).tab;
+      assert.ok(summary.title.length <= 1024 && summary.url.length <= 8192, `${command} returned unbounded metadata`);
+    }
+    const listed = JSON.parse(await shell("tabs list"));
+    assert.ok(listed.tabs.find(tab => tab.id === first).url.length <= 8192);
+    const remaining = JSON.parse(await shell("tabs list --offset 1"));
+    assert.deepEqual(remaining.tabs.map(tab => tab.id), listed.tabs.slice(1).map(tab => tab.id));
+    const proc = JSON.parse(await shell("cat /proc/tabs.json"));
+    assert.equal(proc.total, listed.total);
+    assert.ok(proc.tabs.find(tab => tab.id === first).url.length <= 8192);
     await shown(pinned, first);
     await shell(`page js --tab ${first} 'document.title = "GSV sign-in fixture"; history.replaceState(null, "", "/login"); "restored"'`);
     console.log("PASS: oversized page titles and URLs stay bounded without interrupting live or pinned views");
