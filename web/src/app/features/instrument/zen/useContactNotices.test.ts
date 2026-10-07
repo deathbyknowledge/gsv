@@ -39,7 +39,7 @@ function committed(sequence: number, overrides: { attention?: "notify" | "quiet"
   return { message, directed: false, attention: overrides.attention ?? "notify" };
 }
 
-async function mounted(options: Parameters<typeof useContactNotices>[0] = { enabled: true, listening: true, mayReadView: true }) {
+async function mounted(options: Parameters<typeof useContactNotices>[0] = { listening: true, mayReadView: true }) {
   const root = createTestRoot("contact notices");
   let current!: ReturnType<typeof useContactNotices>;
   function Harness() { current = useContactNotices(options); return null; }
@@ -109,7 +109,7 @@ describe("contact notices in the ship chat", () => {
   });
 
   it("collects nothing while the ship chat is behind another view", async () => {
-    const view = await mounted({ enabled: true, listening: false, mayReadView: true });
+    const view = await mounted({ listening: false, mayReadView: true });
     try {
       await emit("message.committed", committed(1));
       expect(view.current.notices).toEqual([]);
@@ -129,7 +129,7 @@ describe("contact notices in the ship chat", () => {
   });
 
   it("keeps a notice the person is typing a reply under, even once the conversation is read elsewhere", async () => {
-    const view = await mounted({ enabled: true, listening: true, holding: new Set(["contact:ada"]), mayReadView: true });
+    const view = await mounted({ listening: true, holding: new Set(["contact:ada"]), mayReadView: true });
     try {
       await emit("message.committed", committed(1));
       readThrough = 1;
@@ -140,7 +140,7 @@ describe("contact notices in the ship chat", () => {
   });
 
   it("ignores reads when the person may not read view state", async () => {
-    const view = await mounted({ enabled: true, listening: true, mayReadView: false });
+    const view = await mounted({ listening: true, mayReadView: false });
     try {
       await emit("message.committed", committed(1));
       await emit("conversation.changed", { conversationId: "conversation:contact:ada", latestSequence: 1, viewOnly: true });
@@ -165,11 +165,12 @@ describe("contact notices in the ship chat", () => {
     } finally { await view.unmount(); }
   });
 
-  it("stays silent when disabled", async () => {
-    const view = await mounted({ enabled: false, listening: true, mayReadView: true });
+  it("listens as soon as it is connected, before anything about the account is known", async () => {
+    const view = await mounted({ listening: true, mayReadView: false });
     try {
-      expect(listeners.size).toBe(0);
-      expect(view.current.notices).toEqual([]);
+      expect(listeners.size).toBe(1);
+      await emit("message.committed", committed(1));
+      expect(view.current.notices).toHaveLength(1);
     } finally { await view.unmount(); }
   });
 });

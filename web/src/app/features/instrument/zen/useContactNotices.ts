@@ -36,16 +36,16 @@ const NOBODY: ReadonlySet<string> = new Set();
 
 /**
  * Live notices for contact messages that land while the person is in the Ship chat: one per
- * contact, holding every message waiting there. Only the Kernel's `notify` call counts, so
- * muted, blocked and ended contacts stay quiet. Request-state lines and v1 peers carry no
- * social metadata and are skipped. Nothing is seeded from history, and nothing is collected
- * while the chat is behind another view: a notice exists only for messages that arrived while
- * the person was here. A notice the person replied to stays, marked as answered, until that
- * contact writes again; messages that arrived during the send stay unanswered. A notice whose
- * contact is in `holding` (the person typed a reply there) is not cleared by a read elsewhere.
+ * contact, holding every message waiting there. Listening starts as soon as the connection is
+ * up, so nothing committed while the account is still loading is missed; the caller decides
+ * what the person may see. Only the Kernel's `notify` call counts, so muted, blocked and ended
+ * contacts stay quiet. Request-state lines and v1 peers carry no social metadata and are
+ * skipped. Nothing is seeded from history, and nothing is collected while the chat is behind
+ * another view. A notice the person replied to stays, marked as answered, until that contact
+ * writes again; messages that arrived during the send stay unanswered. A notice whose contact
+ * is in `holding` (the person typed a reply there) is not cleared by a read elsewhere.
  */
-export function useContactNotices({ enabled, listening, holding = NOBODY, mayReadView }: {
-  enabled: boolean;
+export function useContactNotices({ listening, holding = NOBODY, mayReadView }: {
   listening: boolean;
   holding?: ReadonlySet<string>;
   mayReadView: boolean;
@@ -70,7 +70,7 @@ export function useContactNotices({ enabled, listening, holding = NOBODY, mayRea
   }, []);
 
   useEffect(() => {
-    if (!connected || !enabled) return;
+    if (!connected) return;
     return client.onSignal((signal, payload) => {
       if (signal === "message.committed") {
         if (!hearing.current) return;
@@ -112,7 +112,7 @@ export function useContactNotices({ enabled, listening, holding = NOBODY, mayRea
         }).catch(() => undefined);
       }
     });
-  }, [client, connected, enabled, mayReadView]);
+  }, [client, connected, mayReadView]);
 
   return { notices, markReplied };
 }

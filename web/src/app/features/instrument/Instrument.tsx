@@ -6,6 +6,8 @@ import { useSession } from "../../services/session/SessionProvider";
 import { TerminalProvider } from "../../services/terminal/TerminalProvider";
 import { DevicePairingProvider } from "../../services/machines/DevicePairingProvider";
 import { Zen } from "./zen/Zen";
+import { useShipNotices } from "./zen/useShipNotices";
+import { useConsoleAccounts } from "../../services/system/useConsoleData";
 import { Fleet, type FleetProps } from "./fleet/Fleet";
 import { Memory } from "./memory/Memory";
 import { Settings } from "./settings/Settings";
@@ -110,6 +112,10 @@ function InstrumentReady({ initialPath }: { initialPath: string }) {
   }, []);
   /* which process Zen shows: null is the ship; Fleet can open a helper's conversation */
   const [zenPid, setZenPid] = useState<string | null>(null);
+  /* Ship's contact notices live here, above the keyed Zen view, so opening a helper and coming back keeps them */
+  const accounts = useConsoleAccounts();
+  const viewer = accounts.data?.find((account) => account.relation === "self");
+  const shipNotices = useShipNotices({ viewer, listening: distance === "zen" && zenPid === null });
   const selectingProcess = useRef(false);
   const controlState = useRef({ zenDirty });
   controlState.current = { zenDirty };
@@ -304,6 +310,7 @@ function InstrumentReady({ initialPath }: { initialPath: string }) {
             if (!move("memory")) return;
             if (page) setSelectedMemoryPage({ ...page });
           }} initialTarget={zenTarget} prefill={zenPrefill} onPrefillUsed={() => setZenPrefill(null)} pid={zenPid}
+          shipNotices={zenPid ? undefined : shipNotices}
           onPeople={(contactId) => { if (move("people")) setPeopleRequest({ contactId }); }} />
         </RetainedView>
         <RetainedView active={distance === "memory"}>
