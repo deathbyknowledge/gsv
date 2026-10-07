@@ -82,6 +82,7 @@ export class BrowserTargetFileSystem implements TargetFileSystem {
   constructor(
     private readonly runtime: TargetFileSystem,
     private readonly openPersistence: () => Promise<FilePersistence | null> = async () => null,
+    readonly maxFileBytes = Number.POSITIVE_INFINITY,
   ) {}
 
   async read(path: string): Promise<Uint8Array> {
@@ -104,18 +105,20 @@ export class BrowserTargetFileSystem implements TargetFileSystem {
     const normalized = normalizePath(path);
     if (normalized === "/dev/null") return;
     this.assertWritable(normalized);
+    this.assertFileSize(content.byteLength);
     await this.assertNotDirectory(normalized);
     await this.ensureDirectory(dirname(normalized));
-    this.files.set(normalized, copyBytes(content));
     const resolvedContentType = contentType ?? inferFsContentType(normalized);
-    this.contentTypes.set(normalized, resolvedContentType);
-    await this.persistEntry({
+    const entry: StoredFsEntry = {
       path: normalized,
       kind: "file",
       content: bytesToArrayBuffer(content),
       contentType: resolvedContentType,
       updatedAt: Date.now(),
-    });
+    };
+    await this.persistEntry(entry);
+    this.files.set(normalized, new Uint8Array(entry.content));
+    this.contentTypes.set(normalized, resolvedContentType);
   }
 
   async append(path: string, content: Uint8Array): Promise<void> {
@@ -123,6 +126,7 @@ export class BrowserTargetFileSystem implements TargetFileSystem {
     const normalized = normalizePath(path);
     await this.assertNotDirectory(normalized);
     const current = await this.exists(normalized) ? await this.read(normalized) : new Uint8Array();
+    this.assertFileSize(current.byteLength + content.byteLength);
     const next = new Uint8Array(current.byteLength + content.byteLength);
     next.set(current, 0);
     next.set(content, current.byteLength);
@@ -137,28 +141,30 @@ export class BrowserTargetFileSystem implements TargetFileSystem {
     if (normalized === "/") {
       throw new Error("Refusing to delete /");
     }
-    if (this.files.delete(normalized)) {
-      this.contentTypes.delete(normalized);
+    if (this.files.has(normalized)) {
       await this.deletePersistedEntries([normalized]);
+      this.files.delete(normalized);
+      this.contentTypes.delete(normalized);
       return;
     }
     if (this.directories.has(normalized)) {
       const deletedPaths = [normalized];
       for (const file of Array.from(this.files.keys())) {
         if (file.startsWith(`${normalized}/`)) {
-          this.files.delete(file);
-          this.contentTypes.delete(file);
           deletedPaths.push(file);
         }
       }
       for (const dir of Array.from(this.directories.values())) {
         if (dir !== normalized && dir.startsWith(`${normalized}/`)) {
-          this.directories.delete(dir);
           deletedPaths.push(dir);
         }
       }
-      this.directories.delete(normalized);
       await this.deletePersistedEntries(deletedPaths);
+      for (const path of deletedPaths) {
+        this.files.delete(path);
+        this.contentTypes.delete(path);
+        this.directories.delete(path);
+      }
       return;
     }
     throw new Error(`No such file or directory: ${normalized}`);
@@ -382,14 +388,22 @@ export class BrowserTargetFileSystem implements TargetFileSystem {
   }
 
   private async ensureDirectory(path: string): Promise<void> {
-    const added = this.ensureDirectorySync(path);
-    for (const directory of added) {
+    let directory = "";
+    for (const part of normalizePath(path).split("/")) {
+      if (!part) continue;
+      directory += `/${part}`;
+      if (this.directories.has(directory)) continue;
       await this.persistEntry({
         path: directory,
         kind: "directory",
         updatedAt: Date.now(),
       });
+      this.directories.add(directory);
     }
+  }
+
+  private assertFileSize(size: number): void {
+    if (size > this.maxFileBytes) throw new Error(`Browser file exceeds the ${this.maxFileBytes} byte limit`);
   }
 
   private ensureDirectorySync(path: string): string[] {
@@ -459,10 +473,6 @@ function isRuntimeSearchPath(path: string): boolean {
     || path.startsWith("/dev/")
     || path === "/proc"
     || path.startsWith("/proc/");
-}
-
-function copyBytes(bytes: Uint8Array): Uint8Array {
-  return new Uint8Array(bytes);
 }
 
 export class BrowserFsDriver {
@@ -674,12 +684,11 @@ export class BrowserFsDriver {
     if (!body) {
       return { data: { ok: false, error: "fs.transfer.receive requires a request body" } };
     }
-    if (body.length === undefined) {
-      void body.stream.cancel();
-      return { data: { ok: false, error: "fs.transfer.receive requires a request body length" } };
-    }
-
     try {
+      if (body.length === undefined) throw new Error("fs.transfer.receive requires a request body length");
+      if (!Number.isSafeInteger(body.length) || body.length < 0) throw new Error("Invalid transfer body length");
+      const limit = this.fs.maxFileBytes ?? Number.POSITIVE_INFINITY;
+      if (body.length > limit) throw new Error(`Browser file exceeds the ${limit} byte limit`);
       const bytes = await readStream(body.stream, body.length);
       const contentType = args.contentType ?? inferFsContentType(path);
       await this.fs.write(path, bytes, contentType);
@@ -692,38 +701,32 @@ export class BrowserFsDriver {
         },
       };
     } catch (error) {
-      void body.stream.cancel(error instanceof Error ? error.message : "Binary transfer failed");
+      await body.stream.cancel(error instanceof Error ? error.message : "Binary transfer failed").catch(() => {});
       return { data: { ok: false, error: error instanceof Error ? error.message : String(error) } };
     }
   }
 }
 
 async function readStream(stream: ReadableStream<Uint8Array>, expectedSize: number): Promise<Uint8Array> {
+  const output = new Uint8Array(expectedSize);
   const reader = stream.getReader();
-  const chunks: Uint8Array[] = [];
   let size = 0;
   try {
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
       if (!value) continue;
-      size += value.byteLength;
-      if (size > expectedSize) {
-        throw new Error(`Transfer size mismatch: expected ${expectedSize}, got more than ${size}`);
+      if (value.byteLength > expectedSize - size) {
+        throw new Error(`Transfer size mismatch: expected ${expectedSize}, got at least ${size + value.byteLength}`);
       }
-      chunks.push(value);
+      output.set(value, size);
+      size += value.byteLength;
     }
   } finally {
     reader.releaseLock();
   }
   if (size !== expectedSize) {
     throw new Error(`Transfer size mismatch: expected ${expectedSize}, got ${size}`);
-  }
-  const output = new Uint8Array(size);
-  let offset = 0;
-  for (const chunk of chunks) {
-    output.set(chunk, offset);
-    offset += chunk.byteLength;
   }
   return output;
 }

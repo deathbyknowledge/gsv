@@ -9,7 +9,7 @@ import { createTabCommands } from "@humansandmachines/gsv-browser/commands/tabs"
 import type { BrowserHumanInput, BrowserPointer, BrowserViewState, CloudInstance } from "@humansandmachines/gsv/protocol";
 import { z } from "zod";
 import { BrowserInputQueue } from "./input-queue";
-import type { StoredFsEntry } from "@humansandmachines/gsv-browser/fs-persistence";
+import { browserFilePersistence, MAX_BROWSER_FILE_BYTES } from "./browser-files";
 import type { BrowserCommand, TargetFileSystem } from "@humansandmachines/gsv-browser/types";
 import { BrowserRuntimeFiles } from "./runtime-files";
 import { instance, type InstanceStore } from "./store";
@@ -72,25 +72,8 @@ export class CloudBrowser implements BrowserPageBackend, BrowserTabsBackend, Deb
       runInput: (work, signal) => this.runInput(work, signal),
     };
     const commands: BrowserCommand[] = [...createTabCommands(tabBackend).tabCommands, ...createPageCommands(pageBackend, debuggerBackend, this.references).pageCommands];
-    this.fs = new BrowserTargetFileSystem(new BrowserRuntimeFiles(this, record, commands), async () => ({
-      list: async () => this.store.sql.exec<{ entry: ArrayBuffer }>("SELECT entry FROM files WHERE instance_id = ?", record.instanceId).toArray().map(row => decodeEntry(row.entry)),
-      get: async (path) => {
-        const row = this.store.sql.exec<{ entry: ArrayBuffer }>("SELECT entry FROM files WHERE instance_id = ? AND path = ?", record.instanceId, path).toArray()[0];
-        return row ? decodeEntry(row.entry) : null;
-      },
-      put: async (entry) => {
-        if (JSON.parse(this.store.byId(record.instanceId).record).state !== "ready") throw new Error("Browser instance is no longer writable");
-        const data = encodeEntry(entry);
-        if (data.byteLength > 16 * 1024 * 1024) throw new Error("Browser file exceeds the 16 MiB limit");
-        const total = this.store.sql.exec<{ bytes: number }>("SELECT COALESCE(SUM(length(entry)), 0) AS bytes FROM files WHERE instance_id = ? AND path != ?", record.instanceId, entry.path).one().bytes;
-        if (total + data.byteLength > 64 * 1024 * 1024) throw new Error("Browser temporary storage limit reached");
-        this.store.sql.exec("INSERT INTO files (instance_id, path, entry) VALUES (?, ?, ?) ON CONFLICT(instance_id, path) DO UPDATE SET entry = excluded.entry", record.instanceId, entry.path, data);
-      },
-      delete: async (paths) => {
-        if (JSON.parse(this.store.byId(record.instanceId).record).state !== "ready") throw new Error("Browser instance is no longer writable");
-        for (const path of paths) this.store.sql.exec("DELETE FROM files WHERE instance_id = ? AND path = ?", record.instanceId, path);
-      },
-    }));
+    this.fs = new BrowserTargetFileSystem(new BrowserRuntimeFiles(this, record, commands),
+      async () => browserFilePersistence(store, record.instanceId), MAX_BROWSER_FILE_BYTES);
     this.files = new BrowserFsDriver(this.fs, async () => record.targetId);
     this.shell = new BrowserTargetShell(this.fs, commands);
   }
@@ -317,15 +300,4 @@ export class CloudBrowser implements BrowserPageBackend, BrowserTabsBackend, Deb
     this.screencasts.clear();
     await this.browser.close();
   }
-}
-
-function encodeEntry(entry: StoredFsEntry): ArrayBuffer {
-  const value = entry.kind === "file" ? { ...entry, content: Buffer.from(entry.content).toString("base64") } : entry;
-  return new Uint8Array(new TextEncoder().encode(JSON.stringify(value))).buffer;
-}
-function decodeEntry(bytes: ArrayBuffer): StoredFsEntry {
-  // SAFETY: encodeEntry is the sole writer; its file payload is base64 rather than an ArrayBuffer.
-  const value = JSON.parse(new TextDecoder().decode(bytes)) as StoredFsEntry & { content?: string };
-  if (value.kind === "file") return { ...value, content: new Uint8Array(Buffer.from(value.content, "base64")).buffer };
-  return value;
 }

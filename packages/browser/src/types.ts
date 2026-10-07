@@ -47,6 +47,7 @@ export type FileStat = {
 };
 
 export type TargetFileSystem = {
+  readonly maxFileBytes?: number;
   read(path: string): Promise<Uint8Array>;
   write(path: string, content: Uint8Array, contentType?: string): Promise<void>;
   append(path: string, content: Uint8Array): Promise<void>;

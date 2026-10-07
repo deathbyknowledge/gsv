@@ -216,6 +216,12 @@ The saved file can then be inspected or attached like other files in your home.
 Browser-local `cp`, pipes and redirection preserve binary file contents;
 `/dev/null` discards output.
 
+Cloud browser temporary storage allows 16 MiB per encoded file entry and 64 MiB
+in total. Encoding and metadata count toward these limits. Transfers declaring
+more than 16 MiB are rejected before their bodies are read; received bytes must
+also match the declared length. A failed save leaves existing file contents
+unchanged and does not publish a new file.
+
 When login is needed, associate the request with the existing responsibility for
 the task and yield after presenting the returned action link:
 
