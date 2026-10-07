@@ -9,9 +9,9 @@ function capturedRequest(input: Parameters<typeof fetch>[0]): Request {
   return input;
 }
 const xml = (value: string) => value.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
-function page(uploads: Upload[] = [], options: { marker?: Upload; next?: Upload; extra?: string } = {}): Response {
+function page(uploads: Upload[] = [], options: { marker?: Upload; next?: Upload; extra?: string; prefix?: string } = {}): Response {
   return new Response(`<?xml version="1.0" encoding="UTF-8"?><ListMultipartUploadsResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/">
-    <Bucket>test-bucket</Bucket><Prefix>${encodeURIComponent(prefix)}</Prefix><EncodingType>url</EncodingType><MaxUploads>1000</MaxUploads>
+    <Bucket>test-bucket</Bucket><Prefix>${encodeURIComponent(options.prefix ?? prefix)}</Prefix><EncodingType>url</EncodingType><MaxUploads>1000</MaxUploads>
     <KeyMarker>${encodeURIComponent(options.marker?.key ?? "")}</KeyMarker><UploadIdMarker>${xml(options.marker?.uploadId ?? "")}</UploadIdMarker>
     <NextKeyMarker>${encodeURIComponent(options.next?.key ?? "")}</NextKeyMarker><NextUploadIdMarker>${xml(options.next?.uploadId ?? "")}</NextUploadIdMarker>
     <IsTruncated>${Boolean(options.next)}</IsTruncated>${options.extra ?? ""}
@@ -34,6 +34,14 @@ function fixture() {
 }
 
 describe("R2 multipart deletion capture", () => {
+  it("uses the configured browser prefix and rejects objects from a neighboring installation", async () => {
+    const f = fixture();
+    f.configuration.catalog[0].r2Prefix = "installation-root";
+    f.transport.mockResolvedValueOnce(page([{ key: "inst_retired-other/browser-data", uploadId: "other" }], { prefix: "inst_retired/" }));
+    await expect(f.run(true)).rejects.toThrow("outside the exact installation prefix");
+    expect(new URL(f.requests()[0].url).searchParams.get("prefix")).toBe("inst_retired/");
+    expect(f.requests().every(request => request.method === "GET")).toBe(true);
+  });
   it("accepts R2's actual empty-page shape with omitted markers", async () => {
     const f = fixture();
     f.transport.mockResolvedValueOnce(new Response(`<ListMultipartUploadsResult><Bucket>test-bucket</Bucket><Prefix>${encodeURIComponent(prefix)}</Prefix><MaxUploads>1000</MaxUploads><IsTruncated>false</IsTruncated><EncodingType>url</EncodingType></ListMultipartUploadsResult>`));

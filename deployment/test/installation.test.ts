@@ -8,7 +8,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { GsvDeployment, type GsvDeploymentProps } from "../src/installation.ts";
 import { GsvRuntime, type GsvRuntimeDependencies } from "../src/runtime.ts";
 import { GsvAdapterWorker } from "../src/adapter.ts";
-import type { OperatorResourceCatalog } from "../src/deletion-bindings.ts";
+import { GsvDeletionResourceBindings, type OperatorResourceCatalog } from "../src/deletion-bindings.ts";
 
 type RecordedWorker = { id: string; props: Cloudflare.Workers.WorkerProps<Cloudflare.Workers.WorkerBindingProps> };
 type RecordedBinding = { id: string; bindings: readonly { name: string; entrypoint?: string; props?: { authority?: string; canonicalOrigin?: unknown }; json?: unknown }[] };
@@ -366,6 +366,24 @@ describe("public operator composition", () => {
     const binding = recorded.bindings.find((binding) => binding.id === "FixtureDirectoryDeletionResourcesBinding");
     const scopes = binding?.bindings.find((entry) => entry.name === "DELETION_RESOURCE_SCOPES");
     await expect(run(Output.evaluate(scopes?.json, {}))).rejects.toThrow(/multipart uploads/);
+  });
+
+  it("requires browser storage and multipart inventory to use the same installation prefix", async () => {
+    const directory = await run(dependencies.Cloudflare.Worker("Directory", { name: "directory", main: "directory.js" }));
+    const scopes = { accounts: [], gateway: [], inference: [], instances: [
+      { kind: "r2" as const, namespace: "browser-profiles", r2Prefix: "installation-root" as const },
+    ] };
+    const browser: OperatorResourceCatalog[number] = { id: "browser-multipart", kind: "r2", namespace: "browser-profiles",
+      source: "cloudflare-r2-multipart", scope: "installation", disposition: "live" };
+    await run(GsvDeletionResourceBindings("WrongPrefix", directory, scopes, [browser]));
+    const wrong = recorded.bindings.find(binding => binding.id === "WrongPrefix")!.bindings.find(entry => entry.name === "DELETION_RESOURCE_SCOPES");
+    await expect(run(Output.evaluate(wrong?.json, {}))).rejects.toThrow(/multipart uploads/);
+    browser.r2Prefix = "installation-root";
+    await run(GsvDeletionResourceBindings("BrowserPrefix", directory, scopes, [browser]));
+    const correct = recorded.bindings.find(binding => binding.id === "BrowserPrefix")!.bindings.find(entry => entry.name === "DELETION_RESOURCE_SCOPES");
+    expect(await run(Output.evaluate(correct?.json, {}))).toMatchObject({
+      instances: scopes.instances, "operator-resources": [{ kind: "r2", namespace: "browser-profiles", r2Prefix: "installation-root" }],
+    });
   });
 
   it.each(["gateway-logs", "ripgit-logs", "workers-ai", "ai-gateway", "default-provider"])("rejects a catalog missing the known %s sink", async (id) => {

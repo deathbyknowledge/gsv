@@ -292,6 +292,11 @@ The public deployment composition accepts `services.instances` together with
 `instance-installation`. Accounts receives the deletion binding with
 `authority: "installation-deletion"`. An adopted operator composition must also
 include its profile bucket and retained copies in its existing resource inventory.
+The profile bucket uses `<installationId>/` as its storage prefix. Declare
+`r2Prefix: "installation-root"` on both its `instances` resource scope and its
+`cloudflare-r2-multipart` operator catalog entry so verification and multipart
+capture inspect that exact prefix. Gateway buckets retain the default
+`installations/<installationId>/` prefix.
 Deletion closes admission, waits for termination, erases live state, and retains
 the normal Durable Object backup retention receipt. Reset uses a new installation
 identity and does not inherit these profiles.
