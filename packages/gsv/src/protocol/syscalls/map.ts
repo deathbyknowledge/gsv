@@ -446,6 +446,7 @@ export type SyscallDomains = {
   "sys.browser.profile.create": { args: Instance.SysBrowserProfileCreateArgs; result: Instance.SysBrowserProfileCreateResult };
   "sys.browser.profile.list": { args: Instance.SysBrowserProfileListArgs; result: Instance.SysBrowserProfileListResult };
   "sys.browser.profile.get": { args: Instance.SysBrowserProfileGetArgs; result: Instance.SysBrowserProfileGetResult };
+  "sys.browser.profile.save": { args: Instance.SysBrowserProfileSaveArgs; result: Instance.SysBrowserProfileSaveResult };
   "sys.browser.profile.delete": { args: Instance.SysBrowserProfileDeleteArgs; result: Instance.SysBrowserProfileDeleteResult };
   "sys.browser.handoff.request": { args: Instance.SysBrowserHandoffRequestArgs; result: Instance.SysBrowserHandoffRequestResult };
   "sys.browser.handoff.get": { args: Instance.SysBrowserHandoffGetArgs; result: Instance.SysBrowserHandoffGetResult };

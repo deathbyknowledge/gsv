@@ -1,6 +1,11 @@
 import type { CloudInstance } from "@humansandmachines/gsv/protocol";
+import type { BrowserStorageUsage } from "@humansandmachines/gsv/protocol";
+import { gzipSync, gunzipSync } from "node:zlib";
 import type { StorageState } from "./browser";
 import { profile, type InstanceStore, type ProfileRow } from "./store";
+import { BrowserStorageError, MAX_PROFILE_BYTES } from "./browser-storage";
+
+const FORMAT = new Uint8Array([71, 83, 86, 2]);
 
 /** One installation coordinator owns every lease and revision committed here. */
 export class ProfileStorage {
@@ -15,34 +20,61 @@ export class ProfileStorage {
     if (!row.object_key.startsWith(this.prefix(row))) throw new Error("Saved profile scope mismatch");
     const object = await this.bucket.get(row.object_key);
     if (!object) throw new Error("Saved profile object is missing");
+    if (object.size > MAX_PROFILE_BYTES + 65536) { await object.body.cancel(); throw new Error("Saved browser data exceeds the restore size limit"); }
     const bytes = new Uint8Array(await object.arrayBuffer());
     const data = await crypto.subtle.decrypt({ name: "AES-GCM", iv: bytes.slice(0, 12), additionalData: new TextEncoder().encode(row.object_key) }, await this.key(row), bytes.slice(12));
+    const payload = new Uint8Array(data);
+    const compressed = FORMAT.every((value, index) => payload[index] === value);
+    // Existing encrypted JSON snapshots remain readable and migrate on the next save.
+    const decoded = compressed ? gunzipSync(payload.subarray(FORMAT.length), { maxOutputLength: MAX_PROFILE_BYTES }) : payload;
+    if (decoded.byteLength > MAX_PROFILE_BYTES) throw new Error("Saved browser data exceeds the restore size limit");
     // SAFETY: Authenticated encryption binds these bytes to the exact revision saved from Playwright's storageState().
-    return JSON.parse(new TextDecoder().decode(data)) as StorageState;
+    const state = JSON.parse(new TextDecoder().decode(decoded)) as StorageState;
+    if (!Array.isArray(state.cookies) || !Array.isArray(state.origins)) throw new Error("Invalid saved browser state");
+    return state;
   }
-  async save(instance: CloudInstance, state: StorageState, maxBytes: number): Promise<void> {
+  async save(instance: CloudInstance, state: StorageState, maxBytes: number, signal?: AbortSignal, usage?: BrowserStorageUsage): Promise<void> {
+    signal?.throwIfAborted();
     if (!instance.profileId) return;
     const actor = { ownerUid: instance.ownerUid, human: false };
     const row = this.store.ownedProfile(actor, instance.profileId);
     if (!row || profile(row).state !== "active" || profile(row).activeInstanceId !== instance.instanceId) return;
     const data = new TextEncoder().encode(JSON.stringify(state));
-    if (data.byteLength > maxBytes) throw new Error("Saved browser profile exceeds the storage allowance");
+    if (data.byteLength > Math.min(maxBytes, MAX_PROFILE_BYTES)) throw new BrowserStorageError(`Saved browser data needs ${data.byteLength} bytes; allowance is ${Math.min(maxBytes, MAX_PROFILE_BYTES)} bytes`, usage);
+    const hash = Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", data)), byte => byte.toString(16).padStart(2, "0")).join("");
+    signal?.throwIfAborted();
+    if (row.object_key && profile(row).contentHash === hash) {
+      const current = this.store.ownedProfile(actor, instance.profileId);
+      if (current && profile(current).state === "active" && profile(current).activeInstanceId === instance.instanceId && current.saved_revision === row.saved_revision) {
+        this.store.putProfile({ ...profile(current), revision: profile(current).revision + 1, saveStatus: "saved", savedAt: Date.now(), bytes: data.byteLength, limitBytes: maxBytes, usage, error: undefined, diagnosticRef: undefined });
+      }
+      return;
+    }
     const revision = row.saved_revision + 1;
     const address = `${this.prefix(row)}${revision}-${crypto.randomUUID()}`;
+    const compressed = gzipSync(data);
+    const payload = new Uint8Array(FORMAT.length + compressed.byteLength); payload.set(FORMAT); payload.set(compressed, FORMAT.length);
     const iv = crypto.getRandomValues(new Uint8Array(12));
-    const encrypted = new Uint8Array(await crypto.subtle.encrypt({ name: "AES-GCM", iv, additionalData: new TextEncoder().encode(address) }, await this.key(row), data));
+    const encrypted = new Uint8Array(await crypto.subtle.encrypt({ name: "AES-GCM", iv, additionalData: new TextEncoder().encode(address) }, await this.key(row), payload));
     const bytes = new Uint8Array(12 + encrypted.byteLength); bytes.set(iv); bytes.set(encrypted, 12);
+    signal?.throwIfAborted();
     await this.bucket.put(address, bytes, { httpMetadata: { contentType: "application/octet-stream" } });
     const current = this.store.ownedProfile(actor, instance.profileId);
-    if (!current || profile(current).state !== "active" || profile(current).activeInstanceId !== instance.instanceId || current.saved_revision !== row.saved_revision) {
+    if (signal?.aborted || !current || profile(current).state !== "active" || profile(current).activeInstanceId !== instance.instanceId || current.saved_revision !== row.saved_revision) {
       await this.bucket.delete(address);
+      signal?.throwIfAborted();
       return;
     }
     this.store.storage.transactionSync(() => {
       this.store.sql.exec("UPDATE profiles SET object_key = ?, saved_revision = ? WHERE id = ?", address, revision, row.id);
-      this.store.putProfile({ ...profile(current), revision: profile(current).revision + 1, saveStatus: "saved", savedAt: Date.now(), diagnosticRef: undefined });
+      this.store.putProfile({ ...profile(current), revision: profile(current).revision + 1, saveStatus: "saved", savedAt: Date.now(), bytes: data.byteLength, storedBytes: bytes.byteLength, limitBytes: maxBytes, contentHash: hash, usage, error: undefined, diagnosticRef: undefined });
     });
-    if (row.object_key) await this.bucket.delete(row.object_key);
+    if (row.object_key) await this.bucket.delete(row.object_key).catch(cause => this.store.diagnostic(instance.instanceId, cause));
+  }
+  async read(row: ProfileRow): Promise<R2ObjectBody | null> {
+    if (!row.object_key) return null;
+    if (!row.object_key.startsWith(this.prefix(row))) throw new Error("Saved profile scope mismatch");
+    return this.bucket.get(row.object_key);
   }
   async erase(row: ProfileRow): Promise<void> {
     const prefix = `${this.installationId}/owners/${row.owner_uid}/profiles/${row.id}/`;

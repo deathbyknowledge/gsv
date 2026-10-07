@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "test": "vitest run",
+    "test": "node ../../tools/instances/storage-script.mjs --check && vitest run",
     "cf-typegen": "wrangler types --include-runtime=false"
   },
   "dependencies": {

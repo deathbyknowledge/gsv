@@ -140,6 +140,17 @@ Explicit login-help requests retain a durable handoff and completion barrier.
 The Instrument owns the viewer, tab selection and cursor presentation; the
 service owns input ordering, browser state and lifecycle.
 
+The instance coordinator serializes snapshot attempts and retains ownership of
+timed-out exports/uploads until they settle. Abort, profile leases and revision
+checks fence late commits. Website origins survive closed tabs and coordinator
+reattachment. Export uses a temporary intercepted page with closed IndexedDB
+handles; restore uses the same pinned codec and completes before readiness.
+Compressed encrypted snapshots remain in the instance service's R2 bucket.
+An ordinary stop requires a final successful save; force, expiry and deletion
+still terminate resources. The native `/var/lib/gsv/browser/{username}` mount
+projects that service's metadata and opaque snapshot, checks the same browser
+capabilities, and routes deletion through the same forget operation.
+
 ## Feedback
 
 Operators can supply `GsvRuntime.services.feedback`, exposed to the Gateway as

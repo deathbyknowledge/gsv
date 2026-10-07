@@ -139,7 +139,13 @@ export class InstanceStore {
   diagnostic(id: string | null, error: unknown): string {
     const ref = crypto.randomUUID();
     // Private diagnostics are retained at the owning boundary, never printed to telemetry.
-    this.sql.exec("INSERT INTO diagnostics (id, instance_id, occurred_at, detail) VALUES (?, ?, ?, ?)", ref, id, Date.now(), error instanceof Error ? `${error.name}: ${error.message}\n${error.stack ?? ""}` : String(error));
+    const details: string[] = [];
+    const seen = new Set<unknown>();
+    for (let cause = error; cause !== undefined && !seen.has(cause); cause = cause instanceof Error ? cause.cause : undefined) {
+      seen.add(cause);
+      details.push(cause instanceof Error ? `${cause.name}: ${cause.message}\n${cause.stack ?? ""}` : String(cause));
+    }
+    this.sql.exec("INSERT INTO diagnostics (id, instance_id, occurred_at, detail) VALUES (?, ?, ?, ?)", ref, id, Date.now(), details.join("\nCaused by: "));
     return ref;
   }
 }

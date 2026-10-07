@@ -11,6 +11,47 @@ import { BrowserViewer } from "./BrowserControl";
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 describe("live browser viewing", () => {
+  it("keeps a browser open after a failed stop, retries saving, and requires an explicit force action", async () => {
+    vi.stubGlobal("document", new EventTarget());
+    vi.spyOn(GSVClient.prototype, "getStatus").mockReturnValue({ state: "connected", url: null, username: null, connectionId: null, message: null });
+    vi.spyOn(GSVClient.prototype, "onStatus").mockImplementation(() => () => {});
+    const instance: CloudInstance = { instanceId: "instance", targetId: "1234abcd", startRequestId: "start", ownerUid: 1000,
+      templateId: "browser", templateRevision: "1", kind: "browser", implements: [], label: "Browser", state: "ready", revision: 1, createdAt: 1, expiresAt: Date.now() + 60000 };
+    const request = vi.spyOn(GSVClient.prototype, "request").mockImplementation(async (call, args) => {
+      if (call === "sys.instance.get") return { data: { instance: { ...instance } } };
+      if (call === "sys.browser.watch") return { data: { watchId: "watch", version: 1 }, body: { stream: new ReadableStream<Uint8Array>() } };
+      if (call === "sys.browser.profile.save") return { data: { profile: null } };
+      if (call === "sys.instance.stop") {
+        if (args && "force" in args && args.force) return { data: { instance: { ...instance, state: "stopping" } } };
+        instance.persistence = { saveStatus: "failed", error: "Browser data could not be saved", savedAt: 1 };
+        throw new Error("The browser is still running");
+      }
+      throw new Error(`Unexpected request ${call}`);
+    });
+    const cache = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity } } });
+    const root = createTestRoot("Save failure"), close = vi.fn();
+    let tree: ComponentChildren;
+    function Harness() { tree = BrowserViewer({ request: { instanceId: instance.instanceId }, onClose: close }); return null; }
+    const click = async (label: string) => {
+      const button = collectNodes(tree).find(node => node.type === "button" && collectText(node) === label);
+      expect(button).toBeDefined();
+      await act(async () => { button!.props.onClick?.(); });
+    };
+    try {
+      await root.render(<GatewayProvider><QueryClientProvider client={cache}><Harness /></QueryClientProvider></GatewayProvider>);
+      await vi.waitFor(() => expect(request.mock.calls.some(([call]) => call === "sys.browser.watch")).toBe(true));
+      await click("stop browser");
+      await vi.waitFor(() => expect(collectText(tree)).toContain("retry save"));
+      expect(close).not.toHaveBeenCalled();
+      await click("retry save");
+      await vi.waitFor(() => expect(request.mock.calls.some(([call]) => call === "sys.browser.profile.save")).toBe(true));
+      await click("stop without saving");
+      await vi.waitFor(() => expect(close).toHaveBeenCalledOnce());
+      expect(request.mock.calls.filter(([call]) => call === "sys.instance.stop").map(([, args]) => args)).toEqual([
+        { instanceId: "instance", force: undefined }, { instanceId: "instance", force: true },
+      ]);
+    } finally { await root.unmount(); cache.clear(); }
+  });
   it("watches without a handoff, binds input to the displayed image, and discards unsent input on close", async () => {
     vi.stubGlobal("document", new EventTarget());
     vi.stubGlobal("requestAnimationFrame", (callback: () => void) => setTimeout(callback, 0));

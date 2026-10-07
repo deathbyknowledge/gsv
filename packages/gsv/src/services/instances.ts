@@ -4,7 +4,7 @@ import type { BinaryBody } from "../protocol/body";
 import type { SyscallDomains, SyscallName } from "../protocol/syscalls/map";
 import type {
   SysInstanceCatalogResult, SysInstanceStartArgs, SysInstanceStartResult,
-  SysInstanceListArgs, SysInstanceListResult, InstanceSelector, SysInstanceGetResult,
+  SysInstanceListArgs, SysInstanceListResult, InstanceSelector, SysInstanceGetResult, SysInstanceStopArgs,
   SysBrowserProfileCreateArgs, SysBrowserProfileCreateResult,
   SysBrowserProfileListResult, SysBrowserProfileGetResult,
   SysBrowserHandoffRequestArgs, SysBrowserHandoffRequestResult,
@@ -33,6 +33,10 @@ export const instanceSelectorSchema = z.union([
   z.strictObject({ startRequestId: id }),
 ]) satisfies z.ZodType<InstanceSelector>;
 export const instanceListSchema = z.strictObject({ includeTerminal: z.boolean().optional() });
+export const instanceStopSchema = z.union([
+  z.strictObject({ instanceId: id, force: z.boolean().optional() }),
+  z.strictObject({ startRequestId: id, force: z.boolean().optional() }),
+]) satisfies z.ZodType<SysInstanceStopArgs>;
 export const browserProfileCreateSchema = z.strictObject({ requestId: id, label: z.string().trim().min(1).max(100) });
 export const browserProfileSelectorSchema = z.strictObject({ profileId: id });
 export const browserHandoffRequestSchema = z.strictObject({
@@ -52,11 +56,13 @@ export interface InstallationInstances {
   start(actor: InstanceActor, args: SysInstanceStartArgs): Promise<SysInstanceStartResult>;
   list(actor: InstanceActor, args: SysInstanceListArgs): Promise<SysInstanceListResult>;
   get(actor: InstanceActor, selector: InstanceSelector): Promise<SysInstanceGetResult>;
-  stop(actor: InstanceActor, selector: InstanceSelector): Promise<SysInstanceGetResult>;
+  stop(actor: InstanceActor, selector: SysInstanceStopArgs): Promise<SysInstanceGetResult>;
   createProfile(actor: InstanceActor, args: SysBrowserProfileCreateArgs): Promise<SysBrowserProfileCreateResult>;
   listProfiles(actor: InstanceActor): Promise<SysBrowserProfileListResult>;
   getProfile(actor: InstanceActor, profileId: string): Promise<SysBrowserProfileGetResult>;
   deleteProfile(actor: InstanceActor, profileId: string): Promise<SysBrowserProfileGetResult>;
+  saveProfile(actor: InstanceActor, instanceId: string): Promise<SysBrowserProfileGetResult>;
+  readProfileState(actor: InstanceActor, profileId: string): Promise<{ body: BinaryBody; size: number } | null>;
   requestHandoff(actor: InstanceActor, args: SysBrowserHandoffRequestArgs): Promise<SysBrowserHandoffRequestResult>;
   getHandoff(actor: InstanceActor, args: SysBrowserHandoffGetArgs): Promise<SysBrowserHandoffGetResult>;
   cancelHandoff(actor: InstanceActor, args: SysBrowserHandoffGetArgs): Promise<SysBrowserHandoffGetResult>;

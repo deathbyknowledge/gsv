@@ -18,6 +18,17 @@ function fixture(request: NonNullable<NativeShellCommandOptions["request"]>, cal
 }
 
 describe("native instance readiness", () => {
+  it("waits for stop to release the browser and forwards an explicit force request", async () => {
+    const request = vi.fn<NonNullable<NativeShellCommandOptions["request"]>>(async frame => ({
+      type: "res", id: frame.id, ok: true,
+      data: { instance: { ...instance, state: frame.call === "sys.instance.stop" ? "stopping" : "stopped" } },
+    }));
+    const result = await fixture(request).exec("instance stop 12345678 --force --wait");
+    expect(result.exitCode).toBe(0);
+    expect(JSON.parse(result.stdout).instance.state).toBe("stopped");
+    expect(request.mock.calls[0][0]).toMatchObject({ call: "sys.instance.stop", args: { instanceId: "12345678", force: true } });
+    expect(request.mock.calls.map(([frame]) => frame.call)).toEqual(["sys.instance.stop", "sys.instance.get"]);
+  });
   it("waits for ready, retains the start receipt and never starts a second time", async () => {
     const request = vi.fn<NonNullable<NativeShellCommandOptions["request"]>>(async frame => ({
       type: "res", id: frame.id, ok: true,

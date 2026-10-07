@@ -67,11 +67,17 @@ Use `:quit`, `:exit`, or `:q` to leave.
 
 With the optional cloud instance service enabled, the gateway shell also exposes
 `instance catalog`, `instance start browser --request-id ID --wait`, `instance list`,
-`instance get ID`, and `instance stop ID`. Starting reuses the account's current
+`instance get ID`, and `instance stop ID --wait`. Starting reuses the account's current
 browser and reports `created` or `reused`; `--new` explicitly creates a separate
 temporary one. `--wait` waits for readiness for up to 60 seconds by default
 (`--timeout MS`, maximum 120000). Cancelling the wait leaves the instance running.
 Get and stop accept the displayed target ID or full instance ID. Ordinary browsers
+save before stopping; a failed save leaves the browser running. Stop `--wait`
+waits for termination and release of saved state. Retry a save with
+`browser profile save ID`, or explicitly discard unsaved changes with
+`instance stop ID --force --wait`. Inspect save status and per-site usage at
+`/var/lib/gsv/browser/<account>/`; deleting `state.enc` forgets saved logins.
+Ordinary browsers
 remember logins automatically. Use `browser handoff` when Ship needs a human to
 complete a sign-in; opening Fleet's browser view otherwise leaves Ship running
 and accepts direct input. These are native target commands, available to Ship

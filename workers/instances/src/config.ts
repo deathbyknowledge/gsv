@@ -3,6 +3,7 @@ import { EntitlementCache } from "@humansandmachines/gsv/services/entitlements";
 import type { EntitlementsService } from "@humansandmachines/gsv/services/entitlements";
 import type { InstallationDirectoryService } from "@humansandmachines/gsv/services/directory";
 import type { InstanceTemplate } from "@humansandmachines/gsv/protocol";
+import { DEFAULT_PROFILE_BYTES, MAX_PROFILE_BYTES } from "./browser-storage";
 
 export type Environment = Omit<Env, "INSTALLATION_DIRECTORY"> & {
   INSTALLATION_DIRECTORY: InstallationDirectoryService;
@@ -14,7 +15,7 @@ export const limitsSchema = z.strictObject({
   periodSeconds: z.number().int().nonnegative(),
   maxInstanceSeconds: z.number().int().min(60).max(86400),
   savedProfiles: z.number().int().min(0).max(1000),
-  profileStorageBytes: z.number().int().positive().max(100 * 1024 * 1024),
+  profileStorageBytes: z.number().int().positive().max(MAX_PROFILE_BYTES),
 });
 export type BrowserLimits = z.infer<typeof limitsSchema>;
 export const IMPLEMENTATIONS = ["shell.exec", "fs.read", "fs.write", "fs.edit", "fs.delete", "fs.search", "fs.copy", "fs.transfer.stat", "fs.transfer.send", "fs.transfer.receive"];
@@ -40,7 +41,7 @@ export class InstancePolicy {
       periodSeconds: values["browser.period_seconds"] ?? 0,
       maxInstanceSeconds: values["browser.max_instance_seconds"] ?? 1800,
       savedProfiles: values["browser.saved_profiles"] ?? 0,
-      profileStorageBytes: values["browser.profile_storage_bytes"] ?? 5242880,
+      profileStorageBytes: values["browser.profile_storage_bytes"] ?? DEFAULT_PROFILE_BYTES,
     });
   }
   async requireActive(): Promise<void> {

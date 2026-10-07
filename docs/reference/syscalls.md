@@ -1606,6 +1606,7 @@ type InstanceSyscalls = {
   "sys.browser.profile.create": { args: SysBrowserProfileCreateArgs; result: SysBrowserProfileCreateResult };
   "sys.browser.profile.list": { args: SysBrowserProfileListArgs; result: SysBrowserProfileListResult };
   "sys.browser.profile.get": { args: SysBrowserProfileGetArgs; result: SysBrowserProfileGetResult };
+  "sys.browser.profile.save": { args: SysBrowserProfileSaveArgs; result: SysBrowserProfileSaveResult };
   "sys.browser.profile.delete": { args: SysBrowserProfileDeleteArgs; result: SysBrowserProfileDeleteResult };
   "sys.browser.handoff.request": { args: SysBrowserHandoffRequestArgs; result: SysBrowserHandoffRequestResult };
   "sys.browser.handoff.get": { args: SysBrowserHandoffGetArgs; result: SysBrowserHandoffGetResult };

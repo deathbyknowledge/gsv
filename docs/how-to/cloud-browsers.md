@@ -46,10 +46,47 @@ local account in this space. The next ordinary browser restores that saved
 state; there is no profile picker. Saved state is encrypted and separate from
 the running browser. Only one instance can use the same saved state at a time.
 
+GSV saves periodically, after human input settles, when you finish a login
+handoff, and before an ordinary stop. Closing a website tab does not forget its
+saved data. Restore completes before the next browser becomes ready. If restore
+fails, that start fails visibly rather than opening an empty replacement.
+
+**Stop browser** saves successfully before closing. If saving fails, the browser
+stays running within its original lifetime, and the view offers **retry save**
+and **stop without saving**. The warning shows the last successful save time.
+Expiry and forced shutdown still close the browser; unsaved changes can be lost.
+The previous successful snapshot survives a failed, oversized or timed-out save.
+
+Saved data is also inspectable on `gsv`, under your account name:
+
+```text
+/var/lib/gsv/browser/hank/
+  README.txt
+  status.json
+  sites.json
+  state.enc
+```
+
+`status.json` reports save status, timestamps, duration and raw/encrypted sizes.
+`sites.json` reports per-origin local storage and IndexedDB sizes, database and
+record counts, and cookie counts/sizes by domain. These files contain no login
+values. `state.enc` is the opaque encrypted snapshot; its key stays with the
+instance service, so copying the file alone is not a portable backup. The files
+are read-only. Delete `state.enc`, or recursively remove your account directory,
+to forget saved logins. This stops the browser using that state, fences pending
+saves and erases its snapshots and key. Physical cleanup can continue after the
+directory disappears. The next ordinary start creates fresh state. Access follows
+the same human owner and browser permissions as the browser API.
+
 This does not copy your personal browser's passwords, extensions or passkeys.
 Websites can expire a session or require another login. Device-bound sign-in,
 security keys, downloads/uploads through the viewer, browser permission dialogs
 and sites that reject cloud browsers may require a connected personal browser.
+This is a website storage snapshot, not a complete Chrome user-data directory:
+session storage, service-worker caches and filesystem-backed site storage are
+not included. IndexedDB export supports binary buffers/views, dates, maps, sets,
+bigints and cyclic values. Unsupported values, including CryptoKey and Blob
+records, fail the save visibly instead of silently becoming empty objects.
 
 Every instance has a fixed lifetime. Reusing it does not extend that lifetime
 or reserve more time. Ship or you can stop it sooner with **stop browser**.
@@ -85,7 +122,8 @@ instance catalog
 instance start browser --request-id <saved-request-id> --seconds 900 --wait
 instance get <browser-id>
 instance list
-instance stop <browser-id>
+instance stop <browser-id> --wait
+browser profile save <browser-id>
 ```
 
 The result reports `disposition: created` or `reused`. `--wait` returns when the
@@ -94,6 +132,10 @@ sets a wait of up to 120 seconds. A timeout or cancellation stops waiting and
 leaves the instance available for inspection by the saved request ID. Instance
 commands accept either the displayed eight-character target ID or the full
 instance ID. An unknown instance ID is an error, including for stop.
+For stop, `--wait` returns after termination and release of the saved-state lease.
+Ordinary stop fails if the final save fails. `instance stop <browser-id> --force
+--wait` explicitly discards unsaved changes. `browser profile save` retries a save
+and returns its status; instance results also include compact persistence status.
 
 The ordinary start reuses the current browser. Use tabs for additional work and
 close your task's tabs when finished. Do not stop a shared browser just because
@@ -176,6 +218,13 @@ or an `ENTITLEMENTS` service implementing these policy keys:
 | `browser.max_instance_seconds` | Maximum lifetime for one instance |
 | `browser.saved_profiles` | Space-wide saved profile count |
 | `browser.profile_storage_bytes` | Maximum saved state bytes per profile |
+
+The local default is 16 MiB of uncompressed serialized state per saved browser;
+the service accepts an operator limit up to 32 MiB. Snapshots are compressed
+before authenticated encryption, and unchanged state does not upload a new R2
+revision. Usage metadata includes failed oversized attempts. Export bounds the
+data transferred out of Chromium and restore bounds decompression. This allowance
+does not guarantee that a website will preserve or accept a login.
 
 Admission, reservations and settlement are owned by the instance service.
 Provider billing reconciliation is separate from this customer allowance.

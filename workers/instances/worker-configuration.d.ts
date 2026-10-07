@@ -3,7 +3,7 @@
 interface __BaseEnv_Env {
 	PROFILES: R2Bucket;
 	BROWSER: BrowserRun;
-	BROWSER_LIMITS: {"enabled":false,"concurrentInstances":0,"periodSeconds":0,"maxInstanceSeconds":1800,"savedProfiles":0,"profileStorageBytes":5242880};
+	BROWSER_LIMITS: {"enabled":false,"concurrentInstances":0,"periodSeconds":0,"maxInstanceSeconds":1800,"savedProfiles":0,"profileStorageBytes":16777216};
 	INSTANCES: DurableObjectNamespace<import("./src/index").InstanceCoordinator>;
 	INSTALLATION_DIRECTORY: Fetcher /* gsv-installations */;
 }

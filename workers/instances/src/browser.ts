@@ -15,9 +15,10 @@ import { BrowserRuntimeFiles } from "./runtime-files";
 import { instance, type InstanceStore } from "./store";
 import { within } from "./browser-operation";
 import { BrowserScreencast, type CapturedBrowserFrame } from "./browser-view";
+import { exportBrowserStorage, restoreBrowserStorage, type BrowserSnapshot } from "./browser-storage";
 
 export type StorageState = Awaited<ReturnType<BrowserContext["storageState"]>>;
-type RuntimeState = { contextId: string; nextTabId: number; activeTabId: number; tabs: Record<string, string> };
+type RuntimeState = { contextId: string; nextTabId: number; activeTabId: number; tabs: Record<string, string>; origins?: string[]; storageTargets?: string[] };
 
 /** Owns one surviving Chromium session. Reconnection never launches a replacement. */
 export class CloudBrowser implements BrowserPageBackend, BrowserTabsBackend, DebuggerBackend<CDPSession> {
@@ -31,6 +32,7 @@ export class CloudBrowser implements BrowserPageBackend, BrowserTabsBackend, Deb
   private readonly screencasts = new Map<number, Promise<BrowserScreencast>>();
   private readonly closingScreencasts = new Map<number, Promise<void>>();
   private readonly viewListeners = new Set<() => void>();
+  private readonly storagePages = new Set<Page>();
   private refresh: Promise<void> | undefined;
   private readonly inputQueue = new BrowserInputQueue();
   pointer: BrowserPointer | undefined;
@@ -42,6 +44,18 @@ export class CloudBrowser implements BrowserPageBackend, BrowserTabsBackend, Deb
     private readonly record: CloudInstance,
     private readonly store: InstanceStore,
   ) {
+    this.state.origins ??= [];
+    const observe = (page: Page) => {
+      const remember = (url: string) => {
+        if (this.storagePages.has(page) || !/^https?:\/\//.test(url)) return;
+        const origin = new URL(url).origin;
+        if (!this.state.origins!.includes(origin)) { this.state.origins!.push(origin); this.persist(); }
+      };
+      for (const frame of page.frames()) remember(frame.url());
+      page.on("framenavigated", frame => remember(frame.url()));
+    };
+    for (const page of context.pages()) observe(page);
+    context.on("page", observe);
     const pageBackend: BrowserPageBackend = {
       activeTab: () => this.activeTab(), getTab: id => this.getTab(id), captureTabPng: id => this.captureTabPng(id),
       executeInTab: (id, func, args) => this.executeInTab(id, func, args),
@@ -88,6 +102,7 @@ export class CloudBrowser implements BrowserPageBackend, BrowserTabsBackend, Deb
     if (row.runtime) {
       // SAFETY: persist() is the sole writer of this private runtime record.
       state = JSON.parse(row.runtime) as RuntimeState;
+      state.origins = [...new Set([...(state.origins ?? []), ...(savedState?.origins.map(origin => origin.origin) ?? [])])];
       const candidates = await Promise.all(browser.contexts().map(async candidate => {
         const page = candidate.pages()[0];
         if (!page) return null;
@@ -100,14 +115,27 @@ export class CloudBrowser implements BrowserPageBackend, BrowserTabsBackend, Deb
       const existing = candidates.find(candidate => candidate !== null);
       if (!existing) throw new Error("Browser context no longer exists; start a new instance");
       context = existing;
+      // A coordinator eviction can strand an export page. Close only targets
+      // durably claimed by the exporter, before publishing tabs again.
+      if (state.storageTargets?.length) {
+        for (const page of context.pages()) {
+          const cdp = await context.newCDPSession(page);
+          try {
+            const { targetInfo } = await cdp.send("Target.getTargetInfo");
+            if (state.storageTargets.includes(targetInfo.targetId)) await page.close();
+          } finally { if (!page.isClosed()) await cdp.detach(); }
+        }
+        state.storageTargets = [];
+      }
     } else {
-      context = await browser.newContext({ storageState: savedState, viewport: { width: 1280, height: 800 } });
+      context = await browser.newContext({ viewport: { width: 1280, height: 800 } });
+      if (savedState) await restoreBrowserStorage(context, savedState);
       const page = await context.newPage();
       const cdp = await context.newCDPSession(page);
       const { targetInfo } = await cdp.send("Target.getTargetInfo");
       await cdp.detach();
       if (!targetInfo.browserContextId) throw new Error("Browser did not provide an isolated context");
-      state = { contextId: targetInfo.browserContextId, nextTabId: 2, activeTabId: 1, tabs: { "1": targetInfo.targetId } };
+      state = { contextId: targetInfo.browserContextId, nextTabId: 2, activeTabId: 1, tabs: { "1": targetInfo.targetId }, origins: savedState?.origins.map(origin => origin.origin) ?? [] };
     }
     const runtime = new CloudBrowser(browser, context, state, record, store);
     runtime.persist();
@@ -123,7 +151,7 @@ export class CloudBrowser implements BrowserPageBackend, BrowserTabsBackend, Deb
     this.refresh ??= (async () => {
       const found = new Set<number>();
       for (const page of this.context.pages()) {
-        if (page.isClosed()) continue;
+        if (page.isClosed() || this.storagePages.has(page)) continue;
         const cdp = await this.debuggerFor(page);
         const { targetInfo } = await within(cdp.send("Target.getTargetInfo"), 5000, "Browser tab metadata");
         let id = Number(Object.keys(this.state.tabs).find(key => this.state.tabs[key] === targetInfo.targetId));
@@ -210,7 +238,12 @@ export class CloudBrowser implements BrowserPageBackend, BrowserTabsBackend, Deb
   async viewerUrlFor(path: string, contentType: string, _label: string, fs: TargetFileSystem): Promise<string> {
     return `data:${contentType};base64,${Buffer.from(await fs.read(path)).toString("base64")}`;
   }
-  async save(): Promise<StorageState> { return this.context.storageState({ indexedDB: true }); }
+  async save(maxBytes: number, signal: AbortSignal): Promise<BrowserSnapshot> {
+    return exportBrowserStorage(this.context, this.state.origins ?? [], maxBytes, signal, this.storagePages, (targetId, owned) => {
+      this.state.storageTargets = owned ? [...(this.state.storageTargets ?? []), targetId] : (this.state.storageTargets ?? []).filter(id => id !== targetId);
+      this.persist();
+    });
+  }
   async documentId(id: number): Promise<string> {
     const cdp = await this.debuggerFor(await this.page(id));
     return (await within(cdp.send("Page.getFrameTree"), 5000, "Browser document identity")).frameTree.frame.loaderId;

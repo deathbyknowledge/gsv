@@ -1,6 +1,6 @@
 import { runInDurableObject } from "cloudflare:test";
 import { env } from "cloudflare:workers";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { instance, InstanceStore, profile } from "../src/store";
 import { ProfileStorage } from "../src/profiles";
 import { migrate } from "../src/schema";
@@ -112,6 +112,67 @@ describe("instance admission", () => {
 });
 
 describe("saved profile encryption", () => {
+  it("removes a late upload after cancellation instead of replacing the last good revision", () => inStore(async store => {
+    const started = store.admit(actor, { requestId: "late", templateId: "browser" }, limits);
+    const storage = new ProfileStorage("late", bucket, store);
+    const state = { cookies: [], origins: [] };
+    await storage.save(started, state, 10000);
+    const before = store.ownedProfile(actor, started.profileId!)!;
+    let release!: () => void;
+    const put = bucket.put.bind(bucket);
+    const uploading = vi.fn(async (...args: Parameters<R2Bucket["put"]>) => {
+      const result = await put(...args);
+      await new Promise<void>(resolve => { release = resolve; });
+      return result;
+    });
+    const delayed: R2Bucket = {
+      // SAFETY: The delayed put delegates every overload to the real bucket and
+      // preserves its result, delaying only the completion notification.
+      put: uploading as R2Bucket["put"],
+      get: bucket.get.bind(bucket), head: bucket.head.bind(bucket),
+      delete: bucket.delete.bind(bucket), list: bucket.list.bind(bucket),
+      createMultipartUpload: bucket.createMultipartUpload.bind(bucket),
+      resumeMultipartUpload: bucket.resumeMultipartUpload.bind(bucket),
+    };
+    const abort = new AbortController();
+    const saving = new ProfileStorage("late", delayed, store).save(started, { cookies: [], origins: [{ origin: "https://example.com", localStorage: [] }] }, 10000, abort.signal);
+    const rejected = expect(saving).rejects.toThrow("Cancelled");
+    await vi.waitFor(() => expect(release).toBeDefined());
+    abort.abort(new Error("Cancelled")); release(); await rejected;
+    expect(store.ownedProfile(actor, started.profileId!)?.object_key).toBe(before.object_key);
+    expect((await bucket.list({ prefix: `late/owners/1000/profiles/${started.profileId}/` })).objects.map(object => object.key)).toEqual([before.object_key]);
+  }));
+  it("compresses large state, skips unchanged uploads, and retains it after an oversized save", () => inStore(async store => {
+    const started = store.admit(actor, { requestId: "large", templateId: "browser" }, limits);
+    const storage = new ProfileStorage("large", bucket, store);
+    const state = { cookies: [], origins: [{ origin: "https://example.com", localStorage: [{ name: "cache", value: "x".repeat(8 * 1024 * 1024) }] }] };
+    await storage.save(started, state, 16 * 1024 * 1024);
+    const row = store.ownedProfile(actor, started.profileId!)!;
+    expect(profile(row).bytes).toBeGreaterThan(8 * 1024 * 1024);
+    expect(profile(row).storedBytes).toBeLessThan(16000);
+    expect(await storage.restore(row)).toEqual(state);
+    await storage.save(started, state, 16 * 1024 * 1024);
+    expect(store.ownedProfile(actor, started.profileId!)?.object_key).toBe(row.object_key);
+    await expect(storage.save(started, state, 5 * 1024 * 1024)).rejects.toThrow("allowance");
+    expect(await storage.restore(store.ownedProfile(actor, started.profileId!)!)).toEqual(state);
+  }));
+  it("reads legacy encrypted JSON then upgrades it on the next save", () => inStore(async store => {
+    const started = store.admit(actor, { requestId: "legacy", templateId: "browser" }, limits);
+    const row = store.ownedProfile(actor, started.profileId!)!;
+    const address = `legacy/owners/${actor.ownerUid}/profiles/${row.id}/1-old`;
+    const state = { cookies: [], origins: [{ origin: "https://example.com", localStorage: [{ name: "session", value: "legacy" }] }] };
+    const key = await crypto.subtle.importKey("raw", row.key!, "AES-GCM", false, ["encrypt"]);
+    const iv = crypto.getRandomValues(new Uint8Array(12));
+    const encrypted = new Uint8Array(await crypto.subtle.encrypt({ name: "AES-GCM", iv, additionalData: new TextEncoder().encode(address) }, key, new TextEncoder().encode(JSON.stringify(state))));
+    const bytes = new Uint8Array(12 + encrypted.length); bytes.set(iv); bytes.set(encrypted, 12);
+    await bucket.put(address, bytes);
+    store.sql.exec("UPDATE profiles SET object_key = ?, saved_revision = 1 WHERE id = ?", address, row.id);
+    const storage = new ProfileStorage("legacy", bucket, store);
+    expect(await storage.restore(store.ownedProfile(actor, row.id)!)).toEqual(state);
+    await storage.save(started, state, 10000);
+    expect(store.ownedProfile(actor, row.id)?.saved_revision).toBe(2);
+    expect(await bucket.get(address)).toBeNull();
+  }));
   it("never overwrites or deletes a concurrently committed revision", () => inStore(async store => {
     const saved = store.createProfile(actor, "profile", "Personal", limits);
     const started = store.admit(actor, { requestId: "start", templateId: "browser", profileId: saved.profileId, lifetimeSeconds: 300 }, limits);

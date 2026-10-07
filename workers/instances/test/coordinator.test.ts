@@ -7,6 +7,7 @@ import { InstancePolicy } from "../src/config";
 import { BrowserProvider } from "../src/provider";
 import { instance, InstanceStore } from "../src/store";
 import { ProfileStorage } from "../src/profiles";
+import { BrowserStorageError } from "../src/browser-storage";
 
 const actor = { ownerUid: 1000, human: true };
 const limits = { enabled: true, concurrentInstances: 2, periodSeconds: 36000, maxInstanceSeconds: 1800, savedProfiles: 5, profileStorageBytes: 5242880 };
@@ -24,7 +25,7 @@ async function fixture(work: (object: InstanceCoordinator, store: InstanceStore,
     watchTab: async (_id, frame) => { frame({ tabId: 1, documentId: "document", capturedAt: Date.now(), width: 1280, height: 800, image: new Uint8Array([1, 2]) }); return () => {}; },
     humanInput, humanFrame: async () => ({ bytes: new Uint8Array([1, 2]), documentId: "document" }),
     documentId: async () => "document", runInput: async work => work(), focusTab: async () => ({ id: 1 }),
-    save: async () => ({ cookies: [], origins: [] }),
+    save: async () => ({ state: { cookies: [], origins: [] }, usage: { bytes: 27, cookieBytes: 2, cookies: 0, sites: [] } }),
     // SAFETY: These coordinator tests exercise only shell execution and its idle barrier.
     shell: shell as CloudBrowser["shell"],
   };
@@ -153,6 +154,48 @@ describe("human browser control", () => {
 });
 
 describe("browser health", () => {
+  it("keeps a failed final save running, exposes measured usage, and permits force stop", () => fixture(async (object, store, instanceId, _installationId, browser) => {
+    const usage = { bytes: 7000000, cookieBytes: 42, cookies: 1, sites: [{ origin: "https://example.com", bytes: 6999958, localStorageBytes: 10, indexedDBBytes: 6999948, localStorageEntries: 1, databases: 1, records: 3 }] };
+    browser.save = vi.fn(async () => { throw new BrowserStorageError("Storage allowance exceeded", usage); });
+    await expect(object.stop(actor, { instanceId })).rejects.toThrow("still running");
+    expect((await object.get(actor, { instanceId })).instance).toMatchObject({ state: "ready", persistence: { saveStatus: "failed", error: "Storage allowance exceeded" } });
+    expect((await object.getProfile(actor, instance(store.byId(instanceId)).profileId!)).profile?.usage).toEqual(usage);
+    await object.stop(actor, { instanceId, force: true });
+    expect((await object.get(actor, { instanceId })).instance?.state).toBe("stopping");
+    expect(browser.save).toHaveBeenCalledOnce();
+  }));
+
+  it("serializes concurrent saves and retries successfully before stopping", () => fixture(async (object, _store, instanceId, _installationId, browser) => {
+    let release!: () => void;
+    const original = browser.save!;
+    browser.save = vi.fn(async (...args) => { await new Promise<void>(resolve => { release = resolve; }); return original(...args); });
+    const first = object.saveProfile(actor, instanceId);
+    const second = object.saveProfile(actor, instanceId);
+    await vi.waitFor(() => expect(browser.save).toHaveBeenCalledOnce());
+    release();
+    const results = await Promise.all([first, second]);
+    expect(results.every(result => result.profile?.saveStatus === "saved")).toBe(true);
+    browser.save = original;
+    await object.stop(actor, { instanceId });
+    expect((await object.get(actor, { instanceId })).instance).toMatchObject({ state: "stopping", persistence: { saveStatus: "saved" } });
+  }));
+
+  it("fences a save when forgetting while it is still exporting", () => fixture(async (object, store, instanceId, _installationId, browser) => {
+    let release!: () => void;
+    const original = browser.save!;
+    browser.save = vi.fn(async (...args) => { await new Promise<void>(resolve => { release = resolve; }); return original(...args); });
+    const saving = object.saveProfile(actor, instanceId);
+    await vi.waitFor(() => expect(browser.save).toHaveBeenCalledOnce());
+    const profileId = instance(store.byId(instanceId)).profileId!;
+    await object.deleteProfile(actor, profileId);
+    release(); await saving;
+    expect(store.ownedProfile(actor, profileId)?.object_key).toBeNull();
+    expect((await object.get(actor, { instanceId })).instance?.state).toBe("stopping");
+    vi.spyOn(BrowserProvider.prototype, "exists").mockResolvedValue(false);
+    await object.alarm();
+    expect((await object.getProfile(actor, profileId)).profile?.state).toBe("deleted");
+  }));
+
   it("checks browser liveness without waiting for a page title or frame", () => fixture(async (object, _store, instanceId, _installationId, browser) => {
     browser.listTabs = vi.fn(() => new Promise(() => {}));
     await object.alarm();
@@ -205,12 +248,14 @@ describe("installation retirement", () => {
     vi.spyOn(ProfileStorage.prototype, "save").mockImplementation(() => new Promise<void>(resolve => { release = resolve; saving(); }));
     const exists = vi.spyOn(BrowserProvider.prototype, "exists").mockResolvedValue(true);
     vi.spyOn(BrowserProvider.prototype, "close").mockResolvedValue();
-    await object.stop(actor, { instanceId });
     vi.useFakeTimers();
-    const stopping = object.alarm();
+    const stopping = object.stop(actor, { instanceId });
+    const failed = expect(stopping).rejects.toThrow("still running");
     await saveStarted;
-    await vi.advanceTimersByTimeAsync(10001);
-    await stopping;
+    await vi.advanceTimersByTimeAsync(20001);
+    await failed;
+    expect((await object.get(actor, { instanceId })).instance?.state).toBe("ready");
+    await object.stop(actor, { instanceId, force: true });
     exists.mockResolvedValue(false);
     await object.alarm();
     expect((await object.get(actor, { instanceId })).instance?.state).toBe("stopped");

@@ -364,6 +364,7 @@ const SYSCALL_NAMES = [
   "sys.browser.profile.create",
   "sys.browser.profile.list",
   "sys.browser.profile.get",
+  "sys.browser.profile.save",
   "sys.browser.profile.delete",
   "sys.browser.handoff.request",
   "sys.browser.handoff.get",

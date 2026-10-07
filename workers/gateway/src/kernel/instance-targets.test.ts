@@ -8,6 +8,7 @@ import { discoverInstanceTargets, requestInstanceTarget } from "./instance-targe
 import { handleInstanceRequest } from "./sys/instance";
 import { testPeer } from "../test-support/peers";
 import { openFsSource } from "../drivers/native/fs";
+import { createBrowserStorageBackend } from "./browser-storage";
 
 function context(service: Partial<InstallationInstances>, processId?: string) {
   const dispose = vi.fn(), deferred: Promise<unknown>[] = [];
@@ -33,6 +34,44 @@ const target: TargetDescriptor = {
 };
 
 describe("instance gateway boundary", () => {
+  it("keeps filesystem browser storage owner-scoped and cannot bypass syscall grants", async () => {
+    const saved = { profileId: "saved", ownerUid: 1000, label: "Browser", state: "active" as const, saveStatus: "saved" as const, createdAt: 1, savedAt: 2, storedBytes: 3, revision: 1 };
+    const listProfiles = vi.fn(async () => ({ profiles: [saved] }));
+    const readProfileState = vi.fn(async () => ({ body: bodyFromBytes(new Uint8Array([1, 2, 3])), size: 3 }));
+    const deleteProfile = vi.fn(async () => ({ profile: saved }));
+    const { ctx, dispose } = context({ listProfiles, readProfileState, deleteProfile });
+    ctx.peer = testPeer({ account: { uid: 1000, username: "owner", gids: [] }, calls: ["*"] });
+    const mount = createBrowserStorageBackend(ctx)!;
+    const opened = await mount.openFile("/var/lib/gsv/browser/owner/state.enc");
+    expect(readProfileState).toHaveBeenCalledWith({ ownerUid: 1000, human: true }, "saved");
+    const before = dispose.mock.calls.length;
+    await opened!.body!.cancel();
+    expect(dispose).toHaveBeenCalledTimes(before + 1);
+    ctx.peer = testPeer({ account: { uid: 1000, username: "owner", gids: [] }, calls: ["fs.*"] });
+    await expect(mount.readFile("/var/lib/gsv/browser/owner/status.json")).rejects.toThrow("sys.browser.profile.list");
+    await expect(mount.rm("/var/lib/gsv/browser/owner/state.enc")).rejects.toThrow("sys.browser.profile.list");
+    ctx.peer = testPeer({ account: { uid: 1000, username: "owner", gids: [] }, calls: ["fs.*", "sys.browser.profile.list", "sys.browser.profile.get"] });
+    await expect(mount.rm("/var/lib/gsv/browser/owner/state.enc")).rejects.toThrow("sys.browser.profile.delete");
+    expect(deleteProfile).not.toHaveBeenCalled();
+  });
+  it("owns a snapshot arriving after a filesystem read is cancelled", async () => {
+    const saved = { profileId: "saved", ownerUid: 1000, label: "Browser", state: "active" as const, saveStatus: "saved" as const, createdAt: 1, savedAt: 2, revision: 1 };
+    let deliver!: (result: Awaited<ReturnType<InstallationInstances["readProfileState"]>>) => void;
+    const readProfileState = vi.fn(() => new Promise<Awaited<ReturnType<InstallationInstances["readProfileState"]>>>(resolve => { deliver = resolve; }));
+    const { ctx, dispose, deferred } = context({ listProfiles: async () => ({ profiles: [saved] }), readProfileState });
+    ctx.peer = testPeer({ account: { uid: 1000, username: "owner", gids: [] }, calls: ["*"] });
+    const abort = new AbortController(); ctx.requestSignal = abort.signal;
+    const reading = createBrowserStorageBackend(ctx)!.openFile("/var/lib/gsv/browser/owner/state.enc");
+    const rejected = expect(reading).rejects.toThrow("Cancelled");
+    await vi.waitFor(() => expect(deliver).toBeDefined());
+    const before = dispose.mock.calls.length;
+    abort.abort(new Error("Cancelled")); await rejected;
+    expect(dispose).toHaveBeenCalledTimes(before);
+    const cancel = vi.fn();
+    deliver({ body: { stream: new ReadableStream<Uint8Array>({ cancel }) }, size: 1 });
+    await Promise.all(deferred);
+    expect(cancel).toHaveBeenCalledOnce(); expect(dispose).toHaveBeenCalledTimes(before + 1);
+  });
   it("opens owned browser artifacts through the same target discovery as direct calls", async () => {
     const instance: CloudInstance = {
       instanceId: "instance", targetId: "browser", startRequestId: "start", ownerUid: 1000,

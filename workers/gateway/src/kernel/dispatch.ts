@@ -607,6 +607,7 @@ async function dispatchKernel(
       case "sys.instance.stop":
       case "sys.browser.profile.create":
       case "sys.browser.profile.list":
+      case "sys.browser.profile.save":
       case "sys.browser.profile.get":
       case "sys.browser.profile.delete":
       case "sys.browser.handoff.request":

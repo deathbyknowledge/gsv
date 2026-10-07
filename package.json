@@ -14,7 +14,7 @@
     "packages/*"
   ],
   "scripts": {
-    "postinstall": "npm run gsv:build && npm run browser:build",
+    "postinstall": "node tools/instances/storage-script.mjs && npm run gsv:build && npm run browser:build",
     "setup": "bash ./scripts/setup-deps.sh",
     "dev": "bash ./scripts/dev-stack.sh",
     "smoke:browser": "node ./tools/instances/smoke.mjs",

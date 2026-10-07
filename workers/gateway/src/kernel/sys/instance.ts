@@ -35,7 +35,7 @@ export async function handleInstanceRequest(frame: InstanceRequest, ctx: KernelC
         body: { ...result.body, stream: withByteStreamFinalizer(result.body.stream, () => service[Symbol.dispose]?.()) } };
     } finally { if (!transferred) service[Symbol.dispose]?.(); }
   }
-  if (["sys.instance.start", "sys.instance.stop", "sys.browser.profile.create", "sys.browser.profile.delete", "sys.browser.handoff.request", "sys.browser.handoff.cancel"].includes(frame.call)) {
+  if (["sys.instance.start", "sys.instance.stop", "sys.browser.profile.create", "sys.browser.profile.delete", "sys.browser.profile.save", "sys.browser.handoff.request", "sys.browser.handoff.cancel"].includes(frame.call)) {
     // SAFETY: The protocol validator has admitted these JSON-only syscall arguments.
     await authorizeNestedOperation(ctx, frame.call, frame.args as JsonObject);
     ctx.requestSignal?.throwIfAborted();
@@ -50,6 +50,7 @@ export async function handleInstanceRequest(frame: InstanceRequest, ctx: KernelC
       case "sys.instance.stop": data = await service.stop(owner, frame.args); break;
       case "sys.browser.profile.create": data = await service.createProfile(owner, frame.args); break;
       case "sys.browser.profile.list": data = await service.listProfiles(owner); break;
+      case "sys.browser.profile.save": data = await service.saveProfile(owner, frame.args.instanceId); break;
       case "sys.browser.profile.get": data = await service.getProfile(owner, frame.args.profileId); break;
       case "sys.browser.profile.delete": data = await service.deleteProfile(owner, frame.args.profileId); break;
       case "sys.browser.handoff.request": {
@@ -94,7 +95,7 @@ export async function handleInstanceRequest(frame: InstanceRequest, ctx: KernelC
       }
     }
     return { type: "res", id: frame.id, ok: true, data };
-  });
+  }, 60000);
 }
 
 async function completeResponsibility(handoff: BrowserHandoff | null, ctx: KernelContext): Promise<void> {

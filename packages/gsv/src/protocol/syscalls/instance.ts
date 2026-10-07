@@ -22,6 +22,7 @@ export type CloudInstance = {
   stoppedAt?: number;
   reason?: string;
   diagnosticRef?: string;
+  persistence?: BrowserPersistence;
 };
 
 export type InstanceTemplate = {
@@ -63,20 +64,49 @@ export type SysInstanceListResult = { instances: CloudInstance[]; handoffs: Brow
 export type InstanceSelector = { instanceId: string; startRequestId?: never } | { startRequestId: string; instanceId?: never };
 export type SysInstanceGetArgs = InstanceSelector;
 export type SysInstanceGetResult = { instance: CloudInstance | null };
-export type SysInstanceStopArgs = InstanceSelector;
+export type SysInstanceStopArgs = InstanceSelector & { force?: boolean };
 export type SysInstanceStopResult = { instance: CloudInstance | null };
 
-export type BrowserProfile = {
+export type BrowserStorageSite = {
+  origin: string;
+  bytes: number;
+  localStorageBytes: number;
+  indexedDBBytes: number;
+  localStorageEntries: number;
+  databases: number;
+  records: number;
+  databaseUsage?: { name: string; bytes: number; stores: number; records: number }[];
+};
+export type BrowserStorageUsage = {
+  measuredAt?: number;
+  complete?: boolean;
+  bytes: number;
+  cookieBytes: number;
+  cookies: number;
+  cookieDomains?: { domain: string; bytes: number; cookies: number }[];
+  sites: BrowserStorageSite[];
+};
+export type BrowserPersistence = {
+  saveStatus: "empty" | "saving" | "saved" | "failed";
+  savedAt?: number;
+  attemptedAt?: number;
+  durationMs?: number;
+  bytes?: number;
+  storedBytes?: number;
+  limitBytes?: number;
+  error?: string;
+  diagnosticRef?: string;
+};
+export type BrowserProfile = BrowserPersistence & {
   profileId: string;
   ownerUid: number;
   label: string;
   createdAt: number;
   revision: number;
   state: "active" | "deleting" | "deleted";
-  saveStatus: "empty" | "saved" | "failed";
-  savedAt?: number;
   activeInstanceId?: string;
-  diagnosticRef?: string;
+  usage?: BrowserStorageUsage;
+  contentHash?: string;
 };
 
 export type SysBrowserProfileCreateArgs = { requestId: string; label: string };
@@ -87,6 +117,8 @@ export type SysBrowserProfileGetArgs = { profileId: string };
 export type SysBrowserProfileGetResult = { profile: BrowserProfile | null };
 export type SysBrowserProfileDeleteArgs = { profileId: string };
 export type SysBrowserProfileDeleteResult = { profile: BrowserProfile | null };
+export type SysBrowserProfileSaveArgs = { instanceId: string };
+export type SysBrowserProfileSaveResult = { profile: BrowserProfile | null };
 
 export type BrowserHandoff = {
   requestId: string;

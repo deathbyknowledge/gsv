@@ -119,13 +119,19 @@ export function BrowserViewer({ request, onClose }: { request: BrowserSelection;
     } catch (cause) { setError(String(cause)); }
     finally { setBusy(false); }
   };
-  const stop = async () => {
+  const stop = async (force = false) => {
     setBusy(true); live.current = false; inputEpoch.current++;
     try {
-      await client.sys.instance.stop({ instanceId: request.instanceId });
+      await client.sys.instance.stop({ instanceId: request.instanceId, force: force || undefined });
       await queryClient.invalidateQueries({ queryKey: INSTANCE_QUERY_KEY });
       onClose();
-    } catch (cause) { setError(String(cause)); setBusy(false); live.current = connected; }
+    } catch (cause) { setError(String(cause)); setBusy(false); live.current = connected; await instanceQuery.refetch(); }
+  };
+  const save = async () => {
+    setBusy(true); setError("");
+    try { await client.sys.browser.profile.save({ instanceId: request.instanceId }); }
+    catch (cause) { setError(String(cause)); }
+    finally { setBusy(false); await instanceQuery.refetch(); }
   };
   const point = (event: MouseEvent | WheelEvent) => {
     const bounds = image.current!.getBoundingClientRect();
@@ -154,6 +160,9 @@ export function BrowserViewer({ request, onClose }: { request: BrowserSelection;
       <div class="browser-window-actions">
         <details class="browser-menu"><summary aria-label="Browser actions">more</summary>
           <div><span>{instance?.label ?? "Browser"}</span><button type="button" onClick={() => void stop()} disabled={busy || !connected}>stop browser</button></div>
+          {instance?.profileId && <small aria-live="polite">{instance.persistence?.saveStatus === "saving" ? "Saving…"
+            : instance.persistence?.saveStatus === "failed" ? "Changes haven’t been saved"
+            : instance.persistence?.savedAt ? `Saved ${new Date(instance.persistence.savedAt).toLocaleTimeString()}` : "No saved state yet"}</small>}
         </details>
         <button type="button" aria-label={expanded ? "Restore browser view" : "Expand browser view"} onClick={() => setExpanded(value => !value)}>{expanded ? "restore" : "expand"}</button>
         <button type="button" aria-label="Close browser view" title="Close view · browser keeps running" onClick={close}>close <kbd>esc</kbd></button>
@@ -167,6 +176,11 @@ export function BrowserViewer({ request, onClose }: { request: BrowserSelection;
     {data?.handoff && <div class="browser-help"><span>{data.handoff.purpose}</span><button type="button" onClick={() => void finish()} disabled={busy || !connected}>continue</button></div>}
     {error && <p class="error" role="alert">{error}</p>}
     {instanceQuery.error && <p class="error" role="alert">{String(instanceQuery.error)}</p>}
+    {ready && instance?.persistence?.saveStatus === "failed" && <div class="browser-help" role="alert">
+      <span>{instance.persistence.error ?? "Changes could not be saved."} {instance.persistence.savedAt ? `Last saved ${new Date(instance.persistence.savedAt).toLocaleTimeString()}.` : "No saved state yet."}</span>
+      <button type="button" onClick={() => void save()} disabled={busy || !connected}>retry save</button>
+      <button type="button" onClick={() => void stop(true)} disabled={busy || !connected}>stop without saving</button>
+    </div>}
     {frameError && ready && <p class="browser-notice" role="status" title={frameError}>View interrupted. Reconnecting…</p>}
     {instance && !ready && <p class="browser-notice" role="status">{instance.state === "starting" ? "Starting browser…" : instance.state === "stopping" ? "Stopping browser…" : "This browser has stopped."}</p>}
     {!connected && <p class="browser-notice" role="alert">Disconnected. Reconnecting…</p>}

@@ -13,5 +13,5 @@
   "migrations": [{ "tag": "v1", "new_sqlite_classes": ["InstanceCoordinator"] }],
   "r2_buckets": [{ "binding": "PROFILES", "bucket_name": "gsv-browser-profiles-dev" }],
   "services": [{ "binding": "INSTALLATION_DIRECTORY", "service": "gsv-installations-dev" }],
-  "vars": { "BROWSER_LIMITS": { "enabled": true, "concurrentInstances": 2, "periodSeconds": 36000, "maxInstanceSeconds": 1800, "savedProfiles": 5, "profileStorageBytes": 5242880 } }
+  "vars": { "BROWSER_LIMITS": { "enabled": true, "concurrentInstances": 2, "periodSeconds": 36000, "maxInstanceSeconds": 1800, "savedProfiles": 5, "profileStorageBytes": 16777216 } }
 }

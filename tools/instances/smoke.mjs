@@ -8,6 +8,7 @@ import { bodyFromText, bodyToBytes } from "../../packages/gsv/dist/protocol.js";
 import { checkBrowserCommands } from "./browser-commands-smoke.mjs";
 import { checkFormCommands } from "./form-commands-smoke.mjs";
 import { checkBrowserFollowing } from "./browser-follow-smoke.mjs";
+import { seedBrowserStorage, checkRestoredBrowserStorage, checkForgettingBrowserStorage } from "./browser-storage-smoke.mjs";
 
 // Intentionally local: this fixture never creates a paid remote browser.
 const origin = new URL(process.env.GSV_BROWSER_SMOKE_ORIGIN ?? "http://localhost:8976");
@@ -74,6 +75,7 @@ async function fileBytes(target, path) {
   assert.equal(response.data.ok, true, response.data.error);
   return bodyToBytes(response.body);
 }
+let flowError;
 try {
   const created = await fetch(new URL("/admin/api/installations", origin), { method: "POST", headers: { Origin: origin.origin, "Content-Type": "application/json" }, body: JSON.stringify({ operationId: crypto.randomUUID(), handle: `browser-smoke-${crypto.randomUUID().slice(0, 8)}` }) });
   assert.equal(created.status, 201, "Local Accounts did not create a test installation");
@@ -120,13 +122,19 @@ try {
   await assert.rejects(input({ kind: "text", text: "late" }), /no longer active/);
   assert.equal((await client.sys.browser.profile.get({ profileId })).profile.saveStatus, "saved");
   console.log("Human login completed and profile saved; late input rejected");
-  await shell({ targetId: "gsv" }, `instance stop ${first.targetId}`); await state(first.instanceId, "stopped");
+  await seedBrowserStorage(shell, client, first);
+  // Close the site's tabs: persistence must remember origins independently.
+  const closing = JSON.parse(await shell(first, "tabs list"));
+  for (const tab of closing.tabs) if (tab.url !== "about:blank") await shell(first, `tabs close ${tab.id}`);
+  await shell({ targetId: "gsv" }, `instance stop ${first.targetId} --wait`);
+  assert.equal((await client.sys.instance.get({ instanceId: first.instanceId })).instance.state, "stopped");
   console.log("PASS: native readiness wait, replay disposition, short-ID get/stop, and unknown-ID rejection");
   console.log("First browser stopped; restoring profile into a new instance");
   const second = await start(); assert.notEqual(first.targetId, second.targetId);
   console.log("Restored browser is ready; checking saved website state");
   const restored = await shell(second, `tabs open --active ${website}/probe && page wait '#restored' && page text`);
   assert.match(restored, /cookie=kept;local=kept;indexed=kept/);
+  await checkRestoredBrowserStorage(shell, client, second);
   console.log("PASS: clean setup, idempotent start, human control, tab selection, input revocation, and cookie/localStorage/IndexedDB restoration");
 
   await shell(second, "page click '#coedit'");
@@ -177,11 +185,12 @@ try {
   const recovered = await client.request("sys.browser.frame", { instanceId: second.instanceId });
   assert.ok((await bodyToBytes(recovered.body)).byteLength > 1000);
   console.log("PASS: tab metadata and browser lifetime remain available while page JavaScript is blocked; live frames recover");
-} catch (error) { console.error("Smoke failed:", error); throw error; }
-finally {
-  try {
+  await checkForgettingBrowserStorage(shell, client, second, start, state, website);
+} catch (error) { flowError = error; }
+let cleanupError;
+try {
     const stopped = await Promise.allSettled(startedIds.map(async instanceId => {
-      await client.sys.instance.stop({ instanceId }); await state(instanceId, "terminal");
+      await client.sys.instance.stop({ instanceId, force: true }); await state(instanceId, "terminal");
     }));
     const failures = stopped.filter(outcome => outcome.status === "rejected").map(outcome => outcome.reason);
     if (profileId) {
@@ -189,7 +198,7 @@ finally {
       assert.equal(result.profile.state, "deleted", "Saved profile deletion is still pending");
     }
     if (failures.length) throw new AggregateError(failures, "Browser cleanup did not complete");
-  } finally { client.disconnect(); server.closeAllConnections(); server.close(); }
-}
+} catch (error) { cleanupError = error; } finally { client.disconnect(); server.closeAllConnections(); server.close(); }
+if (flowError || cleanupError) throw new AggregateError([flowError, cleanupError].filter(Boolean), "Browser smoke failed");
 console.log("PASS: confirmed stop and saved profile deletion");
 process.exit(0);

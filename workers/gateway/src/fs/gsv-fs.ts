@@ -65,6 +65,7 @@ export class GsvFs implements IFileSystem {
     selfPid?: string,
     sourceBackend?: MountBackend | null,
     accountHomeBackend?: MountBackend | null,
+    private readonly browserStorageBackend?: MountBackend | null,
   ) {
     this.identity = identity;
     this.kernel = kernel ?? null;
@@ -453,6 +454,7 @@ export class GsvFs implements IFileSystem {
   }
 
   private backendForPath(path: string): MountBackend {
+    if (this.browserStorageBackend?.handles(path)) return this.browserStorageBackend;
     if (isProcessMediaPath(path)) {
       return this.processMediaBackend;
     }

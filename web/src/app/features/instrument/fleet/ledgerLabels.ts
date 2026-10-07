@@ -109,6 +109,7 @@ const labels = {
   "sys.browser.profile.create": "create a saved browser profile",
   "sys.browser.profile.list": "list saved browser profiles",
   "sys.browser.profile.get": "inspect a saved browser profile",
+  "sys.browser.profile.save": "save browser state",
   "sys.browser.profile.delete": "delete a saved browser profile",
   "sys.browser.handoff.request": "request human browser control",
   "sys.browser.handoff.get": "inspect a browser handoff",
