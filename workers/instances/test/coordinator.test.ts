@@ -465,6 +465,26 @@ describe("browser health", () => {
     expect(store.sql.exec("SELECT id FROM diagnostics WHERE id = ?", stopped!.persistence!.issues![0]!.diagnosticRef!).toArray()).toHaveLength(1);
   }));
 
+  it("reuses repeated partial-save diagnostics and prunes replaced failures after saving", () => fixture(async (object, store, instanceId, _installationId, browser) => {
+    const successful = browser.save!;
+    let version = 0;
+    browser.save = async () => ({
+      state: { cookies: [], origins: [] }, usage: { bytes: 27, cookieBytes: 2, cookies: 0, sites: [] },
+      failures: Array.from({ length: 128 }, (_, i) => ({ issue: { origin: `https://site-${i}.example.com`, reason: "unavailable" as const, message: "Site storage unavailable" }, cause: `Site ${i} failure ${version}` })),
+    });
+    const first = (await object.saveProfile(actor, instanceId)).profile!;
+    const repeated = (await object.saveProfile(actor, instanceId)).profile!;
+    expect(repeated.issues).toEqual(first.issues);
+    expect(store.sql.exec("SELECT id FROM diagnostics").toArray()).toHaveLength(128);
+    version++;
+    const changed = (await object.saveProfile(actor, instanceId)).profile!;
+    await vi.waitFor(() => expect(store.sql.exec("SELECT id FROM diagnostics").toArray()).toHaveLength(128 + 64));
+    for (const issue of changed.issues!) expect(store.sql.exec("SELECT id FROM diagnostics WHERE id = ?", issue.diagnosticRef!).toArray()).toHaveLength(1);
+    browser.save = successful;
+    expect((await object.saveProfile(actor, instanceId)).profile?.saveStatus).toBe("saved");
+    await vi.waitFor(() => expect(store.sql.exec("SELECT id FROM diagnostics").toArray()).toHaveLength(64));
+  }));
+
   it("serializes concurrent saves and retries successfully before stopping", () => fixture(async (object, _store, instanceId, _installationId, browser) => {
     let release!: () => void;
     const original = browser.save!;

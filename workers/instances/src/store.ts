@@ -157,15 +157,36 @@ export class InstanceStore {
   putHandoff(value: BrowserHandoff): void { this.sql.exec("INSERT INTO handoffs (instance_id, request_id, record) VALUES (?, ?, ?) ON CONFLICT(instance_id, request_id) DO UPDATE SET record = excluded.record", value.instanceId, value.requestId, JSON.stringify(value)); }
   // oxlint-disable-next-line anti-slop/no-unknown-parameters -- This exception boundary normalizes arbitrary caught values for private inspection.
   diagnostic(id: string | null, error: unknown): string {
-    const ref = crypto.randomUUID();
     // Private diagnostics are retained at the owning boundary, never printed to telemetry.
     const details: string[] = [];
     const seen = new Set<unknown>();
-    for (let cause = error; cause !== undefined && !seen.has(cause); cause = cause instanceof Error ? cause.cause : undefined) {
+    let cause = error;
+    for (; cause !== undefined && !seen.has(cause) && details.length < 8; cause = cause instanceof Error ? cause.cause : undefined) {
       seen.add(cause);
-      details.push(cause instanceof Error ? `${cause.name}: ${cause.message}\n${cause.stack ?? ""}` : String(cause));
+      details.push(cause instanceof Error ? `${cause.name.slice(0, 4096)}: ${cause.message.slice(0, 4096)}\n${cause.stack?.slice(0, 4096) ?? ""}` : String(cause).slice(0, 4096));
     }
-    this.sql.exec("INSERT INTO diagnostics (id, instance_id, occurred_at, detail) VALUES (?, ?, ?, ?)", ref, id, Date.now(), details.join("\nCaused by: "));
+    const full = details.join("\nCaused by: ");
+    const detail = full.length > 4080 || cause !== undefined ? `${full.slice(0, 4080)}\n[truncated]` : full;
+    const existing = this.sql.exec<{ id: string }>("SELECT id FROM diagnostics WHERE instance_id IS ? AND detail = ? ORDER BY occurred_at DESC LIMIT 1", id, detail).toArray()[0];
+    if (existing) {
+      this.sql.exec("UPDATE diagnostics SET occurred_at = ? WHERE id = ?", Date.now(), existing.id);
+      return existing.id;
+    }
+    const ref = crypto.randomUUID();
+    this.sql.exec("INSERT INTO diagnostics (id, instance_id, occurred_at, detail) VALUES (?, ?, ?, ?)", ref, id, Date.now(), detail);
     return ref;
+  }
+  pruneDiagnostics(savingInstances: string[] = []): void {
+    // In-flight saves may have created site diagnostics whose profile commit is still pending.
+    this.sql.exec(`WITH records(record) AS (
+      SELECT json_object('diagnosticRef', json_extract(record, '$.diagnosticRef'), 'persistence', json_extract(record, '$.persistence')) FROM instances
+      UNION ALL SELECT json_remove(record, '$.usage') FROM profiles WHERE json_extract(record, '$.state') != 'deleted'
+      UNION ALL SELECT record FROM handoffs
+    ), referenced(ref) AS (
+      SELECT item.atom FROM records, json_tree(records.record) item WHERE item.key = 'diagnosticRef' AND item.type = 'text'
+      UNION SELECT id FROM diagnostics WHERE instance_id IN (SELECT value FROM json_each(?))
+    ), retained(id) AS (SELECT ref FROM referenced WHERE ref IS NOT NULL), recent(id) AS (
+      SELECT id FROM diagnostics WHERE id NOT IN (SELECT id FROM retained) ORDER BY occurred_at DESC, rowid DESC LIMIT 64
+    ) DELETE FROM diagnostics WHERE id NOT IN (SELECT id FROM retained) AND id NOT IN (SELECT id FROM recent)`, JSON.stringify(savingInstances));
   }
 }

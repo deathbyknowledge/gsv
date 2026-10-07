@@ -436,6 +436,7 @@ export class InstanceCoordinator extends DurableObject<Environment> implements I
     // wait for it, and its abort signal fences any late R2 commit.
     const settled = work.then(() => {}, () => {}).finally(() => {
       if (this.#saves.get(id)?.done === settled) this.#saves.delete(id);
+      this.#store.pruneDiagnostics([...this.#saves.keys()]);
     });
     const outcome = (async () => {
       try {
@@ -452,6 +453,8 @@ export class InstanceCoordinator extends DurableObject<Environment> implements I
         if (error instanceof BrowserStorageError && error.usage) failure.usage = error.usage;
         this.updatePersistence(id, failure);
         return false;
+      } finally {
+        this.#store.pruneDiagnostics([...this.#saves.keys()]);
       }
     })();
     this.#saves.set(id, { done: settled, outcome, abort });
@@ -491,6 +494,7 @@ export class InstanceCoordinator extends DurableObject<Environment> implements I
       }
     }
     await this.#profiles.cleanup();
+    this.#store.pruneDiagnostics([...this.#saves.keys()]);
     if (!this.#store.rows(true).length && !deleting && !this.#profiles.hasPendingCleanup()) await this.ctx.storage.deleteAlarm();
   }
   async quiesceInstallation(input: InstallationDeletionRequest) {

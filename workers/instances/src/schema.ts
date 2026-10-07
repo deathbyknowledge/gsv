@@ -69,6 +69,12 @@ const migrations = [{
     "UPDATE files SET encoded_size = length(entry)",
     "ALTER TABLE files DROP COLUMN entry",
   ],
+}, {
+  id: 9,
+  statements: [
+    "CREATE INDEX diagnostics_instance_detail ON diagnostics(instance_id, detail)",
+    "CREATE INDEX diagnostics_recent ON diagnostics(occurred_at)",
+  ],
 }];
 
 export function migrate(storage: DurableObjectStorage): void {

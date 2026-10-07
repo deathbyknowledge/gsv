@@ -96,6 +96,11 @@ retries. Slow cleanup does not turn a successful save into a failure or block st
 Uploads rejected after cancellation, a lease change, deletion, or an upload
 error enter the same durable cleanup queue. A temporary deletion failure retains
 their addresses for retry while the last committed snapshot stays available.
+Private diagnostics reuse a reference for repeated matching failures. Current
+profile, instance and handoff references remain inspectable; obsolete entries
+are trimmed to the latest 64 after saves and during maintenance. In-flight saves
+retain their diagnostics until they settle. Each diagnostic is limited to 4,096
+characters and eight causes, with a marker when details are truncated.
 
 Saved data is also inspectable on `gsv`, under your account name:
 
