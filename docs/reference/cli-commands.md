@@ -179,6 +179,10 @@ assigns an already-existing owned process with an explicit recovery deadline.
 producers as `configurable`. Only configurable producers can be changed. Use
 `r12y source disable mail.received` to keep accepting mail without creating a
 Ship responsibility for each message; enabling it affects future completions.
+`mail address` prints this GSV's own address, `<handle>@gsv.space`, which the
+runtime facts also list; `man --search` ranks `mail` for sign-up, verification
+code, receipt and tracking questions, and reports it unavailable when the
+installation has no mailbox.
 Other configurable sources cover federation ingress, new contacts, new machines,
 connected adapters, and adapter authentication loss.
 

@@ -113,6 +113,13 @@ config/ai/context.d/00-runtime.md
 config/ai/context.d/01-gsv.md
 ```
 
+Context files are templates. `00-runtime.md` renders the Kernel's availability
+snapshot at the start of each context epoch: `{{current.date}}` and
+`{{current.timezone}}`, `{{targets}}`, `{{mcpServers}}`, and
+`{{mailbox.address}}`, the owner's managed mailbox or `none` when the
+installation has no mailbox. Later changes to those facts reach the agent as
+context events rather than a rewritten prompt.
+
 ## Tool Approval Policy
 
 The approval policy decides whether an agent's tool call runs, asks the person
