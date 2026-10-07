@@ -13,7 +13,8 @@ including one that is still starting. More work can use another tab. Fleet's
 Click the browser below Zen's prompt, a browser link in its work receipt, or a
 running browser in Fleet to watch Ship work. Zen stays open behind the view.
 The browser window has tabs and an address bar, with the page filling its width.
-Use the window menu for **stop browser**; closing the view keeps it running.
+Use **expand** for a larger view and **more → stop browser** to stop it;
+**close** leaves the browser running. The text controls match the rest of Instrument.
 The view follows Ship's
 active tab and shows its cursor and clicks. You can click, scroll, paste and type
 directly in that view. Clicking pins the view to that tab; choose **Follow Ship**

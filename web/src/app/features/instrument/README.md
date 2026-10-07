@@ -98,8 +98,10 @@ Fleet owns places, processes, responsibilities, routines, files and their inspec
 Cloud browser rows, Zen's browser place chips and browser links in work receipts
 open their live view directly without navigating to Fleet or changing the next
 message's target. The view uses browser chrome: tabs, a slim address strip, and
-page content edge to edge. Expansion and close are window controls; stopping is
-in its secondary menu. Watching follows Ship's active
+page content edge to edge. Tabs use an accent underline; expand, close and more
+are text controls in flat, square chrome with the shell's thin rules. There are
+no decorative icon tiles, rounded frame, glow or backdrop blur. Stopping is in
+the more menu. Watching follows Ship's active
 tab and cursor without pausing its work. Direct input needs no control-mode
 switch; clicking pins the viewed tab, and input is sent against the document
 actually displayed. Closing the view leaves work running. Only an explicit Ship
@@ -249,3 +251,4 @@ Text actions are the default. Choose the style from the control's role and place
 - Use blocks for grouped selectors such as Settings sections, with equal sizes and centered labels, and for the main confirmation within a focused form. Opening Add MCP server is a text action; submitting the resulting form uses a block.
 - Destructive actions use red and appropriate confirmation independently of shape. A contextual delete and its inline confirmation can both be text actions.
 - Preserve semantic buttons or links, keyboard focus, disabled states and usable click areas. An unboxed control still needs a usable target.
+- Use named text controls rather than the retired dot-matrix icon library. Installation icons in `web/public/icons` are branding assets; functional graphics such as a shared cursor remain local to their owning view.

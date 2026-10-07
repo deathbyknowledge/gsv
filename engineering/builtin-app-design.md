@@ -130,6 +130,15 @@ Core rules:
 - show permission state before actions
 - keep shared gateway, history, file, contact and model logic in browser services and domain modules, independent of presentation
 
+The current visual language uses Martian Mono for controls, Host Grotesk for
+prose, thin rules and square corners. The star field and Departure Mono ASCII
+art carry the space theme. Use named text actions and contextual keyboard hints
+instead of decorative icon tiles. The former dot-matrix SVG library and mask
+renderer are retired; the PNGs under `web/public/icons` are installation and
+application identity assets, not a UI icon system. Browser windows follow the
+same contract: quiet text controls around an edge-to-edge live page, without
+rounded framing, glow or a blurred backdrop.
+
 ## Match Controls To Data
 
 Do not use one generic input type everywhere. Match the control to the data and the action.

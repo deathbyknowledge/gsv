@@ -61,7 +61,7 @@ describe("live browser viewing", () => {
         instanceId: instance.instanceId, tabId: 7, documentId: "displayed-document", handoffRequestId: undefined,
       });
       await act(async () => {
-        await collectNodes(tree).find(node => node.type === "button" && collectText(node) === "close")?.props.onClick?.();
+        await collectNodes(tree).find(node => node.type === "button" && node.props["aria-label"] === "Close browser view")?.props.onClick?.();
         inputResult.resolve({ data: { accepted: true } });
         await inputResult.promise;
       });

@@ -60,19 +60,6 @@
   gap: 18px;
 }
 
-.gsv-console-detail-icon {
-  width: 52px;
-  height: 52px;
-  flex: none;
-  border: 1px solid var(--border);
-  background: linear-gradient(180deg, #100e2a, var(--node-bg));
-  color: var(--accent-bright);
-  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.45), inset 0 0 18px rgba(80, 70, 180, 0.18);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
 .gsv-console-detail-title {
   min-width: 0;
   display: grid;
@@ -109,7 +96,7 @@
   letter-spacing: 0.22em;
 }
 
-/* Row-3 action bar: icon tile + 2-line description, with the action below. */
+/* Row-3 action bar: 2-line description, with the action below. */
 .gsv-console-detail-bar {
   display: flex;
   flex-direction: column;
@@ -127,7 +114,7 @@
   gap: 16px;
 }
 
-/* Text column beside the icon — description, and (embedded) the status label
+/* Text column — description, and (embedded) the status label
    dropped beneath it in place of the removed title-row status. */
 .gsv-console-detail-bar-text {
   min-width: 0;
@@ -325,11 +312,6 @@
 
   .gsv-console-detail-head {
     align-items: flex-start;
-  }
-
-  .gsv-console-detail-icon {
-    width: 46px;
-    height: 46px;
   }
 
   .gsv-console-detail-title h2 {
