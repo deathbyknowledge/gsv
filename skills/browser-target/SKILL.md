@@ -15,6 +15,27 @@ even if they do not mention the browser. If none is connected, inspect
 `instance --help` on `gsv` for on-demand cloud browser support; otherwise offer
 pairing the Your GSV extension.
 
+## Quick Start
+
+1. On `gsv`, run `targets list --kind browser`. `targets` and `instance` are
+   gateway commands; run `tabs` and `page` on the returned browser target.
+2. If a cloud browser is needed, persist a fresh request ID and run
+   `instance start browser --request-id <id> --wait` on `gsv`. It returns when
+   ready and says `disposition: created` or `reused`. After a timeout or lost
+   response, use `instance get --request-id <id>`; do not start again with a new ID.
+3. On the browser target, inspect `tabs list` and `page snapshot`. Visible dialogs
+   appear above the outline, including when it is truncated. An empty
+   `page snapshot | grep ...` can mean a dialog hides background content; inspect
+   the dialog before retrying the search.
+4. Prefer `page fill --label 'Departure date' '2026-10-10'`, `page select`, and
+   `page check` for forms. Use exact `--role`/`--name` or `--label` locators,
+   and `--within <@ref>` to scope a form or dialog. Add `--snapshot` for a readable
+   outline after an action. Keep its complete receipt; do not pipe it through `head`.
+   Use `&&` between dependent actions and inspect errors before continuing.
+5. Close tabs you opened when the task is done. A reused browser is shared:
+   do not stop it just because this task ended. Stop an isolated browser you
+   created when finished. Instance commands accept its displayed eight-character ID.
+
 ## Model
 
 - Browser targets may be connected through the GSV browser extension or an on-demand cloud browser. An extension uses the user's existing signed-in profile; a cloud browser retains its own logins and may need the user to sign in through its live view.

@@ -72,7 +72,7 @@ describe("instance gateway boundary", () => {
       templateId: "browser", templateRevision: "1", kind: "browser", implements: target.implements, label: "Browser",
       state: "starting", revision: 1, createdAt: 0, expiresAt: 10000,
     };
-    const start = vi.fn(async () => ({ instance }));
+    const start = vi.fn(async () => ({ instance, disposition: "created" as const }));
     const owned = context({ start }, "crew-process");
     await handleInstanceRequest({ type: "req", id: "start", call: "sys.instance.start", args: { requestId: "persisted", templateId: "browser" } }, owned.ctx);
     expect(owned.getInstallation).toHaveBeenCalledWith("trusted-installation");

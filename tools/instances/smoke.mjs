@@ -55,8 +55,13 @@ async function start() {
   const requestId = crypto.randomUUID();
   const result = await client.sys.instance.start({ requestId, templateId: "browser", lifetimeSeconds: 300 });
   startedIds.push(result.instance.instanceId);
-  assert.equal((await client.sys.instance.start({ requestId, templateId: "browser", lifetimeSeconds: 300 })).instance.instanceId, result.instance.instanceId);
-  return state(result.instance.instanceId, "ready");
+  assert.equal(result.disposition, "created");
+  const ready = JSON.parse(await shell({ targetId: "gsv" }, `instance start browser --request-id ${requestId} --seconds 300 --wait`));
+  assert.equal(ready.instance.instanceId, result.instance.instanceId);
+  assert.equal(ready.instance.state, "ready");
+  assert.equal(ready.disposition, "created");
+  assert.equal(JSON.parse(await shell({ targetId: "gsv" }, `instance get ${ready.instance.targetId}`)).instance.instanceId, ready.instance.instanceId);
+  return ready.instance;
 }
 async function shell(instance, input) {
   const result = await client.shell.exec({ target: instance.targetId, input });
@@ -83,9 +88,11 @@ try {
   assert.match(first.targetId, /^[0-9a-f]{8}$/);
   const before = (await client.sys.instance.list({})).usage;
   const repeats = await Promise.all(Array.from({ length: 3 }, () => client.sys.instance.start({ requestId: crypto.randomUUID(), templateId: "browser" })));
-  assert.ok(repeats.every(value => value.instance.instanceId === first.instanceId));
+  assert.ok(repeats.every(value => value.instance.instanceId === first.instanceId && value.disposition === "reused"));
   assert.equal((await client.sys.instance.list({})).usage.reservedSeconds, before.reservedSeconds);
   console.log("PASS: independent start requests reuse one browser and reservation; saved logins are automatic");
+  const missing = await client.shell.exec({ target: "gsv", input: "instance stop unknown-browser" });
+  assert.equal(missing.exitCode, 1, "An unknown browser was reported as successfully stopped");
   const opened = await shell(first, `tabs open --active ${website}/login`);
   const { tab } = JSON.parse(opened.slice(opened.indexOf("\n") + 1));
   const { handoff } = await client.sys.browser.handoff.request({ instanceId: first.instanceId, requestId: crypto.randomUUID(), tabId: tab.id, purpose: "Test persistent sign-in" });
@@ -111,7 +118,8 @@ try {
   await assert.rejects(input({ kind: "text", text: "late" }), /no longer active/);
   assert.equal((await client.sys.browser.profile.get({ profileId })).profile.saveStatus, "saved");
   console.log("Human login completed and profile saved; late input rejected");
-  await client.sys.instance.stop({ instanceId: first.instanceId }); await state(first.instanceId, "stopped");
+  await shell({ targetId: "gsv" }, `instance stop ${first.targetId}`); await state(first.instanceId, "stopped");
+  console.log("PASS: native readiness wait, replay disposition, short-ID get/stop, and unknown-ID rejection");
   console.log("First browser stopped; restoring profile into a new instance");
   const second = await start(); assert.notEqual(first.targetId, second.targetId);
   console.log("Restored browser is ready; checking saved website state");

@@ -142,6 +142,11 @@ receipt and structured snapshot tree. An inspection failure is reported as
 Filtering snapshot text with `grep` is useful for reading a large page. It is
 not necessary to extract references from prose to locate a known button or
 field. Start with a snapshot for orientation, then use precise locators or refs.
+Visible dialogs are summarized above the outline with usable references, even
+when the outline is truncated. A missing semantic locator also reports visible
+dialogs. If a search is empty, inspect that context before retrying: modal dialogs
+can hide the background from accessibility. This does not make hidden controls
+actionable or assume that every dialog blocks the page.
 Custom dropdowns use `page click --role option --name '…'`; `page select` is for
 native select controls. See `page --help` for syntax.
 

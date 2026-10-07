@@ -1,5 +1,6 @@
 import { defineCommand } from "just-bash";
 import { cancelBinaryBody } from "@humansandmachines/gsv/protocol";
+import type { SysInstanceGetResult, SysInstanceStartResult } from "@humansandmachines/gsv/protocol";
 import type { KernelContext } from "../../../kernel/context";
 import type { RequestFrame } from "../../../protocol/frames";
 import type { NativeShellCommandOptions } from "./commands";
@@ -7,15 +8,17 @@ import { requireCommandCapability, requireShellOptionValue } from "./common";
 
 const INSTANCE_HELP = `Usage:
   instance catalog
-  instance start browser --request-id ID [--new] [--profile ID] [--name NAME] [--seconds N]
+  instance start browser --request-id ID [--wait] [--timeout MS] [--new] [--profile ID] [--name NAME] [--seconds N]
   instance list [--all]
   instance get ID | instance get --request-id ID
   instance stop ID | instance stop --request-id ID
 
 Keep the request ID before starting. If the response is lost, get by that ID; do not start again with a new ID.
 Start reuses your current browser, including one still starting, without extending its lifetime. Use another tab for additional work.
+--wait returns when ready (default timeout 60000 ms, maximum 120000). Cancelling or timing out only stops waiting; get by the saved request ID to recover.
+The result says disposition: created or reused. IDs accept the displayed target ID or full instance ID.
 --new explicitly starts a separate, temporary browser. Ordinary starts remember logins for your account automatically.
-Instances have a fixed lifetime. Stop them when finished. A stopped instance never restarts.
+Instances have a fixed lifetime. Close your task's tabs when finished; do not stop a shared browser just because your task ended. Stop an isolated browser you created when finished. A stopped instance never restarts.
 `;
 const BROWSER_HELP = `Usage:
   browser profile list
@@ -36,9 +39,18 @@ function parseOptions(args: string[], allowed: string[]) {
     const arg = args[i];
     if (!arg.startsWith("--")) { words.push(arg); continue; }
     if (!allowed.includes(arg) || options[arg] !== undefined) throw new Error(`Unexpected option: ${arg}`);
-    options[arg] = arg === "--all" || arg === "--new" ? "true" : requireShellOptionValue(args[++i], arg);
+    options[arg] = arg === "--all" || arg === "--new" || arg === "--wait" ? "true" : requireShellOptionValue(args[++i], arg);
   }
   return { words, options };
+}
+
+function waitForPoll(signal: AbortSignal): Promise<void> {
+  signal.throwIfAborted();
+  return new Promise((resolve, reject) => {
+    const abort = () => { clearTimeout(timer); reject(signal.reason); };
+    const timer = setTimeout(() => { signal.removeEventListener("abort", abort); resolve(); }, 500);
+    signal.addEventListener("abort", abort, { once: true });
+  });
 }
 
 export function buildInstanceCommands(ctx: KernelContext, request?: NativeShellCommandOptions["request"]) {
@@ -47,13 +59,23 @@ export function buildInstanceCommands(ctx: KernelContext, request?: NativeShellC
     if (!argv.length || argv.includes("--help") || argv.includes("-h")) return { stdout: help, stderr: "", exitCode: 0 };
     try {
       let frame: RequestFrame;
+      let waitMs: number | undefined;
       const id = crypto.randomUUID();
       if (name === "instance") {
-        const { words, options } = parseOptions(argv, ["--request-id", "--profile", "--name", "--seconds", "--all", "--new"]);
+        const { words, options } = parseOptions(argv, ["--request-id", "--profile", "--name", "--seconds", "--all", "--new", "--wait", "--timeout"]);
         const [verb, target] = words;
+        const allowed = verb === "start" ? ["--request-id", "--profile", "--name", "--seconds", "--new", "--wait", "--timeout"]
+          : verb === "list" ? ["--all"] : verb === "get" || verb === "stop" ? ["--request-id"] : [];
+        for (const option of Object.keys(options)) if (!allowed.includes(option)) throw new Error(`Unexpected option for ${verb}: ${option}`);
+        if (options["--timeout"] && !options["--wait"]) throw new Error("--timeout requires --wait");
+        if (options["--wait"]) {
+          waitMs = Number(options["--timeout"] ?? 60000);
+          if (!Number.isInteger(waitMs) || waitMs < 1 || waitMs > 120000) throw new Error("--timeout must be between 1 and 120000 ms");
+          requireCommandCapability(ctx, "sys.instance.get");
+        }
         if (verb === "catalog" && words.length === 1) frame = { type: "req", id, call: "sys.instance.catalog", args: {} };
         else if (verb === "list" && words.length === 1) frame = { type: "req", id, call: "sys.instance.list", args: { includeTerminal: options["--all"] === "true" } };
-        else if ((verb === "get" || verb === "stop") && (target || options["--request-id"])) {
+        else if ((verb === "get" || verb === "stop") && words.length <= 2 && (target || options["--request-id"])) {
           if (target && options["--request-id"]) throw new Error("Choose either an instance ID or --request-id");
           frame = { type: "req", id, call: verb === "get" ? "sys.instance.get" : "sys.instance.stop", args: target ? { instanceId: target } : { startRequestId: options["--request-id"] } };
         } else if (verb === "start" && words.length === 2) {
@@ -82,10 +104,42 @@ export function buildInstanceCommands(ctx: KernelContext, request?: NativeShellC
       }
       requireCommandCapability(ctx, frame.call);
       if (!request) throw new Error("Direct syscall transport is unavailable");
-      const response = await request(frame, shell.signal);
-      if (!response.ok) throw new Error(response.error.message);
-      await cancelBinaryBody(response.body, "Instance command returns metadata only");
-      return { stdout: `${JSON.stringify(response.data, null, 2)}\n`, stderr: "", exitCode: 0 };
+      const deadline = new AbortController();
+      const timer = waitMs === undefined ? undefined : setTimeout(() => deadline.abort(new Error("Browser readiness wait timed out")), waitMs);
+      const signal = shell.signal ? AbortSignal.any([shell.signal, deadline.signal]) : deadline.signal;
+      try {
+        const response = await request(frame, signal);
+        if (!response.ok) throw new Error(response.error.message);
+        await cancelBinaryBody(response.body, "Instance command returns metadata only");
+        let data = response.data;
+        // SAFETY: The transport pairs this response with the sys.instance.get request.
+        if (frame.call === "sys.instance.get" && !(data as SysInstanceGetResult).instance) throw new Error("No instance has been admitted for this request ID");
+        if (waitMs !== undefined) {
+          // SAFETY: --wait is accepted only for sys.instance.start, whose paired response has this contract.
+          const receipt = data as SysInstanceStartResult;
+          let current = receipt.instance;
+          while (current.state === "starting") {
+            await waitForPoll(signal);
+            const next = await request({ type: "req", id: crypto.randomUUID(), call: "sys.instance.get", args: { instanceId: current.instanceId } }, signal);
+            if (!next.ok) throw new Error(next.error.message);
+            await cancelBinaryBody(next.body, "Instance readiness returns metadata only");
+            // SAFETY: The transport response is paired with the sys.instance.get request above.
+            const observed = (next.data as SysInstanceGetResult).instance;
+            if (!observed) throw new Error(`Instance ${current.targetId} is no longer available`);
+            current = observed;
+          }
+          signal.throwIfAborted();
+          if (current.state !== "ready") throw new Error(`Instance ${current.targetId} is ${current.state}${current.reason ? `: ${current.reason}` : ""}${current.diagnosticRef ? `; diagnostic ${current.diagnosticRef}` : ""}`);
+          data = { ...receipt, instance: current };
+        }
+        return { stdout: `${JSON.stringify(data, null, 2)}\n`, stderr: "", exitCode: 0 };
+      } catch (error) {
+        if (signal.aborted && frame.call === "sys.instance.start") {
+          const recoveryId = `'${frame.args.requestId.replaceAll("'", "'\\''")}'`;
+          throw new Error(`${deadline.signal.aborted ? "Browser readiness wait timed out" : "Browser readiness wait cancelled"}. The instance was not stopped. Inspect with instance get --request-id ${recoveryId}; do not start again with a new ID.`, { cause: error });
+        }
+        throw error;
+      } finally { clearTimeout(timer); }
     } catch (error) { return { stdout: "", stderr: `${name}: ${error instanceof Error ? error.message : String(error)}\n`, exitCode: 1 }; }
   }));
 }

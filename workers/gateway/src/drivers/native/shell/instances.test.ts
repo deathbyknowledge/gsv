@@ -1,0 +1,70 @@
+import { Bash } from "just-bash";
+import { describe, expect, it, vi } from "vitest";
+import type { CloudInstance } from "@humansandmachines/gsv/protocol";
+import type { KernelContext } from "../../../kernel/context";
+import { testPeer } from "../../../test-support/peers";
+import type { NativeShellCommandOptions } from "./commands";
+import { buildInstanceCommands } from "./instances";
+
+const instance: CloudInstance = {
+  instanceId: "12345678-full-id", targetId: "12345678", startRequestId: "saved", ownerUid: 1000,
+  templateId: "browser", templateRevision: "1", kind: "browser", implements: [], label: "Browser",
+  state: "starting", revision: 1, createdAt: 1, expiresAt: 9999999999999,
+};
+function fixture(request: NonNullable<NativeShellCommandOptions["request"]>, calls = ["*"]) {
+  // SAFETY: Instance commands only inspect the invoking peer's syscall grant.
+  const ctx = { peer: testPeer({ account: { uid: 1000, gid: 1000, gids: [1000], username: "owner", home: "/home/owner", cwd: "/home/owner" }, calls }) } as KernelContext;
+  return new Bash({ customCommands: buildInstanceCommands(ctx, request) });
+}
+
+describe("native instance readiness", () => {
+  it("waits for ready, retains the start receipt and never starts a second time", async () => {
+    const request = vi.fn<NonNullable<NativeShellCommandOptions["request"]>>(async frame => ({
+      type: "res", id: frame.id, ok: true,
+      data: frame.call === "sys.instance.start" ? { instance, disposition: "reused" } : { instance: { ...instance, state: "ready" } },
+    }));
+    const result = await fixture(request).exec("instance start browser --request-id saved --wait");
+    expect(result.exitCode, result.stderr).toBe(0);
+    expect(JSON.parse(result.stdout)).toMatchObject({ disposition: "reused", instance: { state: "ready", targetId: "12345678" } });
+    expect(request.mock.calls.map(([frame]) => frame.call)).toEqual(["sys.instance.start", "sys.instance.get"]);
+  });
+  it("bounds the wait and returns recovery instructions without stopping the browser", async () => {
+    const request = vi.fn<NonNullable<NativeShellCommandOptions["request"]>>(async frame => ({ type: "res", id: frame.id, ok: true, data: { instance, disposition: "created" } }));
+    const result = await fixture(request).exec("instance start browser --request-id saved --wait --timeout 100");
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain("wait timed out");
+    expect(result.stderr).toContain("instance get --request-id 'saved'");
+    expect(request).toHaveBeenCalledTimes(1);
+  });
+  it("stops waiting when startup fails and includes the diagnostic", async () => {
+    const request = vi.fn<NonNullable<NativeShellCommandOptions["request"]>>(async frame => ({ type: "res", id: frame.id, ok: true, data: { instance: { ...instance, state: "failed", diagnosticRef: "diagnostic-1" }, disposition: "created" } }));
+    const result = await fixture(request).exec("instance start browser --request-id saved --wait");
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain("12345678 is failed; diagnostic diagnostic-1");
+    expect(request).toHaveBeenCalledTimes(1);
+  });
+  it("cancels polling without stopping or restarting an admitted browser", async () => {
+    const abort = new AbortController();
+    const request = vi.fn<NonNullable<NativeShellCommandOptions["request"]>>(async frame => {
+      setTimeout(() => abort.abort(new Error("Cancelled by caller")), 10);
+      return { type: "res", id: frame.id, ok: true, data: { instance, disposition: "created" } };
+    });
+    const result = await fixture(request).exec("instance start browser --request-id saved --wait", { signal: abort.signal });
+    expect(result.exitCode).not.toBe(0);
+    expect(request).toHaveBeenCalledTimes(1);
+  });
+  it("rejects invalid waits and missing read authority before starting anything", async () => {
+    const request = vi.fn<NonNullable<NativeShellCommandOptions["request"]>>();
+    for (const suffix of ["--timeout 100", "--wait --timeout 120001", "--wait --timeout nope"]) {
+      expect((await fixture(request).exec(`instance start browser --request-id saved ${suffix}`)).exitCode).toBe(1);
+    }
+    expect((await fixture(request, ["sys.instance.start"]).exec("instance start browser --request-id saved --wait")).stderr).toContain("Permission denied: sys.instance.get");
+    expect(request).not.toHaveBeenCalled();
+  });
+  it("reports an unknown start receipt as a failed get", async () => {
+    const request: NativeShellCommandOptions["request"] = async frame => ({ type: "res", id: frame.id, ok: true, data: { instance: null } });
+    const result = await fixture(request).exec("instance get --request-id missing");
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain("No instance has been admitted");
+  });
+});

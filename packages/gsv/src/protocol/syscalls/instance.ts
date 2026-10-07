@@ -57,7 +57,7 @@ export type SysInstanceStartArgs = {
   /** Create a separate instance instead of reusing the account's current browser. */
   fresh?: boolean;
 };
-export type SysInstanceStartResult = { instance: CloudInstance };
+export type SysInstanceStartResult = { instance: CloudInstance; disposition: "created" | "reused" };
 export type SysInstanceListArgs = { includeTerminal?: boolean };
 export type SysInstanceListResult = { instances: CloudInstance[]; handoffs: BrowserHandoff[]; usage: InstanceUsage };
 export type InstanceSelector = { instanceId: string; startRequestId?: never } | { startRequestId: string; instanceId?: never };

@@ -52,5 +52,25 @@ export async function checkFormCommands(run) {
   for (const input of ["page fill --label Locked 'changed'", "page fill --label Reverting 'changed'", "page fill --label 'Departure time' nonsense", "page type --label 'Departure time' '11:00'"]) {
     const failed = await run(input); assert.equal(failed.exitCode, 1, `Unexpected success: ${input}`);
   }
+  await command(`page js 'const dialog = document.createElement("dialog"); dialog.setAttribute("aria-label", "Choose country"); dialog.innerHTML = "<p>Choose your country before continuing</p><button onclick=this.closest(\\\"dialog\\\").close()>Continue</button>"; document.body.append(dialog); dialog.showModal(); "opened"'`);
+  const modal = await command("page snapshot --json");
+  assert.equal(modal.dialogs.length, 1);
+  assert.equal(modal.dialogs[0].name, "Choose country");
+  assert.ok(modal.dialogs[0].ref);
+  const outline = await run("page snapshot");
+  assert.match(outline.output.split("\n")[3], /^visible-dialog @\S+ "Choose country"/);
+  assert.ok(!flatten(modal.nodes).some(node => node.name === "From"), "A modal exposed the inert background form");
+  const blocked = await run("page fill --label From 'Unreachable station'");
+  assert.equal(blocked.exitCode, 1);
+  assert.match(blocked.error ?? blocked.output, /Visible dialog: "Choose country"/);
+  const afterDialog = await run(`page click --role button --name Continue --within ${modal.dialogs[0].ref} --snapshot`);
+  assert.equal(afterDialog.exitCode, 0, afterDialog.error ?? afterDialog.output);
+  assert.ok(!afterDialog.output.includes("visible-dialog"));
+  assert.equal(JSON.parse(afterDialog.output).delivered.accepted, true);
+  assert.match(JSON.parse(afterDialog.output).snapshotError, /scope is no longer present/);
+  const unscoped = await run("page snapshot");
+  assert.equal(unscoped.exitCode, 0, unscoped.error ?? unscoped.output);
+  assert.match(unscoped.output, /textbox @\S+ "From"/);
   console.log("PASS: form values, native dates/times, shadow labels, strict/scoped targeting, readable/JSON action snapshots, checked chaining/pipefail, select/check verification, password redaction, and rejected/reverted actions");
+  console.log("PASS: visible dialog context, inaccessible background, scoped dismissal, and restored form content");
 }

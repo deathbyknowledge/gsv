@@ -5,7 +5,7 @@ import type { InstanceCoordinator } from "../src/coordinator";
 import { CloudBrowser } from "../src/browser";
 import { InstancePolicy } from "../src/config";
 import { BrowserProvider } from "../src/provider";
-import { InstanceStore } from "../src/store";
+import { instance, InstanceStore } from "../src/store";
 import { ProfileStorage } from "../src/profiles";
 
 const actor = { ownerUid: 1000, human: true };
@@ -41,6 +41,35 @@ async function fixture(work: (object: InstanceCoordinator, store: InstanceStore,
 }
 
 describe("human browser control", () => {
+  it("resolves displayed IDs within the owner and never reports an unknown stop as successful", () => fixture(async (object, store, instanceId) => {
+    const targetId = instance(store.byId(instanceId)).targetId;
+    expect(await object.get(actor, { instanceId: targetId })).toMatchObject({ instance: { instanceId } });
+    for (const id of ["unknown", targetId.slice(0, 4)]) {
+      await expect(object.get(actor, { instanceId: id })).rejects.toThrow("not found");
+      await expect(object.stop(actor, { instanceId: id })).rejects.toThrow("not found");
+    }
+    await expect(object.stop({ ownerUid: 1001, human: true }, { instanceId: targetId })).rejects.toThrow("not found");
+    const view = await object.watch(actor, { instanceId: targetId });
+    await view.body.stream.cancel();
+    const selector = { instanceId: targetId, requestId: "short-handoff" };
+    expect(await object.requestHandoff(actor, { ...selector, tabId: 1, purpose: "Sign in" })).toMatchObject({ handoff: { instanceId } });
+    await object.openHandoff(actor, selector);
+    await object.input(actor, { instanceId: targetId, tabId: 1, documentId: "document", handoffRequestId: selector.requestId }, { kind: "text", text: "test" });
+    await object.finishHandoff(actor, selector);
+    expect(await object.stop(actor, { instanceId: targetId })).toMatchObject({ instance: { instanceId, state: "stopping" } });
+    expect(await object.stop(actor, { startRequestId: "not-admitted" })).toEqual({ instance: null });
+    expect(await object.get(actor, { startRequestId: "not-admitted" })).toEqual({ instance: null });
+    expect(() => store.admit(actor, { requestId: "not-admitted", templateId: "browser" }, limits)).toThrow("cancelled before admission");
+  }));
+  it("preserves created and reused start outcomes when a request is replayed", () => fixture(async (object) => {
+    vi.spyOn(InstancePolicy.prototype, "limits").mockResolvedValue(limits);
+    const created = { requestId: "created", templateId: "browser", fresh: true };
+    const reused = { requestId: "reused", templateId: "browser" };
+    for (let replay = 0; replay < 2; replay++) {
+      expect(await object.start(actor, created)).toMatchObject({ disposition: "created" });
+      expect(await object.start(actor, reused)).toMatchObject({ disposition: "reused" });
+    }
+  }));
   it("scopes and bounds viewers, releases cancelled views, and closes them when the instance stops", () => fixture(async (object, _store, instanceId, _installationId, browser) => {
     const unsubscribe = vi.fn();
     browser.watchTab = async () => unsubscribe;

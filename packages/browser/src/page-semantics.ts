@@ -123,6 +123,7 @@ export type SemanticSnapshot = {
   nodeCount: number;
   referenceCount: number;
   truncated: boolean;
+  dialogs?: Array<{ ref?: string; role: string; name: string; modal: boolean }>;
 };
 
 export type PageElementReference = {
@@ -274,6 +275,10 @@ export function formatSemanticSnapshot(snapshot: SemanticSnapshot): string {
     `url ${JSON.stringify(snapshot.url)}`,
     `title ${JSON.stringify(snapshot.title)}`,
   ];
+  for (const dialog of snapshot.dialogs ?? []) {
+    lines.push(`visible-${dialog.role}${dialog.ref ? ` ${dialog.ref}` : ""} ${JSON.stringify(dialog.name)}${dialog.modal ? " [modal]" : ""}`);
+  }
+  if (snapshot.dialogs?.length) lines.push("A dialog may hide background content. Inspect it with page snapshot --within <@ref> before retrying a missing page element.");
   for (const node of snapshot.nodes) {
     formatNode(node, 0, lines);
   }
@@ -394,8 +399,10 @@ function collectStates(properties: AxProperty[] | undefined): Record<string, Sem
       case "focusable":
       case "focused":
       case "hasPopup":
+      case "hidden":
       case "invalid":
       case "multiline":
+      case "modal":
       case "pressed":
       case "readonly":
       case "required":
@@ -406,6 +413,22 @@ function collectStates(properties: AxProperty[] | undefined): Record<string, Sem
     }
   }
   return states;
+}
+
+/** Dialog context is collected independently of the outline's display budget. */
+export function visibleDialogNodes(nodes: readonly AxNode[]): AxNode[] {
+  const byId = new Map(nodes.map(node => [node.nodeId, node]));
+  return nodes.filter(node => {
+    if (node.ignored || !["dialog", "alertdialog"].includes(normalizeRole(stringValue(node.role)))) return false;
+    const visited = new Set<AxNode>();
+    let current: AxNode | undefined = node;
+    while (current && !visited.has(current)) {
+      if (collectStates(current.properties).hidden === true) return false;
+      visited.add(current);
+      current = current.parentId ? byId.get(current.parentId) : undefined;
+    }
+    return true;
+  }).slice(0, 8);
 }
 
 function isReferenceable(
@@ -688,6 +711,17 @@ export function createPageSemantics<Target>(sendDebuggerCommand: DebuggerCommand
     };
 
     const nodes = rootNodes.flatMap((root) => render(root, 0));
+    const dialogs = visibleDialogNodes(axNodes).map(node => {
+      const role = normalizeRole(stringValue(node.role));
+      const name = compact(stringValue(node.name), MAX_NAME_LENGTH);
+      let reference = references.find(ref => ref.backendNodeId === node.backendDOMNodeId && ref.frameId === (node.frameId || rootFrameId));
+      if (!reference && node.backendDOMNodeId !== undefined) {
+        reference = { ref: `@${snapshotId}e${references.length + 1}`, snapshotId, tabId: tab.id, documentId,
+          frameId: node.frameId || rootFrameId, backendNodeId: node.backendDOMNodeId, role, name };
+        references.push(reference);
+      }
+      return { ref: reference?.ref, role, name, modal: collectStates(node.properties).modal === true };
+    });
     store.save(snapshotId, references);
     return {
       snapshotId,
@@ -699,6 +733,7 @@ export function createPageSemantics<Target>(sendDebuggerCommand: DebuggerCommand
       nodeCount,
       referenceCount: references.length,
       truncated,
+      dialogs: dialogs.length ? dialogs : undefined,
     };
   }
 

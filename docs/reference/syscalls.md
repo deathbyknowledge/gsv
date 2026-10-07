@@ -1565,9 +1565,12 @@ ID, ordinary starts reuse the owner's current ready or starting browser without
 extending its lifetime or reserving more usage. `fresh: true` explicitly creates
 a separate temporary browser. Ordinary new browsers automatically use the
 account's saved logins. Every start request retains its own receipt, including
-when it reused an instance. Stop may use the
-instance ID or the original start request ID; a stop received before admission
-fences that start. Instance reservations and concurrency are space-wide, while
+when it reused an instance. The start result is `{ instance, disposition }`,
+where `disposition` is `created` or `reused` and remains stable on replay.
+Instance selectors accept the full instance ID, its exact displayed target ID,
+or the original start request ID. Unknown instance IDs fail; an unknown request
+ID returns `instance: null`, and stopping it fences any future admission of that
+request. Instance reservations and concurrency are space-wide, while
 access to instances, profiles and human requests is owner-scoped.
 
 `handoff.open`, `handoff.finish`, `browser.frame`, `browser.watch`,

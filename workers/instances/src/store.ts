@@ -28,7 +28,7 @@ export class InstanceStore {
   rows(activeOnly = false): InstanceRow[] { return this.sql.exec<InstanceRow>(`SELECT * FROM instances ${activeOnly ? "WHERE active = 1" : ""} ORDER BY rowid DESC`).toArray(); }
   owned(actor: InstanceActor, selector: InstanceSelector): InstanceRow | null {
     return selector.instanceId
-      ? this.sql.exec<InstanceRow>("SELECT * FROM instances WHERE owner_uid = ? AND id = ?", actor.ownerUid, selector.instanceId).toArray()[0] ?? null
+      ? this.sql.exec<InstanceRow>("SELECT * FROM instances WHERE owner_uid = ? AND (id = ? OR json_extract(record, '$.targetId') = ?)", actor.ownerUid, selector.instanceId, selector.instanceId).toArray()[0] ?? null
       : this.sql.exec<InstanceRow>("SELECT i.* FROM instances i JOIN start_requests r ON r.instance_id = i.id AND r.owner_uid = i.owner_uid WHERE r.owner_uid = ? AND r.request_id = ?", actor.ownerUid, selector.startRequestId!).toArray()[0] ?? null;
   }
   byId(id: string): InstanceRow {

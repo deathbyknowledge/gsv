@@ -1,6 +1,6 @@
 import type { DebuggerCommand } from "./backend";
 import { abortableDelay, throwIfAborted } from "./abort";
-import { createPageSemantics, PageReferenceStore, type PageElementReference } from "./page-semantics";
+import { createPageSemantics, PageReferenceStore, visibleDialogNodes, type PageElementReference } from "./page-semantics";
 
 export type SemanticLocator = {
   kind: "semantic";
@@ -17,6 +17,7 @@ type AxNode = {
   frameId?: string;
   role?: { value?: string };
   name?: { value?: string };
+  properties?: Array<{ name?: string; value?: { value?: unknown } }>;
 };
 const FIELD_ROLES = new Set(["textbox", "searchbox", "combobox", "listbox", "checkbox", "radio", "switch", "slider", "spinbutton", "date", "date-time", "input-time"]);
 const normalize = (text: string) => text.replace(/\s+/g, " ").trim();
@@ -71,7 +72,11 @@ export async function findSemanticReference<Target>(
       }
       return refs[0]!;
     }
-    if (Date.now() - started >= timeoutMs) throw new Error(`No element matches ${describeSemanticLocator(locator)}. Run page snapshot to inspect the current page.`);
+    if (Date.now() - started >= timeoutMs) {
+      const dialogs = visibleDialogNodes(nodes);
+      const context = dialogs.length ? ` Visible dialog: ${dialogs.map(node => JSON.stringify(normalize(String(node.name?.value ?? "")).slice(0, 240))).join(", ")}. A dialog may hide background content; inspect it before retrying.` : "";
+      throw new Error(`No element matches ${describeSemanticLocator(locator)}.${context} Run page snapshot to inspect the current page.`);
+    }
     await abortableDelay(Math.min(100, timeoutMs), signal);
   }
 }

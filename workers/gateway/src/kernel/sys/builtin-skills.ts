@@ -79,6 +79,8 @@ export const BUILTIN_SKILL_FILES = [
       "14a49e723679cbb145170c6888f117dfd53dc25a37ed7c38683ad5a0d2933f56", // eedc54d1d
       // Untouched skill before verified forms and compact action snapshots.
       "9ab07b08b827a4584cfac451f8c635d45d50f3ad71b14e7d73321f5fc79d276c",
+      // Untouched skill before readiness and visible-dialog quick start.
+      "78f679e2688356fb1579f9aae400bb3deb9d2f05e2c23059fdb3cd0c1e245673",
     ],
   },
   {

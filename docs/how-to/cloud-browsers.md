@@ -81,13 +81,22 @@ These are commands on the native `gsv` target:
 
 ```bash
 instance catalog
-instance start browser --request-id <saved-request-id> --seconds 900
-instance get <instance-id>
+instance start browser --request-id <saved-request-id> --seconds 900 --wait
+instance get <browser-id>
 instance list
-instance stop <instance-id>
+instance stop <browser-id>
 ```
 
-The ordinary start reuses the current browser. Use tabs for additional work.
+The result reports `disposition: created` or `reused`. `--wait` returns when the
+browser is ready, with a default timeout of 60 seconds; `--timeout <milliseconds>`
+sets a wait of up to 120 seconds. A timeout or cancellation stops waiting and
+leaves the instance available for inspection by the saved request ID. Instance
+commands accept either the displayed eight-character target ID or the full
+instance ID. An unknown instance ID is an error, including for stop.
+
+The ordinary start reuses the current browser. Use tabs for additional work and
+close your task's tabs when finished. Do not stop a shared browser just because
+one task ended. Stop an isolated browser you created when its work is finished.
 When an independent temporary browser is needed, request it explicitly:
 
 ```bash
@@ -115,6 +124,12 @@ receipt stays intact, followed by a readable outline; add `--json` when a
 structured snapshot tree is needed. Use `--within` to inspect just the relevant
 form or dialog, and `&&` between dependent actions so errors stop the sequence. See
 [target tools](/reference/hardware-tools) and `page --help` for examples.
+
+Visible dialogs appear at the top of a snapshot, with references even if the
+outline reaches its display limit. Missing semantic locators also mention
+visible dialogs. A dialog can hide background content from accessibility:
+an empty filtered snapshot is a reason to inspect the dialog before searching
+again, not evidence that the desired content does not exist.
 
 `page screenshot` returns the path of a PNG on the browser target. To keep it
 after the browser stops, run this on `gsv`, using the returned target and path:

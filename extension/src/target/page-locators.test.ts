@@ -21,6 +21,19 @@ function fixture(nodes: object[], documents = ["document"]) {
 const scope: PageElementReference = { ref: "@s1e1", snapshotId: "s1", tabId: 7, documentId: "document", frameId: "frame", backendNodeId: 10, role: "form", name: "Journey" };
 
 describe("semantic action locators", () => {
+  it("explains visible dialog context when a target is missing, without retrying or matching hidden content", async () => {
+    const { send, command, store } = fixture([
+      field(1, "Country and language", "dialog"),
+      { ...field(2, "Hidden dialog", "dialog"), ignored: true },
+      { ...field(3, "Book title", "textbox"), ignored: true },
+    ]);
+    let message = "";
+    try { await findSemanticReference(send, store, 7, 7, { kind: "semantic", label: "Book title" }, undefined, 0); }
+    catch (error) { message = String(error); }
+    expect(message).toContain('Visible dialog: "Country and language"');
+    expect(message).not.toContain("Hidden dialog");
+    expect(command.mock.calls.filter(([, method]) => method === "Accessibility.getFullAXTree")).toHaveLength(1);
+  });
   it("matches exact field labels and returns a document-bound reference", async () => {
     const { send, store } = fixture([field(1, "From"), field(2, "From station"), field(3, "From", "StaticText")]);
     const ref = await findSemanticReference(send, store, 7, 7, { kind: "semantic", label: "From" });

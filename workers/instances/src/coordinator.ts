@@ -68,7 +68,8 @@ export class InstanceCoordinator extends DurableObject<Environment> implements I
     // Install the recovery alarm before claiming an allocation; an extra empty alarm is harmless.
     await this.ctx.storage.setAlarm(Date.now() + 1);
     this.#retirement.requireLive();
-    return { instance: this.#store.admit(actor, args, limits) };
+    const value = this.#store.admit(actor, args, limits);
+    return { instance: value, disposition: value.startRequestId === args.requestId ? "created" as const : "reused" as const };
   }
   async list(raw: InstanceActor, rawArgs: Parameters<InstallationInstances["list"]>[1]) {
     const actor = instanceActorSchema.parse(raw), args = instanceListSchema.parse(rawArgs);
@@ -78,13 +79,17 @@ export class InstanceCoordinator extends DurableObject<Environment> implements I
   }
   async get(raw: InstanceActor, rawSelector: InstanceSelector) {
     const row = this.#store.owned(instanceActorSchema.parse(raw), instanceSelectorSchema.parse(rawSelector));
+    if (!row && rawSelector.instanceId) throw new Error("Instance not found");
     return { instance: row ? instance(row) : null };
   }
   async stop(raw: InstanceActor, rawSelector: InstanceSelector) {
     const actor = instanceActorSchema.parse(raw), selector = instanceSelectorSchema.parse(rawSelector);
     if ("startRequestId" in selector) this.#store.cancelStart(actor, selector.startRequestId);
     const row = this.#store.owned(actor, selector);
-    if (!row) return { instance: null };
+    if (!row) {
+      if ("instanceId" in selector) throw new Error("Instance not found");
+      return { instance: null };
+    }
     if (row.active) {
       await this.ctx.storage.setAlarm(Date.now() + 1);
       this.fenceStop(instance(row), "Stopped by owner");
@@ -130,8 +135,8 @@ export class InstanceCoordinator extends DurableObject<Environment> implements I
   }
   private handoff(actor: InstanceActor, args: SysBrowserHandoffGetArgs, active = false): BrowserHandoff {
     browserHandoffSelectorSchema.parse(args);
-    this.requireInstance(actor, args.instanceId, active);
-    const value = this.#store.handoffs(args.instanceId).find(item => item.requestId === args.requestId);
+    const row = this.requireInstance(actor, args.instanceId, active);
+    const value = this.#store.handoffs(row.id).find(item => item.requestId === args.requestId);
     if (!value) throw new Error("Browser handoff not found");
     if (active && (value.state !== "active" || value.expiresAt <= Date.now())) throw new Error("Browser handoff is no longer active");
     return value;
@@ -139,6 +144,7 @@ export class InstanceCoordinator extends DurableObject<Environment> implements I
   async requestHandoff(raw: InstanceActor, rawArgs: Parameters<InstallationInstances["requestHandoff"]>[1]) {
     const actor = instanceActorSchema.parse(raw), args = browserHandoffRequestSchema.parse(rawArgs);
     const row = this.requireInstance(actor, args.instanceId, true);
+    args.instanceId = row.id;
     const existing = this.#store.handoffs(row.id).find(value => value.requestId === args.requestId);
     if (existing) {
       if (existing.tabId !== args.tabId || existing.purpose !== args.purpose || existing.responsibilityId !== args.responsibilityId) throw new Error("Handoff requestId has already been used with different arguments");
@@ -183,6 +189,7 @@ export class InstanceCoordinator extends DurableObject<Environment> implements I
   async finishHandoff(actor: InstanceActor, args: SysBrowserHandoffGetArgs) { this.human(actor); return this.endHandoff(actor, args, "completed"); }
   private async endHandoff(actor: InstanceActor, args: SysBrowserHandoffGetArgs, state: "completed" | "cancelled" | "expired") {
     const value = this.handoff(actor, args);
+    args = { ...args, instanceId: value.instanceId };
     if (!liveHandoff(value)) return { handoff: value };
     // Close admission first. execute() also waits for this barrier before resuming.
     const barrier = (async () => {
@@ -202,7 +209,7 @@ export class InstanceCoordinator extends DurableObject<Environment> implements I
   async frame(actor: InstanceActor, rawArgs: Parameters<InstallationInstances["frame"]>[1]) {
     this.human(actor);
     const args = browserFrameSchema.parse(rawArgs);
-    this.requireInstance(actor, args.instanceId, true);
+    args.instanceId = this.requireInstance(actor, args.instanceId, true).id;
     const browser = await this.browser(args.instanceId);
     const tabs = await browser.listTabs();
     const handoff = this.#store.handoffs(args.instanceId).find(liveHandoff);
@@ -218,7 +225,7 @@ export class InstanceCoordinator extends DurableObject<Environment> implements I
   async watch(actor: InstanceActor, rawArgs: Parameters<InstallationInstances["watch"]>[1]) {
     this.human(actor);
     const args = browserWatchSchema.parse(rawArgs);
-    this.requireInstance(actor, args.instanceId, true);
+    args.instanceId = this.requireInstance(actor, args.instanceId, true).id;
     const browser = await this.browser(args.instanceId);
     this.requireInstance(actor, args.instanceId, true);
     if ([...this.#watches.values()].filter(value => value.instanceId === args.instanceId).length >= 4) throw new Error("This browser already has four open viewers");
@@ -235,6 +242,7 @@ export class InstanceCoordinator extends DurableObject<Environment> implements I
   async input(actor: InstanceActor, rawArgs: Parameters<InstallationInstances["input"]>[1], rawInput: BrowserHumanInput) {
     this.human(actor);
     const args = browserInputSchema.parse(rawArgs), input = humanInputSchema.parse(rawInput);
+    args.instanceId = this.requireInstance(actor, args.instanceId, true).id;
     const check = () => {
       this.requireInstance(actor, args.instanceId, true);
       if (args.handoffRequestId) this.handoff(actor, { instanceId: args.instanceId, requestId: args.handoffRequestId }, true);
@@ -266,7 +274,7 @@ export class InstanceCoordinator extends DurableObject<Environment> implements I
 
   async execute(actor: InstanceActor, id: string, frame: InstanceTargetRequest, deadlineAt: number): Promise<InstanceTargetResponse> {
     try {
-      this.requireInstance(actor, id, true);
+      id = this.requireInstance(actor, id, true).id;
       if (!IMPLEMENTATIONS.includes(frame.call)) throw new Error("Unsupported browser syscall");
       if (this.#store.handoffs(id).some(liveHandoff)) { await cancelBinaryBody(frame.body, "Human controls browser"); return { type: "res", id: frame.id, ok: false, error: { code: 409, message: "human_control: waiting for the user to return browser control" } }; }
       await this.#policy.requireActive();
@@ -304,7 +312,7 @@ export class InstanceCoordinator extends DurableObject<Environment> implements I
     finally { clearTimeout(timer); operations.delete(frame.id); }
   }
   async cancel(actor: InstanceActor, id: string, requestId: string): Promise<void> {
-    this.requireInstance(actor, id);
+    id = this.requireInstance(actor, id).id;
     this.#operations.get(id)?.get(requestId)?.abort.abort(new Error("Browser command cancelled"));
   }
   private async settleOperations(id: string): Promise<boolean> {

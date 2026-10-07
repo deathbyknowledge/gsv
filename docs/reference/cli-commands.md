@@ -66,9 +66,12 @@ Commands run inside the gateway OS context, not directly on your local machine.
 Use `:quit`, `:exit`, or `:q` to leave.
 
 With the optional cloud instance service enabled, the gateway shell also exposes
-`instance catalog`, `instance start browser --request-id ID`, `instance list`,
+`instance catalog`, `instance start browser --request-id ID --wait`, `instance list`,
 `instance get ID`, and `instance stop ID`. Starting reuses the account's current
-browser; `--new` explicitly creates a separate temporary one. Ordinary browsers
+browser and reports `created` or `reused`; `--new` explicitly creates a separate
+temporary one. `--wait` waits for readiness for up to 60 seconds by default
+(`--timeout MS`, maximum 120000). Cancelling the wait leaves the instance running.
+Get and stop accept the displayed target ID or full instance ID. Ordinary browsers
 remember logins automatically. Use `browser handoff` when Ship needs a human to
 complete a sign-in; opening Fleet's browser view otherwise leaves Ship running
 and accepts direct input. These are native target commands, available to Ship
