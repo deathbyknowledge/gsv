@@ -7,7 +7,7 @@ import { InstancePolicy } from "../src/config";
 import { BrowserProvider } from "../src/provider";
 import { instance, InstanceStore } from "../src/store";
 import { ProfileStorage } from "../src/profiles";
-import { BrowserStorageError } from "../src/browser-storage";
+import { BrowserStorageError, SAVE_TIMEOUT_MS } from "../src/browser-storage";
 
 const actor = { ownerUid: 1000, human: true };
 const limits = { enabled: true, concurrentInstances: 2, periodSeconds: 36000, maxInstanceSeconds: 1800, savedProfiles: 5, profileStorageBytes: 5242880 };
@@ -39,6 +39,12 @@ async function fixture(work: (object: InstanceCoordinator, store: InstanceStore,
     store.sql.exec("UPDATE instances SET session_id = ? WHERE id = ?", "test-session", value.instanceId);
     await work(object, store, value.instanceId, installationId, browser);
   });
+}
+
+function deferred() {
+  let resolve!: () => void;
+  const promise = new Promise<void>(release => { resolve = release; });
+  return { promise, resolve };
 }
 
 describe("human browser control", () => {
@@ -139,9 +145,11 @@ describe("human browser control", () => {
       const rejected = expect(second).rejects.toThrow("no longer active");
       let returned = false;
       const done = object.finishHandoff(actor, selector).then(() => { returned = true; });
+      const command = object.execute(actor, instanceId, { type: "req", id: "after-handoff", call: "shell.exec", args: { input: "page snapshot" } }, Date.now() + 10000);
       await Promise.resolve();
       expect(returned).toBe(false);
       release(); await first; await rejected; await done;
+      expect(await command).toMatchObject({ ok: true });
       expect(input).toHaveBeenCalledTimes(1);
     }, input);
   });
@@ -150,6 +158,153 @@ describe("human browser control", () => {
     vi.spyOn(InstancePolicy.prototype, "limits").mockResolvedValue({ ...limits, enabled: false });
     expect((await object.catalog(actor)).templates).toEqual([]);
     expect((await object.get(actor, { instanceId })).instance?.implements).toContain("shell.exec");
+  }));
+});
+
+describe("browser save ordering", () => {
+  it("cancels automation before a handoff waits for the save queued behind it", () => fixture(async (object, _store, instanceId, _installationId, browser) => {
+    const started = deferred();
+    vi.spyOn(browser.shell!, "exec").mockImplementation(async (_args, context) => {
+      started.resolve();
+      await new Promise<void>(resolve => context!.abortSignal!.addEventListener("abort", () => resolve(), { once: true }));
+      return { status: "failed", output: "", error: "cancelled" };
+    });
+    const save = vi.spyOn(browser, "save");
+    const command = object.execute(actor, instanceId, { type: "req", id: "before-handoff", call: "shell.exec", args: { input: "page wait '#ready'" } }, Date.now() + 10000);
+    await started.promise;
+    const saving = object.saveProfile(actor, instanceId);
+    await vi.waitFor(async () => expect((await object.get(actor, { instanceId })).instance?.persistence?.saveStatus).toBe("saving"));
+    expect(save).not.toHaveBeenCalled();
+    const result = await object.requestHandoff(actor, { instanceId, requestId: "during-save", tabId: 1, purpose: "Sign in" });
+    expect(result.handoff).toMatchObject({ state: "pending", site: "https://example.com" });
+    expect((await saving).profile?.saveStatus).toBe("saved");
+    expect(await command).toMatchObject({ ok: true, data: { status: "failed" } });
+  }));
+
+  it("waits for admitted shell work to relinquish the browser before saving", () => fixture(async (object, _store, instanceId, _installationId, browser) => {
+    const idle = deferred();
+    const enteredIdle = deferred();
+    vi.spyOn(browser.shell!, "idle").mockImplementation(async () => { enteredIdle.resolve(); await idle.promise; });
+    const save = vi.spyOn(browser, "save");
+    const command = object.execute(actor, instanceId, { type: "req", id: "active", call: "shell.exec", args: { input: "tabs close 1" } }, Date.now() + 10000);
+    await enteredIdle.promise;
+    const saving = object.saveProfile(actor, instanceId);
+    await vi.waitFor(async () => expect((await object.get(actor, { instanceId })).instance?.persistence?.saveStatus).toBe("saving"));
+    expect(save).not.toHaveBeenCalled();
+    idle.resolve();
+    expect(await command).toMatchObject({ ok: true });
+    expect((await saving).profile?.saveStatus).toBe("saved");
+    expect(save).toHaveBeenCalledOnce();
+  }));
+
+  it("waits for active human input before exporting storage", () => fixture(async (object, _store, instanceId, _installationId, browser) => {
+    const inputDone = deferred();
+    const inputStarted = deferred();
+    browser.humanInput = async () => { inputStarted.resolve(); await inputDone.promise; };
+    const save = vi.spyOn(browser, "save");
+    const input = object.input(actor, { instanceId, tabId: 1, documentId: "document" }, { kind: "text", text: "typing" });
+    await inputStarted.promise;
+    const saving = object.saveProfile(actor, instanceId);
+    await vi.waitFor(async () => expect((await object.get(actor, { instanceId })).instance?.persistence?.saveStatus).toBe("saving"));
+    expect(save).not.toHaveBeenCalled();
+    inputDone.resolve();
+    await input;
+    expect((await saving).profile?.saveStatus).toBe("saved");
+    expect(save).toHaveBeenCalledOnce();
+  }));
+
+  it.each(["manual", "alarm"] as const)("holds new commands and human input until a %s save commits", trigger => fixture(async (object, _store, instanceId, _installationId, browser) => {
+    const exported = deferred();
+    const uploading = deferred();
+    const committed = deferred();
+    const events: string[] = [];
+    const exportState = browser.save!;
+    browser.save = vi.fn(async (...args) => { await exported.promise; events.push("export"); return exportState(...args); });
+    const upload = ProfileStorage.prototype.save;
+    vi.spyOn(ProfileStorage.prototype, "save").mockImplementation(async function (...args) {
+      uploading.resolve();
+      await committed.promise;
+      await upload.apply(this, args);
+      events.push("commit");
+    });
+    vi.spyOn(browser.shell!, "exec").mockImplementation(async () => { events.push("command"); return { status: "completed", output: "ok", exitCode: 0 }; });
+    browser.humanInput = async () => { events.push("input"); };
+    const saving = trigger === "manual" ? object.saveProfile(actor, instanceId) : object.alarm();
+    await vi.waitFor(() => expect(browser.save).toHaveBeenCalledOnce());
+    const command = object.execute(actor, instanceId, { type: "req", id: "after-save", call: "shell.exec", args: { input: "tabs close 1" } }, Date.now() + 10000);
+    const input = object.input(actor, { instanceId, tabId: 1, documentId: "document" }, { kind: "click", x: 10, y: 10 });
+    const frame = await object.frame(actor, { instanceId });
+    await frame.body.stream.cancel();
+    expect(events).toEqual([]);
+    exported.resolve();
+    await uploading.promise;
+    expect(events).toEqual(["export"]);
+    committed.resolve();
+    await Promise.all([saving, input]);
+    expect(await command).toMatchObject({ ok: true });
+    expect(events.slice(0, 2)).toEqual(["export", "commit"]);
+    expect(events.slice(2).sort()).toEqual(["command", "input"]);
+  }));
+
+  it("cancels a command waiting on a save and consumes its body without releasing later work", () => fixture(async (object, _store, instanceId, _installationId, browser) => {
+    const exported = deferred();
+    const exportState = browser.save!;
+    browser.save = vi.fn(async (...args) => { await exported.promise; return exportState(...args); });
+    const exec = vi.spyOn(browser.shell!, "exec");
+    const cancelled = vi.fn();
+    const saving = object.saveProfile(actor, instanceId);
+    await vi.waitFor(() => expect(browser.save).toHaveBeenCalledOnce());
+    const command = object.execute(actor, instanceId, {
+      type: "req", id: "cancelled", call: "fs.write", args: { path: "/tmp/file" },
+      body: { stream: new ReadableStream<Uint8Array>({ cancel: cancelled }) },
+    }, Date.now() + 10000);
+    await vi.waitFor(async () => {
+      await object.cancel(actor, instanceId, "cancelled");
+      expect(cancelled).toHaveBeenCalledOnce();
+    });
+    expect(await command).toMatchObject({ ok: false, error: { code: 499 } });
+    const later = object.execute(actor, instanceId, { type: "req", id: "later", call: "shell.exec", args: { input: "page snapshot" } }, Date.now() + 10000);
+    await new Promise(resolve => setTimeout(resolve, 0));
+    expect(exec).not.toHaveBeenCalled();
+    exported.resolve();
+    await saving;
+    expect(await later).toMatchObject({ ok: true });
+    expect(exec).toHaveBeenCalledOnce();
+  }));
+
+  it("retains a timed-out export's barrier until the actual browser work ends", () => fixture(async (object, _store, instanceId, _installationId, browser) => {
+    const exported = deferred();
+    const exporting = deferred();
+    const exportState = browser.save!;
+    browser.save = async (...args) => { exporting.resolve(); await exported.promise; return exportState(...args); };
+    const exec = vi.spyOn(browser.shell!, "exec");
+    const upload = vi.spyOn(ProfileStorage.prototype, "save");
+    vi.useFakeTimers();
+    const saving = object.saveProfile(actor, instanceId);
+    await exporting.promise;
+    await vi.advanceTimersByTimeAsync(SAVE_TIMEOUT_MS + 1);
+    expect((await saving).profile?.saveStatus).toBe("failed");
+    const command = object.execute(actor, instanceId, { type: "req", id: "after-timeout", call: "shell.exec", args: { input: "tabs close 1" } }, Date.now() + 10000);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(exec).not.toHaveBeenCalled();
+    exported.resolve();
+    expect(await command).toMatchObject({ ok: true });
+    expect(upload).not.toHaveBeenCalled();
+  }));
+
+  it("force-stops during a save without admitting the queued command", () => fixture(async (object, _store, instanceId, _installationId, browser) => {
+    const exported = deferred();
+    const exportState = browser.save!;
+    browser.save = vi.fn(async (...args) => { await exported.promise; return exportState(...args); });
+    const exec = vi.spyOn(browser.shell!, "exec");
+    const saving = object.saveProfile(actor, instanceId);
+    await vi.waitFor(() => expect(browser.save).toHaveBeenCalledOnce());
+    const command = object.execute(actor, instanceId, { type: "req", id: "stopping", call: "shell.exec", args: { input: "tabs close 1" } }, Date.now() + 10000);
+    expect((await object.stop(actor, { instanceId, force: true })).instance?.state).toBe("stopping");
+    expect(await command).toMatchObject({ ok: false, error: { code: 499 } });
+    exported.resolve();
+    await saving;
+    expect(exec).not.toHaveBeenCalled();
   }));
 });
 

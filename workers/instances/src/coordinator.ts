@@ -14,7 +14,7 @@ import { instance, InstanceStore, profile, type InstanceRow } from "./store";
 import { ProfileStorage } from "./profiles";
 import { BrowserProvider } from "./provider";
 import { InstanceRetirement } from "./retirement";
-import { within } from "./browser-operation";
+import { BrowserOperationGate, within } from "./browser-operation";
 import { BrowserWatch } from "./browser-watch";
 import { BrowserStorageError, SAVE_TIMEOUT_MS } from "./browser-storage";
 import type { InstallationDeletionRequest } from "@humansandmachines/gsv/services/lifecycle";
@@ -44,6 +44,7 @@ export class InstanceCoordinator extends DurableObject<Environment> implements I
   readonly #retirement: InstanceRetirement;
   readonly #browsers = new Map<string, Promise<CloudBrowser>>();
   readonly #operations = new Map<string, Map<string, OwnedOperation>>();
+  readonly #operationGates = new Map<string, BrowserOperationGate>();
   readonly #saves = new Map<string, { done: Promise<void>; outcome: Promise<boolean>; abort: AbortController }>();
   readonly #stops = new Map<string, Promise<void>>();
   readonly #handoffBarriers = new Map<string, Promise<void>>();
@@ -199,7 +200,7 @@ export class InstanceCoordinator extends DurableObject<Environment> implements I
     this.#store.putHandoff(value);
     try {
       const saving = this.#saves.get(row.id)?.done;
-      if (!await boundedSettlement(saving ? [saving] : [], 10000) || !await this.settleOperations(row.id)) {
+      if (!await this.settleOperations(row.id) || !await boundedSettlement(saving ? [saving] : [], 10000)) {
         this.fenceStop(instance(this.#store.byId(row.id)), "Browser did not release automation for human control");
         throw new Error("Browser could not safely transfer control; the instance is stopping");
       }
@@ -297,19 +298,21 @@ export class InstanceCoordinator extends DurableObject<Environment> implements I
     const previous = this.#humanInputs.get(args.instanceId);
     const operation = (async () => {
       await previous;
-      const browser = await this.browser(args.instanceId);
-      await browser.runInput(async () => {
-        check();
-        if (await browser.documentId(args.tabId) !== args.documentId) throw new Error("The page changed. Check the refreshed view before trying again.");
-        check(); deadline.throwIfAborted();
-        if (input.kind === "tab") {
-          await browser.focusTab(input.tabId);
-          if (args.handoffRequestId) {
-            const value = this.handoff(actor, { instanceId: args.instanceId, requestId: args.handoffRequestId }, true);
-            this.#store.putHandoff({ ...value, activeTabId: input.tabId, revision: value.revision + 1 });
-          }
-        } else await browser.humanInput(args.tabId, input);
-      }, deadline, "human");
+      await this.operationGate(args.instanceId).run(async () => {
+        const browser = await this.browser(args.instanceId);
+        await browser.runInput(async () => {
+          check();
+          if (await browser.documentId(args.tabId) !== args.documentId) throw new Error("The page changed. Check the refreshed view before trying again.");
+          check(); deadline.throwIfAborted();
+          if (input.kind === "tab") {
+            await browser.focusTab(input.tabId);
+            if (args.handoffRequestId) {
+              const value = this.handoff(actor, { instanceId: args.instanceId, requestId: args.handoffRequestId }, true);
+              this.#store.putHandoff({ ...value, activeTabId: input.tabId, revision: value.revision + 1 });
+            }
+          } else await browser.humanInput(args.tabId, input);
+        }, deadline, "human");
+      }, deadline);
     })();
     this.#humanInputs.set(args.instanceId, operation);
     try { await operation; return { accepted: true as const }; }
@@ -338,24 +341,27 @@ export class InstanceCoordinator extends DurableObject<Environment> implements I
     if (!operations) { operations = new Map(); this.#operations.set(id, operations); }
     if (operations.has(frame.id)) { clearTimeout(timer); await cancelBinaryBody(frame.body, "Duplicate browser request"); throw new Error("Browser request is already running"); }
     const done = (async (): Promise<InstanceTargetResponse> => {
-      let browser: CloudBrowser | undefined;
       try {
         await within(this.#handoffBarriers.get(id) ?? Promise.resolve(), Math.max(1, deadlineAt - Date.now()), "Browser handoff completion", abort.signal);
-        browser = await this.browser(id);
-        this.requireInstance(actor, id, true);
-        if (this.#store.handoffs(id).some(liveHandoff)) throw new Error("human_control: browser is waiting for the user");
-        abort.signal.throwIfAborted();
-        const result = frame.call === "shell.exec"
-          ? { data: await browser.shell.exec(frame.args, { currentTargetId: instance(this.#store.byId(id)).targetId, abortSignal: abort.signal }), body: undefined }
-          : await browser.files.handle(frame.call, frame.args, frame.body, abort.signal);
-        // Driver results follow the same filesystem and shell contracts as the extension.
-        // SAFETY: The shared extension driver handles this exact syscall and returns its matching data/body contract.
-        return { type: "res", id: frame.id, ok: true, data: result.data, body: result.body } as InstanceTargetResponse;
+        return await this.operationGate(id).run(async () => {
+          const browser = await this.browser(id);
+          try {
+            this.requireInstance(actor, id, true);
+            if (this.#store.handoffs(id).some(liveHandoff)) throw new Error("human_control: browser is waiting for the user");
+            abort.signal.throwIfAborted();
+            const result = frame.call === "shell.exec"
+              ? { data: await browser.shell.exec(frame.args, { currentTargetId: instance(this.#store.byId(id)).targetId, abortSignal: abort.signal }), body: undefined }
+              : await browser.files.handle(frame.call, frame.args, frame.body, abort.signal);
+            // Driver results follow the same filesystem and shell contracts as the extension.
+            // SAFETY: The shared extension driver handles this exact syscall and returns its matching data/body contract.
+            return { type: "res", id: frame.id, ok: true, data: result.data, body: result.body } as InstanceTargetResponse;
+          } finally { await browser.shell.idle(); }
+        }, abort.signal);
       } catch (error) {
         await cancelBinaryBody(frame.body, "Browser request failed");
         const ref = this.#store.diagnostic(id, error);
         return { type: "res", id: frame.id, ok: false, error: { code: abort.signal.aborted ? 499 : 502, message: `Browser request failed; inspect diagnostic ${ref}` } };
-      } finally { if (browser) await browser.shell.idle(); }
+      }
     })();
     operations.set(frame.id, { abort, done });
     try { return await done; }
@@ -369,6 +375,11 @@ export class InstanceCoordinator extends DurableObject<Environment> implements I
     const operations = [...(this.#operations.get(id)?.values() ?? [])];
     for (const operation of operations) operation.abort.abort(new Error("Browser control transferred"));
     return boundedSettlement(operations.map(operation => operation.done), 10000);
+  }
+  private operationGate(id: string): BrowserOperationGate {
+    let gate = this.#operationGates.get(id);
+    if (!gate) { gate = new BrowserOperationGate(); this.#operationGates.set(id, gate); }
+    return gate;
   }
   private browser(id: string): Promise<CloudBrowser> {
     let attached = this.#browsers.get(id);
@@ -394,7 +405,7 @@ export class InstanceCoordinator extends DurableObject<Environment> implements I
     const abort = new AbortController();
     const started = Date.now();
     this.updatePersistence(id, { saveStatus: "saving", attemptedAt: started, error: undefined, diagnosticRef: undefined });
-    const work = (async () => {
+    const work = this.operationGate(id).save(async () => {
       const limits = await this.#policy.limits();
       abort.signal.throwIfAborted();
       this.updatePersistence(id, { limitBytes: limits.profileStorageBytes });
@@ -403,7 +414,7 @@ export class InstanceCoordinator extends DurableObject<Environment> implements I
       const issues = failures?.map(({ issue, cause }) => ({ ...issue, diagnosticRef: this.#store.diagnostic(id, cause) }));
       await this.#profiles.save(value, state, limits.profileStorageBytes, abort.signal, usage, issues);
       abort.signal.throwIfAborted();
-    })();
+    }, abort.signal);
     // Retain the actual operation after a timeout: deletion and later saves must
     // wait for it, and its abort signal fences any late R2 commit.
     const settled = work.then(() => {}, () => {}).finally(() => {
@@ -581,6 +592,7 @@ export class InstanceCoordinator extends DurableObject<Environment> implements I
     }
     this.#browsers.delete(row.id);
     this.#store.terminal(row.id, Boolean(value.diagnosticRef));
+    this.#operationGates.delete(row.id);
   }
 }
 

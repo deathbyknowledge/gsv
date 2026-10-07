@@ -57,6 +57,10 @@ handoff, and before an ordinary stop. Closing a website tab does not forget its
 saved data. Restore completes before the next browser becomes ready. If restore
 fails, that start fails visibly rather than opening an empty replacement.
 
+A save waits for active browser commands and live-view input to settle. New
+commands and input wait while the save completes, with their usual cancellation
+and time limits. The live view stays open during saving.
+
 **Stop browser** commits saved data before closing. If a website uses unsupported
 storage or its storage cannot be read, GSV saves the other sites and reports
 **saved with exceptions**. It retains that site's previous saved storage and
