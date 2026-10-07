@@ -114,6 +114,34 @@ export async function seedPartialBrowserStorage(shell, client, instance, website
   console.log("PASS: one unsupported site leaves another site's updated state saving and reports a stable retained-save time");
 }
 
+export async function checkBrowserStorageSummaryBounds(shell, client, instance, website) {
+  await evaluate(shell, instance, `(async () => {
+    await Promise.all(Array.from({ length: 48 }, (_, index) => new Promise((resolve, reject) => {
+      const open = indexedDB.open("gsv-summary-" + index + "🙂".repeat(1024), 1);
+      open.onerror = () => reject(open.error);
+      open.onsuccess = () => { open.result.close(); resolve(); };
+    }))); return true;
+  })()`);
+  const { profile } = await client.sys.browser.profile.save({ instanceId: instance.instanceId });
+  assert.equal(profile.saveStatus, "saved", profile.error);
+  const site = profile.usage.sites.find(site => site.origin === new URL(website).origin);
+  assert.ok(site.databases >= 48);
+  assert.equal(site.databaseUsageTruncated, true);
+  assert.ok(site.databaseUsage.length <= 32);
+  assert.ok(new TextEncoder().encode(JSON.stringify(site)).byteLength <= 4096 + 24, "Database details exceeded their metadata allowance");
+  assert.ok(site.databaseUsage.some(db => db.name.endsWith("…")));
+  await evaluate(shell, instance, `(async () => {
+    await Promise.all((await indexedDB.databases()).filter(db => db.name.startsWith("gsv-summary-")).map(db => new Promise((resolve, reject) => {
+      const request = indexedDB.deleteDatabase(db.name);
+      request.onsuccess = resolve; request.onerror = () => reject(request.error); request.onblocked = () => reject(new Error("Summary export retained a connection"));
+    }))); return true;
+  })()`);
+  const cleared = (await client.sys.browser.profile.save({ instanceId: instance.instanceId })).profile;
+  assert.equal(cleared.saveStatus, "saved", cleared.error);
+  assert.equal(cleared.usage.sites.find(site => site.origin === new URL(website).origin).databaseUsageTruncated, false);
+  console.log("PASS: many long database names keep exact storage totals with bounded, visibly truncated details, and normal details return after cleanup");
+}
+
 export async function checkPartialBrowserStorage(shell, instance, website) {
   const healthy = JSON.parse(await shell(instance, `page js 'JSON.stringify({local:localStorage.getItem("healthy-after-failure"),cookie:document.cookie.includes("healthy_session=new")})'`));
   assert.deepEqual(JSON.parse(healthy.js.result), { local: "saved", cookie: true });

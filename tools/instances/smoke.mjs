@@ -9,7 +9,7 @@ import { checkBrowserCommands } from "./browser-commands-smoke.mjs";
 import { checkFormCommands } from "./form-commands-smoke.mjs";
 import { checkBrowserCredentials } from "./browser-credentials-smoke.mjs";
 import { checkBrowserFollowing } from "./browser-follow-smoke.mjs";
-import { seedBrowserStorage, seedPartialBrowserStorage, checkPartialBrowserStorage, checkRestoredBrowserStorage, checkForgettingBrowserStorage } from "./browser-storage-smoke.mjs";
+import { seedBrowserStorage, seedPartialBrowserStorage, checkBrowserStorageSummaryBounds, checkPartialBrowserStorage, checkRestoredBrowserStorage, checkForgettingBrowserStorage } from "./browser-storage-smoke.mjs";
 
 // Intentionally local: this fixture never creates a paid remote browser.
 const origin = new URL(process.env.GSV_BROWSER_SMOKE_ORIGIN ?? "http://localhost:8976");
@@ -166,6 +166,7 @@ try {
   await shell(first, "page snapshot");
   console.log("PASS: linked work resumes once, terminal handoff retries stay terminal, and cancelling work releases human control");
   await seedBrowserStorage(shell, client, first);
+  await checkBrowserStorageSummaryBounds(shell, client, first, website);
   await seedPartialBrowserStorage(shell, client, first, website);
   // Close the site's tabs: persistence must remember origins independently.
   const closing = JSON.parse(await shell(first, "tabs list"));

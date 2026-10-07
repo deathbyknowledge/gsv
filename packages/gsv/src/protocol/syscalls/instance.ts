@@ -77,6 +77,7 @@ export type BrowserStorageSite = {
   databases: number;
   records: number;
   databaseUsage?: { name: string; bytes: number; stores: number; records: number }[];
+  databaseUsageTruncated?: boolean;
 };
 export type BrowserStorageUsage = {
   measuredAt?: number;
@@ -85,6 +86,7 @@ export type BrowserStorageUsage = {
   cookieBytes: number;
   cookies: number;
   cookieDomains?: { domain: string; bytes: number; cookies: number }[];
+  cookieDomainsTruncated?: boolean;
   sites: BrowserStorageSite[];
 };
 export type BrowserStorageIssue = {

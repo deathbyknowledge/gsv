@@ -113,7 +113,13 @@ Saved data is also inspectable on `gsv`, under your account name:
 `savedAt` describes the snapshot commit; an affected site's `retainedAt` describes
 its older retained data. Both metadata files expose the exceptions.
 `sites.json` reports per-origin local storage and IndexedDB sizes, database and
-record counts, and cookie counts/sizes by domain. These files contain no login
+record counts, and cookie counts/sizes by domain. Database details are capped at
+32 entries and 4 KiB per origin; long names are shortened with an ellipsis.
+`databaseUsageTruncated` marks shortened or omitted details. Cookie-domain
+details are capped at 64 entries and 32 KiB, with `cookieDomainsTruncated` when
+entries are omitted. Byte and record totals still include all measured data.
+These limits apply to metadata; website state keeps its ordinary storage allowance.
+These files contain no login
 values. `state.enc` is the opaque encrypted snapshot; its key stays with the
 instance service, so copying the file alone is not a portable backup. The files
 are read-only. Delete `state.enc`, or recursively remove your account directory,

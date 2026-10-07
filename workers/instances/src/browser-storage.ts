@@ -3,6 +3,7 @@ import type { BrowserStorageIssue, BrowserStorageSite, BrowserStorageUsage } fro
 import type { StorageState } from "./browser";
 import { storageScriptSource } from "./playwright-storage.generated";
 import { within } from "./browser-operation";
+import { summarizeBrowserCookies, summarizeBrowserStorage } from "./browser-storage-summary";
 
 export const MAX_PROFILE_BYTES = 32 * 1024 * 1024;
 export const DEFAULT_PROFILE_BYTES = 16 * 1024 * 1024;
@@ -29,10 +30,7 @@ export async function exportBrowserStorage(
   const state: StorageState = { cookies, origins: [] };
   const failures: NonNullable<BrowserSnapshot["failures"]> = [];
   const usage: BrowserStorageUsage = { measuredAt: Date.now(), complete: false, bytes: bytes(state), cookieBytes: bytes(cookies), cookies: cookies.length, sites: [] };
-  usage.cookieDomains = [...new Set(cookies.map(cookie => cookie.domain))].sort().map(domain => {
-    const entries = cookies.filter(cookie => cookie.domain === domain);
-    return { domain, bytes: bytes(entries), cookies: entries.length };
-  });
+  Object.assign(usage, summarizeBrowserCookies(cookies));
   let page: Page | undefined;
   let targetId: string | undefined;
   const close = () => page?.close().catch(() => {});
@@ -58,14 +56,7 @@ export async function exportBrowserStorage(
           const script = new (module.exports.StorageScript())(false);
           const data = { origin: location.origin, ...await script.collect(true) };
           const json = JSON.stringify(data);
-          const size = value => new TextEncoder().encode(JSON.stringify(value)).byteLength;
-          const summary = {
-            origin: location.origin, bytes: new TextEncoder().encode(json).byteLength,
-            localStorageBytes: size(data.localStorage), indexedDBBytes: size(data.indexedDB),
-            localStorageEntries: data.localStorage.length, databases: data.indexedDB.length,
-            records: data.indexedDB.reduce((n, db) => n + db.stores.reduce((m, store) => m + store.records.length, 0), 0),
-            databaseUsage: data.indexedDB.map(db => ({ name: db.name, bytes: size(db), stores: db.stores.length, records: db.stores.reduce((n, store) => n + store.records.length, 0) }))
-          };
+          const summary = (${summarizeBrowserStorage.toString()})(data, new TextEncoder().encode(json).byteLength);
           return { summary, json: summary.bytes <= ${Math.max(0, Math.min(maxBytes, MAX_PROFILE_BYTES) - usage.bytes)} ? json : undefined };
         })()`;
         const exported = await within(page.evaluate<{ summary: BrowserStorageSite; json?: string }>(expression), 5000, "Site storage export", signal);
