@@ -9,6 +9,7 @@ import type {
 import {
   clearInstallationOnboardingToken,
   readInstallationOnboardingToken,
+  readInstallationOnboardingUsername,
 } from "./installationOnboarding";
 
 const STORAGE_USERNAME = "gsv.ui.gateway.username";
@@ -278,7 +279,8 @@ export function createSessionService(client: SessionClient, options: SessionServ
   let snapshot: SessionSnapshot = {
     phase: "booting",
     url: gatewayUrl(),
-    username: currentSessionToken?.username ?? readStored(STORAGE_USERNAME, storage) ?? "",
+    username: currentSessionToken?.username ?? readStored(STORAGE_USERNAME, storage)
+      ?? (options.onboarding === undefined ? readInstallationOnboardingUsername() : null) ?? "",
     connectionId: null,
     server: null,
     message: "Booting up...",

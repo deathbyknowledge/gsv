@@ -365,10 +365,11 @@
   --faint: #a7a3c8;
   --glyph: #6b5fd6;
   --star: #b8b2e6;
-  --online: #1e8a55;
+  --online: #167346; /* AA on every light surface (was #1e8a55, 4.4:1 on white) */
   --error: #c0364f;
   --idle: #9d98c6;
   --update: #a46b00;
+  --warn: #8a5a00; /* light amber; the root value is the dark theme's */
   --live: #5a52a8;
   --primary-hi: #4a43a0;
   --principal: #2e7d4f;

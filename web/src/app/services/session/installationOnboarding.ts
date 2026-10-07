@@ -1,6 +1,7 @@
 const STORAGE_ONBOARDING_TOKEN = "gsv.ui.installation-onboarding.v1";
 const ONBOARDING_PATH = "/onboarding";
 const ONBOARDING_TOKEN_PATTERN = /^onboard_[A-Za-z0-9_-]{32,128}$/;
+const ONBOARDING_USERNAME_PATTERN = /^[a-z_][a-z0-9_-]{0,31}$/;
 
 export function readInstallationOnboardingToken(): string | null {
   if (window.location.pathname === ONBOARDING_PATH && window.location.hash.length > 1) {
@@ -22,6 +23,13 @@ export function readInstallationOnboardingToken(): string | null {
   } catch {
     return null;
   }
+}
+
+/** The username the signup handoff proposed for first-boot setup, kept in the query so it survives a reload. */
+export function readInstallationOnboardingUsername(): string | null {
+  if (window.location.pathname !== ONBOARDING_PATH) return null;
+  const username = new URLSearchParams(window.location.search).get("username");
+  return username && ONBOARDING_USERNAME_PATTERN.test(username) ? username : null;
 }
 
 export function clearInstallationOnboardingToken(): void {

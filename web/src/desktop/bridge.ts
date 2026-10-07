@@ -9,7 +9,7 @@ export type DesktopSession = { generation: string; origin: string | null; values
 type NativeChannel<T> = { onmessage: (message: T) => void };
 type DesktopCommands = {
   desktop_session: { args: undefined; result: DesktopSession };
-  desktop_configure: { args: { origin: string | null; onboardingToken?: string | null }; result: DesktopSession };
+  desktop_configure: { args: { origin: string | null; onboardingToken?: string | null; username?: string }; result: DesktopSession };
   desktop_store: { args: { generation: string; values: Record<string, string> }; result: void };
   desktop_welcome: { args: undefined; result: WelcomeSnapshot };
   desktop_save_welcome: { args: { revision: string; value: WelcomeState | null }; result: WelcomeSnapshot };

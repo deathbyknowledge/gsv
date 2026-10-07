@@ -40,6 +40,16 @@ pub struct SessionStore {
     pending_revokes: BTreeMap<String, Vec<String>>,
 }
 
+/// Mirrors the Kernel's account username rule so an unusable handle never seeds setup.
+fn valid_username(value: &str) -> bool {
+    let bytes = value.as_bytes();
+    (1..=32).contains(&bytes.len())
+        && (bytes[0].is_ascii_lowercase() || bytes[0] == b'_')
+        && bytes
+            .iter()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || *b == b'_' || *b == b'-')
+}
+
 pub fn gateway_origin(value: &str) -> Result<String, String> {
     let url = Url::parse(value.trim()).map_err(|_| "Enter the full HTTPS space address.")?;
     let loopback = matches!(url.host_str(), Some("localhost" | "127.0.0.1" | "[::1]"));
@@ -117,13 +127,16 @@ impl SessionStore {
     }
 
     pub fn configure(&mut self, origin: Option<String>) -> Result<Session, String> {
-        self.configure_onboarding(origin, None)
+        self.configure_onboarding(origin, None, None)
     }
 
+    /// Switches to a space that still awaits first-boot setup. `username` is the
+    /// signup handle the owner chose to reuse; it only seeds the setup form.
     pub fn configure_onboarding(
         &mut self,
         origin: Option<String>,
         onboarding_token: Option<String>,
+        username: Option<String>,
     ) -> Result<Session, String> {
         let origin = origin.as_deref().map(gateway_origin).transpose()?;
         if let Some(token) = &onboarding_token {
@@ -135,6 +148,11 @@ impl SessionStore {
                     .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
             {
                 return Err("Invalid setup authorization.".into());
+            }
+        }
+        if let Some(username) = &username {
+            if onboarding_token.is_none() || !valid_username(username) {
+                return Err("Invalid username.".into());
             }
         }
         let mut pending_revokes = self.pending_revokes.clone();
@@ -156,6 +174,9 @@ impl SessionStore {
         let mut values = BTreeMap::new();
         if let Some(token) = onboarding_token {
             values.insert("gsv.ui.installation-onboarding.v1".into(), token);
+        }
+        if let Some(username) = username {
+            values.insert("gsv.ui.gateway.username".into(), username);
         }
         if let Some(pending) = origin
             .as_ref()
@@ -443,8 +464,16 @@ mod tests {
         let mut store = SessionStore::open(directory.path().to_owned()).unwrap();
         let token = format!("onboard_{}", "a".repeat(43));
         let saved = store
-            .configure_onboarding(Some("https://first.example".into()), Some(token.clone()))
+            .configure_onboarding(
+                Some("https://first.example".into()),
+                Some(token.clone()),
+                Some("alice".into()),
+            )
             .unwrap();
+        assert_eq!(
+            saved.values.get("gsv.ui.gateway.username"),
+            Some(&"alice".to_string())
+        );
         let mut reopened = SessionStore::open(directory.path().to_owned()).unwrap();
         assert_eq!(
             reopened
@@ -456,7 +485,24 @@ mod tests {
         assert!(reopened
             .configure_onboarding(
                 Some("https://second.example".into()),
-                Some("invalid".into())
+                Some("invalid".into()),
+                None
+            )
+            .is_err());
+        for username in ["1alice", "Alice", &"a".repeat(33), ""] {
+            assert!(reopened
+                .configure_onboarding(
+                    Some("https://second.example".into()),
+                    Some(token.clone()),
+                    Some(username.into())
+                )
+                .is_err());
+        }
+        assert!(reopened
+            .configure_onboarding(
+                Some("https://second.example".into()),
+                None,
+                Some("alice".into())
             )
             .is_err());
         assert_eq!(reopened.current.generation, saved.generation);

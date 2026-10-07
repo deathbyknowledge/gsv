@@ -36,8 +36,8 @@ describe("owner welcome", () => {
     }
     // SAFETY: The screen's native form owns an Event-based submit handler.
     const form = () => collectNodes(tree).find((node) => node.type === "form") as VNode<{ onSubmit: (event: Event) => void }>;
-    // SAFETY: The screen's only native input is its agreement checkbox.
-    const checkbox = () => collectNodes(tree).find((node) => node.type === "input") as VNode<JSX.InputHTMLAttributes<HTMLInputElement>>;
+    // SAFETY: The screen's native checkboxes are the required agreement and the optional username choice.
+    const checkbox = () => collectNodes(tree).find((node) => node.type === "input" && node.props.required) as VNode<JSX.InputHTMLAttributes<HTMLInputElement>>;
     const field = (label: string) => collectNodes(tree).find((node) => node.type === TextInput && node.props.label === label)!;
     try {
       await root.render(<Harness />);
@@ -65,6 +65,7 @@ describe("owner welcome", () => {
       await act(() => form().props.onSubmit(new Event("submit")));
       await vi.waitFor(() => expect(field("Handle")).toBeDefined());
       expect(checkbox()).toBeUndefined();
+      expect(collectText(tree)).toContain("Also use this as my username");
       expect(fetcher).toHaveBeenCalledWith("https://accounts.example.com/owner/api/invites/claim", expect.objectContaining({ method: "POST" }));
     } finally { await root.unmount(); }
   });
@@ -105,8 +106,8 @@ describe("owner welcome", () => {
     const button = (label: string) => collectNodes(tree).find((node) => node.props.label === label || node.props["aria-label"] === label)!;
     // SAFETY: The screen's native form owns an Event-based submit handler.
     const form = () => collectNodes(tree).find((node) => node.type === "form") as VNode<{ onSubmit: (event: Event) => void }>;
-    // SAFETY: The screen's only native input is its agreement checkbox.
-    const checkbox = () => collectNodes(tree).find((node) => node.type === "input") as VNode<JSX.InputHTMLAttributes<HTMLInputElement>>;
+    // SAFETY: The screen's native checkboxes are the required agreement and the optional username choice.
+    const checkbox = () => collectNodes(tree).find((node) => node.type === "input" && node.props.required) as VNode<JSX.InputHTMLAttributes<HTMLInputElement>>;
     const creationRequests = () => fetcher.mock.calls.filter(([url]) => url.includes("/invites/"));
     try {
       await root.render(<Harness />);
@@ -155,10 +156,69 @@ describe("owner welcome", () => {
         await act(() => { field("Handle")!.props.onChange?.("my-space"); });
         await act(() => form().props.onSubmit(new Event("submit")));
       }
-      await vi.waitFor(() => expect(onConnect).toHaveBeenCalledExactlyOnceWith("https://my-space.example.com", `onboard_${"a".repeat(43)}`));
+      // The handle doubles as the username by default, including when a saved handle skips the handle step.
+      await vi.waitFor(() => expect(onConnect).toHaveBeenCalledExactlyOnceWith("https://my-space.example.com", `onboard_${"a".repeat(43)}`, "my-space"));
       expect(creationRequests().map(([url]) => new URL(url).pathname)).toEqual([
         ...(!hasInvite ? ["/owner/api/invites/claim"] : []), "/owner/api/invites/invite_fixture/space",
       ]);
+    } finally { await root.unmount(); }
+  });
+
+  it.each([
+    { handle: "my-space", opted: true, username: "my-space", note: null },
+    { handle: "my-space", opted: false, username: undefined, note: null },
+    { handle: "42labs", opted: true, username: undefined, note: "Usernames can't start with a number." },
+    { handle: "a".repeat(33), opted: true, username: undefined, note: "Usernames can't be longer than 32 characters." },
+    { handle: "ship", opted: true, username: undefined, note: "This name belongs to your Ship." },
+  ])("carries the handle $handle as the username only when it is one (opted: $opted)", async ({ handle, opted, username, note }) => {
+    const invite = { id: "invite_fixture", state: "claimed", handle: null, origin: null, lastError: null };
+    let snapshot: WelcomeSnapshot = { revision: "initial", value: {
+      origin: "https://accounts.example.com", flow: "create", sessionSecret: "a".repeat(64),
+      challenge: null, inviteCode: null, inviteId: invite.id, handle: null,
+    } };
+    const fetcher = vi.fn(async (url: string) => {
+      if (url.endsWith("/space")) return Response.json({ invite, origin: `https://${handle}.example.com`, handle,
+        onboardingToken: `onboard_${"a".repeat(43)}`, expiresAt: Date.now() + 60_000 });
+      if (url.includes("/handle?")) return Response.json({ available: true });
+      return Response.json({ email: "owner@example.com", expiresAt: Date.now() + 60_000, spaceDomain: "example.com", spaces: [], invites: [invite] });
+    });
+    const load = async () => new OwnerWelcome(snapshot, { save: async (revision, value) => {
+      snapshot = { revision: crypto.randomUUID(), value };
+      return structuredClone(snapshot);
+    } }, "https://accounts.example.com", fetcher);
+    const onConnect = vi.fn();
+    const root = createTestRoot("Owner welcome username");
+    let tree: ComponentChildren;
+    function Harness() {
+      tree = OwnerWelcomeScreen({ ready: true, resume: true, load, onConnect });
+      return null;
+    }
+    // SAFETY: The screen's native form owns an Event-based submit handler.
+    const form = () => collectNodes(tree).find((node) => node.type === "form") as VNode<{ onSubmit: (event: Event) => void }>;
+    // SAFETY: The screen's native checkboxes are the required agreement and the optional username choice.
+    const consent = () => collectNodes(tree).find((node) => node.type === "input" && node.props.required) as VNode<JSX.InputHTMLAttributes<HTMLInputElement>>;
+    // SAFETY: The username choice is the screen's only native checkbox without `required`.
+    const choice = () => collectNodes(tree).find((node) => node.type === "input" && !node.props.required) as VNode<JSX.InputHTMLAttributes<HTMLInputElement>>;
+    const field = () => collectNodes(tree).find((node) => node.type === TextInput && node.props.label === "Handle")!;
+    try {
+      await root.render(<Harness />);
+      await vi.waitFor(() => expect(consent()?.props.disabled).toBe(false));
+      // SAFETY: The handler only reads the checkbox's checked state.
+      await act(() => consent().props.onChange?.({ currentTarget: { checked: true } } as JSX.TargetedEvent<HTMLInputElement>));
+      await act(() => form().props.onSubmit(new Event("submit")));
+      await vi.waitFor(() => expect(field()?.props.disabled).toBe(false));
+      expect(choice().props).toMatchObject({ checked: true, disabled: false });
+      await act(() => { field().props.onChange?.(handle); });
+      await vi.waitFor(() => expect(field().props.status).toBe("success"));
+      expect(choice().props).toMatchObject({ checked: true, disabled: !!note });
+      if (note) expect(collectText(tree)).toContain(`${note} Change your handle, or choose a different username on the next screen.`);
+      else expect(collectText(tree)).not.toContain("Change your handle");
+      if (!opted) {
+        // SAFETY: The handler only reads the checkbox's checked state.
+        await act(() => choice().props.onChange?.({ currentTarget: { checked: false } } as JSX.TargetedEvent<HTMLInputElement>));
+      }
+      await act(() => form().props.onSubmit(new Event("submit")));
+      await vi.waitFor(() => expect(onConnect).toHaveBeenCalledExactlyOnceWith(`https://${handle}.example.com`, `onboard_${"a".repeat(43)}`, username));
     } finally { await root.unmount(); }
   });
 

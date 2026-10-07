@@ -21,6 +21,12 @@ the Privacy Policy before requesting a verification code. Verify your email with
 the six-digit code it sends, then choose the handle your space will live at.
 Handles use lowercase letters, numbers and hyphens; uppercase input is converted
 automatically. Validation and availability feedback appears beside the field.
+**Also use this as my username** is checked by default, so the setup screen inside
+your new space arrives with the username already filled in from your handle. Untick
+it to choose a different username there. A handle that cannot be a username, for
+example one that starts with a number or runs past 32 characters, keeps the box
+checked but disabled and explains why; change the handle, or pick a username on
+the next screen.
 The same code resumes the same space if the browser or app is interrupted, and
 it works once. The signup page also links to the beta Desktop app for macOS and
 Linux; see [Install host apps](/how-to/install-host-apps) for the download and

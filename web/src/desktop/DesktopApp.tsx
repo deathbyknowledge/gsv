@@ -152,9 +152,9 @@ export function DesktopApp() {
     {error && <div class="desktop-error" role="alert">{error}<button type="button" onClick={() => setError(null)}>dismiss</button></div>}
     {session && storage && !resumeSetup && (session.origin || mock) ? <ConnectedDesktop key={`${session.generation}:${mock}`} session={session} storage={storage} mock={mock} onError={setError} onQuit={requestQuit} onResumeSetup={() => setResumeSetup(true)} /> :
       <PlatformIdentityProvider identity={<button type="button" onClick={requestQuit}>quit</button>}>
-      <AuthScene layout="welcome"><DesktopWelcome ready={!!session} resume={resumeSetup} onConnect={async (origin, onboardingToken) => {
+      <AuthScene layout="welcome"><DesktopWelcome ready={!!session} resume={resumeSetup} onConnect={async (origin, onboardingToken, username) => {
         setError(null);
-        const next = await invoke("desktop_configure", { origin, onboardingToken });
+        const next = await invoke("desktop_configure", { origin, onboardingToken, username });
         window.sessionStorage.clear(); window.localStorage.clear(); setResumeSetup(false); setSession(next);
       }} /></AuthScene></PlatformIdentityProvider>}
   </div></BrowserNavigationProvider>;

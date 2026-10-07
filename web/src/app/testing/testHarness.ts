@@ -15,6 +15,7 @@ export type TestNodeProps = {
   label?: string;
   message?: string;
   onChange?: (value: string) => void;
+  required?: boolean;
   onClick?: () => void | Promise<void>;
   status?: string;
   sub?: string;

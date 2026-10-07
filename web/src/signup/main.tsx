@@ -14,8 +14,8 @@ import { signupDestination } from "./navigation";
 const accountsOrigin = window.location.origin;
 const storage = new BrowserWelcomeStorage(accountsOrigin);
 async function load() { return new OwnerWelcome(await storage.load(), storage, accountsOrigin); }
-async function connect(origin: string, onboardingToken?: string | null) {
-  window.location.assign(signupDestination(origin, onboardingToken));
+async function connect(origin: string, onboardingToken?: string | null, username?: string) {
+  window.location.assign(signupDestination(origin, onboardingToken, username));
 }
 
 const app = document.querySelector<HTMLElement>("#app");
