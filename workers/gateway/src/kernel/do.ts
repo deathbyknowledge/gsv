@@ -191,6 +191,7 @@ import type {
 } from "./do-shared";
 import { ConnectionRuntime } from "./connection-runtime";
 import { Transport } from "./transport";
+import { BrowserHandoffRuntime } from "./browser-handoff-runtime";
 type ProcessNetFetchOptions = {
   ttlMs?: number;
   internalPurpose?: "model-transport";
@@ -240,7 +241,8 @@ type KernelTask =
       callback: "onResponsibilityWake";
       payload: { ownerUid: number; generation: number };
     }
-  | { callback: "onLedgerRotate"; payload: string };
+  | { callback: "onLedgerRotate"; payload: string }
+  | { callback: "onBrowserHandoffs"; payload: null };
 
 type KernelTaskCallback = KernelTask["callback"];
 
@@ -315,6 +317,7 @@ const KERNEL_TASK_SCHEMA = z.discriminatedUnion("callback", [
     }),
   }),
   z.object({ callback: z.literal("onLedgerRotate"), payload: z.string() }),
+  z.object({ callback: z.literal("onBrowserHandoffs"), payload: z.null() }),
 ]);
 const processMessageStreamSignalSchema = z.object({
   type: z.literal("sig"),
@@ -385,6 +388,7 @@ export function kernelRuntimes(host: Kernel) {
     processOutput: new ProcessOutput(host),
     federationRuntime: new FederationRuntime(host),
     responsibilityRuntime: new ResponsibilityRuntime(host),
+    browserHandoffs: new BrowserHandoffRuntime(host),
     ipc: new IpcRuntime(host),
     scheduleRuntime: new ScheduleRuntime(host),
     onboarding: new ManagedOnboarding(host),
@@ -434,6 +438,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
   readonly mcpServers: McpServerStore;
   readonly connections = new Map<string, KernelConnection<ConnectionState>>();
   readonly tasks: DurableTaskScheduler<KernelTask>;
+  declare readonly browserHandoffs: BrowserHandoffRuntime;
   mcp: McpClientManager;
                       readonly ctx: DurableObjectState<{}>;
   readonly env: GatewayEnv;
@@ -559,6 +564,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
       );
     }));
     ctx.blockConcurrencyWhile(async () => {
+      await this.browserHandoffs.recover();
       for (const pending of this.mailboxes.pendingOutboundEnqueues()) {
         await this.scheduleManagedOutboundEnqueue(pending.outboundId, pending.nextAt ?? Date.now() + outboundEnqueueRetryDelay(1));
       }
@@ -887,6 +893,9 @@ export class Kernel extends DurableObject<GatewayEnv> {
         return;
       case "onResponsibilityWake":
         await this.responsibilityRuntime.onResponsibilityWake(task.payload, task);
+        return;
+      case "onBrowserHandoffs":
+        await this.browserHandoffs.run(task.id);
         return;
       case "onLedgerRotate":
         await this.onLedgerRotate(task.payload, task.id);
@@ -1517,6 +1526,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
         await this.cancelSchedule(wakeScheduleId);
       },
       reconcileResponsibilityWake: this.responsibilityRuntime.reconcileResponsibilityWake.bind(this.responsibilityRuntime),
+      trackBrowserHandoff: this.browserHandoffs.track.bind(this.browserHandoffs),
       scheduleManagedOutboundEnqueue: async (outboundId, dueAtMs) => {
         await this.scheduleManagedOutboundEnqueue(outboundId, dueAtMs);
       },

@@ -131,6 +131,7 @@ OS service privilege must never become an agent shell privilege by accident.
 - Pending tool calls and tool results must stay consistent.
 - A stale run must not mutate active state.
 - Cancellation must propagate to the component that owns the active operation.
+- Browser handoff links are Kernel-owned records, independent of editable work details. Cancelling work commits locally; durable reconciliation retries provider cleanup and resumes work whose handoff ended.
 - Request cancellation does not recursively kill an already-created durable shell session unless that contract explicitly says so.
 - `shell.cancel` explicitly stops a durable device session and its process tree. The device owns termination independently of the caller connection; polling remains available for the terminal result. Device disconnects leave session identity available for a status check after reconnect.
 - Recoverable shell starts use `shell.exec` with `start: true` and a caller-persisted fresh `sessionId`. The Kernel persists its target before dispatch and the machine claims that exact identity before spawning. Recovery only polls or cancels; it must never replay a start or uncertain stdin.

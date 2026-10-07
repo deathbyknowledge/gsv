@@ -22,7 +22,6 @@ import type {
 } from "@humansandmachines/gsv/protocol";
 import type { JsonObject } from "@humansandmachines/gsv/protocol";
 import { principalOf, resolveCallerOwnerUid, type KernelContext } from "./context";
-import { cancelResponsibilityHandoff } from "./instance-service";
 
 const MAX_TITLE_BYTES = 240;
 const MAX_TEXT_BYTES = 2_000;
@@ -175,7 +174,7 @@ export async function handleResponsibilityUpdate(
   const ownerUid = resolveCallerOwnerUid(ctx);
   const id = normalizeResponsibilityId(args.id);
   const restrictedProcessId = restrictedCallerProcessId(ctx);
-  const current = requireWritableResponsibility(id, ctx);
+  requireWritableResponsibility(id, ctx);
   const patch = normalizePatch(args.patch, ownerUid, ctx);
   if (restrictedProcessId && patch.audience !== undefined) {
     throw new Error("A child process cannot change its conversation audience");
@@ -198,21 +197,9 @@ export async function handleResponsibilityUpdate(
   if (Object.keys(patch).length === 0) {
     throw new Error("Responsibility update patch is empty");
   }
-  let expectedRevision = args.expectedRevision === undefined
+  const expectedRevision = args.expectedRevision === undefined
     ? undefined
     : normalizeRevision(args.expectedRevision, "expectedRevision");
-  if ((patch.state === "resolved" || patch.state === "cancelled") && current.state !== "resolved" && current.state !== "cancelled") {
-    if (expectedRevision !== undefined && expectedRevision !== current.revision) {
-      throw new Error(`Responsibility revision conflict: expected ${expectedRevision}, found ${current.revision}`);
-    }
-    const cleanup = cancelResponsibilityHandoff(current, ctx);
-    if (cleanup) {
-      await cleanup;
-      ctx.requestSignal?.throwIfAborted();
-      // A concurrent edit must not be overwritten after provider cleanup yields.
-      expectedRevision = current.revision;
-    }
-  }
   const outcome = ctx.responsibilities.update({
     ownerUid,
     id,

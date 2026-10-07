@@ -226,9 +226,13 @@ browser handoff get <instance-id> <request-id>
 
 Human completion or cancellation reopens the matching waiting responsibility.
 Retrying the same completed request does not put the work back into waiting.
-Cancelling or resolving the responsibility also cancels its pending or active
-human request, releasing the browser for automation. If that cleanup fails, the
-work stays unchanged and the update can be retried.
+Cancelling or resolving the responsibility takes effect immediately. Its human
+request is released in the background, normally within five seconds; a browser
+service outage cannot prevent cancellation. Cleanup retries survive restart and
+do not depend on the work's editable details. Browser stops, expiry and provider
+failures also resume matching waiting work through this reconciliation, rather
+than waiting for the original sign-in deadline. During a provider outage, retries
+back off to at most one minute.
 Its deadline also provides a durable recovery check if completion is interrupted.
 After return, inspect the actual page before continuing. A disconnected browser
 or uncertain click does not authorize repeating that click in another instance.

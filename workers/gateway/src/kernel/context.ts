@@ -12,6 +12,7 @@ import type { LedgerStore } from "./ledger";
 import type { McpClientManager } from "./mcp-client";
 import type {
   FederationTransportReceipt,
+  BrowserHandoff,
   JsonObject,
   JsonValue,
   PeerPrincipalKind,
@@ -113,6 +114,7 @@ export type KernelContext = {
   scheduleScheduleWake: (scheduleId: string, dueAtMs: number) => Promise<string>;
   cancelScheduleWake: (wakeScheduleId: string) => Promise<void>;
   reconcileResponsibilityWake: (ownerUid: number) => Promise<void>;
+  trackBrowserHandoff: (ownerUid: number, handoff: BrowserHandoff) => Promise<void>;
   scheduleManagedOutboundEnqueue: (
     outboundId: string,
     dueAtMs: number,

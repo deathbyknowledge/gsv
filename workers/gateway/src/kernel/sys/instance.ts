@@ -66,6 +66,7 @@ export async function handleInstanceRequest(frame: InstanceRequest, ctx: KernelC
           const selector = { instanceId: result.handoff.instanceId, requestId: result.handoff.requestId };
           if (result.handoff.state === "pending" || result.handoff.state === "active") {
             try {
+              await ctx.trackBrowserHandoff(owner.ownerUid, result.handoff);
               ctx.requestSignal?.throwIfAborted();
               const current = requireWritableResponsibility(result.handoff.responsibilityId, ctx);
               if (current.state === "resolved" || current.state === "cancelled") {

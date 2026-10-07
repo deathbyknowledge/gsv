@@ -147,6 +147,10 @@ try {
   await client.sys.browser.handoff.request({ ...cancelledSelector, tabId: tab.id, purpose: "Test cancellation", responsibilityId: cancelledWork.id });
   await client.sys.browser.handoff.open(cancelledSelector);
   await client.r12y.update({ id: cancelledWork.id, patch: { state: "cancelled" } });
+  for (let attempt = 0; attempt < 30; attempt++) {
+    if ((await client.sys.browser.handoff.get(cancelledSelector)).handoff.state === "cancelled") break;
+    await sleep(500);
+  }
   assert.equal((await client.sys.browser.handoff.get(cancelledSelector)).handoff.state, "cancelled");
   await shell(first, "page snapshot");
   console.log("PASS: linked work resumes once, terminal handoff retries stay terminal, and cancelling work releases human control");
@@ -155,9 +159,20 @@ try {
   // Close the site's tabs: persistence must remember origins independently.
   const closing = JSON.parse(await shell(first, "tabs list"));
   for (const tab of closing.tabs) if (tab.url !== "about:blank") await shell(first, `tabs close ${tab.id}`);
+  const remainingTabs = JSON.parse(await shell(first, "tabs list"));
+  const { responsibility: stoppedWork } = await client.r12y.create({ title: "Test browser stop during human handoff" });
+  await client.sys.browser.handoff.request({ instanceId: first.instanceId, requestId: crypto.randomUUID(), tabId: remainingTabs.tabs[0].id,
+    purpose: "Test stop recovery", responsibilityId: stoppedWork.id });
   const stopped = JSON.parse(await shell({ targetId: "gsv" }, `instance stop ${first.targetId} --wait`));
   assert.equal(stopped.instance.persistence.saveStatus, "partial");
   assert.equal((await client.sys.instance.get({ instanceId: first.instanceId })).instance.state, "stopped");
+  for (let attempt = 0; attempt < 30; attempt++) {
+    if ((await client.r12y.get({ id: stoppedWork.id })).responsibility.state === "open") break;
+    await sleep(500);
+  }
+  assert.equal((await client.r12y.get({ id: stoppedWork.id })).responsibility.state, "open", "Stopping the browser left its work waiting");
+  await client.r12y.update({ id: stoppedWork.id, patch: { state: "resolved" } });
+  console.log("PASS: stopping a browser releases linked work without waiting for the handoff deadline");
   console.log("PASS: native readiness wait, replay disposition, short-ID get/stop, and unknown-ID rejection");
   console.log("First browser stopped; restoring profile into a new instance");
   const second = await start(); assert.notEqual(first.targetId, second.targetId);
