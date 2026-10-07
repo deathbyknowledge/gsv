@@ -91,6 +91,24 @@ describe("human browser control", () => {
     expect(unsubscribe).toHaveBeenCalledTimes(5);
     for (const item of [...views.slice(1), reopened]) expect(await item.body.stream.getReader().read()).toMatchObject({ done: true });
   }));
+  it("reclaims abandoned viewers on a static page and lets the owner reopen it", () => fixture(async (object, _store, instanceId, _installationId, browser) => {
+    vi.useFakeTimers();
+    const unsubscribe = vi.fn();
+    browser.watchTab = async (_id, frame) => {
+      frame({ tabId: 1, documentId: "document", capturedAt: Date.now(), width: 1280, height: 800, image: new Uint8Array([1, 2]) });
+      return unsubscribe;
+    };
+    const views = await Promise.all(Array.from({ length: 4 }, () => object.watch(actor, { instanceId })));
+    const readers = views.map(view => view.body.stream.getReader());
+    for (const reader of readers) { await reader.read(); await reader.read(); }
+    await expect(object.watch(actor, { instanceId })).rejects.toThrow("four open viewers");
+    await vi.advanceTimersByTimeAsync(16000);
+    expect(unsubscribe).toHaveBeenCalledTimes(4);
+    for (const reader of readers) await expect(reader.read()).rejects.toThrow("stopped reading");
+    const reopened = await object.watch(actor, { instanceId });
+    await reopened.body.stream.cancel();
+    expect(unsubscribe).toHaveBeenCalledTimes(5);
+  }));
   it("lets the owner watch and input while automation continues, without creating a handoff", () => fixture(async (object, store, instanceId) => {
     const frame = await object.frame(actor, { instanceId });
     expect(frame.data).toMatchObject({ tabId: 1, documentId: "document", instance: { instanceId } });

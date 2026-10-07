@@ -582,8 +582,9 @@ pixel density. Clients bind input to the displayed frame's document identity.
 
 Clients read the next image after presenting the current one; ordinary binary
 `WINDOW` credit provides pacing without a per-frame syscall. The provider retains
-only the newest unsent image. A viewer that stops draining a pending image for
-fifteen seconds is closed; quiet pages send state at least every ten seconds.
+only the newest unsent image and state. A viewer with pending image or state output
+that has not read for fifteen seconds is closed; quiet pages send state at least
+every ten seconds, so an abandoned viewer is released even when the page is still.
 Body cancellation releases the viewer and its capture subscription without
 stopping the instance. Images and page text never enter JSON syscall arguments
 or the agent's history.

@@ -74,7 +74,7 @@ export class BrowserView {
   state(state: BrowserViewState): void { if (!this.ended) { this.pendingState = state; this.flush(); } }
   invalidateFrame(): void { this.pendingFrame = undefined; }
   checkConsumer(): void {
-    if (this.pendingFrame && !this.pulling && Date.now() - this.lastReadAt > 15000) this.close(new Error("Browser viewer stopped reading frames"));
+    if ((this.pendingFrame || this.pendingState) && !this.pulling && Date.now() - this.lastReadAt > 15000) this.close(new Error("Browser viewer stopped reading updates"));
   }
   close(error?: Error): void {
     if (this.ended) return;

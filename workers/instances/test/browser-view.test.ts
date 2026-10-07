@@ -22,15 +22,32 @@ describe("browser presentation pacing", () => {
     expect(closed).toHaveBeenCalledOnce();
     view.close(); expect(closed).toHaveBeenCalledOnce();
   });
-  it("closes an abandoned viewer when its transport stops reading", async () => {
+  it.each(["frame", "state"] as const)("closes an abandoned viewer with unread %s output", async pending => {
     vi.useFakeTimers();
     const closed = vi.fn(), view = new BrowserView(closed);
     const packets = decodeBrowserViewStream(view.body);
     view.frame(frame(1)); await packets.next();
-    view.frame(frame(2));
+    if (pending === "frame") view.frame(frame(2));
+    else view.state({ kind: "state", tabs: [], activeTabId: 1 });
     await vi.advanceTimersByTimeAsync(15001);
     view.checkConsumer();
     await expect(packets.next()).rejects.toThrow("stopped reading");
+    expect(closed).toHaveBeenCalledOnce();
+  });
+  it("keeps a quiet viewer open while it reads state heartbeats", async () => {
+    vi.useFakeTimers();
+    const closed = vi.fn(), view = new BrowserView(closed);
+    const packets = decodeBrowserViewStream(view.body);
+    view.frame(frame(1)); await packets.next();
+    for (let heartbeat = 0; heartbeat < 3; heartbeat++) {
+      const reading = packets.next();
+      await vi.advanceTimersByTimeAsync(10000);
+      view.state({ kind: "state", tabs: [], activeTabId: 1 });
+      view.checkConsumer();
+      expect((await reading).value?.metadata.kind).toBe("state");
+      expect(closed).not.toHaveBeenCalled();
+    }
+    await packets.return();
     expect(closed).toHaveBeenCalledOnce();
   });
 });
