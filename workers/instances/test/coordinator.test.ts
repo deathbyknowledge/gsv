@@ -465,6 +465,21 @@ describe("browser health", () => {
     expect(store.sql.exec("SELECT id FROM diagnostics WHERE id = ?", stopped!.persistence!.issues![0]!.diagnosticRef!).toArray()).toHaveLength(1);
   }));
 
+  it("does not start a delayed manual save after forced shutdown fences the browser", () => fixture(async (object, _store, instanceId, _installationId, browser) => {
+    let attach!: (value: CloudBrowser) => void;
+    vi.spyOn(CloudBrowser, "attach").mockImplementation(() => new Promise(resolve => { attach = resolve; }));
+    const save = vi.spyOn(browser, "save");
+    const pending = object.saveProfile(actor, instanceId);
+    const rejected = expect(pending).rejects.toThrow();
+    await vi.waitFor(() => expect(attach).toBeDefined());
+    await object.stop(actor, { instanceId, force: true });
+    // SAFETY: The fixture supplies every browser operation used by this coordinator test.
+    attach(browser as CloudBrowser);
+    await rejected;
+    expect(save).not.toHaveBeenCalled();
+    expect((await object.get(actor, { instanceId })).instance?.state).toBe("stopping");
+  }));
+
   it("reuses repeated partial-save diagnostics and prunes replaced failures after saving", () => fixture(async (object, store, instanceId, _installationId, browser) => {
     const successful = browser.save!;
     let version = 0;

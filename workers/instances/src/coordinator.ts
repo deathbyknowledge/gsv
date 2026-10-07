@@ -145,6 +145,8 @@ export class InstanceCoordinator extends DurableObject<Environment> implements I
     const row = this.requireInstance(actor, id, true);
     if (this.#stops.has(row.id)) throw new Error("Browser is preparing to stop");
     await this.browser(row.id);
+    this.requireInstance(actor, row.id, true);
+    if (this.#stops.has(row.id)) throw new Error("Browser is preparing to stop");
     await this.save(row.id);
     const profileId = instance(row).profileId;
     return profileId ? this.getProfile(actor, profileId) : { profile: null };
