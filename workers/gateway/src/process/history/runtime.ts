@@ -52,7 +52,7 @@ import {
 import { formatContextRunwayAlertMessage } from "../../prompts/context-runway";
 import {
   assembleSystemPromptSnapshot, contextProjectionFromManifest, contextProjectionsEqual, createContextProjection,
-  countResponsibilityTemplates, parseContextProjection, type ContextProjection,
+  countResponsibilityTemplates, parseContextProjection, type ContextProjection, type PromptAssemblyInput,
 } from "../context";
 import type { RunState } from "../run/state";
 import { contextSnapshotFromRun } from "../run/helpers";
@@ -2017,19 +2017,21 @@ export class ProcessHistory {
       (count, file) => count + countResponsibilityTemplates(file.text), 0,
     ) ?? 0;
     const baseline = renderResponsibilityBaseline(ledger, this.host.pid, Math.max(1, baselineCopies));
+    const promptInput: PromptAssemblyInput = {
+      config: promptConfig,
+      identity: this.host.identity,
+      ownerIdentity: config.owner ?? undefined,
+      targets: projection.targets,
+      mcpServers: projection.mcpServers,
+      runtime: projection.runtime,
+      r12y: baseline.text,
+      storage: this.host.storage,
+      ripgit: this.host.ripgit,
+    };
+    if (projection.mailbox) promptInput.mailbox = projection.mailbox;
     const snapshot = promptOverride
       ? { prompt: promptOverride, sources: [] }
-      : await assembleSystemPromptSnapshot({
-          config: promptConfig,
-          identity: this.host.identity,
-          ownerIdentity: config.owner ?? undefined,
-          targets: projection.targets,
-          mcpServers: projection.mcpServers,
-          runtime: projection.runtime,
-          r12y: baseline.text,
-          storage: this.host.storage,
-          ripgit: this.host.ripgit,
-        });
+      : await assembleSystemPromptSnapshot(promptInput);
     const modelManifest: JsonObject = {
       provider: config.provider,
       model: config.model,
