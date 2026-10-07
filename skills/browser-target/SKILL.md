@@ -1,6 +1,6 @@
 ---
 name: browser-target
-description: Use a paired browser: the user's signed-in profile, reaching any site they are logged into (calendar, mail, dashboards) with no integration. Load for any website or web app question; if none is paired, offer pairing.
+description: Use connected browser targets for websites and web apps, including the user's signed-in extension browser and on-demand cloud browsers. Discover supported commands, inspect pages, and verify browser actions.
 aliases: browser-extension, browser
 ---
 
@@ -11,12 +11,13 @@ Use this skill when a target is listed as kind `browser`, has platform
 browser target. Browser target ids are user-configured and may look like
 `browser:chrome`, `rearden:brave`, or another device id. Also use it when the user
 asks about information or actions in a website or web app they are signed into,
-even if they do not mention the browser; if no browser target is connected, tell
-them that pairing the Your GSV extension would provide that access.
+even if they do not mention the browser. If none is connected, inspect
+`instance --help` on `gsv` for on-demand cloud browser support; otherwise offer
+pairing the Your GSV extension.
 
 ## Model
 
-- Browser targets are active browser profiles connected by the GSV browser extension.
+- Browser targets may be connected through the GSV browser extension or an on-demand cloud browser. An extension uses the user's existing signed-in profile; a cloud browser retains its own logins and may need the user to sign in through its live view.
 - A paired browser is the user's signed-in profile. Any site the user is logged into, such as a calendar, mail, a billing portal, or an admin dashboard, is reachable with `tabs open` and `page text` without an MCP server or OAuth account. Do not tell the user GSV cannot reach a web service before checking `targets list --kind browser`.
 - Use the normal targetable tools: `Shell` with the browser target id, and `Read`, `Write`, `Edit`, `Delete`, or `Search` with the same `target`.
 - Use normal file tools only for paths the target advertises.
@@ -151,6 +152,49 @@ with no detected change may be a no-op or an effect outside the observer;
 inspect the warning and snapshot again rather than treating it as a transport
 failure.
 
+For forms, prefer verified value-setting commands. `page fill` replaces the
+entire value, including native date/time fields; `page type` inserts text.
+`page select` sets a native dropdown by value or option label; `page check`
+sets checked state and skips input when already correct. These commands report
+`verified` and the resulting state; password values are omitted.
+
+```bash
+page fill --tab <tabId> --label 'From' 'Amsterdam Centraal'
+page fill --tab <tabId> --role input-time '10:00'
+page select --tab <tabId> --label Class --option-label First
+page check --tab <tabId> --label 'Direct only'
+page click --tab <tabId> --role button --name Plan --snapshot
+```
+
+Role/name and label locators resolve against the current page and require one
+match. Ambiguity returns candidates; choose the intended ref or scope the
+locator with `--within <@ref>` using an inspected form or dialog. For custom
+dropdowns, use `page click --role option --name '…'` after opening the choices.
+`page wait` accepts the same semantic locators.
+
+Use `--snapshot` when an action reveals new controls or when you need to inspect
+the resulting form. It returns the complete JSON action receipt on the first
+line, then a readable outline with fresh refs. `--within` scopes both lookup and
+the follow-up snapshot. Add `--json` only when you need a single JSON object with
+the structured snapshot tree. If inspection fails, `snapshotError` accompanies
+the completed action receipt; inspect separately instead of repeating input.
+For simple verified value changes, the receipt is usually enough.
+
+`page snapshot --within <@ref>` keeps inspection focused. Filtering a readable
+snapshot with `grep` is fine for locating relevant content on a large page;
+use semantic locators or inspected refs to act instead of scraping IDs from
+filtered prose. Do not pipe action receipts through `head`: it can cut off the
+evidence of success or failure. Chain dependent actions with `&&`, not `;`:
+
+```bash
+page fill --tab <tabId> --label Notes 'Draft text' && page check --tab <tabId> --label 'Save draft'
+```
+
+If you must pipe an action, enable `set -o pipefail` so a pipe reader's success
+cannot hide the action's failure. Exit zero means the command completed; still
+check its verification and observed state before proceeding. Use `page wait`
+for the expected control instead of fixed sleeps.
+
 CSS selectors remain useful as an explicit fallback when the page's semantic
 tree omits a target:
 
@@ -183,7 +227,7 @@ may reuse one DOM node for different rows after scrolling.
 Enter, submit buttons, and send controls as separate mutations and invoke them
 only when the task authorizes submission.
 
-Use JavaScript evaluation only when page snapshot/text/click/type/wait cannot
+Use JavaScript evaluation only when page snapshot/text/click/fill/select/check/type/wait cannot
 express the task:
 
 ```bash

@@ -132,15 +132,24 @@ Use a real form or dialog reference from a snapshot in place of `@form-ref`.
 Role/label locators read the current accessibility tree and require one match;
 ambiguity returns candidate references. `--within @ref` restricts that lookup
 to a region. `page snapshot --within @ref` inspects the same region before the
-snapshot's size limit is applied. `--snapshot` on an action includes fresh
-state and references afterward; an inspection failure is reported separately
-from the completed action. `page wait` also accepts role/label locators.
+snapshot's size limit is applied. `--snapshot` on an action returns its complete
+JSON receipt on the first line, followed by a readable outline with fresh state
+and references. Add `--json` to return one JSON object containing both the
+receipt and structured snapshot tree. An inspection failure is reported as
+`snapshotError` on the completed action's receipt; it does not repeat the action.
+`page wait` also accepts role/label locators.
 
 Filtering snapshot text with `grep` is useful for reading a large page. It is
 not necessary to extract references from prose to locate a known button or
 field. Start with a snapshot for orientation, then use precise locators or refs.
 Custom dropdowns use `page click --role option --name '…'`; `page select` is for
 native select controls. See `page --help` for syntax.
+
+Keep action receipts intact so delivery, observation and verification remain
+visible. Avoid `head` on action output. Chain dependent actions with `&&` so a
+failed command stops the sequence; if an action must be piped, enable
+`set -o pipefail`. A successful later command or pipe reader does not prove the
+preceding action succeeded. Check the receipt's observed state before proceeding.
 
 Click and type check which element would receive input, including nested shadow
 DOM, slotted content, and CSS pseudo-elements. They wait up to two seconds for a

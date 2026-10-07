@@ -33,7 +33,9 @@ const PAGE_USAGE = [
   "Use --within <@ref> to scope role/label locators. Ambiguous matches are errors.",
   "fill replaces a field value (including native dates/times); type inserts text.",
   "select sets a native dropdown; check sets checked state. Form actions verify the result.",
-  "click/fill/select/check/type accept --snapshot to include the resulting page or scoped form.",
+  "click/fill/select/check/type return a JSON action receipt; --snapshot adds a readable page or scoped form outline.",
+  "Use --snapshot --json for a single JSON receipt with the full snapshot tree.",
+  "Keep action receipts intact; use && for dependent actions so a failure stops the sequence.",
 ].join("\n");
 
 const PAGE_SNAPSHOT_USAGE = [
@@ -46,12 +48,14 @@ const PAGE_CLICK_USAGE = [
   "Usage: page click [--tab <tabId>] <@ref|selector> [index]",
   "Snapshot refs canonically start with @; the bare generated form is also accepted.",
   "       page click [--tab <tabId>] --role <role> [--name <name>] [--within <@ref>] [--snapshot]",
+  "--snapshot adds a readable outline after the JSON receipt; add --json for the full JSON snapshot tree.",
 ].join("\n");
 const PAGE_TYPE_USAGE = [
   "Usage: page type [--tab <tabId>] <@ref|selector> <text>",
   "Snapshot refs canonically start with @; the bare generated form is also accepted.",
   "Locators also accept --label <label> or --role <role> [--name <name>], optionally --within <@ref>.",
   "type inserts text. Use page fill to replace a value or set a native date/time field.",
+  "--snapshot adds a readable outline after the JSON receipt; add --json for the full JSON snapshot tree.",
 ].join("\n");
 const PAGE_FORM_USAGE = [
   "Usage: page fill <locator> <value>",
@@ -59,6 +63,7 @@ const PAGE_FORM_USAGE = [
   "       page check <locator> [--unchecked]",
   "Locators: <@ref|CSS>, --label <field label>, or --role <role> [--name <exact name>].",
   "Options: --tab <id>, --within <@ref> for role/label locators, --snapshot for fresh references after the action.",
+  "--snapshot adds a readable outline after the JSON receipt; add --json for the full JSON snapshot tree.",
   "fill replaces the entire value; an empty value clears the field. Native dates use YYYY-MM-DD; times use HH:mm.",
   "select chooses one native dropdown option by value or --option-label. Custom listboxes use page click --role option --name <name>.",
   "check sets checked state, --unchecked clears it; matching state does not click again.",
@@ -315,7 +320,8 @@ export function createPageCommands<Target>(backend: BrowserPageBackend, debugger
     const semantic = values.role || values.label;
     if (values.within && !semantic) throw new Error("--within requires a role or label locator.");
     return {
-      args: rest.filter(arg => arg !== "--snapshot"), snapshot: rest.includes("--snapshot"),
+      args: rest.filter(arg => arg !== "--snapshot" && arg !== "--json"),
+      snapshot: rest.includes("--snapshot"), json: rest.includes("--json"),
       locator: semantic ? { kind: "semantic" as const, role: values.role, name: values.name, label: values.label,
         within: values.within ? pageReferences.resolve(values.within) : undefined } : undefined,
     };
@@ -337,7 +343,9 @@ export function createPageCommands<Target>(backend: BrowserPageBackend, debugger
         console.warn("GSV browser target failed to detach debugger", error);
       });
     }
-    return commandCompactJson({ tabId: tab.id, ...result, ...snapshot });
+    if (options.json || "snapshotError" in snapshot) return commandCompactJson({ tabId: tab.id, ...result, ...snapshot });
+    const receipt = commandCompactJson({ tabId: tab.id, ...result });
+    return commandOk(`${receipt.stdout}\n${formatSemanticSnapshot(snapshot.snapshot)}`);
   }
 
   async function runKey(args: string[], ctx: CommandContext): Promise<CommandResult> {

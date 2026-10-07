@@ -31,7 +31,20 @@ export async function checkFormCommands(run) {
   const ambiguous = await run("page click --role button --name Plan");
   assert.equal(ambiguous.exitCode, 1);
   assert.match(ambiguous.error ?? ambiguous.output, /matches 2 elements/);
-  const clicked = await command(`page click --role button --name Plan --within ${form.ref} --snapshot`);
+  for (const failedAction of ["page fill --label Locked changed", "set -o pipefail; page fill --label Locked changed | cat"]) {
+    const chained = await run(`${failedAction} && page click --role button --name Plan --within ${form.ref}`);
+    assert.equal(chained.exitCode, 1);
+    const after = await run(`page snapshot --within ${form.ref}`);
+    assert.equal(after.exitCode, 0);
+    assert.ok(!after.output.includes("Journey ready"), "A failed fill must not run the chained Plan action");
+  }
+  const readable = await run(`page fill --label Notes --within ${form.ref} 'Readable snapshot' --snapshot`);
+  assert.equal(readable.exitCode, 0, readable.error);
+  assert.equal(JSON.parse(readable.output.split("\n")[0]).verified, true);
+  assert.match(readable.output, /\n\s+textbox @\S+ "Notes" value="Readable snapshot"/);
+  assert.ok(!readable.output.includes("Other trip"));
+  assert.ok(!readable.output.includes("fixture-secret"));
+  const clicked = await command(`page click --role button --name Plan --within ${form.ref} --snapshot --json`);
   assert.ok(JSON.stringify(clicked.snapshot).includes("Journey ready"));
   assert.ok(!JSON.stringify(clicked.snapshot).includes("Other trip"));
   const wait = await command("page wait --role textbox --name From --timeout 1000");
@@ -39,5 +52,5 @@ export async function checkFormCommands(run) {
   for (const input of ["page fill --label Locked 'changed'", "page fill --label Reverting 'changed'", "page fill --label 'Departure time' nonsense", "page type --label 'Departure time' '11:00'"]) {
     const failed = await run(input); assert.equal(failed.exitCode, 1, `Unexpected success: ${input}`);
   }
-  console.log("PASS: form values, native dates/times, shadow labels, strict/scoped targeting, select/check verification, password redaction, and rejected/reverted actions");
+  console.log("PASS: form values, native dates/times, shadow labels, strict/scoped targeting, readable/JSON action snapshots, checked chaining/pipefail, select/check verification, password redaction, and rejected/reverted actions");
 }

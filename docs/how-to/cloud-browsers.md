@@ -105,7 +105,10 @@ on that target. It does not implement an operating-system shell.
 Use `page fill` to replace a field value, including dates and times,
 `page select` for native dropdowns, and `page check` for checked state.
 These commands verify the result. Role/label locators, scoped snapshots and
-action `--snapshot` avoid parsing reference IDs from filtered text. See
+action `--snapshot` avoid parsing reference IDs from filtered text. The action
+receipt stays intact, followed by a readable outline; add `--json` when a
+structured snapshot tree is needed. Use `--within` to inspect just the relevant
+form or dialog, and `&&` between dependent actions so errors stop the sequence. See
 [target tools](/reference/hardware-tools) and `page --help` for examples.
 
 `page screenshot` returns the path of a PNG on the browser target. To keep it

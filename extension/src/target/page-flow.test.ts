@@ -11,6 +11,25 @@ afterEach(async () => {
 });
 
 describe("semantic page automation flow", () => {
+  it.each([false, true])("returns fresh action references in readable or explicit JSON snapshots (json=%s)", async (json) => {
+    const fixture = stubWhatsAppLikePage();
+    const initial = await pageCommand.run(["snapshot", "--json"], context());
+    const chat = findNode(JSON.parse(initial.stdout).nodes, "English");
+    const result = await pageCommand.run(["click", chat!.ref!, "--snapshot", ...(json ? ["--json"] : [])], context());
+    expect(result.exitCode).toBe(0);
+    const receipt = JSON.parse(json ? result.stdout : result.stdout.split("\n")[0]!);
+    expect(receipt).toMatchObject({ tabId: 42, action: "click", delivered: { accepted: true }, observed: { semanticChanged: true } });
+    if (json) {
+      expect(findNode(receipt.snapshot.nodes, "English")?.ref).toBeTruthy();
+      expect(findNode(receipt.snapshot.nodes, "English")?.ref).not.toBe(chat!.ref);
+    } else {
+      expect(receipt).not.toHaveProperty("snapshot");
+      expect(result.stdout).toMatch(/\n\s+row @\S+ "English"/);
+      expect(result.stdout.slice(result.stdout.indexOf("\n"))).not.toContain(chat!.ref);
+    }
+    expect(fixture.sendCommand.mock.calls.filter(([, method, params]) => method === "Input.dispatchMouseEvent" && params?.type === "mouseReleased")).toHaveLength(1);
+  });
+
   it("keeps the accepted action receipt when its optional follow-up snapshot fails", async () => {
     const fixture = stubWhatsAppLikePage();
     const initial = await pageCommand.run(["snapshot", "--json"], context());
