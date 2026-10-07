@@ -52,6 +52,7 @@
   --error:         #ff6f8c;  /* crashed / disconnected        */
   --idle:          #6661a0;  /* offline (no glow)             */
   --update:        #ffd24d;  /* attention / needs action      */
+  --sender-external: #ffd24d; /* messages from a contact's person or GSV */
   --live:          #8f8aff;  /* processing pulse              */
   --bg-error:      #170b17;  /* dark notice bg — error        */
   --bg-online:     #081812;  /* dark notice bg — success/live */
