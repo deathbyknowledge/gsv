@@ -207,11 +207,17 @@ export class CloudBrowser implements BrowserPageBackend, BrowserTabsBackend, Deb
   async getTab(tabId: number): Promise<TabSummary | null> { await this.refreshTabs(); const page = this.tabs.get(tabId); return page ? this.summary(tabId, page) : null; }
   async createTab(url: string, active: boolean): Promise<TabSummary> {
     const page = await this.context.newPage();
-    await page.goto(url, { waitUntil: "domcontentloaded", timeout: 30000 });
-    await this.refreshTabs();
-    const id = [...this.tabs].find(([, candidate]) => candidate === page)![0];
-    if (active) return this.focusTab(id);
-    return this.summary(id, page);
+    try {
+      await page.goto(url, { waitUntil: "domcontentloaded", timeout: 30000 });
+      await this.refreshTabs();
+      const id = [...this.tabs].find(([, candidate]) => candidate === page)![0];
+      if (active) return await this.focusTab(id);
+      return this.summary(id, page);
+    } catch (cause) {
+      try { await page.close(); }
+      catch (cleanup) { throw new AggregateError([cause, cleanup], "Browser tab opening and cleanup failed", { cause }); }
+      throw cause;
+    }
   }
   async focusTab(id: number): Promise<TabSummary> { const page = await this.page(id); await page.bringToFront(); this.state.activeTabId = id; this.persist(); return this.summary(id, page); }
   async closeTab(id: number): Promise<void> {

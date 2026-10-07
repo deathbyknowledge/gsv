@@ -37,7 +37,9 @@ const server = http.createServer((request, response) => {
   } else if (request.url === "/probe") {
     const cookie = request.headers.cookie?.includes("gsv_test_session=valid") ? "kept" : "missing";
     response.end(`<body><input id="coedit" oninput="this.dataset.done='yes'"><script>const open=indexedDB.open("profile-test",1);open.onupgradeneeded=()=>open.result.createObjectStore("state");open.onsuccess=()=>{const request=open.result.transaction("state").objectStore("state").get("session");request.onsuccess=()=>{document.body.insertAdjacentHTML('beforeend','<pre id="restored">cookie=${cookie};local='+localStorage.getItem("profile-test")+';indexed='+request.result+'</pre>')}}</script></body>`);
-  } else if (request.url === "/components") response.end(components);
+  } else if (request.url === "/navigation-failure") request.destroy();
+  else if (request.url === "/navigation-timeout") response.write("<!doctype html><title>Pending navigation</title>");
+  else if (request.url === "/components") response.end(components);
   else if (request.url === "/forms") response.end(forms);
   else if (request.url === "/passkeys" || request.url.startsWith("/passkeys?")) response.end(passkeys);
   else if (request.url === "/empty") response.end("<!doctype html><title>Storage fixture</title>");
@@ -109,6 +111,15 @@ try {
   console.log("PASS: named browser commands complete in the foreground; replay, polling and stdin cannot repeat their effects");
   const missing = await client.shell.exec({ target: "gsv", input: "instance stop unknown-browser" });
   assert.equal(missing.exitCode, 1, "An unknown browser was reported as successfully stopped");
+  const originalTabs = JSON.parse(await shell(first, "tabs list"));
+  for (const [path, active, error] of [["navigation-failure", "", /ERR_EMPTY_RESPONSE/], ["navigation-timeout", "--active ", /Timeout 30000ms exceeded/]]) {
+    const failed = await client.shell.exec({ target: first.targetId, input: `tabs open ${active}${website}/${path}` });
+    assert.equal(failed.exitCode, 1, "Failed navigation reported a successful tab open");
+    assert.match(failed.error ?? failed.output, error);
+    const afterFailure = JSON.parse(await shell(first, "tabs list"));
+    assert.deepEqual(afterFailure.tabs.map(tab => [tab.id, tab.active]), originalTabs.tabs.map(tab => [tab.id, tab.active]), "Failed tab opening leaked a tab or changed the active tab");
+  }
+  console.log("PASS: failed and timed-out tab opens preserve the error, close their new tab, and leave existing tabs selected");
   await checkBrowserFollowing(client, first, website);
   const opened = await shell(first, `tabs open --active ${website}/login`);
   const { tab } = JSON.parse(opened.slice(opened.indexOf("\n") + 1));

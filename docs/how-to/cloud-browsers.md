@@ -206,6 +206,10 @@ The cloud browser shares the extension's `tabs`, `page`, screenshots and
 temporary filesystem commands. For example, run `tabs list` and `page snapshot`
 on that target. It does not implement an operating-system shell.
 
+If `tabs open` fails, including a navigation timeout, GSV closes the newly
+created tab and reports the error. Existing tabs remain open, so retrying does
+not accumulate tabs from failed attempts.
+
 `tabs list` returns a bounded page with `count`, `total`, and `nextOffset` when
 more tabs remain. Continue with `tabs list --offset <nextOffset>`. Titles, URLs
 and list size are bounded; an ellipsis marks shortened display text. The cloud
