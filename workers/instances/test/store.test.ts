@@ -97,6 +97,14 @@ describe("instance admission", () => {
     store.terminal(value.instanceId, true);
     expect(store.usage(limits)).toMatchObject({ usedSeconds: 0, reservedSeconds: 0, activeInstances: 0 });
   }));
+  it("returns the entire allowance after an unknown allocation's cleanup and settles once", () => inStore(store => {
+    const value = store.admit(actor, { requestId: "unknown-start", templateId: "browser", lifetimeSeconds: 600 }, limits);
+    store.sql.exec("UPDATE instances SET acquire_at = ? WHERE id = ?", value.createdAt, value.instanceId);
+    store.terminal(value.instanceId, true, value.createdAt + 180000);
+    store.terminal(value.instanceId, true, value.createdAt + 600000);
+    expect(store.usage(limits)).toMatchObject({ usedSeconds: 0, reservedSeconds: 0, activeInstances: 0 });
+    expect(store.admit(actor, { requestId: "retry", templateId: "browser", lifetimeSeconds: 600 }, limits).state).toBe("starting");
+  }));
   it("serializes saved profile leases and never releases a newer lease", () => inStore(store => {
     const saved = store.createProfile(actor, "saved", "Personal", limits);
     const first = store.admit(actor, { requestId: "one", templateId: "browser", profileId: saved.profileId, lifetimeSeconds: 300 }, limits);

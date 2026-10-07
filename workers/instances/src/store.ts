@@ -106,8 +106,8 @@ export class InstanceStore {
       const row = this.byId(id), previous = instance(row);
       if (!row.active) return previous;
       const value: CloudInstance = { ...previous, state: failed ? "failed" : "stopped", stoppedAt: now, revision: previous.revision + 1 };
-      // A resource with an unknown allocation is conservatively charged its reservation.
-      const charge = previous.readyAt ? Math.min(row.reservation, Math.max(0, Math.ceil((now - previous.readyAt) / 1000))) : row.acquire_at && !row.session_id ? row.reservation : 0;
+      // Cleanup retains the reservation until termination; usage starts only at readiness.
+      const charge = previous.readyAt === undefined ? 0 : Math.min(row.reservation, Math.max(0, Math.ceil((now - previous.readyAt) / 1000)));
       this.sql.exec("UPDATE instances SET record = ?, active = 0, reservation = 0, charged = ? WHERE id = ?", JSON.stringify(value), charge, id);
       if (value.profileId) {
         const saved = this.ownedProfile({ ownerUid: value.ownerUid, human: false }, value.profileId);

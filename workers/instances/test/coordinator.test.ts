@@ -138,7 +138,7 @@ describe("human browser control", () => {
     vi.setSystemTime(acquiredAt + 180000);
     await object.alarm();
     expect(store.byId(id).active).toBe(0);
-    expect(store.usage(limits).reservedSeconds).toBe(0);
+    expect(store.usage(limits)).toMatchObject({ reservedSeconds: 0, usedSeconds: 0, activeInstances: 0 });
     expect(acquire).not.toHaveBeenCalled();
   }));
   it("keeps old handoff retries terminal while listing only the current request", () => fixture(async (object, store, instanceId) => {

@@ -197,6 +197,8 @@ retains its reservation until cleanup can establish that it cannot still run.
 When no session ID was received, the concurrency slot is released three minutes
 after the acquisition attempt, covering its short provider keepalive; the requested
 browser lifetime does not extend that grace period. The acquisition is never replayed.
+A launch that never reaches readiness consumes no browser-time allowance; its
+entire reservation is returned once cleanup completes.
 
 ## Commands for Ship
 
