@@ -8,7 +8,7 @@ afterEach(async () => {
 });
 
 describe("network capture teardown", () => {
-  it("discards a response body returned after capture stops", async () => {
+  it("discards late bodies and drains in-flight persistence before stop", async () => {
     let onEvent!: (source: chrome.debugger.DebuggerSession, method: string, params?: object) => void;
     let resolveBody!: (value: { body: string; base64Encoded: boolean }) => void;
     const body = new Promise<{ body: string; base64Encoded: boolean }>((resolve) => { resolveBody = resolve; });
@@ -30,11 +30,22 @@ describe("network capture teardown", () => {
       },
       tabs: { onRemoved: { addListener: vi.fn(), removeListener: vi.fn() } },
     });
-    const write = vi.fn(async (_path: string, _content: Uint8Array) => {});
+    let blockBodyWrite = false;
+    let bodyWriteStarted!: () => void;
+    const writingBody = new Promise<void>((resolve) => { bodyWriteStarted = resolve; });
+    let releaseBodyWrite!: () => void;
+    const bodyWritten = new Promise<void>((resolve) => { releaseBodyWrite = resolve; });
+    const write = vi.fn(async (path: string, _content: Uint8Array) => {
+      if (blockBodyWrite && path.includes("response-body")) {
+        bodyWriteStarted();
+        await bodyWritten;
+      }
+    });
+    const append = vi.fn(async (_path: string, _content: Uint8Array) => {});
     const fs = {
       mkdir: vi.fn(async () => {}),
       write,
-      append: vi.fn(async () => {}),
+      append,
     } as unknown as TargetFileSystem;
     await startNetworkCapture({ tabId: 42, bodies: true, persist: true, bodyLimit: 1_000, fs });
     onEvent({ tabId: 42 }, "Network.requestWillBeSent", {
@@ -50,5 +61,33 @@ describe("network capture teardown", () => {
 
     expect(networkStatus()).toEqual([]);
     expect(write.mock.calls.some(([path]) => String(path).includes("response-body"))).toBe(false);
+
+    blockBodyWrite = true;
+    await startNetworkCapture({ tabId: 42, bodies: true, persist: true, bodyLimit: 1_000, fs });
+    onEvent({ tabId: 42 }, "Network.requestWillBeSent", {
+      requestId: "request-2",
+      request: { url: "https://example.test/second", method: "GET" },
+    });
+    onEvent({ tabId: 42 }, "Network.loadingFinished", { requestId: "request-2" });
+    await writingBody;
+
+    const stopping = stopNetworkCapture();
+    const stoppingAgain = stopNetworkCapture();
+    let stopped = false;
+    void stopping.then(() => { stopped = true; });
+    let stoppedAgain = false;
+    void stoppingAgain.then(() => { stoppedAgain = true; });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(stopped).toBe(false);
+    expect(stoppedAgain).toBe(false);
+    releaseBodyWrite();
+    await Promise.all([stopping, stoppingAgain]);
+
+    const writesAfterStop = write.mock.calls.length;
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(write).toHaveBeenCalledWith(expect.stringContaining("response-body"), expect.any(Uint8Array));
+    expect(write.mock.calls).toHaveLength(writesAfterStop);
+    expect(append.mock.calls.some(([, content]) => new TextDecoder().decode(content).includes('"type":"body"'))).toBe(false);
+    expect(networkStatus()).toEqual([]);
   });
 });
