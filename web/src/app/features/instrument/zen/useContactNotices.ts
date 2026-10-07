@@ -11,6 +11,8 @@ export type ContactNoticeMessage = {
   /** the contact's GSV wrote it rather than the person */
   byShip: boolean;
   reference: { actor: { shipId: string; subjectId: string }; messageId: string };
+  /** attachments as the message carried them; ZenMedia reads the shape */
+  media: readonly unknown[];
 };
 
 export type ContactNotice = {
@@ -63,7 +65,7 @@ export function useContactNotices({ enabled, mayReadView }: { enabled: boolean; 
         const author = message.author;
         const arrived: ContactNoticeMessage = {
           messageId: message.id, sequence: message.sequence, text: message.text, createdAt: message.createdAt,
-          byShip: message.social.provenance.kind === "process", reference: message.social.reference,
+          byShip: message.social.provenance.kind === "process", reference: message.social.reference, media: message.media ?? [],
         };
         setNotices((current) => {
           const existing = current.find((notice) => notice.contactId === author.contactId);

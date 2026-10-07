@@ -8,6 +8,8 @@ export const committedMessageSchema = z.object({
     sequence: z.number(),
     text: z.string(),
     createdAt: z.number(),
+    /* attachments as the message carried them; the shape is the media renderer's to read */
+    media: z.array(z.unknown()).optional(),
     author: z.union([
       z.object({ kind: z.literal("process"), pid: z.string() }),
       z.object({ kind: z.literal("contact"), contactId: z.string(), displayName: z.string() }),

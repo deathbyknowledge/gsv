@@ -5,7 +5,7 @@ import { ContactNoticeMoment, noticeName, preview } from "./ContactNotice";
 import type { ContactNotice, ContactNoticeMessage } from "./useContactNotices";
 
 function message(sequence: number, text: string, byShip = false): ContactNoticeMessage {
-  return { messageId: `message:${sequence}`, sequence, text, createdAt: sequence, byShip, reference: { actor: { shipId: "ship:ada", subjectId: "subject:ada" }, messageId: `origin:${sequence}` } };
+  return { messageId: `message:${sequence}`, sequence, text, createdAt: sequence, byShip, media: [], reference: { actor: { shipId: "ship:ada", subjectId: "subject:ada" }, messageId: `origin:${sequence}` } };
 }
 const notice: ContactNotice = {
   contactId: "contact:ada", conversationId: "conversation:ada", displayName: "Ada Lovelace",
@@ -53,10 +53,17 @@ describe("the contact notice", () => {
     expect(buttons(tree)).toHaveLength(1);
   });
 
-  it("clips a preview to its first words and names an attachment with no text", () => {
+  it("names a message with no text by what it carries", () => {
+    const attachment = { ...notice, messages: [{ ...message(1, ""), media: [{ type: "resource", path: "/tmp/build.zip" }] }] };
+    const tree = ContactNoticeMoment({ notice: attachment, contact: undefined, open: false, onShow: vi.fn(), onGoToChat: vi.fn() });
+    expect(text(tree)).toBe("Ada Lovelace PERSON (an attachment) show message go to chat");
+  });
+
+  it("clips a preview to its first words", () => {
     expect(preview("one two three")).toBe("one two three");
     expect(preview("one two three four five six seven eight nine ten")).toBe("one two three four five six seven eight…");
-    expect(preview("   ")).toBe("(an attachment, with no text)");
+    expect(preview("   ")).toBe("(an empty message)");
+    expect(preview("", 2)).toBe("(2 attachments)");
   });
 
   it("falls back to the name the peer sent when the contact is not loaded", () => {

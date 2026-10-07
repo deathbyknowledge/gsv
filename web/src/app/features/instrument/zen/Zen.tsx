@@ -36,7 +36,7 @@ import { ActivityWorking } from "./ActivityWorking";
 import { ApprovalCard } from "../shared/ApprovalCard";
 import { canConfigure } from "../settings/settingsModel";
 import { useContacts } from "../people/Contacts";
-import { ContactNoticeMoment, ContactReplyBox } from "./ContactNotice";
+import { ContactNoticeMoment, ContactReplyBox, EMPTY_REPLY, type ContactReplyDraft } from "./ContactNotice";
 import { latestOf, useContactNotices, type ContactNotice } from "./useContactNotices";
 import { DelegatedApprovals } from "./DelegatedApprovals";
 import { useZenScroll } from "./useZenScroll";
@@ -334,6 +334,13 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
   const contactFor = (contactId: string) => contactsQuery.data?.contacts.find((contact) => contact.id === contactId);
   /* the contact whose reply box is open under its notice */
   const [replying, setReplying] = useState<string | null>(null);
+  /* what the person typed under each notice, kept while its box is closed so switching notices loses nothing */
+  const [replyDrafts, setReplyDrafts] = useState<ReadonlyMap<string, ContactReplyDraft>>(() => new Map());
+  const setReplyDraft = (contactId: string, draft: ContactReplyDraft | null) => setReplyDrafts((current) => {
+    const next = new Map(current);
+    if (draft) next.set(contactId, draft); else next.delete(contactId);
+    return next;
+  });
   const markRead = (notice: ContactNotice) => {
     if (!may("conversation.view.update")) return;
     /* a failed read mark changes nothing the person can see; the notice still clears when they act on it */
@@ -364,7 +371,7 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
   const fileInput = useRef<HTMLInputElement>(null);
   const dragDepth = useRef(0);
   const [draggingFiles, setDraggingFiles] = useState(false);
-  const dirty = hasDraft || attachments.length > 0 || outbox.messages.length > 0;
+  const dirty = hasDraft || attachments.length > 0 || outbox.messages.length > 0 || [...replyDrafts.values()].some((draft) => draft.text.trim() !== "");
   useLayoutEffect(() => { onDraftChange?.(dirty); }, [dirty, onDraftChange]);
   useLayoutEffect(() => () => onDraftChange?.(false), [onDraftChange]);
   useEffect(() => {
@@ -1024,7 +1031,8 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
                   onShow={() => setReplying(notice.contactId)}
                   onGoToChat={() => onPeople?.(notice.contactId)}>
                   {replying === notice.contactId && <ContactReplyBox notice={notice} contact={contactFor(notice.contactId)} account={viewer}
-                    onSent={() => { notices.markReplied(notice.contactId); markRead(notice); setReplying(null); }} />}
+                    draft={replyDrafts.get(notice.contactId) ?? EMPTY_REPLY} onDraft={(draft) => setReplyDraft(notice.contactId, draft)}
+                    onSent={() => { notices.markReplied(notice.contactId); markRead(notice); setReplyDraft(notice.contactId, null); setReplying(null); }} />}
                 </ContactNoticeMoment>
               ))}
               {pendingHil ? (

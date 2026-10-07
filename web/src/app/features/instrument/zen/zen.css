@@ -79,6 +79,7 @@
 .zen-moment.is-contact-notice .fleet-text-action { color: var(--sender-external); }
 /* the message and a reply box, inline under the line */
 .zen-moment.is-contact-notice .reply-box { margin-top: 12px; }
+.zen-moment.is-contact-notice .reply-box .message + .message { margin-top: 10px; }
 .zen-moment.is-contact-notice .ask { margin: 0 0 10px; font: 17px/1.45 var(--gsv-font-prose); color: var(--sender-external); white-space: pre-wrap; overflow-wrap: anywhere; max-width: var(--measure-prose); }
 .zen-moment.is-contact-notice .reply { display: block; width: 100%; box-sizing: border-box; padding: 10px 12px; border: 1px solid var(--border); border-radius: 0; background: var(--panel-2); color: var(--text); font: 16px/1.55 var(--gsv-font-prose); resize: vertical; }
 .zen-moment.is-contact-notice .reply:focus-visible { outline: 1px solid var(--accent); outline-offset: 2px; }

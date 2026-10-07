@@ -27,14 +27,15 @@ beforeEach(() => {
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 /* a committed contact message as the kernel broadcasts it; `social` is left off for request-state lines and v1 peers */
-function committed(sequence: number, overrides: { attention?: "notify" | "quiet"; social?: boolean; contactId?: string; id?: string } = {}): Payload {
+function committed(sequence: number, overrides: { attention?: "notify" | "quiet"; social?: boolean; media?: boolean; contactId?: string; id?: string } = {}): Payload {
   const contactId = overrides.contactId ?? "contact:ada";
   const base = {
     id: overrides.id ?? `${contactId}:${sequence}`, conversationId: `conversation:${contactId}`, sequence, text: `message ${sequence}`, createdAt: sequence,
     author: { kind: "contact", contactId, shipId: "ship:ada", subjectId: "subject:ada", displayName: "Ada Lovelace" },
   };
   const social = { reference: { actor: { shipId: "ship:ada", subjectId: "subject:ada" }, messageId: `origin:${sequence}` }, provenance: { kind: sequence % 2 ? "human" : "process" } };
-  const message = overrides.social === false ? base : { ...base, social };
+  const withSocial = overrides.social === false ? base : { ...base, social };
+  const message = overrides.media ? { ...withSocial, media: [{ type: "resource", path: "/home/ada/build.zip" }] } : withSocial;
   return { message, directed: false, attention: overrides.attention ?? "notify" };
 }
 
@@ -58,6 +59,16 @@ describe("contact notices in the ship chat", () => {
       expect(view.current.notices).toEqual([]);
       await emit("message.committed", committed(2));
       expect(view.current.notices).toMatchObject([{ contactId: "contact:ada", displayName: "Ada Lovelace", messages: [{ sequence: 2, text: "message 2", byShip: true }], replied: false }]);
+    } finally { await view.unmount(); }
+  });
+
+  it("carries a message's attachments so the notice can show them", async () => {
+    const view = await mounted();
+    try {
+      await emit("message.committed", committed(1, { media: true }));
+      expect(view.current.notices).toMatchObject([{ messages: [{ sequence: 1, media: [{ path: "/home/ada/build.zip" }] }] }]);
+      await emit("message.committed", committed(2));
+      expect(view.current.notices[0].messages[1].media).toEqual([]);
     } finally { await view.unmount(); }
   });
 
