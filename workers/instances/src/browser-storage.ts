@@ -58,12 +58,21 @@ export async function exportBrowserStorage(
           const module = {};
           ${storageScriptSource}
           const script = new (module.exports.StorageScript())(false);
-          const data = { origin: location.origin, ...await script.collect(true) };
+          let data;
+          try { data = { origin: location.origin, ...await script.collect(true, ${Math.max(0, Math.min(maxBytes, MAX_PROFILE_BYTES) - usage.bytes - (usage.sites.length ? 1 : 0))}) }; }
+          catch (error) {
+            if (error.name === "StorageBudgetExceeded") return { minimumBytes: error.minimumBytes };
+            throw error;
+          }
           const json = JSON.stringify(data);
           const summary = (${summarizeBrowserStorage.toString()})(data, new TextEncoder().encode(json).byteLength);
           return { summary, json: summary.bytes <= ${Math.max(0, Math.min(maxBytes, MAX_PROFILE_BYTES) - usage.bytes)} ? json : undefined };
         })()`;
-        const exported = await within(page.evaluate<{ summary: BrowserStorageSite; json?: string }>(expression), 5000, "Site storage export", signal);
+        const exported = await within(page.evaluate<{ summary: BrowserStorageSite; json?: string } | { minimumBytes: number }>(expression), 5000, "Site storage export", signal);
+        if ("minimumBytes" in exported) {
+          usage.bytes += exported.minimumBytes + (usage.sites.length ? 1 : 0);
+          throw new BrowserStorageError(`Saved browser data needs at least ${usage.bytes} bytes; allowance is ${Math.min(maxBytes, MAX_PROFILE_BYTES)} bytes. Collection stopped at the limit.`, usage);
+        }
         usage.sites.push(exported.summary);
         usage.bytes += exported.summary.bytes + (usage.sites.length > 1 ? 1 : 0);
         if (exported.json) {
@@ -71,6 +80,7 @@ export async function exportBrowserStorage(
           state.origins.push(JSON.parse(exported.json) as StorageState["origins"][number]);
         }
       } catch (cause) {
+        if (cause instanceof BrowserStorageError) throw cause;
         if (signal.aborted || page.isClosed()) throw cause;
         const unsupported = cause instanceof Error && cause.message.includes("Unsupported IndexedDB value type");
         const type = unsupported && cause instanceof Error ? cause.message.match(/Unsupported IndexedDB value type: \[object (CryptoKey|Blob|File)\]/)?.[1] : undefined;

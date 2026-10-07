@@ -91,6 +91,12 @@ the browser stays running within its original lifetime, and the view offers
 **retry save** and **stop without saving**. The warning shows the last save time.
 Expiry and forced shutdown still close the browser; unsaved changes can be lost.
 The previous successful snapshot survives a failed, oversized or timed-out save.
+Export reads IndexedDB records sequentially and stops when the remaining storage
+allowance is exceeded. An incomplete measurement reports a lower bound for the
+required bytes; it does not read the rest of an oversized database. Serialization
+and compression use bounded chunks, and restore checks the size while
+decompressing. The encrypted snapshot format remains compatible with existing
+saved logins.
 Once a new snapshot commits, deleting its predecessor runs separately with durable
 retries. Slow cleanup does not turn a successful save into a failure or block stop.
 Uploads rejected after cancellation, a lease change, deletion, or an upload

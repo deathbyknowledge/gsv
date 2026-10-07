@@ -1,5 +1,6 @@
 import { readFile, writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
+import { collectBrowserStorage } from "./storage-collection.mjs";
 
 // Keep the browser-side codec from the pinned Playwright release. This backports
 // https://github.com/microsoft/playwright/pull/42260 without changing node_modules.
@@ -64,7 +65,10 @@ export function storageCodec(source) {
     });
     committed.catch(() => {});`);
   replace('    } finally { db.close(); }\n  }\n  async restore(originState)', '    await committed;\n    } finally { db.close(); }\n  }\n  async restore(originState)');
-  return source;
+  const first = source.indexOf("  async _collectDB(dbInfo) {"), last = source.indexOf("  async _restoreDB(dbInfo) {", first);
+  if (first < 0 || last < 0) throw new Error("Playwright storage collection changed; review the bounded collector");
+  const collect = collectBrowserStorage.toString().replace("async function collectBrowserStorage(", "async collect(");
+  return source.slice(0, first) + `  ${collect}\n` + source.slice(last);
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {

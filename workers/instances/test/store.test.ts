@@ -5,6 +5,9 @@ import { instance, InstanceStore, profile } from "../src/store";
 import { ProfileStorage } from "../src/profiles";
 import { migrate } from "../src/schema";
 import type { StorageState } from "../src/browser";
+import { Buffer } from "node:buffer";
+import { randomFillSync, createHash } from "node:crypto";
+import { MAX_PROFILE_BYTES } from "../src/browser-storage";
 
 const limits = { enabled: true, concurrentInstances: 2, periodSeconds: 1000, maxInstanceSeconds: 600, savedProfiles: 2, profileStorageBytes: 5242880 };
 const actor = { ownerUid: 1000, human: true };
@@ -113,6 +116,33 @@ describe("instance admission", () => {
 });
 
 describe("saved profile encryption", () => {
+  it("settles an upload rejected before its body is read and permits the next save", () => inStore(async store => {
+    const started = store.admit(actor, { requestId: "rejected-body", templateId: "browser" }, limits);
+    const storage = new ProfileStorage("rejected-body", bucket, store);
+    const upload = vi.spyOn(bucket, "put").mockRejectedValueOnce(new Error("Upload rejected before reading its body"));
+    try {
+      await expect(storage.save(started, { cookies: [], origins: [] }, 10000)).rejects.toThrow("Upload rejected before reading its body");
+      expect(store.ownedProfile(actor, started.profileId!)?.object_key).toBeNull();
+      await storage.save(started, { cookies: [], origins: [] }, 10000);
+      expect(profile(store.ownedProfile(actor, started.profileId!)!).saveStatus).toBe("saved");
+    } finally { upload.mockRestore(); }
+  }), 5000);
+  it("saves and restores incompressible data near the supported 32 MiB limit", () => inStore(async store => {
+    const started = store.admit(actor, { requestId: "large-random", templateId: "browser" }, limits);
+    const storage = new ProfileStorage("large-random", bucket, store);
+    const random = () => {
+      const data = Buffer.alloc(24 * 1024 * 1024 - 1024);
+      for (let offset = 0; offset < data.byteLength; offset += 65536) randomFillSync(data.subarray(offset, offset + 65536));
+      return data.toString("base64");
+    };
+    const value = random(), expected = createHash("sha256").update(value).digest("hex");
+    await storage.save(started, { cookies: [], origins: [{ origin: "https://example.com", localStorage: [{ name: "random", value }] }] }, MAX_PROFILE_BYTES);
+    const row = store.ownedProfile(actor, started.profileId!)!;
+    expect(profile(row).bytes).toBeGreaterThan(31 * 1024 * 1024);
+    expect(profile(row).storedBytes).toBeGreaterThan(23 * 1024 * 1024);
+    const restored = await storage.restore(row);
+    expect(createHash("sha256").update(restored!.origins[0]!.localStorage[0]!.value).digest("hex")).toBe(expected);
+  }), 30000);
   it("pages small profile summaries and fetches storage detail for only the selected owner", () => inStore(store => {
     const saved = Array.from({ length: 70 }, (_, index) => store.createProfile(actor, `profile-${index}`, `Browser ${index}`, { ...limits, savedProfiles: 1000 }));
     const usage = { bytes: 20, cookies: 0, cookieBytes: 2, sites: [{ origin: "https://example.com", bytes: 18, localStorageBytes: 2, indexedDBBytes: 2, localStorageEntries: 0, databases: 0, records: 0 }] };
