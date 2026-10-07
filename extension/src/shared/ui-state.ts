@@ -49,6 +49,7 @@ export type ExtensionUiState = {
     message: string | null;
     reconnectSuppressed: boolean;
   };
+  pausePending: boolean;
   targetId: string;
   gatewayHost: string;
   activeRequests: Pick<ActivityEntry, "label" | "detail">[];

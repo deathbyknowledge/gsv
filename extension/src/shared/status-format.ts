@@ -24,14 +24,22 @@ export function browserTargetTone(state: ExtensionUiState): string {
 }
 
 export function liveAccessCount(state: ExtensionUiState): number {
-  return state.activeRequests.length
+  return Number(state.pausePending)
+    + state.activeRequests.length
     + state.sensitive.networkCaptures
     + state.sensitive.mediaRecordings
     + state.sensitive.debuggerTabs.length;
 }
 
+export function browserAccessAction(state: ExtensionUiState): "pause" | "resume" {
+  return state.connection.reconnectSuppressed && liveAccessCount(state) === 0 ? "resume" : "pause";
+}
+
 export function liveAccessText(state: ExtensionUiState): string {
   const parts: string[] = [];
+  if (state.pausePending) {
+    parts.push("browser work is still stopping");
+  }
   if (state.sensitive.networkCaptures > 0) {
     parts.push(`${state.sensitive.networkCaptures} network capture${state.sensitive.networkCaptures === 1 ? "" : "s"}`);
   }

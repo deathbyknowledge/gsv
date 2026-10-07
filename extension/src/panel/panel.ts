@@ -1,6 +1,6 @@
 import "./panel.css";
 import { configReady, normalizeGatewayUrl, type ExtensionConfig } from "../shared/config";
-import { liveAccessCount, timeUntil } from "../shared/status-format";
+import { browserAccessAction, liveAccessCount, timeUntil } from "../shared/status-format";
 import { escapeHtml, formatDuration, sendUiMessage, timeAgo, truncateMiddle } from "../shared/ui-client";
 import type { ActivityEntry, ExtensionUiState, RuntimeResponse } from "../shared/ui-state";
 
@@ -285,7 +285,10 @@ function main(current: ExtensionUiState): string {
   let detailClass = "";
   const actions: string[] = [];
 
-  if (paused && live > 0) {
+  if (paused && current.pausePending) {
+    title = "Still stopping browser work.";
+    detail = "Access stays paused while a browser action finishes. You can resume when cleanup is complete.";
+  } else if (paused && live > 0) {
     title = "Some browser activity remains.";
     detail = "Access is paused, but some work may still be active. Try stopping it again.";
   } else if (paused) {
@@ -431,7 +434,7 @@ function advanced(current: ExtensionUiState): string {
 function accessControl(current: ExtensionUiState): string {
   const paused = current.connection.reconnectSuppressed;
   const activityRemains = liveAccessCount(current) > 0;
-  const action = paused && !activityRemains ? "resume" : "pause";
+  const action = browserAccessAction(current);
   const label = !paused ? "pause access" : activityRemains ? "stop remaining activity" : "resume access";
   return `<div class="access-control">${button(action, label, paused && !activityRemains ? "ibtn is-primary" : "ibtn", "browser-access")}</div>`;
 }

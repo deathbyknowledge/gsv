@@ -26,7 +26,7 @@ import { networkStatus, stopNetworkCapture } from "../target/network-recorder";
 import { ConnectionSupervisor } from "./connection-supervisor";
 import { BrowserPairing } from "./pairing";
 import { createBrowserTargetDriver, type BrowserTargetActivity } from "./driver";
-import { pauseBrowserResources, releaseBrowserResources } from "./pause-access";
+import { pauseBrowserResources, releaseBrowserResources, type PauseAccessResult } from "./pause-access";
 
 const client = new GSVClient();
 const endpoint = client.endpoint({
@@ -40,7 +40,6 @@ const endpoint = client.endpoint({
 const connectionSupervisor = new ConnectionSupervisor(endpoint);
 const browserPairing = new BrowserPairing();
 let pauseOperations = 0;
-let pauseEpoch = 0;
 let diagnostics: ExtensionDiagnostics = emptyDiagnostics();
 const diagnosticsReady = loadDiagnostics().then((stored) => {
   diagnostics = mergeDiagnostics(stored, diagnostics);
@@ -205,10 +204,10 @@ async function connectNow(config?: ExtensionConfig): Promise<void> {
 
 async function pauseBrowserAccess(): Promise<RuntimeResponse> {
   pauseOperations += 1;
-  const epoch = ++pauseEpoch;
   const commandsStopped = browserTarget.pause();
+  let result: PauseAccessResult;
   try {
-    const result = await pauseBrowserResources({
+    result = await pauseBrowserResources({
       disconnect: async () => await setManualReconnectSuppressed(true, "access paused by user"),
       waitForCommands: async () => await commandsStopped,
       revokeMediaGrant: clearMediaCaptureGrant,
@@ -216,33 +215,39 @@ async function pauseBrowserAccess(): Promise<RuntimeResponse> {
       stopRecordings: stopAllMediaRecordings,
       releaseDebuggers: releaseAllDebuggers,
     });
-    if (result.commandsPending) {
-      void commandsStopped.then(async () => {
-        if (epoch !== pauseEpoch || !connectionSupervisor.getState().reconnectSuppressed) return;
-        const late = await releaseBrowserResources({
-          stopNetwork: stopNetworkCapture,
-          stopRecordings: stopAllMediaRecordings,
-          releaseDebuggers: releaseAllDebuggers,
-        });
-        if (late.errors.length > 0) console.warn("Your GSV: late browser cleanup failed", late.errors);
-      }).catch((error) => console.warn("Your GSV: browser commands did not stop", error));
-    }
-    addActivity({
-      kind: result.errors.length > 0 ? "error" : "sensitive",
-      label: "access paused",
-      detail: [
-        `stopped ${result.stoppedCaptures} network capture(s), ${result.stoppedRecordings} media recording(s), detached ${result.detachedTabs} debugger tab(s)`,
-        ...result.errors.map((error) => `cleanup error: ${error}`),
-      ].join("; "),
-      status: result.errors.length > 0 ? "error" : "info",
+  } catch (error) {
+    pauseOperations -= 1;
+    throw error;
+  }
+  if (result.commandsPending) {
+    void commandsStopped.catch((error) => {
+      console.warn("Your GSV: browser commands did not stop", error);
+    }).then(async () => {
+      const late = await releaseBrowserResources({
+        stopNetwork: stopNetworkCapture,
+        stopRecordings: stopAllMediaRecordings,
+        releaseDebuggers: releaseAllDebuggers,
+      });
+      if (late.errors.length > 0) console.warn("Your GSV: late browser cleanup failed", late.errors);
+    }).catch((error) => console.warn("Your GSV: late browser cleanup failed", error)).finally(() => {
+      pauseOperations -= 1;
     });
-    if (result.errors.length > 0) {
-      return { ok: false, error: `Access may not be fully paused: ${result.errors.join("; ")}`, state: await buildUiState() };
-    }
-    return await stateResponse();
-  } finally {
+  } else {
     pauseOperations -= 1;
   }
+  addActivity({
+    kind: result.errors.length > 0 ? "error" : "sensitive",
+    label: "access paused",
+    detail: [
+      `stopped ${result.stoppedCaptures} network capture(s), ${result.stoppedRecordings} media recording(s), detached ${result.detachedTabs} debugger tab(s)`,
+      ...result.errors.map((error) => `cleanup error: ${error}`),
+    ].join("; "),
+    status: result.errors.length > 0 ? "error" : "info",
+  });
+  if (result.errors.length > 0) {
+    return { ok: false, error: `Access may not be fully paused: ${result.errors.join("; ")}`, state: await buildUiState() };
+  }
+  return await stateResponse();
 }
 
 // Chrome will not open the side panel without a person's gesture, so an ask from your GSV cannot
@@ -293,7 +298,6 @@ async function setManualReconnectSuppressed(value: boolean, reason?: string): Pr
   }
   connectionSupervisor.setReconnectSuppressed(value, reason);
   if (!value) {
-    pauseEpoch += 1;
     browserTarget.resume();
   }
   await saveRuntimeState({ manualReconnectSuppressed: value });
@@ -353,6 +357,7 @@ async function buildUiState(): Promise<ExtensionUiState> {
   return {
     config,
     connection,
+    pausePending: pauseOperations > 0,
     targetId: config.deviceId,
     gatewayHost: gatewayHost(config.gatewayUrl),
     activeRequests: browserTarget.activeRequests().map(({ label, detail }) => ({ label, detail })),

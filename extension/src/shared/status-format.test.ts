@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { browserTargetHeadline, browserTargetTone, liveAccessCount } from "./status-format";
+import { browserAccessAction, browserTargetHeadline, browserTargetTone, liveAccessCount } from "./status-format";
 import type { ExtensionUiState } from "./ui-state";
 
 describe("browser target status", () => {
@@ -8,6 +8,7 @@ describe("browser target status", () => {
       config: { gatewayUrl: "", username: "", token: "", deviceId: "chrome", autoConnect: false },
       activeRequests: [{ label: "tabs open", detail: "https://example.test/" }],
       connection: { state: "connected", connectionId: null, message: null, reconnectSuppressed: false },
+      pausePending: false,
       targetId: "chrome",
       gatewayHost: "",
       activity: [],
@@ -37,5 +38,14 @@ describe("browser target status", () => {
 
     state.connection.reconnectSuppressed = true;
     expect(browserTargetHeadline(state)).toBe("Browser activity remains");
+
+    state.activeRequests = [];
+    state.pausePending = true;
+    expect(liveAccessCount(state)).toBe(1);
+    expect(browserTargetHeadline(state)).toBe("Browser activity remains");
+    expect(browserAccessAction(state)).toBe("pause");
+
+    state.pausePending = false;
+    expect(browserAccessAction(state)).toBe("resume");
   });
 });
