@@ -48,7 +48,66 @@ function deferred() {
   return { promise, resolve };
 }
 
+function anotherReadyBrowser(store: InstanceStore): string {
+  const profile = store.createProfile(actor, crypto.randomUUID(), "Second browser", limits);
+  const value = store.admit(actor, { requestId: crypto.randomUUID(), templateId: "browser", profileId: profile.profileId, fresh: true, lifetimeSeconds: 300 }, limits);
+  store.update({ ...value, state: "ready", readyAt: Date.now() });
+  store.sql.exec("UPDATE instances SET session_id = ? WHERE id = ?", "other-session", value.instanceId);
+  return value.instanceId;
+}
+
 describe("human browser control", () => {
+  it("serializes cold attachments and manual snapshots across different browsers", () => fixture(async (object, store, firstId, _installationId, browser) => {
+    const secondId = anotherReadyBrowser(store), attached = deferred(), saved = deferred();
+    let attaching = 0, peakAttachments = 0, saving = 0, peakSaves = 0;
+    vi.spyOn(CloudBrowser, "attach").mockImplementation(async () => {
+      attaching++; peakAttachments = Math.max(peakAttachments, attaching);
+      await attached.promise; attaching--;
+      // SAFETY: The fixture implements the browser operations used in this test.
+      return browser as CloudBrowser;
+    });
+    const original = browser.save!;
+    browser.save = vi.fn(async (...args) => {
+      saving++; peakSaves = Math.max(peakSaves, saving);
+      await saved.promise; saving--; return original(...args);
+    });
+    const first = object.saveProfile(actor, firstId), second = object.saveProfile(actor, secondId);
+    await vi.waitFor(() => expect(CloudBrowser.attach).toHaveBeenCalledOnce());
+    attached.resolve();
+    await vi.waitFor(() => expect(browser.save).toHaveBeenCalledOnce());
+    expect(peakAttachments).toBe(1); expect(peakSaves).toBe(1);
+    saved.resolve();
+    expect((await Promise.all([first, second])).every(result => result.profile?.saveStatus === "saved")).toBe(true);
+    expect(peakAttachments).toBe(1); expect(peakSaves).toBe(1);
+  }));
+  it("rejects a queued cold attachment after force stop without allocating its profile", () => fixture(async (object, store, firstId, _installationId, browser) => {
+    const secondId = anotherReadyBrowser(store), attached = deferred();
+    vi.spyOn(CloudBrowser, "attach").mockImplementation(async () => {
+      await attached.promise;
+      // SAFETY: The fixture implements the browser operations used in this test.
+      return browser as CloudBrowser;
+    });
+    const first = object.saveProfile(actor, firstId), second = object.saveProfile(actor, secondId);
+    const rejected = expect(second).rejects.toThrow("Browser is not ready");
+    await vi.waitFor(() => expect(CloudBrowser.attach).toHaveBeenCalledOnce());
+    await object.stop(actor, { instanceId: secondId, force: true });
+    attached.resolve();
+    await first; await rejected;
+    expect(CloudBrowser.attach).toHaveBeenCalledOnce();
+  }));
+  it("continues a bounded maintenance pass from its durable cursor", () => fixture(async (object, store, firstId, _installationId, browser) => {
+    const secondId = anotherReadyBrowser(store);
+    vi.useFakeTimers({ toFake: ["Date"] });
+    browser.heartbeat = vi.fn(async () => { vi.setSystemTime(Date.now() + 20001); });
+    const saves = vi.spyOn(ProfileStorage.prototype, "save");
+    await object.alarm();
+    expect(saves).toHaveBeenCalledOnce();
+    const firstMaintained = saves.mock.calls[0]![0].instanceId;
+    expect(await store.storage.get("maintenance_cursor")).toBe(firstMaintained);
+    expect(await store.storage.getAlarm()).toBeLessThanOrEqual(Date.now() + 1);
+    await object.alarm();
+    expect(new Set(saves.mock.calls.map(([value]) => value.instanceId))).toEqual(new Set([firstId, secondId]));
+  }));
   it("resolves displayed IDs within the owner and never reports an unknown stop as successful", () => fixture(async (object, store, instanceId) => {
     const targetId = instance(store.byId(instanceId)).targetId;
     expect(await object.get(actor, { instanceId: targetId })).toMatchObject({ instance: { instanceId } });
@@ -571,6 +630,27 @@ describe("browser health", () => {
 });
 
 describe("installation retirement", () => {
+  it("retains a cold attachment until it settles before confirming quiescence", () => fixture(async (object, store, instanceId, installationId, browser) => {
+    const attached = deferred();
+    vi.spyOn(CloudBrowser, "attach").mockImplementation(async () => {
+      await attached.promise;
+      // SAFETY: The fixture implements the browser operations used in this test.
+      return browser as CloudBrowser;
+    });
+    const pending = object.saveProfile(actor, instanceId);
+    const rejected = expect(pending).rejects.toThrow();
+    await vi.waitFor(() => expect(CloudBrowser.attach).toHaveBeenCalledOnce());
+    await object.stop(actor, { instanceId, force: true });
+    vi.spyOn(BrowserProvider.prototype, "exists").mockResolvedValue(false);
+    await object.alarm();
+    expect(store.byId(instanceId).active).toBe(0);
+    const request = { version: 1 as const, operationId: "delete-cold-space", installationId };
+    expect((await object.quiesceInstallation(request)).phase).toBe("quiescing");
+    attached.resolve(); await rejected;
+    expect((await object.quiesceInstallation(request)).phase).toBe("quiesced");
+    expect((await object.eraseInstallation(request)).phase).toBe("live-erased");
+    expect(await store.storage.get("maintenance_cursor")).toBeUndefined();
+  }));
   it("retains ownership of a slow shutdown save until installation deletion can drain it", () => fixture(async (object, store, instanceId, installationId) => {
     const saved = store.createProfile(actor, "profile", "Personal", limits);
     const value = (await object.get(actor, { instanceId })).instance!;

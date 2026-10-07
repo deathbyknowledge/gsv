@@ -21,6 +21,7 @@ import type { InstallationDeletionRequest } from "@humansandmachines/gsv/service
 
 const QUIET_ALLOCATION_MS = 180_000;
 const PROVIDER_RECOVERY_MS = 60_000;
+const MAINTENANCE_BUDGET_MS = 20_000;
 const humanInputSchema = z.discriminatedUnion("kind", [
   z.strictObject({ kind: z.literal("tab"), tabId: z.number().int().positive() }),
   z.strictObject({ kind: z.literal("click"), x: z.number().min(0).max(1280), y: z.number().min(0).max(800) }),
@@ -43,8 +44,10 @@ export class InstanceCoordinator extends DurableObject<Environment> implements I
   readonly #provider: BrowserProvider;
   readonly #retirement: InstanceRetirement;
   readonly #browsers = new Map<string, Promise<CloudBrowser>>();
+  readonly #attachments = new Set<Promise<CloudBrowser>>();
   readonly #operations = new Map<string, Map<string, OwnedOperation>>();
   readonly #operationGates = new Map<string, BrowserOperationGate>();
+  readonly #profileWork = new BrowserOperationGate();
   readonly #saves = new Map<string, { done: Promise<void>; outcome: Promise<boolean>; abort: AbortController }>();
   readonly #stops = new Map<string, Promise<void>>();
   readonly #handoffBarriers = new Map<string, Promise<void>>();
@@ -406,15 +409,22 @@ export class InstanceCoordinator extends DurableObject<Environment> implements I
       const row = this.#store.byId(id);
       if (!row.session_id) throw new Error("Browser session is unavailable");
       const value = instance(row);
-      attached = (async () => {
+      attached = this.#profileWork.save(async () => {
+        const current = instance(this.#store.byId(id));
+        const finalSave = current.state === "stopping" && current.reason === "Browser lifetime expired" && this.#saves.has(id);
+        if (current.state !== "starting" && current.state !== "ready" && !finalSave) throw new Error("Browser is not ready");
         const saved = value.profileId ? this.#store.ownedProfile({ ownerUid: value.ownerUid, human: false }, value.profileId) : null;
         const state = saved ? await this.#profiles.restore(saved) : undefined;
-        return within(CloudBrowser.attach(this.env.BROWSER, row.session_id!, value, this.#store, state), 30000);
-      })();
+        return CloudBrowser.attach(this.env.BROWSER, row.session_id!, value, this.#store, state);
+      }, new AbortController().signal);
       this.#browsers.set(id, attached);
+      this.#attachments.add(attached);
+      const finished = () => { this.#attachments.delete(attached!); };
+      void attached.then(finished, finished);
       attached.catch(() => { if (this.#browsers.get(id) === attached) this.#browsers.delete(id); });
     }
-    return attached;
+    // A caller may stop waiting, but the actual attachment retains the memory slot.
+    return within(attached, 30000, "Browser attachment");
   }
   private save(id: string): Promise<boolean> {
     const pending = this.#saves.get(id)?.outcome;
@@ -428,11 +438,14 @@ export class InstanceCoordinator extends DurableObject<Environment> implements I
       const limits = await this.#policy.limits();
       abort.signal.throwIfAborted();
       this.updatePersistence(id, { limitBytes: limits.profileStorageBytes });
-      const { state, usage, failures } = await (await this.browser(id)).save(limits.profileStorageBytes, abort.signal);
-      abort.signal.throwIfAborted();
-      const issues = failures?.map(({ issue, cause }) => ({ ...issue, diagnosticRef: this.#store.diagnostic(id, cause) }));
-      await this.#profiles.save(value, state, limits.profileStorageBytes, abort.signal, usage, issues);
-      abort.signal.throwIfAborted();
+      const browser = await this.browser(id);
+      await this.#profileWork.save(async () => {
+        const { state, usage, failures } = await browser.save(limits.profileStorageBytes, abort.signal);
+        abort.signal.throwIfAborted();
+        const issues = failures?.map(({ issue, cause }) => ({ ...issue, diagnosticRef: this.#store.diagnostic(id, cause) }));
+        await this.#profiles.save(value, state, limits.profileStorageBytes, abort.signal, usage, issues);
+        abort.signal.throwIfAborted();
+      }, abort.signal);
     }, abort.signal);
     // Retain the actual operation after a timeout: deletion and later saves must
     // wait for it, and its abort signal fences any late R2 commit.
@@ -486,7 +499,25 @@ export class InstanceCoordinator extends DurableObject<Environment> implements I
   async alarm(): Promise<void> {
     // The next alarm survives a failed or evicted provider call.
     await this.ctx.storage.setAlarm(Date.now() + 20_000);
-    await Promise.all(this.#store.rows(true).map(row => this.maintain(row.id)));
+    const started = Date.now();
+    const rows = this.#store.sql.exec<Pick<InstanceRow, "id">>("SELECT id FROM instances WHERE active = 1 ORDER BY rowid DESC").toArray();
+    for (const row of rows) {
+      const value = instance(this.#store.byId(row.id));
+      if (value.expiresAt <= started) this.fenceStop(value, "Browser lifetime expired");
+    }
+    const last = await this.ctx.storage.get<string>("maintenance_cursor");
+    const offset = last ? rows.findIndex(row => row.id === last) + 1 : 0;
+    const rotated = [...rows.slice(offset), ...rows.slice(0, offset)];
+    const stopping = (row: Pick<InstanceRow, "id">) => instance(this.#store.byId(row.id)).state === "stopping";
+    const ordered = [...rotated.filter(stopping), ...rotated.filter(row => !stopping(row))];
+    for (let i = 0; i < ordered.length; i++) {
+      await this.maintain(ordered[i]!.id);
+      await this.ctx.storage.put("maintenance_cursor", ordered[i]!.id);
+      if (Date.now() - started >= MAINTENANCE_BUDGET_MS && i + 1 < ordered.length) {
+        await this.ctx.storage.setAlarm(Date.now() + 1);
+        break;
+      }
+    }
     let deleting = false;
     for (const row of this.#store.sql.exec<{ id: string; owner_uid: number }>("SELECT id, owner_uid FROM profiles").toArray()) {
       const saved = this.#store.ownedProfile({ ownerUid: row.owner_uid, human: false }, row.id)!;
@@ -497,7 +528,7 @@ export class InstanceCoordinator extends DurableObject<Environment> implements I
     }
     await this.#profiles.cleanup();
     this.#store.pruneDiagnostics([...this.#saves.keys()]);
-    if (!this.#store.rows(true).length && !deleting && !this.#profiles.hasPendingCleanup()) await this.ctx.storage.deleteAlarm();
+    if (!this.#store.rows(true).length && !deleting && !this.#attachments.size && !this.#profiles.hasPendingCleanup()) await this.ctx.storage.deleteAlarm();
   }
   async quiesceInstallation(input: InstallationDeletionRequest) {
     this.#retirement.begin(input);
@@ -509,7 +540,7 @@ export class InstanceCoordinator extends DurableObject<Environment> implements I
       }
     }
     await this.ctx.storage.setAlarm(Date.now() + 1);
-    if (!this.#store.rows(true).length && !this.#saves.size && !this.#humanInputs.size && ![...this.#operations.values()].some(operations => operations.size)) {
+    if (!this.#store.rows(true).length && !this.#attachments.size && !this.#saves.size && !this.#humanInputs.size && ![...this.#operations.values()].some(operations => operations.size)) {
       if (this.#retirement.get()?.phase === "quiescing") this.#retirement.phase("quiesced");
     }
     return this.installationDeletionStatus(input);
@@ -525,6 +556,7 @@ export class InstanceCoordinator extends DurableObject<Environment> implements I
     const listed = await this.env.PROFILES.list({ prefix: `${this.#installationId}/` });
     if (listed.objects.length) await this.env.PROFILES.delete(listed.objects.map(object => object.key));
     if (listed.truncated) return this.installationDeletionStatus(input);
+    await this.ctx.storage.delete("maintenance_cursor");
     this.ctx.storage.transactionSync(() => {
       for (const table of ["file_chunks", "files", "handoffs", "profiles", "instances", "diagnostics", "cancelled_starts", "start_requests", "obsolete_profile_objects"]) this.#store.sql.exec(`DELETE FROM ${table}`);
       this.#retirement.phase("erased");

@@ -97,6 +97,10 @@ required bytes; it does not read the rest of an oversized database. Serializatio
 and compression use bounded chunks, and restore checks the size while
 decompressing. The encrypted snapshot format remains compatible with existing
 saved logins.
+Within a space, cold profile restores and saves share one memory slot. Browser
+maintenance runs sequentially, prioritizes stopping browsers, and resumes from a
+durable cursor when a pass reaches its time budget. Queued work rechecks lifecycle
+state, and deletion waits for actual attachments and saves to settle.
 Once a new snapshot commits, deleting its predecessor runs separately with durable
 retries. Slow cleanup does not turn a successful save into a failure or block stop.
 Uploads rejected after cancellation, a lease change, deletion, or an upload
