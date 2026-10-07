@@ -52,6 +52,7 @@ import { handleSysConfigGet, handleSysConfigSet } from "./sys/config";
 import { handleSysTargetDelete, handleSysTargetGet, handleSysTargetList, handleSysTargetUpdate } from "./sys/target";
 import { handleInstanceRequest } from "./sys/instance";
 import { requestInstanceTarget } from "./instance-targets";
+import { rejectBeforeDispatch } from "./request-rejection";
 import { handleSysLedgerList } from "./sys/ledger";
 import { normalizeNetFetchTimeoutMs } from "./net";
 import { handleSysBootstrap } from "./sys/bootstrap";
@@ -1074,14 +1075,6 @@ function findTargetConnection(
 
 function errFrame(id: string, code: number, message: string): ResponseFrame {
   return { type: "res", id, ok: false, error: { code, message } };
-}
-
-export function rejectBeforeDispatch(frame: RequestFrame, code: number, message: string): ResponseFrame {
-  const response = errFrame(frame.id, code, message);
-  if (!response.ok && frame.call === "shell.exec" && frame.args.start === true) {
-    response.error.details = { shellStart: "rejected" };
-  }
-  return response;
 }
 
 function requestCancelMessage(signal: AbortSignal): string {

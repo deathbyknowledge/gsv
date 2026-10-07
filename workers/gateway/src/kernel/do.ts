@@ -78,7 +78,8 @@ import { IpcCallStore } from "./ipc-calls";
 import {
   ScheduleStore,
 } from "./scheduler";
-import { dispatch, rejectBeforeDispatch, type DispatchDeps } from "./dispatch";
+import { dispatch, type DispatchDeps } from "./dispatch";
+import { rejectBeforeDispatch } from "./request-rejection";
 import { raceWithAbort } from "../shared/abort";
 import type { KernelContext } from "./context";
 import { resolveCallerOwnerUid, principalOf, requirePrincipal } from "./context";

@@ -1,4 +1,5 @@
 import { cancelBinaryBody } from "@humansandmachines/gsv/protocol";
+import type { InstallationInstances } from "@humansandmachines/gsv/services/instances";
 import { acquireInstances, instanceActor, withInstances } from "./instance-service";
 import type { KernelContext } from "./context";
 import { principalOf } from "./context";
@@ -6,6 +7,7 @@ import type { TargetDescriptor, TargetDiscovery, TargetListOptions } from "./tar
 import type { RequestFrame, ResponseFrame } from "../protocol/frames";
 import { raceWithAbort } from "../shared/abort";
 import { withByteStreamFinalizer } from "../shared/streams";
+import { rejectBeforeDispatch } from "./request-rejection";
 
 export type InstanceTargetRoute = { kind: "instance"; instanceId: string };
 
@@ -46,32 +48,37 @@ export async function discoverInstanceTargets(ctx: KernelContext, options: Targe
 }
 
 export async function requestInstanceTarget(frame: RequestFrame, target: TargetDescriptor, deadlineAt: number, ctx: KernelContext): Promise<ResponseFrame> {
-  if (!ctx.env.INSTANCES || target.route.kind !== "instance") throw new Error("Instance target is unavailable");
-  const actor = instanceActor(ctx), id = target.route.instanceId;
   let transferred = false;
+  let dispatched = false;
+  let service: InstallationInstances | undefined;
   const deadline = new AbortController();
   const timer = setTimeout(() => deadline.abort(new Error("Browser target request timed out")), Math.max(0, deadlineAt - Date.now()));
   const signal = ctx.requestSignal ? AbortSignal.any([ctx.requestSignal, deadline.signal]) : deadline.signal;
-  const service = await acquireInstances(ctx, signal).catch(async error => {
-    clearTimeout(timer);
-    await cancelBinaryBody(frame.body, "Browser service acquisition failed");
-    throw error;
-  });
   try {
+    if (!ctx.env.INSTANCES || target.route.kind !== "instance") throw new Error("Instance target is unavailable");
+    const actor = instanceActor(ctx), id = target.route.instanceId;
+    const acquired = await acquireInstances(ctx, signal);
+    service = acquired;
     signal.throwIfAborted();
-    const invocation = service.execute(actor, id, frame, deadlineAt);
+    dispatched = true;
+    const invocation = acquired.execute(actor, id, frame, deadlineAt);
     const response = await raceWithAbort(invocation, signal, { onAbort: () => {
       transferred = true;
       ctx.defer(Promise.allSettled([
-        service.cancel(actor, id, frame.id),
+        acquired.cancel(actor, id, frame.id),
         invocation.then(async late => { if (late.ok) await cancelBinaryBody(late.body, "Browser response arrived after cancellation"); }),
-      ]).finally(() => service[Symbol.dispose]?.()));
+      ]).finally(() => acquired[Symbol.dispose]?.()));
     } });
     if (response.id !== frame.id) { if (response.ok) await cancelBinaryBody(response.body, "Invalid browser response"); throw new Error("Browser response identity mismatch"); }
     if (response.ok && response.body) {
       transferred = true;
-      return { ...response, body: { ...response.body, stream: withByteStreamFinalizer(response.body.stream, () => service[Symbol.dispose]?.()) } };
+      return { ...response, body: { ...response.body, stream: withByteStreamFinalizer(response.body.stream, () => acquired[Symbol.dispose]?.()) } };
     }
     return response;
-  } finally { clearTimeout(timer); if (!transferred) service[Symbol.dispose]?.(); }
+  } catch (error) {
+    if (dispatched) throw error;
+    await cancelBinaryBody(frame.body, "Browser request was not dispatched");
+    return rejectBeforeDispatch(frame, ctx.requestSignal?.aborted ? 499 : deadline.signal.aborted ? 504 : 503,
+      error instanceof Error ? error.message : String(error));
+  } finally { clearTimeout(timer); if (!transferred) service?.[Symbol.dispose]?.(); }
 }

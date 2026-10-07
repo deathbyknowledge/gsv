@@ -49,6 +49,59 @@ const frameData: Awaited<ReturnType<InstallationInstances["frame"]>>["data"] = {
 };
 
 describe("instance gateway boundary", () => {
+  it("rejects a named start before dispatch and permits a fresh attempt without reusing the reserved ID", async () => {
+    await runWithRealKernelSql(async sql => {
+      const instance: CloudInstance = { ...frameData.instance, implements: ["shell.exec"], expiresAt: Date.now() + 60000 };
+      const list = async () => ({ instances: [instance], handoffs: [], usage: {
+        periodStartsAt: 0, periodEndsAt: 1, usedSeconds: 0, reservedSeconds: 60, limitSeconds: 3600, activeInstances: 1, concurrentLimit: 2,
+      } });
+      const execute = vi.fn<InstallationInstances["execute"]>(async (_actor, _id, frame) => ({ type: "res", id: frame.id, ok: true, data: {} }));
+      const { ctx, getInstallation } = context({ list, execute });
+      const acquire = getInstallation.getMockImplementation()!;
+      getInstallation.mockImplementationOnce(acquire).mockRejectedValueOnce(new Error("Service acquisition failed"));
+      const shellSessions = new ShellSessionStore(sql);
+      // SAFETY: Instance dispatch uses only the durable session store from these dependencies.
+      const deps = { shellSessions } as DispatchDeps;
+      const sessionId = crypto.randomUUID();
+      const start = (id: string) => dispatch({ type: "req", id: crypto.randomUUID(), call: "shell.exec",
+        args: { input: "page snapshot", target: "browser", start: true, sessionId: id } }, { type: "app", id: "app" }, ctx, deps);
+      expect(await start(sessionId)).toMatchObject({ handled: true, response: { ok: false,
+        error: { code: 503, message: "Service acquisition failed", details: { shellStart: "rejected" } } } });
+      expect(shellSessions.get(sessionId)).toMatchObject({ targetId: "browser" });
+      expect(execute).not.toHaveBeenCalled();
+      expect(await start(sessionId)).toMatchObject({ response: { ok: false, error: { code: 409 } } });
+      expect(await start(crypto.randomUUID())).toMatchObject({ response: { ok: true } });
+      expect(execute).toHaveBeenCalledOnce();
+    });
+  });
+
+  it.each(["cancel", "timeout"] as const)("marks %s during acquisition as rejected and disposes a late capability", async outcome => {
+    let deliver!: (service: Awaited<ReturnType<ReturnType<typeof context>["getInstallation"]>>) => void;
+    const execute = vi.fn<InstallationInstances["execute"]>();
+    const { ctx, getInstallation, dispose } = context({ execute });
+    getInstallation.mockImplementationOnce(() => new Promise(resolve => { deliver = resolve; }));
+    const cancel = vi.fn(), pull = vi.fn();
+    const abort = new AbortController(); ctx.requestSignal = abort.signal;
+    const pending = requestInstanceTarget({ type: "req", id: "start", call: "shell.exec",
+      args: { input: "page snapshot", start: true, sessionId: crypto.randomUUID() },
+      body: { stream: new ReadableStream<Uint8Array>({ cancel, pull }, { highWaterMark: 0 }) } }, target,
+      Date.now() + (outcome === "timeout" ? 20 : 10000), ctx);
+    if (outcome === "cancel") abort.abort(new Error("Cancelled before dispatch"));
+    expect(await pending).toMatchObject({ ok: false, error: { code: outcome === "cancel" ? 499 : 504, details: { shellStart: "rejected" } } });
+    expect(cancel).toHaveBeenCalledOnce();
+    expect(pull).not.toHaveBeenCalled();
+    deliver({ execute, [Symbol.dispose]: dispose });
+    await vi.waitFor(() => expect(dispose).toHaveBeenCalledOnce());
+    expect(execute).not.toHaveBeenCalled();
+  });
+
+  it("does not mark a lost execute response as a rejected start", async () => {
+    const { ctx } = context({ execute: async () => { throw new Error("Response lost after dispatch"); } });
+    await expect(requestInstanceTarget({ type: "req", id: "start", call: "shell.exec", args: {
+      input: "page click button", start: true, sessionId: crypto.randomUUID(),
+    } }, target, Date.now() + 10000, ctx)).rejects.toThrow("Response lost after dispatch");
+  });
+
   it.each(["sys.browser.frame", "sys.browser.watch"] as const)("cancels an unexpected %s upload before acquiring its response", async call => {
     const pull = vi.fn(), cancel = vi.fn();
     const stream = new ReadableStream<Uint8Array>({ pull, cancel }, { highWaterMark: 0 });

@@ -302,6 +302,8 @@ access to a target the caller can no longer see.
 
 When the Kernel rejects a named start before forwarding it, the error includes
 `details: { "shellStart": "rejected" }`. Clients may finish that attempt as failed.
+This includes cloud-browser service acquisition failures before the command is
+sent. A later attempt uses a fresh session ID; the rejected ID remains reserved.
 An unmarked transport error is uncertain: retain the saved session ID and recover
 by polling. A reused ID is also unmarked because its existing command may be live.
 
