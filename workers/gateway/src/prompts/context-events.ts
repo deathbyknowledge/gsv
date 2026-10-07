@@ -18,6 +18,7 @@ export function formatContextProjectionEvent(
     formatTargetChanges(previous.targets, current.targets),
     formatSetChanges("MCP servers", previous.mcpServers, current.mcpServers),
     formatSkillChanges(previous, current),
+    formatMailboxChanges(previous, current),
   ].filter((section): section is string => Boolean(section));
   if (sections.length === 0) {
     return null;
@@ -87,6 +88,15 @@ function formatSkillChanges(
     ...renderChangeGroup("Updated", updated, (entry) => formatSkill(entry.id, entry.description)),
   ];
   return lines.length > 0 ? ["Available skills:", ...lines].join("\n") : null;
+}
+
+function formatMailboxChanges(
+  previous: ContextProjection,
+  current: ContextProjection,
+): string | null {
+  if (previous.mailbox?.address === current.mailbox?.address) return null;
+  const address = current.mailbox ? quote(current.mailbox.address) : "none";
+  return ["Email:", `- Address: ${address}`].join("\n");
 }
 
 function formatSetChanges(

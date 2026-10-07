@@ -52,6 +52,7 @@ export function contextSnapshotFromRun(
     },
     skillIndex: config.skillIndex ?? [],
     skillIndexMode: config.skillIndexMode ?? "summary",
+    mailbox: null,
   };
   if (config.systemContextFiles !== undefined) {
     snapshot.systemContextFiles = config.systemContextFiles;

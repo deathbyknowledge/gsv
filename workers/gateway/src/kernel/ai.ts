@@ -12,6 +12,7 @@
  */
 
 import { principalOf, requirePrincipal, resolveCallerOwnerUid, type KernelContext } from "./context";
+import { managedMailAddressForOwner } from "./mailbox";
 import { ownerTimezone } from "./timezone";
 import { baseAiModelStack } from "../inference/base-model-stack";
 import { peerActingAs } from "./peer";
@@ -216,10 +217,17 @@ export async function handleAiContext(
       timezone: principalOf(ctx) ? ownerTimezone(config, resolveCallerOwnerUid(ctx)) : config.get("config/server/timezone") ?? "UTC",
     },
     skillIndexMode,
+    mailbox: resolveContextMailbox(ctx),
   };
   if (targetDiscovery.complete) result.targets = targetDiscovery.targets.map(targetToAiTarget);
   if (skillIndex !== undefined) result.skillIndex = skillIndex;
   return result;
+}
+
+function resolveContextMailbox(ctx: KernelContext): AiContextResult["mailbox"] {
+  if (!principalOf(ctx)) return null;
+  const address = managedMailAddressForOwner(resolveCallerOwnerUid(ctx), ctx);
+  return address ? { address } : null;
 }
 
 export async function handleAiConfig(

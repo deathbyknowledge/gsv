@@ -23,7 +23,7 @@ describe("decodeWireFrameJson", () => {
       type: "res" as const,
       id: "context-targets",
       ok: true as const,
-      data: { ...targets, mcpServers: [], system: { timezone: "UTC" }, skillIndexMode: "off" },
+      data: { ...targets, mcpServers: [], system: { timezone: "UTC" }, skillIndexMode: "off", mailbox: null },
     };
     expect(decodeWireResponse("ai.context", response)).toEqual(response);
   });

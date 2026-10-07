@@ -296,6 +296,9 @@ describe("managed Kernel mailbox", () => {
       };
       expect(managedMailAddressForOwner(1000, staging)).toBe("hank@staging.gsv.space");
       expect(managedMailAddressForOwner(1001, staging)).toBeNull();
+
+      const selfHosted = { ...production, installationIdentity: undefined };
+      expect(managedMailAddressForOwner(1000, selfHosted)).toBeNull();
     });
   });
 });
@@ -318,6 +321,7 @@ describe("managed mailbox account removal", () => {
       expect(kernel.mailboxes.getPrimaryMailbox()).toEqual(mailbox);
       expect(kernel.mailboxes.getMailboxForOwner(1001)).toBeNull();
       expect(managedMailAddressForOwner(1000, root)).toBe(METADATA.envelope.to);
+      expect(managedMailAddressForOwner(1001, root)).toBeNull();
 
       for (const intakeId of [METADATA.intakeId, "accepted-digest-retry"]) {
         await expect(kernel.acceptManagedInboundMail({ ...METADATA, intakeId }, bodyFromBytes(RAW))).resolves.toEqual(accepted);

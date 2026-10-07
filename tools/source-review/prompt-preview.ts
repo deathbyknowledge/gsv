@@ -60,6 +60,7 @@ export async function createPromptPreview(account: PreviewAccount): Promise<Prom
       }),
     },
     runtime: { date: "2026-01-01", timezone: "UTC" },
+    mailbox: { address: "preview@gsv.space" },
     targets: [{ id: "laptop", label: "Laptop", implements: ["shell.exec", "fs.read"] }],
     mcpServers: [],
     r12y: "No unresolved responsibilities.",

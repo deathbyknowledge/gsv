@@ -39,6 +39,12 @@ export type AiContextResult = {
   /** Omitted when the catalog could not be read; retain the last observed projection. */
   skillIndex?: AiSkillIndexEntry[];
   skillIndexMode: AiSkillIndexMode;
+  /** The managed mailbox the caller's owner reads and sends as, or null when this installation has none. */
+  mailbox: AiContextMailbox | null;
+};
+
+export type AiContextMailbox = {
+  address: string;
 };
 
 export type AiSkillIndexEntry = {

@@ -20,6 +20,8 @@ const contextProjectionSchema = z.object({
     mode: z.enum(["summary", "names", "off"]),
     entries: z.array(skillSchema),
   }),
+  /** Omitted when the installation has no managed mailbox for the owner. Keep last: equality is serialized. */
+  mailbox: z.object({ address: z.string() }).optional(),
 });
 
 export type ContextProjection = z.infer<typeof contextProjectionSchema>;
@@ -32,7 +34,7 @@ export function createContextProjection(
   fallback?: Pick<ContextProjection, "targets" | "skills">,
 ): ContextProjection {
   const timezone = normalizeContextTimezone(snapshot.system.timezone);
-  return {
+  const projection: ContextProjection = {
     version: 1,
     runtime: {
       date: formatContextDate(now, timezone),
@@ -42,6 +44,9 @@ export function createContextProjection(
     mcpServers: normalizeStringSet(snapshot.mcpServers),
     skills: normalizeSkillProjection(snapshot, fallback?.skills),
   };
+  const address = normalizeOptionalLine(snapshot.mailbox?.address);
+  if (address) projection.mailbox = { address };
+  return projection;
 }
 
 export function parseContextProjection(

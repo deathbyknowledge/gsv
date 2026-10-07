@@ -179,7 +179,8 @@ appear in later updates. Agents can use the snapshot and subsequent events direc
 content.
 
 The same epoch owns a normalized availability projection for accessible online
-targets, ready MCP servers, current date and timezone, and the visible skill catalog.
+targets, ready MCP servers, current date and timezone, the visible skill catalog, and
+the owner's managed mailbox address when the installation has one.
 Before every provider turn, Process asks the Kernel for the current prompt-relevant
 snapshot and compares it with the last observed projection. A meaningful change is
 persisted as one bounded `[GSV EVENT]` in the Process Activity, and the event message

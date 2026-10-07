@@ -343,11 +343,12 @@ mail reply MESSAGE_ID --body ./reply.txt
 mail status DELIVERY_ID
 ```
 
-Both commands run inside `shell.exec`, so a model invocation is governed by the
-outer `shell.exec` approval. They do not create a second nested `mail.send`
-approval. Use `--delivery-id` to retain an idempotency key across a deliberate
-retry; otherwise the command derives one from the outer request and the
-invocation's ordinal.
+Both commands run inside `shell.exec`, but approval follows the actual
+destination: a model invocation still raises the `mail.send` approval, from
+Shell and CodeMode alike, and a denial leaves nothing queued. Use
+`--delivery-id` to retain an idempotency key across a deliberate retry;
+otherwise the command derives one from the outer request and the invocation's
+ordinal.
 
 ## Mail: `mail.send`
 
@@ -1942,7 +1943,7 @@ type AiSyscalls = {
 
   "ai.context": {
     args: Empty;
-    result: { targets?: Array<{ id: string; implements: string[]; label?: string; description?: string; platform?: string }>; mcpServers: string[]; systemContextFiles?: Array<{ name: string; text: string }>; system: { timezone: string }; skillIndex?: Array<{ id: string; name: string; description: string; source: { kind: "home"; label: string; writable: boolean } }>; skillIndexMode: "summary" | "names" | "off" };
+    result: { targets?: Array<{ id: string; implements: string[]; label?: string; description?: string; platform?: string }>; mcpServers: string[]; systemContextFiles?: Array<{ name: string; text: string }>; system: { timezone: string }; skillIndex?: Array<{ id: string; name: string; description: string; source: { kind: "home"; label: string; writable: boolean } }>; skillIndexMode: "summary" | "names" | "off"; mailbox: { address: string } | null };
   };
 
   "ai.text.generate": {
@@ -1954,9 +1955,12 @@ type AiSyscalls = {
 
 `ai.context` is the process-facing projection of everything a run needs
 besides the model: reachable targets, ready MCP servers, system context files,
-and the skill index. An omitted `targets` or `skillIndex` means that catalog
+the skill index, and the managed mailbox. An omitted `targets` or `skillIndex` means that catalog
 could not be refreshed; Process retains its last observed projection. An empty
-array is an authoritative catalog with no entries. `ai.text.generate` runs one model turn through the
+array is an authoritative catalog with no entries. `mailbox` is the address the
+caller's owner reads and sends as through `mail`, or `null` when the
+installation has no managed mailbox for that owner; Process renders it as a
+runtime fact and reports a change as a context event. `ai.text.generate` runs one model turn through the
 gateway's provider stack; `AiTextMessage`, `AiAssistantMessage`, and
 `AiTextGenerationReasoning` are the message and reasoning records in
 `packages/gsv/src/protocol/syscalls/ai.ts`.

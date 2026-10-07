@@ -60,6 +60,39 @@ describe("context epoch projection", () => {
     })).toEqual(projection);
   });
 
+  it("keeps the managed mailbox as a trailing optional fact", () => {
+    const base = {
+      mcpServers: [],
+      system: { timezone: "UTC" },
+      skillIndexMode: "off" as const,
+      skillIndex: [],
+      targets: [],
+    };
+    const without = createContextProjection({ ...base, mailbox: null });
+    expect(without).not.toHaveProperty("mailbox");
+    // A projection stored before the fact existed equals one for an installation without a mailbox.
+    const legacy = contextProjectionFromManifest({
+      version: 2,
+      contextProjection: {
+        version: 1,
+        runtime: without.runtime,
+        targets: [],
+        mcpServers: [],
+        skills: { mode: "off", entries: [] },
+      },
+    });
+    expect(legacy && contextProjectionsEqual(legacy, without)).toBe(true);
+
+    const withMailbox = createContextProjection({ ...base, mailbox: { address: " hank@gsv.space\n" } });
+    expect(withMailbox.mailbox).toEqual({ address: "hank@gsv.space" });
+    expect(Object.keys(withMailbox).at(-1)).toBe("mailbox");
+    expect(contextProjectionsEqual(withMailbox, without)).toBe(false);
+    const reparsed = contextProjectionFromManifest({ version: 2, contextProjection: withMailbox });
+    expect(reparsed).toEqual(withMailbox);
+    expect(reparsed && contextProjectionsEqual(reparsed, withMailbox)).toBe(true);
+    expect(createContextProjection({ ...base, mailbox: { address: "   " } })).not.toHaveProperty("mailbox");
+  });
+
   it("falls back to UTC and compares normalized snapshots exactly", () => {
     const input = {
       targets: [],
