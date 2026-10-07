@@ -26,8 +26,8 @@ const NO_INBOX_CURSOR: ConversationInboxArgs["before"] = undefined;
 export function People({ onDirtyChange, onProfile, openRequest }: {
   onDirtyChange: (dirty: boolean) => void;
   onProfile: () => void;
-  /** A conversation to land on, asked for from another view, with any reply the person had started there; a fresh object reopens the same contact. */
-  openRequest?: { contactId: string; draft?: string } | null;
+  /** A conversation to land on, asked for from another view; a fresh object reopens the same contact. */
+  openRequest?: { contactId: string } | null;
 }) {
   const active = useViewActive();
   const { client, connected } = useGateway();
@@ -100,11 +100,7 @@ export function People({ onDirtyChange, onProfile, openRequest }: {
     setArchived(false);
     openContact(id);
   };
-  useLayoutEffect(() => {
-    if (!openRequest) return;
-    showConversation(openRequest.contactId);
-    if (openRequest.draft) drafts.update(openRequest.contactId, { text: openRequest.draft });
-  }, [openRequest]);
+  useLayoutEffect(() => { if (openRequest) showConversation(openRequest.contactId); }, [openRequest]);
   const sent = (value: ApproachSummary) => {
     setDialog(null);
     setCompose(emptyApproachDraft()); setView("requests"); setDirection("outgoing"); setHistory(false);

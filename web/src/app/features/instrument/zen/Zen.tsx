@@ -85,7 +85,7 @@ export type ZenProps = {
   pid?: string | null;
   onDraftChange?: (dirty: boolean) => void;
   /** Open a contact's conversation in People, for a message that arrived while here. */
-  onPeople?: (contactId: string, draft?: string) => void;
+  onPeople?: (contactId: string) => void;
 };
 
 const HISTORY_LIMIT = 400;
@@ -336,7 +336,7 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
     if (draft) next.set(contactId, draft); else next.delete(contactId);
     return next;
   });
-  /* a notice that still holds typed text stays until the person sends it or takes it to the chat */
+  /* a notice that still holds typed text stays, with that text and its send intent, until the person sends or clears it */
   const holding = useMemo(() => new Set([...replyDrafts].filter(([, draft]) => draft.text.trim() !== "").map(([contactId]) => contactId)), [replyDrafts]);
   const notices = useContactNotices({ enabled: !pidProp && may("contact.list"), listening: active, holding, mayReadView: may("conversation.view.get") });
   const contactsQuery = useContacts(human && notices.notices.length > 0 ? viewer : undefined);
@@ -1031,12 +1031,7 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
               {notices.notices.map((notice) => (
                 <ContactNoticeMoment key={notice.contactId} notice={notice} contact={contactFor(notice.contactId)} open={replying === notice.contactId}
                   onShow={() => setReplying(notice.contactId)}
-                  onGoToChat={() => {
-                    /* an unsent reply goes along to the chat's composer rather than staying stranded here */
-                    const draft = replyDrafts.get(notice.contactId)?.text.trim();
-                    setReplyDraft(notice.contactId, null);
-                    onPeople?.(notice.contactId, draft || undefined);
-                  }}>
+                  onGoToChat={() => onPeople?.(notice.contactId)}>
                   {replying === notice.contactId && <ContactReplyBox notice={notice} contact={contactFor(notice.contactId)} account={viewer}
                     draft={replyDrafts.get(notice.contactId) ?? EMPTY_REPLY} onDraft={(draft) => setReplyDraft(notice.contactId, draft)}
                     onSent={(through) => { notices.markReplied(notice.contactId, through); markRead(notice, through); setReplyDraft(notice.contactId, null); setReplying(null); }} />}
