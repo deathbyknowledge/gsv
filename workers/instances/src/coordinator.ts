@@ -190,6 +190,10 @@ export class InstanceCoordinator extends DurableObject<Environment> implements I
     if (active && (value.state !== "active" || value.expiresAt <= Date.now())) throw new Error("Browser handoff is no longer active");
     return value;
   }
+  private requireHandoffAdmission(actor: InstanceActor, id: string): void {
+    const row = this.requireInstance(actor, id, true);
+    if (this.#stops.has(row.id)) throw new Error("Browser is preparing to stop");
+  }
   async requestHandoff(raw: InstanceActor, rawArgs: Parameters<InstallationInstances["requestHandoff"]>[1]) {
     const actor = instanceActorSchema.parse(raw), args = browserHandoffRequestSchema.parse(rawArgs);
     const row = this.requireInstance(actor, args.instanceId, true);
@@ -199,6 +203,7 @@ export class InstanceCoordinator extends DurableObject<Environment> implements I
       if (existing.tabId !== args.tabId || existing.purpose !== args.purpose || existing.responsibilityId !== args.responsibilityId) throw new Error("Handoff requestId has already been used with different arguments");
       if (existing.site || !liveHandoff(existing)) return { handoff: existing, actionPath: actionPath(existing) };
     }
+    this.requireHandoffAdmission(actor, row.id);
     if (this.#handoffBarriers.has(row.id)) throw new Error("Browser is finishing human control; retry the request after it settles");
     if (this.#store.liveHandoffs(row.id).some(value => value.requestId !== args.requestId)) throw new Error("Browser already has a pending human request");
     const value: BrowserHandoff = existing ?? { ...args, site: "", state: "pending", revision: 1, createdAt: Date.now(), expiresAt: Math.min(instance(row).expiresAt, Date.now() + 15 * 60_000) };
@@ -212,7 +217,7 @@ export class InstanceCoordinator extends DurableObject<Environment> implements I
       }
       const tab = await (await this.browser(row.id)).getTab(args.tabId);
       if (!tab) throw new Error("Requested browser tab no longer exists");
-      this.requireInstance(actor, row.id, true);
+      this.requireHandoffAdmission(actor, row.id);
       const current = this.handoff(actor, { instanceId: args.instanceId, requestId: args.requestId });
       if (!liveHandoff(current)) throw new Error("Browser handoff was cancelled");
       const prepared = { ...current, site: tab.url ? new URL(tab.url).origin : "about:blank" };
@@ -228,7 +233,7 @@ export class InstanceCoordinator extends DurableObject<Environment> implements I
   async openHandoff(actor: InstanceActor, args: SysBrowserHandoffGetArgs) {
     this.human(actor);
     const previous = this.handoff(actor, args);
-    this.requireInstance(actor, args.instanceId, true);
+    this.requireHandoffAdmission(actor, previous.instanceId);
     if (!liveHandoff(previous) || previous.expiresAt <= Date.now()) throw new Error("Browser handoff is no longer available");
     if (!previous.site) throw new Error("Browser is still preparing human control");
     const value: BrowserHandoff = { ...previous, state: "active", revision: previous.state === "active" ? previous.revision : previous.revision + 1 };

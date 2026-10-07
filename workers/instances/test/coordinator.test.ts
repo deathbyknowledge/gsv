@@ -59,6 +59,48 @@ function anotherReadyBrowser(store: InstanceStore): string {
 }
 
 describe("human browser control", () => {
+  it.each(["saved", "failed"])("fences new handoffs and opening during a pending stop whose save is %s", outcome => fixture(async (object, store, instanceId, _installationId, browser) => {
+    const first = { instanceId, requestId: "existing", tabId: 1, purpose: "Sign in" };
+    const prepared = await object.requestHandoff(actor, first);
+    const entered = deferred(), released = deferred(), original = browser.save!;
+    browser.save = async (...args) => {
+      entered.resolve(); await released.promise;
+      if (outcome === "failed") throw new Error("Storage unavailable");
+      return original(...args);
+    };
+    const stopping = object.stop(actor, { instanceId });
+    const settled = outcome === "failed" ? expect(stopping).rejects.toThrow("still running") : stopping;
+    await entered.promise;
+    const next = { ...first, requestId: "during-stop" };
+    await expect(object.requestHandoff(actor, next)).rejects.toThrow("preparing to stop");
+    expect(store.handoff(instanceId, next.requestId)).toBeUndefined();
+    expect(await object.requestHandoff(actor, first)).toEqual(prepared);
+    const selector = { instanceId: instance(store.byId(instanceId)).targetId, requestId: first.requestId };
+    await expect(object.openHandoff(actor, selector)).rejects.toThrow("preparing to stop");
+    expect((await object.getHandoff(actor, selector)).handoff).toEqual(prepared.handoff);
+    released.resolve(); await settled;
+    if (outcome === "failed") {
+      expect((await object.openHandoff(actor, selector)).handoff.state).toBe("active");
+      await object.cancelHandoff(actor, selector);
+      expect((await object.requestHandoff(actor, next)).handoff.state).toBe("pending");
+    } else expect((await object.getHandoff(actor, selector)).handoff.state).toBe("cancelled");
+  }));
+
+  it("does not publish a prepared handoff after stop begins during its tab lookup", () => fixture(async (object, store, instanceId, _installationId, browser) => {
+    const tabEntered = deferred(), tabReleased = deferred(), saveEntered = deferred(), saveReleased = deferred();
+    browser.getTab = async () => { tabEntered.resolve(); await tabReleased.promise; return { id: 1, url: "https://example.com/login" }; };
+    const original = browser.save!;
+    browser.save = async (...args) => { saveEntered.resolve(); await saveReleased.promise; return original(...args); };
+    const request = object.requestHandoff(actor, { instanceId, requestId: "preparing", tabId: 1, purpose: "Sign in" });
+    const rejected = expect(request).rejects.toThrow("preparing to stop");
+    await tabEntered.promise;
+    const stopping = object.stop(actor, { instanceId });
+    await saveEntered.promise;
+    tabReleased.resolve(); await rejected;
+    expect(store.handoff(instanceId, "preparing")).toMatchObject({ state: "failed", site: "" });
+    saveReleased.resolve(); await stopping;
+  }));
+
   it.each(["stop", "delete"])("rejects delayed command admission after %s without allocating runtime state", mode => fixture(async (object, store, instanceId, installationId) => {
     const entered = deferred(), admitted = deferred(), cancel = vi.fn();
     vi.spyOn(InstancePolicy.prototype, "requireActive").mockImplementationOnce(async () => { entered.resolve(); await admitted.promise; });
