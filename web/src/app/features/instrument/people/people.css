@@ -47,10 +47,8 @@
 .people-message header > span { color: var(--label); }
 .people-message-author { display: inline-flex; align-items: center; gap: 8px; }
 /* Colour messages by sender, matching the Ship chat: you = --text-hi, GSV = --accent, external (the contact's person or their GSV) = --sender-external. */
-.people-message[data-author="contact-human"] .people-message-author,
-.people-message[data-author="contact-ship"] .people-message-author,
-.people-message[data-author="contact-human"] > p,
-.people-message[data-author="contact-ship"] > p { color: var(--sender-external); }
+.people-message[data-author^="contact"] .people-message-author,
+.people-message[data-author^="contact"] > p { color: var(--sender-external); }
 .people-message[data-author="you"] .people-message-author,
 .people-message[data-author="you"] > p { color: var(--text); }
 .people-message[data-author="you"] > p { font-weight: 500; }
