@@ -74,6 +74,9 @@ export function BrowserViewer({ request, onClose }: { request: BrowserSelection;
   const [selectedTab, setSelectedTab] = useState<number>();
   const [error, setError] = useState("");
   const { frame: view, state: viewState, error: frameError } = useBrowserStream(client, request.instanceId, selectedTab, connected && ready);
+  const handoff = viewState?.handoff;
+  const requestMatches = request.requestId === undefined || handoff?.requestId === request.requestId;
+  const requestUnavailable = viewState !== undefined && !requestMatches;
   const [busy, setBusy] = useState(false);
   const [expanded, setExpanded] = useState(false);
   const inputQueue = useRef<Promise<void>>(Promise.resolve());
@@ -84,19 +87,18 @@ export function BrowserViewer({ request, onClose }: { request: BrowserSelection;
     live.current = connected && ready;
     return () => { live.current = false; inputEpoch.current++; };
   }, [connected, ready, request.instanceId]);
+  useLayoutEffect(() => { inputEpoch.current++; }, [request.requestId, handoff?.requestId, handoff?.state]);
   useEffect(() => {
-    const handoff = viewState?.handoff;
-    if (!connected || handoff?.state !== "pending" || !handoff.site) return;
+    if (!connected || !requestMatches || handoff?.state !== "pending" || !handoff.site) return;
     let current = true;
     void client.sys.browser.handoff.open({ instanceId: request.instanceId, requestId: handoff.requestId })
       .catch(cause => { if (current) setError(String(cause)); });
     return () => { current = false; };
-  }, [client, connected, request.instanceId, viewState?.handoff?.requestId, viewState?.handoff?.state, viewState?.handoff?.site]);
+  }, [client, connected, request.instanceId, requestMatches, handoff?.requestId, handoff?.state, handoff?.site]);
 
   const input = (value: BrowserHumanInput) => {
     const shown = displayed.current;
-    const handoff = viewState?.handoff;
-    if (!live.current || busy || !shown || (handoff && handoff.state !== "active")) return;
+    if (!live.current || !requestMatches || busy || !shown || (handoff && handoff.state !== "active")) return;
     if (value.kind === "click") setSelectedTab(shown.tabId);
     const epoch = inputEpoch.current;
     const args = { instanceId: request.instanceId, tabId: shown.tabId, documentId: shown.documentId, handoffRequestId: handoff?.requestId };
@@ -108,11 +110,12 @@ export function BrowserViewer({ request, onClose }: { request: BrowserSelection;
   };
   const close = () => { live.current = false; inputEpoch.current++; onClose(); };
   const finish = async () => {
-    const handoff = viewState?.handoff;
-    if (!handoff || busy) return;
+    if (!requestMatches || !handoff || busy) return;
+    const epoch = inputEpoch.current;
     setBusy(true);
     try {
       await inputQueue.current;
+      if (!live.current || inputEpoch.current !== epoch) return;
       inputEpoch.current++;
       await client.sys.browser.handoff.finish({ instanceId: request.instanceId, requestId: handoff.requestId });
       setError("");
@@ -175,7 +178,8 @@ export function BrowserViewer({ request, onClose }: { request: BrowserSelection;
       <button type="button" class={`browser-follow${selectedTab === undefined ? " is-following" : ""}`} aria-pressed={selectedTab === undefined}
         title="Follow Ship’s active tab" onClick={() => setSelectedTab(undefined)}>{selectedTab === undefined ? "following Ship" : "follow Ship"}</button>
     </div>
-    {data?.handoff && <div class="browser-help"><span>{data.handoff.purpose}</span><button type="button" onClick={() => void finish()} disabled={busy || !connected}>continue</button></div>}
+    {requestUnavailable && <p class="browser-notice" role="status">This browser request has expired or ended. Open the latest request from Ship.</p>}
+    {requestMatches && data?.handoff && <div class="browser-help"><span>{data.handoff.purpose}</span><button type="button" onClick={() => void finish()} disabled={busy || !connected}>continue</button></div>}
     {error && <p class="error" role="alert">{error}</p>}
     {instanceQuery.error && <p class="error" role="alert">{String(instanceQuery.error)}</p>}
     {ready && instance?.persistence?.issues?.length && instance.persistence.saveStatus !== "failed" ? <div class="browser-help" role="status">
@@ -199,6 +203,7 @@ export function BrowserViewer({ request, onClose }: { request: BrowserSelection;
         {pointer.clickedAt && <i class="browser-click" key={pointer.clickedAt} />}
       </div>}
       <textarea ref={keyboard} class="browser-keyboard" aria-label="Type in the selected browser field" autoComplete="off" autoCapitalize="off" spellcheck={false}
+        disabled={!requestMatches || busy || (handoff !== undefined && handoff.state !== "active")}
         onInput={event => { if (event.isComposing) return; const value = event.currentTarget.value; event.currentTarget.value = ""; if (value) input({ kind: "text", text: value }); }}
         onCompositionEnd={event => { const value = event.currentTarget.value; event.currentTarget.value = ""; if (value) input({ kind: "text", text: value }); }}
         onKeyDown={event => {

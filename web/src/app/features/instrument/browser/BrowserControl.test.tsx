@@ -10,7 +10,85 @@ import { BrowserViewer } from "./BrowserControl";
 
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
+async function openLinkedViewer(initialState: "pending" | "active" | undefined, initialId = "new-login") {
+  vi.stubGlobal("document", new EventTarget());
+  vi.stubGlobal("requestAnimationFrame", (callback: () => void) => setTimeout(callback, 0));
+  vi.stubGlobal("cancelAnimationFrame", clearTimeout);
+  vi.spyOn(GSVClient.prototype, "getStatus").mockReturnValue({ state: "connected", url: null, username: null, connectionId: null, message: null });
+  vi.spyOn(GSVClient.prototype, "onStatus").mockImplementation(() => () => {});
+  const instance: CloudInstance = { instanceId: "instance", targetId: "1234abcd", startRequestId: "start", ownerUid: 1000,
+    templateId: "browser", templateRevision: "1", kind: "browser", implements: [], label: "Browser", state: "ready", revision: 1, createdAt: 1, expiresAt: Date.now() + 60000 };
+  const handoff: BrowserHandoff = { instanceId: instance.instanceId, requestId: "linked-login", tabId: 1, site: "https://example.com", purpose: "Sign in", state: "active", revision: 1, createdAt: 1, expiresAt: instance.expiresAt };
+  let source!: ReadableStreamDefaultController<Uint8Array>;
+  const push = (state: "pending" | "active" | undefined, requestId = "new-login") => source.enqueue(encodeBrowserViewPacket({
+    kind: "state", activeTabId: 1, tabs: [{ id: 1, title: "Login", url: handoff.site }], handoff: state ? { ...handoff, requestId, state } : undefined,
+  }));
+  const inputResult = deferred<{ data: { accepted: true } }>();
+  const request = vi.spyOn(GSVClient.prototype, "request").mockImplementation(async call => {
+    if (call === "sys.instance.get") return { data: { instance } };
+    if (call === "sys.browser.watch") return { data: { watchId: "watch", version: 1 }, body: { stream: new ReadableStream<Uint8Array>({ start(controller) {
+      source = controller; push(initialState, initialId);
+      controller.enqueue(encodeBrowserViewPacket({ kind: "frame", tabId: 1, documentId: "document", sequence: 1, capturedAt: Date.now(), width: 1280, height: 800 }, new Uint8Array([1])));
+    } }) } };
+    if (call === "sys.browser.input") return inputResult.promise;
+    if (call === "sys.browser.handoff.open" || call === "sys.browser.handoff.finish") return { data: { handoff } };
+    throw new Error(`Unexpected request ${call}`);
+  });
+  const cache = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity } } });
+  const root = createTestRoot("Linked browser request");
+  let tree: ComponentChildren;
+  function Harness() { tree = BrowserViewer({ request: { instanceId: instance.instanceId, requestId: "linked-login" }, onClose: vi.fn() }); return null; }
+  const nodes = () => collectNodes(tree);
+  await root.render(<GatewayProvider><QueryClientProvider client={cache}><Harness /></QueryClientProvider></GatewayProvider>);
+  await vi.waitFor(() => expect(nodes().find(node => node.type === "img")).toBeDefined());
+  // SAFETY: This intrinsic image node has the viewer's image props.
+  const image = nodes().find(node => node.type === "img") as VNode<JSX.ImgHTMLAttributes<HTMLImageElement>>;
+  // SAFETY: The image onLoad handler reads no event data.
+  const loaded = new Event("load") as JSX.TargetedEvent<HTMLImageElement>;
+  await act(() => { image.props.onLoad?.(loaded); });
+  return { request, inputResult, push, nodes, text: () => collectText(tree),
+    type(value: string) {
+      // SAFETY: The intrinsic textarea handler reads only currentTarget.value and isComposing.
+      const keyboard = nodes().find(node => node.type === "textarea") as VNode<JSX.TextareaHTMLAttributes<HTMLTextAreaElement>>;
+      // SAFETY: The handler reads only currentTarget.value and isComposing.
+      keyboard.props.onInput?.({ currentTarget: { value }, isComposing: false } as JSX.TargetedInputEvent<HTMLTextAreaElement>);
+    },
+    async close() { inputResult.resolve({ data: { accepted: true } }); await root.unmount(); cache.clear(); },
+  };
+}
+
 describe("live browser viewing", () => {
+  it.each(["pending", "active", undefined] as const)("rejects an old action link when the current handoff is %s", async state => {
+    const viewer = await openLinkedViewer(state);
+    try {
+      await vi.waitFor(() => expect(viewer.text()).toContain("This browser request has expired or ended"));
+      expect(viewer.nodes().some(node => node.type === "button" && collectText(node) === "continue")).toBe(false);
+      await act(() => { viewer.type("private input"); });
+      expect(viewer.request.mock.calls.some(([call]) => call.startsWith("sys.browser.handoff.") || call === "sys.browser.input")).toBe(false);
+    } finally { await viewer.close(); }
+  });
+
+  it("opens only the linked request and drops queued input and completion when that request changes", async () => {
+    const viewer = await openLinkedViewer("pending", "linked-login");
+    try {
+      await vi.waitFor(() => expect(viewer.request.mock.calls.filter(([call]) => call === "sys.browser.handoff.open")).toHaveLength(1));
+      expect(viewer.request.mock.calls.find(([call]) => call === "sys.browser.handoff.open")?.[1]).toEqual({ instanceId: "instance", requestId: "linked-login" });
+      await act(() => { viewer.push("active", "linked-login"); });
+      await vi.waitFor(() => expect(viewer.nodes().find(node => node.type === "textarea")?.props.disabled).toBe(false));
+      await act(() => { viewer.type("first"); viewer.type("unsent"); });
+      await vi.waitFor(() => expect(viewer.request.mock.calls.filter(([call]) => call === "sys.browser.input")).toHaveLength(1));
+      const finish = viewer.nodes().find(node => node.type === "button" && collectText(node) === "continue");
+      await act(() => { finish!.props.onClick?.(); });
+      await act(() => { viewer.push("pending"); });
+      await vi.waitFor(() => expect(viewer.text()).toContain("This browser request has expired or ended"));
+      await act(async () => { viewer.inputResult.resolve({ data: { accepted: true } }); await viewer.inputResult.promise; });
+      expect(viewer.request.mock.calls.filter(([call]) => call === "sys.browser.input")).toHaveLength(1);
+      expect(viewer.request.mock.calls.find(([call]) => call === "sys.browser.input")?.[1]).toMatchObject({ handoffRequestId: "linked-login" });
+      expect(viewer.request.mock.calls.filter(([call]) => call === "sys.browser.handoff.open")).toHaveLength(1);
+      expect(viewer.request.mock.calls.some(([call]) => call === "sys.browser.handoff.finish")).toBe(false);
+    } finally { await viewer.close(); }
+  });
+
   it("keeps Continue available after a save failure and clears the warning after retry", async () => {
     vi.stubGlobal("document", new EventTarget());
     vi.stubGlobal("requestAnimationFrame", (callback: () => void) => setTimeout(callback, 0));
@@ -33,7 +111,7 @@ describe("live browser viewing", () => {
     const cache = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity } } });
     const root = createTestRoot("Retry handoff"), close = vi.fn();
     let tree: ComponentChildren;
-    function Harness() { tree = BrowserViewer({ request: { instanceId: instance.instanceId }, onClose: close }); return null; }
+    function Harness() { tree = BrowserViewer({ request: { instanceId: instance.instanceId, requestId: handoff.requestId }, onClose: close }); return null; }
     const button = () => collectNodes(tree).find(node => node.type === "button" && collectText(node) === "continue");
     try {
       await root.render(<GatewayProvider><QueryClientProvider client={cache}><Harness /></QueryClientProvider></GatewayProvider>);

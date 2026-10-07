@@ -35,8 +35,10 @@ Ship, or follow its link from your messenger and sign in to GSV. For these
 explicit requests, automation pauses until you choose **continue**, Ship cancels
 the request, or it expires. Closing the viewer leaves the request available.
 Requests expire after fifteen minutes or when the browser stops, whichever comes
-first. The link identifies a request; it never grants access without your GSV
-login. Your next chat message still goes to Ship. Website passwords and
+first. The link identifies one request; it never grants access without your GSV
+login. An old link shows that its request has ended and cannot control or complete
+a later request. Open the latest request from Ship when needed.
+Your next chat message still goes to Ship. Website passwords and
 verification codes belong in the browser view.
 
 Passkeys and hardware security keys are unavailable in cloud browsers. GSV
