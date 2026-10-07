@@ -8,6 +8,8 @@ import { BrowserProvider } from "../src/provider";
 import { instance, InstanceStore } from "../src/store";
 import { ProfileStorage } from "../src/profiles";
 import { BrowserStorageError, SAVE_TIMEOUT_MS } from "../src/browser-storage";
+import { BrowserFsDriver } from "@humansandmachines/gsv-browser/fs";
+import type { TargetFileSystem } from "@humansandmachines/gsv-browser/types";
 
 const actor = { ownerUid: 1000, human: true };
 const limits = { enabled: true, concurrentInstances: 2, periodSeconds: 36000, maxInstanceSeconds: 1800, savedProfiles: 5, profileStorageBytes: 5242880 };
@@ -251,6 +253,27 @@ describe("human browser control", () => {
     vi.spyOn(InstancePolicy.prototype, "requireActive").mockRejectedValue(new Error("Space is not active"));
     await expect(object.execute(actor, instanceId, { ...command, body: { stream: new ReadableStream<Uint8Array>({ cancel: inactiveCancelled }) } }, Date.now() + 10000)).rejects.toThrow("not active");
     expect(inactiveCancelled).toHaveBeenCalledTimes(1);
+  }));
+
+  it.each(["cancel", "deadline", "handoff"])("settles a stalled file upload on %s and allows human control", mode => fixture(async (object, _store, instanceId, _installationId, browser) => {
+    const write = vi.fn(), pull = vi.fn(), cancel = vi.fn(() => new Promise<void>(() => {}));
+    // SAFETY: Transfer receive consults the size limit and writes only after reading the complete body.
+    browser.files = new BrowserFsDriver({ maxFileBytes: 8, write } as TargetFileSystem);
+    const stream = new ReadableStream<Uint8Array>({ pull, cancel }, { highWaterMark: 0 });
+    const pending = object.execute(actor, instanceId, {
+      type: "req", id: "stalled-upload", call: "fs.transfer.receive", args: { path: "/tmp/input" }, body: { stream, length: 8 },
+    }, Date.now() + (mode === "deadline" ? 1000 : 10000));
+    await vi.waitFor(() => expect(pull).toHaveBeenCalledOnce());
+    const selector = { instanceId, requestId: "login-after-upload" };
+    if (mode === "cancel") await object.cancel(actor, instanceId, "stalled-upload");
+    if (mode === "handoff") await object.requestHandoff(actor, { ...selector, tabId: 1, purpose: "Sign in" });
+    expect(await pending).toMatchObject({ ok: true, data: { ok: false } });
+    expect(cancel).toHaveBeenCalledOnce();
+    expect(stream.locked).toBe(false);
+    expect(write).not.toHaveBeenCalled();
+    if (mode !== "handoff") await object.requestHandoff(actor, { ...selector, tabId: 1, purpose: "Sign in" });
+    expect((await object.openHandoff(actor, selector)).handoff.state).toBe("active");
+    await object.cancelHandoff(actor, selector);
   }));
 
   it("blocks automation throughout human control, rejects processes and other owners, then revokes late input", () => fixture(async (object, _store, instanceId) => {

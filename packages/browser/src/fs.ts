@@ -503,7 +503,7 @@ export class BrowserFsDriver {
       case "fs.transfer.send":
         return await this.transferSend(fsTransferSendSchema.parse(args));
       case "fs.transfer.receive":
-        return await this.transferReceive(fsTransferReceiveSchema.parse(args), body);
+        return await this.transferReceive(fsTransferReceiveSchema.parse(args), body, signal);
       default:
         throw new Error(`Unsupported filesystem syscall: ${call}`);
     }
@@ -681,7 +681,7 @@ export class BrowserFsDriver {
     };
   }
 
-  private async transferReceive(args: FsTransferReceiveArgs, body?: GsvBody): Promise<GsvResponse> {
+  private async transferReceive(args: FsTransferReceiveArgs, body?: GsvBody, signal?: AbortSignal): Promise<GsvResponse> {
     const path = args.path;
     if (!body) {
       return { data: { ok: false, error: "fs.transfer.receive requires a request body" } };
@@ -691,7 +691,8 @@ export class BrowserFsDriver {
       if (!Number.isSafeInteger(body.length) || body.length < 0) throw new Error("Invalid transfer body length");
       const limit = this.fs.maxFileBytes ?? Number.POSITIVE_INFINITY;
       if (body.length > limit) throw new Error(`Browser file exceeds the ${limit} byte limit`);
-      const bytes = await readStream(body.stream, body.length);
+      const bytes = await readStream(body.stream, body.length, signal);
+      throwIfAborted(signal);
       const contentType = args.contentType ?? inferFsContentType(path);
       await this.fs.write(path, bytes, contentType);
       return {
@@ -703,19 +704,24 @@ export class BrowserFsDriver {
         },
       };
     } catch (error) {
-      await body.stream.cancel(error instanceof Error ? error.message : "Binary transfer failed").catch(() => {});
+      // Closing the stream is synchronous; a stalled source's cleanup must not hold the operation open.
+      void body.stream.cancel(error instanceof Error ? error.message : "Binary transfer failed").catch(() => {});
       return { data: { ok: false, error: error instanceof Error ? error.message : String(error) } };
     }
   }
 }
 
-async function readStream(stream: ReadableStream<Uint8Array>, expectedSize: number): Promise<Uint8Array> {
+async function readStream(stream: ReadableStream<Uint8Array>, expectedSize: number, signal?: AbortSignal): Promise<Uint8Array> {
+  throwIfAborted(signal);
   const output = new Uint8Array(expectedSize);
   const reader = stream.getReader();
+  const onAbort = () => { void reader.cancel(signal?.reason).catch(() => {}); };
+  signal?.addEventListener("abort", onAbort, { once: true });
   let size = 0;
   try {
     while (true) {
       const { done, value } = await reader.read();
+      throwIfAborted(signal);
       if (done) break;
       if (!value) continue;
       if (value.byteLength > expectedSize - size) {
@@ -725,6 +731,7 @@ async function readStream(stream: ReadableStream<Uint8Array>, expectedSize: numb
       size += value.byteLength;
     }
   } finally {
+    signal?.removeEventListener("abort", onAbort);
     reader.releaseLock();
   }
   if (size !== expectedSize) {

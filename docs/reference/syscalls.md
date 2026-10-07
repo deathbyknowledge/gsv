@@ -176,7 +176,9 @@ discovery, authorization and routing as direct filesystem calls. The
 `fs.transfer.*` calls are the body-bearing transport: `fs.transfer.send`
 answers with the bytes as a response body, `fs.transfer.receive` takes them as
 a request body, and `fs.transfer.stat` reports size and revision without a
-body. See [Frame Bodies](/reference/websocket-protocol#frame-bodies).
+body. Browser receivers cancel and release their body reader on cancellation or
+deadline, including when a sender stalls. Cancellation while reading leaves
+the destination unchanged. See [Frame Bodies](/reference/websocket-protocol#frame-bodies).
 
 For a file result, `size` is the original file size; the body descriptor length
 is the transmitted payload size and can differ when `offset` or `limit` selects

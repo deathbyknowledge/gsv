@@ -85,6 +85,25 @@ describe("browser file admission and persistence", () => {
     expect(await fs.read("/tmp/input")).toEqual(bytes);
   });
 
+  it.each([false, true])("cancels stalled transfers without waiting for source cleanup (already aborted: %s)", async alreadyAborted => {
+    const { fs } = persistedFileSystem();
+    await fs.write("/tmp/input", new Uint8Array([7]));
+    const abort = new AbortController(), pull = vi.fn();
+    const cancel = vi.fn(() => new Promise<void>(() => {}));
+    const stream = new ReadableStream<Uint8Array>({ pull, cancel }, { highWaterMark: 0 });
+    if (alreadyAborted) abort.abort(new Error("Transfer cancelled"));
+    const pending = new BrowserFsDriver(fs).handle("fs.transfer.receive", { path: "/tmp/input" }, { stream, length: 8 }, abort.signal);
+    if (!alreadyAborted) {
+      await vi.waitFor(() => expect(pull).toHaveBeenCalledOnce());
+      abort.abort(new Error("Transfer cancelled"));
+    }
+    expect((await pending).data).toMatchObject({ ok: false, error: "Transfer cancelled" });
+    expect(cancel).toHaveBeenCalledOnce();
+    expect(stream.locked).toBe(false);
+    expect(await fs.read("/tmp/input")).toEqual(new Uint8Array([7]));
+    if (alreadyAborted) expect(pull).not.toHaveBeenCalled();
+  });
+
   it.each([false, true])("keeps committed state after a rejected write (existing: %s)", async existing => {
     const { fs, persistence } = persistedFileSystem();
     if (existing) await fs.write("/tmp/input", new Uint8Array([1]), "image/png");
