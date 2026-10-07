@@ -142,6 +142,8 @@ function InstrumentReady({ initialPath }: { initialPath: string }) {
     } finally { selectingProcess.current = false; }
   });
 
+  /* a contact conversation Zen asked People to open; a fresh object each time so the same contact reopens */
+  const [peopleRequest, setPeopleRequest] = useState<{ contactId: string } | null>(null);
   const move = useCallback(
     (to: Distance, reference: FleetReference | null = null) => {
       if (reference && fleetDirty && !window.confirm("Discard unsaved Fleet edits and open this item?")) return false;
@@ -301,7 +303,8 @@ function InstrumentReady({ initialPath }: { initialPath: string }) {
             if (page && memoryDirty && !window.confirm("Discard your unsaved page changes and open this page?")) return;
             if (!move("memory")) return;
             if (page) setSelectedMemoryPage({ ...page });
-          }} initialTarget={zenTarget} prefill={zenPrefill} onPrefillUsed={() => setZenPrefill(null)} pid={zenPid} />
+          }} initialTarget={zenTarget} prefill={zenPrefill} onPrefillUsed={() => setZenPrefill(null)} pid={zenPid}
+          onPeople={(contactId) => { if (move("people")) setPeopleRequest({ contactId }); }} />
         </RetainedView>
         <RetainedView active={distance === "memory"}>
           <Memory onDirtyChange={setMemoryDirty} initialPage={selectedMemoryPage} onAsk={(_page, prompt) => {
@@ -319,7 +322,7 @@ function InstrumentReady({ initialPath }: { initialPath: string }) {
           }} />
         </RetainedView>
         <RetainedView active={distance === "people"}>
-          <People onDirtyChange={setPeopleDirty} onProfile={() => { if (move("settings")) setSettingsEntry({ section: "profile" }); }} />
+          <People onDirtyChange={setPeopleDirty} openRequest={peopleRequest} onProfile={() => { if (move("settings")) setSettingsEntry({ section: "profile" }); }} />
         </RetainedView>
         <RetainedView active={distance === "fleet"}>
           <Fleet

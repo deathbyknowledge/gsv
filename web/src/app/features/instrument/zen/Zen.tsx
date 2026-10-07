@@ -34,6 +34,10 @@ import { SHELL_KEYS } from "../shared/shellKeys";
 import { useDismissOnOutsideClick } from "../shared/useDismissOnOutsideClick";
 import { ActivityWorking } from "./ActivityWorking";
 import { ApprovalCard } from "../shared/ApprovalCard";
+import { canConfigure } from "../settings/settingsModel";
+import { useContacts } from "../people/Contacts";
+import { ContactNoticeDialog, ContactNoticeRow } from "./ContactNotice";
+import { useContactNotices, type ContactNotice } from "./useContactNotices";
 import { DelegatedApprovals } from "./DelegatedApprovals";
 import { useZenScroll } from "./useZenScroll";
 import { useZenProcess } from "./useZenProcess";
@@ -80,6 +84,8 @@ export type ZenProps = {
   /** A specific process to show instead of the ship, for a helper opened from Fleet. */
   pid?: string | null;
   onDraftChange?: (dirty: boolean) => void;
+  /** Open a contact's conversation in People, for a message that arrived while here. */
+  onPeople?: (contactId: string) => void;
 };
 
 const HISTORY_LIMIT = 400;
@@ -308,7 +314,7 @@ function NoteMoment({
   );
 }
 
-export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, pid: pidProp, onDraftChange }: ZenProps) {
+export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, pid: pidProp, onDraftChange, onPeople }: ZenProps) {
   const active = useViewActive();
   const { client, connected } = useGateway();
   const { snapshot } = useSession();
@@ -318,6 +324,21 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
   const config = useConsoleConfig();
   const accounts = useConsoleAccounts();
   const viewer = accounts.data?.find((account) => account.relation === "self");
+
+  /* contact messages that land while the person is here: one notice per contact, only on the personal Ship,
+     and only when the Kernel says the person should hear about it */
+  const human = !!viewer && viewer.uid >= 1000;
+  const may = (syscall: string) => human && canConfigure(viewer!, syscall);
+  const notices = useContactNotices({ enabled: !pidProp && may("contact.list"), mayReadView: may("conversation.view.get") });
+  const contactsQuery = useContacts(human && notices.notices.length > 0 ? viewer : undefined);
+  const contactFor = (contactId: string) => contactsQuery.data?.contacts.find((contact) => contact.id === contactId);
+  /* the notice being read holds its own copy, so it stays put if the row clears while the dialog is open */
+  const [shown, setShown] = useState<ContactNotice | null>(null);
+  const markRead = (notice: ContactNotice) => {
+    if (!may("conversation.view.update")) return;
+    /* a failed read mark changes nothing the person can see; the notice still clears when they act on it */
+    void client.conversation.view.update({ conversationId: notice.conversationId, readThroughSequence: notice.sequence }).catch(() => undefined);
+  };
   const timeZone = ownerTimeZone(config.data, viewer?.uid);
   const [today, setToday] = useState(Date.now);
   useEffect(() => {
@@ -605,6 +626,10 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
   useLayoutEffect(() => {
     if (active && pendingHil) scrolling.follow();
   }, [active, pendingHil?.requestId, scrolling.follow]);
+  /* a new contact notice sits under the transcript; keep it in view the way an approval is */
+  useLayoutEffect(() => {
+    if (active && notices.notices.length > 0) scrolling.follow();
+  }, [active, notices.notices.length, scrolling.follow]);
 
   const toggleActivity = useCallback((key: string) => {
     setOpenActivities((current) => {
@@ -994,6 +1019,11 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
                   </div>
                 );
               })}
+              {notices.notices.map((notice) => (
+                <ContactNoticeRow key={notice.contactId} notice={notice} contact={contactFor(notice.contactId)}
+                  onShow={() => { setShown(notice); markRead(notice); }}
+                  onGoToChat={() => { notices.dismiss(notice.contactId); onPeople?.(notice.contactId); }} />
+              ))}
               {pendingHil ? (
                 <div class="zen-moment is-approval">
                   <ApprovalCard
@@ -1118,6 +1148,9 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
         </div>
       </div>
       <div class="zen-input-panels" ref={nativePanels} />
+      {shown && <ContactNoticeDialog notice={shown} contact={contactFor(shown.contactId)} account={viewer} open={active}
+        onClose={() => setShown(null)}
+        onSent={() => { notices.dismiss(shown.contactId); setShown(null); }} />}
       <FleetDialog open={active && connectingPlace} title="Connect a place" onClose={() => setConnectingPlace(false)}>
         <ConnectPlace account={viewer} targets={targetsQuery.data ?? []} ready={!!targetsQuery.data && !targetsQuery.isError}
           onClose={() => setConnectingPlace(false)}

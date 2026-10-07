@@ -1,21 +1,11 @@
 import { useEffect, useRef } from "preact/hooks";
 import { useQuery } from "@tanstack/preact-query";
-import { z } from "zod";
 import { findConsolePersonalProcess } from "../../../domain/system/consoleProcesses";
 import { useGateway } from "../../../services/gateway/GatewayProvider";
 import { loadConsoleProcesses } from "../../../services/system/consoleService";
 import { INSTRUMENT_PROCESSES_KEY } from "../wire/queryKeys";
+import { committedMessageSchema } from "./committedMessageSignal";
 import { badgeIcon, createTabAttention, type TabAttention } from "./tabAttention";
-
-/* the part of a committed message the tab signal reads: which message it is, and which process wrote it */
-const committedMessageSchema = z.object({
-  message: z.object({ id: z.string(), author: z.union([
-    z.object({ kind: z.literal("process"), pid: z.string() }),
-    z.object({ kind: z.literal("contact") }),
-  ]) }),
-  directed: z.boolean().optional(),
-  attention: z.enum(["notify", "quiet"]).optional(),
-});
 
 /**
  * Shows Ship messages that land while the person is looking elsewhere in the browser
