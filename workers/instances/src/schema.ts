@@ -75,6 +75,19 @@ const migrations = [{
     "CREATE INDEX diagnostics_instance_detail ON diagnostics(instance_id, detail)",
     "CREATE INDEX diagnostics_recent ON diagnostics(occurred_at)",
   ],
+}, {
+  id: 10,
+  statements: [
+    "CREATE INDEX handoffs_live ON handoffs(instance_id, json_extract(record, '$.state'))",
+    "CREATE TABLE handoff_receipts (instance_id TEXT NOT NULL, request_id TEXT NOT NULL, record TEXT NOT NULL, PRIMARY KEY(instance_id, request_id))",
+    `INSERT INTO handoff_receipts SELECT instance_id, request_id,
+      json_remove(record, '$.diagnosticRef', '$.reason', '$.activeTabId') FROM handoffs
+      WHERE json_extract(record, '$.state') NOT IN ('pending', 'active') AND rowid NOT IN (
+        SELECT rowid FROM handoffs WHERE json_extract(record, '$.state') NOT IN ('pending', 'active')
+        ORDER BY COALESCE(json_extract(record, '$.completedAt'), json_extract(record, '$.createdAt')) DESC, rowid DESC LIMIT 64
+      )`,
+    "DELETE FROM handoffs WHERE EXISTS (SELECT 1 FROM handoff_receipts r WHERE r.instance_id = handoffs.instance_id AND r.request_id = handoffs.request_id)",
+  ],
 }];
 
 export function migrate(storage: DurableObjectStorage): void {

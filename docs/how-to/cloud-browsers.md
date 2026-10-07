@@ -97,10 +97,20 @@ required bytes; it does not read the rest of an oversized database. Serializatio
 and compression use bounded chunks, and restore checks the size while
 decompressing. The encrypted snapshot format remains compatible with existing
 saved logins.
+Collection also bounds structural work to 65,536 visited values/property names and
+128 levels of nesting per site. This limits temporary codec objects even when the
+eventual JSON is small. A site exceeding that limit reports a partial save and
+retains its earlier snapshot when available; healthy sites continue saving.
 Within a space, cold profile restores and saves share one memory slot. Browser
-maintenance runs sequentially, prioritizes stopping browsers, and resumes from a
-durable cursor when a pass reaches its time budget. Queued work rechecks lifecycle
+maintenance runs sequentially, initially prioritizes stopping browsers, and resumes from a
+durable cursor when a pass reaches its time budget. A stuck shutdown cannot take
+priority over that cursor and starve other browsers. Queued work rechecks lifecycle
 state, and deletion waits for actual attachments and saves to settle.
+Sign-in requests retain live records and the 64 most recent terminal records.
+Older requests become indexed retry receipts: their terminal outcome and linked
+work remain available, while old diagnostics and control details expire. Listing
+or watching browsers reads only live requests, and exact retries cannot reopen an
+old request.
 Once a new snapshot commits, deleting its predecessor runs separately with durable
 retries. Slow cleanup does not turn a successful save into a failure or block stop.
 Uploads rejected after cancellation, a lease change, deletion, or an upload
@@ -184,6 +194,9 @@ allowance and concurrent instance limit. Usage counts from readiness until
 confirmed termination, including time spent signing in, capped at the reserved
 lifetime. Unused time is returned after termination. An uncertain allocation
 retains its reservation until cleanup can establish that it cannot still run.
+When no session ID was received, the concurrency slot is released three minutes
+after the acquisition attempt, covering its short provider keepalive; the requested
+browser lifetime does not extend that grace period. The acquisition is never replayed.
 
 ## Commands for Ship
 

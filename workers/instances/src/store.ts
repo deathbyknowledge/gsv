@@ -150,11 +150,29 @@ export class InstanceStore {
       return value;
     });
   }
-  handoffs(id: string): BrowserHandoff[] {
+  liveHandoffs(id: string): BrowserHandoff[] {
     // SAFETY: Only putHandoff writes this column, using the admitted handoff contract.
-    return this.sql.exec<{ record: string }>("SELECT record FROM handoffs WHERE instance_id = ? ORDER BY rowid DESC", id).toArray().map(row => JSON.parse(row.record) as BrowserHandoff);
+    return this.sql.exec<{ record: string }>("SELECT record FROM handoffs WHERE instance_id = ? AND json_extract(record, '$.state') IN ('pending', 'active') ORDER BY rowid DESC", id).toArray().map(row => JSON.parse(row.record) as BrowserHandoff);
   }
-  putHandoff(value: BrowserHandoff): void { this.sql.exec("INSERT INTO handoffs (instance_id, request_id, record) VALUES (?, ?, ?) ON CONFLICT(instance_id, request_id) DO UPDATE SET record = excluded.record", value.instanceId, value.requestId, JSON.stringify(value)); }
+  handoff(id: string, requestId: string): BrowserHandoff | undefined {
+    const row = this.sql.exec<{ record: string }>(`SELECT record FROM handoffs WHERE instance_id = ? AND request_id = ?
+      UNION ALL SELECT record FROM handoff_receipts WHERE instance_id = ? AND request_id = ? LIMIT 1`, id, requestId, id, requestId).toArray()[0];
+    // SAFETY: Both tables contain admitted handoffs; receipts omit only optional expired details.
+    return row ? JSON.parse(row.record) as BrowserHandoff : undefined;
+  }
+  putHandoff(value: BrowserHandoff): void {
+    this.storage.transactionSync(() => {
+      if (value.state !== "pending" && value.state !== "active") value = { ...value, completedAt: value.completedAt ?? Date.now() };
+      this.sql.exec("INSERT INTO handoffs (instance_id, request_id, record) VALUES (?, ?, ?) ON CONFLICT(instance_id, request_id) DO UPDATE SET record = excluded.record", value.instanceId, value.requestId, JSON.stringify(value));
+      this.sql.exec(`INSERT OR IGNORE INTO handoff_receipts SELECT instance_id, request_id,
+        json_remove(record, '$.diagnosticRef', '$.reason', '$.activeTabId') FROM handoffs
+        WHERE json_extract(record, '$.state') NOT IN ('pending', 'active') AND rowid NOT IN (
+          SELECT rowid FROM handoffs WHERE json_extract(record, '$.state') NOT IN ('pending', 'active')
+          ORDER BY COALESCE(json_extract(record, '$.completedAt'), json_extract(record, '$.createdAt')) DESC, rowid DESC LIMIT 64
+        )`);
+      this.sql.exec("DELETE FROM handoffs WHERE EXISTS (SELECT 1 FROM handoff_receipts r WHERE r.instance_id = handoffs.instance_id AND r.request_id = handoffs.request_id)");
+    });
+  }
   // oxlint-disable-next-line anti-slop/no-unknown-parameters -- This exception boundary normalizes arbitrary caught values for private inspection.
   diagnostic(id: string | null, error: unknown): string {
     // Private diagnostics are retained at the owning boundary, never printed to telemetry.

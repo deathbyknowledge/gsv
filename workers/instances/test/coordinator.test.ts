@@ -108,6 +108,56 @@ describe("human browser control", () => {
     await object.alarm();
     expect(new Set(saves.mock.calls.map(([value]) => value.instanceId))).toEqual(new Set([firstId, secondId]));
   }));
+  it("continues past a stopping browser whose provider lookup repeatedly times out", () => fixture(async (object, store, firstId) => {
+    const secondId = anotherReadyBrowser(store);
+    await object.stop(actor, { instanceId: firstId, force: true });
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.spyOn(BrowserProvider.prototype, "exists").mockImplementation(async () => {
+      vi.setSystemTime(Date.now() + 30000);
+      throw new Error("Provider lookup timed out");
+    });
+    const saves = vi.spyOn(ProfileStorage.prototype, "save");
+    await object.alarm();
+    expect(saves).not.toHaveBeenCalled();
+    expect(await store.storage.get("maintenance_cursor")).toBe(firstId);
+    await object.alarm();
+    expect(saves.mock.calls.map(([value]) => value.instanceId)).toContain(secondId);
+    expect(instance(store.byId(firstId)).state).toBe("stopping");
+  }));
+  it("releases an unknown allocation after its acquisition grace period, regardless of lifetime", () => fixture(async (object, store, id) => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    const acquiredAt = Date.now(), value = instance(store.byId(id));
+    store.update({ ...value, state: "starting", readyAt: undefined, expiresAt: acquiredAt + 86400000 });
+    store.sql.exec("UPDATE instances SET session_id = NULL, acquire_at = ? WHERE id = ?", acquiredAt, id);
+    const acquire = vi.spyOn(BrowserProvider.prototype, "acquire");
+    await object.alarm();
+    expect(instance(store.byId(id)).state).toBe("stopping");
+    vi.setSystemTime(acquiredAt + 179999);
+    await object.alarm();
+    expect(store.byId(id).active).toBe(1);
+    vi.setSystemTime(acquiredAt + 180000);
+    await object.alarm();
+    expect(store.byId(id).active).toBe(0);
+    expect(store.usage(limits).reservedSeconds).toBe(0);
+    expect(acquire).not.toHaveBeenCalled();
+  }));
+  it("keeps old handoff retries terminal while listing only the current request", () => fixture(async (object, store, instanceId) => {
+    vi.spyOn(InstancePolicy.prototype, "limits").mockResolvedValue(limits);
+    const original = { instanceId, requestId: "login-0", tabId: 1, purpose: "Sign in" };
+    for (let i = 0; i < 70; i++) {
+      const args = { ...original, requestId: `login-${i}` };
+      await object.requestHandoff(actor, args);
+      await object.cancelHandoff(actor, { instanceId, requestId: args.requestId });
+    }
+    await object.requestHandoff(actor, { ...original, requestId: "current" });
+    expect((await object.list(actor, {})).handoffs.map(value => value.requestId)).toEqual(["current"]);
+    expect((await object.requestHandoff(actor, original)).handoff.state).toBe("cancelled");
+    expect((await object.getHandoff(actor, { instanceId, requestId: original.requestId })).handoff.state).toBe("cancelled");
+    await expect(object.requestHandoff(actor, { ...original, purpose: "Different" })).rejects.toThrow("different arguments");
+    await expect(object.getHandoff({ ownerUid: 1001, human: true }, { instanceId, requestId: original.requestId })).rejects.toThrow("not found");
+    expect(store.sql.exec<{ count: number }>("SELECT COUNT(*) AS count FROM handoffs").one().count).toBe(65);
+    expect(store.sql.exec<{ count: number }>("SELECT COUNT(*) AS count FROM handoff_receipts").one().count).toBe(6);
+  }));
   it("resolves displayed IDs within the owner and never reports an unknown stop as successful", () => fixture(async (object, store, instanceId) => {
     const targetId = instance(store.byId(instanceId)).targetId;
     expect(await object.get(actor, { instanceId: targetId })).toMatchObject({ instance: { instanceId } });
@@ -175,7 +225,7 @@ describe("human browser control", () => {
     expect(frame.data.handoff).toBeUndefined();
     await frame.body.stream.cancel();
     await object.input(actor, { instanceId, tabId: 1, documentId: "document" }, { kind: "text", text: "hello" });
-    expect(store.handoffs(instanceId)).toEqual([]);
+    expect(store.liveHandoffs(instanceId)).toEqual([]);
     expect(await object.execute(actor, instanceId, { type: "req", id: "watching", call: "shell.exec", args: { input: "page snapshot" } }, Date.now() + 10000)).toMatchObject({ ok: true });
     await expect(object.frame({ ownerUid: 1001, human: true }, { instanceId })).rejects.toThrow("not found");
     await expect(object.input(actor, { instanceId, tabId: 1, documentId: "previous-page" }, { kind: "click", x: 1, y: 2 })).rejects.toThrow("page changed");
@@ -257,7 +307,7 @@ describe("browser save ordering", () => {
     else vi.spyOn(ProfileStorage.prototype, "save").mockRejectedValueOnce(new Error("Upload failed"));
     await expect(object.finishHandoff(actor, selector)).rejects.toThrow(/Human control is still active.*Retry Continue.*Diagnostic:/);
     expect((await object.getHandoff(actor, selector)).handoff).toEqual(opened);
-    expect(new InstanceStore(store.storage).handoffs(instanceId)[0]).toMatchObject({ state: "active" });
+    expect(new InstanceStore(store.storage).liveHandoffs(instanceId)[0]).toMatchObject({ state: "active" });
     expect((await object.get(actor, { instanceId })).instance?.persistence?.saveStatus).toBe("failed");
     expect(await object.execute(actor, instanceId, { type: "req", id: "too-early", call: "shell.exec", args: { input: "page snapshot" } }, Date.now() + 10000)).toMatchObject({ ok: false, error: { code: 409 } });
     expect(await object.input(actor, { instanceId, tabId: 1, documentId: "document", handoffRequestId: selector.requestId }, { kind: "text", text: "retry" })).toEqual({ accepted: true });

@@ -87,7 +87,7 @@ export class InstanceCoordinator extends DurableObject<Environment> implements I
     const actor = instanceActorSchema.parse(raw), args = instanceListSchema.parse(rawArgs);
     const limits = await this.#policy.limits();
     const rows = this.#store.rows(!args.includeTerminal).filter(row => row.owner_uid === actor.ownerUid);
-    return { instances: rows.map(instance), handoffs: rows.flatMap(row => this.#store.handoffs(row.id).filter(liveHandoff)), usage: this.#store.usage(limits) };
+    return { instances: rows.map(instance), handoffs: rows.flatMap(row => this.#store.liveHandoffs(row.id)), usage: this.#store.usage(limits) };
   }
   async get(raw: InstanceActor, rawSelector: InstanceSelector) {
     const row = this.#store.owned(instanceActorSchema.parse(raw), instanceSelectorSchema.parse(rawSelector));
@@ -185,7 +185,7 @@ export class InstanceCoordinator extends DurableObject<Environment> implements I
   private handoff(actor: InstanceActor, args: SysBrowserHandoffGetArgs, active = false): BrowserHandoff {
     browserHandoffSelectorSchema.parse(args);
     const row = this.requireInstance(actor, args.instanceId, active);
-    const value = this.#store.handoffs(row.id).find(item => item.requestId === args.requestId);
+    const value = this.#store.handoff(row.id, args.requestId);
     if (!value) throw new Error("Browser handoff not found");
     if (active && (value.state !== "active" || value.expiresAt <= Date.now())) throw new Error("Browser handoff is no longer active");
     return value;
@@ -194,13 +194,13 @@ export class InstanceCoordinator extends DurableObject<Environment> implements I
     const actor = instanceActorSchema.parse(raw), args = browserHandoffRequestSchema.parse(rawArgs);
     const row = this.requireInstance(actor, args.instanceId, true);
     args.instanceId = row.id;
-    const existing = this.#store.handoffs(row.id).find(value => value.requestId === args.requestId);
+    const existing = this.#store.handoff(row.id, args.requestId);
     if (existing) {
       if (existing.tabId !== args.tabId || existing.purpose !== args.purpose || existing.responsibilityId !== args.responsibilityId) throw new Error("Handoff requestId has already been used with different arguments");
       if (existing.site || !liveHandoff(existing)) return { handoff: existing, actionPath: actionPath(existing) };
     }
     if (this.#handoffBarriers.has(row.id)) throw new Error("Browser is finishing human control; retry the request after it settles");
-    if (this.#store.handoffs(row.id).some(value => liveHandoff(value) && value.requestId !== args.requestId)) throw new Error("Browser already has a pending human request");
+    if (this.#store.liveHandoffs(row.id).some(value => value.requestId !== args.requestId)) throw new Error("Browser already has a pending human request");
     const value: BrowserHandoff = existing ?? { ...args, site: "", state: "pending", revision: 1, createdAt: Date.now(), expiresAt: Math.min(instance(row).expiresAt, Date.now() + 15 * 60_000) };
     // Fence before awaiting CDP or cancellation. No new automation can enter now.
     this.#store.putHandoff(value);
@@ -277,7 +277,7 @@ export class InstanceCoordinator extends DurableObject<Environment> implements I
     const args = browserFrameSchema.parse(rawArgs);
     args.instanceId = this.requireInstance(actor, args.instanceId, true).id;
     const browser = await this.browser(args.instanceId);
-    const handoff = this.#store.handoffs(args.instanceId).find(liveHandoff);
+    const handoff = this.#store.liveHandoffs(args.instanceId)[0];
     const preferred = args.tabId ?? handoff?.activeTabId ?? handoff?.tabId;
     const tab = (preferred === undefined ? null : await browser.getTab(preferred)) ?? await browser.activeTab();
     if (!tab) throw new Error("This browser has no open tabs");
@@ -296,7 +296,7 @@ export class InstanceCoordinator extends DurableObject<Environment> implements I
     if ([...this.#watches.values()].filter(value => value.instanceId === args.instanceId).length >= 4) throw new Error("This browser already has four open viewers");
     const watchId = crypto.randomUUID();
     const watch = new BrowserWatch(browser, args.tabId,
-      () => this.#store.handoffs(args.instanceId).find(liveHandoff),
+      () => this.#store.liveHandoffs(args.instanceId)[0],
       () => { this.requireInstance(actor, args.instanceId, true); },
       cause => new Error(`Browser view interrupted; reference = ${this.#store.diagnostic(args.instanceId, cause)}`),
       () => { this.#watches.delete(watchId); });
@@ -313,7 +313,7 @@ export class InstanceCoordinator extends DurableObject<Environment> implements I
       if (this.#stops.has(args.instanceId)) throw new Error("Browser is preparing to stop");
       if (this.#handoffBarriers.has(args.instanceId)) throw new Error("Browser is finishing human control; retry input after it settles");
       if (args.handoffRequestId) this.handoff(actor, { instanceId: args.instanceId, requestId: args.handoffRequestId }, true);
-      else if (this.#store.handoffs(args.instanceId).some(liveHandoff)) throw new Error("Open the pending browser request before entering input");
+      else if (this.#store.liveHandoffs(args.instanceId).length) throw new Error("Open the pending browser request before entering input");
     };
     check();
     const deadline = AbortSignal.timeout(10000);
@@ -350,7 +350,7 @@ export class InstanceCoordinator extends DurableObject<Environment> implements I
     try {
       id = this.requireInstance(actor, id, true).id;
       if (!isBrowserRequest(frame)) throw new Error("Unsupported browser syscall");
-      if (this.#store.handoffs(id).some(liveHandoff) && !this.#handoffBarriers.has(id)) { await cancelBinaryBody(frame.body, "Human controls browser"); return { type: "res", id: frame.id, ok: false, error: { code: 409, message: "human_control: waiting for the user to return browser control" } }; }
+      if (this.#store.liveHandoffs(id).length && !this.#handoffBarriers.has(id)) { await cancelBinaryBody(frame.body, "Human controls browser"); return { type: "res", id: frame.id, ok: false, error: { code: 409, message: "human_control: waiting for the user to return browser control" } }; }
       await this.#policy.requireActive();
       if (this.#stops.has(id)) throw new Error("Browser is preparing to stop");
     } catch (error) {
@@ -369,7 +369,7 @@ export class InstanceCoordinator extends DurableObject<Environment> implements I
           const browser = await this.browser(id);
           try {
             this.requireInstance(actor, id, true);
-            if (this.#store.handoffs(id).some(liveHandoff)) throw new Error("human_control: browser is waiting for the user");
+            if (this.#store.liveHandoffs(id).length) throw new Error("human_control: browser is waiting for the user");
             abort.signal.throwIfAborted();
             const result = frame.call === "shell.exec"
               ? { data: await browser.shell.exec(frame.args, { currentTargetId: instance(this.#store.byId(id)).targetId, abortSignal: abort.signal }), body: undefined }
@@ -493,7 +493,7 @@ export class InstanceCoordinator extends DurableObject<Environment> implements I
     for (const item of this.#watches.values()) if (item.instanceId === value.instanceId) item.watch.view.close();
     if (value.state === "stopped" || value.state === "failed") return;
     if (value.state !== "stopping") this.#store.update({ ...value, state: "stopping", reason, revision: value.revision + 1 });
-    for (const handoff of this.#store.handoffs(value.instanceId).filter(liveHandoff)) this.#store.putHandoff({ ...handoff, state: "cancelled", reason, revision: handoff.revision + 1 });
+    for (const handoff of this.#store.liveHandoffs(value.instanceId)) this.#store.putHandoff({ ...handoff, state: "cancelled", reason, revision: handoff.revision + 1 });
     for (const operation of this.#operations.get(value.instanceId)?.values() ?? []) operation.abort.abort(new Error(reason));
   }
   async alarm(): Promise<void> {
@@ -505,11 +505,11 @@ export class InstanceCoordinator extends DurableObject<Environment> implements I
       const value = instance(this.#store.byId(row.id));
       if (value.expiresAt <= started) this.fenceStop(value, "Browser lifetime expired");
     }
-    const last = await this.ctx.storage.get<string>("maintenance_cursor");
-    const offset = last ? rows.findIndex(row => row.id === last) + 1 : 0;
-    const rotated = [...rows.slice(offset), ...rows.slice(0, offset)];
     const stopping = (row: Pick<InstanceRow, "id">) => instance(this.#store.byId(row.id)).state === "stopping";
-    const ordered = [...rotated.filter(stopping), ...rotated.filter(row => !stopping(row))];
+    const prioritized = [...rows.filter(stopping), ...rows.filter(row => !stopping(row))];
+    const last = await this.ctx.storage.get<string>("maintenance_cursor");
+    const offset = last ? prioritized.findIndex(row => row.id === last) + 1 : 0;
+    const ordered = [...prioritized.slice(offset), ...prioritized.slice(0, offset)];
     for (let i = 0; i < ordered.length; i++) {
       await this.maintain(ordered[i]!.id);
       await this.ctx.storage.put("maintenance_cursor", ordered[i]!.id);
@@ -558,7 +558,7 @@ export class InstanceCoordinator extends DurableObject<Environment> implements I
     if (listed.truncated) return this.installationDeletionStatus(input);
     await this.ctx.storage.delete("maintenance_cursor");
     this.ctx.storage.transactionSync(() => {
-      for (const table of ["file_chunks", "files", "handoffs", "profiles", "instances", "diagnostics", "cancelled_starts", "start_requests", "obsolete_profile_objects"]) this.#store.sql.exec(`DELETE FROM ${table}`);
+      for (const table of ["file_chunks", "files", "handoffs", "handoff_receipts", "profiles", "instances", "diagnostics", "cancelled_starts", "start_requests", "obsolete_profile_objects"]) this.#store.sql.exec(`DELETE FROM ${table}`);
       this.#retirement.phase("erased");
     });
     await this.ctx.storage.deleteAlarm();
@@ -589,7 +589,7 @@ export class InstanceCoordinator extends DurableObject<Environment> implements I
         }
       }
       row = this.#store.byId(id); value = instance(row);
-      for (const handoff of this.#store.handoffs(id).filter(liveHandoff)) {
+      for (const handoff of this.#store.liveHandoffs(id)) {
         if (handoff.expiresAt <= Date.now()) await this.endHandoff({ ownerUid: value.ownerUid, human: false }, { instanceId: id, requestId: handoff.requestId }, "expired");
       }
       if (value.state === "ready") {
@@ -630,7 +630,7 @@ export class InstanceCoordinator extends DurableObject<Environment> implements I
   private async cleanup(row: InstanceRow): Promise<void> {
     const value = instance(row);
     if (!row.session_id) {
-      if (row.acquire_at && Date.now() < value.expiresAt + QUIET_ALLOCATION_MS) return;
+      if (row.acquire_at && Date.now() < row.acquire_at + QUIET_ALLOCATION_MS) return;
     } else {
       if (await this.#provider.exists(row.session_id)) {
         const settled = await this.settleOperations(row.id);
