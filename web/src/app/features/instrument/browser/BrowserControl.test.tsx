@@ -10,7 +10,7 @@ import { BrowserViewer } from "./BrowserControl";
 
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
-async function openLinkedViewer(initialState: "pending" | "active" | undefined, initialId = "new-login") {
+async function openLinkedViewer(initialState: "pending" | "active" | undefined, initialId = "new-login", options: { manualFrames?: boolean } = {}) {
   vi.stubGlobal("document", new EventTarget());
   vi.stubGlobal("requestAnimationFrame", (callback: () => void) => setTimeout(callback, 0));
   vi.stubGlobal("cancelAnimationFrame", clearTimeout);
@@ -20,15 +20,18 @@ async function openLinkedViewer(initialState: "pending" | "active" | undefined, 
     templateId: "browser", templateRevision: "1", kind: "browser", implements: [], label: "Browser", state: "ready", revision: 1, createdAt: 1, expiresAt: Date.now() + 60000 };
   const handoff: BrowserHandoff = { instanceId: instance.instanceId, requestId: "linked-login", tabId: 1, site: "https://example.com", purpose: "Sign in", state: "active", revision: 1, createdAt: 1, expiresAt: instance.expiresAt };
   let source!: ReadableStreamDefaultController<Uint8Array>;
+  let watches = 0;
+  const frame = (tabId: number, sequence: number) => source.enqueue(encodeBrowserViewPacket({ kind: "frame", tabId,
+    documentId: `document-${tabId}`, sequence, capturedAt: Date.now(), width: 1280, height: 800 }, new Uint8Array([1])));
   const push = (state: "pending" | "active" | undefined, requestId = "new-login") => source.enqueue(encodeBrowserViewPacket({
-    kind: "state", activeTabId: 1, tabs: [{ id: 1, title: "Login", url: handoff.site }], handoff: state ? { ...handoff, requestId, state } : undefined,
+    kind: "state", activeTabId: 1, tabs: [{ id: 1, title: "Login", url: handoff.site }, { id: 2, title: "Other tab", url: "https://other.example" }], handoff: state ? { ...handoff, requestId, state } : undefined,
   }));
   const inputResult = deferred<{ data: { accepted: true } }>();
   const request = vi.spyOn(GSVClient.prototype, "request").mockImplementation(async call => {
     if (call === "sys.instance.get") return { data: { instance } };
     if (call === "sys.browser.watch") return { data: { watchId: "watch", version: 1 }, body: { stream: new ReadableStream<Uint8Array>({ start(controller) {
-      source = controller; push(initialState, initialId);
-      controller.enqueue(encodeBrowserViewPacket({ kind: "frame", tabId: 1, documentId: "document", sequence: 1, capturedAt: Date.now(), width: 1280, height: 800 }, new Uint8Array([1])));
+      source = controller; watches++; push(initialState, initialId);
+      if (!options.manualFrames || watches === 1) frame(1, 1);
     } }) } };
     if (call === "sys.browser.input") return inputResult.promise;
     if (call === "sys.browser.handoff.open" || call === "sys.browser.handoff.finish") return { data: { handoff } };
@@ -46,7 +49,7 @@ async function openLinkedViewer(initialState: "pending" | "active" | undefined, 
   // SAFETY: The image onLoad handler reads no event data.
   const loaded = new Event("load") as JSX.TargetedEvent<HTMLImageElement>;
   await act(() => { image.props.onLoad?.(loaded); });
-  return { request, inputResult, push, nodes, text: () => collectText(tree),
+  return { request, inputResult, push, frame, nodes, text: () => collectText(tree),
     type(value: string) {
       // SAFETY: The intrinsic textarea handler reads only currentTarget.value and isComposing.
       const keyboard = nodes().find(node => node.type === "textarea") as VNode<JSX.TextareaHTMLAttributes<HTMLTextAreaElement>>;
@@ -58,6 +61,52 @@ async function openLinkedViewer(initialState: "pending" | "active" | undefined, 
 }
 
 describe("live browser viewing", () => {
+  it("fences immediate, queued and late-image input until the newly selected view has loaded", async () => {
+    const viewer = await openLinkedViewer("active", "linked-login", { manualFrames: true });
+    // SAFETY: This selects the intrinsic viewer image and uses its image event props.
+    const image = () => viewer.nodes().find(node => node.type === "img") as VNode<JSX.ImgHTMLAttributes<HTMLImageElement>>;
+    // SAFETY: The image load callback reads no event data.
+    const loaded = new Event("load") as JSX.TargetedEvent<HTMLImageElement>;
+    const inputs = () => viewer.request.mock.calls.filter(([call]) => call === "sys.browser.input");
+    try {
+      const original = image();
+      await act(() => { viewer.type("first"); viewer.type("queued for first tab"); });
+      await vi.waitFor(() => expect(inputs()).toHaveLength(1));
+      await act(() => {
+        viewer.nodes().find(node => node.type === "button" && collectText(node) === "Other tab")!.props.onClick?.();
+        viewer.type("immediately after switching");
+      });
+      await vi.waitFor(() => expect(viewer.request.mock.calls.filter(([call]) => call === "sys.browser.watch")).toHaveLength(2));
+      await act(async () => {
+        original.props.onLoad?.(loaded);
+        viewer.type("after a late old image");
+        viewer.inputResult.resolve({ data: { accepted: true } });
+        await viewer.inputResult.promise;
+      });
+      expect(inputs()).toHaveLength(1);
+      await act(() => { viewer.frame(2, 2); });
+      await vi.waitFor(() => expect(image().props.src).not.toBe(original.props.src));
+      await act(() => { viewer.type("new image has not loaded yet"); });
+      expect(inputs()).toHaveLength(1);
+      const second = image();
+      await act(() => { second.props.onLoad?.(loaded); viewer.type("second tab"); });
+      await vi.waitFor(() => expect(inputs()).toHaveLength(2));
+      expect(inputs()[1][1]).toMatchObject({ tabId: 2, documentId: "document-2" });
+      await act(() => {
+        viewer.nodes().find(node => node.type === "button" && collectText(node) === "follow Ship")!.props.onClick?.();
+        viewer.type("immediately after following");
+      });
+      await vi.waitFor(() => expect(viewer.request.mock.calls.filter(([call]) => call === "sys.browser.watch")).toHaveLength(3));
+      await act(() => { original.props.onLoad?.(loaded); viewer.type("stale original follow image"); });
+      expect(inputs()).toHaveLength(2);
+      await act(() => { viewer.frame(1, 3); });
+      await vi.waitFor(() => expect(image().props.src).not.toBe(second.props.src));
+      await act(() => { image().props.onLoad?.(loaded); viewer.type("fresh follow image"); });
+      await vi.waitFor(() => expect(inputs()).toHaveLength(3));
+      expect(inputs()[2][1]).toMatchObject({ tabId: 1, documentId: "document-1" });
+    } finally { await viewer.close(); }
+  });
+
   it.each(["pending", "active", undefined] as const)("rejects an old action link when the current handoff is %s", async state => {
     const viewer = await openLinkedViewer(state);
     try {

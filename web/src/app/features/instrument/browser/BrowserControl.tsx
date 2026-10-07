@@ -5,9 +5,9 @@ import { useQueryClient } from "@tanstack/preact-query";
 import { useGateway } from "../../../services/gateway/GatewayProvider";
 import { useSession } from "../../../services/session/SessionProvider";
 import { sendBrowserInput } from "../../../services/instances/browserControl";
-import type { BrowserHumanInput, BrowserViewFrame } from "@humansandmachines/gsv/protocol";
+import type { BrowserHumanInput } from "@humansandmachines/gsv/protocol";
 import { INSTRUMENT_TARGETS_KEY } from "../wire/queryKeys";
-import { useBrowserStream } from "./useBrowserStream";
+import { useBrowserStream, type BrowserImage } from "./useBrowserStream";
 import "./browser.css";
 
 export const INSTANCE_QUERY_KEY = ["cloud-instances"];
@@ -70,10 +70,10 @@ export function BrowserViewer({ request, onClose }: { request: BrowserSelection;
   const dialog = useRef<HTMLDialogElement>(null);
   const keyboard = useRef<HTMLTextAreaElement>(null);
   const image = useRef<HTMLImageElement>(null);
-  const displayed = useRef<BrowserViewFrame | null>(null);
+  const displayed = useRef<BrowserImage | null>(null);
   const [selectedTab, setSelectedTab] = useState<number>();
   const [error, setError] = useState("");
-  const { frame: view, state: viewState, error: frameError } = useBrowserStream(client, request.instanceId, selectedTab, connected && ready);
+  const { frame: view, state: viewState, error: frameError, selection } = useBrowserStream(client, request.instanceId, selectedTab, connected && ready);
   const handoff = viewState?.handoff;
   const requestMatches = request.requestId === undefined || handoff?.requestId === request.requestId;
   const requestUnavailable = viewState !== undefined && !requestMatches;
@@ -97,8 +97,8 @@ export function BrowserViewer({ request, onClose }: { request: BrowserSelection;
   }, [client, connected, request.instanceId, requestMatches, handoff?.requestId, handoff?.state, handoff?.site]);
 
   const input = (value: BrowserHumanInput) => {
-    const shown = displayed.current;
-    if (!live.current || !requestMatches || busy || !shown || (handoff && handoff.state !== "active")) return;
+    const shown = displayed.current?.data;
+    if (!live.current || !requestMatches || busy || !shown || displayed.current?.selection !== selection || (handoff && handoff.state !== "active")) return;
     if (value.kind === "click") setSelectedTab(shown.tabId);
     const epoch = inputEpoch.current;
     const args = { instanceId: request.instanceId, tabId: shown.tabId, documentId: shown.documentId, handoffRequestId: handoff?.requestId };
@@ -107,6 +107,12 @@ export function BrowserViewer({ request, onClose }: { request: BrowserSelection;
       await sendBrowserInput(client, args, value);
       setError("");
     }).catch(cause => { inputEpoch.current++; setError(`Input could not be confirmed. ${String(cause)}`); });
+  };
+  const selectTab = (tabId: number | undefined) => {
+    if (tabId === selectedTab) return;
+    displayed.current = null;
+    inputEpoch.current++;
+    setSelectedTab(tabId);
   };
   const close = () => { live.current = false; inputEpoch.current++; onClose(); };
   const finish = async () => {
@@ -139,7 +145,7 @@ export function BrowserViewer({ request, onClose }: { request: BrowserSelection;
   };
   const point = (event: MouseEvent | WheelEvent) => {
     const bounds = image.current!.getBoundingClientRect();
-    const width = displayed.current?.width ?? 1280, height = displayed.current?.height ?? 800;
+    const width = displayed.current?.data.width ?? 1280, height = displayed.current?.data.height ?? 800;
     return { x: Math.max(0, Math.min(width, (event.clientX - bounds.left) * width / bounds.width)), y: Math.max(0, Math.min(height, (event.clientY - bounds.top) * height / bounds.height)) };
   };
   const data = view && viewState ? { ...viewState, ...view.data } : undefined;
@@ -154,11 +160,11 @@ export function BrowserViewer({ request, onClose }: { request: BrowserSelection;
               : event.key === "Home" ? 0 : event.key === "End" ? data.tabs.length - 1 : undefined;
             if (next === undefined) return;
             event.preventDefault();
-            setSelectedTab(data.tabs[next]!.id);
+            selectTab(data.tabs[next]!.id);
             const button = event.currentTarget.parentElement?.children[next];
             if (button instanceof HTMLButtonElement) button.focus();
           }}
-          title={item.url} onClick={() => setSelectedTab(item.id)}>{item.url === "about:blank" ? "New tab" : item.title || item.url}</button>)}
+          title={item.url} onClick={() => selectTab(item.id)}>{item.url === "about:blank" ? "New tab" : item.title || item.url}</button>)}
         {!data && <span class="browser-tab-loading">{instance?.label ?? "Opening browser…"}</span>}
       </div>
       <div class="browser-window-actions">
@@ -176,7 +182,7 @@ export function BrowserViewer({ request, onClose }: { request: BrowserSelection;
     <div class="browser-toolbar">
       <div class="browser-address" title={tab?.url}>{tab?.url === "about:blank" ? "New tab" : tab?.url ?? "Connecting…"}</div>
       <button type="button" class={`browser-follow${selectedTab === undefined ? " is-following" : ""}`} aria-pressed={selectedTab === undefined}
-        title="Follow Ship’s active tab" onClick={() => setSelectedTab(undefined)}>{selectedTab === undefined ? "following Ship" : "follow Ship"}</button>
+        title="Follow Ship’s active tab" onClick={() => selectTab(undefined)}>{selectedTab === undefined ? "following Ship" : "follow Ship"}</button>
     </div>
     {requestUnavailable && <p class="browser-notice" role="status">This browser request has expired or ended. Open the latest request from Ship.</p>}
     {requestMatches && data?.handoff && <div class="browser-help"><span>{data.handoff.purpose}</span><button type="button" onClick={() => void finish()} disabled={busy || !connected}>continue</button></div>}
@@ -196,14 +202,14 @@ export function BrowserViewer({ request, onClose }: { request: BrowserSelection;
     {!connected && <p class="browser-notice" role="alert">Disconnected. Reconnecting…</p>}
     <div class="browser-screen" onClick={event => { if (image.current) { input({ kind: "click", ...point(event) }); keyboard.current?.focus({ preventScroll: true }); } }}
       onWheel={event => { event.preventDefault(); if (image.current) input({ kind: "scroll", ...point(event), deltaX: event.deltaX, deltaY: event.deltaY }); }}>
-      {view ? <img ref={image} src={view.source} onLoad={() => { displayed.current = view.data; view.presented(); }} alt="Live cloud browser page" draggable={false} /> : ready && <p>Connecting to the browser…</p>}
+      {view ? <img ref={image} src={view.source} onLoad={() => { displayed.current = view; view.presented(); }} alt="Live cloud browser page" draggable={false} /> : ready && <p>Connecting to the browser…</p>}
       {pointer && <div class={`browser-pointer is-${pointer.actor}`} style={{ left: `${pointer.x / (data?.width ?? 1280) * 100}%`, top: `${pointer.y / (data?.height ?? 800) * 100}%` }} aria-label={pointer.actor === "ship" ? "Ship cursor" : "Your cursor"}>
         <svg width="20" height="27" viewBox="0 0 20 27" aria-hidden="true"><path d="M2 2V21L7 16L11 25L15 23L11 15H19Z" fill="currentColor" stroke="white" stroke-width="1.5" /></svg>
         <span>{pointer.actor === "ship" ? "Ship" : "You"}</span>
         {pointer.clickedAt && <i class="browser-click" key={pointer.clickedAt} />}
       </div>}
       <textarea ref={keyboard} class="browser-keyboard" aria-label="Type in the selected browser field" autoComplete="off" autoCapitalize="off" spellcheck={false}
-        disabled={!requestMatches || busy || (handoff !== undefined && handoff.state !== "active")}
+        disabled={!requestMatches || busy || view?.selection !== selection || (handoff !== undefined && handoff.state !== "active")}
         onInput={event => { if (event.isComposing) return; const value = event.currentTarget.value; event.currentTarget.value = ""; if (value) input({ kind: "text", text: value }); }}
         onCompositionEnd={event => { const value = event.currentTarget.value; event.currentTarget.value = ""; if (value) input({ kind: "text", text: value }); }}
         onKeyDown={event => {

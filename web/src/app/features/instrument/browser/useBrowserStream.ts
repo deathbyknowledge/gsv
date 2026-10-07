@@ -1,11 +1,12 @@
-import { useEffect, useState } from "preact/hooks";
+import { useEffect, useMemo, useState } from "preact/hooks";
 import type { GSVClient } from "@humansandmachines/gsv/client";
 import type { BrowserViewFrame, BrowserViewState } from "@humansandmachines/gsv/protocol";
 import { watchBrowser } from "../../../services/instances/browserControl";
 
-export type BrowserImage = { source: string; data: BrowserViewFrame; presented: () => void };
+export type BrowserImage = { source: string; data: BrowserViewFrame; selection: object; presented: () => void };
 
 export function useBrowserStream(client: GSVClient, instanceId: string, tabId: number | undefined, enabled: boolean) {
+  const selection = useMemo(() => ({ instanceId, tabId }), [instanceId, tabId]);
   const [frame, setFrame] = useState<BrowserImage | null>(null);
   const [state, setState] = useState<BrowserViewState>();
   const [error, setError] = useState("");
@@ -43,7 +44,7 @@ export function useBrowserStream(client: GSVClient, instanceId: string, tabId: n
               if (cause) reject(cause); else resolve();
             };
             active.signal.addEventListener("abort", abort, { once: true });
-            setFrame({ source, data: metadata, presented: () => {
+            setFrame({ source, data: metadata, selection, presented: () => {
               if (active.signal.aborted) return;
               releaseUrls(source);
               const paint = requestAnimationFrame(() => { paints.delete(paint); finish(); });
@@ -65,6 +66,6 @@ export function useBrowserStream(client: GSVClient, instanceId: string, tabId: n
       for (const paint of paints) cancelAnimationFrame(paint);
       releaseUrls();
     };
-  }, [client, instanceId, tabId, enabled, visible]);
-  return { frame, state, error };
+  }, [client, instanceId, tabId, selection, enabled, visible]);
+  return { frame, state, error, selection };
 }
