@@ -5,7 +5,7 @@ import type { CloudInstance } from "@humansandmachines/gsv/protocol";
 import type { KernelContext } from "./context";
 import type { TargetDescriptor } from "./targets";
 import { discoverInstanceTargets, requestInstanceTarget } from "./instance-targets";
-import { handleInstanceRequest } from "./sys/instance";
+import { handleInstanceRequest, type InstanceRequest } from "./sys/instance";
 import { testPeer } from "../test-support/peers";
 import { openFsSource } from "../drivers/native/fs";
 import { createBrowserStorageBackend } from "./browser-storage";
@@ -39,8 +39,64 @@ const target: TargetDescriptor = {
   ownerUid: 1000, ownerUsername: "owner", label: "Browser", description: "Test browser", platform: "browser", version: "1",
   online: true, implements: ["shell.exec", "fs.read"], firstSeenAt: 0, lastSeenAt: 0, connectedAt: 0, disconnectedAt: null,
 };
+const frameData: Awaited<ReturnType<InstallationInstances["frame"]>>["data"] = {
+  instance: {
+    instanceId: "instance", targetId: "browser", startRequestId: "start", ownerUid: 1000,
+    templateId: "browser", templateRevision: "1", kind: "browser", implements: [], label: "Browser",
+    state: "ready", revision: 1, createdAt: 0, expiresAt: 60000,
+  },
+  tabId: 1, documentId: "document", tabs: [], width: 1280, height: 800, contentType: "image/jpeg",
+};
 
 describe("instance gateway boundary", () => {
+  it.each(["sys.browser.frame", "sys.browser.watch"] as const)("cancels an unexpected %s upload before acquiring its response", async call => {
+    const pull = vi.fn(), cancel = vi.fn();
+    const stream = new ReadableStream<Uint8Array>({ pull, cancel }, { highWaterMark: 0 });
+    const bytes = new Uint8Array([1, 2, 3]);
+    const { ctx, dispose, getInstallation } = context({
+      frame: async () => ({ data: frameData, body: bodyFromBytes(bytes) }),
+      watch: async () => ({ data: { watchId: "watch", version: 1 }, body: bodyFromBytes(bytes) }),
+    });
+    const acquire = getInstallation.getMockImplementation()!;
+    getInstallation.mockImplementation(async () => { expect(cancel).toHaveBeenCalledOnce(); return acquire(); });
+    const response = await handleInstanceRequest({ type: "req", id: "image", call, args: { instanceId: "instance" }, body: { stream } }, ctx);
+    if (!response.ok || !response.body) throw new Error("Missing image response");
+    expect(await bodyToBytes(response.body)).toEqual(bytes);
+    expect(pull).not.toHaveBeenCalled();
+    expect(cancel).toHaveBeenCalledOnce();
+    expect(dispose).toHaveBeenCalledOnce();
+  });
+
+  it.each(["sys.browser.frame", "sys.browser.watch", "sys.browser.input"] as const)("cancels the %s body when service acquisition fails", async call => {
+    const pull = vi.fn(), cancel = vi.fn();
+    const stream = new ReadableStream<Uint8Array>({ pull, cancel }, { highWaterMark: 0 });
+    const { ctx, getInstallation } = context({});
+    getInstallation.mockRejectedValueOnce(new Error("Provider unavailable"));
+    await expect(handleInstanceRequest({ type: "req", id: "failed", call, args: { instanceId: "instance", tabId: 1, documentId: "document" }, body: { stream } }, ctx)).rejects.toThrow("Provider unavailable");
+    expect(pull).not.toHaveBeenCalled();
+    expect(cancel).toHaveBeenCalledOnce();
+  });
+
+  it.each(["sys.browser.frame", "sys.browser.input"] as const)("cancels a stalled %s body when the service deadline expires", async call => {
+    const deadline = new AbortController();
+    vi.spyOn(AbortSignal, "timeout").mockReturnValue(deadline.signal);
+    const pull = vi.fn(), cancel = vi.fn();
+    const stream = new ReadableStream<Uint8Array>({ pull, cancel }, { highWaterMark: 0 });
+    const input = vi.fn<InstallationInstances["input"]>(async () => ({ accepted: true }));
+    const { ctx, dispose } = context({ frame: async () => ({ data: frameData, body: { stream } }), input });
+    const request: InstanceRequest = { type: "req", id: "stalled", call, args: { instanceId: "instance", tabId: 1, documentId: "document" } };
+    if (call === "sys.browser.input") request.body = { stream };
+    const pending = handleInstanceRequest(request, ctx);
+    const rejected = expect(pending).rejects.toThrow("Deadline expired");
+    await vi.waitFor(() => expect(pull).toHaveBeenCalledOnce());
+    deadline.abort(new Error("Deadline expired"));
+    await rejected;
+    expect(cancel).toHaveBeenCalledOnce();
+    expect(stream.locked).toBe(false);
+    expect(dispose).toHaveBeenCalledOnce();
+    expect(input).not.toHaveBeenCalled();
+  });
+
   it("requires the instance-stop grant when deleting a cloud browser target", async () => {
     const instance: CloudInstance = {
       instanceId: "instance", targetId: "browser", startRequestId: "start", ownerUid: 1000,

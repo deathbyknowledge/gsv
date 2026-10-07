@@ -575,6 +575,11 @@ coalescing. Chunk limits and cancellation rules apply to both modes.
 
 ### Browser view records
 
+Browser frame and watch requests accept structured arguments only; the gateway
+cancels unexpected request bodies without reading them. Browser input bodies are
+consumed or cancelled even when authorization, service acquisition, or the
+request deadline fails.
+
 `sys.browser.watch` carries a continuous response body on the ordinary gateway
 WebSocket. Version 1 consists of records with two little-endian unsigned 32-bit
 lengths (metadata bytes, image bytes), followed by UTF-8 JSON metadata and raw

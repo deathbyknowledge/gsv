@@ -12,17 +12,21 @@ import { withByteStreamFinalizer } from "../../shared/streams";
 export type InstanceRequest = Extract<RequestFrame, { call: `sys.instance.${string}` | `sys.browser.${string}` }>;
 
 export async function handleInstanceRequest(frame: InstanceRequest, ctx: KernelContext): Promise<ResponseFrame> {
+  try {
+    if (frame.call !== "sys.browser.input") await cancelBinaryBody(frame.body, "This browser action has no request body");
+    return await dispatchInstanceRequest(frame, ctx);
+  } finally { await cancelBinaryBody(frame.body, "Browser request completed"); }
+}
+
+async function dispatchInstanceRequest(frame: InstanceRequest, ctx: KernelContext): Promise<ResponseFrame> {
   const actor = instanceActor(ctx);
   if (["sys.browser.handoff.open", "sys.browser.handoff.finish", "sys.browser.frame", "sys.browser.watch", "sys.browser.input"].includes(frame.call) && !actor.human) {
-    await cancelBinaryBody(frame.body, "Human browser input cannot be requested by a process");
     throw new Error("This browser action requires the signed-in human owner");
   }
   if (!hasCapability(principalOf(ctx)?.calls ?? [], frame.call)) {
-    await cancelBinaryBody(frame.body, "Instance syscall permission denied");
     throw new Error(`EACCES: permission denied: ${frame.call}`);
   }
   if (frame.call === "sys.browser.watch") {
-    await cancelBinaryBody(frame.body, "Browser viewing has no request body");
     const timeout = AbortSignal.timeout(30000);
     const signal = ctx.requestSignal ? AbortSignal.any([ctx.requestSignal, timeout]) : timeout;
     const service = await acquireInstances(ctx, signal);
@@ -45,7 +49,7 @@ export async function handleInstanceRequest(frame: InstanceRequest, ctx: KernelC
     await authorizeNestedOperation(ctx, frame.call, frame.args as JsonObject);
     ctx.requestSignal?.throwIfAborted();
   }
-  return withInstances(ctx, async (service, owner) => {
+  return withInstances(ctx, async (service, owner, signal) => {
     let data: Extract<ResponseFrame, { ok: true }>["data"];
     switch (frame.call) {
       case "sys.instance.catalog": data = await service.catalog(owner); break;
@@ -102,18 +106,16 @@ export async function handleInstanceRequest(frame: InstanceRequest, ctx: KernelC
       case "sys.browser.frame": {
         const result = await service.frame(owner, frame.args);
         // Materialize this bounded image before releasing its remote RPC capability.
-        const bytes = await bodyToBytes(result.body, 4 * 1024 * 1024, ctx.requestSignal);
+        const bytes = await bodyToBytes(result.body, 4 * 1024 * 1024, signal);
         return { type: "res", id: frame.id, ok: true, data: result.data, body: bodyFromBytes(bytes) };
       }
       case "sys.browser.input": {
         if (!frame.body) throw new Error("Browser input requires a body");
-        try {
-          const text = await bodyToText(frame.body, 128 * 1024, ctx.requestSignal);
-          // The owning instance service validates this private, bounded input body.
-          // SAFETY: This assertion only transports the value to that validation boundary; Kernel does not interpret it.
-          const input = JSON.parse(text) as BrowserHumanInput;
-          data = await service.input(owner, frame.args, input);
-        } finally { await cancelBinaryBody(frame.body, "Browser input consumed"); }
+        const text = await bodyToText(frame.body, 128 * 1024, signal);
+        // The owning instance service validates this private, bounded input body.
+        // SAFETY: This assertion only transports the value to that validation boundary; Kernel does not interpret it.
+        const input = JSON.parse(text) as BrowserHumanInput;
+        data = await service.input(owner, frame.args, input);
         break;
       }
     }

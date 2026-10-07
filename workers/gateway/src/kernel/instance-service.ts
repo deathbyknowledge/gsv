@@ -17,11 +17,11 @@ export async function acquireInstances(ctx: KernelContext, signal?: AbortSignal)
   });
 }
 
-export async function withInstances<T>(ctx: KernelContext, work: (service: InstallationInstances, actor: InstanceActor) => Promise<T>, timeoutMs = 30000): Promise<T> {
+export async function withInstances<T>(ctx: KernelContext, work: (service: InstallationInstances, actor: InstanceActor, signal: AbortSignal) => Promise<T>, timeoutMs = 30000): Promise<T> {
   const actor = instanceActor(ctx);
   const timeout = AbortSignal.timeout(timeoutMs);
   const signal = ctx.requestSignal ? AbortSignal.any([ctx.requestSignal, timeout]) : timeout;
   const service = await acquireInstances(ctx, signal);
-  try { return await raceWithAbort(work(service, actor), signal); }
+  try { return await raceWithAbort(work(service, actor, signal), signal); }
   finally { service[Symbol.dispose]?.(); }
 }
