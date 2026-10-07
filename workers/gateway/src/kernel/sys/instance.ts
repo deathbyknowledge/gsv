@@ -1,6 +1,7 @@
 import { bodyFromBytes, bodyToBytes, bodyToText, cancelBinaryBody } from "@humansandmachines/gsv/protocol";
 import type { BrowserHandoff, BrowserHumanInput, JsonObject } from "@humansandmachines/gsv/protocol";
-import type { KernelContext } from "../context";
+import { principalOf, type KernelContext } from "../context";
+import { hasCapability } from "../capabilities";
 import type { RequestFrame, ResponseFrame } from "../../protocol/frames";
 import { authorizeNestedOperation } from "../tool-approval";
 import { acquireInstances, instanceActor, withInstances } from "../instance-service";
@@ -15,6 +16,10 @@ export async function handleInstanceRequest(frame: InstanceRequest, ctx: KernelC
   if (["sys.browser.handoff.open", "sys.browser.handoff.finish", "sys.browser.frame", "sys.browser.watch", "sys.browser.input"].includes(frame.call) && !actor.human) {
     await cancelBinaryBody(frame.body, "Human browser input cannot be requested by a process");
     throw new Error("This browser action requires the signed-in human owner");
+  }
+  if (!hasCapability(principalOf(ctx)?.calls ?? [], frame.call)) {
+    await cancelBinaryBody(frame.body, "Instance syscall permission denied");
+    throw new Error(`EACCES: permission denied: ${frame.call}`);
   }
   if (frame.call === "sys.browser.watch") {
     await cancelBinaryBody(frame.body, "Browser viewing has no request body");

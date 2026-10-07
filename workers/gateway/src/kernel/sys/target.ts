@@ -19,7 +19,7 @@ import {
   updateTargetMetadata,
 } from "../targets";
 import { z } from "zod";
-import { withInstances } from "../instance-service";
+import { handleInstanceRequest } from "./instance";
 
 const targetArgsSchema = z.object({
   includeOffline: z.boolean().optional(),
@@ -117,7 +117,8 @@ export async function handleSysTargetDelete(
     const target = await resolveVisibleTarget(ctx, targetId, { includeOffline: true });
     if (target?.route.kind === "instance") {
       const id = target.route.instanceId;
-      await withInstances(ctx, (service, actor) => service.stop(actor, { instanceId: id }));
+      const response = await handleInstanceRequest({ type: "req", id: crypto.randomUUID(), call: "sys.instance.stop", args: { instanceId: id } }, ctx);
+      if (!response.ok) throw new Error(response.error.message);
       return { deleted: false, targetId, revokedTokens: 0 };
     }
   }

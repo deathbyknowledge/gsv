@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { bodyFromBytes, bodyToBytes } from "@humansandmachines/gsv/protocol";
 import type { InstallationInstances } from "@humansandmachines/gsv/services/instances";
 import type { CloudInstance } from "@humansandmachines/gsv/protocol";
@@ -12,6 +12,10 @@ import { createBrowserStorageBackend } from "./browser-storage";
 import { dispatch, type DispatchDeps } from "./dispatch";
 import { ShellSessionStore } from "./shell-sessions";
 import { runWithRealKernelSql } from "../test-support/real-kernel-sql";
+import { handleSysTargetDelete } from "./sys/target";
+import * as processTransport from "../shared/utils";
+
+afterEach(() => { vi.restoreAllMocks(); });
 
 function context(service: Partial<InstallationInstances>, processId?: string) {
   const dispose = vi.fn(), deferred: Promise<unknown>[] = [];
@@ -19,7 +23,7 @@ function context(service: Partial<InstallationInstances>, processId?: string) {
   const ledger = { append: vi.fn(), complete: vi.fn() };
   const partial = {
     installationId: "trusted-installation", env: { INSTANCES: { getInstallation } },
-    peer: testPeer({ account: { uid: processId ? 2000 : 1000, username: processId ? "crew" : "owner", gids: [] } }),
+    peer: testPeer({ account: { uid: processId ? 2000 : 1000, username: processId ? "crew" : "owner", gids: [] }, calls: ["*"] }),
     processId, procs: { getOwnerUid: () => 1000 }, auth: { getPasswdByUid: () => ({ username: "owner" }) },
     targets: { canAccess: () => false, get: () => null },
     adapters: { identityLinks: { list: () => [] } },
@@ -37,6 +41,48 @@ const target: TargetDescriptor = {
 };
 
 describe("instance gateway boundary", () => {
+  it("requires the instance-stop grant when deleting a cloud browser target", async () => {
+    const instance: CloudInstance = {
+      instanceId: "instance", targetId: "browser", startRequestId: "start", ownerUid: 1000,
+      templateId: "browser", templateRevision: "1", kind: "browser", implements: ["shell.exec"], label: "Browser",
+      state: "ready", revision: 1, createdAt: Date.now(), expiresAt: Date.now() + 60000,
+    };
+    const list = async () => ({ instances: [instance], handoffs: [], usage: { periodStartsAt: 0, periodEndsAt: 1, usedSeconds: 0, reservedSeconds: 60, limitSeconds: 3600, activeInstances: 1, concurrentLimit: 2 } });
+    const stop = vi.fn(async () => ({ instance: { ...instance, state: "stopping" as const } }));
+    const { ctx } = context({ list, stop });
+    ctx.peer = testPeer({ account: { uid: 1000, username: "owner", gids: [] }, calls: ["sys.target.delete"] });
+    await expect(handleSysTargetDelete({ targetId: "browser" }, ctx)).rejects.toThrow("permission denied: sys.instance.stop");
+    expect(stop).not.toHaveBeenCalled();
+    ctx.peer = testPeer({ account: { uid: 1000, username: "owner", gids: [] }, calls: ["sys.target.delete", "sys.instance.stop"] });
+    expect(await handleSysTargetDelete({ targetId: "browser" }, ctx)).toMatchObject({ deleted: false, targetId: "browser" });
+    expect(stop).toHaveBeenCalledOnce();
+  });
+
+  it.each(["deny", "cancel", "approve"] as const)("honors %s of a target deletion's nested instance-stop approval", async outcome => {
+    const instance: CloudInstance = {
+      instanceId: "instance", targetId: "browser", startRequestId: "start", ownerUid: 1000,
+      templateId: "browser", templateRevision: "1", kind: "browser", implements: ["shell.exec"], label: "Browser",
+      state: "ready", revision: 1, createdAt: Date.now(), expiresAt: Date.now() + 60000,
+    };
+    const list = async () => ({ instances: [instance], handoffs: [], usage: { periodStartsAt: 0, periodEndsAt: 1, usedSeconds: 0, reservedSeconds: 60, limitSeconds: 3600, activeInstances: 1, concurrentLimit: 2 } });
+    const stop = vi.fn(async () => ({ instance }));
+    const { ctx } = context({ list, stop }, "crew-process");
+    const controller = new AbortController();
+    ctx.requestSignal = controller.signal;
+    ctx.toolOwner = { runId: "run", requestId: "shell" };
+    const approve = vi.spyOn(processTransport, "sendFrameToProcess").mockImplementation(async () => {
+      if (outcome === "cancel") controller.abort(new Error("stop cancelled"));
+      return { type: "res", id: "approval", ok: true, data: { approved: outcome !== "deny" } };
+    });
+    const deleting = handleSysTargetDelete({ targetId: "browser" }, ctx);
+    if (outcome === "approve") await deleting;
+    else await expect(deleting).rejects.toThrow(outcome === "deny" ? "not approved" : "stop cancelled");
+    expect(approve).toHaveBeenCalledWith("trusted-installation", "crew-process", expect.objectContaining({
+      call: "proc.tool.authorize", args: expect.objectContaining({ ...ctx.toolOwner, syscall: "sys.instance.stop", args: { instanceId: "instance" } }),
+    }));
+    expect(stop).toHaveBeenCalledTimes(outcome === "approve" ? 1 : 0);
+  });
+
   it("resolves named shell follow-ups through the owner's current instance inventory", async () => {
     await runWithRealKernelSql(async sql => {
       const instance: CloudInstance = {
