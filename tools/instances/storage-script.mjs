@@ -1,6 +1,6 @@
 import { readFile, writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
-import { collectBrowserStorage } from "./storage-collection.mjs";
+import { collectBrowserStorage, encodeBrowserBinary } from "./storage-collection.mjs";
 
 // Keep the browser-side codec from the pinned Playwright release. This backports
 // https://github.com/microsoft/playwright/pull/42260 without changing node_modules.
@@ -27,6 +27,7 @@ export function storageCodec(source) {
     if (!source.includes(before)) throw new Error("Playwright storage codec changed; review the structured-clone support");
     source = source.replace(before, after);
   };
+  replace('  const binary = Array.from(new Uint8Array(array.buffer, array.byteOffset, array.byteLength)).map((b) => String.fromCharCode(b)).join("");\n  return btoa(binary);', `  return (${encodeBrowserBinary.toString()})(array);`);
   replace('    if ("a" in value) {', `    if ("ab" in value) return base64ToTypedArray(value.ab, Uint8Array).buffer;
     if ("dv" in value) return new DataView(base64ToTypedArray(value.dv, Uint8Array).buffer);
     if ("m" in value || "s" in value) {
