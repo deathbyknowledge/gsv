@@ -116,15 +116,17 @@ function InstrumentReady({ initialPath }: { initialPath: string }) {
   const accounts = useConsoleAccounts();
   const viewer = accounts.data?.find((account) => account.relation === "self");
   const shipNotices = useShipNotices({ viewer, listening: distance === "zen" && zenPid === null });
+  /* unsaved work the instrument guards as a whole: the chat's prompt, and replies typed under Ship's notices even while a helper is shown */
+  const unsaved = zenDirty || shipNotices.dirty;
   const selectingProcess = useRef(false);
-  const controlState = useRef({ zenDirty });
-  controlState.current = { zenDirty };
+  const controlState = useRef({ unsaved });
+  controlState.current = { unsaved };
   useClientControl(["status", "new", "use"], async ({ command, checkpoint, signal }) => {
     if (command.type === "status") return { type: "status", status: {
       gateway: status.state === "connected" ? "connected" : status.state === "connecting" ? "connecting" : "disconnected",
       window: "visible", selectedProcess: zenPid,
     } };
-    if (zenDirty || selectingProcess.current) throw new ClientControlError("busy");
+    if (unsaved || selectingProcess.current) throw new ClientControlError("busy");
     if (status.state !== "connected") throw new ClientControlError("unavailable");
     selectingProcess.current = true;
     try {
@@ -140,7 +142,7 @@ function InstrumentReady({ initialPath }: { initialPath: string }) {
         pid = command.processId;
       } else throw new ClientControlError("unavailable");
       await checkpoint();
-      if (controlState.current.zenDirty) throw new ClientControlError("busy");
+      if (controlState.current.unsaved) throw new ClientControlError("busy");
       setZenPid(pid);
       setDistance("zen");
       history.replaceState(null, "", "/zen");
@@ -324,7 +326,7 @@ function InstrumentReady({ initialPath }: { initialPath: string }) {
         </RetainedView>
         <RetainedView active={distance === "settings"}>
           <Settings openRequest={settingsEntry} onDirtyChange={setSettingsDirty} onInspectProcess={(pid) => { move("fleet", `proc:${pid}`); }} onSignOut={() => {
-            if ((settingsDirty || zenDirty || fleetDirty || memoryDirty || peopleDirty) && !window.confirm("Discard your unsaved work and sign out?")) return;
+            if ((settingsDirty || unsaved || fleetDirty || memoryDirty || peopleDirty) && !window.confirm("Discard your unsaved work and sign out?")) return;
             void session.lock("Signed out");
           }} />
         </RetainedView>
