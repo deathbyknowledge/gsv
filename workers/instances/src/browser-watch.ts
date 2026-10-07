@@ -60,11 +60,21 @@ export class BrowserWatch {
     const generation = ++this.generation;
     this.unsubscribeFrames?.(); this.unsubscribeFrames = undefined;
     this.view.invalidateFrame();
-    const unsubscribe = await this.browser.watchTab(next.id, frame => {
-      if (!this.closed && generation === this.generation) this.view.frame(frame);
-    }, cause => { if (generation === this.generation) this.fail(cause); });
-    if (this.closed || generation !== this.generation) unsubscribe();
-    else this.unsubscribeFrames = unsubscribe;
+    try {
+      const unsubscribe = await this.browser.watchTab(next.id, frame => {
+        if (!this.closed && generation === this.generation) this.view.frame(frame);
+      }, cause => { void this.recoverTab(generation, cause).catch(error => this.fail(error)); });
+      if (this.closed || generation !== this.generation) unsubscribe();
+      else this.unsubscribeFrames = unsubscribe;
+    } catch (cause) {
+      await this.recoverTab(generation, cause);
+    }
+  }
+  private async recoverTab(generation: number, cause: unknown): Promise<void> {
+    if (this.closed || generation !== this.generation) return;
+    await this.browser.listTabs();
+    await this.update();
+    if (!this.closed && generation === this.generation) throw cause;
   }
   private fail(cause: unknown): void { if (!this.closed) this.view.close(this.failure(cause)); }
 }

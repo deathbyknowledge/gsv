@@ -151,11 +151,14 @@ export class CloudBrowser implements BrowserPageBackend, BrowserTabsBackend, Deb
     if (!page || page.isClosed()) throw new Error(`Browser tab ${id} is closed`);
     return page;
   }
-  async acquireDebugger(tabId: number): Promise<CDPSession> {
+  private async agentPage(tabId: number): Promise<Page> {
     const page = await this.page(tabId);
     this.state.activeTabId = tabId;
     this.persist();
-    return this.debuggerFor(page);
+    return page;
+  }
+  async acquireDebugger(tabId: number): Promise<CDPSession> {
+    return this.debuggerFor(await this.agentPage(tabId));
   }
   async releaseDebugger(_tabId: number): Promise<void> { /* The instance owns its CDP sessions until stop. */ }
   readonly sendDebuggerCommand: DebuggerCommand<CDPSession> = async <T extends object | undefined>(target: CDPSession, method: string, params?: Record<string, BrowserValue>): Promise<T> => {
@@ -198,11 +201,11 @@ export class CloudBrowser implements BrowserPageBackend, BrowserTabsBackend, Deb
     if (this.context.pages().length === 1) await this.context.newPage();
     await (await this.page(id)).close(); await this.refreshTabs();
   }
-  async reloadTab(id: number): Promise<void> { await (await this.page(id)).reload({ waitUntil: "domcontentloaded", timeout: 30000 }); }
-  async captureTabPng(id: number): Promise<Uint8Array> { return (await this.page(id)).screenshot({ type: "png", timeout: 10000 }); }
+  async reloadTab(id: number): Promise<void> { await (await this.agentPage(id)).reload({ waitUntil: "domcontentloaded", timeout: 30000 }); }
+  async captureTabPng(id: number): Promise<Uint8Array> { return (await this.agentPage(id)).screenshot({ type: "png", timeout: 10000 }); }
   async executeInTab<T>(id: number, func: (...args: BrowserValue[]) => T, args: BrowserValue[] = []): Promise<T> {
     // SAFETY: The serialized expression invokes this exact backend callback with its typed arguments.
-    return (await this.page(id)).evaluate(`(${func.toString()})(...${JSON.stringify(args)})`) as Promise<T>;
+    return (await this.agentPage(id)).evaluate(`(${func.toString()})(...${JSON.stringify(args)})`) as Promise<T>;
   }
   async viewerUrlFor(path: string, contentType: string, _label: string, fs: TargetFileSystem): Promise<string> {
     return `data:${contentType};base64,${Buffer.from(await fs.read(path)).toString("base64")}`;

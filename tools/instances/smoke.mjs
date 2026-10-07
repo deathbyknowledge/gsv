@@ -7,6 +7,7 @@ import { GSVClient } from "../../packages/gsv/dist/client.js";
 import { bodyFromText, bodyToBytes } from "../../packages/gsv/dist/protocol.js";
 import { checkBrowserCommands } from "./browser-commands-smoke.mjs";
 import { checkFormCommands } from "./form-commands-smoke.mjs";
+import { checkBrowserFollowing } from "./browser-follow-smoke.mjs";
 
 // Intentionally local: this fixture never creates a paid remote browser.
 const origin = new URL(process.env.GSV_BROWSER_SMOKE_ORIGIN ?? "http://localhost:8976");
@@ -93,6 +94,7 @@ try {
   console.log("PASS: independent start requests reuse one browser and reservation; saved logins are automatic");
   const missing = await client.shell.exec({ target: "gsv", input: "instance stop unknown-browser" });
   assert.equal(missing.exitCode, 1, "An unknown browser was reported as successfully stopped");
+  await checkBrowserFollowing(client, first, website);
   const opened = await shell(first, `tabs open --active ${website}/login`);
   const { tab } = JSON.parse(opened.slice(opened.indexOf("\n") + 1));
   const { handoff } = await client.sys.browser.handoff.request({ instanceId: first.instanceId, requestId: crypto.randomUUID(), tabId: tab.id, purpose: "Test persistent sign-in" });

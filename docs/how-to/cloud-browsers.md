@@ -15,8 +15,9 @@ running browser in Fleet to watch Ship work. Zen stays open behind the view.
 The browser window has tabs and an address bar, with the page filling its width.
 Use **expand** for a larger view and **more → stop browser** to stop it;
 **close** leaves the browser running. The text controls match the rest of Instrument.
-The view follows Ship's
-active tab and shows its cursor and clicks. You can click, scroll, paste and type
+The view follows the tab Ship is reading or interacting with, including text
+reads and screenshots, and shows its cursor and clicks. Opening a background tab
+leaves the view in place until Ship uses it. You can click, scroll, paste and type
 directly in that view. Clicking pins the view to that tab; choose **Follow Ship**
 to follow again. Watching leaves Ship running. Your input gets brief priority
 while you are interacting, and browser actions run in sequence so a human click
@@ -206,7 +207,9 @@ Run or the extension's browser.
 After the server is ready, `npm run smoke:browser` creates
 a clean local space and exercises concurrent start reuse, automatic saved logins,
 cookie/local-storage/IndexedDB restoration, passive viewing, cursor reporting,
-human input alongside agent work, input revocation, stop and saved-state deletion. Browser
+human input alongside agent work, input revocation, stop and saved-state deletion.
+Live-view checks cover following page commands, pinned tabs, rapid tab changes,
+and closing the followed tab. Browser
 artifact checks also cover screenshots, binary shell operations and file
 transfers in both directions between the browser and `gsv`, nested web components,
 calendar controls, popovers positioned with CSS anchors, verified form commands,
