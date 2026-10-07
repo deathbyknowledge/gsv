@@ -1,7 +1,7 @@
 import type { SqlMigration } from "../../schema/runner";
 
-export const KERNEL_V065_BROWSER_HANDOFF_LINKS: SqlMigration = {
-  id: 65,
+export const KERNEL_V066_BROWSER_HANDOFF_LINKS: SqlMigration = {
+  id: 66,
   name: "browser_handoff_links",
   statements: [
     `CREATE TABLE browser_handoff_links (

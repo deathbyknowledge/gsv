@@ -77,6 +77,9 @@
   color: var(--text-dim);
   margin-bottom: 8px;
 }
+/* the handle takes the same sender colour as the body; the timestamp below stays faint */
+.zen-moment.is-human > .who { color: var(--text); }
+.zen-moment.is-ship > .who { color: var(--accent); }
 /* when it was sent: kept in the row so nothing moves, visible on hover, focus or under the browse cursor */
 .zen-moment > .who .when {
   margin-left: 12px;
@@ -108,7 +111,7 @@
   font-weight: 500;
   font-size: clamp(18px, 1.7vw, 24px);
   line-height: 1.3;
-  color: var(--accent);
+  color: var(--text);
   white-space: pre-wrap;
 }
 .zen-moment.is-ship .text {
@@ -116,7 +119,7 @@
   font-weight: 400;
   font-size: clamp(20px, 2.3vw, 32px);
   line-height: 1.28;
-  color: var(--text-hi);
+  color: var(--accent);
   text-wrap: pretty;
 }
 .zen-moment.is-ship.is-older .text {

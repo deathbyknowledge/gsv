@@ -853,7 +853,7 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
       const receipt = receipts.get(moment.id);
       return <>
         {moment.role === "human" || moment.text || moment.media?.length || moment.streaming ? <div class="who">
-          {moment.role === "human" ? who : "ship"}
+          {moment.role === "human" ? who : "GSV"}
           {moment.outgoing && moment.outgoing.status !== "failed" ? (
             <span class="zen-send-status" role="status" aria-label={moment.outgoing.status === "uploading" ? "Uploading attachments" : "Sending message"}>
               <Spinner size={14} />

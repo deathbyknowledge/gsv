@@ -7,6 +7,9 @@ import {
   integrationProviderFromName,
   integrationProviderFromUrl,
   integrationProviderSchema,
+  shipPlatformFromAdapter,
+  shipPlatformFromPeer,
+  shipPlatformSchema,
   telemetryRecordSchema,
 } from "../dist/telemetry.js";
 
@@ -21,6 +24,17 @@ const INPUT = {
 };
 
 describe("telemetry contract", () => {
+  it("reports setup recovery failures without accepting raw diagnostics", () => {
+    const event = {
+      stream: "operational", name: "installation.setup.failed",
+      properties: { diagnosticId: "11111111-1111-4111-8111-111111111111", stage: "recovery", outcome: "failed", errorType: "TypeError", durationMs: 12 },
+    };
+    assert.ok(telemetryRecordSchema.safeParse(createTelemetryRecord({ ...INPUT, event })).success);
+    assert.throws(() => createTelemetryRecord({ ...INPUT, component: "accounts", event }));
+    for (const extra of [{ cause: "private" }, { errorType: "private-provider-value" }, { diagnosticId: "private" }]) {
+      assert.throws(() => createTelemetryRecord({ ...INPUT, event: { ...event, properties: { ...event.properties, ...extra } } }));
+    }
+  });
   it("allows correlated metadata timings only from the three lookup owners", () => {
     const event = {
       stream: "operational", name: "inference.metadata.finished",
@@ -296,6 +310,64 @@ describe("integration.connected", () => {
       integrationProviderFromUrl("https://user:secret@mcp.example.com/private/path"),
     ]) {
       assert.equal(integrationProviderSchema.safeParse(value).success, true);
+      assert.equal(value, "other");
+    }
+  });
+});
+
+describe("ship.message.committed", () => {
+  const committed = (properties) => telemetryRecordSchema.safeParse(createTelemetryRecord(
+    {
+      installationId: "inst_telemetry",
+      component: "gateway",
+      event: { stream: "product", name: "ship.message.committed", properties },
+    },
+    1_789_000_000_000,
+    "11111111-1111-4111-8111-111111111111",
+  ));
+
+  it("accepts the platform breakdown and keeps it optional for rolling upgrades", () => {
+    assert.equal(committed({ delivery: "client", hasMedia: false }).success, true);
+    assert.equal(committed({ delivery: "client", hasMedia: false, platform: "phone" }).success, true);
+    assert.equal(committed({ delivery: "adapter", hasMedia: true, platform: "telegram" }).success, true);
+  });
+
+  it("rejects platforms outside the closed allowlist", () => {
+    for (const platform of ["browser", "gsv-cli-123", ""]) {
+      assert.throws(() => committed({ delivery: "client", hasMedia: false, platform }));
+    }
+  });
+
+  it("classifies reported peer platforms into the allowlist", () => {
+    assert.equal(shipPlatformFromPeer("web"), "web");
+    assert.equal(shipPlatformFromPeer(" Phone "), "phone");
+    assert.equal(shipPlatformFromPeer("tablet"), "tablet");
+    assert.equal(shipPlatformFromPeer("desktop"), "desktop");
+    assert.equal(shipPlatformFromPeer("browser"), "web");
+    assert.equal(shipPlatformFromPeer("macos"), "cli");
+    assert.equal(shipPlatformFromPeer("linux"), "cli");
+    assert.equal(shipPlatformFromPeer("windows"), "cli");
+    assert.equal(shipPlatformFromPeer("javascript"), "other");
+    assert.equal(shipPlatformFromPeer("telegram"), "other");
+    assert.equal(shipPlatformFromPeer(""), "other");
+    assert.equal(shipPlatformFromPeer(undefined), "other");
+  });
+
+  it("classifies adapter names into the allowlist", () => {
+    assert.equal(shipPlatformFromAdapter("telegram"), "telegram");
+    assert.equal(shipPlatformFromAdapter("Discord"), "discord");
+    assert.equal(shipPlatformFromAdapter("slack"), "slack");
+    assert.equal(shipPlatformFromAdapter("whatsapp"), "other");
+    assert.equal(shipPlatformFromAdapter("web"), "other");
+    assert.equal(shipPlatformFromAdapter(""), "other");
+  });
+
+  it("only ever returns allowlist members", () => {
+    for (const value of [
+      shipPlatformFromPeer("gsv-cli-11111111-1111-4111-8111-111111111111"),
+      shipPlatformFromAdapter("acme-internal"),
+    ]) {
+      assert.equal(shipPlatformSchema.safeParse(value).success, true);
       assert.equal(value, "other");
     }
   });

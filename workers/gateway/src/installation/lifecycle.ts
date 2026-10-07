@@ -6,9 +6,11 @@ import { parseInstallationId } from "./identity";
 
 export const MANAGED_LIFECYCLE_RECHECK_MS = 60_000;
 
+type SetupRecoveryDetails = { setupRecovery: true; setupUrl?: string };
+
 export type ManagedInstallationWorkGate =
   | { allowed: true }
-  | { allowed: false; code: 423 | 503; message: string };
+  | { allowed: false; code: 423 | 503; message: string; details?: SetupRecoveryDetails };
 
 type ResolvedManagedInstallation = Extract<
   InstallationDirectoryResult,
@@ -17,7 +19,19 @@ type ResolvedManagedInstallation = Extract<
 
 export type ManagedInstallationLifecycleBindings = {
   INSTALLATION_DIRECTORY?: InstallationDirectoryService;
+  GSV_OWNER_SIGNUP_URL?: string;
 };
+
+export function setupRecoveryDetails(
+  bindings: Pick<ManagedInstallationLifecycleBindings, "GSV_OWNER_SIGNUP_URL">,
+  installation: ResolvedManagedInstallation,
+): SetupRecoveryDetails {
+  const details: SetupRecoveryDetails = { setupRecovery: true };
+  if (installation.ownerSetupRecovery && bindings.GSV_OWNER_SIGNUP_URL) {
+    details.setupUrl = bindings.GSV_OWNER_SIGNUP_URL;
+  }
+  return details;
+}
 
 export async function resolveManagedInstallationById(
   bindings: ManagedInstallationLifecycleBindings,
@@ -45,6 +59,9 @@ export async function managedInstallationWorkGate(
     );
     if (result.state === "active") {
       return { allowed: true };
+    }
+    if (result.state === "provisioning") {
+      return { allowed: false, code: 503, message: "Finish setting up your space", details: setupRecoveryDetails(bindings, result) };
     }
     return result.state === "restricted"
       ? {

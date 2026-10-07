@@ -108,8 +108,14 @@ export function ContactConversation({ contact, account, draft, onDraft, onSend, 
       {history.isPending && connected && <LoadingState variant="panel">Loading messages…</LoadingState>}
       {history.error && <p class="error" role="alert">{history.error.message} <button class="fleet-text-action" disabled={!connected} onClick={() => void history.refetch()}>retry</button></p>}
       {history.data && messages.length === 0 && <p class="note">No messages yet.</p>}
-      {messages.map((message) => <article key={message.id} data-message-sequence={message.sequence} class="people-message">
-        <header><span>{message.author.kind === "contact" ? message.author.displayName : message.author.kind === "process" ? "Your Ship" : "you"}{message.author.kind === "contact" && message.social?.provenance.kind === "process" ? " · their Ship" : ""}</span><time dateTime={new Date(message.createdAt).toISOString()}>{new Date(message.createdAt).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}</time></header>
+      {messages.map((message) => {
+        const incoming = message.author.kind === "contact";
+        /* absent on historical and v1 messages, whose submission path is unknown: no badge rather than a guess */
+        const provenance = incoming ? message.social?.provenance.kind ?? null : null;
+        const authorName = message.author.kind === "contact" ? message.author.displayName : message.author.kind === "process" ? "GSV" : "you";
+        const authorKind = incoming ? (provenance === "process" ? "contact-ship" : provenance === "human" ? "contact-human" : "contact") : message.author.kind === "process" ? "your-ship" : "you";
+        return <article key={message.id} data-message-sequence={message.sequence} data-author={authorKind} class="people-message">
+        <header><span class="people-message-author">{authorName}{provenance && <span class="people-message-badge">{provenance === "process" && <span class="people-message-dot" />}{provenance === "process" ? "GSV" : "PERSON"}</span>}</span><time dateTime={new Date(message.createdAt).toISOString()}>{new Date(message.createdAt).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}</time></header>
         {message.social?.replyTo && <blockquote class="people-reply-quote">{messages.find((candidate) => sameReference(candidate.social?.reference, message.social!.replyTo!))?.text.slice(0, 240) || "Reply to an earlier message"}</blockquote>}
         {message.text && <p>{message.text}</p>}
         {message.media?.map((media, index) => <ZenMedia key={index} media={media} processId={message.processId ?? ""} onReady={followLatest} />)}
@@ -117,9 +123,10 @@ export function ContactConversation({ contact, account, draft, onDraft, onSend, 
           {message.social && contact.protocol?.features.includes("messages") && <button class="fleet-text-action people-message-reply" type="button" disabled={disabled} onClick={() => onDraft({ reply: { reference: message.social!.reference, author: message.author.kind === "contact" ? message.author.displayName : "you", preview: message.text.slice(0, 200) } })}>reply</button>}
           {message.author.kind !== "contact" && <MessageDelivery delivery={deliveryBySequence.get(message.sequence)} mayRetry={!!account && canConfigure(account, "contact.delivery.retry")} />}
         </footer>
-      </article>)}
-      {pendingMessages.map((entry) => <article key={entry.intent.idempotencyKey} class="people-message people-pending-message">
-        <header><span>you</span><span role="status">{entry.state === "sending" ? <LoadingState>sending…</LoadingState> : entry.state === "queued" ? "accepted for delivery" : entry.state === "delivered" ? "delivered" : "send unconfirmed"}</span></header>
+      </article>;
+      })}
+      {pendingMessages.map((entry) => <article key={entry.intent.idempotencyKey} data-author="you" class="people-message people-pending-message">
+        <header><span class="people-message-author">you</span><span role="status">{entry.state === "sending" ? <LoadingState>sending…</LoadingState> : entry.state === "queued" ? "accepted for delivery" : entry.state === "delivered" ? "delivered" : "send unconfirmed"}</span></header>
         {entry.reply && <blockquote class="people-reply-quote">{entry.reply.preview}</blockquote>}
         {entry.intent.text && <p>{entry.intent.text}</p>}
         {entry.attachmentCount > 0 && <span class="note">{entry.attachmentCount} attachment{entry.attachmentCount === 1 ? "" : "s"}</span>}

@@ -20,5 +20,6 @@ async function connect(origin: string, onboardingToken?: string | null) {
 
 const app = document.querySelector<HTMLElement>("#app");
 if (!app) throw new Error("Missing #app mount");
-render(<AuthScene layout="welcome"><OwnerWelcomeScreen ready resume={false} initialStep="invite"
+const resume = new URLSearchParams(window.location.search).get("resume") === "1";
+render(<AuthScene layout="welcome"><OwnerWelcomeScreen ready resume={resume} initialStep={resume ? "email" : "invite"}
   load={load} onConnect={connect} /><DesktopAppLink /></AuthScene>, app);

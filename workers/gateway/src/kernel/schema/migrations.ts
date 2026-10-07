@@ -1,5 +1,5 @@
 import { KERNEL_V064_SHIP_REPLY_ROUTES } from "./v064_ship_reply_routes";
-import { KERNEL_V065_BROWSER_HANDOFF_LINKS } from "./v065_browser_handoff_links";
+import { KERNEL_V066_BROWSER_HANDOFF_LINKS } from "./v066_browser_handoff_links";
 import { runSqlMigrations, type SqlMigration } from "../../schema/runner";
 import { KERNEL_V001_INITIAL_SCHEMA } from "./v001_initial";
 import { KERNEL_V002_REMOVE_DEVICE_LIFECYCLE } from "./v002_remove_device_lifecycle";
@@ -113,6 +113,7 @@ import { KERNEL_V061_BOUND_APPROACH_INVITES } from "./v061_bound_approach_invite
 import { KERNEL_V062_PRIVATE_CONVERSATION_VIEWS } from "./v062_private_conversation_views";
 
 import { KERNEL_V063_CONTACT_REPLY_CONTINUATIONS } from "./v063_contact_reply_continuations";
+import { KERNEL_V065_RECORD_RUN_ROUTE_PLATFORM } from "./v065_record_run_route_platform";
 
 export const KERNEL_SCHEMA_COMPONENT = "kernel";
 
@@ -181,7 +182,8 @@ export const KERNEL_MIGRATIONS: readonly SqlMigration[] = [
   KERNEL_V062_PRIVATE_CONVERSATION_VIEWS,
   KERNEL_V063_CONTACT_REPLY_CONTINUATIONS,
   KERNEL_V064_SHIP_REPLY_ROUTES,
-  KERNEL_V065_BROWSER_HANDOFF_LINKS,
+  KERNEL_V065_RECORD_RUN_ROUTE_PLATFORM,
+  KERNEL_V066_BROWSER_HANDOFF_LINKS,
 ];
 
 export function runKernelSqlMigrations(storage: DurableObjectStorage): void {

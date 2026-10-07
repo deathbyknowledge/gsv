@@ -8,6 +8,8 @@ import type {
 } from "@humansandmachines/gsv/protocol";
 import {
   emitTelemetry,
+  shipPlatformFromAdapter,
+  shipPlatformFromPeer,
 } from "@humansandmachines/gsv/telemetry";
 import {
   type ProcessRuntimePatch,
@@ -104,7 +106,14 @@ readonly pendingProcessSignals = new Map<string, Promise<void>>();
     let next: RunRoute | null;
     if (connectionId) {
       if (route?.kind === "connection" && route.connectionId === connectionId) return route;
-      next = this.host.runRoutes.setConnectionRoute({ runId, processId, uid, connectionId, followsShip: true });
+      next = this.host.runRoutes.setConnectionRoute({
+        runId,
+        processId,
+        uid,
+        connectionId,
+        followsShip: true,
+        clientPlatform: this.host.connections.get(connectionId)?.state.clientPlatform?.trim() || undefined,
+      });
     } else {
       next = this.host.adapterDelivery.materializePersonalAdapterFallback(processId, runId, uid);
       if (!next && route) this.host.runRoutes.delete(runId);
@@ -448,6 +457,11 @@ async commitProcessMessage(
                 ? "adapter"
                 : "background",
             hasMedia: Boolean(message.media?.length),
+            platform: route?.kind === "connection"
+              ? shipPlatformFromPeer(route.clientPlatform)
+              : route?.kind === "adapter"
+                ? shipPlatformFromAdapter(route.destination.adapter)
+                : "background",
           },
         },
       });

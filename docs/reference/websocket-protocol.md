@@ -163,6 +163,13 @@ complete. `sys.setup` and `sys.setup.assist` must include the one-time
 token before invoking the ordinary setup implementation and activates routing
 only after setup succeeds.
 
+Provisioning connections and rejected setup tokens return
+`details.setupRecovery: true`. For owner-claimed spaces, `details.setupUrl` points
+to the operator's configured owner verification page. Operator-issued links omit
+that URL and require reissue by the operator. Clients discard rejected setup
+tokens and re-probe `sys.connect` before resuming; an active space then opens ordinary sign-in, while an
+unfinished space receives fresh setup authorization after owner verification.
+
 ---
 
 ## `sys.connect`
@@ -200,7 +207,7 @@ derived from the password or token used to authenticate.
 | `protocol` | `number` | Yes | Must currently be `4`. A mismatch returns error `102` with `requestedProtocol`, `supportedProtocol`, `serverVersion`, and `installer` details so an outdated client can explain the upgrade. The negotiated version is stored with the hibernating socket; a socket restored after a deploy that negotiated another version is closed with code `1008` so the client reconnects and receives the same error. |
 | `peer.id` | `string` | Yes | Stable application, machine, or service identity |
 | `peer.version` | `string` | Yes | Peer version |
-| `peer.platform` | `string` | Yes | Platform string |
+| `peer.platform` | `string` | Yes | Platform string. The Instrument UI reports `web`, `phone`, `tablet`, or `desktop`; Rust clients report their operating system. The Kernel accepts any string, records it on the connection, and only ever exports a closed classification of it. |
 | `peer.implements` | `string[]` | No | Requested reverse syscall implementation patterns. Machine credentials require at least one. |
 | `auth.username` | `string` | No | Required when authenticating |
 | `auth.password` | `string` | No | User-password auth |

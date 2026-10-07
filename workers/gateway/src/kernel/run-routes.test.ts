@@ -34,6 +34,40 @@ describe("RunRouteStore", () => {
     });
   });
 
+  it("retains the reporting client platform on connection routes", async () => {
+    await runWithRealKernelSql((sql) => {
+      vi.spyOn(Date, "now").mockReturnValue(1_000);
+      const store = new RunRouteStore(sql);
+
+      const created = store.setConnectionRoute({
+        runId: "run-platform",
+        processId: "init:1000",
+        uid: 1000,
+        connectionId: "conn-a",
+        clientPlatform: "phone",
+      });
+      expect(created.clientPlatform).toBe("phone");
+
+      const route = store.get("run-platform");
+      expect(route?.kind).toBe("connection");
+      if (route?.kind === "connection") {
+        expect(route.clientPlatform).toBe("phone");
+      }
+
+      store.setConnectionRoute({
+        runId: "run-anonymous",
+        processId: "init:1000",
+        uid: 1000,
+        connectionId: "conn-b",
+      });
+      const anonymous = store.get("run-anonymous");
+      expect(anonymous?.kind).toBe("connection");
+      if (anonymous?.kind === "connection") {
+        expect(anonymous.clientPlatform).toBeUndefined();
+      }
+    });
+  });
+
   it("stores and resolves adapter routes", async () => {
     await runWithRealKernelSql((sql) => {
       vi.spyOn(Date, "now").mockReturnValue(2_000);

@@ -94,7 +94,7 @@ describe("gateway runtime integration", () => {
       ok: false,
       error: {
         code: 503,
-        message: "Managed installation is unavailable",
+        message: "Finish setting up your space",
       },
     });
 

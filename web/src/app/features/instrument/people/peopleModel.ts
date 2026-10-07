@@ -47,7 +47,7 @@ export function inboxPreview(contact: ContactSummary, entry?: ConversationInboxE
   if (contact.state === "revoked") return "Connection ended · history available";
   if (!entry?.preview) return contact.preferences?.muted ? "Muted" : new URL(contact.remoteOrigin).host;
   const preview = entry.preview;
-  const author = preview.author.kind === "user" ? "You: " : preview.author.kind === "process" ? "Your Ship: "
-    : preview.provenance?.kind === "process" ? "Their Ship: " : "";
+  const author = preview.author.kind === "user" ? "You: " : preview.author.kind === "process" ? "GSV: "
+    : preview.provenance?.kind === "process" ? "Their GSV: " : "";
   return `${author}${preview.text || `${preview.attachmentCount} attachment${preview.attachmentCount === 1 ? "" : "s"}`}`;
 }
