@@ -125,7 +125,7 @@ export function ContactConversation({ contact, account, draft, onDraft, onSend, 
       </article>;
       })}
       {pendingMessages.map((entry) => <article key={entry.intent.idempotencyKey} data-author="you" class="people-message people-pending-message">
-        <header><span>you</span><span role="status">{entry.state === "sending" ? <LoadingState>sending…</LoadingState> : entry.state === "queued" ? "accepted for delivery" : entry.state === "delivered" ? "delivered" : "send unconfirmed"}</span></header>
+        <header><span class="people-message-author">you</span><span role="status">{entry.state === "sending" ? <LoadingState>sending…</LoadingState> : entry.state === "queued" ? "accepted for delivery" : entry.state === "delivered" ? "delivered" : "send unconfirmed"}</span></header>
         {entry.reply && <blockquote class="people-reply-quote">{entry.reply.preview}</blockquote>}
         {entry.intent.text && <p>{entry.intent.text}</p>}
         {entry.attachmentCount > 0 && <span class="note">{entry.attachmentCount} attachment{entry.attachmentCount === 1 ? "" : "s"}</span>}
