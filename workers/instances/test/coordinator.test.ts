@@ -599,6 +599,25 @@ describe("browser save ordering", () => {
 });
 
 describe("browser health", () => {
+  it.each(["heartbeat", "lookup"])("rechecks expiry during failed provider recovery at %s", stage => fixture(async (object, store, instanceId, _installationId, browser) => {
+    const entered = deferred(), released = deferred();
+    const pause = async () => { entered.resolve(); await released.promise; };
+    browser.heartbeat = async () => {
+      if (stage === "heartbeat") await pause();
+      throw new Error("Temporary provider outage");
+    };
+    const exists = vi.spyOn(BrowserProvider.prototype, "exists").mockImplementation(async () => {
+      if (stage === "lookup") await pause();
+      return true;
+    });
+    const maintenance = object.alarm();
+    await entered.promise;
+    store.update({ ...instance(store.byId(instanceId)), expiresAt: Date.now() - 1 });
+    released.resolve(); await maintenance;
+    expect(instance(store.byId(instanceId))).toMatchObject({ state: "stopping", reason: "Browser lifetime expired" });
+    expect(exists).toHaveBeenCalledTimes(stage === "heartbeat" ? 0 : 1);
+  }));
+
   it.each(["allocation", "restore", "attachment"])("never publishes readiness or saves an instance that expired during %s", stage => fixture(async (object, store, instanceId, _installationId, browser) => {
     store.update({ ...instance(store.byId(instanceId)), state: "starting", readyAt: undefined });
     store.sql.exec("UPDATE instances SET session_id = NULL WHERE id = ?", instanceId);

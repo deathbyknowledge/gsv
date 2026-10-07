@@ -632,7 +632,7 @@ export class InstanceCoordinator extends DurableObject<Environment> implements I
       }
       if (value.state === "stopping") await this.cleanup(row);
     } catch (error) {
-      const value = instance(this.#store.byId(id));
+      const value = instance(this.expireIfDue(id));
       this.#store.update({ ...value, diagnosticRef: this.#store.diagnostic(id, error), revision: value.revision + 1 });
       if (value.state === "ready") {
         this.#store.sql.exec("UPDATE instances SET provider_failed_at = COALESCE(provider_failed_at, ?) WHERE id = ?", Date.now(), id);
@@ -640,6 +640,7 @@ export class InstanceCoordinator extends DurableObject<Environment> implements I
         let exists = true;
         try { exists = Boolean(failed.session_id) && await within(this.#provider.exists(failed.session_id!), 5000, "Browser recovery lookup"); }
         catch (lookupError) { this.#store.diagnostic(id, lookupError); }
+        if (instance(this.expireIfDue(id)).state !== "ready") return;
         if (exists && Date.now() - failed.provider_failed_at! < PROVIDER_RECOVERY_MS) return;
       }
       this.fenceStop(instance(this.#store.byId(id)), "Browser provider failed");
