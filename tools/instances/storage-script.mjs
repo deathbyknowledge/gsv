@@ -53,6 +53,7 @@ export function storageCodec(source) {
     throw new Error("Unsupported IndexedDB value type: " + Object.prototype.toString.call(value));
   if (Array.isArray(value)) {`);
   replace('    let trivial = true;', '    let trivial = true;\n    const seen = new Set();');
+  replace('typeof v === "number" ||', '(typeof v === "number" && Number.isFinite(v) && !Object.is(v, -0)) ||');
   replace('      if (!isTrivial)', `      if (v && typeof v === "object") {
         if (seen.has(v)) trivial = false;
         seen.add(v);

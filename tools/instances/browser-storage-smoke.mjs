@@ -21,7 +21,8 @@ export async function seedBrowserStorage(shell, client, instance) {
     const cycle = { label: "cycle" }; cycle.self = cycle;
     const values = { big: "x".repeat(8 * 1024 * 1024), bytes: new Uint8Array([0, 4, 255]), buffer: new Uint8Array([7, 8]).buffer,
       view: new DataView(new Uint8Array([9, 10]).buffer), map: new Map([["answer", 42]]), set: new Set(["one", "two"]),
-      date: new Date("2026-01-01T00:00:00Z"), bigint: 12345678901234567890n, cycle, empty: "", zero: 0, no: false, nothing: null };
+      date: new Date("2026-01-01T00:00:00Z"), bigint: 12345678901234567890n, cycle, empty: "", zero: 0, no: false, nothing: null,
+      numbers: { positive: Infinity, negative: -Infinity, nan: NaN, zero: -0 }, infinity: Infinity };
     for (const [key, value] of Object.entries(values)) store.put(value, key);
     await new Promise((resolve, reject) => { tx.oncomplete = resolve; tx.onabort = () => reject(tx.error); }); db.close(); return "seeded";
   })()`), "seeded");
@@ -195,11 +196,12 @@ export async function checkRestoredBrowserStorage(shell, client, instance) {
     const db = await new Promise((resolve, reject) => { open.onsuccess = () => resolve(open.result); open.onerror = () => reject(open.error); });
     const tx = db.transaction("records"), store = tx.objectStore("records");
     const read = key => new Promise((resolve, reject) => { const request = store.get(key); request.onsuccess = () => resolve(request.result); request.onerror = () => reject(request.error); });
-    const [big, bytes, buffer, view, map, set, date, bigint, cycle, empty, zero, no, nothing] = await Promise.all(["big", "bytes", "buffer", "view", "map", "set", "date", "bigint", "cycle", "empty", "zero", "no", "nothing"].map(read));
+    const [big, bytes, buffer, view, map, set, date, bigint, cycle, empty, zero, no, nothing, numbers, infinity] = await Promise.all(["big", "bytes", "buffer", "view", "map", "set", "date", "bigint", "cycle", "empty", "zero", "no", "nothing", "numbers", "infinity"].map(read));
     db.close();
-    return { big: big.length, bytes: [...bytes], buffer: [...new Uint8Array(buffer)], view: view.getUint8(1), map: map.get("answer"), set: [...set], date: date.toISOString(), bigint: String(bigint), cycle: cycle.self === cycle, empty, zero, no, nothing };
+    return { big: big.length, bytes: [...bytes], buffer: [...new Uint8Array(buffer)], view: view.getUint8(1), map: map.get("answer"), set: [...set], date: date.toISOString(), bigint: String(bigint), cycle: cycle.self === cycle, empty, zero, no, nothing,
+      specialNumbers: infinity === Infinity && numbers.positive === Infinity && numbers.negative === -Infinity && Number.isNaN(numbers.nan) && Object.is(numbers.zero, -0) };
   })()`);
-  assert.deepEqual(result, { big: 8 * 1024 * 1024, bytes: [0, 4, 255], buffer: [7, 8], view: 10, map: 42, set: ["one", "two"], date: "2026-01-01T00:00:00.000Z", bigint: "12345678901234567890", cycle: true, empty: "", zero: 0, no: false, nothing: null });
+  assert.deepEqual(result, { big: 8 * 1024 * 1024, bytes: [0, 4, 255], buffer: [7, 8], view: 10, map: 42, set: ["one", "two"], date: "2026-01-01T00:00:00.000Z", bigint: "12345678901234567890", cycle: true, empty: "", zero: 0, no: false, nothing: null, specialNumbers: true });
   const root = "/var/lib/gsv/browser/browser-tester";
   const metadata = JSON.parse(await shell({ targetId: "gsv" }, `cat ${root}/status.json`));
   assert.equal(metadata.saveStatus, "saved");
@@ -209,7 +211,7 @@ export async function checkRestoredBrowserStorage(shell, client, instance) {
   const saved = await client.request("fs.transfer.send", { target: "gsv", path: `${root}/state.enc` });
   assert.equal(saved.data.ok, true);
   await saved.body.stream.cancel();
-  console.log("PASS: restored binary values, maps, sets, dates, bigints, cycles, false/zero/null, and the GSV filesystem view");
+  console.log("PASS: restored binary values, maps, sets, dates, bigints, cycles, special numbers, false/zero/null, and the GSV filesystem view");
 }
 
 export async function checkForgettingBrowserStorage(shell, client, instance, start, wait, website) {
