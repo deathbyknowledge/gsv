@@ -90,4 +90,47 @@ describe("network capture teardown", () => {
     expect(append.mock.calls.some(([, content]) => new TextDecoder().decode(content).includes('"type":"body"'))).toBe(false);
     expect(networkStatus()).toEqual([]);
   });
+
+  it("does not persist capture status after Pause interrupts directory creation", async () => {
+    let finishMkdir!: () => void;
+    const pendingMkdir = new Promise<void>((resolve) => { finishMkdir = resolve; });
+    let mkdirStarted!: () => void;
+    const started = new Promise<void>((resolve) => { mkdirStarted = resolve; });
+    const detach = vi.fn(async () => {});
+    const sendCommand = vi.fn(async () => ({}));
+    vi.stubGlobal("chrome", {
+      debugger: {
+        attach: vi.fn(async () => {}),
+        detach,
+        sendCommand,
+        onEvent: { addListener: vi.fn() },
+        onDetach: { addListener: vi.fn() },
+      },
+      tabs: { onRemoved: { addListener: vi.fn(), removeListener: vi.fn() } },
+    });
+    const write = vi.fn();
+    const fs = {
+      mkdir: vi.fn(() => { mkdirStarted(); return pendingMkdir; }),
+      write,
+    } as unknown as TargetFileSystem;
+    const controller = new AbortController();
+
+    const capture = startNetworkCapture({
+      tabId: 42,
+      bodies: false,
+      persist: true,
+      bodyLimit: 1_000,
+      fs,
+      abortSignal: controller.signal,
+    });
+    await started;
+    controller.abort(new Error("Browser access paused"));
+    finishMkdir();
+
+    await expect(capture).rejects.toThrow("Browser access paused");
+    expect(write).not.toHaveBeenCalled();
+    expect(sendCommand).not.toHaveBeenCalled();
+    expect(detach).toHaveBeenCalledWith({ tabId: 42 });
+    expect(networkStatus()).toEqual([]);
+  });
 });

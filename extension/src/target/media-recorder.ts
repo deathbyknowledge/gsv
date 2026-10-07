@@ -49,7 +49,9 @@ export type StartMediaRecordingOptions = {
 export async function startMediaRecording(options: StartMediaRecordingOptions): Promise<MediaRecordingStatus> {
   throwIfAborted(options.abortSignal);
   const tabId = options.tabId ?? await activeTabId();
+  throwIfAborted(options.abortSignal);
   const tab = await getTab(tabId);
+  throwIfAborted(options.abortSignal);
   if (!tab) {
     throw new Error(`tab not found: ${tabId}`);
   }
@@ -65,6 +67,7 @@ export async function startMediaRecording(options: StartMediaRecordingOptions): 
     now: Date.parse(startedAt),
   });
   await assertLocalWritableFile(options.fs, output.localPath);
+  throwIfAborted(options.abortSignal);
 
   await ensureOffscreenDocument();
   throwIfAborted(options.abortSignal);

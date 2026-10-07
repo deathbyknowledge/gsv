@@ -1,5 +1,6 @@
 import { hasHelpFlag, parseInteger, requiredInteger } from "./args";
-import type { BrowserCommand, CommandResult } from "../types";
+import { throwIfAborted } from "../abort";
+import type { BrowserCommand, CommandContext, CommandResult } from "../types";
 import { commandError, commandJson, commandOk } from "../types";
 
 type ParseResult<T> =
@@ -46,14 +47,14 @@ const DOWNLOADS_OPEN_USAGE = "Usage: downloads open <downloadId>";
 export const downloadsCommand: BrowserCommand = {
   name: "downloads",
   summary: "Start and manage browser downloads.",
-  async run(args: string[]): Promise<CommandResult> {
-    return await runDownloadsCommand(args);
+  async run(args: string[], ctx: CommandContext): Promise<CommandResult> {
+    return await runDownloadsCommand(args, ctx);
   },
 };
 
 export default downloadsCommand;
 
-async function runDownloadsCommand(args: string[]): Promise<CommandResult> {
+async function runDownloadsCommand(args: string[], ctx: CommandContext): Promise<CommandResult> {
   const subcommand = args[0] ?? "list";
   if (hasHelpFlag(args)) {
     return commandOk(`${downloadsUsageFor(subcommand)}\n`);
@@ -66,7 +67,7 @@ async function runDownloadsCommand(args: string[]): Promise<CommandResult> {
       case "get":
         return await getDownload(args.slice(1));
       case "start":
-        return await startDownload(args.slice(1));
+        return await startDownload(args.slice(1), ctx);
       case "pause":
         return await updateDownload(args.slice(1), DOWNLOADS_PAUSE_USAGE, "paused", (id) => requireDownloadsApi().pause(id));
       case "resume":
@@ -127,14 +128,17 @@ async function getDownload(args: string[]): Promise<CommandResult> {
   return commandJson(formatDownload(download));
 }
 
-async function startDownload(args: string[]): Promise<CommandResult> {
+async function startDownload(args: string[], ctx: CommandContext): Promise<CommandResult> {
   const parsed = parseStartArgs(args);
   if (!parsed.ok) {
     return commandError(parsed.error);
   }
 
+  throwIfAborted(ctx.abortSignal);
   const downloadId = await requireDownloadsApi().download(parsed.value);
+  throwIfAborted(ctx.abortSignal);
   const downloads = await requireDownloadsApi().search({ id: downloadId });
+  throwIfAborted(ctx.abortSignal);
   return commandJson({
     downloadId,
     download: downloads[0] ? formatDownload(downloads[0]) : null,

@@ -3,7 +3,7 @@ import {
   listWindows,
   type WindowSummary,
 } from "../../shared/chrome";
-import type { BrowserCommand, CommandResult } from "../types";
+import type { BrowserCommand, CommandContext, CommandResult } from "../types";
 import { commandError, commandJson, commandOk } from "../types";
 import { hasHelpFlag, requiredInteger } from "./args";
 
@@ -20,15 +20,15 @@ export const windowCommands: BrowserCommand[] = [
   {
     name: "windows",
     summary: "List and focus browser windows.",
-    run(args) {
-      return runWindowsCommand(args);
+    run(args, ctx) {
+      return runWindowsCommand(args, ctx);
     },
   },
 ];
 
 export default windowCommands;
 
-async function runWindowsCommand(args: string[]): Promise<CommandResult> {
+async function runWindowsCommand(args: string[], ctx: CommandContext): Promise<CommandResult> {
   const subcommand = args[0] ?? "list";
   if (hasHelpFlag(args)) {
     return commandOk(`${windowsUsageFor(subcommand)}\n`);
@@ -37,9 +37,9 @@ async function runWindowsCommand(args: string[]): Promise<CommandResult> {
   try {
     switch (subcommand) {
       case "list":
-        return await runList(args);
+        return await runList(args, ctx);
       case "focus":
-        return await runFocus(args);
+        return await runFocus(args, ctx);
       default:
         return commandError(`Unknown windows command: ${subcommand}\n${WINDOWS_USAGE}`);
     }
@@ -48,16 +48,17 @@ async function runWindowsCommand(args: string[]): Promise<CommandResult> {
   }
 }
 
-async function runList(args: string[]): Promise<CommandResult> {
+async function runList(args: string[], ctx: CommandContext): Promise<CommandResult> {
   if (args.length > 1) {
     return commandError(WINDOWS_LIST_USAGE);
   }
 
   const windows = await listWindows();
+  ctx.abortSignal?.throwIfAborted();
   return commandJson({ windows, count: windows.length });
 }
 
-async function runFocus(args: string[]): Promise<CommandResult> {
+async function runFocus(args: string[], ctx: CommandContext): Promise<CommandResult> {
   const parsed = parseWindowId(args, WINDOWS_FOCUS_USAGE);
   if (!parsed.ok) {
     return commandError(parsed.error);
@@ -66,7 +67,7 @@ async function runFocus(args: string[]): Promise<CommandResult> {
     return commandError(WINDOWS_FOCUS_USAGE);
   }
 
-  const window = await focusWindow(parsed.windowId);
+  const window = await focusWindow(parsed.windowId, ctx.abortSignal);
   return commandOk(`focused window ${window.id}\n${compactWindowJson(window)}\n`);
 }
 

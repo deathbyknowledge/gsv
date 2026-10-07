@@ -1,4 +1,5 @@
 import { activeTab, getTab } from "../../shared/chrome";
+import { throwIfAborted } from "../abort";
 import type { BrowserCommand, CommandContext, CommandResult } from "../types";
 import { commandError, commandJson, commandOk } from "../types";
 import { hasHelpFlag, parseInteger, splitOption } from "./args";
@@ -188,9 +189,11 @@ async function runExport(args: string[], ctx: CommandContext): Promise<CommandRe
   }
 
   const har = await networkHar(parsed.value.tabId ?? undefined);
+  throwIfAborted(ctx.abortSignal);
   if (parsed.value.path) {
     const path = ctx.fs.resolvePath(ctx.cwd, parsed.value.path);
     await ctx.fs.write(path, new TextEncoder().encode(`${JSON.stringify(har, null, 2)}\n`));
+    throwIfAborted(ctx.abortSignal);
     return commandJson({ path, format: "har" });
   }
   return commandJson(har);

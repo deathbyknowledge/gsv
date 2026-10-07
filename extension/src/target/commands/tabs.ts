@@ -67,19 +67,19 @@ async function runTabsCommand(args: string[], ctx: CommandContext): Promise<Comm
   try {
     switch (subcommand) {
       case "list":
-        return await runList(args);
+        return await runList(args, ctx);
       case "active":
-        return await runActive(args);
+        return await runActive(args, ctx);
       case "get":
-        return await runGet(args);
+        return await runGet(args, ctx);
       case "open":
         return await runOpen(args, ctx);
       case "focus":
-        return await runFocus(args);
+        return await runFocus(args, ctx);
       case "close":
-        return await runClose(args);
+        return await runClose(args, ctx);
       case "reload":
-        return await runReload(args);
+        return await runReload(args, ctx);
       default:
         return commandError(`Unknown tabs command: ${subcommand}\n${TABS_USAGE}`);
     }
@@ -88,24 +88,27 @@ async function runTabsCommand(args: string[], ctx: CommandContext): Promise<Comm
   }
 }
 
-async function runList(args: string[]): Promise<CommandResult> {
+async function runList(args: string[], ctx: CommandContext): Promise<CommandResult> {
   if (args.length > 1) {
     return commandError(TABS_LIST_USAGE);
   }
 
   const tabs = await listTabs();
+  throwIfAborted(ctx.abortSignal);
   return commandJson({ tabs, count: tabs.length });
 }
 
-async function runActive(args: string[]): Promise<CommandResult> {
+async function runActive(args: string[], ctx: CommandContext): Promise<CommandResult> {
   if (args.length !== 1) {
     return commandError(TABS_ACTIVE_USAGE);
   }
 
-  return commandJson({ tab: await activeTab() });
+  const tab = await activeTab();
+  throwIfAborted(ctx.abortSignal);
+  return commandJson({ tab });
 }
 
-async function runGet(args: string[]): Promise<CommandResult> {
+async function runGet(args: string[], ctx: CommandContext): Promise<CommandResult> {
   const parsed = parseTabId(args, TABS_GET_USAGE);
   if (!parsed.ok) {
     return commandError(parsed.error);
@@ -115,6 +118,7 @@ async function runGet(args: string[]): Promise<CommandResult> {
   }
 
   const tab = await getTab(parsed.tabId);
+  throwIfAborted(ctx.abortSignal);
   if (!tab) {
     return commandError(`tab not found: ${parsed.tabId}`);
   }
@@ -129,15 +133,16 @@ async function runOpen(args: string[], ctx: CommandContext): Promise<CommandResu
 
   const { input, contentType, active } = parsed.value;
   if (isBrowserUrl(input)) {
-    const tab = await createTab(input, active);
+    const tab = await createTab(input, active, ctx.abortSignal);
     return commandOk(`opened tab ${tab.id}\n${compactOpenJson({ tab })}\n`);
   }
 
   const renderable = input === "-"
     ? await renderableFromStdin(ctx, contentType)
     : await renderableFromPath(input, ctx, contentType);
+  throwIfAborted(ctx.abortSignal);
   const viewerUrl = viewerUrlFor(renderable.path, renderable.contentType, renderable.label);
-  const tab = await createTab(viewerUrl, active);
+  const tab = await createTab(viewerUrl, active, ctx.abortSignal);
   return commandOk(`opened tab ${tab.id}\n${compactOpenJson({
     tab,
     path: renderable.path,
@@ -146,7 +151,7 @@ async function runOpen(args: string[], ctx: CommandContext): Promise<CommandResu
   })}\n`);
 }
 
-async function runFocus(args: string[]): Promise<CommandResult> {
+async function runFocus(args: string[], ctx: CommandContext): Promise<CommandResult> {
   const parsed = parseTabId(args, TABS_FOCUS_USAGE);
   if (!parsed.ok) {
     return commandError(parsed.error);
@@ -155,11 +160,11 @@ async function runFocus(args: string[]): Promise<CommandResult> {
     return commandError(TABS_FOCUS_USAGE);
   }
 
-  const tab = await focusTab(parsed.tabId);
+  const tab = await focusTab(parsed.tabId, ctx.abortSignal);
   return commandOk(`focused tab ${tab.id}\n${compactOpenJson({ tab })}\n`);
 }
 
-async function runClose(args: string[]): Promise<CommandResult> {
+async function runClose(args: string[], ctx: CommandContext): Promise<CommandResult> {
   const parsed = parseTabId(args, TABS_CLOSE_USAGE);
   if (!parsed.ok) {
     return commandError(parsed.error);
@@ -168,11 +173,11 @@ async function runClose(args: string[]): Promise<CommandResult> {
     return commandError(TABS_CLOSE_USAGE);
   }
 
-  await closeTab(parsed.tabId);
+  await closeTab(parsed.tabId, ctx.abortSignal);
   return commandOk(`closed tab ${parsed.tabId}\n`);
 }
 
-async function runReload(args: string[]): Promise<CommandResult> {
+async function runReload(args: string[], ctx: CommandContext): Promise<CommandResult> {
   const parsed = parseTabId(args, TABS_RELOAD_USAGE);
   if (!parsed.ok) {
     return commandError(parsed.error);
@@ -181,7 +186,7 @@ async function runReload(args: string[]): Promise<CommandResult> {
     return commandError(TABS_RELOAD_USAGE);
   }
 
-  await reloadTab(parsed.tabId);
+  await reloadTab(parsed.tabId, ctx.abortSignal);
   return commandOk(`reloaded tab ${parsed.tabId}\n`);
 }
 
@@ -248,7 +253,9 @@ async function renderableFromStdin(ctx: CommandContext, contentType?: string): P
   const resolvedType = contentType ?? "text/plain; charset=utf-8";
   const path = tempRenderPath("stdin", extensionForContentType(resolvedType));
   await ctx.fs.mkdir("/tmp/render");
+  throwIfAborted(ctx.abortSignal);
   await ctx.fs.write(path, new TextEncoder().encode(ctx.stdin), resolvedType);
+  throwIfAborted(ctx.abortSignal);
   return {
     path,
     source: "stdin",
@@ -277,7 +284,11 @@ async function renderableFromPath(input: string, ctx: CommandContext, contentTyp
 
   const destination = tempRenderPath(basename(path), extensionForPathOrType(path, resolvedType));
   await ctx.fs.mkdir("/tmp/render");
-  await ctx.fs.write(destination, await ctx.fs.read(path), resolvedType);
+  throwIfAborted(ctx.abortSignal);
+  const contents = await ctx.fs.read(path);
+  throwIfAborted(ctx.abortSignal);
+  await ctx.fs.write(destination, contents, resolvedType);
+  throwIfAborted(ctx.abortSignal);
   return localRenderable(destination, path, path, resolvedType);
 }
 
@@ -306,7 +317,11 @@ async function renderableFromTargetEndpoint(
 
     const destination = tempRenderPath(basename(path), extensionForPathOrType(path, resolvedType));
     await ctx.fs.mkdir("/tmp/render");
-    await ctx.fs.write(destination, await ctx.fs.read(path), resolvedType);
+    throwIfAborted(ctx.abortSignal);
+    const contents = await ctx.fs.read(path);
+    throwIfAborted(ctx.abortSignal);
+    await ctx.fs.write(destination, contents, resolvedType);
+    throwIfAborted(ctx.abortSignal);
     return localRenderable(destination, sourceText, sourceText, resolvedType);
   }
   if (!ctx.currentTargetId) {
@@ -319,6 +334,7 @@ async function renderableFromTargetEndpoint(
   const inferredType = contentType ?? inferContentType(endpoint.path);
   const destination = tempRenderPath(basename(endpoint.path), extensionForPathOrType(endpoint.path, inferredType));
   await ctx.fs.mkdir("/tmp/render");
+  throwIfAborted(ctx.abortSignal);
   let copy: unknown;
   try {
     copy = await ctx.copyTargetFile(endpoint, {
@@ -348,6 +364,7 @@ async function renderableFromTargetEndpoint(
 
 async function requireFile(ctx: CommandContext, path: string): Promise<FileStat> {
   const stat = await ctx.fs.stat(path);
+  throwIfAborted(ctx.abortSignal);
   if (stat.isDirectory) {
     throw new Error(`Is a directory: ${path}`);
   }

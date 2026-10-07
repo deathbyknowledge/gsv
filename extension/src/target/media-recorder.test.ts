@@ -15,6 +15,34 @@ afterEach(() => {
 });
 
 describe("tab media recording ownership", () => {
+  it("does not prepare a recording after Pause interrupts tab lookup", async () => {
+    const pendingTab = deferred<chrome.tabs.Tab>();
+    const hasDocument = vi.fn(async () => true);
+    vi.stubGlobal("chrome", {
+      tabs: { get: vi.fn(() => pendingTab.promise) },
+      offscreen: { hasDocument },
+    });
+    const controller = new AbortController();
+    const stat = vi.fn();
+    const start = startMediaRecording({
+      tabId: 42,
+      cwd: "/",
+      fs: { stat } as unknown as TargetFileSystem,
+      mode: "video",
+      maxDurationMs: 10_000,
+      maxBytes: 1_000_000,
+      monitor: false,
+      abortSignal: controller.signal,
+    });
+
+    controller.abort(new Error("Browser access paused"));
+    pendingTab.resolve({ id: 42, windowId: 1, index: 0, active: true } as chrome.tabs.Tab);
+
+    await expect(start).rejects.toThrow("Browser access paused");
+    expect(stat).not.toHaveBeenCalled();
+    expect(hasDocument).not.toHaveBeenCalled();
+  });
+
   it("stops only the recording created by an aborted start", async () => {
     const startResponse = deferred<OffscreenMediaResponse<MediaRecordingStatus>>();
     const active = new Set(["previous-recording"]);
