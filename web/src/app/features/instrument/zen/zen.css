@@ -70,22 +70,21 @@
 .zen-moment.is-older { opacity: 0.55; }
 .zen-moment.is-work { padding-block: 1vh; }
 .zen-moment.is-approval { padding-block: 0; }
-/* a contact wrote while the person was here: one line per contact in the sender colour, with what to do about it */
-.zen-moment.is-contact-notice { padding-block: 1vh; display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 18px; font-family: var(--gsv-font-mono); font-size: 13px; color: var(--sender-external); }
-.zen-moment.is-contact-notice strong { font-weight: 500; }
-.zen-moment.is-contact-notice .sender-badge { margin-left: 8px; }
-.zen-moment.is-contact-notice .keys { display: inline-flex; gap: 14px; }
+/* a contact wrote while the person was here: a moment in the sender colour, labelled like any sender, with what to do about it */
+.zen-moment.is-contact-notice > .who, .zen-moment.is-contact-notice .text { color: var(--sender-external); }
+.zen-moment.is-contact-notice > .who { display: flex; align-items: center; gap: 10px; }
+.zen-moment.is-contact-notice .text { font-family: var(--gsv-font-prose); font-weight: 500; font-size: clamp(18px, 1.7vw, 24px); line-height: 1.3; }
+.zen-moment.is-contact-notice .replied { margin-left: 10px; font: 400 11px/1 var(--gsv-font-mono); letter-spacing: 0.12em; color: var(--text-dim); vertical-align: middle; }
+.zen-moment.is-contact-notice .keys { display: flex; gap: 14px; margin-top: 10px; font: 400 13px/1 var(--gsv-font-mono); }
 .zen-moment.is-contact-notice .fleet-text-action { color: var(--sender-external); }
-/* the message itself, boxed like an approval but in the sender colour, with a reply beneath */
-.zen-contact-dialog { font-family: var(--gsv-font-mono); font-size: 13px; color: var(--text); }
-.zen-contact-dialog .q { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; color: var(--sender-external); letter-spacing: 0.14em; text-transform: uppercase; font-size: 11px; }
-.zen-contact-dialog .q .more { color: var(--text-dim); letter-spacing: 0; text-transform: none; }
-.zen-contact-dialog .ask { margin: 0; font-family: var(--gsv-font-prose); font-size: clamp(17px, 1.6vw, 22px); line-height: 1.3; color: var(--sender-external); text-wrap: pretty; white-space: pre-wrap; overflow-wrap: anywhere; max-width: var(--measure-prose); }
-.zen-contact-dialog .reply { display: block; width: 100%; box-sizing: border-box; margin-top: 16px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 0; background: var(--panel-2); color: var(--text); font: 16px/1.55 var(--gsv-font-prose); resize: vertical; }
-.zen-contact-dialog .reply:focus-visible { outline: 1px solid var(--accent); outline-offset: 2px; }
-.zen-contact-dialog .keys { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-top: 12px; color: var(--text-dim); }
-.zen-contact-dialog .keys .ibtn { padding: 6px 12px; }
-.zen-contact-dialog .error { color: var(--error); }
+/* the message and a reply box, inline under the line */
+.zen-moment.is-contact-notice .reply-box { margin-top: 12px; }
+.zen-moment.is-contact-notice .ask { margin: 0 0 10px; font: 17px/1.45 var(--gsv-font-prose); color: var(--sender-external); white-space: pre-wrap; overflow-wrap: anywhere; max-width: var(--measure-prose); }
+.zen-moment.is-contact-notice .reply { display: block; width: 100%; box-sizing: border-box; padding: 10px 12px; border: 1px solid var(--border); border-radius: 0; background: var(--panel-2); color: var(--text); font: 16px/1.55 var(--gsv-font-prose); resize: vertical; }
+.zen-moment.is-contact-notice .reply:focus-visible { outline: 1px solid var(--accent); outline-offset: 2px; }
+.zen-moment.is-contact-notice .send { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-top: 10px; font: 400 13px/1 var(--gsv-font-mono); color: var(--text-dim); }
+.zen-moment.is-contact-notice .send .ibtn { padding: 6px 12px; }
+.zen-moment.is-contact-notice .error { color: var(--error); }
 .zen-moment > .who {
   font-size: 11px;
   letter-spacing: 0.2em;

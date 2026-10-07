@@ -34,12 +34,14 @@ and approval rules. Turning it on waits for the next message; it does not start 
 on the existing conversation. Turn it off to stop ongoing handling. Messages
 distinguish the person from their Ship.
 
-A contact message that arrives while you are in the Ship chat adds a line under
-the transcript: **new message from** the person, with a **PERSON** or **GSV** badge
-for who wrote it, and a count when several are waiting. **show** opens the message
-with a reply box; sending threads your reply to that message and marks the
-conversation read. **go to chat** opens the conversation in People. The line is
-for this session only; messages that landed earlier wait in People's unread list.
+A contact message that arrives while you are in the Ship chat adds a notice under
+the transcript, labelled like any sender: the person's name with a **PERSON** or
+**GSV** badge for who wrote it, then **Sent 1 message** (the count grows while
+they wait). **reply** opens the message and a reply box inline; sending threads
+your reply to that message, marks the conversation read, and leaves the notice
+marked **(replied)** until that contact writes again. **go to chat** opens the
+conversation in People. Notices are for this session only; messages that landed
+earlier wait in People's unread list.
 
 Work for a particular task is separate from that standing preference. When Ship
 sends with `message send --to contact:ID --responsibility R12Y_ID`, replies continue

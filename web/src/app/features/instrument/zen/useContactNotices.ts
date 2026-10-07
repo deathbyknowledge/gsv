@@ -15,8 +15,10 @@ export type ContactNotice = {
   /** the contact's GSV wrote it rather than the person */
   byShip: boolean;
   reference: { actor: { shipId: string; subjectId: string }; messageId: string };
-  /** messages from this contact since the notice appeared */
+  /** messages from this contact since the notice appeared, or since the person last replied from it */
   count: number;
+  /** the person answered the latest message from the notice itself */
+  replied: boolean;
 };
 
 const changedSchema = z.object({ conversationId: z.string(), latestSequence: z.number(), viewOnly: z.boolean().optional() });
@@ -26,7 +28,8 @@ const changedSchema = z.object({ conversationId: z.string(), latestSequence: z.n
  * contact, holding the latest message and how many arrived. Only the Kernel's `notify` call
  * counts, so muted, blocked and ended contacts stay quiet. Request-state lines and v1 peers
  * carry no social metadata and are skipped. Nothing is seeded from history: a notice exists
- * only for the session in which its message arrived, as the tab signal does.
+ * only for the session in which its message arrived, as the tab signal does. A notice the
+ * person replied to stays, marked as answered, until that contact writes again.
  */
 export function useContactNotices({ enabled, mayReadView }: { enabled: boolean; mayReadView: boolean }) {
   const { client, connected } = useGateway();
@@ -35,8 +38,8 @@ export function useContactNotices({ enabled, mayReadView }: { enabled: boolean; 
   held.current = notices;
   const seen = useRef(new Set<string>());
 
-  const dismiss = useCallback((contactId: string) => {
-    setNotices((current) => current.filter((notice) => notice.contactId !== contactId));
+  const markReplied = useCallback((contactId: string) => {
+    setNotices((current) => current.map((notice) => notice.contactId === contactId ? { ...notice, replied: true } : notice));
   }, []);
 
   useEffect(() => {
@@ -63,7 +66,9 @@ export function useContactNotices({ enabled, mayReadView }: { enabled: boolean; 
             createdAt: message.createdAt,
             byShip: social.provenance.kind === "process",
             reference: social.reference,
-            count: (existing?.count ?? 0) + 1,
+            /* a message after a reply starts the count over */
+            count: existing && !existing.replied ? existing.count + 1 : 1,
+            replied: false,
           };
           return [...current.filter((notice) => notice.contactId !== author.contactId), next];
         });
@@ -73,15 +78,15 @@ export function useContactNotices({ enabled, mayReadView }: { enabled: boolean; 
         const changed = changedSchema.safeParse(payload);
         if (!changed.success || !changed.data.viewOnly || !mayReadView) return;
         const { conversationId } = changed.data;
-        if (!held.current.some((notice) => notice.conversationId === conversationId)) return;
-        /* reading the conversation elsewhere clears the notice once the read covers the message it holds;
-           a failed read keeps the notice, which the person can still act on */
+        if (!held.current.some((notice) => notice.conversationId === conversationId && !notice.replied)) return;
+        /* reading the conversation elsewhere clears an unanswered notice once the read covers its message;
+           an answered one stays as the record of the reply. A failed read keeps the notice either way. */
         void client.conversation.view.get({ conversationId }).then(({ entry }) => {
-          setNotices((current) => current.filter((notice) => notice.conversationId !== conversationId || entry.view.readThroughSequence < notice.sequence));
+          setNotices((current) => current.filter((notice) => notice.conversationId !== conversationId || notice.replied || entry.view.readThroughSequence < notice.sequence));
         }).catch(() => undefined);
       }
     });
   }, [client, connected, enabled, mayReadView]);
 
-  return { notices, dismiss };
+  return { notices, markReplied };
 }

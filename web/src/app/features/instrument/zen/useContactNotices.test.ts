@@ -97,15 +97,29 @@ describe("contact notices in the ship chat", () => {
     } finally { await view.unmount(); }
   });
 
-  it("ignores reads when the person may not read view state, and dismisses on request", async () => {
+  it("ignores reads when the person may not read view state", async () => {
     const view = await mounted({ enabled: true, mayReadView: false });
     try {
       await emit("message.committed", committed(1));
       await emit("conversation.changed", { conversationId: "conversation:contact:ada", latestSequence: 1, viewOnly: true });
       expect(GSVClient.prototype.request).not.toHaveBeenCalled();
       expect(view.current.notices).toHaveLength(1);
-      await act(() => view.current.dismiss("contact:ada"));
-      expect(view.current.notices).toEqual([]);
+    } finally { await view.unmount(); }
+  });
+
+  it("keeps an answered notice through a read elsewhere, and starts the count over when the contact writes again", async () => {
+    const view = await mounted();
+    try {
+      await emit("message.committed", committed(1));
+      await emit("message.committed", committed(2));
+      await act(() => view.current.markReplied("contact:ada"));
+      expect(view.current.notices).toMatchObject([{ count: 2, replied: true }]);
+      readThrough = 2;
+      await emit("conversation.changed", { conversationId: "conversation:contact:ada", latestSequence: 2, viewOnly: true });
+      expect(GSVClient.prototype.request).not.toHaveBeenCalled();
+      expect(view.current.notices).toMatchObject([{ count: 2, replied: true }]);
+      await emit("message.committed", committed(3));
+      expect(view.current.notices).toMatchObject([{ sequence: 3, count: 1, replied: false }]);
     } finally { await view.unmount(); }
   });
 

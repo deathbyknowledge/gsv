@@ -36,7 +36,7 @@ import { ActivityWorking } from "./ActivityWorking";
 import { ApprovalCard } from "../shared/ApprovalCard";
 import { canConfigure } from "../settings/settingsModel";
 import { useContacts } from "../people/Contacts";
-import { ContactNoticeDialog, ContactNoticeRow } from "./ContactNotice";
+import { ContactNoticeMoment, ContactReplyBox } from "./ContactNotice";
 import { useContactNotices, type ContactNotice } from "./useContactNotices";
 import { DelegatedApprovals } from "./DelegatedApprovals";
 import { useZenScroll } from "./useZenScroll";
@@ -332,8 +332,8 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
   const notices = useContactNotices({ enabled: !pidProp && may("contact.list"), mayReadView: may("conversation.view.get") });
   const contactsQuery = useContacts(human && notices.notices.length > 0 ? viewer : undefined);
   const contactFor = (contactId: string) => contactsQuery.data?.contacts.find((contact) => contact.id === contactId);
-  /* the notice being read holds its own copy, so it stays put if the row clears while the dialog is open */
-  const [shown, setShown] = useState<ContactNotice | null>(null);
+  /* the contact whose reply box is open under its notice */
+  const [replying, setReplying] = useState<string | null>(null);
   const markRead = (notice: ContactNotice) => {
     if (!may("conversation.view.update")) return;
     /* a failed read mark changes nothing the person can see; the notice still clears when they act on it */
@@ -1020,9 +1020,12 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
                 );
               })}
               {notices.notices.map((notice) => (
-                <ContactNoticeRow key={notice.contactId} notice={notice} contact={contactFor(notice.contactId)}
-                  onShow={() => { setShown(notice); markRead(notice); }}
-                  onGoToChat={() => { notices.dismiss(notice.contactId); onPeople?.(notice.contactId); }} />
+                <ContactNoticeMoment key={notice.contactId} notice={notice} contact={contactFor(notice.contactId)} open={replying === notice.contactId}
+                  onReply={() => setReplying(notice.contactId)}
+                  onGoToChat={() => onPeople?.(notice.contactId)}>
+                  {replying === notice.contactId && <ContactReplyBox notice={notice} contact={contactFor(notice.contactId)} account={viewer}
+                    onSent={() => { notices.markReplied(notice.contactId); markRead(notice); setReplying(null); }} />}
+                </ContactNoticeMoment>
               ))}
               {pendingHil ? (
                 <div class="zen-moment is-approval">
@@ -1148,9 +1151,6 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
         </div>
       </div>
       <div class="zen-input-panels" ref={nativePanels} />
-      {shown && <ContactNoticeDialog notice={shown} contact={contactFor(shown.contactId)} account={viewer} open={active}
-        onClose={() => setShown(null)}
-        onSent={() => { notices.dismiss(shown.contactId); setShown(null); }} />}
       <FleetDialog open={active && connectingPlace} title="Connect a place" onClose={() => setConnectingPlace(false)}>
         <ConnectPlace account={viewer} targets={targetsQuery.data ?? []} ready={!!targetsQuery.data && !targetsQuery.isError}
           onClose={() => setConnectingPlace(false)}
