@@ -16,6 +16,7 @@ import { instance, type InstanceStore } from "./store";
 import { within } from "./browser-operation";
 import { BrowserScreencast, type CapturedBrowserFrame } from "./browser-view";
 import { exportBrowserStorage, restoreBrowserStorage, type BrowserSnapshot } from "./browser-storage";
+import { cloudBrowserCredentials } from "./browser-credentials";
 
 export type StorageState = Awaited<ReturnType<BrowserContext["storageState"]>>;
 type RuntimeState = { contextId: string; nextTabId: number; activeTabId: number; tabs: Record<string, string>; origins?: string[]; storageTargets?: string[] };
@@ -137,6 +138,7 @@ export class CloudBrowser implements BrowserPageBackend, BrowserTabsBackend, Deb
       if (!targetInfo.browserContextId) throw new Error("Browser did not provide an isolated context");
       state = { contextId: targetInfo.browserContextId, nextTabId: 2, activeTabId: 1, tabs: { "1": targetInfo.targetId }, origins: savedState?.origins.map(origin => origin.origin) ?? [] };
     }
+    await context.addInitScript(cloudBrowserCredentials);
     const runtime = new CloudBrowser(browser, context, state, record, store);
     runtime.persist();
     await runtime.refreshTabs();

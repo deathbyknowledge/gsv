@@ -39,6 +39,12 @@ first. The link identifies a request; it never grants access without your GSV
 login. Your next chat message still goes to Ship. Website passwords and
 verification codes belong in the browser view.
 
+Passkeys and hardware security keys are unavailable in cloud browsers. GSV
+reports this to websites before they can open an invisible native passkey
+prompt that blocks page input. Choose the website's password or another
+supported sign-in method. A site that requires a passkey needs your connected
+personal browser.
+
 ## Remembered logins and lifetime
 
 GSV automatically keeps website cookies, local storage and IndexedDB for your

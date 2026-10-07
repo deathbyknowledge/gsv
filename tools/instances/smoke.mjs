@@ -7,6 +7,7 @@ import { GSVClient } from "../../packages/gsv/dist/client.js";
 import { bodyFromText, bodyToBytes } from "../../packages/gsv/dist/protocol.js";
 import { checkBrowserCommands } from "./browser-commands-smoke.mjs";
 import { checkFormCommands } from "./form-commands-smoke.mjs";
+import { checkBrowserCredentials } from "./browser-credentials-smoke.mjs";
 import { checkBrowserFollowing } from "./browser-follow-smoke.mjs";
 import { seedBrowserStorage, seedPartialBrowserStorage, checkPartialBrowserStorage, checkRestoredBrowserStorage, checkForgettingBrowserStorage } from "./browser-storage-smoke.mjs";
 
@@ -22,6 +23,7 @@ class LocalSocket extends WebSocket {
 const client = new GSVClient({ WebSocket: LocalSocket, defaultRequestTimeoutMs: 60000 });
 const components = readFileSync(new URL("./fixtures/components.html", import.meta.url), "utf8");
 const forms = readFileSync(new URL("./fixtures/forms.html", import.meta.url), "utf8");
+const passkeys = readFileSync(new URL("./fixtures/passkeys.html", import.meta.url), "utf8");
 const login = `<!doctype html><title>GSV sign-in fixture</title><style>body{font:20px system-ui;padding:40px}input,button{display:block;margin:20px 0;padding:12px;width:300px}</style><h1>Test sign-in</h1><form action="/session" method="post"><input name="email" placeholder="Email"><input type="password" name="password" placeholder="Password"><button>Sign in</button></form>`;
 let stored;
 const storageReady = new Promise(resolve => { stored = resolve; });
@@ -37,6 +39,7 @@ const server = http.createServer((request, response) => {
     response.end(`<body><input id="coedit" oninput="this.dataset.done='yes'"><script>const open=indexedDB.open("profile-test",1);open.onupgradeneeded=()=>open.result.createObjectStore("state");open.onsuccess=()=>{const request=open.result.transaction("state").objectStore("state").get("session");request.onsuccess=()=>{document.body.insertAdjacentHTML('beforeend','<pre id="restored">cookie=${cookie};local='+localStorage.getItem("profile-test")+';indexed='+request.result+'</pre>')}}</script></body>`);
   } else if (request.url === "/components") response.end(components);
   else if (request.url === "/forms") response.end(forms);
+  else if (request.url === "/passkeys" || request.url.startsWith("/passkeys?")) response.end(passkeys);
   else if (request.url === "/empty") response.end("<!doctype html><title>Storage fixture</title>");
   else response.end(login);
 });
@@ -179,6 +182,7 @@ try {
   await checkBrowserCommands(input => client.shell.exec({ target: second.targetId, input }));
   await shell(second, `tabs open --active ${website}/forms`);
   await checkFormCommands(input => client.shell.exec({ target: second.targetId, input }));
+  await checkBrowserCredentials(shell, client, second, website);
   await shell(second, `page js 'setTimeout(() => { const until = Date.now() + 25000; while (Date.now() < until) {} }, 500); "scheduled"'`);
   await sleep(750);
   const listedAt = Date.now();
