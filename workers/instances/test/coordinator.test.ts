@@ -599,6 +599,56 @@ describe("browser save ordering", () => {
 });
 
 describe("browser health", () => {
+  it.each(["allocation", "restore", "attachment"])("never publishes readiness or saves an instance that expired during %s", stage => fixture(async (object, store, instanceId, _installationId, browser) => {
+    store.update({ ...instance(store.byId(instanceId)), state: "starting", readyAt: undefined });
+    store.sql.exec("UPDATE instances SET session_id = NULL WHERE id = ?", instanceId);
+    const entered = deferred(), released = deferred();
+    const pause = async () => { entered.resolve(); await released.promise; };
+    vi.spyOn(BrowserProvider.prototype, "acquire").mockImplementation(async () => {
+      if (stage === "allocation") await pause();
+      return "late-session";
+    });
+    const restore = ProfileStorage.prototype.restore;
+    vi.spyOn(ProfileStorage.prototype, "restore").mockImplementation(async function (...args) {
+      if (stage === "restore") await pause();
+      return restore.apply(this, args);
+    });
+    vi.spyOn(CloudBrowser, "attach").mockImplementation(async () => {
+      if (stage === "attachment") await pause();
+      // SAFETY: The fixture supplies all browser methods exercised by maintenance.
+      return browser as CloudBrowser;
+    });
+    const exists = vi.spyOn(BrowserProvider.prototype, "exists").mockResolvedValue(true);
+    const close = vi.spyOn(BrowserProvider.prototype, "close").mockResolvedValue();
+    const save = vi.spyOn(browser, "save");
+    const maintenance = object.alarm();
+    await entered.promise;
+    store.update({ ...instance(store.byId(instanceId)), expiresAt: Date.now() - 1 });
+    released.resolve(); await maintenance;
+    expect(instance(store.byId(instanceId))).toMatchObject({ state: "stopping", reason: "Browser lifetime expired" });
+    expect(instance(store.byId(instanceId)).readyAt).toBeUndefined();
+    expect(browser.heartbeat).not.toHaveBeenCalled();
+    if (stage !== "attachment") expect(CloudBrowser.attach).not.toHaveBeenCalled();
+    if (!close.mock.calls.length) await object.alarm();
+    expect(close).toHaveBeenCalledOnce();
+    expect(save).not.toHaveBeenCalled();
+    exists.mockResolvedValue(false); await object.alarm();
+    expect(store.byId(instanceId).active).toBe(0);
+    expect(store.usage(limits)).toMatchObject({ activeInstances: 0, reservedSeconds: 0, usedSeconds: 0 });
+  }));
+
+  it("fences expiry during health checks before periodic saving", () => fixture(async (object, store, instanceId, _installationId, browser) => {
+    const entered = deferred(), released = deferred();
+    browser.heartbeat = async () => { entered.resolve(); await released.promise; };
+    const save = vi.spyOn(browser, "save");
+    const maintenance = object.alarm();
+    await entered.promise;
+    store.update({ ...instance(store.byId(instanceId)), expiresAt: Date.now() - 1 });
+    released.resolve(); await maintenance;
+    expect(instance(store.byId(instanceId))).toMatchObject({ state: "stopping", reason: "Browser lifetime expired" });
+    expect(save).not.toHaveBeenCalled();
+  }));
+
   it.each(["stop", "delete", "expire", "claimed"])("rechecks startup after policy admission when it was %s", mode => fixture(async (object, store, instanceId, installationId) => {
     store.update({ ...instance(store.byId(instanceId)), state: "starting", readyAt: undefined });
     store.sql.exec("UPDATE instances SET session_id = NULL WHERE id = ?", instanceId);

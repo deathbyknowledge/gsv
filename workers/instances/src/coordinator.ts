@@ -417,11 +417,15 @@ export class InstanceCoordinator extends DurableObject<Environment> implements I
       if (!row.session_id) throw new Error("Browser session is unavailable");
       const value = instance(row);
       attached = this.#profileWork.save(async () => {
-        const current = instance(this.#store.byId(id));
-        const finalSave = current.state === "stopping" && current.reason === "Browser lifetime expired" && this.#saves.has(id);
-        if (current.state !== "starting" && current.state !== "ready" && !finalSave) throw new Error("Browser is not ready");
+        const check = () => {
+          const current = instance(this.expireIfDue(id));
+          const finalSave = current.readyAt !== undefined && current.state === "stopping" && current.reason === "Browser lifetime expired" && this.#saves.has(id);
+          if (current.state !== "starting" && current.state !== "ready" && !finalSave) throw new Error("Browser is not ready");
+        };
+        check();
         const saved = value.profileId ? this.#store.ownedProfile({ ownerUid: value.ownerUid, human: false }, value.profileId) : null;
         const state = saved ? await this.#profiles.restore(saved) : undefined;
+        check();
         return CloudBrowser.attach(this.env.BROWSER, row.session_id!, value, this.#store, state);
       }, new AbortController().signal);
       this.#browsers.set(id, attached);
@@ -570,20 +574,22 @@ export class InstanceCoordinator extends DurableObject<Environment> implements I
     const count = this.#store.sql.exec<{ count: number }>("SELECT (SELECT COUNT(*) FROM instances) + (SELECT COUNT(*) FROM profiles) AS count").one().count;
     return this.#retirement.receipt(input, count);
   }
+  private expireIfDue(id: string): InstanceRow {
+    const row = this.#store.byId(id), value = instance(row);
+    if (row.active && value.state !== "stopping" && value.expiresAt <= Date.now()) {
+      this.fenceStop(value, "Browser lifetime expired");
+      return this.#store.byId(id);
+    }
+    return row;
+  }
   private async maintain(id: string): Promise<void> {
     try {
-      let row = this.#store.byId(id), value = instance(row);
-      if (value.expiresAt <= Date.now()) this.fenceStop(value, "Browser lifetime expired");
-      value = instance(this.#store.byId(id));
+      let row = this.expireIfDue(id), value = instance(row);
       if (value.state === "starting") {
         await this.#policy.requireActive();
         if (this.#retirement.get()) return;
-        row = this.#store.byId(id); value = instance(row);
+        row = this.expireIfDue(id); value = instance(row);
         if (value.state !== "starting") return;
-        if (value.expiresAt <= Date.now()) {
-          this.fenceStop(value, "Browser lifetime expired");
-          return;
-        }
         if (row.acquire_at && !row.session_id) {
           this.fenceStop(value, "Browser allocation outcome is unknown; a new allocation will not be retried");
         } else if (!row.session_id) {
@@ -591,22 +597,24 @@ export class InstanceCoordinator extends DurableObject<Environment> implements I
           const sessionId = await this.#provider.acquire();
           this.#store.sql.exec("UPDATE instances SET session_id = ? WHERE id = ?", sessionId, id);
         }
-        value = instance(this.#store.byId(id));
+        value = instance(this.expireIfDue(id));
         if (value.state === "starting") {
           await this.browser(id);
-          value = instance(this.#store.byId(id));
+          value = instance(this.expireIfDue(id));
           if (value.state === "starting") this.#store.update({ ...value, state: "ready", readyAt: Date.now(), revision: value.revision + 1 });
         }
       }
-      row = this.#store.byId(id); value = instance(row);
+      row = this.expireIfDue(id); value = instance(row);
       for (const handoff of this.#store.liveHandoffs(id)) {
         if (handoff.expiresAt <= Date.now()) await this.endHandoff({ ownerUid: value.ownerUid, human: false }, { instanceId: id, requestId: handoff.requestId }, "expired");
       }
+      row = this.expireIfDue(id); value = instance(row);
       if (value.state === "ready") {
         const browser = await this.browser(id);
+        if (instance(this.expireIfDue(id)).state !== "ready") return;
         // A metadata command keeps this exact session alive; it never creates one.
         await within(browser.heartbeat(), 10000, "Browser health check");
-        row = this.#store.byId(id);
+        row = this.expireIfDue(id);
         if (instance(row).state !== "ready") return;
         if (row.provider_failed_at !== null) {
           this.#store.sql.exec("UPDATE instances SET provider_failed_at = NULL WHERE id = ?", id);
@@ -646,7 +654,7 @@ export class InstanceCoordinator extends DurableObject<Environment> implements I
         const settled = await this.settleOperations(row.id);
         const inputs = this.#humanInputs.get(row.id), saving = this.#saves.get(row.id)?.done;
         const quiet = await boundedSettlement([...(inputs ? [inputs] : []), ...(saving ? [saving] : [])], 10000);
-        if (settled && quiet && value.reason === "Browser lifetime expired") {
+        if (settled && quiet && value.readyAt !== undefined && value.reason === "Browser lifetime expired") {
           // Shutdown may stop waiting, but deletion must still own the actual save.
           await this.save(row.id);
         }
