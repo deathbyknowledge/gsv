@@ -1,3 +1,4 @@
+import { z } from "zod";
 import type { GsvBody, GsvResponse } from "@humansandmachines/gsv/client";
 import {
   bodyFromBytes,
@@ -6,6 +7,15 @@ import {
   isTextContentType,
 } from "@humansandmachines/gsv/protocol";
 import type {
+  FsCopyArgs,
+  FsReadArgs,
+  FsWriteArgs,
+  FsEditArgs,
+  FsDeleteArgs,
+  FsSearchArgs,
+  FsTransferStatArgs,
+  FsTransferSendArgs,
+  FsTransferReceiveArgs,
   FsCopyResult,
   FsDeleteResult,
   FsEditResult,
@@ -21,53 +31,24 @@ import {
   type StoredFsEntry,
 } from "./fs-persistence";
 import { throwIfAborted } from "./abort";
+import type { BrowserValue } from "./backend";
 import type { FileStat, TargetFileSystem } from "./types";
-import { isString } from "./schemas";
 
-type FsReadArgs = {
-  representation?: unknown;
-  path?: unknown;
-  offset?: unknown;
-  limit?: unknown;
-};
-
-type FsWriteArgs = {
-  path?: unknown;
-  content?: unknown;
-};
-
-type FsEditArgs = {
-  path?: unknown;
-  oldString?: unknown;
-  newString?: unknown;
-  replaceAll?: unknown;
-};
-
-type FsDeleteArgs = {
-  path?: unknown;
-};
-
-type FsSearchArgs = {
-  path?: unknown;
-  query?: unknown;
-  include?: unknown;
-};
-
-type FsCopyEndpoint = {
-  target?: string;
-  path?: string;
-};
-
-type FsCopyArgs = {
-  source?: FsCopyEndpoint;
-  destination?: FsCopyEndpoint;
-};
-
-type TransferArgs = {
-  path?: unknown;
-  contentType?: unknown;
-  revision?: unknown;
-};
+const pathSchema = z.string().refine(path => path.trim().length > 0, "path is required").transform(path => normalizePath(path));
+const copyEndpointSchema = z.object({ path: pathSchema, target: z.string().trim().optional() });
+const fsReadSchema = z.object({
+  path: pathSchema,
+  representation: z.enum(["content", "resource", "reference"]).optional(),
+  offset: z.number().int().nonnegative().optional(),
+  limit: z.number().int().nonnegative().optional(),
+});
+const fsWriteSchema = z.object({ path: pathSchema, content: z.string() });
+const fsEditSchema = z.object({ path: pathSchema, oldString: z.string(), newString: z.string(), replaceAll: z.boolean().optional() });
+const fsPathSchema = z.object({ path: pathSchema });
+const fsSearchSchema = z.object({ query: z.string().trim().min(1), path: pathSchema.optional(), include: z.string().trim().optional() });
+const fsCopySchema = z.object({ source: copyEndpointSchema, destination: copyEndpointSchema });
+const fsTransferSendSchema = z.object({ path: pathSchema, revision: z.string().optional() });
+const fsTransferReceiveSchema = z.object({ path: pathSchema, contentType: z.string().optional() });
 
 /** A browser file has no inode; its revision is its content. */
 async function contentRevision(bytes: Uint8Array): Promise<string> {
@@ -491,34 +472,33 @@ export class BrowserFsDriver {
     private readonly targetId: () => Promise<string> = async () => "browser",
   ) {}
 
-  async handle(call: string, args: unknown, body?: GsvBody, signal?: AbortSignal): Promise<GsvResponse> {
+  async handle(call: string, args: BrowserValue, body?: GsvBody, signal?: AbortSignal): Promise<GsvResponse> {
     switch (call) {
       case "fs.read":
-        return await this.read(args);
+        return await this.read(fsReadSchema.parse(args));
       case "fs.write":
-        return { data: await this.write(args) };
+        return { data: await this.write(fsWriteSchema.parse(args)) };
       case "fs.edit":
-        return { data: await this.edit(args) };
+        return { data: await this.edit(fsEditSchema.parse(args)) };
       case "fs.delete":
-        return { data: await this.delete(args) };
+        return { data: await this.delete(fsPathSchema.parse(args)) };
       case "fs.search":
-        return { data: await this.search(args, signal) };
+        return { data: await this.search(fsSearchSchema.parse(args), signal) };
       case "fs.copy":
-        return { data: await this.copy(args) };
+        return { data: await this.copy(fsCopySchema.parse(args)) };
       case "fs.transfer.stat":
-        return { data: await this.transferStat(args) };
+        return { data: await this.transferStat(fsPathSchema.parse(args)) };
       case "fs.transfer.send":
-        return await this.transferSend(args);
+        return await this.transferSend(fsTransferSendSchema.parse(args));
       case "fs.transfer.receive":
-        return await this.transferReceive(args, body);
+        return await this.transferReceive(fsTransferReceiveSchema.parse(args), body);
       default:
         throw new Error(`Unsupported filesystem syscall: ${call}`);
     }
   }
 
-  private async read(raw: unknown): Promise<GsvResponse> {
-    const args = asRecord(raw) as FsReadArgs;
-    const path = parsePath(args.path, "fs.read");
+  private async read(args: FsReadArgs): Promise<GsvResponse> {
+    const path = args.path;
     try {
       const stat = await this.fs.stat(path);
       if (stat.isDirectory) {
@@ -573,8 +553,8 @@ export class BrowserFsDriver {
       } catch {
         return { data: { ok: false, error: `Binary file (${contentType}, ${formatSize(bytes.byteLength)})` } };
       }
-      const offset = parseNonNegativeInteger(args.offset) ?? 0;
-      const limit = parseNonNegativeInteger(args.limit);
+      const offset = args.offset ?? 0;
+      const limit = args.limit ?? null;
       const lines = text.split("\n");
       const selected = limit === null ? lines.slice(offset) : lines.slice(offset, offset + limit);
       return {
@@ -593,23 +573,15 @@ export class BrowserFsDriver {
     }
   }
 
-  private async write(raw: unknown): Promise<FsWriteResult> {
-    const args = asRecord(raw) as FsWriteArgs;
-    const path = parsePath(args.path, "fs.write");
-    if (typeof args.content !== "string") {
-      return { ok: false, error: "fs.write requires string content" };
-    }
+  private async write(args: FsWriteArgs): Promise<FsWriteResult> {
+    const path = args.path;
     const bytes = textEncoder.encode(args.content);
     await this.fs.write(path, bytes);
     return { ok: true, path, size: bytes.byteLength };
   }
 
-  private async edit(raw: unknown): Promise<FsEditResult> {
-    const args = asRecord(raw) as FsEditArgs;
-    const path = parsePath(args.path, "fs.edit");
-    if (typeof args.oldString !== "string" || typeof args.newString !== "string") {
-      return { ok: false, error: "fs.edit requires oldString and newString" };
-    }
+  private async edit(args: FsEditArgs): Promise<FsEditResult> {
+    const path = args.path;
     const oldText = textDecoder.decode(await this.fs.read(path));
     const count = oldText.split(args.oldString).length - 1;
     if (count === 0) {
@@ -625,29 +597,25 @@ export class BrowserFsDriver {
     return { ok: true, path, replacements: args.replaceAll === true ? count : 1 };
   }
 
-  private async delete(raw: unknown): Promise<FsDeleteResult> {
-    const args = asRecord(raw) as FsDeleteArgs;
-    const path = parsePath(args.path, "fs.delete");
+  private async delete(args: FsDeleteArgs): Promise<FsDeleteResult> {
+    const path = args.path;
     await this.fs.delete(path);
     return { ok: true, path };
   }
 
-  private async search(raw: unknown, signal?: AbortSignal): Promise<FsSearchResult> {
-    const args = asRecord(raw) as FsSearchArgs;
-    const query = typeof args.query === "string" ? args.query.trim() : "";
+  private async search(args: FsSearchArgs, signal?: AbortSignal): Promise<FsSearchResult> {
+    const query = args.query;
     if (!query) {
       return { ok: false, error: "fs.search requires query" };
     }
-    const path = typeof args.path === "string" && args.path.trim() ? normalizePath(args.path) : "/";
-    const include = typeof args.include === "string" && args.include.trim() ? args.include.trim() : undefined;
+    const path = args.path ?? "/";
+    const include = args.include || undefined;
     const matches = await this.fs.search(path, query, include, signal);
     return { ok: true, matches, count: matches.length, truncated: matches.length >= MAX_SEARCH_MATCHES };
   }
 
-  private async copy(raw: unknown): Promise<FsCopyResult> {
-    const args = asRecord(raw) as FsCopyArgs;
-    const source = parseCopyEndpoint(args.source, "source");
-    const destination = parseCopyEndpoint(args.destination, "destination");
+  private async copy(args: FsCopyArgs): Promise<FsCopyResult> {
+    const { source, destination } = args;
     const destinationPath = await this.fs.copy(source.path, destination.path);
     const stat = await this.fs.stat(destinationPath);
     return {
@@ -659,9 +627,8 @@ export class BrowserFsDriver {
     };
   }
 
-  private async transferStat(raw: unknown): Promise<FsTransferStatResult> {
-    const args = asRecord(raw) as TransferArgs;
-    const path = parsePath(args.path, "fs.transfer.stat");
+  private async transferStat(args: FsTransferStatArgs): Promise<FsTransferStatResult> {
+    const path = args.path;
     try {
       const stat = await this.fs.stat(path);
       const revision = stat.isFile ? await contentRevision(await this.fs.read(path)) : undefined;
@@ -682,13 +649,12 @@ export class BrowserFsDriver {
     }
   }
 
-  private async transferSend(raw: unknown): Promise<GsvResponse> {
-    const args = asRecord(raw) as TransferArgs;
-    const path = parsePath(args.path, "fs.transfer.send");
+  private async transferSend(args: FsTransferSendArgs): Promise<GsvResponse> {
+    const path = args.path;
     const bytes = await this.fs.read(path);
     const stat = await this.fs.stat(path);
     const revision = await contentRevision(bytes);
-    if (isString(args.revision) && args.revision !== revision) {
+    if (args.revision !== undefined && args.revision !== revision) {
       return { data: { ok: false, error: `Source revision is no longer available: ${path}` } };
     }
     return {
@@ -703,9 +669,8 @@ export class BrowserFsDriver {
     };
   }
 
-  private async transferReceive(raw: unknown, body?: GsvBody): Promise<GsvResponse> {
-    const args = asRecord(raw) as TransferArgs;
-    const path = parsePath(args.path, "fs.transfer.receive");
+  private async transferReceive(args: FsTransferReceiveArgs, body?: GsvBody): Promise<GsvResponse> {
+    const path = args.path;
     if (!body) {
       return { data: { ok: false, error: "fs.transfer.receive requires a request body" } };
     }
@@ -716,7 +681,7 @@ export class BrowserFsDriver {
 
     try {
       const bytes = await readStream(body.stream, body.length);
-      const contentType = typeof args.contentType === "string" ? args.contentType : inferFsContentType(path);
+      const contentType = args.contentType ?? inferFsContentType(path);
       await this.fs.write(path, bytes, contentType);
       return {
         data: {
@@ -731,31 +696,6 @@ export class BrowserFsDriver {
       return { data: { ok: false, error: error instanceof Error ? error.message : String(error) } };
     }
   }
-}
-
-function parsePath(value: unknown, call: string): string {
-  if (typeof value !== "string" || !value.trim()) {
-    throw new Error(`${call} requires path`);
-  }
-  return normalizePath(value);
-}
-
-function parseCopyEndpoint(value: unknown, label: string): { target?: string; path: string } {
-  const record = asRecord(value) as FsCopyEndpoint;
-  if (!record || typeof record.path !== "string" || !record.path.trim()) {
-    throw new Error(`fs.copy requires ${label}.path`);
-  }
-  return {
-    ...(typeof record.target === "string" && record.target.trim() ? { target: record.target.trim() } : {}),
-    path: normalizePath(record.path),
-  };
-}
-
-function parseNonNegativeInteger(value: unknown): number | null {
-  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) {
-    return null;
-  }
-  return value;
 }
 
 async function readStream(stream: ReadableStream<Uint8Array>, expectedSize: number): Promise<Uint8Array> {
@@ -792,8 +732,4 @@ function formatSize(size: number): string {
   if (size < 1024) return `${size} B`;
   if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KiB`;
   return `${(size / 1024 / 1024).toFixed(1)} MiB`;
-}
-
-function asRecord(value: unknown): Record<string, unknown> {
-  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
 }

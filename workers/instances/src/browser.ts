@@ -233,7 +233,7 @@ export class CloudBrowser implements BrowserPageBackend, BrowserTabsBackend, Deb
   }
   async reloadTab(id: number): Promise<void> { await (await this.agentPage(id)).reload({ waitUntil: "domcontentloaded", timeout: 30000 }); }
   async captureTabPng(id: number): Promise<Uint8Array> { return (await this.agentPage(id)).screenshot({ type: "png", timeout: 10000 }); }
-  async executeInTab<T>(id: number, func: (...args: BrowserValue[]) => T, args: BrowserValue[] = []): Promise<T> {
+  async executeInTab<Args extends BrowserValue[], T>(id: number, func: (...args: Args) => T, args: Args): Promise<T> {
     // SAFETY: The serialized expression invokes this exact backend callback with its typed arguments.
     return (await this.agentPage(id)).evaluate(`(${func.toString()})(...${JSON.stringify(args)})`) as Promise<T>;
   }

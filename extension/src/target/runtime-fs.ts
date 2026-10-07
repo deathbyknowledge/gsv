@@ -646,7 +646,7 @@ async function activeTabPath(): Promise<string> {
 
 async function tabText(tab: TabSummary): Promise<string> {
   try {
-    const extracted = await executeInTab<string>(tab.id, extractVisibleText);
+    const extracted = await executeInTab(tab.id, extractVisibleText, []);
     return compactPageText(extracted);
   } catch (error) {
     return `[text unavailable: ${errorMessage(error)}]\n`;

@@ -18,7 +18,7 @@ export const limitsSchema = z.strictObject({
   profileStorageBytes: z.number().int().positive().max(MAX_PROFILE_BYTES),
 });
 export type BrowserLimits = z.infer<typeof limitsSchema>;
-export const IMPLEMENTATIONS = ["shell.exec", "fs.read", "fs.write", "fs.edit", "fs.delete", "fs.search", "fs.copy", "fs.transfer.stat", "fs.transfer.send", "fs.transfer.receive"];
+export const IMPLEMENTATIONS = ["shell.exec", "fs.read", "fs.write", "fs.edit", "fs.delete", "fs.search", "fs.copy", "fs.transfer.stat", "fs.transfer.send", "fs.transfer.receive"] as const;
 export function browserTemplate(limits: BrowserLimits): InstanceTemplate {
   return {
     templateId: "browser", revision: "1", kind: "browser", label: "Cloud browser",

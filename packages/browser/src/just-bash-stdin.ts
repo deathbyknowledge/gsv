@@ -3,7 +3,8 @@ import type { CommandContext } from "just-bash/browser";
 const utf8Decoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: false });
 
 export function decodeJustBashStdin(stdin: CommandContext["stdin"]): string {
-  const value = stdin as unknown as string;
+  // just-bash/browser does not export latin1FromBytes; ByteString's runtime value is a string.
+  const value = String(stdin);
   let hasHighByte = false;
   for (let index = 0; index < value.length; index += 1) {
     const code = value.charCodeAt(index);

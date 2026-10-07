@@ -46,6 +46,42 @@ export type ParsedKey = {
   text?: string;
 };
 
+type NamedKey = { key: string; code: string; virtual: number; text?: string };
+
+const namedKeys = new Map<string, NamedKey>([
+  ["backspace", { key: "Backspace", code: "Backspace", virtual: 8 }],
+  ["tab", { key: "Tab", code: "Tab", virtual: 9 }],
+  ["enter", { key: "Enter", code: "Enter", virtual: 13, text: "\r" }],
+  ["return", { key: "Enter", code: "Enter", virtual: 13, text: "\r" }],
+  ["escape", { key: "Escape", code: "Escape", virtual: 27 }],
+  ["esc", { key: "Escape", code: "Escape", virtual: 27 }],
+  ["space", { key: " ", code: "Space", virtual: 32, text: " " }],
+  ["pageup", { key: "PageUp", code: "PageUp", virtual: 33 }],
+  ["pagedown", { key: "PageDown", code: "PageDown", virtual: 34 }],
+  ["end", { key: "End", code: "End", virtual: 35 }],
+  ["home", { key: "Home", code: "Home", virtual: 36 }],
+  ["arrowleft", { key: "ArrowLeft", code: "ArrowLeft", virtual: 37 }],
+  ["left", { key: "ArrowLeft", code: "ArrowLeft", virtual: 37 }],
+  ["arrowup", { key: "ArrowUp", code: "ArrowUp", virtual: 38 }],
+  ["up", { key: "ArrowUp", code: "ArrowUp", virtual: 38 }],
+  ["arrowright", { key: "ArrowRight", code: "ArrowRight", virtual: 39 }],
+  ["right", { key: "ArrowRight", code: "ArrowRight", virtual: 39 }],
+  ["arrowdown", { key: "ArrowDown", code: "ArrowDown", virtual: 40 }],
+  ["down", { key: "ArrowDown", code: "ArrowDown", virtual: 40 }],
+  ["delete", { key: "Delete", code: "Delete", virtual: 46 }],
+]);
+
+type PageKeyEvent = {
+  type: string;
+  key: string;
+  code: string;
+  modifiers: number;
+  windowsVirtualKeyCode: number;
+  nativeVirtualKeyCode: number;
+  text?: string;
+  unmodifiedText?: string;
+};
+
 export function parsePageKey(raw: string): ParsedKey {
   const parts = (raw === " " ? "Space" : raw).split("+").map((part) => part.trim()).filter(Boolean);
   const keyPart = parts.pop() ?? "";
@@ -62,67 +98,46 @@ export function parsePageKey(raw: string): ParsedKey {
     else throw new Error(`Unknown key modifier: ${modifier}`);
   }
   const normalized = keyPart.toLowerCase();
-  const named: Record<string, { key: string; code: string; virtual: number; text?: string }> = {
-    backspace: { key: "Backspace", code: "Backspace", virtual: 8 },
-    tab: { key: "Tab", code: "Tab", virtual: 9 },
-    enter: { key: "Enter", code: "Enter", virtual: 13, text: "\r" },
-    return: { key: "Enter", code: "Enter", virtual: 13, text: "\r" },
-    escape: { key: "Escape", code: "Escape", virtual: 27 },
-    esc: { key: "Escape", code: "Escape", virtual: 27 },
-    space: { key: " ", code: "Space", virtual: 32, text: " " },
-    pageup: { key: "PageUp", code: "PageUp", virtual: 33 },
-    pagedown: { key: "PageDown", code: "PageDown", virtual: 34 },
-    end: { key: "End", code: "End", virtual: 35 },
-    home: { key: "Home", code: "Home", virtual: 36 },
-    arrowleft: { key: "ArrowLeft", code: "ArrowLeft", virtual: 37 },
-    left: { key: "ArrowLeft", code: "ArrowLeft", virtual: 37 },
-    arrowup: { key: "ArrowUp", code: "ArrowUp", virtual: 38 },
-    up: { key: "ArrowUp", code: "ArrowUp", virtual: 38 },
-    arrowright: { key: "ArrowRight", code: "ArrowRight", virtual: 39 },
-    right: { key: "ArrowRight", code: "ArrowRight", virtual: 39 },
-    arrowdown: { key: "ArrowDown", code: "ArrowDown", virtual: 40 },
-    down: { key: "ArrowDown", code: "ArrowDown", virtual: 40 },
-    delete: { key: "Delete", code: "Delete", virtual: 46 },
-  };
-  const mapped = named[normalized];
+  const mapped = namedKeys.get(normalized);
   if (mapped) {
     const { text, ...definition } = mapped;
-    return {
-      ...definition, windowsVirtualKeyCode: mapped.virtual, modifiers, modifierNames,
-      ...(text && !(modifiers & (1 | 2 | 4)) ? { text } : {}),
-    };
+    const parsed: ParsedKey = { ...definition, windowsVirtualKeyCode: mapped.virtual, modifiers, modifierNames };
+    if (text && !(modifiers & (1 | 2 | 4))) parsed.text = text;
+    return parsed;
   }
   if (keyPart.length !== 1) {
     throw new Error(`Unsupported key: ${keyPart}`);
   }
   const upper = keyPart.toUpperCase();
-  return {
+  const parsed: ParsedKey = {
     key: keyPart,
     code: /[a-z]/i.test(keyPart) ? `Key${upper}` : keyPart,
     modifiers,
     modifierNames,
     windowsVirtualKeyCode: upper.charCodeAt(0),
-    ...(modifiers & (1 | 2 | 4) ? {} : { text: keyPart }),
   };
+  if (!(modifiers & (1 | 2 | 4))) parsed.text = keyPart;
+  return parsed;
 }
 
-export function keyEvent(direction: "down" | "up", key: ParsedKey): Record<string, unknown> {
-  return {
+export function keyEvent(direction: "down" | "up", key: ParsedKey): PageKeyEvent {
+  const event: PageKeyEvent = {
     type: direction === "up" ? "keyUp" : key.text ? "keyDown" : "rawKeyDown",
     key: key.key,
     code: key.code,
     modifiers: key.modifiers,
     windowsVirtualKeyCode: key.windowsVirtualKeyCode,
     nativeVirtualKeyCode: key.windowsVirtualKeyCode,
-    ...(direction === "down" && key.text ? { text: key.text, unmodifiedText: key.text } : {}),
   };
+  if (direction === "down" && key.text) {
+    event.text = key.text;
+    event.unmodifiedText = key.text;
+  }
+  return event;
 }
 
 export function scrollDeltas(target: PageScrollTarget, state: ScrollState): InputPoint {
   const maxY = Math.max(0, state.scrollHeight - state.clientHeight);
-  if (typeof target === "object") {
-    return { x: target.x - state.scrollLeft, y: target.y - state.scrollTop };
-  }
   const pageY = Math.max(1, Math.floor(state.clientHeight * 0.85));
   switch (target) {
     case "up":
@@ -133,6 +148,8 @@ export function scrollDeltas(target: PageScrollTarget, state: ScrollState): Inpu
       return { x: 0, y: -Math.max(pageY, maxY) };
     case "bottom":
       return { x: 0, y: Math.max(pageY, maxY) };
+    default:
+      return { x: target.x - state.scrollLeft, y: target.y - state.scrollTop };
   }
 }
 

@@ -1,4 +1,4 @@
-import type { BrowserPageBackend, DebuggerBackend, TabSummary } from "../backend";
+import type { BrowserValue, BrowserPageBackend, DebuggerBackend, TabSummary } from "../backend";
 import { abortable, abortableDelay, throwIfAborted } from "../abort";
 import { findPageSelector, readPageText, snapshotDomPage, type InjectedPageResult } from "../page-dom";
 import { createPageActions, type PageLocator, type PageScrollTarget } from "../page-actions";
@@ -176,7 +176,7 @@ export function createPageCommands<Target>(backend: BrowserPageBackend, debugger
           : commandOk(formatSemanticSnapshot(snapshot));
       } finally {
         if (target) {
-          await releaseDebugger(tab.id).catch((error: unknown) => {
+          await releaseDebugger(tab.id).catch((error) => {
             console.warn("GSV browser target failed to detach debugger", error);
           });
         }
@@ -184,8 +184,8 @@ export function createPageCommands<Target>(backend: BrowserPageBackend, debugger
     }
 
     const selector = joinArgsOrNull(snapshotArgs);
-    const result = normalizeInjectedResult<unknown>(
-      await executeInTab<unknown>(tab.id, snapshotDomPage, [selector]),
+    const result = normalizeInjectedResult(
+      await executeInTab(tab.id, snapshotDomPage, [selector]),
       "page snapshot",
     );
     if (!result.ok) {
@@ -206,8 +206,8 @@ export function createPageCommands<Target>(backend: BrowserPageBackend, debugger
 
     const tab = await resolveTab(parsed.value.tabId);
     const selector = joinArgsOrNull(parsed.value.args);
-    const result = normalizeInjectedResult<{ text: string; count: number }>(
-      await executeInTab<unknown>(tab.id, readPageText, [selector]),
+    const result = normalizeInjectedResult(
+      await executeInTab(tab.id, readPageText, [selector]),
       "page text",
     );
     if (!result.ok) {
@@ -427,9 +427,9 @@ export function createPageCommands<Target>(backend: BrowserPageBackend, debugger
     const startedAt = ctx.now();
 
     while (true) {
-      const result = normalizeInjectedResult<Record<string, unknown> | null>(
+      const result = normalizeInjectedResult(
         await abortable(
-          executeInTab<unknown>(tab.id, findPageSelector, [selector]),
+          executeInTab(tab.id, findPageSelector, [selector]),
           ctx.abortSignal,
         ),
         "page wait",
@@ -472,35 +472,9 @@ export function createPageCommands<Target>(backend: BrowserPageBackend, debugger
     return commandCompactJson({ tabId: tab.id, js: result.value });
   }
 
-  function normalizeInjectedResult<T>(value: unknown, command: string): InjectedPageResult<T> {
-    if (
-      value &&
-      typeof value === "object" &&
-      typeof (value as { ok?: unknown }).ok === "boolean"
-    ) {
-      return value as InjectedPageResult<T>;
-    }
-    return {
-      ok: false,
-      error: `${command} returned an invalid injected result: ${describeInjectedValue(value)}`,
-    };
-  }
-
-  function describeInjectedValue(value: unknown): string {
-    if (value === null) {
-      return "null";
-    }
-    if (typeof value === "undefined") {
-      return "undefined";
-    }
-    if (typeof value === "object") {
-      try {
-        return JSON.stringify(value);
-      } catch {
-        return "object";
-      }
-    }
-    return String(value);
+  function normalizeInjectedResult<T>(value: InjectedPageResult<T> | null | undefined, command: string): InjectedPageResult<T> {
+    if (value?.ok === true || value?.ok === false) return value;
+    return { ok: false, error: `${command} returned an invalid injected result` };
   }
 
   function parsePageOptions(args: string[], usage: string): Parsed<PageOptions> {
@@ -698,7 +672,7 @@ export function createPageCommands<Target>(backend: BrowserPageBackend, debugger
     }
   }
 
-  function commandCompactJson(value: unknown): CommandResult {
+  function commandCompactJson(value: BrowserValue): CommandResult {
     return commandOk(`${JSON.stringify(value)}\n`);
   }
 
@@ -715,8 +689,8 @@ export function createPageCommands<Target>(backend: BrowserPageBackend, debugger
     return value.endsWith("\n") ? value : `${value}\n`;
   }
 
-  function errorMessage(error: unknown): string {
-    return error instanceof Error ? error.message : String(error);
+  function errorMessage(cause: unknown): string {
+    return cause instanceof Error ? cause.message : String(cause);
   }
   return { pageCommand, pageCommands };
 }

@@ -17,7 +17,7 @@ export function bytesToArrayBuffer(bytes: Uint8Array): ArrayBuffer {
   return copy.buffer;
 }
 
-export function bytesFromStoredContent(content: unknown): Uint8Array {
+export function bytesFromStoredContent(content: ArrayBuffer | ArrayBufferView | string | null | undefined): Uint8Array {
   if (content instanceof Uint8Array) {
     return copyBytes(content);
   }

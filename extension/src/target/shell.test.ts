@@ -105,6 +105,20 @@ describe("BrowserTargetShell", () => {
     expect(run).toHaveBeenCalledTimes(1);
   });
 
+  it("rejects malformed execution settings before commands run and leaves the queue usable", async () => {
+    const run = vi.fn(commandResult);
+    const shell = new BrowserTargetShell(directoryOnlyFileSystem(), [{ name: "side-effect", summary: "Record a browser side effect.", run }]);
+    for (const timeout of [0, -1, "100", null]) {
+      await expect(shell.exec({ input: "side-effect", timeout })).resolves.toMatchObject({
+        status: "failed", error: "shell.exec timeout must be a positive number",
+      });
+    }
+    await expect(shell.exec({ input: "side-effect", cwd: 42 })).resolves.toMatchObject({ status: "failed" });
+    expect(run).not.toHaveBeenCalled();
+    await expect(shell.exec({ input: "side-effect", cwd: undefined })).resolves.toMatchObject({ status: "completed" });
+    expect(run).toHaveBeenCalledTimes(1);
+  });
+
   it("drops a cancelled queued command without bypassing the active command", async () => {
     const running = deferred<void>();
     const started = deferred<void>();

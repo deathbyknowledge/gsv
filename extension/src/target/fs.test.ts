@@ -1,9 +1,26 @@
 import { describe, expect, it, vi } from "vitest";
 import { bodyToBytes, bodyToText } from "@humansandmachines/gsv/protocol";
 import { BrowserFsDriver, BrowserTargetFileSystem } from "./fs";
+import { createRuntimeFileSystem } from "./runtime-fs";
 import type { TargetFileSystem } from "./types";
 
 describe("BrowserFsDriver", () => {
+  it("rejects malformed writes before changing files and normalizes valid paths", async () => {
+    const fs = new BrowserTargetFileSystem(createRuntimeFileSystem());
+    const write = vi.spyOn(fs, "write");
+    const driver = new BrowserFsDriver(fs);
+
+    await expect(driver.handle("fs.write", { path: "/tmp/note.txt", content: 42 })).rejects.toThrow();
+    await expect(driver.handle("fs.write", { path: "  ", content: "hello" })).rejects.toThrow();
+    await expect(driver.handle("fs.copy", { source: { path: "/tmp/note.txt" }, destination: {} })).rejects.toThrow();
+    expect(write).not.toHaveBeenCalled();
+
+    await expect(driver.handle("fs.write", { path: "/tmp/../tmp/note.txt", content: "hello" })).resolves.toMatchObject({
+      data: { ok: true, path: "/tmp/note.txt", size: 5 },
+    });
+    expect(new TextDecoder().decode(await fs.read("/tmp/note.txt"))).toBe("hello");
+  });
+
   it("uses the stored MIME type when reading an extensionless file", async () => {
     const runtime = {
       exists: async () => false,

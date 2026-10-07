@@ -1,3 +1,4 @@
+import { isString, isNumber, isBoolean } from "./schemas";
 import type { DebuggerCommand, TabSummary } from "./backend";
 
 const MAX_SNAPSHOTS = 24;
@@ -216,7 +217,7 @@ export class PageReferenceStore {
       this.references.set(reference.ref, reference);
     }
     while (this.snapshots.size > MAX_SNAPSHOTS) {
-      const oldest = this.snapshots.keys().next().value as string | undefined;
+      const oldest = this.snapshots.keys().next().value;
       if (!oldest) {
         break;
       }
@@ -335,7 +336,7 @@ function collectDomNodeInfo(snapshot: DomSnapshotResult): Map<number, DomNodeInf
     const clickable = new Set(nodes.isClickable?.index ?? []);
     for (let index = 0; index < (nodes.backendNodeId?.length ?? 0); index += 1) {
       const backendNodeId = nodes.backendNodeId?.[index];
-      if (typeof backendNodeId !== "number") {
+      if (backendNodeId === undefined) {
         continue;
       }
       result.set(backendNodeId, {
@@ -348,8 +349,8 @@ function collectDomNodeInfo(snapshot: DomSnapshotResult): Map<number, DomNodeInf
     const layout = document.layout;
     for (let layoutIndex = 0; layoutIndex < (layout?.nodeIndex?.length ?? 0); layoutIndex += 1) {
       const nodeIndex = layout?.nodeIndex?.[layoutIndex];
-      const backendNodeId = typeof nodeIndex === "number" ? nodes.backendNodeId?.[nodeIndex] : undefined;
-      if (typeof backendNodeId !== "number") {
+      const backendNodeId = nodeIndex !== undefined ? nodes.backendNodeId?.[nodeIndex] : undefined;
+      if (backendNodeId === undefined) {
         continue;
       }
       const info = result.get(backendNodeId);
@@ -382,7 +383,7 @@ function collectDomNodeInfo(snapshot: DomSnapshotResult): Map<number, DomNodeInf
   return result;
 }
 
-function collectStates(properties: AxProperty[] | undefined): Record<string, SemanticNodeState> {
+function collectStates(properties: AxProperty[] | undefined) {
   const states: Record<string, SemanticNodeState> = {};
   for (const property of properties ?? []) {
     const name = property.name ?? "";
@@ -507,7 +508,7 @@ function normalizeRole(value: string): string {
 
 function primitiveValue(value: AxValue | undefined): string | number | boolean | undefined {
   const raw = value?.value;
-  return typeof raw === "string" || typeof raw === "number" || typeof raw === "boolean"
+  return isString(raw) || isNumber(raw) || isBoolean(raw)
     ? raw
     : undefined;
 }
@@ -517,7 +518,7 @@ function stringValue(value: AxValue | undefined): string {
   return raw === undefined ? "" : String(raw);
 }
 
-function attributesAt(strings: string[], indexes: number[] | undefined): Record<string, string> {
+function attributesAt(strings: string[], indexes: number[] | undefined) {
   const attributes: Record<string, string> = {};
   for (let index = 0; index < (indexes?.length ?? 0); index += 2) {
     const name = stringAt(strings, indexes?.[index]);
@@ -529,7 +530,7 @@ function attributesAt(strings: string[], indexes: number[] | undefined): Record<
 }
 
 function stringAt(strings: string[], index: number | undefined): string {
-  return typeof index === "number" ? strings[index] ?? "" : "";
+  return index !== undefined ? strings[index] ?? "" : "";
 }
 
 function rectangleAt(value: number[] | undefined): Rectangle | undefined {
@@ -551,13 +552,7 @@ function compact(value: string, maxLength: number): string {
 
 function randomToken(): string {
   const bytes = new Uint8Array(4);
-  if (typeof crypto !== "undefined" && typeof crypto.getRandomValues === "function") {
-    crypto.getRandomValues(bytes);
-  } else {
-    for (let index = 0; index < bytes.length; index += 1) {
-      bytes[index] = Math.floor(Math.random() * 256);
-    }
-  }
+  crypto.getRandomValues(bytes);
   return Array.from(bytes, (value) => value.toString(36).padStart(2, "0")).join("");
 }
 
@@ -612,7 +607,7 @@ export function createPageSemantics<Target>(sendDebuggerCommand: DebuggerCommand
         const states = collectStates(child.properties);
         if (states.hidden === true) return false;
         const backendId = child.backendDOMNodeId;
-        return (typeof backendId === "number"
+        return (backendId !== undefined
           && (isReferenceable(normalizeRole(stringValue(child.role)), states, undefined)
             || Boolean(domNodes.get(backendId)?.scroll)))
           || hasInteractiveDescendant(child);
@@ -636,11 +631,11 @@ export function createPageSemantics<Target>(sendDebuggerCommand: DebuggerCommand
         return [];
       }
       const backendNodeId = node.backendDOMNodeId;
-      const dom = typeof backendNodeId === "number" ? domNodes.get(backendNodeId) : undefined;
+      const dom = backendNodeId !== undefined ? domNodes.get(backendNodeId) : undefined;
       const accessibleName = compact(stringValue(node.name), MAX_NAME_LENGTH);
       const displayedName = accessibleName
         || compact(descendantText(node, nodesById), MAX_SYNTHETIC_NAME_LENGTH);
-      const referenceable = typeof backendNodeId === "number" && isReferenceable(role, states, dom);
+      const referenceable = backendNodeId !== undefined && isReferenceable(role, states, dom);
       const renderedRole = dom?.scroll
         ? "scroll-region"
         : WRAPPER_ROLES.has(role) && referenceable
@@ -657,7 +652,7 @@ export function createPageSemantics<Target>(sendDebuggerCommand: DebuggerCommand
 
       nodeCount += 1;
       const output: SemanticSnapshotNode = { role: renderedRole || "element" };
-      if (referenceable && typeof backendNodeId === "number") {
+      if (referenceable && backendNodeId !== undefined) {
         const ref = `@${snapshotId}e${references.length + 1}`;
         output.ref = ref;
         references.push({
@@ -682,9 +677,9 @@ export function createPageSemantics<Target>(sendDebuggerCommand: DebuggerCommand
       const password = dom?.attributes.type?.toLowerCase() === "password";
       const editable = states.editable === true || renderedRole === "textbox" || renderedRole === "searchbox";
       if (value !== undefined && !password) {
-        output.value = typeof value === "string" ? compact(value, MAX_NAME_LENGTH) : value;
+        output.value = isString(value) ? compact(value, MAX_NAME_LENGTH) : value;
       }
-      if (typeof value === "string" && editable && !password) {
+      if (isString(value) && editable && !password) {
         output.valueLength = value.length;
       }
       if (Object.keys(states).length > 0) {

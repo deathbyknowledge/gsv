@@ -1,4 +1,5 @@
 import type { GsvEndpointHandler } from "@humansandmachines/gsv/client";
+import type { FsCopyResult } from "@humansandmachines/gsv/protocol";
 
 export type CommandResult = {
   stdout: string;
@@ -32,7 +33,7 @@ export type CommandContext = {
     source: TargetCopyEndpoint,
     destination: TargetCopyEndpoint,
     signal: AbortSignal | undefined,
-  ) => Promise<unknown>;
+  ) => Promise<FsCopyResult>;
 };
 
 export type DriverHandler = GsvEndpointHandler;
@@ -65,7 +66,7 @@ export function commandOk(stdout = ""): CommandResult {
   return { stdout, stderr: "", exitCode: 0 };
 }
 
-export function commandJson(value: unknown): CommandResult {
+export function commandJson<T>(value: T): CommandResult {
   return commandOk(`${JSON.stringify(value, null, 2)}\n`);
 }
 

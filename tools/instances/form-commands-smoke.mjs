@@ -52,7 +52,7 @@ export async function checkFormCommands(run) {
   for (const input of ["page fill --label Locked 'changed'", "page fill --label Reverting 'changed'", "page fill --label 'Departure time' nonsense", "page type --label 'Departure time' '11:00'"]) {
     const failed = await run(input); assert.equal(failed.exitCode, 1, `Unexpected success: ${input}`);
   }
-  await command(`page js 'const dialog = document.createElement("dialog"); dialog.setAttribute("aria-label", "Choose country"); dialog.innerHTML = "<p>Choose your country before continuing</p><button onclick=this.closest(\\\"dialog\\\").close()>Continue</button>"; document.body.append(dialog); dialog.showModal(); "opened"'`);
+  await command(`page js 'const dialog = document.createElement("dialog"); dialog.setAttribute("aria-label", "Choose country"); dialog.innerHTML = "<p>Choose your country before continuing</p><button>Continue</button>"; dialog.querySelector("button").addEventListener("click", () => dialog.close()); document.body.append(dialog); dialog.showModal(); "opened"'`);
   const modal = await command("page snapshot --json");
   assert.equal(modal.dialogs.length, 1);
   assert.equal(modal.dialogs[0].name, "Choose country");

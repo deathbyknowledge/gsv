@@ -92,7 +92,7 @@ if (process.argv.includes("--check")) {
 }
 
 function emitType(rustName, definition, typePath, inline, copy) {
-  if (definition.type === "string" && typeof definition.const === "string") {
+  if (definition.type === "string" && Object.hasOwn(definition, "const")) {
     emitEnum(rustName, { ...definition, enum: [definition.const] }, copy);
     return;
   }

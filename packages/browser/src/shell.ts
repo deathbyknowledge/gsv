@@ -1,3 +1,6 @@
+import { z } from "zod";
+import type { ShellExecArgs } from "@humansandmachines/gsv/protocol";
+import type { BrowserValue } from "./backend";
 import { Bash, defineCommand, type BashExecResult } from "just-bash/browser";
 import { DEFAULT_SHELL_EXEC_TIMEOUT_MS } from "@humansandmachines/gsv/protocol";
 import { abortable, throwIfAborted } from "./abort";
@@ -7,11 +10,18 @@ import type {
   BrowserCommand,
   CommandContext,
   ShellResult,
-  TargetCopyEndpoint,
   TargetFileSystem,
 } from "./types";
 import { commandError } from "./types";
 import { commandCatalog, helpText } from "./catalog";
+
+const shellExecSchema = z.object({
+  input: z.string({ error: "shell.exec requires input" }),
+  cwd: z.string().optional(),
+  sessionId: z.string().optional(),
+  start: z.boolean().optional(),
+  timeout: z.number({ error: "shell.exec timeout must be a positive number" }).positive({ error: "shell.exec timeout must be a positive number" }).optional(),
+});
 
 type BrowserBash = InstanceType<typeof Bash>;
 
@@ -21,11 +31,7 @@ const JUST_BASH_EXTENSION_CLEANUP_TIME_MS = 100;
 export type BrowserShellExecContext = {
   currentTargetId?: string;
   abortSignal?: AbortSignal;
-  copyTargetFile?: (
-    source: TargetCopyEndpoint,
-    destination: TargetCopyEndpoint,
-    signal: AbortSignal | undefined,
-  ) => Promise<unknown>;
+  copyTargetFile?: CommandContext["copyTargetFile"];
 };
 
 export class BrowserTargetShell {
@@ -43,7 +49,7 @@ export class BrowserTargetShell {
   /** Wait until cancelled commands have relinquished their underlying browser work. */
   async idle(): Promise<void> { await this.execQueue; }
 
-  async exec(args: unknown, context: BrowserShellExecContext = {}): Promise<ShellResult> {
+  async exec(args: BrowserValue, context: BrowserShellExecContext = {}): Promise<ShellResult> {
     const previous = this.execQueue;
     let release!: () => void;
     this.execQueue = new Promise((resolve) => {
@@ -53,7 +59,9 @@ export class BrowserTargetShell {
     try {
       await abortable(previous, context.abortSignal);
       acquired = true;
-      return await this.execLocked(args, context);
+      const parsed = shellExecSchema.safeParse(args);
+      if (!parsed.success) return { status: "failed", output: "", error: parsed.error.issues.map(issue => issue.message).join("; ") };
+      return await this.execLocked(parsed.data, context);
     } catch (error) {
       return failedResult(error);
     } finally {
@@ -72,21 +80,17 @@ export class BrowserTargetShell {
     }
   }
 
-  private async execLocked(args: unknown, context: BrowserShellExecContext): Promise<ShellResult> {
-    const record = asRecord(args);
-    const input = typeof record.input === "string" ? record.input : "";
-    const cwd = typeof record.cwd === "string" && record.cwd.trim() ? this.fs.resolvePath("/", record.cwd) : "/";
-    const sessionId = typeof record.sessionId === "string" ? record.sessionId.trim() : "";
-    const timeoutMs = resolveShellTimeout(record.timeout);
+  private async execLocked(args: ShellExecArgs, context: BrowserShellExecContext): Promise<ShellResult> {
+    const input = args.input;
+    const cwd = args.cwd?.trim() ? this.fs.resolvePath("/", args.cwd) : "/";
+    const sessionId = args.sessionId?.trim() ?? "";
+    const timeoutMs = args.timeout ?? DEFAULT_BROWSER_SHELL_TIMEOUT_MS;
 
-    if (sessionId || record.start === true) {
+    if (sessionId || args.start === true) {
       return { status: "failed", output: "", error: "Browser shell sessions are not supported yet" };
     }
     if (!input.trim()) {
       return { status: "failed", output: "", error: "shell.exec requires input" };
-    }
-    if (timeoutMs === null) {
-      return { status: "failed", output: "", error: "shell.exec timeout must be a positive number" };
     }
     if (input.trim() === "help") {
       return { status: "completed", output: helpText(this.commands), exitCode: 0 };
@@ -236,21 +240,10 @@ function toShellResult(result: BashExecResult): ShellResult {
   };
 }
 
-function failedResult(error: unknown): ShellResult {
+function failedResult(cause: unknown): ShellResult {
   return {
     status: "failed",
     output: "",
-    error: error instanceof Error ? error.message : String(error),
+    error: cause instanceof Error ? cause.message : String(cause),
   };
-}
-
-function asRecord(value: unknown): Record<string, unknown> {
-  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
-}
-
-function resolveShellTimeout(value: unknown): number | null {
-  if (value === undefined) return DEFAULT_BROWSER_SHELL_TIMEOUT_MS;
-  return typeof value === "number" && Number.isFinite(value) && value > 0
-    ? value
-    : null;
 }

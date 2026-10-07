@@ -1,3 +1,4 @@
+import { isString, isNumber, isBoolean } from "./schemas";
 import type { BrowserValue, DebuggerBackend } from "./backend";
 import { abortableDelay, throwIfAborted } from "./abort";
 import { keyEvent, parsePageKey as parseKey, scrollChanged, scrollDeltas, scrollSummary, createPageInput, type InputPoint, type PageScrollTarget, type ScrollState } from "./page-input";
@@ -135,7 +136,7 @@ export function createPageActions<Target>(debuggerBackend: DebuggerBackend<Targe
     locator: PageLocator,
     signal?: AbortSignal,
     store: PageReferenceStore = pageReferences,
-  ): Promise<Record<string, unknown>> {
+  ) {
     return await withDebugger(tabId, signal, async (target) => {
       const element = await resolveElement(target, tabId, locator, signal);
       await validateElementReference(target, element);
@@ -200,7 +201,7 @@ export function createPageActions<Target>(debuggerBackend: DebuggerBackend<Targe
         hasDocumentChanged(target, document.documentId).catch(() => true),
       ]);
       const observed = actionObservation(observation.before, afterObservation, beforeState, afterState, documentChanged);
-      return {
+      const result = {
         action: "click",
         delivered: {
           method: "cdp",
@@ -210,10 +211,9 @@ export function createPageActions<Target>(debuggerBackend: DebuggerBackend<Targe
           point: roundedPoint(point),
         },
         observed,
-        ...(observed.semanticChanged ? {} : {
-          warning: "Chrome accepted the click input, but no observable page state change was detected. The page may have handled a no-op or an effect outside the observer.",
-        }),
       };
+      if (!observed.semanticChanged) return { ...result, warning: "Chrome accepted the click input, but no observable page state change was detected. The page may have handled a no-op or an effect outside the observer." };
+      return result;
     });
   }
 
@@ -223,7 +223,7 @@ export function createPageActions<Target>(debuggerBackend: DebuggerBackend<Targe
     text: string,
     signal?: AbortSignal,
     store: PageReferenceStore = pageReferences,
-  ): Promise<Record<string, unknown>> {
+  ) {
     return await withDebugger(tabId, signal, async (target) => {
       const selected = await resolveElement(target, tabId, locator, signal);
       await validateElementReference(target, selected);
@@ -275,7 +275,7 @@ export function createPageActions<Target>(debuggerBackend: DebuggerBackend<Targe
         hasDocumentChanged(target, document.documentId).catch(() => true),
       ]);
       const observed = actionObservation(observation.before, afterObservation, beforeState, afterState, documentChanged);
-      return {
+      const result = {
         action: "type",
         delivered: {
           method: "cdp",
@@ -286,10 +286,9 @@ export function createPageActions<Target>(debuggerBackend: DebuggerBackend<Targe
           textLength: text.length,
         },
         observed,
-        ...(afterState?.valueLength === beforeState.valueLength ? {
-          warning: "Chrome accepted the text input, but the editable value length did not change. Replacing a selection with equal-length text can produce this result.",
-        } : {}),
       };
+      if (afterState?.valueLength === beforeState.valueLength) return { ...result, warning: "Chrome accepted the text input, but the editable value length did not change. Replacing a selection with equal-length text can produce this result." };
+      return result;
     });
   }
 
@@ -318,8 +317,8 @@ export function createPageActions<Target>(debuggerBackend: DebuggerBackend<Targe
             else {
               const key = parseKey("Backspace");
               // SAFETY: keyEvent produces a JSON debugger command payload.
-              await sendDebuggerCommand(target, "Input.dispatchKeyEvent", keyEvent("down", key) as Record<string, BrowserValue>);
-              await sendDebuggerCommand(target, "Input.dispatchKeyEvent", keyEvent("up", key) as Record<string, BrowserValue>);
+              await sendDebuggerCommand(target, "Input.dispatchKeyEvent", keyEvent("down", key));
+              await sendDebuggerCommand(target, "Input.dispatchKeyEvent", keyEvent("up", key));
             }
           }
         } else if (change.kind === "select") {
@@ -358,7 +357,7 @@ export function createPageActions<Target>(debuggerBackend: DebuggerBackend<Targe
     rawKey: string,
     signal?: AbortSignal,
     store: PageReferenceStore = pageReferences,
-  ): Promise<Record<string, unknown>> {
+  ) {
     return await withDebugger(tabId, signal, async (target) => {
       const key = parseKey(rawKey);
       const focused = await activeElement(target);
@@ -372,9 +371,9 @@ export function createPageActions<Target>(debuggerBackend: DebuggerBackend<Targe
       try {
         throwIfAborted(signal);
         // SAFETY: keyEvent produces a JSON debugger command payload.
-        await sendDebuggerCommand(target, "Input.dispatchKeyEvent", keyEvent("down", key) as { [key: string]: BrowserValue });
+        await sendDebuggerCommand(target, "Input.dispatchKeyEvent", keyEvent("down", key));
         // SAFETY: keyEvent produces a JSON debugger command payload.
-        await sendDebuggerCommand(target, "Input.dispatchKeyEvent", keyEvent("up", key) as { [key: string]: BrowserValue });
+        await sendDebuggerCommand(target, "Input.dispatchKeyEvent", keyEvent("up", key));
         await abortableDelay(ACTION_SETTLE_MS, signal);
         afterObservation = await endObservation(target, observation);
       } finally {
@@ -386,7 +385,7 @@ export function createPageActions<Target>(debuggerBackend: DebuggerBackend<Targe
       const afterState = focused ? await readElementState(target, focused.backendNodeId).catch(() => null) : null;
       const documentChanged = await hasDocumentChanged(target, document.documentId).catch(() => true);
       const observed = actionObservation(observation.before, afterObservation, beforeState, afterState, documentChanged);
-      return {
+      const result = {
         action: "key",
         delivered: {
           method: "cdp",
@@ -397,10 +396,9 @@ export function createPageActions<Target>(debuggerBackend: DebuggerBackend<Targe
           receiver,
         },
         observed,
-        ...(observed.semanticChanged ? {} : {
-          warning: "Chrome accepted the key input for the reported receiver, but no observable page state change was detected. The page may have handled a no-op or an effect outside the observer.",
-        }),
       };
+      if (!observed.semanticChanged) return { ...result, warning: "Chrome accepted the key input for the reported receiver, but no observable page state change was detected. The page may have handled a no-op or an effect outside the observer." };
+      return result;
     });
   }
 
@@ -410,7 +408,7 @@ export function createPageActions<Target>(debuggerBackend: DebuggerBackend<Targe
     reference: PageElementReference | null,
     signal?: AbortSignal,
     store: PageReferenceStore = pageReferences,
-  ): Promise<Record<string, unknown>> {
+  ) {
     return await withDebugger(tabId, signal, async (target) => {
       const element = reference
         ? await resolveElement(target, tabId, { kind: "reference", reference })
@@ -515,6 +513,9 @@ export function createPageActions<Target>(debuggerBackend: DebuggerBackend<Targe
       const observed = actionObservation(observation.before, afterObservation, beforeState, afterState, documentChanged);
       const changed = scrollChanged(beforeState, afterState);
       const boundaryReached = scrollBoundaryReached(scrollTarget, afterState);
+      const scroll = {
+        before: scrollSummary(beforeState), after: scrollSummary(afterState), changed,
+      };
       return {
         action: "scroll",
         delivered: {
@@ -536,12 +537,7 @@ export function createPageActions<Target>(debuggerBackend: DebuggerBackend<Targe
         },
         observed: {
           ...observed,
-          scroll: {
-            before: scrollSummary(beforeState),
-            after: scrollSummary(afterState),
-            changed,
-            ...(boundaryReached === null ? {} : { boundaryReached }),
-          },
+          scroll: boundaryReached === null ? scroll : { ...scroll, boundaryReached },
         },
         ...scrollWarning(changed, boundaryReached, scrollTarget, dispatchedEvents),
       };
@@ -582,7 +578,7 @@ export function createPageActions<Target>(debuggerBackend: DebuggerBackend<Targe
     boundaryReached: boolean | null,
     target: PageScrollTarget,
     events: number,
-  ): { warning?: string } {
+  ) {
     if (boundaryReached === true || (changed && boundaryReached === null)) {
       return {};
     }
@@ -608,7 +604,7 @@ export function createPageActions<Target>(debuggerBackend: DebuggerBackend<Targe
         throwIfAborted(signal);
         return await use(target);
       } finally {
-        await releaseDebugger(tabId).catch((error: unknown) => {
+        await releaseDebugger(tabId).catch((error) => {
           console.warn("GSV browser target failed to detach debugger", error);
         });
       }
@@ -642,7 +638,7 @@ export function createPageActions<Target>(debuggerBackend: DebuggerBackend<Targe
       depth: 0,
       pierce: true,
     });
-    if (typeof document.root?.nodeId !== "number") {
+    if (document.root?.nodeId === undefined) {
       throw new Error("Chrome did not return a DOM root");
     }
     const matches = await sendDebuggerCommand<QuerySelectorAllResult>(target, "DOM.querySelectorAll", {
@@ -654,7 +650,7 @@ export function createPageActions<Target>(debuggerBackend: DebuggerBackend<Targe
       throw new Error(`No element matches selector: ${locator.selector}`);
     }
     const nodeId = nodeIds[locator.index];
-    if (typeof nodeId !== "number") {
+    if (nodeId === undefined) {
       throw new Error(`Selector matched ${nodeIds.length} element(s), index ${locator.index} is out of range`);
     }
     return await describeNode(target, { nodeId });
@@ -670,7 +666,7 @@ export function createPageActions<Target>(debuggerBackend: DebuggerBackend<Targe
       pierce: true,
     });
     const node = result.node;
-    if (typeof node?.backendNodeId !== "number") {
+    if (node?.backendNodeId === undefined) {
       throw new Error("The page element is detached or unavailable");
     }
     return {
@@ -782,7 +778,7 @@ export function createPageActions<Target>(debuggerBackend: DebuggerBackend<Targe
       includeUserAgentShadowDOM: false,
       ignorePointerEventsNone: false,
     });
-    if (typeof result.backendNodeId !== "number") {
+    if (result.backendNodeId === undefined) {
       throw new Error("Chrome could not determine which element would receive the input");
     }
     return result.backendNodeId;
@@ -867,7 +863,7 @@ export function createPageActions<Target>(debuggerBackend: DebuggerBackend<Targe
     const states: Record<string, string | number | boolean> = {};
     for (const property of node?.properties ?? []) {
       const value = property.value?.value;
-      if (property.name && (typeof value === "string" || typeof value === "number" || typeof value === "boolean")) {
+      if (property.name && (isString(value) || isNumber(value) || isBoolean(value))) {
         states[property.name] = value;
       }
     }
@@ -895,22 +891,22 @@ export function createPageActions<Target>(debuggerBackend: DebuggerBackend<Targe
       : undefined;
     const ref = preferred?.ref ?? store.referenceFor(tabId, backendNodeId);
     const reference = preferred ?? (ref ? store.resolve(ref) : undefined);
-    return {
-      ...(ref ? { ref } : {}),
-      tag: element.tag,
-      ...(semantic.role || reference?.role ? { role: semantic.role || reference?.role } : {}),
-      ...(semantic.name || reference?.name ? { name: semantic.name || reference?.name } : {}),
-      ...(Object.keys(semantic.states).length > 0 ? { states: semantic.states } : {}),
-    };
+    const summary: ElementSummary = { tag: element.tag };
+    if (ref) summary.ref = ref;
+    const role = semantic.role || reference?.role;
+    const name = semantic.name || reference?.name;
+    if (role) summary.role = role;
+    if (name) summary.name = name;
+    if (Object.keys(semantic.states).length > 0) summary.states = semantic.states;
+    return summary;
   }
 
   function detachedSummary(element: ResolvedElement): ElementSummary {
-    return {
-      ...(element.reference?.ref ? { ref: element.reference.ref } : {}),
-      tag: "detached",
-      ...(element.reference?.role ? { role: element.reference.role } : {}),
-      ...(element.reference?.name ? { name: element.reference.name } : {}),
-    };
+    const summary: ElementSummary = { tag: "detached" };
+    if (element.reference?.ref) summary.ref = element.reference.ref;
+    if (element.reference?.role) summary.role = element.reference.role;
+    if (element.reference?.name) summary.name = element.reference.name;
+    return summary;
   }
 
   async function resolveRemoteNode(
@@ -997,17 +993,18 @@ export function createPageActions<Target>(debuggerBackend: DebuggerBackend<Targe
     const result = await sendDebuggerCommand<RuntimeResult>(target, "Runtime.callFunctionOn", {
       objectId,
       functionDeclaration,
-      ...(args.length ? { arguments: args.map(value => ({ value })) } : {}),
+      arguments: args.map(value => ({ value })),
       returnByValue: true,
       silent: true,
     });
     if (result.exceptionDetails) {
       throw new Error(runtimeError(result));
     }
+    // SAFETY: Callers supply the result type of GSV-owned page functions, serialized here and returned by CDP by value.
     return result.result?.value as T;
   }
 
-  function attributeRecord(attributes: string[] | undefined): Record<string, string> {
+  function attributeRecord(attributes: string[] | undefined) {
     const record: Record<string, string> = {};
     for (let index = 0; index < (attributes?.length ?? 0); index += 2) {
       const name = attributes?.[index];

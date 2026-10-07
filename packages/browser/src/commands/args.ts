@@ -18,7 +18,7 @@ export function requiredInteger(value: string | undefined, label: string): numbe
   return parsed;
 }
 
-export function splitOption(args: string[], name: string): { value: string | null; rest: string[] } {
+export function splitOption(args: string[], name: string) {
   const rest: string[] = [];
   let value: string | null = null;
 

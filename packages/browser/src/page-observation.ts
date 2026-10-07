@@ -171,7 +171,7 @@ export function createPageObservation<Target>(sendDebuggerCommand: DebuggerComma
     beforeState: ObservableTargetState | null,
     afterState: ObservableTargetState | null,
     documentChanged: boolean,
-  ): Record<string, unknown> & { semanticChanged: boolean } {
+  ) {
     const urlChanged = before.url !== after.url;
     const focusChanged = JSON.stringify(before.focus) !== JSON.stringify(after.focus);
     const selectionChanged = (before.selection ?? null) !== (after.selection ?? null);
@@ -182,7 +182,7 @@ export function createPageObservation<Target>(sendDebuggerCommand: DebuggerComma
       || focusChanged
       || selectionChanged
       || targetStateChanged
-      || (typeof mutationCount === "number" && mutationCount > 0);
+      || (mutationCount !== null && mutationCount > 0);
     return {
       documentChanged,
       status: semanticChanged ? "changed" : "no-change-detected",
@@ -226,10 +226,11 @@ export function createPageObservation<Target>(sendDebuggerCommand: DebuggerComma
           ?? "Page evaluation failed",
       ));
     }
+    // SAFETY: Only this module's fixed observation expressions produce T; CDP returns their value by copy.
     return result.result?.value as T;
   }
 
-  function relevantState(state: ObservableTargetState | null): Record<string, unknown> | null {
+  function relevantState(state: ObservableTargetState | null) {
     if (!state) {
       return null;
     }

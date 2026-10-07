@@ -94,6 +94,12 @@ GSV currently projects these environments:
   installed GSV app identity, and the adapter retains both credentials and
   provider policy.
 
+The extension and cloud browser share `packages/browser` for filesystem and
+shell behavior. That driver parses incoming syscall arguments before accessing
+files or executing commands, then uses the public SDK's operation types.
+Backend script execution retains the injected function's argument and result
+types, and file-copy receipts use the ordinary `fs.copy` result contract.
+
 The persisted registry and compatibility syscalls still use `device` names for
 non-native targets. That is an implementation and upgrade constraint, not the
 architectural definition of a target.

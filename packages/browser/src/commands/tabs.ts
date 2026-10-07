@@ -1,4 +1,5 @@
-import type { BrowserTabsBackend } from "../backend";
+import type { FsCopyResult } from "@humansandmachines/gsv/protocol";
+import type { BrowserValue, BrowserTabsBackend } from "../backend";
 import { inferContentType } from "../content-types";
 import { basename, normalizePath } from "../paths";
 import { throwIfAborted } from "../abort";
@@ -313,7 +314,7 @@ export function createTabCommands(backend: BrowserTabsBackend) {
     const inferredType = contentType ?? inferContentType(endpoint.path);
     const destination = tempRenderPath(basename(endpoint.path), extensionForPathOrType(endpoint.path, inferredType));
     await ctx.fs.mkdir("/tmp/render");
-    let copy: unknown;
+    let copy: FsCopyResult;
     try {
       copy = await ctx.copyTargetFile(endpoint, {
         target: ctx.currentTargetId,
@@ -323,15 +324,9 @@ export function createTabCommands(backend: BrowserTabsBackend) {
     } catch (error) {
       throw new Error(remoteCopyErrorMessage(error));
     }
-    const copyRecord = asRecord(copy);
-    if (copyRecord.ok === false) {
-      throw new Error(typeof copyRecord.error === "string" ? copyRecord.error : "fs.copy failed");
-    }
-    const copiedType = contentType ?? copyContentType(copy) ?? inferredType;
-    const copiedDestination = asRecord(copyRecord.destination);
-    const copiedPath = typeof copiedDestination.path === "string" && copiedDestination.path.trim()
-      ? copiedDestination.path.trim()
-      : destination;
+    if (!copy.ok) throw new Error(copy.error);
+    const copiedType = contentType ?? (copy.contentType?.trim() || inferredType);
+    const copiedPath = copy.destination.path.trim() || destination;
     return {
       path: copiedPath,
       source: sourceText,
@@ -432,15 +427,8 @@ export function createTabCommands(backend: BrowserTabsBackend) {
     return /^[A-Za-z0-9!#$&^_.+-]+\/[A-Za-z0-9!#$&^_.+-]+(?:\s*;\s*[A-Za-z0-9_.-]+=[^;]+)*$/.test(value.trim());
   }
 
-  function copyContentType(value: unknown): string | null {
-    const record = asRecord(value);
-    return typeof record.contentType === "string" && record.contentType.trim()
-      ? record.contentType.trim()
-      : null;
-  }
-
-  function remoteCopyErrorMessage(error: unknown): string {
-    const message = errorMessage(error);
+  function remoteCopyErrorMessage(cause: unknown): string {
+    const message = errorMessage(cause);
     if (message.includes("Permission denied: fs.copy")) {
       return "remote file open is unavailable from this browser shell; copy the file to this browser target with native cp first";
     }
@@ -451,16 +439,12 @@ export function createTabCommands(backend: BrowserTabsBackend) {
     return contentType.toLowerCase().split(";")[0]?.trim() ?? "";
   }
 
-  function compactOpenJson(value: Record<string, unknown>): string {
+  function compactOpenJson(value: BrowserValue): string {
     return JSON.stringify(value);
   }
 
-  function asRecord(value: unknown): Record<string, unknown> {
-    return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
-  }
-
-  function errorMessage(error: unknown): string {
-    return error instanceof Error ? error.message : String(error);
+  function errorMessage(cause: unknown): string {
+    return cause instanceof Error ? cause.message : String(cause);
   }
   return { tabCommands };
 }

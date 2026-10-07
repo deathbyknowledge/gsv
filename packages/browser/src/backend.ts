@@ -1,5 +1,6 @@
 import type { TargetFileSystem } from "./types";
-export type BrowserValue = string | number | boolean | null | undefined | BrowserValue[] | object;
+/** Values serialized across the browser backend boundary; absent object fields are omitted. */
+export type BrowserValue = string | number | boolean | null | undefined | BrowserValue[] | { [key: string]: BrowserValue };
 export type DebuggerCommand<Target> = <T extends object | undefined = object | undefined>(target: Target, method: string, params?: Record<string, BrowserValue>) => Promise<T>;
 export type BrowserInputBackend = {
   /** Keep one complete input action together when several actors share a browser. */
@@ -28,7 +29,7 @@ export type BrowserPageBackend = {
   activeTab(): Promise<TabSummary | null>;
   getTab(tabId: number): Promise<TabSummary | null>;
   captureTabPng(tabId: number): Promise<Uint8Array>;
-  executeInTab<T>(tabId: number, func: (...args: BrowserValue[]) => T, args?: BrowserValue[]): Promise<T>;
+  executeInTab<Args extends BrowserValue[], T>(tabId: number, func: (...args: Args) => T, args: Args): Promise<T>;
 };
 export type BrowserTabsBackend = BrowserInputBackend & Pick<BrowserPageBackend, "activeTab" | "getTab"> & {
   listTabs(): Promise<TabSummary[]>;

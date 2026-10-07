@@ -1,8 +1,26 @@
 export type InjectedPageResult<T> = { ok: true; value: T } | { ok: false; error: string };
 
-export function snapshotDomPage(selector: unknown): InjectedPageResult<unknown> {
+type DomBounds = { x: number; y: number; width: number; height: number };
+type DomSnapshotNode = {
+  tag: string;
+  text?: string;
+  role?: string;
+  attrs?: Record<string, string | boolean>;
+  bounds?: DomBounds;
+  children?: DomSnapshotNode[];
+  truncatedChildren?: number;
+};
+type DomSnapshot = {
+  url: string;
+  title: string;
+  viewport: { width: number; height: number; scrollX: number; scrollY: number };
+  root: DomSnapshotNode;
+};
+type DomElementSummary = { tag: string; text: string; attrs: Record<string, string>; bounds: DomBounds };
+
+export function snapshotDomPage(selector: string | null): InjectedPageResult<DomSnapshot> {
   try {
-    const selectorText = typeof selector === "string" && selector.trim() ? selector.trim() : null;
+    const selectorText = selector?.trim() || null;
     const root = selectorText ? document.querySelector(selectorText) : document.body ?? document.documentElement;
     if (!root) {
       return { ok: false, error: selectorText ? `No element matches selector: ${selectorText}` : "No document root" };
@@ -14,7 +32,7 @@ export function snapshotDomPage(selector: unknown): InjectedPageResult<unknown> 
     const skippedTags = new Set(["SCRIPT", "STYLE", "NOSCRIPT", "TEMPLATE", "META", "LINK"]);
 
     function compactText(element: Element): string | undefined {
-      const raw = ((element as HTMLElement).innerText || element.textContent || "").replace(/\s+/g, " ").trim();
+      const raw = ((element instanceof HTMLElement ? element.innerText : "") || element.textContent || "").replace(/\s+/g, " ").trim();
       if (!raw) {
         return undefined;
       }
@@ -78,7 +96,7 @@ export function snapshotDomPage(selector: unknown): InjectedPageResult<unknown> 
       return Object.keys(attrs).length > 0 ? attrs : undefined;
     }
 
-    function boundsFor(element: Element): Record<string, number> {
+    function boundsFor(element: Element) {
       const rect = element.getBoundingClientRect();
       return {
         x: Math.round(rect.x),
@@ -97,12 +115,12 @@ export function snapshotDomPage(selector: unknown): InjectedPageResult<unknown> 
       return rect.width > 0 || rect.height > 0 || Boolean((element.textContent || "").trim());
     }
 
-    function snapshotElement(element: Element, depth: number): Record<string, unknown> {
+    function snapshotElement(element: Element, depth: number): DomSnapshotNode {
       const childElements = Array.from(element.children)
         .filter((child) => !skippedTags.has(child.tagName))
         .filter((child) => depth === 0 || isVisible(child));
       const visibleChildren = childElements.slice(0, maxChildren);
-      const node: Record<string, unknown> = { tag: element.tagName.toLowerCase() };
+      const node: DomSnapshotNode = { tag: element.tagName.toLowerCase() };
       const text = compactText(element);
       const role = roleFor(element);
       const attrs = attrsFor(element);
@@ -138,9 +156,9 @@ export function snapshotDomPage(selector: unknown): InjectedPageResult<unknown> 
   }
 }
 
-export function readPageText(selector: unknown): InjectedPageResult<{ text: string; count: number }> {
+export function readPageText(selector: string | null): InjectedPageResult<{ text: string; count: number }> {
   try {
-    const selectorText = typeof selector === "string" && selector.trim() ? selector.trim() : null;
+    const selectorText = selector?.trim() || null;
     const elements = selectorText
       ? Array.from(document.querySelectorAll(selectorText))
       : [document.body ?? document.documentElement].filter(Boolean);
@@ -148,7 +166,7 @@ export function readPageText(selector: unknown): InjectedPageResult<{ text: stri
       return { ok: false, error: `No element matches selector: ${selectorText}` };
     }
     const text = elements
-      .map((element) => ((element as HTMLElement).innerText || element.textContent || "").trim())
+      .map((element) => ((element instanceof HTMLElement ? element.innerText : "") || element.textContent || "").trim())
       .filter(Boolean)
       .join("\n\n");
     return { ok: true, value: { text, count: elements.length } };
@@ -157,10 +175,10 @@ export function readPageText(selector: unknown): InjectedPageResult<{ text: stri
   }
 }
 
-export function findPageSelector(selector: unknown): InjectedPageResult<Record<string, unknown> | null> {
-  const selectorText = typeof selector === "string" ? selector : "";
+export function findPageSelector(selector: string): InjectedPageResult<DomElementSummary | null> {
+  const selectorText = selector;
 
-  function summarizeElement(element: Element): Record<string, unknown> {
+  function summarizeElement(element: Element): DomElementSummary {
     const rect = element.getBoundingClientRect();
     const attrs: Record<string, string> = {};
     for (const name of ["id", "role", "aria-label", "name", "type", "href", "title"]) {
@@ -169,7 +187,7 @@ export function findPageSelector(selector: unknown): InjectedPageResult<Record<s
     }
     return {
       tag: element.tagName.toLowerCase(),
-      text: ((element as HTMLElement).innerText || element.textContent || "").replace(/\s+/g, " ").trim().slice(0, 160),
+      text: ((element instanceof HTMLElement ? element.innerText : "") || element.textContent || "").replace(/\s+/g, " ").trim().slice(0, 160),
       attrs,
       bounds: {
         x: Math.round(rect.x),

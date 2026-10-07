@@ -32,6 +32,10 @@ type OwnedOperation = { abort: AbortController; done: Promise<unknown> };
 const liveHandoff = (value: BrowserHandoff): boolean => value.state === "pending" || value.state === "active";
 const actionPath = (value: BrowserHandoff): string => `/?browserInstance=${encodeURIComponent(value.instanceId)}&browserHandoff=${encodeURIComponent(value.requestId)}`;
 
+function isBrowserRequest(frame: InstanceTargetRequest): frame is Extract<InstanceTargetRequest, { call: typeof IMPLEMENTATIONS[number] }> {
+  return IMPLEMENTATIONS.some(call => call === frame.call);
+}
+
 export class InstanceCoordinator extends DurableObject<Environment> implements InstallationInstances {
   readonly #store: InstanceStore;
   readonly #policy: InstancePolicy;
@@ -320,7 +324,7 @@ export class InstanceCoordinator extends DurableObject<Environment> implements I
   async execute(actor: InstanceActor, id: string, frame: InstanceTargetRequest, deadlineAt: number): Promise<InstanceTargetResponse> {
     try {
       id = this.requireInstance(actor, id, true).id;
-      if (!IMPLEMENTATIONS.includes(frame.call)) throw new Error("Unsupported browser syscall");
+      if (!isBrowserRequest(frame)) throw new Error("Unsupported browser syscall");
       if (this.#store.handoffs(id).some(liveHandoff)) { await cancelBinaryBody(frame.body, "Human controls browser"); return { type: "res", id: frame.id, ok: false, error: { code: 409, message: "human_control: waiting for the user to return browser control" } }; }
       await this.#policy.requireActive();
       if (this.#stops.has(id)) throw new Error("Browser is preparing to stop");

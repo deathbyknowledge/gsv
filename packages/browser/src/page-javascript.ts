@@ -1,4 +1,4 @@
-import type { DebuggerBackend } from "./backend";
+import type { BrowserValue, DebuggerBackend } from "./backend";
 
 const DEBUGGER_EVALUATE_TIMEOUT_MS = 30_000;
 
@@ -6,7 +6,7 @@ type RuntimeRemoteObject = {
   type?: string;
   subtype?: string;
   className?: string;
-  value?: unknown;
+  value?: BrowserValue;
   unserializableValue?: string;
   description?: string;
   objectId?: string;
@@ -24,7 +24,7 @@ type RuntimeEvaluateResult = {
   exceptionDetails?: RuntimeExceptionDetails;
 };
 
-type JavaScriptResult = { ok: true; value: unknown } | { ok: false; error: string };
+type JavaScriptResult = { ok: true; value: BrowserValue } | { ok: false; error: string };
 
 const DEBUGGER_SERIALIZER_FUNCTION = String.raw`function() {
   function summarizeElement(element) {
@@ -163,7 +163,7 @@ export function createPageJavaScript<Target>(debuggerBackend: DebuggerBackend<Ta
       return { ok: false, error: error instanceof Error ? error.message : String(error) };
     } finally {
       if (target) {
-        await releaseDebugger(tabId).catch((error: unknown) => {
+        await releaseDebugger(tabId).catch((error) => {
           console.warn("GSV browser target failed to detach debugger", error);
         });
       }
@@ -188,7 +188,7 @@ export function createPageJavaScript<Target>(debuggerBackend: DebuggerBackend<Ta
   async function serializeRuntimeRemoteObject(
     target: Target,
     remote: RuntimeRemoteObject,
-  ): Promise<unknown> {
+  ): Promise<BrowserValue> {
     if (!remote.objectId) {
       return remoteObjectLiteral(remote);
     }
@@ -216,7 +216,7 @@ export function createPageJavaScript<Target>(debuggerBackend: DebuggerBackend<Ta
     }
   }
 
-  function remoteObjectLiteral(remote: RuntimeRemoteObject): unknown {
+  function remoteObjectLiteral(remote: RuntimeRemoteObject): BrowserValue {
     if (Object.prototype.hasOwnProperty.call(remote, "value")) {
       return remote.value;
     }
@@ -242,7 +242,7 @@ export function createPageJavaScript<Target>(debuggerBackend: DebuggerBackend<Ta
         ?? details.text
         ?? "JavaScript evaluation failed",
     );
-    const location = typeof details.lineNumber === "number" && typeof details.columnNumber === "number"
+    const location = details.lineNumber !== undefined && details.columnNumber !== undefined
       ? ` at ${details.lineNumber + 1}:${details.columnNumber + 1}`
       : "";
     return `${message}${location}`;
