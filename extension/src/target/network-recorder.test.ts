@@ -128,6 +128,7 @@ describe("network capture teardown", () => {
     finishMkdir();
 
     await expect(capture).rejects.toThrow("Browser access paused");
+    expect(fs.mkdir).toHaveBeenCalledWith(expect.stringContaining("/requests"), controller.signal);
     expect(write).not.toHaveBeenCalled();
     expect(sendCommand).not.toHaveBeenCalled();
     expect(detach).toHaveBeenCalledWith({ tabId: 42 });

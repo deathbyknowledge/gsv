@@ -34,6 +34,27 @@ describe("tabs open", () => {
     expect(result.exitCode).toBe(0);
   });
 
+  it("passes Pause cancellation to rendered tab storage", async () => {
+    stubChrome({ create: vi.fn(async ({ url }) => tab(false, url ?? "")) });
+    const controller = new AbortController();
+    const mkdir = vi.fn(async () => {});
+    const write = vi.fn(async () => {});
+    const ctx = context(write, {
+      stdin: "hello",
+      abortSignal: controller.signal,
+      fs: { mkdir, write } as unknown as TargetFileSystem,
+    });
+
+    expect((await runTabs(["open", "-"], ctx)).exitCode).toBe(0);
+    expect(mkdir).toHaveBeenCalledWith("/tmp/render", controller.signal);
+    expect(write).toHaveBeenCalledWith(
+      expect.stringMatching(/^\/tmp\/render\/\d{14}-[a-f0-9]{8}-stdin\.txt$/),
+      new TextEncoder().encode("hello"),
+      "text/plain; charset=utf-8",
+      controller.signal,
+    );
+  });
+
   it("closes a tab returned by Chrome after Pause", async () => {
     let finishCreate!: (created: chrome.tabs.Tab) => void;
     const pendingCreate = new Promise<chrome.tabs.Tab>((resolve) => { finishCreate = resolve; });
@@ -188,12 +209,13 @@ describe("tabs open", () => {
 describe("page screenshot", () => {
   it("captures an inactive tab without focusing it", async () => {
     const write = vi.fn();
+    const controller = new AbortController();
     const chromeApi = stubChrome({
       get: vi.fn(async () => tab(false, "https://example.com")),
       sendCommand: vi.fn(async () => ({ data: "AQIDBA==" })),
     });
 
-    const result = await pageCommand.run(["screenshot", "--tab", "42"], context(write));
+    const result = await pageCommand.run(["screenshot", "--tab", "42"], context(write, { abortSignal: controller.signal }));
 
     expect(result.exitCode).toBe(0);
     expect(chromeApi.debugger.attach).toHaveBeenCalledWith({ tabId: 42 }, "1.3");
@@ -210,6 +232,7 @@ describe("page screenshot", () => {
       "/home/browser/screenshots/tab-42-19700101000000.png",
       new Uint8Array([1, 2, 3, 4]),
       "image/png",
+      controller.signal,
     );
   });
 
@@ -281,6 +304,7 @@ function stubChrome(overrides: {
       captureVisibleTab: vi.fn(),
     },
     windows: { update: overrides.updateWindow ?? vi.fn() },
+    runtime: { getURL: vi.fn((path: string) => `chrome-extension://test/${path}`) },
     debugger: {
       attach: vi.fn(),
       detach: vi.fn(),

@@ -187,11 +187,12 @@ export class BrowserTargetFileSystem implements TargetFileSystem {
     throw new Error(`No such file or directory: ${normalized}`);
   }
 
-  async mkdir(path: string): Promise<void> {
+  async mkdir(path: string, signal?: AbortSignal): Promise<void> {
     await this.ensureLoaded();
+    throwIfAborted(signal);
     const normalized = normalizePath(path);
     this.assertWritable(normalized);
-    await this.ensureDirectory(normalized);
+    await this.ensureDirectory(normalized, signal);
   }
 
   async copy(source: string, destination: string, signal?: AbortSignal): Promise<string> {

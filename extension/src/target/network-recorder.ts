@@ -199,9 +199,9 @@ export async function startNetworkCapture(options: NetworkCaptureOptions): Promi
   try {
     throwIfAborted(options.abortSignal);
     if (state.sessionPath) {
-      await options.fs.mkdir(`${state.sessionPath}/requests`);
+      await options.fs.mkdir(`${state.sessionPath}/requests`, options.abortSignal);
       throwIfAborted(options.abortSignal);
-      await options.fs.write(`${state.sessionPath}/status.json`, jsonBytes(captureStatus(state)));
+      await options.fs.write(`${state.sessionPath}/status.json`, jsonBytes(captureStatus(state)), undefined, options.abortSignal);
     }
     throwIfAborted(options.abortSignal);
     await sendDebuggerCommand(target, "Network.enable", {

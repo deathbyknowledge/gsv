@@ -218,7 +218,7 @@ async function runScreenshot(args: string[], ctx: CommandContext): Promise<Comma
     ".png",
   ].join("");
   throwIfAborted(ctx.abortSignal);
-  await ctx.fs.write(path, png, "image/png");
+  await ctx.fs.write(path, png, "image/png", ctx.abortSignal);
   throwIfAborted(ctx.abortSignal);
 
   return commandCompactJson({

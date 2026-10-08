@@ -192,7 +192,7 @@ async function runExport(args: string[], ctx: CommandContext): Promise<CommandRe
   throwIfAborted(ctx.abortSignal);
   if (parsed.value.path) {
     const path = ctx.fs.resolvePath(ctx.cwd, parsed.value.path);
-    await ctx.fs.write(path, new TextEncoder().encode(`${JSON.stringify(har, null, 2)}\n`));
+    await ctx.fs.write(path, new TextEncoder().encode(`${JSON.stringify(har, null, 2)}\n`), undefined, ctx.abortSignal);
     throwIfAborted(ctx.abortSignal);
     return commandJson({ path, format: "har" });
   }

@@ -252,9 +252,9 @@ async function renderableFromStdin(ctx: CommandContext, contentType?: string): P
   }
   const resolvedType = contentType ?? "text/plain; charset=utf-8";
   const path = tempRenderPath("stdin", extensionForContentType(resolvedType));
-  await ctx.fs.mkdir("/tmp/render");
+  await ctx.fs.mkdir("/tmp/render", ctx.abortSignal);
   throwIfAborted(ctx.abortSignal);
-  await ctx.fs.write(path, new TextEncoder().encode(ctx.stdin), resolvedType);
+  await ctx.fs.write(path, new TextEncoder().encode(ctx.stdin), resolvedType, ctx.abortSignal);
   throwIfAborted(ctx.abortSignal);
   return {
     path,
@@ -283,11 +283,11 @@ async function renderableFromPath(input: string, ctx: CommandContext, contentTyp
   }
 
   const destination = tempRenderPath(basename(path), extensionForPathOrType(path, resolvedType));
-  await ctx.fs.mkdir("/tmp/render");
+  await ctx.fs.mkdir("/tmp/render", ctx.abortSignal);
   throwIfAborted(ctx.abortSignal);
   const contents = await ctx.fs.read(path);
   throwIfAborted(ctx.abortSignal);
-  await ctx.fs.write(destination, contents, resolvedType);
+  await ctx.fs.write(destination, contents, resolvedType, ctx.abortSignal);
   throwIfAborted(ctx.abortSignal);
   return localRenderable(destination, path, path, resolvedType);
 }
@@ -316,11 +316,11 @@ async function renderableFromTargetEndpoint(
     }
 
     const destination = tempRenderPath(basename(path), extensionForPathOrType(path, resolvedType));
-    await ctx.fs.mkdir("/tmp/render");
+    await ctx.fs.mkdir("/tmp/render", ctx.abortSignal);
     throwIfAborted(ctx.abortSignal);
     const contents = await ctx.fs.read(path);
     throwIfAborted(ctx.abortSignal);
-    await ctx.fs.write(destination, contents, resolvedType);
+    await ctx.fs.write(destination, contents, resolvedType, ctx.abortSignal);
     throwIfAborted(ctx.abortSignal);
     return localRenderable(destination, sourceText, sourceText, resolvedType);
   }
@@ -333,7 +333,7 @@ async function renderableFromTargetEndpoint(
 
   const inferredType = contentType ?? inferContentType(endpoint.path);
   const destination = tempRenderPath(basename(endpoint.path), extensionForPathOrType(endpoint.path, inferredType));
-  await ctx.fs.mkdir("/tmp/render");
+  await ctx.fs.mkdir("/tmp/render", ctx.abortSignal);
   throwIfAborted(ctx.abortSignal);
   let copy: unknown;
   try {
