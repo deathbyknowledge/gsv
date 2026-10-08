@@ -65,7 +65,7 @@ const NATIVE_COMMAND_DESCRIPTORS = defineNativeCommandDescriptors({
     "contact identity",
     "contact list [--all] [--json]",
     "contact invite create [--expires DURATION]",
-    "contact invite accept CODE",
+    "contact invite accept LINK_OR_CODE",
     "contact invite list [--all] [--json]",
     "contact invite cancel INVITE_ID",
     "contact revoke CONTACT_ID",

@@ -115,6 +115,8 @@ export type ContactInviteCreateArgs = {
 export type ContactInviteCreateResult = {
   inviteId: string;
   code: string;
+  /** Shareable link; older gateways return only the equivalent code. */
+  url?: string;
   expiresAtMs: number;
 };
 

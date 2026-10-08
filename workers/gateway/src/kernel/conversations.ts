@@ -290,6 +290,11 @@ export class ConversationRegistry {
       `SELECT c.*, f.contact_id AS inbox_contact_id FROM conversations c
        JOIN federation_contacts f ON f.conversation_id = c.conversation_id AND f.owner_uid = c.owner_uid
        WHERE c.owner_uid = ? AND c.kind = 'contact' AND c.archived = ?
+       ${args.attentionOnly ? `AND c.latest_incoming_sequence > c.read_through_sequence
+         AND f.state = 'active' AND f.muted = 0 AND NOT EXISTS (
+           SELECT 1 FROM federation_actor_blocks b WHERE b.owner_uid = f.owner_uid
+             AND b.ship_id = f.remote_ship_id AND b.subject_id = f.remote_subject_id
+         )` : ""}
        ${cursor ? "AND (c.updated_at < ? OR (c.updated_at = ? AND c.conversation_id < ?))" : ""}
        ORDER BY c.updated_at DESC, c.conversation_id DESC LIMIT ?`,
       ownerUid, Number(args.archived ?? false),

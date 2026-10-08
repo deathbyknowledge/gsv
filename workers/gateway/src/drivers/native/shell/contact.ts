@@ -118,7 +118,7 @@ async function manageInvite(args: string[], ctx: KernelContext): Promise<ExecRes
   }
   if (action === "accept") {
     requireCommandCapability(ctx, "contact.invite.accept");
-    requireArgumentCount(rest, 1, "invite accept requires: contact invite accept CODE");
+    requireArgumentCount(rest, 1, "invite accept requires: contact invite accept LINK_OR_CODE");
     return json(await handleContactInviteAccept({ code: rest[0] }, ctx));
   }
   if (action === "list") {
@@ -281,7 +281,7 @@ function contactUsage(): string {
     "  contact list [--all] [--json]",
     "  contact alias CONTACT_ID NAME|--clear",
     "  contact invite create [--expires DURATION]",
-    "  contact invite accept CODE",
+    "  contact invite accept LINK_OR_CODE",
     "  contact invite list [--all] [--json]",
     "  contact invite cancel INVITE_ID",
     "  contact revoke CONTACT_ID",

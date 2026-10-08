@@ -696,7 +696,7 @@ shared account system. Each installation keeps its own conversation, request,
 resource grants, delivery receipts, and Process state.
 
 Pairing is explicit and human-controlled. `contact.invite.create` returns a
-short-lived, one-use code; the other signed-in person accepts it with
+short-lived, one-use code and a shareable `url`; the other signed-in person accepts either with
 `contact.invite.accept`. The Kernel derives the remote installation and subject
 from the signed exchange. Callers never choose a remote local uid, Process,
 conversation, filesystem path, or installation id.
@@ -708,8 +708,8 @@ create, accept, cancel, or revoke Contact trust.
 | Syscall | Behavior |
 |---|---|
 | `contact.identity` | Returns this installation's signed Ship document and the caller's local federation subject. |
-| `contact.invite.create` | Creates a one-use pairing code, optionally with a shorter expiry. |
-| `contact.invite.accept` | Verifies and consumes a remote invite, creates both contact records, and ensures the local Contact conversation. |
+| `contact.invite.create` | Creates a one-use pairing code and shareable link, with an optional expiry of up to seven days. |
+| `contact.invite.accept` | Accepts a link or code, verifies and consumes the remote invite, creates both contact records, and ensures the local Contact conversation. |
 | `contact.invite.list` | Lists invitation lifecycle metadata without exposing recoverable invitation secrets. |
 | `contact.invite.cancel` | Cancels one unaccepted invitation. |
 | `contact.list` | Lists the caller's active contacts; `includeRevoked` includes terminal relationships. |
@@ -823,7 +823,7 @@ type ContactSyscalls = {
   };
   "contact.invite.create": {
     args: { expiresInSeconds?: number };
-    result: { inviteId: string; code: string; expiresAtMs: number };
+    result: { inviteId: string; code: string; url?: string; expiresAtMs: number };
   };
   "contact.invite.accept": {
     args: { code: string };
@@ -1030,7 +1030,7 @@ actor independently of whether a contact was ever accepted. Unblocking does not 
 ```ts
 type ConversationInboxSyscalls = {
   "conversation.inbox": {
-    args: { archived?: boolean; before?: { updatedAt: number; conversationId: string }; limit?: number };
+    args: { archived?: boolean; attentionOnly?: boolean; before?: { updatedAt: number; conversationId: string }; limit?: number };
     result: { entries: ConversationInboxEntry[]; next?: { updatedAt: number; conversationId: string } };
   };
   "conversation.view.get": {
@@ -1045,7 +1045,9 @@ type ConversationInboxSyscalls = {
 ```
 
 `conversation.inbox` lists accepted contact conversations, optionally filtered by `archived`, with
-`before` and `limit` paging. Entries contain the contact ID, conversation, latest preview, unread
+`before` and `limit` paging. `attentionOnly: true` selects unread conversations with active,
+unmuted, unblocked contacts before pagination. This uses the same owner-private read state
+as the ordinary inbox. Entries contain the contact ID, conversation, latest preview, unread
 state and private view state. `conversation.view.get` reads one entry; `conversation.view.update`
 advances `readThroughSequence` monotonically or sets `archived`. Both use `conversationId`.
 Changing `archived` requires `expectedRevision` from the current view to avoid overwriting a newer change.

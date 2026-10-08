@@ -122,7 +122,7 @@ contact identity
 contact list [--all] [--json]
 contact alias CONTACT_ID NAME|--clear
 contact invite create [--expires DURATION]
-contact invite accept CODE
+contact invite accept LINK_OR_CODE
 contact invite list [--all] [--json]
 contact invite cancel INVITE_ID
 contact revoke CONTACT_ID
@@ -313,8 +313,9 @@ automatic retry. An outcome that may have reached the provider is reported as
 `sent=false`, `delivery_confirmed=false`, and `delivery_state=ambiguous`.
 
 `contact` manages relationships with people on other GSV installations.
-`contact invite create` produces a short-lived one-use code; the other person
-accepts that code while signed in to their own GSV. Pairing and revocation may
+`contact invite create` returns a short-lived one-use code and a shareable `url`;
+the other person accepts either while signed in to their own GSV. The default
+lifetime is one hour; `--expires` accepts up to seven days. Pairing and revocation may
 be performed by the signed-in human or their canonical Ship. `contact list` prints the opaque contact id accepted
 by `message send --to`; `message destinations` exposes the same active contacts
 alongside messaging endpoints. `contact alias` changes only the local display

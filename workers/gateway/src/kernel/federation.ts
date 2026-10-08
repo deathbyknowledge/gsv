@@ -49,6 +49,9 @@ import type {
 } from "@humansandmachines/gsv/protocol";
 import {
   contactDisplayName,
+  contactInvitationUrl,
+  encodeContactInvitation,
+  parseContactInvitation,
   federationDeliveryEnvelopeSchema,
   federationDeliveryReceiptSchema,
   federationDeliveryPayloadSchema,
@@ -104,8 +107,6 @@ import {
   isReadyFederationOutbox,
 } from "./federation-store";
 import {
-  base64UrlDecode,
-  base64UrlEncode,
   canonicalJson,
   deriveContactSecret,
   normalizeFederationOrigin,
@@ -172,7 +173,6 @@ const SHIP_DOCUMENT_PATH = "/.well-known/gsv/federation/v1/ship";
 const INVITE_ACCEPT_PATH = "/_gsv/federation/v1/invites/accept";
 const DELIVERY_PATH = "/_gsv/federation/v1/deliver";
 const RESOURCE_PATH_PREFIX = "/_gsv/federation/v1/resources/";
-const INVITE_PREFIX = "gsv-contact-v1:";
 const DEFAULT_INVITE_LIFETIME_MS = 60 * 60_000;
 const MAX_INVITE_LIFETIME_MS = 7 * 24 * 60 * 60_000;
 const MAX_CONTACT_DISPLAY_NAME_BYTES = 256;
@@ -190,15 +190,6 @@ const MAX_CLOCK_SKEW_MS = 5 * 60_000;
 const MAX_DELIVERY_ATTEMPTS = 12;
 const encoder = new TextEncoder();
 const decoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: false });
-
-const inviteCodeSchema = z.strictObject({
-  version: z.literal(1),
-  origin: z.string().min(1).max(2_048),
-  shipId: z.string().min(1).max(128),
-  subject: federationSubjectSchema,
-  token: z.string().min(1).max(128),
-  expiresAtMs: z.number().int().nonnegative(),
-});
 
 const inviteAcceptSchema = z.strictObject({
   version: z.literal(1),
@@ -291,7 +282,7 @@ export async function handleContactInviteCreate(
       now,
     });
   });
-  const code = encodeInviteCode({
+  const code = encodeContactInvitation({
     version: 1,
     origin: document.origin,
     shipId: document.shipId,
@@ -300,7 +291,8 @@ export async function handleContactInviteCreate(
     expiresAtMs,
   });
   ctx.broadcastToUserUid(ownerUid, "contact.invite.changed");
-  return { inviteId: invite.inviteId, code, expiresAtMs };
+  const url = contactInvitationUrl(code, ctx.env.GSV_OWNER_SIGNUP_URL ?? `${document.origin}/connect`);
+  return { inviteId: invite.inviteId, code, url, expiresAtMs };
 }
 
 export function handleContactInviteList(
@@ -340,7 +332,7 @@ export async function handleContactInviteAccept(
   const ownerUid = requireContactCaller(ctx, true);
   const now = Date.now();
   pruneFederationState(ctx, now);
-  const invite = decodeInviteCode(args.code);
+  const { invitation: invite } = parseContactInvitation(args.code);
   const tokenHash = await sha256Base64Url(invite.token);
   const remoteOrigin = normalizeFederationOrigin(invite.origin);
   const recordedAttempt = ctx.federation.pairingAttempt(tokenHash);
@@ -2540,20 +2532,6 @@ function boundedDetails(value: JsonObject): JsonObject {
     throw new Error(`Request details exceed ${MAX_FEDERATION_REQUEST_DETAILS_BYTES} bytes`);
   }
   return value;
-}
-
-function encodeInviteCode(value: z.infer<typeof inviteCodeSchema>): string {
-  return `${INVITE_PREFIX}${base64UrlEncode(encoder.encode(JSON.stringify(value)))}`;
-}
-
-function decodeInviteCode(value: string): z.infer<typeof inviteCodeSchema> {
-  if (!value.startsWith(INVITE_PREFIX)) throw new Error("Contact invite code is invalid");
-  try {
-    const encoded = value.slice(INVITE_PREFIX.length);
-    return inviteCodeSchema.parse(JSON.parse(decoder.decode(base64UrlDecode(encoded))));
-  } catch {
-    throw new Error("Contact invite code is invalid");
-  }
 }
 
 function inviteAcceptResponseUnsigned(value: InviteAcceptResponse): InviteAcceptResponseUnsigned {

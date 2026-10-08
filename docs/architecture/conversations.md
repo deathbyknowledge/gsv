@@ -162,6 +162,15 @@ owner and are resolved only when a user inspects a span.
 
 ## Storage and retention
 
+Instrument's People indicator and Zen activity strip read the ordinary owner-scoped
+inbox with `attentionOnly: true` and the incoming request list. The Kernel filters
+unread, active, unmuted, unblocked conversations before pagination; the caller selects
+the usual archived state. Existing `conversation.changed`, `contact.changed` and
+`approach.changed` signals invalidate those bounded reads, and reconnect refreshes
+them. Attention survives reload through the private inbox projection rather than a
+second notification store. Zen's session-local inline notices remain a presentation
+of live committed messages; the activity strip omits contacts already shown there.
+
 The Kernel Durable Object stores the conversation directory, membership, optional handler, surface
 mapping, latest sequence and private inbox projection. Contact previews, read positions and archive
 state stay in that projection; canonical messages have one owner. Each conversation has its own installation-scoped Conversation Durable

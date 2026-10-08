@@ -112,6 +112,8 @@ export type ConversationInboxEntry = {
 
 export type ConversationInboxArgs = {
   archived?: boolean;
+  /** Unread conversations with active, unmuted, unblocked contacts. */
+  attentionOnly?: boolean;
   before?: { updatedAt: number; conversationId: string };
   limit?: number;
 };
