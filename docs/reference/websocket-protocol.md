@@ -575,7 +575,7 @@ coalescing. Chunk limits and cancellation rules apply to both modes.
 
 ### Browser view records
 
-Browser frame and watch requests accept structured arguments only; the gateway
+Browser watch requests accept structured arguments only; the gateway
 cancels unexpected request bodies without reading them. Browser input bodies are
 consumed or cancelled even when authorization, service acquisition, or the
 request deadline fails.

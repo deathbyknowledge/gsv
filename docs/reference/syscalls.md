@@ -1614,7 +1614,7 @@ were updated. Partial saves allow ordinary stop; a whole-save failure preserves
 the previous snapshot and keeps the browser running. `force: true` explicitly
 discards unsaved changes.
 
-`handoff.open`, `handoff.finish`, `browser.frame`, `browser.watch`,
+`handoff.open`, `handoff.finish`, `browser.watch`,
 and `browser.input` require a directly signed-in human.
 Processes cannot use them. A process's handoff request requires a writable
 responsibility ID. Only a pending or active handoff puts that work into waiting;
@@ -1625,7 +1625,7 @@ retry human-control cleanup independently of editable work details and survive
 restart. Live links are checked every five seconds; provider-side stop, expiry,
 profile deletion or failure reopens the matching waiting work. Service failures
 retain a private diagnostic and back off retries to at most one minute.
-`frame` returns a JPEG in its binary body; `input` accepts a
+`input` accepts a
 bounded JSON body describing a click, key, text, scroll or tab selection. Viewing
 does not create a handoff or pause automation. Input names the displayed tab and
 document, and rejects a changed document before dispatch. Human and agent input
