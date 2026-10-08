@@ -22,7 +22,7 @@ type DirectoryListing = { files: string[]; directories: string[] };
 type RuntimeFile = {
   contentType: string;
   size?: number;
-  read: () => Promise<Uint8Array>;
+  read: (signal?: AbortSignal) => Promise<Uint8Array>;
 };
 
 type RuntimeManifest = {
@@ -218,16 +218,20 @@ const README = [
 export class RuntimeFileSystem implements TargetFileSystem {
   constructor(private readonly tabResources = new TabResourceStore()) {}
 
-  async read(path: string): Promise<Uint8Array> {
+  async read(path: string, signal?: AbortSignal): Promise<Uint8Array> {
+    throwIfAborted(signal);
     const normalized = runtimePath(path);
-    const file = await this.getFile(normalized);
+    const file = await this.getFile(normalized, signal);
+    throwIfAborted(signal);
     if (!file) {
-      if (await this.isDirectory(normalized)) {
+      if (await this.isDirectory(normalized, signal)) {
         throw new Error(`Is a directory: ${normalized}`);
       }
       throw new Error(`No such file: ${normalized}`);
     }
-    return await file.read();
+    const bytes = await file.read(signal);
+    throwIfAborted(signal);
+    return bytes;
   }
 
   async write(path: string, _content: Uint8Array): Promise<void> {
@@ -258,21 +262,27 @@ export class RuntimeFileSystem implements TargetFileSystem {
     throw readOnly(source);
   }
 
-  async list(path: string): Promise<DirectoryListing> {
+  async list(path: string, signal?: AbortSignal): Promise<DirectoryListing> {
+    throwIfAborted(signal);
     const normalized = runtimePath(path);
-    const listing = await this.getDirectoryListing(normalized);
+    const listing = await this.getDirectoryListing(normalized, signal);
+    throwIfAborted(signal);
     if (!listing) {
-      if (await this.fileExists(normalized)) {
+      if (await this.fileExists(normalized, signal)) {
+        throwIfAborted(signal);
         throw new Error(`Not a directory: ${normalized}`);
       }
+      throwIfAborted(signal);
       throw new Error(`No such directory: ${normalized}`);
     }
     return listing;
   }
 
-  async stat(path: string): Promise<FileStat> {
+  async stat(path: string, signal?: AbortSignal): Promise<FileStat> {
+    throwIfAborted(signal);
     const normalized = runtimePath(path);
-    const listing = await this.getDirectoryListing(normalized);
+    const listing = await this.getDirectoryListing(normalized, signal);
+    throwIfAborted(signal);
     if (listing) {
       return {
         path: normalized,
@@ -282,22 +292,33 @@ export class RuntimeFileSystem implements TargetFileSystem {
       };
     }
 
-    const file = await this.getFile(normalized);
+    const file = await this.getFile(normalized, signal);
+    throwIfAborted(signal);
     if (!file) {
       throw new Error(`No such file or directory: ${normalized}`);
     }
+    const size = file.size ?? (await file.read(signal)).byteLength;
+    throwIfAborted(signal);
     return {
       path: normalized,
       isFile: true,
       isDirectory: false,
-      size: file.size ?? (await file.read()).byteLength,
+      size,
       contentType: file.contentType,
     };
   }
 
-  async exists(path: string): Promise<boolean> {
+  async exists(path: string, signal?: AbortSignal): Promise<boolean> {
+    throwIfAborted(signal);
     const normalized = runtimePath(path);
-    return (await this.isDirectory(normalized)) || (await this.fileExists(normalized));
+    if (await this.isDirectory(normalized, signal)) {
+      throwIfAborted(signal);
+      return true;
+    }
+    throwIfAborted(signal);
+    const exists = await this.fileExists(normalized, signal);
+    throwIfAborted(signal);
+    return exists;
   }
 
   async search(path: string, query: string, include?: string, signal?: AbortSignal): Promise<Array<{ path: string; line: number; content: string }>> {
@@ -311,7 +332,7 @@ export class RuntimeFileSystem implements TargetFileSystem {
     const includePattern = include?.trim() || null;
     const resourcePath = parseTabResourcePath(root);
     if (resourcePath) {
-      if (!(await this.isDirectory(root)) && !(await this.fileExists(root))) {
+      if (!(await this.isDirectory(root, signal)) && !(await this.fileExists(root, signal))) {
         throw new Error(`No such file or directory: ${root}`);
       }
       const matches = await this.tabResources.search(
@@ -328,7 +349,7 @@ export class RuntimeFileSystem implements TargetFileSystem {
       }));
     }
 
-    const files = await this.collectFiles(root);
+    const files = await this.collectFiles(root, signal);
     const decoder = new TextDecoder();
     const matches: Array<{ path: string; line: number; content: string }> = [];
 
@@ -337,7 +358,7 @@ export class RuntimeFileSystem implements TargetFileSystem {
       if (!matchesInclude(filePath, root, includePattern)) {
         continue;
       }
-      const content = decoder.decode(await this.read(filePath));
+      const content = decoder.decode(await this.read(filePath, signal));
       if (content.includes("\0")) {
         continue;
       }
@@ -360,9 +381,12 @@ export class RuntimeFileSystem implements TargetFileSystem {
     return normalizePath(path, cwd);
   }
 
-  async getAllPaths(): Promise<string[]> {
+  async getAllPaths(signal?: AbortSignal): Promise<string[]> {
+    throwIfAborted(signal);
     const tabs = await listTabs();
+    throwIfAborted(signal);
     const windows = await listWindows();
+    throwIfAborted(signal);
     const paths = new Set<string>([
       "/",
       "/README.txt",
@@ -394,7 +418,8 @@ export class RuntimeFileSystem implements TargetFileSystem {
     return [...paths].sort();
   }
 
-  private async getFile(path: string): Promise<RuntimeFile | null> {
+  private async getFile(path: string, signal?: AbortSignal): Promise<RuntimeFile | null> {
+    throwIfAborted(signal);
     if (path === "/README.txt") {
       return textFile(README);
     }
@@ -402,10 +427,14 @@ export class RuntimeFileSystem implements TargetFileSystem {
       return jsonFile(browserRuntimeInfo());
     }
     if (path === "/proc/tabs.json") {
-      return jsonFile({ tabs: await listTabs() });
+      const tabs = await listTabs();
+      throwIfAborted(signal);
+      return jsonFile({ tabs });
     }
     if (path === "/proc/windows.json") {
-      return jsonFile({ windows: await listWindows() });
+      const windows = await listWindows();
+      throwIfAborted(signal);
+      return jsonFile({ windows });
     }
     if (path === "/proc/network/status.json") {
       return jsonFile(networkStatusSnapshot());
@@ -420,37 +449,41 @@ export class RuntimeFileSystem implements TargetFileSystem {
       return jsonFile(networkRequestsSnapshot());
     }
     if (path === "/dev/active-tab") {
-      return textFile(await activeTabPath());
+      return textFile(await activeTabPath(signal));
     }
 
     const tabMetaId = parseDynamicFile(path, "/proc/tabs", "meta.json");
     if (tabMetaId !== null) {
       const tab = await getTab(tabMetaId);
+      throwIfAborted(signal);
       return tab ? jsonFile(tab) : null;
     }
 
     const tabTextId = parseDynamicFile(path, "/proc/tabs", "text.txt");
     if (tabTextId !== null) {
       const tab = await getTab(tabTextId);
-      return tab ? textFile(await tabText(tab)) : null;
+      throwIfAborted(signal);
+      return tab ? textFile(await tabText(tab, signal)) : null;
     }
 
     const resourcePath = parseTabResourcePath(path);
     if (resourcePath) {
       const tab = await getTab(resourcePath.tabId);
-      return tab ? await this.tabResources.file(resourcePath.tabId, resourcePath.relativePath) : null;
+      throwIfAborted(signal);
+      return tab ? await this.tabResources.file(resourcePath.tabId, resourcePath.relativePath, signal) : null;
     }
 
     const windowMetaId = parseDynamicFile(path, "/proc/windows", "meta.json");
     if (windowMetaId !== null) {
-      const window = await getWindow(windowMetaId);
+      const window = await getWindow(windowMetaId, signal);
       return window ? jsonFile(window) : null;
     }
 
     return null;
   }
 
-  private async fileExists(path: string): Promise<boolean> {
+  private async fileExists(path: string, signal?: AbortSignal): Promise<boolean> {
+    throwIfAborted(signal);
     if (
       path === "/README.txt"
       || path === "/proc/browser.json"
@@ -466,24 +499,28 @@ export class RuntimeFileSystem implements TargetFileSystem {
 
     const tabFileId = parseDynamicFile(path, "/proc/tabs", "meta.json") ?? parseDynamicFile(path, "/proc/tabs", "text.txt");
     if (tabFileId !== null) {
-      return await getTab(tabFileId) !== null;
+      const tab = await getTab(tabFileId);
+      throwIfAborted(signal);
+      return tab !== null;
     }
 
     const resourcePath = parseTabResourcePath(path);
     if (resourcePath) {
       const tab = await getTab(resourcePath.tabId);
-      return tab !== null && await this.tabResources.file(resourcePath.tabId, resourcePath.relativePath) !== null;
+      throwIfAborted(signal);
+      return tab !== null && await this.tabResources.file(resourcePath.tabId, resourcePath.relativePath, signal) !== null;
     }
 
     const windowFileId = parseDynamicFile(path, "/proc/windows", "meta.json");
     if (windowFileId !== null) {
-      return await getWindow(windowFileId) !== null;
+      return await getWindow(windowFileId, signal) !== null;
     }
 
     return false;
   }
 
-  private async getDirectoryListing(path: string): Promise<DirectoryListing | null> {
+  private async getDirectoryListing(path: string, signal?: AbortSignal): Promise<DirectoryListing | null> {
+    throwIfAborted(signal);
     if (path === "/") {
       return { directories: ["dev", "proc"], files: ["README.txt"] };
     }
@@ -504,6 +541,7 @@ export class RuntimeFileSystem implements TargetFileSystem {
     }
     if (path === "/proc/tabs") {
       const tabs = await listTabs();
+      throwIfAborted(signal);
       return {
         directories: tabs.map((tab) => String(tab.id)),
         files: [],
@@ -511,6 +549,7 @@ export class RuntimeFileSystem implements TargetFileSystem {
     }
     if (path === "/proc/windows") {
       const windows = await listWindows();
+      throwIfAborted(signal);
       return {
         directories: windows.map((window) => String(window.id)),
         files: [],
@@ -520,39 +559,48 @@ export class RuntimeFileSystem implements TargetFileSystem {
     const resourcePath = parseTabResourcePath(path);
     if (resourcePath) {
       const tab = await getTab(resourcePath.tabId);
-      return tab ? await this.tabResources.list(resourcePath.tabId, resourcePath.relativePath) : null;
+      throwIfAborted(signal);
+      return tab ? await this.tabResources.list(resourcePath.tabId, resourcePath.relativePath, signal) : null;
     }
 
     const tabId = parseDynamicDirectory(path, "/proc/tabs");
     if (tabId !== null) {
-      return await getTab(tabId) ? { directories: ["resources"], files: ["meta.json", "text.txt"] } : null;
+      const tab = await getTab(tabId);
+      throwIfAborted(signal);
+      return tab ? { directories: ["resources"], files: ["meta.json", "text.txt"] } : null;
     }
 
     const windowId = parseDynamicDirectory(path, "/proc/windows");
     if (windowId !== null) {
-      return await getWindow(windowId) ? { directories: [], files: ["meta.json"] } : null;
+      const window = await getWindow(windowId, signal);
+      return window ? { directories: [], files: ["meta.json"] } : null;
     }
 
     return null;
   }
 
-  private async isDirectory(path: string): Promise<boolean> {
-    return await this.getDirectoryListing(path) !== null;
+  private async isDirectory(path: string, signal?: AbortSignal): Promise<boolean> {
+    const listing = await this.getDirectoryListing(path, signal);
+    throwIfAborted(signal);
+    return listing !== null;
   }
 
-  private async collectFiles(root: string): Promise<string[]> {
-    if (await this.fileExists(root)) {
+  private async collectFiles(root: string, signal?: AbortSignal): Promise<string[]> {
+    if (await this.fileExists(root, signal)) {
       return [root];
     }
 
-    const listing = await this.getDirectoryListing(root);
+    throwIfAborted(signal);
+    const listing = await this.getDirectoryListing(root, signal);
     if (!listing) {
       throw new Error(`No such file or directory: ${root}`);
     }
 
     const files: string[] = [];
     const visit = async (directory: string): Promise<void> => {
-      const entries = await this.getDirectoryListing(directory);
+      throwIfAborted(signal);
+      const entries = await this.getDirectoryListing(directory, signal);
+      throwIfAborted(signal);
       if (!entries) {
         return;
       }
@@ -629,22 +677,27 @@ function getManifest(): RuntimeManifest | null {
   return chrome.runtime.getManifest() as RuntimeManifest;
 }
 
-async function activeTabPath(): Promise<string> {
+async function activeTabPath(signal?: AbortSignal): Promise<string> {
+  throwIfAborted(signal);
   const tab = await activeTab();
+  throwIfAborted(signal);
   return tab ? `/proc/tabs/${tab.id}\n` : "none\n";
 }
 
-async function tabText(tab: TabSummary): Promise<string> {
+async function tabText(tab: TabSummary, signal?: AbortSignal): Promise<string> {
   try {
-    const extracted = await executeInTab<string>(tab.id, extractVisibleText);
+    const extracted = await executeInTab<string>(tab.id, extractVisibleText, [], signal);
     return compactPageText(extracted);
   } catch (error) {
+    throwIfAborted(signal);
     return `[text unavailable: ${errorMessage(error)}]\n`;
   }
 }
 
-async function getWindow(windowId: number): Promise<WindowSummary | null> {
+async function getWindow(windowId: number, signal?: AbortSignal): Promise<WindowSummary | null> {
+  throwIfAborted(signal);
   const windows = await listWindows();
+  throwIfAborted(signal);
   return windows.find((window) => window.id === windowId) ?? null;
 }
 

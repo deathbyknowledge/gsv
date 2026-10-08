@@ -46,19 +46,19 @@ export type FileStat = {
 };
 
 export type TargetFileSystem = {
-  read(path: string): Promise<Uint8Array>;
+  read(path: string, signal?: AbortSignal): Promise<Uint8Array>;
   write(path: string, content: Uint8Array, contentType?: string, signal?: AbortSignal): Promise<void>;
-  append(path: string, content: Uint8Array): Promise<void>;
+  append(path: string, content: Uint8Array, signal?: AbortSignal): Promise<void>;
   delete(path: string, signal?: AbortSignal): Promise<void>;
   mkdir(path: string, signal?: AbortSignal): Promise<void>;
   copy(source: string, destination: string, signal?: AbortSignal): Promise<string>;
-  move(source: string, destination: string): Promise<void>;
-  list(path: string): Promise<{ files: string[]; directories: string[] }>;
-  stat(path: string): Promise<FileStat>;
-  exists(path: string): Promise<boolean>;
+  move(source: string, destination: string, signal?: AbortSignal): Promise<void>;
+  list(path: string, signal?: AbortSignal): Promise<{ files: string[]; directories: string[] }>;
+  stat(path: string, signal?: AbortSignal): Promise<FileStat>;
+  exists(path: string, signal?: AbortSignal): Promise<boolean>;
   search(path: string, query: string, include?: string, signal?: AbortSignal): Promise<Array<{ path: string; line: number; content: string }>>;
   resolvePath(cwd: string, path: string): string;
-  getAllPaths(): Promise<string[]>;
+  getAllPaths(signal?: AbortSignal): Promise<string[]>;
 };
 
 export function commandOk(stdout = ""): CommandResult {

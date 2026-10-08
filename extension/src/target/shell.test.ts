@@ -51,6 +51,32 @@ describe("BrowserTargetShell", () => {
     ])).resolves.toMatchObject({ status: "failed" });
   });
 
+  it("passes cancellation to a shell filesystem read", async () => {
+    const started = deferred<void>();
+    const pendingRead = deferred<Uint8Array>();
+    const read = vi.fn((_path: string, _signal?: AbortSignal) => {
+      started.resolve(undefined);
+      return pendingRead.promise;
+    });
+    const fs = {
+      ...directoryOnlyFileSystem(),
+      read,
+      exists: async (path: string) => path === "/" || path === "/proc/file.txt",
+      stat: async (path: string) => ({ path, isFile: path === "/proc/file.txt", isDirectory: path !== "/proc/file.txt", size: 4 }),
+    };
+    const shell = new BrowserTargetShell(fs, []);
+    const controller = new AbortController();
+    const running = shell.exec({ input: "cat /proc/file.txt" }, { abortSignal: controller.signal });
+
+    await within(started.promise);
+    expect(read).toHaveBeenCalledWith("/proc/file.txt", expect.any(AbortSignal));
+    controller.abort(new Error("Browser access paused"));
+    pendingRead.resolve(new TextEncoder().encode("late"));
+
+    await expect(within(running)).resolves.toMatchObject({ status: "failed" });
+    expect(read.mock.calls[0]?.[1]?.aborted).toBe(true);
+  });
+
   it("rejects session starts and polls before executing browser side effects", async () => {
     const run = vi.fn(commandResult);
     const shell = new BrowserTargetShell(directoryOnlyFileSystem(), [{

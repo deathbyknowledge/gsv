@@ -4,7 +4,7 @@ import {
   releaseDebugger,
   sendDebuggerCommand,
 } from "../shared/debugger";
-import { abortable, throwIfAborted } from "./abort";
+import { throwIfAborted } from "./abort";
 
 export type TabResourceDirectoryListing = {
   files: string[];
@@ -14,7 +14,7 @@ export type TabResourceDirectoryListing = {
 export type TabResourceFile = {
   contentType: string;
   size: number;
-  read: () => Promise<Uint8Array>;
+  read: (signal?: AbortSignal) => Promise<Uint8Array>;
 };
 
 export type TabResourceSearchMatch = {
@@ -138,8 +138,9 @@ export class TabResourceStore {
     chrome.tabs.onRemoved?.addListener((tabId) => this.invalidate(tabId));
   }
 
-  async list(tabId: number, relativePath: string): Promise<TabResourceDirectoryListing | null> {
-    const inventory = await this.getInventory(tabId);
+  async list(tabId: number, relativePath: string, signal?: AbortSignal): Promise<TabResourceDirectoryListing | null> {
+    const inventory = await this.getInventory(tabId, false, signal);
+    throwIfAborted(signal);
     const directory = normalizeRelativePath(relativePath);
     if (!inventory.directories.has(directory)) {
       return null;
@@ -159,15 +160,16 @@ export class TabResourceStore {
     };
   }
 
-  async file(tabId: number, relativePath: string): Promise<TabResourceFile | null> {
+  async file(tabId: number, relativePath: string, signal?: AbortSignal): Promise<TabResourceFile | null> {
     const path = normalizeRelativePath(relativePath);
-    const inventory = await this.getInventory(tabId);
+    const inventory = await this.getInventory(tabId, false, signal);
+    throwIfAborted(signal);
     if (path === INDEX_FILE) {
       const bytes = inventoryBytes(inventory);
       return {
         contentType: JSON_CONTENT_TYPE,
         size: bytes.byteLength,
-        read: async () => inventoryBytes(await this.getInventory(tabId)),
+        read: async (readSignal) => inventoryBytes(await this.getInventory(tabId, false, readSignal)),
       };
     }
 
@@ -178,7 +180,7 @@ export class TabResourceStore {
     return {
       contentType: resource.mimeType || DEFAULT_CONTENT_TYPE,
       size: resource.contentSize ?? 0,
-      read: async () => await this.readResource(tabId, path),
+      read: async (readSignal) => await this.readResource(tabId, path, readSignal),
     };
   }
 
@@ -191,7 +193,7 @@ export class TabResourceStore {
   ): Promise<TabResourceSearchMatch[]> {
     throwIfAborted(signal);
     const root = normalizeRelativePath(relativePath);
-    let inventory = await abortable(this.getInventory(tabId), signal);
+    let inventory = await this.getInventory(tabId, false, signal);
     const matches = searchIndex(inventory, root, query, include);
     if (matches.length >= MAX_SEARCH_MATCHES || root === INDEX_FILE) {
       return matches.slice(0, MAX_SEARCH_MATCHES);
@@ -206,22 +208,21 @@ export class TabResourceStore {
     const errors: string[] = [];
     await withDebugger(tabId, async (target) => {
       await sendDebuggerCommand(target, "Page.enable");
+      throwIfAborted(signal);
       for (const resource of candidates) {
         throwIfAborted(signal);
         if (matches.length >= MAX_SEARCH_MATCHES) {
           break;
         }
         try {
-          const response = await abortable(
-            sendDebuggerCommand<CdpSearchResult>(target, "Page.searchInResource", {
-              frameId: resource.frameId,
-              url: resource.url,
-              query,
-              caseSensitive: true,
-              isRegex: false,
-            }),
-            signal,
-          );
+          const response = await sendDebuggerCommand<CdpSearchResult>(target, "Page.searchInResource", {
+            frameId: resource.frameId,
+            url: resource.url,
+            query,
+            caseSensitive: true,
+            isRegex: false,
+          });
+          throwIfAborted(signal);
           searched += 1;
           for (const result of response?.result ?? []) {
             matches.push({
@@ -238,11 +239,11 @@ export class TabResourceStore {
           errors.push(errorMessage(error));
         }
       }
-    });
+    }, signal);
 
     if (searched === 0 && errors.length > 0) {
       this.invalidate(tabId);
-      inventory = await abortable(this.getInventory(tabId), signal);
+      inventory = await this.getInventory(tabId, false, signal);
       candidates = matchingResources(inventory, root, include);
       if (candidates.length > 0) {
         throw new Error(`Unable to search tab resources: ${errors[0]}`);
@@ -251,9 +252,10 @@ export class TabResourceStore {
     return matches.slice(0, MAX_SEARCH_MATCHES);
   }
 
-  private async readResource(tabId: number, path: string): Promise<Uint8Array> {
+  private async readResource(tabId: number, path: string, signal?: AbortSignal): Promise<Uint8Array> {
     for (let attempt = 0; attempt < 2; attempt += 1) {
-      const inventory = await this.getInventory(tabId, attempt > 0);
+      const inventory = await this.getInventory(tabId, attempt > 0, signal);
+      throwIfAborted(signal);
       const resource = inventory.byPath.get(path);
       if (!resource) {
         throw new Error(`Tab resource no longer exists: ${path}`);
@@ -262,18 +264,21 @@ export class TabResourceStore {
       try {
         return await withDebugger(tabId, async (target) => {
           await sendDebuggerCommand(target, "Page.enable");
+          throwIfAborted(signal);
           const response = await sendDebuggerCommand<CdpResourceContentResult>(target, "Page.getResourceContent", {
             frameId: resource.frameId,
             url: resource.url,
           });
+          throwIfAborted(signal);
           if (typeof response?.content !== "string") {
             throw new Error(`Page.getResourceContent returned no content for ${resource.url}`);
           }
           return response.base64Encoded
             ? base64ToBytes(response.content)
             : new TextEncoder().encode(response.content);
-        });
+        }, signal);
       } catch (error) {
+        throwIfAborted(signal);
         if (attempt === 0) {
           this.invalidate(tabId);
           continue;
@@ -284,19 +289,24 @@ export class TabResourceStore {
     throw new Error(`Unable to read tab resource: ${path}`);
   }
 
-  private async getInventory(tabId: number, force = false): Promise<ResourceInventory> {
+  private async getInventory(tabId: number, force = false, signal?: AbortSignal): Promise<ResourceInventory> {
+    throwIfAborted(signal);
     const cached = this.inventories.get(tabId);
     if (!force && cached && cached.expiresAt >= this.now()) {
-      return await cached.promise;
+      const inventory = await cached.promise;
+      throwIfAborted(signal);
+      return inventory;
     }
 
-    const promise = loadInventory(tabId);
+    const promise = loadInventory(tabId, signal);
     this.inventories.set(tabId, {
       expiresAt: this.now() + this.cacheMs,
       promise,
     });
     try {
-      return await promise;
+      const inventory = await promise;
+      throwIfAborted(signal);
+      return inventory;
     } catch (error) {
       if (this.inventories.get(tabId)?.promise === promise) {
         this.inventories.delete(tabId);
@@ -306,10 +316,12 @@ export class TabResourceStore {
   }
 }
 
-async function loadInventory(tabId: number): Promise<ResourceInventory> {
+async function loadInventory(tabId: number, signal?: AbortSignal): Promise<ResourceInventory> {
   return await withDebugger(tabId, async (target) => {
     await sendDebuggerCommand(target, "Page.enable");
+    throwIfAborted(signal);
     const result = await sendDebuggerCommand<CdpResourceTreeResult>(target, "Page.getResourceTree");
+    throwIfAborted(signal);
     if (!result?.frameTree) {
       throw new Error("Page.getResourceTree returned no frame tree");
     }
@@ -331,7 +343,7 @@ async function loadInventory(tabId: number): Promise<ResourceInventory> {
       byPath: new Map(resources.map((resource) => [resource.path, resource])),
       directories,
     };
-  });
+  }, signal);
 }
 
 function collectFrameResources(
@@ -669,9 +681,12 @@ function compactSearchLine(line: string, query: string): string {
 async function withDebugger<T>(
   tabId: number,
   use: (target: chrome.debugger.DebuggerSession) => Promise<T>,
+  signal?: AbortSignal,
 ): Promise<T> {
+  throwIfAborted(signal);
   const target = await acquireDebugger(tabId);
   try {
+    throwIfAborted(signal);
     return await use(target);
   } finally {
     await releaseDebugger(tabId).catch((error: unknown) => {

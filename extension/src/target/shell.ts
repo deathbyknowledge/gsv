@@ -129,7 +129,7 @@ export class BrowserTargetShell {
   }
 
   private async initialize(): Promise<void> {
-    const adapter = new JustBashFileSystemAdapter(this.fs);
+    const adapter = new JustBashFileSystemAdapter(this.fs, () => this.activeExecContext.abortSignal);
     const customCommands = [
       defineCommand("commands", async (args) => {
         if (args.length === 0) {

@@ -42,7 +42,7 @@ describe("network export cancellation", () => {
     };
 
     const running = networkCommand.run(["export", "har", "--path", "/tmp/capture.har"], ctx);
-    await vi.waitFor(() => expect(exists).toHaveBeenCalledWith("/tmp/capture.har"));
+    await vi.waitFor(() => expect(exists).toHaveBeenCalledWith("/tmp/capture.har", controller.signal));
     controller.abort(new Error("Browser access paused"));
     finishExists(false);
 

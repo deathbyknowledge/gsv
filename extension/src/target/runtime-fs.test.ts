@@ -9,6 +9,46 @@ afterEach(async () => {
 });
 
 describe("browser tab resources", () => {
+  it("does not inventory a tab after Pause interrupts its lookup", async () => {
+    const browser = installChrome();
+    let finishTab!: (tab: chrome.tabs.Tab) => void;
+    const pendingTab = new Promise<chrome.tabs.Tab>((resolve) => { finishTab = resolve; });
+    chrome.tabs.get = vi.fn(() => pendingTab);
+    const fs = new RuntimeFileSystem(new TabResourceStore(() => 0));
+    const controller = new AbortController();
+    const running = fs.read("/proc/tabs/7/resources/index.json", controller.signal);
+
+    await vi.waitFor(() => expect(chrome.tabs.get).toHaveBeenCalledWith(7));
+    controller.abort(new Error("Browser access paused"));
+    finishTab({ id: 7, windowId: 1, index: 0, active: true } as chrome.tabs.Tab);
+
+    await expect(running).rejects.toThrow("Browser access paused");
+    expect(browser.sendCommand).not.toHaveBeenCalled();
+    expect(chrome.debugger.attach).not.toHaveBeenCalled();
+  });
+
+  it("does not fetch a resource after Pause interrupts inventory", async () => {
+    const browser = installChrome();
+    let finishTree!: (tree: object) => void;
+    const pendingTree = new Promise<object>((resolve) => { finishTree = resolve; });
+    browser.sendCommand.mockImplementation(async (_target: chrome.debugger.DebuggerSession, method: string) => {
+      if (method === "Page.getResourceTree") return await pendingTree;
+      return {};
+    });
+    const fs = new RuntimeFileSystem(new TabResourceStore(() => 0));
+    const controller = new AbortController();
+    const running = fs.read("/proc/tabs/7/resources/https/example.com/app.js", controller.signal);
+
+    await vi.waitFor(() => expect(methodCalls(browser.sendCommand, "Page.getResourceTree")).toHaveLength(1));
+    controller.abort(new Error("Browser access paused"));
+    finishTree({ frameTree: { frame: { id: "frame-1", url: "https://example.com/" }, resources: [] } });
+
+    await expect(running).rejects.toThrow("Browser access paused");
+    expect(methodCalls(browser.sendCommand, "Page.getResourceContent")).toHaveLength(0);
+    expect(chrome.debugger.attach).toHaveBeenCalledTimes(1);
+    expect(chrome.debugger.detach).toHaveBeenCalledWith({ tabId: 7 });
+  });
+
   it("lists metadata without reading bodies and fetches one body lazily", async () => {
     const browser = installChrome();
     const fs = new RuntimeFileSystem(new TabResourceStore(() => 0));

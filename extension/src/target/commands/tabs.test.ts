@@ -158,6 +158,8 @@ describe("tabs open", () => {
 
     const running = runTabs(["open", "/reports/summary.txt"], ctx);
     await started;
+    expect(ctx.fs.stat).toHaveBeenCalledWith("/reports/summary.txt", controller.signal);
+    expect(ctx.fs.read).toHaveBeenCalledWith("/reports/summary.txt", controller.signal);
     controller.abort(new Error("Browser access paused"));
     finishRead(new Uint8Array([1, 2, 3]));
     const result = await running;

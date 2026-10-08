@@ -285,7 +285,7 @@ async function renderableFromPath(input: string, ctx: CommandContext, contentTyp
   const destination = tempRenderPath(basename(path), extensionForPathOrType(path, resolvedType));
   await ctx.fs.mkdir("/tmp/render", ctx.abortSignal);
   throwIfAborted(ctx.abortSignal);
-  const contents = await ctx.fs.read(path);
+  const contents = await ctx.fs.read(path, ctx.abortSignal);
   throwIfAborted(ctx.abortSignal);
   await ctx.fs.write(destination, contents, resolvedType, ctx.abortSignal);
   throwIfAborted(ctx.abortSignal);
@@ -318,7 +318,7 @@ async function renderableFromTargetEndpoint(
     const destination = tempRenderPath(basename(path), extensionForPathOrType(path, resolvedType));
     await ctx.fs.mkdir("/tmp/render", ctx.abortSignal);
     throwIfAborted(ctx.abortSignal);
-    const contents = await ctx.fs.read(path);
+    const contents = await ctx.fs.read(path, ctx.abortSignal);
     throwIfAborted(ctx.abortSignal);
     await ctx.fs.write(destination, contents, resolvedType, ctx.abortSignal);
     throwIfAborted(ctx.abortSignal);
@@ -363,7 +363,7 @@ async function renderableFromTargetEndpoint(
 }
 
 async function requireFile(ctx: CommandContext, path: string): Promise<FileStat> {
-  const stat = await ctx.fs.stat(path);
+  const stat = await ctx.fs.stat(path, ctx.abortSignal);
   throwIfAborted(ctx.abortSignal);
   if (stat.isDirectory) {
     throw new Error(`Is a directory: ${path}`);

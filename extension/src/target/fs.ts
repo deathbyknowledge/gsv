@@ -104,13 +104,19 @@ export class BrowserTargetFileSystem implements TargetFileSystem {
 
   constructor(private readonly runtime: TargetFileSystem) {}
 
-  async read(path: string): Promise<Uint8Array> {
+  async read(path: string, signal?: AbortSignal): Promise<Uint8Array> {
     await this.ensureLoaded();
+    throwIfAborted(signal);
     const normalized = normalizePath(path);
-    if (await this.runtime.exists(normalized)) {
-      return await this.runtime.read(normalized);
+    const runtimeExists = await this.runtime.exists(normalized, signal);
+    throwIfAborted(signal);
+    if (runtimeExists) {
+      const bytes = await this.runtime.read(normalized, signal);
+      throwIfAborted(signal);
+      return bytes;
     }
     await this.refreshPersistedEntry(normalized);
+    throwIfAborted(signal);
     const value = this.files.get(normalized);
     if (!value) {
       throw new Error(`No such file: ${normalized}`);
@@ -123,7 +129,7 @@ export class BrowserTargetFileSystem implements TargetFileSystem {
     throwIfAborted(signal);
     const normalized = normalizePath(path);
     this.assertWritable(normalized);
-    await this.assertNotDirectory(normalized);
+    await this.assertNotDirectory(normalized, signal);
     throwIfAborted(signal);
     await this.ensureDirectory(dirname(normalized), signal);
     throwIfAborted(signal);
@@ -139,15 +145,18 @@ export class BrowserTargetFileSystem implements TargetFileSystem {
     });
   }
 
-  async append(path: string, content: Uint8Array): Promise<void> {
+  async append(path: string, content: Uint8Array, signal?: AbortSignal): Promise<void> {
     await this.ensureLoaded();
+    throwIfAborted(signal);
     const normalized = normalizePath(path);
-    await this.assertNotDirectory(normalized);
-    const current = await this.exists(normalized) ? await this.read(normalized) : new Uint8Array();
+    await this.assertNotDirectory(normalized, signal);
+    throwIfAborted(signal);
+    const current = await this.exists(normalized, signal) ? await this.read(normalized, signal) : new Uint8Array();
+    throwIfAborted(signal);
     const next = new Uint8Array(current.byteLength + content.byteLength);
     next.set(current, 0);
     next.set(content, current.byteLength);
-    await this.write(normalized, next);
+    await this.write(normalized, next, undefined, signal);
   }
 
   async delete(path: string, signal?: AbortSignal): Promise<void> {
@@ -200,41 +209,46 @@ export class BrowserTargetFileSystem implements TargetFileSystem {
     throwIfAborted(signal);
     const sourcePath = normalizePath(source);
     const destinationPath = normalizePath(destination);
-    const sourceStat = await this.stat(sourcePath);
+    const sourceStat = await this.stat(sourcePath, signal);
     throwIfAborted(signal);
     if (!sourceStat.isFile) {
       throw new Error(`Source is not a file: ${sourcePath}`);
     }
     let finalDestination = destinationPath;
-    if (await this.exists(destinationPath)) {
+    if (await this.exists(destinationPath, signal)) {
       throwIfAborted(signal);
-      const destinationStat = await this.stat(destinationPath);
+      const destinationStat = await this.stat(destinationPath, signal);
       throwIfAborted(signal);
       if (destinationStat.isDirectory) {
         finalDestination = joinPath(destinationPath, basename(sourcePath));
       }
     }
     throwIfAborted(signal);
-    const bytes = await this.read(sourcePath);
+    const bytes = await this.read(sourcePath, signal);
     throwIfAborted(signal);
     await this.write(finalDestination, bytes, sourceStat.contentType, signal);
     return finalDestination;
   }
 
-  async move(source: string, destination: string): Promise<void> {
-    await this.copy(source, destination);
-    await this.delete(source);
+  async move(source: string, destination: string, signal?: AbortSignal): Promise<void> {
+    await this.copy(source, destination, signal);
+    throwIfAborted(signal);
+    await this.delete(source, signal);
   }
 
-  async list(path: string): Promise<{ files: string[]; directories: string[] }> {
+  async list(path: string, signal?: AbortSignal): Promise<{ files: string[]; directories: string[] }> {
     await this.ensureLoaded();
+    throwIfAborted(signal);
     await this.refreshPersistedEntries();
+    throwIfAborted(signal);
     const normalized = normalizePath(path);
     const mergedFiles = new Set<string>();
     const mergedDirectories = new Set<string>();
 
-    if (await this.runtime.exists(normalized)) {
-      const runtimeEntries = await this.runtime.list(normalized);
+    if (await this.runtime.exists(normalized, signal)) {
+      throwIfAborted(signal);
+      const runtimeEntries = await this.runtime.list(normalized, signal);
+      throwIfAborted(signal);
       for (const file of runtimeEntries.files) mergedFiles.add(file);
       for (const dir of runtimeEntries.directories) mergedDirectories.add(dir);
     }
@@ -253,7 +267,7 @@ export class BrowserTargetFileSystem implements TargetFileSystem {
       }
     }
 
-    if (mergedFiles.size === 0 && mergedDirectories.size === 0 && !(await this.exists(normalized))) {
+    if (mergedFiles.size === 0 && mergedDirectories.size === 0 && !(await this.exists(normalized, signal))) {
       throw new Error(`No such directory: ${normalized}`);
     }
 
@@ -263,16 +277,21 @@ export class BrowserTargetFileSystem implements TargetFileSystem {
     };
   }
 
-  async stat(path: string): Promise<FileStat> {
+  async stat(path: string, signal?: AbortSignal): Promise<FileStat> {
     await this.ensureLoaded();
+    throwIfAborted(signal);
     const normalized = normalizePath(path);
-    if (await this.runtime.exists(normalized)) {
-      return await this.runtime.stat(normalized);
+    if (await this.runtime.exists(normalized, signal)) {
+      throwIfAborted(signal);
+      const stat = await this.runtime.stat(normalized, signal);
+      throwIfAborted(signal);
+      return stat;
     }
     if (this.directories.has(normalized)) {
       return { path: normalized, isFile: false, isDirectory: true, size: 0 };
     }
     await this.refreshPersistedEntry(normalized);
+    throwIfAborted(signal);
     const value = this.files.get(normalized);
     if (value !== undefined) {
       return {
@@ -286,13 +305,16 @@ export class BrowserTargetFileSystem implements TargetFileSystem {
     throw new Error(`No such file or directory: ${normalized}`);
   }
 
-  async exists(path: string): Promise<boolean> {
+  async exists(path: string, signal?: AbortSignal): Promise<boolean> {
     await this.ensureLoaded();
+    throwIfAborted(signal);
     const normalized = normalizePath(path);
-    if (this.files.has(normalized) || this.directories.has(normalized) || await this.runtime.exists(normalized)) {
+    if (this.files.has(normalized) || this.directories.has(normalized) || await this.runtime.exists(normalized, signal)) {
+      throwIfAborted(signal);
       return true;
     }
     await this.refreshPersistedEntry(normalized);
+    throwIfAborted(signal);
     return this.files.has(normalized) || this.directories.has(normalized);
   }
 
@@ -301,10 +323,12 @@ export class BrowserTargetFileSystem implements TargetFileSystem {
     throwIfAborted(signal);
     const normalized = normalizePath(path);
     if (isRuntimeSearchPath(normalized)) {
-      return await this.runtime.search(normalized, query, include, signal);
+      const matches = await this.runtime.search(normalized, query, include, signal);
+      throwIfAborted(signal);
+      return matches;
     }
     const matches: Array<{ path: string; line: number; content: string }> = [];
-    const allPaths = await this.getAllPaths();
+    const allPaths = await this.getAllPaths(signal);
 
     for (const candidate of allPaths) {
       throwIfAborted(signal);
@@ -316,14 +340,15 @@ export class BrowserTargetFileSystem implements TargetFileSystem {
       }
       let stat: FileStat;
       try {
-        stat = await this.stat(candidate);
+        stat = await this.stat(candidate, signal);
       } catch {
         continue;
       }
       if (!stat.isFile || !isTextContentType(stat.contentType ?? inferFsContentType(candidate))) {
         continue;
       }
-      const text = textDecoder.decode(await this.read(candidate));
+      const text = textDecoder.decode(await this.read(candidate, signal));
+      throwIfAborted(signal);
       const lines = text.split("\n");
       for (const [index, line] of lines.entries()) {
         if (line.includes(query)) {
@@ -342,13 +367,17 @@ export class BrowserTargetFileSystem implements TargetFileSystem {
     return normalizePath(path, normalizePath(cwd));
   }
 
-  async getAllPaths(): Promise<string[]> {
+  async getAllPaths(signal?: AbortSignal): Promise<string[]> {
     await this.ensureLoaded();
+    throwIfAborted(signal);
     await this.refreshPersistedEntries();
+    throwIfAborted(signal);
+    const runtimePaths = await this.runtime.getAllPaths(signal);
+    throwIfAborted(signal);
     return Array.from(new Set([
       ...this.directories,
       ...this.files.keys(),
-      ...await this.runtime.getAllPaths(),
+      ...runtimePaths,
     ])).sort();
   }
 
@@ -462,10 +491,10 @@ export class BrowserTargetFileSystem implements TargetFileSystem {
     }
   }
 
-  private async assertNotDirectory(path: string): Promise<void> {
+  private async assertNotDirectory(path: string, signal?: AbortSignal): Promise<void> {
     let stat: FileStat;
     try {
-      stat = await this.stat(path);
+      stat = await this.stat(path, signal);
     } catch {
       return;
     }
@@ -506,7 +535,7 @@ export class BrowserFsDriver {
     let response: GsvResponse;
     switch (call) {
       case "fs.read":
-        response = await this.read(args);
+        response = await this.read(args, signal);
         break;
       case "fs.write":
         response = { data: await this.write(args, signal) };
@@ -524,10 +553,10 @@ export class BrowserFsDriver {
         response = { data: await this.copy(args, signal) };
         break;
       case "fs.transfer.stat":
-        response = { data: await this.transferStat(args) };
+        response = { data: await this.transferStat(args, signal) };
         break;
       case "fs.transfer.send":
-        response = await this.transferSend(args);
+        response = await this.transferSend(args, signal);
         break;
       case "fs.transfer.receive":
         response = await this.transferReceive(args, body, signal);
@@ -539,16 +568,18 @@ export class BrowserFsDriver {
     return response;
   }
 
-  private async read(raw: unknown): Promise<GsvResponse> {
+  private async read(raw: unknown, signal?: AbortSignal): Promise<GsvResponse> {
     const args = asRecord(raw) as FsReadArgs;
     const path = parsePath(args.path, "fs.read");
     try {
-      const stat = await this.fs.stat(path);
+      const stat = await this.fs.stat(path, signal);
+      throwIfAborted(signal);
       if (stat.isDirectory) {
-        return { data: { ok: true, path, ...await this.fs.list(path) } };
+        return { data: { ok: true, path, ...await this.fs.list(path, signal) } };
       }
 
-      const bytes = await this.fs.read(path);
+      const bytes = await this.fs.read(path, signal);
+      throwIfAborted(signal);
       const contentType = stat.contentType ?? inferFsContentType(path);
       const isImage = contentType.trim().toLowerCase().startsWith("image/") && !isTextContentType(contentType);
       // `reference` answers any file with its immutable reference alone, the thing a message or a transfer works from
@@ -634,7 +665,7 @@ export class BrowserFsDriver {
     if (typeof args.oldString !== "string" || typeof args.newString !== "string") {
       return { ok: false, error: "fs.edit requires oldString and newString" };
     }
-    const oldText = textDecoder.decode(await this.fs.read(path));
+    const oldText = textDecoder.decode(await this.fs.read(path, signal));
     throwIfAborted(signal);
     const count = oldText.split(args.oldString).length - 1;
     if (count === 0) {
@@ -677,7 +708,7 @@ export class BrowserFsDriver {
     throwIfAborted(signal);
     const destinationPath = await this.fs.copy(source.path, destination.path, signal);
     throwIfAborted(signal);
-    const stat = await this.fs.stat(destinationPath);
+    const stat = await this.fs.stat(destinationPath, signal);
     return {
       ok: true,
       source: { target: source.target ?? "local", path: source.path },
@@ -687,12 +718,13 @@ export class BrowserFsDriver {
     };
   }
 
-  private async transferStat(raw: unknown): Promise<FsTransferStatResult> {
+  private async transferStat(raw: unknown, signal?: AbortSignal): Promise<FsTransferStatResult> {
     const args = asRecord(raw) as TransferArgs;
     const path = parsePath(args.path, "fs.transfer.stat");
     try {
-      const stat = await this.fs.stat(path);
-      const revision = stat.isFile ? await contentRevision(await this.fs.read(path)) : undefined;
+      const stat = await this.fs.stat(path, signal);
+      throwIfAborted(signal);
+      const revision = stat.isFile ? await contentRevision(await this.fs.read(path, signal)) : undefined;
       return {
         ok: true,
         path,
@@ -710,11 +742,13 @@ export class BrowserFsDriver {
     }
   }
 
-  private async transferSend(raw: unknown): Promise<GsvResponse> {
+  private async transferSend(raw: unknown, signal?: AbortSignal): Promise<GsvResponse> {
     const args = asRecord(raw) as TransferArgs;
     const path = parsePath(args.path, "fs.transfer.send");
-    const bytes = await this.fs.read(path);
-    const stat = await this.fs.stat(path);
+    const bytes = await this.fs.read(path, signal);
+    throwIfAborted(signal);
+    const stat = await this.fs.stat(path, signal);
+    throwIfAborted(signal);
     const revision = await contentRevision(bytes);
     if (isString(args.revision) && args.revision !== revision) {
       return { data: { ok: false, error: `Source revision is no longer available: ${path}` } };

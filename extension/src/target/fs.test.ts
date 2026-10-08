@@ -4,6 +4,25 @@ import { BrowserFsDriver, BrowserTargetFileSystem } from "./fs";
 import type { TargetFileSystem } from "./types";
 
 describe("BrowserFsDriver", () => {
+  it("does not read browser content after Pause interrupts stat", async () => {
+    let finishStat!: (stat: { path: string; isFile: boolean; isDirectory: boolean; size: number }) => void;
+    const pendingStat = new Promise<{ path: string; isFile: boolean; isDirectory: boolean; size: number }>((resolve) => {
+      finishStat = resolve;
+    });
+    const stat = vi.fn(() => pendingStat);
+    const read = vi.fn();
+    const fs = { stat, read } as unknown as TargetFileSystem;
+    const controller = new AbortController();
+    const running = new BrowserFsDriver(fs).handle("fs.read", { path: "/proc/tabs/42/resources/app.js" }, undefined, controller.signal);
+
+    await vi.waitFor(() => expect(stat).toHaveBeenCalledWith("/proc/tabs/42/resources/app.js", controller.signal));
+    controller.abort(new Error("Browser access paused"));
+    finishStat({ path: "/proc/tabs/42/resources/app.js", isFile: true, isDirectory: false, size: 10 });
+
+    await expect(running).rejects.toThrow("Browser access paused");
+    expect(read).not.toHaveBeenCalled();
+  });
+
   it("does not write an edit after Pause interrupts its read", async () => {
     let finishRead!: (bytes: Uint8Array) => void;
     const pendingRead = new Promise<Uint8Array>((resolve) => { finishRead = resolve; });
@@ -14,7 +33,7 @@ describe("BrowserFsDriver", () => {
       path: "/tmp/note.txt", oldString: "old", newString: "new",
     }, undefined, controller.signal);
 
-    await vi.waitFor(() => expect(fs.read).toHaveBeenCalledWith("/tmp/note.txt"));
+    await vi.waitFor(() => expect(fs.read).toHaveBeenCalledWith("/tmp/note.txt", controller.signal));
     controller.abort(new Error("Browser access paused"));
     finishRead(new TextEncoder().encode("old"));
 
@@ -51,7 +70,7 @@ describe("BrowserFsDriver", () => {
       path: "/tmp/late.txt", content: "late",
     }, undefined, controller.signal);
 
-    await vi.waitFor(() => expect(exists).toHaveBeenCalledWith("/tmp/late.txt"));
+    await vi.waitFor(() => expect(exists).toHaveBeenCalledWith("/tmp/late.txt", controller.signal));
     controller.abort(new Error("Browser access paused"));
     finishExists(false);
 
@@ -71,7 +90,7 @@ describe("BrowserFsDriver", () => {
       source: { path: "/tmp/source.txt" }, destination: { path: "/tmp/dest.txt" },
     }, undefined, controller.signal);
 
-    await vi.waitFor(() => expect(fs.read).toHaveBeenCalledWith("/tmp/source.txt"));
+    await vi.waitFor(() => expect(fs.read).toHaveBeenCalledWith("/tmp/source.txt", controller.signal));
     controller.abort(new Error("Browser access paused"));
     finishRead(new TextEncoder().encode("source"));
 
