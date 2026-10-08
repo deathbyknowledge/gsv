@@ -35,8 +35,12 @@ still affect how quickly an action appears.
 Sign in directly on the website in this view, including any verification code.
 Ship can also request your help with a particular website. Open the request in
 Ship, or follow its link from your messenger and sign in to GSV. For these
-explicit requests, automation pauses until you choose **continue**, Ship cancels
-the request, or it expires. Closing the viewer leaves the request available.
+explicit requests, automation pauses until you choose **I’m done — resume Ship**,
+Ship cancels the request, or it expires. Closing the viewer leaves the request
+available.
+Choose **I’m done — resume Ship** after you finish signing in or completing the
+requested steps. Once saving succeeds, the view confirms completion and stays
+open, following Ship again.
 Requests expire after fifteen minutes or when the browser stops, whichever comes
 first. The link identifies one request; it never grants access without your GSV
 login. An old link shows that its request has ended and cannot control or complete
@@ -75,9 +79,10 @@ handoff, and before an ordinary stop. Closing a website tab does not forget its
 saved data. Restore completes before the next browser becomes ready. If restore
 fails, that start fails visibly rather than opening an empty replacement.
 
-**Continue** finishes a login handoff only after its save succeeds. If saving
-fails, human control and the waiting Ship task stay open; retry Continue or
-cancel the request. Cancelling remains available while a save is in progress.
+**I’m done — resume Ship** finishes a login handoff only after its save succeeds.
+If saving fails, human control and the waiting Ship task stay open; retry
+completion or cancel the request. Cancelling remains available while a save is
+in progress.
 
 A save waits for active browser commands and live-view input to settle. New
 commands and input wait while the save completes, with their usual cancellation

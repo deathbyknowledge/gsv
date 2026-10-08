@@ -268,7 +268,7 @@ export class InstanceCoordinator extends DurableObject<Environment> implements I
         if (!liveHandoff(current)) return;
         if (!saved) {
           const persistence = instance(this.#store.byId(args.instanceId)).persistence;
-          throw new Error(`${persistence?.error ?? "Browser data could not be saved."} Human control is still active. Retry Continue or cancel the request.${persistence?.diagnosticRef ? ` Diagnostic: ${persistence.diagnosticRef}.` : ""}`);
+          throw new Error(`${persistence?.error ?? "Browser data could not be saved."} Human control is still active. Retry finishing or cancel the request.${persistence?.diagnosticRef ? ` Diagnostic: ${persistence.diagnosticRef}.` : ""}`);
         }
         this.#store.putHandoff({ ...current, state, completedAt: Date.now(), revision: current.revision + 1 });
       }

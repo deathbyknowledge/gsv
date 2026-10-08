@@ -73,10 +73,13 @@ export function BrowserViewer({ request, onClose }: { request: BrowserSelection;
   const displayed = useRef<BrowserImage | null>(null);
   const [selectedTab, setSelectedTab] = useState<number>();
   const [error, setError] = useState("");
+  const [completedRequestId, setCompletedRequestId] = useState<string>();
+  const [finishing, setFinishing] = useState(false);
   const { frame: view, state: viewState, error: frameError, selection } = useBrowserStream(client, request.instanceId, selectedTab, connected && ready);
-  const handoff = viewState?.handoff;
-  const requestMatches = request.requestId === undefined || handoff?.requestId === request.requestId;
-  const requestUnavailable = viewState !== undefined && !requestMatches;
+  const handoff = viewState?.handoff?.requestId === completedRequestId ? undefined : viewState?.handoff;
+  // Only a completion confirmed in this viewer releases its original action link.
+  const requestMatches = request.requestId === undefined || completedRequestId !== undefined || handoff?.requestId === request.requestId;
+  const requestUnavailable = viewState !== undefined && !requestMatches && !finishing;
   const [busy, setBusy] = useState(false);
   const [expanded, setExpanded] = useState(false);
   const inputQueue = useRef<Promise<void>>(Promise.resolve());
@@ -88,6 +91,13 @@ export function BrowserViewer({ request, onClose }: { request: BrowserSelection;
     return () => { live.current = false; inputEpoch.current++; };
   }, [connected, ready, request.instanceId]);
   useLayoutEffect(() => { inputEpoch.current++; }, [request.requestId, handoff?.requestId, handoff?.state]);
+  useEffect(() => {
+    if (!completedRequestId) return;
+    const url = new URL(window.location.href);
+    if (url.searchParams.get("browserInstance") !== request.instanceId || url.searchParams.get("browserHandoff") !== completedRequestId) return;
+    url.searchParams.delete("browserHandoff");
+    window.history.replaceState(window.history.state, "", url);
+  }, [completedRequestId, request.instanceId]);
   useEffect(() => {
     if (!connected || !requestMatches || handoff?.state !== "pending" || !handoff.site) return;
     let current = true;
@@ -124,11 +134,16 @@ export function BrowserViewer({ request, onClose }: { request: BrowserSelection;
       await inputQueue.current;
       if (!live.current || inputEpoch.current !== epoch) return;
       inputEpoch.current++;
-      await client.sys.browser.handoff.finish({ instanceId: request.instanceId, requestId: handoff.requestId });
+      setFinishing(true);
+      const result = await client.sys.browser.handoff.finish({ instanceId: request.instanceId, requestId: handoff.requestId });
+      if (result.handoff.state === "completed") {
+        setCompletedRequestId(handoff.requestId);
+        selectTab(undefined);
+      }
       setError("");
       await queryClient.invalidateQueries({ queryKey: INSTANCE_QUERY_KEY });
     } catch (cause) { setError(String(cause)); }
-    finally { setBusy(false); }
+    finally { setFinishing(false); setBusy(false); }
   };
   const stop = async (force = false) => {
     setBusy(true); live.current = false; inputEpoch.current++;
@@ -186,7 +201,9 @@ export function BrowserViewer({ request, onClose }: { request: BrowserSelection;
         title="Follow Ship’s active tab" onClick={() => selectTab(undefined)}>{selectedTab === undefined ? "following Ship" : "follow Ship"}</button>
     </div>
     {requestUnavailable && <p class="browser-notice" role="status">This browser request has expired or ended. Open the latest request from Ship.</p>}
-    {requestMatches && data?.handoff && <div class="browser-help"><span>{data.handoff.purpose}</span><button type="button" onClick={() => void finish()} disabled={busy || !connected}>continue</button></div>}
+    {finishing && <p class="browser-notice" role="status">Saving before Ship resumes…</p>}
+    {!finishing && completedRequestId && !handoff && <p class="browser-notice" role="status">You’re done. Ship can continue.</p>}
+    {!finishing && requestMatches && handoff && <div class="browser-help"><span>{handoff.purpose}</span><button type="button" onClick={() => void finish()} disabled={busy || !connected || handoff.state !== "active"}>I’m done — resume Ship</button></div>}
     {error && <p class="error" role="alert">{error}</p>}
     {instanceQuery.error && <p class="error" role="alert">{String(instanceQuery.error)}</p>}
     {ready && instance?.persistence?.issues?.length && instance.persistence.saveStatus !== "failed" ? <div class="browser-help" role="status">

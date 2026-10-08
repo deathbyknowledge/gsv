@@ -428,7 +428,7 @@ describe("browser save ordering", () => {
     const { handoff: opened } = await object.openHandoff(actor, selector);
     if (failure === "export") vi.spyOn(browser, "save").mockRejectedValueOnce(new Error("Export failed"));
     else vi.spyOn(ProfileStorage.prototype, "save").mockRejectedValueOnce(new Error("Upload failed"));
-    await expect(object.finishHandoff(actor, selector)).rejects.toThrow(/Human control is still active.*Retry Continue.*Diagnostic:/);
+    await expect(object.finishHandoff(actor, selector)).rejects.toThrow(/Human control is still active.*Retry finishing.*Diagnostic:/);
     expect((await object.getHandoff(actor, selector)).handoff).toEqual(opened);
     expect(new InstanceStore(store.storage).liveHandoffs(instanceId)[0]).toMatchObject({ state: "active" });
     expect((await object.get(actor, { instanceId })).instance?.persistence?.saveStatus).toBe("failed");

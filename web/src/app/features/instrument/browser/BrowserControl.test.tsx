@@ -3,14 +3,19 @@ import { GSVClient } from "@humansandmachines/gsv/client";
 import { encodeBrowserViewPacket, type BrowserHandoff, type CloudInstance } from "@humansandmachines/gsv/protocol";
 import type { ComponentChildren, JSX, VNode } from "preact";
 import { act } from "preact/test-utils";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { GatewayProvider } from "../../../services/gateway/GatewayProvider";
 import { collectNodes, collectText, createTestRoot, deferred } from "../../../testing/testHarness";
 import { BrowserViewer } from "./BrowserControl";
 
+beforeEach(() => {
+  const location = new URL("https://space.example/?browserInstance=instance&browserHandoff=linked-login");
+  vi.stubGlobal("window", { location, history: { state: null, replaceState: vi.fn((_state, _unused, url: URL) => { location.href = url.href; }) } });
+});
+
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
-async function openLinkedViewer(initialState: "pending" | "active" | undefined, initialId = "new-login", options: { manualFrames?: boolean } = {}) {
+async function openLinkedViewer(initialState: "pending" | "active" | undefined, initialId = "new-login", options: { manualFrames?: boolean; finish?: () => Promise<BrowserHandoff> } = {}) {
   vi.stubGlobal("document", new EventTarget());
   vi.stubGlobal("requestAnimationFrame", (callback: () => void) => setTimeout(callback, 0));
   vi.stubGlobal("cancelAnimationFrame", clearTimeout);
@@ -34,7 +39,8 @@ async function openLinkedViewer(initialState: "pending" | "active" | undefined, 
       if (!options.manualFrames || watches === 1) frame(1, 1);
     } }) } };
     if (call === "sys.browser.input") return inputResult.promise;
-    if (call === "sys.browser.handoff.open" || call === "sys.browser.handoff.finish") return { data: { handoff } };
+    if (call === "sys.browser.handoff.open") return { data: { handoff } };
+    if (call === "sys.browser.handoff.finish") return { data: { handoff: options.finish ? await options.finish() : { ...handoff, state: "completed" } } };
     throw new Error(`Unexpected request ${call}`);
   });
   const cache = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity } } });
@@ -49,7 +55,7 @@ async function openLinkedViewer(initialState: "pending" | "active" | undefined, 
   // SAFETY: The image onLoad handler reads no event data.
   const loaded = new Event("load") as JSX.TargetedEvent<HTMLImageElement>;
   await act(() => { image.props.onLoad?.(loaded); });
-  return { request, inputResult, push, frame, nodes, text: () => collectText(tree),
+  return { request, handoff, inputResult, push, frame, nodes, text: () => collectText(tree),
     disconnect() { source.error(new Error("Viewer connection lost")); },
     type(value: string) {
       // SAFETY: The intrinsic textarea handler reads only currentTarget.value and isComposing.
@@ -150,7 +156,7 @@ describe("live browser viewing", () => {
     const viewer = await openLinkedViewer(state);
     try {
       await vi.waitFor(() => expect(viewer.text()).toContain("This browser request has expired or ended"));
-      expect(viewer.nodes().some(node => node.type === "button" && collectText(node) === "continue")).toBe(false);
+      expect(viewer.nodes().some(node => node.type === "button" && collectText(node) === "I’m done — resume Ship")).toBe(false);
       await act(() => { viewer.type("private input"); });
       expect(viewer.request.mock.calls.some(([call]) => call.startsWith("sys.browser.handoff.") || call === "sys.browser.input")).toBe(false);
     } finally { await viewer.close(); }
@@ -165,7 +171,7 @@ describe("live browser viewing", () => {
       await vi.waitFor(() => expect(viewer.nodes().find(node => node.type === "textarea")?.props.disabled).toBe(false));
       await act(() => { viewer.type("first"); viewer.type("unsent"); });
       await vi.waitFor(() => expect(viewer.request.mock.calls.filter(([call]) => call === "sys.browser.input")).toHaveLength(1));
-      const finish = viewer.nodes().find(node => node.type === "button" && collectText(node) === "continue");
+      const finish = viewer.nodes().find(node => node.type === "button" && collectText(node) === "I’m done — resume Ship");
       await act(() => { finish!.props.onClick?.(); });
       await act(() => { viewer.push("pending"); });
       await vi.waitFor(() => expect(viewer.text()).toContain("This browser request has expired or ended"));
@@ -177,7 +183,63 @@ describe("live browser viewing", () => {
     } finally { await viewer.close(); }
   });
 
-  it("keeps Continue available after a save failure and clears the warning after retry", async () => {
+  it.each(["stream", "response"] as const)("returns a completed handoff to live viewing when the %s arrives first", async first => {
+    const completion = deferred<BrowserHandoff>();
+    const viewer = await openLinkedViewer("active", "linked-login", { finish: () => completion.promise });
+    try {
+      const finish = viewer.nodes().find(node => node.type === "button" && collectText(node) === "I’m done — resume Ship");
+      await act(() => { finish!.props.onClick?.(); });
+      await vi.waitFor(() => expect(viewer.request.mock.calls.some(([call]) => call === "sys.browser.handoff.finish")).toBe(true));
+      if (first === "stream") {
+        await act(() => { viewer.push(undefined); });
+        await vi.waitFor(() => expect(viewer.text()).toContain("Saving before Ship resumes"));
+        expect(viewer.text()).not.toContain("expired or ended");
+        expect(viewer.nodes().find(node => node.type === "textarea")?.props.disabled).toBe(true);
+      }
+      await act(async () => { completion.resolve({ ...viewer.handoff, state: "completed" }); await completion.promise; });
+      await vi.waitFor(() => expect(viewer.text()).toContain("You’re done. Ship can continue."));
+      expect(viewer.nodes().some(node => node.type === "button" && collectText(node) === "I’m done — resume Ship")).toBe(false);
+      if (first === "response") await act(() => { viewer.push(undefined); });
+      await vi.waitFor(() => expect(viewer.nodes().find(node => node.type === "textarea")?.props.disabled).toBe(false));
+      expect(viewer.text()).not.toContain("expired or ended");
+      expect(new URL(window.location.href).searchParams.has("browserHandoff")).toBe(false);
+      expect(new URL(window.location.href).searchParams.get("browserInstance")).toBe("instance");
+      await act(() => { viewer.type("ordinary live input"); });
+      await vi.waitFor(() => expect(viewer.request.mock.calls.filter(([call]) => call === "sys.browser.input")).toHaveLength(1));
+      expect(viewer.request.mock.calls.find(([call]) => call === "sys.browser.input")?.[1]).toMatchObject({ handoffRequestId: undefined });
+      expect(viewer.request.mock.calls.filter(([call]) => call === "sys.browser.watch")).toHaveLength(1);
+    } finally { await viewer.close(); }
+  });
+
+  it.each(["cancelled", "expired"] as const)("keeps an action link bound when completion returns %s", async state => {
+    const completion = deferred<BrowserHandoff>();
+    const viewer = await openLinkedViewer("active", "linked-login", { finish: () => completion.promise });
+    try {
+      const finish = viewer.nodes().find(node => node.type === "button" && collectText(node) === "I’m done — resume Ship");
+      await act(() => { finish!.props.onClick?.(); });
+      await vi.waitFor(() => expect(viewer.request.mock.calls.some(([call]) => call === "sys.browser.handoff.finish")).toBe(true));
+      await act(async () => { viewer.push(undefined); completion.resolve({ ...viewer.handoff, state }); await completion.promise; });
+      await vi.waitFor(() => expect(viewer.text()).toContain("This browser request has expired or ended"));
+      await act(() => { viewer.push("pending", "another-request"); });
+      await vi.waitFor(() => expect(viewer.nodes().find(node => node.type === "textarea")?.props.disabled).toBe(true));
+      expect(viewer.text()).not.toContain("You’re done");
+      expect(new URL(window.location.href).searchParams.get("browserHandoff")).toBe("linked-login");
+      expect(viewer.request.mock.calls.some(([call]) => call === "sys.browser.handoff.open")).toBe(false);
+    } finally { await viewer.close(); }
+  });
+
+  it("does not rewrite the action link after its viewer closes during completion", async () => {
+    const completion = deferred<BrowserHandoff>();
+    const viewer = await openLinkedViewer("active", "linked-login", { finish: () => completion.promise });
+    const finish = viewer.nodes().find(node => node.type === "button" && collectText(node) === "I’m done — resume Ship");
+    await act(() => { finish!.props.onClick?.(); });
+    await vi.waitFor(() => expect(viewer.request.mock.calls.some(([call]) => call === "sys.browser.handoff.finish")).toBe(true));
+    await viewer.close();
+    await act(async () => { completion.resolve({ ...viewer.handoff, state: "completed" }); await completion.promise; });
+    expect(window.history.replaceState).not.toHaveBeenCalled();
+  });
+
+  it("keeps completion available after a save failure and clears the warning after retry", async () => {
     vi.stubGlobal("document", new EventTarget());
     vi.stubGlobal("requestAnimationFrame", (callback: () => void) => setTimeout(callback, 0));
     vi.stubGlobal("cancelAnimationFrame", clearTimeout);
@@ -186,7 +248,7 @@ describe("live browser viewing", () => {
     const instance: CloudInstance = { instanceId: "instance", targetId: "1234abcd", startRequestId: "start", ownerUid: 1000,
       templateId: "browser", templateRevision: "1", kind: "browser", implements: [], label: "Browser", state: "ready", revision: 1, createdAt: 1, expiresAt: Date.now() + 60000 };
     const handoff: BrowserHandoff = { instanceId: instance.instanceId, requestId: "login", tabId: 1, site: "https://example.com", purpose: "Sign in", state: "active", revision: 1, createdAt: 1, expiresAt: instance.expiresAt };
-    const finish = vi.fn().mockRejectedValueOnce(new Error("Save failed; retry Continue")).mockResolvedValueOnce({ data: { handoff: { ...handoff, state: "completed" } } });
+    const finish = vi.fn().mockRejectedValueOnce(new Error("Save failed; retry finishing")).mockResolvedValueOnce({ data: { handoff: { ...handoff, state: "completed" } } });
     const request = vi.spyOn(GSVClient.prototype, "request").mockImplementation(async call => {
       if (call === "sys.instance.get") return { data: { instance } };
       if (call === "sys.browser.watch") return { data: { watchId: "watch", version: 1 }, body: { stream: new ReadableStream<Uint8Array>({ start(controller) {
@@ -200,16 +262,16 @@ describe("live browser viewing", () => {
     const root = createTestRoot("Retry handoff"), close = vi.fn();
     let tree: ComponentChildren;
     function Harness() { tree = BrowserViewer({ request: { instanceId: instance.instanceId, requestId: handoff.requestId }, onClose: close }); return null; }
-    const button = () => collectNodes(tree).find(node => node.type === "button" && collectText(node) === "continue");
+    const button = () => collectNodes(tree).find(node => node.type === "button" && collectText(node) === "I’m done — resume Ship");
     try {
       await root.render(<GatewayProvider><QueryClientProvider client={cache}><Harness /></QueryClientProvider></GatewayProvider>);
       await vi.waitFor(() => expect(button()).toBeDefined());
       await act(async () => { button()!.props.onClick?.(); });
-      await vi.waitFor(() => expect(collectText(tree)).toContain("Save failed; retry Continue"));
+      await vi.waitFor(() => expect(collectText(tree)).toContain("Save failed; retry finishing"));
       expect(button()!.props.disabled).toBe(false);
       expect(close).not.toHaveBeenCalled();
       await act(async () => { button()!.props.onClick?.(); });
-      await vi.waitFor(() => expect(collectText(tree)).not.toContain("Save failed; retry Continue"));
+      await vi.waitFor(() => expect(collectText(tree)).not.toContain("Save failed; retry finishing"));
       expect(finish).toHaveBeenCalledTimes(2);
       expect(request.mock.calls.filter(([call]) => call === "sys.browser.handoff.finish").map(([, args]) => args)).toEqual([
         { instanceId: "instance", requestId: "login" }, { instanceId: "instance", requestId: "login" },
