@@ -1,4 +1,5 @@
 import type { JsonObject } from "../json";
+import type { CloudInstanceState } from "./instance";
 
 export type ProcessIdentity = {
   uid: number;
@@ -304,6 +305,7 @@ export type SysTargetSummary = {
   version: string;
   online: boolean;
   lastSeenAt: number;
+  instance?: { instanceId: string; state: CloudInstanceState; expiresAt: number; profileId?: string };
 };
 
 export type SysTargetListResult = {

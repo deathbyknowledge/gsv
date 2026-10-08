@@ -421,7 +421,7 @@ describe("img2txt", () => {
       transport,
     );
 
-    expect(result.stderr).toContain("Access denied to device: laptop");
+    expect(result.stderr).toContain("Access denied to target: laptop");
     expect(transport.requestTarget).not.toHaveBeenCalled();
     expect(ai.imageRead).not.toHaveBeenCalled();
   });
@@ -556,9 +556,16 @@ async function run(
 function targetContext(targets: string[]): KernelContext {
   return Object.assign({}, CTX, {
     ...CTX,
+    env: {},
+    auth: { getPasswdByUid: () => null },
+    adapters: { identityLinks: { list: () => [] } },
     targets: {
       canAccess: vi.fn(() => true),
       canHandle: vi.fn(() => true),
+      get: vi.fn((id: string) => targets.includes(id) ? {
+        target_id: id, owner_uid: IDENTITY.uid, label: id, description: "", platform: "browser", version: "test",
+        implements: ["fs.*"], online: true, first_seen_at: 1, last_seen_at: 1, connected_at: 1, disconnected_at: null,
+      } : null),
       listForUser: vi.fn(() => targets.map((target_id) => ({ target_id }))),
     },
   });

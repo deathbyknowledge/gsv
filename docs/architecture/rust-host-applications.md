@@ -30,6 +30,11 @@ contracts, but they do not embed one another's runtime or state ownership.
 These crates contain contracts and transport primitives. They do not own a
 machine lifecycle, a CLI interaction, or Desktop UI state.
 
+Binary bodies preserve the shared delivery mode. `delivery: "realtime"` uses
+a 32 KiB initial and replenishment window so live browser images stay close to
+the viewer; ordinary file transfers retain the default 4 MiB window. Both modes
+use the same cancellation and byte-credit protocol.
+
 The host applications, helpers, and shared crates form one Cargo workspace
 rooted at `host/`. Its lockfile and build output belong to that boundary;
 `workers/ripgit/` remains an independent Rust project.

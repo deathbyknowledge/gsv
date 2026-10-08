@@ -112,7 +112,10 @@ policy copying and disablement remain service-owned.
 Pending deletion means data remains stored. Accounts durably coordinates
 quiesce and erase operations across the captured resource inventory, including
 pending resets inherited from an older source. Kernel, Process, Conversation,
-R2, ripgit, adapters, mail and inference report their own cleanup receipts.
+R2, ripgit, adapters, mail, inference and cloud instances report their own cleanup receipts.
+Instance coordinators are installation-owned resources in discovery and deletion;
+they do not require adapter peer-inventory import. Their lifecycle owner stops
+browsers and erases profiles and temporary files before confirming live erasure.
 Missing inventory or owner evidence prevents a claim of completed erasure.
 Stale work cannot recreate data after its owner has retired the identity.
 

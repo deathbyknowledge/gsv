@@ -65,6 +65,29 @@ intelligence process. Set `GSV_CLIENT_DEBUG=1` to trace run-signal matching.
 Commands run inside the gateway OS context, not directly on your local machine.
 Use `:quit`, `:exit`, or `:q` to leave.
 
+With the optional cloud instance service enabled, the gateway shell also exposes
+`instance catalog`, `instance start browser --request-id ID --wait`, `instance list`,
+`instance get ID`, and `instance stop ID --wait`. Starting reuses the account's current
+browser and reports `created` or `reused`; `--new` explicitly creates a separate
+temporary one. `--wait` waits for readiness for up to 60 seconds by default
+(`--timeout MS`, maximum 120000). Cancelling the wait leaves the instance running.
+Get and stop accept the displayed target ID or full instance ID. Ordinary browsers
+save before stopping. Partial saves report `persistence.issues` for affected
+sites and permit normal stop; other sites are saved. A whole-save failure leaves
+the browser running and reports its cause and diagnostic. Stop `--wait`
+waits for termination and release of saved state. Retry a save with
+`browser profile save ID`, or explicitly discard unsaved changes with
+`instance stop ID --force --wait`. Force is not a persistence test and cannot fix
+unsupported website storage. Inspect save status and per-site usage with
+`browser profile get PROFILE_ID`; `browser profile delete PROFILE_ID` forgets
+saved logins and stops the browser using them.
+Ordinary browsers
+remember logins automatically. Use `browser handoff` when Ship needs a human to
+complete a sign-in; opening Fleet's browser view otherwise leaves Ship running
+and accepts direct input. These are native target commands, available to Ship
+through Shell as well. See [cloud browsers](/how-to/cloud-browsers) for saved
+logins, recovery after a lost response, and the complete sign-in flow.
+
 Inside the gateway shell, `proc` is the process IPC userland command.
 `message` inspects and uses external chat reply routes. `sched add --ship`
 creates recurring or one-shot Ship responsibilities; `sched add --here`
@@ -253,7 +276,8 @@ default.
 `IMAGE` accepts the same target-qualified source forms as `cp`: a local path,
 `gsv:/path`, `target:/path`, or `[target-with-colons]:/path`. A target image is
 streamed directly through the filesystem transfer boundary into image reading;
-the command does not stage a temporary GSV copy.
+the command does not stage a temporary GSV copy. Cloud browser screenshots use
+the same source forms and ownership checks as files on connected devices.
 
 Query and OCR structured output accepts `text`, `json`, `xml`, `markdown`, or
 `csv`. A JSON `--schema` is added to the caller's instruction, then the result

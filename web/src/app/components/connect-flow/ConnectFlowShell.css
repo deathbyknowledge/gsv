@@ -13,7 +13,7 @@
   background: transparent;
 }
 
-/* Action bar — icon tile + 2-line description, stepper below. */
+/* Action bar — 2-line description, stepper below. */
 .gsv-cf-bar {
   display: flex;
   flex-direction: column;
@@ -30,19 +30,6 @@
   display: flex;
   align-items: center;
   gap: 16px;
-}
-
-.gsv-cf-icon {
-  width: 52px;
-  height: 52px;
-  flex: none;
-  border: 1px solid var(--border);
-  background: linear-gradient(180deg, #100e2a, var(--node-bg));
-  color: var(--accent-bright);
-  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.45), inset 0 0 18px rgba(80, 70, 180, 0.18);
-  display: flex;
-  align-items: center;
-  justify-content: center;
 }
 
 .gsv-cf-desc {

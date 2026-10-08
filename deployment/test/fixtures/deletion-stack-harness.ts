@@ -3,7 +3,7 @@ import { createTestHarness, unstable_readConfig, type Unstable_RawConfig } from 
 
 export const PUBLIC_ROOT = resolve(import.meta.dirname, "../../..");
 export const STACK = { gateway: "deletion-gateway", accounts: "deletion-accounts", inference: "deletion-inference",
-  mail: "deletion-mail", ripgit: "deletion-ripgit", dependencies: "gsv-test-dependencies", evidence: "deletion-evidence" };
+  mail: "deletion-mail", ripgit: "deletion-ripgit", instances: "deletion-instances", dependencies: "gsv-test-dependencies", evidence: "deletion-evidence" };
 export const NAMESPACES = [
   { namespaceId: "1".repeat(32), ownerId: "gateway", kind: "kernel", worker: STACK.gateway, binding: "KERNEL" },
   { namespaceId: "2".repeat(32), ownerId: "gateway", kind: "process", worker: STACK.gateway, binding: "PROCESS" },
@@ -11,9 +11,11 @@ export const NAMESPACES = [
   { namespaceId: "4".repeat(32), ownerId: "inference", kind: "inference-executor", worker: STACK.inference, binding: "INFERENCE_EXECUTORS" },
   { namespaceId: "5".repeat(32), ownerId: "mail", kind: "mail", worker: STACK.mail, binding: "MAIL_INSTALLATIONS" },
   { namespaceId: "6".repeat(32), ownerId: "gateway", kind: "ripgit", worker: STACK.ripgit, binding: "REPOSITORY" },
+  { namespaceId: "7".repeat(32), ownerId: "instances", kind: "instance-installation", worker: STACK.instances, binding: "INSTANCES" },
 ] as const;
 export const SCOPES = { accounts: [{ kind: "d1", namespace: "accounts-db" }],
-  gateway: [{ kind: "r2", namespace: "space-storage" }, { kind: "kv", namespace: "repository-registry" }], inference: [], mail: [] } satisfies Record<string, { kind: "d1" | "r2" | "kv"; namespace: string }[]>;
+  gateway: [{ kind: "r2", namespace: "space-storage" }, { kind: "kv", namespace: "repository-registry" }], inference: [], mail: [],
+  instances: [{ kind: "r2", namespace: "browser-profiles", r2Prefix: "installation-root" }] } satisfies Record<string, { kind: "d1" | "r2" | "kv"; namespace: string; r2Prefix?: "installation-root" }[]>;
 const origin = "https://accounts.example.invalid";
 const deletionProps = { authority: "installation-deletion" };
 function config(path: string): Unstable_RawConfig { return unstable_readConfig({ config: resolve(PUBLIC_ROOT, path) }, { hideWarnings: true }); }
@@ -24,6 +26,7 @@ export function deletionStackHarness() {
   const accounts = config("workers/installations/wrangler.jsonc");
   const inference = config("workers/inference/wrangler.jsonc");
   const mail = config("workers/adapters/email/wrangler.test.jsonc");
+  const instances = config("workers/instances/wrangler.test.jsonc");
   const dependencies = config("workers/gateway/test-integration/fixtures/wrangler.jsonc");
   const gatewayConfig: Unstable_RawConfig = {
     name: STACK.gateway, main: gateway.main, compatibility_date: gateway.compatibility_date,
@@ -34,7 +37,7 @@ export function deletionStackHarness() {
     worker_loaders: [{ binding: "LOADER" }],
     queues: { producers: [{ binding: "MANAGED_MAIL_OUTBOUND", queue: "deletion-mail-queue" }] },
     services: [{ binding: "INSTALLATION_DIRECTORY", service: STACK.accounts }, { binding: "INFERENCE_EXECUTION", service: STACK.inference },
-      { binding: "RIPGIT", service: STACK.ripgit }],
+      { binding: "RIPGIT", service: STACK.ripgit }, { binding: "INSTANCES", service: STACK.instances }],
   };
   const accountsConfig: Unstable_RawConfig = {
     name: STACK.accounts, main: accounts.main, compatibility_date: accounts.compatibility_date, compatibility_flags: accounts.compatibility_flags,
@@ -47,6 +50,7 @@ export function deletionStackHarness() {
       { binding: "DELETION_OWNER_GATEWAY", service: STACK.evidence, entrypoint: "GatewayFaultRelay" },
       { binding: "DELETION_OWNER_INFERENCE", service: STACK.inference, entrypoint: "InferenceLifecycleEntrypoint", props: deletionProps },
       { binding: "DELETION_OWNER_MAIL", service: STACK.mail, entrypoint: "MailLifecycleEntrypoint", props: deletionProps },
+      { binding: "DELETION_OWNER_INSTANCES", service: STACK.instances, entrypoint: "InstanceLifecycleEntrypoint", props: deletionProps },
       { binding: "DELETION_ADDITIONAL_EVIDENCE", service: STACK.evidence },
     ],
   };
@@ -69,8 +73,15 @@ export function deletionStackHarness() {
     durable_objects: { bindings: [{ name: "REPOSITORY", class_name: "Repository" }] }, migrations: [{ tag: "v1", new_sqlite_classes: ["Repository"] }],
     kv_namespaces: [{ binding: "REGISTRY", id: "repository-registry" }],
   };
+  const instancesConfig: Unstable_RawConfig = {
+    name: STACK.instances, main: instances.main, compatibility_date: instances.compatibility_date,
+    compatibility_flags: instances.compatibility_flags, vars: instances.vars,
+    durable_objects: instances.durable_objects, migrations: instances.migrations,
+    r2_buckets: [{ binding: "PROFILES", bucket_name: "browser-profiles" }],
+    services: [{ binding: "INSTALLATION_DIRECTORY", service: STACK.accounts }],
+  };
   return createTestHarness({ root: resolve(PUBLIC_ROOT, "workers/gateway"), workers: [
-    { config: gatewayConfig }, { config: accountsConfig }, { config: inferenceConfig }, { config: mailConfig }, { config: ripgitConfig },
+    { config: gatewayConfig }, { config: accountsConfig }, { config: inferenceConfig }, { config: mailConfig }, { config: ripgitConfig }, { config: instancesConfig },
     { config: { name: STACK.dependencies, main: dependencies.main, compatibility_date: dependencies.compatibility_date,
       compatibility_flags: [...dependencies.compatibility_flags ?? [], "enable_abortsignal_rpc"], durable_objects: dependencies.durable_objects,
       migrations: dependencies.migrations } },

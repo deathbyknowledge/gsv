@@ -4,6 +4,12 @@ The browser extension gives GSV control over your browser — navigate, read pag
 
 ## Connect your browser
 
+If your operator enables cloud browsers, you can also
+[use a browser in GSV](/how-to/cloud-browsers) while your personal devices are
+offline. Ship reuses your account's current browser, and website logins are
+remembered automatically. Click the browser in Fleet to watch Ship's cursor and
+clicks or enter input yourself. Watching and closing the view leave Ship running.
+
 1. In GSV, open **Fleet**, click **connect** beside Places, and choose **Browser.** Give it a name or leave the default.
 2. Download the extension, **Your GSV**, and load it at `chrome://extensions` with developer mode on.
 3. Click its toolbar icon, paste the invitation from GSV, and choose **Pair this browser**.

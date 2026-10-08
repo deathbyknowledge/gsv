@@ -38,8 +38,6 @@ export interface ConnectFlowDef {
   navLabel: string;
   /** Breadcrumb parent (e.g. "MACHINES"). */
   parentLabel: string;
-  /** Icon name for the action-bar tile. */
-  icon: string;
   /** Page title (e.g. "Connect machine"). */
   title: string;
   /** Action-bar description. Split on the last " · " into two lines. */

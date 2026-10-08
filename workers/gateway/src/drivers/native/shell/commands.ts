@@ -31,6 +31,7 @@ import { buildTargetsCommands } from "./targets";
 import { buildWikiCommand } from "./wiki";
 import { buildWebCommand } from "./web";
 import { buildFeedbackCommand } from "./feedback";
+import { buildInstanceCommands } from "./instances";
 import { ShellDiscoveryCatalog } from "./discovery";
 
 export type NativeShellCommandOptions = {
@@ -112,6 +113,7 @@ export function buildCustomCommands(
     wiki,
     web,
     feedback,
+    ...buildInstanceCommands(ctx, options?.request),
     flynn,
   ];
   discovery.registerCommands(nativeCommands);

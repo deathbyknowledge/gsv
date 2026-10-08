@@ -30,6 +30,12 @@
   ],
   "services": [
     {
+      "binding": "DELETION_OWNER_INSTANCES",
+      "service": "gsv-instances-dev",
+      "entrypoint": "InstanceLifecycleEntrypoint",
+      "props": { "authority": "installation-deletion" }
+    },
+    {
       "binding": "ACCOUNTS_GATEWAY_RECOVERY",
       "service": "gsv-gateway-dev",
       "entrypoint": "GatewayRecoveryEntrypoint",

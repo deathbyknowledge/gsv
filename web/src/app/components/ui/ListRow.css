@@ -6,14 +6,6 @@
   overflow: hidden;
 }
 
-.lr-icon {
-  width: 20px;
-  flex: none;
-  display: inline-flex;
-  justify-content: center;
-  color: var(--accent-bright);
-}
-
 .lr-leading {
   flex: none;
   display: inline-flex;

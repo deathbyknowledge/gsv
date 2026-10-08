@@ -91,6 +91,18 @@ R2 remains the byte store. The current runtime uses these key families:
 
 Temporary process media is deleted by prefix when the process is reset or killed. New producers retain the exact source revision directly in the run-as agent's immutable `.gsv/media` namespace; legacy process-media records are promoted before a transcript archive or terminal Message drops their last live reference. The archive identity includes the retaining Process, source key, and revision, so two reads of a mutable path before and after an edit remain distinct immutable resources while cancellation cleanup stays exclusive to one Process. Every Process, Kernel, and filesystem read validates the archive path plus its `purpose`, owning `uid` and `gid`, read-only mode `0400`, required source revision metadata, stored source content type, and current object HTTP content type. A missing legacy live object is archived as metadata-only rather than preventing reset or teardown. The `/var/media` view remains read-only for supported stored histories.
 
+## Cloud Browser State
+
+Cloud browser snapshots use the optional instance service's separate R2 bucket,
+under `{installationId}/owners/{uid}/profiles/{profileId}/{revision}-{uuid}`.
+They are compressed and authenticated-encrypted before upload. The installation
+coordinator owns the encryption key, lease, revision and deletion fence; Kernel
+does not hold another copy. Legacy encrypted JSON is readable and migrates on
+the next save. `browser profile get PROFILE_ID` exposes account-scoped save
+metadata. `browser profile delete PROFILE_ID` invokes the instance service's
+forget operation, including shutdown and key erasure. Snapshot bytes remain
+private to Instances. See [cloud browsers](/how-to/cloud-browsers).
+
 ## ripgit Repositories
 
 ripgit stores versioned content. It is used anywhere history, diffs, search, or source snapshots matter.

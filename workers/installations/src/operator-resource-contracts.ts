@@ -8,10 +8,12 @@ export const operatorResourceCatalogSchema = z.array(z.strictObject({
   id, kind: z.enum(["r2", "queue", "logs", "provider", "backup", "cache"]),
   namespace: z.string().min(1).max(500), source,
   scope: z.enum(["installation", "deployment"]), disposition: z.enum(["live", "retained"]),
+  r2Prefix: z.literal("installation-root").optional(),
 })).min(1).max(128).superRefine((catalog, ctx) => {
   if (new Set(catalog.map((entry) => entry.id)).size !== catalog.length) ctx.addIssue({ code: "custom", message: "Catalog resource IDs must be unique" });
   if (new Set(catalog.map((entry) => JSON.stringify([entry.kind, entry.namespace]))).size !== catalog.length) ctx.addIssue({ code: "custom", message: "Catalog physical scopes must be unique" });
   for (const entry of catalog) {
+    if (entry.r2Prefix && entry.kind !== "r2") ctx.addIssue({ code: "custom", message: "An R2 prefix requires an R2 resource" });
     if (["r2", "queue"].includes(entry.kind) && entry.disposition !== "live") ctx.addIssue({ code: "custom", message: "Multipart and queue payloads require live cleanup" });
     const expected = { "cloudflare-r2-multipart": "r2", "cloudflare-queue": "queue", "cloudflare-workers-logs": "logs", posthog: "logs", "ai-gateway": "provider", provider: "provider", backup: "backup", cache: "cache" }[entry.source];
     if (expected !== entry.kind) ctx.addIssue({ code: "custom", message: "Catalog source and resource kind do not match" });
@@ -41,12 +43,14 @@ export const operatorResourceAttestationSchema = z.strictObject({
 export type OperatorResourceCapture = z.infer<typeof operatorResourceCaptureSchema>;
 export type OperatorResourceAttestation = z.infer<typeof operatorResourceAttestationSchema>;
 
+export function installationResourceId(resource: { kind: string; r2Prefix?: "installation-root" }, installationId: string): string {
+  return resource.kind === "r2" ? `${resource.r2Prefix === "installation-root" ? "" : "installations/"}${encodeURIComponent(installationId)}/` : installationId;
+}
 export function operatorResourceSelector(resource: OperatorResource, installationId: string): string {
-  return resource.scope === "deployment" ? "*" : resource.kind === "r2" ? `installations/${encodeURIComponent(installationId)}/` : installationId;
+  return resource.scope === "deployment" ? "*" : installationResourceId(resource, installationId);
 }
 export function operatorResourceManifestResources(catalog: OperatorResourceCatalog, installationId: string): InstallationDeletionManifest["owners"][number]["resources"] {
-  return catalog.map(({ kind, namespace }) => ({ kind, namespace,
-    resourceId: kind === "r2" ? `installations/${encodeURIComponent(installationId)}/` : installationId }));
+  return catalog.map((resource) => ({ kind: resource.kind, namespace: resource.namespace, resourceId: installationResourceId(resource, installationId) }));
 }
 export async function operatorResourceDigest(value: OperatorResourceCapture | OperatorResourceCatalog): Promise<string> {
   const canonical = Array.isArray(value) ? operatorResourceCatalogSchema.parse(value).sort((left, right) => left.id.localeCompare(right.id)) : operatorResourceCaptureSchema.parse(value);

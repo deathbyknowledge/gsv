@@ -141,10 +141,10 @@ export async function captureTabPng(tabId: number): Promise<Uint8Array> {
   }
 }
 
-export async function executeInTab<T>(
+export async function executeInTab<Args extends ExtensionBoundaryValue[], T>(
   tabId: number,
-  func: (...args: ExtensionBoundaryValue[]) => T,
-  args: ExtensionBoundaryValue[] = [],
+  func: (...args: Args) => T,
+  args: Args,
 ): Promise<T> {
   const results = await chrome.scripting.executeScript({
     target: { tabId },

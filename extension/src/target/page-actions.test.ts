@@ -64,6 +64,43 @@ describe("CDP page actions", () => {
     expect(inputMethods(fixture.sendCommand)).toEqual([]);
   });
 
+  it("waits for a transient overlay before delivering exactly one click", async () => {
+    const fixture = stubCdp({ receiverIds: [999, 999, 101] });
+    const { store, reference } = referencedElement();
+
+    await clickPageElement(42, { kind: "reference", reference }, undefined, store);
+
+    expect(inputMethods(fixture.sendCommand)).toEqual([
+      ["Input.dispatchMouseEvent", "mouseMoved"],
+      ["Input.dispatchMouseEvent", "mousePressed"],
+      ["Input.dispatchMouseEvent", "mouseReleased"],
+    ]);
+    expect(fixture.sendCommand.mock.calls.filter((call) => call[1] === "DOM.getNodeForLocation")).toHaveLength(3);
+  });
+
+  it("cancels an occluded action without delivering input", async () => {
+    const fixture = stubCdp({ receiverId: 999 });
+    const { store, reference } = referencedElement();
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 50);
+    try {
+      await expect(clickPageElement(42, { kind: "reference", reference }, controller.signal, store))
+        .rejects.toThrow(/abort/i);
+    } finally {
+      clearTimeout(timer);
+    }
+    expect(inputMethods(fixture.sendCommand)).toEqual([]);
+  });
+
+  it("does not deliver pending input after navigation while an overlay clears", async () => {
+    const fixture = stubCdp({ receiverId: 999, navigateAfterHit: true });
+    const { store, reference } = referencedElement();
+
+    await expect(clickPageElement(42, { kind: "reference", reference }, undefined, store))
+      .rejects.toThrow("page navigated while waiting");
+    expect(inputMethods(fixture.sendCommand)).toEqual([]);
+  });
+
   it("keeps CSS selectors as a native-input fallback", async () => {
     const fixture = stubCdp({
       states: [elementState(), elementState({ focused: true })],
@@ -82,6 +119,36 @@ describe("CDP page actions", () => {
     );
     expect(inputMethods(fixture.sendCommand)).toContainEqual(["Input.dispatchMouseEvent", "mousePressed"]);
     expect(result).toMatchObject({ action: "click", delivered: { method: "cdp" } });
+  });
+
+  it("clicks the visible part of an oversized element", async () => {
+    const fixture = stubCdp({ quads: [[0, 700, 300, 700, 300, 1700, 0, 1700]] });
+    const { store, reference } = referencedElement();
+
+    const result = await clickPageElement(42, { kind: "reference", reference }, undefined, store);
+
+    expect(result).toMatchObject({ delivered: { point: { x: 150, y: 750 } } });
+    expect(fixture.sendCommand).toHaveBeenCalledWith({ tabId: 42 }, "DOM.getNodeForLocation", expect.objectContaining({ x: 150, y: 750 }));
+  });
+
+  it("hit tests in document coordinates while dispatching input in viewport coordinates", async () => {
+    const fixture = stubCdp({ pageOffset: { x: 100, y: 2700 } });
+    const { store, reference } = referencedElement();
+
+    await clickPageElement(42, { kind: "reference", reference }, undefined, store);
+
+    expect(fixture.sendCommand).toHaveBeenCalledWith({ tabId: 42 }, "DOM.getNodeForLocation", expect.objectContaining({ x: 250, y: 2770 }));
+    expect(fixture.sendCommand).toHaveBeenCalledWith({ tabId: 42 }, "Input.dispatchMouseEvent", expect.objectContaining({ type: "mousePressed", x: 150, y: 70 }));
+  });
+
+  it("diagnoses an offscreen fixed control without hit testing or dispatching input", async () => {
+    const fixture = stubCdp({ quads: [[200, 4076, 251, 4076, 251, 4124, 200, 4124]] });
+    const { store, reference } = referencedElement();
+
+    await expect(clickPageElement(42, { kind: "reference", reference }, undefined, store))
+      .rejects.toThrow("outside the visible viewport after scrolling");
+    expect(fixture.sendCommand.mock.calls.some((call) => call[1] === "DOM.getNodeForLocation")).toBe(false);
+    expect(inputMethods(fixture.sendCommand)).toEqual([]);
   });
 
   it("uses CDP for text, key, and nested scrolling actions", async () => {
@@ -113,7 +180,7 @@ describe("CDP page actions", () => {
     });
     const keyResult = await sendPageKey(42, "Enter", undefined, typed.store);
     expect(inputMethods(keyFixture.sendCommand)).toEqual([
-      ["Input.dispatchKeyEvent", "rawKeyDown"],
+      ["Input.dispatchKeyEvent", "keyDown"],
       ["Input.dispatchKeyEvent", "keyUp"],
     ]);
     expect(keyResult).toMatchObject({
@@ -320,6 +387,10 @@ function elementState(overrides: Partial<State> = {}): State {
 
 function stubCdp(options: {
   receiverId?: number;
+  receiverIds?: number[];
+  navigateAfterHit?: boolean;
+  quads?: number[][];
+  pageOffset?: { x: number; y: number };
   relatedReceiver?: boolean;
   states?: State[];
   mutations?: number;
@@ -332,6 +403,7 @@ function stubCdp(options: {
   let stateIndex = 0;
   let objectIndex = 0;
   let observationIndex = 0;
+  let hitIndex = 0;
   const sendCommand = vi.fn(async (
     _target: chrome.debugger.DebuggerSession,
     method: string,
@@ -339,7 +411,7 @@ function stubCdp(options: {
   ): Promise<object> => {
     switch (method) {
       case "Page.getFrameTree":
-        return { frameTree: { frame: { id: "frame-1", loaderId: "loader-1", url: "https://web.whatsapp.test/" } } };
+        return { frameTree: { frame: { id: "frame-1", loaderId: options.navigateAfterHit && hitIndex > 0 ? "loader-2" : "loader-1", url: "https://web.whatsapp.test/" } } };
       case "DOM.describeNode": {
         const backendNodeId = Number(params?.backendNodeId ?? params?.nodeId ?? (params?.objectId ? 101 : 101));
         const overlay = backendNodeId === 999;
@@ -378,9 +450,14 @@ function stubCdp(options: {
       case "DOM.querySelectorAll":
         return { nodeIds: [101] };
       case "DOM.getContentQuads":
-        return { quads: [[0, 40, 300, 40, 300, 100, 0, 100]] };
-      case "DOM.getNodeForLocation":
-        return { backendNodeId: receiverId, frameId: "frame-1" };
+        return { quads: options.quads ?? [[0, 40, 300, 40, 300, 100, 0, 100]] };
+      case "Page.getLayoutMetrics":
+        return { cssLayoutViewport: { clientWidth: 1280, clientHeight: 800, pageX: options.pageOffset?.x ?? 0, pageY: options.pageOffset?.y ?? 0 } };
+      case "DOM.getNodeForLocation": {
+        const currentReceiver = options.receiverIds?.[hitIndex] ?? receiverId;
+        hitIndex += 1;
+        return { backendNodeId: currentReceiver, frameId: "frame-1" };
+      }
       case "DOM.resolveNode":
         objectIndex += 1;
         return { object: { objectId: `node-${objectIndex}`, subtype: "node" } };
@@ -401,7 +478,7 @@ function stubCdp(options: {
       }
       case "Runtime.evaluate": {
         const expression = String(params?.expression ?? "");
-        if (expression === "document.activeElement") {
+        if (params?.returnByValue === false && expression.includes("document.activeElement")) {
           return { result: { objectId: "active-node", subtype: "node" } };
         }
         observationIndex += 1;

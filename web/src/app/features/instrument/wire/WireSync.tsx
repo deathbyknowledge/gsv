@@ -8,6 +8,7 @@ import { instrumentProcessAiKey, INSTRUMENT_CONTACTS_KEY, INSTRUMENT_CONTACT_BLO
 import { refreshContactQuery, syncContactDetailSignal } from "./contactSync";
 import { refreshMessengerConnections } from "./messengerSync";
 import { syncWorkSignal } from "./workSync";
+import { syncInstanceSignal } from "./instanceSync";
 import { syncProcessSignal } from "./processSync";
 import { createLedgerSync } from "./ledgerSync";
 import {
@@ -26,6 +27,7 @@ import {
  * A reconnect after a drop is the only moment everything is fetched again.
  * Payload-free contact notifications use selective list invalidation below.
  * Process title changes and snapshots interrupted by a change also reread their list.
+ * Instance notifications refresh browser inventories and their shared target projection.
  */
 export function WireSync(): null {
   const { client, connected } = useGateway();
@@ -37,6 +39,10 @@ export function WireSync(): null {
     if (!connected) return;
     const ledger = createLedgerSync(queryClient);
     const unsubscribe = client.onSignal((signal, payload) => {
+      if (signal === "instance.changed") {
+        void syncInstanceSignal(queryClient);
+        return;
+      }
       if (signal === "approach.changed") {
         void queryClient.cancelQueries({ queryKey: INSTRUMENT_APPROACHES_KEY }).then(() => queryClient.invalidateQueries({ queryKey: INSTRUMENT_APPROACHES_KEY }));
         return;

@@ -47,6 +47,8 @@ import {
   type FleetReference,
 } from "./fleetModel";
 import { PlaceActions } from "./PlaceActions";
+import { CloudBrowserActions, StartCloudBrowser } from "../browser/CloudInstances";
+import { useBrowserControl, useCloudInstances } from "../browser/BrowserControl";
 import { FleetApproval } from "./FleetApproval";
 import { NewProcess, ProcessAiControls } from "./ProcessControls";
 import { canConfigure } from "../settings/settingsModel";
@@ -82,6 +84,7 @@ function isFleetRow(value: string | undefined): value is FleetRow {
 }
 
 export function Fleet({ openRequest, onZen, onCommand, onDirtyChange }: FleetProps) {
+  useCloudInstances();
   const active = useViewActive();
   const [fileDirty, setFileDirty] = useState(false);
   const [workDirty, setWorkDirty] = useState(false);
@@ -154,6 +157,13 @@ export function Fleet({ openRequest, onZen, onCommand, onDirtyChange }: FleetPro
     () => (selected?.startsWith("proc:") ? processes.find((process) => processRow(process.pid) === selected) ?? null : null),
     [selected, processes],
   );
+  const browserControl = useBrowserControl();
+  useLayoutEffect(() => {
+    if (inspectorOpen && selectedPlace?.instance && ["starting", "ready"].includes(selectedPlace.instance.state)) {
+      setInspectorOpen(false);
+      browserControl.open({ instanceId: selectedPlace.instance.instanceId });
+    }
+  }, [inspectorOpen, selectedPlace?.instance?.instanceId, selectedPlace?.instance?.state]);
   const missingRequestedRow = selected !== null && selected === initialRow && (
     (selected.startsWith("proc:") && !selectedProcess) || (selected.startsWith("target:") && !selectedPlace)
   );
@@ -311,6 +321,7 @@ export function Fleet({ openRequest, onZen, onCommand, onDirtyChange }: FleetPro
           <section class="fleet-block">
             <h2>
               <i /> Places
+              <StartCloudBrowser allowed={Boolean(viewer && canConfigure(viewer, "sys.instance.start"))} />
               <button type="button" class="fleet-heading-action" disabled={!connected || !viewer || !canConfigure(viewer, "sys.pair.create")} onClick={() => connect("place")}>connect</button>
               <span class="count">{places.length}</span>
             </h2>
@@ -722,7 +733,9 @@ function PlaceInspector({ place, uid, focusPair, runsToday, now, onRun, onBrowse
           talk about it
         </button>
       </div>
-      <PlaceActions place={place} uid={uid} focusPair={focusPair} />
+      {place.instance
+        ? <CloudBrowserActions targetId={place.id} allowed={uid === place.ownerUid} />
+        : <PlaceActions place={place} uid={uid} focusPair={focusPair} />}
       <p class="note">
         Run a command opens Zen on this place. Commands run directly and appear in Logs.
       </p>
