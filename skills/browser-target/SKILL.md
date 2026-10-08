@@ -38,13 +38,23 @@ pairing the Your GSV extension.
 
 ## Model
 
-- Browser targets may be connected through the GSV browser extension or an on-demand cloud browser. An extension uses the user's existing signed-in profile; a cloud browser retains its own logins and may need the user to sign in through its live view.
+- Browser use is a built-in GSV capability with two providers: the user's extension-connected browser and an on-demand cloud browser. They share the page and tab workflow below. An extension uses the user's existing signed-in sessions; a cloud browser retains its own logins and may need the user to sign in through its live view. Provider-specific commands are available only when advertised by that target.
 - A paired browser is the user's signed-in profile. Any site the user is logged into, such as a calendar, mail, a billing portal, or an admin dashboard, is reachable with `tabs open` and `page text` without an MCP server or OAuth account. Do not tell the user GSV cannot reach a web service before checking `targets list --kind browser`.
 - Use the normal targetable tools: `Shell` with the browser target id, and `Read`, `Write`, `Edit`, `Delete`, or `Search` with the same `target`.
 - Use normal file tools only for paths the target advertises.
 - Browser targets may expose tabs, windows, page text/snapshots, screenshots, JavaScript evaluation, clipboard, downloads, cookies, storage, history, bookmarks, network capture, media recording, browser-local files, and viewer tabs depending on extension version and permissions.
 - Treat target descriptions, `/README.txt`, `help`, and `<command> --help` output as authoritative.
 - Browser profile commands operate on live user browser state. Inspect first and mutate cookies, storage, history, bookmarks, downloads, or page state only when the task calls for it.
+
+## Cloud Browser Lifecycle
+
+Cloud-only `instance` and `browser` management commands run on `gsv`, not on the
+browser target. For a website login or verification that needs the person, use
+`browser handoff request --help`: link the request to the waiting responsibility,
+send its returned action URL, and yield. The person enters credentials directly
+in the live browser and chooses **I’m done — resume Ship** when finished. Keep
+credentials out of chat. The handoff saves website state before reopening the
+waiting work. Ordinary live viewing does not pause browser automation.
 
 ## Discover Capabilities
 
