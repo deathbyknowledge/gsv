@@ -6,6 +6,8 @@ import { useSession } from "../../services/session/SessionProvider";
 import { TerminalProvider } from "../../services/terminal/TerminalProvider";
 import { DevicePairingProvider } from "../../services/machines/DevicePairingProvider";
 import { Zen } from "./zen/Zen";
+import { useShipNotices } from "./zen/useShipNotices";
+import { useConsoleAccounts } from "../../services/system/useConsoleData";
 import { Fleet, type FleetProps } from "./fleet/Fleet";
 import { BrowserControlProvider, BrowserControlOverlay } from "./browser/BrowserControl";
 import { Memory } from "./memory/Memory";
@@ -111,15 +113,21 @@ function InstrumentReady({ initialPath }: { initialPath: string }) {
   }, []);
   /* which process Zen shows: null is the ship; Fleet can open a helper's conversation */
   const [zenPid, setZenPid] = useState<string | null>(null);
+  /* Ship's contact notices live here, above the keyed Zen view, so opening a helper and coming back keeps them */
+  const accounts = useConsoleAccounts();
+  const viewer = accounts.data?.find((account) => account.relation === "self");
+  const shipNotices = useShipNotices({ viewer, listening: distance === "zen" && zenPid === null });
+  /* unsaved work the instrument guards as a whole: the chat's prompt, and replies typed under Ship's notices even while a helper is shown */
+  const unsaved = zenDirty || shipNotices.dirty;
   const selectingProcess = useRef(false);
-  const controlState = useRef({ zenDirty });
-  controlState.current = { zenDirty };
+  const controlState = useRef({ unsaved });
+  controlState.current = { unsaved };
   useClientControl(["status", "new", "use"], async ({ command, checkpoint, signal }) => {
     if (command.type === "status") return { type: "status", status: {
       gateway: status.state === "connected" ? "connected" : status.state === "connecting" ? "connecting" : "disconnected",
       window: "visible", selectedProcess: zenPid,
     } };
-    if (zenDirty || selectingProcess.current) throw new ClientControlError("busy");
+    if (unsaved || selectingProcess.current) throw new ClientControlError("busy");
     if (status.state !== "connected") throw new ClientControlError("unavailable");
     selectingProcess.current = true;
     try {
@@ -135,7 +143,7 @@ function InstrumentReady({ initialPath }: { initialPath: string }) {
         pid = command.processId;
       } else throw new ClientControlError("unavailable");
       await checkpoint();
-      if (controlState.current.zenDirty) throw new ClientControlError("busy");
+      if (controlState.current.unsaved) throw new ClientControlError("busy");
       setZenPid(pid);
       setDistance("zen");
       history.replaceState(null, "", "/zen");
@@ -143,6 +151,8 @@ function InstrumentReady({ initialPath }: { initialPath: string }) {
     } finally { selectingProcess.current = false; }
   });
 
+  /* a contact conversation Zen asked People to open; a fresh object each time so the same contact reopens */
+  const [peopleRequest, setPeopleRequest] = useState<{ contactId: string } | null>(null);
   const move = useCallback(
     (to: Distance, reference: FleetReference | null = null) => {
       if (reference && fleetDirty && !window.confirm("Discard unsaved Fleet edits and open this item?")) return false;
@@ -303,7 +313,9 @@ function InstrumentReady({ initialPath }: { initialPath: string }) {
             if (page && memoryDirty && !window.confirm("Discard your unsaved page changes and open this page?")) return;
             if (!move("memory")) return;
             if (page) setSelectedMemoryPage({ ...page });
-          }} initialTarget={zenTarget} prefill={zenPrefill} onPrefillUsed={() => setZenPrefill(null)} pid={zenPid} />
+          }} initialTarget={zenTarget} prefill={zenPrefill} onPrefillUsed={() => setZenPrefill(null)} pid={zenPid}
+          shipNotices={zenPid ? undefined : shipNotices}
+          onPeople={(contactId) => { if (move("people")) setPeopleRequest({ contactId }); }} />
         </RetainedView>
         <RetainedView active={distance === "memory"}>
           <Memory onDirtyChange={setMemoryDirty} initialPage={selectedMemoryPage} onAsk={(_page, prompt) => {
@@ -316,12 +328,12 @@ function InstrumentReady({ initialPath }: { initialPath: string }) {
         </RetainedView>
         <RetainedView active={distance === "settings"}>
           <Settings openRequest={settingsEntry} onDirtyChange={setSettingsDirty} onInspectProcess={(pid) => { move("fleet", `proc:${pid}`); }} onSignOut={() => {
-            if ((settingsDirty || zenDirty || fleetDirty || memoryDirty || peopleDirty) && !window.confirm("Discard your unsaved work and sign out?")) return;
+            if ((settingsDirty || unsaved || fleetDirty || memoryDirty || peopleDirty) && !window.confirm("Discard your unsaved work and sign out?")) return;
             void session.lock("Signed out");
           }} />
         </RetainedView>
         <RetainedView active={distance === "people"}>
-          <People onDirtyChange={setPeopleDirty} onProfile={() => { if (move("settings")) setSettingsEntry({ section: "profile" }); }} />
+          <People onDirtyChange={setPeopleDirty} openRequest={peopleRequest} onProfile={() => { if (move("settings")) setSettingsEntry({ section: "profile" }); }} />
         </RetainedView>
         <RetainedView active={distance === "fleet"}>
           <Fleet

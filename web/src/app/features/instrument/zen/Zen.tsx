@@ -34,6 +34,10 @@ import { SHELL_KEYS } from "../shared/shellKeys";
 import { useDismissOnOutsideClick } from "../shared/useDismissOnOutsideClick";
 import { ActivityWorking } from "./ActivityWorking";
 import { ApprovalCard } from "../shared/ApprovalCard";
+import { useContacts } from "../people/Contacts";
+import { ContactNoticeMoment, ContactReplyBox, EMPTY_REPLY, type ContactReplyDraft } from "./ContactNotice";
+import type { ContactNotice } from "./useContactNotices";
+import type { ShipNotices } from "./useShipNotices";
 import { DelegatedApprovals } from "./DelegatedApprovals";
 import { useZenScroll } from "./useZenScroll";
 import { useZenProcess } from "./useZenProcess";
@@ -80,9 +84,16 @@ export type ZenProps = {
   /** A specific process to show instead of the ship, for a helper opened from Fleet. */
   pid?: string | null;
   onDraftChange?: (dirty: boolean) => void;
+  /** Open a contact's conversation in People, for a message that arrived while here. */
+  onPeople?: (contactId: string) => void;
+  /** Ship's contact notices and the replies typed under them, owned above this keyed view; absent for a helper. */
+  shipNotices?: ShipNotices;
 };
 
 const HISTORY_LIMIT = 400;
+/* a helper's view has no contact notices */
+const NO_NOTICES: ContactNotice[] = [];
+const NO_DRAFTS: ReadonlyMap<string, ContactReplyDraft> = new Map();
 const EMPTY_COLLECTIONS: readonly LibraryCollection[] = [];
 const EMPTY_EXPANDED: ReadonlySet<string> = new Set();
 const RESOLVE_FRAME_MS = 60;
@@ -308,7 +319,7 @@ function NoteMoment({
   );
 }
 
-export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, onPrefillUsed, pid: pidProp, onDraftChange }: ZenProps) {
+export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, onPrefillUsed, pid: pidProp, onDraftChange, onPeople, shipNotices }: ZenProps) {
   const active = useViewActive();
   const browserControl = useBrowserControl();
   const { client, connected } = useGateway();
@@ -319,6 +330,15 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
   const config = useConsoleConfig();
   const accounts = useConsoleAccounts();
   const viewer = accounts.data?.find((account) => account.relation === "self");
+
+  /* contact messages that landed while the person was here, owned by Instrument so a helper switch keeps them */
+  const notices = shipNotices?.notices ?? NO_NOTICES;
+  const replyDrafts = shipNotices?.drafts ?? NO_DRAFTS;
+  const human = !!viewer && viewer.uid >= 1000;
+  const contactsQuery = useContacts(human && notices.length > 0 ? viewer : undefined);
+  const contactFor = (contactId: string) => contactsQuery.data?.contacts.find((contact) => contact.id === contactId);
+  /* the contact whose reply box is open under its notice */
+  const [replying, setReplying] = useState<string | null>(null);
   const timeZone = ownerTimeZone(config.data, viewer?.uid);
   const [today, setToday] = useState(Date.now);
   useEffect(() => {
@@ -344,7 +364,7 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
   const fileInput = useRef<HTMLInputElement>(null);
   const dragDepth = useRef(0);
   const [draggingFiles, setDraggingFiles] = useState(false);
-  const dirty = hasDraft || attachments.length > 0 || outbox.messages.length > 0;
+  const dirty = hasDraft || attachments.length > 0 || outbox.messages.length > 0 || (shipNotices?.dirty ?? false);
   useLayoutEffect(() => { onDraftChange?.(dirty); }, [dirty, onDraftChange]);
   useLayoutEffect(() => () => onDraftChange?.(false), [onDraftChange]);
   useEffect(() => {
@@ -614,6 +634,10 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
   useLayoutEffect(() => {
     if (active && pendingHil) scrolling.follow();
   }, [active, pendingHil?.requestId, scrolling.follow]);
+  /* a new contact notice sits under the transcript; keep it in view the way an approval is */
+  useLayoutEffect(() => {
+    if (active && notices.length > 0) scrolling.follow();
+  }, [active, notices.length, scrolling.follow]);
 
   const toggleActivity = useCallback((key: string) => {
     setOpenActivities((current) => {
@@ -933,7 +957,7 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
       <button type="button" disabled={!connected || conversation.historyFetching} onClick={() => void conversation.retryHistory()}>retry</button>
     </div>
   ) : null;
-  const empty = ready && moments.length === 0 && pid !== null && pendingHil === null;
+  const empty = ready && moments.length === 0 && pid !== null && pendingHil === null && notices.length === 0;
 
   return (
     <main class={`zen${!promptFocused ? " is-browse" : ""}${draggingFiles ? " is-file-drop" : ""}`} aria-label="Zen"
@@ -1003,6 +1027,15 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
                   </div>
                 );
               })}
+              {shipNotices && notices.map((notice) => (
+                <ContactNoticeMoment key={notice.contactId} notice={notice} contact={contactFor(notice.contactId)} open={replying === notice.contactId}
+                  onShow={() => setReplying(notice.contactId)}
+                  onGoToChat={() => onPeople?.(notice.contactId)}>
+                  {replying === notice.contactId && <ContactReplyBox notice={notice} contact={contactFor(notice.contactId)} account={viewer}
+                    draft={replyDrafts.get(notice.contactId) ?? EMPTY_REPLY} onDraft={(draft) => shipNotices.setDraft(notice.contactId, draft)}
+                    onSent={(through) => { shipNotices.markReplied(notice.contactId, through); shipNotices.markRead(notice, through); shipNotices.setDraft(notice.contactId, null); setReplying(null); }} />}
+                </ContactNoticeMoment>
+              ))}
               {pendingHil ? (
                 <div class="zen-moment is-approval">
                   <ApprovalCard

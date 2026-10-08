@@ -54,8 +54,6 @@
 .people-message[data-author="you"] > p { font-weight: 500; }
 .people-message[data-author="your-ship"] .people-message-author,
 .people-message[data-author="your-ship"] > p { color: var(--accent); }
-.people-message-badge { display: inline-flex; align-items: center; gap: 6px; padding: 3px 7px; border: 1px solid; border-color: color-mix(in srgb, currentColor 42%, transparent); font: 500 8.5px/1 var(--gsv-font-mono); letter-spacing: .14em; }
-.people-message-dot { width: 6px; height: 6px; border-radius: 50%; flex: none; background: currentColor; box-shadow: 0 0 6px currentColor; }
 .people-message time { font-size: 9px; color: var(--faint); }
 .people-message > p { margin: 12px 0 0; white-space: pre-wrap; font: 17px/1.65 var(--gsv-font-prose); }
 .people-composer { border-top: 1px solid var(--border); flex-shrink: 0; margin-top: 8px; padding-block: 12px 16px; }

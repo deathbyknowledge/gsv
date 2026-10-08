@@ -23,7 +23,12 @@ type PeopleView = "inbox" | "requests" | "contacts";
 const NO_CURSOR: ApproachListArgs["before"] = undefined;
 const NO_INBOX_CURSOR: ConversationInboxArgs["before"] = undefined;
 
-export function People({ onDirtyChange, onProfile }: { onDirtyChange: (dirty: boolean) => void; onProfile: () => void }) {
+export function People({ onDirtyChange, onProfile, openRequest }: {
+  onDirtyChange: (dirty: boolean) => void;
+  onProfile: () => void;
+  /** A conversation to land on, asked for from another view; a fresh object reopens the same contact. */
+  openRequest?: { contactId: string } | null;
+}) {
   const active = useViewActive();
   const { client, connected } = useGateway();
   const cache = useQueryClient();
@@ -95,6 +100,7 @@ export function People({ onDirtyChange, onProfile }: { onDirtyChange: (dirty: bo
     setArchived(false);
     openContact(id);
   };
+  useLayoutEffect(() => { if (openRequest) showConversation(openRequest.contactId); }, [openRequest]);
   const sent = (value: ApproachSummary) => {
     setDialog(null);
     setCompose(emptyApproachDraft()); setView("requests"); setDirection("outgoing"); setHistory(false);
