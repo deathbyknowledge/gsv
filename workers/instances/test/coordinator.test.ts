@@ -1,7 +1,7 @@
 import { runInDurableObject } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { InstanceCoordinator } from "../src/coordinator";
+import { InstanceCoordinator } from "../src/coordinator";
 import { CloudBrowser } from "../src/browser";
 import { InstancePolicy } from "../src/config";
 import { BrowserProvider } from "../src/provider";
@@ -61,6 +61,40 @@ function anotherReadyBrowser(store: InstanceStore): string {
 }
 
 describe("human browser control", () => {
+  it.each(["retry", "retirement"] as const)("retains failed terminal notifications across a cold start until %s", async outcome => {
+    // SAFETY: The test Wrangler configuration binds this exact test-only entrypoint.
+    const events = env.INSTANCE_EVENTS as Service<TestInstanceEvents>;
+    const installationId = crypto.randomUUID();
+    const stub = namespace.getByName(installationId);
+    vi.spyOn(BrowserProvider.prototype, "exists").mockResolvedValue(false);
+    await events.setFailing(installationId, true);
+    await runInDurableObject(stub, async (object, ctx) => {
+      const store = new InstanceStore(ctx.storage);
+      const value = store.admit(actor, { requestId: "start", templateId: "browser" }, limits);
+      store.update({ ...value, state: "ready", readyAt: Date.now() });
+      store.sql.exec("UPDATE instances SET session_id = ? WHERE id = ?", "test-session", value.instanceId);
+      await object.stop(actor, { instanceId: value.instanceId, force: true });
+      await object.alarm();
+      expect(store.activeRows()).toHaveLength(0);
+      await vi.waitFor(() => expect(store.sql.exec("SELECT 1 FROM diagnostics WHERE detail LIKE '%Browser change notification failed%'").toArray().length).toBeGreaterThan(0));
+      expect(ctx.storage.kv.get<Map<number, number>>("pending_instance_changes")?.has(actor.ownerUid)).toBe(true);
+      expect(await ctx.storage.getAlarm()).not.toBeNull();
+    });
+    await events.setFailing(installationId, false);
+    await runInDurableObject(stub, async (_object, ctx) => {
+      const cold = new InstanceCoordinator(ctx, env);
+      const deletion = { version: 1 as const, installationId, operationId: "delete" };
+      if (outcome === "retirement") await cold.quiesceInstallation(deletion);
+      await cold.alarm();
+      await vi.waitFor(() => expect(ctx.storage.kv.get("pending_instance_changes")).toBeUndefined());
+      if (outcome === "retirement") await cold.eraseInstallation(deletion);
+      else await cold.alarm();
+      expect(await ctx.storage.getAlarm()).toBeNull();
+    });
+    const received = await events.take(installationId);
+    expect(received).toEqual(outcome === "retry" ? [{ installationId, ownerUid: actor.ownerUid }] : []);
+  });
+
   it("publishes owner-scoped changes through the gateway binding for admission, handoffs and shutdown", () => fixture(async (object, _store, instanceId, installationId) => {
     // SAFETY: The test Wrangler configuration binds this exact test-only entrypoint.
     const events = env.INSTANCE_EVENTS as Service<TestInstanceEvents>;

@@ -22,6 +22,7 @@ import type { InstallationDeletionRequest } from "@humansandmachines/gsv/service
 const QUIET_ALLOCATION_MS = 180_000;
 const PROVIDER_RECOVERY_MS = 60_000;
 const MAINTENANCE_BUDGET_MS = 20_000;
+const PENDING_CHANGES_KEY = "pending_instance_changes";
 const humanInputSchema = z.discriminatedUnion("kind", [
   z.strictObject({ kind: z.literal("tab"), tabId: z.number().int().positive() }),
   z.strictObject({ kind: z.literal("click"), x: z.number().min(0).max(1280), y: z.number().min(0).max(800) }),
@@ -54,8 +55,7 @@ export class InstanceCoordinator extends DurableObject<Environment> implements I
   readonly #autosaveAfter = new Map<string, number>();
   readonly #humanInputs = new Map<string, Promise<unknown>>();
   readonly #watches = new Map<string, { instanceId: string; watch: BrowserWatch }>();
-  readonly #changedOwners = new Set<number>();
-  #notifying = false;
+  #notifying: Promise<void> | null = null;
   readonly #installationId: string;
   constructor(ctx: DurableObjectState, env: Environment) {
     super(ctx, env);
@@ -71,25 +71,49 @@ export class InstanceCoordinator extends DurableObject<Environment> implements I
   getTarget(): InstallationInstances { this.#retirement.requireLive(); return new InstanceCapability(this); }
 
   private notifyChange(ownerUid: number): void {
-    this.#changedOwners.add(ownerUid);
-    if (this.#notifying) return;
-    this.#notifying = true;
+    if (this.#retirement.get()) return;
+    const pending = this.pendingChanges();
+    pending.set(ownerUid, (pending.get(ownerUid) ?? 0) + 1);
+    this.ctx.storage.kv.put(PENDING_CHANGES_KEY, pending);
+    this.ctx.waitUntil(this.publishChanges());
+  }
+
+  private pendingChanges(): Map<number, number> {
+    return this.ctx.storage.kv.get<Map<number, number>>(PENDING_CHANGES_KEY) ?? new Map();
+  }
+
+  private publishChanges(): Promise<void> {
+    if (this.#notifying) return this.#notifying;
     // Coalesce synchronous writes after their transaction, off the browser action's critical path.
-    this.ctx.waitUntil(Promise.resolve().then(async () => {
-      while (this.#changedOwners.size) {
-        const owners = [...this.#changedOwners];
-        this.#changedOwners.clear();
-        await Promise.all(owners.map(async ownerUid => {
+    this.#notifying = Promise.resolve().then(async () => {
+      if (!this.pendingChanges().size || this.#retirement.get()) return;
+      const retryAt = Date.now() + 20_000;
+      const alarm = await this.ctx.storage.getAlarm();
+      if (this.#retirement.get()) return;
+      if (alarm === null || alarm > retryAt) await this.ctx.storage.setAlarm(retryAt);
+      const failed = new Set<number>();
+      while (!this.#retirement.get()) {
+        const pending = [...this.pendingChanges()].filter(([ownerUid]) => !failed.has(ownerUid));
+        if (!pending.length) break;
+        await Promise.all(pending.map(async ([ownerUid, revision]) => {
           try {
             await within(this.env.INSTANCE_EVENTS.instancesChanged({ installationId: this.#installationId, ownerUid }), 5000, "Browser change notification");
+            if (this.#retirement.get()) return;
+            const remaining = this.pendingChanges();
+            if (remaining.get(ownerUid) !== revision) return;
+            remaining.delete(ownerUid);
+            if (remaining.size) this.ctx.storage.kv.put(PENDING_CHANGES_KEY, remaining);
+            else this.ctx.storage.kv.delete(PENDING_CHANGES_KEY);
           } catch (cause) {
             if (this.#retirement.get()) return;
+            failed.add(ownerUid);
             const ref = this.#store.diagnostic(null, new Error("Browser change notification failed", { cause }));
             console.warn(`[Instances] Browser change notification failed; diagnostic ${ref}`);
           }
         }));
       }
-    }).finally(() => { this.#notifying = false; }));
+    }).finally(() => { this.#notifying = null; });
+    return this.#notifying;
   }
 
   async catalog(raw: InstanceActor) {
@@ -550,10 +574,12 @@ export class InstanceCoordinator extends DurableObject<Environment> implements I
     }
     await this.#profiles.cleanup();
     this.#store.pruneDiagnostics([...this.#saves.keys()]);
-    if (!this.#store.activeRows().length && !deleting && !this.#attachments.size && !this.#profiles.hasPendingCleanup()) await this.ctx.storage.deleteAlarm();
+    this.ctx.waitUntil(this.publishChanges());
+    if (!this.#store.activeRows().length && !deleting && !this.#attachments.size && !this.#profiles.hasPendingCleanup() && !this.pendingChanges().size) await this.ctx.storage.deleteAlarm();
   }
   async quiesceInstallation(input: InstallationDeletionRequest) {
     this.#retirement.begin(input);
+    this.ctx.storage.kv.delete(PENDING_CHANGES_KEY);
     for (const row of this.#store.activeRows()) this.fenceStop(instance(row), "Space deleted");
     for (const saved of this.#store.profilesInState("active")) {
       const value = profile(saved);

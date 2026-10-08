@@ -154,6 +154,9 @@ The instance service binds `INSTANCE_EVENTS` to the Gateway's
 `InstancesGatewayEntrypoint`, with deployment-owned
 `{ "authority": "instance-notifications" }` props. Instance and handoff changes
 notify the Kernel with the stored installation identity and human owner.
+The coordinator retains pending owners in one storage record until delivery,
+retrying failures through its existing maintenance alarm even after the last
+browser stops. Space retirement clears that pending work.
 The Gateway resolves that identity through the trusted directory and the Kernel
 broadcasts a payload-free `instance.changed` signal only to that owner's clients.
 Instrument updates its shared target and browser caches from this signal; it
