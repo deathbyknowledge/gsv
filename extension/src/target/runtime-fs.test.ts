@@ -49,6 +49,38 @@ describe("browser tab resources", () => {
     expect(chrome.debugger.detach).toHaveBeenCalledWith({ tabId: 7 });
   });
 
+  it("keeps a shared inventory load alive for another reader after one cancels", async () => {
+    const browser = installChrome();
+    let finishTree!: () => void;
+    const pendingTree = new Promise<void>((resolve) => { finishTree = resolve; });
+    const sendCommand = browser.sendCommand.getMockImplementation() as (
+      target: chrome.debugger.DebuggerSession,
+      method: string,
+      params?: Record<string, unknown>,
+    ) => Promise<object | undefined>;
+    browser.sendCommand.mockImplementation(async (target, method, params) => {
+      if (method === "Page.getResourceTree") await pendingTree;
+      return await sendCommand(target, method, params);
+    });
+    const store = new TabResourceStore(() => 0);
+    const cancelled = new AbortController();
+    const active = new AbortController();
+    const first = store.file(7, "index.json", cancelled.signal);
+    const firstResult = expect(first).rejects.toThrow("Browser access paused");
+
+    await vi.waitFor(() => expect(methodCalls(browser.sendCommand, "Page.getResourceTree")).toHaveLength(1));
+    const second = store.file(7, "index.json", active.signal);
+    cancelled.abort(new Error("Browser access paused"));
+    await firstResult;
+    finishTree();
+
+    const file = await second;
+    expect(file).not.toBeNull();
+    const manifest = JSON.parse(new TextDecoder().decode(await file!.read(active.signal))) as ResourceManifest;
+    expect(manifest.resources.some((resource) => resource.url.includes("app.js"))).toBe(true);
+    expect(methodCalls(browser.sendCommand, "Page.getResourceTree")).toHaveLength(1);
+  });
+
   it("lists metadata without reading bodies and fetches one body lazily", async () => {
     const browser = installChrome();
     const fs = new RuntimeFileSystem(new TabResourceStore(() => 0));

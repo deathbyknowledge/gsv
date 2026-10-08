@@ -4,7 +4,7 @@ import {
   releaseDebugger,
   sendDebuggerCommand,
 } from "../shared/debugger";
-import { throwIfAborted } from "./abort";
+import { abortable, throwIfAborted } from "./abort";
 
 export type TabResourceDirectoryListing = {
   files: string[];
@@ -100,6 +100,9 @@ type ResourceInventory = {
 type CachedInventory = {
   expiresAt: number;
   promise: Promise<ResourceInventory>;
+  controller: AbortController;
+  waiters: number;
+  settled: boolean;
 };
 
 type RawResource = Omit<ResourceDescriptor, "path">;
@@ -291,27 +294,42 @@ export class TabResourceStore {
 
   private async getInventory(tabId: number, force = false, signal?: AbortSignal): Promise<ResourceInventory> {
     throwIfAborted(signal);
-    const cached = this.inventories.get(tabId);
-    if (!force && cached && cached.expiresAt >= this.now()) {
-      const inventory = await cached.promise;
-      throwIfAborted(signal);
-      return inventory;
+    let cached = this.inventories.get(tabId);
+    if (force || !cached || cached.expiresAt < this.now()) {
+      const controller = new AbortController();
+      cached = {
+        expiresAt: this.now() + this.cacheMs,
+        promise: loadInventory(tabId, controller.signal),
+        controller,
+        waiters: 0,
+        settled: false,
+      };
+      this.inventories.set(tabId, cached);
+      const created = cached;
+      void created.promise.then(
+        () => { created.settled = true; },
+        () => {
+          created.settled = true;
+          if (this.inventories.get(tabId) === created) {
+            this.inventories.delete(tabId);
+          }
+        },
+      );
     }
 
-    const promise = loadInventory(tabId, signal);
-    this.inventories.set(tabId, {
-      expiresAt: this.now() + this.cacheMs,
-      promise,
-    });
+    cached.waiters += 1;
     try {
-      const inventory = await promise;
+      const inventory = await abortable(cached.promise, signal);
       throwIfAborted(signal);
       return inventory;
-    } catch (error) {
-      if (this.inventories.get(tabId)?.promise === promise) {
-        this.inventories.delete(tabId);
+    } finally {
+      cached.waiters -= 1;
+      if (cached.waiters === 0 && !cached.settled) {
+        cached.controller.abort();
+        if (this.inventories.get(tabId) === cached) {
+          this.inventories.delete(tabId);
+        }
       }
-      throw error;
     }
   }
 }
