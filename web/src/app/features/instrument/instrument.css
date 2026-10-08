@@ -109,6 +109,7 @@
 }
 .instrument-view { min-width: 0; min-height: 0; height: 100%; }
 .instrument-view[hidden] { display: none; }
+.instrument-people-waiting { color: var(--accent); margin-left: 4px; font-size: 15px; line-height: 1; }
 
 /* ---------- shared chrome ---------- */
 .instrument-top {

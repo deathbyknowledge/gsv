@@ -15,7 +15,7 @@ describe("first-message approval", () => {
     const intent = approachSendIntent(draft);
     expect(intent.displayName).toBe("My chosen name");
     expect(approachSendIntent({ ...draft, profile: { ...profile }, intent })).toBe(intent);
-    expect(emptyApproachDraft(profile.url).displayName).toBe("");
+    expect(emptyApproachDraft(profile.url).displayName).toBeNull();
   });
 
   it("does not reuse approval after the recipient, published revision, name or message changes", () => {

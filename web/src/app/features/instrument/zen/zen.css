@@ -495,6 +495,16 @@
 
 /* the place picker floats above the prompt, as the TUI's environment picker does */
 .zen-bottom { position: relative; }
+.zen-people { display: flex; align-items: baseline; gap: 24px; padding-block: 12px; border-top: 1px solid var(--border); }
+.zen-people-title { flex-shrink: 0; color: var(--accent); font: 11px/1.5 var(--gsv-font-mono); }
+.zen-people-title > span { padding-left: 8px; }
+.zen-people-items { display: flex; flex: 1; min-width: 0; gap: 24px; overflow-x: auto; scrollbar-width: thin; }
+.zen-people-item { display: flex; flex-direction: column; gap: 4px; min-width: 100px; max-width: 260px; text-align: left; padding: 2px 0; }
+.zen-people-item > span { color: var(--text); font: 14px/1.5 var(--gsv-font-prose); }
+.zen-people-item > small { color: var(--text-dim); font: 11px/1.6 var(--gsv-font-prose); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.zen-people-item:hover > span { color: var(--accent); }
+.zen-people-error { color: var(--text-dim); font: 11px/1.5 var(--gsv-font-mono); }
+.zen-people-error button { color: var(--accent); }
 .zen-picker {
   position: absolute;
   left: 0;

@@ -9,16 +9,28 @@ Search inside a conversation with **search** or `Ctrl/Cmd+F`. Open **details** f
 the private name, mute and connection controls. **Save contact** adds someone to Contacts without
 changing their permissions or how Ship handles the conversation.
 
+On your first visit, try an example: make plans, plan a trip, or work together.
+Choose **try this with someone** to connect. The example remains available when
+your conversation opens, so you can turn it into a request to Ship.
+
 ## Start a conversation
 
-Choose **new** to find a saved contact by name or enter someone's public profile address. Review
-the profile, choose the display name they will see, and send a first message.
-They can accept or decline it. Acceptance keeps that first message in the same
-conversation and enables further messages and attachments.
+Choose **connect → create invitation link** and share the link wherever you already
+talk. It connects one person and lasts seven days; you can cancel it before it is
+accepted. In managed spaces, the link opens the existing Accounts space chooser.
+The recipient selects their own space, signs in if needed, and explicitly accepts
+the invitation. Other deployments ask for the recipient's space address.
+Neither person needs to publish a profile. Acceptance opens the conversation.
 
-Alternatively, choose **use a private invitation** to create or accept a one-use
-contact code. These invitations are separate from
+If someone gives you a link or an older contact code, choose **connect → I have an
+invitation** to paste it. These invitations are separate from
 [inviting an account into your space](/how-to/invite-people).
+
+Choose **connect → use a profile address** to find a saved contact by name or enter
+someone's public profile address. Review the profile and your prefilled display
+name, then send a first message.
+They can accept or decline it. Acceptance keeps that first message in the same
+conversation, opens it directly, and enables further messages and attachments.
 
 Your profile starts private. In **Settings → Profile**, save a draft, review it
 and explicitly publish it. A profile can accept message requests, require a private
@@ -34,6 +46,11 @@ and approval rules. Turning it on waits for the next message; it does not start 
 on the existing conversation. Turn it off to stop ongoing handling. Messages
 distinguish the person from their Ship.
 
+For a particular task, choose **ask Ship** in the conversation. This opens an
+editable request in your ordinary Ship chat. Review it and send it when ready.
+It does not turn on automatic replies for that person. A first-use example can
+prefill a more specific request, such as finding a time for dinner.
+
 A contact message that arrives while you are in the Ship chat adds a notice under
 the transcript, labelled like any sender: the person's name with a **PERSON** or
 **GSV** badge for who wrote it, then the first words of their newest message.
@@ -42,8 +59,12 @@ with a reply box inline; sending threads your reply to the newest one, marks the
 conversation read, and leaves the notice marked **(replied)** until that contact
 writes again. **go to chat** opens the
 conversation in People; a reply you started under the notice stays there, in the
-Ship chat, until you send or clear it. Notices are for this session only; messages that landed
-earlier wait in People's unread list.
+Ship chat, until you send or clear it. These inline notices are for this session.
+The **people** strip above the prompt also shows unread conversations and message
+requests from earlier, including after a reload or reconnect. Select a person or
+request to open it in People. A dot beside **people** in the main navigation stays
+visible while unread activity waits. Muted, blocked, ended and archived
+conversations do not attract attention there.
 
 Work for a particular task is separate from that standing preference. When Ship
 sends with `message send --to contact:ID --responsibility R12Y_ID`, replies continue

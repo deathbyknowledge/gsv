@@ -4,23 +4,34 @@ import { randomId } from "../../../services/ids";
 export type ApproachDraft = {
   url: string;
   profile: PublicProfile | null;
-  displayName: string;
+  displayName: string | null;
   text: string;
   intent: ApproachCreateArgs | null;
 };
 
 export function emptyApproachDraft(url = ""): ApproachDraft {
-  return { url, profile: null, displayName: "", text: "", intent: null };
+  return { url, profile: null, displayName: null, text: "", intent: null };
+}
+
+export function profileAddress(value: string): string | null {
+  const text = value.trim();
+  if (!text || (!/^https?:\/\//i.test(text) && !text.includes("/@"))) return null;
+  try {
+    const url = new URL(/^https?:\/\//i.test(text) ? text : `https://${text}`);
+    if (!["https:", "http:"].includes(url.protocol) || url.username || url.password) return null;
+    return url.href;
+  } catch { return null; }
 }
 
 export function approachSendIntent(draft: ApproachDraft): ApproachCreateArgs {
   if (!draft.profile) throw new Error("Open a profile before writing to someone");
+  const displayName = (draft.displayName ?? "").trim();
   const previous = draft.intent;
   if (previous && previous.profileUrl === draft.profile.url && previous.profileRevision === draft.profile.revision
     && previous.recipient.shipId === draft.profile.actor.shipId && previous.recipient.subjectId === draft.profile.actor.subjectId
-    && previous.displayName === draft.displayName.trim() && previous.text === draft.text.trim()) return previous;
+    && previous.displayName === displayName && previous.text === draft.text.trim()) return previous;
   return { profileUrl: draft.profile.url, recipient: draft.profile.actor, profileRevision: draft.profile.revision,
-    displayName: draft.displayName.trim(), text: draft.text.trim(), idempotencyKey: randomId() };
+    displayName, text: draft.text.trim(), idempotencyKey: randomId() };
 }
 
 export function approachStatus(request: ApproachSummary): string {

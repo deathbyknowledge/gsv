@@ -1,7 +1,7 @@
 import type { ApproachSummary } from "@humansandmachines/gsv/protocol";
 import { useMutation, useQueryClient } from "@tanstack/preact-query";
 import { useQuery } from "../../../services/navigation/viewQueries";
-import { useState } from "preact/hooks";
+import { useEffect, useRef, useState } from "preact/hooks";
 import { useGateway } from "../../../services/gateway/GatewayProvider";
 import type { ConsoleAccount } from "../../../domain/system/consoleModels";
 import { canConfigure } from "../settings/settingsModel";
@@ -15,6 +15,13 @@ export function MessageRequest({ request, account, onOpen }: {
   const { client, connected } = useGateway();
   const cache = useQueryClient();
   const [blockConfirm, setBlockConfirm] = useState(false);
+  const opened = useRef(request.state === "accepted");
+  useEffect(() => {
+    if (!opened.current && request.state === "accepted" && request.contactId) {
+      opened.current = true;
+      onOpen(request.contactId);
+    }
+  }, [request.state, request.contactId, onOpen]);
   const refresh = () => cache.invalidateQueries({ queryKey: INSTRUMENT_APPROACHES_KEY });
   const allowed = (name: string) => connected && !!account && canConfigure(account, name);
   const history = useQuery({

@@ -6,7 +6,7 @@ import { useViewActive } from "../../../services/navigation/ViewActivity";
 import type { ConsoleAccount } from "../../../domain/system/consoleModels";
 import { canConfigure } from "../settings/settingsModel";
 import { LoadingState } from "../../../components/ui/Spinner";
-import { approachSendIntent, type ApproachDraft } from "./peopleModel";
+import { approachSendIntent, profileAddress as resolveProfileAddress, type ApproachDraft } from "./peopleModel";
 
 export function NewConversation({ account, draft, onChange, onSent, onBusy, contacts, onOpen, onInvitation }: {
   account: ConsoleAccount | undefined;
@@ -20,13 +20,16 @@ export function NewConversation({ account, draft, onChange, onSent, onBusy, cont
 }) {
   const { client, connected } = useGateway();
   const active = useViewActive();
-  const profileAddress = /^https?:\/\//i.test(draft.url.trim());
+  const profileAddress = resolveProfileAddress(draft.url);
+  const latest = useRef(draft);
+  latest.current = draft;
+  const displayName = draft.displayName ?? (account?.displayName || account?.gecos || account?.username || "");
   const saved = contacts.filter((contact) => contact.state === "active" && contact.preferences?.saved !== false
     && `${contactDisplayName(contact)} ${contact.remoteOrigin}`.toLocaleLowerCase().includes(draft.url.trim().toLocaleLowerCase()))
     .sort((a, b) => contactDisplayName(a).localeCompare(contactDisplayName(b)));
   const resolve = useMutation({
     mutationFn: (url: string) => client.profile.resolve({ url }),
-    onSuccess: ({ profile }) => onChange({ ...draft, profile, url: profile.url }),
+    onSuccess: ({ profile }) => onChange({ ...latest.current, profile, url: profile.url }),
   });
   const send = useMutation({
     mutationFn: (intent: ApproachCreateArgs) => client.approach.create(intent),
@@ -36,7 +39,7 @@ export function NewConversation({ account, draft, onChange, onSent, onBusy, cont
   useEffect(() => {
     if (initial.current || !active || !connected || !account) return;
     initial.current = true;
-    if (profileAddress && !draft.profile && canConfigure(account, "profile.resolve")) resolve.mutate(draft.url.trim());
+    if (profileAddress && !draft.profile && canConfigure(account, "profile.resolve")) resolve.mutate(profileAddress);
   }, [active, connected, account]);
   const busy = resolve.isPending || send.isPending;
   useEffect(() => { onBusy(busy); return () => onBusy(false); }, [busy, onBusy]);
@@ -45,13 +48,13 @@ export function NewConversation({ account, draft, onChange, onSent, onBusy, cont
   const canResolve = connected && !!account && canConfigure(account, "profile.resolve");
   const canSend = connected && !!account && canConfigure(account, "approach.create");
   const bytes = new TextEncoder().encode(draft.text.trim()).length;
-  const valid = !!draft.displayName.trim() && !!draft.text.trim() && bytes <= 32_768;
+  const valid = !!displayName.trim() && !!draft.text.trim() && bytes <= 32_768;
   const error = resolve.error ?? send.error;
 
   return <section class="people-compose" aria-label="New conversation">
     <form class="people-form" onSubmit={(event) => {
       event.preventDefault();
-      if (canResolve && profileAddress && !busy) resolve.mutate(draft.url.trim());
+      if (canResolve && profileAddress && !busy) resolve.mutate(profileAddress);
     }}>
       <label>To<input value={draft.url} placeholder="Name or profile address" spellcheck={false} autoComplete="off" disabled={busy} onInput={(event) => {
         resolve.reset(); send.reset(); onChange({ ...draft, url: event.currentTarget.value, profile: null });
@@ -74,10 +77,10 @@ export function NewConversation({ account, draft, onChange, onSent, onBusy, cont
         : <form class="people-form" onSubmit={(event) => {
           event.preventDefault();
           if (!canSend || !valid || busy) return;
-          const intent = approachSendIntent(draft);
+          const intent = approachSendIntent({ ...draft, displayName });
           onChange({ ...draft, intent }); send.mutate(intent);
         }}>
-          <label>Your display name<input value={draft.displayName} maxLength={80} autoComplete="off" disabled={busy} onInput={(event) => onChange({ ...draft, displayName: event.currentTarget.value })} /></label>
+          <label>Your display name<input value={displayName} maxLength={80} autoComplete="off" disabled={busy} onInput={(event) => onChange({ ...draft, displayName: event.currentTarget.value })} /></label>
           <label>Message<textarea value={draft.text} rows={5} maxLength={32_768} disabled={busy} onInput={(event) => onChange({ ...draft, text: event.currentTarget.value })} /></label>
           {bytes > 32_768 && <p class="people-error" role="alert">This message is too long. Shorten it before sending.</p>}
           <p class="people-note">You can send more messages and attachments once they accept.</p>

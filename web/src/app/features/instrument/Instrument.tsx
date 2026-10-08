@@ -12,7 +12,8 @@ import { Fleet, type FleetProps } from "./fleet/Fleet";
 import { BrowserControlProvider, BrowserControlOverlay } from "./browser/BrowserControl";
 import { Memory } from "./memory/Memory";
 import { Settings } from "./settings/Settings";
-import { People } from "./people/People";
+import { People, type PeopleOpenRequest } from "./people/People";
+import { usePeopleActivity } from "./people/usePeopleActivity";
 import type { FleetReference } from "./fleet/fleetModel";
 import { WireSync } from "./wire/WireSync";
 import type { MemoryPageRef } from "./shared/navigation";
@@ -152,7 +153,8 @@ function InstrumentReady({ initialPath }: { initialPath: string }) {
   });
 
   /* a contact conversation Zen asked People to open; a fresh object each time so the same contact reopens */
-  const [peopleRequest, setPeopleRequest] = useState<{ contactId: string } | null>(null);
+  const [peopleRequest, setPeopleRequest] = useState<PeopleOpenRequest | null>(null);
+  const peopleActivity = usePeopleActivity(viewer);
   const move = useCallback(
     (to: Distance, reference: FleetReference | null = null) => {
       if (reference && fleetDirty && !window.confirm("Discard unsaved Fleet edits and open this item?")) return false;
@@ -229,7 +231,7 @@ function InstrumentReady({ initialPath }: { initialPath: string }) {
       <InstrumentBackdrop />
       <WireSync />
       <div class="instrument-scaled">
-      <InstrumentHeader distance={distance} onNavigate={move} helper={distance === "zen" && zenPid !== null}
+      <InstrumentHeader distance={distance} onNavigate={move} peopleWaiting={peopleActivity.conversations.length > 0 || peopleActivity.requests.length > 0} helper={distance === "zen" && zenPid !== null}
         onShip={() => {
           if (!zenDirty || window.confirm("Discard your unsent message and attachments?")) setZenPid(null);
         }} help={help} onHelp={() => setHelp((open) => !open)} helpButtonRef={helpButtonRef} />
@@ -315,6 +317,8 @@ function InstrumentReady({ initialPath }: { initialPath: string }) {
             if (page) setSelectedMemoryPage({ ...page });
           }} initialTarget={zenTarget} prefill={zenPrefill} onPrefillUsed={() => setZenPrefill(null)} pid={zenPid}
           shipNotices={zenPid ? undefined : shipNotices}
+          peopleActivity={zenPid ? undefined : peopleActivity}
+          onPeopleActivity={(request) => { if (move("people") && request) setPeopleRequest(request); }}
           onPeople={(contactId) => { if (move("people")) setPeopleRequest({ contactId }); }} />
         </RetainedView>
         <RetainedView active={distance === "memory"}>
@@ -333,7 +337,11 @@ function InstrumentReady({ initialPath }: { initialPath: string }) {
           }} />
         </RetainedView>
         <RetainedView active={distance === "people"}>
-          <People onDirtyChange={setPeopleDirty} openRequest={peopleRequest} onProfile={() => { if (move("settings")) setSettingsEntry({ section: "profile" }); }} />
+          <People onDirtyChange={setPeopleDirty} openRequest={peopleRequest} onProfile={() => { if (move("settings")) setSettingsEntry({ section: "profile" }); }} onAsk={(prompt) => {
+            if (zenDirty && !window.confirm("Replace your unsent message and attachments with this request?")) return;
+            if (!move("zen")) return;
+            setZenPid(null); setZenTarget(null); setZenPrefill(prompt);
+          }} />
         </RetainedView>
         <RetainedView active={distance === "fleet"}>
           <Fleet

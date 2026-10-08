@@ -38,6 +38,9 @@ import { useContacts } from "../people/Contacts";
 import { ContactNoticeMoment, ContactReplyBox, EMPTY_REPLY, type ContactReplyDraft } from "./ContactNotice";
 import type { ContactNotice } from "./useContactNotices";
 import type { ShipNotices } from "./useShipNotices";
+import { PeopleActivity } from "../people/PeopleActivity";
+import type { PeopleActivity as PeopleActivityState } from "../people/usePeopleActivity";
+import type { PeopleOpenRequest } from "../people/People";
 import { DelegatedApprovals } from "./DelegatedApprovals";
 import { useZenScroll } from "./useZenScroll";
 import { useZenProcess } from "./useZenProcess";
@@ -88,6 +91,8 @@ export type ZenProps = {
   onPeople?: (contactId: string) => void;
   /** Ship's contact notices and the replies typed under them, owned above this keyed view; absent for a helper. */
   shipNotices?: ShipNotices;
+  peopleActivity?: PeopleActivityState;
+  onPeopleActivity?: (request?: PeopleOpenRequest) => void;
 };
 
 const HISTORY_LIMIT = 400;
@@ -319,7 +324,7 @@ function NoteMoment({
   );
 }
 
-export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, onPrefillUsed, pid: pidProp, onDraftChange, onPeople, shipNotices }: ZenProps) {
+export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, onPrefillUsed, pid: pidProp, onDraftChange, onPeople, shipNotices, peopleActivity, onPeopleActivity }: ZenProps) {
   const active = useViewActive();
   const browserControl = useBrowserControl();
   const { client, connected } = useGateway();
@@ -1057,6 +1062,7 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
       </div>
 
       <div class="zen-bottom">
+        {peopleActivity && onPeopleActivity && <PeopleActivity activity={peopleActivity} liveContacts={notices.map((notice) => notice.contactId)} onOpen={onPeopleActivity} />}
         {!pidProp && <BrowserRequests />}
         {pid ? <DelegatedApprovals pid={pid} onFleet={onFleet} placeLabelFor={(target) => placeLabel(target, places)} /> : null}
 
