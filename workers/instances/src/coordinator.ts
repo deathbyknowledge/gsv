@@ -357,7 +357,8 @@ export class InstanceCoordinator extends DurableObject<Environment> implements I
     const deadline = AbortSignal.timeout(10000);
     const previous = this.#humanInputs.get(args.instanceId);
     const operation = (async () => {
-      await previous;
+      // The previous input owns its result; serialization only waits for cleanup.
+      await previous?.catch(() => {});
       await this.operationGate(args.instanceId).run(async () => {
         const browser = await this.browser(args.instanceId);
         await browser.runInput(async () => {

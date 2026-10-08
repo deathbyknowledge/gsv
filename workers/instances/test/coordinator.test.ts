@@ -633,6 +633,28 @@ describe("browser save ordering", () => {
     expect((await object.eraseInstallation(deletion)).phase).toBe("live-erased");
   }));
 
+  it("admits fresh input after a timed-out predecessor fails during cleanup", () => fixture(async (object, _store, instanceId, _installationId, browser) => {
+    const entered = deferred(), released = deferred();
+    browser.humanInput = vi.fn().mockImplementationOnce(async () => {
+      entered.resolve();
+      await released.promise;
+      throw new Error("Previous provider input failed late");
+    }).mockResolvedValue(undefined);
+    vi.useFakeTimers();
+    const args = { instanceId, tabId: 1, documentId: "document" };
+    const first = object.input(actor, args, { kind: "click", x: 10, y: 10 });
+    const rejected = expect(first).rejects.toThrow(/Browser input timed out|timeout/i);
+    await entered.promise;
+    await vi.advanceTimersByTimeAsync(10001);
+    await rejected;
+    const next = object.input(actor, args, { kind: "click", x: 20, y: 20 });
+    expect(browser.humanInput).toHaveBeenCalledOnce();
+    released.resolve();
+    await expect(next).resolves.toEqual({ accepted: true });
+    expect(browser.humanInput).toHaveBeenCalledTimes(2);
+    expect(browser.humanInput).toHaveBeenLastCalledWith(1, { kind: "click", x: 20, y: 20 });
+  }));
+
   it.each(["manual", "alarm"] as const)("holds new commands and human input until a %s save commits", trigger => fixture(async (object, _store, instanceId, _installationId, browser) => {
     const exported = deferred();
     const uploading = deferred();
