@@ -58,6 +58,22 @@
 .zen-content > :first-child { margin-top: auto; }
 .zen-content.has-approval { padding-bottom: 0; }
 .zen-moments::-webkit-scrollbar { display: none; }
+.zen-jump-bottom {
+  position: absolute;
+  z-index: 1;
+  bottom: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  min-height: 34px;
+  padding: 7px 12px;
+  border: 1px solid var(--border-raised);
+  background: var(--panel);
+  color: var(--text);
+  font: 11px/1 var(--gsv-font-mono);
+  cursor: pointer;
+}
+.zen-jump-bottom:hover { color: var(--accent); border-color: var(--accent); }
+.zen-jump-bottom:focus-visible { outline: 1px solid var(--accent); outline-offset: 2px; }
 .zen-history-status { display: flex; justify-content: center; gap: 16px; font-size: 11px; color: var(--text-dim); }
 .zen-history-status.is-err { color: var(--error); }
 .zen-moment {

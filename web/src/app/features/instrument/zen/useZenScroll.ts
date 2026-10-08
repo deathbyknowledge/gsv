@@ -24,6 +24,7 @@ export function useZenScroll({ moments, ready, promptFocused, hasOlder, loadingO
   const loading = useRef(false);
   const nodes = useRef<{ ordered: HTMLElement[]; byId: Map<string, HTMLElement> }>({ ordered: [], byId: new Map() });
   const [selected, setSelected] = useState<string | null>(null);
+  const [awayFromBottom, setAwayFromBottom] = useState(false);
   const current = useRef({ active, moments, ready, promptFocused, hasOlder, loadingOlder, loadOlder });
   current.current = { active, moments, ready, promptFocused, hasOlder, loadingOlder, loadOlder };
   const inset = useCallback(() => viewport.current ? parseFloat(getComputedStyle(viewport.current).scrollPaddingTop) || 0 : 0, []);
@@ -52,6 +53,7 @@ export function useZenScroll({ moments, ready, promptFocused, hasOlder, loadingO
     if (!element || !current.current.active) return;
     element.scrollTop = top;
     writtenTop.current = element.scrollTop;
+    setAwayFromBottom(!atBottom(element));
   }, []);
   const sync = useCallback(() => {
     const element = viewport.current;
@@ -66,6 +68,7 @@ export function useZenScroll({ moments, ready, promptFocused, hasOlder, loadingO
       }
     }
     capture();
+    setAwayFromBottom(!atBottom(element));
   }, [capture, write]);
   const stopFollowing = useCallback(() => {
     following.current = false;
@@ -91,6 +94,7 @@ export function useZenScroll({ moments, ready, promptFocused, hasOlder, loadingO
     }
     writtenTop.current = null;
     following.current = atBottom(element);
+    setAwayFromBottom(!following.current);
     capture();
     setSelected(following.current ? null : anchors.current[0]?.id ?? null);
     if (!following.current && element.scrollTop < 80) readOlder();
@@ -165,5 +169,5 @@ export function useZenScroll({ moments, ready, promptFocused, hasOlder, loadingO
 
   const selectedIndex = selected === null ? -1 : moments.findIndex((moment) => key(moment.id) === selected);
   const browse = promptFocused || moments.length === 0 ? null : selectedIndex < 0 ? moments.length - 1 : selectedIndex;
-  return { viewport, content, browse, select, page, follow, stopFollowing, readOlder, move };
+  return { viewport, content, browse, awayFromBottom, select, page, follow, stopFollowing, readOlder, move };
 }

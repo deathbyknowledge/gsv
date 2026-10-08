@@ -16,6 +16,8 @@ Long lines scroll inside the block. Copy preserves indentation and internal line
 adding the renderer's final newline to the clipboard.
 Chat renders human messages as plain text with clickable web URLs. External web links in human
 messages and Ship's Markdown replies open in a new tab.
+When the reader scrolls above the latest chat message, a small button returns the transcript to
+the bottom and resumes following new replies.
 
 ## Conversation kinds
 
