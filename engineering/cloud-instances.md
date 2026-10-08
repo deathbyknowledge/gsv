@@ -35,7 +35,7 @@ bounds do not establish higher effective resolution.
 Ship should be able to start a cloud browser or Linux machine, use it as an
 ordinary GSV target, and stop it when the work is finished. A saved browser
 profile keeps login state between browser instances. When a person needs to
-sign in, GSV presents that request in Zen and opens the browser from Fleet or
+sign in, GSV presents that request in Chat and opens the browser from Fleet or
 the conversation.
 
 The governing invariant is explicit lifetime: **one start creates one instance;
@@ -329,7 +329,7 @@ transaction. Ship verifies the resulting page using ordinary browser commands.
 2. Subscribe to the provider completion event before starting its handoff. Set a
    deadline bounded by both the instance lifetime and the provider limit. Persist
    the provider handoff identity for reconciliation.
-3. Surface a Zen action such as **Sign in to continue**, with the site, browser,
+3. Surface a Chat action such as **Sign in to continue**, with the site, browser,
    task purpose, and time remaining. Its action path contains only GSV identity;
    the signed-in human obtains provider access when opening it.
 4. While the person controls the browser, reject agent page reads and mutations
@@ -360,7 +360,7 @@ from the handoff deadline, rather than relying on the generic waiting default.
 
 ### Live View in Instrument
 
-Zen owns the request and completion messages. Fleet owns the running browser,
+Chat owns the request and completion messages. Fleet owns the running browser,
 tabs, saved profile, expiry, and Open/Stop actions. A normal watch action should
 issue read-only viewing access; taking control enters the handoff contract.
 Settings owns profile preferences and forgetting saved logins. These are views
@@ -463,7 +463,7 @@ policy. [Browser pricing](https://developers.cloudflare.com/browser-run/pricing/
 | Provider feasibility | Run a browser login/save/close/restore trial, verify allocation recovery and control revocation, measure startup, and verify hosted viewing plus current container APIs and pinned SDK compatibility. Test actual supported sign-in flows rather than assuming a saved cookie is sufficient. |
 | Lifecycle foundation | Public instance service and syscall contracts, optional deployment binding, Kernel authorization and service target routing, durable admissions, expiry, stop, and accounting. Test simultaneous starts, lost responses, stop during startup, provider loss, and stale callbacks. |
 | Browser target | Shared extension/cloud command core and one browser template. Run the same command, reference, streaming, and cancellation fixtures against both backends; retain extension behavior. |
-| Profiles and handoff | Serialized encrypted profile storage, durable interaction requests, responsibility wakeups, and Zen/Fleet presentation. Exercise login, expiry, cancellation, failed saves, control revocation, Process replacement, and duplicate completion. |
+| Profiles and handoff | Serialized encrypted profile storage, durable interaction requests, responsibility wakeups, and Chat/Fleet presentation. Exercise login, expiry, cancellation, failed saves, control revocation, Process replacement, and duplicate completion. |
 | Linux template | Foreground `gsvd`, scoped bootstrap, readiness, deadline enforcement, output export, and usage. Test filesystem transfer and durable shell recovery across a connection loss; daemon loss must terminate the instance. |
 | Release integration | Clean-installation flow with no connected personal devices; active/restricted transitions, quota exhaustion, owner isolation, reset and deletion. Update public docs, the target/protocol architecture contract, and the GSV Manual alongside the implementation that changes each workflow. |
 

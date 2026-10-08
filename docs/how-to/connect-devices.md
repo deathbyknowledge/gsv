@@ -36,7 +36,7 @@ work is done.
 
 For websites you need while personal devices are offline, an enabled operator
 can also provide [cloud browsers](/how-to/cloud-browsers). Start one from Fleet
-and sign in directly in its browser view. Ship can show a browser request in Zen
+and sign in directly in its browser view. Ship can show a browser request in Chat
 when it needs your help; finishing that request returns control to Ship.
 
 ## Try it

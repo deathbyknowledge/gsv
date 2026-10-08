@@ -1747,6 +1747,9 @@ at `/.well-known/oauth-client/gsv.json` for providers that accept client
 metadata URLs; in those cases the `clientId` can be that metadata URL, and the
 metadata document advertises the same URL as its `client_id`.
 
+In `sys.feedback`, the existing `"zen"` context value identifies the Chat view.
+It is metadata; the browser route is `/chat`.
+
 ```ts
 type SystemSyscalls = {
   "sys.feedback": {

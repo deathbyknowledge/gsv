@@ -1,6 +1,6 @@
 # Instrument surfaces
 
-Instrument is the default web UI at `/`. Its views use `/chat`, `/people`, `/fleet`, `/memory` and `/chat/settings`. The former desktop shell, console and standalone workspaces are retired; old deep links have no compatibility mapping. Login and `/onboarding` capabilities enter the same UI. Shared gateway and history logic lives under `app/services/`, with system types and model/approval logic under `app/domain/`. The design catalog and its retained examples load separately when opened.
+Instrument is the default web UI at `/`. Its views use `/chat`, `/people`, `/fleet`, `/memory` and `/chat/settings`. Older `/zen` and `/zen/settings` links replace their address with the Chat routes. The former desktop shell, console and standalone workspaces are retired; old deep links for those surfaces have no compatibility mapping. Login and `/onboarding` capabilities enter the same UI. Shared gateway and history logic lives under `app/services/`, with system types and model/approval logic under `app/domain/`. The design catalog and its retained examples load separately when opened.
 
 The shared header reserves its own height above every view. Messages, lists and
 files cannot pass behind the header.
@@ -95,7 +95,7 @@ The receipt has three levels: work between messages, action purpose, evidence. C
 
 Fleet owns places, processes, responsibilities, routines, files and their inspectors. Places offers Connect, subject to the signed-in account's permissions. A new place can be a computer or browser. People owns contact conversations and private invitations. Opening either connection form never creates a credential or invitation.
 
-Cloud browser rows, Zen's browser place chips and browser links in work receipts
+Cloud browser rows, Chat's browser place chips and browser links in work receipts
 open their live view directly without navigating to Fleet or changing the next
 message's target. The view uses browser chrome: tabs, a slim address strip, and
 page content edge to edge. Tabs use an accent underline; expand, close and more
