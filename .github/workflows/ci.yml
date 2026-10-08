@@ -145,6 +145,7 @@ jobs:
               - 'packages/gsv/**'
               - 'packages/browser/**'
               - 'workers/instances/**'
+              - 'tools/instances/**'
             installations:
               - '.github/workflows/ci.yml'
               - 'package.json'
