@@ -1,6 +1,5 @@
 import { isString, isNumber, isBoolean } from "./schemas";
 import type { DebuggerCommand, TabSummary } from "./backend";
-import { throwIfAborted } from "./abort";
 
 const MAX_SNAPSHOTS = 24;
 const MAX_SNAPSHOT_NODES = 600;
@@ -564,9 +563,7 @@ export function createPageSemantics<Target>(sendDebuggerCommand: DebuggerCommand
     tab: TabSummary,
     store: PageReferenceStore = pageReferences,
     scope?: PageElementReference,
-    signal?: AbortSignal,
   ): Promise<SemanticSnapshot> {
-    throwIfAborted(signal);
     const [frameTree, accessibility, domSnapshot] = await Promise.all([
       sendDebuggerCommand<FrameTreeResult>(target, "Page.getFrameTree"),
       sendDebuggerCommand<AccessibilityTreeResult>(target, "Accessibility.getFullAXTree"),
@@ -576,7 +573,6 @@ export function createPageSemantics<Target>(sendDebuggerCommand: DebuggerCommand
         includeDOMRects: true,
       }),
     ]);
-    throwIfAborted(signal);
 
     const frame = frameTree.frameTree?.frame;
     const documentId = frame?.loaderId;
@@ -721,7 +717,6 @@ export function createPageSemantics<Target>(sendDebuggerCommand: DebuggerCommand
       }
       return { ref: reference?.ref, role, name, modal: collectStates(node.properties).modal === true };
     });
-    throwIfAborted(signal);
     store.save(snapshotId, references);
     return {
       snapshotId,

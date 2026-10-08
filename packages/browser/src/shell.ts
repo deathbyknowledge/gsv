@@ -103,8 +103,8 @@ export class BrowserTargetShell {
 
     await this.ensureReady();
     try {
-      if (!(await this.fs.exists(cwd, context.abortSignal))) {
-        await this.fs.mkdir(cwd, context.abortSignal);
+      if (!(await this.fs.exists(cwd))) {
+        await this.fs.mkdir(cwd);
       }
       throwIfAborted(context.abortSignal);
       const deadline = new AbortController();
@@ -137,7 +137,7 @@ export class BrowserTargetShell {
   }
 
   private async initialize(): Promise<void> {
-    const adapter = new JustBashFileSystemAdapter(this.fs, () => this.activeExecContext.abortSignal);
+    const adapter = new JustBashFileSystemAdapter(this.fs);
     const customCommands = [
       defineCommand("commands", async (args) => {
         if (args.length === 0) {
@@ -171,7 +171,6 @@ export class BrowserTargetShell {
             copyTargetFile: this.activeExecContext.copyTargetFile,
           };
           try {
-            throwIfAborted(commandContext.abortSignal);
             const execution = Promise.resolve(command.run(args, commandContext));
             const completion = execution.then(
               () => undefined,

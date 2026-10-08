@@ -1,6 +1,6 @@
 import "./panel.css";
 import { configReady, normalizeGatewayUrl, type ExtensionConfig } from "../shared/config";
-import { browserAccessAction, liveAccessCount, timeUntil } from "../shared/status-format";
+import { liveAccessCount, timeUntil } from "../shared/status-format";
 import { escapeHtml, formatDuration, sendUiMessage, timeAgo, truncateMiddle } from "../shared/ui-client";
 import type { ActivityEntry, ExtensionUiState, RuntimeResponse } from "../shared/ui-state";
 
@@ -108,7 +108,10 @@ async function runAction(action: string): Promise<void> {
         apply(await sendUiMessage({ type: "connect" }));
         break;
       case "pause":
-        apply(await sendUiMessage({ type: "pause" }));
+        apply(await sendUiMessage({ type: "disconnect" }));
+        break;
+      case "stop":
+        apply(await sendUiMessage({ type: "stop-all" }));
         break;
       case "allow-recording":
         apply(await sendUiMessage({ type: "grant-media-capture" }));
@@ -260,11 +263,10 @@ function keepFormState(): () => void {
 function header(current: ExtensionUiState, paired: boolean): string {
   const mood = paired ? tone(current) : "idle";
   const label = !paired ? "not paired"
-    : current.connection.reconnectSuppressed && liveAccessCount(current) > 0 ? "attention"
-    : current.connection.reconnectSuppressed ? "paused"
     : liveAccessCount(current) > 0 ? "working"
     : current.connection.state === "connected" ? "ready"
     : current.connection.state === "connecting" ? "connecting"
+    : current.connection.reconnectSuppressed ? "paused"
     : "offline";
   return `
     <header class="top">
@@ -285,16 +287,7 @@ function main(current: ExtensionUiState): string {
   let detailClass = "";
   const actions: string[] = [];
 
-  if (paused && current.pausePending) {
-    title = "Still stopping browser work.";
-    detail = "Access stays paused while a browser action finishes. You can resume when cleanup is complete.";
-  } else if (paused && live > 0) {
-    title = "Some browser activity remains.";
-    detail = "Access is paused, but some work may still be active. Try stopping it again.";
-  } else if (paused) {
-    title = "Paused.";
-    detail = "Your GSV can't use this browser until you resume.";
-  } else if (live > 0) {
+  if (live > 0) {
     const site = workingSite(current);
     title = "Your GSV is working here.";
     detail = site ? `It's using <span class="site">${escapeHtml(site)}</span> right now. ${liveSentence(current)}` : liveSentence(current);
@@ -304,6 +297,9 @@ function main(current: ExtensionUiState): string {
   } else if (connecting) {
     title = "Connecting to your GSV…";
     detail = "This usually takes a moment.";
+  } else if (paused) {
+    title = "Paused.";
+    detail = "Your GSV can't use this browser until you resume.";
   } else {
     title = "Can't reach your GSV.";
     detail = current.connection.message || "The connection dropped. It will retry on its own; you can also try now.";
@@ -315,7 +311,7 @@ function main(current: ExtensionUiState): string {
     : "";
   // Chrome only lets an extension record a tab after a person has invoked it there, so the ask
   // appears in the moment: right after your GSV tried to record and was refused.
-  const recordingAsk = connected && !paused && !grant && wantsRecording(current)
+  const recordingAsk = !grant && wantsRecording(current)
     ? `<div class="note"><p>Your GSV wants to record this tab. Chrome needs you to allow that here, once per recording.</p><div class="actions">${button("allow-recording", "allow recording", "ibtn is-primary")}</div></div>`
     : "";
   const bannerNote = showBannerNote
@@ -339,7 +335,7 @@ function pairing(current: ExtensionUiState): string {
   return `
     <section class="say">
       <h1>Connect this browser to your GSV.</h1>
-      <p>Pair it to let your GSV help with tasks you give it on sites you're signed into. You can see recent activity here and pause access anytime.</p>
+      <p>Pair it to let your GSV help with tasks you give it on sites you're signed into. You can see recent activity here and pause the connection anytime.</p>
     </section>
     <form class="pair" data-form="pair">
       <ol>
@@ -433,10 +429,9 @@ function advanced(current: ExtensionUiState): string {
 
 function accessControl(current: ExtensionUiState): string {
   const paused = current.connection.reconnectSuppressed;
-  const activityRemains = liveAccessCount(current) > 0;
-  const action = browserAccessAction(current);
-  const label = !paused ? "pause access" : activityRemains ? "stop remaining activity" : "resume access";
-  return `<div class="access-control">${button(action, label, paused && !activityRemains ? "ibtn is-primary" : "ibtn", "browser-access")}</div>`;
+  const active = liveAccessCount(current) > 0;
+  const action = active ? "stop" : paused ? "resume" : "pause";
+  return `<div class="access-control">${button(action, action, paused && !active ? "ibtn is-primary" : "ibtn", "browser-access")}</div>`;
 }
 
 function footer(current: ExtensionUiState, paired: boolean): string {
@@ -472,10 +467,10 @@ function fact(label: string, value: string): string {
 }
 
 function tone(current: ExtensionUiState): string {
-  if (current.connection.reconnectSuppressed) return liveAccessCount(current) > 0 ? "is-warn" : "";
   if (liveAccessCount(current) > 0) return "is-live";
   if (current.connection.state === "connected") return "is-on";
   if (current.connection.state === "connecting") return "is-live";
+  if (current.connection.reconnectSuppressed) return "";
   return "is-err";
 }
 
@@ -487,7 +482,8 @@ function wantsRecording(current: ExtensionUiState): boolean {
 
 /** The site your GSV is in, from the newest active row that names one. */
 function workingSite(current: ExtensionUiState): string | null {
-  for (const entry of current.activeRequests) {
+  for (const entry of current.activity) {
+    if (entry.kind === "connection") continue;
     const match = entry.detail.match(/https?:\/\/([^/\s]+)/);
     if (match) return match[1];
   }
@@ -496,15 +492,13 @@ function workingSite(current: ExtensionUiState): string | null {
 
 function liveSentence(current: ExtensionUiState): string {
   const parts: string[] = [];
-  const activeRequests = current.activeRequests.length;
-  if (activeRequests > 0) parts.push(activeRequests === 1 ? "it's working on a task" : `it's working on ${activeRequests} tasks`);
   const tabs = current.sensitive.debuggerTabs.length;
   if (tabs > 0) parts.push(tabs === 1 ? "one tab is in use" : `${tabs} tabs are in use`);
   if (current.sensitive.networkCaptures > 0) parts.push("it's watching network traffic");
   if (current.sensitive.mediaRecordings > 0) parts.push("it's recording");
-  if (parts.length === 0) return "Pause access ends this work.";
+  if (parts.length === 0) return "Stop ends everything it's doing here.";
   const sentence = parts.join(", ");
-  return `${sentence.charAt(0).toUpperCase()}${sentence.slice(1)}. Pause access ends this work.`;
+  return `${sentence.charAt(0).toUpperCase()}${sentence.slice(1)}. Stop ends all of it.`;
 }
 
 /** What an activity row did, in the person's words. */

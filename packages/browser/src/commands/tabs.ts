@@ -69,19 +69,19 @@ export function createTabCommands(backend: BrowserTabsBackend) {
     try {
       switch (subcommand) {
         case "list":
-          return await runList(args, ctx);
+          return await runList(args);
         case "active":
-          return await runActive(args, ctx);
+          return await runActive(args);
         case "get":
-          return await runGet(args, ctx);
+          return await runGet(args);
         case "open":
           return await input(() => runOpen(args, ctx));
         case "focus":
-          return await input(() => runFocus(args, ctx));
+          return await input(() => runFocus(args));
         case "close":
-          return await input(() => runClose(args, ctx));
+          return await input(() => runClose(args));
         case "reload":
-          return await input(() => runReload(args, ctx));
+          return await input(() => runReload(args));
         default:
           return commandError(`Unknown tabs command: ${subcommand}\n${TABS_USAGE}`);
       }
@@ -90,26 +90,23 @@ export function createTabCommands(backend: BrowserTabsBackend) {
     }
   }
 
-  async function runList(args: string[], ctx: CommandContext): Promise<CommandResult> {
+  async function runList(args: string[]): Promise<CommandResult> {
     const parsed = splitOption(args.slice(1), "--offset");
     if (parsed.rest.length) return commandError(TABS_LIST_USAGE);
     const offset = parsed.value === null ? 0 : requiredInteger(parsed.value, "offset");
     const page = await listTabs(offset);
-    throwIfAborted(ctx.abortSignal);
     return commandJson({ ...page, count: page.tabs.length });
   }
 
-  async function runActive(args: string[], ctx: CommandContext): Promise<CommandResult> {
+  async function runActive(args: string[]): Promise<CommandResult> {
     if (args.length !== 1) {
       return commandError(TABS_ACTIVE_USAGE);
     }
 
-    const tab = await activeTab(ctx.abortSignal);
-    throwIfAborted(ctx.abortSignal);
-    return commandJson({ tab });
+    return commandJson({ tab: await activeTab() });
   }
 
-  async function runGet(args: string[], ctx: CommandContext): Promise<CommandResult> {
+  async function runGet(args: string[]): Promise<CommandResult> {
     const parsed = parseTabId(args, TABS_GET_USAGE);
     if (!parsed.ok) {
       return commandError(parsed.error);
@@ -118,8 +115,7 @@ export function createTabCommands(backend: BrowserTabsBackend) {
       return commandError(TABS_GET_USAGE);
     }
 
-    const tab = await getTab(parsed.tabId, ctx.abortSignal);
-    throwIfAborted(ctx.abortSignal);
+    const tab = await getTab(parsed.tabId);
     if (!tab) {
       return commandError(`tab not found: ${parsed.tabId}`);
     }
@@ -134,19 +130,15 @@ export function createTabCommands(backend: BrowserTabsBackend) {
 
     const { input, contentType, active } = parsed.value;
     if (isBrowserUrl(input)) {
-      const tab = await createTab(input, active, ctx.abortSignal);
-      throwIfAborted(ctx.abortSignal);
+      const tab = await createTab(input, active);
       return commandOk(`opened tab ${tab.id}\n${compactOpenJson({ tab })}\n`);
     }
 
     const renderable = input === "-"
       ? await renderableFromStdin(ctx, contentType)
       : await renderableFromPath(input, ctx, contentType);
-    throwIfAborted(ctx.abortSignal);
     const viewerUrl = await backend.viewerUrlFor(renderable.path, renderable.contentType, renderable.label, ctx.fs);
-    throwIfAborted(ctx.abortSignal);
-    const tab = await createTab(viewerUrl, active, ctx.abortSignal);
-    throwIfAborted(ctx.abortSignal);
+    const tab = await createTab(viewerUrl, active);
     return commandOk(`opened tab ${tab.id}\n${compactOpenJson({
       tab,
       path: renderable.path,
@@ -155,7 +147,7 @@ export function createTabCommands(backend: BrowserTabsBackend) {
     })}\n`);
   }
 
-  async function runFocus(args: string[], ctx: CommandContext): Promise<CommandResult> {
+  async function runFocus(args: string[]): Promise<CommandResult> {
     const parsed = parseTabId(args, TABS_FOCUS_USAGE);
     if (!parsed.ok) {
       return commandError(parsed.error);
@@ -164,11 +156,11 @@ export function createTabCommands(backend: BrowserTabsBackend) {
       return commandError(TABS_FOCUS_USAGE);
     }
 
-    const tab = await focusTab(parsed.tabId, ctx.abortSignal);
+    const tab = await focusTab(parsed.tabId);
     return commandOk(`focused tab ${tab.id}\n${compactOpenJson({ tab })}\n`);
   }
 
-  async function runClose(args: string[], ctx: CommandContext): Promise<CommandResult> {
+  async function runClose(args: string[]): Promise<CommandResult> {
     const parsed = parseTabId(args, TABS_CLOSE_USAGE);
     if (!parsed.ok) {
       return commandError(parsed.error);
@@ -177,11 +169,11 @@ export function createTabCommands(backend: BrowserTabsBackend) {
       return commandError(TABS_CLOSE_USAGE);
     }
 
-    await closeTab(parsed.tabId, ctx.abortSignal);
+    await closeTab(parsed.tabId);
     return commandOk(`closed tab ${parsed.tabId}\n`);
   }
 
-  async function runReload(args: string[], ctx: CommandContext): Promise<CommandResult> {
+  async function runReload(args: string[]): Promise<CommandResult> {
     const parsed = parseTabId(args, TABS_RELOAD_USAGE);
     if (!parsed.ok) {
       return commandError(parsed.error);
@@ -190,7 +182,7 @@ export function createTabCommands(backend: BrowserTabsBackend) {
       return commandError(TABS_RELOAD_USAGE);
     }
 
-    await reloadTab(parsed.tabId, ctx.abortSignal);
+    await reloadTab(parsed.tabId);
     return commandOk(`reloaded tab ${parsed.tabId}\n`);
   }
 
@@ -249,10 +241,8 @@ export function createTabCommands(backend: BrowserTabsBackend) {
     }
     const resolvedType = contentType ?? "text/plain; charset=utf-8";
     const path = tempRenderPath("stdin", extensionForContentType(resolvedType));
-    await ctx.fs.mkdir("/tmp/render", ctx.abortSignal);
-    throwIfAborted(ctx.abortSignal);
-    await ctx.fs.write(path, new TextEncoder().encode(ctx.stdin), resolvedType, ctx.abortSignal);
-    throwIfAborted(ctx.abortSignal);
+    await ctx.fs.mkdir("/tmp/render");
+    await ctx.fs.write(path, new TextEncoder().encode(ctx.stdin), resolvedType);
     return {
       path,
       source: "stdin",
@@ -280,12 +270,8 @@ export function createTabCommands(backend: BrowserTabsBackend) {
     }
 
     const destination = tempRenderPath(basename(path), extensionForPathOrType(path, resolvedType));
-    await ctx.fs.mkdir("/tmp/render", ctx.abortSignal);
-    throwIfAborted(ctx.abortSignal);
-    const contents = await ctx.fs.read(path, ctx.abortSignal);
-    throwIfAborted(ctx.abortSignal);
-    await ctx.fs.write(destination, contents, resolvedType, ctx.abortSignal);
-    throwIfAborted(ctx.abortSignal);
+    await ctx.fs.mkdir("/tmp/render");
+    await ctx.fs.write(destination, await ctx.fs.read(path), resolvedType);
     return localRenderable(destination, path, path, resolvedType);
   }
 
@@ -313,12 +299,8 @@ export function createTabCommands(backend: BrowserTabsBackend) {
       }
 
       const destination = tempRenderPath(basename(path), extensionForPathOrType(path, resolvedType));
-      await ctx.fs.mkdir("/tmp/render", ctx.abortSignal);
-      throwIfAborted(ctx.abortSignal);
-      const contents = await ctx.fs.read(path, ctx.abortSignal);
-      throwIfAborted(ctx.abortSignal);
-      await ctx.fs.write(destination, contents, resolvedType, ctx.abortSignal);
-      throwIfAborted(ctx.abortSignal);
+      await ctx.fs.mkdir("/tmp/render");
+      await ctx.fs.write(destination, await ctx.fs.read(path), resolvedType);
       return localRenderable(destination, sourceText, sourceText, resolvedType);
     }
     if (!ctx.currentTargetId) {
@@ -330,8 +312,7 @@ export function createTabCommands(backend: BrowserTabsBackend) {
 
     const inferredType = contentType ?? inferContentType(endpoint.path);
     const destination = tempRenderPath(basename(endpoint.path), extensionForPathOrType(endpoint.path, inferredType));
-    await ctx.fs.mkdir("/tmp/render", ctx.abortSignal);
-    throwIfAborted(ctx.abortSignal);
+    await ctx.fs.mkdir("/tmp/render");
     let copy: FsCopyResult;
     try {
       copy = await ctx.copyTargetFile(endpoint, {
@@ -354,8 +335,7 @@ export function createTabCommands(backend: BrowserTabsBackend) {
   }
 
   async function requireFile(ctx: CommandContext, path: string): Promise<FileStat> {
-    const stat = await ctx.fs.stat(path, ctx.abortSignal);
-    throwIfAborted(ctx.abortSignal);
+    const stat = await ctx.fs.stat(path);
     if (stat.isDirectory) {
       throw new Error(`Is a directory: ${path}`);
     }

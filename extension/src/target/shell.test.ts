@@ -85,32 +85,6 @@ describe("BrowserTargetShell", () => {
     ])).resolves.toMatchObject({ status: "failed" });
   });
 
-  it("passes cancellation to a shell filesystem read", async () => {
-    const started = deferred<void>();
-    const pendingRead = deferred<Uint8Array>();
-    const read = vi.fn((_path: string, _signal?: AbortSignal) => {
-      started.resolve(undefined);
-      return pendingRead.promise;
-    });
-    const fs = {
-      ...directoryOnlyFileSystem(),
-      read,
-      exists: async (path: string) => path === "/" || path === "/proc/file.txt",
-      stat: async (path: string) => ({ path, isFile: path === "/proc/file.txt", isDirectory: path !== "/proc/file.txt", size: 4 }),
-    };
-    const shell = new BrowserTargetShell(fs, []);
-    const controller = new AbortController();
-    const running = shell.exec({ input: "cat /proc/file.txt" }, { abortSignal: controller.signal });
-
-    await within(started.promise);
-    expect(read).toHaveBeenCalledWith("/proc/file.txt", expect.any(AbortSignal));
-    controller.abort(new Error("Browser access paused"));
-    pendingRead.resolve(new TextEncoder().encode("late"));
-
-    await expect(within(running)).resolves.toMatchObject({ status: "failed" });
-    expect(read.mock.calls[0]?.[1]?.aborted).toBe(true);
-  });
-
   it("accepts named foreground starts but rejects polls and stdin before executing browser side effects", async () => {
     const run = vi.fn(commandResult);
     const shell = new BrowserTargetShell(directoryOnlyFileSystem(), [{
@@ -246,33 +220,6 @@ describe("BrowserTargetShell", () => {
     running.resolve(undefined);
     await expect(within(next)).resolves.toMatchObject({ status: "completed" });
     expect(laterRuns).toBe(1);
-  });
-
-  it("waits for underlying command work after the cancelled shell request settles", async () => {
-    const running = deferred<void>();
-    const started = deferred<void>();
-    const shell = new BrowserTargetShell(directoryOnlyFileSystem(), [{
-      name: "block",
-      summary: "Ignore cancellation until released.",
-      async run() {
-        started.resolve(undefined);
-        await running.promise;
-        return commandResult();
-      },
-    }]);
-    const controller = new AbortController();
-    const execution = shell.exec({ input: "block" }, { abortSignal: controller.signal });
-    await started.promise;
-    controller.abort(new Error("Browser access paused"));
-    await expect(execution).resolves.toMatchObject({ status: "failed" });
-
-    let idle = false;
-    const waiting = shell.idle().then(() => { idle = true; });
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(idle).toBe(false);
-    running.resolve(undefined);
-    await waiting;
-    expect(idle).toBe(true);
   });
 
   it("stops later pipeline stages and keeps the active stage fenced", async () => {

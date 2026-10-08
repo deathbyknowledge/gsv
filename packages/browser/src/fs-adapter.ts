@@ -8,22 +8,15 @@ import type {
   RmOptions,
 } from "just-bash/browser";
 import type { TargetFileSystem } from "./types";
-import { throwIfAborted } from "./abort";
 
 type ReadFileOptions = { encoding?: BufferEncoding | null };
 type WriteFileOptions = { encoding?: BufferEncoding };
 
 export class JustBashFileSystemAdapter implements IFileSystem {
-  constructor(
-    private readonly fs: TargetFileSystem,
-    private readonly getSignal: () => AbortSignal | undefined = () => undefined,
-  ) {}
+  constructor(private readonly fs: TargetFileSystem) {}
 
   async readFile(path: string, options?: ReadFileOptions | BufferEncoding): Promise<string> {
-    const signal = this.getSignal();
-    throwIfAborted(signal);
-    const bytes = await this.fs.read(path, signal);
-    throwIfAborted(signal);
+    const bytes = await this.fs.read(path);
     const encoding = isEncodingOption(options) ? options : options?.encoding;
     if (encoding === "base64") {
       return bytesToBase64(bytes);
@@ -36,36 +29,24 @@ export class JustBashFileSystemAdapter implements IFileSystem {
   }
 
   async readFileBuffer(path: string): Promise<Uint8Array> {
-    const signal = this.getSignal();
-    throwIfAborted(signal);
-    return await this.fs.read(path, signal);
+    return await this.fs.read(path);
   }
 
   async writeFile(path: string, content: FileContent, options?: WriteFileOptions | BufferEncoding): Promise<void> {
-    const signal = this.getSignal();
-    throwIfAborted(signal);
-    await this.fs.write(path, fileContentToBytes(content, isEncodingOption(options) ? options : options?.encoding), undefined, signal);
+    await this.fs.write(path, fileContentToBytes(content, isEncodingOption(options) ? options : options?.encoding));
   }
 
   async appendFile(path: string, content: FileContent, options?: WriteFileOptions | BufferEncoding): Promise<void> {
-    const signal = this.getSignal();
-    throwIfAborted(signal);
-    await this.fs.append(path, fileContentToBytes(content, isEncodingOption(options) ? options : options?.encoding), signal);
+    await this.fs.append(path, fileContentToBytes(content, isEncodingOption(options) ? options : options?.encoding));
   }
 
   async exists(path: string): Promise<boolean> {
-    const signal = this.getSignal();
-    throwIfAborted(signal);
-    return await this.fs.exists(path, signal);
+    return await this.fs.exists(path);
   }
 
   async stat(path: string): Promise<FsStat> {
-    const signal = this.getSignal();
-    throwIfAborted(signal);
-    if (!await this.fs.exists(path, signal)) throw new Error(`ENOENT: no such file or directory: ${path}`);
-    throwIfAborted(signal);
-    const stat = await this.fs.stat(path, signal);
-    throwIfAborted(signal);
+    if (!await this.fs.exists(path)) throw new Error(`ENOENT: no such file or directory: ${path}`);
+    const stat = await this.fs.stat(path);
     return {
       isFile: stat.isFile,
       isDirectory: stat.isDirectory,
@@ -83,24 +64,16 @@ export class JustBashFileSystemAdapter implements IFileSystem {
   }
 
   async mkdir(path: string, _options?: MkdirOptions): Promise<void> {
-    const signal = this.getSignal();
-    throwIfAborted(signal);
-    await this.fs.mkdir(path, signal);
+    await this.fs.mkdir(path);
   }
 
   async readdir(path: string): Promise<string[]> {
-    const signal = this.getSignal();
-    throwIfAborted(signal);
-    const entries = await this.fs.list(path, signal);
-    throwIfAborted(signal);
+    const entries = await this.fs.list(path);
     return [...entries.directories, ...entries.files].sort();
   }
 
   async readdirWithFileTypes(path: string): Promise<Array<{ name: string; isFile: boolean; isDirectory: boolean; isSymbolicLink: boolean }>> {
-    const signal = this.getSignal();
-    throwIfAborted(signal);
-    const entries = await this.fs.list(path, signal);
-    throwIfAborted(signal);
+    const entries = await this.fs.list(path);
     return [
       ...entries.directories.map((name) => ({ name, isFile: false, isDirectory: true, isSymbolicLink: false })),
       ...entries.files.map((name) => ({ name, isFile: true, isDirectory: false, isSymbolicLink: false })),
@@ -108,21 +81,15 @@ export class JustBashFileSystemAdapter implements IFileSystem {
   }
 
   async rm(path: string, _options?: RmOptions): Promise<void> {
-    const signal = this.getSignal();
-    throwIfAborted(signal);
-    await this.fs.delete(path, signal);
+    await this.fs.delete(path);
   }
 
   async cp(src: string, dest: string, _options?: CpOptions): Promise<void> {
-    const signal = this.getSignal();
-    throwIfAborted(signal);
-    await this.fs.copy(src, dest, signal);
+    await this.fs.copy(src, dest);
   }
 
   async mv(src: string, dest: string): Promise<void> {
-    const signal = this.getSignal();
-    throwIfAborted(signal);
-    await this.fs.move(src, dest, signal);
+    await this.fs.move(src, dest);
   }
 
   resolvePath(base: string, path: string): string {
@@ -148,10 +115,7 @@ export class JustBashFileSystemAdapter implements IFileSystem {
   }
 
   async realpath(path: string): Promise<string> {
-    const signal = this.getSignal();
-    throwIfAborted(signal);
-    await this.fs.stat(path, signal);
-    throwIfAborted(signal);
+    await this.fs.stat(path);
     return this.fs.resolvePath("/", path);
   }
 

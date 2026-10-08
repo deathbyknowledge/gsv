@@ -49,10 +49,8 @@ export type ExtensionUiState = {
     message: string | null;
     reconnectSuppressed: boolean;
   };
-  pausePending: boolean;
   targetId: string;
   gatewayHost: string;
-  activeRequests: Pick<ActivityEntry, "label" | "detail">[];
   activity: ActivityEntry[];
   sensitive: SensitiveState;
   network: {
@@ -86,7 +84,8 @@ export type RuntimeMessage =
   | { type: "status" }
   | { type: "refresh" }
   | { type: "connect" }
-  | { type: "pause" }
+  | { type: "disconnect" }
+  | { type: "stop-all" }
   | { type: "grant-media-capture"; tabId?: number }
   | { type: "clear-diagnostics" }
   | { type: "save-config"; config: ExtensionConfig }

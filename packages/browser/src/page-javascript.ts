@@ -1,5 +1,4 @@
 import type { BrowserValue, DebuggerBackend } from "./backend";
-import { throwIfAborted } from "./abort";
 
 const DEBUGGER_EVALUATE_TIMEOUT_MS = 30_000;
 
@@ -129,26 +128,23 @@ const DEBUGGER_SERIALIZER_FUNCTION = String.raw`function() {
 export function createPageJavaScript<Target>(debuggerBackend: DebuggerBackend<Target>) {
   const { acquireDebugger, releaseDebugger, sendDebuggerCommand } = debuggerBackend;
 
-  async function evaluatePageJavaScript(tabId: number, source: string, signal?: AbortSignal): Promise<JavaScriptResult> {
+  async function evaluatePageJavaScript(tabId: number, source: string): Promise<JavaScriptResult> {
     let target: Target | null = null;
     try {
-      throwIfAborted(signal);
       target = await acquireDebugger(tabId);
-      throwIfAborted(signal);
       await sendDebuggerCommand(target, "Runtime.enable");
-      throwIfAborted(signal);
 
-      let result = await runtimeEvaluate(target, source, signal);
+      let result = await runtimeEvaluate(target, source);
       if (isSyntaxException(result.exceptionDetails)) {
-        const syncWrapped = await runtimeEvaluate(target, `(() => {\n${source}\n})()`, signal);
+        const syncWrapped = await runtimeEvaluate(target, `(() => {\n${source}\n})()`);
         if (!syncWrapped.exceptionDetails || !isSyntaxException(syncWrapped.exceptionDetails)) {
           result = syncWrapped;
         } else {
-          result = await runtimeEvaluate(target, `(async () => {\n${source}\n})()`, signal);
+          result = await runtimeEvaluate(target, `(async () => {\n${source}\n})()`);
         }
       }
       if (isSyntaxException(result.exceptionDetails)) {
-        const parenthesized = await runtimeEvaluate(target, `(${source})`, signal);
+        const parenthesized = await runtimeEvaluate(target, `(${source})`);
         if (!parenthesized.exceptionDetails) {
           result = parenthesized;
         }
@@ -161,7 +157,7 @@ export function createPageJavaScript<Target>(debuggerBackend: DebuggerBackend<Ta
       }
       return {
         ok: true,
-        value: { result: await serializeRuntimeRemoteObject(target, result.result, signal) },
+        value: { result: await serializeRuntimeRemoteObject(target, result.result) },
       };
     } catch (error) {
       return { ok: false, error: error instanceof Error ? error.message : String(error) };
@@ -177,10 +173,8 @@ export function createPageJavaScript<Target>(debuggerBackend: DebuggerBackend<Ta
   async function runtimeEvaluate(
     target: Target,
     expression: string,
-    signal?: AbortSignal,
   ): Promise<RuntimeEvaluateResult> {
-    throwIfAborted(signal);
-    const result = await sendDebuggerCommand<RuntimeEvaluateResult>(target, "Runtime.evaluate", {
+    return await sendDebuggerCommand<RuntimeEvaluateResult>(target, "Runtime.evaluate", {
       expression,
       awaitPromise: true,
       returnByValue: false,
@@ -189,27 +183,22 @@ export function createPageJavaScript<Target>(debuggerBackend: DebuggerBackend<Ta
       timeout: DEBUGGER_EVALUATE_TIMEOUT_MS,
       replMode: true,
     });
-    throwIfAborted(signal);
-    return result;
   }
 
   async function serializeRuntimeRemoteObject(
     target: Target,
     remote: RuntimeRemoteObject,
-    signal?: AbortSignal,
   ): Promise<BrowserValue> {
     if (!remote.objectId) {
       return remoteObjectLiteral(remote);
     }
     try {
-      throwIfAborted(signal);
       const raw = await sendDebuggerCommand<RuntimeEvaluateResult>(target, "Runtime.callFunctionOn", {
         objectId: remote.objectId,
         functionDeclaration: DEBUGGER_SERIALIZER_FUNCTION,
         returnByValue: true,
         silent: true,
       });
-      throwIfAborted(signal);
       if (raw.exceptionDetails) {
         return {
           type: remote.type ?? "object",

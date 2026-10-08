@@ -169,7 +169,6 @@ export function createPageActions<Target>(debuggerBackend: DebuggerBackend<Targe
           buttons: 0,
           pointerType: "mouse",
         });
-        throwIfAborted(signal);
         await sendDebuggerCommand(target, "Input.dispatchMouseEvent", {
           type: "mousePressed",
           x: point.x,
@@ -254,7 +253,6 @@ export function createPageActions<Target>(debuggerBackend: DebuggerBackend<Targe
       const { point } = await waitForHitTarget(
         target, tabId, editable, document.documentId, "Editable", store, signal,
       );
-      throwIfAborted(signal);
       await sendDebuggerCommand(target, "DOM.focus", {
         backendNodeId: editable.backendNodeId,
       });

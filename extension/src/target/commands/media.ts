@@ -86,7 +86,6 @@ async function runStart(args: string[], ctx: CommandContext): Promise<CommandRes
     cwd: ctx.cwd,
     fs: ctx.fs,
     currentTargetId: ctx.currentTargetId,
-    abortSignal: ctx.abortSignal,
   });
   return commandJson(status);
 }

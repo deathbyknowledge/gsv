@@ -15,9 +15,7 @@ import { loadRuntimeState, saveRuntimeState } from "../shared/runtime-state";
 import { isNumber } from "../shared/schemas";
 import type { ActivityEntry, ExtensionUiState, RuntimeMessage, RuntimeResponse } from "../shared/ui-state";
 import {
-  clearMediaCaptureGrant,
   grantMediaCapture,
-  mediaCaptureGrantGeneration,
   mediaCaptureGrantStatus,
   mediaRecordingStatus,
   stopAllMediaRecordings,
@@ -26,7 +24,6 @@ import { networkStatus, stopNetworkCapture } from "../target/network-recorder";
 import { ConnectionSupervisor } from "./connection-supervisor";
 import { BrowserPairing } from "./pairing";
 import { createBrowserTargetDriver, type BrowserTargetActivity } from "./driver";
-import { pauseBrowserResources, releaseBrowserResources, type PauseAccessResult } from "./pause-access";
 
 const client = new GSVClient();
 const endpoint = client.endpoint({
@@ -39,7 +36,6 @@ const endpoint = client.endpoint({
 });
 const connectionSupervisor = new ConnectionSupervisor(endpoint);
 const browserPairing = new BrowserPairing();
-let pauseOperations = 0;
 let diagnostics: ExtensionDiagnostics = emptyDiagnostics();
 const diagnosticsReady = loadDiagnostics().then((stored) => {
   diagnostics = mergeDiagnostics(stored, diagnostics);
@@ -50,9 +46,6 @@ let diagnosticsWrite: Promise<void> = Promise.resolve();
 let lastConnectionStatus = "";
 const runtimeStateReady = loadRuntimeState().then((state) => {
   connectionSupervisor.setReconnectSuppressed(state.manualReconnectSuppressed);
-  if (state.manualReconnectSuppressed) {
-    void browserTarget.pause();
-  }
 }).catch((error) => {
   console.warn("Your GSV: runtime state unavailable", error);
 });
@@ -137,9 +130,13 @@ async function handleRuntimeMessage(message: RuntimeMessage): Promise<RuntimeRes
         await setManualReconnectSuppressed(false);
         await connectNow();
         return await stateResponse();
-      case "pause":
+      case "disconnect":
         browserPairing.stop();
-        return await pauseBrowserAccess();
+        await setManualReconnectSuppressed(true);
+        return await stateResponse();
+      case "stop-all":
+        browserPairing.stop();
+        return await stopAll();
       case "grant-media-capture":
         return await grantMediaCaptureAccess(message.tabId);
       case "clear-diagnostics":
@@ -153,6 +150,7 @@ async function handleRuntimeMessage(message: RuntimeMessage): Promise<RuntimeRes
           detail: `${config.deviceId} (${gatewayHost(config.gatewayUrl)})`,
           status: "info",
         });
+        await setManualReconnectSuppressed(false);
         await connectionSupervisor.reconcile(config);
         return await stateResponse();
       }
@@ -202,51 +200,36 @@ async function connectNow(config?: ExtensionConfig): Promise<void> {
   await connectionSupervisor.reconcile(config, { manual: true });
 }
 
-async function pauseBrowserAccess(): Promise<RuntimeResponse> {
-  pauseOperations += 1;
-  const commandsStopped = browserTarget.pause();
-  let result: PauseAccessResult;
-  try {
-    result = await pauseBrowserResources({
-      disconnect: async () => await setManualReconnectSuppressed(true, "access paused by user"),
-      waitForCommands: async () => await commandsStopped,
-      revokeMediaGrant: clearMediaCaptureGrant,
-      stopNetwork: stopNetworkCapture,
-      stopRecordings: stopAllMediaRecordings,
-      releaseDebuggers: releaseAllDebuggers,
-    });
-  } catch (error) {
-    pauseOperations -= 1;
-    throw error;
-  }
-  if (result.commandsPending) {
-    void commandsStopped.catch((error) => {
-      console.warn("Your GSV: browser commands did not stop", error);
-    }).then(async () => {
-      const late = await releaseBrowserResources({
-        stopNetwork: stopNetworkCapture,
-        stopRecordings: stopAllMediaRecordings,
-        releaseDebuggers: releaseAllDebuggers,
-      });
-      if (late.errors.length > 0) console.warn("Your GSV: late browser cleanup failed", late.errors);
-    }).catch((error) => console.warn("Your GSV: late browser cleanup failed", error)).finally(() => {
-      pauseOperations -= 1;
-    });
-  } else {
-    pauseOperations -= 1;
-  }
-  addActivity({
-    kind: result.errors.length > 0 ? "error" : "sensitive",
-    label: "access paused",
-    detail: [
-      `stopped ${result.stoppedCaptures} network capture(s), ${result.stoppedRecordings} media recording(s), detached ${result.detachedTabs} debugger tab(s)`,
-      ...result.errors.map((error) => `cleanup error: ${error}`),
-    ].join("; "),
-    status: result.errors.length > 0 ? "error" : "info",
+async function stopAll(): Promise<RuntimeResponse> {
+  const cleanupErrors: string[] = [];
+  const stoppedCaptures = await stopNetworkCapture().catch((error) => {
+    // SAFETY: rejected browser operations expose Error-compatible values here.
+    cleanupErrors.push(`network: ${errorMessage(error as Error)}`);
+    return [];
   });
-  if (result.errors.length > 0) {
-    return { ok: false, error: `Access may not be fully paused: ${result.errors.join("; ")}`, state: await buildUiState() };
-  }
+  const stoppedRecordings = await stopAllMediaRecordings().catch((error) => {
+    // SAFETY: rejected browser operations expose Error-compatible values here.
+    cleanupErrors.push(`media: ${errorMessage(error as Error)}`);
+    return [];
+  });
+  const detachedTabs = await releaseAllDebuggers().catch((error) => {
+    // SAFETY: rejected browser operations expose Error-compatible values here.
+    cleanupErrors.push(`debugger: ${errorMessage(error as Error)}`);
+    return [];
+  });
+  await setManualReconnectSuppressed(true, "stop all").catch((error) => {
+    // SAFETY: rejected browser operations expose Error-compatible values here.
+    cleanupErrors.push(`runtime state: ${errorMessage(error as Error)}`);
+  });
+  addActivity({
+    kind: cleanupErrors.length > 0 ? "error" : "sensitive",
+    label: "stop all",
+    detail: [
+      `stopped ${stoppedCaptures.length} network capture(s), ${stoppedRecordings.length} media recording(s), detached ${detachedTabs.length} debugger tab(s)`,
+      ...cleanupErrors.map((error) => `cleanup error: ${error}`),
+    ].join("; "),
+    status: cleanupErrors.length > 0 ? "error" : "info",
+  });
   return await stateResponse();
 }
 
@@ -273,15 +256,8 @@ async function clearAttentionBadge(): Promise<void> {
 }
 
 async function grantMediaCaptureAccess(tabId?: number): Promise<RuntimeResponse> {
-  if (pauseOperations > 0 || connectionSupervisor.getState().reconnectSuppressed || client.getStatus().state !== "connected") {
-    throw new Error("Resume browser access before allowing recording");
-  }
-  const grantGeneration = mediaCaptureGrantGeneration();
   void clearAttentionBadge();
   const grant = await grantMediaCapture(tabId);
-  if (pauseOperations > 0 || grantGeneration !== mediaCaptureGrantGeneration()) {
-    throw new Error("Browser access was paused before recording was allowed");
-  }
   addActivity({
     kind: "sensitive",
     label: "recording access",
@@ -293,13 +269,7 @@ async function grantMediaCaptureAccess(tabId?: number): Promise<RuntimeResponse>
 
 async function setManualReconnectSuppressed(value: boolean, reason?: string): Promise<void> {
   await runtimeStateReady;
-  if (!value && pauseOperations > 0) {
-    throw new Error("Wait for browser access to finish pausing");
-  }
   connectionSupervisor.setReconnectSuppressed(value, reason);
-  if (!value) {
-    browserTarget.resume();
-  }
   await saveRuntimeState({ manualReconnectSuppressed: value });
 }
 
@@ -357,10 +327,8 @@ async function buildUiState(): Promise<ExtensionUiState> {
   return {
     config,
     connection,
-    pausePending: pauseOperations > 0,
     targetId: config.deviceId,
     gatewayHost: gatewayHost(config.gatewayUrl),
-    activeRequests: browserTarget.activeRequests().map(({ label, detail }) => ({ label, detail })),
     activity: activity.slice(0, 80),
     sensitive: {
       connected: connection.state === "connected",

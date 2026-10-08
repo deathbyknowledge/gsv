@@ -1,5 +1,5 @@
 import type { BrowserValue, BrowserPageBackend, DebuggerBackend, TabSummary } from "../backend";
-import { abortableDelay, throwIfAborted } from "../abort";
+import { abortable, abortableDelay, throwIfAborted } from "../abort";
 import { findPageSelector, readPageText, snapshotDomPage, type InjectedPageResult } from "../page-dom";
 import { createPageActions, type PageLocator, type PageScrollTarget } from "../page-actions";
 import { findSemanticReference } from "../page-locators";
@@ -116,7 +116,7 @@ export function createPageCommands<Target>(backend: BrowserPageBackend, debugger
         case "snapshot":
           return await runSnapshot(rest, ctx);
         case "text":
-          return await runText(rest, ctx);
+          return await runText(rest);
         case "screenshot":
           return await runScreenshot(rest, ctx);
         case "click":
@@ -134,7 +134,7 @@ export function createPageCommands<Target>(backend: BrowserPageBackend, debugger
         case "wait":
           return await runWait(rest, ctx);
         case "js":
-          return await runJavaScript(rest, ctx);
+          return await runJavaScript(rest);
         default:
           return commandError(`Unknown page command: ${subcommand}\n${PAGE_USAGE}`);
       }
@@ -158,7 +158,7 @@ export function createPageCommands<Target>(backend: BrowserPageBackend, debugger
       return commandError(`${PAGE_SNAPSHOT_USAGE}\nUnknown option: ${invalid}`);
     }
 
-    const tab = scope ? await resolveReferencedTab(parsed.value.tabId, scope.tabId, scope.ref, ctx.abortSignal) : await resolveTab(parsed.value.tabId, ctx.abortSignal);
+    const tab = scope ? await resolveReferencedTab(parsed.value.tabId, scope.tabId, scope.ref) : await resolveTab(parsed.value.tabId);
     if (scope && dom) return commandError("--within scopes semantic snapshots; use a selector with --dom.");
     if (!dom && snapshotArgs.length > 0) {
       return commandError(`${PAGE_SNAPSHOT_USAGE}\nUse --dom when providing a CSS selector.`);
@@ -169,7 +169,7 @@ export function createPageCommands<Target>(backend: BrowserPageBackend, debugger
         throwIfAborted(ctx.abortSignal);
         target = await acquireDebugger(tab.id);
         throwIfAborted(ctx.abortSignal);
-        const snapshot = await captureSemanticSnapshot(target, tab, pageReferences, scope, ctx.abortSignal);
+        const snapshot = await captureSemanticSnapshot(target, tab, pageReferences, scope);
         throwIfAborted(ctx.abortSignal);
         return json
           ? commandCompactJson(snapshot)
@@ -185,7 +185,7 @@ export function createPageCommands<Target>(backend: BrowserPageBackend, debugger
 
     const selector = joinArgsOrNull(snapshotArgs);
     const result = normalizeInjectedResult(
-      await executeInTab(tab.id, snapshotDomPage, [selector], ctx.abortSignal),
+      await executeInTab(tab.id, snapshotDomPage, [selector]),
       "page snapshot",
     );
     if (!result.ok) {
@@ -194,7 +194,7 @@ export function createPageCommands<Target>(backend: BrowserPageBackend, debugger
     return commandCompactJson({ tabId: tab.id, selector, snapshot: result.value });
   }
 
-  async function runText(args: string[], ctx: CommandContext): Promise<CommandResult> {
+  async function runText(args: string[]): Promise<CommandResult> {
     const parsed = parsePageOptions(args, PAGE_TEXT_USAGE);
     if (!parsed.ok) {
       return commandError(parsed.error);
@@ -204,10 +204,10 @@ export function createPageCommands<Target>(backend: BrowserPageBackend, debugger
       return commandError(`${PAGE_TEXT_USAGE}\nUnknown option: ${invalid}`);
     }
 
-    const tab = await resolveTab(parsed.value.tabId, ctx.abortSignal);
+    const tab = await resolveTab(parsed.value.tabId);
     const selector = joinArgsOrNull(parsed.value.args);
     const result = normalizeInjectedResult(
-      await executeInTab(tab.id, readPageText, [selector], ctx.abortSignal),
+      await executeInTab(tab.id, readPageText, [selector]),
       "page text",
     );
     if (!result.ok) {
@@ -225,8 +225,8 @@ export function createPageCommands<Target>(backend: BrowserPageBackend, debugger
       return commandError(PAGE_SCREENSHOT_USAGE);
     }
 
-    const tab = await resolveTab(parsed.value.tabId, ctx.abortSignal);
-    const png = await captureTabPng(tab.id, ctx.abortSignal);
+    const tab = await resolveTab(parsed.value.tabId);
+    const png = await captureTabPng(tab.id);
     const capturedAt = new Date(ctx.now()).toISOString();
     const path = [
       "/home/browser/screenshots/tab-",
@@ -235,9 +235,7 @@ export function createPageCommands<Target>(backend: BrowserPageBackend, debugger
       capturedAt.replace(/\D/g, "").slice(0, 14),
       ".png",
     ].join("");
-    throwIfAborted(ctx.abortSignal);
-    await ctx.fs.write(path, png, "image/png", ctx.abortSignal);
-    throwIfAborted(ctx.abortSignal);
+    await ctx.fs.write(path, png, "image/png");
 
     return commandCompactJson({
       tabId: tab.id,
@@ -267,7 +265,7 @@ export function createPageCommands<Target>(backend: BrowserPageBackend, debugger
 
     if (options.locator && options.args.length) return commandError(PAGE_CLICK_USAGE);
     const locator = options.locator ?? pageLocator(click.value.selector, click.value.index);
-    const tab = await resolveLocatorTab(parsed.value.tabId, locator, ctx.abortSignal);
+    const tab = await resolveLocatorTab(parsed.value.tabId, locator);
     const result = await clickPageElement(tab.id, locator, ctx.abortSignal);
     return actionResult(tab, result, options, ctx);
   }
@@ -284,7 +282,7 @@ export function createPageCommands<Target>(backend: BrowserPageBackend, debugger
     }
 
     const locator = options.locator ?? pageLocator(typed.value.selector, 0);
-    const tab = await resolveLocatorTab(parsed.value.tabId, locator, ctx.abortSignal);
+    const tab = await resolveLocatorTab(parsed.value.tabId, locator);
     const result = await typePageText(tab.id, locator, typed.value.text, ctx.abortSignal);
     return actionResult(tab, result, options, ctx);
   }
@@ -300,7 +298,7 @@ export function createPageCommands<Target>(backend: BrowserPageBackend, debugger
     if (firstUnknownOption(remaining)) return commandError(PAGE_FORM_USAGE);
     if ((kind !== "select" && option.value !== null) || (kind !== "check" && unchecked)) return commandError(PAGE_FORM_USAGE);
     if (kind === "check" ? remaining.length !== 0 : option.value !== null ? remaining.length !== 0 : remaining.length !== 1) return commandError(PAGE_FORM_USAGE);
-    const tab = await resolveLocatorTab(parsed.value.tabId, locator, ctx.abortSignal);
+    const tab = await resolveLocatorTab(parsed.value.tabId, locator);
     const result = await changeFormControl(tab.id, locator, kind === "check" ? { kind, checked: !unchecked }
       : kind === "select" ? { kind, value: option.value ?? remaining[0]!, byLabel: option.value !== null }
         : { kind, value: remaining[0]! }, ctx.abortSignal);
@@ -336,9 +334,8 @@ export function createPageCommands<Target>(backend: BrowserPageBackend, debugger
     try {
       throwIfAborted(ctx.abortSignal);
       target = await acquireDebugger(tab.id);
-      throwIfAborted(ctx.abortSignal);
       const scope = options.locator?.kind === "semantic" ? options.locator.within : undefined;
-      snapshot = { snapshot: await captureSemanticSnapshot(target, tab, pageReferences, scope, ctx.abortSignal) };
+      snapshot = { snapshot: await captureSemanticSnapshot(target, tab, pageReferences, scope) };
     } catch (error) {
       snapshot = { snapshotError: errorMessage(error) };
     } finally {
@@ -364,7 +361,7 @@ export function createPageCommands<Target>(backend: BrowserPageBackend, debugger
       return commandError(PAGE_KEY_USAGE);
     }
 
-    const tab = await resolveTab(parsed.value.tabId, ctx.abortSignal);
+    const tab = await resolveTab(parsed.value.tabId);
     const result = await sendPageKey(tab.id, parsed.value.args[0] ?? "", ctx.abortSignal);
     return commandCompactJson({ tabId: tab.id, ...result });
   }
@@ -395,8 +392,8 @@ export function createPageCommands<Target>(backend: BrowserPageBackend, debugger
 
     const reference = normalizedReference ? pageReferences.resolve(normalizedReference) : null;
     const tab = reference
-      ? await resolveReferencedTab(parsed.value.tabId, reference.tabId, reference.ref, ctx.abortSignal)
-      : await resolveTab(parsed.value.tabId, ctx.abortSignal);
+      ? await resolveReferencedTab(parsed.value.tabId, reference.tabId, reference.ref)
+      : await resolveTab(parsed.value.tabId);
     const result = await scrollPage(tab.id, target.value, reference, ctx.abortSignal);
     return commandCompactJson({ tabId: tab.id, ...result });
   }
@@ -409,11 +406,9 @@ export function createPageCommands<Target>(backend: BrowserPageBackend, debugger
     const options = locatorOptions(parsed.value.args);
     if (options.locator?.kind === "semantic") {
       if (options.args.length) return commandError(PAGE_WAIT_USAGE);
-      const tab = await resolveLocatorTab(parsed.value.tabId, options.locator, ctx.abortSignal);
-      throwIfAborted(ctx.abortSignal);
+      const tab = await resolveLocatorTab(parsed.value.tabId, options.locator);
       const target = await acquireDebugger(tab.id);
       try {
-        throwIfAborted(ctx.abortSignal);
         const reference = await findSemanticReference(debuggerBackend.sendDebuggerCommand, pageReferences, target, tab.id, options.locator, ctx.abortSignal, parsed.value.timeoutMs);
         return commandCompactJson({ tabId: tab.id, wait: { ref: reference.ref, role: reference.role, name: reference.name } });
       } finally { await releaseDebugger(tab.id); }
@@ -428,12 +423,15 @@ export function createPageCommands<Target>(backend: BrowserPageBackend, debugger
       return commandError(PAGE_WAIT_USAGE);
     }
 
-    const tab = await resolveTab(parsed.value.tabId, ctx.abortSignal);
+    const tab = await resolveTab(parsed.value.tabId);
     const startedAt = ctx.now();
 
     while (true) {
       const result = normalizeInjectedResult(
-        await executeInTab(tab.id, findPageSelector, [selector], ctx.abortSignal),
+        await abortable(
+          executeInTab(tab.id, findPageSelector, [selector]),
+          ctx.abortSignal,
+        ),
         "page wait",
       );
       if (!result.ok) {
@@ -455,7 +453,7 @@ export function createPageCommands<Target>(backend: BrowserPageBackend, debugger
     }
   }
 
-  async function runJavaScript(args: string[], ctx: CommandContext): Promise<CommandResult> {
+  async function runJavaScript(args: string[]): Promise<CommandResult> {
     const parsed = parsePageOptions(args, PAGE_JS_USAGE);
     if (!parsed.ok) {
       return commandError(parsed.error);
@@ -466,9 +464,8 @@ export function createPageCommands<Target>(backend: BrowserPageBackend, debugger
       return commandError(PAGE_JS_USAGE);
     }
 
-    const tab = await resolveTab(parsed.value.tabId, ctx.abortSignal);
-    throwIfAborted(ctx.abortSignal);
-    const result = await evaluatePageJavaScript(tab.id, source, ctx.abortSignal);
+    const tab = await resolveTab(parsed.value.tabId);
+    const result = await evaluatePageJavaScript(tab.id, source);
     if (!result.ok) {
       return commandError(result.error);
     }
@@ -592,19 +589,16 @@ export function createPageCommands<Target>(backend: BrowserPageBackend, debugger
     return { ok: true, value: parsed };
   }
 
-  async function resolveTab(tabId: number | null, signal?: AbortSignal): Promise<TabSummary> {
-    throwIfAborted(signal);
+  async function resolveTab(tabId: number | null): Promise<TabSummary> {
     if (tabId !== null) {
-      const tab = await getTab(tabId, signal);
-      throwIfAborted(signal);
+      const tab = await getTab(tabId);
       if (!tab) {
         throw new Error(`tab not found: ${tabId}`);
       }
       return tab;
     }
 
-    const tab = await activeTab(signal);
-    throwIfAborted(signal);
+    const tab = await activeTab();
     if (!tab) {
       throw new Error("no active tab");
     }
@@ -626,26 +620,23 @@ export function createPageCommands<Target>(backend: BrowserPageBackend, debugger
     return { kind: "reference", reference: pageReferences.resolve(reference) };
   }
 
-  async function resolveLocatorTab(tabId: number | null, locator: PageLocator, signal?: AbortSignal): Promise<TabSummary> {
+  async function resolveLocatorTab(tabId: number | null, locator: PageLocator): Promise<TabSummary> {
     if (locator.kind !== "reference") {
-      if (locator.kind === "semantic" && locator.within) return resolveReferencedTab(tabId, locator.within.tabId, locator.within.ref, signal);
-      return await resolveTab(tabId, signal);
+      if (locator.kind === "semantic" && locator.within) return resolveReferencedTab(tabId, locator.within.tabId, locator.within.ref);
+      return await resolveTab(tabId);
     }
-    return await resolveReferencedTab(tabId, locator.reference.tabId, locator.reference.ref, signal);
+    return await resolveReferencedTab(tabId, locator.reference.tabId, locator.reference.ref);
   }
 
   async function resolveReferencedTab(
     requestedTabId: number | null,
     referencedTabId: number,
     ref: string,
-    signal?: AbortSignal,
   ): Promise<TabSummary> {
     if (requestedTabId !== null && requestedTabId !== referencedTabId) {
       throw new Error(`Reference ${ref} belongs to tab ${referencedTabId}, not tab ${requestedTabId}`);
     }
-    throwIfAborted(signal);
-    const tab = await getTab(referencedTabId, signal);
-    throwIfAborted(signal);
+    const tab = await getTab(referencedTabId);
     if (!tab) {
       throw new Error(`tab not found for reference ${ref}: ${referencedTabId}`);
     }

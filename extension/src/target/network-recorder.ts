@@ -7,7 +7,6 @@ import {
   sendDebuggerCommand,
 } from "../shared/debugger";
 import type { TargetFileSystem } from "./types";
-import { throwIfAborted } from "./abort";
 
 type HeaderMap = Record<string, string>;
 
@@ -17,7 +16,6 @@ export type NetworkCaptureOptions = {
   persist: boolean;
   bodyLimit: number;
   fs: TargetFileSystem;
-  abortSignal?: AbortSignal;
 };
 
 export type NetworkBodyRecord = {
@@ -98,7 +96,6 @@ type CaptureState = {
   seq: number;
   events: NetworkEventRecord[];
   requests: Map<string, NetworkRequestRecord>;
-  pendingPersistence: Set<Promise<void>>;
 };
 
 type RequestWillBeSentParams = {
@@ -157,14 +154,12 @@ type ResponseBodyResult = {
 };
 
 const captures = new Map<number, CaptureState>();
-const retiredCaptures = new Set<CaptureState>();
 const MAX_EVENTS_PER_TAB = 2_000;
 let removeDebuggerEventListener: (() => void) | null = null;
 let removeDebuggerDetachListener: (() => void) | null = null;
 let removeTabRemovedListener: (() => void) | null = null;
 
 export async function startNetworkCapture(options: NetworkCaptureOptions): Promise<NetworkCaptureStatus> {
-  throwIfAborted(options.abortSignal);
   ensureNetworkListener();
   const existing = captures.get(options.tabId);
   if (existing) {
@@ -193,22 +188,17 @@ export async function startNetworkCapture(options: NetworkCaptureOptions): Promi
     seq: 0,
     events: [],
     requests: new Map(),
-    pendingPersistence: new Set(),
   };
 
   try {
-    throwIfAborted(options.abortSignal);
     if (state.sessionPath) {
-      await options.fs.mkdir(`${state.sessionPath}/requests`, options.abortSignal);
-      throwIfAborted(options.abortSignal);
-      await options.fs.write(`${state.sessionPath}/status.json`, jsonBytes(captureStatus(state)), undefined, options.abortSignal);
+      await options.fs.mkdir(`${state.sessionPath}/requests`);
+      await options.fs.write(`${state.sessionPath}/status.json`, jsonBytes(captureStatus(state)));
     }
-    throwIfAborted(options.abortSignal);
     await sendDebuggerCommand(target, "Network.enable", {
       maxResourceBufferSize: options.bodyLimit,
       maxTotalBufferSize: Math.max(options.bodyLimit * 4, options.bodyLimit),
     });
-    throwIfAborted(options.abortSignal);
     captures.set(options.tabId, state);
     recordEvent(state, { type: "captureStarted" });
     return captureStatus(state);
@@ -233,23 +223,16 @@ function assertSameCaptureOptions(existing: CaptureState, options: NetworkCaptur
 
 export async function stopNetworkCapture(tabId?: number): Promise<NetworkCaptureStatus[]> {
   const states = captureStates(tabId);
-  const statuses = states.map((state) => {
+  const statuses: NetworkCaptureStatus[] = [];
+
+  for (const state of states) {
     recordEvent(state, { type: "captureStopped" });
     captures.delete(state.tabId);
-    retireCapture(state);
-    return { ...captureStatus(state), active: false };
-  });
+    statuses.push({ ...captureStatus(state), active: false });
+    await releaseDebugger(state.tabId).catch(() => undefined);
+  }
+
   maybeRemoveNetworkListener();
-  const draining = new Set([
-    ...states,
-    ...[...retiredCaptures].filter((state) => tabId === undefined || state.tabId === tabId),
-  ]);
-  await Promise.all([...draining].map(async (state) => {
-    await Promise.all([
-      releaseDebugger(state.tabId).catch(() => undefined),
-      Promise.allSettled([...state.pendingPersistence]),
-    ]);
-  }));
   return statuses;
 }
 
@@ -438,13 +421,8 @@ function removeCapture(tabId: number, event: Omit<NetworkEventRecord, "seq" | "t
   }
   captures.delete(tabId);
   recordEvent(state, event);
-  retireCapture(state);
   maybeRemoveNetworkListener();
   return true;
-}
-
-function retireCapture(state: CaptureState): void {
-  if (state.pendingPersistence.size > 0) retiredCaptures.add(state);
 }
 
 function captureStates(tabId?: number): CaptureState[] {
@@ -618,7 +596,6 @@ async function fetchAndStoreBody(state: CaptureState, requestId: string): Promis
     const result = await sendDebuggerCommand<ResponseBodyResult>(state.target, "Network.getResponseBody", {
       requestId,
     });
-    if (captures.get(state.tabId) !== state) return;
     const content = result.body ?? "";
     const base64Encoded = Boolean(result.base64Encoded);
     const byteCount = base64Encoded ? base64ByteLength(content) : byteLength(content);
@@ -626,35 +603,28 @@ async function fetchAndStoreBody(state: CaptureState, requestId: string): Promis
     const storedContent = truncated && !base64Encoded
       ? content.slice(0, state.bodyLimit)
       : truncated ? "" : content;
-    const bodyRecord: NetworkBodyRecord = {
+    request.body = {
       content: storedContent,
       base64Encoded,
       byteLength: byteCount,
       truncated,
     };
-    request.body = bodyRecord;
 
-    await trackPersistence(state, async () => {
-      if (state.sessionPath) {
-        const extension = base64Encoded ? "base64" : bodyExtension(request);
-        const path = `${state.sessionPath}/requests/${safeRequestId(requestId)}/response-body.${extension}`;
-        await state.fs.mkdir(`${state.sessionPath}/requests/${safeRequestId(requestId)}`);
-        if (captures.get(state.tabId) !== state) return;
-        await state.fs.write(path, textBytes(storedContent));
-        if (captures.get(state.tabId) !== state) return;
-        bodyRecord.path = path;
-      }
-      await persistRequestMeta(state, request);
-      if (captures.get(state.tabId) !== state) return;
-      recordEvent(state, {
-        type: "body",
-        requestId,
-        url: request.url,
-        encodedDataLength: byteCount,
-      });
+    if (state.sessionPath) {
+      const extension = base64Encoded ? "base64" : bodyExtension(request);
+      const path = `${state.sessionPath}/requests/${safeRequestId(requestId)}/response-body.${extension}`;
+      await state.fs.mkdir(`${state.sessionPath}/requests/${safeRequestId(requestId)}`);
+      await state.fs.write(path, textBytes(storedContent));
+      request.body.path = path;
+    }
+    await persistRequestMeta(state, request);
+    recordEvent(state, {
+      type: "body",
+      requestId,
+      url: request.url,
+      encodedDataLength: byteCount,
     });
   } catch (error) {
-    if (captures.get(state.tabId) !== state) return;
     request.bodyError = errorMessage(error);
     await persistRequestMeta(state, request);
   }
@@ -690,35 +660,17 @@ function recordEvent(state: CaptureState, event: Omit<NetworkEventRecord, "seq" 
     state.events.splice(0, state.events.length - MAX_EVENTS_PER_TAB);
   }
   if (state.sessionPath) {
-    void trackPersistence(state, () => state.fs.append(`${state.sessionPath}/events.jsonl`, textBytes(`${JSON.stringify(record)}\n`)));
+    void state.fs.append(`${state.sessionPath}/events.jsonl`, textBytes(`${JSON.stringify(record)}\n`));
   }
 }
 
-function persistRequestMeta(state: CaptureState, request: NetworkRequestRecord): Promise<void> {
+async function persistRequestMeta(state: CaptureState, request: NetworkRequestRecord): Promise<void> {
   if (!state.sessionPath) {
-    return Promise.resolve();
+    return;
   }
   const directory = `${state.sessionPath}/requests/${safeRequestId(request.requestId)}`;
-  return trackPersistence(state, async () => {
-    await state.fs.mkdir(directory);
-    if (captures.get(state.tabId) !== state) return;
-    await state.fs.write(`${directory}/meta.json`, jsonBytes(cloneRequest(request)));
-  });
-}
-
-function trackPersistence(state: CaptureState, operation: () => Promise<void>): Promise<void> {
-  const pending = operation();
-  state.pendingPersistence.add(pending);
-  void pending.then(
-    () => finishPersistence(state, pending),
-    () => finishPersistence(state, pending),
-  );
-  return pending;
-}
-
-function finishPersistence(state: CaptureState, pending: Promise<void>): void {
-  state.pendingPersistence.delete(pending);
-  if (state.pendingPersistence.size === 0) retiredCaptures.delete(state);
+  await state.fs.mkdir(directory);
+  await state.fs.write(`${directory}/meta.json`, jsonBytes(cloneRequest(request)));
 }
 
 function captureStatus(state: CaptureState): NetworkCaptureStatus {

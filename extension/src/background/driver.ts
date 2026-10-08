@@ -17,9 +17,6 @@ export type BrowserTargetActivityObserver = (activity: BrowserTargetActivity) =>
 
 export type BrowserTargetDriver = {
   handle: GsvEndpointHandler;
-  activeRequests(): BrowserTargetActivity[];
-  pause(): Promise<void>;
-  resume(): void;
 };
 
 export function createBrowserTargetDriver(
@@ -28,89 +25,54 @@ export function createBrowserTargetDriver(
   const fs = new BrowserTargetFileSystem(createRuntimeFileSystem());
   const fsDriver = new BrowserFsDriver(fs, async () => (await loadConfig()).deviceId);
   const shell = new BrowserTargetShell(fs, createBrowserCommands());
-  const activeRequests = new Map<string, BrowserTargetActivity>();
-  const inFlight = new Set<Promise<void>>();
-  let paused = false;
-  let access = new AbortController();
 
   return {
-    activeRequests: () => [...activeRequests.values()].reverse(),
-    async pause() {
-      if (!paused) {
-        paused = true;
-        access.abort(new Error("Browser access paused"));
+    async handle(request, context): Promise<GsvResponse> {
+      const startedAt = Date.now();
+      const baseActivity = activityForFrame(request);
+      try {
+        let response: GsvResponse;
+        if (request.call === "shell.exec") {
+          response = {
+            data: await shell.exec(request.args, {
+              currentTargetId: currentTargetId(context),
+              abortSignal: context.abortSignal,
+              copyTargetFile: async (source, destination, signal) => (await context.client.request(
+                "fs.copy",
+                { source, destination },
+                { signal },
+              )).data,
+            }),
+          };
+        } else if (request.call.startsWith("fs.")) {
+          response = await fsDriver.handle(request.call, request.args, request.body, context.abortSignal);
+        } else {
+          throw new Error(`Unsupported browser target syscall: ${request.call}`);
+        }
+        const result = response.data;
+        observeActivity?.({
+          ...baseActivity,
+          // SAFETY: gateway syscall responses are JSON protocol values.
+          // SAFETY: syscall responses are JSON protocol values.
+          detail: detailWithResultPath(baseActivity.detail, result as ExtensionBoundaryValue),
+          // SAFETY: syscall responses are JSON protocol values.
+          status: statusForResult(result as ExtensionBoundaryValue),
+          durationMs: Date.now() - startedAt,
+        });
+        return response;
+      } catch (error) {
+        observeActivity?.({
+          kind: "error",
+          label: baseActivity.label,
+          // SAFETY: rejected syscall operations are Error-compatible values.
+          detail: truncate(`${baseActivity.detail}: ${errorMessage(error as Error)}`, 180),
+          status: "error",
+          durationMs: Date.now() - startedAt,
+        });
+        throw error;
       }
-      await Promise.all(inFlight);
-      await shell.idle();
-    },
-    resume() {
-      if (!paused) {
-        return;
-      }
-      access = new AbortController();
-      paused = false;
-    },
-    handle(request, context): Promise<GsvResponse> {
-      if (paused) {
-        return Promise.reject(new Error("Browser access is paused"));
-      }
-      const signal = AbortSignal.any([context.abortSignal, access.signal]);
-      const execution = handleRequest(request, context, signal);
-      const completion = execution.then(() => undefined, () => undefined);
-      inFlight.add(completion);
-      void completion.then(() => inFlight.delete(completion));
-      return execution;
     },
   };
-
-  async function handleRequest(request: GsvEndpointRequest, context: GsvEndpointContext, signal: AbortSignal): Promise<GsvResponse> {
-    const startedAt = Date.now();
-    const baseActivity = activityForFrame(request);
-    activeRequests.set(request.id, baseActivity);
-    try {
-      let response: GsvResponse;
-      if (request.call === "shell.exec") {
-        response = {
-          data: await shell.exec(request.args, {
-            currentTargetId: currentTargetId(context),
-            abortSignal: signal,
-            copyTargetFile: async (source, destination, signal) => (await context.client.request(
-              "fs.copy",
-              { source, destination },
-              { signal },
-            )).data,
-          }),
-        };
-      } else if (request.call.startsWith("fs.")) {
-        response = await fsDriver.handle(request.call, request.args, request.body, signal);
-      } else {
-        throw new Error(`Unsupported browser target syscall: ${request.call}`);
-      }
-      const result = response.data;
-      observeActivity?.({
-        ...baseActivity,
-        // SAFETY: gateway syscall responses are JSON protocol values.
-        // SAFETY: syscall responses are JSON protocol values.
-        detail: detailWithResultPath(baseActivity.detail, result as ExtensionBoundaryValue),
-        // SAFETY: syscall responses are JSON protocol values.
-        status: statusForResult(result as ExtensionBoundaryValue),
-        durationMs: Date.now() - startedAt,
-      });
-      return response;
-    } catch (error) {
-      observeActivity?.({
-        kind: "error",
-        label: baseActivity.label,
-        // SAFETY: rejected syscall operations are Error-compatible values.
-        detail: truncate(`${baseActivity.detail}: ${errorMessage(error as Error)}`, 180),
-        status: "error",
-        durationMs: Date.now() - startedAt,
-      });
-      throw error;
-    } finally {
-      activeRequests.delete(request.id);
-    }
-  }
 }
 
 function activityForFrame(frame: GsvEndpointRequest): BrowserTargetActivity {

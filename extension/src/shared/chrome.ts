@@ -56,52 +56,32 @@ export async function getTab(tabId: number): Promise<TabSummary | null> {
   }
 }
 
-export async function createTab(url: string, active: boolean, signal?: AbortSignal): Promise<TabSummary> {
-  signal?.throwIfAborted();
+export async function createTab(url: string, active: boolean): Promise<TabSummary> {
   const tab = await chrome.tabs.create({ url, active });
-  if (signal?.aborted) {
-    if (!isNumber(tab.id)) {
-      throw new Error("Chrome created a tab without an id during Pause; it could not be closed");
-    }
-    try {
-      await chrome.tabs.remove(tab.id);
-    } catch (error) {
-      throw new Error(`Could not close tab ${tab.id} after Pause: ${String(error)}`, { cause: error });
-    }
-  }
-  signal?.throwIfAborted();
   if (!hasTabIdentity(tab)) {
     throw new Error("Chrome did not return a tab id");
   }
   return toTabSummary(tab);
 }
 
-export async function focusTab(tabId: number, signal?: AbortSignal): Promise<TabSummary> {
-  signal?.throwIfAborted();
+export async function focusTab(tabId: number): Promise<TabSummary> {
   const current = await chrome.tabs.get(tabId);
-  signal?.throwIfAborted();
   if (isNumber(current.windowId)) {
     await chrome.windows.update(current.windowId, { focused: true });
-    signal?.throwIfAborted();
   }
   const tab = await chrome.tabs.update(tabId, { active: true });
-  signal?.throwIfAborted();
   if (!tab || !hasTabIdentity(tab)) {
     throw new Error(`Unable to focus tab ${tabId}`);
   }
   return toTabSummary(tab);
 }
 
-export async function closeTab(tabId: number, signal?: AbortSignal): Promise<void> {
-  signal?.throwIfAborted();
+export async function closeTab(tabId: number): Promise<void> {
   await chrome.tabs.remove(tabId);
-  signal?.throwIfAborted();
 }
 
-export async function reloadTab(tabId: number, signal?: AbortSignal): Promise<void> {
-  signal?.throwIfAborted();
+export async function reloadTab(tabId: number): Promise<void> {
   await chrome.tabs.reload(tabId);
-  signal?.throwIfAborted();
 }
 
 export async function listWindows(): Promise<WindowSummary[]> {
@@ -124,10 +104,8 @@ export async function listWindows(): Promise<WindowSummary[]> {
     .sort((left, right) => left.id - right.id);
 }
 
-export async function focusWindow(windowId: number, signal?: AbortSignal): Promise<WindowSummary> {
-  signal?.throwIfAborted();
+export async function focusWindow(windowId: number): Promise<WindowSummary> {
   const window = await chrome.windows.update(windowId, { focused: true });
-  signal?.throwIfAborted();
   if (!window || !isNumber(window.id)) {
     throw new Error(`Unable to focus window ${windowId}`);
   }
@@ -144,17 +122,14 @@ export async function focusWindow(windowId: number, signal?: AbortSignal): Promi
   };
 }
 
-export async function captureTabPng(tabId: number, signal?: AbortSignal): Promise<Uint8Array> {
-  signal?.throwIfAborted();
+export async function captureTabPng(tabId: number): Promise<Uint8Array> {
   const target = await acquireDebugger(tabId);
   try {
-    signal?.throwIfAborted();
     const result = await sendDebuggerCommand<{ data: string }>(target, "Page.captureScreenshot", {
       format: "png",
       fromSurface: true,
       captureBeyondViewport: false,
     });
-    signal?.throwIfAborted();
     if (!result?.data) {
       throw new Error("Page.captureScreenshot returned no data");
     }
@@ -170,15 +145,12 @@ export async function executeInTab<Args extends ExtensionBoundaryValue[], T>(
   tabId: number,
   func: (...args: Args) => T,
   args: Args,
-  signal?: AbortSignal,
 ): Promise<T> {
-  signal?.throwIfAborted();
   const results = await chrome.scripting.executeScript({
     target: { tabId },
     func,
     args,
   });
-  signal?.throwIfAborted();
   // SAFETY: executeScript returns the function's declared result type T.
   return results[0]?.result as T;
 }

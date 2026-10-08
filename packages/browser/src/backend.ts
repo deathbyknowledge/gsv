@@ -27,16 +27,16 @@ export type TabSummary = {
   favIconUrl: string | null;
 };
 export type BrowserPageBackend = {
-  activeTab(signal?: AbortSignal): Promise<TabSummary | null>;
-  getTab(tabId: number, signal?: AbortSignal): Promise<TabSummary | null>;
-  captureTabPng(tabId: number, signal?: AbortSignal): Promise<Uint8Array>;
-  executeInTab<Args extends BrowserValue[], T>(tabId: number, func: (...args: Args) => T, args: Args, signal?: AbortSignal): Promise<T>;
+  activeTab(): Promise<TabSummary | null>;
+  getTab(tabId: number): Promise<TabSummary | null>;
+  captureTabPng(tabId: number): Promise<Uint8Array>;
+  executeInTab<Args extends BrowserValue[], T>(tabId: number, func: (...args: Args) => T, args: Args): Promise<T>;
 };
 export type BrowserTabsBackend = BrowserInputBackend & Pick<BrowserPageBackend, "activeTab" | "getTab"> & {
   listTabs(offset?: number): Promise<TabList>;
-  createTab(url: string, active: boolean, signal?: AbortSignal): Promise<TabSummary>;
-  focusTab(tabId: number, signal?: AbortSignal): Promise<TabSummary>;
-  closeTab(tabId: number, signal?: AbortSignal): Promise<void>;
-  reloadTab(tabId: number, signal?: AbortSignal): Promise<void>;
+  createTab(url: string, active: boolean): Promise<TabSummary>;
+  focusTab(tabId: number): Promise<TabSummary>;
+  closeTab(tabId: number): Promise<void>;
+  reloadTab(tabId: number): Promise<void>;
   viewerUrlFor(path: string, contentType: string, label: string, fs: TargetFileSystem): Promise<string> | string;
 };

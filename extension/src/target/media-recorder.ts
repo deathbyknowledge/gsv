@@ -31,7 +31,6 @@ type MediaCaptureGrant = MediaCaptureGrantStatus & {
 };
 
 let mediaCaptureGrant: MediaCaptureGrant | null = null;
-let captureGrantGeneration = 0;
 
 export type StartMediaRecordingOptions = {
   tabId?: number;
@@ -43,15 +42,11 @@ export type StartMediaRecordingOptions = {
   maxDurationMs: number;
   maxBytes: number;
   monitor: boolean;
-  abortSignal?: AbortSignal;
 };
 
 export async function startMediaRecording(options: StartMediaRecordingOptions): Promise<MediaRecordingStatus> {
-  throwIfAborted(options.abortSignal);
   const tabId = options.tabId ?? await activeTabId();
-  throwIfAborted(options.abortSignal);
   const tab = await getTab(tabId);
-  throwIfAborted(options.abortSignal);
   if (!tab) {
     throw new Error(`tab not found: ${tabId}`);
   }
@@ -67,13 +62,10 @@ export async function startMediaRecording(options: StartMediaRecordingOptions): 
     now: Date.parse(startedAt),
   });
   await assertLocalWritableFile(options.fs, output.localPath);
-  throwIfAborted(options.abortSignal);
 
   await ensureOffscreenDocument();
-  throwIfAborted(options.abortSignal);
   const streamId = takeGrantedMediaStreamId(tabId) ?? await getTabMediaStreamId(tabId);
-  throwIfAborted(options.abortSignal);
-  const status = await sendOffscreenMessage<MediaRecordingStatus>({
+  return await sendOffscreenMessage<MediaRecordingStatus>({
     target: OFFSCREEN_MEDIA_RECORDER_TARGET,
     type: "start",
     recordingId,
@@ -88,24 +80,11 @@ export async function startMediaRecording(options: StartMediaRecordingOptions): 
     monitor: options.monitor,
     startedAt,
   });
-  if (options.abortSignal?.aborted) {
-    await sendOffscreenMessage<MediaRecordingStatus[]>({
-      target: OFFSCREEN_MEDIA_RECORDER_TARGET,
-      type: "stop",
-      recordingId,
-    });
-    throwIfAborted(options.abortSignal);
-  }
-  return status;
 }
 
 export async function grantMediaCapture(tabId?: number): Promise<MediaCaptureGrantStatus> {
-  const generation = captureGrantGeneration;
   const streamId = await getTabMediaStreamId(tabId);
   const tab = typeof tabId === "number" ? await getTab(tabId) : await activeTab();
-  if (generation !== captureGrantGeneration) {
-    throw new Error("Browser access was paused before recording was allowed");
-  }
   if (!tab) {
     throw new Error(typeof tabId === "number" ? `tab not found: ${tabId}` : "no active tab");
   }
@@ -130,15 +109,6 @@ export function mediaCaptureGrantStatus(now = Date.now()): MediaCaptureGrantStat
     return null;
   }
   return publicMediaCaptureGrant(mediaCaptureGrant);
-}
-
-export function clearMediaCaptureGrant(): void {
-  captureGrantGeneration += 1;
-  mediaCaptureGrant = null;
-}
-
-export function mediaCaptureGrantGeneration(): number {
-  return captureGrantGeneration;
 }
 
 export async function stopMediaRecording(

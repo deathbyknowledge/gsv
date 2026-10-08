@@ -64,48 +64,6 @@ describe("CDP page actions", () => {
     expect(inputMethods(fixture.sendCommand)).toEqual([]);
   });
 
-  it("does not press after Pause while mouse movement is pending", async () => {
-    let finishMove!: () => void;
-    const move = new Promise<void>((resolve) => { finishMove = resolve; });
-    const fixture = stubCdp({ inputBarrier: { type: "mouseMoved", wait: move } });
-    const { store, reference } = referencedElement();
-    const controller = new AbortController();
-
-    const clicking = clickPageElement(42, { kind: "reference", reference }, controller.signal, store);
-    await vi.waitFor(() => expect(inputMethods(fixture.sendCommand)).toEqual([
-      ["Input.dispatchMouseEvent", "mouseMoved"],
-    ]));
-    controller.abort(new Error("Paused"));
-    finishMove();
-
-    await expect(clicking).rejects.toThrow("Paused");
-    expect(inputMethods(fixture.sendCommand)).toEqual([["Input.dispatchMouseEvent", "mouseMoved"]]);
-    expect(fixture.detach).toHaveBeenCalledWith({ tabId: 42 });
-  });
-
-  it("releases a press accepted while Pause is pending", async () => {
-    let finishPress!: () => void;
-    const press = new Promise<void>((resolve) => { finishPress = resolve; });
-    const fixture = stubCdp({ inputBarrier: { type: "mousePressed", wait: press } });
-    const { store, reference } = referencedElement();
-    const controller = new AbortController();
-
-    const clicking = clickPageElement(42, { kind: "reference", reference }, controller.signal, store);
-    await vi.waitFor(() => expect(inputMethods(fixture.sendCommand)).toEqual([
-      ["Input.dispatchMouseEvent", "mouseMoved"],
-      ["Input.dispatchMouseEvent", "mousePressed"],
-    ]));
-    controller.abort(new Error("Paused"));
-    finishPress();
-
-    await expect(clicking).rejects.toThrow("Paused");
-    expect(inputMethods(fixture.sendCommand)).toEqual([
-      ["Input.dispatchMouseEvent", "mouseMoved"],
-      ["Input.dispatchMouseEvent", "mousePressed"],
-      ["Input.dispatchMouseEvent", "mouseReleased"],
-    ]);
-  });
-
   it("waits for a transient overlay before delivering exactly one click", async () => {
     const fixture = stubCdp({ receiverIds: [999, 999, 101] });
     const { store, reference } = referencedElement();
@@ -439,7 +397,6 @@ function stubCdp(options: {
   role?: string;
   name?: string;
   selections?: Array<string | null>;
-  inputBarrier?: { type: string; wait: Promise<void> };
 } = {}) {
   const receiverId = options.receiverId ?? 101;
   const states = options.states ?? [elementState(), elementState()];
@@ -483,14 +440,10 @@ function stubCdp(options: {
       }
       case "DOM.scrollIntoViewIfNeeded":
       case "DOM.focus":
+      case "Input.dispatchMouseEvent":
       case "Input.insertText":
       case "Input.dispatchKeyEvent":
       case "Runtime.releaseObject":
-        return {};
-      case "Input.dispatchMouseEvent":
-        if (options.inputBarrier && params?.type === options.inputBarrier.type) {
-          await options.inputBarrier.wait;
-        }
         return {};
       case "DOM.getDocument":
         return { root: { nodeId: 1, backendNodeId: 1, nodeName: "#document" } };

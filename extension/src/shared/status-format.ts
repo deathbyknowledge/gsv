@@ -1,9 +1,6 @@
 import type { ExtensionUiState } from "./ui-state";
 
 export function browserTargetHeadline(state: ExtensionUiState): string {
-  if (state.connection.reconnectSuppressed) {
-    return liveAccessCount(state) > 0 ? "Browser activity remains" : "Paused by user";
-  }
   if (liveAccessCount(state) > 0) {
     return "Agent using this browser";
   }
@@ -12,6 +9,9 @@ export function browserTargetHeadline(state: ExtensionUiState): string {
   }
   if (state.connection.state === "connecting") {
     return "Connecting";
+  }
+  if (state.connection.reconnectSuppressed) {
+    return "Paused by user";
   }
   return "Offline";
 }
@@ -24,22 +24,13 @@ export function browserTargetTone(state: ExtensionUiState): string {
 }
 
 export function liveAccessCount(state: ExtensionUiState): number {
-  return Number(state.pausePending)
-    + state.activeRequests.length
-    + state.sensitive.networkCaptures
+  return state.sensitive.networkCaptures
     + state.sensitive.mediaRecordings
     + state.sensitive.debuggerTabs.length;
 }
 
-export function browserAccessAction(state: ExtensionUiState): "pause" | "resume" {
-  return state.connection.reconnectSuppressed && liveAccessCount(state) === 0 ? "resume" : "pause";
-}
-
 export function liveAccessText(state: ExtensionUiState): string {
   const parts: string[] = [];
-  if (state.pausePending) {
-    parts.push("browser work is still stopping");
-  }
   if (state.sensitive.networkCaptures > 0) {
     parts.push(`${state.sensitive.networkCaptures} network capture${state.sensitive.networkCaptures === 1 ? "" : "s"}`);
   }
