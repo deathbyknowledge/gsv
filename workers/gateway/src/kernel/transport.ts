@@ -238,7 +238,7 @@ async handleReq(
       ) {
         const gate = await this.host.onboarding.managedWorkGate();
         if (!gate.allowed) {
-          this.sendError(connection, frame.id, gate.code, gate.message);
+          this.sendError(connection, frame.id, gate.code, gate.message, gate.details);
           return;
         }
       }

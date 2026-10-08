@@ -166,10 +166,10 @@ export async function captureTabPng(tabId: number, signal?: AbortSignal): Promis
   }
 }
 
-export async function executeInTab<T>(
+export async function executeInTab<Args extends ExtensionBoundaryValue[], T>(
   tabId: number,
-  func: (...args: ExtensionBoundaryValue[]) => T,
-  args: ExtensionBoundaryValue[] = [],
+  func: (...args: Args) => T,
+  args: Args,
   signal?: AbortSignal,
 ): Promise<T> {
   signal?.throwIfAborted();

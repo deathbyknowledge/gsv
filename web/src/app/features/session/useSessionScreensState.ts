@@ -31,6 +31,7 @@ export function useSessionScreensState({ session, snapshot }: UseSessionScreensS
   const screenRef = useRef<HTMLElement>(null);
   const busy = snapshot.phase === "authenticating";
   const visibleView = snapshot.phase === "ready" ? "ready"
+    : snapshot.phase === "setup-recovery" ? "setup-recovery"
     : snapshot.phase === "setup" || (busy && pendingAction === "setup") ? "setup"
     : snapshot.phase === "booting" ? "booting" : "login";
 

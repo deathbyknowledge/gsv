@@ -2874,6 +2874,7 @@ describe("fs copy", () => {
     ctx.targets = focusedFixture<KernelContext["targets"]>({
       canAccess: vi.fn(() => true),
       canHandle: vi.fn(() => true),
+      get: vi.fn((target_id: string) => makeDevice({ target_id, implements: ["fs.*"] })),
     });
     let received = "";
 
@@ -2920,6 +2921,7 @@ describe("fs copy", () => {
     ctx.targets = focusedFixture<KernelContext["targets"]>({
       canAccess: vi.fn(() => true),
       canHandle: vi.fn(() => true),
+      get: vi.fn((target_id: string) => makeDevice({ target_id, implements: ["fs.*"] })),
     });
     let requestSignal: AbortSignal | undefined;
     const request = handleFsCopy({
@@ -2956,6 +2958,7 @@ describe("fs copy", () => {
     ctx.targets = focusedFixture<KernelContext["targets"]>({
       canAccess: vi.fn(() => true),
       canHandle: vi.fn(() => true),
+      get: vi.fn((target_id: string) => makeDevice({ target_id, implements: ["fs.*"] })),
     });
     const result = await handleFsCopy({
       source: { target: "gsv", path: "/home/sam/copy-test/device-send-fail.txt" },
@@ -2988,6 +2991,7 @@ describe("fs copy", () => {
     ctx.targets = focusedFixture<KernelContext["targets"]>({
       canAccess: vi.fn(() => true),
       canHandle: vi.fn(() => true),
+      get: vi.fn((target_id: string) => makeDevice({ target_id, implements: ["fs.*"] })),
     });
 
     const result = await handleFsCopy({
@@ -3039,6 +3043,7 @@ describe("fs copy", () => {
     ctx.targets = focusedFixture<KernelContext["targets"]>({
       canAccess: vi.fn(() => true),
       canHandle: vi.fn(() => true),
+      get: vi.fn((target_id: string) => makeDevice({ target_id, implements: ["fs.*"] })),
     });
     const result = await handleFsCopy({
       source: { target: "rearden", path: "/tmp/source.txt" },
@@ -3069,6 +3074,7 @@ describe("fs copy", () => {
     ctx.targets = focusedFixture<KernelContext["targets"]>({
       canAccess: vi.fn(() => true),
       canHandle: vi.fn(() => true),
+      get: vi.fn((target_id: string) => makeDevice({ target_id, implements: ["fs.*"] })),
     });
     let received = "";
 

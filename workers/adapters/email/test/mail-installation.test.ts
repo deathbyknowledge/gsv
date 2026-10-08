@@ -266,7 +266,8 @@ describe("managed mail installation transport", () => {
   it("durably stages a message at the configured 16 MiB boundary", async () => {
     const installationId = "installation_mail_size_boundary";
     const stub = env.MAIL_INSTALLATIONS.getByName(installationId);
-    await runInDurableObject(stub, async (instance) => {
+    let restoreAlarmScheduling = () => {};
+    await runInDurableObject(stub, async (instance, state) => {
 // SAFETY: The test fixture supplies the concrete adapter contract for this assertion.
 // SAFETY: The test fixture supplies the concrete adapter contract for this assertion.
 // SAFETY: The test fixture supplies the concrete adapter contract for this assertion.
@@ -281,41 +282,52 @@ describe("managed mail installation transport", () => {
         policy: MailPolicy;
       };
       vi.spyOn(internals.policy, "limits").mockResolvedValue({ ...await internals.policy.limits(), dailyInboundBytes: 64 * 1024 * 1024 });
+      // Keep automatic delivery from reclaiming the chunks before the staging assertion.
+      const setAlarm = state.storage.setAlarm.bind(state.storage);
+      const alarm = vi.spyOn(state.storage, "setAlarm").mockImplementation(
+        async () => await setAlarm(Date.now() + 60_000),
+      );
+      restoreAlarmScheduling = () => alarm.mockRestore();
     });
     const bytes = new Uint8Array(16 * 1024 * 1024 - 1);
     const prefix = encoder.encode("Subject: size boundary\r\n\r\n");
     bytes.set(prefix);
     bytes.fill("x".charCodeAt(0), prefix.byteLength);
 
-    const result = await stub.intake(
-      context(installationId),
-      {
-        from: "mike@example.com",
-        to: "hank@gsv.space",
-        rawSize: bytes.byteLength,
-      },
-      chunkedBody(bytes, 1024 * 1024),
-    );
+    let result: Awaited<ReturnType<typeof stub.intake>>;
+    try {
+      result = await stub.intake(
+        context(installationId),
+        {
+          from: "mike@example.com",
+          to: "hank@gsv.space",
+          rawSize: bytes.byteLength,
+        },
+        chunkedBody(bytes, 1024 * 1024),
+      );
 
-    expect(result).toMatchObject({ status: "accepted" });
-    const durable = await runInDurableObject(stub, (_instance, state) =>
-      state.storage.sql.exec<{
-        raw_size: number;
-        chunks: number;
-        stored_bytes: number;
-      }>(
-        `SELECT raw_size,
-                (SELECT COUNT(*) FROM mail_intake_chunks
-                 WHERE mail_intake_chunks.intake_id = mail_intakes.intake_id) AS chunks,
-                (SELECT SUM(length(content)) FROM mail_intake_chunks
-                 WHERE mail_intake_chunks.intake_id = mail_intakes.intake_id) AS stored_bytes
-         FROM mail_intakes`,
-      ).one());
-    expect(durable).toEqual({
-      raw_size: bytes.byteLength,
-      chunks: 16,
-      stored_bytes: bytes.byteLength,
-    });
+      expect(result).toMatchObject({ status: "accepted" });
+      const durable = await runInDurableObject(stub, (_instance, state) =>
+        state.storage.sql.exec<{
+          raw_size: number;
+          chunks: number;
+          stored_bytes: number;
+        }>(
+          `SELECT raw_size,
+                  (SELECT COUNT(*) FROM mail_intake_chunks
+                   WHERE mail_intake_chunks.intake_id = mail_intakes.intake_id) AS chunks,
+                  (SELECT SUM(length(content)) FROM mail_intake_chunks
+                   WHERE mail_intake_chunks.intake_id = mail_intakes.intake_id) AS stored_bytes
+           FROM mail_intakes`,
+        ).one());
+      expect(durable).toEqual({
+        raw_size: bytes.byteLength,
+        chunks: 16,
+        stored_bytes: bytes.byteLength,
+      });
+    } finally {
+      restoreAlarmScheduling();
+    }
     await runDurableObjectAlarm(stub);
     await expect(stub.getIntake(
       context(installationId),

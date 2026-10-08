@@ -382,7 +382,8 @@
     {
       "id": "browser-extension",
       "paths": [
-        "extension/**"
+        "extension/**",
+        "packages/browser/**"
       ],
       "docs": [
         "docs/how-to/browse-web.md",
@@ -406,6 +407,26 @@
       ],
       "manual": [
         "pages/accounts-access/"
+      ]
+    },
+    {
+      "id": "cloud-instances",
+      "paths": [
+        "workers/instances/**",
+        "workers/gateway/src/kernel/instance-*.ts",
+        "workers/gateway/src/kernel/sys/instance.ts",
+        "workers/gateway/src/drivers/native/shell/instances.ts",
+        "packages/gsv/src/services/instances.ts",
+        "packages/gsv/src/protocol/syscalls/instance.ts",
+        "web/src/app/features/instrument/browser/**",
+        "web/src/app/services/instances/**"
+      ],
+      "docs": [
+        "docs/how-to/cloud-browsers.md",
+        "docs/reference/syscalls.md"
+      ],
+      "manual": [
+        "pages/devices-workplaces/cloud-browsers.md"
       ]
     }
   ]

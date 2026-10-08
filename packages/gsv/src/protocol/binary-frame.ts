@@ -16,6 +16,8 @@ export const BINARY_FRAME_WINDOW = 1 << 4;
  * Shared by every implementation so the first chunks can race the descriptor.
  */
 export const BINARY_INITIAL_WINDOW_BYTES = 4 * 1024 * 1024;
+/** Small windows keep interactive streams close to their consumer. */
+export const BINARY_REALTIME_WINDOW_BYTES = 32 * 1024;
 export const BINARY_WINDOW_PAYLOAD_BYTES = 4;
 
 export type BinaryFrame = {
@@ -24,9 +26,12 @@ export type BinaryFrame = {
   payload: Uint8Array;
 };
 
+export type BinaryBodyDelivery = "realtime";
+
 export type BinaryFrameDescriptor = {
   streamId: number;
   length?: number;
+  delivery?: BinaryBodyDelivery;
 };
 
 export function buildBinaryFrame(

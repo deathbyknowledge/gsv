@@ -41,7 +41,7 @@ export function createBrowserTargetDriver(
         access.abort(new Error("Browser access paused"));
       }
       await Promise.all(inFlight);
-      await shell.waitForIdle();
+      await shell.idle();
     },
     resume() {
       if (!paused) {

@@ -1,6 +1,5 @@
 import type { ComponentChildren } from "preact";
 import { Button } from "../ui/Button";
-import { Icon } from "../ui/Icon";
 import { ListRow, type ListRowStatus } from "../ui/ListRow";
 import { SectionHeader } from "../ui/SectionHeader";
 import { StatusMeta, type StatusTone } from "../ui/StatusDot";
@@ -8,7 +7,6 @@ import "./ConsoleDetailPage.css";
 
 export type ConsoleDetailRow = {
   id: string;
-  icon?: string;
   label: string;
   /** Optional "?" help tooltip explaining the row's value. */
   labelInfo?: string;
@@ -41,7 +39,6 @@ type ConsoleDetailPageProps = {
    *  bottom-left of the page footer, opposite the regular/primary `actions`
    *  which sit at the end by default. */
   dangerAction?: ComponentChildren;
-  icon: string;
   /** Back navigation. For surfaces whose detail is reflected in the shell
    *  breadcrumb this is handled there (so `showBack` stays off); non-route-backed
    *  callers (e.g. the model/runtime config details) set `showBack` to render a
@@ -68,7 +65,6 @@ export function ConsoleDetailPage({
   children,
   dangerAction,
   embedded = false,
-  icon,
   onBack,
   onPrimary,
   parentLabel,
@@ -110,13 +106,10 @@ export function ConsoleDetailPage({
         />
       )}
 
-      {/* Row 3 — action bar: icon tile + description, with the action below.
+      {/* Row 3 — action bar: description, with the action below.
           Back navigation lives in the breadcrumb, so there is no BACK button. */}
       <div class="gsv-console-detail-bar">
         <div class="gsv-console-detail-bar-lead">
-          <span class="gsv-console-detail-icon">
-            <Icon name={icon} size={30} />
-          </span>
           <div class="gsv-console-detail-bar-text">
             <p class="gsv-console-detail-desc gsv-prose">
               {descPrimary}
@@ -153,7 +146,6 @@ export function ConsoleDetailPage({
                   <div>
                     {section.rows.map((row) => (
                       <ListRow
-                        icon={row.icon}
                         key={row.id}
                         label={row.label}
                         labelInfo={row.labelInfo}

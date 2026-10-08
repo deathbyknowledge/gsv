@@ -7,7 +7,7 @@ export function detailRow(
   id: string,
   label: string,
   value: string | number | boolean | null | undefined,
-  options: Pick<ConsoleDetailRow, "icon" | "status" | "statusLabel" | "labelInfo"> = {},
+  options: Pick<ConsoleDetailRow, "status" | "statusLabel" | "labelInfo"> = {},
 ): ConsoleDetailRow | null {
   const sub = z.boolean().safeParse(value).success
     ? (value ? "YES" : "NO")

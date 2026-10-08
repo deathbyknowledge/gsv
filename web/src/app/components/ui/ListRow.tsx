@@ -1,5 +1,4 @@
 import type { ComponentChildren, JSX } from "preact";
-import { Icon } from "./Icon";
 import { IconButton } from "./IconButton";
 import { Tag, type TagTone } from "./Tag";
 import { Hint } from "./Tooltip";
@@ -23,12 +22,10 @@ export interface ListRowProps {
   chevron?: boolean;
   /** Hover label rendered next to the chevron (e.g. "Switch agent"). */
   chevronLabel?: string;
-  icon?: string;
-  iconTitle?: string;
-  /** Custom leading node (e.g. an avatar image); takes precedence over `icon`. */
+  /** Custom leading node (e.g. an avatar image). */
   leading?: ComponentChildren;
   statusDotPlacement?: ListRowStatusDotPlacement;
-  /** Row density — "compact" tightens padding/gap/icon for dense popover lists. */
+  /** Row density — "compact" tightens padding/gap for dense popover lists. */
   density?: ListRowDensity;
   style?: JSX.CSSProperties;
   active?: boolean;
@@ -65,8 +62,6 @@ export function ListRow({
   tagTone = "update",
   chevron = false,
   chevronLabel = "",
-  icon,
-  iconTitle,
   leading,
   statusDotPlacement = "leading",
   density = "default",
@@ -117,10 +112,6 @@ export function ListRow({
     <>
       {leading ? (
         <span class="lr-leading">{leading}</span>
-      ) : icon ? (
-        <span class="lr-icon">
-          <Icon name={icon} size={compact ? 14 : 18} title={iconTitle ?? label} />
-        </span>
       ) : null}
       {hasDot && statusDotPlacement === "leading" ? <span class={dotClass} style={dotStyle} /> : null}
       <div class="lr-main" style={{ flex: "1 1 0", minWidth: 0, maxWidth: "100%", overflow: "hidden" }}>

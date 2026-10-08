@@ -25,6 +25,7 @@ import type { ShellSessionStore } from "./shell-sessions";
 import { jsonObjectSchema, type NetFetchArgs } from "@humansandmachines/gsv/protocol";
 import { authorizeNestedOperation, nestedToolOwner } from "./tool-approval";
 import { dispatchGsvTarget } from "../drivers/native/target";
+import type { FsDeviceTransport } from "../drivers/native/fs";
 import { WEB_SEARCH_TIMEOUT_MS, webSearchArgsSchema } from "@humansandmachines/gsv/services/web-search";
 import {
   handleAiContext,
@@ -49,6 +50,9 @@ import {
 import { handleAccountCreate, handleAccountList } from "./agents";
 import { handleSysConfigGet, handleSysConfigSet } from "./sys/config";
 import { handleSysTargetDelete, handleSysTargetGet, handleSysTargetList, handleSysTargetUpdate } from "./sys/target";
+import { handleInstanceRequest } from "./sys/instance";
+import { requestInstanceTarget } from "./instance-targets";
+import { rejectBeforeDispatch } from "./request-rejection";
 import { handleSysLedgerList } from "./sys/ledger";
 import { normalizeNetFetchTimeoutMs } from "./net";
 import { handleSysBootstrap } from "./sys/bootstrap";
@@ -140,7 +144,6 @@ import {
 } from "./responsibilities";
 import {
   GSV_TARGET_ID,
-  getVisibleTarget,
   resolveVisibleTarget,
   targetCanHandle,
   type TargetDescriptor,
@@ -278,7 +281,7 @@ export async function dispatch(
       };
     }
     if (routingArgs) delete routingArgs.target;
-    const sessionTarget = getVisibleTarget(ctx, session.targetId, { includeOffline: true });
+    const sessionTarget = await resolveVisibleTarget(ctx, session.targetId, { includeOffline: true });
     if (!sessionTarget) {
       return {
         handled: true,
@@ -335,9 +338,26 @@ async function dispatchLocal(
       throw error;
     }
   };
-  const fsTransport = {
-    ...deps,
-    requestTarget,
+  const fsTransport: FsDeviceTransport = {
+    requestTarget: async (targetId, call, args, options) => {
+      let signal = options?.signal ?? nativeContext.requestSignal;
+      if (options?.ttlMs !== undefined) {
+        const deadline = AbortSignal.timeout(options.ttlMs);
+        signal = signal ? AbortSignal.any([signal, deadline]) : deadline;
+      }
+      // SAFETY: Native filesystem operations construct the matching syscall arguments;
+      // dispatch owns grants, target resolution, approval, cancellation and body cleanup.
+      const request = {
+        type: "req",
+        id: crypto.randomUUID(),
+        call,
+        args: { ...args, target: targetId },
+        body: options?.body,
+      } as RequestFrame;
+      const response = await deps.request(request, nativeContext, signal);
+      if (!response.ok) throw new Error(response.error.message);
+      return response;
+    },
     openContactSource: async (source: Parameters<typeof openContactResourceSource>[0], signal?: AbortSignal) => {
       const contactContext = { ...nativeContext, requestSignal: signal ?? nativeContext.requestSignal };
       await authorizeNestedOperation(contactContext, "fs.transfer.send", { ...source });
@@ -580,6 +600,24 @@ async function dispatchKernel(
       case "sys.feedback":
         data = await handleSysFeedback(frame.args, ctx, frame.body);
         break;
+      case "sys.instance.catalog":
+      case "sys.instance.start":
+      case "sys.instance.list":
+      case "sys.instance.get":
+      case "sys.instance.stop":
+      case "sys.browser.profile.create":
+      case "sys.browser.profile.list":
+      case "sys.browser.profile.save":
+      case "sys.browser.profile.get":
+      case "sys.browser.profile.delete":
+      case "sys.browser.handoff.request":
+      case "sys.browser.handoff.get":
+      case "sys.browser.handoff.cancel":
+      case "sys.browser.handoff.open":
+      case "sys.browser.handoff.finish":
+      case "sys.browser.watch":
+      case "sys.browser.input":
+        return await handleInstanceRequest(frame, ctx);
       case "sys.config.get":
         data = handleSysConfigGet(frame.args, ctx);
         break;
@@ -587,16 +625,16 @@ async function dispatchKernel(
         data = handleSysConfigSet(frame.args, ctx);
         break;
       case "sys.target.list":
-        data = handleSysTargetList(frame.args, ctx);
+        data = await handleSysTargetList(frame.args, ctx);
         break;
       case "sys.target.get":
-        data = handleSysTargetGet(frame.args, ctx);
+        data = await handleSysTargetGet(frame.args, ctx);
         break;
       case "sys.target.update":
         data = handleSysTargetUpdate(frame.args, ctx);
         break;
       case "sys.target.delete":
-        data = handleSysTargetDelete(frame.args, ctx);
+        data = await handleSysTargetDelete(frame.args, ctx);
         break;
       case "sys.ledger.list":
         data = await handleSysLedgerList(frame.args, ctx);
@@ -933,6 +971,9 @@ async function routeToTarget(
   }
 
   const ttlMs = routedFrameTtlMs(frame);
+  if (target.route.kind === "instance") {
+    return { handled: true, response: await requestInstanceTarget(frame, target, Date.now() + ttlMs, ctx) };
+  }
   if (target.route.kind === "adapter") {
     return {
       handled: true,
@@ -997,6 +1038,7 @@ async function routeToTarget(
 
 export function routedFrameTtlMs(frame: RequestFrame): number {
   if (frame.call === "web.search") return WEB_SEARCH_TIMEOUT_MS;
+  if (frame.call === "fs.transfer.send" || frame.call === "fs.transfer.receive") return 120_000;
   if (frame.call === "shell.exec") {
     const requested = frame.args.timeout;
     if (requested === undefined || !Number.isFinite(requested) || requested <= 0) {
@@ -1032,14 +1074,6 @@ function findTargetConnection(
 
 function errFrame(id: string, code: number, message: string): ResponseFrame {
   return { type: "res", id, ok: false, error: { code, message } };
-}
-
-export function rejectBeforeDispatch(frame: RequestFrame, code: number, message: string): ResponseFrame {
-  const response = errFrame(frame.id, code, message);
-  if (!response.ok && frame.call === "shell.exec" && frame.args.start === true) {
-    response.error.details = { shellStart: "rejected" };
-  }
-  return response;
 }
 
 function requestCancelMessage(signal: AbortSignal): string {

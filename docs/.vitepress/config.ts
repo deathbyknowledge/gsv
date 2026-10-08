@@ -137,6 +137,7 @@ export default defineConfig({
             { text: "Bring Your Own Model", link: "/how-to/bring-your-own-model" },
             { text: "Integrations (MCP)", link: "/how-to/integrations" },
             { text: "Browse the Web", link: "/how-to/browse-web" },
+            { text: "Cloud Browsers", link: "/how-to/cloud-browsers" },
           ],
         },
       ],

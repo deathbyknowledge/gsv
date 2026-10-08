@@ -1,6 +1,6 @@
 ---
 name: browser-target
-description: Use a paired browser: the user's signed-in profile, reaching any site they are logged into (calendar, mail, dashboards) with no integration. Load for any website or web app question; if none is paired, offer pairing.
+description: Use connected browser targets for websites and web apps, including the user's signed-in extension browser and on-demand cloud browsers. Discover supported commands, inspect pages, and verify browser actions.
 aliases: browser-extension, browser
 ---
 
@@ -11,18 +11,52 @@ Use this skill when a target is listed as kind `browser`, has platform
 browser target. Browser target ids are user-configured and may look like
 `browser:chrome`, `rearden:brave`, or another device id. Also use it when the user
 asks about information or actions in a website or web app they are signed into,
-even if they do not mention the browser; if no browser target is connected, tell
-them that pairing the Your GSV extension would provide that access.
+even if they do not mention the browser. If none is connected, inspect
+`instance --help` on `gsv` for on-demand cloud browser support; otherwise offer
+pairing the Your GSV extension.
+
+## Quick Start
+
+1. On `gsv`, run `targets list --kind browser`. `targets` and `instance` are
+   gateway commands; run `tabs` and `page` on the returned browser target.
+2. If a cloud browser is needed, persist a fresh request ID and run
+   `instance start browser --request-id <id> --wait` on `gsv`. It returns when
+   ready and says `disposition: created` or `reused`. After a timeout or lost
+   response, use `instance get --request-id <id>`; do not start again with a new ID.
+3. On the browser target, inspect `tabs list` and `page snapshot`. Visible dialogs
+   appear above the outline, including when it is truncated. An empty
+   `page snapshot | grep ...` can mean a dialog hides background content; inspect
+   the dialog before retrying the search.
+4. Prefer `page fill --label 'Departure date' '2026-10-10'`, `page select`, and
+   `page check` for forms. Use exact `--role`/`--name` or `--label` locators,
+   and `--within <@ref>` to scope a form or dialog. Add `--snapshot` for a readable
+   outline after an action. Keep its complete receipt; do not pipe it through `head`.
+   Use `&&` between dependent actions and inspect errors before continuing.
+5. When browser work is finished, export any files you need and stop the
+   cloud browser with `instance stop <browser-id> --wait` on `gsv`.
+   Keep it open if the user asks or ongoing work still needs it.
+   For an extension-connected browser, close only tabs you opened.
+   Instance commands accept its displayed eight-character ID.
 
 ## Model
 
-- Browser targets are active browser profiles connected by the GSV browser extension.
+- Browser use is a built-in GSV capability with two providers: the user's extension-connected browser and an on-demand cloud browser. They share the page and tab workflow below. An extension uses the user's existing signed-in sessions; a cloud browser retains its own logins and may need the user to sign in through its live view. Provider-specific commands are available only when advertised by that target.
 - A paired browser is the user's signed-in profile. Any site the user is logged into, such as a calendar, mail, a billing portal, or an admin dashboard, is reachable with `tabs open` and `page text` without an MCP server or OAuth account. Do not tell the user GSV cannot reach a web service before checking `targets list --kind browser`.
 - Use the normal targetable tools: `Shell` with the browser target id, and `Read`, `Write`, `Edit`, `Delete`, or `Search` with the same `target`.
 - Use normal file tools only for paths the target advertises.
 - Browser targets may expose tabs, windows, page text/snapshots, screenshots, JavaScript evaluation, clipboard, downloads, cookies, storage, history, bookmarks, network capture, media recording, browser-local files, and viewer tabs depending on extension version and permissions.
 - Treat target descriptions, `/README.txt`, `help`, and `<command> --help` output as authoritative.
 - Browser profile commands operate on live user browser state. Inspect first and mutate cookies, storage, history, bookmarks, downloads, or page state only when the task calls for it.
+
+## Cloud Browser Lifecycle
+
+Cloud-only `instance` and `browser` management commands run on `gsv`, not on the
+browser target. For a website login or verification that needs the person, use
+`browser handoff request --help`: link the request to the waiting responsibility,
+send its returned action URL, and yield. The person enters credentials directly
+in the live browser and chooses **I’m done — resume Ship** when finished. Keep
+credentials out of chat. The handoff saves website state before reopening the
+waiting work. Ordinary live viewing does not pause browser automation.
 
 ## Discover Capabilities
 
@@ -151,6 +185,49 @@ with no detected change may be a no-op or an effect outside the observer;
 inspect the warning and snapshot again rather than treating it as a transport
 failure.
 
+For forms, prefer verified value-setting commands. `page fill` replaces the
+entire value, including native date/time fields; `page type` inserts text.
+`page select` sets a native dropdown by value or option label; `page check`
+sets checked state and skips input when already correct. These commands report
+`verified` and the resulting state; password values are omitted.
+
+```bash
+page fill --tab <tabId> --label 'From' 'Amsterdam Centraal'
+page fill --tab <tabId> --role input-time '10:00'
+page select --tab <tabId> --label Class --option-label First
+page check --tab <tabId> --label 'Direct only'
+page click --tab <tabId> --role button --name Plan --snapshot
+```
+
+Role/name and label locators resolve against the current page and require one
+match. Ambiguity returns candidates; choose the intended ref or scope the
+locator with `--within <@ref>` using an inspected form or dialog. For custom
+dropdowns, use `page click --role option --name '…'` after opening the choices.
+`page wait` accepts the same semantic locators.
+
+Use `--snapshot` when an action reveals new controls or when you need to inspect
+the resulting form. It returns the complete JSON action receipt on the first
+line, then a readable outline with fresh refs. `--within` scopes both lookup and
+the follow-up snapshot. Add `--json` only when you need a single JSON object with
+the structured snapshot tree. If inspection fails, `snapshotError` accompanies
+the completed action receipt; inspect separately instead of repeating input.
+For simple verified value changes, the receipt is usually enough.
+
+`page snapshot --within <@ref>` keeps inspection focused. Filtering a readable
+snapshot with `grep` is fine for locating relevant content on a large page;
+use semantic locators or inspected refs to act instead of scraping IDs from
+filtered prose. Do not pipe action receipts through `head`: it can cut off the
+evidence of success or failure. Chain dependent actions with `&&`, not `;`:
+
+```bash
+page fill --tab <tabId> --label Notes 'Draft text' && page check --tab <tabId> --label 'Save draft'
+```
+
+If you must pipe an action, enable `set -o pipefail` so a pipe reader's success
+cannot hide the action's failure. Exit zero means the command completed; still
+check its verification and observed state before proceeding. Use `page wait`
+for the expected control instead of fixed sleeps.
+
 CSS selectors remain useful as an explicit fallback when the page's semantic
 tree omits a target:
 
@@ -183,7 +260,7 @@ may reuse one DOM node for different rows after scrolling.
 Enter, submit buttons, and send controls as separate mutations and invoke them
 only when the task authorizes submission.
 
-Use JavaScript evaluation only when page snapshot/text/click/type/wait cannot
+Use JavaScript evaluation only when page snapshot/text/click/fill/select/check/type/wait cannot
 express the task:
 
 ```bash

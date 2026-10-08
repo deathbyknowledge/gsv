@@ -24,6 +24,11 @@ export type GsvDeploymentProps = Omit<GsvRuntimeProps, "services"> & {
       entrypoint: string;
       namespaces: readonly { className: string; kind: "web-search-installation" }[];
     };
+    instancesLifecycle?: {
+      worker: Cloudflare.Workers.Worker;
+      entrypoint: string;
+      namespaces: readonly { className: string; kind: "instance-installation" }[];
+    };
   };
   /** Explicit current and historical operator inventory, including BYOK providers; known-sink checks do not discover that history. */
   deletion?: { operatorResources: OperatorResourceCatalog };
@@ -57,7 +62,7 @@ export type GsvDeploymentProps = Omit<GsvRuntimeProps, "services"> & {
 export const GsvDeployment = (props: GsvDeploymentProps, dependencies = gsvRuntimeDependencies) => {
   const { Cloudflare, Effect, retain } = dependencies;
   return Effect.gen(function* () {
-  if (props.deletion && (props.services?.installationDirectory || props.services?.inferenceExecution || props.services?.mailOutbound || props.services?.webSearch)) {
+  if (props.deletion && (props.services?.installationDirectory || props.services?.inferenceExecution || props.services?.mailOutbound || props.services?.webSearch || props.services?.instances)) {
     throw new Error("An adopted operator composition must supply its complete resource inventory through GsvDeletionResourceBindings");
   }
   if (Boolean(props.services?.inferenceExecution) !== Boolean(props.services?.inferenceLifecycle)) {
@@ -76,6 +81,12 @@ export const GsvDeployment = (props: GsvDeploymentProps, dependencies = gsvRunti
     || webSearchLifecycle.namespaces.some((namespace) => !namespace.className.trim()
       || namespace.kind !== "web-search-installation"))) {
     throw new Error("Supplied web search lifecycle requires valid search namespace ownership");
+  }
+  const instancesLifecycle = props.services?.instancesLifecycle;
+  if (Boolean(props.services?.instances) !== Boolean(instancesLifecycle)) throw new Error("Supplied instances require their owned lifecycle and namespace inventory");
+  if (instancesLifecycle && (!instancesLifecycle.entrypoint.trim() || !instancesLifecycle.namespaces.length
+    || instancesLifecycle.namespaces.some(namespace => !namespace.className.trim() || namespace.kind !== "instance-installation"))) {
+    throw new Error("Supplied instances lifecycle requires valid instance namespace ownership");
   }
   const domain = new URL(`https://${props.domain}`);
   const admin = new URL(props.adminOrigin);
@@ -195,8 +206,14 @@ export const GsvDeployment = (props: GsvDeploymentProps, dependencies = gsvRunti
     }).pipe(retain(props.allowResourceDeletion !== true));
     inference = inferenceWorker;
   }
+  const extraBindings: Cloudflare.Workers.WorkerBindingProps = {};
+  if (props.installations.ownerEmail) {
+    extraBindings.GSV_OWNER_SIGNUP_URL = new URL("/owner/signup/?resume=1", props.adminOrigin).href;
+  }
+  Object.assign(extraBindings, props.services?.extraBindings);
   const runtime = yield* GsvRuntime({ ...props, compatibility,
-    services: { ...props.services, installationDirectory: directory, inferenceExecution: inference } }, dependencies);
+    services: { ...props.services, installationDirectory: directory, inferenceExecution: inference,
+      extraBindings } }, dependencies);
   const inferenceLifecycle = props.services?.inferenceLifecycle ?? {
     worker: inferenceWorker!, entrypoint: "InferenceLifecycleEntrypoint",
     namespaces: [{ className: "InferenceExecutor", kind: "inference-executor" as const }],
@@ -211,6 +228,12 @@ export const GsvDeployment = (props: GsvDeploymentProps, dependencies = gsvRunti
         entrypoint: webSearchLifecycle.entrypoint, props: { authority: "installation-deletion" } }],
     });
   }
+  if (instancesLifecycle) {
+    yield* directory.bind(`${props.logicalPrefix}DirectoryInstancesDeletionBinding`, {
+      bindings: [{ type: "service", name: "DELETION_OWNER_INSTANCES", service: instancesLifecycle.worker.workerName,
+        entrypoint: instancesLifecycle.entrypoint, props: { authority: "installation-deletion" } }],
+    });
+  }
   yield* GsvDeletionDiscoveryBindings(`${props.logicalPrefix}DirectoryDeletionDiscoveryBinding`, directory, [
     { ownerId: "gateway", worker: runtime.gateway, className: "Kernel", kind: "kernel" },
     { ownerId: "gateway", worker: runtime.gateway, className: "Process", kind: "process" },
@@ -218,6 +241,7 @@ export const GsvDeployment = (props: GsvDeploymentProps, dependencies = gsvRunti
     { ownerId: "gateway", worker: runtime.ripgit, className: "Repository", kind: "ripgit" },
     ...inferenceLifecycle.namespaces.map((namespace) => ({ ...namespace, ownerId: "inference", worker: inferenceLifecycle.worker })),
     ...(webSearchLifecycle?.namespaces.map((namespace) => ({ ...namespace, ownerId: "web-search", worker: webSearchLifecycle.worker })) ?? []),
+    ...(instancesLifecycle?.namespaces.map(namespace => ({ ...namespace, ownerId: "instances", worker: instancesLifecycle.worker })) ?? []),
     ...gsvAdapterDeletionNamespaces(props.services?.adapters ?? []),
   ]);
   if (catalog && database) {

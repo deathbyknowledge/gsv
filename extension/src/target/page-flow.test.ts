@@ -11,6 +11,40 @@ afterEach(async () => {
 });
 
 describe("semantic page automation flow", () => {
+  it.each([false, true])("returns fresh action references in readable or explicit JSON snapshots (json=%s)", async (json) => {
+    const fixture = stubWhatsAppLikePage();
+    const initial = await pageCommand.run(["snapshot", "--json"], context());
+    const chat = findNode(JSON.parse(initial.stdout).nodes, "English");
+    const result = await pageCommand.run(["click", chat!.ref!, "--snapshot", ...(json ? ["--json"] : [])], context());
+    expect(result.exitCode).toBe(0);
+    const receipt = JSON.parse(json ? result.stdout : result.stdout.split("\n")[0]!);
+    expect(receipt).toMatchObject({ tabId: 42, action: "click", delivered: { accepted: true }, observed: { semanticChanged: true } });
+    if (json) {
+      expect(findNode(receipt.snapshot.nodes, "English")?.ref).toBeTruthy();
+      expect(findNode(receipt.snapshot.nodes, "English")?.ref).not.toBe(chat!.ref);
+    } else {
+      expect(receipt).not.toHaveProperty("snapshot");
+      expect(result.stdout).toMatch(/\n\s+row @\S+ "English"/);
+      expect(result.stdout.slice(result.stdout.indexOf("\n"))).not.toContain(chat!.ref);
+    }
+    expect(fixture.sendCommand.mock.calls.filter(([, method, params]) => method === "Input.dispatchMouseEvent" && params?.type === "mouseReleased")).toHaveLength(1);
+  });
+
+  it("keeps the accepted action receipt when its optional follow-up snapshot fails", async () => {
+    const fixture = stubWhatsAppLikePage();
+    const initial = await pageCommand.run(["snapshot", "--json"], context());
+    const chat = findNode(JSON.parse(initial.stdout).nodes, "English");
+    const original = fixture.sendCommand.getMockImplementation()!;
+    fixture.sendCommand.mockImplementation(async (target, method, params) => {
+      if (method === "Accessibility.getFullAXTree") throw new Error("Snapshot unavailable");
+      return original(target, method, params);
+    });
+    const result = await pageCommand.run(["click", chat!.ref!, "--snapshot"], context());
+    expect(result.exitCode).toBe(0);
+    expect(JSON.parse(result.stdout)).toMatchObject({ action: "click", delivered: { accepted: true }, snapshotError: "Snapshot unavailable" });
+    expect(fixture.sendCommand.mock.calls.filter(([, method, params]) => method === "Input.dispatchMouseEvent" && params?.type === "mouseReleased")).toHaveLength(1);
+  });
+
   it("opens a virtualized chat by ref and scrolls its nested message region", async () => {
     const fixture = stubWhatsAppLikePage();
 
@@ -144,6 +178,8 @@ function stubWhatsAppLikePage() {
       case "DOM.scrollIntoViewIfNeeded":
       case "Runtime.releaseObject":
         return {};
+      case "Page.getLayoutMetrics":
+        return { cssLayoutViewport: { clientWidth: 1280, clientHeight: 800, pageX: 0, pageY: 0 } };
       case "DOM.getContentQuads": {
         lastGeometryNode = Number(params?.backendNodeId ?? 103);
         return { quads: lastGeometryNode === 104

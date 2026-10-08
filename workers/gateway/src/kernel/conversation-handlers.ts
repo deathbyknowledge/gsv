@@ -199,6 +199,7 @@ export async function handleConversationSend(
       uid: conversation.ownerUid,
       connectionId: ctx.connection.id,
       followsShip: conversation.kind === "ship" && principalOf(ctx)?.account.uid === conversation.ownerUid,
+      clientPlatform: interactionOrigin?.kind === "client" ? interactionOrigin.platform : undefined,
     });
   }
   let result: Extract<ProcSendResult, { ok: true }>;

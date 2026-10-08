@@ -74,6 +74,22 @@ async function setupScreen(path = "/", preceding: HistoryEntry[] = [{ url: "http
 }
 
 describe("minimal account setup", () => {
+  it("submits an underscore username unchanged after consent", async () => {
+    const screen = await setupScreen();
+    try {
+      await act(() => {
+        screen.state().setup.onUsername("sample_user");
+        screen.state().setup.onPassword("password123");
+        screen.state().setup.onPasswordConfirm("password123");
+      });
+      await act(() => screen.state().setup.onSubmit(new Event("submit")));
+      expect(screen.state().setup.step).toBe("consent");
+      await act(() => screen.state().setup.onConsent(true));
+      await act(() => { void screen.state().setup.onSubmit(new Event("submit")); });
+      expect(screen.setup).toHaveBeenCalledWith(expect.objectContaining({ username: "sample_user" }));
+    } finally { await screen.unmount(); }
+  });
+
   it("defers blur errors until submit when a pointer press does not focus Continue", async () => {
     const screen = await setupScreen();
     try {

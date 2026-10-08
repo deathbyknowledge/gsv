@@ -9,13 +9,6 @@ import type { ConsoleDetailSection } from "../../../../components/detail/Console
 import { compactText, formatAge, formatTokenLabel } from "../../../../domain/system/consoleFormat";
 import type { ConsoleAdapter, ConsoleAdapterAccount } from "../../../../domain/system/consoleModels";
 
-export function iconForAdapterName(adapter: string): string {
-  if (adapter === "telegram") return "telegram";
-  if (adapter === "discord") return "discord";
-  if (adapter === "whatsapp") return "doticons/whatsapp";
-  return "chat";
-}
-
 export function adapterName(adapter: string): string {
   return formatTokenLabel(adapter);
 }

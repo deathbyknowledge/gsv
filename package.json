@@ -9,13 +9,15 @@
     "workers/gateway",
     "workers/installations",
     "workers/inference",
+    "workers/instances",
     "web",
     "packages/*"
   ],
   "scripts": {
-    "postinstall": "npm run gsv:build",
+    "postinstall": "node tools/instances/storage-script.mjs && npm run gsv:build && npm run browser:build",
     "setup": "bash ./scripts/setup-deps.sh",
     "dev": "bash ./scripts/dev-stack.sh",
+    "smoke:browser": "node ./tools/instances/smoke.mjs",
     "dev:managed": "bash ./scripts/dev-managed-stack.sh",
     "review:prompts": "node ./tools/source-review/server.mjs prompts",
     "review:manual": "node ./tools/source-review/server.mjs manual",
@@ -44,7 +46,8 @@
     "version:bump": "node ./scripts/version.mjs bump",
     "release:build:cloudflare": "bash ./scripts/build-cloudflare-bundles.sh",
     "release:show:stable-tag": "node ./scripts/release.mjs stable-tag",
-    "release:cut:stable": "node ./scripts/release.mjs cut-stable"
+    "release:cut:stable": "node ./scripts/release.mjs cut-stable",
+    "browser:build": "npm run build --workspace packages/browser"
   },
   "devDependencies": {
     "@effect/platform-node": "4.0.0-beta.107",
@@ -57,6 +60,7 @@
     "magic-string": "0.30.21",
     "oxlint": "1.79.0",
     "source-map-js": "1.2.1",
-    "ts-json-schema-generator": "2.9.0"
+    "ts-json-schema-generator": "2.9.0",
+    "wrangler": "4.147.0"
   }
 }

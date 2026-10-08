@@ -95,6 +95,20 @@ The receipt has three levels: work between messages, action purpose, evidence. C
 
 Fleet owns places, processes, responsibilities, routines, files and their inspectors. Places offers Connect, subject to the signed-in account's permissions. A new place can be a computer or browser. People owns contact conversations and private invitations. Opening either connection form never creates a credential or invitation.
 
+Cloud browser rows, Zen's browser place chips and browser links in work receipts
+open their live view directly without navigating to Fleet or changing the next
+message's target. The view uses browser chrome: tabs, a slim address strip, and
+page content edge to edge. Tabs use an accent underline; expand, close and more
+are text controls in flat, square chrome with the shell's thin rules. There are
+no decorative icon tiles, rounded frame, glow or backdrop blur. Stopping is in
+the more menu. Watching follows Ship's active
+tab and cursor without pausing its work. Direct input needs no control-mode
+switch; clicking pins the viewed tab, and input is sent against the document
+actually displayed. Closing the view leaves work running. Only an explicit Ship
+sign-in request shows a completion action. The Fleet browser action reuses the
+account's current instance, and saved logins are automatic rather than exposed
+as profile setup. Stopped instances leave the ordinary place list.
+
 The Fleet overview uses the full width with modest side gutters on wide screens.
 Browsing with j/k or the arrow keys only
 moves browser focus: it does not change inspection, mount detail queries or read
@@ -237,3 +251,4 @@ Text actions are the default. Choose the style from the control's role and place
 - Use blocks for grouped selectors such as Settings sections, with equal sizes and centered labels, and for the main confirmation within a focused form. Opening Add MCP server is a text action; submitting the resulting form uses a block.
 - Destructive actions use red and appropriate confirmation independently of shape. A contextual delete and its inline confirmation can both be text actions.
 - Preserve semantic buttons or links, keyboard focus, disabled states and usable click areas. An unboxed control still needs a usable target.
+- Use named text controls rather than the retired dot-matrix icon library. Installation icons in `web/public/icons` are branding assets; functional graphics such as a shared cursor remain local to their owning view.

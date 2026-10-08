@@ -1,7 +1,145 @@
 import { describe, expect, it, vi } from "vitest";
 import { bodyToBytes, bodyToText } from "@humansandmachines/gsv/protocol";
 import { BrowserFsDriver, BrowserTargetFileSystem } from "./fs";
+import { createRuntimeFileSystem } from "./runtime-fs";
 import type { TargetFileSystem } from "./types";
+import { BrowserTargetFileSystem as SharedBrowserFileSystem } from "@humansandmachines/gsv-browser/fs";
+import { storedFsMetadata, type FilePersistence, type StoredFsEntry } from "@humansandmachines/gsv-browser/fs-persistence";
+
+function persistedFileSystem() {
+  const entries = new Map<string, StoredFsEntry>();
+  const persistence: FilePersistence = {
+    list: async () => [...entries.values()].map(storedFsMetadata),
+    stat: async path => { const entry = entries.get(path); return entry ? storedFsMetadata(entry) : null; },
+    get: vi.fn(async path => entries.get(path) ?? null),
+    put: vi.fn(async entry => { entries.set(entry.path, entry); }),
+    delete: vi.fn(async paths => { for (const path of paths) entries.delete(path); }),
+  };
+  const runtime = createRuntimeFileSystem();
+  vi.spyOn(runtime, "getAllPaths").mockResolvedValue([]);
+  const fs = new SharedBrowserFileSystem(runtime, async () => persistence, 8);
+  return { fs, persistence, entries };
+}
+
+describe("browser file admission and persistence", () => {
+  it("lists and stats persisted files without loading bodies, and reads fresh bytes only on demand", async () => {
+    const { fs, persistence, entries } = persistedFileSystem();
+    entries.set("/tmp/a", { path: "/tmp/a", kind: "file", content: new Uint8Array([1, 2]).buffer, contentType: "image/png", updatedAt: 1 });
+    entries.set("/tmp/b", { path: "/tmp/b", kind: "file", content: new Uint8Array([3]).buffer, updatedAt: 1 });
+    expect(await fs.list("/tmp")).toEqual({ files: ["a", "b"], directories: [] });
+    expect(await fs.stat("/tmp/a")).toMatchObject({ size: 2, contentType: "image/png" });
+    expect(await fs.exists("/tmp/b")).toBe(true);
+    expect(await fs.getAllPaths()).toContain("/tmp/a");
+    expect(persistence.get).not.toHaveBeenCalled();
+    expect(await fs.read("/tmp/a")).toEqual(new Uint8Array([1, 2]));
+    expect(persistence.get).toHaveBeenCalledExactlyOnceWith("/tmp/a");
+    entries.set("/tmp/a", { path: "/tmp/a", kind: "file", content: new Uint8Array([9]).buffer, updatedAt: 2 });
+    expect(await fs.read("/tmp/a")).toEqual(new Uint8Array([9]));
+    entries.delete("/tmp/a");
+    expect(await fs.exists("/tmp/a")).toBe(false);
+    await expect(fs.read("/tmp/a")).rejects.toThrow("No such file");
+    expect((await fs.list("/tmp")).files).toEqual(["b"]);
+    await fs.delete("/tmp/b");
+    expect(persistence.get).toHaveBeenCalledTimes(3);
+  });
+
+  it.each([undefined, -1, 1.5, Number.POSITIVE_INFINITY, Number.NaN, 9])(
+    "rejects invalid or oversized declared length %s without reading the body", async length => {
+      const { fs } = persistedFileSystem();
+      const pull = vi.fn(), cancel = vi.fn();
+      const stream = new ReadableStream<Uint8Array>({ pull, cancel }, { highWaterMark: 0 });
+      const result = await new BrowserFsDriver(fs).handle("fs.transfer.receive", { path: "/tmp/input" }, { stream, length });
+      expect(result.data).toMatchObject({ ok: false });
+      expect(pull).not.toHaveBeenCalled();
+      expect(cancel).toHaveBeenCalledOnce();
+      expect(await fs.exists("/tmp/input")).toBe(false);
+    },
+  );
+
+  it("cancels an overlong stream and leaves the destination unchanged", async () => {
+    const { fs } = persistedFileSystem();
+    await fs.write("/tmp/input", new Uint8Array([7]));
+    const cancel = vi.fn();
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) { controller.enqueue(new Uint8Array(9)); }, cancel,
+    });
+    const result = await new BrowserFsDriver(fs).handle("fs.transfer.receive", { path: "/tmp/input" }, { stream, length: 8 });
+    expect(result.data).toMatchObject({ ok: false, error: expect.stringContaining("size mismatch") });
+    expect(cancel).toHaveBeenCalledOnce();
+    expect(await fs.read("/tmp/input")).toEqual(new Uint8Array([7]));
+  });
+
+  it("accepts a chunked transfer exactly at the file bound and rejects a short body", async () => {
+    const { fs } = persistedFileSystem();
+    const bytes = new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8]);
+    const stream = new ReadableStream<Uint8Array>({ start(controller) {
+      controller.enqueue(bytes.subarray(0, 3)); controller.enqueue(bytes.subarray(3)); controller.close();
+    } });
+    const driver = new BrowserFsDriver(fs);
+    expect((await driver.handle("fs.transfer.receive", { path: "/tmp/input" }, { stream, length: 8 })).data).toMatchObject({ ok: true, bytesWritten: 8 });
+    expect(await fs.read("/tmp/input")).toEqual(bytes);
+    const short = new ReadableStream<Uint8Array>({ start(controller) { controller.close(); } });
+    expect((await driver.handle("fs.transfer.receive", { path: "/tmp/input" }, { stream: short, length: 8 })).data).toMatchObject({ ok: false });
+    expect(await fs.read("/tmp/input")).toEqual(bytes);
+    await expect(fs.append("/tmp/input", new Uint8Array([9]))).rejects.toThrow("byte limit");
+    expect(await fs.read("/tmp/input")).toEqual(bytes);
+  });
+
+  it.each([false, true])("cancels stalled transfers without waiting for source cleanup (already aborted: %s)", async alreadyAborted => {
+    const { fs } = persistedFileSystem();
+    await fs.write("/tmp/input", new Uint8Array([7]));
+    const abort = new AbortController(), pull = vi.fn();
+    const cancel = vi.fn(() => new Promise<void>(() => {}));
+    const stream = new ReadableStream<Uint8Array>({ pull, cancel }, { highWaterMark: 0 });
+    if (alreadyAborted) abort.abort(new Error("Transfer cancelled"));
+    const pending = new BrowserFsDriver(fs).handle("fs.transfer.receive", { path: "/tmp/input" }, { stream, length: 8 }, abort.signal);
+    if (!alreadyAborted) {
+      await vi.waitFor(() => expect(pull).toHaveBeenCalledOnce());
+      abort.abort(new Error("Transfer cancelled"));
+    }
+    expect((await pending).data).toMatchObject({ ok: false, error: "Transfer cancelled" });
+    expect(cancel).toHaveBeenCalledOnce();
+    expect(stream.locked).toBe(false);
+    expect(await fs.read("/tmp/input")).toEqual(new Uint8Array([7]));
+    if (alreadyAborted) expect(pull).not.toHaveBeenCalled();
+  });
+
+  it.each([false, true])("keeps committed state after a rejected write (existing: %s)", async existing => {
+    const { fs, persistence } = persistedFileSystem();
+    if (existing) await fs.write("/tmp/input", new Uint8Array([1]), "image/png");
+    vi.mocked(persistence.put).mockRejectedValueOnce(new Error("Storage quota exceeded"));
+    await expect(fs.write("/tmp/input", new Uint8Array([2]), "text/plain")).rejects.toThrow("quota");
+    expect(await fs.exists("/tmp/input")).toBe(existing);
+    if (existing) {
+      expect(await fs.read("/tmp/input")).toEqual(new Uint8Array([1]));
+      expect(await fs.stat("/tmp/input")).toMatchObject({ contentType: "image/png", size: 1 });
+    } else {
+      await expect(fs.read("/tmp/input")).rejects.toThrow("No such file");
+    }
+  });
+
+  it("publishes a new file only after its write commits", async () => {
+    const { fs, persistence, entries } = persistedFileSystem();
+    let commit = () => {};
+    vi.mocked(persistence.put).mockImplementationOnce(entry => new Promise<void>(resolve => {
+      commit = () => { entries.set(entry.path, entry); resolve(); };
+    }));
+    const pending = fs.write("/tmp/input", new Uint8Array([1]));
+    await vi.waitFor(() => expect(persistence.put).toHaveBeenCalledOnce());
+    expect(await fs.exists("/tmp/input")).toBe(false);
+    commit();
+    await pending;
+    expect(await fs.read("/tmp/input")).toEqual(new Uint8Array([1]));
+  });
+
+  it("does not retain directories whose persistence failed", async () => {
+    const { fs, persistence } = persistedFileSystem();
+    vi.mocked(persistence.put).mockRejectedValueOnce(new Error("Storage quota exceeded"));
+    await expect(fs.write("/tmp/new/input", new Uint8Array([1]))).rejects.toThrow("quota");
+    expect(await fs.exists("/tmp/new")).toBe(false);
+    expect(await fs.exists("/tmp/new/input")).toBe(false);
+  });
+});
 
 describe("BrowserFsDriver", () => {
   it("does not read browser content after Pause interrupts stat", async () => {
@@ -54,7 +192,7 @@ describe("BrowserFsDriver", () => {
     await vi.waitFor(() => expect(stream.locked).toBe(true));
     controller.abort(new Error("Browser access paused"));
 
-    await expect(running).rejects.toThrow("Browser access paused");
+    await expect(running).resolves.toMatchObject({ data: { ok: false, error: "Browser access paused" } });
     expect(cancel).toHaveBeenCalledOnce();
     expect(write).not.toHaveBeenCalled();
   });
@@ -96,6 +234,22 @@ describe("BrowserFsDriver", () => {
 
     await expect(running).rejects.toThrow("Browser access paused");
     await expect(fs.exists("/tmp/dest.txt")).resolves.toBe(false);
+  });
+
+  it("rejects malformed writes before changing files and normalizes valid paths", async () => {
+    const fs = new BrowserTargetFileSystem(createRuntimeFileSystem());
+    const write = vi.spyOn(fs, "write");
+    const driver = new BrowserFsDriver(fs);
+
+    await expect(driver.handle("fs.write", { path: "/tmp/note.txt", content: 42 })).rejects.toThrow();
+    await expect(driver.handle("fs.write", { path: "  ", content: "hello" })).rejects.toThrow();
+    await expect(driver.handle("fs.copy", { source: { path: "/tmp/note.txt" }, destination: {} })).rejects.toThrow();
+    expect(write).not.toHaveBeenCalled();
+
+    await expect(driver.handle("fs.write", { path: "/tmp/../tmp/note.txt", content: "hello" })).resolves.toMatchObject({
+      data: { ok: true, path: "/tmp/note.txt", size: 5 },
+    });
+    expect(new TextDecoder().decode(await fs.read("/tmp/note.txt"))).toBe("hello");
   });
 
   it("uses the stored MIME type when reading an extensionless file", async () => {

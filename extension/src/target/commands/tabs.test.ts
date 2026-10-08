@@ -9,6 +9,45 @@ afterEach(async () => {
   vi.unstubAllGlobals();
 });
 
+describe("tabs list", () => {
+  it("pages through every tab and bounds page-controlled metadata", async () => {
+    const tabs = Array.from({ length: 260 }, (_, index) => ({ ...tab(false, `https://example.com/${"x".repeat(20000)}`), id: index + 1, index, title: "\0".repeat(20000) }));
+    stubChrome({ query: vi.fn(async () => tabs) });
+    const ids: number[] = [];
+    let offset = 0;
+    do {
+      const result = await runTabs(["list", "--offset", String(offset)]);
+      expect(result.exitCode).toBe(0);
+      expect(new TextEncoder().encode(result.stdout).byteLength).toBeLessThan(132 * 1024);
+      const page = JSON.parse(result.stdout);
+      expect(page.total).toBe(260);
+      expect(page.count).toBe(page.tabs.length);
+      expect(page.tabs.length).toBeGreaterThan(0);
+      for (const value of page.tabs) {
+        expect(value.title.length).toBeLessThanOrEqual(1024);
+        expect(value.url.length).toBeLessThanOrEqual(8192);
+        ids.push(value.id);
+      }
+      if (page.nextOffset === undefined) break;
+      expect(page.nextOffset).toBeGreaterThan(offset);
+      offset = page.nextOffset;
+    } while (offset < tabs.length);
+    expect(ids).toEqual(tabs.map(value => value.id));
+    expect(JSON.parse((await runTabs(["list", "--offset", "260"])).stdout)).toEqual({ tabs: [], total: 260, count: 0 });
+  });
+
+  it("caps the number of small summaries and rejects malformed offsets", async () => {
+    const query = vi.fn(async () => Array.from({ length: 200 }, (_, index) => ({ ...tab(false, "about:blank"), id: index + 1, index })));
+    stubChrome({ query });
+    expect(JSON.parse((await runTabs(["list"])).stdout)).toMatchObject({ count: 128, total: 200, nextOffset: 128 });
+    query.mockClear();
+    for (const value of ["-1", "1.5", "9007199254740992", "nope", ""]) {
+      expect((await runTabs(["list", "--offset", value])).exitCode).toBe(1);
+    }
+    expect(query).not.toHaveBeenCalled();
+  });
+});
+
 describe("tabs open", () => {
   it("opens a background tab by default and returns its id", async () => {
     const create = vi.fn(async ({ url, active }: chrome.tabs.CreateProperties) => tab(active ?? true, url ?? ""));
@@ -292,6 +331,7 @@ function tab(active: boolean, url: string): chrome.tabs.Tab {
 }
 
 function stubChrome(overrides: {
+  query?: typeof chrome.tabs.query;
   create?: typeof chrome.tabs.create;
   get?: typeof chrome.tabs.get;
   updateWindow?: typeof chrome.windows.update;
@@ -299,6 +339,7 @@ function stubChrome(overrides: {
 }) {
   const chromeApi = {
     tabs: {
+      query: overrides.query ?? vi.fn(),
       create: overrides.create ?? vi.fn(),
       get: overrides.get ?? vi.fn(),
       remove: vi.fn(async () => {}),

@@ -26,6 +26,12 @@ it works once. The signup page also links to the beta Desktop app for macOS and
 Linux; see [Install host apps](/how-to/install-host-apps) for the download and
 first-launch steps.
 
+If setup is interrupted or its link expires, opening the unfinished space shows
+**Continue setup** instead of the ordinary sign-in form. Sign in with the email
+you used to claim the space, then select **Continue** beside its handle. This
+renews setup authorization for the same space; you do not need another invite.
+For a setup invitation issued directly by an operator, ask the operator to renew it.
+
 If you are already signed in and choose **Use an invite**, confirm the same age,
 Terms and Privacy agreement on **Before you begin** before the invite is claimed.
 Resuming signup after reopening the browser or app also requires confirmation
@@ -64,6 +70,10 @@ The web console is called **Instrument** and has five views:
 - **Settings** holds preferences (models), permissions, instructions, messengers, MCP connections and **Logs** for actions and their outcomes. The **people** and **sign-in** sections appear only for the root account.
 
 The Settings sidebar highlights the section you're viewing.
+
+If your operator enables cloud browsers, Fleet also offers **start browser**.
+You can [sign in and save website logins](/how-to/cloud-browsers) there so Ship
+can use those sites while your personal devices are offline.
 
 In Zen, **search** or `Ctrl/Cmd+F` finds earlier messages; `/` opens it in browse
 mode. Open a match to read the surrounding conversation. Closing search returns

@@ -99,6 +99,14 @@ describe("public multi-worker deletion acceptance", () => {
     }
     const pidA = await populate(socketA, "first-space");
     await populate(socketB, "second-space");
+    for (const socket of [socketA, socketB]) {
+      expect(await ok(socket, "sys.browser.profile.create", { requestId: "saved-browser", label: "Saved browser" }))
+        .toMatchObject({ profile: { ownerUid: 1000, state: "active" } });
+    }
+    const { PROFILES: profiles } = await harness.getWorker<{ PROFILES: R2Bucket }>(STACK.instances).getEnv();
+    for (const installationId of [a.installationId, b.installation.installationId]) {
+      await profiles.put(`${installationId}/owners/1000/profiles/fixture/state.enc`, "fixture encrypted snapshot");
+    }
     const gateway = harness.getWorker<{ STORAGE: R2Bucket }>(STACK.gateway);
     let { STORAGE: storage } = await gateway.getEnv();
     expect(await (await storage.get(`installations/${a.installationId}/${path.slice(1)}`))?.text()).toBe("first-space");
@@ -183,7 +191,7 @@ describe("public multi-worker deletion acceptance", () => {
     expect(capture.resources.some((resource) => resource.namespace === NAMESPACES[1].namespaceId && resource.name.includes(encodeURIComponent(pidA)))).toBe(true);
     const manifest: InstallationDeletionManifest = { version: 1, installationId: a.installationId, capturedAt: Date.now(),
       owners: Object.entries(SCOPES).map(([id, scopes]) => ({ id,
-        resources: [...scopes.map((scope) => ({ ...scope, resourceId: scope.kind === "r2" ? `installations/${a.installationId}/` : a.installationId })),
+        resources: [...scopes.map((scope) => ({ kind: scope.kind, namespace: scope.namespace, resourceId: scope.kind === "r2" ? `${id === "instances" ? "" : "installations/"}${a.installationId}/` : a.installationId })),
           ...capture.resources.filter((resource) => resource.ownerId === id).map(({ ownerId: _ownerId, ...resource }) => resource)],
         evidence: capture.evidence.map((record) => ({ id: record.reference, reference: record.reference, sha256: record.sha256, capturedAt: Date.now() })),
       })) };
@@ -227,9 +235,13 @@ describe("public multi-worker deletion acceptance", () => {
     });
     const receipts = (await db.prepare("SELECT owner_id, receipt_json FROM installation_deletion_owners WHERE operation_id = ?")
       .bind("delete-retired-first").all<{ owner_id: string; receipt_json: string }>()).results;
-    expect(receipts.map((receipt) => receipt.owner_id).sort()).toEqual(["accounts", "gateway", "inference", "mail"]);
+    expect(receipts.map((receipt) => receipt.owner_id).sort()).toEqual(["accounts", "gateway", "inference", "instances", "mail"]);
     for (const receipt of receipts) expect(JSON.parse(receipt.receipt_json)).toMatchObject({ phase: "live-erased", pendingResources: 0, outcome: "retention-pending" });
     expect((await storage.list({ prefix: `installations/${a.installationId}/` })).objects).toEqual([]);
+    const { PROFILES: remainingProfiles } = await harness.getWorker<{ PROFILES: R2Bucket }>(STACK.instances).getEnv();
+    expect((await remainingProfiles.list({ prefix: `${a.installationId}/` })).objects).toEqual([]);
+    expect((await remainingProfiles.list({ prefix: `${b.installation.installationId}/` })).objects).toHaveLength(1);
+    expect(await ok(socketB, "sys.browser.profile.list", {})).toMatchObject({ profiles: [{ state: "active" }] });
     expect(await db.prepare("SELECT id FROM installations WHERE id = ?").bind(a.installationId).first()).toBeNull();
     const replay = await harness.getWorker(STACK.evidence).fetch("https://fixture.invalid/replay", {
       method: "POST", body: JSON.stringify({ installationId: a.installationId }),
@@ -260,6 +272,11 @@ describe("public multi-worker deletion acceptance", () => {
       } else if (namespace.kind === "mail") {
         expect(await sql.exec("SELECT COUNT(*) AS count FROM mail_outbound_deliveries")).toEqual([{ count: 0 }]);
         expect(await sql.exec("SELECT COUNT(*) AS count FROM mail_daily_usage")).toEqual([{ count: 0 }]);
+      } else if (namespace.kind === "instance-installation") {
+        for (const table of ["instances", "profiles", "files", "file_chunks", "handoffs"]) {
+          expect(await sql.exec(`SELECT COUNT(*) AS count FROM ${table}`)).toEqual([{ count: 0 }]);
+        }
+        expect(await sql.exec("SELECT phase FROM retirement")).toEqual([{ phase: "erased" }]);
       }
     }
     expect(await ok(socketB, "fs.search", { path, query: "second-space" })).toMatchObject({ ok: true, count: 1 });

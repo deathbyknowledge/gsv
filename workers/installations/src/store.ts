@@ -455,7 +455,10 @@ export class AccountStore {
     if (!hostname) return { found: false };
 
     const row = await this.db.prepare(
-      `SELECT i.id, i.handle, i.canonical_origin, i.state
+      `SELECT i.id, i.handle, i.canonical_origin, i.state,
+         EXISTS (SELECT 1 FROM installation_creation_invites c
+           WHERE c.installation_id = i.id AND c.principal_id = i.owner_principal_id
+             AND c.revoked_at IS NULL) AS owner_setup_recovery
        FROM hostnames h
        JOIN installations i ON i.id = h.installation_id
        WHERE h.normalized_hostname = ? AND h.state != 'retired'
@@ -465,15 +468,18 @@ export class AccountStore {
       handle: string;
       canonical_origin: string;
       state: InstallationState;
+      owner_setup_recovery: number;
     }>();
     if (!row) return { found: false };
-    return {
+    const result: InstallationDirectoryResult = {
       found: true,
       installationId: row.id,
       handle: row.handle,
       canonicalOrigin: row.canonical_origin,
       state: row.state,
     };
+    if (row.owner_setup_recovery) result.ownerSetupRecovery = true;
+    return result;
   }
 
   async resolveInstallation(
@@ -487,28 +493,34 @@ export class AccountStore {
     }
 
     const row = await this.db.prepare(
-      `SELECT id, handle, canonical_origin, state
-       FROM installations
-       WHERE id = ?
+      `SELECT i.id, i.handle, i.canonical_origin, i.state,
+         EXISTS (SELECT 1 FROM installation_creation_invites c
+           WHERE c.installation_id = i.id AND c.principal_id = i.owner_principal_id
+             AND c.revoked_at IS NULL) AS owner_setup_recovery
+       FROM installations i
+       WHERE i.id = ?
        LIMIT 1`,
     ).bind(installationId).first<{
       id: string;
       handle: string;
       canonical_origin: string;
       state: InstallationState;
+      owner_setup_recovery: number;
     }>();
     if (!row) {
       const retired = await this.db.prepare("SELECT installation_id FROM installation_account_deletions WHERE installation_id = ?")
         .bind(installationId).first<{ installation_id: string }>();
       return retired ? { found: true, installationId, handle: "deleted", canonicalOrigin: "https://deleted.invalid", state: "deleted" } : { found: false };
     }
-    return {
+    const result: InstallationDirectoryResult = {
       found: true,
       installationId: row.id,
       handle: row.handle,
       canonicalOrigin: row.canonical_origin,
       state: row.state,
     };
+    if (row.owner_setup_recovery) result.ownerSetupRecovery = true;
+    return result;
   }
 
   async getPrincipal(principalIdValue: string): Promise<PrincipalRecord | null> {

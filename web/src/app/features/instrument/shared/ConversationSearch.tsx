@@ -85,7 +85,7 @@ export const ConversationSearch = memo(function ConversationSearch({ conversatio
           {fresh && hits.map((hit, index) => <button type="button" key={hit.id} id={`zen-search-hit-${index}`} data-search-index={index}
             class={`zen-search-hit${index === selected ? " is-selected" : ""}`} role="option" aria-selected={index === selected}
             onMouseEnter={() => setSelected(index)} onClick={() => setOpened(hit)}>
-            <span class="zen-search-byline"><span>{hit.author.kind === "user" ? "you" : hit.author.kind === "contact" ? hit.author.displayName : "ship"}</span>
+            <span class="zen-search-byline"><span>{hit.author.kind === "user" ? "you" : hit.author.kind === "contact" ? hit.author.displayName : "GSV"}</span>
               <time dateTime={new Date(hit.createdAt).toISOString()}>{date.format(hit.createdAt)}</time></span>
             <span class="zen-search-snippet">{hit.snippet}</span>
           </button>)}
@@ -135,7 +135,7 @@ function ConversationExcerpt({ conversationId, hit, date }: {
       {history.isLoading && <span role="status" aria-label="Loading messages"><Spinner /></span>}
       {history.isError && <p role="alert">Messages could not be loaded. <button type="button" onClick={() => void history.refetch()}>retry</button></p>}
       {messages.map((message) => <article key={message.id} data-message-id={message.id} class={message.id === hit.id ? "is-match" : ""}>
-        <div class="zen-search-byline"><span>{message.author.kind === "user" ? "you" : message.author.kind === "contact" ? message.author.displayName : "ship"}</span>
+        <div class="zen-search-byline"><span>{message.author.kind === "user" ? "you" : message.author.kind === "contact" ? message.author.displayName : "GSV"}</span>
           <time dateTime={new Date(message.createdAt).toISOString()}>{date.format(message.createdAt)}</time></div>
         <ZenText text={message.text} markdown={message.author.kind !== "user"} progress={null} tick={0} />
         {message.media?.map((media, index) => <ZenMedia key={index} media={media} processId={message.processId ?? ""} />)}

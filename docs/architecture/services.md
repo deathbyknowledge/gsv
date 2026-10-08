@@ -15,6 +15,7 @@ The current contracts are:
 - `inference`: streamed model inference and cancellation
 - `mail`: Gateway mail transport and operational mail inspection
 - `web-search`: optional provider-neutral search implementation for the `gsv` target
+- `instances`: optional provisioned browser targets, saved profiles and human browser control
 - `adapters`: external messaging transport discovery and operations
 
 [Installation directory and onboarding](./installation-directory.md)
@@ -69,6 +70,16 @@ adapter over this loop. Changing a funded provider does not change the
 Managed inference telemetry identifies the executing provider; failures before
 a provider is selected use `gsv` rather than naming a provider that was not called.
 
+The public Workers AI transport allows two retries while acquiring a response,
+using the provider library's cancellable backoff within the original generation
+deadline. Connection failures and transient HTTP rejections can recover before
+output starts; permanent rejections and failures during response streaming do
+not restart that provider request. Each dispatch has its own attempt identity
+under the same executor request. If acquisition still fails, the executor retains
+the underlying binding error in the owner-visible failure instead of losing it
+behind the SDK's generic `Connection error.` message. It does not log request
+bodies or credentials.
+
 `getExecutor()` validates the installation and forwards a restricted RPC target
 created inside its executor Durable Object. That target owns generation, media
 and cancellation calls without exposing installation lifecycle methods. The
@@ -120,6 +131,52 @@ the provider's cancellation RPC. The Gateway defers that notification and
 disposes the acquired target; the service must enforce the supplied deadline.
 Connected providers can advertise `web.search` without this binding or a messaging
 adapter. See [Web search](../reference/web-search.md).
+
+## Cloud instances
+
+The optional instance service owns browser provisioning, owner-scoped saved
+login state, metering and cleanup. Ordinary starts atomically reuse the owner's
+current browser; independent request receipts point to that same instance.
+An explicit separate start admits another temporary browser under the same
+concurrency and usage limits. Reuse neither extends a lifetime nor makes a
+second reservation.
+
+The Kernel derives the human owner and routes ordinary target syscalls to this
+service. Human-only `sys.browser.watch` and `sys.browser.input` expose the same
+browser through GSV's authenticated transport. Viewing does not create a handoff
+or pause automation. Complete browser actions share an input queue; human input
+gets brief priority and is bound to the tab and document that were displayed.
+Explicit login-help requests retain a durable handoff and completion barrier.
+The Instrument owns the viewer, tab selection and cursor presentation; the
+service owns input ordering, browser state and lifecycle.
+
+The instance service binds `INSTANCE_EVENTS` to the Gateway's
+`InstancesGatewayEntrypoint`, with deployment-owned
+`{ "authority": "instance-notifications" }` props. Instance and handoff changes
+notify the Kernel with the stored installation identity and human owner.
+The coordinator retains pending owners in one storage record until delivery,
+retrying failures through its existing maintenance alarm even after the last
+browser stops. Space retirement clears that pending work.
+The Gateway resolves that identity through the trusted directory and the Kernel
+broadcasts a payload-free `instance.changed` signal only to that owner's clients.
+Instrument updates its shared target and browser caches from this signal; it
+does not need Fleet to be open or poll browser inventories. Browser contents,
+credentials and handoff purposes are not included in the notification.
+
+The instance coordinator serializes snapshot attempts and retains ownership of
+timed-out exports/uploads until they settle. Abort, profile leases and revision
+checks fence late commits. Website origins survive closed tabs and coordinator
+reattachment. Export uses a temporary intercepted page with closed IndexedDB
+handles; restore uses the same pinned codec and completes before readiness.
+Compressed encrypted snapshots remain in the instance service's R2 bucket.
+An ordinary stop requires a final committed save. A failed site retains its
+previous storage and matching cookies while other sites advance; the committed
+snapshot reports `partial` with per-site reasons, diagnostic references and
+retained timestamps. A partial save permits normal stop. Whole-snapshot failures
+keep the browser running; force, expiry and deletion still terminate resources.
+Browser profile syscalls expose save metadata and forgetting under the owner's
+browser capabilities. Snapshot bytes and encryption keys remain private to the
+instance service.
 
 ## Feedback
 

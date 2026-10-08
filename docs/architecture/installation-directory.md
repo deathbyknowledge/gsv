@@ -78,6 +78,18 @@ installation-scoped; replay of a consumed authorization cannot admit another
 setup. Kernel-owned pending completion is retained for retry when an
 Accounts call fails.
 
+An ordinary connection to a provisioning space returns `details.setupRecovery`
+instead of presenting it as a ready account. Expired setup authorization returns
+the same recovery signal. The operator may bind `GSV_OWNER_SIGNUP_URL` to its
+owner signup page with `?resume=1`; the public composition supplies it when owner
+email sign-in is configured. Accounts sets `ownerSetupRecovery` in the directory
+only when the installation belongs to a claimed creation invitation. The Kernel
+includes the recovery URL only for those spaces; this link carries no authority.
+A verified owner resumes the same invitation and receives fresh setup
+authorization if it is still needed. Clients clear rejected capabilities so an
+already activated space returns to ordinary sign-in. Operator-issued setup links
+instead direct the person to request a replacement from the operator.
+
 The directory's `memberships` rows are ownership records, with an
 installation id, principal id, state, and creation time. They are not Kernel
 memberships or a grant of local permissions. Linking a verified owner requires
@@ -100,7 +112,10 @@ policy copying and disablement remain service-owned.
 Pending deletion means data remains stored. Accounts durably coordinates
 quiesce and erase operations across the captured resource inventory, including
 pending resets inherited from an older source. Kernel, Process, Conversation,
-R2, ripgit, adapters, mail and inference report their own cleanup receipts.
+R2, ripgit, adapters, mail, inference and cloud instances report their own cleanup receipts.
+Instance coordinators are installation-owned resources in discovery and deletion;
+they do not require adapter peer-inventory import. Their lifecycle owner stops
+browsers and erases profiles and temporary files before confirming live erasure.
 Missing inventory or owner evidence prevents a claim of completed erasure.
 Stale work cannot recreate data after its owner has retired the identity.
 

@@ -58,7 +58,7 @@ describe("browser target activity", () => {
     await vi.waitFor(() => expect(stream.locked).toBe(true));
 
     await driver.pause();
-    await expect(execution).rejects.toThrow("Browser access paused");
+    await expect(execution).resolves.toMatchObject({ data: { ok: false, error: "Browser access paused" } });
     expect(cancel).toHaveBeenCalledOnce();
   });
 

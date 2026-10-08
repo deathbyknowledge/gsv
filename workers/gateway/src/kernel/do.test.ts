@@ -907,7 +907,7 @@ describe("Kernel frame bodies", () => {
 });
 
 describe("Kernel nested dispatch", () => {
-  it("cancels request bodies rejected by nested capability checks", async () => {
+  it.each(["net.fetch", "fs.transfer.send", "fs.transfer.receive"] as const)("cancels %s request bodies rejected by nested capability checks", async (call) => {
     let cancelled: KernelTestValue;
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     const kernel = bareKernel();
@@ -915,8 +915,8 @@ describe("Kernel nested dispatch", () => {
       {
         type: "req",
         id: "nested-denied",
-        call: "net.fetch",
-        args: { url: "https://example.com" },
+        call,
+        args: call === "net.fetch" ? { url: "https://example.com" } : { target: "browser", path: "/tmp/shot.png" },
         body: {
           stream: new ReadableStream({
             cancel(reason) {
@@ -939,7 +939,7 @@ describe("Kernel nested dispatch", () => {
 
     expect(response).toMatchObject({
       ok: false,
-      error: { code: 403, message: "Permission denied: net.fetch" },
+      error: { code: 403, message: `Permission denied: ${call}` },
     });
     expect(cancelled).toBe("Dispatched request completed");
   });

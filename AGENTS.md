@@ -43,6 +43,7 @@ This document is the root engineering contract for the repository. It explains h
 - Structured frames carry metadata. Potentially large or binary payloads travel through frame bodies and streams.
 - Live syscall ledger rows require both the ledger signal grant and `sys.ledger.list`, scoped to the owning human or root. Clients merge pushed rows and completion updates by sequence; ordinary ledger changes must not trigger another ledger read.
 - Whoever accepts a body, request, media object, or background operation owns its completion, cancellation, and cleanup.
+- The instance service owns cloud browser save ordering, profile leases, encrypted snapshots and forgetting. Browser profile syscalls expose metadata and deletion under the same owner and browser capabilities. Ordinary stop requires a successful final save, while explicit force, expiry and deletion remain available.
 
 ### Treat targets as Unix-shaped capability environments
 
@@ -101,6 +102,7 @@ Contact conversations have no mandatory Process handler. Pairing and first-messa
 - `workers/gateway/src/inference/`: inference coordination and the authorized callback into machine model transport. Gateway owns credentials, request admission, cancellation and stale-result fences; it does not execute provider SDKs or use an AI binding directly.
 - `workers/inference/` and `packages/inference/`: required inference execution Worker, durable request execution, shared provider integration, model transport, media processing and the public reference provider policy. An operator can deploy this independently of Gateway; commercial implementations consume the same execution runtime.
 - `packages/gsv/`: public client and protocol types.
+- `packages/browser/`: shared browser commands, semantic page references, shell, and filesystem driver. Backends supply CDP, tab operations, and persistence; browser state belongs to the backend instance.
 - `web/`: Instrument web UI, setup/login, shared browser-side gateway services, and the development design catalog.
 - `host/apps/desktop/`: desktop host for the shared Instrument UI, native input, local control, machine enrollment through the CLI, and window lifecycle.
 - `host/apps/cli/`: user, deployment, administration, and OS service-control commands.
@@ -109,6 +111,7 @@ Contact conversations have no mandatory Process handler. Pairing and first-messa
 - `host/crates/`: shared gateway transport, host configuration, Desktop IPC, gesture protocol contracts, and Windows SCM/process ownership primitives. `host/` owns their Cargo workspace and build artifacts.
 - `workers/adapters/`: platform-specific messaging workers and identity normalization.
 - `extension/`: browser-backed target and browser integration.
+- `workers/instances/`: optional cloud browser provisioning, profiles, human control, metering, and instance-owned cleanup.
 - `workers/ripgit/`: git-backed repositories and filesystem storage operations.
 
 Keep platform-specific identity and delivery behavior in its adapter. Keep visual presentation in the web and Desktop clients. Keep target selection below stable syscall contracts.
@@ -128,6 +131,7 @@ OS service privilege must never become an agent shell privilege by accident.
 - Pending tool calls and tool results must stay consistent.
 - A stale run must not mutate active state.
 - Cancellation must propagate to the component that owns the active operation.
+- Browser handoff links are Kernel-owned records, independent of editable work details. Cancelling work commits locally; durable reconciliation retries provider cleanup and resumes work whose handoff ended.
 - Request cancellation does not recursively kill an already-created durable shell session unless that contract explicitly says so.
 - `shell.cancel` explicitly stops a durable device session and its process tree. The device owns termination independently of the caller connection; polling remains available for the terminal result. Device disconnects leave session identity available for a status check after reconnect.
 - Recoverable shell starts use `shell.exec` with `start: true` and a caller-persisted fresh `sessionId`. The Kernel persists its target before dispatch and the machine claims that exact identity before spawning. Recovery only polls or cancels; it must never replay a start or uncertain stdin.
@@ -242,6 +246,8 @@ Before Desktop Rust checks, build its shared frontend with `npm run gsv:build &&
 - Machine: `cd host && cargo fmt --package machine --check && cargo test --package machine`
 - ripgit: `cd workers/ripgit && npm test`
 - Browser extension: `cd extension && npm run check && npm run test:run && npm run build`
+- Cloud instances: `npm run typecheck --workspace workers/instances && npm test --workspace workers/instances`; after starting the local stack, `npm run smoke:browser`
+- Shared browser core: `npm run browser:build`, then the browser extension checks above and checks for each provider that consumes it.
 - Discord, Telegram, Slack, or test adapter: `cd workers/adapters/<name> && npm run typecheck`
 
 Protocol or client changes may affect gateway, web, CLI, devices, and adapters even when only one type definition changed. Validate each actual consumer.

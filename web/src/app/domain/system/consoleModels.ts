@@ -32,6 +32,7 @@ export type ConsoleTarget = {
   online: boolean;
   lastSeenAt: number | null;
   implements: string[];
+  instance?: SysTargetSummary["instance"];
 };
 
 export type ConsoleAccountRelation = "self" | "personal-agent" | "agent" | "human" | "unknown";
@@ -182,3 +183,4 @@ export function combineResourceStates<A, B>(
   };
 }
 import type { JsonObject } from "@humansandmachines/gsv/protocol";
+import type { SysTargetSummary } from "@humansandmachines/gsv/protocol";

@@ -17,7 +17,7 @@ type Props = {
   load(): Promise<OwnerWelcome>;
   onConnect(origin: string, onboardingToken?: string | null): Promise<void>;
   addressPanel?: (options: { disabled: boolean; connect(origin: string): Promise<void> }) => ComponentChildren;
-  initialStep?: "welcome" | "invite";
+  initialStep?: "welcome" | "invite" | "email";
 };
 
 export function OwnerWelcomeScreen({ ready, resume, load, onConnect, addressPanel, initialStep = "welcome" }: Props) {

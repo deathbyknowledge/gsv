@@ -16,11 +16,19 @@ pub struct ErrorShape {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum BinaryBodyDelivery {
+    #[serde(rename = "realtime")]
+    Realtime,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FrameBodyDescriptor {
     pub stream_id: u32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub length: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub delivery: Option<BinaryBodyDelivery>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

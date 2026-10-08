@@ -17,6 +17,7 @@ pub const BINARY_FRAME_CANCEL: u8 = 1 << 3;
 pub const BINARY_FRAME_WINDOW: u8 = 1 << 4;
 /// Credit every sender starts with before its receiver has granted anything.
 pub const BINARY_INITIAL_WINDOW_BYTES: u64 = 4 * 1024 * 1024;
+pub const BINARY_REALTIME_WINDOW_BYTES: u64 = 32 * 1024;
 pub const BINARY_WINDOW_PAYLOAD_BYTES: usize = 4;
 
 // ---------------------------------------------------------------------------
@@ -181,6 +182,7 @@ mod tests {
         assert_eq!(
             request.body,
             Some(FrameBodyDescriptor {
+                delivery: None,
                 stream_id: 41,
                 length: Some(3),
             })
@@ -195,6 +197,7 @@ mod tests {
             data: Some(json!({ "ok": true })),
             error: None,
             body: Some(FrameBodyDescriptor {
+                delivery: None,
                 stream_id: 42,
                 length: None,
             }),

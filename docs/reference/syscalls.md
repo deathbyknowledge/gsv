@@ -169,11 +169,16 @@ type FilesystemSyscalls = {
 ```
 
 `fs.copy` copies one file between two endpoints, each on `gsv` or on a target
-machine, so a machine-to-`gsv` copy needs no client in the middle. The
+that implements file transfers, including connected machines and cloud
+browsers. A target-to-`gsv` copy needs no client in the middle. Native commands
+such as `cp` and `img2txt` resolve their file sources through the same target
+discovery, authorization and routing as direct filesystem calls. The
 `fs.transfer.*` calls are the body-bearing transport: `fs.transfer.send`
 answers with the bytes as a response body, `fs.transfer.receive` takes them as
 a request body, and `fs.transfer.stat` reports size and revision without a
-body. See [Frame Bodies](/reference/websocket-protocol#frame-bodies).
+body. Browser receivers cancel and release their body reader on cancellation or
+deadline, including when a sender stalls. Cancellation while reading leaves
+the destination unchanged. See [Frame Bodies](/reference/websocket-protocol#frame-bodies).
 
 For a file result, `size` is the original file size; the body descriptor length
 is the transmitted payload size and can differ when `offset` or `limit` selects
@@ -288,12 +293,19 @@ rejects reuse of an existing ID. Machines start under that exact ID and detach
 immediately. The start acknowledgement consumes no output; the first poll owns it.
 Recovery polls or cancels the saved ID and never replays the start or stdin.
 Older machines reject the unknown session before executing the command and must
-be updated. Browser targets can accept a named start but remain foreground-only;
-disconnecting their request cancels the operation. The native `gsv` shell also
+be updated. Browser targets accept a named start but remain foreground-only;
+disconnecting their request cancels the operation, and they reject session polls
+and stdin. Their start response contains the terminal result. The native `gsv` shell also
 remains foreground-only and does not accept named sessions.
+
+Follow-up requests resolve the saved target against the caller's current target
+inventory, including cloud instances. A remembered session ID does not grant
+access to a target the caller can no longer see.
 
 When the Kernel rejects a named start before forwarding it, the error includes
 `details: { "shellStart": "rejected" }`. Clients may finish that attempt as failed.
+This includes cloud-browser service acquisition failures before the command is
+sent. A later attempt uses a fresh session ID; the rejected ID remains reserved.
 An unmarked transport error is uncertain: retain the saved session ID and recover
 by polling. A reused ID is also unmarked because its existing command may be live.
 
@@ -1549,6 +1561,112 @@ type RepoSyscalls = {
 };
 ```
 
+## Cloud instances and browser control
+
+The optional instance service owns browser starts, deadlines, stop, profiles and
+usage. Kernel derives installation and human owner scope. Management calls are
+available through native `instance` and `browser` shell commands; ordinary browser
+commands run on the returned target. See [cloud browsers](/how-to/cloud-browsers).
+
+A start requires a persisted request ID. Repeating the same ID and arguments
+returns the same instance, including after it becomes terminal. With a new request
+ID, ordinary starts reuse the owner's ready or starting automatic browser without
+extending its lifetime or reserving more usage. `fresh: true` explicitly creates
+a separate temporary browser. Ordinary new browsers automatically use the
+account's automatic saved-login profile. Its durable `automatic` marker
+distinguishes it from explicitly created profiles. Ordinary starts only reuse a
+browser attached to that automatic profile; deleting it never selects another
+explicit profile. Every start request retains its own receipt, including
+when it reused an instance. The start result is `{ instance, disposition }`,
+where `disposition` is `created` or `reused` and remains stable on replay.
+Instance selectors accept the full instance ID, its exact displayed target ID,
+or the original start request ID. Unknown instance IDs fail; an unknown request
+ID returns `instance: null`, and stopping it fences any future admission of that
+request. Instance reservations and concurrency are space-wide, while
+access to instances, profiles and human requests is owner-scoped.
+
+`sys.instance.list` returns active instances. `includeTerminal: true` also
+includes the owner's 64 most recently created terminal instances. Inventory
+omits `persistence.issues`; use `sys.instance.get` for recent details. Older
+terminal records retain compact identity/status receipts for exact selectors
+and start-request replay, but discard `persistence`, `reason` and `diagnosticRef`.
+The private runtime is discarded at termination. Monthly usage and saved
+profiles have independent lifetimes.
+
+Usage starts at readiness and ends at the earlier of fixed `expiresAt` or
+confirmed termination. Settlement rounds up once to seconds, caps by the
+reservation, and assigns each started second to its UTC month. Cleanup retains
+the reservation until termination is confirmed but cannot add usage past expiry.
+
+`sys.browser.profile.list` accepts an optional nonnegative `offset` and returns
+`{ profiles, total, nextOffset? }`. Each page contains at most 32 summaries in
+creation order, excluding storage `usage` and `issues`; `sys.browser.profile.get`
+retrieves those details for one profile. Usage metadata has a 64 KiB aggregate
+budget; `siteCount` and `sitesTruncated` identify omitted site breakdowns while
+byte totals remain exact. These metadata limits never truncate saved state.
+
+Instance `persistence` and browser-profile results distinguish `saved`, `partial`
+and `failed` saves. A partial save commits supported sites and retains the failed
+origins' previous storage and matching cookies. Its `issues` list contains each
+origin, `unsupported` or `unavailable` reason, message, diagnostic reference and
+optional `retainedAt` timestamp. Snapshot `savedAt` does not imply those sites
+were updated. Partial saves allow ordinary stop; a whole-save failure preserves
+the previous snapshot and keeps the browser running. `force: true` explicitly
+discards unsaved changes.
+
+`handoff.open`, `handoff.finish`, `browser.watch`,
+and `browser.input` require a directly signed-in human.
+Processes cannot use them. A process's handoff request requires a writable
+responsibility ID. Only a pending or active handoff puts that work into waiting;
+retrying a terminal request reconciles completion without blocking the work again.
+Cancelling or resolving the linked responsibility commits locally even if the
+instances service is unavailable. Kernel-owned links and scheduled reconciliation
+retry human-control cleanup independently of editable work details and survive
+restart. Live links are checked every five seconds; provider-side stop, expiry,
+profile deletion or failure reopens the matching waiting work. Service failures
+retain a private diagnostic and back off retries to at most one minute.
+`input` accepts a
+bounded JSON body describing a click, key, text, scroll or tab selection. Viewing
+does not create a handoff or pause automation. Input names the displayed tab and
+document, and rejects a changed document before dispatch. Human and agent input
+actions are serialized; recent human activity gets priority automatically. Images
+and typed input are not syscall arguments or agent history. Automation on the
+instance is fenced while a human request is pending or active. Completion closes
+input admission and waits for accepted input before resuming automation.
+
+`browser.watch({ instanceId, tabId? })` returns `{ watchId, version: 1 }` and an
+open binary body containing image and state records. Omit `tabId` to follow the
+active tab. Clients drain frames as they display them; a small binary receive
+window and replacement of unsent images keep slow viewers from building an
+unbounded backlog. Cancelling the body closes only that viewer. Four viewers
+may share an instance; their capture producer is shared per page.
+See [browser view records](/reference/websocket-protocol#browser-view-records).
+
+The following argument and result types are exported from
+`@humansandmachines/gsv/protocol`:
+
+```ts
+type InstanceSyscalls = {
+  "sys.instance.catalog": { args: SysInstanceCatalogArgs; result: SysInstanceCatalogResult };
+  "sys.instance.start": { args: SysInstanceStartArgs; result: SysInstanceStartResult };
+  "sys.instance.list": { args: SysInstanceListArgs; result: SysInstanceListResult };
+  "sys.instance.get": { args: SysInstanceGetArgs; result: SysInstanceGetResult };
+  "sys.instance.stop": { args: SysInstanceStopArgs; result: SysInstanceStopResult };
+  "sys.browser.profile.create": { args: SysBrowserProfileCreateArgs; result: SysBrowserProfileCreateResult };
+  "sys.browser.profile.list": { args: SysBrowserProfileListArgs; result: SysBrowserProfileListResult };
+  "sys.browser.profile.get": { args: SysBrowserProfileGetArgs; result: SysBrowserProfileGetResult };
+  "sys.browser.profile.save": { args: SysBrowserProfileSaveArgs; result: SysBrowserProfileSaveResult };
+  "sys.browser.profile.delete": { args: SysBrowserProfileDeleteArgs; result: SysBrowserProfileDeleteResult };
+  "sys.browser.handoff.request": { args: SysBrowserHandoffRequestArgs; result: SysBrowserHandoffRequestResult };
+  "sys.browser.handoff.get": { args: SysBrowserHandoffGetArgs; result: SysBrowserHandoffGetResult };
+  "sys.browser.handoff.cancel": { args: SysBrowserHandoffCancelArgs; result: SysBrowserHandoffCancelResult };
+  "sys.browser.handoff.open": { args: SysBrowserHandoffOpenArgs; result: SysBrowserHandoffOpenResult };
+  "sys.browser.handoff.finish": { args: SysBrowserHandoffFinishArgs; result: SysBrowserHandoffFinishResult };
+  "sys.browser.watch": { args: SysBrowserWatchArgs; result: SysBrowserWatchResult };
+  "sys.browser.input": { args: SysBrowserInputArgs; result: SysBrowserInputResult };
+};
+```
+
 ## System: `sys.*`
 
 `sys.*` covers setup, configuration, devices, workspaces, tokens, and account links.
@@ -1567,7 +1685,7 @@ Runtime behavior:
 | `sys.target.list` | `handleSysTargetList` | Lists targets accessible by owner uid or group ACL. Root sees all. Defaults to online devices only unless `includeOffline` is true. |
 | `sys.target.get` | `handleSysTargetGet` | Reads one target descriptor. Missing or inaccessible targets return `target: null` rather than a permission error. |
 | `sys.target.update` | `handleSysTargetUpdate` | Updates owner-managed target metadata. Root or the device owner may update the process-visible `description`; group-only device access can use the device but cannot edit its metadata. Missing or inaccessible targets return `target: null`. |
-| `sys.target.delete` | `handleSysTargetDelete` | Forgets an owned physical target, disconnects any live socket for it, and revokes active machine tokens bound to that peer id. Group-only access cannot forget. Missing or inaccessible devices return `deleted: false`. |
+| `sys.target.delete` | `handleSysTargetDelete` | Forgets an owned physical target, disconnects any live socket for it, and revokes active machine tokens bound to that peer id. Group-only access cannot forget. For an instance target, invokes `sys.instance.stop` with its capability and agent approval checks; the instance record remains and `deleted` is false. Missing or inaccessible devices return `deleted: false`. |
 | `sys.ledger.list` | `handleSysLedgerList` | Lists the ledger of dispatched syscalls, newest first, paged by `cursor`. Each line carries who, where, the call, its arguments as sent (JSON text, cut at 16 KB), the outcome, and duration; ai calls add tokens and cost. Failed responses retain their reported `error` message, capped at 4,096 characters; older entries may omit it. Provider metadata and response bodies are not copied into that field. Non-root sees the lines of its owning human; root sees all. Filters: `pid`, `target`, `callPrefix`, `since`, `until`. |
 | `sys.oauth.start` | `handleSysOAuthStart` | Starts an OAuth authorization-code + PKCE flow for an AI provider, MCP server, or generic integration. Returns an authorization URL and pending flow summary. Redirects must target `/oauth/callback` on the deployed GSV origin. Non-root is scoped to self. |
 | `sys.oauth.list` | `handleSysOAuthList` | Lists OAuth account summaries without access or refresh tokens. Non-root is scoped to self; root can list all or one uid. `includePending: true` also returns unexpired pending flows. |

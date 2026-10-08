@@ -59,12 +59,15 @@ const README = [
   "  windows list",
   "  windows focus <windowId>",
   "",
-  "  page snapshot [--tab <tabId>] [--json]",
+  "  page snapshot [--tab <tabId>] [--within <@ref>] [--json]",
   "  page snapshot [--tab <tabId>] --dom [selector]",
   "  page text [--tab <tabId>] [selector]",
   "  page screenshot [--tab <tabId>]",
   "  page click [--tab <tabId>] <@ref|selector> [index]",
   "  page type [--tab <tabId>] <@ref|selector> <text>",
+  "  page fill [--tab <tabId>] <locator> <value>",
+  "  page select [--tab <tabId>] <locator> <value> | --option-label <label>",
+  "  page check [--tab <tabId>] <locator> [--unchecked]",
   "  page key [--tab <tabId>] <key>",
   "  page scroll [--tab <tabId>] [@ref] <up|down|top|bottom|x,y>",
   "  page wait [--tab <tabId>] <selector> [--timeout ms]",
@@ -146,6 +149,13 @@ const README = [
   "  page snapshot returns a semantic accessibility outline with snapshot-scoped refs; canonical refs start with @ and bare generated refs are also accepted.",
   "  use page snapshot --dom for the bounded raw-DOM debugging view.",
   "  page click/type accept semantic refs or CSS selectors; refs remain pinned to their original tab and document.",
+  "  actions also accept --label <field label> or --role <role> --name <exact name>, optionally --within <@ref>; ambiguous matches fail with candidate refs.",
+  "  page fill replaces and verifies text, number, and native date/time values; page type inserts text only.",
+  "  page select sets a native dropdown by value or --option-label; custom dropdowns use page click --role option --name <name>.",
+  "  page check sets checked state without toggling an already matching control; use --unchecked to clear it.",
+  "  page snapshot --within <@ref> inspects one form or dialog; action --snapshot adds a readable outline after its intact JSON receipt.",
+  "  add --json to --snapshot for the full structured snapshot tree; use scoped snapshots to keep output focused.",
+  "  keep action receipts intact: do not pipe them through head. Chain dependent actions with &&; use set -o pipefail if an action must be piped.",
   "  taking a newer snapshot does not itself expire recent refs, though dynamic pages may replace or repurpose their nodes.",
   "  page click/type/key/scroll use Chrome input and report accepted delivery separately from observed page changes.",
   "  targeted scroll top/bottom repeats bounded native wheel input and reports whether it reached the requested boundary.",
@@ -686,7 +696,7 @@ async function activeTabPath(signal?: AbortSignal): Promise<string> {
 
 async function tabText(tab: TabSummary, signal?: AbortSignal): Promise<string> {
   try {
-    const extracted = await executeInTab<string>(tab.id, extractVisibleText, [], signal);
+    const extracted = await executeInTab(tab.id, extractVisibleText, [], signal);
     return compactPageText(extracted);
   } catch (error) {
     throwIfAborted(signal);

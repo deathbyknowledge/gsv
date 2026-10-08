@@ -4,8 +4,9 @@ import type { InstallationDeletionManifest } from "./deletion-inventory";
 import { createInstallationDeletionInventoryResolver, type OperatorDeletionInventory } from "../../../deployment/src/installation-deletion-resolver.ts";
 import type { DeletionResourceObservation } from "../../../deployment/src/installation-deletion-evidence.ts";
 import { AccountsOperatorResources } from "./operator-resources";
+import { installationResourceId } from "./operator-resource-contracts";
 
-type ScopedResource = Pick<InstallationDeletionManifest["owners"][number]["resources"][number], "kind" | "namespace">;
+type ScopedResource = Pick<InstallationDeletionManifest["owners"][number]["resources"][number], "kind" | "namespace"> & { r2Prefix?: "installation-root" };
 export type DeletionResourceEnvironment = AccountsDeletionEnvironment & {
   /** Deployment declares every current or historical owner and its non-DO storage. */
   DELETION_RESOURCE_SCOPES?: Record<string, ScopedResource[]>;
@@ -23,7 +24,7 @@ export function configuredDeletionEnvironment(db: D1Database, env: DeletionResou
   return { ...env, DELETION_INVENTORY: createInstallationDeletionInventoryResolver({
     namespaces: Object.entries(namespaces).map(([namespaceId, owner]) => ({ namespaceId, ownerId: owner.ownerId, className: owner.kind })),
     resources: (installationId) => Object.fromEntries(Object.entries(scopes).map(([owner, resources]) => [owner,
-      resources.map((resource) => ({ ...resource, resourceId: resource.kind === "r2" ? `installations/${encodeURIComponent(installationId)}/` : installationId })),
+      resources.map((resource) => ({ kind: resource.kind, namespace: resource.namespace, resourceId: installationResourceId(resource, installationId) })),
     ])),
     verifyAdditionalEvidence: (input) => additionalEvidence.verifyAdditionalEvidence(input),
     createProbe: async (epoch) => ({

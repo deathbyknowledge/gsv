@@ -44,13 +44,17 @@ const persistedRevokesSchema = z.array(z.string().min(1)).catch([]);
 const sessionErrorSchema = z.object({
   code: z.number().optional(),
   retryable: z.boolean().optional(),
-  details: z.object({ setupMode: z.literal(true).optional() }).optional(),
+  details: z.object({
+    setupMode: z.literal(true).optional(),
+    setupRecovery: z.literal(true).optional(),
+    setupUrl: z.url({ protocol: /^https$/ }).optional().catch(undefined),
+  }).optional(),
 });
 const sessionWireSchema = z.unknown();
 type SessionWireValue = z.input<typeof sessionWireSchema>;
 const sessionMessageSchema = z.union([z.instanceof(Error), z.string()]);
 
-export type SessionPhase = "booting" | "setup" | "locked" | "authenticating" | "ready";
+export type SessionPhase = "booting" | "setup" | "setup-recovery" | "locked" | "authenticating" | "ready";
 
 export type SessionSnapshot = {
   phase: SessionPhase;
@@ -59,6 +63,7 @@ export type SessionSnapshot = {
   connectionId: string | null;
   server: ServerBuild | null;
   message: string | null;
+  setupRecoveryUrl?: string;
 };
 
 export type SessionLoginInput = {
@@ -86,6 +91,7 @@ export type SessionService = {
   setup: (input: SessionSetupInput) => Promise<SysSetupResult>;
   lock: (reason?: string) => Promise<void>;
   start: () => Promise<void>;
+  resumeSetup?: (url: string) => void;
   dispose?: () => void;
 };
 
@@ -94,7 +100,8 @@ export type SessionStorage = Pick<Storage, "getItem" | "setItem" | "removeItem">
 export type SessionServiceOptions = {
   url?: string;
   storage?: SessionStorage;
-  onboarding?: false | { token: string; complete(): Promise<void> };
+  onboarding?: false | { token: string; discard(): Promise<void>; complete(): Promise<void> };
+  resumeSetup?: (url: string) => void;
 };
 
 function readStored(key: string, storage?: SessionStorage): string | null {
@@ -176,6 +183,14 @@ function isSetupRequiredError(value: SessionWireValue): boolean {
   return error.data.details?.setupMode === true;
 }
 
+function setupRecovery(value: SessionWireValue): Pick<SessionSnapshot, "phase" | "message" | "setupRecoveryUrl"> | null {
+  const parsed = sessionErrorSchema.safeParse(value);
+  const details = parsed.success ? parsed.data.details : undefined;
+  return details?.setupRecovery
+    ? { phase: "setup-recovery", message: "Finish setting up your space", setupRecoveryUrl: details.setupUrl }
+    : null;
+}
+
 function isAuthenticationRejectedError(value: SessionWireValue): boolean {
   const error = sessionErrorSchema.safeParse(value);
   return error.success && error.data.code === 401;
@@ -229,7 +244,7 @@ async function revokeSessionToken(client: SessionClient, tokenId: string, reason
   return result.revoked === true;
 }
 
-async function probeSetupMode(client: SessionClient, url: string): Promise<boolean> {
+async function probeSetupMode(client: SessionClient, url: string): Promise<Pick<SessionSnapshot, "phase" | "message" | "setupRecoveryUrl">> {
   try {
     await client.requestOnce(url, "sys.connect", {
       protocol: 4,
@@ -239,12 +254,14 @@ async function probeSetupMode(client: SessionClient, url: string): Promise<boole
         platform: "browser",
       },
     });
-    return false;
+    return { phase: "locked", message: null };
   } catch (error) {
+    const recovery = setupRecovery(error);
+    if (recovery) return recovery;
     if (isSetupRequiredError(error)) {
-      return true;
+      return { phase: "setup", message: null };
     }
-    return false;
+    return { phase: "locked", message: isAuthenticationRejectedError(error) ? null : normalizeMessage(error) };
   }
 }
 
@@ -532,6 +549,11 @@ export function createSessionService(client: SessionClient, options: SessionServ
       }
       if (disposed || generation !== reconnectGeneration || !syncStoredSession()) return;
 
+      const recovery = setupRecovery(error);
+      if (recovery) {
+        setSnapshot({ ...recovery, url: gatewayUrl(), username: token.username, connectionId: null });
+        return;
+      }
       if (isSetupRequiredError(error)) {
         setSnapshot({
           phase: "setup",
@@ -675,6 +697,11 @@ export function createSessionService(client: SessionClient, options: SessionServ
       return result;
     } catch (error) {
       if (disposed || generation !== reconnectGeneration) throw error;
+      const recovery = setupRecovery(error);
+      if (recovery) {
+        setSnapshot({ ...recovery, url, username: username || snapshot.username, connectionId: null });
+        throw error;
+      }
       if (isSetupRequiredError(error)) {
         setSnapshot({
           phase: "setup",
@@ -722,12 +749,27 @@ export function createSessionService(client: SessionClient, options: SessionServ
       });
     } catch (error) {
       if (setupGeneration === reconnectGeneration) {
+        let recovery = setupRecovery(error);
+        if (recovery && installationOnboardingToken) {
+          try {
+            if (options.onboarding) await options.onboarding.discard();
+            else clearInstallationOnboardingToken();
+            installationOnboardingToken = null;
+          } catch (storageError) {
+            if (setupGeneration === reconnectGeneration) setSnapshot({ phase: "setup", url,
+              username: username || snapshot.username, connectionId: null, message: normalizeMessage(storageError) });
+            throw storageError;
+          }
+        }
+        if (recovery) recovery = await probeSetupMode(client, url);
+        if (setupGeneration !== reconnectGeneration) throw error;
         setSnapshot({
           phase: "setup",
           url,
           username: username || snapshot.username,
           connectionId: null,
           message: normalizeMessage(error),
+          ...recovery,
         });
       }
       throw error;
@@ -803,49 +845,18 @@ export function createSessionService(client: SessionClient, options: SessionServ
     }
 
     if (!persisted) {
-      const setupRequired = await probeSetupMode(client, url);
+      const initial = await probeSetupMode(client, url);
       if (disposed || generation !== reconnectGeneration) return;
-      if (setupRequired) {
-        setSnapshot({
-          phase: "setup",
-          url,
-          username: snapshot.username,
-          connectionId: null,
-          message: null,
-        });
-      } else {
-        setSnapshot({
-          phase: "locked",
-          url,
-          username: snapshot.username,
-          connectionId: null,
-          message: null,
-        });
-      }
+      setSnapshot({ ...initial, url, username: snapshot.username, connectionId: null });
       return;
     }
 
     if (persisted.expiresAt !== null && persisted.expiresAt <= Date.now()) {
       clearStoredSessionToken();
-      const setupRequired = await probeSetupMode(client, url);
+      const initial = await probeSetupMode(client, url);
       if (disposed || generation !== reconnectGeneration) return;
-      if (setupRequired) {
-        setSnapshot({
-          phase: "setup",
-          url,
-          username: snapshot.username,
-          connectionId: null,
-          message: null,
-        });
-      } else {
-        setSnapshot({
-          phase: "locked",
-          url,
-          username: persisted.username,
-          connectionId: null,
-          message: "Session expired. Sign in again.",
-        });
-      }
+      setSnapshot({ ...initial, url, username: persisted.username, connectionId: null,
+        message: initial.message ?? (initial.phase === "locked" ? "Session expired. Sign in again." : null) });
       return;
     }
 
@@ -874,6 +885,7 @@ export function createSessionService(client: SessionClient, options: SessionServ
     setup,
     lock,
     start,
+    resumeSetup: options.resumeSetup,
     dispose: () => {
       disposed = true;
       cancelSilentReconnect();

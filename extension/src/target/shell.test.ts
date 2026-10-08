@@ -2,10 +2,44 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { pageCommand } from "./commands/page";
 import { BrowserTargetShell, DEFAULT_BROWSER_SHELL_TIMEOUT_MS } from "./shell";
 import type { BrowserCommand, CommandResult, TargetFileSystem } from "./types";
+import { BrowserTargetFileSystem } from "./fs";
 
 afterEach(() => vi.unstubAllGlobals());
 
 describe("BrowserTargetShell", () => {
+  it("copies across directories and over existing files while rejecting a copy onto itself", async () => {
+    const fs = new BrowserTargetFileSystem(directoryOnlyFileSystem());
+    const shell = new BrowserTargetShell(fs, []);
+    const bytes = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0, 0xff, 0x80]);
+    await fs.write("/home/browser/screenshots/shot.png", bytes);
+    for (let attempt = 0; attempt < 2; attempt++) {
+      expect(await shell.exec({ input: "cp /home/browser/screenshots/shot.png /tmp/shot.png" })).toMatchObject({ status: "completed", exitCode: 0 });
+      expect(await fs.read("/tmp/shot.png")).toEqual(bytes);
+    }
+    expect(await shell.exec({ input: "cp /tmp/shot.png /tmp/../tmp/shot.png" })).toMatchObject({ status: "failed", error: expect.stringContaining("are the same file") });
+    expect(await fs.read("/tmp/shot.png")).toEqual(bytes);
+  });
+
+  it("preserves binary bytes through redirection, pipes and append, including stderr to /dev/null", async () => {
+    const fs = new BrowserTargetFileSystem(directoryOnlyFileSystem());
+    const shell = new BrowserTargetShell(fs, []);
+    const bytes = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0, 0xff, 0x80]);
+    await fs.write("/home/browser/shot.png", bytes);
+    expect(await shell.exec({ input: "cat /home/browser/shot.png > /tmp/shot.png 2>/dev/null" })).toMatchObject({ status: "completed", exitCode: 0 });
+    expect(await fs.read("/tmp/shot.png")).toEqual(bytes);
+    expect(await shell.exec({ input: "cat /home/browser/shot.png | cat >> /tmp/shot.png" })).toMatchObject({ status: "completed", exitCode: 0 });
+    expect(await fs.read("/tmp/shot.png")).toEqual(new Uint8Array([...bytes, ...bytes]));
+  });
+
+  it("discards /dev/null writes without making the runtime filesystem writable", async () => {
+    const fs = new BrowserTargetFileSystem(directoryOnlyFileSystem());
+    const shell = new BrowserTargetShell(fs, []);
+    expect(await shell.exec({ input: "printf discarded > /dev/null && cat /dev/null" })).toMatchObject({ status: "completed", output: "", exitCode: 0 });
+    expect(await fs.read("/dev/null")).toEqual(new Uint8Array());
+    expect(await fs.list("/dev")).toEqual({ files: ["null"], directories: [] });
+    await expect(fs.write("/dev/other", new Uint8Array([1]))).rejects.toThrow("Read-only path");
+  });
+
   it("uses a two-minute default runtime", () => {
     expect(DEFAULT_BROWSER_SHELL_TIMEOUT_MS).toBe(120_000);
   });
@@ -37,10 +71,10 @@ describe("BrowserTargetShell", () => {
     });
   });
 
-  it("stops a running command when its request is cancelled", async () => {
+  it.each([false, true])("stops a running command when its request is cancelled (named start: %s)", async (named) => {
     const shell = new BrowserTargetShell(directoryOnlyFileSystem(), []);
     const controller = new AbortController();
-    const execution = shell.exec({ input: "sleep 300" }, { abortSignal: controller.signal });
+    const execution = shell.exec({ input: "sleep 300", ...(named ? { start: true, sessionId: crypto.randomUUID() } : {}) }, { abortSignal: controller.signal });
 
     await new Promise((resolve) => setTimeout(resolve, 10));
     controller.abort(new Error("User interrupted"));
@@ -77,7 +111,7 @@ describe("BrowserTargetShell", () => {
     expect(read.mock.calls[0]?.[1]?.aborted).toBe(true);
   });
 
-  it("rejects session starts and polls before executing browser side effects", async () => {
+  it("accepts named foreground starts but rejects polls and stdin before executing browser side effects", async () => {
     const run = vi.fn(commandResult);
     const shell = new BrowserTargetShell(directoryOnlyFileSystem(), [{
       name: "side-effect",
@@ -85,15 +119,42 @@ describe("BrowserTargetShell", () => {
       run,
     }]);
     const sessionId = crypto.randomUUID();
-    for (const args of [{ sessionId, start: true }, { start: true }, { sessionId }]) {
-      await expect(shell.exec({ input: "side-effect", ...args })).resolves.toMatchObject({
+    for (const input of ["", "side-effect"]) {
+      await expect(shell.exec({ input, sessionId })).resolves.toMatchObject({
         status: "failed",
-        error: "Browser shell sessions are not supported yet",
+        error: expect.stringContaining("foreground-only"),
       });
     }
     expect(run).not.toHaveBeenCalled();
 
+    await expect(shell.exec({ input: "side-effect", sessionId, start: true })).resolves.toMatchObject({ status: "completed", exitCode: 0 });
+    expect(run).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects malformed named starts before executing commands", async () => {
+    const run = vi.fn(commandResult);
+    const shell = new BrowserTargetShell(directoryOnlyFileSystem(), [{ name: "side-effect", summary: "Record a browser side effect.", run }]);
+    for (const sessionId of [undefined, "", "invalid", crypto.randomUUID().toUpperCase()]) {
+      await expect(shell.exec({ input: "side-effect", start: true, sessionId })).resolves.toMatchObject({
+        status: "failed", error: "Starting a named browser command requires a fresh UUID",
+      });
+    }
+    expect(run).not.toHaveBeenCalled();
     await expect(shell.exec({ input: "side-effect" })).resolves.toMatchObject({ status: "completed" });
+    expect(run).toHaveBeenCalledOnce();
+  });
+
+  it("rejects malformed execution settings before commands run and leaves the queue usable", async () => {
+    const run = vi.fn(commandResult);
+    const shell = new BrowserTargetShell(directoryOnlyFileSystem(), [{ name: "side-effect", summary: "Record a browser side effect.", run }]);
+    for (const timeout of [0, -1, "100", null]) {
+      await expect(shell.exec({ input: "side-effect", timeout })).resolves.toMatchObject({
+        status: "failed", error: "shell.exec timeout must be a positive number",
+      });
+    }
+    await expect(shell.exec({ input: "side-effect", cwd: 42 })).resolves.toMatchObject({ status: "failed" });
+    expect(run).not.toHaveBeenCalled();
+    await expect(shell.exec({ input: "side-effect", cwd: undefined })).resolves.toMatchObject({ status: "completed" });
     expect(run).toHaveBeenCalledTimes(1);
   });
 
@@ -206,7 +267,7 @@ describe("BrowserTargetShell", () => {
     await expect(execution).resolves.toMatchObject({ status: "failed" });
 
     let idle = false;
-    const waiting = shell.waitForIdle().then(() => { idle = true; });
+    const waiting = shell.idle().then(() => { idle = true; });
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(idle).toBe(false);
     running.resolve(undefined);

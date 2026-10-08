@@ -24,7 +24,7 @@ import type { LibraryCollection } from "../../../services/memory/libraryTypes";
 import { useTerminalSessions } from "../../../services/terminal/TerminalProvider";
 import { terminalFinished } from "../../../services/terminal/terminalSessions";
 import { TerminalControls } from "./TerminalControls";
-import { orderPlaces, type FleetReference } from "../fleet/fleetModel";
+import { fleetReferenceRow, orderPlaces, type FleetReference } from "../fleet/fleetModel";
 import { ConnectPlace } from "../fleet/ConnectPlace";
 import { FleetDialog } from "../fleet/FleetDialog";
 import { INSTRUMENT_MEMORY_KEY, INSTRUMENT_TARGETS_KEY } from "../wire/queryKeys";
@@ -182,7 +182,7 @@ const ActivityLine = memo(function ActivityLine({
       </div>
       {open ? (
         <div class="detail">
-          {activity.target !== null ? <button type="button" class="work-link" onClick={() => onFleet(`target:${activity.target}`)}>view {label} in fleet</button> : null}
+          {activity.target !== null ? <button type="button" class="work-link" onClick={() => onFleet(`target:${activity.target}`)}>view {label}</button> : null}
           <ActivityWorking activity={activity} who={who} />
           {activity.terminal && <TerminalControls session={activity.terminal} />}
         </div>
@@ -308,8 +308,9 @@ function NoteMoment({
   );
 }
 
-export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, pid: pidProp, onDraftChange }: ZenProps) {
+export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, onPrefillUsed, pid: pidProp, onDraftChange }: ZenProps) {
   const active = useViewActive();
+  const browserControl = useBrowserControl();
   const { client, connected } = useGateway();
   const { snapshot } = useSession();
   const who = snapshot.username || "you";
@@ -438,6 +439,14 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
     queryFn: () => loadConsoleTargets(client),
     enabled: connected,
   });
+  const onFleet = useCallback<ZenProps["onFleet"]>((reference) => {
+    const row = fleetReferenceRow(reference ?? null);
+    const target = row?.startsWith("target:")
+      ? targetsQuery.data?.find(target => target.deviceId === row.slice(7)) : undefined;
+    if (browserControl.available && target?.instance && ["starting", "ready"].includes(target.instance.state)) {
+      browserControl.open({ instanceId: target.instance.instanceId });
+    } else navigateFleet(reference);
+  }, [browserControl.available, browserControl.open, targetsQuery.data, navigateFleet]);
   useEffect(() => {
     if (!targetsQuery.data) return;
     const next = placesFromTargets(targetsQuery.data);
@@ -844,7 +853,7 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
       const receipt = receipts.get(moment.id);
       return <>
         {moment.role === "human" || moment.text || moment.media?.length || moment.streaming ? <div class="who">
-          {moment.role === "human" ? who : "ship"}
+          {moment.role === "human" ? who : "GSV"}
           {moment.outgoing && moment.outgoing.status !== "failed" ? (
             <span class="zen-send-status" role="status" aria-label={moment.outgoing.status === "uploading" ? "Uploading attachments" : "Sending message"}>
               <Spinner size={14} />
@@ -1015,6 +1024,7 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
       </div>
 
       <div class="zen-bottom">
+        {!pidProp && <BrowserRequests />}
         {pid ? <DelegatedApprovals pid={pid} onFleet={onFleet} placeLabelFor={(target) => placeLabel(target, places)} /> : null}
 
         <div class="zen-composer">
@@ -1096,18 +1106,20 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
                 {currentPlace.label} is offline · view place
               </button>
             </div>}
-            <ul class="zen-places" aria-label="Choose a place for your next message or command">
+            <ul class="zen-places" aria-label="Places and live browsers">
               {selectorPlaces.map((target) => {
                 const label = target.id === CLOUD_PLACE_ID ? CLOUD_PLACE_LABEL : target.label;
+                const viewBrowser = browserControl.available && target.instance && ["starting", "ready"].includes(target.instance.state);
                 return (
                   <li key={target.id}>
                     <button type="button" class={`zen-place${cloudAlone ? " is-alone" : target.id === currentPlace.id ? " is-selected" : ""}`}
-                      aria-label={target.online ? `Use ${label} for the next message or command` : `${label} is offline`}
-                      aria-pressed={target.id === currentPlace.id}
-                      disabled={!target.online}
-                      onClick={() => { setWhere(target.id); setPickerQuery(null); promptRef.current?.focus(); }}>
+                      aria-label={viewBrowser ? `View ${label}` : target.online ? `Use ${label} for the next message or command` : `${label} is offline`}
+                      aria-pressed={viewBrowser ? undefined : target.id === currentPlace.id}
+                      disabled={!viewBrowser && !target.online}
+                      onClick={() => { if (viewBrowser) onFleet(`target:${target.id}`); else { setWhere(target.id); setPickerQuery(null); promptRef.current?.focus(); } }}>
                       <span class={`zen-place-status${target.online ? " is-online" : ""}`} aria-hidden="true" />
                       <span>{label}</span>
+                      {viewBrowser && <span class="zen-browser-open" aria-hidden="true">↗</span>}
                     </button>
                     {cloudAlone && <button type="button" class="zen-connect-place" onClick={() => setConnectingPlace(true)}>+ connect place</button>}
                   </li>
@@ -1128,3 +1140,4 @@ export function Zen({ onFleet, onMemory, initialTarget, prefill, onPrefillUsed, 
     </main>
   );
 }
+import { BrowserRequests, useBrowserControl } from "../browser/BrowserControl";
