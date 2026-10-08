@@ -338,6 +338,11 @@ of encrypted saved profiles. Browser Run credentials stay in its `BROWSER`
 binding. Profile keys stay in the coordinator; object addresses and encryption
 authentication include installation and human owner scope.
 
+The first browser release creates its instance database with one initial SQL
+migration. Earlier development checkpoints are not a supported upgrade path.
+The Gateway separately applies its new browser-handoff-links migration to
+existing spaces; previously shipped Gateway migrations remain unchanged.
+
 Production configuration is disabled by default. Supply explicit `BROWSER_LIMITS`
 or an `ENTITLEMENTS` service implementing these policy keys:
 
@@ -393,7 +398,8 @@ After the server is ready, `npm run smoke:browser` creates
 a clean local space and exercises concurrent start reuse, automatic saved logins,
 cookie/local-storage/IndexedDB restoration, passive viewing, cursor reporting,
 human input alongside agent work, input revocation, stop and saved-state deletion.
-Live-view checks cover following page commands, pinned tabs, rapid tab changes,
+Login and live-view checks both use `sys.browser.watch`, the same streamed view
+as Instrument. Checks cover following page commands, pinned tabs, rapid tab changes,
 and closing the followed tab. Browser
 artifact checks also cover screenshots, binary shell operations and file
 transfers in both directions between the browser and `gsv`, nested web components,

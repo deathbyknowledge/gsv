@@ -74,12 +74,12 @@ export async function encryptProfile(chunks: Uint8Array[], size: number, key: Cr
 }
 
 export async function decodeProfile(payload: Uint8Array): Promise<string> {
-  const compressed = PROFILE_FORMAT.every((value, index) => payload[index] === value);
+  if (!PROFILE_FORMAT.every((value, index) => payload[index] === value)) throw new Error("Unsupported saved browser format");
   const input = new ReadableStream<Uint8Array>({ start(controller) {
-    controller.enqueue(compressed ? payload.subarray(PROFILE_FORMAT.length) : payload); controller.close();
+    controller.enqueue(payload.subarray(PROFILE_FORMAT.length)); controller.close();
     payload = new Uint8Array();
   } });
-  const reader = (compressed ? input.pipeThrough(new DecompressionStream("gzip")) : input).getReader();
+  const reader = input.pipeThrough(new DecompressionStream("gzip")).getReader();
   const decoder = new TextDecoder(), text: string[] = []; let bytes = 0;
   try {
     for (;;) {

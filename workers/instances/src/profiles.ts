@@ -24,7 +24,6 @@ export class ProfileStorage {
   }
   async restore(row: ProfileRow): Promise<StorageState | undefined> {
     if (!row.object_key) return undefined;
-    // Existing encrypted JSON snapshots remain readable and migrate on the next save.
     const decoded = await decodeProfile(await this.decrypt(row));
     // SAFETY: Authenticated encryption binds these bytes to the exact revision saved from Playwright's storageState().
     const state = JSON.parse(decoded) as StorageState;

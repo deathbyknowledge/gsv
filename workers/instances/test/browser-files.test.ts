@@ -1,5 +1,4 @@
 import { runInDurableObject } from "cloudflare:test";
-import { Buffer } from "node:buffer";
 import { env } from "cloudflare:workers";
 import { describe, expect, it, vi } from "vitest";
 import { BrowserFsDriver, BrowserTargetFileSystem } from "@humansandmachines/gsv-browser/fs";
@@ -7,7 +6,6 @@ import type { TargetFileSystem } from "@humansandmachines/gsv-browser/types";
 import type { FilePersistence } from "@humansandmachines/gsv-browser/fs-persistence";
 import { browserFilePersistence, MAX_BROWSER_FILE_BYTES } from "../src/browser-files";
 import { InstanceStore } from "../src/store";
-import { migrate } from "../src/schema";
 
 async function fixture(work: (fs: BrowserTargetFileSystem, reopen: () => BrowserTargetFileSystem, persistence: FilePersistence, store: InstanceStore) => Promise<void>) {
   await runInDurableObject(env.INSTANCES.getByName(crypto.randomUUID()), async (_object, ctx) => {
@@ -45,21 +43,10 @@ describe("cloud browser files", () => {
     expect(store.sql.exec("SELECT 1 FROM files").toArray()).toHaveLength(0);
   }));
 
-  it("migrates existing entries to metadata without changing binary sizes or directories", () => fixture(async (fs, reopen, persistence, store) => {
+  it("reopens chunked entries without changing binary sizes or directories", () => fixture(async (fs, reopen, persistence, store) => {
     for (let size = 0; size < 6; size++) await fs.write(`/tmp/files/${size}`, new Uint8Array(size), "image/png");
     const large = new Uint8Array(1024 * 1024); large[0] = 1; large[large.length - 1] = 2;
     await fs.write("/tmp/files/large", large);
-    const legacy = await Promise.all((await persistence.list()).map(entry => persistence.get(entry.path)));
-    store.sql.exec("DROP TABLE file_chunks");
-    store.sql.exec("DROP TABLE files");
-    store.sql.exec("CREATE TABLE files (instance_id TEXT NOT NULL, path TEXT NOT NULL, entry BLOB NOT NULL, PRIMARY KEY(instance_id, path))");
-    for (const entry of legacy) {
-      if (!entry) throw new Error("Missing fixture entry");
-      const encoded = JSON.stringify(entry.kind === "file" ? { ...entry, content: Buffer.from(entry.content).toString("base64") } : entry);
-      store.sql.exec("INSERT INTO files VALUES (?, ?, ?)", store.activeRows()[0]!.id, entry.path, new TextEncoder().encode(encoded));
-    }
-    store.sql.exec("DELETE FROM instance_schema WHERE id IN (7, 8)");
-    migrate(store.storage);
     const recovered = reopen();
     for (let size = 0; size < 6; size++) {
       expect(await recovered.stat(`/tmp/files/${size}`)).toMatchObject({ size, contentType: "image/png" });

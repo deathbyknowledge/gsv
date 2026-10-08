@@ -4,8 +4,8 @@ import { browserTemplate, type BrowserLimits } from "./config";
 import { boundBrowserStorageUsage } from "./browser-storage-summary";
 
 export type InstanceRow = {
-  id: string; owner_uid: number; request_id: string; fingerprint: string; record: string; active: number;
-  period_start: number; reservation: number; charged: number; session_id: string | null; acquire_at: number | null; runtime: string | null;
+  id: string; owner_uid: number; record: string; active: number;
+  reservation: number; charged: number; session_id: string | null; acquire_at: number | null; runtime: string | null;
   provider_failed_at: number | null; retained: number;
 };
 export type ProfileRow = { id: string; owner_uid: number; request_id: string; record: string; key: ArrayBuffer | null; object_key: string | null; saved_revision: number };
@@ -15,9 +15,7 @@ export function period(now: number) {
 }
 export function instance(row: Pick<InstanceRow, "record">): CloudInstance {
   // SAFETY: This private column is written only from admitted CloudInstance records and versioned migrations.
-  const value = JSON.parse(row.record) as CloudInstance;
-  if (value.label === "Cloud browser") value.label = `Browser ${value.instanceId.slice(0, 8)}`;
-  return value;
+  return JSON.parse(row.record) as CloudInstance;
 }
 export function profile(row: ProfileRow): BrowserProfile {
   // SAFETY: The profile owner serializes BrowserProfile records into this private column.
@@ -95,7 +93,7 @@ export class InstanceStore {
         label: args.label ?? `Browser ${id.slice(0, 8)}`, state: "starting", revision: 1, profileId, isolated: args.fresh === true && !profileId,
         createdAt: now, expiresAt: now + lifetime * 1000,
       };
-      this.sql.exec("INSERT INTO instances (id, owner_uid, request_id, fingerprint, record, active, period_start, reservation) VALUES (?, ?, ?, ?, ?, 1, ?, ?)", id, actor.ownerUid, args.requestId, fingerprint, JSON.stringify(value), period(now).start, lifetime);
+      this.sql.exec("INSERT INTO instances (id, owner_uid, record, active, reservation) VALUES (?, ?, ?, 1, ?)", id, actor.ownerUid, JSON.stringify(value), lifetime);
       this.sql.exec("INSERT INTO start_requests VALUES (?, ?, ?, ?)", actor.ownerUid, args.requestId, id, fingerprint);
       if (saved) this.putProfile({ ...profile(saved), activeInstanceId: id, revision: profile(saved).revision + 1 });
       return value;
@@ -135,7 +133,6 @@ export class InstanceStore {
       return value;
     });
   }
-  profiles(ownerUid: number): Iterable<ProfileRow> { return this.sql.exec<ProfileRow>("SELECT * FROM profiles WHERE owner_uid = ? ORDER BY rowid DESC", ownerUid); }
   profilesInState(state: "active" | "deleting"): ProfileRow[] {
     return this.sql.exec<ProfileRow>("SELECT * FROM profiles WHERE json_extract(record, '$.state') = ?", state).toArray();
   }

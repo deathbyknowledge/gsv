@@ -1662,7 +1662,6 @@ type InstanceSyscalls = {
   "sys.browser.handoff.cancel": { args: SysBrowserHandoffCancelArgs; result: SysBrowserHandoffCancelResult };
   "sys.browser.handoff.open": { args: SysBrowserHandoffOpenArgs; result: SysBrowserHandoffOpenResult };
   "sys.browser.handoff.finish": { args: SysBrowserHandoffFinishArgs; result: SysBrowserHandoffFinishResult };
-  "sys.browser.frame": { args: SysBrowserFrameArgs; result: SysBrowserFrameResult };
   "sys.browser.watch": { args: SysBrowserWatchArgs; result: SysBrowserWatchResult };
   "sys.browser.input": { args: SysBrowserInputArgs; result: SysBrowserInputResult };
 };

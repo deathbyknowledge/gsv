@@ -57,11 +57,8 @@ describe("private browser diagnostics", () => {
     for (const ref of refs) expect(ids()).not.toContain(ref);
   }));
 
-  it("adds retention indexes without losing diagnostics or changing their references", () => inStore(store => {
+  it("preserves diagnostic identities when reopening the schema", () => inStore(store => {
     const ref = store.diagnostic("existing", "old failure");
-    store.sql.exec("DROP INDEX diagnostics_instance_detail");
-    store.sql.exec("DROP INDEX diagnostics_recent");
-    store.sql.exec("DELETE FROM instance_schema WHERE id = 9");
     migrate(store.storage); migrate(store.storage);
     expect(store.diagnostic("existing", "old failure")).toBe(ref);
     expect(store.sql.exec("SELECT id FROM diagnostics").toArray()).toHaveLength(1);

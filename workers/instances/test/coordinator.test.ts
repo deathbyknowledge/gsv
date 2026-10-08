@@ -10,6 +10,7 @@ import { ProfileStorage } from "../src/profiles";
 import { BrowserStorageError, SAVE_TIMEOUT_MS } from "../src/browser-storage";
 import { BrowserFsDriver } from "@humansandmachines/gsv-browser/fs";
 import type { TargetFileSystem } from "@humansandmachines/gsv-browser/types";
+import { decodeBrowserViewStream } from "@humansandmachines/gsv/protocol";
 
 const actor = { ownerUid: 1000, human: true };
 const limits = { enabled: true, concurrentInstances: 2, periodSeconds: 36000, maxInstanceSeconds: 1800, savedProfiles: 5, profileStorageBytes: 5242880 };
@@ -26,7 +27,7 @@ async function fixture(work: (object: InstanceCoordinator, store: InstanceStore,
     viewState: () => ({ kind: "state", activeTabId: 1, tabs: [{ id: 1, title: "Login", url: "https://example.com/login" }] }),
     onViewChange: () => () => {},
     watchTab: async (_id, frame) => { frame({ tabId: 1, documentId: "document", capturedAt: Date.now(), width: 1280, height: 800, image: new Uint8Array([1, 2]) }); return () => {}; },
-    humanInput, humanFrame: async () => ({ bytes: new Uint8Array([1, 2]), documentId: "document" }),
+    humanInput,
     documentId: async () => "document", runInput: async work => work(), focusTab: async () => ({ id: 1 }),
     save: async () => ({ state: { cookies: [], origins: [] }, usage: { bytes: 27, cookieBytes: 2, cookies: 0, sites: [] } }),
     // SAFETY: These coordinator tests exercise only shell execution and its idle barrier.
@@ -315,26 +316,32 @@ describe("human browser control", () => {
     expect(unsubscribe).toHaveBeenCalledTimes(5);
   }));
   it("lets the owner watch and input while automation continues, without creating a handoff", () => fixture(async (object, store, instanceId) => {
-    const frame = await object.frame(actor, { instanceId });
-    expect(frame.data).toMatchObject({ tabId: 1, documentId: "document", instance: { instanceId } });
-    expect(frame.data.handoff).toBeUndefined();
-    await frame.body.stream.cancel();
+    const stream = decodeBrowserViewStream((await object.watch(actor, { instanceId })).body);
+    const state = await stream.next();
+    expect(state.value.metadata).toMatchObject({ kind: "state", activeTabId: 1 });
+    expect(state.value.metadata.handoff).toBeUndefined();
+    expect((await stream.next()).value.metadata).toMatchObject({ kind: "frame", tabId: 1, documentId: "document" });
+    await stream.return(undefined);
     await object.input(actor, { instanceId, tabId: 1, documentId: "document" }, { kind: "text", text: "hello" });
     expect(store.liveHandoffs(instanceId)).toEqual([]);
     expect(await object.execute(actor, instanceId, { type: "req", id: "watching", call: "shell.exec", args: { input: "page snapshot" } }, Date.now() + 10000)).toMatchObject({ ok: true });
-    await expect(object.frame({ ownerUid: 1001, human: true }, { instanceId })).rejects.toThrow("not found");
+    await expect(object.watch({ ownerUid: 1001, human: true }, { instanceId })).rejects.toThrow("not found");
     await expect(object.input(actor, { instanceId, tabId: 1, documentId: "previous-page" }, { kind: "click", x: 1, y: 2 })).rejects.toThrow("page changed");
     await object.stop(actor, { instanceId });
     await expect(object.input(actor, { instanceId, tabId: 1, documentId: "document" }, { kind: "text", text: "late" })).rejects.toThrow("not ready");
   }));
-  it("captures a selected tab without depending on the first inventory page", () => fixture(async (object, _store, instanceId, _installationId, browser) => {
-    browser.getTab = vi.fn(async id => ({ id, url: "https://example.com/login" }));
+  it("streams a selected tab outside the first inventory page", () => fixture(async (object, _store, instanceId, _installationId, browser) => {
     browser.listTabs = vi.fn(async () => ({ tabs: [], total: 1000, nextOffset: 128 }));
-    const frame = await object.frame(actor, { instanceId, tabId: 999 });
-    expect(frame.data.tabId).toBe(999);
-    expect(browser.getTab).toHaveBeenCalledWith(999);
-    expect(browser.listTabs).not.toHaveBeenCalled();
-    await frame.body.stream.cancel();
+    browser.viewState = () => ({ kind: "state", activeTabId: 1, tabs: [{ id: 999, title: "Selected", url: "https://example.com" }] });
+    browser.watchTab = vi.fn(async (tabId, frame) => {
+      frame({ tabId, documentId: "selected", capturedAt: Date.now(), width: 1280, height: 800, image: new Uint8Array([1, 2]) });
+      return () => {};
+    });
+    const stream = decodeBrowserViewStream((await object.watch(actor, { instanceId, tabId: 999 })).body);
+    await stream.next();
+    expect((await stream.next()).value.metadata).toMatchObject({ kind: "frame", tabId: 999, documentId: "selected" });
+    expect(browser.watchTab).toHaveBeenCalledWith(999, expect.any(Function), expect.any(Function));
+    await stream.return(undefined);
   }));
   it("cancels request bodies rejected before admission", () => fixture(async (object, _store, instanceId) => {
     const cancelled = vi.fn();
@@ -377,7 +384,7 @@ describe("human browser control", () => {
     await expect(object.openHandoff({ ...actor, human: false, processId: "agent" }, selector)).rejects.toThrow("human owner");
     await expect(object.openHandoff({ ownerUid: 1001, human: true }, selector)).rejects.toThrow("not found");
     await object.openHandoff(actor, selector);
-    await expect(object.frame({ ...actor, human: false }, selector)).rejects.toThrow("human owner");
+    await expect(object.watch({ ...actor, human: false }, { instanceId })).rejects.toThrow("human owner");
     await expect(object.input({ ...actor, human: false }, { instanceId, tabId: 1, documentId: "document", handoffRequestId: "login" }, { kind: "text", text: "secret" })).rejects.toThrow("human owner");
     await object.input(actor, { instanceId, tabId: 1, documentId: "document", handoffRequestId: "login" }, { kind: "text", text: "test" });
     await object.finishHandoff(actor, selector);
@@ -565,8 +572,8 @@ describe("browser save ordering", () => {
     await vi.waitFor(() => expect(browser.save).toHaveBeenCalledOnce());
     const command = object.execute(actor, instanceId, { type: "req", id: "after-save", call: "shell.exec", args: { input: "tabs close 1" } }, Date.now() + 10000);
     const input = object.input(actor, { instanceId, tabId: 1, documentId: "document" }, { kind: "click", x: 10, y: 10 });
-    const frame = await object.frame(actor, { instanceId });
-    await frame.body.stream.cancel();
+    const view = await object.watch(actor, { instanceId });
+    await view.body.stream.cancel();
     expect(events).toEqual([]);
     exported.resolve();
     await uploading.promise;
@@ -991,7 +998,7 @@ describe("installation retirement", () => {
     expect(receipt).toMatchObject({ phase: "live-erased", pendingResources: 0, outcome: "retention-pending" });
     expect(receipt.retainedCopies).toHaveLength(1);
     expect(store.sql.exec("SELECT id FROM instances").toArray()).toEqual([]);
-    expect([...store.profiles(actor.ownerUid)]).toEqual([]);
+    expect(store.sql.exec("SELECT id FROM profiles").toArray()).toEqual([]);
     await expect(object.start(actor, { requestId: "late", templateId: "browser" })).rejects.toThrow("retired");
     await expect(object.eraseInstallation({ ...request, operationId: "other" })).rejects.toThrow("immutable");
   }));

@@ -610,7 +610,6 @@ The current body-bearing syscalls are:
 | Syscall | Request body | Response body |
 |---|---|---|
 | `sys.browser.watch` | No | Continuous browser image/state records |
-| `sys.browser.frame` | No | One JPEG image |
 | `sys.browser.input` | Bounded UTF-8 JSON input | No |
 | `sys.feedback` | Required UTF-8 JSON report (message and optional activity), at most 512 KiB | No |
 | `fs.read` | No | Raw UTF-8 text, or image bytes when `representation` is `content`. Resource-mode image reads, directory listings, and operation errors are JSON-only. |

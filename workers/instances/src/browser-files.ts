@@ -50,7 +50,7 @@ export function browserFilePersistence(store: InstanceStore, instanceId: string)
 }
 
 function decodeMetadata(value: string): StoredFsMetadata {
-  // SAFETY: Metadata is committed with each entry or derived by the versioned migration.
+  // SAFETY: Metadata is committed with each entry by this persistence driver.
   return JSON.parse(value) as StoredFsMetadata;
 }
 

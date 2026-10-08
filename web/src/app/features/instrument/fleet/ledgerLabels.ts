@@ -116,7 +116,6 @@ const labels = {
   "sys.browser.handoff.cancel": "cancel a browser handoff",
   "sys.browser.handoff.open": "open a browser handoff",
   "sys.browser.handoff.finish": "finish a browser handoff",
-  "sys.browser.frame": "view the live browser",
   "sys.browser.watch": "watch the live browser",
   "sys.browser.input": "control the live browser",
   "sys.config.set": "changed a setting",

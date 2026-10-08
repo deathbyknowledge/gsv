@@ -18,7 +18,7 @@ function inStore<T>(work: (store: InstanceStore) => T | Promise<T>) {
 }
 
 describe("instance admission", () => {
-  it.each([false, true])("bounds terminal inventory while retaining owner-scoped replay receipts (migration: %s)", upgrade => inStore(store => {
+  it("bounds terminal inventory while retaining owner-scoped replay receipts", () => inStore(store => {
     const other = { ...actor, ownerUid: 1001 };
     const records = [actor, other].map(owner => Array.from({ length: 70 }, (_, index) => {
       const started = store.admit(owner, { requestId: `history-${index}`, templateId: "browser", lifetimeSeconds: 300 }, limits);
@@ -30,19 +30,6 @@ describe("instance admission", () => {
       return terminal;
     }));
     const running = store.admit(actor, { requestId: "running", templateId: "browser", lifetimeSeconds: 300 }, limits);
-    if (upgrade) {
-      store.sql.exec("DROP INDEX instances_retained");
-      store.sql.exec("DROP INDEX instances_target");
-      store.sql.exec("DROP INDEX profiles_state");
-      store.sql.exec("DROP INDEX profiles_live");
-      store.sql.exec("ALTER TABLE instances DROP COLUMN retained");
-      for (const record of records.flat()) {
-        store.update(record);
-        store.sql.exec("UPDATE instances SET runtime = ? WHERE id = ?", '{"tabs":[1]}', record.instanceId);
-      }
-      store.sql.exec("DELETE FROM instance_schema WHERE id = 13");
-      migrate(store.storage); migrate(store.storage);
-    }
     expect(store.inventory(actor.ownerUid).map(value => value.instanceId)).toEqual([running.instanceId]);
     for (const [index, owner] of [actor, other].entries()) {
       const inventory = store.inventory(owner.ownerUid, true);
@@ -91,35 +78,13 @@ describe("instance admission", () => {
     expect(fresh.profileId).not.toBe(explicit.profileId);
     expect(profile(store.ownedProfile(actor, explicit.profileId)!).activeInstanceId).toBe(manual.instanceId);
   }));
-  it("migrates established automatic state and does not select another profile after deletion", () => inStore(store => {
-    const explicit = store.createProfile(actor, "explicit", "Browser", limits);
-    const first = store.admit(actor, { requestId: "ordinary", templateId: "browser", lifetimeSeconds: 300 }, limits);
-    store.terminal(first.instanceId, false);
-    const upgrade = () => {
-      store.sql.exec("DROP INDEX profiles_automatic_owner");
-      store.sql.exec("UPDATE profiles SET record = json_remove(record, '$.automatic')");
-      store.sql.exec("DELETE FROM instance_schema WHERE id = 12");
-      migrate(store.storage); migrate(store.storage);
-    };
-    upgrade();
-    expect(profile(store.ownedProfile(actor, first.profileId!)!).automatic).toBe(true);
-    expect(profile(store.ownedProfile(actor, explicit.profileId)!).automatic).not.toBe(true);
-    const next = store.admit(actor, { requestId: "continued", templateId: "browser", lifetimeSeconds: 300 }, limits);
-    expect(next.profileId).toBe(first.profileId);
-    store.terminal(next.instanceId, false);
-    store.putProfile({ ...profile(store.ownedProfile(actor, next.profileId!)!), state: "deleted" });
-    upgrade();
-    const fresh = store.admit(actor, { requestId: "after-upgrade", templateId: "browser", lifetimeSeconds: 300 }, limits);
-    expect(fresh.profileId).not.toBe(first.profileId);
-    expect(fresh.profileId).not.toBe(explicit.profileId);
-  }));
   it("reuses a starting browser, remembers every request, and keeps one allowance and login store", () => inStore(store => {
     const first = store.admit(actor, { requestId: "human", templateId: "browser", lifetimeSeconds: 300 }, limits);
     const second = store.admit({ ...actor, human: false, processId: "ship" }, { requestId: "ship", templateId: "browser" }, limits);
     expect(second.instanceId).toBe(first.instanceId);
     expect(first.targetId).toMatch(/^[0-9a-f]{8}$/);
     expect(first.profileId).toBeDefined();
-    expect([...store.profiles(actor.ownerUid)]).toHaveLength(1);
+    expect(store.listProfiles(actor.ownerUid).total).toBe(1);
     expect(store.usage(limits)).toMatchObject({ activeInstances: 1, reservedSeconds: 300 });
     expect(store.owned(actor, { startRequestId: "ship" })?.id).toBe(first.instanceId);
     store.terminal(first.instanceId, false);
@@ -136,31 +101,11 @@ describe("instance admission", () => {
     expect(isolated.profileId).toBeUndefined();
     expect(store.admit(actor, { requestId: "ordinary", templateId: "browser", lifetimeSeconds: 300 }, limits).instanceId).toBe(primary.instanceId);
   }));
-  it("migrates original start receipts without changing their replay semantics", () => inStore(store => {
-    const args = { requestId: "before-upgrade", templateId: "browser", lifetimeSeconds: 300 };
-    const first = store.admit(actor, args, limits);
-    store.sql.exec("DROP TABLE start_requests");
-    store.sql.exec("DELETE FROM instance_schema WHERE id = 4");
-    store.sql.exec("UPDATE instances SET fingerprint = json_remove(fingerprint, '$[4]')");
-    migrate(store.storage);
-    expect(store.admit(actor, args, limits).instanceId).toBe(first.instanceId);
-    expect(() => store.admit(actor, { ...args, fresh: true }, limits)).toThrow("different arguments");
-  }));
   it("fences a stop that arrives before its start request", () => inStore(store => {
     store.cancelStart(actor, "late-start");
     expect(() => store.admit(actor, { requestId: "late-start", templateId: "browser" }, limits)).toThrow("cancelled before admission");
     expect(store.activeRows()).toHaveLength(0);
     expect(store.admit({ ownerUid: 1001, human: true }, { requestId: "late-start", templateId: "browser", lifetimeSeconds: 60 }, limits).state).toBe("starting");
-  }));
-  it("adds provider recovery state without changing existing sessions or leases", () => inStore(store => {
-    const first = store.admit(actor, { requestId: "before-health-upgrade", templateId: "browser", lifetimeSeconds: 300 }, limits);
-    store.sql.exec("UPDATE instances SET session_id = ? WHERE id = ?", "surviving-session", first.instanceId);
-    store.sql.exec("ALTER TABLE instances DROP COLUMN provider_failed_at");
-    store.sql.exec("DELETE FROM instance_schema WHERE id = 5");
-    migrate(store.storage);
-    expect(store.byId(first.instanceId)).toMatchObject({ session_id: "surviving-session", provider_failed_at: null });
-    expect(instance(store.byId(first.instanceId))).toEqual(first);
-    expect(profile(store.ownedProfile(actor, first.profileId!)!).activeInstanceId).toBe(first.instanceId);
   }));
   it("keeps a start receipt terminal and rejects reusing it with other arguments", () => inStore(store => {
     const args = { requestId: "start", templateId: "browser", lifetimeSeconds: 300 };
@@ -200,7 +145,7 @@ describe("instance admission", () => {
     expect(() => store.admit(actor, { requestId: "too-much", templateId: "browser", lifetimeSeconds: 600 }, nextLimits, rollover + 120001)).toThrow("allowance");
     expect(store.admit(actor, { requestId: "remaining", templateId: "browser", lifetimeSeconds: 480 }, nextLimits, rollover + 120001).state).toBe("starting");
   }));
-  it.each([false, true])("caps delayed startup usage at expiry and preserves reservations (migration: %s)", upgrade => inStore(store => {
+  it("caps delayed startup usage at expiry and preserves reservations", () => inStore(store => {
     const rollover = Date.UTC(2026, 10, 1), began = rollover - 300000;
     const started = store.admit(actor, { requestId: "slow-start", templateId: "browser", lifetimeSeconds: 300 }, limits, began);
     store.update({ ...started, state: "ready", readyAt: rollover - 60000 });
@@ -209,14 +154,6 @@ describe("instance admission", () => {
     store.update({ ...late, state: "ready", readyAt: rollover + 100 });
     store.terminal(late.instanceId, false, rollover + 60100);
     const active = store.admit(actor, { requestId: "still-running", templateId: "browser", lifetimeSeconds: 300 }, limits, rollover + 1);
-    if (upgrade) {
-      store.sql.exec("UPDATE instances SET charged = 120 WHERE id = ?", started.instanceId);
-      store.sql.exec("UPDATE instances SET charged = 60 WHERE id = ?", late.instanceId);
-      store.sql.exec("INSERT INTO instance_usage VALUES (?, ?, 60)", started.instanceId, rollover);
-      store.sql.exec("INSERT INTO instance_usage VALUES (?, ?, 60)", late.instanceId, rollover);
-      store.sql.exec("DELETE FROM instance_schema WHERE id = 14");
-      migrate(store.storage); migrate(store.storage);
-    }
     expect(store.byId(started.instanceId).charged).toBe(60);
     expect(store.byId(late.instanceId).charged).toBe(0);
     expect(store.usage(limits, began)).toMatchObject({ usedSeconds: 60, reservedSeconds: 300 });
@@ -237,22 +174,6 @@ describe("instance admission", () => {
     store.terminal(delayed.instanceId, false, rollover + 31000);
     expect(store.usage(limits, began).usedSeconds).toBe(1);
     expect(store.usage(limits, rollover).usedSeconds).toBe(89);
-  }));
-  it("migrates settled charges into their runtime months without retaining failed-start charges", () => inStore(store => {
-    const rollover = Date.UTC(2026, 10, 1), began = rollover - 60000;
-    const started = store.admit(actor, { requestId: "old-rollover", templateId: "browser", lifetimeSeconds: 600 }, limits, began);
-    store.update({ ...started, state: "ready", readyAt: began });
-    store.terminal(started.instanceId, false, rollover + 120000);
-    const failed = store.admit(actor, { requestId: "old-failure", templateId: "browser", lifetimeSeconds: 600 }, limits, began);
-    store.terminal(failed.instanceId, true, began);
-    store.sql.exec("UPDATE instances SET charged = 600 WHERE id = ?", failed.instanceId);
-    store.sql.exec("DROP TABLE instance_usage");
-    store.sql.exec("DROP INDEX instances_active");
-    store.sql.exec("DELETE FROM instance_schema WHERE id = 11");
-    migrate(store.storage); migrate(store.storage);
-    expect(store.usage(limits, began).usedSeconds).toBe(60);
-    expect(store.usage(limits, rollover).usedSeconds).toBe(120);
-    expect(store.byId(failed.instanceId).charged).toBe(0);
   }));
   it("releases failed startup time after a known allocation is confirmed stopped", () => inStore(store => {
     const value = store.admit(actor, { requestId: "failed-start", templateId: "browser", lifetimeSeconds: 300 }, limits);
@@ -280,9 +201,12 @@ describe("instance admission", () => {
   it("keeps receipts and profile keys when migrations run again", () => inStore(store => {
     const saved = store.createProfile(actor, "saved", "Personal", limits);
     const first = store.admit(actor, { requestId: "one", templateId: "browser", lifetimeSeconds: 300 }, limits);
-    migrate(store.storage);
+    const key = store.ownedProfile(actor, saved.profileId)!.key;
+    migrate(store.storage); migrate(store.storage);
+    expect(store.sql.exec("SELECT id FROM instance_schema").toArray()).toEqual([{ id: 1 }]);
     expect(instance(store.byId(first.instanceId))).toEqual(first);
-    expect(store.ownedProfile(actor, saved.profileId)?.key?.byteLength).toBe(32);
+    expect(store.admit(actor, { requestId: "one", templateId: "browser", lifetimeSeconds: 300 }, limits)).toEqual(first);
+    expect(store.ownedProfile(actor, saved.profileId)?.key).toEqual(key);
   }));
 });
 
@@ -452,24 +376,6 @@ describe("saved profile encryption", () => {
     expect(store.ownedProfile(actor, started.profileId!)?.object_key).toBe(row.object_key);
     await expect(storage.save(started, state, 5 * 1024 * 1024)).rejects.toThrow("allowance");
     expect(await storage.restore(store.ownedProfile(actor, started.profileId!)!)).toEqual(state);
-  }));
-  it("reads legacy encrypted JSON then upgrades it on the next save", () => inStore(async store => {
-    const started = store.admit(actor, { requestId: "legacy", templateId: "browser" }, limits);
-    const row = store.ownedProfile(actor, started.profileId!)!;
-    const address = `legacy/owners/${actor.ownerUid}/profiles/${row.id}/1-old`;
-    const state = { cookies: [], origins: [{ origin: "https://example.com", localStorage: [{ name: "session", value: "legacy" }] }] };
-    const key = await crypto.subtle.importKey("raw", row.key!, "AES-GCM", false, ["encrypt"]);
-    const iv = crypto.getRandomValues(new Uint8Array(12));
-    const encrypted = new Uint8Array(await crypto.subtle.encrypt({ name: "AES-GCM", iv, additionalData: new TextEncoder().encode(address) }, key, new TextEncoder().encode(JSON.stringify(state))));
-    const bytes = new Uint8Array(12 + encrypted.length); bytes.set(iv); bytes.set(encrypted, 12);
-    await bucket.put(address, bytes);
-    store.sql.exec("UPDATE profiles SET object_key = ?, saved_revision = 1 WHERE id = ?", address, row.id);
-    const storage = new ProfileStorage("legacy", bucket, store);
-    expect(await storage.restore(store.ownedProfile(actor, row.id)!)).toEqual(state);
-    await storage.save(started, state, 10000);
-    expect(store.ownedProfile(actor, row.id)?.saved_revision).toBe(2);
-    await storage.cleanup();
-    expect(await bucket.get(address)).toBeNull();
   }));
   it("retains obsolete snapshot cleanup across reconstruction without changing the committed save", () => inStore(async store => {
     const started = store.admit(actor, { requestId: "cleanup", templateId: "browser" }, limits);

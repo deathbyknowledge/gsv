@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { bodyFromText, bodyToBytes } from "../../packages/gsv/dist/protocol.js";
+import { bodyFromText } from "../../packages/gsv/dist/protocol.js";
+import { readBrowserView } from "./browser-view-smoke.mjs";
 
 export async function checkBrowserCredentials(shell, client, instance, website) {
   const js = async (tabId, expression) => JSON.parse(await shell(instance, `page js --tab ${tabId} '${expression}'`)).js.result;
@@ -26,9 +27,8 @@ export async function checkBrowserCredentials(shell, client, instance, website) 
   // Chrome disallows silent password retrieval in a frame; preserve that restriction.
   assert.deepEqual(iframe, { ...authentication, silent: "NotSupportedError" });
 
-  const frame = await client.request("sys.browser.frame", { instanceId: instance.instanceId, tabId: main.id });
-  await bodyToBytes(frame.body);
-  const input = value => client.request("sys.browser.input", { instanceId: instance.instanceId, tabId: main.id, documentId: frame.data.documentId }, {
+  const frame = await readBrowserView(client, { instanceId: instance.instanceId, tabId: main.id });
+  const input = value => client.request("sys.browser.input", { instanceId: instance.instanceId, tabId: main.id, documentId: frame.documentId }, {
     body: bodyFromText(JSON.stringify(value)),
   });
   const point = JSON.parse(await js(main.id, "JSON.stringify((() => { const r = document.getElementById(\"signin\").getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 }; })())"));

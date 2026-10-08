@@ -32,7 +32,6 @@ const MAX_PREALLOCATED_BODY_BYTES = 64 * 1024 * 1024;
 
 export const BODY_SYSCALL_NAMES = [
   "sys.feedback",
-  "sys.browser.frame",
   "sys.browser.watch",
   "sys.browser.input",
   "fs.read",

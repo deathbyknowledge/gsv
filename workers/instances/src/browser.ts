@@ -249,12 +249,6 @@ export class CloudBrowser implements BrowserPageBackend, BrowserTabsBackend, Deb
     const cdp = await this.debuggerFor(await this.page(id));
     return (await within(cdp.send("Page.getFrameTree"), 5000, "Browser document identity")).frameTree.frame.loaderId;
   }
-  async humanFrame(id: number): Promise<{ bytes: Uint8Array; documentId: string }> {
-    const documentId = await this.documentId(id);
-    const bytes = await within((await this.page(id)).screenshot({ type: "jpeg", quality: 75, timeout: 10000 }), 11000, "Browser live frame");
-    if (documentId !== await this.documentId(id)) throw new Error("The page changed; refreshing the view");
-    return { bytes, documentId };
-  }
   viewState(preferredTabId?: number): BrowserViewState {
     return { kind: "state", tabs: browserViewTabs(this.tabMetadata, this.state.activeTabId, preferredTabId), activeTabId: this.state.activeTabId, pointer: this.pointer };
   }
@@ -309,11 +303,5 @@ export class CloudBrowser implements BrowserPageBackend, BrowserTabsBackend, Deb
       const prefix = [[1, "Alt"], [2, "Control"], [4, "Meta"], [8, "Shift"]] as const;
       await page.keyboard.press([...prefix.filter(([mask]) => modifiers & mask).map(([, key]) => key), input.key].join("+"));
     } else { await page.mouse.move(input.x, input.y); await page.mouse.wheel(input.deltaX, input.deltaY); }
-  }
-  async close(): Promise<void> {
-    await Promise.allSettled([...this.screencasts.values()].map(async pending => (await pending).close()));
-    await Promise.allSettled(this.closingScreencasts.values());
-    this.screencasts.clear();
-    await this.browser.close();
   }
 }

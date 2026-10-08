@@ -9,7 +9,7 @@ import type {
   SysBrowserProfileListArgs, SysBrowserProfileListResult, SysBrowserProfileGetResult,
   SysBrowserHandoffRequestArgs, SysBrowserHandoffRequestResult,
   SysBrowserHandoffGetArgs, SysBrowserHandoffGetResult,
-  SysBrowserFrameArgs, SysBrowserFrameResult, SysBrowserInputArgs, BrowserHumanInput,
+  SysBrowserInputArgs, BrowserHumanInput,
   SysBrowserWatchArgs, SysBrowserWatchResult,
 } from "../protocol/syscalls/instance";
 
@@ -45,8 +45,7 @@ export const browserHandoffRequestSchema = z.strictObject({
   purpose: z.string().trim().min(1).max(500), responsibilityId: id.optional(),
 }) satisfies z.ZodType<SysBrowserHandoffRequestArgs>;
 export const browserHandoffSelectorSchema = z.strictObject({ instanceId: id, requestId: id });
-export const browserFrameSchema = z.strictObject({ instanceId: id, tabId: z.number().int().positive().optional() });
-export const browserWatchSchema = browserFrameSchema;
+export const browserWatchSchema = z.strictObject({ instanceId: id, tabId: z.number().int().positive().optional() });
 export const browserInputSchema = z.strictObject({ instanceId: id, tabId: z.number().int().positive(), documentId: id, handoffRequestId: id.optional() });
 export type InstanceTargetRequest = TypedRequest<SyscallDomains, SyscallName, BinaryBody>;
 export type InstanceTargetResponse = TypedResponse<SyscallDomains, SyscallName, BinaryBody>;
@@ -69,7 +68,6 @@ export interface InstallationInstances {
   cancelHandoff(actor: InstanceActor, args: SysBrowserHandoffGetArgs): Promise<SysBrowserHandoffGetResult>;
   openHandoff(actor: InstanceActor, args: SysBrowserHandoffGetArgs): Promise<SysBrowserHandoffRequestResult>;
   finishHandoff(actor: InstanceActor, args: SysBrowserHandoffGetArgs): Promise<SysBrowserHandoffGetResult>;
-  frame(actor: InstanceActor, args: SysBrowserFrameArgs): Promise<{ data: SysBrowserFrameResult; body: BinaryBody }>;
   watch(actor: InstanceActor, args: SysBrowserWatchArgs): Promise<{ data: SysBrowserWatchResult; body: BinaryBody }>;
   input(actor: InstanceActor, args: SysBrowserInputArgs, input: BrowserHumanInput): Promise<{ accepted: true }>;
   execute(actor: InstanceActor, instanceId: string, frame: InstanceTargetRequest, deadlineAt: number): Promise<InstanceTargetResponse>;

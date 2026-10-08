@@ -169,22 +169,9 @@ export type SysBrowserHandoffOpenArgs = SysBrowserHandoffGetArgs;
 export type SysBrowserHandoffOpenResult = { handoff: BrowserHandoff };
 export type SysBrowserHandoffFinishArgs = SysBrowserHandoffGetArgs;
 export type SysBrowserHandoffFinishResult = { handoff: BrowserHandoff };
-export type SysBrowserFrameArgs = { instanceId: string; tabId?: number };
-export type SysBrowserWatchArgs = SysBrowserFrameArgs;
+export type SysBrowserWatchArgs = { instanceId: string; tabId?: number };
 export type SysBrowserWatchResult = { watchId: string; version: 1 };
 export type BrowserPointer = { tabId: number; x: number; y: number; actor: "ship" | "human"; clickedAt?: number };
-/** The image travels in the response body, never in history or a provider URL. */
-export type SysBrowserFrameResult = {
-  instance: CloudInstance;
-  handoff?: BrowserHandoff;
-  tabId: number;
-  documentId: string;
-  pointer?: BrowserPointer;
-  tabs: Array<{ id: number; title: string; url: string }>;
-  width: number;
-  height: number;
-  contentType: "image/jpeg";
-};
 export type SysBrowserInputArgs = { instanceId: string; tabId: number; documentId: string; handoffRequestId?: string };
 export type SysBrowserInputResult = { accepted: true };
 /** Human-only input travels as a JSON body, outside syscall argument ledgers. */

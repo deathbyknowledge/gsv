@@ -9,6 +9,7 @@ import { checkBrowserCommands } from "./browser-commands-smoke.mjs";
 import { checkFormCommands } from "./form-commands-smoke.mjs";
 import { checkBrowserCredentials } from "./browser-credentials-smoke.mjs";
 import { checkBrowserFollowing } from "./browser-follow-smoke.mjs";
+import { readBrowserView } from "./browser-view-smoke.mjs";
 import { seedBrowserStorage, seedPartialBrowserStorage, checkBrowserStorageSummaryBounds, checkPartialBrowserStorage, checkRestoredBrowserStorage, checkForgettingBrowserStorage } from "./browser-storage-smoke.mjs";
 
 // Intentionally local: this fixture never creates a paid remote browser.
@@ -130,15 +131,14 @@ try {
   const selector = { instanceId: first.instanceId, requestId: handoff.requestId };
   await client.sys.browser.handoff.open(selector);
   await assert.rejects(client.shell.exec({ target: first.targetId, input: "page snapshot" }), /human_control/);
-  const frame = await client.request("sys.browser.frame", { instanceId: first.instanceId });
-  assert.ok((await bodyToBytes(frame.body)).byteLength > 1000);
+  const frame = await readBrowserView(client, { instanceId: first.instanceId });
+  assert.ok(frame.image.byteLength > 1000);
   const input = async value => {
-    const current = await client.request("sys.browser.frame", { instanceId: first.instanceId });
-    await bodyToBytes(current.body);
+    const current = await readBrowserView(client, { instanceId: first.instanceId });
     return client.request("sys.browser.input", { instanceId: first.instanceId, handoffRequestId: handoff.requestId,
-      tabId: current.data.tabId, documentId: current.data.documentId }, { body: bodyFromText(JSON.stringify(value)) });
+      tabId: current.tabId, documentId: current.documentId }, { body: bodyFromText(JSON.stringify(value)) });
   };
-  for (const id of [frame.data.tabs[0].id, tab.id]) await input({ kind: "tab", tabId: id });
+  for (const id of [frame.tabs[0].id, tab.id]) await input({ kind: "tab", tabId: id });
   await input({ kind: "click", x: 180, y: 175 });
   await input({ kind: "text", text: "tester@example.invalid" });
   await input({ kind: "key", key: "Tab" });
@@ -210,15 +210,15 @@ try {
   console.log("PASS: clean setup, idempotent start, human control, tab selection, input revocation, and cookie/localStorage/IndexedDB restoration");
 
   await shell(second, "page click '#coedit'");
-  const watching = await client.request("sys.browser.frame", { instanceId: second.instanceId });
-  assert.ok((await bodyToBytes(watching.body)).byteLength > 1000);
-  assert.equal(watching.data.handoff, undefined);
-  assert.equal(watching.data.pointer.actor, "ship");
-  assert.ok(watching.data.pointer.clickedAt);
+  const watching = await readBrowserView(client, { instanceId: second.instanceId });
+  assert.ok(watching.image.byteLength > 1000);
+  assert.equal(watching.handoff, undefined);
+  assert.equal(watching.pointer.actor, "ship");
+  assert.ok(watching.pointer.clickedAt);
   let finished = false;
   const waiting = shell(second, "page wait '#coedit[data-done=yes]' --timeout 10000").then(() => { finished = true; });
   await sleep(150); assert.equal(finished, false);
-  await client.request("sys.browser.input", { instanceId: second.instanceId, tabId: watching.data.tabId, documentId: watching.data.documentId }, {
+  await client.request("sys.browser.input", { instanceId: second.instanceId, tabId: watching.tabId, documentId: watching.documentId }, {
     body: bodyFromText(JSON.stringify({ kind: "text", text: "Human and Ship together" })),
   });
   await waiting;
@@ -255,8 +255,8 @@ try {
   assert.ok(Date.now() - listedAt < 5000, "Tab metadata waited for busy page JavaScript");
   await sleep(26000);
   assert.equal((await client.sys.instance.get({ instanceId: second.instanceId })).instance.state, "ready", "A busy renderer stopped a live browser");
-  const recovered = await client.request("sys.browser.frame", { instanceId: second.instanceId });
-  assert.ok((await bodyToBytes(recovered.body)).byteLength > 1000);
+  const recovered = await readBrowserView(client, { instanceId: second.instanceId });
+  assert.ok(recovered.image.byteLength > 1000);
   console.log("PASS: tab metadata and browser lifetime remain available while page JavaScript is blocked; live frames recover");
   await checkForgettingBrowserStorage(shell, client, second, start, state, website);
 } catch (error) { flowError = error; }

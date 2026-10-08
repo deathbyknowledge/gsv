@@ -39,19 +39,16 @@ const target: TargetDescriptor = {
   ownerUid: 1000, ownerUsername: "owner", label: "Browser", description: "Test browser", platform: "browser", version: "1",
   online: true, implements: ["shell.exec", "fs.read"], firstSeenAt: 0, lastSeenAt: 0, connectedAt: 0, disconnectedAt: null,
 };
-const frameData: Awaited<ReturnType<InstallationInstances["frame"]>>["data"] = {
-  instance: {
-    instanceId: "instance", targetId: "browser", startRequestId: "start", ownerUid: 1000,
-    templateId: "browser", templateRevision: "1", kind: "browser", implements: [], label: "Browser",
-    state: "ready", revision: 1, createdAt: 0, expiresAt: 60000,
-  },
-  tabId: 1, documentId: "document", tabs: [], width: 1280, height: 800, contentType: "image/jpeg",
+const browserInstance: CloudInstance = {
+  instanceId: "instance", targetId: "browser", startRequestId: "start", ownerUid: 1000,
+  templateId: "browser", templateRevision: "1", kind: "browser", implements: [], label: "Browser",
+  state: "ready", revision: 1, createdAt: 0, expiresAt: 60000,
 };
 
 describe("instance gateway boundary", () => {
   it("rejects a named start before dispatch and permits a fresh attempt without reusing the reserved ID", async () => {
     await runWithRealKernelSql(async sql => {
-      const instance: CloudInstance = { ...frameData.instance, implements: ["shell.exec"], expiresAt: Date.now() + 60000 };
+      const instance: CloudInstance = { ...browserInstance, implements: ["shell.exec"], expiresAt: Date.now() + 60000 };
       const list = async () => ({ instances: [instance], handoffs: [], usage: {
         periodStartsAt: 0, periodEndsAt: 1, usedSeconds: 0, reservedSeconds: 60, limitSeconds: 3600, activeInstances: 1, concurrentLimit: 2,
       } });
@@ -102,17 +99,16 @@ describe("instance gateway boundary", () => {
     } }, target, Date.now() + 10000, ctx)).rejects.toThrow("Response lost after dispatch");
   });
 
-  it.each(["sys.browser.frame", "sys.browser.watch"] as const)("cancels an unexpected %s upload before acquiring its response", async call => {
+  it("cancels an unexpected browser-watch upload before acquiring its response", async () => {
     const pull = vi.fn(), cancel = vi.fn();
     const stream = new ReadableStream<Uint8Array>({ pull, cancel }, { highWaterMark: 0 });
     const bytes = new Uint8Array([1, 2, 3]);
     const { ctx, dispose, getInstallation } = context({
-      frame: async () => ({ data: frameData, body: bodyFromBytes(bytes) }),
       watch: async () => ({ data: { watchId: "watch", version: 1 }, body: bodyFromBytes(bytes) }),
     });
     const acquire = getInstallation.getMockImplementation()!;
     getInstallation.mockImplementation(async () => { expect(cancel).toHaveBeenCalledOnce(); return acquire(); });
-    const response = await handleInstanceRequest({ type: "req", id: "image", call, args: { instanceId: "instance" }, body: { stream } }, ctx);
+    const response = await handleInstanceRequest({ type: "req", id: "image", call: "sys.browser.watch", args: { instanceId: "instance" }, body: { stream } }, ctx);
     if (!response.ok || !response.body) throw new Error("Missing image response");
     expect(await bodyToBytes(response.body)).toEqual(bytes);
     expect(pull).not.toHaveBeenCalled();
@@ -120,7 +116,7 @@ describe("instance gateway boundary", () => {
     expect(dispose).toHaveBeenCalledOnce();
   });
 
-  it.each(["sys.browser.frame", "sys.browser.watch", "sys.browser.input"] as const)("cancels the %s body when service acquisition fails", async call => {
+  it.each(["sys.browser.watch", "sys.browser.input"] as const)("cancels the %s body when service acquisition fails", async call => {
     const pull = vi.fn(), cancel = vi.fn();
     const stream = new ReadableStream<Uint8Array>({ pull, cancel }, { highWaterMark: 0 });
     const { ctx, getInstallation } = context({});
@@ -130,15 +126,14 @@ describe("instance gateway boundary", () => {
     expect(cancel).toHaveBeenCalledOnce();
   });
 
-  it.each(["sys.browser.frame", "sys.browser.input"] as const)("cancels a stalled %s body when the service deadline expires", async call => {
+  it("cancels stalled browser input when the service deadline expires", async () => {
     const deadline = new AbortController();
     vi.spyOn(AbortSignal, "timeout").mockReturnValue(deadline.signal);
     const pull = vi.fn(), cancel = vi.fn();
     const stream = new ReadableStream<Uint8Array>({ pull, cancel }, { highWaterMark: 0 });
     const input = vi.fn<InstallationInstances["input"]>(async () => ({ accepted: true }));
-    const { ctx, dispose } = context({ frame: async () => ({ data: frameData, body: { stream } }), input });
-    const request: InstanceRequest = { type: "req", id: "stalled", call, args: { instanceId: "instance", tabId: 1, documentId: "document" } };
-    if (call === "sys.browser.input") request.body = { stream };
+    const { ctx, dispose } = context({ input });
+    const request: InstanceRequest = { type: "req", id: "stalled", call: "sys.browser.input", args: { instanceId: "instance", tabId: 1, documentId: "document" }, body: { stream } };
     const pending = handleInstanceRequest(request, ctx);
     const rejected = expect(pending).rejects.toThrow("Deadline expired");
     await vi.waitFor(() => expect(pull).toHaveBeenCalledOnce());
@@ -314,7 +309,7 @@ describe("instance gateway boundary", () => {
 
   it("derives owner and installation scope and rejects human input from processes before acquiring a service", async () => {
     const { ctx, getInstallation } = context({}, "crew-process");
-    for (const call of ["sys.browser.handoff.open", "sys.browser.handoff.finish", "sys.browser.frame", "sys.browser.input"] as const) {
+    for (const call of ["sys.browser.handoff.open", "sys.browser.handoff.finish", "sys.browser.watch", "sys.browser.input"] as const) {
       await expect(handleInstanceRequest({ type: "req", id: "private-input", call, args: call === "sys.browser.input" ? { instanceId: "instance", tabId: 1, documentId: "document" } : { instanceId: "instance", requestId: "login" } }, ctx)).rejects.toThrow("human owner");
     }
     expect(getInstallation).not.toHaveBeenCalled();

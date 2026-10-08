@@ -1,9 +1,9 @@
 import { DurableObject, RpcTarget } from "cloudflare:workers";
-import { bodyFromBytes, cancelBinaryBody } from "@humansandmachines/gsv/protocol";
+import { cancelBinaryBody } from "@humansandmachines/gsv/protocol";
 import type { BrowserHandoff, BrowserHumanInput, BrowserProfile, BrowserPersistence, CloudInstance, InstanceSelector, SysInstanceStopArgs, SysBrowserHandoffGetArgs } from "@humansandmachines/gsv/protocol";
 import {
   browserHandoffRequestSchema, browserHandoffSelectorSchema, browserProfileCreateSchema, browserProfileListSchema,
-  instanceActorSchema, instanceListSchema, instanceSelectorSchema, instanceStopSchema, instanceStartSchema, browserFrameSchema, browserInputSchema, browserWatchSchema,
+  instanceActorSchema, instanceListSchema, instanceSelectorSchema, instanceStopSchema, instanceStartSchema, browserInputSchema, browserWatchSchema,
 } from "@humansandmachines/gsv/services/instances";
 import type { InstallationInstances, InstanceActor, InstanceTargetRequest, InstanceTargetResponse } from "@humansandmachines/gsv/services/instances";
 import { z } from "zod";
@@ -53,7 +53,7 @@ export class InstanceCoordinator extends DurableObject<Environment> implements I
   readonly #handoffBarriers = new Map<string, Promise<void>>();
   readonly #autosaveAfter = new Map<string, number>();
   readonly #humanInputs = new Map<string, Promise<unknown>>();
-  readonly #watches = new Map<string, { instanceId: string; ownerUid: number; watch: BrowserWatch }>();
+  readonly #watches = new Map<string, { instanceId: string; watch: BrowserWatch }>();
   readonly #installationId: string;
   constructor(ctx: DurableObjectState, env: Environment) {
     super(ctx, env);
@@ -277,21 +277,6 @@ export class InstanceCoordinator extends DurableObject<Environment> implements I
     try { await barrier; } finally { if (this.#handoffBarriers.get(args.instanceId) === barrier) this.#handoffBarriers.delete(args.instanceId); }
     return { handoff: this.handoff(actor, args) };
   }
-  async frame(actor: InstanceActor, rawArgs: Parameters<InstallationInstances["frame"]>[1]) {
-    this.human(actor);
-    const args = browserFrameSchema.parse(rawArgs);
-    args.instanceId = this.requireInstance(actor, args.instanceId, true).id;
-    const browser = await this.browser(args.instanceId);
-    const handoff = this.#store.liveHandoffs(args.instanceId)[0];
-    const preferred = args.tabId ?? handoff?.activeTabId ?? handoff?.tabId;
-    const tab = (preferred === undefined ? null : await browser.getTab(preferred)) ?? await browser.activeTab();
-    if (!tab) throw new Error("This browser has no open tabs");
-    const { bytes, documentId } = await browser.humanFrame(tab.id);
-    const row = this.requireInstance(actor, args.instanceId, true);
-    return { data: { instance: instance(row), handoff, tabId: tab.id, documentId, pointer: browser.pointer,
-      tabs: browser.viewState(tab.id).tabs,
-      width: 1280, height: 800, contentType: "image/jpeg" as const }, body: bodyFromBytes(bytes) };
-  }
   async watch(actor: InstanceActor, rawArgs: Parameters<InstallationInstances["watch"]>[1]) {
     this.human(actor);
     const args = browserWatchSchema.parse(rawArgs);
@@ -305,7 +290,7 @@ export class InstanceCoordinator extends DurableObject<Environment> implements I
       () => { this.requireInstance(actor, args.instanceId, true); },
       cause => new Error(`Browser view interrupted; reference = ${this.#store.diagnostic(args.instanceId, cause)}`),
       () => { this.#watches.delete(watchId); });
-    this.#watches.set(watchId, { instanceId: args.instanceId, ownerUid: actor.ownerUid, watch });
+    this.#watches.set(watchId, { instanceId: args.instanceId, watch });
     await watch.start();
     return { data: { watchId, version: 1 as const }, body: watch.view.body };
   }
@@ -697,7 +682,6 @@ class InstanceCapability extends RpcTarget implements InstallationInstances {
   openHandoff(...args: Parameters<InstallationInstances["openHandoff"]>) { return this.#owner.openHandoff(...args); }
   cancelHandoff(...args: Parameters<InstallationInstances["cancelHandoff"]>) { return this.#owner.cancelHandoff(...args); }
   finishHandoff(...args: Parameters<InstallationInstances["finishHandoff"]>) { return this.#owner.finishHandoff(...args); }
-  frame(...args: Parameters<InstallationInstances["frame"]>) { return this.#owner.frame(...args); }
   watch(...args: Parameters<InstallationInstances["watch"]>) { return this.#owner.watch(...args); }
   input(...args: Parameters<InstallationInstances["input"]>) { return this.#owner.input(...args); }
   execute(...args: Parameters<InstallationInstances["execute"]>) { return this.#owner.execute(...args); }

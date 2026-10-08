@@ -142,7 +142,7 @@ concurrency and usage limits. Reuse neither extends a lifetime nor makes a
 second reservation.
 
 The Kernel derives the human owner and routes ordinary target syscalls to this
-service. Human-only `sys.browser.frame` and `sys.browser.input` expose the same
+service. Human-only `sys.browser.watch` and `sys.browser.input` expose the same
 browser through GSV's authenticated transport. Viewing does not create a handoff
 or pause automation. Complete browser actions share an input queue; human input
 gets brief priority and is bound to the tab and document that were displayed.

@@ -1,4 +1,4 @@
-import { bodyFromBytes, bodyToBytes, bodyToText, cancelBinaryBody } from "@humansandmachines/gsv/protocol";
+import { bodyToText, cancelBinaryBody } from "@humansandmachines/gsv/protocol";
 import type { BrowserHandoff, BrowserHumanInput, JsonObject } from "@humansandmachines/gsv/protocol";
 import { principalOf, type KernelContext } from "../context";
 import { hasCapability } from "../capabilities";
@@ -20,7 +20,7 @@ export async function handleInstanceRequest(frame: InstanceRequest, ctx: KernelC
 
 async function dispatchInstanceRequest(frame: InstanceRequest, ctx: KernelContext): Promise<ResponseFrame> {
   const actor = instanceActor(ctx);
-  if (["sys.browser.handoff.open", "sys.browser.handoff.finish", "sys.browser.frame", "sys.browser.watch", "sys.browser.input"].includes(frame.call) && !actor.human) {
+  if (["sys.browser.handoff.open", "sys.browser.handoff.finish", "sys.browser.watch", "sys.browser.input"].includes(frame.call) && !actor.human) {
     throw new Error("This browser action requires the signed-in human owner");
   }
   if (!hasCapability(principalOf(ctx)?.calls ?? [], frame.call)) {
@@ -102,12 +102,6 @@ async function dispatchInstanceRequest(frame: InstanceRequest, ctx: KernelContex
       case "sys.browser.handoff.finish": {
         const result = await service.finishHandoff(owner, frame.args);
         await completeResponsibility(result.handoff, ctx); data = result; break;
-      }
-      case "sys.browser.frame": {
-        const result = await service.frame(owner, frame.args);
-        // Materialize this bounded image before releasing its remote RPC capability.
-        const bytes = await bodyToBytes(result.body, 4 * 1024 * 1024, signal);
-        return { type: "res", id: frame.id, ok: true, data: result.data, body: bodyFromBytes(bytes) };
       }
       case "sys.browser.input": {
         if (!frame.body) throw new Error("Browser input requires a body");
