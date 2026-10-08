@@ -183,6 +183,7 @@ export async function clickPageElement(
         buttons: 0,
         pointerType: "mouse",
       });
+      throwIfAborted(signal);
       await sendDebuggerCommand(target, "Input.dispatchMouseEvent", {
         type: "mousePressed",
         x: point.x,
@@ -192,6 +193,7 @@ export async function clickPageElement(
         clickCount: 1,
         pointerType: "mouse",
       });
+      // A dispatched press still needs its matching release if Pause arrives while Chrome accepts it.
       await sendDebuggerCommand(target, "Input.dispatchMouseEvent", {
         type: "mouseReleased",
         x: point.x,
@@ -262,6 +264,7 @@ export async function typePageText(
       throw new Error("Editable element is read-only");
     }
 
+    throwIfAborted(signal);
     await sendDebuggerCommand(target, "DOM.scrollIntoViewIfNeeded", {
       backendNodeId: editable.backendNodeId,
     });
@@ -271,6 +274,7 @@ export async function typePageText(
       const hitReceiver = await summarizeElement(target, tabId, hitReceiverId, store);
       throw new Error(`Editable target is occluded by ${formatElement(hitReceiver)}`);
     }
+    throwIfAborted(signal);
     await sendDebuggerCommand(target, "DOM.focus", {
       backendNodeId: editable.backendNodeId,
     });
@@ -415,6 +419,7 @@ export async function scrollPage(
       };
     }
     if (element) {
+      throwIfAborted(signal);
       await sendDebuggerCommand(target, "DOM.scrollIntoViewIfNeeded", {
         backendNodeId: element.backendNodeId,
       });
