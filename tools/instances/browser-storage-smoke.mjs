@@ -139,7 +139,7 @@ export async function seedPartialBrowserStorage(shell, client, instance, website
     assert.equal(saved.issues[0].retainedAt, before.savedAt);
     assert.ok(saved.issues[0].diagnosticRef);
   }
-  const status = JSON.parse(await shell({ targetId: "gsv" }, "cat /var/lib/gsv/browser/browser-tester/status.json"));
+  const { profile: status } = JSON.parse(await shell({ targetId: "gsv" }, `browser profile get ${instance.profileId}`));
   assert.equal(status.saveStatus, "partial");
   assert.equal(status.issues[0].origin, other.origin);
   console.log("PASS: one unsupported site leaves another site's updated state saving and reports a stable retained-save time");
@@ -202,25 +202,17 @@ export async function checkRestoredBrowserStorage(shell, client, instance) {
       specialNumbers: infinity === Infinity && numbers.positive === Infinity && numbers.negative === -Infinity && Number.isNaN(numbers.nan) && Object.is(numbers.zero, -0) };
   })()`);
   assert.deepEqual(result, { big: 8 * 1024 * 1024, bytes: [0, 4, 255], buffer: [7, 8], view: 10, map: 42, set: ["one", "two"], date: "2026-01-01T00:00:00.000Z", bigint: "12345678901234567890", cycle: true, empty: "", zero: 0, no: false, nothing: null, specialNumbers: true });
-  const root = "/var/lib/gsv/browser/browser-tester";
-  const metadata = JSON.parse(await shell({ targetId: "gsv" }, `cat ${root}/status.json`));
+  const { profile: metadata } = await client.sys.browser.profile.get({ profileId: instance.profileId });
   assert.equal(metadata.saveStatus, "saved");
-  const sites = JSON.parse(await shell({ targetId: "gsv" }, `cat ${root}/sites.json`));
-  assert.equal(sites.measured, true);
-  assert.ok(sites.usage.sites.some(site => site.indexedDBBytes > 8 * 1024 * 1024));
-  const saved = await client.request("fs.transfer.send", { target: "gsv", path: `${root}/state.enc` });
-  assert.equal(saved.data.ok, true);
-  await saved.body.stream.cancel();
-  console.log("PASS: restored binary values, maps, sets, dates, bigints, cycles, special numbers, false/zero/null, and the GSV filesystem view");
+  assert.ok(metadata.usage.sites.some(site => site.indexedDBBytes > 8 * 1024 * 1024));
+  console.log("PASS: restored binary values, maps, sets, dates, bigints, cycles, special numbers, false/zero/null, and saved-profile usage");
 }
 
 export async function checkForgettingBrowserStorage(shell, client, instance, start, wait, website) {
-  const root = "/var/lib/gsv/browser/browser-tester";
   const { profile: explicit } = await client.sys.browser.profile.create({ requestId: crypto.randomUUID(), label: "Explicit browser state" });
   try {
-    await shell({ targetId: "gsv" }, `rm ${root}/state.enc`);
+    await shell({ targetId: "gsv" }, `browser profile delete ${instance.profileId}`);
     await wait(instance.instanceId, "terminal");
-    await shell({ targetId: "gsv" }, `test ! -e ${root}`);
     assert.equal((await client.sys.browser.profile.get({ profileId: instance.profileId })).profile.state, "deleted");
     const fresh = await start();
     assert.notEqual(fresh.profileId, instance.profileId);
@@ -228,9 +220,9 @@ export async function checkForgettingBrowserStorage(shell, client, instance, sta
     assert.equal((await client.sys.browser.profile.get({ profileId: explicit.profileId })).profile.state, "active");
     const probe = await shell(fresh, `tabs open --active ${website}/probe && page wait '#restored' && page text`);
     assert.match(probe, /cookie=missing;local=null;indexed=undefined/);
-    await shell({ targetId: "gsv" }, `rm -r ${root}`);
+    await client.sys.browser.profile.delete({ profileId: fresh.profileId });
     await wait(fresh.instanceId, "terminal");
     assert.equal((await client.sys.browser.profile.get({ profileId: fresh.profileId })).profile.state, "deleted");
-    console.log("PASS: filesystem deletion stops the active browser, erases saved state, and the next start is fresh despite another saved profile; recursive deletion follows the same path");
+    console.log("PASS: profile deletion stops the active browser, erases saved state, and the next start is fresh despite another saved profile");
   } finally { await client.sys.browser.profile.delete({ profileId: explicit.profileId }); }
 }

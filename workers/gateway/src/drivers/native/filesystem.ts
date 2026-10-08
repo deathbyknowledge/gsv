@@ -11,7 +11,6 @@ import { requirePrincipal } from "../../kernel/context";
 import { resolveCallerOwnerUid } from "../../kernel/context";
 import { createCronFileService } from "../../kernel/crontab";
 import { handleRepoList } from "../../kernel/repo";
-import { createBrowserStorageBackend } from "../../kernel/browser-storage";
 
 export function createNativeFileSystem(ctx: KernelContext): GsvFs {
   const identity = requirePrincipal(ctx).account;
@@ -43,6 +42,5 @@ export function createNativeFileSystem(ctx: KernelContext): GsvFs {
       ownerUid,
       isRoot: identity.uid === 0,
     }),
-    createBrowserStorageBackend(ctx),
   );
 }

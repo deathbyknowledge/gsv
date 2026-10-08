@@ -98,10 +98,10 @@ under `{installationId}/owners/{uid}/profiles/{profileId}/{revision}-{uuid}`.
 They are compressed and authenticated-encrypted before upload. The installation
 coordinator owns the encryption key, lease, revision and deletion fence; Kernel
 does not hold another copy. Legacy encrypted JSON is readable and migrates on
-the next save. The native filesystem projects account-scoped metadata and opaque
-snapshot bytes at `/var/lib/gsv/browser/{username}/`. Deleting `state.enc` or the
-account directory invokes the instance service's forget operation, including
-shutdown and key erasure. See [cloud browsers](/how-to/cloud-browsers).
+the next save. `browser profile get PROFILE_ID` exposes account-scoped save
+metadata. `browser profile delete PROFILE_ID` invokes the instance service's
+forget operation, including shutdown and key erasure. Snapshot bytes remain
+private to Instances. See [cloud browsers](/how-to/cloud-browsers).
 
 ## ripgit Repositories
 

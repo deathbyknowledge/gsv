@@ -78,8 +78,9 @@ the browser running and reports its cause and diagnostic. Stop `--wait`
 waits for termination and release of saved state. Retry a save with
 `browser profile save ID`, or explicitly discard unsaved changes with
 `instance stop ID --force --wait`. Force is not a persistence test and cannot fix
-unsupported website storage. Inspect save status and per-site usage at
-`/var/lib/gsv/browser/<account>/`; deleting `state.enc` forgets saved logins.
+unsupported website storage. Inspect save status and per-site usage with
+`browser profile get PROFILE_ID`; `browser profile delete PROFILE_ID` forgets
+saved logins and stops the browser using them.
 Ordinary browsers
 remember logins automatically. Use `browser handoff` when Ship needs a human to
 complete a sign-in; opening Fleet's browser view otherwise leaves Ship running

@@ -202,12 +202,6 @@ export class InstanceCoordinator extends DurableObject<Environment> implements I
     const profileId = instance(row).profileId;
     return profileId ? this.getProfile(actor, profileId) : { profile: null };
   }
-  async readProfileState(raw: InstanceActor, id: string) {
-    const row = this.#store.ownedProfile(instanceActorSchema.parse(raw), id);
-    if (!row || profile(row).state !== "active") return null;
-    const object = await this.#profiles.read(row);
-    return object ? { body: { stream: object.body, length: object.size }, size: object.size } : null;
-  }
   async deleteProfile(raw: InstanceActor, id: string) {
     const actor = instanceActorSchema.parse(raw), row = this.#store.ownedProfile(actor, id);
     if (!row || profile(row).state === "deleted") return { profile: row ? profile(row) : null };
@@ -734,7 +728,6 @@ class InstanceCapability extends RpcTarget implements InstallationInstances {
   listProfiles(...args: Parameters<InstallationInstances["listProfiles"]>) { return this.#owner.listProfiles(...args); }
   getProfile(...args: Parameters<InstallationInstances["getProfile"]>) { return this.#owner.getProfile(...args); }
   saveProfile(...args: Parameters<InstallationInstances["saveProfile"]>) { return this.#owner.saveProfile(...args); }
-  readProfileState(...args: Parameters<InstallationInstances["readProfileState"]>) { return this.#owner.readProfileState(...args); }
   deleteProfile(...args: Parameters<InstallationInstances["deleteProfile"]>) { return this.#owner.deleteProfile(...args); }
   requestHandoff(...args: Parameters<InstallationInstances["requestHandoff"]>) { return this.#owner.requestHandoff(...args); }
   getHandoff(...args: Parameters<InstallationInstances["getHandoff"]>) { return this.#owner.getHandoff(...args); }

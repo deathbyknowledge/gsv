@@ -174,9 +174,9 @@ previous storage and matching cookies while other sites advance; the committed
 snapshot reports `partial` with per-site reasons, diagnostic references and
 retained timestamps. A partial save permits normal stop. Whole-snapshot failures
 keep the browser running; force, expiry and deletion still terminate resources.
-The native `/var/lib/gsv/browser/{username}` mount
-projects that service's metadata and opaque snapshot, checks the same browser
-capabilities, and routes deletion through the same forget operation.
+Browser profile syscalls expose save metadata and forgetting under the owner's
+browser capabilities. Snapshot bytes and encryption keys remain private to the
+instance service.
 
 ## Feedback
 

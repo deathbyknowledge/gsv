@@ -43,7 +43,7 @@ This document is the root engineering contract for the repository. It explains h
 - Structured frames carry metadata. Potentially large or binary payloads travel through frame bodies and streams.
 - Live syscall ledger rows require both the ledger signal grant and `sys.ledger.list`, scoped to the owning human or root. Clients merge pushed rows and completion updates by sequence; ordinary ledger changes must not trigger another ledger read.
 - Whoever accepts a body, request, media object, or background operation owns its completion, cancellation, and cleanup.
-- The instance service owns cloud browser save ordering, profile leases, encrypted snapshots and forgetting. The native `/var/lib/gsv/browser/{username}` mount projects that state under the same owner and browser capabilities; it never keeps a second copy. Ordinary stop requires a successful final save, while explicit force, expiry and deletion remain available.
+- The instance service owns cloud browser save ordering, profile leases, encrypted snapshots and forgetting. Browser profile syscalls expose metadata and deletion under the same owner and browser capabilities. Ordinary stop requires a successful final save, while explicit force, expiry and deletion remain available.
 
 ### Treat targets as Unix-shaped capability environments
 

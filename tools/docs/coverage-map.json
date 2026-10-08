@@ -414,8 +414,6 @@
       "paths": [
         "workers/instances/**",
         "workers/gateway/src/kernel/instance-*.ts",
-        "workers/gateway/src/kernel/browser-storage.ts",
-        "workers/gateway/src/fs/backends/browser-storage.ts",
         "workers/gateway/src/kernel/sys/instance.ts",
         "workers/gateway/src/drivers/native/shell/instances.ts",
         "packages/gsv/src/services/instances.ts",

@@ -72,7 +72,6 @@ export interface InstallationInstances {
   getProfile(actor: InstanceActor, profileId: string): Promise<SysBrowserProfileGetResult>;
   deleteProfile(actor: InstanceActor, profileId: string): Promise<SysBrowserProfileGetResult>;
   saveProfile(actor: InstanceActor, instanceId: string): Promise<SysBrowserProfileGetResult>;
-  readProfileState(actor: InstanceActor, profileId: string): Promise<{ body: BinaryBody; size: number } | null>;
   requestHandoff(actor: InstanceActor, args: SysBrowserHandoffRequestArgs): Promise<SysBrowserHandoffRequestResult>;
   getHandoff(actor: InstanceActor, args: SysBrowserHandoffGetArgs): Promise<SysBrowserHandoffGetResult>;
   cancelHandoff(actor: InstanceActor, args: SysBrowserHandoffGetArgs): Promise<SysBrowserHandoffGetResult>;

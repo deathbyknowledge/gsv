@@ -125,11 +125,6 @@ export class ProfileStorage {
       });
     } catch (cause) { this.store.diagnostic(null, cause); }
   }
-  async read(row: ProfileRow): Promise<R2ObjectBody | null> {
-    if (!row.object_key) return null;
-    if (!row.object_key.startsWith(this.prefix(row))) throw new Error("Saved profile scope mismatch");
-    return this.bucket.get(row.object_key);
-  }
   async erase(row: ProfileRow): Promise<void> {
     const prefix = `${this.installationId}/owners/${row.owner_uid}/profiles/${row.id}/`;
     let cursor: string | undefined;

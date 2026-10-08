@@ -137,22 +137,19 @@ are trimmed to the latest 64 after saves and during maintenance. In-flight saves
 retain their diagnostics until they settle. Each diagnostic is limited to 4,096
 characters and eight causes, with a marker when details are truncated.
 
-Saved data is also inspectable on `gsv`, under your account name:
+Inspect saved-state metadata on `gsv` with the existing browser commands:
 
-```text
-/var/lib/gsv/browser/hank/
-  README.txt
-  status.json
-  sites.json
-  state.enc
+```bash
+browser profile list
+browser profile get PROFILE_ID
 ```
 
-`status.json` reports save status, timestamps, duration and raw/encrypted sizes.
+`browser profile get` reports save status, timestamps, duration and raw/encrypted sizes.
 `saveStatus: "partial"` means a snapshot was committed with site exceptions;
 `issues` identifies each origin, reason, diagnostic and previous save time, if any.
 `savedAt` describes the snapshot commit; an affected site's `retainedAt` describes
-its older retained data. Both metadata files expose the exceptions.
-`sites.json` reports per-origin local storage and IndexedDB sizes, database and
+its older retained data. `browser profile get` exposes the exceptions.
+Its `usage` field reports per-origin local storage and IndexedDB sizes, database and
 record counts, and cookie counts/sizes by domain. Database details are capped at
 32 entries and 4 KiB per origin; long names are shortened with an ellipsis.
 `databaseUsageTruncated` marks shortened or omitted details. Cookie-domain
@@ -165,13 +162,11 @@ These limits apply to metadata; website state keeps its ordinary storage allowan
 `browser profile list [--offset N]` returns at most 32 small summaries, the total
 count and `nextOffset` when more remain. `browser profile get ID` returns that
 profile's storage details and site exceptions.
-These files contain no login
-values. `state.enc` is the opaque encrypted snapshot; its key stays with the
-instance service, so copying the file alone is not a portable backup. The files
-are read-only. Delete `state.enc`, or recursively remove your account directory,
-to forget saved logins. This stops the browser using that state, fences pending
-saves and erases its snapshots and key. Physical cleanup can continue after the
-directory disappears. The next ordinary start creates fresh state. Access follows
+Metadata contains no login values. Snapshot bytes and their encryption key remain
+private to Instances. To forget saved logins, use
+`browser profile delete PROFILE_ID`. This stops the browser using that state, fences pending saves and
+erases its snapshots and key. Physical cleanup can continue while the profile
+is marked `deleting`. The next ordinary start creates fresh state. Access follows
 the same human owner and browser permissions as the browser API.
 
 This does not copy your personal browser's passwords, extensions or passkeys.
