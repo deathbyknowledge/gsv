@@ -249,9 +249,9 @@ that browser is preparing to stop; its request ID
 has not been committed to the stopping browser. If the stop's save fails, the
 browser remains usable; after successful termination, a retry creates a new one.
 
-Use tabs for additional work and
-close your task's tabs when finished. Do not stop a shared browser just because
-one task ended. Stop an isolated browser you created when its work is finished.
+Use tabs for additional work. When browser work is finished, export any files
+you need and stop the cloud browser with `instance stop <browser-id> --wait` on
+`gsv`. Keep it open if the user asks or ongoing work still needs it.
 When an independent temporary browser is needed, request it explicitly:
 
 ```bash

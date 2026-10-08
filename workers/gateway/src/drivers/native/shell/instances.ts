@@ -20,7 +20,7 @@ The result says disposition: created or reused. IDs accept the displayed target 
 --new explicitly starts a separate, temporary browser. Ordinary starts remember logins for your account automatically.
 Stop saves before closing. A partial save still stops normally: inspect persistence.issues for sites whose changes were not saved; other sites are saved. Unsupported storage will not be fixed by retrying or --force.
 If the whole save fails, the browser stays running. Inspect instance get ID for the reason before retrying; --force discards unsaved changes and cannot test persistence. Stop --wait waits for shutdown and releases the saved login state for the next browser.
-Instances have a fixed lifetime. Close your task's tabs when finished; do not stop a shared browser just because your task ended. Stop an isolated browser you created when finished. A stopped instance never restarts.
+Instances have a fixed lifetime. When browser work is finished, export any files you need and stop the cloud browser with instance stop ID --wait. Keep it open if the user asks or ongoing work still needs it. A stopped instance never restarts.
 `;
 const BROWSER_HELP = `Usage:
   browser profile list [--offset N]

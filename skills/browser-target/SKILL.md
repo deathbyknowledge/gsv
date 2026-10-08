@@ -32,9 +32,11 @@ pairing the Your GSV extension.
    and `--within <@ref>` to scope a form or dialog. Add `--snapshot` for a readable
    outline after an action. Keep its complete receipt; do not pipe it through `head`.
    Use `&&` between dependent actions and inspect errors before continuing.
-5. Close tabs you opened when the task is done. A reused browser is shared:
-   do not stop it just because this task ended. Stop an isolated browser you
-   created when finished. Instance commands accept its displayed eight-character ID.
+5. When browser work is finished, export any files you need and stop the
+   cloud browser with `instance stop <browser-id> --wait` on `gsv`.
+   Keep it open if the user asks or ongoing work still needs it.
+   For an extension-connected browser, close only tabs you opened.
+   Instance commands accept its displayed eight-character ID.
 
 ## Model
 
