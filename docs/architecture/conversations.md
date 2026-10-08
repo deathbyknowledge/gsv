@@ -15,6 +15,10 @@ Web and Desktop render Ship's Markdown code blocks at a readable monospace size 
 Long lines scroll inside the block. Copy preserves indentation and internal line breaks without
 adding the renderer's final newline to the clipboard.
 
+A very long message in Zen folds behind **read more** once it has finished arriving, and **show
+less** folds it again. A reply the user watched stream in stays open. Opening or folding keeps the
+reading position, and the message text itself is unchanged.
+
 ## Conversation kinds
 
 The Kernel owns the conversation directory and membership:
@@ -151,6 +155,11 @@ explains that this remembers all shell commands on that target for the requestin
 process, not just the displayed command. Other processes and targets still use
 their own approval rules; ordinary approval and denial never remember a rule.
 
+Web and Desktop present a failed run, and a failure reported above the composer, as a plain-language
+summary with a recommended next step, such as trying again, waiting a few minutes or restarting the
+process. The client derives that summary from the event kind and error text; the gateway's original
+error stays under **details** for diagnosis.
+
 Opening a Process activity inspector calls `proc.observe`. Raw Process signals then reach that
 specific client in addition to any connection that owns the active run. Closing the inspector calls
 `proc.unobserve`. Observation is explicit so every connected client does not receive every model
@@ -193,6 +202,11 @@ active run independently of its transcript, including context preparation and re
 visible work arrives. A streaming reply takes over that feedback; a run that continues after sending
 shows activity again until it ends. The model label identifies the run's selected model, not whether
 the provider has started returning tokens.
+
+A paste of more than 400 characters or eight lines waits beside the prompt as a chip showing its
+character count instead of filling the input; a paste into a `$` command stays inline. Sending
+joins the typed words and then each pasted block, in paste order and separated by blank lines, into
+one message.
 
 Instrument resolves attachment bytes through its authenticated gateway connection. Browser clients
 use ordinary image links and downloads; Desktop opens raster images in an in-app preview and saves

@@ -3,6 +3,7 @@ import { chatMediaKind, formatChatMediaSize, parseChatMedia } from "../../../ser
 import { useChatMediaSource, useMediaObjectUrl } from "../../../services/chat/hooks/useChatMediaSource";
 import type { ChatMediaUpload } from "../../../services/chat/domain/processes";
 import { useMediaPreview } from "../../../services/platform/MediaPreview";
+import type { ZenPaste } from "./zenAttachments";
 
 export function ZenDraftAttachment({ attachment, onRemove, disabled }: { attachment: ChatMediaUpload; onRemove?: () => void; disabled?: boolean }) {
   const image = attachment.type === "image";
@@ -11,6 +12,17 @@ export function ZenDraftAttachment({ attachment, onRemove, disabled }: { attachm
     {source && <img src={source} alt="" />}
     <span class="file-name">{attachment.filename}<small>{formatChatMediaSize(attachment.body.size)}</small></span>
     {onRemove && <button type="button" onClick={onRemove} disabled={disabled} aria-label={`Remove ${attachment.filename}`}>×</button>}
+  </li>;
+}
+
+const PASTE_PREVIEW_CHARACTERS = 280;
+
+/** Long pasted text as a chip: its size stands in for the text, and hovering shows how it begins. */
+export function ZenDraftPaste({ paste, onRemove, disabled }: { paste: ZenPaste; onRemove?: () => void; disabled?: boolean }) {
+  const preview = paste.text.length > PASTE_PREVIEW_CHARACTERS ? `${paste.text.slice(0, PASTE_PREVIEW_CHARACTERS)}…` : paste.text;
+  return <li class="zen-draft-attachment" title={preview}>
+    <span class="file-name">pasted text<small>{`${paste.characters.toLocaleString("en-US")} characters`}</small></span>
+    {onRemove && <button type="button" onClick={onRemove} disabled={disabled} aria-label="Remove pasted text">×</button>}
   </li>;
 }
 

@@ -20,6 +20,8 @@ import { FleetDialog } from "../fleet/FleetDialog";
 import { ZenText } from "./ZenText";
 import { ThinkingMark } from "./ThinkingMark";
 import { ApprovalCard } from "../shared/ApprovalCard";
+import { ZenDraftPaste } from "./ZenMedia";
+import { FeedbackNote } from "./ZenNotes";
 
 let storage: Map<string, string>;
 let messages: ConversationMessage[];
@@ -327,7 +329,7 @@ describe("Zen conversation entry", () => {
       await act(() => { expect(zen.props(NativeVoiceControls).send("@cloud")).toBe(true); });
       expect(zen.props(PromptLine).place.id).toBe("gsv");
       await act(() => { zen.props(NativeVoiceControls).send("@missing"); });
-      expect(zen.text()).toContain("No place called missing.");
+      expect(zen.props(FeedbackNote).note).toEqual({ kind: "notice", text: "No place called missing." });
       expect(send).not.toHaveBeenCalled();
     } finally { await zen.unmount(); }
   });
@@ -341,6 +343,35 @@ describe("Zen conversation entry", () => {
       }
       expect(zen.props(PromptLine).allowEmpty).toBe(true);
       expect(send).not.toHaveBeenCalled();
+      expect(vi.mocked(GSVClient.prototype.request).mock.calls.some(([call]) => call === "shell.exec")).toBe(false);
+    } finally { await zen.unmount(); }
+  });
+
+  it("folds a long paste into a chip and sends it after the typed words", async () => {
+    send.mockResolvedValueOnce({ message: message("user", "joined"), handlerPid: shipPid, runId: "paste" });
+    const log = Array.from({ length: 12 }, (_, index) => `error ${index}`).join("\n");
+    const zen = await mountedZen();
+    try {
+      const pastes = () => zen.nodes().filter((node) => node.type === ZenDraftPaste);
+      await act(() => { expect(zen.props(PromptLine).onPasteText?.("a short paste")).toBe(false); });
+      // A long paste that is itself a command stays inline so it runs directly, even into an empty prompt.
+      await act(() => { expect(zen.props(PromptLine).onPasteText?.(`$ ${"x".repeat(500)}`)).toBe(false); });
+      expect(pastes()).toHaveLength(0);
+      await act(() => { expect(zen.props(PromptLine).onPasteText?.("z".repeat(500))).toBe(true); });
+      await act(() => { expect(zen.props(PromptLine).onPasteText?.(log)).toBe(true); });
+      expect(pastes()).toHaveLength(2);
+      expect(zen.props(PromptLine).allowEmpty).toBe(true);
+      expect(zen.dirty()).toBe(true);
+      await act(() => { expect(zen.props(PromptLine).onSubmit("$ pwd")).toBe(false); });
+      expect(zen.props(FeedbackNote).note).toEqual({ kind: "notice", text: "Remove attachments and pasted text before running a command, or send them to your Ship in plain words." });
+      await act(() => { zen.props(ZenDraftPaste).onRemove?.(); });
+      expect(pastes()).toHaveLength(1);
+      expect(zen.props(ZenDraftPaste).paste.text).toBe(log);
+      await act(() => { expect(zen.props(PromptLine).onSubmit("What failed?")).toBe(true); });
+      await vi.waitFor(() => expect(send).toHaveBeenCalledOnce());
+      expect(send.mock.calls[0]?.[0].text).toBe(`What failed?\n\n${log}`);
+      expect(pastes()).toHaveLength(0);
+      expect(zen.props(PromptLine).allowEmpty).toBe(false);
       expect(vi.mocked(GSVClient.prototype.request).mock.calls.some(([call]) => call === "shell.exec")).toBe(false);
     } finally { await zen.unmount(); }
   });
@@ -370,6 +401,8 @@ describe("Zen conversation entry", () => {
     const zen = await mountedZen();
     try {
       await vi.waitFor(() => expect(zen.props(ZenText).text).toBe("Your machine is online."));
+      // History was not watched arriving, so a long message from it folds.
+      expect(zen.props(ZenText).opened).toBe(false);
       expect(zen.text()).not.toContain("I am the ship. Who are you?");
       expect(send).not.toHaveBeenCalled();
     } finally { await zen.unmount(); }

@@ -23,6 +23,8 @@ export type PromptLineProps = {
   /** A native composer can finalize its current segment before ordinary submission. */
   interceptSubmit?: () => boolean;
   onFiles?: (files: File[]) => void;
+  /** Called with pasted plain text; return true when the text was taken elsewhere, so it stays out of the input. */
+  onPasteText?: (text: string) => boolean;
   /** Called when the chip is pressed, to change the place. */
   onPlace?: () => void;
   /** Called on ArrowUp / ArrowDown with the input empty, for history browsing. */
@@ -61,7 +63,7 @@ export function promptAfterSubmit(text: string): string {
  * the chip and keeps taking words.
  */
 // The prompt grows from that first line as text wraps, up to a scrollable height.
-export const PromptLine = forwardRef<PromptLineHandle, PromptLineProps>(function PromptLine({ place, showPlace = true, dir, placeholder, disabled, onSubmit, allowEmpty, interceptSubmit, onFiles, onPlace, onHistory, autoFocus, onFocusChange, onInput, onKeyIntercept }, ref) {
+export const PromptLine = forwardRef<PromptLineHandle, PromptLineProps>(function PromptLine({ place, showPlace = true, dir, placeholder, disabled, onSubmit, allowEmpty, interceptSubmit, onFiles, onPasteText, onPlace, onHistory, autoFocus, onFocusChange, onInput, onKeyIntercept }, ref) {
   const active = useViewActive();
   const activeRef = useRef(active);
   activeRef.current = active;
@@ -295,7 +297,16 @@ export const PromptLine = forwardRef<PromptLineHandle, PromptLineProps>(function
           onInput={changed}
           onPaste={(event) => {
             const files = Array.from(event.clipboardData?.files ?? []);
-            if (onFiles && files.length > 0) { event.preventDefault(); onFiles(files); }
+            if (onFiles && files.length > 0) { event.preventDefault(); onFiles(files); return; }
+            const text = event.clipboardData?.getData("text/plain") ?? "";
+            if (!text || !onPasteText?.(text)) return;
+            event.preventDefault();
+            // The paste went to a chip; a selection the person meant to replace still goes away.
+            const input = event.currentTarget;
+            if (input.selectionStart !== input.selectionEnd) {
+              input.setRangeText("", input.selectionStart, input.selectionEnd, "end");
+              changed();
+            }
           }}
           onFocus={() => {
             scheduleMeasure(true);

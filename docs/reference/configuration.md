@@ -20,6 +20,8 @@ Sensitive final path segments include `api_key`, `secret`, `token`, `password`, 
 
 `users/{ownerUid}/locale/timezone` is the human's IANA timezone, for example `Europe/Amsterdam`. Ship's context and new schedules without an explicit timezone use this preference, falling back to `config/server/timezone` and then UTC. Existing schedules retain their saved timezone, and system crontabs retain their system/`CRON_TZ` semantics. Invalid personal timezones are rejected; clearing the preference restores the installation default. The Instrument preference does not change the browser's formatting timezone.
 
+The Instrument theme is not stored here. **Settings → preferences → Appearance** chooses Match system, Light or Dark for the current browser only, as does the `l` key; other devices and agents are unaffected.
+
 ## Reading and Writing
 
 Inside a GSV shell, use the filesystem view:

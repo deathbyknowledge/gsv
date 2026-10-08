@@ -139,6 +139,26 @@
   color: var(--target);
   border-bottom: 1px solid rgba(151, 170, 255, 0.35);
 }
+/* a very long message folds once it has arrived: its first lines fade out above "read more" */
+.zen-moment .text.is-folded {
+  /* the line count is set inline from zenFold.ts; this holds where lh is unknown */
+  max-height: 60vh;
+  overflow: clip;
+  -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 4em), transparent);
+  mask-image: linear-gradient(to bottom, #000 calc(100% - 4em), transparent);
+}
+.zen-fold-toggle {
+  margin-top: 0.65rem;
+  padding: 0.25rem 0;
+  border: 0;
+  background: none;
+  font-family: var(--gsv-font-mono);
+  font-size: 12px;
+  letter-spacing: 0.02em;
+  color: var(--label);
+  cursor: pointer;
+}
+.zen-fold-toggle:hover { color: var(--accent); }
 .zen-caret {
   display: inline-block;
   width: 0.55em;
@@ -378,6 +398,24 @@
 }
 .zen-feedback .is-warn { color: var(--update); }
 .zen-feedback .is-err { color: var(--error); }
+/* the status line reports; it is not a control, so only a failure's details toggle invites a click */
+.zen-feedback-note { cursor: default; }
+.zen-feedback-error { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; min-width: 0; }
+.zen-feedback-error .action { color: var(--label); }
+.zen-feedback-error details { flex-basis: 100%; }
+.zen-feedback-error summary { width: max-content; color: var(--text-dim); cursor: pointer; text-decoration: underline; text-underline-offset: 3px; }
+.zen-feedback-error summary:hover, .zen-feedback-error summary:focus-visible { color: var(--accent); }
+.zen-feedback-error pre {
+  margin: 6px 0 0;
+  max-height: 8em;
+  overflow: auto;
+  font: inherit;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--label);
+  border-left: 2px solid var(--border);
+  padding-left: 10px;
+}
 @container instrument (max-width: 720px) {
   .zen-bottom { padding: 0 18px 14px; }
   .prompt-line { font-size: 15px; }
@@ -446,6 +484,17 @@
 }
 .zen-moment.is-note .note-line:hover { color: var(--label); }
 .zen-moment.is-note .tri { color: var(--faint); width: 1ch; }
+.zen-moment.is-note.is-error .note-summary { color: var(--error); }
+.zen-moment.is-note .note-hint { color: var(--faint); font-size: 11px; text-decoration: underline; text-underline-offset: 3px; }
+.zen-moment.is-note .note-line:hover .note-hint { color: var(--accent); }
+.zen-moment.is-note .note-action {
+  margin: 2px 0 0 calc(1ch + 10px);
+  max-width: var(--measure-prose);
+  font-family: var(--gsv-font-mono);
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--label);
+}
 .zen-moment.is-note.is-open .tri { color: var(--accent); }
 .zen-moment.is-note .note-text {
   margin-top: 8px;
@@ -455,6 +504,7 @@
   line-height: 1.6;
   color: var(--label);
   white-space: pre-wrap;
+  overflow-wrap: anywhere;
   border-left: 2px solid var(--border);
   padding-left: 14px;
 }
