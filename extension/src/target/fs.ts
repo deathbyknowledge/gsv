@@ -25,7 +25,7 @@ import {
   type FsPersistenceBackend,
   type StoredFsEntry,
 } from "./fs-persistence";
-import { throwIfAborted } from "./abort";
+import { abortable, throwIfAborted } from "./abort";
 import type { FileStat, TargetFileSystem } from "./types";
 import { isString } from "../shared/schemas";
 
@@ -118,12 +118,15 @@ export class BrowserTargetFileSystem implements TargetFileSystem {
     return value;
   }
 
-  async write(path: string, content: Uint8Array, contentType?: string): Promise<void> {
+  async write(path: string, content: Uint8Array, contentType?: string, signal?: AbortSignal): Promise<void> {
     await this.ensureLoaded();
+    throwIfAborted(signal);
     const normalized = normalizePath(path);
     this.assertWritable(normalized);
     await this.assertNotDirectory(normalized);
-    await this.ensureDirectory(dirname(normalized));
+    throwIfAborted(signal);
+    await this.ensureDirectory(dirname(normalized), signal);
+    throwIfAborted(signal);
     this.files.set(normalized, copyBytes(content));
     const resolvedContentType = contentType ?? inferFsContentType(normalized);
     this.contentTypes.set(normalized, resolvedContentType);
@@ -147,11 +150,13 @@ export class BrowserTargetFileSystem implements TargetFileSystem {
     await this.write(normalized, next);
   }
 
-  async delete(path: string): Promise<void> {
+  async delete(path: string, signal?: AbortSignal): Promise<void> {
     await this.ensureLoaded();
+    throwIfAborted(signal);
     const normalized = normalizePath(path);
     this.assertWritable(normalized);
     await this.refreshPersistedEntries();
+    throwIfAborted(signal);
     if (normalized === "/") {
       throw new Error("Refusing to delete /");
     }
@@ -189,22 +194,29 @@ export class BrowserTargetFileSystem implements TargetFileSystem {
     await this.ensureDirectory(normalized);
   }
 
-  async copy(source: string, destination: string): Promise<string> {
+  async copy(source: string, destination: string, signal?: AbortSignal): Promise<string> {
     await this.ensureLoaded();
+    throwIfAborted(signal);
     const sourcePath = normalizePath(source);
     const destinationPath = normalizePath(destination);
     const sourceStat = await this.stat(sourcePath);
+    throwIfAborted(signal);
     if (!sourceStat.isFile) {
       throw new Error(`Source is not a file: ${sourcePath}`);
     }
     let finalDestination = destinationPath;
     if (await this.exists(destinationPath)) {
+      throwIfAborted(signal);
       const destinationStat = await this.stat(destinationPath);
+      throwIfAborted(signal);
       if (destinationStat.isDirectory) {
         finalDestination = joinPath(destinationPath, basename(sourcePath));
       }
     }
-    await this.write(finalDestination, await this.read(sourcePath), sourceStat.contentType);
+    throwIfAborted(signal);
+    const bytes = await this.read(sourcePath);
+    throwIfAborted(signal);
+    await this.write(finalDestination, bytes, sourceStat.contentType, signal);
     return finalDestination;
   }
 
@@ -395,9 +407,11 @@ export class BrowserTargetFileSystem implements TargetFileSystem {
     }
   }
 
-  private async ensureDirectory(path: string): Promise<void> {
+  private async ensureDirectory(path: string, signal?: AbortSignal): Promise<void> {
+    throwIfAborted(signal);
     const added = this.ensureDirectorySync(path);
     for (const directory of added) {
+      throwIfAborted(signal);
       await this.persistEntry({
         path: directory,
         kind: "directory",
@@ -487,28 +501,41 @@ export class BrowserFsDriver {
   ) {}
 
   async handle(call: string, args: unknown, body?: GsvBody, signal?: AbortSignal): Promise<GsvResponse> {
+    if (call !== "fs.transfer.receive") throwIfAborted(signal);
+    let response: GsvResponse;
     switch (call) {
       case "fs.read":
-        return await this.read(args);
+        response = await this.read(args);
+        break;
       case "fs.write":
-        return { data: await this.write(args) };
+        response = { data: await this.write(args, signal) };
+        break;
       case "fs.edit":
-        return { data: await this.edit(args) };
+        response = { data: await this.edit(args, signal) };
+        break;
       case "fs.delete":
-        return { data: await this.delete(args) };
+        response = { data: await this.delete(args, signal) };
+        break;
       case "fs.search":
-        return { data: await this.search(args, signal) };
+        response = { data: await this.search(args, signal) };
+        break;
       case "fs.copy":
-        return { data: await this.copy(args) };
+        response = { data: await this.copy(args, signal) };
+        break;
       case "fs.transfer.stat":
-        return { data: await this.transferStat(args) };
+        response = { data: await this.transferStat(args) };
+        break;
       case "fs.transfer.send":
-        return await this.transferSend(args);
+        response = await this.transferSend(args);
+        break;
       case "fs.transfer.receive":
-        return await this.transferReceive(args, body);
+        response = await this.transferReceive(args, body, signal);
+        break;
       default:
         throw new Error(`Unsupported filesystem syscall: ${call}`);
     }
+    throwIfAborted(signal);
+    return response;
   }
 
   private async read(raw: unknown): Promise<GsvResponse> {
@@ -588,24 +615,26 @@ export class BrowserFsDriver {
     }
   }
 
-  private async write(raw: unknown): Promise<FsWriteResult> {
+  private async write(raw: unknown, signal?: AbortSignal): Promise<FsWriteResult> {
     const args = asRecord(raw) as FsWriteArgs;
     const path = parsePath(args.path, "fs.write");
     if (typeof args.content !== "string") {
       return { ok: false, error: "fs.write requires string content" };
     }
     const bytes = textEncoder.encode(args.content);
-    await this.fs.write(path, bytes);
+    throwIfAborted(signal);
+    await this.fs.write(path, bytes, undefined, signal);
     return { ok: true, path, size: bytes.byteLength };
   }
 
-  private async edit(raw: unknown): Promise<FsEditResult> {
+  private async edit(raw: unknown, signal?: AbortSignal): Promise<FsEditResult> {
     const args = asRecord(raw) as FsEditArgs;
     const path = parsePath(args.path, "fs.edit");
     if (typeof args.oldString !== "string" || typeof args.newString !== "string") {
       return { ok: false, error: "fs.edit requires oldString and newString" };
     }
     const oldText = textDecoder.decode(await this.fs.read(path));
+    throwIfAborted(signal);
     const count = oldText.split(args.oldString).length - 1;
     if (count === 0) {
       return { ok: false, error: `oldString not found in ${path}` };
@@ -616,14 +645,15 @@ export class BrowserFsDriver {
     const next = args.replaceAll === true
       ? oldText.replaceAll(args.oldString, args.newString)
       : oldText.replace(args.oldString, args.newString);
-    await this.fs.write(path, textEncoder.encode(next));
+    await this.fs.write(path, textEncoder.encode(next), undefined, signal);
     return { ok: true, path, replacements: args.replaceAll === true ? count : 1 };
   }
 
-  private async delete(raw: unknown): Promise<FsDeleteResult> {
+  private async delete(raw: unknown, signal?: AbortSignal): Promise<FsDeleteResult> {
     const args = asRecord(raw) as FsDeleteArgs;
     const path = parsePath(args.path, "fs.delete");
-    await this.fs.delete(path);
+    throwIfAborted(signal);
+    await this.fs.delete(path, signal);
     return { ok: true, path };
   }
 
@@ -639,11 +669,13 @@ export class BrowserFsDriver {
     return { ok: true, matches, count: matches.length, truncated: matches.length >= MAX_SEARCH_MATCHES };
   }
 
-  private async copy(raw: unknown): Promise<FsCopyResult> {
+  private async copy(raw: unknown, signal?: AbortSignal): Promise<FsCopyResult> {
     const args = asRecord(raw) as FsCopyArgs;
     const source = parseCopyEndpoint(args.source, "source");
     const destination = parseCopyEndpoint(args.destination, "destination");
-    const destinationPath = await this.fs.copy(source.path, destination.path);
+    throwIfAborted(signal);
+    const destinationPath = await this.fs.copy(source.path, destination.path, signal);
+    throwIfAborted(signal);
     const stat = await this.fs.stat(destinationPath);
     return {
       ok: true,
@@ -698,21 +730,22 @@ export class BrowserFsDriver {
     };
   }
 
-  private async transferReceive(raw: unknown, body?: GsvBody): Promise<GsvResponse> {
-    const args = asRecord(raw) as TransferArgs;
-    const path = parsePath(args.path, "fs.transfer.receive");
+  private async transferReceive(raw: unknown, body?: GsvBody, signal?: AbortSignal): Promise<GsvResponse> {
     if (!body) {
       return { data: { ok: false, error: "fs.transfer.receive requires a request body" } };
     }
-    if (body.length === undefined) {
-      void body.stream.cancel();
-      return { data: { ok: false, error: "fs.transfer.receive requires a request body length" } };
-    }
 
     try {
-      const bytes = await readStream(body.stream, body.length);
+      throwIfAborted(signal);
+      const args = asRecord(raw) as TransferArgs;
+      const path = parsePath(args.path, "fs.transfer.receive");
+      if (body.length === undefined) {
+        throw new Error("fs.transfer.receive requires a request body length");
+      }
+      const bytes = await readStream(body.stream, body.length, signal);
+      throwIfAborted(signal);
       const contentType = typeof args.contentType === "string" ? args.contentType : inferFsContentType(path);
-      await this.fs.write(path, bytes, contentType);
+      await this.fs.write(path, bytes, contentType, signal);
       return {
         data: {
           ok: true,
@@ -722,7 +755,11 @@ export class BrowserFsDriver {
         },
       };
     } catch (error) {
-      void body.stream.cancel(error instanceof Error ? error.message : "Binary transfer failed");
+      try {
+        await body.stream.cancel(error instanceof Error ? error.message : "Binary transfer failed");
+      } catch (cancelError) {
+        throw new Error(`Could not cancel filesystem transfer body: ${String(cancelError)}`, { cause: cancelError });
+      }
       return { data: { ok: false, error: error instanceof Error ? error.message : String(error) } };
     }
   }
@@ -753,13 +790,14 @@ function parseNonNegativeInteger(value: unknown): number | null {
   return value;
 }
 
-async function readStream(stream: ReadableStream<Uint8Array>, expectedSize: number): Promise<Uint8Array> {
+async function readStream(stream: ReadableStream<Uint8Array>, expectedSize: number, signal?: AbortSignal): Promise<Uint8Array> {
   const reader = stream.getReader();
   const chunks: Uint8Array[] = [];
   let size = 0;
   try {
     while (true) {
-      const { done, value } = await reader.read();
+      const { done, value } = await abortable(reader.read(), signal);
+      throwIfAborted(signal);
       if (done) break;
       if (!value) continue;
       size += value.byteLength;

@@ -4,6 +4,81 @@ import { BrowserFsDriver, BrowserTargetFileSystem } from "./fs";
 import type { TargetFileSystem } from "./types";
 
 describe("BrowserFsDriver", () => {
+  it("does not write an edit after Pause interrupts its read", async () => {
+    let finishRead!: (bytes: Uint8Array) => void;
+    const pendingRead = new Promise<Uint8Array>((resolve) => { finishRead = resolve; });
+    const write = vi.fn(async () => {});
+    const fs = { read: vi.fn(() => pendingRead), write } as unknown as TargetFileSystem;
+    const controller = new AbortController();
+    const running = new BrowserFsDriver(fs).handle("fs.edit", {
+      path: "/tmp/note.txt", oldString: "old", newString: "new",
+    }, undefined, controller.signal);
+
+    await vi.waitFor(() => expect(fs.read).toHaveBeenCalledWith("/tmp/note.txt"));
+    controller.abort(new Error("Browser access paused"));
+    finishRead(new TextEncoder().encode("old"));
+
+    await expect(running).rejects.toThrow("Browser access paused");
+    expect(write).not.toHaveBeenCalled();
+  });
+
+  it("cancels a pending transfer body before Pause can write it", async () => {
+    const cancel = vi.fn();
+    const stream = new ReadableStream<Uint8Array>({ cancel });
+    const write = vi.fn(async () => {});
+    const fs = { write } as unknown as TargetFileSystem;
+    const controller = new AbortController();
+    const running = new BrowserFsDriver(fs).handle("fs.transfer.receive", {
+      path: "/tmp/incoming.bin",
+    }, { stream, length: 4 }, controller.signal);
+
+    await vi.waitFor(() => expect(stream.locked).toBe(true));
+    controller.abort(new Error("Browser access paused"));
+
+    await expect(running).rejects.toThrow("Browser access paused");
+    expect(cancel).toHaveBeenCalledOnce();
+    expect(write).not.toHaveBeenCalled();
+  });
+
+  it("does not create a file after Pause interrupts a storage lookup", async () => {
+    let finishExists!: (exists: boolean) => void;
+    const pendingExists = new Promise<boolean>((resolve) => { finishExists = resolve; });
+    const exists = vi.fn((path: string) => path === "/tmp/late.txt" ? pendingExists : Promise.resolve(false));
+    const runtime = { exists, getAllPaths: async () => [] } as unknown as TargetFileSystem;
+    const fs = new BrowserTargetFileSystem(runtime);
+    const controller = new AbortController();
+    const running = new BrowserFsDriver(fs).handle("fs.write", {
+      path: "/tmp/late.txt", content: "late",
+    }, undefined, controller.signal);
+
+    await vi.waitFor(() => expect(exists).toHaveBeenCalledWith("/tmp/late.txt"));
+    controller.abort(new Error("Browser access paused"));
+    finishExists(false);
+
+    await expect(running).rejects.toThrow("Browser access paused");
+    await expect(fs.exists("/tmp/late.txt")).resolves.toBe(false);
+  });
+
+  it("does not copy after Pause interrupts source acquisition", async () => {
+    const runtime = { exists: async () => false, getAllPaths: async () => [] } as unknown as TargetFileSystem;
+    const fs = new BrowserTargetFileSystem(runtime);
+    await fs.write("/tmp/source.txt", new TextEncoder().encode("source"));
+    let finishRead!: (bytes: Uint8Array) => void;
+    const pendingRead = new Promise<Uint8Array>((resolve) => { finishRead = resolve; });
+    vi.spyOn(fs, "read").mockImplementation(() => pendingRead);
+    const controller = new AbortController();
+    const running = new BrowserFsDriver(fs).handle("fs.copy", {
+      source: { path: "/tmp/source.txt" }, destination: { path: "/tmp/dest.txt" },
+    }, undefined, controller.signal);
+
+    await vi.waitFor(() => expect(fs.read).toHaveBeenCalledWith("/tmp/source.txt"));
+    controller.abort(new Error("Browser access paused"));
+    finishRead(new TextEncoder().encode("source"));
+
+    await expect(running).rejects.toThrow("Browser access paused");
+    await expect(fs.exists("/tmp/dest.txt")).resolves.toBe(false);
+  });
+
   it("uses the stored MIME type when reading an extensionless file", async () => {
     const runtime = {
       exists: async () => false,

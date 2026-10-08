@@ -47,11 +47,11 @@ export type FileStat = {
 
 export type TargetFileSystem = {
   read(path: string): Promise<Uint8Array>;
-  write(path: string, content: Uint8Array, contentType?: string): Promise<void>;
+  write(path: string, content: Uint8Array, contentType?: string, signal?: AbortSignal): Promise<void>;
   append(path: string, content: Uint8Array): Promise<void>;
-  delete(path: string): Promise<void>;
+  delete(path: string, signal?: AbortSignal): Promise<void>;
   mkdir(path: string): Promise<void>;
-  copy(source: string, destination: string): Promise<string>;
+  copy(source: string, destination: string, signal?: AbortSignal): Promise<string>;
   move(source: string, destination: string): Promise<void>;
   list(path: string): Promise<{ files: string[]; directories: string[] }>;
   stat(path: string): Promise<FileStat>;

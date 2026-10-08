@@ -40,6 +40,28 @@ describe("browser target activity", () => {
     expect(driver.activeRequests()).toHaveLength(0);
   });
 
+  it("waits for an accepted transfer body to be cancelled on pause", async () => {
+    const cancel = vi.fn();
+    const stream = new ReadableStream<Uint8Array>({ cancel });
+    const driver = createBrowserTargetDriver();
+    // SAFETY: this test only executes fs.transfer.receive, which reads the abort signal.
+    const context = { abortSignal: new AbortController().signal } as GsvEndpointContext;
+    const args = { path: "/tmp/incoming.bin" };
+    const request: GsvEndpointRequest = {
+      id: "transfer",
+      call: "fs.transfer.receive",
+      args,
+      body: { stream, length: 4 },
+      raw: { type: "req", id: "transfer", call: "fs.transfer.receive", args },
+    };
+    const execution = driver.handle(request, context);
+    await vi.waitFor(() => expect(stream.locked).toBe(true));
+
+    await driver.pause();
+    await expect(execution).rejects.toThrow("Browser access paused");
+    expect(cancel).toHaveBeenCalledOnce();
+  });
+
   it("waits for a cancelled page command before completing pause", async () => {
     const tabRequested = deferred<void>();
     const tabResult = deferred<chrome.tabs.Tab[]>();
