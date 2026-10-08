@@ -90,6 +90,9 @@ in progress.
 A save waits for active browser commands and live-view input to settle. New
 commands and input wait while the save completes, with their usual cancellation
 and time limits. The live view stays open during saving.
+Live-view input requests time out after ten seconds. A timed-out request is not
+replayed; GSV retains the underlying operation until it settles, so saving and
+space deletion cannot mistake a timeout for completed input.
 
 **Stop browser** commits saved data before closing. If a website uses unsupported
 storage or its storage cannot be read, GSV saves the other sites and reports

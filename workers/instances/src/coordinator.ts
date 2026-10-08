@@ -366,6 +366,7 @@ export class InstanceCoordinator extends DurableObject<Environment> implements I
           check(); deadline.throwIfAborted();
           if (input.kind === "tab") {
             await browser.focusTab(input.tabId);
+            check(); deadline.throwIfAborted();
             if (args.handoffRequestId) {
               const value = this.handoff(actor, { instanceId: args.instanceId, requestId: args.handoffRequestId }, true);
               this.#store.putHandoff({ ...value, activeTabId: input.tabId, revision: value.revision + 1 });
@@ -374,16 +375,23 @@ export class InstanceCoordinator extends DurableObject<Environment> implements I
         }, deadline, "human");
       }, deadline);
     })();
-    this.#humanInputs.set(args.instanceId, operation);
-    try { await operation; return { accepted: true as const }; }
-    finally {
-      if (this.#humanInputs.get(args.instanceId) === operation) this.#humanInputs.delete(args.instanceId);
-      if (this.#store.byId(args.instanceId).active) {
-        this.#autosaveAfter.set(args.instanceId, Date.now() + 3000);
-        const alarm = await this.ctx.storage.getAlarm();
-        if (alarm === null || alarm > Date.now() + 3000) await this.ctx.storage.setAlarm(Date.now() + 3000);
+    const settled = operation.finally(async () => {
+      try {
+        if (!this.#retirement.get() && this.#store.byId(args.instanceId).active) {
+          this.#autosaveAfter.set(args.instanceId, Date.now() + 3000);
+          const alarm = await this.ctx.storage.getAlarm();
+          if (!this.#retirement.get() && (alarm === null || alarm > Date.now() + 3000)) await this.ctx.storage.setAlarm(Date.now() + 3000);
+        }
+      } finally {
+        if (this.#humanInputs.get(args.instanceId) === settled) this.#humanInputs.delete(args.instanceId);
       }
-    }
+    });
+    this.#humanInputs.set(args.instanceId, settled);
+    this.ctx.waitUntil(settled.catch(cause => {
+      if (!this.#retirement.get()) this.#store.diagnostic(args.instanceId, cause);
+    }));
+    await within(settled, 10000, "Browser input", deadline);
+    return { accepted: true as const };
   }
 
   async execute(actor: InstanceActor, id: string, frame: InstanceTargetRequest, deadlineAt: number): Promise<InstanceTargetResponse> {

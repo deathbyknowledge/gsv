@@ -613,6 +613,26 @@ describe("browser save ordering", () => {
     expect(save).toHaveBeenCalledOnce();
   }));
 
+  it("times out active human input while retaining its late completion through retirement", () => fixture(async (object, _store, instanceId, installationId, browser) => {
+    const entered = deferred(), released = deferred();
+    browser.humanInput = vi.fn(async () => { entered.resolve(); await released.promise; });
+    vi.useFakeTimers();
+    const input = object.input(actor, { instanceId, tabId: 1, documentId: "document" }, { kind: "click", x: 10, y: 10 });
+    const rejected = expect(input).rejects.toThrow(/Browser input timed out|timeout/i);
+    await entered.promise;
+    await vi.advanceTimersByTimeAsync(10001);
+    await rejected;
+    vi.spyOn(BrowserProvider.prototype, "exists").mockResolvedValue(false);
+    const deletion = { version: 1 as const, operationId: "delete-after-input-timeout", installationId };
+    expect((await object.quiesceInstallation(deletion)).phase).toBe("quiescing");
+    await object.alarm();
+    expect((await object.quiesceInstallation(deletion)).phase).toBe("quiescing");
+    released.resolve();
+    await vi.waitFor(async () => expect((await object.quiesceInstallation(deletion)).phase).toBe("quiesced"));
+    expect(browser.humanInput).toHaveBeenCalledOnce();
+    expect((await object.eraseInstallation(deletion)).phase).toBe("live-erased");
+  }));
+
   it.each(["manual", "alarm"] as const)("holds new commands and human input until a %s save commits", trigger => fixture(async (object, _store, instanceId, _installationId, browser) => {
     const exported = deferred();
     const uploading = deferred();
