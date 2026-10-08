@@ -8,8 +8,6 @@ type InstrumentHeaderProps = {
   distance: Distance;
   onNavigate: (distance: Distance) => void;
   peopleWaiting?: boolean;
-  onSearch: () => void;
-  searchEnabled: boolean;
   helper: boolean;
   /** Back to the ship's own conversation. */
   onShip: () => void;
@@ -19,7 +17,7 @@ type InstrumentHeaderProps = {
   helpButtonRef: RefObject<HTMLButtonElement>;
 };
 
-export function InstrumentHeader({ distance, onNavigate, peopleWaiting, onSearch, searchEnabled, helper, onShip, help, onHelp, helpButtonRef }: InstrumentHeaderProps) {
+export function InstrumentHeader({ distance, onNavigate, peopleWaiting, helper, onShip, help, onHelp, helpButtonRef }: InstrumentHeaderProps) {
   return (
     <header class="instrument-top instrument-header">
       <div class="instrument-identity">
@@ -31,9 +29,6 @@ export function InstrumentHeader({ distance, onNavigate, peopleWaiting, onSearch
         {helper && <span class="instrument-helper">helper · <button type="button" onClick={onShip}>back to your Ship</button></span>}
       </div>
       <nav class="keys" aria-label="Views">
-        {distance === "zen" && <button type="button" disabled={!searchEnabled} title="Search conversation (Ctrl+K)" aria-keyshortcuts="Control+K" onClick={onSearch}>
-          <kbd>Ctrl+K</kbd>search
-        </button>}
         <button type="button" aria-current={distance === "zen" ? "page" : undefined} aria-keyshortcuts="c" onClick={() => onNavigate("zen")}>
           <kbd>c</kbd><span class="view-label">chat</span>
         </button>

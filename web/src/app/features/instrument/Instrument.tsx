@@ -259,9 +259,12 @@ function InstrumentReady({ initialPath }: { initialPath: string }) {
       <InstrumentHeader distance={distance} onNavigate={move} peopleWaiting={peopleActivity.conversations.length > 0 || peopleActivity.requests.length > 0} helper={distance === "zen" && zenPid !== null}
         onShip={() => {
           if (!zenDirty || window.confirm("Discard your unsent message and attachments?")) setZenPid(null);
-        }} onSearch={openSearch} searchEnabled={status.state === "connected"} help={help} onHelp={() => setHelp((open) => !open)} helpButtonRef={helpButtonRef} />
+        }} help={help} onHelp={() => setHelp((open) => !open)} helpButtonRef={helpButtonRef} />
       {help ? (
         <aside id="instrument-help" class="instrument-help" aria-label="Help" ref={helpRef}>
+          <button type="button" class="instrument-help-search" disabled={status.state !== "connected"} aria-keyshortcuts="Control+K" onClick={openSearch}>
+            <span>Search Chat</span><kbd>Ctrl+K</kbd>
+          </button>
           <h4>Views & appearance</h4>
           <p>Navigation shortcuts work outside text fields and setup forms.</p>
           <dl>
@@ -270,7 +273,6 @@ function InstrumentReady({ initialPath }: { initialPath: string }) {
             <dt>m</dt><dd>Memory</dd>
             <dt>p</dt><dd>People</dd>
             <dt>s</dt><dd>Settings</dd>
-            <dt>Ctrl+K</dt><dd>Search Chat</dd>
             <dt>l</dt><dd>Switch between light and dark</dd>
             <dt>x</dt><dd>Cycle text size</dd>
             <dt>?</dt><dd>Show or hide these shortcuts</dd>

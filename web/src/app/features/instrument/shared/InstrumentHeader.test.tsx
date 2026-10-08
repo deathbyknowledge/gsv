@@ -4,9 +4,9 @@ import { collectNodes, collectText } from "../../../testing/testHarness";
 import type { Distance } from "../Instrument";
 import { InstrumentHeader } from "./InstrumentHeader";
 
-function headerButtons(distance: Distance, onSearch = vi.fn()) {
+function headerButtons(distance: Distance) {
   const header = InstrumentHeader({
-    distance, onNavigate: vi.fn(), onSearch, searchEnabled: true,
+    distance, onNavigate: vi.fn(),
     helper: false, onShip: vi.fn(), help: false, onHelp: vi.fn(),
     helpButtonRef: createRef<HTMLButtonElement>(),
   });
@@ -15,22 +15,18 @@ function headerButtons(distance: Distance, onSearch = vi.fn()) {
   return collectNodes(nav).filter((node) => node.type === "button");
 }
 
-describe("Instrument header search", () => {
-  it("shows Search immediately before Chat in Chat", () => {
-    const onSearch = vi.fn();
-    const buttons = headerButtons("zen", onSearch);
-    expect(buttons.slice(0, 2).map(collectText)).toEqual(["Ctrl+K search", "c chat"]);
-    buttons[0].props.onClick?.();
-    expect(onSearch).toHaveBeenCalledOnce();
-  });
-
+describe("Instrument header", () => {
   it.each(["fleet", "memory", "people", "settings"] as const)(
-    "hides Search while %s is open",
+    "keeps Search out of the top bar while %s is open",
     (distance: Distance) => {
       const buttons = headerButtons(distance);
       expect(buttons.map(collectText)).toEqual(["c chat", "f fleet", "m memory", "p people", "s settings", "? help"]);
     },
   );
+
+  it("keeps Search out of the Chat top bar", () => {
+    expect(headerButtons("zen").map(collectText)).toEqual(["c chat", "f fleet", "m memory", "p people", "s settings", "? help"]);
+  });
 
   it.each(["zen", "fleet", "memory", "people", "settings"] as const)(
     "keeps the shortcut badge separate from the %s label",

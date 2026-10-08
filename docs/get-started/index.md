@@ -85,8 +85,8 @@ Ship can use cloud browsers without per-action approval by default. To change
 that, select **Cloud browsers** under **Settings → permissions** and choose
 **Ask** or **Block**; personal computers and browsers keep their existing rules.
 
-When Chat is open, the **search** button appears to its left in the header. Press `Ctrl+K`
-from any view to find earlier messages. In Chat, `/` opens search in browse
+Open **Help** in the header and choose **Search Chat** to find earlier messages.
+Press `Ctrl+K` from any view to open the same search. In Chat, `/` opens search in browse
 mode, and `Ctrl/Cmd+F` also works while typing. Open a match to read the
 surrounding conversation. Closing search returns to your place and draft.
 
