@@ -12,7 +12,7 @@ export function spaceAddress(input: string): SpaceAddress {
   try {
     const explicitScheme = /^[a-z][a-z0-9+.-]*:\/\//i.test(value);
     let url = new URL(explicitScheme ? value : `https://${value}${suffix}`);
-    const loopback = ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname);
+    const loopback = ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname) || url.hostname.endsWith(".localhost");
     if (!explicitScheme && loopback) url = new URL(`http://${value}`);
     if (url.protocol === "wss:") url.protocol = "https:";
     if (url.protocol === "ws:") url.protocol = "http:";

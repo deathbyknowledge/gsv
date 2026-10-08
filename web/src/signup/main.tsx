@@ -6,6 +6,7 @@ import "../styles/gsv-scrollbar.css";
 import { render } from "preact";
 import { AuthLayout, AuthScene } from "../app/features/session/AuthLayout";
 import { OwnerWelcomeScreen } from "../app/features/session/OwnerWelcomeScreen";
+import { SpaceAddressForm } from "../app/features/session/SpaceAddressForm";
 import { OwnerWelcome } from "../app/services/session/ownerWelcome";
 import { BrowserWelcomeStorage } from "./storage";
 import { DesktopAppLink } from "./DesktopAppLink";
@@ -34,5 +35,6 @@ render(<AuthScene layout="welcome">{invitationError
     <a class="gsv-auth-link" href="/owner/signup/?resume=1" onClick={clearContactInvitation}>open my spaces</a></section></AuthLayout>
   : <OwnerWelcomeScreen ready resume={resume} initialStep={resume ? "email" : "invite"}
     chooseSpace={!!contactInvitation} context={invitationPreview && "name" in invitationPreview && <p class="desktop-welcome-detail">
-      {invitationPreview.name} invited you to connect. Choose your space, then accept their invitation.</p>}
+      {invitationPreview.name} invited you to connect. Choose your space or enter its address, then accept their invitation.</p>}
+    addressPanel={contactInvitation ? ({ connect, disabled }) => <SpaceAddressForm disabled={disabled} onConnect={connect} /> : undefined}
     load={load} onConnect={connect} />}{!contactInvitation && <DesktopAppLink />}</AuthScene>, app);

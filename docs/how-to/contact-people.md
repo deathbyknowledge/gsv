@@ -18,8 +18,10 @@ your conversation opens, so you can turn it into a request to Ship.
 Choose **connect → create invitation link** and share the link wherever you already
 talk. It connects one person and lasts seven days; you can cancel it before it is
 accepted. In managed spaces, the link opens the existing Accounts space chooser.
-The recipient selects their own space, signs in if needed, and explicitly accepts
-the invitation. Other deployments ask for the recipient's space address.
+The recipient chooses a listed space or enters its address, signs in if needed,
+and explicitly accepts the invitation. Entering an address also works for people
+using another operator or a space they do not own. Other deployments open the
+space-address form directly.
 Neither person needs to publish a profile. Acceptance opens the conversation.
 
 If someone gives you a link or an older contact code, choose **connect → I have an

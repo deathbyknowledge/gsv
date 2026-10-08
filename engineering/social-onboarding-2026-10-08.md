@@ -9,8 +9,9 @@ The first-use surface introduces talking directly and asking Ship to coordinate
 something together. Concrete, selectable examples lead into the same connection
 flow as the ordinary Connect action. Invitations are shareable links; existing
 codes remain accepted. Managed installations reuse the existing Accounts space
-chooser, then the recipient's normal space login and explicit acceptance. Other
-operators retain a direct space-address route. No public profile is required.
+chooser, then the recipient's normal space login and explicit acceptance. Every
+invitation entry point also accepts a space address, including spaces owned by
+someone else or served by another operator. No public profile is required.
 Public profiles remain an alternative for reaching someone by address.
 
 Acceptance opens the resulting conversation. A task chosen before connecting
