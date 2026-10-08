@@ -81,6 +81,8 @@ export const BUILTIN_SKILL_FILES = [
       "9ab07b08b827a4584cfac451f8c635d45d50f3ad71b14e7d73321f5fc79d276c",
       // Untouched skill before readiness and visible-dialog quick start.
       "78f679e2688356fb1579f9aae400bb3deb9d2f05e2c23059fdb3cd0c1e245673",
+      // Untouched skill before closing cloud browsers when work is finished.
+      "8d99e5d48add62320e0e8fec91f7daaddd8f4ab3a04d58ab01bd80439cf57096",
     ],
   },
   {
