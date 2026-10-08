@@ -150,6 +150,16 @@ Explicit login-help requests retain a durable handoff and completion barrier.
 The Instrument owns the viewer, tab selection and cursor presentation; the
 service owns input ordering, browser state and lifecycle.
 
+The instance service binds `INSTANCE_EVENTS` to the Gateway's
+`InstancesGatewayEntrypoint`, with deployment-owned
+`{ "authority": "instance-notifications" }` props. Instance and handoff changes
+notify the Kernel with the stored installation identity and human owner.
+The Gateway resolves that identity through the trusted directory and the Kernel
+broadcasts a payload-free `instance.changed` signal only to that owner's clients.
+Instrument updates its shared target and browser caches from this signal; it
+does not need Fleet to be open or poll browser inventories. Browser contents,
+credentials and handoff purposes are not included in the notification.
+
 The instance coordinator serializes snapshot attempts and retains ownership of
 timed-out exports/uploads until they settle. Abort, profile leases and revision
 checks fence late commits. Website origins survive closed tabs and coordinator

@@ -696,6 +696,14 @@ export class Kernel extends DurableObject<GatewayEnv> {
     return this.installationIdentity ?? null;
   }
 
+  async instancesChanged(ownerUid: number): Promise<void> {
+    this.retirement.assertActive();
+    const gate = await this.onboarding.managedWorkGate();
+    if (!gate.allowed || !this.auth.getPasswdByUid(ownerUid) || this.auth.isAccountDisabled(ownerUid)) return;
+    this.retirement.assertActive();
+    this.connectionRuntime.broadcastToUserUid(ownerUid, "instance.changed");
+  }
+
   async getPublicProfileProjection(locator: PublicProfileLocator): Promise<PublicProfileProjection | null> {
     this.retirement.assertActive();
     const gate = await this.onboarding.managedWorkGate();

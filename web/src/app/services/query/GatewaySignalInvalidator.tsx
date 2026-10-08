@@ -54,7 +54,7 @@ export function watchGatewayQueries(
       return;
     }
 
-    if (signal === "target.status") {
+    if (signal === "target.status" || signal === "instance.changed") {
       void queryClient.invalidateQueries({ queryKey: ["devices"] });
       return;
     }

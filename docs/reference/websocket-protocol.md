@@ -114,6 +114,12 @@ Error:
 | `payload` | JSON value | No | Signal payload |
 | `seq` | `number` | No | Optional sequence number |
 
+`target.status` reports connected-target transitions. Cloud instance lifecycle,
+saved-state and handoff changes emit the payload-free `instance.changed` signal
+to the owning human's connections. Clients refresh their instance and target
+inventories and any open instance details, discarding reads begun before the
+notification. Reconnection reloads authoritative state after missed signals.
+
 ### ErrorShape
 
 ```json

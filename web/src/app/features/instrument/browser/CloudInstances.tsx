@@ -2,7 +2,8 @@ import { useState } from "preact/hooks";
 import { useQueryClient } from "@tanstack/preact-query";
 import { useGateway } from "../../../services/gateway/GatewayProvider";
 import { useSession } from "../../../services/session/SessionProvider";
-import { INSTANCE_QUERY_KEY, useBrowserControl, useCloudInstances } from "./BrowserControl";
+import { useBrowserControl, useCloudInstances } from "./BrowserControl";
+import { INSTANCE_QUERY_KEY } from "../wire/queryKeys";
 
 export function StartCloudBrowser({ allowed }: { allowed: boolean }) {
   const { available, open } = useBrowserControl();

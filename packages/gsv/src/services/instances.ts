@@ -14,6 +14,16 @@ import type {
 } from "../protocol/syscalls/instance";
 
 const id = z.string().trim().min(1).max(160);
+export const instanceChangeSchema = z.strictObject({
+  installationId: id,
+  ownerUid: z.number().int().nonnegative(),
+});
+
+/** Deployment-authorized notifications contain identity only, never browser or login state. */
+export interface InstancesGatewayService {
+  instancesChanged(change: z.infer<typeof instanceChangeSchema>): Promise<void>;
+}
+
 export const instanceActorSchema = z.strictObject({
   ownerUid: z.number().int().nonnegative(),
   human: z.boolean(),

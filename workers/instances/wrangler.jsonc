@@ -12,7 +12,10 @@
   "durable_objects": { "bindings": [{ "name": "INSTANCES", "class_name": "InstanceCoordinator" }] },
   "migrations": [{ "tag": "v1", "new_sqlite_classes": ["InstanceCoordinator"] }],
   "r2_buckets": [{ "binding": "PROFILES", "bucket_name": "gsv-browser-profiles" }],
-  "services": [{ "binding": "INSTALLATION_DIRECTORY", "service": "gsv-installations" }],
+  "services": [
+    { "binding": "INSTALLATION_DIRECTORY", "service": "gsv-installations" },
+    { "binding": "INSTANCE_EVENTS", "service": "gsv", "entrypoint": "InstancesGatewayEntrypoint", "props": { "authority": "instance-notifications" } }
+  ],
   "vars": { "BROWSER_LIMITS": { "enabled": false, "concurrentInstances": 0, "periodSeconds": 0, "maxInstanceSeconds": 1800, "savedProfiles": 0, "profileStorageBytes": 16777216 } },
   "observability": { "enabled": true }
 }

@@ -6,11 +6,10 @@ import { useGateway } from "../../../services/gateway/GatewayProvider";
 import { useSession } from "../../../services/session/SessionProvider";
 import { sendBrowserInput } from "../../../services/instances/browserControl";
 import type { BrowserHumanInput } from "@humansandmachines/gsv/protocol";
-import { INSTRUMENT_TARGETS_KEY } from "../wire/queryKeys";
+import { INSTANCE_QUERY_KEY } from "../wire/queryKeys";
 import { useBrowserStream, type BrowserImage } from "./useBrowserStream";
 import "./browser.css";
 
-export const INSTANCE_QUERY_KEY = ["cloud-instances"];
 type BrowserSelection = { instanceId: string; requestId?: string };
 type BrowserControlContext = { available: boolean; selection: BrowserSelection | null; open: (request: BrowserSelection) => void; close: () => void };
 const Context = createContext<BrowserControlContext>({ available: false, selection: null, open: () => {}, close: () => {} });
@@ -42,11 +41,7 @@ export function BrowserControlOverlay() {
 export function useCloudInstances() {
   const { client, connected } = useGateway();
   const { available } = useBrowserControl();
-  const queryClient = useQueryClient();
-  const result = useQuery({ queryKey: INSTANCE_QUERY_KEY, queryFn: () => client.sys.instance.list({}), enabled: connected && available, refetchInterval: 2500 });
-  const revision = result.data?.instances.map(value => `${value.instanceId}:${value.revision}`).join(",");
-  useEffect(() => { if (revision !== undefined) void queryClient.invalidateQueries({ queryKey: INSTRUMENT_TARGETS_KEY }); }, [revision, queryClient]);
-  return result;
+  return useQuery({ queryKey: INSTANCE_QUERY_KEY, queryFn: () => client.sys.instance.list({}), enabled: connected && available });
 }
 
 export function BrowserRequests() {
@@ -64,7 +59,7 @@ export function BrowserRequests() {
 export function BrowserViewer({ request, onClose }: { request: BrowserSelection; onClose: () => void }) {
   const { client, connected } = useGateway();
   const queryClient = useQueryClient();
-  const instanceQuery = useQuery({ queryKey: ["cloud-instance", request.instanceId], queryFn: () => client.sys.instance.get({ instanceId: request.instanceId }), enabled: connected, refetchInterval: 2500 });
+  const instanceQuery = useQuery({ queryKey: ["cloud-instance", request.instanceId], queryFn: () => client.sys.instance.get({ instanceId: request.instanceId }), enabled: connected });
   const instance = instanceQuery.data?.instance;
   const ready = instance?.state === "ready";
   const dialog = useRef<HTMLDialogElement>(null);

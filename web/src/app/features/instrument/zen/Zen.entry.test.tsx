@@ -15,6 +15,7 @@ import { collectNodes, collectText, createTestRoot, deferred } from "../../../te
 import { PromptLine, type PromptLineHandle } from "../shared/PromptLine";
 import { NativeVoiceControls } from "../../../services/platform/NativeVoiceControls";
 import { Zen } from "./Zen";
+import { BrowserRequests } from "../browser/BrowserControl";
 import { ConnectPlace } from "../fleet/ConnectPlace";
 import { FleetDialog } from "../fleet/FleetDialog";
 import { ZenText } from "./ZenText";
@@ -126,6 +127,13 @@ async function mountedZen(pid?: string, initialTarget?: string) {
 }
 
 describe("Zen conversation entry", () => {
+  it.each([undefined, "helper"])("keeps browser requests on Ship after its process loads, with selection %s", async pid => {
+    const zen = await mountedZen(pid);
+    try {
+      expect(zen.nodes().some(node => node.type === BrowserRequests)).toBe(pid === undefined);
+    } finally { await zen.unmount(); }
+  });
+
   it.each([false, true])("sends the exact Ship approval with an explicit remember choice: %s", async (remember) => {
     activeRunId = "shell-run";
     const zen = await mountedZen();

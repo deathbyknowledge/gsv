@@ -1024,7 +1024,7 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
       </div>
 
       <div class="zen-bottom">
-        {!pid && <BrowserRequests />}
+        {!pidProp && <BrowserRequests />}
         {pid ? <DelegatedApprovals pid={pid} onFleet={onFleet} placeLabelFor={(target) => placeLabel(target, places)} /> : null}
 
         <div class="zen-composer">

@@ -24,7 +24,7 @@ export function profile(row: ProfileRow): BrowserProfile {
   return value;
 }
 export class InstanceStore {
-  constructor(readonly storage: DurableObjectStorage) {}
+  constructor(readonly storage: DurableObjectStorage, private readonly changed?: (ownerUid: number) => void) {}
   get sql(): SqlStorage { return this.storage.sql; }
   activeRows(): InstanceRow[] { return this.sql.exec<InstanceRow>("SELECT * FROM instances WHERE active = 1 ORDER BY rowid DESC").toArray(); }
   inventory(ownerUid: number, includeTerminal = false): CloudInstance[] {
@@ -96,13 +96,17 @@ export class InstanceStore {
       this.sql.exec("INSERT INTO instances (id, owner_uid, record, active, reservation) VALUES (?, ?, ?, 1, ?)", id, actor.ownerUid, JSON.stringify(value), lifetime);
       this.sql.exec("INSERT INTO start_requests VALUES (?, ?, ?, ?)", actor.ownerUid, args.requestId, id, fingerprint);
       if (saved) this.putProfile({ ...profile(saved), activeInstanceId: id, revision: profile(saved).revision + 1 });
+      this.changed?.(value.ownerUid);
       return value;
     });
   }
   cancelStart(actor: InstanceActor, requestId: string): void {
     this.sql.exec("INSERT OR IGNORE INTO cancelled_starts (owner_uid, request_id) VALUES (?, ?)", actor.ownerUid, requestId);
   }
-  update(value: CloudInstance): void { this.sql.exec("UPDATE instances SET record = ? WHERE id = ?", JSON.stringify(value), value.instanceId); }
+  update(value: CloudInstance): void {
+    this.sql.exec("UPDATE instances SET record = ? WHERE id = ?", JSON.stringify(value), value.instanceId);
+    this.changed?.(value.ownerUid);
+  }
   terminal(id: string, failed: boolean, now = Date.now()): CloudInstance {
     return this.storage.transactionSync(() => {
       const row = this.byId(id), previous = instance(row);
@@ -130,6 +134,7 @@ export class InstanceStore {
       }
       this.sql.exec("DELETE FROM files WHERE instance_id = ?", id);
       this.sql.exec("DELETE FROM file_chunks WHERE instance_id = ?", id);
+      this.changed?.(value.ownerUid);
       return value;
     });
   }
@@ -189,6 +194,7 @@ export class InstanceStore {
         )`);
       this.sql.exec("DELETE FROM handoffs WHERE EXISTS (SELECT 1 FROM handoff_receipts r WHERE r.instance_id = handoffs.instance_id AND r.request_id = handoffs.request_id)");
     });
+    this.changed?.(this.byId(value.instanceId).owner_uid);
   }
   // oxlint-disable-next-line anti-slop/no-unknown-parameters -- This exception boundary normalizes arbitrary caught values for private inspection.
   diagnostic(id: string | null, error: unknown): string {

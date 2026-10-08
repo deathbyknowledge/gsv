@@ -4,6 +4,9 @@ A cloud browser lets Ship use websites while your personal devices are offline.
 It appears in Fleet alongside your connected browsers and computers. Your
 operator must enable cloud browsers; the local development stack enables them.
 
+The browser list below Zen's prompt and in Fleet updates automatically as
+browsers start, become ready or stop. Opening Fleet or refreshing is unnecessary.
+
 ## Watch and use the browser
 
 Ask Ship to use a browser. GSV reuses your account's current cloud browser,

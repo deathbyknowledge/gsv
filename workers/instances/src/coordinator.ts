@@ -54,19 +54,43 @@ export class InstanceCoordinator extends DurableObject<Environment> implements I
   readonly #autosaveAfter = new Map<string, number>();
   readonly #humanInputs = new Map<string, Promise<unknown>>();
   readonly #watches = new Map<string, { instanceId: string; watch: BrowserWatch }>();
+  readonly #changedOwners = new Set<number>();
+  #notifying = false;
   readonly #installationId: string;
   constructor(ctx: DurableObjectState, env: Environment) {
     super(ctx, env);
     if (!ctx.id.name) throw new Error("Instances require a named installation identity");
     this.#installationId = ctx.id.name;
     migrate(ctx.storage);
-    this.#store = new InstanceStore(ctx.storage);
+    this.#store = new InstanceStore(ctx.storage, ownerUid => this.notifyChange(ownerUid));
     this.#policy = new InstancePolicy(env, this.#installationId);
     this.#profiles = new ProfileStorage(this.#installationId, env.PROFILES, this.#store);
     this.#provider = new BrowserProvider(env.BROWSER);
     this.#retirement = new InstanceRetirement(ctx.storage, this.#installationId);
   }
   getTarget(): InstallationInstances { this.#retirement.requireLive(); return new InstanceCapability(this); }
+
+  private notifyChange(ownerUid: number): void {
+    this.#changedOwners.add(ownerUid);
+    if (this.#notifying) return;
+    this.#notifying = true;
+    // Coalesce synchronous writes after their transaction, off the browser action's critical path.
+    this.ctx.waitUntil(Promise.resolve().then(async () => {
+      while (this.#changedOwners.size) {
+        const owners = [...this.#changedOwners];
+        this.#changedOwners.clear();
+        await Promise.all(owners.map(async ownerUid => {
+          try {
+            await within(this.env.INSTANCE_EVENTS.instancesChanged({ installationId: this.#installationId, ownerUid }), 5000, "Browser change notification");
+          } catch (cause) {
+            if (this.#retirement.get()) return;
+            const ref = this.#store.diagnostic(null, new Error("Browser change notification failed", { cause }));
+            console.warn(`[Instances] Browser change notification failed; diagnostic ${ref}`);
+          }
+        }));
+      }
+    }).finally(() => { this.#notifying = false; }));
+  }
 
   async catalog(raw: InstanceActor) {
     instanceActorSchema.parse(raw);

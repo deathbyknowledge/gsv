@@ -3,10 +3,12 @@ import { EntitlementCache } from "@humansandmachines/gsv/services/entitlements";
 import type { EntitlementsService } from "@humansandmachines/gsv/services/entitlements";
 import type { InstallationDirectoryService } from "@humansandmachines/gsv/services/directory";
 import type { InstanceTemplate } from "@humansandmachines/gsv/protocol";
+import type { InstancesGatewayService } from "@humansandmachines/gsv/services/instances";
 import { DEFAULT_PROFILE_BYTES, MAX_PROFILE_BYTES } from "./browser-storage";
 
-export type Environment = Omit<Env, "INSTALLATION_DIRECTORY"> & {
+export type Environment = Omit<Env, "INSTALLATION_DIRECTORY" | "INSTANCE_EVENTS"> & {
   INSTALLATION_DIRECTORY: InstallationDirectoryService;
+  INSTANCE_EVENTS: InstancesGatewayService;
   ENTITLEMENTS?: EntitlementsService;
 };
 export const limitsSchema = z.strictObject({

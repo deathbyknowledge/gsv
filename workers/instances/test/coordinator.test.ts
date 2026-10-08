@@ -11,6 +11,7 @@ import { BrowserStorageError, SAVE_TIMEOUT_MS } from "../src/browser-storage";
 import { BrowserFsDriver } from "@humansandmachines/gsv-browser/fs";
 import type { TargetFileSystem } from "@humansandmachines/gsv-browser/types";
 import { decodeBrowserViewStream } from "@humansandmachines/gsv/protocol";
+import type { TestInstanceEvents } from "./worker";
 
 const actor = { ownerUid: 1000, human: true };
 const limits = { enabled: true, concurrentInstances: 2, periodSeconds: 36000, maxInstanceSeconds: 1800, savedProfiles: 5, profileStorageBytes: 5242880 };
@@ -60,6 +61,32 @@ function anotherReadyBrowser(store: InstanceStore): string {
 }
 
 describe("human browser control", () => {
+  it("publishes owner-scoped changes through the gateway binding for admission, handoffs and shutdown", () => fixture(async (object, _store, instanceId, installationId) => {
+    // SAFETY: The test Wrangler configuration binds this exact test-only entrypoint.
+    const events = env.INSTANCE_EVENTS as Service<TestInstanceEvents>;
+    const received: { installationId: string; ownerUid: number }[] = [];
+    const expectOwner = async (ownerUid: number) => {
+      await vi.waitFor(async () => {
+        received.push(...await events.take(installationId));
+        expect(received).toContainEqual({ installationId, ownerUid });
+      });
+      expect(received.every(value => value.installationId === installationId && Object.keys(value).length === 2)).toBe(true);
+      received.length = 0;
+    };
+    await object.start({ ...actor, ownerUid: 1001 }, { requestId: "other-owner", templateId: "browser", fresh: true, lifetimeSeconds: 300 });
+    await expectOwner(1001);
+    const handoff = { instanceId, requestId: "login-notification", tabId: 1, purpose: "Sign in" };
+    const selector = { instanceId, requestId: handoff.requestId };
+    await object.requestHandoff(actor, handoff);
+    await expectOwner(actor.ownerUid);
+    await object.openHandoff(actor, selector);
+    await expectOwner(actor.ownerUid);
+    await object.finishHandoff(actor, selector);
+    await expectOwner(actor.ownerUid);
+    await object.stop(actor, { instanceId, force: true });
+    await expectOwner(actor.ownerUid);
+  }));
+
   it.each(["saved", "failed"])("fences new handoffs and opening during a pending stop whose save is %s", outcome => fixture(async (object, store, instanceId, _installationId, browser) => {
     const first = { instanceId, requestId: "existing", tabId: 1, purpose: "Sign in" };
     const prepared = await object.requestHandoff(actor, first);
