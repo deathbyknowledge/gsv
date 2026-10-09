@@ -1,0 +1,4 @@
+.browser-voice-controls { display: flex; flex-wrap: wrap; align-items: center; gap: .75rem; margin-left: auto; min-width: 0; }
+.browser-voice-controls .browser-voice-stop { color: var(--accent); }
+.browser-voice-controls .browser-voice-error { color: var(--error); flex-basis: 100%; max-width: 36rem; overflow-wrap: anywhere; }
+.browser-voice-controls [role="status"]:empty { display: none; }

@@ -184,6 +184,7 @@
         "web/src/app/features/instrument/zen/**"
       ],
       "docs": [
+        "docs/how-to/voice-input.md",
         "docs/architecture/conversations.md",
         "docs/architecture/agent-loop.md",
         "docs/how-to/connect-devices.md"
@@ -342,6 +343,7 @@
         "host/helpers/**"
       ],
       "docs": [
+        "docs/how-to/voice-input.md",
         "docs/how-to/install-host-apps.md",
         "docs/architecture/rust-host-applications.md"
       ],

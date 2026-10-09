@@ -14,6 +14,8 @@ import { chatConversationHistoryKey } from "../../../services/chat/hooks/useChat
 import { collectNodes, collectText, createTestRoot, deferred } from "../../../testing/testHarness";
 import { PromptLine, type PromptLineHandle } from "../shared/PromptLine";
 import { NativeVoiceControls } from "../../../services/platform/NativeVoiceControls";
+import { BrowserVoiceControls } from "../../../services/platform/BrowserVoiceControls";
+import { NativeInputProvider, type NativeInput } from "../../../services/platform/PlatformProvider";
 import { Zen } from "./Zen";
 import { BrowserRequests } from "../browser/BrowserControl";
 import { ConnectPlace } from "../fleet/ConnectPlace";
@@ -98,18 +100,24 @@ beforeEach(() => {
 });
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
-async function mountedZen(pid?: string, initialTarget?: string) {
+async function mountedZen(pid?: string, initialTarget?: string, native = false) {
   const root = createTestRoot("Zen entry");
   const cache = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
   let tree: ComponentChildren;
   const draftChange = vi.fn();
   const onFleet = vi.fn();
+  const input: NativeInput = {
+    subscribe: () => { throw new Error("Zen entry tests inspect controls without mounting them"); },
+    acknowledge: async () => {}, command: async () => {},
+  };
   function Harness() { tree = Zen({ pid, initialTarget, onFleet, onDraftChange: draftChange }); return null; }
   const render = () => root.render(<GatewayProvider><SessionProvider createService={(client) => {
     const service = createSessionService(client);
     return { ...service, start: async () => {}, subscribe: () => () => {},
       snapshot: () => ({ ...service.snapshot(), url: gateway, username: "hank" }) };
-  }}><TerminalProvider><QueryClientProvider client={cache}><Harness /></QueryClientProvider></TerminalProvider></SessionProvider></GatewayProvider>);
+  }}><TerminalProvider><QueryClientProvider client={cache}>
+    {native ? <NativeInputProvider input={input}><Harness /></NativeInputProvider> : <Harness />}
+  </QueryClientProvider></TerminalProvider></SessionProvider></GatewayProvider>);
   await render();
   await vi.waitFor(() => expect(collectNodes(tree).some((entry) => entry.type === PromptLine && entry.props.disabled === false)).toBe(true));
   await render();
@@ -127,6 +135,18 @@ async function mountedZen(pid?: string, initialTarget?: string) {
 }
 
 describe("Zen conversation entry", () => {
+  it.each([false, true])("selects browser recording or native dictation for the active platform: native=%s", async (native) => {
+    const zen = await mountedZen("helper", undefined, native);
+    try {
+      expect(zen.nodes().some((node) => node.type === NativeVoiceControls)).toBe(native);
+      expect(zen.nodes().some((node) => node.type === BrowserVoiceControls)).toBe(!native);
+      if (!native) {
+        expect(zen.props(BrowserVoiceControls).pid).toBe("helper");
+        expect(zen.props(BrowserVoiceControls).enabled).toBe(true);
+      }
+    } finally { await zen.unmount(); }
+  });
+
   it.each([undefined, "helper"])("keeps browser requests on Ship after its process loads, with selection %s", async pid => {
     const zen = await mountedZen(pid);
     try {
@@ -171,7 +191,7 @@ describe("Zen conversation entry", () => {
         selection: () => ({ value: "Keep typing", start: 5, end: 5 }),
         append: vi.fn(), blur: vi.fn(), submit: vi.fn(),
       };
-      zen.props(NativeVoiceControls).prompt.current = input;
+      zen.props(BrowserVoiceControls).prompt.current = input;
       await act(() => {
         zen.props(PromptLine).onFocusChange?.(true);
         zen.props(PromptLine).onInput?.("Keep typing");
@@ -218,7 +238,7 @@ describe("Zen conversation entry", () => {
         selection: () => ({ value: "Keep this draft", start: 15, end: 15 }),
         append: vi.fn(), blur: vi.fn(), submit: vi.fn(),
       };
-      zen.props(NativeVoiceControls).prompt.current = input;
+      zen.props(BrowserVoiceControls).prompt.current = input;
       await act(() => { prompt().onInput?.("Keep this draft"); });
       const cloud = () => zen.nodes().find((node) => node.type === "button"
         && node.props["aria-label"] === "Use your cloud for the next message or command")!;
@@ -318,7 +338,7 @@ describe("Zen conversation entry", () => {
   });
 
   it.each(["$ pwd", "!pwd"])("routes a finalized native %s prompt to the terminal without sending it to Ship", async (text) => {
-    const zen = await mountedZen();
+    const zen = await mountedZen(undefined, undefined, true);
     try {
       await act(() => { expect(zen.props(NativeVoiceControls).send(text)).toBe(true); });
       await vi.waitFor(() => expect(vi.mocked(GSVClient.prototype.request).mock.calls.some(([call, args]) =>
@@ -329,7 +349,7 @@ describe("Zen conversation entry", () => {
   });
 
   it("switches the place for a native @ prompt and reports an unknown place without sending either to Ship", async () => {
-    const zen = await mountedZen(undefined, "laptop");
+    const zen = await mountedZen(undefined, "laptop", true);
     try {
       await vi.waitFor(() => expect(zen.props(PromptLine).place.id).toBe("laptop"));
       await act(() => { expect(zen.props(NativeVoiceControls).send("@cloud")).toBe(true); });
@@ -341,7 +361,7 @@ describe("Zen conversation entry", () => {
   });
 
   it("rejects native commands with attachments instead of submitting a chat message", async () => {
-    const zen = await mountedZen();
+    const zen = await mountedZen(undefined, undefined, true);
     try {
       await act(() => { zen.props(PromptLine).onFiles?.([new File(["fixture"], "note.txt", { type: "text/plain" })]); });
       for (const text of ["$ pwd", "$", "!"]) {
@@ -355,7 +375,7 @@ describe("Zen conversation entry", () => {
 
   it("sends ordinary native text through the conversation outbox", async () => {
     send.mockResolvedValueOnce({ message: message("user", "Hello from voice"), handlerPid: shipPid, runId: "voice" });
-    const zen = await mountedZen();
+    const zen = await mountedZen(undefined, undefined, true);
     try {
       await act(() => { expect(zen.props(NativeVoiceControls).send("Hello from voice")).toBe(true); });
       await vi.waitFor(() => expect(send).toHaveBeenCalledOnce());

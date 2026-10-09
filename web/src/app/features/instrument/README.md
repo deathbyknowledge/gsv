@@ -177,6 +177,15 @@ while visible, supports pause and reduced motion, and caches its small finite
 glyph loops as frames are first displayed, without blurred shadows or a bulk
 render on opening.
 
+Web Zen offers record, stop and cancel when no native input provider is present.
+The browser owns microphone capture and releases it before uploading a bounded
+audio body through `ai.transcription.create`, with the current Process selecting
+the transcription configuration. The result inserts at the current draft cursor
+without sending. Enter finishes capture for review; scope changes, leaving Zen,
+hiding the tab, disconnecting and clearing the draft cancel capture or upload
+and fence late results. Failed uploads can retry the in-memory recording. Desktop retains its
+local continuous dictation and gesture controls.
+
 The guide uses an original 3D hand mesh with a shaped palm, independently curling
 fingers and an opposing thumb. It shares the ship's supersampled triangle raster,
 depth buffer, lighting, theme palettes and Departure Mono glyphs. Its 96×48 scene
