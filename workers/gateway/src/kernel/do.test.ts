@@ -4161,6 +4161,7 @@ describe("Kernel IPC completion", () => {
       completeByRun.mock.invocationCallOrder[0],
     );
     expect(completeByRun).toHaveBeenCalledWith(expect.objectContaining({
+      runStatus: "aborted",
       response: expect.objectContaining({
         media: [expect.objectContaining({
           path: `/home/worker/.gsv/media/archived-media:${"b".repeat(64)}`,
@@ -4198,6 +4199,7 @@ describe("Kernel IPC completion", () => {
       uid: 1000,
       targetPid: "proc-worker",
       runId: "run-worker",
+      runStatus: "ok",
       response: {
         text: "Private worker result.",
         usage: null,
@@ -4233,9 +4235,31 @@ describe("Kernel IPC completion", () => {
       eventType: "process.delegation.killed",
       blocker: "Target process was killed",
     },
+    {
+      status: "completed",
+      runStatus: "aborted",
+      error: "Target run was aborted: user.abort",
+      eventType: "process.delegation.aborted",
+      blocker: "Target run was aborted: user.abort",
+    },
+    {
+      status: "completed",
+      runStatus: "aborted",
+      error: "A custom interruption reason",
+      eventType: "process.delegation.aborted",
+      blocker: "A custom interruption reason",
+    },
+    {
+      status: "completed",
+      runStatus: "error",
+      error: "Provider connection aborted unexpectedly",
+      eventType: "process.delegation.failed",
+      blocker: "Provider connection aborted unexpectedly",
+    },
   ] as const)(
     "returns a $eventType responsibility to Ship exactly once",
-    ({ status, error, eventType, blocker }) => {
+    (scenario) => {
+      const { status, error, eventType, blocker } = scenario;
       const responsibilityId = "r12y:11111111-1111-4111-8111-111111111111";
       let responsibility = {
         id: responsibilityId,
@@ -4275,6 +4299,8 @@ describe("Kernel IPC completion", () => {
       };
       kernel.responsibilityRuntime.reconcileResponsibilityWake = reconcileResponsibilityWake;
       kernel.ctx = { waitUntil };
+      kernel.installationId = TEST_INSTALLATION_ID;
+      kernel.installationEnv = { GSV_TELEMETRY_ENABLED: "1" };
       const call = {
         callId: "ipc:call-1",
         ownerUid: 1000,
@@ -4283,6 +4309,7 @@ describe("Kernel IPC completion", () => {
         targetPid: "proc:worker",
         targetRunId: "run:worker",
         status,
+        runStatus: "runStatus" in scenario ? scenario.runStatus : null,
         deadlineAt: 9_000,
         createdAt: 1_000,
         response: status === "completed" && error === null ? { text: "done" } : null,
@@ -4290,8 +4317,22 @@ describe("Kernel IPC completion", () => {
         responsibilityId,
       };
 
-      kernel.ipc.returnDelegatedResponsibility(call);
-      kernel.ipc.returnDelegatedResponsibility(call);
+      const emitted: unknown[] = [];
+      const log = vi.spyOn(console, "log").mockImplementation((record) => { emitted.push(record); });
+      try {
+        kernel.ipc.returnDelegatedResponsibility(call);
+        kernel.ipc.returnDelegatedResponsibility(call);
+      } finally {
+        log.mockRestore();
+      }
+
+      expect(emitted).toContainEqual(expect.objectContaining({
+        event: {
+          stream: "operational",
+          name: "delegation.finished",
+          properties: { outcome: eventType.split(".").at(-1), durationMs: expect.any(Number) },
+        },
+      }));
 
       expect(update).toHaveBeenCalledTimes(1);
       expect(update).toHaveBeenCalledWith(expect.objectContaining({

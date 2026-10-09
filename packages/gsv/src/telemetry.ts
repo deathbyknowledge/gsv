@@ -165,7 +165,7 @@ const delegationFinishedSchema = z.strictObject({
   stream: z.literal("operational"),
   name: z.literal("delegation.finished"),
   properties: z.strictObject({
-    outcome: z.enum(["completed", "failed", "timed_out", "killed"]),
+    outcome: z.enum(["completed", "failed", "aborted", "timed_out", "killed"]),
     durationMs: nonNegativeIntegerSchema,
   }),
 });

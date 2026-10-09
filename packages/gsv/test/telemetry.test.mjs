@@ -24,6 +24,16 @@ const INPUT = {
 };
 
 describe("telemetry contract", () => {
+  it("distinguishes an aborted delegation from a failed delegation", () => {
+    for (const outcome of ["aborted", "failed"]) {
+      const record = createTelemetryRecord({
+        ...INPUT,
+        event: { stream: "operational", name: "delegation.finished", properties: { outcome, durationMs: 123 } },
+      });
+      assert.equal(record.event.properties.outcome, outcome);
+    }
+  });
+
   it("reports setup recovery failures without accepting raw diagnostics", () => {
     const event = {
       stream: "operational", name: "installation.setup.failed",

@@ -107,6 +107,8 @@ without granting those adapters ownership of another component's application eve
 
 - Gateway: terminal runs, compaction completion and failure stage, delegation,
   committed messages, target/adapter connection and adapter transport outcomes.
+  `delegation.finished` distinguishes `aborted` child runs from `failed` work,
+  including when completion delivery is recovered after a Kernel restart.
   A committed Ship reply also carries a closed `platform` class for the surface
   that receives it: `web`, `phone`, `tablet`, `desktop`, `cli`, `telegram`,
   `discord`, `slack`, `background`, or `other`. The Kernel derives it from the
