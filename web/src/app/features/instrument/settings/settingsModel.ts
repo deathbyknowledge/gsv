@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { toolApprovalTargetSelectorSchema } from "@humansandmachines/gsv/protocol";
 import type { ConsoleAccount } from "../../../domain/system/consoleModels";
 
 export {
@@ -22,7 +23,7 @@ export const settingsPolicySchema = z.strictObject({
   default: action,
   rules: z.array(z.strictObject({
     match: z.string().min(1).refine((value) => value.trim() === value, "Remove surrounding spaces"),
-    target: z.string().min(1).optional(),
+    target: z.union([z.string().min(1), toolApprovalTargetSelectorSchema]).optional(),
     action,
   })),
 });

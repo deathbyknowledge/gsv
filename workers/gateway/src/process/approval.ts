@@ -2,7 +2,11 @@ import type { JsonObject } from "@humansandmachines/gsv/protocol";
 import { MAIL_SEND } from "../syscalls/constants";
 import { isRoutableSyscall, type SyscallName } from "../syscalls";
 import { z } from "zod";
-import { DEFAULT_TOOL_APPROVAL_POLICY, type ToolApprovalAction, type ToolApprovalPolicy, type ToolApprovalRule } from "@humansandmachines/gsv/protocol";
+import type { ProcessApprovalTarget } from "../protocol/process-frames";
+import {
+  DEFAULT_TOOL_APPROVAL_POLICY, isToolApprovalTargetSelector, normalizeToolApprovalTarget, toolApprovalTargetSchema,
+  type ToolApprovalAction, type ToolApprovalPolicy, type ToolApprovalRule, type ToolApprovalTarget,
+} from "@humansandmachines/gsv/protocol";
 
 export { DEFAULT_TOOL_APPROVAL_POLICY };
 export type { ToolApprovalPolicy, ToolApprovalRule };
@@ -11,6 +15,7 @@ export type ToolApprovalResolution = {
   action: ToolApprovalAction;
   target: string;
   matchedRule?: string;
+  approvedTarget?: ProcessApprovalTarget;
 };
 
 /** Syscall arguments with the model's one-sentence purpose for the person lifted off them. */
@@ -39,7 +44,7 @@ const approvalValueSchema = z.unknown();
 type ApprovalWireValue = z.input<typeof approvalValueSchema>;
 const approvalRuleSchema = z.object({
   match: z.string().trim().min(1),
-  target: z.string().optional(),
+  target: toolApprovalTargetSchema.optional(),
   action: approvalActionSchema,
   when: approvalValueSchema.optional(),
 });
@@ -76,6 +81,7 @@ export function resolveToolApproval(
   policy: ToolApprovalPolicy,
   syscall: string,
   args?: ApprovalWireValue,
+  metadata?: ProcessApprovalTarget,
 ): ToolApprovalResolution {
   const target = resolveToolApprovalTarget(syscall, args);
   const rules = policy.rules
@@ -85,7 +91,7 @@ export function resolveToolApproval(
       matchSpecificity: rule.match === syscall ? 2 : isWildcardMatch(rule.match, syscall) ? 1 : 0,
       targetSpecificity: targetScopeSpecificity(rule.target),
     }))
-    .filter((entry) => entry.matchSpecificity > 0 && targetMatchesScope(entry.rule.target, target))
+    .filter((entry) => entry.matchSpecificity > 0 && targetMatchesScope(entry.rule.target, target, metadata))
     .sort((left, right) =>
       right.targetSpecificity - left.targetSpecificity
       || right.matchSpecificity - left.matchSpecificity
@@ -112,6 +118,14 @@ export function resolveToolApproval(
     action: policy.default,
     target,
   };
+}
+
+export function approvalNeedsTargetMetadata(policy: ToolApprovalPolicy, syscall: string, ordinary: ToolApprovalResolution): boolean {
+  return ordinary.target !== "gsv" && policy.rules.some((rule) =>
+    rule.target && isToolApprovalTargetSelector(rule.target)
+    && rule.action !== ordinary.action
+    && (rule.match === syscall || isWildcardMatch(rule.match, syscall))
+  );
 }
 
 function protectManagedMailApproval(policy: ToolApprovalPolicy): ToolApprovalPolicy {
@@ -165,28 +179,15 @@ function isWildcardMatch(ruleMatch: string, syscall: string): boolean {
 }
 
 function normalizeTargetPatch(
-  targetValue: ApprovalWireValue,
+  targetValue: ToolApprovalTarget | undefined,
   legacyWhen: ApprovalWireValue,
 ): Pick<ToolApprovalRule, "target"> {
-  const target = normalizeTargetScope(targetValue)
-    ?? normalizeTargetScope(legacyWhenTarget(legacyWhen));
+  const target = normalizeToolApprovalTarget(targetValue)
+    ?? normalizeToolApprovalTarget(legacyWhenTarget(legacyWhen));
   return target ? { target } : {};
 }
 
-function normalizeTargetScope(value: ApprovalWireValue): string | undefined {
-  const parsed = z.string().safeParse(value);
-  if (!parsed.success) return undefined;
-  const normalized = normalizeTargetAlias(parsed.data);
-  if (!normalized || normalized === "*" || normalized === "any") {
-    return undefined;
-  }
-  if (normalized === "device" || normalized === "devices/*") {
-    return "targets/*";
-  }
-  return normalized;
-}
-
-function legacyWhenTarget(value: ApprovalWireValue): ApprovalWireValue {
+function legacyWhenTarget(value: ApprovalWireValue): string | undefined {
   const parsed = z.object({ target: z.string().optional() }).safeParse(value);
   if (!parsed.success) return undefined;
   return parsed.data.target === "device" ? "targets/*" : parsed.data.target;
@@ -208,12 +209,16 @@ function normalizeTargetAlias(value: string): string {
   return trimmed;
 }
 
-function targetMatchesScope(scope: string | undefined, target: string): boolean {
+function targetMatchesScope(scope: ToolApprovalTarget | undefined, target: string, metadata?: ProcessApprovalTarget): boolean {
   if (!scope || scope === "*" || scope === "any") {
     return true;
   }
   if (scope === "targets/*" || scope === "devices/*") {
     return target !== "gsv";
+  }
+  if (isToolApprovalTargetSelector(scope)) {
+    return metadata?.targetId === target && metadata.route.kind === scope.route
+      && (!scope.platform || metadata.platform === scope.platform);
   }
   if (target === "targets/*") {
     return scope === "targets/*" || scope === "devices/*";
@@ -221,12 +226,13 @@ function targetMatchesScope(scope: string | undefined, target: string): boolean 
   return scope === target;
 }
 
-function targetScopeSpecificity(scope: string | undefined): number {
+function targetScopeSpecificity(scope: ToolApprovalTarget | undefined): number {
   if (!scope || scope === "*" || scope === "any") {
     return 0;
   }
   if (scope === "targets/*" || scope === "devices/*" || scope === "gsv") {
     return 1;
   }
-  return 2;
+  if (isToolApprovalTargetSelector(scope)) return scope.platform ? 3 : 2;
+  return 4;
 }

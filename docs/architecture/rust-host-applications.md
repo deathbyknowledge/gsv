@@ -39,6 +39,12 @@ The host applications, helpers, and shared crates form one Cargo workspace
 rooted at `host/`. Its lockfile and build output belong to that boundary;
 `workers/ripgit/` remains an independent Rust project.
 
+The gesture runtime's CMake build downloads Eigen from TensorFlow's archive
+mirror and ml_dtypes from GitHub, both at LiteRT's pinned revisions with SHA-256
+verification. It does not clone Eigen from GitLab or fetch ml_dtypes' unused
+Eigen submodule. This source selection applies to local builds and every desktop
+release platform, including builds without a dependency cache.
+
 ## `gsvd`
 
 `gsvd` is the machine driver. It connects to the gateway with the driver role

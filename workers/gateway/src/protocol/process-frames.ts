@@ -14,14 +14,33 @@ import type {
 } from "@humansandmachines/gsv/protocol";
 import type { Frame, FrameBody, RequestFrame, SignalFrame } from "./frames";
 import type { SyscallName } from "../syscalls";
+import type { TargetDescriptor } from "../kernel/targets";
 
 /** Kernel-derived ownership for operations composed beneath a dispatched agent tool. */
 export type ProcessToolOwner = { runId: string; requestId: string };
+
+/** Kernel-resolved approval scope, carried outside model-controlled syscall frames. */
+export type ProcessApprovalTarget = Pick<TargetDescriptor, "targetId" | "ownerUid" | "platform" | "route">;
+export type ProcessApprovalTargetRef = { targetId: string } | { sessionId: string };
+
+export const processApprovalTargetSchema: z.ZodType<ProcessApprovalTarget> = z.object({
+  targetId: z.string(), ownerUid: z.number(), platform: z.string(),
+  route: z.discriminatedUnion("kind", [
+    z.object({ kind: z.literal("machine"), targetId: z.string() }),
+    z.object({ kind: z.literal("instance"), instanceId: z.string() }),
+    z.object({
+      kind: z.literal("adapter"), adapter: z.string(), accountId: z.string(), actorId: z.string(),
+      adapterTargetId: z.string(), routeGeneration: z.string().optional(),
+    }),
+  ]),
+});
 
 export type ProcessToolAuthorizeArgs = ProcessToolOwner & {
   syscall: SyscallName;
   args: JsonObject;
   defaultAction?: "ask";
+  /** Derived from the Kernel's resolved route, never from syscall arguments. */
+  target?: ProcessApprovalTarget;
 };
 
 export type ProcessAdapterWorkReturnedRuntimeEvent = {

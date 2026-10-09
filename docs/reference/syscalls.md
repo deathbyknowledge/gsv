@@ -32,6 +32,14 @@ Generated namespace methods and `client.call()` are data-only.
 include `target`; dispatch strips it before the selected native or registered
 target implementation receives the syscall.
 
+Agent approval follows the resolved destination for direct tools, CodeMode and
+nested native commands. The default policy allows these operations on `gsv` and
+GSV-provisioned cloud browsers. Personal browser and computer targets retain their
+approval requirements. The Kernel supplies resolved route and platform metadata; approval cannot carry
+over to a replacement target. Capability
+and owner checks still apply. See [tool approval policy](configuration.md#tool-approval-policy)
+for target selectors and custom policies.
+
 ### Tool purpose
 
 When a Process calls a syscall through one of its capability tools, the tool

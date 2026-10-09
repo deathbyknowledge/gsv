@@ -50,7 +50,7 @@ import type { InstallationIdentity } from "../installation/identity";
 import type { KernelConnection, KernelConnectionState } from "./connection";
 import type { PeerContext } from "./peer";
 import type { RequestFrame, ResponseFrame } from "../protocol/frames";
-import type { ProcessToolOwner } from "../protocol/process-frames";
+import type { ProcessApprovalTarget, ProcessToolOwner } from "../protocol/process-frames";
 import type { GatewayEnv } from "../runtime-env";
 
 export type KernelContext = {
@@ -93,6 +93,8 @@ export type KernelContext = {
   processId?: string;
   processRunId?: string;
   toolOwner?: ProcessToolOwner;
+  /** Constrain dispatch to the target scope used for Process approval. */
+  approvedTarget?: ProcessApprovalTarget;
   requestId?: string;
   requestSignal?: AbortSignal;
   callerOwnerUid?: number;

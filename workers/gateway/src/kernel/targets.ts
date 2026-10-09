@@ -7,6 +7,7 @@ import { hasCapability } from "./capabilities";
 import type { KernelContext } from "./context";
 import { principalOf } from "./context";
 import type { TargetRecord } from "./target-registry";
+import type { ProcessApprovalTarget } from "../protocol/process-frames";
 import { discoverInstanceTargets, type InstanceTargetRoute } from "./instance-targets";
 import {
   discoverVisibleAdapterTargets,
@@ -39,6 +40,27 @@ export type TargetDescriptor = {
   instance?: SysTargetSummary["instance"];
   route: { kind: "machine"; targetId: string } | AdapterTargetRoute | InstanceTargetRoute;
 };
+
+export function approvalTargetIdentity(target: TargetDescriptor): ProcessApprovalTarget {
+  const { targetId, ownerUid, platform, route } = target;
+  return { targetId, ownerUid, platform, route };
+}
+
+export function matchesApprovalTarget(target: TargetDescriptor, approved: ProcessApprovalTarget): boolean {
+  if (target.targetId !== approved.targetId || target.ownerUid !== approved.ownerUid || target.platform !== approved.platform) return false;
+  const actual = target.route;
+  const expected = approved.route;
+  switch (actual.kind) {
+    case "machine":
+      return expected.kind === "machine" && actual.targetId === expected.targetId;
+    case "instance":
+      return expected.kind === "instance" && actual.instanceId === expected.instanceId;
+    case "adapter":
+      return expected.kind === "adapter" && actual.adapter === expected.adapter
+        && actual.accountId === expected.accountId && actual.actorId === expected.actorId
+        && actual.adapterTargetId === expected.adapterTargetId && actual.routeGeneration === expected.routeGeneration;
+  }
+}
 
 export type TargetListOptions = {
   includeOffline?: boolean;

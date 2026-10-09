@@ -42,6 +42,7 @@ export type ProcessRuntimeHarness = {
 
 export async function startProcessRuntimeHarness(options: {
   workersAi?: boolean;
+  instances?: boolean;
   managedMailQueue?: string;
 } = {}): Promise<ProcessRuntimeHarness> {
   const ai = await startOpenAiFixture();
