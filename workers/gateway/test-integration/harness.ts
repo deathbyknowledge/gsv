@@ -26,6 +26,7 @@ type ServiceBinding = NonNullable<Unstable_RawConfig["services"]>[number];
 export function integrationGatewayConfig(options: {
   name?: string;
   workersAi?: boolean;
+  instances?: boolean;
   managed?: boolean;
   managedServices?: {
     accounts: string;
@@ -89,6 +90,7 @@ export function integrationGatewayConfig(options: {
     ai: undefined,
     services: [
       executionBinding,
+      ...(options.instances ? [{ binding: "INSTANCES", service: DEPENDENCY_WORKER, entrypoint: "IntegrationInstances" }] : []),
       {
         binding: "CHANNEL_DISCORD",
         service: DEPENDENCY_WORKER,
@@ -264,6 +266,7 @@ function managedInferenceProbeConfig(): Unstable_RawConfig {
 
 export function createGatewayTestHarness(options: {
   workersAi?: boolean;
+  instances?: boolean;
   managedMailQueue?: string;
 } = {}): TestHarness {
   return createTestHarness({

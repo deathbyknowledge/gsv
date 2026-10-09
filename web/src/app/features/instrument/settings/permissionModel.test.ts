@@ -9,7 +9,15 @@ describe("Settings approval labels", () => {
     expect(options.tools.find((option) => option.value === "sys.mcp.call")?.label).toBe("Call MCP tools");
     expect(options.targets.find((option) => option.value === "machine:123")?.label).toBe("My MacBook");
     expect(options.targets.find((option) => option.value === "gsv")?.label).toBe("GSV computer");
+    expect(options.targets.find((option) => option.value === "cloud-browsers/*")?.label).toBe("Cloud browsers");
     expect(options.targets.find((option) => option.value === "")?.label).toBe("All machines");
+  });
+
+  it("offers the cloud-browser scope before any instance exists", () => {
+    const options = permissionOptionsForRule({ match: "shell.exec", target: "cloud-browsers/*", action: "ask" }, []);
+    expect(options.targets.filter((option) => option.value === "cloud-browsers/*")).toEqual([
+      { value: "cloud-browsers/*", label: "Cloud browsers", group: undefined },
+    ]);
   });
 
   it("retains custom rules and unavailable target IDs before and after target discovery", () => {

@@ -22,6 +22,25 @@ function prepareShell(process: Process): void {
 }
 
 describe("approval beneath a native command", () => {
+  it("uses the Kernel's cloud-browser classification for nested commands and still enforces capabilities", async () => {
+    const stub = await initProcess("nested-cloud-browser", ROOT_IDENTITY);
+    await runInProcess(stub, async (process: Process) => {
+      prepareShell(process);
+      const request: ProcessToolAuthorizeArgs = {
+        runId: "run", requestId: "shell", syscall: "fs.write",
+        args: { target: "cloud", path: "/tmp/report.txt", content: "report" }, targetKind: "cloud-browser",
+      };
+      const signal = new AbortController().signal;
+      expect(await process.tools.authorizeNestedTool(request, signal)).toBe(true);
+      expect(process.store.tools.getPendingHil()).toBeNull();
+      const run = process.runs.active!;
+      run.config!.capabilities = ["fs.read"];
+      process.runs.active = run;
+      await expect(process.tools.authorizeNestedTool(request, signal)).rejects.toThrow("Permission denied");
+      process.runs.active = null;
+    });
+  });
+
   it("keeps a search target's approval beneath its owning Shell call", async () => {
     const stub = await initProcess("nested-shell-search", ROOT_IDENTITY);
     await runInProcess(stub, async (process: Process) => {

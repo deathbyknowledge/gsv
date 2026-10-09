@@ -19,6 +19,7 @@ export async function authorizeNestedOperation(
   args: JsonObject,
   defaultAction?: "ask",
   send: typeof sendFrameToProcess = sendFrameToProcess,
+  targetKind?: "cloud-browser",
 ): Promise<void> {
   if (!ctx.toolOwner) return;
   if (!ctx.processId) throw new Error("Agent operation has no owning process");
@@ -26,7 +27,7 @@ export async function authorizeNestedOperation(
   signal?.throwIfAborted();
   const id = `approval:${crypto.randomUUID()}`;
   const response = await raceWithAbort(send(ctx.installationId, ctx.processId, {
-    type: "req", id, call: "proc.tool.authorize", args: { ...ctx.toolOwner, syscall, args, defaultAction },
+    type: "req", id, call: "proc.tool.authorize", args: { ...ctx.toolOwner, syscall, args, defaultAction, targetKind },
   }), signal, {
     onAbort: () => {
       ctx.defer(send(ctx.installationId, ctx.processId!, {

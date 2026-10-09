@@ -100,7 +100,7 @@ import {
   assertAdapterMessageDestinationAccess,
   identityLinkRouteGeneration,
 } from "./adapter-destinations";
-import type { InternalResponseFrame } from "../protocol/process-frames";
+import type { InternalResponseFrame, ProcessApprovalTarget } from "../protocol/process-frames";
 import type {
   ProcessOutboundFrame,
 } from "../protocol/process-frames";
@@ -137,7 +137,7 @@ import {
   recoverManagedOutboundEnqueue,
   resolveOutboundMailReference as resolveKernelOutboundMailReference,
 } from "./outbound-mail";
-import { getVisibleTarget } from "./targets";
+import { getVisibleTarget, resolveVisibleTarget } from "./targets";
 import { runKernelSqlMigrations } from "./schema/migrations";
 import { LEDGER_PRUNE_PER_ALARM, LEDGER_WINDOW_ROWS, LedgerStore, argsText, ledgerTargetOf, outcomeOfResponse, errorOfResponse, usageOfResponse, type JsonLike } from "./ledger";
 import { LedgerFeed } from "./ledger-feed";
@@ -922,6 +922,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
   async recvFrame(
     processId: string,
     frame: ProcessOutboundFrame,
+    approvedTarget?: ProcessApprovalTarget,
   ): Promise<Frame | InternalResponseFrame<"proc.message.commit"> | null> {
     try { this.retirement.assertActive(); } catch (error) {
       await cancelUnlockedBody("body" in frame ? frame.body : undefined, "Installation admission is closed");
@@ -947,7 +948,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
         }
       }
       try {
-        return await this.handleProcessReq(processId, frame);
+        return await this.handleProcessReq(processId, frame, approvedTarget);
       } finally {
         await cancelUnlockedBody(frame.body, "Process request completed");
       }
@@ -1014,6 +1015,18 @@ export class Kernel extends DurableObject<GatewayEnv> {
       console.warn("[Kernel] Process run stream ended before completion");
     });
     return true;
+  }
+
+  /** Runtime approval metadata; target discovery is not an extra agent capability. */
+  async resolveProcessApprovalTarget(processId: string, targetId: string): Promise<ProcessApprovalTarget> {
+    this.retirement.assertActive();
+    const ctx = this.buildProcessContext(processId);
+    if (!ctx) throw new Error("Unknown process");
+    const target = await resolveVisibleTarget(ctx, targetId, { includeOffline: true });
+    if (!target) throw new Error(`Target unavailable for tool approval: ${targetId}`);
+    return target.route.kind === "instance" && target.platform === "browser"
+      ? { kind: "cloud-browser", instanceId: target.route.instanceId }
+      : { kind: "other" };
   }
 
   async requestProcessNetFetch(
@@ -1398,11 +1411,12 @@ export class Kernel extends DurableObject<GatewayEnv> {
     };
   }
 
-                                      async handleProcessReq(processId: string, frame: RequestFrame): Promise<ResponseFrame | null> {
+                                      async handleProcessReq(processId: string, frame: RequestFrame, approvedTarget?: ProcessApprovalTarget): Promise<ResponseFrame | null> {
     const ctx = this.buildProcessContext(processId, frame.runId);
     if (!ctx) {
       return errFrame(frame.id, 404, "Unknown process");
     }
+    ctx.approvedTarget = approvedTarget;
 
     return await this.dispatchPeerRequest(
       frame,

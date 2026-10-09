@@ -2,6 +2,7 @@ import type { JsonObject } from "@humansandmachines/gsv/protocol";
 import { MAIL_SEND } from "../syscalls/constants";
 import { isRoutableSyscall, type SyscallName } from "../syscalls";
 import { z } from "zod";
+import type { ProcessApprovalTarget } from "../protocol/process-frames";
 import { DEFAULT_TOOL_APPROVAL_POLICY, type ToolApprovalAction, type ToolApprovalPolicy, type ToolApprovalRule } from "@humansandmachines/gsv/protocol";
 
 export { DEFAULT_TOOL_APPROVAL_POLICY };
@@ -11,6 +12,7 @@ export type ToolApprovalResolution = {
   action: ToolApprovalAction;
   target: string;
   matchedRule?: string;
+  approvedTarget?: ProcessApprovalTarget;
 };
 
 /** Syscall arguments with the model's one-sentence purpose for the person lifted off them. */
@@ -76,6 +78,7 @@ export function resolveToolApproval(
   policy: ToolApprovalPolicy,
   syscall: string,
   args?: ApprovalWireValue,
+  targetKind?: "cloud-browser",
 ): ToolApprovalResolution {
   const target = resolveToolApprovalTarget(syscall, args);
   const rules = policy.rules
@@ -85,7 +88,7 @@ export function resolveToolApproval(
       matchSpecificity: rule.match === syscall ? 2 : isWildcardMatch(rule.match, syscall) ? 1 : 0,
       targetSpecificity: targetScopeSpecificity(rule.target),
     }))
-    .filter((entry) => entry.matchSpecificity > 0 && targetMatchesScope(entry.rule.target, target))
+    .filter((entry) => entry.matchSpecificity > 0 && targetMatchesScope(entry.rule.target, target, targetKind))
     .sort((left, right) =>
       right.targetSpecificity - left.targetSpecificity
       || right.matchSpecificity - left.matchSpecificity
@@ -208,12 +211,15 @@ function normalizeTargetAlias(value: string): string {
   return trimmed;
 }
 
-function targetMatchesScope(scope: string | undefined, target: string): boolean {
+function targetMatchesScope(scope: string | undefined, target: string, targetKind?: "cloud-browser"): boolean {
   if (!scope || scope === "*" || scope === "any") {
     return true;
   }
   if (scope === "targets/*" || scope === "devices/*") {
     return target !== "gsv";
+  }
+  if (scope === "cloud-browsers/*") {
+    return target !== "gsv" && targetKind === "cloud-browser";
   }
   if (target === "targets/*") {
     return scope === "targets/*" || scope === "devices/*";
@@ -228,5 +234,5 @@ function targetScopeSpecificity(scope: string | undefined): number {
   if (scope === "targets/*" || scope === "devices/*" || scope === "gsv") {
     return 1;
   }
-  return 2;
+  return scope === "cloud-browsers/*" ? 2 : 3;
 }

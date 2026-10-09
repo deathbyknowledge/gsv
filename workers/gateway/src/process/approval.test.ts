@@ -6,6 +6,42 @@ import {
 } from "./approval";
 
 describe("tool approval policy", () => {
+  it.each(["shell.exec", "net.fetch", "fs.write", "fs.edit", "fs.delete", "fs.copy", "fs.transfer.receive"])(
+    "allows %s on verified cloud browsers", (syscall) => {
+      const args = { target: "browser-id" };
+      expect(resolveToolApproval(DEFAULT_TOOL_APPROVAL_POLICY, syscall, args, "cloud-browser").action).toBe("auto");
+      expect(resolveToolApproval(DEFAULT_TOOL_APPROVAL_POLICY, syscall, args).action).toBe("ask");
+    },
+  );
+
+  it("does not let syscall arguments or target names claim cloud-browser provenance", () => {
+    for (const target of ["browser-id", "cloud-browsers/*"]) {
+      expect(resolveToolApproval(DEFAULT_TOOL_APPROVAL_POLICY, "shell.exec", {
+        target, targetKind: "cloud-browser", instance: { instanceId: "made-up" }, platform: "browser",
+      }).action).toBe("ask");
+    }
+  });
+
+  it("keeps cloud-browser defaults configurable and exact target overrides most specific", () => {
+    const policy = parseToolApprovalPolicy(JSON.stringify({
+      default: "deny",
+      rules: [
+        { match: "fs.read", target: "targets/*", action: "auto" },
+        { match: "fs.*", target: "cloud-browsers/*", action: "ask" },
+        { match: "fs.read", target: "private-browser", action: "deny" },
+      ],
+    }));
+    expect(resolveToolApproval(policy, "fs.read", { target: "cloud" }, "cloud-browser").action).toBe("ask");
+    expect(resolveToolApproval(policy, "fs.read", { target: "private-browser" }, "cloud-browser").action).toBe("deny");
+    expect(resolveToolApproval(policy, "fs.read", { target: "personal-browser" }).action).toBe("auto");
+  });
+
+  it("preserves stored policies without adding cloud-browser allowances", () => {
+    const policy = parseToolApprovalPolicy('{"default":"deny","rules":[{"match":"shell.exec","target":"targets/*","action":"ask"}]}');
+    expect(resolveToolApproval(policy, "shell.exec", { target: "cloud" }, "cloud-browser").action).toBe("ask");
+    expect(resolveToolApproval(policy, "fs.write", { target: "cloud" }, "cloud-browser").action).toBe("deny");
+  });
+
   it("parses policy JSON and keeps defaults on invalid input", () => {
     expect(parseToolApprovalPolicy(null)).toEqual(DEFAULT_TOOL_APPROVAL_POLICY);
     expect(parseToolApprovalPolicy("{")).toEqual(DEFAULT_TOOL_APPROVAL_POLICY);

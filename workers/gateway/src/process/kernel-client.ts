@@ -7,7 +7,7 @@ import {
 import type { ArgsOf, ResultOf, SyscallName } from "../syscalls";
 import type { Frame, FrameBody, RequestFrame, ResponseOkFrame } from "../protocol/frames";
 import {
-  cancelProcessRequests, requestProcessNetFetch, sendFrameToKernel, type RequestProcessNetFetchOptions,
+  cancelProcessRequests, getKernelPtr, requestProcessNetFetch, sendFrameToKernel, type RequestProcessNetFetchOptions,
 } from "../shared/utils";
 import { cancelResponseBody } from "./internal/messages";
 import { formatAgentToolResponse, materializeToolResponse } from "./tool-response";
@@ -17,22 +17,32 @@ import {
 } from "../kernel/net";
 import { routedFetchOptionsSchema } from "./internal/schemas";
 import type { Process } from "./do";
+import type { ProcessApprovalTarget } from "../protocol/process-frames";
 import { raceWithAbort } from "../shared/abort";
 
 export class ProcessKernelClient {
   constructor(private readonly host: Process) {}
+
+  async resolveApprovalTarget(targetId: string, signal?: AbortSignal): Promise<ProcessApprovalTarget> {
+    signal?.throwIfAborted();
+    return raceWithAbort(
+      getKernelPtr(this.host.installationId).then(kernel => kernel.resolveProcessApprovalTarget(this.host.pid, targetId)),
+      signal,
+    );
+  }
 
   async kernelRpc<T extends SyscallName>(
     call: T,
     args: ArgsOf<T>,
     signal?: AbortSignal,
     requestId?: string,
+    approvedTarget?: ProcessApprovalTarget,
   ): Promise<ResultOf<T>> {
     signal?.throwIfAborted();
     const pid = this.host.pid;
     const id = requestId ?? crypto.randomUUID();
     const frame: RequestFrame<T> = { type: "req", id, call, args };
-    const pending = sendFrameToKernel(this.host.installationId, pid, frame);
+    const pending = sendFrameToKernel(this.host.installationId, pid, frame, approvedTarget);
     const cancellationReason = () =>
       signal?.reason instanceof Error ? signal.reason.message : "Request cancelled";
     const response: Frame | null = await raceWithAbort(pending, signal, {
@@ -153,6 +163,7 @@ export class ProcessKernelClient {
     call: SyscallName,
     args: JsonObject,
     purpose?: string,
+    approvedTarget?: ProcessApprovalTarget,
   ): Promise<void> {
     if (this.host.handleRunStopped(runId) || !this.host.store.tools.getPending(dispatchId)) {
       return;
@@ -178,7 +189,7 @@ export class ProcessKernelClient {
     } as RequestFrame;
     if (purpose) reqFrame.purpose = purpose;
 
-    const response = await sendFrameToKernel(this.host.installationId, pid, reqFrame);
+    const response = await sendFrameToKernel(this.host.installationId, pid, reqFrame, approvedTarget);
 
     if (!response || response.type !== "res") return;
     if (this.host.handleRunStopped(runId) || !this.host.store.tools.getPending(dispatchId)) {

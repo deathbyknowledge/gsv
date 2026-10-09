@@ -39,7 +39,7 @@ import { hasCapability } from "../../kernel/capabilities";
 import { materializeToolResponse } from "../tool-response";
 import { raceWithAbort } from "../../shared/abort";
 import { stableOpaqueId } from "../../shared/stable-id";
-import type { ProcessToolAuthorizeArgs, ProcessToolOwner } from "../../protocol/process-frames";
+import type { ProcessApprovalTarget, ProcessToolAuthorizeArgs, ProcessToolOwner } from "../../protocol/process-frames";
 
 const APPROVED_READS_REMEMBERED = 64;
 const readPathArgsSchema = z.object({ path: z.string().min(1), target: z.string().optional() });
@@ -113,7 +113,7 @@ export class ProcessTools {
     if (!hasCapability(context.capabilities, args.syscall)) {
       throw new Error(`Permission denied: ${args.syscall}`);
     }
-    const approval = resolveToolApproval(context.approvalPolicy, args.syscall, args.args);
+    const approval = resolveToolApproval(context.approvalPolicy, args.syscall, args.args, args.targetKind);
     if (approval.action === "deny") return false;
     if (approval.action === "auto" && (approval.matchedRule || args.defaultAction !== "ask")) return true;
     const approved = await this.waitForCodeModeApproval(
@@ -139,6 +139,20 @@ export class ProcessTools {
     };
     this.host.runs.active = run;
     return run.approvalPolicy;
+  }
+
+  async resolveApproval(
+    policy: ToolApprovalPolicy,
+    syscall: string,
+    args: JsonObject,
+    signal?: AbortSignal,
+  ): Promise<ToolApprovalResolution> {
+    const ordinary = resolveToolApproval(policy, syscall, args);
+    const browser = resolveToolApproval(policy, syscall, args, "cloud-browser");
+    // Most calls need no discovery. Only resolve provenance when it changes the decision.
+    if (ordinary.action === browser.action) return ordinary;
+    const approvedTarget = await this.host.kernel.resolveApprovalTarget(ordinary.target, signal);
+    return { ...(approvedTarget.kind === "cloud-browser" ? browser : ordinary), approvedTarget };
   }
 
   prepareToolArgs(syscall: string, args: JsonObject): PreparedJsonToolArgs {
@@ -518,11 +532,11 @@ export class ProcessTools {
     }
   }
 
-  private admitRegisteredToolCall(
+  private async admitRegisteredToolCall(
     run: RunState,
     toolCall: ToolCallRecord,
     approvalPolicy: ToolApprovalPolicy,
-  ): AdmittedToolCall | null {
+  ): Promise<AdmittedToolCall | null> {
     if (isRunControlCall(toolCall.call)) {
       this.host.store.tools.fail(toolCall.dispatchId, INTERRUPTED_RUN_CONTROL_MESSAGE);
       return null;
@@ -542,7 +556,16 @@ export class ProcessTools {
     }
 
     const { args, purpose } = takePurpose(jsonObjectSchema.parse(toolCall.args));
-    const approval = resolveToolApproval(approvalPolicy, syscall, args);
+    let approval: ToolApprovalResolution;
+    try {
+      approval = await this.resolveApproval(approvalPolicy, syscall, args, this.host.run.runAbortSignal(run.runId));
+    } catch (error) {
+      if (!this.host.handleRunStopped(run.runId)) {
+        this.host.store.tools.fail(toolCall.dispatchId, `Tool approval failed: ${errorMessageFromUnknown(error)}`);
+      }
+      return null;
+    }
+    if (this.host.handleRunStopped(run.runId)) return null;
     if (approval.action === "deny") {
       this.host.store.tools.fail(toolCall.dispatchId, "Tool execution denied by policy");
       return null;
@@ -587,8 +610,11 @@ export class ProcessTools {
       if (this.host.handleRunStopped(runId)) {
         return null;
       }
-      const admitted = this.admitRegisteredToolCall(run, toolCall, approvalPolicy);
+      const admitted = await this.admitRegisteredToolCall(run, toolCall, approvalPolicy);
       if (!admitted) continue;
+      const concurrentApproval = this.host.store.tools.getPendingHilForRun(runId);
+      if (concurrentApproval) return concurrentApproval;
+      if (this.host.store.tools.getPending(toolCall.dispatchId)?.status !== "registered") continue;
       const { callId, dispatchId, syscall, toolName, args, approval, purpose } = admitted;
 
       if (approval.action === "ask") {
@@ -631,7 +657,7 @@ export class ProcessTools {
       if (this.host.handleRunStopped(runId)) {
         return null;
       }
-      this.launchToolDispatch(runId, dispatchId, syscall, args, approvalPolicy, purpose);
+      this.launchToolDispatch(runId, dispatchId, syscall, args, approvalPolicy, purpose, approval.approvedTarget);
     }
 
     return null;
@@ -649,11 +675,12 @@ export class ProcessTools {
     args: JsonObject,
     approvalPolicy: ToolApprovalPolicy,
     purpose?: string,
+    approvedTarget?: ProcessApprovalTarget,
   ): void {
     const execution =
       syscall === CODEMODE_EXEC
         ? this.executeCodeModeTool(runId, dispatchId, args, approvalPolicy, purpose)
-        : this.host.kernel.dispatchSyscall(runId, dispatchId, syscall, args, purpose);
+        : this.host.kernel.dispatchSyscall(runId, dispatchId, syscall, args, purpose, approvedTarget);
     this.host.startBackground(
       `tool dispatch ${dispatchId}`,
       execution.catch((error) => {
@@ -859,8 +886,12 @@ export class ProcessTools {
     }
     const toolArgs = prepared.args;
 
+    let approvedTarget: ProcessApprovalTarget | undefined;
     if (context) {
-      const approval = resolveToolApproval(context.approvalPolicy, call, toolArgs);
+      const approval = await this.resolveApproval(context.approvalPolicy, call, toolArgs, signal);
+      approvedTarget = approval.approvedTarget;
+      signal?.throwIfAborted();
+      if (this.host.handleRunStopped(context.runId)) throw new Error("Run stopped during tool approval");
       if (approval.action === "deny") {
         throw new Error(`Tool execution denied by policy: ${call}`);
       }
@@ -895,6 +926,7 @@ export class ProcessTools {
       toolArgs,
       signal,
       context?.dispatchId,
+      approvedTarget,
     );
 
     if (context && this.host.handleRunStopped(context.runId)) {
@@ -1003,6 +1035,7 @@ export class ProcessTools {
     args: JsonObject,
     signal?: AbortSignal,
     ownerDispatchId?: string,
+    approvedTarget?: ProcessApprovalTarget,
   ): Promise<ResponseFrame> {
     signal?.throwIfAborted();
     const pid = this.host.pid;
@@ -1043,7 +1076,7 @@ export class ProcessTools {
     void pending.catch(() => {});
 
     const operation = (async () => {
-      const response = await sendFrameToKernel(this.host.installationId, pid, reqFrame);
+      const response = await sendFrameToKernel(this.host.installationId, pid, reqFrame, approvedTarget);
       if (response && response.type === "res") {
         const waiter = this.host.codeModeResponses.get(id);
         if (!waiter || (runId !== null && this.host.handleRunStopped(runId))) {

@@ -146,6 +146,10 @@ export const BUILTIN_TARGET_OPTIONS: SelectOption[] = [
     label: "GSV computer",
     value: "gsv",
   },
+  {
+    label: "Cloud browsers",
+    value: "cloud-browsers/*",
+  },
 ];
 const LEGACY_EXTERNAL_TARGET_OPTION: SelectOption = {
   group: "Stored machine",

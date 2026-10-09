@@ -139,8 +139,8 @@ Policy shape:
 
 - `action` is `auto`, `ask`, or `deny`. The console labels them **Allow**, **Ask**, and **Block**.
 - `match` is an exact syscall name or a domain wildcard ending in `.*`; `fs.*` matches `fs` and every `fs.` call.
-- `target` scopes a rule to where the call runs. Omit it, or use `*` or `any`, for every target. `gsv` is the cloud home (`gateway` and `local` are aliases). `targets/*` is any connected machine or browser. A bare target id scopes the rule to that one target. The legacy values `device` and `devices/*` are read as `targets/*`, and a legacy `when: { "target": ... }` object is read as `target`; nothing else inside `when` is honoured.
-- Precedence: the rule with the most specific target wins, then an exact `match` beats a wildcard, then list order. A rule that fails validation is dropped; a value that is not valid JSON falls back to the built-in default.
+- `target` scopes a rule to where the call runs. Omit it, or use `*` or `any`, for every target. `gsv` is the cloud home (`gateway` and `local` are aliases). `targets/*` is any connected machine or browser, including cloud browsers. `cloud-browsers/*` selects only GSV-provisioned cloud browsers; Settings labels it **Cloud browsers**. A bare target id scopes the rule to that one target. The legacy values `device` and `devices/*` are read as `targets/*`, and a legacy `when: { "target": ... }` object is read as `target`; nothing else inside `when` is honoured.
+- Precedence: an exact target wins over `cloud-browsers/*`, which wins over `targets/*`, which wins over an unscoped rule. Within a target scope, an exact `match` beats a wildcard, then list order breaks ties. A rule that fails validation is dropped; a value that is not valid JSON falls back to the built-in default.
 
 For a call, the target is resolved before matching: `fs.*`, `shell.exec`, and `net.fetch` use the call's `target` argument; a `shell.exec` carrying a `sessionId` resolves to `targets/*`; every other syscall resolves to `gsv`.
 
@@ -149,10 +149,13 @@ Default policy (`default` is `auto`; the runtime, the Process fallback, and the 
 | Where | Runs automatically | Asks first |
 |---|---|---|
 | `gsv`, the cloud home | `fs.*`, `shell.exec`, `net.fetch` | — |
+| `cloud-browsers/*`, GSV-provisioned browsers | `fs.*`, `shell.exec`, `net.fetch` | — |
 | `targets/*`, connected computers and browsers | `fs.read`, `fs.search`, `fs.transfer.stat`, `fs.transfer.send` | every other `fs.*` call, `shell.exec`, `net.fetch` |
 | any target | `web.search` | `sys.mcp.call`, `mail.send` |
 
-So native work in the cloud home and reads or searches on a connected target proceed without asking; changing files, running commands, or making network requests on a connected target asks first. Capability grants and resource checks still apply on top.
+Native work in the cloud home and GSV-provisioned browsers proceeds without asking. Connected personal browsers and computers still ask before changing files, running commands, or making network requests. Capability grants, ownership checks, and browser sign-in handoffs still apply. A cloud browser may retain website logins; use an Ask or Block rule for **Cloud browsers**, or for one target, to restrict its use.
+
+The Kernel identifies cloud browsers from their instance route, never from a target name, a client-declared platform, or tool arguments. Automatic approval based on that identity is bound to the resolved instance and checked again before dispatch. Explicit stored policies keep their existing rules; this changes the built-in default, without rewriting account policies.
 
 A stored policy may leave either field out. An omitted `default` is `auto`, and an omitted `rules` keeps the built-in rules above, so `{"default":"deny"}` alone still runs native cloud-home work automatically. To replace every built-in rule, set `rules` explicitly, using `[]` for none. A value that is not valid JSON, or not an object, falls back to the built-in policy.
 

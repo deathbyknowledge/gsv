@@ -324,6 +324,9 @@ async function dispatchLocal(
   ctx: KernelContext,
   deps: DispatchDeps,
 ): Promise<ResponseFrame> {
+  if (ctx.approvedTarget?.kind === "cloud-browser") {
+    return rejectBeforeDispatch(frame, 403, "Approval target changed before dispatch; retry the operation");
+  }
   const nativeContext = { ...ctx, toolOwner: nestedToolOwner(ctx) };
   const requestTarget: DispatchDeps["requestTarget"] = async (targetId, call, args, options) => {
     const signal = options?.signal ?? nativeContext.requestSignal;
@@ -936,6 +939,12 @@ async function routeToTarget(
   ctx: KernelContext,
   deps: DispatchDeps,
 ): Promise<DispatchResult> {
+  const cloudBrowser = target.route.kind === "instance" && target.platform === "browser";
+  if (ctx.approvedTarget && (ctx.approvedTarget.kind === "cloud-browser"
+    ? target.route.kind !== "instance" || !cloudBrowser || target.route.instanceId !== ctx.approvedTarget.instanceId
+    : cloudBrowser)) {
+    return { handled: true, response: rejectBeforeDispatch(frame, 403, "Approval target changed before dispatch; retry the operation") };
+  }
   if (!target.online) {
     return {
       handled: true,
@@ -951,7 +960,8 @@ async function routeToTarget(
   }
 
   try {
-    await authorizeNestedOperation(ctx, frame.call, jsonObjectSchema.parse({ ...frame.args, target: target.targetId }));
+    await authorizeNestedOperation(ctx, frame.call, jsonObjectSchema.parse({ ...frame.args, target: target.targetId }),
+      undefined, undefined, cloudBrowser ? "cloud-browser" : undefined);
     ctx.requestSignal?.throwIfAborted();
   } catch (error) {
     return {

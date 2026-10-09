@@ -1,4 +1,5 @@
 import { DurableObject, RpcTarget, WorkerEntrypoint } from "cloudflare:workers";
+export { IntegrationInstances } from "./instances";
 import { z } from "zod";
 import {
   adapterSendArgsSchema,
@@ -85,6 +86,15 @@ interface Env {
 }
 
 export class IntegrationState extends DurableObject<Env> {
+  async recordInstanceCall(call: string): Promise<void> {
+    const calls = await this.ctx.storage.get<string[]>("instance-calls") ?? [];
+    await this.ctx.storage.put("instance-calls", [...calls, call]);
+  }
+
+  async listInstanceCalls(): Promise<string[]> {
+    return await this.ctx.storage.get<string[]>("instance-calls") ?? [];
+  }
+
   async recordOutbound(entry: RecordedOutboundMessage): Promise<void> {
     const messages = await this.ctx.storage.get<RecordedOutboundMessage[]>("outbound") ?? [];
     messages.push(entry);

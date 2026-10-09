@@ -4,7 +4,7 @@ import type {
   AssistantMessage, AssistantMessageEvent, Context, ToolCall, Tool,
 } from "@humansandmachines/gsv/services/inference-context";
 import { z } from "zod";
-import type { InternalRequestFrame } from "../../protocol/process-frames";
+import type { InternalRequestFrame, ProcessApprovalTarget } from "../../protocol/process-frames";
 import type {
   CommittedRunControlMessage, RunControlResult, TerminalResponsibilityCheck, CompletedRunTransition,
   RunFinishEffects, RunFinishedTelemetryProperties, PreparedRunTickContext, RunTickGenerationAttemptOutcome,
@@ -23,7 +23,7 @@ import {
 } from "@humansandmachines/gsv/protocol";
 import { parseAttachPath, type RunControlCommand, type RunControlCommandParseResult } from "../run-control-command";
 import { mediaTypeFromContentType } from "../history/helpers";
-import { DEFAULT_TOOL_APPROVAL_POLICY, resolveToolApproval, takePurpose } from "../approval";
+import { DEFAULT_TOOL_APPROVAL_POLICY, takePurpose } from "../approval";
 import { readPathKey } from "../tools/runtime";
 import type { FileResourceReference, FsReadArgs, FsReadResult, ResourceBlock } from "@humansandmachines/gsv/protocol";
 import type { RunOutputMedia, RunState } from "./state";
@@ -195,7 +195,7 @@ export class ProcessRun {
       const readArgs: FsReadArgs = target === "gsv"
         ? { path, representation: "reference" }
         : { target, path, representation: "reference" };
-      const approval = resolveToolApproval(policy, "fs.read", readArgs);
+      const approval = await this.host.tools.resolveApproval(policy, "fs.read", readArgs, this.runAbortSignal(runId));
       if (approval.action === "deny") {
         return { ok: false, error: `cannot attach ${spec}: reading it is not allowed by the tool approval rules` };
       }
@@ -207,7 +207,7 @@ export class ProcessRun {
           error: `cannot attach ${spec}: reading it needs the person's approval; read it with the Read tool first, then send`,
         };
       }
-      const referenced = await this.referenceFile(runId, spec, readArgs);
+      const referenced = await this.referenceFile(runId, spec, readArgs, approval.approvedTarget);
       if (!referenced.ok) return referenced;
       const ref = referenced.ref;
       // the place answers for itself and nothing else: a reference naming another place would be retained from
@@ -236,10 +236,11 @@ export class ProcessRun {
     runId: string,
     spec: string,
     readArgs: FsReadArgs,
+    approvedTarget?: ProcessApprovalTarget,
   ): Promise<{ ok: true; ref: FileResourceReference } | { ok: false; error: string }> {
     const read = async (args: FsReadArgs): Promise<FsReadResult> => {
       try {
-        return await this.host.kernel.kernelRpc("fs.read", args, this.runAbortSignal(runId));
+        return await this.host.kernel.kernelRpc("fs.read", args, this.runAbortSignal(runId), undefined, approvedTarget);
       } catch (error) {
         return { ok: false, error: errorMessageFromUnknown(error) };
       }
