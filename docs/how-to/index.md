@@ -9,6 +9,7 @@ Step-by-step guides for common tasks. Each page focuses on one concrete goal —
 - [Run GSV for Your Organisation](/how-to/organisations) — operate spaces for your people and talk to us about your deployment
 - [Invite People](/how-to/invite-people) — add accounts to your space, set passwords, and remove access
 - [Install Host Applications](/how-to/install-host-apps) — install or upgrade the CLI, machine daemon, and native Desktop
+- [Use Voice Input](/how-to/voice-input) — record a message draft in the browser or dictate on Desktop
 - [Connect Devices](/how-to/connect-devices) — turn your laptop, phone, and server into one computer your agent can act across
 - [Connect a Messenger](/how-to/messengers) — talk to GSV from Telegram, Discord, or Slack
 - [Bring Your Own Model](/how-to/bring-your-own-model) — use your own provider key for better speed and model choice

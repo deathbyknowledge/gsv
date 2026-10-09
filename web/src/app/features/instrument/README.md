@@ -177,6 +177,24 @@ while visible, supports pause and reduced motion, and caches its small finite
 glyph loops as frames are first displayed, without blurred shadows or a bulk
 render on opening.
 
+Web Zen offers record, stop and cancel when no native input provider is present.
+Recording replaces the prompt's presentation with a live waveform: square bars,
+the Instrument accent colour, and quiet text actions. The draft remains mounted
+and returns for review after transcription or cancellation. Enter stops capture;
+Escape cancels. The waveform observes the same microphone stream locally, with
+no speaker connection, and closes its audio graph before transcription. Reduced
+motion slows visual updates. The waveform owns its animation; audio samples do
+not cause Zen or the conversation to rerender.
+The browser owns microphone capture and releases it before uploading a bounded
+audio body through `ai.transcription.create`, with the current Process selecting
+the transcription configuration. The result inserts at the current draft cursor
+without sending. Enter finishes capture for review; scope changes, leaving Zen,
+hiding the tab, disconnecting and clearing the draft cancel capture or upload
+and fence late results. Voice input uses the composer's effective place from the
+first render, so loading the target list does not interrupt recording or transcription
+at the default cloud place. Failed uploads can retry the in-memory recording. Desktop retains its
+local continuous dictation and gesture controls.
+
 The guide uses an original 3D hand mesh with a shaped palm, independently curling
 fingers and an opposing thumb. It shares the ship's supersampled triangle raster,
 depth buffer, lighting, theme palettes and Departure Mono glyphs. Its 96×48 scene

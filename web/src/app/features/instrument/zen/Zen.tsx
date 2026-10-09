@@ -1,4 +1,6 @@
 import { NativeVoiceControls, type NativeVoiceHandle } from "../../../services/platform/NativeVoiceControls";
+import { BrowserVoiceControls } from "../../../services/platform/BrowserVoiceControls";
+import { useNativeInput } from "../../../services/platform/PlatformProvider";
 import { ConversationSearch } from "../shared/ConversationSearch";
 import { useViewActive } from "../../../services/navigation/ViewActivity";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "preact/hooks";
@@ -312,6 +314,7 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
   const active = useViewActive();
   const browserControl = useBrowserControl();
   const { client, connected } = useGateway();
+  const nativeInput = useNativeInput();
   const { snapshot } = useSession();
   const who = snapshot.username || "you";
 
@@ -649,8 +652,11 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
     [attachments, conversation.conversation?.id, outbox.send, pid, scrolling.follow, where],
   );
 
-  const nativeVoice = useRef<NativeVoiceHandle>(null);
+  const voiceScope = `${snapshot.url}:${snapshot.username}:${pid ?? ""}:${currentPlace.id}`;
+  const voiceInput = useRef<NativeVoiceHandle>(null);
   const nativePanels = useRef<HTMLDivElement>(null);
+  const voiceSurface = useRef<HTMLDivElement>(null);
+  const [recordingVoice, setRecordingVoice] = useState(false);
 
   const runDirectly = useCallback(
     (command: string) => {
@@ -1062,31 +1068,34 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
             </span>}
             {note ? <span class="is-err" role="alert">{note}</span> : null}
           </div>}
-          <PromptLine
-            ref={promptRef}
-            onFocusChange={onPromptFocus}
-            onInput={(value) => { onPromptInput(value); nativeVoice.current?.onInput(value); }}
-            interceptSubmit={() => nativeVoice.current?.interceptSubmit() ?? false}
-            onKeyIntercept={onPromptKey}
-            onPlace={openPicker}
-            place={currentPlace}
-            showPlace={false}
-            dir="~"
-            placeholder={
-              pendingHil
-                ? "answer the approval first"
-                : !promptFocused
-                  ? "Start chatting, or click here to chat"
-                  : currentPlace.online
-                    ? "Ask in plain words, or start with $ to run a terminal command yourself"
-                    : `Ask in plain words; ${currentPlace.label} will run it when it's back`
-            }
-            disabled={!connected || !pid}
-            onSubmit={onSubmit}
-            allowEmpty={attachments.length > 0}
-            onFiles={addFiles}
-            onHistory={onHistory}
-          />
+          <div hidden={recordingVoice}>
+            <PromptLine
+              ref={promptRef}
+              onFocusChange={onPromptFocus}
+              onInput={(value) => { onPromptInput(value); voiceInput.current?.onInput(value); }}
+              interceptSubmit={() => voiceInput.current?.interceptSubmit() ?? false}
+              onKeyIntercept={onPromptKey}
+              onPlace={openPicker}
+              place={currentPlace}
+              showPlace={false}
+              dir="~"
+              placeholder={
+                pendingHil
+                  ? "answer the approval first"
+                  : !promptFocused
+                    ? "Start chatting, or click here to chat"
+                    : currentPlace.online
+                      ? "Ask in plain words, or start with $ to run a terminal command yourself"
+                      : `Ask in plain words; ${currentPlace.label} will run it when it's back`
+              }
+              disabled={!connected || !pid || recordingVoice}
+              onSubmit={onSubmit}
+              allowEmpty={attachments.length > 0}
+              onFiles={addFiles}
+              onHistory={onHistory}
+            />
+          </div>
+          <div ref={voiceSurface} />
           <div class="zen-compose-actions">
             <input ref={fileInput} type="file" multiple hidden aria-label="Choose attachments" onChange={(event) => {
               addFiles(Array.from(event.currentTarget.files ?? [])); event.currentTarget.value = "";
@@ -1095,10 +1104,14 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
             <button type="button" disabled={!connected || !conversation.conversation} title="Search conversation (Ctrl/Cmd+F)" onClick={() => setSearchOpen(true)}>search</button>
             {attachments.length > 0 && <button type="button" disabled={!connected || !pid || outbox.sending} onClick={() => promptRef.current?.submit()}>send</button>}
             <span class="zen-connection-status" role="status">{connected ? "" : "Reconnecting..."}</span>
-            <NativeVoiceControls ref={nativeVoice} prompt={promptRef} panelHost={nativePanels}
-              scope={`${snapshot.url}:${snapshot.username}:${pid ?? ""}:${where ?? ""}`}
+            {nativeInput ? <NativeVoiceControls ref={voiceInput} prompt={promptRef} panelHost={nativePanels}
+              scope={voiceScope}
               enabled={active && connected && pid !== null && pendingHil === null && !searchOpen && !connectingPlace}
               send={onSubmit} scroll={scrolling.move} />
+              : <BrowserVoiceControls ref={voiceInput} prompt={promptRef} client={client} pid={pid}
+                surfaceHost={voiceSurface} onActiveChange={setRecordingVoice}
+                scope={voiceScope}
+                enabled={active && connected && pid !== null && pendingHil === null && !searchOpen && !connectingPlace && !outbox.sending} />}
           </div>
           <div class="zen-place-section">
             {!currentPlace.online && <div class="zen-feedback" role="status">

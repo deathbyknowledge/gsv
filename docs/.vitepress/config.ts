@@ -132,6 +132,7 @@ export default defineConfig({
             { text: "Invite People", link: "/how-to/invite-people" },
             { text: "Contact People", link: "/how-to/contact-people" },
             { text: "Install Host Applications", link: "/how-to/install-host-apps" },
+            { text: "Use Voice Input", link: "/how-to/voice-input" },
             { text: "Connect Devices", link: "/how-to/connect-devices" },
             { text: "Connect a Messenger", link: "/how-to/messengers" },
             { text: "Bring Your Own Model", link: "/how-to/bring-your-own-model" },
