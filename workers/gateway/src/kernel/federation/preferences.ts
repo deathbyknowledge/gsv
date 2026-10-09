@@ -10,7 +10,7 @@ import { changeContactHandling } from "./attention";
 import { revokeFederationContact } from "./pairing";
 
 export async function handleContactPreferencesUpdate(args: ContactPreferencesUpdateArgs, ctx: KernelContext): Promise<ContactPreferencesUpdateResult> {
-  const ownerUid = requireContactHuman(ctx);
+  const ownerUid = requireContactCaller(ctx, true);
   if (!Number.isSafeInteger(args.expectedRevision) || args.expectedRevision < 1) throw new Error("Contact policy revision is invalid");
   const patch = contactPreferencesPatchSchema.parse(args.patch);
   let handlingChanged = false;

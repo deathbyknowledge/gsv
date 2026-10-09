@@ -75,8 +75,11 @@ export function requireContactHuman(ctx: KernelContext): number {
 }
 
 export function contactHandlingChoice(value: boolean | undefined, ctx: KernelContext): boolean {
-  if (value === undefined) return false;
-  requireContactHuman(ctx);
+  if (value === undefined) {
+    if (ctx.processId) throw new Error("Ask the owner who should handle new messages, then provide shipHandlesMessages explicitly");
+    return false;
+  }
+  requireContactCaller(ctx, true);
   if (!hasCapability(principalOf(ctx)!.calls, "contact.preferences.update")) {
     throw new Error("Changing contact handling requires contact.preferences.update");
   }

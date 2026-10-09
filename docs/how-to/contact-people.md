@@ -28,6 +28,12 @@ If someone gives you a link or an older contact code, choose **connect → I hav
 invitation** to paste it. These invitations are separate from
 [inviting an account into your space](/how-to/invite-people).
 
+You can also ask Ship to create an invitation, or give it someone's invitation
+link to accept. Ship asks who should handle new messages unless you already told
+it, then completes the connection with that choice. It can also change the choice
+later when you ask. This works in your ordinary Ship conversation, including
+messaging apps; opening People is optional.
+
 Choose **connect → use a profile address** to find a saved contact by name or enter
 someone's public profile address. Review the profile and your prefilled display
 name, choose who handles new messages, then send a first message.
@@ -45,8 +51,8 @@ conversations remain. People who already viewed it may retain copies.
 When connecting in People, both people explicitly choose **I’ll handle them** or
 **Let Ship handle them** for their own side. Neither option is preselected. The
 choice stays with the invitation or request, even if acceptance happens later.
-Existing contacts keep their settings. Invitations created through Ship or Shell
-keep automatic handling off unless the human later changes it in People.
+Existing contacts keep their settings. Ship-led invitations use the same explicit
+choice; creating or accepting one does not silently choose automatic handling.
 
 **Automatically handle new messages**, beside the person's name, changes this
 choice. When on, Ship can respond using its ordinary permissions and approval

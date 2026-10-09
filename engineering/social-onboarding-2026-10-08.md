@@ -19,8 +19,12 @@ remains available afterward. Ask Ship opens an editable draft in the user's
 ordinary Ship conversation with the contact identified; the user sends it.
 Each person explicitly chooses who handles new messages before inviting or
 accepting. Neither option is preselected. Kernel retains that local choice with
-the invitation or request, and applies it when pairing completes. Connection
-alone does not start Ship or replay existing messages. The conversation's
+the invitation or request, and applies it when pairing completes. Ship can create
+and accept invitations in the ordinary conversation after asking
+for this choice, and can change it later at the owner’s request. The canonical
+Ship uses the same Kernel authority and revision checks; delegated work cannot
+change these settings. Connection alone does not start Ship or replay existing
+messages. The conversation's
 Automatically handle new messages setting changes the choice later; replies to
 assigned tasks can still resume those tasks independently.
 

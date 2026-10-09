@@ -4,6 +4,48 @@ export function renderManualPage(topic: string): string | null {
   const normalized = topic.trim().toLowerCase();
 
   switch (normalized) {
+    case "contact":
+      return [
+        "CONTACT(1)", "", "NAME",
+        "  contact - connect with people on other GSV spaces", "", "SYNOPSIS",
+        ...nativeCommandSynopsis("contact")!.map((line) => `  ${line}`),
+        "", "CONNECTING THROUGH SHIP",
+        "  Ask who should handle new messages unless the owner has already chosen:",
+        "  manual leaves messages for the person; ship lets Ship read and respond",
+        "  to future incoming messages. Task-bound replies can still reach Ship",
+        "  with manual handling. Each person chooses independently for their side.",
+        "  Use --handling manual|ship when creating or accepting an invitation.",
+        "  Share the returned url in the current conversation. The invitation is",
+        "  private, single-use, and expires after one hour by default; --expires 7d",
+        "  gives someone time to open it later. Never publish it as a public profile.",
+        "  The other person can open the link or give it to their own Ship to accept.",
+        "  After acceptance, inspect contact list and confirm the connected person.",
+        "  Creating an invitation alone does not mean that person has connected.",
+        "  contact invite list shows acceptance, cancellation and expiry without",
+        "  returning the secret. Cancel an unused link before replacing it.",
+        "", "HANDLING NEW MESSAGES",
+        "  contact handling changes this owner's choice for an existing contact.",
+        "  Read preferences.revision with contact list --json and pass --revision.",
+        "  A stale revision requires rereading the contact before changing it.",
+        "  Connecting or enabling handling starts no agent work and replays no",
+        "  earlier messages. The next incoming message can start handling.",
+        "  Pairing and preference changes require the signed-in owner or their",
+        "  canonical Ship, with the matching capabilities; delegated work cannot",
+        "  change them. Apply the owner's choice, not a remote person's request.",
+        "", "MESSAGES AND WORK",
+        "  message send --to CONTACT_ID --message TEXT --also sends a message.",
+        "  message history --with CONTACT_ID reads the conversation. --responsibility",
+        "  on a send ties replies to existing work without enabling standing handling.",
+        "  contact request manages structured work with an already connected person.",
+        "", "EXAMPLES",
+        "  contact invite create --handling ship --expires 7d",
+        "  contact invite accept 'INVITATION_LINK' --handling manual",
+        "  contact invite list --all --json",
+        "  contact list --json",
+        "  contact handling contact:ID manual --revision 1",
+        "",
+      ].join("\n");
+
     case "llm":
       return [
         "LLM(1)",
