@@ -705,6 +705,16 @@ Trust changes may be initiated by the signed-in human or by that owner's exact
 canonical Ship Process. Delegated work Processes and remote callers cannot
 create, accept, cancel, or revoke Contact trust.
 
+`contact.invite.create` and `contact.invite.accept` accept an optional
+`shipHandlesMessages` boolean for the local owner's new contact. Setting it
+requires a signed-in human with `contact.preferences.update`; a Process cannot
+choose standing handling. The Kernel retains it with the invitation or acceptance
+attempt and applies it when that contact generation activates. Omitting it keeps
+automatic handling off. Replaying a completed acceptance does not overwrite later
+preference changes. `approach.create` and an `approach.decide` acceptance support
+the same local choice, retained through asynchronous pairing and retries. It is
+never supplied by the remote person, and activation admits no Ship work itself.
+
 | Syscall | Behavior |
 |---|---|
 | `contact.identity` | Returns this installation's signed Ship document and the caller's local federation subject. |

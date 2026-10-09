@@ -2,6 +2,7 @@ import { contactDisplayName, type ContactSummary, type ConversationInboxEntry, t
 import { latestOf, type ContactNotice, type ContactNoticeMessage } from "../zen/useContactNotices";
 import type { ContactReplyDraft } from "../zen/ContactNotice";
 import type { PeopleActivity } from "./usePeopleActivity";
+import { messagePreviewPrefix } from "./peopleModel";
 
 export type PeopleConversationItem = {
   contactId: string;
@@ -33,9 +34,10 @@ export function peopleConversations(activity: PeopleActivity, notices: readonly 
     const conversationId = contact?.conversationId ?? entry?.conversation.id ?? notice?.conversationId;
     if (!conversationId || !waiting && !draft) return [];
     const preview = latest && (!entry?.preview || latest.sequence >= entry.preview.sequence) ? latest : null;
+    const prefix = preview ? (preview.byShip ? "Their Ship: " : "") : entry?.preview ? messagePreviewPrefix(entry.preview) : "";
     return [{ contactId, conversationId, contact, entry, notice, draft: !!draft,
       name: contact ? contactDisplayName(contact) : notice?.displayName ?? entry?.conversation.title ?? "New message",
-      text: draft || preview?.text || entry?.preview?.text || "",
+      text: draft || `${prefix}${preview?.text ?? entry?.preview?.text ?? ""}`,
       attachmentCount: preview?.media.length ?? entry?.preview?.attachmentCount ?? 0 }];
   });
 }

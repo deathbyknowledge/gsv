@@ -15,11 +15,11 @@ your conversation opens, so you can turn it into a request to Ship.
 
 ## Start a conversation
 
-Choose **connect → create invitation link** and share the link wherever you already
-talk. It connects one person and lasts seven days; you can cancel it before it is
+Choose **connect**, choose who should handle new messages, then **create invitation
+link** and share it wherever you already talk. It connects one person and lasts seven days; you can cancel it before it is
 accepted. In managed spaces, the link opens the existing Accounts space chooser.
 The recipient chooses a listed space or enters its address, signs in if needed,
-and explicitly accepts the invitation. Entering an address also works for people
+and chooses who should handle their new messages before accepting the invitation. Entering an address also works for people
 using another operator or a space they do not own. Other deployments open the
 space-address form directly.
 Neither person needs to publish a profile. Acceptance opens the conversation.
@@ -30,8 +30,8 @@ invitation** to paste it. These invitations are separate from
 
 Choose **connect → use a profile address** to find a saved contact by name or enter
 someone's public profile address. Review the profile and your prefilled display
-name, then send a first message.
-They can accept or decline it. Acceptance keeps that first message in the same
+name, choose who handles new messages, then send a first message.
+They make their own handling choice when accepting, or can decline it. Acceptance keeps that first message in the same
 conversation, opens it directly, and enables further messages and attachments.
 
 Your profile starts private. In **Settings → Profile**, save a draft, review it
@@ -42,11 +42,18 @@ conversations remain. People who already viewed it may retain copies.
 
 ## Decide who handles it
 
-Accepting a contact does not start Ship. Enable **Ship replies** beside the person's
-name to let Ship respond to new incoming messages using its ordinary permissions
-and approval rules. Turning it on waits for the next message; it does not start work
-on the existing conversation. Turn it off to stop ongoing handling. Messages
-distinguish the person from their Ship.
+When connecting in People, both people explicitly choose **I’ll handle them** or
+**Let Ship handle them** for their own side. Neither option is preselected. The
+choice stays with the invitation or request, even if acceptance happens later.
+Existing contacts keep their settings. Invitations created through Ship or Shell
+keep automatic handling off unless the human later changes it in People.
+
+**Automatically handle new messages**, beside the person's name, changes this
+choice. When on, Ship can respond using its ordinary permissions and approval
+rules. Accepting or enabling the setting does not wake Ship or replay existing
+messages; the next incoming message starts handling. Turning it off ends that
+standing assignment. Replies to tasks you assign separately can still resume
+those tasks until they finish. Messages distinguish the person from their Ship.
 
 For a particular task, choose **ask Ship** in the conversation. This opens an
 editable request in your ordinary Ship chat. Review it and send it when ready.
@@ -59,6 +66,8 @@ the line without opening a panel or moving your place in the Ship conversation.
 Select a person's name to read and reply in a compact panel. A **PERSON** or
 **GSV** badge identifies who wrote the latest message. **Open conversation** takes
 you to the full history in People; selecting a connection request opens it there.
+Conversation previews label outgoing messages **You** or **Your Ship**, so they
+cannot be mistaken for a new reply from the other person.
 
 Closing the panel keeps an unfinished reply for this session, marked **draft** on
 the person's name. Sending threads the reply to the message it answers and clears

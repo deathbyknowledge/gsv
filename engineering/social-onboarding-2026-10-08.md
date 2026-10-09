@@ -17,7 +17,12 @@ Public profiles remain an alternative for reaching someone by address.
 Acceptance opens the resulting conversation. A task chosen before connecting
 remains available afterward. Ask Ship opens an editable draft in the user's
 ordinary Ship conversation with the contact identified; the user sends it.
-Connection alone does not start Ship or enable automatic replies.
+Each person explicitly chooses who handles new messages before inviting or
+accepting. Neither option is preselected. Kernel retains that local choice with
+the invitation or request, and applies it when pairing completes. Connection
+alone does not start Ship or replay existing messages. The conversation's
+Automatically handle new messages setting changes the choice later; replies to
+assigned tasks can still resume those tasks independently.
 
 Keep Instrument's list/detail layout, typography, thin rules, and quiet text
 actions. The empty state must work on a narrow screen too. Incoming requests and

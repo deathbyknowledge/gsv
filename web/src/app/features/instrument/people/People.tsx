@@ -39,7 +39,7 @@ export function People({ onDirtyChange, onProfile, onAsk, openRequest }: {
   const { client, connected } = useGateway();
   const cache = useQueryClient();
   const [compose, setCompose] = useState(() => emptyApproachDraft(new URLSearchParams(window.location.search).get("compose") ?? ""));
-  const [invitation, setInvitation] = useState<InvitationDraft>(() => ({ code: pendingContactInvitation() ?? "", issued: null }));
+  const [invitation, setInvitation] = useState<InvitationDraft>(() => ({ code: pendingContactInvitation() ?? "", issued: null, shipHandlesMessages: null }));
   const [idea, setIdea] = useState(0);
   const [chosenIdea, setChosenIdea] = useState<{ index: number; contactId: string | null } | null>(null);
   const [contactId, setContactId] = useState<string | null>(null);

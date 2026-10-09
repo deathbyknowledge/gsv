@@ -26,6 +26,7 @@ import type {
 import {
   handleContactAliasSet,
   handleContactInviteCancel,
+  handleContactInviteCreate,
   handleContactInviteAccept,
   handleContactNoticeDismiss,
   handleContactRequestCreate,
@@ -49,6 +50,16 @@ const OWNER: ProcessIdentity = {
 describe("federation outbound boundary", () => {
   afterEach(() => {
     vi.restoreAllMocks();
+  });
+
+  it("reserves invitation handling choices for the signed-in human with preference authority", async () => {
+    const limited = focusedContext({});
+    const ship = focusedContext({ processId: "proc:ship", peer: testPeer({ account: OWNER, calls: ["*"] }),
+      procs: focusedFixture({ get: () => ({ isPersonalController: true, ownerUid: OWNER.uid }) }) });
+    await expect(handleContactInviteCreate({ shipHandlesMessages: true }, limited)).rejects.toThrow("contact.preferences.update");
+    await expect(handleContactInviteAccept({ code: "unused", shipHandlesMessages: true }, limited)).rejects.toThrow("contact.preferences.update");
+    await expect(handleContactInviteCreate({ shipHandlesMessages: true }, ship)).rejects.toThrow("signed-in human");
+    await expect(handleContactInviteAccept({ code: "unused", shipHandlesMessages: true }, ship)).rejects.toThrow("signed-in human");
   });
 
   it.each([

@@ -13,6 +13,7 @@ export class ApproachAdmissionError extends Error {
 }
 
 type ApproachRow = {
+  ship_handles_messages: number;
   approach_id: string; owner_uid: number; direction: ApproachSummary["direction"];
   origin_ship_id: string; origin_subject_id: string; origin_id: string;
   remote_ship_id: string; remote_subject_id: string; remote_origin: string; remote_public_key_json: string;
@@ -28,6 +29,7 @@ type ApproachRow = {
 
 /** Owning-runtime record. Public APIs return summary() instead. */
 export type ApproachRecord = {
+  shipHandlesMessages: boolean;
   summary: ApproachSummary;
   ownerUid: number;
   remoteOrigin: string;
@@ -51,6 +53,7 @@ export type ApproachRecord = {
 };
 
 export type PrepareApproach = {
+  shipHandlesMessages?: boolean;
   ownerUid: number;
   direction: ApproachSummary["direction"];
   peer: ActorRef;
@@ -101,14 +104,14 @@ export class ApproachStore {
         remote_display_name, local_display_name, conversation_id, contact_id, thread_id,
         state, fingerprint, idempotency_key, metadata_json, pending_text, pending_text_bytes,
         setup_token, setup_token_hash, setup_invite_id, delivery_state, next_attempt_at,
-        created_at, updated_at, expires_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'preparing', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        created_at, updated_at, expires_at, ship_handles_messages
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'preparing', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       id, input.ownerUid, input.direction, metadata.reference.actor.shipId, metadata.reference.actor.subjectId, metadata.reference.approachId,
       input.peer.shipId, input.peer.subjectId, input.remoteOrigin, JSON.stringify(input.remotePublicKey),
       input.remoteDisplayName, input.localDisplayName, input.conversationId, input.contactId, input.threadId,
       input.fingerprint, input.idempotencyKey ?? null, JSON.stringify(metadata), text, bytes,
       input.setupToken, input.setupTokenHash, input.setupInviteId ?? null, input.direction === "outgoing" ? "queued" : "unconfirmed", now,
-      now, now, metadata.expiresAtMs);
+      now, now, metadata.expiresAtMs, input.shipHandlesMessages ? 1 : 0);
       return this.get(id)!;
     });
   }
@@ -285,7 +288,7 @@ export class ApproachStore {
     return this.get(id)!;
   }
 
-  beginAcceptance(id: string, ownerUid: number, expectedRevision: number, attemptId: string, now = Date.now()): ApproachRecord {
+  beginAcceptance(id: string, ownerUid: number, expectedRevision: number, attemptId: string, shipHandlesMessages = false, now = Date.now()): ApproachRecord {
     return this.storage.transactionSync(() => {
       const current = this.owned(id, ownerUid);
       this.requireUnblocked(ownerUid, current.summary.peer);
@@ -295,7 +298,8 @@ export class ApproachStore {
         throw new Error("Message request changed; reload before accepting");
       }
       this.sql.exec(`UPDATE social_approaches SET state = 'accepting', revision = revision + 1,
-        pairing_attempt_id = ?, next_attempt_at = ?, updated_at = ? WHERE approach_id = ?`, attemptId, now, now, id);
+        pairing_attempt_id = ?, next_attempt_at = ?, updated_at = ?, ship_handles_messages = ? WHERE approach_id = ?`,
+      attemptId, now, now, shipHandlesMessages ? 1 : 0, id);
       return this.get(id)!;
     });
   }
@@ -367,6 +371,7 @@ function summary(row: ApproachRow): ApproachSummary {
 
 function record(row: ApproachRow): ApproachRecord {
   return {
+    shipHandlesMessages: row.ship_handles_messages === 1,
     summary: summary(row), ownerUid: row.owner_uid, remoteOrigin: row.remote_origin,
     remotePublicKey: federationPublicKeySchema.parse(JSON.parse(row.remote_public_key_json)), localDisplayName: row.local_display_name,
     contactId: row.contact_id, threadId: row.thread_id, fingerprint: row.fingerprint,

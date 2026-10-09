@@ -9,6 +9,9 @@ describe("federation wire version upgrade", () => {
     await runWithRealKernelSql(async (sql, storage) => {
       await storage.deleteAll();
       runSqlMigrations(storage, KERNEL_SCHEMA_COMPONENT, KERNEL_MIGRATIONS.filter((migration) => migration.id < 56));
+      sql.exec(`INSERT INTO federation_invites (
+        invite_id, owner_uid, token_hash, issuing_ship_id, issuing_origin, state, expires_at, created_at
+      ) VALUES ('invite:old', 1000, 'token:old', 'ship:local', 'https://local.example', 'issued', 1000, 1)`);
       const payload = { kind: "message", messageId: "message:old", threadId: "thread:old", text: "Before upgrade" };
       sql.exec(`INSERT INTO federation_contacts (
         contact_id, owner_uid, state, generation, remote_ship_id, remote_subject_id, remote_display_name,
@@ -36,6 +39,7 @@ describe("federation wire version upgrade", () => {
       runKernelSqlMigrations(storage);
       runKernelSqlMigrations(storage);
       const store = new FederationStore(storage);
+      expect(store.invite("invite:old")).toMatchObject({ state: "issued", shipHandlesMessages: false });
       expect(store.get("contact:old")).toMatchObject({
         generation: "generation:old", sharedSecret: "fixture-secret", conversationId: "conv:old", threadId: "thread:old",
       });

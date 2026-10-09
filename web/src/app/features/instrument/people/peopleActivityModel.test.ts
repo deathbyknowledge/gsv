@@ -42,6 +42,18 @@ describe("People activity above the Ship prompt", () => {
     expect(items[0].text).toBe("Message 3");
   });
 
+  it("identifies outgoing Ship messages while an earlier contact message remains unread", () => {
+    const current = activity(3);
+    current.conversations[0].latestIncomingSequence = 2;
+    current.conversations[0].preview!.author = { kind: "process", pid: "proc:ship", uid: 1001 };
+    expect(peopleConversations(current, [notice(2)], new Map())[0]).toMatchObject({ name: "Ada", text: "Your Ship: Message 3" });
+    current.conversations[0].preview!.author = { kind: "user", uid: 1000 };
+    expect(peopleConversations(current, [], new Map())[0].text).toBe("You: Message 3");
+    const live = notice(4);
+    live.messages[0].byShip = true;
+    expect(peopleConversations(current, [live], new Map())[0].text).toBe("Their Ship: Message 4");
+  });
+
   it("keeps an unfinished draft reachable after a read elsewhere or an ended connection", () => {
     const quiet = { ...activity(), contacts: [{ ...contact, state: "revoked" as const }] };
     expect(peopleConversations(quiet, [notice(2)], new Map())).toEqual([]);

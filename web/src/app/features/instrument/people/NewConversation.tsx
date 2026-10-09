@@ -7,6 +7,7 @@ import type { ConsoleAccount } from "../../../domain/system/consoleModels";
 import { canConfigure } from "../settings/settingsModel";
 import { LoadingState } from "../../../components/ui/Spinner";
 import { approachSendIntent, profileAddress as resolveProfileAddress, type ApproachDraft } from "./peopleModel";
+import { ContactHandlingChoice } from "./ContactHandlingChoice";
 
 export function NewConversation({ account, draft, onChange, onSent, onBusy, contacts, onOpen, onInvitation }: {
   account: ConsoleAccount | undefined;
@@ -48,7 +49,7 @@ export function NewConversation({ account, draft, onChange, onSent, onBusy, cont
   const canResolve = connected && !!account && canConfigure(account, "profile.resolve");
   const canSend = connected && !!account && canConfigure(account, "approach.create");
   const bytes = new TextEncoder().encode(draft.text.trim()).length;
-  const valid = !!displayName.trim() && !!draft.text.trim() && bytes <= 32_768;
+  const valid = !!displayName.trim() && !!draft.text.trim() && bytes <= 32_768 && draft.shipHandlesMessages !== null;
   const error = resolve.error ?? send.error;
 
   return <section class="people-compose" aria-label="New conversation">
@@ -57,7 +58,7 @@ export function NewConversation({ account, draft, onChange, onSent, onBusy, cont
       if (canResolve && profileAddress && !busy) resolve.mutate(profileAddress);
     }}>
       <label>To<input value={draft.url} placeholder="Name or profile address" spellcheck={false} autoComplete="off" disabled={busy} onInput={(event) => {
-        resolve.reset(); send.reset(); onChange({ ...draft, url: event.currentTarget.value, profile: null });
+        resolve.reset(); send.reset(); onChange({ ...draft, url: event.currentTarget.value, profile: null, shipHandlesMessages: null });
       }} /></label>
       {profileAddress && <button class="people-action" type="submit" disabled={!canResolve || busy}>{resolve.isPending ? <LoadingState>opening profile…</LoadingState> : "open profile"}</button>}
     </form>
@@ -84,6 +85,7 @@ export function NewConversation({ account, draft, onChange, onSent, onBusy, cont
           <label>Message<textarea value={draft.text} rows={5} maxLength={32_768} disabled={busy} onInput={(event) => onChange({ ...draft, text: event.currentTarget.value })} /></label>
           {bytes > 32_768 && <p class="people-error" role="alert">This message is too long. Shorten it before sending.</p>}
           <p class="people-note">You can send more messages and attachments once they accept.</p>
+          <ContactHandlingChoice value={draft.shipHandlesMessages} disabled={busy || !account || !canConfigure(account, "contact.preferences.update")} onChange={(shipHandlesMessages) => onChange({ ...draft, shipHandlesMessages })} />
           <button class="ibtn is-primary" type="submit" disabled={!canSend || busy || !valid}>{send.isPending ? <LoadingState>sending request…</LoadingState> : "send message request"}</button>
         </form>}
     </>}

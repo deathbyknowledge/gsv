@@ -11,18 +11,21 @@ const profile: PublicProfile = {
 
 describe("first-message approval", () => {
   it("retains the exact send identity after a lost response or refreshing the same profile", () => {
-    const draft = { ...emptyApproachDraft(profile.url), profile, displayName: " My chosen name ", text: " Hello " };
+    const draft = { ...emptyApproachDraft(profile.url), profile, displayName: " My chosen name ", text: " Hello ", shipHandlesMessages: false };
     const intent = approachSendIntent(draft);
     expect(intent.displayName).toBe("My chosen name");
     expect(approachSendIntent({ ...draft, profile: { ...profile }, intent })).toBe(intent);
     expect(emptyApproachDraft(profile.url).displayName).toBeNull();
+    expect(emptyApproachDraft(profile.url).shipHandlesMessages).toBeNull();
+    expect(() => approachSendIntent({ ...draft, shipHandlesMessages: null })).toThrow("Choose who");
   });
 
   it("does not reuse approval after the recipient, published revision, name or message changes", () => {
-    const draft = { ...emptyApproachDraft(profile.url), profile, displayName: "My name", text: "Hello" };
+    const draft = { ...emptyApproachDraft(profile.url), profile, displayName: "My name", text: "Hello", shipHandlesMessages: false };
     const intent = approachSendIntent(draft);
     for (const change of [
       { text: "Different message" }, { displayName: "A different name" },
+      { shipHandlesMessages: true },
       { profile: { ...profile, revision: 2 } },
       { profile: { ...profile, actor: { ...profile.actor, subjectId: "person:other" } } },
     ]) expect(approachSendIntent({ ...draft, intent, ...change }).idempotencyKey).not.toBe(intent.idempotencyKey);

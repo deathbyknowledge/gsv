@@ -124,7 +124,7 @@ import {
   requireCommittedPairingContact,
   revokeFederationContact,
 } from "./federation/pairing";
-import { contactSummary, requireContactCaller, requireContactHuman, requireOwnedContact, requireOwnedActiveContact, requireOwnedActiveContactGeneration } from "./federation/authority";
+import { contactHandlingChoice, contactSummary, requireContactCaller, requireContactHuman, requireOwnedContact, requireOwnedActiveContact, requireOwnedActiveContactGeneration } from "./federation/authority";
 import { bindContactReply, admitContactMessage } from "./federation/attention";
 import { FederationHttpError, PublicFederationError } from "./federation/errors";
 import { fetchFederation, fetchFederationJson as fetchJson, MAX_PUBLIC_JSON_BYTES, readFederationBody } from "./federation/http";
@@ -248,6 +248,7 @@ export async function handleContactInviteCreate(
   ctx: KernelContext,
 ): Promise<ContactInviteCreateResult> {
   const ownerUid = requireContactCaller(ctx, true);
+  const shipHandlesMessages = contactHandlingChoice(args.shipHandlesMessages, ctx);
   const now = Date.now();
   pruneFederationState(ctx, now);
   const document = await localShipDocument(ctx);
@@ -275,6 +276,7 @@ export async function handleContactInviteCreate(
     }], now, "Contact invite rate limit reached");
     return ctx.federation.createInvite({
       ownerUid,
+      shipHandlesMessages,
       tokenHash,
       issuingShipId: document.shipId,
       issuingOrigin: document.origin,
@@ -330,6 +332,7 @@ export async function handleContactInviteAccept(
 ): Promise<ContactInviteAcceptResult> {
   ctx.requestSignal?.throwIfAborted();
   const ownerUid = requireContactCaller(ctx, true);
+  contactHandlingChoice(args.shipHandlesMessages, ctx);
   const now = Date.now();
   pruneFederationState(ctx, now);
   const { invitation: invite } = parseContactInvitation(args.code);
@@ -379,6 +382,7 @@ export async function handleContactInviteAccept(
   const attempt = ctx.federation.transaction(() => ctx.federation.beginPairingAttempt({
     tokenHash,
     ownerUid,
+    shipHandlesMessages: args.shipHandlesMessages,
     expiresAtMs: invite.expiresAtMs,
     remoteShipId: remoteDocument.shipId,
     remoteSubjectId: invite.subject.id,
@@ -476,6 +480,7 @@ export async function handleContactInviteAccept(
       sharedSecret: secret,
       threadId: accepted.threadId,
       pairingAttemptTokenHash: tokenHash,
+      shipHandlesMessages: currentAttempt.shipHandlesMessages,
       now: Date.now(),
     }, ctx);
     ctx.federation.commitPairingAttempt({
@@ -1556,6 +1561,7 @@ async function acceptRemoteInvite(
     );
     const activated = activateFederationContact({
       ownerUid: currentInvite.ownerUid,
+      shipHandlesMessages: currentInvite.shipHandlesMessages,
       generation,
       remoteShipId: input.document.shipId,
       remoteSubject,

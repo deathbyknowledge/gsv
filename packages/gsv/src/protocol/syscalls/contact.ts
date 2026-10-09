@@ -110,6 +110,8 @@ export type ContactIdentityResult = {
 
 export type ContactInviteCreateArgs = {
   expiresInSeconds?: number;
+  /** Human-only choice for this owner's new contact; omitted keeps automatic handling off. */
+  shipHandlesMessages?: boolean;
 };
 
 export type ContactInviteCreateResult = {
@@ -122,6 +124,8 @@ export type ContactInviteCreateResult = {
 
 export type ContactInviteAcceptArgs = {
   code: string;
+  /** Human-only choice, retained for retries of this acceptance. */
+  shipHandlesMessages?: boolean;
 };
 
 export type ContactInviteAcceptResult = {

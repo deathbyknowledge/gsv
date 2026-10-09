@@ -32,7 +32,7 @@ export function ContactAttentionNotice({ account }: { account: ConsoleAccount | 
     onSuccess: () => cache.invalidateQueries({ queryKey: CONTACTS_KEY }),
   });
   return <aside class="people-note" aria-label="Contact handling changed">
-    <p>Accepting a contact no longer starts Ship. Enable “Ship replies” in a conversation to let it respond to new messages.</p>
+    <p>Your existing conversations stay under your control. Enable “Automatically handle new messages” in a conversation to let Ship respond for you.</p>
     <button class="people-action" disabled={!connected || !account || !canConfigure(account, "contact.notice.dismiss") || dismiss.isPending} onClick={() => dismiss.mutate()}>dismiss</button>
     {dismiss.error && <p class="people-error" role="alert">{dismiss.error.message}</p>}
   </aside>;
@@ -86,9 +86,9 @@ export function ContactInspector({ contact, account, draft, onDraft, onSend, onR
     <header class="people-conversation-header">
       <div><h1>{name}</h1>
         {contact.state !== "active" ? <p class="people-conversation-state">Connection ended</p>
-          : preferences && <label class="people-handling" title="Allow Ship to reply to new messages">
-            <input type="checkbox" role="switch" aria-label="Ship replies" checked={(updatePreferences.isPending ? updatePreferences.variables?.shipHandlesMessages : undefined) ?? preferences.shipHandlesMessages} disabled={!controls.canEdit || controls.pending || contact.blocked} onChange={(event) => controls.update({ shipHandlesMessages: event.currentTarget.checked })} />
-            <span>Ship replies</span>
+          : preferences && <label class="people-handling" title="Let Ship read and respond to new messages. Replies to tasks you assign can still reach Ship when this is off.">
+            <input type="checkbox" role="switch" aria-label="Automatically handle new messages" checked={(updatePreferences.isPending ? updatePreferences.variables?.shipHandlesMessages : undefined) ?? preferences.shipHandlesMessages} disabled={!controls.canEdit || controls.pending || contact.blocked} onChange={(event) => controls.update({ shipHandlesMessages: event.currentTarget.checked })} />
+            <span>Automatically handle new messages</span>
             {controls.pending && updatePreferences.variables?.shipHandlesMessages !== undefined && <LoadingState>saving…</LoadingState>}
           </label>}
         {!detailsOpen && controls.error && <p class="people-error" role="alert">{controls.error.message}</p>}
