@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { GatewayProvider } from "../../../services/gateway/GatewayProvider";
 import { createTestRoot } from "../../../testing/testHarness";
 import { useContactNotices } from "./useContactNotices";
+import { useShipNotices } from "./useShipNotices";
 
 type Listener = Parameters<GSVClient["onSignal"]>[0];
 type Payload = Parameters<Listener>[1];
@@ -61,6 +62,29 @@ async function emit(signal: string, payload: Payload) {
 }
 
 describe("contact notices in the ship chat", () => {
+  it("clears only the submitted draft when a send finishes after its panel was reopened", async () => {
+    const root = createTestRoot("contact reply drafts");
+    let current!: ReturnType<typeof useShipNotices>;
+    function Harness() {
+      current = useShipNotices({ listening: true, viewer: { uid: 1000, username: "person", displayName: "Person", relation: "self", runnable: false, gecos: "", capabilities: ["*"] } });
+      return null;
+    }
+    const intent = { contactId: "contact:ada", idempotencyKey: "send:one", text: "First reply", media: [] };
+    await root.render(h(GatewayProvider, null, h(Harness, null)));
+    try {
+      await act(() => current.setDraft(intent.contactId, { text: intent.text, intent }));
+      await act(() => current.setDraft(intent.contactId, { text: "A newer reply", intent }));
+      await act(() => current.clearSentDraft(intent.contactId, intent));
+      expect(current.drafts.get(intent.contactId)?.text).toBe("A newer reply");
+      const newer = { ...intent, idempotencyKey: "send:two" };
+      await act(() => current.setDraft(intent.contactId, { text: intent.text, intent: newer }));
+      await act(() => current.clearSentDraft(intent.contactId, intent));
+      expect(current.drafts.has(intent.contactId)).toBe(true);
+      await act(() => current.clearSentDraft(intent.contactId, newer));
+      expect(current.drafts.has(intent.contactId)).toBe(false);
+    } finally { await root.unmount(); }
+  });
+
   it("shows a notice only for a contact message the kernel marks notify", async () => {
     const view = await mounted();
     try {

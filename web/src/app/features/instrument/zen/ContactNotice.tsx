@@ -1,5 +1,5 @@
 import { contactDisplayName, type ContactSummary } from "@humansandmachines/gsv/protocol";
-import type { ComponentChildren, JSX } from "preact";
+import type { ComponentChildren, JSX, RefObject } from "preact";
 import { useState } from "preact/hooks";
 import type { ConsoleAccount } from "../../../domain/system/consoleModels";
 import { selectContactSendIntent, type ContactDraftSendIntent } from "../../../services/contacts/contactSendIntent";
@@ -60,28 +60,25 @@ function senderBadge(byShip: boolean) {
  * the start of the newest message, and what to do about it. The opened messages and reply box
  * render as children between the line and the actions.
  */
-export function ContactNoticeMoment({ notice, contact, open, onShow, onGoToChat, children }: {
-  notice: ContactNotice;
-  contact: ContactSummary | undefined;
+export function ContactNoticePanel({ id, name, notice, panelRef, onClose, onGoToChat, children }: {
+  id: string;
+  name: string;
+  notice: ContactNotice | null;
+  panelRef?: RefObject<HTMLElement>;
   /** the messages are showing, so the show action steps aside */
-  open: boolean;
-  onShow: () => void;
+  onClose: () => void;
   onGoToChat: () => void;
   children?: ComponentChildren;
 }) {
-  const name = noticeName(notice, contact);
-  const latest = latestOf(notice);
-  const count = notice.messages.length;
+  const latest = notice && latestOf(notice);
   return (
-    <div class="zen-moment is-contact-notice" role="status">
-      <div class="who">{name}{senderBadge(latest.byShip)}</div>
-      <div class="text">{preview(latest.text, latest.media.length)}{notice.replied && <span class="replied">(replied)</span>}</div>
+    <section id={id} ref={panelRef} tabIndex={-1} class="zen-people-panel" aria-label={`Messages from ${name}`}>
+      <header class="zen-people-heading"><span>{name}{latest && senderBadge(latest.byShip)}</span>
+        <button type="button" class="fleet-text-action" onClick={onClose}>close</button></header>
       {children}
-      <div class="keys">
-        {!notice.replied && !open && <button type="button" class="fleet-text-action" onClick={onShow}>{count === 1 ? "show message" : `show ${count} messages`}</button>}
-        <button type="button" class="fleet-text-action" onClick={onGoToChat}>go to chat</button>
-      </div>
-    </div>
+      <footer class="zen-people-foot"><span>{notice ? `${notice.messages.length} message${notice.messages.length === 1 ? "" : "s"}` : ""}</span>
+        <button type="button" class="fleet-text-action" onClick={onGoToChat}>open conversation <span aria-hidden="true">↗</span></button></footer>
+    </section>
   );
 }
 
@@ -97,7 +94,7 @@ export function ContactReplyBox({ notice, contact, account, draft, onDraft, onSe
   draft: ContactReplyDraft;
   onDraft: (draft: ContactReplyDraft) => void;
   /** the reply went out, answering the batch through this sequence */
-  onSent: (through: number) => void;
+  onSent: (through: number, intent: NonNullable<ContactReplyDraft["intent"]>) => void;
 }) {
   const { client, connected } = useGateway();
   const [state, setState] = useState<"idle" | "sending" | "undelivered" | "failed">("idle");
@@ -122,7 +119,8 @@ export function ContactReplyBox({ notice, contact, account, draft, onDraft, onSe
         setError("not delivered — open the chat to retry");
         return;
       }
-      onSent(repliedThrough(notice, intent));
+      setState("idle");
+      onSent(repliedThrough(notice, intent), intent);
     } catch (cause) {
       setState("failed");
       setError(cause instanceof Error ? cause.message : String(cause));
@@ -131,13 +129,14 @@ export function ContactReplyBox({ notice, contact, account, draft, onDraft, onSe
 
   return (
     <div class="reply-box">
-      {notice.messages.map((message) => (
+      <div class="reply-messages">{notice.messages.map((message) => (
         <div key={message.messageId} class="message">
+          <time dateTime={new Date(message.createdAt).toISOString()}>{new Date(message.createdAt).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })}</time>
           {message.text && <p class="ask">{message.text}</p>}
           {message.media.map((media, index) => <ZenMedia key={index} media={media} processId="" />)}
         </div>
-      ))}
-      <textarea class="reply" rows={3} placeholder={`reply to ${name}`} value={draft.text} disabled={!maySend || state === "sending"}
+      ))}</div>
+      <textarea class="reply" rows={2} aria-label={`Reply to ${name}`} placeholder={`Reply to ${name}…`} value={draft.text} disabled={!maySend || state === "sending"}
         onInput={(event: JSX.TargetedEvent<HTMLTextAreaElement>) => {
           onDraft({ ...draft, text: event.currentTarget.value });
           if (state !== "sending") setState("idle");

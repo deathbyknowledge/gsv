@@ -1,7 +1,7 @@
 import type { ContactSummary } from "@humansandmachines/gsv/protocol";
 import { describe, expect, it, vi } from "vitest";
 import { collectNodes, collectText } from "../../../testing/testHarness";
-import { ContactNoticeMoment, noticeName, preview, repliedThrough, replyIntentFor } from "./ContactNotice";
+import { ContactNoticePanel, noticeName, preview, repliedThrough, replyIntentFor } from "./ContactNotice";
 import type { ContactNotice, ContactNoticeMessage } from "./useContactNotices";
 
 function message(sequence: number, text: string, byShip = false): ContactNoticeMessage {
@@ -17,46 +17,33 @@ const contact: ContactSummary = {
   conversationId: notice.conversationId, localAlias: "Ada", createdAtMs: 1, updatedAtMs: 1,
 };
 
-function buttons(tree: ReturnType<typeof ContactNoticeMoment>) {
+function buttons(tree: ReturnType<typeof ContactNoticePanel>) {
   return collectNodes(tree).filter((node) => node.type === "button");
 }
 /* the harness joins text fragments with spaces; read the moment the way a person does */
-function text(tree: ReturnType<typeof ContactNoticeMoment>) {
+function text(tree: ReturnType<typeof ContactNoticePanel>) {
   return collectText(tree).replace(/\s+/g, " ").trim();
 }
 
 describe("the contact notice", () => {
-  it("shows the sender like any other, the start of the message, and offers show and go to chat", () => {
-    const onShow = vi.fn();
+  it("keeps sender provenance and explicit close and full conversation actions in the panel", () => {
+    const onClose = vi.fn();
     const onGoToChat = vi.fn();
-    const tree = ContactNoticeMoment({ notice, contact: undefined, open: false, onShow, onGoToChat });
-    expect(text(tree)).toBe("Ada Lovelace PERSON hey — free to look at the release… show message go to chat");
-    const [show, goToChat] = buttons(tree);
-    void show.props.onClick?.();
+    const tree = ContactNoticePanel({ id: "people-panel", name: "Ada", notice, onClose, onGoToChat, children: "Waiting message" });
+    expect(text(tree)).toBe("Ada PERSON close Waiting message 1 message open conversation ↗");
+    expect(tree.props["aria-label"]).toBe("Messages from Ada");
+    const [close, goToChat] = buttons(tree);
+    void close.props.onClick?.();
     void goToChat.props.onClick?.();
-    expect(onShow).toHaveBeenCalledOnce();
+    expect(onClose).toHaveBeenCalledOnce();
     expect(onGoToChat).toHaveBeenCalledOnce();
   });
 
-  it("counts waiting messages, badges the newest sender, prefers the alias, and steps show aside while open", () => {
+  it("counts waiting messages and identifies when the contact's Ship wrote the latest", () => {
     const three = { ...notice, messages: [message(1, "first"), message(2, "second"), message(3, "ok, sent it", true)] };
-    const closed = ContactNoticeMoment({ notice: three, contact, open: false, onShow: vi.fn(), onGoToChat: vi.fn() });
-    expect(text(closed)).toBe("Ada GSV ok, sent it show 3 messages go to chat");
-    expect(collectNodes(closed).some((node) => node.props.class === "sender-dot")).toBe(true);
-    const opened = ContactNoticeMoment({ notice: three, contact, open: true, onShow: vi.fn(), onGoToChat: vi.fn() });
-    expect(text(opened)).toBe("Ada GSV ok, sent it go to chat");
-  });
-
-  it("keeps go to chat after a reply and says it was answered", () => {
-    const tree = ContactNoticeMoment({ notice: { ...notice, replied: true }, contact: undefined, open: false, onShow: vi.fn(), onGoToChat: vi.fn() });
-    expect(text(tree)).toBe("Ada Lovelace PERSON hey — free to look at the release… (replied) go to chat");
-    expect(buttons(tree)).toHaveLength(1);
-  });
-
-  it("names a message with no text by what it carries", () => {
-    const attachment = { ...notice, messages: [{ ...message(1, ""), media: [{ type: "resource", path: "/tmp/build.zip" }] }] };
-    const tree = ContactNoticeMoment({ notice: attachment, contact: undefined, open: false, onShow: vi.fn(), onGoToChat: vi.fn() });
-    expect(text(tree)).toBe("Ada Lovelace PERSON (an attachment) show message go to chat");
+    const tree = ContactNoticePanel({ id: "people-panel", name: "Ada", notice: three, onClose: vi.fn(), onGoToChat: vi.fn() });
+    expect(text(tree)).toBe("Ada GSV close 3 messages open conversation ↗");
+    expect(collectNodes(tree).some((node) => node.props.class === "sender-dot")).toBe(true);
   });
 
   it("clips a preview to its first words", () => {

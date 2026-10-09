@@ -11,6 +11,7 @@ export type ShipNotices = {
   /** what the person typed under each notice, kept while its box is closed */
   drafts: ReadonlyMap<string, ContactReplyDraft>;
   setDraft: (contactId: string, draft: ContactReplyDraft | null) => void;
+  clearSentDraft: (contactId: string, intent: NonNullable<ContactReplyDraft["intent"]>) => void;
   markRead: (notice: ContactNotice, through: number) => void;
   /** typed text is waiting under a notice: unsaved work */
   dirty: boolean;
@@ -33,6 +34,13 @@ export function useShipNotices({ viewer, listening }: { viewer: ConsoleAccount |
     if (draft) next.set(contactId, draft); else next.delete(contactId);
     return next;
   }), []);
+  const clearSentDraft = useCallback((contactId: string, intent: NonNullable<ContactReplyDraft["intent"]>) => setDrafts((current) => {
+    const draft = current.get(contactId);
+    if (draft?.intent?.idempotencyKey !== intent.idempotencyKey || draft.text.trim() !== intent.text) return current;
+    const next = new Map(current);
+    next.delete(contactId);
+    return next;
+  }), []);
   /* a notice that still holds typed text stays, with that text and its send intent, until the person sends or clears it */
   const holding = useMemo(() => new Set([...drafts].filter(([, draft]) => draft.text.trim() !== "").map(([contactId]) => contactId)), [drafts]);
   const { notices, markReplied } = useContactNotices({ listening, holding, mayReadView: may("conversation.view.get") });
@@ -42,5 +50,5 @@ export function useShipNotices({ viewer, listening }: { viewer: ConsoleAccount |
     void client.conversation.view.update({ conversationId: notice.conversationId, readThroughSequence: through }).catch(() => undefined);
   };
   const dirty = [...drafts.values()].some((draft) => draft.text.trim() !== "");
-  return { notices: may("contact.list") ? notices : NO_NOTICES, markReplied, drafts, setDraft, markRead, dirty };
+  return { notices: may("contact.list") ? notices : NO_NOTICES, markReplied, drafts, setDraft, clearSentDraft, markRead, dirty };
 }

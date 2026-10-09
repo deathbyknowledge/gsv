@@ -318,8 +318,7 @@ function InstrumentReady({ initialPath }: { initialPath: string }) {
           }} initialTarget={zenTarget} prefill={zenPrefill} onPrefillUsed={() => setZenPrefill(null)} pid={zenPid}
           shipNotices={zenPid ? undefined : shipNotices}
           peopleActivity={zenPid ? undefined : peopleActivity}
-          onPeopleActivity={(request) => { if (move("people") && request) setPeopleRequest(request); }}
-          onPeople={(contactId) => { if (move("people")) setPeopleRequest({ contactId }); }} />
+          onPeopleActivity={(request) => { if (move("people") && request) setPeopleRequest(request); }} />
         </RetainedView>
         <RetainedView active={distance === "memory"}>
           <Memory onDirtyChange={setMemoryDirty} initialPage={selectedMemoryPage} onAsk={(_page, prompt) => {

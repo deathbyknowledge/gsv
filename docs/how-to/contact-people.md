@@ -53,20 +53,18 @@ editable request in your ordinary Ship chat. Review it and send it when ready.
 It does not turn on automatic replies for that person. A first-use example can
 prefill a more specific request, such as finding a time for dinner.
 
-A contact message that arrives while you are in the Ship chat adds a notice under
-the transcript, labelled like any sender: the person's name with a **PERSON** or
-**GSV** badge for who wrote it, then the first words of their newest message.
-**show message** (or **show N messages** while several wait) opens them in full
-with a reply box inline; sending threads your reply to the newest one, marks the
-conversation read, and leaves the notice marked **(replied)** until that contact
-writes again. **go to chat** opens the
-conversation in People; a reply you started under the notice stays there, in the
-Ship chat, until you send or clear it. These inline notices are for this session.
-The **people** strip above the prompt also shows unread conversations and message
-requests from earlier, including after a reload or reconnect. Select a person or
-request to open it in People. A dot beside **people** in the main navigation stays
-visible while unread activity waits. Muted, blocked, ended and archived
-conversations do not attract attention there.
+The **people** line above the Ship prompt keeps unread conversations and incoming
+requests within reach, including after reload or reconnect. New messages update
+the line without opening a panel or moving your place in the Ship conversation.
+Select a person's name to read and reply in a compact panel. A **PERSON** or
+**GSV** badge identifies who wrote the latest message. **Open conversation** takes
+you to the full history in People; selecting a connection request opens it there.
+
+Closing the panel keeps an unfinished reply for this session, marked **draft** on
+the person's name. Sending threads the reply to the message it answers and clears
+that answered activity; a newer arrival still waits. A dot beside **people** in
+the main navigation also marks unread activity. Muted, blocked, ended and archived
+conversations stay quiet; an unfinished draft remains reachable.
 
 Work for a particular task is separate from that standing preference. When Ship
 sends with `message send --to contact:ID --responsibility R12Y_ID`, replies continue

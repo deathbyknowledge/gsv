@@ -35,3 +35,18 @@ changes to agent isolation are outside this change.
 Validate the shared invitation format and inbox selection at their boundaries,
 the web connection and navigation transitions, and a fresh two-space connection,
 message, acceptance and reload flow. Inspect light, dark, and narrow layouts.
+
+## People while talking to Ship
+
+Zen keeps one compact People line above its composer. Incoming messages do not
+become moving entries in the Ship transcript and never force its scroll position.
+The line combines live notices, unread conversations recovered after reload,
+incoming requests and unfinished replies. A selected person opens one bounded
+panel above the line, with their messages, a reply field and a link to People.
+Closing the panel keeps the draft. Replying clears the answered messages; arrivals
+during a send remain waiting. The panel does not open itself for new messages.
+
+Instrument owns this presentation, using the existing inbox, conversation history,
+signals and reply intents. People retains the full conversation and request
+workflow. Form placeholders share the Zen prompt's typographic treatment across
+Instrument instead of falling back to native gray placeholders.

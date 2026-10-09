@@ -68,6 +68,7 @@
   --glyph:         #8071dd;  /* phosphor glyphs: wordmark, ASCII art     */
   --star:          #5d5798;  /* star field glyphs                         */
   --faint:         #4e496f;  /* faintest chrome: timeline marks, hints    */
+  --placeholder:   #565199;  /* empty fields share the Zen prompt colour */
   --principal:     #8ec9a4;  /* prompt line: who (matches the TUI)        */
   --target:        #97aaff;  /* prompt line + activity: where             */
   --path:          #bea4e8;  /* prompt line: directory                    */
