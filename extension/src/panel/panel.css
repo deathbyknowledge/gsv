@@ -115,8 +115,13 @@ a { color: var(--accent); text-decoration: none; }
 .facts dt { color: var(--faint); letter-spacing: .08em; text-transform: uppercase; font-size: 10.5px; }
 .facts dd { color: var(--label); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; letter-spacing: .02em; }
 
+.panel-bottom { display: flex; flex-direction: column; gap: 12px; position: sticky; bottom: 0; z-index: 1; padding-top: 8px; background: var(--void); }
+.access-control { display: flex; }
+.access-control .ibtn { width: 100%; }
+
 /* ── footer line ── */
 .foot { display: flex; justify-content: space-between; gap: 12px; font-size: 10.5px; letter-spacing: .1em; text-transform: uppercase; color: var(--faint); padding-top: 10px; border-top: 1px solid var(--rule-inner); }
 .foot .tbtn { font-size: 10.5px; }
 .foot .host { color: var(--text-dim); text-transform: none; letter-spacing: .04em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.foot a.host:hover { color: var(--accent); text-decoration: underline; text-underline-offset: 3px; }
 .loading { font-family: var(--gsv-font-prose); color: var(--text-dim); padding: 24px 0; }
