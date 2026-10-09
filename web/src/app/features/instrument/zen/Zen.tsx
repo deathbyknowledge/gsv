@@ -91,6 +91,8 @@ export type ZenProps = {
   peopleActivity?: PeopleActivityState;
   /** Open a contact's conversation in People, for a message that arrived while here. */
   onPeopleActivity?: (request?: PeopleOpenRequest) => void;
+  searchRequested?: boolean;
+  onSearchRequestHandled?: () => void;
 };
 
 const HISTORY_LIMIT = 400;
@@ -319,7 +321,7 @@ function NoteMoment({
   );
 }
 
-export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, onPrefillUsed, pid: pidProp, onDraftChange, contactReplies, peopleActivity, onPeopleActivity }: ZenProps) {
+export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, onPrefillUsed, pid: pidProp, onDraftChange, contactReplies, peopleActivity, onPeopleActivity, searchRequested, onSearchRequestHandled }: ZenProps) {
   const active = useViewActive();
   const browserControl = useBrowserControl();
   const { client, connected } = useGateway();
@@ -344,6 +346,11 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
   const [searchOpen, setSearchOpen] = useState(false);
   const closeSearch = useCallback(() => setSearchOpen(false), []);
   useEffect(() => { if (!active) setSearchOpen(false); }, [active]);
+  useEffect(() => {
+    if (!active || !searchRequested) return;
+    setSearchOpen(true);
+    onSearchRequestHandled?.();
+  }, [active, searchRequested, onSearchRequestHandled]);
   const pid = useZenProcess(pidProp, setNote);
   /* the conversation is what was actually said, both ways; the process transcript is what the ship did */
   const conversation = useChatConversation({ processId: pid ?? "", enabled: pid !== null });
@@ -952,7 +959,7 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
   const empty = ready && moments.length === 0 && pid !== null && pendingHil === null;
 
   return (
-    <main class={`zen${!promptFocused ? " is-browse" : ""}${draggingFiles ? " is-file-drop" : ""}`} aria-label="Zen"
+    <main class={`zen${!promptFocused ? " is-browse" : ""}${draggingFiles ? " is-file-drop" : ""}`} aria-label="Chat"
       onDragEnter={(event) => { if (event.dataTransfer?.types.includes("Files")) { event.preventDefault(); dragDepth.current++; setDraggingFiles(true); } }}
       onDragOver={(event) => { if (event.dataTransfer?.types.includes("Files")) { event.preventDefault(); event.dataTransfer.dropEffect = "copy"; } }}
       onDragLeave={(event) => { if (event.dataTransfer?.types.includes("Files") && --dragDepth.current <= 0) { dragDepth.current = 0; setDraggingFiles(false); } }}
@@ -1037,6 +1044,8 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
           </div>
         )}
         <div />
+        {!empty && ready && scrolling.awayFromBottom && <button type="button" class="zen-jump-bottom"
+          aria-label="Jump to latest message" onClick={scrolling.follow}>↓ latest</button>}
       </div>
 
       <div class="zen-bottom">
@@ -1078,11 +1087,16 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
           {showFeedback && <div class="zen-feedback">
             {activeRun !== null && pendingHil === null && <span role="status">
               {currentModel && <>{currentModel} · </>}
-              {currentPlace.label} {currentPlace.online ? "ready" : "offline"}
+              {currentPlace.label} is {currentPlace.online ? "ready" : "offline"}
             </span>}
             {note ? <span class="is-err" role="alert">{note}</span> : null}
           </div>}
-          <div hidden={recordingVoice}>
+          <div class="zen-compose-line" hidden={recordingVoice}>
+            <input ref={fileInput} type="file" multiple hidden aria-label="Choose attachments" onChange={(event) => {
+              addFiles(Array.from(event.currentTarget.files ?? [])); event.currentTarget.value = "";
+            }} />
+            <button type="button" class="zen-attach" aria-label="Attach files" title="Attach files"
+              onClick={() => fileInput.current?.click()}>+</button>
             <PromptLine
               ref={promptRef}
               onFocusChange={onPromptFocus}
@@ -1111,11 +1125,6 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
           </div>
           <div ref={voiceSurface} />
           <div class="zen-compose-actions">
-            <input ref={fileInput} type="file" multiple hidden aria-label="Choose attachments" onChange={(event) => {
-              addFiles(Array.from(event.currentTarget.files ?? [])); event.currentTarget.value = "";
-            }} />
-            <button type="button" onClick={() => fileInput.current?.click()}>attach</button>
-            <button type="button" disabled={!connected || !conversation.conversation} title="Search conversation (Ctrl/Cmd+F)" onClick={() => setSearchOpen(true)}>search</button>
             {attachments.length > 0 && <button type="button" disabled={!connected || !pid || outbox.sending} onClick={() => promptRef.current?.submit()}>send</button>}
             <span class="zen-connection-status" role="status">{connected ? "" : "Reconnecting..."}</span>
             {nativeInput ? <NativeVoiceControls ref={voiceInput} prompt={promptRef} panelHost={nativePanels}

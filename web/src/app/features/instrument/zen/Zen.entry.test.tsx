@@ -23,6 +23,7 @@ import { FleetDialog } from "../fleet/FleetDialog";
 import { ZenText } from "./ZenText";
 import { ThinkingMark } from "./ThinkingMark";
 import { ApprovalCard } from "../shared/ApprovalCard";
+import { ConversationSearch } from "../shared/ConversationSearch";
 
 let storage: Map<string, string>;
 let messages: ConversationMessage[];
@@ -102,7 +103,7 @@ beforeEach(() => {
 });
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
-async function mountedZen(pid?: string, initialTarget?: string, native = false) {
+async function mountedZen(pid?: string, initialTarget?: string, native = false, searchRequested = false) {
   const root = createTestRoot("Zen entry");
   const cache = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
   let tree: ComponentChildren;
@@ -112,7 +113,8 @@ async function mountedZen(pid?: string, initialTarget?: string, native = false) 
     subscribe: () => { throw new Error("Zen entry tests inspect controls without mounting them"); },
     acknowledge: async () => {}, command: async () => {},
   };
-  function Harness() { tree = Zen({ pid, initialTarget, onFleet, onDraftChange: draftChange }); return null; }
+  const searchHandled = vi.fn();
+  function Harness() { tree = Zen({ pid, initialTarget, onFleet, onDraftChange: draftChange, searchRequested, onSearchRequestHandled: searchHandled }); return null; }
   const render = () => root.render(<GatewayProvider><SessionProvider createService={(client) => {
     const service = createSessionService(client);
     return { ...service, start: async () => {}, subscribe: () => () => {},
@@ -129,7 +131,7 @@ async function mountedZen(pid?: string, initialTarget?: string, native = false) 
     // SAFETY: The VNode was selected by the exact component whose props type P describes.
     return node.props as P;
   };
-  return { render, props, onFleet, text: () => collectText(tree), dirty: () => draftChange.mock.lastCall?.[0] === true,
+  return { render, props, onFleet, searchHandled, text: () => collectText(tree), dirty: () => draftChange.mock.lastCall?.[0] === true,
     nodes: () => collectNodes(tree),
     async unmount() { await root.unmount(); cache.clear(); },
     async refreshHistory() { await act(async () => { await cache.invalidateQueries({ queryKey: chatConversationHistoryKey("canonical-ship") }); }); },
@@ -181,6 +183,14 @@ describe("Zen conversation entry", () => {
     const zen = await mountedZen(pid);
     try {
       expect(zen.nodes().some(node => node.type === BrowserRequests)).toBe(pid === undefined);
+    } finally { await zen.unmount(); }
+  });
+
+  it("opens conversation search requested from the header", async () => {
+    const zen = await mountedZen(undefined, undefined, false, true);
+    try {
+      await vi.waitFor(() => expect(zen.nodes().some((node) => node.type === ConversationSearch)).toBe(true));
+      expect(zen.searchHandled).toHaveBeenCalledOnce();
     } finally { await zen.unmount(); }
   });
 
@@ -327,8 +337,8 @@ describe("Zen conversation entry", () => {
   });
 
   it.each([
-    { target: "gsv", readiness: "your cloud ready", status: "completed", queuedCount: 0 },
-    { target: "laptop", readiness: "laptop offline", status: "aborted", queuedCount: 1 },
+    { target: "gsv", readiness: "your cloud is ready", status: "completed", queuedCount: 0 },
+    { target: "laptop", readiness: "laptop is offline", status: "aborted", queuedCount: 1 },
   ])("shows run feedback before streaming and clears it when $status", async ({ target, readiness, status, queuedCount }) => {
     runContext = {
       revision: 1, runId: "previous-run", provider: "openai", model: "previous-model",
@@ -340,8 +350,12 @@ describe("Zen conversation entry", () => {
     send.mockResolvedValueOnce({ message: message("user", "Keep working"), handlerPid: shipPid, runId: "active-run" });
     const zen = await mountedZen(undefined, target);
     const text = () => zen.text().replace(/\s+/g, " ");
+    const feedbackText = () => {
+      const feedback = zen.nodes().find((node) => node.type === "span" && node.props.role === "status" && !node.props.class);
+      return feedback ? collectText(feedback).replace(/\s+/g, " ") : "";
+    };
     try {
-      expect(text()).not.toContain(readiness);
+      expect(feedbackText()).not.toContain(readiness);
       expect(text()).not.toContain("attempting");
       await act(() => { zen.props(PromptLine).onSubmit("Keep working"); });
       await vi.waitFor(() => expect(send).toHaveBeenCalledOnce());
@@ -349,7 +363,7 @@ describe("Zen conversation entry", () => {
 
       activeRunId = "active-run";
       await act(() => { for (const listener of signals) listener("proc.run.started", { pid: shipPid, runId: activeRunId }); });
-      await vi.waitFor(() => expect(text()).toContain(readiness));
+      await vi.waitFor(() => expect(feedbackText()).toContain(readiness));
       expect(zen.nodes().some((node) => node.type === ThinkingMark)).toBe(true);
       expect(text()).not.toContain("previous-model");
 
@@ -357,11 +371,11 @@ describe("Zen conversation entry", () => {
       await act(() => { for (const listener of signals) listener("proc.changed", { pid: shipPid, changes: ["context"], context: runContext }); });
       await vi.waitFor(() => expect(text()).toContain("active-model"));
       expect(text()).not.toContain("attempting");
-      expect(text()).toContain(readiness);
+      expect(feedbackText()).toContain(readiness);
 
       activeRunId = null;
       await act(() => { for (const listener of signals) listener("proc.run.finished", { pid: shipPid, runId: "active-run", status, queuedCount }); });
-      await vi.waitFor(() => expect(text()).not.toContain(readiness));
+      await vi.waitFor(() => expect(feedbackText()).not.toContain(readiness));
       expect(zen.nodes().some((node) => node.type === ThinkingMark)).toBe(false);
       expect(text()).not.toContain("attempting");
     } finally { await zen.unmount(); }

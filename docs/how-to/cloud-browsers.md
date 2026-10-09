@@ -10,7 +10,7 @@ explicitly ask Ship to create one. If browser access is unavailable, Ship should
 explain the actual availability or startup problem. A website may separately
 require you to sign in through the browser view.
 
-The browser list below Zen's prompt and in Fleet updates automatically as
+The browser list below Chat's prompt and in Fleet updates automatically as
 browsers start, become ready or stop. Opening Fleet or refreshing is unnecessary.
 
 By default, Ship can run commands, use the network and manage files in cloud
@@ -26,8 +26,8 @@ Ask Ship to use a browser. GSV reuses your account's current cloud browser,
 including one that is still starting. More work can use another tab. Fleet's
 **browser** action follows the same rule and opens the view immediately.
 
-Click the browser below Zen's prompt, a browser link in its work receipt, or a
-running browser in Fleet to watch Ship work. Zen stays open behind the view.
+Click the browser below Chat's prompt, a browser link in its work receipt, or a
+running browser in Fleet to watch Ship work. Chat stays open behind the view.
 The browser window has tabs and an address bar, with the page filling its width.
 Use **expand** for a larger view and **more → stop browser** to stop it;
 **close** leaves the browser running. The text controls match the rest of Instrument.

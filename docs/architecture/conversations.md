@@ -14,6 +14,10 @@ conversation. Users can inspect the referenced Process while it exists or read i
 Web and Desktop render Ship's Markdown code blocks at a readable monospace size with a copy action.
 Long lines scroll inside the block. Copy preserves indentation and internal line breaks without
 adding the renderer's final newline to the clipboard.
+Chat renders human messages as plain text with clickable web URLs. External web links in human
+messages and Ship's Markdown replies open in a new tab.
+When the reader scrolls above the latest chat message, a small button returns the transcript to
+the bottom and resumes following new replies.
 
 ## Conversation kinds
 
@@ -225,7 +229,8 @@ native saves apply to the attachment blobs resolved by the authenticated fronten
 
 ## Search
 
-Zen opens conversation search with `/` in browse mode or `Ctrl/Cmd+F`; People uses the same search
+Chat opens conversation search from its header action or with `Ctrl+K` from any view.
+`/` in browse mode and `Ctrl/Cmd+F` in Chat remain available. People uses the same search
 dialog and syscall for the selected contact conversation. Selecting a result shows the
 original message and surrounding messages in the dialog, preserving the conversation position and
 any draft when the dialog closes.

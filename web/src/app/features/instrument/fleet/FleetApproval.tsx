@@ -56,7 +56,7 @@ export function FleetApproval({ pid, who, label, requestId, runId, placeLabelFor
     {!connected ? <p class="note" role="status">Connecting…</p>
       : pending.isPending ? <p class="note"><LoadingState>Loading approval…</LoadingState></p>
       : pending.isError ? <p class="error" role="alert">Could not load this approval: {pending.error.message}</p>
-      : !request ? <p class="note" role="status">{requestId ? "This approval is no longer pending." : "No approval is pending."}{pending.data && requestId ? " A different request is now waiting; open its approval from Zen." : ""}</p>
+      : !request ? <p class="note" role="status">{requestId ? "This approval is no longer pending." : "No approval is pending."}{pending.data && requestId ? " A different request is now waiting; open its approval from Chat." : ""}</p>
       : <ApprovalCard
         key={request.requestId}
         request={request}

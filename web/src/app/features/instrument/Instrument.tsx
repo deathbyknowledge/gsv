@@ -16,7 +16,7 @@ import { People, type PeopleOpenRequest } from "./people/People";
 import { usePeopleActivity } from "./people/usePeopleActivity";
 import type { FleetReference } from "./fleet/fleetModel";
 import { WireSync } from "./wire/WireSync";
-import type { MemoryPageRef } from "./shared/navigation";
+import { replaceLegacyChatPath, type MemoryPageRef } from "./shared/navigation";
 import { InstrumentHeader } from "./shared/InstrumentHeader";
 import { SHELL_KEYS } from "./shared/shellKeys";
 import { useDismissOnOutsideClick } from "./shared/useDismissOnOutsideClick";
@@ -34,16 +34,17 @@ export type Distance = "zen" | "fleet" | "memory" | "settings" | "people";
 export type FleetRow = `target:${string}` | `proc:${string}` | `work:${string}` | `routine:${string}` | `more:${string}` | `dir:${string}` | `file:${string}`;
 
 const DISTANCE_TO_PATH = {
-  zen: "/zen",
+  zen: "/chat",
   fleet: "/fleet",
   memory: "/memory",
-  settings: "/zen/settings",
+  settings: "/chat/settings",
   people: "/people",
 } satisfies Record<Distance, string>;
 
 const DISTANCES: readonly Distance[] = ["zen", "fleet", "memory", "settings", "people"];
 
 function distanceForPath(path: string): Distance {
+  if (path === "/zen/settings") return "settings";
   return DISTANCES.find((distance) => DISTANCE_TO_PATH[distance] === path) ?? "zen";
 }
 
@@ -83,6 +84,9 @@ function InstrumentReady({ initialPath }: { initialPath: string }) {
     });
   }, [client, status.state]);
   const [distance, setDistance] = useState<Distance>(() => distanceForPath(initialPath));
+  useEffect(() => {
+    replaceLegacyChatPath();
+  }, [initialPath]);
   const [fleetRequest, setFleetRequest] = useState<FleetProps["openRequest"]>(null);
   const [zenPrefill, setZenPrefill] = useState<string | null>(null);
   const [selectedMemoryPage, setSelectedMemoryPage] = useState<MemoryPageRef | null>(null);
@@ -99,6 +103,7 @@ function InstrumentReady({ initialPath }: { initialPath: string }) {
   useTabAttention();
   const [scale, setScale] = useState<Scale>(() => storedScale());
   const [help, setHelp] = useState(false);
+  const [searchRequested, setSearchRequested] = useState(false);
   const helpRef = useRef<HTMLElement>(null);
   const helpButtonRef = useRef<HTMLButtonElement>(null);
   const cycleScale = useCallback(() => {
@@ -147,7 +152,7 @@ function InstrumentReady({ initialPath }: { initialPath: string }) {
       if (controlState.current.unsaved) throw new ClientControlError("busy");
       setZenPid(pid);
       setDistance("zen");
-      history.replaceState(null, "", "/zen");
+      history.replaceState(null, "", "/chat");
       return { type: command.type === "new" ? "created" : "selected", processId: pid };
     } finally { selectingProcess.current = false; }
   });
@@ -170,6 +175,13 @@ function InstrumentReady({ initialPath }: { initialPath: string }) {
     [distance, fleetDirty],
   );
 
+  const openSearch = useCallback(() => {
+    if (status.state !== "connected") return;
+    move("zen");
+    setHelp(false);
+    setSearchRequested(true);
+  }, [move, status.state]);
+
   useLayoutEffect(() => {
     if (!help) return;
     const dismissHelp = (event: KeyboardEvent) => {
@@ -190,24 +202,35 @@ function InstrumentReady({ initialPath }: { initialPath: string }) {
       const typing =
         target instanceof HTMLElement &&
         (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.tagName === "SELECT" || target.isContentEditable);
-      if (target instanceof HTMLElement && target.closest(".fleet-connection, .settings-model-editor")) return;
-      if (event.defaultPrevented || typing || event.metaKey || event.ctrlKey || event.altKey) return;
-      if (!SHELL_KEYS.has(event.key)) return;
-      if (event.key === "z") {
+      if (event.defaultPrevented || event.isComposing) return;
+      if (target instanceof HTMLElement && target.closest(".zen-search-dialog")) return;
+      if (event.key === "k" && event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey && status.state === "connected") {
         event.preventDefault();
-        move(distance === "fleet" ? "zen" : "fleet");
+        openSearch();
+        return;
+      }
+      if (target instanceof HTMLElement && target.closest(".fleet-connection, .settings-model-editor")) return;
+      if (typing || event.metaKey || event.ctrlKey || event.altKey) return;
+      if (!SHELL_KEYS.has(event.key)) return;
+      if (event.key === "c") {
+        event.preventDefault();
+        move("zen");
+      }
+      if (event.key === "f") {
+        event.preventDefault();
+        move("fleet");
       }
       if (event.key === "m") {
         event.preventDefault();
-        move(distance === "memory" ? "zen" : "memory");
+        move("memory");
       }
       if (event.key === "p") {
         event.preventDefault();
-        move(distance === "people" ? "zen" : "people");
+        move("people");
       }
-      if (event.key === ",") {
+      if (event.key === "s") {
         event.preventDefault();
-        move(distance === "settings" ? "zen" : "settings");
+        move("settings");
       }
       if (event.key === "l") {
         event.preventDefault();
@@ -224,7 +247,7 @@ function InstrumentReady({ initialPath }: { initialPath: string }) {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [cycleScale, distance, move, toggleTheme]);
+  }, [cycleScale, move, openSearch, status.state, toggleTheme]);
 
   return (
     <div class={`instrument${theme === "light" ? " is-light" : ""}${scale === 1.5 ? " is-scale-15" : scale === 2 ? " is-scale-2" : ""}`}>
@@ -236,30 +259,34 @@ function InstrumentReady({ initialPath }: { initialPath: string }) {
           if (!zenDirty || window.confirm("Discard your unsent message and attachments?")) setZenPid(null);
         }} help={help} onHelp={() => setHelp((open) => !open)} helpButtonRef={helpButtonRef} />
       {help ? (
-        <aside id="instrument-help" class="instrument-help" aria-label="Keys" ref={helpRef}>
+        <aside id="instrument-help" class="instrument-help" aria-label="Help" ref={helpRef}>
+          <button type="button" class="instrument-help-search" disabled={status.state !== "connected"} aria-keyshortcuts="Control+K" onClick={openSearch}>
+            <span>Search Chat</span><kbd>Ctrl+K</kbd>
+          </button>
           <h4>Views & appearance</h4>
           <p>Navigation shortcuts work outside text fields and setup forms.</p>
           <dl>
-            <dt>z</dt><dd>Fleet · press again to return to Zen</dd>
-            <dt>m</dt><dd>Memory · press again to return to Zen</dd>
-            <dt>p</dt><dd>People · press again to return to Zen</dd>
-            <dt>,</dt><dd>Settings · press again to return to Zen</dd>
+            <dt>c</dt><dd>Chat</dd>
+            <dt>f</dt><dd>Fleet</dd>
+            <dt>m</dt><dd>Memory</dd>
+            <dt>p</dt><dd>People</dd>
+            <dt>s</dt><dd>Settings</dd>
             <dt>l</dt><dd>Switch between light and dark</dd>
             <dt>x</dt><dd>Cycle text size</dd>
             <dt>?</dt><dd>Show or hide these shortcuts</dd>
             <dt>Esc</dt><dd>Close this panel</dd>
           </dl>
           {distance === "zen" && <>
-            <h4>Zen · browse</h4>
+            <h4>Chat · browse</h4>
             <dl>
               <dt>j / k</dt><dd>Next / previous message or activity</dd>
               <dt>gg / G</dt><dd>Earlier history / latest messages and follow</dd>
               <dt>o</dt><dd>Show or hide the selected message’s activity</dd>
-              <dt>/</dt><dd>Search conversation · Ctrl/Cmd+F also works while typing</dd>
+              <dt>/</dt><dd>Search in browse mode · Ctrl/Cmd+F also works</dd>
               <dt>y / n</dt><dd>Approve or deny a pending request</dd>
               <dt>other keys</dt><dd>Start writing; the keystroke lands in the prompt</dd>
             </dl>
-            <h4>Zen · input</h4>
+            <h4>Chat · input</h4>
             <dl>
               <dt>Enter</dt><dd>Send the message or run the command</dd>
               <dt>Esc</dt><dd>Return to browse; closes the place picker first</dd>
@@ -311,7 +338,7 @@ function InstrumentReady({ initialPath }: { initialPath: string }) {
       <div class="distance" data-view={distance}>
         <BrowserControlOverlay />
         <RetainedView active={distance === "zen"}>
-          <Zen key={zenPid ?? "ship"} onDraftChange={setZenDirty} onFleet={(reference) => move("fleet", reference ?? null)} onMemory={(page) => {
+          <Zen key={zenPid ?? "ship"} searchRequested={searchRequested} onSearchRequestHandled={() => setSearchRequested(false)} onDraftChange={setZenDirty} onFleet={(reference) => move("fleet", reference ?? null)} onMemory={(page) => {
             if (page && memoryDirty && !window.confirm("Discard your unsaved page changes and open this page?")) return;
             if (!move("memory")) return;
             if (page) setSelectedMemoryPage({ ...page });

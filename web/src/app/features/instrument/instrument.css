@@ -145,6 +145,8 @@
 .instrument-helper { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .instrument-helper button { color: var(--accent); }
 .instrument-header .keys { display: flex; align-items: center; gap: 14px; justify-self: end; margin-right: -8px; }
+.instrument-header .keys [aria-current="page"] { color: var(--text-hi); }
+.instrument-header .keys [aria-current="page"] .view-label { text-decoration: underline; text-underline-offset: 4px; }
 @container instrument (max-width: 900px) {
   .instrument-header { padding-inline: 18px; gap: 8px; }
   .instrument-header .keys { gap: 8px; }
@@ -433,6 +435,10 @@
   overflow-y: auto;
 }
 .instrument.is-light .instrument-help { box-shadow: 0 14px 40px rgba(20, 17, 43, 0.15); }
+.instrument-help-search { display: flex; align-items: center; justify-content: space-between; width: 100%; padding: 0 0 10px; margin-bottom: 12px; border-bottom: 1px solid var(--border-raised); color: var(--text-hi); text-align: left; }
+.instrument-help-search:hover { color: var(--accent); }
+.instrument-help-search:disabled { opacity: .45; cursor: default; }
+.instrument-help-search kbd { margin-right: 0; }
 .instrument-help h4 { margin: 0 0 6px; font-size: 10px; letter-spacing: 0.2em; text-transform: uppercase; color: var(--faint); font-weight: 400; }
 .instrument-help h4:not(:first-child) { margin-top: 14px; }
 .instrument-help p { margin: 0 0 10px; color: var(--faint); font-size: 11px; line-height: 1.5; }
