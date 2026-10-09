@@ -213,6 +213,8 @@ Inviting, accepting an invitation, sending a profile request and accepting a req
 
 Contact messages support older history, text, attachments and exact replies in the same conversation. Reply and successful-delivery controls appear on hover or keyboard focus, and stay available on touch screens. Pending and failed delivery states remain visible. Drafts, uploads and send identities stay in People across navigation; reloading warns, and uploads are cancelled on teardown. Active conversation and request caches refresh from exact owner-scoped signals, and hidden views wait until opened. Request actions retain revision checks. Revoked contacts keep readable history with sending disabled.
 
+The empty conversation notice shares the message column's maximum width and gutters.
+
 Memory and People share a full-height sidebar divider owned by the Instrument shell. Their scrolling content begins below the header; on narrow layouts the divider disappears as the panes stack or show separately.
 Settings extends its divider through the header at the edge of its naturally sized
 section rail. It switches to a horizontal separator with the narrow section strip.

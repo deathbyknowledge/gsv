@@ -42,7 +42,7 @@
 .people-header-actions { display: flex; gap: 24px; flex-shrink: 0; }
 .people-conversation { display: flex; flex-direction: column; flex: 1; min-height: 0; }
 .people-history { flex: 1; min-height: 0; overflow-y: auto; overflow-anchor: none; padding: 18px var(--people-gutter) 8px; scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
-.people-message { max-width: 728px; margin: 0 auto 28px; overflow-wrap: anywhere; }
+.people-message, .people-history > .note { max-width: 728px; margin: 0 auto 28px; overflow-wrap: anywhere; }
 .people-message header { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; color: var(--text-dim); font-size: 10px; }
 .people-message header > span { color: var(--label); }
 .people-message-author { display: inline-flex; align-items: center; gap: 8px; }
