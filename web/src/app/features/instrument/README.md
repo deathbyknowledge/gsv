@@ -20,11 +20,12 @@ existing protection. Leaving Chat also releases its native input lease.
 
 Login, recovery and installation setup share Instrument's star field, wordmark,
 typefaces and light/dark preference. Setup identifies the current space and asks
-for one local username and password. The browser supplies its timezone; optional
+only for a password. The Kernel derives the internal username from the space handle. The browser supplies its timezone; optional
 configuration stays in Settings and Fleet. The session service owns the
 installation capability and signs in immediately after creating the account.
 Failed account creation keeps the form available for retry. If only sign-in
-fails, the ordinary login form shows the error with the created username filled.
+fails, the ordinary login form shows the error and asks for the personal password.
+Administrator sign-in explicitly selects root; it is not the ordinary account.
 
 Before choosing a space, Desktop presents two equal paths: create a space with
 an invite, or open an existing space. Open shows email sign-in beside direct
@@ -278,3 +279,9 @@ Text actions are the default. Choose the style from the control's role and place
 - Destructive actions use red and appropriate confirmation independently of shape. A contextual delete and its inline confirmation can both be text actions.
 - Preserve semantic buttons or links, keyboard focus, disabled states and usable click areas. An unboxed control still needs a usable target.
 - Use named text controls rather than the retired dot-matrix icon library. Installation icons in `web/public/icons` are branding assets; functional graphics such as a shared cursor remain local to their owning view.
+
+Your profile opens in People by selecting your display name at the bottom of its
+left sidebar. It uses the same retained view and draft protection as conversations.
+The sidebar list scrolls independently of this link. Save and publish remain
+separate; `/profile` is the public address without an alias choice. Existing
+published aliases continue to resolve. Profile queries share the signal-updated cache.

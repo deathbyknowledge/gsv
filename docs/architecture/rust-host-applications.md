@@ -130,6 +130,11 @@ Daemon-writable configuration never selects the service pipe's owner.
 
 ## `gsv`
 
+`gsv auth login` defaults to the personal account and asks only for its password.
+`--username root` selects administration; machine enrollment retains its explicit
+account identity. The shared gateway client accepts omitted human usernames and
+the CLI stores the identity returned by the Kernel with its session token.
+
 `gsv` is an operator client. It owns gateway administration, authentication,
 chat and process commands, deployment, OS service installation/control for
 `gsvd`, and the client sides of local Desktop and daemon control.

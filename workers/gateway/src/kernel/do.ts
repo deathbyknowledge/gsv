@@ -53,7 +53,6 @@ import { AuthStore } from "./auth-store";
 import { DevicePairingStore } from "./device-pairings";
 import { MemberRecoveryStore } from "./member-recovery";
 import { AccountRecoveryStore } from "./account-recovery";
-import { PeopleStore } from "./people";
 import type { AuthorizeRootRecoveryInput } from "@humansandmachines/gsv/services/ownership";
 import { CapabilityStore, hasCapability } from "./capabilities";
 import { ConfigStore } from "./config";
@@ -116,7 +115,7 @@ import {
 import { FederationStore } from "./federation-store";
 import { ProfileStore, type PublicProfileLocator, type PublicProfileProjection } from "./profile-store";
 import { ApproachStore } from "./approach-store";
-import { profileOwnerActive } from "./profiles";
+import { resolveSpacePublicProfile } from "./profiles";
 import { processApproachMaintenance } from "./approaches/runtime";
 import { MANAGED_LIFECYCLE_RECHECK_MS } from "../installation/lifecycle";
 import { FederationIdentity } from "./federation-crypto";
@@ -411,7 +410,6 @@ export class Kernel extends DurableObject<GatewayEnv> {
   readonly pairings: DevicePairingStore;
   readonly accountRecovery: AccountRecoveryStore;
   readonly memberRecovery: MemberRecoveryStore;
-  readonly people: PeopleStore;
   readonly caps: CapabilityStore;
   readonly config: ConfigStore;
   readonly modelMetadata: ModelMetadataResolver;
@@ -499,7 +497,6 @@ export class Kernel extends DurableObject<GatewayEnv> {
     this.targets = new TargetRegistry(sql);
     this.pairings = new DevicePairingStore(ctx.storage, this.auth, this.targets);
     this.accountRecovery = new AccountRecoveryStore(ctx.storage, this.auth, this.installationId);
-    this.people = new PeopleStore(ctx.storage, this.auth);
     this.memberRecovery = new MemberRecoveryStore(ctx.storage, this.auth);
 
     this.routes = new RoutingTable(sql);
@@ -709,8 +706,9 @@ export class Kernel extends DurableObject<GatewayEnv> {
     const gate = await this.onboarding.managedWorkGate();
     if (!gate.allowed) return null;
     this.retirement.assertActive();
-    const projection = this.profiles.published(locator);
-    return projection && profileOwnerActive(projection.ownerUid, this.buildKernelContext({})) ? projection : null;
+    const projection = await resolveSpacePublicProfile(locator, this.buildKernelContext({}));
+    this.retirement.assertActive();
+    return projection;
   }
 
   async scheduleApproachMaintenance(runningTaskId?: string): Promise<void> {
@@ -1505,7 +1503,6 @@ export class Kernel extends DurableObject<GatewayEnv> {
       pairings: this.pairings,
       accountRecovery: this.accountRecovery,
       memberRecovery: this.memberRecovery,
-      people: this.people,
       invalidateAccountConnections: (uid) => this.connectionRuntime.invalidateAccountConnections(uid),
       caps: this.caps,
       config: this.config,
@@ -1740,10 +1737,9 @@ export class Kernel extends DurableObject<GatewayEnv> {
       const ownerUid = resolveCallerOwnerUid(ctx);
       // SAFETY: request args are the wire JSON the frame decoder accepted; the ledger keeps them as text.
       // Enrollment authorization stays out of the ledger even when a caller lacks its grant.
-      const args = (frame.call === "account.owner.link" || frame.call === "account.recovery.redeem" || frame.call === "account.invite.redeem"
+      const args = (frame.call === "account.owner.link" || frame.call === "account.recovery.redeem"
         || frame.call === "account.recovery.code.start" || frame.call === "account.recovery.code.redeem"
         ? { id: frame.args.id }
-        : frame.call === "account.invite.create" ? { id: frame.args.id, username: frame.args.username }
         : frame.call === "account.password.set" ? { uid: frame.args.uid }
         : frame.call === "sys.pair.create"
         ? { id: frame.args.id, targetId: frame.args.targetId, label: frame.args.label }

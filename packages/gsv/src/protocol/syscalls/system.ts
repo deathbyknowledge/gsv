@@ -45,7 +45,8 @@ export type ConnectArgs = {
     implements?: string[];
   };
   auth?: {
-    username: string;
+    /** Omit for the space's personal account; use `root` for administrator access. */
+    username?: string;
     password?: string;
     token?: string;
   };
@@ -100,11 +101,9 @@ export type UserPermissions = {
 export type AccountKind = "human" | "agent";
 
 export type AccountCreateArgs = {
-  kind: AccountKind;
+  kind: "agent";
   /** `^[a-z_][a-z0-9_-]{0,31}$`, globally unique across users and groups. */
   username: string;
-  /** Required for `kind: "human"`; must be at least 8 characters. */
-  password?: string;
   /** Optional GECOS/display string. */
   gecos?: string;
   /** Optional persona seed for `kind: "agent"` (written to context.d/05-persona.md). */
@@ -115,9 +114,7 @@ export type AccountCreateArgs = {
 
 export type AccountCreateResult = {
   account: ProcessIdentity;
-  kind: AccountKind;
-  /** For `kind: "human"`: the provisioned 1:1 personal agent identity. */
-  personalAgent?: ProcessIdentity;
+  kind: "agent";
 };
 
 /** How the listing caller relates to a listed account. */
@@ -144,18 +141,9 @@ export type AccountListResult = {
   accounts: AccountSummary[];
 };
 
-export type HumanInvitation = {
-  id: string;
-  username: string;
-  createdAt: number;
-  expiresAt: number;
-  status: "pending" | "redeemed" | "cancelled" | "expired";
-};
-
-export type LocalPerson = { uid: number; username: string; displayName: string; disabled: boolean };
-
 export type SysSetupArgs = {
-  username: string;
+  /** Existing clients may supply a local name; otherwise the Kernel derives it from the space. */
+  username?: string;
   password: string;
   onboardingToken?: string;
   rootPassword?: string;

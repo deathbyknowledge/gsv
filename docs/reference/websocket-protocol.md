@@ -215,7 +215,7 @@ derived from the password or token used to authenticate.
 | `peer.version` | `string` | Yes | Peer version |
 | `peer.platform` | `string` | Yes | Platform string. The Instrument UI reports `web`, `phone`, `tablet`, or `desktop`; Rust clients report their operating system. The Kernel accepts any string, records it on the connection, and only ever exports a closed classification of it. |
 | `peer.implements` | `string[]` | No | Requested reverse syscall implementation patterns. Machine credentials require at least one. |
-| `auth.username` | `string` | No | Required when authenticating |
+| `auth.username` | `string` | No | Omit for the personal account; specify `root` for administration. Machine/service credentials retain their enrolled account name. |
 | `auth.password` | `string` | No | User-password auth |
 | `auth.token` | `string` | No | Human, machine, or service token auth. The token kind is the principal kind. |
 

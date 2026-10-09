@@ -7,7 +7,7 @@ Step-by-step guides for common tasks. Each page focuses on one concrete goal —
 - [Operate a GSV Deployment](/how-to/operate-gsv) — give people spaces, connect services, and verify cleanup
 - [Retire a Standalone Deployment](/how-to/standalone-retirement) — what to pin and migrate if you ran the old single-space stack
 - [Run GSV for Your Organisation](/how-to/organisations) — operate spaces for your people and talk to us about your deployment
-- [Invite People](/how-to/invite-people) — add accounts to your space, set passwords, and remove access
+- [One person per space](/how-to/invite-people) — personal sign-in, root access, and password recovery
 - [Install Host Applications](/how-to/install-host-apps) — install or upgrade the CLI, machine daemon, and native Desktop
 - [Use Voice Input](/how-to/voice-input) — record a message draft in the browser or dictate on Desktop
 - [Connect Devices](/how-to/connect-devices) — turn your laptop, phone, and server into one computer your agent can act across

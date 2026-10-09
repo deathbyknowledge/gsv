@@ -12,8 +12,9 @@
  *     so the human can act as the agent and vice versa.
  */
 
-import type { AccountKind, ProcessIdentity } from "@humansandmachines/gsv/protocol";
-import { hashPassword, makeShadowEntry } from "../auth/shadow";
+// Human provisioning in the original design above now belongs exclusively to sys.setup.
+import type { ProcessIdentity } from "@humansandmachines/gsv/protocol";
+import { makeShadowEntry } from "../auth/shadow";
 import { ensureAccountHomeLayout, seedAccountHome } from "./account-home";
 import type { KernelContext } from "./context";
 import type { AuthStore } from "./auth-store";
@@ -24,7 +25,6 @@ const TEXT_ENCODER = new TextEncoder();
 type AccountNameCandidate = string | undefined;
 
 export const ACCOUNT_USERNAME_RE = /^[a-z_][a-z0-9_-]{0,31}$/;
-export const MIN_PASSWORD_LENGTH = 8;
 
 /** A username is available when it collides with no existing user or group. */
 export function isUsernameAvailable(auth: AuthStore, name: string): boolean {
@@ -54,12 +54,10 @@ export function accountIdentity(auth: AuthStore, entry: PasswdEntry): ProcessIde
 }
 
 export interface CreateAccountInput {
-  kind: AccountKind;
+  kind: "agent";
   /** Pre-validated, normalized username. */
   username: string;
   gecos?: string;
-  /** Required for `kind: "human"`. */
-  password?: string;
   /** The owning human's uid (for `kind: "agent"`): drives cross-membership. */
   ownerUid?: number;
   /** Join `users` (gid 100) for the shared standard capability set. Default true. */
@@ -105,36 +103,14 @@ export async function createAccount(
   ctx: KernelContext,
   input: CreateAccountInput,
 ): Promise<CreatedAccount> {
-  const prepared = await prepareAccount(input);
-  const result = commitAccount(ctx, prepared);
+  const result = commitAccount(ctx, input);
   await prepareAccountHome(ctx.env, input, result.identity);
   return result;
 }
 
-export type PreparedAccount = { input: CreateAccountInput; shadowHash: string };
-
-export async function prepareAccount(input: CreateAccountInput): Promise<PreparedAccount> {
-  // Validate (and hash) before any auth-state mutation: a human account with a
-  // bad/missing password must not leave a half-created passwd row behind, which
-  // would also make the username unavailable on retry.
-  let shadowHash: string;
-  if (input.kind === "human") {
-    if (!input.password || input.password.length < MIN_PASSWORD_LENGTH) {
-      throw new Error(`password must be at least ${MIN_PASSWORD_LENGTH} characters`);
-    }
-    if (input.password.length > 1024) throw new Error("password must be at most 1024 characters");
-    shadowHash = await hashPassword(input.password);
-  } else {
-    // Locked account: agents are never logged into directly.
-    shadowHash = "!";
-  }
-  return { input, shadowHash };
-}
-
 /** Synchronous identity writes let an enrollment owner commit its receipt in the same transaction. */
-export function commitAccount(ctx: KernelContext, prepared: PreparedAccount): CreatedAccount {
+export function commitAccount(ctx: KernelContext, input: CreateAccountInput): CreatedAccount {
   const { auth } = ctx;
-  const { input, shadowHash } = prepared;
   const username = input.username;
 
   if (!ACCOUNT_USERNAME_RE.test(username)) {
@@ -166,7 +142,8 @@ export function commitAccount(ctx: KernelContext, prepared: PreparedAccount): Cr
     shell: "/bin/init",
   });
 
-  auth.setShadow(makeShadowEntry(username, shadowHash));
+  // Locked account: agents are never logged into directly.
+  auth.setShadow(makeShadowEntry(username, "!"));
 
   // Private primary group (gid = uid). The owner joins it so they can act as
   // this account.
@@ -215,9 +192,8 @@ export function commitAccount(ctx: KernelContext, prepared: PreparedAccount): Cr
 /** Idempotent remote scaffolding resumes after an enrollment receipt has committed. */
 export async function prepareAccountHome(env: Pick<Env, "STORAGE" | "RIPGIT">, input: CreateAccountInput, identity: ProcessIdentity): Promise<void> {
   await ensureAccountHomeLayout(env, identity, {
-    seedPromptContext: input.kind === "agent",
+    seedPromptContext: true,
     personalAgent: input.personalAgentOf != null,
-    cleanupGeneratedPromptContext: input.kind !== "agent",
   });
   if (input.persona) {
     await seedPersona(env, identity, input.persona);

@@ -95,7 +95,6 @@ function InstrumentReady({ initialPath }: { initialPath: string }) {
   const [fleetDirty, setFleetDirty] = useState(false);
   const [memoryDirty, setMemoryDirty] = useState(false);
   const [peopleDirty, setPeopleDirty] = useState(false);
-  const [settingsEntry, setSettingsEntry] = useState<{ section: "profile" } | null>(null);
   const [zenTarget, setZenTarget] = useState<string | null>(null);
   /* the theme follows the system until the person picks one with the l key; the choice is remembered on this device */
   const { theme, toggleTheme } = useColorTheme();
@@ -357,13 +356,13 @@ function InstrumentReady({ initialPath }: { initialPath: string }) {
           }} />
         </RetainedView>
         <RetainedView active={distance === "settings"}>
-          <Settings openRequest={settingsEntry} onDirtyChange={setSettingsDirty} onInspectProcess={(pid) => { move("fleet", `proc:${pid}`); }} onSignOut={() => {
+          <Settings onDirtyChange={setSettingsDirty} onInspectProcess={(pid) => { move("fleet", `proc:${pid}`); }} onSignOut={() => {
             if ((settingsDirty || unsaved || fleetDirty || memoryDirty || peopleDirty) && !window.confirm("Discard your unsaved work and sign out?")) return;
             void session.lock("Signed out");
           }} />
         </RetainedView>
         <RetainedView active={distance === "people"}>
-          <People onDirtyChange={setPeopleDirty} openRequest={peopleRequest} onProfile={() => { if (move("settings")) setSettingsEntry({ section: "profile" }); }} onAsk={(prompt) => {
+          <People onDirtyChange={setPeopleDirty} openRequest={peopleRequest} onAsk={(prompt) => {
             if (zenDirty && !window.confirm("Replace your unsent message and attachments with this request?")) return;
             if (!move("zen")) return;
             setZenPid(null); setZenTarget(null); setZenPrefill(prompt);

@@ -17,7 +17,7 @@ If you cannot state the app's job clearly, stop and design first.
 Examples:
 - `Chat` owns conversation, messages, run activity, approvals and direct shell commands
 - `Fleet` owns places, processes, responsibilities, routines and files
-- `People` owns contact conversations, message requests and the private address book
+- `People` owns contact conversations, message requests, the private address book and your public profile
 - `Memory` owns reading, finding, creating and correcting pages
 - `Settings` owns model preferences, instructions, permissions, connections, timezone and the full ledger
 

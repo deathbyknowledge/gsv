@@ -1,12 +1,41 @@
 import type { AuthorizeRootRecoveryInput } from "@humansandmachines/gsv/services/ownership";
 import { hashPassword, hashToken } from "../auth/shadow";
 import type { AuthStore } from "./auth-store";
+import { principalOf, type KernelContext } from "./context";
+import { z } from "zod";
+
+const passwordResetSchema = z.strictObject({ uid: z.number().int().min(1000).optional(), password: z.string().min(8).max(1024) });
+
+/** Credential provenance excludes Processes, which may also act as a human-shaped principal. */
+function requireRootHuman(ctx: KernelContext): number {
+  const principal = principalOf(ctx);
+  if (principal?.kind !== "human" || principal.account.uid !== 0 || ctx.peer?.provenance.kind !== "credential") throw new Error("Password reset requires a signed-in root human");
+  const epoch = ctx.auth.credentialEpoch(0);
+  if (ctx.auth.isAccountDisabled(0) || (ctx.connection && (ctx.connection.state.step !== "connected" || (ctx.connection.state.credentialEpoch ?? 0) !== epoch))) throw new Error("Root credentials changed; sign in again");
+  return epoch;
+}
 
 type RecoveryClaim = { id: string; secret_hash: string; credential_epoch: number; expires_at: number; redeemed_at: number | null; redemption_hash: string | null };
 
 /** Kernel alone owns credential changes. Accounts can grant only a bounded root-reset claim. */
 export class AccountRecoveryStore {
   constructor(private readonly storage: DurableObjectStorage, private readonly auth: AuthStore, private readonly installationId: string) {}
+
+  async resetPersonalPassword(input: { uid?: number; password: string }, ctx: KernelContext): Promise<{ updated: true }> {
+    const rootEpoch = requireRootHuman(ctx);
+    const args = passwordResetSchema.parse(input);
+    const human = this.auth.getHumanAccount();
+    if (!human || (args.uid !== undefined && args.uid !== human.uid)) throw new Error("Personal account is unavailable");
+    const epoch = this.auth.credentialEpoch(human.uid);
+    const passwordHash = await hashPassword(args.password);
+    this.storage.transactionSync(() => {
+      if (requireRootHuman(ctx) !== rootEpoch || this.auth.getHumanAccount()?.uid !== human.uid
+        || this.auth.credentialEpoch(human.uid) !== epoch) throw new Error("Account credentials changed; try again");
+      this.auth.replaceHumanPassword(human.uid, passwordHash, "root password reset");
+    });
+    ctx.invalidateAccountConnections(human.uid);
+    return { updated: true };
+  }
 
   beginOwnerLink(id: string, secretHash: string, epoch: number): void {
     if (this.auth.credentialEpoch(0) !== epoch || this.auth.isAccountDisabled(0)) throw new Error("Root authorization changed");

@@ -50,6 +50,7 @@ const REMOTE_SHIP_ID = "ship:remote";
 const REMOTE_SUBJECT_ID = "subject:remote";
 
 type KernelInternals = {
+  ctx: DurableObjectState;
   auth: AuthStore;
   federation: FederationStore;
   procs: ProcessRegistry;
@@ -1362,8 +1363,7 @@ function kernelInternals(instance: Kernel): KernelInternals {
 }
 
 async function removeOwner(instance: Kernel): Promise<void> {
-  instance.auth.setShadow(makeShadowEntry(OWNER.username, await hashPassword("federation-fixture-password")));
-  await instance.people.remove(OWNER.uid, instance.buildKernelContext({ peer: testPeer({ account: {
-    uid: 0, gid: 0, gids: [0], username: "root", home: "/root", cwd: "/root",
-  }, calls: ["*"] }) }));
+  const internal = kernelInternals(instance);
+  internal.ctx.storage.sql.exec("INSERT INTO account_access (uid, disabled_at) VALUES (?, ?)", OWNER.uid, Date.now());
+  internal.auth.invalidateCredentials(OWNER.uid, "test account disabled");
 }

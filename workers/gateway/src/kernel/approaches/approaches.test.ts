@@ -176,9 +176,9 @@ async function withSpaces(work: (sender: TestSpace, recipient: TestSpace, profil
   const sender = testSpace("sender");
   const recipient = testSpace("recipient");
   const profile = await recipient.run(async (ctx) => {
-    handleProfileUpdate({ expectedRevision: 0, draft: { alias: "person", displayName: "Published recipient", about: "Hello", contactPolicy: "requests", representation: "human" } }, ctx);
+    handleProfileUpdate({ expectedRevision: 0, draft: { displayName: "Published recipient", about: "Hello", contactPolicy: "requests", representation: "human" } }, ctx);
     await handleProfilePublish({ expectedRevision: 1 }, ctx);
-    const publication = ctx.profiles.published({ alias: "person" })!.profile;
+    const publication = ctx.profiles.published({ space: true })!.profile;
     return publication;
   });
   await work(sender, recipient, profile);

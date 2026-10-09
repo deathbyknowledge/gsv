@@ -17,7 +17,7 @@ gsv --url wss://example.workers.dev/ws chat "hello"
 | `--url <URL>` | `GSV_URL` | Gateway WebSocket URL. Defaults to `gateway.url` in local config, then `ws://localhost:8787/ws`. |
 | `-u, --user <USER>` | | Gateway username override. |
 | `-p, --password <PASS>` | | Password for non-interactive login/setup. |
-| `-t, --token <TOKEN>` | `GSV_TOKEN` | Non-interactive credential. User commands require a username with token auth. |
+| `-t, --token <TOKEN>` | `GSV_TOKEN` | Non-interactive credential. User commands default to the personal account; device credentials retain their enrolled username. |
 
 Local CLI config is stored at `~/.config/gsv/config.toml`. Remote user commands use
 the cached session token from `gsv auth login`, or prompt/login when needed.
@@ -588,7 +588,10 @@ Initialize a new space through its Accounts-issued browser setup invitation.
 The old `gsv auth setup` wizard and automatic setup probes are removed. Login
 and commands operate on a space whose authorized setup has completed.
 
-`login` creates a short-lived user token with `sys.token.create` and caches it
+`login` asks only for a password when no credential is cached. Omit the username
+to use the personal account, or pass `--username root` for administration. Existing
+configured usernames remain supported. The authenticated identity returned by the
+Kernel is saved with the session. `login` creates a short-lived user token with `sys.token.create` and caches it
 locally. The default TTL is 8 hours. `logout` clears only the cached local session
 token.
 

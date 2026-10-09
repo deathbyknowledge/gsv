@@ -3,7 +3,7 @@ import { createPairingSecret } from "@humansandmachines/gsv/protocol";
 import { z } from "zod";
 
 const storageKey = "gsv.ui.member-recovery.v1";
-const attemptSchema = z.strictObject({ id: z.uuid(), username: z.string(), proof: z.string().regex(/^[a-f0-9]{64}$/), createdAt: z.number() });
+const attemptSchema = z.strictObject({ id: z.uuid(), username: z.string().optional(), proof: z.string().regex(/^[a-f0-9]{64}$/), createdAt: z.number() });
 export type MemberRecoveryAttempt = z.infer<typeof attemptSchema>;
 
 export function readMemberRecoveryAttempt(): MemberRecoveryAttempt | null {
@@ -13,10 +13,10 @@ export function readMemberRecoveryAttempt(): MemberRecoveryAttempt | null {
 }
 
 /** Save browser ownership before sending anything; a lost response retains the same recipient. */
-export function createMemberRecoveryAttempt(username: string): MemberRecoveryAttempt {
-  const normalized = username.trim().toLowerCase();
+export function createMemberRecoveryAttempt(username?: string): MemberRecoveryAttempt {
+  const normalized = username?.trim().toLowerCase();
   const existing = readMemberRecoveryAttempt();
-  if (existing?.username === normalized && existing.createdAt > Date.now() - 60_000) return existing;
+  if (existing && existing.username === normalized && existing.createdAt > Date.now() - 60_000) return existing;
   const attempt = { id: crypto.randomUUID(), username: normalized, proof: createPairingSecret(), createdAt: Date.now() };
   window.sessionStorage.setItem(storageKey, JSON.stringify(attempt));
   return attempt;

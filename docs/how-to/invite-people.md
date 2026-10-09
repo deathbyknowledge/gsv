@@ -1,27 +1,24 @@
-# Invite people
+# One person per space
 
-A space can hold more than one person. The root account invites people, sets or resets their passwords, and removes their access. Everyone else sees only their own account.
+Each GSV space has one personal account, its Ship and any additional agent accounts.
+To connect with another person, invite them through [People](/how-to/contact-people).
+They use their own space; a contact invitation does not create an account in yours.
+An operator can host separate spaces for a [whole team](/how-to/organisations).
 
-## Invite a person
+## Sign in
 
-1. Sign in as **root** and open **Settings → people.**
-2. Under **Invite a person**, enter the username they will use: lowercase, starting with a letter or `_`, up to 32 characters.
-3. Click **create invitation.** GSV shows a private link; **copy link** and send it over a channel you trust.
+Open your space and enter your password. Setup derives the internal account name
+from the space handle, so there is no second username to choose. Existing spaces
+keep their account identity, home directory, credentials and connected devices.
 
-The link expires after ten minutes. The person opens it, chooses their password, and is signed in to their own account in your space. Pending invitations are listed under **Invitations**, each with **cancel invitation**.
+## Recover personal access
 
-## Manage accounts
+**Forgot password?** sends a code through an eligible messenger you previously
+linked. If you have no eligible link, choose **Administrator sign-in** and sign in
+as root, then open **Settings → sign-in → Personal sign-in** to reset your personal
+password. Reset revokes personal sessions and messenger links; sign in again and
+reconnect those messengers. Your data, account identity and running work remain.
 
-**Accounts** lists everyone in the space, marking root and removed accounts. For each other person:
-
-- **set password** sets a new password (at least 8 characters). Their existing credentials and messenger links are revoked, so they sign in again and re-link any messengers.
-- **remove access** stops their credentials and messenger links from working. Their data and any work already running remain in the space.
-
-## What a person can do
-
-Each account has its own conversations, processes and files, and its own approval policy under **Settings → permissions**. Capability grants set the outer limit of what an account may do; see the [security model](/architecture/security-model). An account cannot see another account's people or sign-in settings.
-
-## See also
-
-- [Run GSV for your organisation](/how-to/organisations) — when you need spaces for a whole team
-- [Configuration reference](/reference/configuration) — the keys behind per-account settings
+Root remains an administrative credential with broader permissions. Ordinary
+personal sign-in does not grant root access. Verified-owner recovery for root is
+separate from personal recovery; see the [security model](/architecture/security-model).

@@ -16,7 +16,7 @@ export function emptyApproachDraft(url = ""): ApproachDraft {
 
 export function profileAddress(value: string): string | null {
   const text = value.trim();
-  if (!text || (!/^https?:\/\//i.test(text) && !text.includes("/@"))) return null;
+  if (!text || (!/^https?:\/\//i.test(text) && !text.includes("."))) return null;
   try {
     const url = new URL(/^https?:\/\//i.test(text) ? text : `https://${text}`);
     if (!["https:", "http:"].includes(url.protocol) || url.username || url.password) return null;
