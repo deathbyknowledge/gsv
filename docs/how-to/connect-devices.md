@@ -23,7 +23,9 @@ Once the daemon connects, the place appears as connected.
 
 ## Connect a browser
 
-Ship can also create a browser invitation and give you the extension download.
+Ship can also create a browser invitation and give you a download link matched to
+your GSV release. To get the current public release yourself,
+[click here to download the extension](https://github.com/deathbyknowledge/gsv/releases/latest/download/gsv-browser-extension.zip).
 
 Choose **Browser** in the same flow. Download and unzip the extension, called
 **Your GSV**, enable developer mode at `chrome://extensions`, and load its folder.

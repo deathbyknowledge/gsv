@@ -135,6 +135,17 @@
   color: var(--accent);
   text-wrap: pretty;
 }
+.zen-moment .text { min-width: 0; overflow-wrap: anywhere; }
+.zen-message-actions { display: flex; justify-content: flex-end; margin-top: 4px; }
+.zen-copy-message {
+  padding: 2px 0 2px 8px;
+  color: var(--text-dim);
+  font: 400 10px/1.4 var(--gsv-font-mono);
+  opacity: 0.4;
+  transition: opacity var(--dur-fast);
+}
+.zen-moment:hover .zen-copy-message,
+.zen-copy-message:focus-visible { opacity: 1; }
 .zen-moment.is-ship.is-older .text {
   font-size: clamp(17px, 1.6vw, 22px);
 }
