@@ -276,6 +276,10 @@ System-owned producers use the same ledger contract:
   child, renews the IPC result route, records the next check time, and wakes Ship
   without terminating the work. The child result itself remains an IPC event in
   Process Activity.
+  An aborted child run returns the assignment with `process.delegation.aborted`,
+  distinct from a failed run. The IPC call retains the structured run outcome
+  through delivery retries and Kernel restarts; interruption text remains available
+  as the blocker for Ship's review.
 
 ## Epoch archives
 

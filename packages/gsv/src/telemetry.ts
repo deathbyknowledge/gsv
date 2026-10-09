@@ -1,4 +1,6 @@
 import * as z from "zod/mini";
+import { exceptionDiagnosticProperties } from "./diagnostics.js";
+export { exceptionDiagnostics, sanitizeExceptionDiagnostics, redactDiagnosticText, type ExceptionDiagnostics } from "./diagnostics.js";
 
 export const GSV_TELEMETRY_MARKER = "gsv.telemetry";
 export const GSV_TELEMETRY_VERSION = 1;
@@ -134,6 +136,7 @@ const adapterDeliveryFinishedSchema = z.strictObject({
   stream: z.literal("operational"),
   name: z.literal("adapter.delivery.finished"),
   properties: z.strictObject({
+    ...exceptionDiagnosticProperties,
     adapter: adapterNameSchema,
     outcome: z.enum([
       "sent",
@@ -152,11 +155,14 @@ const adapterRouteDeliveryFailedSchema = z.strictObject({
   stream: z.literal("operational"),
   name: z.literal("adapter.route_delivery.failed"),
   properties: z.strictObject({
+    ...exceptionDiagnosticProperties,
     adapter: adapterNameSchema,
     deliveryKind: z.enum(["message", "approval"]),
     surface: z.enum(["dm", "group", "channel", "thread"]),
     outcome: z.literal("failed"),
     failureKind: z.enum(["permanent", "ambiguous", "exhausted"]),
+    stage: z.optional(z.enum(["route", "media", "adapter"])),
+    providerStatusCode: z.optional(httpStatusCodeSchema),
     attempts: positiveIntegerSchema,
   }),
 });
@@ -165,7 +171,7 @@ const delegationFinishedSchema = z.strictObject({
   stream: z.literal("operational"),
   name: z.literal("delegation.finished"),
   properties: z.strictObject({
-    outcome: z.enum(["completed", "failed", "timed_out", "killed"]),
+    outcome: z.enum(["completed", "failed", "aborted", "timed_out", "killed"]),
     durationMs: nonNegativeIntegerSchema,
   }),
 });
@@ -174,6 +180,7 @@ const inferenceRequestFinishedSchema = z.strictObject({
   stream: z.literal("operational"),
   name: z.literal("inference.request.finished"),
   properties: z.strictObject({
+    ...exceptionDiagnosticProperties,
     diagnosticId: z.optional(z.string().check(z.uuid())),
     outcome: z.enum(["completed", "failed", "aborted", "abandoned"]),
     purpose: z.enum(["agent", "mail-intake"]),
@@ -208,6 +215,7 @@ const inferenceProviderAttemptFailedSchema = z.strictObject({
   stream: z.literal("operational"),
   name: z.literal("inference.provider_attempt.failed"),
   properties: z.strictObject({
+    ...exceptionDiagnosticProperties,
     diagnosticId: z.optional(z.string().check(z.uuid())),
     purpose: z.enum(["agent", "mail-intake"]),
     workload: inferenceWorkloadSchema,
@@ -322,6 +330,7 @@ export const telemetryEventSchema = z.discriminatedUnion("name", [
   z.strictObject({
     stream: z.literal("operational"), name: z.literal("inference.client.finished"),
     properties: z.strictObject({
+      ...exceptionDiagnosticProperties,
       diagnosticId: z.string().check(z.uuid()),
       boundary: z.enum(["execution", "managed"]),
       phase: z.enum(["acquisition", "request", "stream", "abort"]),

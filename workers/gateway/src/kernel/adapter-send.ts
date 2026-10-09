@@ -17,6 +17,8 @@ import {
 } from "@humansandmachines/gsv/protocol";
 import {
   emitTelemetry,
+  exceptionDiagnostics,
+  sanitizeExceptionDiagnostics,
 } from "@humansandmachines/gsv/telemetry";
 import * as z from "zod/mini";
 import { principalOf,
@@ -182,6 +184,7 @@ async function deliverAdapterMessage(
         name: "adapter.delivery.finished",
         properties: {
           adapter: args.adapter.trim().toLowerCase(),
+          ...sanitizeExceptionDiagnostics(result.diagnostics ?? {}),
           outcome: result.ok
             ? result.deliveryState ?? "sent"
             : result.retryable
@@ -203,6 +206,7 @@ async function deliverAdapterMessage(
         properties: {
           adapter: args.adapter.trim().toLowerCase(),
           outcome: "error",
+          ...exceptionDiagnostics(error),
           hasMedia: Boolean(args.media?.length),
           durationMs: Math.max(0, Date.now() - startedAt),
         },
@@ -322,6 +326,7 @@ async function deliverAdapterMessageOwned(
         error: publicAdapterDeliveryError(adapter, retryable),
         deliveryId,
         retryable,
+        diagnostics: exceptionDiagnostics(response.error),
       };
     }
     const decoded = adapterSendResultSchema.safeParse(response.data);
@@ -341,6 +346,7 @@ async function deliverAdapterMessageOwned(
         error: publicAdapterDeliveryError(adapter, result.retryable === true),
         deliveryId,
         retryable: result.retryable === true,
+        diagnostics: sanitizeExceptionDiagnostics(result.diagnostics ?? exceptionDiagnostics(result.error)),
       };
     }
     if (
@@ -358,9 +364,10 @@ async function deliverAdapterMessageOwned(
       };
     }
     return result;
-  } catch {
+  } catch (error) {
     return {
       ok: false,
+      diagnostics: exceptionDiagnostics(error),
       error: publicAdapterDeliveryError(adapter, true),
       deliveryId,
       retryable: true,

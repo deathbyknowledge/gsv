@@ -19,6 +19,8 @@ metadata field. Records may contain:
 - event names, bounded categories, timings, outcomes, and aggregate counts;
 - content-free inference failure categories, lifecycle stages, retryability,
   HTTP status codes, and workload classes;
+- bounded, redacted exception names, messages, stacks, immediate causes, provider
+  codes and request IDs on supported operational failure events;
 - the installation identity needed by a deployment-owned consumer to derive a
   pseudonym; and
 - a random event id and occurrence time for idempotent export.
@@ -33,14 +35,20 @@ inference, appears in retained failure details, and joins client outcomes to
 managed request and provider-attempt telemetry. It is optional across RPC for
 rolling upgrades; invalid diagnostic input never prevents inference.
 
-Records must never contain prompts, messages, file paths, URLs, tool arguments,
-media, credentials, contact or channel identifiers, raw exception text, or
-other user content. Invalid records are rejected without affecting user work.
+Records must never contain prompts, conversation messages, tool arguments,
+media, credentials, contact or channel identifiers, request/response bodies or
+arbitrary SDK error objects. The shared diagnostic extractor selects error fields
+and scrubs common credential formats, URL credentials/query values/fragments,
+email addresses and user home paths. Message/cause text is limited to 2,048
+characters and stacks to 8,192; JSON response messages retain only their selected
+error message. The exporter repeats this scrubbing. This is best-effort redaction,
+not a guarantee that arbitrary application text is safe: producers must never
+put user content into exceptions intended for export. Invalid records are rejected without affecting user work.
 Managed telemetry does not export Process traces or conversation activity.
 
 Managed inference reports every admitted logical request at its terminal owner
 boundary. Failed and abandoned requests include a provider-neutral failure kind
-and stage rather than exception text. The provider HTTP status is included when
+and stage alongside available redacted exception diagnostics. The provider HTTP status is included when
 one was observed; network, timeout, policy, admission, protocol, and settlement
 failures remain distinguishable when no response existed. Workload classes let
 operators separate interactive, background, delegated IPC, compaction, Kernel,
@@ -72,10 +80,11 @@ Producers emit one structured record only when `GSV_TELEMETRY_ENABLED` is set by
 their deployment. A deployment-owned log consumer may accept those records and
 export them to a backend. It must validate the shared schema,
 verify that the producing Worker is allowed to emit the claimed component, and
-discard surrounding application logs, request bodies, headers, raw exceptions
-and traces. A consumer may separately extract closed platform failure categories,
-timings and keyed exception fingerprints from invocation metadata; raw exception
-text must not leave that consumer.
+discard surrounding application logs, request bodies, headers and traces.
+A consumer may also extract platform failure categories, timings, keyed exception
+fingerprints and the same selected, redacted exception fields from invocation
+exceptions or platform-provided console Error metadata. Free-form console context
+is not exported.
 Because the transport record carries an installation ID until the consumer
 pseudonymizes it, a telemetry-enabled deployment must not persist producer
 console or invocation logs. `GsvRuntime` applies that non-persistent
@@ -107,6 +116,12 @@ without granting those adapters ownership of another component's application eve
 
 - Gateway: terminal runs, compaction completion and failure stage, delegation,
   committed messages, target/adapter connection and adapter transport outcomes.
+  `delegation.finished` distinguishes `aborted` child runs from `failed` work,
+  including when completion delivery is recovered after a Kernel restart.
+  Terminal adapter delivery failures report the route/media/adapter stage,
+  redacted error detail and available provider codes/status/request ID. The
+  adapter owns provider interpretation; diagnostics survive its durable delivery
+  receipt and the canonical `adapter.send` result, including ambiguous outcomes.
   A committed Ship reply also carries a closed `platform` class for the surface
   that receives it: `web`, `phone`, `tablet`, `desktop`, `cli`, `telegram`,
   `discord`, `slack`, `background`, or `other`. The Kernel derives it from the
@@ -122,8 +137,8 @@ without granting those adapters ownership of another component's application eve
 - Gateway and Inference: `inference.client.finished` records service acquisition,
   request dispatch and stream completion, including pre-admission exceptions,
   cancellation, deadlines and failed abort RPCs. Error names and Cloudflare RPC
-  flags are closed diagnostic fields. Exception text stays in the owning Process
-  history; it is never included in these telemetry records. Returned generation
+  flags accompany the selected redacted error fields. Full causes stay in the
+  owning Process history, correlated by the diagnostic ID. Returned generation
   errors are recorded as `generation.error`, separately from empty model output.
 - Search: admission rejection, cancellation, provider/settlement failure and
   completion, latency, result count and whether the provider confirmed cost.
@@ -145,12 +160,16 @@ The managed consumer also records `runtime.invocation.failed` for failed platfor
 invocations and uncaught exceptions from configured producer Workers, even when
 no application record was emitted. These service-level records contain the
 platform outcome, exception type/count, timings, Worker version and a keyed error
-fingerprint. They contain neither installation identity nor exception text,
-request data, paths or headers. Export failures retain their HTTP status in the
+fingerprint, plus selected redacted exception details when the platform supplies
+them. They contain no installation identity, request data or headers. Pure
+cancellation and response-stream disconnects remain informational; accompanying
+exceptions, logged errors or HTTP 5xx responses make the invocation an error.
+Production log alerts should filter the production environment, GSV services and
+error/fatal severity; they must not exclude all `runtime.invocation.failed` events. Export failures retain their HTTP status in the
 consumer's own operator logs.
 
 This pipeline is best effort. It is not a durable event bus, quota counter or
 billing ledger. Services persist their own usage before invoking providers and
 settle it independently of telemetry availability. Exporter outages and anonymous
 signup progress still require separate monitoring; forwarding arbitrary logs or
-raw exceptions would violate the privacy contract.
+whole exception objects would violate the privacy contract.

@@ -1,3 +1,4 @@
+import type { ExceptionDiagnostics } from "../../../../packages/gsv/src/diagnostics.js";
 import { sameAdapterDataOwner, type AdapterDataScope, type AdapterRetirement } from "./retirement";
 import type {
   AdapterOutboundMessage,
@@ -56,6 +57,7 @@ type DeliveryRecord = (
       deliveryId: string;
       requestFingerprint: string;
       error: string;
+      diagnostics?: ExceptionDiagnostics;
       createdAt: number;
       expiresAt: number;
     }) & { owner?: AdapterDataScope };
@@ -324,12 +326,14 @@ export class DeliveryLedger {
     deliveryId: string,
     attemptId: string,
     error: string,
+    diagnostics?: ExceptionDiagnostics,
   ): Promise<void> {
     await this.replaceAttempt(deliveryId, attemptId, (attempt) => ({
       state: "ambiguous",
       deliveryId,
       requestFingerprint: attempt.requestFingerprint,
       error: truncate(error, MAX_ERROR_LENGTH),
+      diagnostics,
       createdAt: attempt.createdAt,
       expiresAt: attempt.expiresAt,
     }));
@@ -339,12 +343,14 @@ export class DeliveryLedger {
     deliveryId: string,
     attemptId: string,
     error: string,
+    diagnostics?: ExceptionDiagnostics,
   ): Promise<void> {
     await this.replaceAttempt(deliveryId, attemptId, (attempt) => ({
       state: "failed",
       deliveryId,
       requestFingerprint: attempt.requestFingerprint,
       error: truncate(error, MAX_ERROR_LENGTH),
+      diagnostics,
       createdAt: attempt.createdAt,
       expiresAt: attempt.expiresAt,
     }));
@@ -426,12 +432,12 @@ function claimFromExisting(record: DeliveryRecord): DeliveryClaim {
     case "failed":
       return {
         claimed: false,
-        result: { ok: false, error: record.error },
+        result: { ok: false, error: record.error, diagnostics: record.diagnostics },
       };
     case "ambiguous":
       return {
         claimed: false,
-        result: { ok: false, error: record.error, ambiguous: true },
+        result: { ok: false, error: record.error, ambiguous: true, diagnostics: record.diagnostics },
       };
     case "attempting":
       return {

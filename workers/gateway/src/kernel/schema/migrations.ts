@@ -1,6 +1,7 @@
 import { KERNEL_V064_SHIP_REPLY_ROUTES } from "./v064_ship_reply_routes";
 import { KERNEL_V066_BROWSER_HANDOFF_LINKS } from "./v066_browser_handoff_links";
 import { KERNEL_V067_CONTACT_HANDLING_CHOICE } from "./v067_contact_handling_choice";
+import { KERNEL_V068_RETAIN_IPC_RUN_STATUS } from "./v068_retain_ipc_run_status";
 import { runSqlMigrations, type SqlMigration } from "../../schema/runner";
 import { KERNEL_V001_INITIAL_SCHEMA } from "./v001_initial";
 import { KERNEL_V002_REMOVE_DEVICE_LIFECYCLE } from "./v002_remove_device_lifecycle";
@@ -186,6 +187,7 @@ export const KERNEL_MIGRATIONS: readonly SqlMigration[] = [
   KERNEL_V065_RECORD_RUN_ROUTE_PLATFORM,
   KERNEL_V066_BROWSER_HANDOFF_LINKS,
   KERNEL_V067_CONTACT_HANDLING_CHOICE,
+  KERNEL_V068_RETAIN_IPC_RUN_STATUS,
 ];
 
 export function runKernelSqlMigrations(storage: DurableObjectStorage): void {

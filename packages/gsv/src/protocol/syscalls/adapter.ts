@@ -1,3 +1,4 @@
+import { exceptionDiagnosticsSchema, type ExceptionDiagnostics } from "../../diagnostics.js";
 import type {
   AdapterAccountStatus,
   AdapterConnectConfig,
@@ -106,6 +107,7 @@ export const adapterSendArgsSchema = z.strictObject({
 export type AdapterSendResult =
   | {
       ok: true;
+      diagnostics?: ExceptionDiagnostics;
       adapter: string;
       accountId: string;
       surfaceId: string;
@@ -116,6 +118,7 @@ export type AdapterSendResult =
   | {
       ok: false;
       error: string;
+      diagnostics?: ExceptionDiagnostics;
       /** Stable id to reuse when reconciling or retrying this delivery. */
       deliveryId?: string;
       /** True only when retrying the same deliveryId is safe. */
@@ -125,6 +128,7 @@ export type AdapterSendResult =
 export const adapterSendResultSchema = z.discriminatedUnion("ok", [
   z.strictObject({
     ok: z.literal(true),
+    diagnostics: z.optional(exceptionDiagnosticsSchema),
     adapter: nonEmptyStringSchema,
     accountId: nonEmptyStringSchema,
     surfaceId: z.string(),
@@ -135,6 +139,7 @@ export const adapterSendResultSchema = z.discriminatedUnion("ok", [
   z.strictObject({
     ok: z.literal(false),
     error: nonEmptyStringSchema,
+    diagnostics: z.optional(exceptionDiagnosticsSchema),
     deliveryId: z.optional(z.string()),
     retryable: z.optional(z.boolean()),
   }),

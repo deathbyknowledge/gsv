@@ -1,4 +1,5 @@
 export type IpcCallStatus = "pending" | "completed" | "timed_out";
+type IpcRunStatus = "ok" | "error" | "aborted";
 
 export type IpcCallRecord = {
   callId: string;
@@ -8,6 +9,7 @@ export type IpcCallRecord = {
   targetPid: string;
   targetRunId: string;
   status: IpcCallStatus;
+  runStatus: IpcRunStatus | null;
   supervised: boolean;
   deadlineAt: number;
   createdAt: number;
@@ -24,6 +26,7 @@ type IpcCallRow = {
   target_pid: string;
   target_run_id: string;
   status: string;
+  run_status: IpcRunStatus | null;
   supervised: number;
   deadline_at: number;
   created_at: number;
@@ -106,6 +109,7 @@ export class IpcCallStore {
     uid: number;
     targetPid: string;
     runId: string;
+    runStatus: IpcRunStatus;
     response: unknown;
     error?: string | null;
   }): string[] {
@@ -113,6 +117,7 @@ export class IpcCallStore {
     return this.sql.exec<{ call_id: string }>(
       `UPDATE ipc_calls
           SET status = 'completed',
+              run_status = ?,
               response_json = ?,
               error = ?,
               updated_at = ?
@@ -122,6 +127,7 @@ export class IpcCallStore {
           AND status = 'pending'
           AND (supervised = 1 OR deadline_at > ?)
         RETURNING call_id`,
+      input.runStatus,
       JSON.stringify(input.response ?? null),
       input.error ?? null,
       now,
@@ -264,6 +270,7 @@ function toIpcCallRecord(row: IpcCallRow): IpcCallRecord {
     targetRunId: row.target_run_id,
     // SAFETY: SQLite status values are constrained by the IPC call schema.
     status: row.status as IpcCallStatus,
+    runStatus: row.run_status,
     supervised: row.supervised === 1,
     deadlineAt: row.deadline_at,
     createdAt: row.created_at,

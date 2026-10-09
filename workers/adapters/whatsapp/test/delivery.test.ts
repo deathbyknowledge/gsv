@@ -307,3 +307,16 @@ it("rechecks the route between uploading media and sending it", async () => {
   });
   expect(await messages(actorId)).toEqual([]);
 });
+
+
+it("preserves Meta failure diagnostics when replaying a terminal delivery receipt", async () => {
+  const { peer, route, message } = await seed("34690219999");
+  message.text = "graph rejects this";
+  using first = await peer.sendMessage(route.installationId, message);
+  expect(first).toMatchObject({ ok: false, diagnostics: {
+    exceptionName: "ManagedWhatsAppDeliveryError", errorCode: "131026",
+    providerStatusCode: 400, exceptionMessage: expect.stringContaining("rejected"),
+  } });
+  using replay = await peer.sendMessage(route.installationId, message);
+  expect(replay).toEqual(first);
+});

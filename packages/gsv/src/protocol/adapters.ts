@@ -1,3 +1,4 @@
+import { exceptionDiagnosticsSchema, type ExceptionDiagnostics } from "../diagnostics.js";
 import type { BinaryBody } from "./body";
 import {
   bodyFrameSchemas,
@@ -401,6 +402,7 @@ export const adapterProviderSendResultSchema = z.discriminatedUnion("ok", [
   z.strictObject({
     ok: z.literal(false),
     error: nonEmptyStringSchema,
+    diagnostics: z.optional(exceptionDiagnosticsSchema),
     retryable: z.optional(z.boolean()),
     ambiguous: z.optional(z.boolean()),
   }).check(z.refine((result) => !(result.retryable === true && result.ambiguous === true))),
@@ -411,6 +413,7 @@ export type AdapterProviderSendResult =
   | {
       ok: false;
       error: string;
+      diagnostics?: ExceptionDiagnostics;
       /** True only when retrying this deliveryId may safely call the provider again. */
       retryable?: boolean;
       /** The provider may have accepted the delivery; retrying could duplicate it. */

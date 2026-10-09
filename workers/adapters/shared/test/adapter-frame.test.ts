@@ -91,6 +91,28 @@ describe("handleAdapterFrame", () => {
     expect(tracked.cancelled()).toBe("Adapter request completed");
   });
 
+  it.each([false, true])("preserves provider diagnostics through the public frame (ambiguous: %s)", async (ambiguous) => {
+    const diagnostics = { exceptionName: "APIError", exceptionMessage: "Provider rejected the delivery", errorCode: "131026", providerStatusCode: 400, providerRequestId: "trace-123" };
+    const result = await handleAdapterFrame("test", CONTEXT, sendFrame(), {
+      send: async () => ({ ok: false, error: "Provider rejected the delivery", ambiguous, diagnostics }),
+    });
+    expect(result).toMatchObject({ type: "res", ok: true, data: {
+      ok: ambiguous, diagnostics, ...(ambiguous ? { deliveryState: "ambiguous" } : { retryable: false }),
+    } });
+  });
+
+  it("retains diagnostics when the provider handler throws", async () => {
+    const result = await handleAdapterFrame("test", CONTEXT, sendFrame(), { send: async () => {
+      throw Object.assign(new TypeError("Provider disconnected token=private-key"), { request: { body: "private message" } });
+    } });
+    expect(result).toMatchObject({ ok: true, data: { ok: false, retryable: true, diagnostics: {
+      exceptionName: "TypeError", exceptionMessage: "Provider disconnected token=[redacted]",
+      exceptionStack: expect.stringContaining("TypeError: Provider disconnected"),
+    } } });
+    expect(JSON.stringify(result)).not.toContain("private-key");
+    expect(JSON.stringify(result)).not.toContain("private message");
+  });
+
   it("rejects a request that does not match its trusted route", async () => {
     const tracked = trackedBody();
     const frame = sendFrame({ deliveryId: "other-message" });
