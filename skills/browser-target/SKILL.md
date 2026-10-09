@@ -1,25 +1,29 @@
 ---
 name: browser-target
-description: Use connected browser targets for websites and web apps, including the user's signed-in extension browser and on-demand cloud browsers. Discover supported commands, inspect pages, and verify browser actions.
+description: Use GSV's browser capability for public websites and signed-in web apps, even when no browser is connected. Use a suitable existing browser or provision a cloud browser, inspect pages, and verify actions.
 aliases: browser-extension, browser
 ---
 
 # Browser Targets
 
-Use this skill when a target is listed as kind `browser`, has platform
-`browser` or `browser-extension`, or when the user asks you to act on an active
-browser target. Browser target ids are user-configured and may look like
-`browser:chrome`, `rearden:brave`, or another device id. Also use it when the user
-asks about information or actions in a website or web app they are signed into,
-even if they do not mention the browser. If none is connected, inspect
-`instance --help` on `gsv` for on-demand cloud browser support; otherwise offer
-pairing the Your GSV extension.
+Use this skill for tasks that need reading or interacting with websites and web
+apps, including public pages and signed-in services, even when the user does not
+mention a browser or no browser target is listed. Browser access is a built-in
+GSV capability: use a suitable existing browser or provision a cloud browser.
+The user does not need to connect their personal browser first.
+
+Browser targets have kind `browser` or platform `browser` or `browser-extension`.
+Their ids may look like `browser:chrome`, `rearden:brave`, or an instance id;
+use the id returned by discovery or provisioning.
 
 ## Quick Start
 
-1. On `gsv`, run `targets list --kind browser`. `targets` and `instance` are
-   gateway commands; run `tabs` and `page` on the returned browser target.
-2. If a cloud browser is needed, persist a fresh request ID and run
+1. On `gsv`, run `targets list --kind browser` and choose a suitable browser if
+   one is already available. This lists existing targets; an empty list does not
+   rule out cloud provisioning. `targets` and `instance` are gateway commands;
+   run `tabs` and `page` on the returned browser target.
+2. If no suitable browser is available, run `instance catalog` on `gsv`.
+   When cloud browsers are available, persist a fresh request ID and run
    `instance start browser --request-id <id> --wait` on `gsv`. It returns when
    ready and says `disposition: created` or `reused`. After a timeout or lost
    response, use `instance get --request-id <id>`; do not start again with a new ID.
@@ -41,7 +45,8 @@ pairing the Your GSV extension.
 ## Model
 
 - Browser use is a built-in GSV capability with two providers: the user's extension-connected browser and an on-demand cloud browser. They share the page and tab workflow below. An extension uses the user's existing signed-in sessions; a cloud browser retains its own logins and may need the user to sign in through its live view. Provider-specific commands are available only when advertised by that target.
-- A paired browser is the user's signed-in profile. Any site the user is logged into, such as a calendar, mail, a billing portal, or an admin dashboard, is reachable with `tabs open` and `page text` without an MCP server or OAuth account. Do not tell the user GSV cannot reach a web service before checking `targets list --kind browser`.
+- A paired browser uses the user's existing signed-in profile. Use a cloud browser for public pages and its own saved sessions for signed-in pages. Both can access websites with `tabs open` and `page text` without a separate MCP server or OAuth integration. If a website needs login or verification, follow the human handoff workflow below.
+- Only report browser access unavailable after checking cloud availability or receiving a start failure, and explain the specific limitation. Offer personal-browser pairing when the user wants it, their existing sessions or device features are needed, or cloud browsing is unavailable. A missing connected browser alone is not a reason to refuse a website task.
 - Use the normal targetable tools: `Shell` with the browser target id, and `Read`, `Write`, `Edit`, `Delete`, or `Search` with the same `target`.
 - Use normal file tools only for paths the target advertises.
 - Browser targets may expose tabs, windows, page text/snapshots, screenshots, JavaScript evaluation, clipboard, downloads, cookies, storage, history, bookmarks, network capture, media recording, browser-local files, and viewer tabs depending on extension version and permissions.

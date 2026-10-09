@@ -134,6 +134,12 @@ the client drops the preview and shows the committed message. A Send that fails 
 generation that fails or retries, and a run that is interrupted, superseded, reset or killed also abort
 their projections, so no partial text outlives its message. Adapters never see the projection.
 
+Sending a message and yielding remain separate even when requested in one call. If
+outstanding responsibilities prevent a requested yield, the valid message still commits
+and stays visible while the Process continues working. The tool result identifies the
+remaining work and confirms that the message was sent, so Ship can finish or defer the
+work and yield without sending the same reply again.
+
 New Ship approval notifications use the same reply preference and authorized messenger fallback.
 Delegated Work retains its inherited approval route. An already queued adapter delivery keeps its
 chosen destination through retries; changing activity does not replay old notifications.

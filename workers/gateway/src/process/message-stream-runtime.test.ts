@@ -51,6 +51,50 @@ function recordStreamedPhases(process: Process): StreamedPhase[] {
 }
 
 describe("Send text streaming", () => {
+  it("keeps a sent reply when outstanding work prevents the requested yield", async () => {
+    const pid = "mech-send-stream-pending-work";
+    const runId = "run-send-stream-pending-work";
+    const text = "What would you like me to look up?";
+    const stub = await initProcess(pid, ROOT_IDENTITY);
+
+    await runInProcess(stub, async (process) => {
+      const emitted = captureSignals(process);
+      const streamed = recordStreamedPhases(process);
+      process.run.scheduleTick = vi.fn(async () => {});
+      process.run.verifyTerminalResponsibilities = vi.fn(async () => ({
+        ok: false as const,
+        error: "The responsibility batch still contains unhandled work: onboarding.",
+      }));
+      process.run.commitRunControlMessage = vi.fn(async () => {
+        streamed.push({ phase: "committed", id: `draft:${runId}:send-question` });
+        return { conversationId: "conv:ship", id: "sent-question", text };
+      });
+      process.generation = sendStreamGeneration("send-question", [JSON.stringify({ text, yield: true })], { text, yield: true });
+      process.store.messages.appendMessage("user", "Hello.", { runId });
+      process.runs.active = generationRun(runId, processTestConfig(pid), { conversationId: "conv:ship" });
+
+      await process.run.runTick(runId);
+
+      expect(streamed.map(({ phase }) => phase)).toEqual(["started", "delta", "committed"]);
+      expect(process.run.commitRunControlMessage).toHaveBeenCalledOnce();
+      expect(process.runs.active?.runId).toBe(runId);
+      expect(process.run.scheduleTick).toHaveBeenCalledWith(runId);
+      expect(emitted.some(({ signal }) => signal === "proc.run.finished")).toBe(false);
+      const result = process.store.messages.getMessages().find((message) => message.toolCallId === "send-question");
+      expect(result?.content).toContain("Message committed; run remains active");
+      expect(result?.content).toContain("onboarding");
+      expect(result?.content).toContain("Do not resend");
+      expect(JSON.parse(result!.toolCalls!)).toMatchObject({ isError: false });
+
+      process.run.verifyTerminalResponsibilities = vi.fn(async () => ({ ok: true as const, admissionKey: "[]" }));
+      process.generation = sendStreamGeneration("finish-onboarding", ['{"yield":true}'], { yield: true });
+      await process.run.runTick(runId);
+      expect(process.run.commitRunControlMessage).toHaveBeenCalledOnce();
+      expect(streamed.some(({ phase }) => phase === "aborted")).toBe(false);
+      expect(process.runs.active).toBeNull();
+    });
+  });
+
   it("shows the text as the model writes it, then commits the same message without another delta", async () => {
     const pid = "mech-send-stream";
     const runId = "run-send-stream";

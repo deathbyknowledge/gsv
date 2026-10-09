@@ -4,6 +4,12 @@ A cloud browser lets Ship use websites while your personal devices are offline.
 It appears in Fleet alongside your connected browsers and computers. Your
 operator must enable cloud browsers; the local development stack enables them.
 
+For website tasks, Ship checks for a suitable existing browser and can start a
+cloud browser when needed. You do not need to connect a personal browser or
+explicitly ask Ship to create one. If browser access is unavailable, Ship should
+explain the actual availability or startup problem. A website may separately
+require you to sign in through the browser view.
+
 The browser list below Zen's prompt and in Fleet updates automatically as
 browsers start, become ready or stop. Opening Fleet or refreshing is unnecessary.
 

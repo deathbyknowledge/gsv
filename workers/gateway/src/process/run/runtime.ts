@@ -101,23 +101,6 @@ export class ProcessRun {
         error: parsed.error,
       };
     }
-    // a finishing call is admitted by the responsibilities first, before anything it names is staged:
-    // a refused finish then leaves nothing behind for a later Send to carry by accident
-    let responsibilityAdmissionKey: string | undefined;
-    if (parsed.command.action === "yield" || parsed.command.finish) {
-      const responsibilityCheck = await this.verifyTerminalResponsibilities(runId);
-      if (!responsibilityCheck.ok) {
-        return {
-          ok: false,
-          action: parsed.command.action,
-          text: parsed.command.action === "message" ? parsed.command.text : "",
-          delivery: { kind: "none" },
-          failureKind: "command",
-          error: responsibilityCheck.error,
-        };
-      }
-      responsibilityAdmissionKey = responsibilityCheck.admissionKey;
-    }
     // files the Send names are referenced on their place, retained and staged; a message goes out whole or not at all
     let media = stagedMedia;
     if (parsed.command.action === "message" && parsed.command.attach && parsed.command.attach.length > 0) {
@@ -154,6 +137,20 @@ export class ProcessRun {
       };
     }
     if (command.action === "yield") {
+      // This preflight applies to a bare yield; a message commits independently below.
+      // a finishing call is admitted by the responsibilities first, before anything it names is staged:
+      // a refused finish then leaves nothing behind for a later Send to carry by accident
+      const responsibilityCheck = await this.verifyTerminalResponsibilities(runId);
+      if (!responsibilityCheck.ok) {
+        return {
+          ok: false,
+          action: "yield",
+          text: "",
+          delivery: { kind: "none" },
+          failureKind: "command",
+          error: responsibilityCheck.error,
+        };
+      }
       await this.host.streams.silence(runId, actionId);
       return {
         ok: true,
@@ -161,17 +158,21 @@ export class ProcessRun {
         finish: true,
         text: "",
         delivery: { kind: "none" },
-        responsibilityAdmissionKey,
+        responsibilityAdmissionKey: responsibilityCheck.admissionKey,
       };
     }
-    return await this.executeMessageRunControlAction({
+    const sent = await this.executeMessageRunControlAction({
       runId,
       actionId,
       text: command.text,
       finish: command.finish,
       media,
-      responsibilityAdmissionKey,
     });
+    if (!sent.ok || !command.finish) return sent;
+    const responsibilityCheck = await this.verifyTerminalResponsibilities(runId);
+    return responsibilityCheck.ok
+      ? { ...sent, responsibilityAdmissionKey: responsibilityCheck.admissionKey }
+      : { ...sent, finish: false, yieldError: responsibilityCheck.error };
   }
 
   /**
@@ -261,7 +262,6 @@ export class ProcessRun {
     text: string;
     finish: boolean;
     media: RunOutputMedia[];
-    responsibilityAdmissionKey?: string;
   }): Promise<RunControlResult> {
     try {
       await this.host.streams.complete(options.runId, options.actionId, options.text);
@@ -289,7 +289,6 @@ export class ProcessRun {
     text: string;
     finish: boolean;
     media: RunOutputMedia[];
-    responsibilityAdmissionKey?: string;
   }): Promise<RunControlResult> {
     const releaseCommit = this.beginRunControlCommit(options.runId);
     try {
@@ -311,7 +310,6 @@ export class ProcessRun {
           finish: options.finish,
           text: options.text,
           delivery: { kind: "none" },
-          responsibilityAdmissionKey: options.responsibilityAdmissionKey,
         };
       }
       const request = this.buildRunControlMessageCommitRequest(run, options);
@@ -344,7 +342,6 @@ export class ProcessRun {
           conversationId: committedMessage.conversationId,
           messageId: committedMessage.id,
         },
-        responsibilityAdmissionKey: options.responsibilityAdmissionKey,
       };
     } finally {
       releaseCommit();
@@ -1477,6 +1474,16 @@ export class ProcessRun {
       } else {
         this.host.store.tools.fail(dispatchId, result.error, "failed");
       }
+      const output: JsonObject = result.ok
+        ? { action: result.action, finish: result.finish, delivery: result.delivery }
+        : {
+          action: result.action,
+          finish: false,
+          delivery: result.delivery,
+          failureKind: result.failureKind,
+          attempt,
+        };
+      if (result.ok && result.yieldError) output.yieldError = result.yieldError;
       this.host.store.messages.appendToolResult(
         toolCallId,
         registration.resultName,
@@ -1486,17 +1493,8 @@ export class ProcessRun {
         result.ok ? "completed" : "failed",
         undefined,
         result.ok
-          ? { output: { action: result.action, finish: result.finish, delivery: result.delivery } }
-          : {
-            output: {
-              action: result.action,
-              finish: false,
-              delivery: result.delivery,
-              failureKind: result.failureKind,
-              attempt,
-            },
-            error: { message: result.error },
-          },
+          ? { output }
+          : { output, error: { message: result.error } },
       );
       this.host.store.tools.clearRun(runId);
       return true;
