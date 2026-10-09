@@ -17,16 +17,16 @@ import {
 } from "../kernel/net";
 import { routedFetchOptionsSchema } from "./internal/schemas";
 import type { Process } from "./do";
-import type { ProcessApprovalTarget } from "../protocol/process-frames";
+import type { ProcessApprovalTarget, ProcessApprovalTargetRef } from "../protocol/process-frames";
 import { raceWithAbort } from "../shared/abort";
 
 export class ProcessKernelClient {
   constructor(private readonly host: Process) {}
 
-  async resolveApprovalTarget(targetId: string, signal?: AbortSignal): Promise<ProcessApprovalTarget> {
+  async resolveApprovalTarget(ref: ProcessApprovalTargetRef, signal?: AbortSignal): Promise<ProcessApprovalTarget> {
     signal?.throwIfAborted();
     return raceWithAbort(
-      getKernelPtr(this.host.installationId).then(kernel => kernel.resolveProcessApprovalTarget(this.host.pid, targetId)),
+      getKernelPtr(this.host.installationId).then(kernel => kernel.resolveProcessApprovalTarget(this.host.pid, ref)),
       signal,
     );
   }

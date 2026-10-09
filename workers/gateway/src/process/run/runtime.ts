@@ -13,7 +13,7 @@ import type {
 } from "../internal/contracts";
 import {
   CORRECTION_FAILURE_NOTICE, MAX_TERMINAL_CORRECTION_ROUNDS, YIELD_CORRECTION_MESSAGE,
-  MAX_RETRYABLE_GENERATION_ATTEMPTS, SEND_TOOL_NAME, UNKNOWN_SHELL_SESSION_TARGET_MESSAGE, isRunControlCall,
+  MAX_RETRYABLE_GENERATION_ATTEMPTS, SEND_TOOL_NAME, isRunControlCall,
   MEDIA_PREPARATION_TIMEOUT_MS, TOOL_DISPATCH_TIMEOUT_MS,
 } from "../internal/lifecycle";
 import {
@@ -1718,9 +1718,6 @@ export class ProcessRun {
         prepared.args,
         takePurpose(prepared.args).purpose,
       );
-      if (prepared.missingShellSessionTarget) {
-        this.host.store.tools.fail(dispatchId, UNKNOWN_SHELL_SESSION_TARGET_MESSAGE);
-      }
     }
     for (const toolCall of turn.unofferedToolCalls) {
       const syscall = resolveToolSyscall(toolCall.name, this.host.runs.active?.toolSyscalls);

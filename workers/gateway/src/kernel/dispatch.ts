@@ -963,6 +963,13 @@ async function routeToTarget(
     await authorizeNestedOperation(ctx, frame.call, jsonObjectSchema.parse({ ...frame.args, target: target.targetId }),
       undefined, undefined, approvalTargetIdentity(target));
     ctx.requestSignal?.throwIfAborted();
+    if (ctx.toolOwner) {
+      const current = await resolveVisibleTarget(ctx, target.targetId, { includeOffline: true });
+      ctx.requestSignal?.throwIfAborted();
+      if (!current || !matchesApprovalTarget(current, target)) {
+        throw new Error("Approval target changed while awaiting approval; retry the operation");
+      }
+    }
   } catch (error) {
     return {
       handled: true,

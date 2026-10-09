@@ -15,7 +15,7 @@ import type { RunState } from "../run/state";
 import {
   INTERRUPTED_RUN_CONTROL_MESSAGE, SHELL_SESSION_TARGET_KEY_PREFIX, isRunControlCall,
   TOOL_APPROVAL_OVERRIDES_KEY, TOOL_DISPATCH_TIMEOUT_MS, CODE_MODE_APPROVAL_TIMEOUT_MS,
-  CODE_MODE_NESTED_SYSCALL_TIMEOUT_MS, UNKNOWN_SHELL_SESSION_TARGET_MESSAGE,
+  CODE_MODE_NESTED_SYSCALL_TIMEOUT_MS,
 } from "../internal/lifecycle";
 import {
   approvalNeedsTargetMetadata, parseToolApprovalPolicy, resolveToolApproval, resolveToolApprovalTarget, takePurpose,
@@ -146,12 +146,21 @@ export class ProcessTools {
     syscall: string,
     args: JsonObject,
     signal?: AbortSignal,
-  ): Promise<ToolApprovalResolution> {
+  ): Promise<ToolApprovalResolution & { args: JsonObject }> {
+    const prepared = this.prepareToolArgs(syscall, args);
+    let approvedTarget: ProcessApprovalTarget | undefined;
+    if (prepared.missingShellSessionTarget) {
+      approvedTarget = await this.host.kernel.resolveApprovalTarget({ sessionId: z.string().parse(args.sessionId).trim() }, signal);
+      args = { ...prepared.args, target: approvedTarget.targetId };
+    } else {
+      args = prepared.args;
+    }
     const ordinary = resolveToolApproval(policy, syscall, args);
     // Most calls need no discovery. Only resolve provenance when a metadata rule can change the decision.
-    if (!approvalNeedsTargetMetadata(policy, syscall, ordinary)) return ordinary;
-    const approvedTarget = await this.host.kernel.resolveApprovalTarget(ordinary.target, signal);
-    return { ...resolveToolApproval(policy, syscall, args, approvedTarget), approvedTarget };
+    if (!approvedTarget && approvalNeedsTargetMetadata(policy, syscall, ordinary)) {
+      approvedTarget = await this.host.kernel.resolveApprovalTarget({ targetId: ordinary.target }, signal);
+    }
+    return { ...(approvedTarget ? resolveToolApproval(policy, syscall, args, approvedTarget) : ordinary), args, approvedTarget };
   }
 
   prepareToolArgs(syscall: string, args: JsonObject): PreparedJsonToolArgs {
@@ -555,15 +564,9 @@ export class ProcessTools {
     }
 
     const { args: rawArgs, purpose } = takePurpose(jsonObjectSchema.parse(toolCall.args));
-    const prepared = this.prepareToolArgs(syscall, rawArgs);
-    if (prepared.missingShellSessionTarget) {
-      this.host.store.tools.fail(toolCall.dispatchId, UNKNOWN_SHELL_SESSION_TARGET_MESSAGE);
-      return null;
-    }
-    const args = prepared.args;
-    let approval: ToolApprovalResolution;
+    let approval: ToolApprovalResolution & { args: JsonObject };
     try {
-      approval = await this.resolveApproval(approvalPolicy, syscall, args, this.host.run.runAbortSignal(run.runId));
+      approval = await this.resolveApproval(approvalPolicy, syscall, rawArgs, this.host.run.runAbortSignal(run.runId));
     } catch (error) {
       if (!this.host.handleRunStopped(run.runId)) {
         this.host.store.tools.fail(toolCall.dispatchId, `Tool approval failed: ${errorMessageFromUnknown(error)}`);
@@ -580,7 +583,7 @@ export class ProcessTools {
       dispatchId: toolCall.dispatchId,
       syscall,
       toolName,
-      args,
+      args: approval.args,
       approval,
     };
     if (purpose) {
@@ -632,6 +635,7 @@ export class ProcessTools {
           args,
           createdAt: Date.now(),
         };
+        if (approval.approvedTarget) pendingHil.approvedTarget = approval.approvedTarget;
         if (purpose) {
           pendingHil.purpose = purpose;
         }
@@ -885,16 +889,11 @@ export class ProcessTools {
     }
 
     const toolCallId = `codemode-${crypto.randomUUID()}`;
-    const prepared = this.prepareToolArgs(call, args);
-    if (prepared.missingShellSessionTarget) {
-      throw new Error(UNKNOWN_SHELL_SESSION_TARGET_MESSAGE);
-    }
-    const toolArgs = prepared.args;
+    const approval = await this.resolveApproval(context?.approvalPolicy ?? { default: "auto", rules: [] }, call, args, signal);
+    const toolArgs = approval.args;
 
-    let approvedTarget: ProcessApprovalTarget | undefined;
+    const approvedTarget = approval.approvedTarget;
     if (context) {
-      const approval = await this.resolveApproval(context.approvalPolicy, call, toolArgs, signal);
-      approvedTarget = approval.approvedTarget;
       signal?.throwIfAborted();
       if (this.host.handleRunStopped(context.runId)) throw new Error("Run stopped during tool approval");
       if (approval.action === "deny") {

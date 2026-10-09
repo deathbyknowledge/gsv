@@ -10,17 +10,17 @@ const cloud: ProcessApprovalTarget = {
 const personal: ProcessApprovalTarget = { ...cloud, route: { kind: "machine", targetId: "browser" } };
 
 describe("cloud browser approval admission", () => {
-  it.each(["cloud", "personal", "unavailable"].flatMap(kind => [false, true].map(poll => ({ kind, poll }))))(
-    "admits a $kind browser through the owning policy (poll=$poll)", async ({ kind, poll }) => {
-      const stub = await initProcess(`browser-approval-${kind}-${poll}`, ROOT_IDENTITY);
+  it.each(["cloud", "personal", "unavailable"].flatMap(kind => ["start", "cached", "uncertain"].map(mode => ({ kind, mode }))))(
+    "admits a $kind browser through the owning policy (mode=$mode)", async ({ kind, mode }) => {
+      const stub = await initProcess(`browser-approval-${kind}-${mode}`, ROOT_IDENTITY);
       await runInProcess(stub, async (process: Process) => {
         process.runs.active = approvedRun("run", {
           config: { ...terminalTestConfig(process.pid), capabilities: ["shell.exec"] },
           approvalPolicy: DEFAULT_TOOL_APPROVAL_POLICY,
           tools: offeredTools("Shell"), offeredToolNames: ["Shell"],
         });
-        const args = poll ? { sessionId: "session", input: "" } : { target: "browser", input: "page snapshot" };
-        if (poll) process.tools.rememberShellSessionTargetFromResult("shell.exec", { target: "browser" }, { sessionId: "session" });
+        const args = mode !== "start" ? { sessionId: "session", input: "" } : { target: "browser", input: "page snapshot" };
+        if (mode === "cached") process.tools.rememberShellSessionTargetFromResult("shell.exec", { target: "browser" }, { sessionId: "session" });
         process.store.tools.register("shell", "call", "run", "shell.exec", args);
         const resolve = vi.spyOn(process.kernel, "resolveApprovalTarget");
         if (kind === "unavailable") resolve.mockRejectedValue(new Error("Approval lookup unavailable"));
@@ -30,7 +30,7 @@ describe("cloud browser approval admission", () => {
         vi.spyOn(process.signals, "toolStarted").mockResolvedValue(undefined);
         vi.spyOn(process.run, "schedule").mockResolvedValue(undefined);
         const approval = await process.tools.processToolCalls("run");
-        expect(resolve).toHaveBeenCalledWith("browser", expect.any(AbortSignal));
+        expect(resolve).toHaveBeenCalledWith(mode === "uncertain" ? { sessionId: "session" } : { targetId: "browser" }, expect.any(AbortSignal));
         if (kind === "cloud") {
           expect(approval).toBeNull();
           expect(launch).toHaveBeenCalledWith("run", "shell", "shell.exec", { ...args, target: "browser" },
@@ -45,7 +45,7 @@ describe("cloud browser approval admission", () => {
       });
     });
 
-  it("rejects an unknown shell session before target lookup or dispatch", async () => {
+  it("rejects a session only after consulting the Kernel", async () => {
     const stub = await initProcess("browser-approval-unknown-session", ROOT_IDENTITY);
     await runInProcess(stub, async (process: Process) => {
       process.runs.active = approvedRun("run", {
@@ -53,12 +53,28 @@ describe("cloud browser approval admission", () => {
         tools: offeredTools("Shell"), offeredToolNames: ["Shell"],
       });
       process.store.tools.register("shell", "call", "run", "shell.exec", { sessionId: "unknown", input: "" });
-      const resolve = vi.spyOn(process.kernel, "resolveApprovalTarget");
+      const resolve = vi.spyOn(process.kernel, "resolveApprovalTarget").mockRejectedValue(new Error("Unknown shell session"));
       const launch = vi.spyOn(process.tools, "launchToolDispatch").mockImplementation(() => {});
       expect(await process.tools.processToolCalls("run")).toBeNull();
-      expect(resolve).not.toHaveBeenCalled();
+      expect(resolve).toHaveBeenCalledWith({ sessionId: "unknown" }, expect.any(AbortSignal));
       expect(launch).not.toHaveBeenCalled();
       expect(process.store.tools.getResults("run")[0]).toMatchObject({ status: "error", error: expect.stringContaining("session") });
+      process.runs.active = null;
+    });
+  });
+
+  it("recovers a session-only CodeMode poll from Kernel state", async () => {
+    const stub = await initProcess("codemode-uncertain-session", ROOT_IDENTITY);
+    await runInProcess(stub, async (process: Process) => {
+      process.runs.active = approvedRun("run", { config: terminalTestConfig(process.pid) });
+      const resolve = vi.spyOn(process.kernel, "resolveApprovalTarget").mockResolvedValue(cloud);
+      const dispatch = vi.spyOn(process.tools, "dispatchCodeModeSyscall").mockResolvedValue({ type: "res", id: "poll", ok: true, data: { status: "completed", output: "done" } });
+      const signal = new AbortController().signal;
+      await process.tools.executeCodeModeSyscall({ runId: "run", dispatchId: "codemode", approvalPolicy: DEFAULT_TOOL_APPROVAL_POLICY, capabilities: ["shell.exec"] },
+        "shell.exec", { sessionId: "uncertain", input: "" }, signal);
+      expect(resolve).toHaveBeenCalledOnce();
+      expect(resolve).toHaveBeenCalledWith({ sessionId: "uncertain" }, signal);
+      expect(dispatch).toHaveBeenCalledWith("run", expect.any(String), "shell.exec", { sessionId: "uncertain", input: "", target: "browser" }, signal, "codemode", cloud);
       process.runs.active = null;
     });
   });

@@ -100,7 +100,7 @@ import {
   assertAdapterMessageDestinationAccess,
   identityLinkRouteGeneration,
 } from "./adapter-destinations";
-import type { InternalResponseFrame, ProcessApprovalTarget } from "../protocol/process-frames";
+import type { InternalResponseFrame, ProcessApprovalTarget, ProcessApprovalTargetRef } from "../protocol/process-frames";
 import type {
   ProcessOutboundFrame,
 } from "../protocol/process-frames";
@@ -1018,10 +1018,12 @@ export class Kernel extends DurableObject<GatewayEnv> {
   }
 
   /** Runtime approval metadata; target discovery is not an extra agent capability. */
-  async resolveProcessApprovalTarget(processId: string, targetId: string): Promise<ProcessApprovalTarget> {
+  async resolveProcessApprovalTarget(processId: string, ref: ProcessApprovalTargetRef): Promise<ProcessApprovalTarget> {
     this.retirement.assertActive();
     const ctx = this.buildProcessContext(processId);
     if (!ctx) throw new Error("Unknown process");
+    const targetId = "sessionId" in ref ? this.shellSessions.get(ref.sessionId)?.targetId : ref.targetId;
+    if (!targetId) throw new Error("Unknown shell session");
     const target = await resolveVisibleTarget(ctx, targetId, { includeOffline: true });
     if (!target) throw new Error(`Target unavailable for tool approval: ${targetId}`);
     return approvalTargetIdentity(target);

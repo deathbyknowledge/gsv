@@ -23,6 +23,9 @@ class IntegrationInstanceTarget extends RpcTarget implements Pick<InstallationIn
     if (actor.ownerUid !== instance.ownerUid || instanceId !== instance.instanceId) throw new Error("Unknown browser");
     if (frame.call !== "shell.exec") throw new Error("Unsupported fixture operation");
     await this.state.recordInstanceCall(frame.call);
+    if (frame.args.start === true) {
+      return { type: "res", id: frame.id, ok: false, error: { code: 500, message: "Fixture lost the start response" } };
+    }
     return { type: "res", id: frame.id, ok: true, data: { status: "completed", output: "browser command completed", exitCode: 0 } };
   }
 }

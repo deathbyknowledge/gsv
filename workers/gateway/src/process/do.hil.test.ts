@@ -715,6 +715,7 @@ describe("proc.hil", () => {
         { path: "/private/input" },
         process.runs.active.approvalPolicy,
         undefined,
+        undefined,
       );
       expect(process.sendSignal).toHaveBeenCalledWith(
         "proc.run.tool.started",

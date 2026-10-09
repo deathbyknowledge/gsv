@@ -94,6 +94,14 @@ describe("instance gateway boundary", () => {
       expect(approve).toHaveBeenLastCalledWith("trusted-installation", "crew-process", expect.objectContaining({
         args: expect.objectContaining({ target: expect.objectContaining({ route: { kind: "machine", targetId: "browser" } }) }),
       }));
+
+      ctx.targets.canAccess = () => false;
+      approve.mockImplementationOnce(async (_installation, _pid, frame) => {
+        instance.instanceId = "changed-during-approval";
+        return { type: "res", id: frame.id, ok: true, data: { approved: true } };
+      });
+      expect(await request()).toMatchObject({ response: { ok: false, error: { code: 403, message: expect.stringContaining("changed while awaiting approval") } } });
+      expect(execute).toHaveBeenCalledOnce();
     });
   });
 

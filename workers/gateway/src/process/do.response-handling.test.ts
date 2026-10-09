@@ -845,6 +845,7 @@ describe("response handling", () => {
       process.sendSignal = vi.fn();
       process.run.scheduleTick = vi.fn(async () => {});
       process.kernel.dispatchSyscall = vi.fn();
+      process.kernel.resolveApprovalTarget = vi.fn().mockRejectedValue(new Error("Unknown shell session"));
       process.generation = {
         async generate() {
           return assistantResponse([
@@ -885,7 +886,7 @@ describe("response handling", () => {
           id: "call-shell-unknown-poll",
           status: "error",
           error: expect.stringContaining(
-            "Shell session continuation requires an explicit target",
+            "Unknown shell session",
           ),
         },
       ]);

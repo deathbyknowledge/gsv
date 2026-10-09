@@ -4,6 +4,30 @@ import { startProcessRuntimeHarness } from "./process-runtime-harness";
 import type { IntegrationState } from "./fixtures/dependencies";
 
 describe("cloud browser approval", () => {
+  it("polls a Kernel-committed session when the start response never reached the Process", async () => {
+    const runtime = await startProcessRuntimeHarness({ instances: true });
+    try {
+      const { INTEGRATION_STATE } = await runtime.harness.getWorker<{
+        INTEGRATION_STATE: DurableObjectNamespace<IntegrationState>;
+      }>("gsv-test-dependencies").getEnv();
+      const state = INTEGRATION_STATE.getByName("integration-recorder");
+      const process = await runtime.spawn("Uncertain shell recovery");
+      await runtime.configureAi(process.pid);
+      const sessionId = crypto.randomUUID();
+      runtime.ai.enqueue(
+        { kind: "tool-calls", calls: [{ id: "start", name: "Shell", arguments: { start: true, sessionId, target: "cloud-browser", input: "page snapshot" } }] },
+        { kind: "tool-calls", calls: [{ id: "poll", name: "Shell", arguments: { sessionId, input: "" } }] },
+        { kind: "tool-calls", calls: [{ id: "yield", name: "Shell", arguments: { input: "yield" } }] },
+      );
+      expect(await runtime.client.proc.send({ pid: process.pid, message: "Recover the shell result." })).toMatchObject({ ok: true });
+      await runtime.waitFor(async () => {
+        const history = await runtime.client.proc.history({ pid: process.pid, includeMessages: false });
+        return history.ok && history.activeRunId === null && history.pendingHil === null;
+      }, "uncertain session recovery", 15000);
+      expect(await state.listInstanceCalls()).toEqual(["shell.exec", "shell.exec"]);
+    } finally { await runtime.close(); }
+  });
+
   it("automatically admits Shell and CodeMode in a clean space, and respects an explicit Ask override", async () => {
     const runtime = await startProcessRuntimeHarness({ instances: true });
     try {
