@@ -1,3 +1,4 @@
+import { exceptionDiagnostics } from "../../../../packages/gsv/src/diagnostics.js";
 import {
   AdapterRetirement,
   type AdapterDataOwner,
@@ -165,7 +166,7 @@ type DeliveryOptions = {
 type DeliveryPart = () => Promise<string | undefined>;
 type ClaimedDelivery = Extract<DeliveryClaim, { claimed: true }>;
 type PendingTemplateClaim = number | "window-open" | null;
-type FailDelivery = (kind: DeliveryFailureKind, detail?: string) => Promise<AdapterSendResult>;
+type FailDelivery = (kind: DeliveryFailureKind, detail?: string, cause?: unknown) => Promise<AdapterSendResult>;
 type PairingIssue = { code: string; claimId: string; expiresAt: number };
 type ManagedPairingStub = { initialize(input: ManagedWhatsAppPairingRecord): Promise<{ created: boolean }> };
 
@@ -846,22 +847,23 @@ export class ManagedWhatsAppPeer extends DurableObject<ManagedWhatsAppPeerEnv> {
     if (!claim.claimed) return claim.result;
     const legacyGrouping = claim.progress.sent > 0 && (claim.progress.formatVersion ?? 0) === 0;
 
-    const fail = async (kind: DeliveryFailureKind, detail?: string): Promise<AdapterSendResult> => {
+    const fail: FailDelivery = async (kind, detail, cause) => {
       const error = detail ?? `WhatsApp delivery failed (${kind})`;
+      const diagnostics = exceptionDiagnostics(cause ?? error);
       if (kind === "retryable") {
         await this.deliveries.releaseRetryable(message.deliveryId, claim.attemptId);
-        return { ok: false, error, retryable: true };
+        return { ok: false, error, retryable: true, diagnostics };
       }
       if (kind === "ambiguous") {
         try {
-          await this.deliveries.failAmbiguous(message.deliveryId, claim.attemptId, error);
+          await this.deliveries.failAmbiguous(message.deliveryId, claim.attemptId, error, diagnostics);
         } catch {
           // The durable attempting receipt already prevents replay if this write fails.
         }
-        return { ok: false, error, ambiguous: true };
+        return { ok: false, error, ambiguous: true, diagnostics };
       }
-      await this.deliveries.failPermanent(message.deliveryId, claim.attemptId, error);
-      return { ok: false, error };
+      await this.deliveries.failPermanent(message.deliveryId, claim.attemptId, error, diagnostics);
+      return { ok: false, error, diagnostics };
     };
 
     // Outside the customer service window Meta accepts only the template. The
@@ -963,9 +965,9 @@ export class ManagedWhatsAppPeer extends DurableObject<ManagedWhatsAppPeerEnv> {
         }
         // A definite rejection resumes at the first unsent part on retry; an
         // unknown provider outcome stays ambiguous and is never replayed.
-        return await fail(error.kind, error.message);
+        return await fail(error.kind, error.message, error);
       }
-      return await fail(attemptedProviderSend ? "ambiguous" : "retryable");
+      return await fail(attemptedProviderSend ? "ambiguous" : "retryable", undefined, error);
     }
   }
 
@@ -1038,7 +1040,7 @@ export class ManagedWhatsAppPeer extends DurableObject<ManagedWhatsAppPeerEnv> {
         // remains pending until their reply or its expiry.
         if (kind !== "ambiguous") await this.settlePendingTemplate(claimedAt, null);
         if (kind === "permanent" && !complete) await this.held.remove(message.deliveryId);
-        return await fail(kind, error instanceof ManagedWhatsAppDeliveryError ? error.message : undefined);
+        return await fail(kind, error instanceof ManagedWhatsAppDeliveryError ? error.message : undefined, error);
       }
       try {
         await this.settlePendingTemplate(claimedAt, sent.messageId);

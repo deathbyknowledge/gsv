@@ -13,6 +13,9 @@ import type {
 } from "@humansandmachines/gsv/protocol";
 import {
   emitTelemetry,
+  exceptionDiagnostics,
+  sanitizeExceptionDiagnostics,
+  type ExceptionDiagnostics,
 } from "@humansandmachines/gsv/telemetry";
 import {
   bundleAdapterMedia,
@@ -71,7 +74,7 @@ const MAX_ADAPTER_ROUTE_DELIVERY_ATTEMPTS = 10;
 type AdapterRouteDeliveryOutcome =
   | { state: "delivered" }
   | { state: "skipped" }
-  | { state: "retryable" | "permanent" | "ambiguous"; error: string };
+  | { state: "retryable" | "permanent" | "ambiguous"; error: string; stage: "route" | "media" | "adapter"; diagnostics?: ExceptionDiagnostics };
 
 
 type ProcessDeliveryNoticePayload = Omit<
@@ -201,6 +204,8 @@ async attemptAdapterRouteDelivery(
     } catch (error) {
       outcome = {
         state: error instanceof AdapterReplyMediaError ? "permanent" : "retryable",
+        stage: error instanceof AdapterReplyMediaError ? "media" : "adapter",
+        diagnostics: exceptionDiagnostics(error),
         error: error instanceof Error ? error.message : String(error),
       };
     }
@@ -237,6 +242,8 @@ async attemptAdapterRouteDelivery(
           outcome: "failed",
           failureKind: terminalState,
           attempts: attempt,
+          stage: outcome.stage,
+          ...sanitizeExceptionDiagnostics(outcome.diagnostics ?? exceptionDiagnostics(outcome.error)),
         },
       },
     });
@@ -500,7 +507,7 @@ async deliverAdapterRouteReply(
     const ctx = this.host.buildProcessContext(route.processId, route.runId);
     if (!ctx) {
       await cancelBinaryBody(body, "Reply route references a missing process");
-      return { state: "permanent", error: "Reply route references a missing process" };
+      return { state: "permanent", stage: "route", error: "Reply route references a missing process" };
     }
     try {
       assertAdapterMessageDestinationAccess(route.destination, route.uid, ctx);
@@ -509,6 +516,8 @@ async deliverAdapterRouteReply(
       ctx.adapters.privateDestinations.clearIfMatches(route.uid, route.destination);
       return {
         state: "permanent",
+        stage: "route",
+        diagnostics: exceptionDiagnostics(error),
         error: error instanceof Error ? error.message : String(error),
       };
     }
@@ -549,12 +558,16 @@ async deliverAdapterRouteReply(
     if (!result.ok) {
       return {
         state: result.retryable ? "retryable" : "permanent",
+        stage: "adapter",
+        diagnostics: result.diagnostics,
         error: `Adapter reply failed (${route.destination.adapter}): ${result.error}`,
       };
     }
     if (result.deliveryState === "ambiguous") {
       return {
         state: "ambiguous",
+        stage: "adapter",
+        diagnostics: result.diagnostics,
         error: `Adapter delivery ${message.deliveryId} is ambiguous`,
       };
     }

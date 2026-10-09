@@ -49,7 +49,7 @@ describe("gateway inference execution boundary", () => {
         },
       } });
       expect(result.errorMessage).toContain(record.event.properties.diagnosticId);
-      expect(JSON.stringify(record)).not.toContain("private RPC detail");
+      expect(record.event.properties).toMatchObject({ exceptionName: "Error", exceptionMessage: "private RPC detail", exceptionStack: expect.stringContaining("Error: private RPC detail") });
     } finally { log.mockRestore(); }
   });
   it("preserves model identity and ordered generic events without forwarding Kernel configuration", async () => {

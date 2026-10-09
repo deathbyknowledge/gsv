@@ -1,3 +1,4 @@
+import { exceptionDiagnostics, type ExceptionDiagnostics } from "@humansandmachines/gsv/telemetry";
 import type {
   InferenceFailureKind,
   InferenceFailureStage,
@@ -8,6 +9,7 @@ export type InferenceFailure = {
   stage: InferenceFailureStage;
   retryable: boolean;
   providerStatusCode?: number;
+  diagnostics?: ExceptionDiagnostics;
 };
 
 export type ProviderFailureInput = {
@@ -32,9 +34,13 @@ const PROTOCOL_PATTERN =
 const NETWORK_PATTERN =
   /network|fetch failed|connection|socket|dns|econn|enotfound/i;
 
-export function classifyProviderFailure(
-  input: ProviderFailureInput,
-): InferenceFailure {
+export function classifyProviderFailure(input: ProviderFailureInput): InferenceFailure {
+  const failure = classifyFailureKind(input);
+  if (input.message) failure.diagnostics = exceptionDiagnostics(input.message);
+  return failure;
+}
+
+function classifyFailureKind(input: ProviderFailureInput): InferenceFailure {
   const statusCode = validHttpStatus(input.statusCode);
   const message = input.message ?? "";
 

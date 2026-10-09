@@ -541,3 +541,9 @@ multiple surfaces into the same computer.
 - [Connect a Messenger](../how-to/messengers)
 - [Routing Reference](../reference/routing.md)
 - [Architecture Overview](./index.md)
+
+Adapter delivery diagnostics travel with failed or ambiguous `adapter.send`
+results. The provider owner selects bounded error fields; durable delivery
+receipts preserve them across retries, and Gateway reports the terminal failure
+stage and redacted details. Message bodies, recipient identifiers and provider
+request/response objects are excluded from telemetry.

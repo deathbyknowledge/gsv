@@ -53,7 +53,7 @@ describe("GSV inference provider", () => {
   afterEach(() => vi.useRealTimers());
 
   it.each(["acquisition", "request", "stream"])("preserves %s failures and exports only safe diagnostics", async (phase) => {
-    const failure = Object.assign(new TypeError("synthetic private failure detail"), { remote: true, retryable: true });
+    const failure = Object.assign(new TypeError("Remote RPC disconnected; token=private-rpc-token"), { remote: true, retryable: true });
     const { service, target } = managedService(async () => {
       if (phase === "request") throw failure;
       return new ReadableStream({ start(controller) { controller.error(failure); } });
@@ -64,7 +64,7 @@ describe("GSV inference provider", () => {
       const factory = createGsvInferenceProviderFactory(service, { GSV_TELEMETRY_ENABLED: true });
       const result = await providerStreamFromFactory(factory, new AbortController().signal).result();
       expect(result.stopReason).toBe("error");
-      expect(result.errorMessage).toContain(`Managed inference ${phase} failed: synthetic private failure detail`);
+      expect(result.errorMessage).toContain(`Managed inference ${phase} failed: Remote RPC disconnected; token=private-rpc-token`);
       const records = log.mock.calls.map(([record]) => telemetryRecordSchema.parse(record));
       expect(records).toHaveLength(1);
       if (records[0]!.event.name !== "inference.client.finished") throw new Error("Missing inference client telemetry");
@@ -75,7 +75,8 @@ describe("GSV inference provider", () => {
         },
       } });
       expect(result.errorMessage).toContain(records[0]!.event.properties.diagnosticId);
-      expect(JSON.stringify(records)).not.toContain("synthetic private failure detail");
+      expect(records[0]!.event.properties).toMatchObject({ exceptionName: "TypeError", exceptionMessage: "Remote RPC disconnected; token=[redacted]" });
+      expect(JSON.stringify(records)).not.toContain("private-rpc-token");
       expect(target.abort).toHaveBeenCalledTimes(phase === "acquisition" ? 0 : 1);
     } finally { log.mockRestore(); }
   });

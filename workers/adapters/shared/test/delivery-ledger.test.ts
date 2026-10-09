@@ -79,6 +79,21 @@ describe("DeliveryLedger", () => {
     });
   });
 
+  it.each(["failPermanent", "failAmbiguous"] as const)("retains diagnostics in %s receipts across a fresh ledger instance", async (method) => {
+    const storage = new MemoryStorage();
+    // SAFETY: the fixture implements the transactional storage methods used by DeliveryLedger.
+    const ledger = new DeliveryLedger(storage as DurableObjectStorage);
+    const claim = await ledger.claim("delivery-diagnostic", REQUEST_FINGERPRINT);
+    if (!claim.claimed) throw new Error("expected a fresh claim");
+    const diagnostics = { exceptionName: "APIError", exceptionMessage: "Provider rejected request", errorCode: "131026", providerRequestId: "meta-trace" };
+    await ledger[method]("delivery-diagnostic", claim.attemptId, "Delivery failed", diagnostics);
+    // SAFETY: the same fixture models storage surviving eviction of the owning object.
+    const recovered = new DeliveryLedger(storage as DurableObjectStorage);
+    expect(await recovered.claim("delivery-diagnostic", REQUEST_FINGERPRINT)).toMatchObject({
+      claimed: false, result: { ok: false, diagnostics },
+    });
+  });
+
   it("releases a definitely rejected attempt for a safe retry", async () => {
     const ledger = memoryLedger();
     const first = await ledger.claim("delivery-2", REQUEST_FINGERPRINT);

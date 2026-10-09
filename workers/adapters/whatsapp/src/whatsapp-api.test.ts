@@ -48,7 +48,7 @@ describe("WhatsApp Graph API client", () => {
 
   it("classifies provider failures for a non-idempotent send", async () => {
     await expect(sendWhatsAppMessage(TOKEN, PHONE_NUMBER_ID, { to: "1" }, async () => graphError(400, 131047)))
-      .rejects.toMatchObject({ kind: "permanent", windowClosed: true, message: WHATSAPP_WINDOW_CLOSED_ERROR });
+      .rejects.toMatchObject({ kind: "permanent", windowClosed: true, message: expect.stringContaining(WHATSAPP_WINDOW_CLOSED_ERROR) });
     await expect(sendWhatsAppMessage(TOKEN, PHONE_NUMBER_ID, { to: "1" }, async () => graphError(429, 130429)))
       .rejects.toMatchObject({ kind: "retryable", graphCode: 130429 });
     await expect(sendWhatsAppMessage(TOKEN, PHONE_NUMBER_ID, { to: "1" }, async () => graphError(500, 2)))
@@ -70,6 +70,17 @@ describe("WhatsApp Graph API client", () => {
     expect(classifyWhatsAppFailure(503, undefined, true)).toBe("retryable");
     expect(classifyWhatsAppFailure(503, undefined, false)).toBe("ambiguous");
     expect(classifyWhatsAppFailure(400, 4, false)).toBe("retryable");
+  });
+
+  it("retains selected Meta diagnostics and redacts credentials", async () => {
+    const fetcher = async () => Response.json({ error: {
+      message: "Delivery rejected", code: 131026, error_subcode: 42, fbtrace_id: "meta-trace-123",
+      error_data: { details: "Recipient unavailable; access_token=private-meta-token", request: { text: "private message" } },
+    } }, { status: 400 });
+    await expect(sendWhatsAppMessage(TOKEN, PHONE_NUMBER_ID, { to: "1" }, fetcher)).rejects.toMatchObject({
+      status: 400, code: 131026, subcode: 42, requestId: "meta-trace-123",
+      message: expect.stringContaining("Recipient unavailable; access_token=[redacted]"),
+    });
   });
 
   it.each([

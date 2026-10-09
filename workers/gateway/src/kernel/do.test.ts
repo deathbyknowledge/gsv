@@ -2468,13 +2468,15 @@ describe("Kernel process signal routing", () => {
     expect(kernel.runRoutes.delete).not.toHaveBeenCalled();
   });
 
-  it("emits content-free telemetry after adapter route delivery is terminal", async () => {
+  it("emits redacted diagnostics after adapter route delivery is terminal", async () => {
     const route = adapterRoute("run-terminal-telemetry");
     const kernel = buildKernel(route);
     kernel.installationEnv = { GSV_TELEMETRY_ENABLED: "1" };
     kernel.adapterDelivery.deliverAdapterRouteEvent.mockResolvedValue({
       state: "retryable",
-      error: "private provider response for chat-1",
+      error: "provider response for chat-1",
+      stage: "adapter",
+      diagnostics: { exceptionName: "APIError", exceptionMessage: "Rate limited token=private-provider-token", errorCode: "130429", providerStatusCode: 429, providerRequestId: "meta-trace" },
     });
     kernel.adapterDelivery.queueProcessDeliveryNotice = vi.fn(async () => {});
     const log = vi.spyOn(console, "log").mockImplementation(() => {});
@@ -2499,10 +2501,16 @@ describe("Kernel process signal routing", () => {
             outcome: "failed",
             failureKind: "exhausted",
             attempts: 10,
+            stage: "adapter",
+            exceptionName: "APIError",
+            exceptionMessage: "Rate limited token=[redacted]",
+            errorCode: "130429",
+            providerStatusCode: 429,
+            providerRequestId: "meta-trace",
           },
         },
       }));
-      expect(JSON.stringify(log.mock.calls)).not.toContain("private provider response");
+      expect(JSON.stringify(log.mock.calls)).not.toContain("private-provider-token");
       expect(JSON.stringify(log.mock.calls)).not.toContain("chat-1");
     } finally {
       log.mockRestore();

@@ -3875,6 +3875,24 @@ describe("adapter lifecycle handlers", () => {
     errorLog.mockRestore();
   });
 
+  it("preserves and scrubs provider diagnostics through a failed adapter.send result", async () => {
+    const adapterFrame: NonNullable<AdapterService["adapterFrame"]> = vi.fn(async (_installation, _context, frame) => ({
+      type: "res", id: frame.id, ok: true,
+      data: { ok: false, error: "private provider context", retryable: false, diagnostics: {
+        exceptionName: "APIError", exceptionMessage: "Recipient unavailable token=private-token", errorCode: "131026", providerStatusCode: 400, providerRequestId: "meta-trace",
+      } },
+    }));
+    const ctx = makeContext({ CHANNEL_WHATSAPP: { adapterFrame } }, { upsert: vi.fn() });
+    linkSendFixture(ctx, "whatsapp", "primary", "dm-1");
+    const result = await handleAdapterSend({ adapter: "whatsapp", accountId: "primary", deliveryId: "provider-diagnostic", surface: { kind: "dm", id: "dm-1" }, text: "private user message" }, ctx);
+    expect(result).toMatchObject({ ok: false, retryable: false, diagnostics: {
+      exceptionName: "APIError", exceptionMessage: "Recipient unavailable token=[redacted]", errorCode: "131026", providerStatusCode: 400, providerRequestId: "meta-trace",
+    } });
+    expect(JSON.stringify(result)).not.toContain("private-token");
+    expect(JSON.stringify(result)).not.toContain("private provider context");
+    expect(JSON.stringify(result)).not.toContain("private user message");
+  });
+
   it("sanitizes malformed activity results at the gateway boundary", async () => {
     const privatePayload = "private-activity-payload";
     const warningLog = vi.spyOn(console, "warn").mockImplementation(() => undefined);
@@ -4049,6 +4067,7 @@ describe("adapter lifecycle handlers", () => {
       error: "Telegram delivery is temporarily unavailable",
       deliveryId: "retryable-delivery-1",
       retryable: true,
+      diagnostics: { exceptionName: "Error", exceptionMessage: "service binding disconnected", exceptionStack: expect.stringContaining("Error: service binding disconnected") },
     });
 
     const generated = await handleAdapterSend({
@@ -4650,6 +4669,7 @@ describe("adapter lifecycle handlers", () => {
       error: "Telegram delivery is temporarily unavailable",
       deliveryId: "run-1:finished",
       retryable: true,
+      diagnostics: { exceptionMessage: "Telegram API 400 chat_id=[redacted] raw provider response" },
     });
   });
 
