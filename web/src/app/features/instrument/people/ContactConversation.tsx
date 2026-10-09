@@ -1,5 +1,4 @@
 import { MAX_FEDERATION_MESSAGE_RESOURCES, type ContactSummary, type OriginMessageRef } from "@humansandmachines/gsv/protocol";
-import { useInfiniteQuery } from "../../../services/navigation/viewQueries";
 import { useQueries } from "@tanstack/preact-query";
 import { useViewActive } from "../../../services/navigation/ViewActivity";
 import { useLayoutEffect, useRef } from "preact/hooks";
@@ -8,15 +7,14 @@ import { useGateway } from "../../../services/gateway/GatewayProvider";
 import { MAX_STAGED_RESOURCE_BYTES } from "../../../services/gateway/stagedResources";
 import type { ConsoleAccount } from "../../../domain/system/consoleModels";
 import { canConfigure } from "../settings/settingsModel";
-import { instrumentContactConversationKey, instrumentContactDeliveriesKey } from "../wire/queryKeys";
+import { instrumentContactDeliveriesKey } from "../wire/queryKeys";
 import { ZenDraftAttachment, ZenMedia } from "../zen/ZenMedia";
 import { zenAttachment } from "../zen/zenAttachments";
 import type { ContactDraft } from "./useContactDrafts";
 import { useConversationReadPosition } from "./useConversationReadPosition";
+import { useContactHistory } from "./useContactHistory";
 import { MessageDelivery } from "./MessageDelivery";
 import "../shared/senderBadge.css";
-
-const NO_SEQUENCE: number | null = null;
 
 export type ContactComposerProps = {
   draft: ContactDraft;
@@ -42,17 +40,7 @@ export function ContactConversation({ contact, account, draft, onDraft, onSend, 
   const scroll = useRef<HTMLDivElement>(null);
   const follow = useRef(true);
   const olderHeight = useRef<number | null>(null);
-  const history = useInfiniteQuery({
-    queryKey: instrumentContactConversationKey(contact.conversationId),
-    enabled: connected && mayRead,
-    initialPageParam: NO_SEQUENCE,
-    queryFn: ({ pageParam }) => client.conversation.history({
-      conversationId: contact.conversationId,
-      limit: 50,
-      beforeSequence: pageParam ?? undefined,
-    }),
-    getNextPageParam: (page) => page.hasMore ? page.messages[0]?.sequence : undefined,
-  });
+  const history = useContactHistory(contact.conversationId, mayRead);
   const messages = history.data?.pages.slice().reverse().flatMap((page) => page.messages) ?? [];
   useConversationReadPosition(contact.conversationId, scroll, messages.at(-1)?.sequence ?? 0, !!account && account.uid >= 1000 && canConfigure(account, "conversation.view.update"));
   const pendingMessages = draft.sent.filter((entry) => !entry.messageId || !messages.some((message) => message.id === entry.messageId));

@@ -6,7 +6,7 @@ import { useSession } from "../../services/session/SessionProvider";
 import { TerminalProvider } from "../../services/terminal/TerminalProvider";
 import { DevicePairingProvider } from "../../services/machines/DevicePairingProvider";
 import { Zen } from "./zen/Zen";
-import { useShipNotices } from "./zen/useShipNotices";
+import { useContactReplies } from "./people/useContactReplies";
 import { useConsoleAccounts } from "../../services/system/useConsoleData";
 import { Fleet, type FleetProps } from "./fleet/Fleet";
 import { BrowserControlProvider, BrowserControlOverlay } from "./browser/BrowserControl";
@@ -117,9 +117,9 @@ function InstrumentReady({ initialPath }: { initialPath: string }) {
   /* Ship's contact notices live here, above the keyed Zen view, so opening a helper and coming back keeps them */
   const accounts = useConsoleAccounts();
   const viewer = accounts.data?.find((account) => account.relation === "self");
-  const shipNotices = useShipNotices({ viewer, listening: distance === "zen" && zenPid === null });
+  const contactReplies = useContactReplies(viewer);
   /* unsaved work the instrument guards as a whole: the chat's prompt, and replies typed under Ship's notices even while a helper is shown */
-  const unsaved = zenDirty || shipNotices.dirty;
+  const unsaved = zenDirty || contactReplies.dirty;
   const selectingProcess = useRef(false);
   const controlState = useRef({ unsaved });
   controlState.current = { unsaved };
@@ -316,7 +316,7 @@ function InstrumentReady({ initialPath }: { initialPath: string }) {
             if (!move("memory")) return;
             if (page) setSelectedMemoryPage({ ...page });
           }} initialTarget={zenTarget} prefill={zenPrefill} onPrefillUsed={() => setZenPrefill(null)} pid={zenPid}
-          shipNotices={zenPid ? undefined : shipNotices}
+          contactReplies={zenPid ? undefined : contactReplies}
           peopleActivity={zenPid ? undefined : peopleActivity}
           onPeopleActivity={(request) => { if (move("people") && request) setPeopleRequest(request); }} />
         </RetainedView>

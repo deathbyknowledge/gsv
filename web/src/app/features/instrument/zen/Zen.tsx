@@ -34,7 +34,7 @@ import { SHELL_KEYS } from "../shared/shellKeys";
 import { useDismissOnOutsideClick } from "../shared/useDismissOnOutsideClick";
 import { ActivityWorking } from "./ActivityWorking";
 import { ApprovalCard } from "../shared/ApprovalCard";
-import type { ShipNotices } from "./useShipNotices";
+import type { ContactReplies } from "../people/useContactReplies";
 import { PeopleActivity } from "../people/PeopleActivity";
 import type { PeopleActivity as PeopleActivityState } from "../people/usePeopleActivity";
 import type { PeopleOpenRequest } from "../people/People";
@@ -85,7 +85,7 @@ export type ZenProps = {
   pid?: string | null;
   onDraftChange?: (dirty: boolean) => void;
   /** Ship's contact notices and the replies typed under them, owned above this keyed view; absent for a helper. */
-  shipNotices?: ShipNotices;
+  contactReplies?: ContactReplies;
   peopleActivity?: PeopleActivityState;
   /** Open a contact's conversation in People, for a message that arrived while here. */
   onPeopleActivity?: (request?: PeopleOpenRequest) => void;
@@ -317,7 +317,7 @@ function NoteMoment({
   );
 }
 
-export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, onPrefillUsed, pid: pidProp, onDraftChange, shipNotices, peopleActivity, onPeopleActivity }: ZenProps) {
+export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, onPrefillUsed, pid: pidProp, onDraftChange, contactReplies, peopleActivity, onPeopleActivity }: ZenProps) {
   const active = useViewActive();
   const browserControl = useBrowserControl();
   const { client, connected } = useGateway();
@@ -354,7 +354,7 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
   const fileInput = useRef<HTMLInputElement>(null);
   const dragDepth = useRef(0);
   const [draggingFiles, setDraggingFiles] = useState(false);
-  const dirty = hasDraft || attachments.length > 0 || outbox.messages.length > 0 || (shipNotices?.dirty ?? false);
+  const dirty = hasDraft || attachments.length > 0 || outbox.messages.length > 0 || (contactReplies?.dirty ?? false);
   useLayoutEffect(() => { onDraftChange?.(dirty); }, [dirty, onDraftChange]);
   useLayoutEffect(() => () => onDraftChange?.(false), [onDraftChange]);
   useEffect(() => {
@@ -1037,7 +1037,7 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
         {/* contact messages that landed while the person was here, owned by Instrument so a helper switch keeps them */}
         {/* a helper's view has no contact notices */}
         {/* a new contact notice sits under the transcript; keep it in view the way an approval is */}
-        {peopleActivity && shipNotices && onPeopleActivity && <PeopleActivity activity={peopleActivity} shipNotices={shipNotices} account={viewer} onOpen={onPeopleActivity} />}
+        {peopleActivity && contactReplies && onPeopleActivity && <PeopleActivity activity={peopleActivity} replies={contactReplies} account={viewer} onOpen={onPeopleActivity} />}
         {!pidProp && <BrowserRequests />}
         {pid ? <DelegatedApprovals pid={pid} onFleet={onFleet} placeLabelFor={(target) => placeLabel(target, places)} /> : null}
 

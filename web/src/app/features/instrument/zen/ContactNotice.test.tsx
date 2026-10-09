@@ -1,15 +1,17 @@
 import type { ContactSummary } from "@humansandmachines/gsv/protocol";
 import { describe, expect, it, vi } from "vitest";
 import { collectNodes, collectText } from "../../../testing/testHarness";
-import { ContactNoticePanel, noticeName, preview, repliedThrough, replyIntentFor } from "./ContactNotice";
-import type { ContactNotice, ContactNoticeMessage } from "./useContactNotices";
+import { ContactNoticePanel, noticeName, preview, replyIntentFor, type ContactNotice, type ContactNoticeMessage } from "./ContactNotice";
 
 function message(sequence: number, text: string, byShip = false): ContactNoticeMessage {
-  return { messageId: `message:${sequence}`, sequence, text, createdAt: sequence, byShip, media: [], reference: { actor: { shipId: "ship:ada", subjectId: "subject:ada" }, messageId: `origin:${sequence}` } };
+  return { id: `message:${sequence}`, conversationId: "conversation:ada", sequence, text, createdAt: sequence, media: [],
+    author: { kind: "contact", contactId: "contact:ada", shipId: "ship:ada", subjectId: "subject:ada", displayName: "Ada Lovelace" },
+    origin: { kind: "federation", contactId: "contact:ada", deliveryId: `delivery:${sequence}` },
+    social: { threadId: "thread:ada", reference: { actor: { shipId: "ship:ada", subjectId: "subject:ada" }, messageId: `origin:${sequence}` }, provenance: byShip ? { kind: "process", processId: "proc:ada" } : { kind: "human" } } };
 }
 const notice: ContactNotice = {
   contactId: "contact:ada", conversationId: "conversation:ada", displayName: "Ada Lovelace",
-  messages: [message(1, "hey — free to look at the release notes before i send them out?")], replied: false,
+  messages: [message(1, "hey — free to look at the release notes before i send them out?")],
 };
 const contact: ContactSummary = {
   id: notice.contactId, ownerUid: 1000, state: "active", generation: "generation:one", remoteShipId: "ship:ada",
@@ -58,11 +60,12 @@ describe("the contact notice", () => {
     expect(first).toMatchObject({ contactId: notice.contactId, text: "yes, go ahead", replyTo: { messageId: "origin:1" } });
     const grown = { ...notice, messages: [...notice.messages, message(2, "also — can you cc tau?")] };
     expect(replyIntentFor(first, grown, "yes, go ahead")).toBe(first);
-    expect(repliedThrough(grown, first)).toBe(1);
+    expect(first.throughSequence).toBe(1);
+    expect(replyIntentFor(first, { ...grown, messages: [message(60, "The original has left the recent page")] }, "yes, go ahead")).toBe(first);
     const changed = replyIntentFor(first, grown, "yes, and tau too");
     expect(changed.idempotencyKey).not.toBe(first.idempotencyKey);
     expect(changed.replyTo).toMatchObject({ messageId: "origin:2" });
-    expect(repliedThrough(grown, changed)).toBe(2);
+    expect(changed.throughSequence).toBe(2);
   });
 
   it("falls back to the name the peer sent when the contact is not loaded", () => {

@@ -16,12 +16,12 @@ export type PeopleActivity = {
 /** The ordinary inbox is durable; WireSync and reconnect invalidation keep these bounded reads current. */
 export function usePeopleActivity(viewer: ConsoleAccount | undefined): PeopleActivity {
   const { client, connected } = useGateway();
-  const may = (name: string) => connected && !!viewer && viewer.uid >= 1000 && canConfigure(viewer, name);
-  const inbox = useQuery({ queryKey: [...INSTRUMENT_INBOX_KEY, "attention"], enabled: may("conversation.inbox"),
+  const may = (name: string) => !!viewer && viewer.uid >= 1000 && canConfigure(viewer, name);
+  const inbox = useQuery({ queryKey: [...INSTRUMENT_INBOX_KEY, "attention"], enabled: connected && may("conversation.inbox"),
     queryFn: () => client.conversation.inbox({ attentionOnly: true, limit: 4 }) });
-  const requests = useQuery({ queryKey: [...INSTRUMENT_APPROACHES_KEY, "attention"], enabled: may("approach.list"),
+  const requests = useQuery({ queryKey: [...INSTRUMENT_APPROACHES_KEY, "attention"], enabled: connected && may("approach.list"),
     queryFn: () => client.approach.list({ direction: "incoming", status: "active", limit: 4 }) });
-  const contacts = useQuery({ queryKey: INSTRUMENT_CONTACTS_KEY, enabled: may("contact.list"),
+  const contacts = useQuery({ queryKey: INSTRUMENT_CONTACTS_KEY, enabled: connected && may("contact.list"),
     queryFn: () => client.contact.list({ includeRevoked: true }) });
   return { conversations: may("conversation.inbox") ? inbox.data?.entries ?? [] : [],
     requests: may("approach.list") ? requests.data?.approaches ?? [] : [],

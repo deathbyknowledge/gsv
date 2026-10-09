@@ -1,4 +1,4 @@
-import { contactDisplayName, type ContactSummary } from "@humansandmachines/gsv/protocol";
+import { contactDisplayName, type ContactSummary, type ConversationMessage } from "@humansandmachines/gsv/protocol";
 import type { ComponentChildren, JSX, RefObject } from "preact";
 import { useState } from "preact/hooks";
 import type { ConsoleAccount } from "../../../domain/system/consoleModels";
@@ -7,7 +7,6 @@ import { sendContactMessage } from "../../../services/contacts/contactsService";
 import { useGateway } from "../../../services/gateway/GatewayProvider";
 import type { StagedResourceUpload } from "../../../services/gateway/stagedResources";
 import { canConfigure } from "../settings/settingsModel";
-import { latestOf, type ContactNotice } from "./useContactNotices";
 import { ZenMedia } from "./ZenMedia";
 import "../shared/senderBadge.css";
 
@@ -19,23 +18,33 @@ type ReplyMedia = StagedResourceUpload & { id: string };
 /* replies from a notice are text only; attachments belong to the full chat */
 const NO_MEDIA: readonly ReplyMedia[] = [];
 
+export type ContactNoticeMessage = ConversationMessage & { social: NonNullable<ConversationMessage["social"]> };
+export type ContactNotice = {
+  contactId: string;
+  conversationId: string;
+  displayName: string;
+  messages: ContactNoticeMessage[];
+};
+
+type ReplyIntent = ContactDraftSendIntent<ReplyMedia> & {
+  /** The sequence of the message a reply answers; the newest when the reference is no longer held. */
+  // The submitted intent now retains that sequence even after the message leaves the recent history page.
+  throughSequence: number;
+};
+
 /** What the person typed under a notice, and the send it last became, so a retry reuses its key. */
-export type ContactReplyDraft = { text: string; intent: ContactDraftSendIntent<ReplyMedia> | null };
-export const EMPTY_REPLY: ContactReplyDraft = { text: "", intent: null };
+export type ContactReplyDraft = { text: string; intent: ReplyIntent | null; readThroughSequence: number };
+export const EMPTY_REPLY: ContactReplyDraft = { text: "", intent: null, readThroughSequence: 0 };
 
 /**
  * The send a reply becomes. A retry of the same text keeps the intent it was submitted with —
  * its key and the message it answers — even if the contact wrote again meanwhile, so an
  * uncertain send cannot land twice. New text is a new message, answering the newest one.
  */
-export function replyIntentFor(previous: ContactDraftSendIntent<ReplyMedia> | null, notice: ContactNotice, body: string): ContactDraftSendIntent<ReplyMedia> {
+export function replyIntentFor(previous: ReplyIntent | null, notice: ContactNotice, body: string): ReplyIntent {
   if (previous && previous.contactId === notice.contactId && previous.text === body) return previous;
-  return selectContactSendIntent(null, notice.contactId, body, NO_MEDIA, latestOf(notice).reference);
-}
-
-/** The sequence of the message a reply answers; the newest when the reference is no longer held. */
-export function repliedThrough(notice: ContactNotice, intent: ContactDraftSendIntent<ReplyMedia>): number {
-  return notice.messages.find((message) => message.reference.messageId === intent.replyTo?.messageId)?.sequence ?? latestOf(notice).sequence;
+  const latest = notice.messages[notice.messages.length - 1];
+  return { ...selectContactSendIntent(null, notice.contactId, body, NO_MEDIA, latest.social.reference), throughSequence: latest.sequence };
 }
 
 /** The local alias when the person set one, else the name the peer sent. */
@@ -70,10 +79,10 @@ export function ContactNoticePanel({ id, name, notice, panelRef, onClose, onGoTo
   onGoToChat: () => void;
   children?: ComponentChildren;
 }) {
-  const latest = notice && latestOf(notice);
+  const latest = notice?.messages.at(-1);
   return (
     <section id={id} ref={panelRef} tabIndex={-1} class="zen-people-panel" aria-label={`Messages from ${name}`}>
-      <header class="zen-people-heading"><span>{name}{latest && senderBadge(latest.byShip)}</span>
+      <header class="zen-people-heading"><span>{name}{latest && senderBadge(latest.social.provenance.kind === "process")}</span>
         <button type="button" class="fleet-text-action" onClick={onClose}>close</button></header>
       {children}
       <footer class="zen-people-foot"><span>{notice ? `${notice.messages.length} message${notice.messages.length === 1 ? "" : "s"}` : ""}</span>
@@ -110,7 +119,7 @@ export function ContactReplyBox({ notice, contact, account, draft, onDraft, onSe
   const send = async () => {
     if (!maySend || !body || tooLong || state === "sending" || undelivered) return;
     const intent = replyIntentFor(draft.intent, notice, body);
-    onDraft({ text: draft.text, intent });
+    onDraft({ ...draft, intent });
     setState("sending"); setError(null);
     try {
       const result = await sendContactMessage(client, notice.contactId, intent);
@@ -120,7 +129,7 @@ export function ContactReplyBox({ notice, contact, account, draft, onDraft, onSe
         return;
       }
       setState("idle");
-      onSent(repliedThrough(notice, intent), intent);
+      onSent(intent.throughSequence, intent);
     } catch (cause) {
       setState("failed");
       setError(cause instanceof Error ? cause.message : String(cause));
@@ -130,10 +139,10 @@ export function ContactReplyBox({ notice, contact, account, draft, onDraft, onSe
   return (
     <div class="reply-box">
       <div class="reply-messages">{notice.messages.map((message) => (
-        <div key={message.messageId} class="message">
+        <div key={message.id} class="message">
           <time dateTime={new Date(message.createdAt).toISOString()}>{new Date(message.createdAt).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })}</time>
           {message.text && <p class="ask">{message.text}</p>}
-          {message.media.map((media, index) => <ZenMedia key={index} media={media} processId="" />)}
+          {message.media?.map((media, index) => <ZenMedia key={index} media={media} processId="" />)}
         </div>
       ))}</div>
       <textarea class="reply" rows={2} aria-label={`Reply to ${name}`} placeholder={`Reply to ${name}…`} value={draft.text} disabled={!maySend || state === "sending"}
