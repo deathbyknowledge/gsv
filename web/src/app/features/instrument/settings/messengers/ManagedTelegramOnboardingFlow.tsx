@@ -53,6 +53,11 @@ const STEP_CONFIRM = 2;
 const STEP_DONE = 3;
 const fieldStyle = { maxWidth: "520px" };
 
+function formatPairingCode(value: string): string {
+  const characters = value.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 12);
+  return characters.match(/.{1,4}/g)?.join("-") ?? "";
+}
+
 export function ManagedTelegramOnboardingFlow({
   onBack,
   onConnected,
@@ -116,6 +121,7 @@ function ManagedMessengerOnboardingFlow({
   const [code, setCode] = useState("");
   const [candidate, setCandidate] = useState<ConsoleAdapterPairingCandidate | null>(null);
   const [formError, setFormError] = useState("");
+  const codeComplete = code.length === 14;
   const paired = step === STEP_DONE;
   dependencies.useUnsavedGuard(() => !paired && (step > STEP_MESSAGE || code.trim().length > 0));
 
@@ -148,7 +154,7 @@ function ManagedMessengerOnboardingFlow({
       : "Send the official GSV bot any private message. It will reply with a short-lived pairing code.";
 
   const inspectCode = async () => {
-    if (!code.trim() || inspect.isPending) return;
+    if (!codeComplete || inspect.isPending) return;
     setFormError("");
     try {
       const next = await inspect.mutateAsync({ adapter: adapterId, code });
@@ -254,11 +260,13 @@ function ManagedMessengerOnboardingFlow({
                 status={formError ? "error" : "none"}
                 message={formError}
                 onChange={(value) => {
-                  setCode(value.toUpperCase());
+                  setCode(formatPairingCode(value));
                   if (formError) setFormError("");
                 }}
                 inputProps={{
                   autoComplete: "one-time-code",
+                  autoCapitalize: "characters",
+                  spellcheck: false,
                   name: `managed${platform}PairingCode`,
                   onKeyDown: (event) => {
                     if (event.key === "Enter") {
@@ -275,7 +283,7 @@ function ManagedMessengerOnboardingFlow({
               <Button
                 variant="primary"
                 label={inspect.isPending ? "CHECKING" : "CHECK CODE"}
-                disabled={!code.trim() || inspect.isPending}
+                disabled={!codeComplete || inspect.isPending}
                 onClick={() => void inspectCode()}
               />
             </div>

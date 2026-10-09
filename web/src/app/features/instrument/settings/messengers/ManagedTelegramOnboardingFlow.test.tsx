@@ -119,8 +119,9 @@ describe("ManagedTelegramOnboardingFlow", () => {
     await click("I HAVE A CODE");
     expect(mocks.currentStep).toBe(1);
     await act(() => {
-      nodeWithLabel(nodes(), "PAIRING CODE").props.onChange?.("abcd-efgh-jklm");
+      nodeWithLabel(nodes(), "PAIRING CODE").props.onChange?.("abcdefghjklm");
     });
+    expect(nodeWithLabel(nodes(), "PAIRING CODE").props.value).toBe("ABCD-EFGH-JKLM");
     await click("CHECK CODE");
 
     expect(mocks.inspect).toHaveBeenCalledWith({

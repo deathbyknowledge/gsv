@@ -32,7 +32,8 @@ it("opens server installation and requires explicit confirmation of the Discord 
     expect(collectText(nodes().find((node) => node.props.href?.startsWith("https://discord.com/oauth2/authorize")))).toBe("INSTALL GSV IN DISCORD");
     expect(nodes().some((node) => node.props.label === "BOT TOKEN")).toBe(false);
     await click("I HAVE A CODE");
-    await act(() => { nodeWithLabel(nodes(), "PAIRING CODE").props.onChange?.("abcd-efgh-jklm"); });
+    await act(() => { nodeWithLabel(nodes(), "PAIRING CODE").props.onChange?.("abcdefghjklm"); });
+    expect(nodeWithLabel(nodes(), "PAIRING CODE").props.value).toBe("ABCD-EFGH-JKLM");
     await click("CHECK CODE");
     expect(inspect).toHaveBeenCalledWith({ adapter: "discord", code: "ABCD-EFGH-JKLM" });
     expect(confirm).not.toHaveBeenCalled();

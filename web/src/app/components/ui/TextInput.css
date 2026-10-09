@@ -10,22 +10,22 @@
   align-items: center;
   width: 100%;
   gap: 9px;
-  background: #0a0822;
-  border: 1px solid #4a449e;
+  background: var(--panel-2);
+  border: 1px solid var(--border-raised);
   transition: border-color 0.14s, box-shadow 0.14s;
 }
 .gsv-ti-wrap:hover {
-  border-color: #6b62c4;
+  border-color: var(--bracket);
 }
 .gsv-ti-wrap.is-readonly:hover {
-  border-color: #3a3676;
+  border-color: var(--rule-section);
 }
 .gsv-ti-wrap.is-disabled:hover {
-  border-color: #25224d;
+  border-color: var(--rule-inner);
 }
 .gsv-ti-wrap:focus-within {
-  border-color: #b3aeff;
-  box-shadow: 0 0 0 1px rgba(150, 140, 255, 0.22), 0 0 16px rgba(150, 140, 255, 0.14);
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
 }
 .gsv-ti.is-error .gsv-ti-wrap {
   border-color: var(--error, #ff6f8c);
@@ -39,31 +39,31 @@
   background: transparent;
   border: none;
   outline: none;
-  color: #f4f2ff;
+  color: var(--text-hi);
   font-family: inherit;
   letter-spacing: 0.04em;
   padding: 0;
 }
 .gsv-ti-input::placeholder {
-  color: #565199;
+  color: var(--text-dim);
   letter-spacing: 0.08em;
 }
 .gsv-ti-wrap:focus-within .gsv-ti-input {
-  text-shadow: 0 0 9px rgba(150, 140, 255, 0.4);
+  text-shadow: var(--glow-focus);
 }
 .gsv-ti-wrap.is-readonly {
   border-style: dashed;
-  border-color: #3a3676;
+  border-color: var(--rule-section);
 }
 .gsv-ti-wrap.is-readonly .gsv-ti-input {
-  color: #cbc7ff;
+  color: var(--accent-bright);
 }
 .gsv-ti-wrap.is-disabled {
-  border-color: #25224d;
+  border-color: var(--rule-inner);
   opacity: 0.65;
 }
 .gsv-ti-wrap.is-disabled .gsv-ti-input {
-  color: #565199;
+  color: var(--text-dim);
   cursor: not-allowed;
 }
 .gsv-ti-sm .gsv-ti-wrap {
@@ -89,7 +89,7 @@
   /* size from .gsv-label (13px); tracking kept */
   flex: none;
   letter-spacing: 0.1em;
-  color: #7d78b8;
+  color: var(--text-dim);
   white-space: nowrap;
 }
 .gsv-ti-btn {
@@ -102,14 +102,14 @@
   font: inherit;
   /* size + family from .gsv-sublabel (12px); tracking kept */
   letter-spacing: 0.16em;
-  color: #7d78b8;
+  color: var(--text-dim);
   cursor: pointer;
   transition: color 0.12s;
   user-select: none;
 }
 .gsv-ti-btn:not(:disabled):hover,
 .gsv-ti-btn:not(:disabled):focus-visible {
-  color: #cbc7ff;
+  color: var(--accent-bright);
   outline: none;
 }
 .gsv-ti-btn:disabled {
@@ -129,18 +129,18 @@
   border: 0;
   background: transparent;
   cursor: pointer;
-  color: #7d78b8;
+  color: var(--text-dim);
   transition: color 0.12s;
 }
 .gsv-ti-x:hover,
 .gsv-ti-x:focus-visible {
-  color: #ffb3c2;
+  color: var(--error);
   outline: none;
 }
 .gsv-ti-counter {
   /* size from .gsv-sublabel (12px); tracking kept */
   letter-spacing: 0.1em;
-  color: #565199;
+  color: var(--text-dim);
 }
 
 /* Shared field shell — kept in sync with the .gsv-fld block in Select.css /
@@ -161,18 +161,18 @@
   /* size from .gsv-sublabel (12px); tracking + transform kept */
   letter-spacing: 0.22em;
   text-transform: uppercase;
-  color: #b3aee2;
+  color: var(--label);
 }
 .gsv-fld-req {
   /* size from .gsv-sublabel (12px); tracking kept */
-  color: #7d78b8;
+  color: var(--text-dim);
   letter-spacing: 0.14em;
 }
 .gsv-fld-desc {
   /* size from .gsv-paragraph-small (12px); line-height + tracking kept */
   line-height: 1.5;
   letter-spacing: 0.02em;
-  color: #7d78b8;
+  color: var(--text-dim);
   margin-bottom: 10px;
   max-width: 46ch;
 }
@@ -194,30 +194,30 @@
   letter-spacing: 0.1em;
 }
 .gsv-fld.is-error .gsv-fld-msg {
-  color: #ff6f8c;
+  color: var(--error);
 }
 .gsv-fld.is-error .gsv-fld-dot {
-  background: #ff6f8c;
-  box-shadow: 0 0 6px #ff6f8c;
+  background: var(--error);
+  box-shadow: 0 0 6px var(--error);
 }
 .gsv-fld.is-success .gsv-fld-msg {
-  color: #5ef2a0;
+  color: var(--online);
 }
 .gsv-fld.is-success .gsv-fld-dot {
-  background: #5ef2a0;
-  box-shadow: 0 0 6px #5ef2a0;
+  background: var(--online);
+  box-shadow: 0 0 6px var(--online);
 }
 .gsv-fld.is-info .gsv-fld-msg {
-  color: #8f8aff;
+  color: var(--live);
 }
 .gsv-fld.is-info .gsv-fld-dot {
-  background: #8f8aff;
-  box-shadow: 0 0 6px #8f8aff;
+  background: var(--live);
+  box-shadow: 0 0 6px var(--live);
 }
 .gsv-fld.is-warn .gsv-fld-msg {
-  color: #e0a64c;
+  color: var(--warn);
 }
 .gsv-fld.is-warn .gsv-fld-dot {
-  background: #e0a64c;
-  box-shadow: 0 0 6px #e0a64c;
+  background: var(--warn);
+  box-shadow: 0 0 6px var(--warn);
 }

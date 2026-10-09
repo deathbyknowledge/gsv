@@ -133,8 +133,9 @@ describe("ManagedSlackOnboardingFlow", () => {
   it("pairs the Slack author and opens the workspace account detail", async () => {
     await click("I HAVE A CODE");
     await act(() => {
-      nodeWithLabel(nodes(), "PAIRING CODE").props.onChange?.("abcd-efgh-jklm");
+      nodeWithLabel(nodes(), "PAIRING CODE").props.onChange?.("abcd efgh jklm");
     });
+    expect(nodeWithLabel(nodes(), "PAIRING CODE").props.value).toBe("ABCD-EFGH-JKLM");
     await click("CHECK CODE");
 
     expect(mocks.inspect).toHaveBeenCalledWith({

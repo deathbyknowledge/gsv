@@ -131,8 +131,14 @@ describe("ManagedWhatsAppOnboardingFlow", () => {
   it("reveals the profile name and masked number before linking, then opens the account detail", async () => {
     await click("I HAVE A CODE");
     await act(() => {
-      nodeWithLabel(nodes(), "PAIRING CODE").props.onChange?.("abcd-efgh-jklm");
+      nodeWithLabel(nodes(), "PAIRING CODE").props.onChange?.("abcde");
     });
+    expect(nodeWithLabel(nodes(), "PAIRING CODE").props.value).toBe("ABCD-E");
+    expect(nodeWithLabel(nodes(), "CHECK CODE").props.disabled).toBe(true);
+    await act(() => {
+      nodeWithLabel(nodes(), "PAIRING CODE").props.onChange?.("abcdefghjklm");
+    });
+    expect(nodeWithLabel(nodes(), "PAIRING CODE").props.value).toBe("ABCD-EFGH-JKLM");
     await click("CHECK CODE");
 
     expect(mocks.inspect).toHaveBeenCalledWith({

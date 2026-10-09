@@ -9,6 +9,12 @@ import { canConfigure, SETTINGS_MCP_KEY, signInUrl } from "./settingsModel";
 import { SettingsError, useSettingsDirty, type SettingsSectionProps } from "./settingsShared";
 import { parseMcpHeaders, type McpHeaderDraft } from "./mcpHeaders";
 
+const examples = [
+  { name: "Notion", url: "https://mcp.notion.com/mcp" },
+  { name: "Linear", url: "https://mcp.linear.app/mcp" },
+  { name: "Cloudflare Docs", url: "https://docs.mcp.cloudflare.com/mcp" },
+] as const;
+
 export function Mcp({ account, active, onDirty }: SettingsSectionProps) {
   const { client, connected } = useGateway();
   const cache = useQueryClient();
@@ -20,6 +26,7 @@ export function Mcp({ account, active, onDirty }: SettingsSectionProps) {
   const parsedHeaders = parseMcpHeaders(headers);
   const [removeId, setRemoveId] = useState<string | null>(null);
   const canList = canConfigure(account, "sys.mcp.list");
+  const canAdd = canConfigure(account, "sys.mcp.add");
   const servers = useQuery({ queryKey: SETTINGS_MCP_KEY, queryFn: () => loadConsoleMcpServers(client), enabled: connected && active && canList });
   const dirty = name !== "" || url !== "" || transport !== "auto" || headers.some((header) => header.name !== "" || header.value !== "");
   useSettingsDirty(dirty, onDirty);
@@ -43,7 +50,7 @@ export function Mcp({ account, active, onDirty }: SettingsSectionProps) {
   });
   return <section aria-labelledby="settings-mcp-title">
     <h1 id="settings-mcp-title">MCP servers</h1>
-    <p class="settings-intro">Connect tools and resources to your Ship.</p>
+    <p class="settings-intro">Connect tools and resources to your Ship, e.g. Notion pages, Linear issues, or Cloudflare documentation.</p>
     {!canList && <p class="settings-muted">Your account cannot list MCP servers.</p>}
     <SettingsError error={servers.error ?? change.error} />
     {servers.isPending && connected && canList && <LoadingState variant="panel">Loading MCP servers…</LoadingState>}
@@ -67,15 +74,23 @@ export function Mcp({ account, active, onDirty }: SettingsSectionProps) {
       </li>;
     })}</ul>
     {servers.data?.length === 0 && <p>No MCP servers are connected.</p>}
-    {!canConfigure(account, "sys.mcp.add") && <p class="settings-muted">Your account cannot add MCP servers.</p>}
-    {!adding ? <button class="settings-text-action" type="button" disabled={!connected || !canConfigure(account, "sys.mcp.add")} onClick={() => { add.reset(); setAdding(true); }}>add MCP server</button> : <div class="settings-mcp-create">
+    {!canAdd && <p class="settings-muted">Your account cannot add MCP servers.</p>}
+    {!adding ? <>
+      <button class="settings-text-action" type="button" disabled={!connected || !canAdd} onClick={() => { add.reset(); setAdding(true); }}>add MCP server</button>
+      {canAdd && <div class="settings-mcp-examples" aria-label="Example MCP servers">
+        <span>or start with</span>
+        {examples.map((example) => <button key={example.name} class="settings-text-action" type="button" disabled={!connected} onClick={() => {
+          add.reset(); setName(example.name); setUrl(example.url); setTransport("streamable-http"); setHeaders([]); setAdding(true);
+        }}>{example.name}</button>)}
+      </div>}
+    </> : <div class="settings-mcp-create">
     <div class="settings-instruction-heading"><h2>New MCP server</h2><button class="settings-text-action" type="button" disabled={add.isPending} onClick={() => {
       if (dirty && !window.confirm("Discard this new MCP server?")) return;
       setName(""); setUrl(""); setTransport("auto"); setHeaders([]); setAdding(false); add.reset();
     }}>cancel</button></div>
     <SettingsError error={add.error} />
-    <form aria-label="New MCP server" onSubmit={(event) => { event.preventDefault(); if (connected && !add.isPending && canConfigure(account, "sys.mcp.add")) add.mutate(); }}>
-      <fieldset disabled={!connected || !canConfigure(account, "sys.mcp.add") || add.isPending}>
+    <form aria-label="New MCP server" onSubmit={(event) => { event.preventDefault(); if (connected && !add.isPending && canAdd) add.mutate(); }}>
+      <fieldset disabled={!connected || !canAdd || add.isPending}>
         <label>Name<input autoFocus value={name} required onInput={(event) => setName(event.currentTarget.value)} placeholder="My tools" /></label>
         <label>Server URL<input type="url" value={url} required onInput={(event) => setUrl(event.currentTarget.value)} placeholder="https://example.com/mcp" /></label>
         <label>Transport<select value={transport} onChange={(event) => {

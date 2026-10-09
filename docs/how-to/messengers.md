@@ -10,7 +10,8 @@ Your deployment operator enables the WhatsApp, Discord, Telegram, and Slack
 apps offered in **Messengers**. You link your human identity to a space by
 inspecting and confirming a short-lived code while signed in. You do not need
 to create a bot or paste its token into the space. If a code expires, message
-the app again.
+the app again. All four apps show a 12-character code in three groups of four
+(`ABCD-EFGH-JKLM`). The pairing field adds the hyphens as you type or paste.
 
 ## Telegram
 
