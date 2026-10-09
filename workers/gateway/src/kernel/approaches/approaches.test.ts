@@ -27,7 +27,7 @@ const OWNER = { uid: 1000, gid: 1000, gids: [1000], username: "private-login", g
 describe("authenticated first contact", () => {
   afterEach(() => vi.restoreAllMocks());
 
-  it("recovers lost delivery and claim receipts without changing the message, consent or generation", async () => {
+  it.each([false, true])("recovers lost receipts while preserving independent handling choices (sender=%s)", async (shipHandlesMessages) => {
     await withSpaces(async (sender, recipient, profile) => {
       let loseDelivery = true;
       let loseClaim = true;
@@ -35,10 +35,11 @@ describe("authenticated first contact", () => {
         if (path === APPROACH_PATH && loseDelivery) { loseDelivery = false; throw new Error("response lost"); }
         if (path === APPROACH_CLAIM_PATH && loseClaim) { loseClaim = false; throw new Error("response lost"); }
       });
-      const input = sendIntent(profile);
+      const input = { ...sendIntent(profile), shipHandlesMessages };
       const created = (await sender.run((ctx) => handleApproachCreate(input, ctx))).approach;
       expect(created.state).toBe("preparing");
       expect((await sender.run((ctx) => handleApproachCreate(input, ctx))).approach.id).toBe(created.id);
+      await expect(sender.run((ctx) => handleApproachCreate({ ...input, shipHandlesMessages: !shipHandlesMessages }, ctx))).rejects.toThrow("different content");
       expect(await sender.run((ctx) => ctx.federation.listInvites(OWNER.uid, true))).toEqual([]);
       expect(await sender.run((ctx) => ctx.federation.outstandingInviteCount(OWNER.uid))).toBe(0);
       await sender.run(processApproachMaintenance);
@@ -63,7 +64,7 @@ describe("authenticated first contact", () => {
         return response.status;
       });
       expect(leakedStatus).toBe(404);
-      const decision = (await recipient.run((ctx) => handleApproachDecide({ approachId: request.id, expectedRevision: request.revision, decision: "accept" }, ctx))).approach;
+      const decision = (await recipient.run((ctx) => handleApproachDecide({ approachId: request.id, expectedRevision: request.revision, decision: "accept", shipHandlesMessages: !shipHandlesMessages }, ctx))).approach;
       await recipient.run(processApproachMaintenance);
       const claimed = (await sender.run((ctx) => ctx.approaches.get(created.id)))!;
       expect(claimed.summary.state).toBe("accepting");
@@ -83,6 +84,8 @@ describe("authenticated first contact", () => {
       const peer = (await recipient.run((ctx) => ctx.approaches.get(request.id)))!;
       expect((await recipient.run((ctx) => ctx.federation.get(peer.contactId)))?.sharedSecret).toBe((await sender.run((ctx) => ctx.federation.get(claimed.contactId)))?.sharedSecret);
       expect((await recipient.run((ctx) => ctx.federation.get(peer.contactId)))?.preferences.saved).toBe(false);
+      expect((await sender.run((ctx) => ctx.federation.get(claimed.contactId)))?.preferences.shipHandlesMessages).toBe(shipHandlesMessages);
+      expect((await recipient.run((ctx) => ctx.federation.get(peer.contactId)))?.preferences.shipHandlesMessages).toBe(!shipHandlesMessages);
       for (const [ctx, id] of [[sender, created.id], [recipient, request.id]] as const) {
         const saved = (await ctx.run((context) => context.approaches.get(id)))!;
         expect(saved.setupToken).toBeNull();

@@ -36,6 +36,10 @@ import { SHELL_KEYS } from "../shared/shellKeys";
 import { useDismissOnOutsideClick } from "../shared/useDismissOnOutsideClick";
 import { ActivityWorking } from "./ActivityWorking";
 import { ApprovalCard } from "../shared/ApprovalCard";
+import type { ContactReplies } from "../people/useContactReplies";
+import { PeopleActivity } from "../people/PeopleActivity";
+import type { PeopleActivity as PeopleActivityState } from "../people/usePeopleActivity";
+import type { PeopleOpenRequest } from "../people/People";
 import { DelegatedApprovals } from "./DelegatedApprovals";
 import { useZenScroll } from "./useZenScroll";
 import { useZenProcess } from "./useZenProcess";
@@ -82,6 +86,11 @@ export type ZenProps = {
   /** A specific process to show instead of the ship, for a helper opened from Fleet. */
   pid?: string | null;
   onDraftChange?: (dirty: boolean) => void;
+  /** Ship's contact notices and the replies typed under them, owned above this keyed view; absent for a helper. */
+  contactReplies?: ContactReplies;
+  peopleActivity?: PeopleActivityState;
+  /** Open a contact's conversation in People, for a message that arrived while here. */
+  onPeopleActivity?: (request?: PeopleOpenRequest) => void;
 };
 
 const HISTORY_LIMIT = 400;
@@ -310,7 +319,7 @@ function NoteMoment({
   );
 }
 
-export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, onPrefillUsed, pid: pidProp, onDraftChange }: ZenProps) {
+export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, onPrefillUsed, pid: pidProp, onDraftChange, contactReplies, peopleActivity, onPeopleActivity }: ZenProps) {
   const active = useViewActive();
   const browserControl = useBrowserControl();
   const { client, connected } = useGateway();
@@ -322,6 +331,7 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
   const config = useConsoleConfig();
   const accounts = useConsoleAccounts();
   const viewer = accounts.data?.find((account) => account.relation === "self");
+
   const timeZone = ownerTimeZone(config.data, viewer?.uid);
   const [today, setToday] = useState(Date.now);
   useEffect(() => {
@@ -347,7 +357,7 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
   const fileInput = useRef<HTMLInputElement>(null);
   const dragDepth = useRef(0);
   const [draggingFiles, setDraggingFiles] = useState(false);
-  const dirty = hasDraft || attachments.length > 0 || outbox.messages.length > 0;
+  const dirty = hasDraft || attachments.length > 0 || outbox.messages.length > 0 || (contactReplies?.dirty ?? false);
   useLayoutEffect(() => { onDraftChange?.(dirty); }, [dirty, onDraftChange]);
   useLayoutEffect(() => () => onDraftChange?.(false), [onDraftChange]);
   useEffect(() => {
@@ -1030,6 +1040,10 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
       </div>
 
       <div class="zen-bottom">
+        {/* contact messages that landed while the person was here, owned by Instrument so a helper switch keeps them */}
+        {/* a helper's view has no contact notices */}
+        {/* a new contact notice sits under the transcript; keep it in view the way an approval is */}
+        {peopleActivity && contactReplies && onPeopleActivity && <PeopleActivity activity={peopleActivity} replies={contactReplies} account={viewer} onOpen={onPeopleActivity} />}
         {!pidProp && <BrowserRequests />}
         {pid ? <DelegatedApprovals pid={pid} onFleet={onFleet} placeLabelFor={(target) => placeLabel(target, places)} /> : null}
 

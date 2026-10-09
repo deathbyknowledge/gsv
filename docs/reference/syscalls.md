@@ -696,7 +696,7 @@ shared account system. Each installation keeps its own conversation, request,
 resource grants, delivery receipts, and Process state.
 
 Pairing is explicit and human-controlled. `contact.invite.create` returns a
-short-lived, one-use code; the other signed-in person accepts it with
+short-lived, one-use code and a shareable `url`; the other signed-in person accepts either with
 `contact.invite.accept`. The Kernel derives the remote installation and subject
 from the signed exchange. Callers never choose a remote local uid, Process,
 conversation, filesystem path, or installation id.
@@ -705,16 +705,27 @@ Trust changes may be initiated by the signed-in human or by that owner's exact
 canonical Ship Process. Delegated work Processes and remote callers cannot
 create, accept, cancel, or revoke Contact trust.
 
+`contact.invite.create` and `contact.invite.accept` accept an optional
+`shipHandlesMessages` boolean for the local owner's new contact. Setting it
+requires the signed-in owner or their canonical Ship with `contact.preferences.update`.
+Ship must explicitly supply the owner's choice; omission is rejected for Processes.
+The Kernel retains it with the invitation or acceptance attempt and applies it when
+that contact generation activates. Older human clients may omit it to keep automatic
+handling off. Replaying a completed acceptance does not overwrite later
+preference changes. `approach.create` and an `approach.decide` acceptance support
+the same local choice, retained through asynchronous pairing and retries. It is
+never supplied by the remote person, and activation admits no Ship work itself.
+
 | Syscall | Behavior |
 |---|---|
 | `contact.identity` | Returns this installation's signed Ship document and the caller's local federation subject. |
-| `contact.invite.create` | Creates a one-use pairing code, optionally with a shorter expiry. |
-| `contact.invite.accept` | Verifies and consumes a remote invite, creates both contact records, and ensures the local Contact conversation. |
+| `contact.invite.create` | Creates a one-use pairing code and shareable link, with an optional expiry of up to seven days. |
+| `contact.invite.accept` | Accepts a link or code, verifies and consumes the remote invite, creates both contact records, and ensures the local Contact conversation. |
 | `contact.invite.list` | Lists invitation lifecycle metadata without exposing recoverable invitation secrets. |
 | `contact.invite.cancel` | Cancels one unaccepted invitation. |
 | `contact.list` | Lists the caller's active contacts; `includeRevoked` includes terminal relationships. |
 | `contact.alias.set` | Sets or clears the owner's local name for a Contact without changing or federating its authenticated remote identity. |
-| `contact.preferences.update` | Human-only, revision-checked changes to saved, muted and standing Ship handling preferences. |
+| `contact.preferences.update` | Owner or canonical Ship, revision-checked changes to saved, muted and standing Ship handling preferences. |
 | `contact.block.set` | Human-only block or unblock of one remote actor; blocking also ends its active connection and pending first-contact requests. |
 | `contact.block.list` | Reads private blocks, optionally filtered by `actor`, with cursor paging. |
 | `contact.notice.dismiss` | Dismisses the one-time notice that global contact auto-wake has been retired. |
@@ -823,7 +834,7 @@ type ContactSyscalls = {
   };
   "contact.invite.create": {
     args: { expiresInSeconds?: number };
-    result: { inviteId: string; code: string; expiresAtMs: number };
+    result: { inviteId: string; code: string; url?: string; expiresAtMs: number };
   };
   "contact.invite.accept": {
     args: { code: string };
@@ -1030,7 +1041,7 @@ actor independently of whether a contact was ever accepted. Unblocking does not 
 ```ts
 type ConversationInboxSyscalls = {
   "conversation.inbox": {
-    args: { archived?: boolean; before?: { updatedAt: number; conversationId: string }; limit?: number };
+    args: { archived?: boolean; attentionOnly?: boolean; before?: { updatedAt: number; conversationId: string }; limit?: number };
     result: { entries: ConversationInboxEntry[]; next?: { updatedAt: number; conversationId: string } };
   };
   "conversation.view.get": {
@@ -1045,7 +1056,9 @@ type ConversationInboxSyscalls = {
 ```
 
 `conversation.inbox` lists accepted contact conversations, optionally filtered by `archived`, with
-`before` and `limit` paging. Entries contain the contact ID, conversation, latest preview, unread
+`before` and `limit` paging. `attentionOnly: true` selects unread conversations with active,
+unmuted, unblocked contacts before pagination. This uses the same owner-private read state
+as the ordinary inbox. Entries contain the contact ID, conversation, latest preview, unread
 state and private view state. `conversation.view.get` reads one entry; `conversation.view.update`
 advances `readThroughSequence` monotonically or sets `archived`. Both use `conversationId`.
 Changing `archived` requires `expectedRevision` from the current view to avoid overwriting a newer change.

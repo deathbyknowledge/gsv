@@ -12,6 +12,38 @@ import { KERNEL_MIGRATIONS, KERNEL_SCHEMA_COMPONENT, runKernelSqlMigrations } fr
 const OWNER = { uid: 1000, gid: 1000, gids: [1000], username: "person", home: "/home/person", cwd: "/home/person" };
 
 describe("private inbox state", () => {
+  it("selects unread attention before pagination and respects private read, mute, block and connection state", async () => {
+    await runWithRealKernelSql((sql, storage) => {
+      const { ctx, registry, contact } = fixture(storage);
+      registry.recordContactMessage({ id: "unread", conversationId: contact.conversationId, sequence: 1,
+        author: { kind: "contact", contactId: contact.id, shipId: contact.remoteShipId, subjectId: contact.remoteSubject.id, displayName: "Remote" },
+        text: "Waiting while you were away", origin: { kind: "federation", contactId: contact.id, deliveryId: "delivery:one" }, createdAt: Date.now(),
+      }, false);
+      const newer = ctx.federation.activateContact({ ...contact, remoteShipId: "ship:newer", remoteSubject: { id: "subject:newer", displayName: "Newer" },
+        generation: "generation:newer", threadId: "thread:newer" });
+      registry.ensureContact(1000, "Newer", newer.conversationId);
+      registry.recordContactMessage({ id: "outgoing", conversationId: newer.conversationId, sequence: 1,
+        author: { kind: "user", uid: 1000 }, text: "An already-read, more recent conversation", origin: { kind: "client" }, createdAt: Date.now() + 1000,
+      }, false);
+      const waiting = () => handleConversationInbox({ attentionOnly: true, limit: 1 }, ctx).entries;
+      expect(waiting().map((entry) => entry.contactId)).toEqual([contact.id]);
+      expect(handleConversationInbox({ attentionOnly: true }, { ...ctx, callerOwnerUid: 1002 }).entries).toEqual([]);
+      sql.exec("UPDATE federation_contacts SET muted = 1 WHERE contact_id = ?", contact.id);
+      expect(waiting()).toEqual([]);
+      sql.exec("UPDATE federation_contacts SET muted = 0 WHERE contact_id = ?", contact.id);
+      ctx.federation.setActorBlock(1000, { shipId: contact.remoteShipId, subjectId: contact.remoteSubject.id }, true);
+      expect(waiting()).toEqual([]);
+      ctx.federation.setActorBlock(1000, { shipId: contact.remoteShipId, subjectId: contact.remoteSubject.id }, false);
+      expect(waiting()).toHaveLength(1);
+      sql.exec("UPDATE federation_contacts SET state = 'revoked' WHERE contact_id = ?", contact.id);
+      expect(waiting()).toEqual([]);
+      sql.exec("UPDATE federation_contacts SET state = 'active' WHERE contact_id = ?", contact.id);
+      handleConversationViewUpdate({ conversationId: contact.conversationId, readThroughSequence: 1 }, ctx);
+      expect(waiting()).toEqual([]);
+      expect(handleConversationInbox({}, ctx).entries).toHaveLength(2);
+    });
+  });
+
   it("merges read positions, fences archive decisions, and keeps muted new messages archived", async () => {
     await runWithRealKernelSql((sql, storage) => {
       const { ctx, registry, contact } = fixture(storage);

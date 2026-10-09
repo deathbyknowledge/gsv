@@ -1,13 +1,14 @@
 import type { ApproachSummary } from "@humansandmachines/gsv/protocol";
 import { useMutation, useQueryClient } from "@tanstack/preact-query";
 import { useQuery } from "../../../services/navigation/viewQueries";
-import { useState } from "preact/hooks";
+import { useEffect, useRef, useState } from "preact/hooks";
 import { useGateway } from "../../../services/gateway/GatewayProvider";
 import type { ConsoleAccount } from "../../../domain/system/consoleModels";
 import { canConfigure } from "../settings/settingsModel";
 import { INSTRUMENT_APPROACHES_KEY, INSTRUMENT_CONTACT_BLOCKS_KEY, instrumentContactConversationKey } from "../wire/queryKeys";
 import { LoadingState } from "../../../components/ui/Spinner";
 import { approachStatus, requestMayRetry } from "./peopleModel";
+import { ContactHandlingChoice } from "./ContactHandlingChoice";
 
 export function MessageRequest({ request, account, onOpen }: {
   request: ApproachSummary; account: ConsoleAccount | undefined; onOpen: (contactId: string) => void;
@@ -15,6 +16,14 @@ export function MessageRequest({ request, account, onOpen }: {
   const { client, connected } = useGateway();
   const cache = useQueryClient();
   const [blockConfirm, setBlockConfirm] = useState(false);
+  const [shipHandlesMessages, setShipHandlesMessages] = useState<boolean | null>(null);
+  const opened = useRef(request.state === "accepted");
+  useEffect(() => {
+    if (!opened.current && request.state === "accepted" && request.contactId) {
+      opened.current = true;
+      onOpen(request.contactId);
+    }
+  }, [request.state, request.contactId, onOpen]);
   const refresh = () => cache.invalidateQueries({ queryKey: INSTRUMENT_APPROACHES_KEY });
   const allowed = (name: string) => connected && !!account && canConfigure(account, name);
   const history = useQuery({
@@ -22,7 +31,11 @@ export function MessageRequest({ request, account, onOpen }: {
     enabled: allowed("conversation.history") && request.messageSequence !== undefined,
     queryFn: () => client.conversation.history({ conversationId: request.conversationId, beforeSequence: request.messageSequence! + 1, limit: 1 }),
   });
-  const decide = useMutation({ mutationFn: (decision: "accept" | "decline" | "withdraw") => client.approach.decide({ approachId: request.id, expectedRevision: request.revision, decision }), onSuccess: refresh });
+  const decide = useMutation({ mutationFn: (decision: "accept" | "decline" | "withdraw") => {
+    if (decision === "accept" && shipHandlesMessages === null) throw new Error("Choose who should handle new messages");
+    return client.approach.decide({ approachId: request.id, expectedRevision: request.revision, decision,
+      shipHandlesMessages: decision === "accept" ? shipHandlesMessages! : undefined });
+  }, onSuccess: refresh });
   const retry = useMutation({ mutationFn: () => client.approach.retry({ approachId: request.id, expectedRevision: request.revision }), onSuccess: refresh });
   const blockedQuery = useQuery({
     queryKey: [...INSTRUMENT_CONTACT_BLOCKS_KEY, request.peer], enabled: allowed("contact.block.list"),
@@ -48,7 +61,8 @@ export function MessageRequest({ request, account, onOpen }: {
     {text !== undefined && <article class="people-first-message"><p>{text}</p><time dateTime={new Date(request.createdAtMs).toISOString()}>{new Date(request.createdAtMs).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })}</time></article>}
     {request.state === "preparing" && <LoadingState>Sending…</LoadingState>}
     {canDecide && request.direction === "incoming" && <div class="people-decision">
-      <div class="people-actions"><button class="ibtn is-primary" disabled={!allowed("approach.decide") || pending || request.state !== "pending"} onClick={() => decide.mutate("accept")}>{decide.isPending && decide.variables === "accept" ? "accepting…" : "accept conversation"}</button><button class="people-action" disabled={!allowed("approach.decide") || pending} onClick={() => decide.mutate("decline")}>decline</button></div>
+      <ContactHandlingChoice value={shipHandlesMessages} disabled={pending || !allowed("contact.preferences.update")} onChange={setShipHandlesMessages} />
+      <div class="people-actions"><button class="ibtn is-primary" disabled={!allowed("approach.decide") || pending || request.state !== "pending" || shipHandlesMessages === null} onClick={() => decide.mutate("accept")}>{decide.isPending && decide.variables === "accept" ? "accepting…" : "accept conversation"}</button><button class="people-action" disabled={!allowed("approach.decide") || pending} onClick={() => decide.mutate("decline")}>decline</button></div>
       <p class="people-note">Declining is private.</p>
     </div>}
     {canDecide && request.direction === "outgoing" && <div class="people-decision">

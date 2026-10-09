@@ -1,6 +1,7 @@
 import { defineCommand } from "just-bash";
 import type { ExecResult } from "just-bash";
 import type {
+  ContactInviteCreateArgs,
   ContactRequestCreateArgs,
   ContactRequestState,
   ContactRequestUpdateArgs,
@@ -20,6 +21,7 @@ import {
   handleContactRequestUpdate,
   handleContactRevoke,
 } from "../../../kernel/federation";
+import { handleContactPreferencesUpdate } from "../../../kernel/federation/preferences";
 import {
   parseDurationMs,
   requireCommandCapability,
@@ -73,6 +75,16 @@ async function runContactCommand(args: string[], ctx: KernelContext): Promise<Ex
       }, ctx));
     case "invite":
       return await manageInvite(rest, ctx);
+    case "handling": {
+      requireCommandCapability(ctx, "contact.preferences.update");
+      requireArgumentCount(rest, 4, "handling requires: contact handling CONTACT_ID manual|ship --revision N");
+      const expectedRevision = Number(rest[3]);
+      if (rest[2] !== "--revision" || !Number.isSafeInteger(expectedRevision) || expectedRevision < 1) {
+        throw new Error("handling requires --revision with the current preferences revision from contact list --json");
+      }
+      return json(await handleContactPreferencesUpdate({ contactId: rest[0], expectedRevision,
+        patch: { shipHandlesMessages: parseHandling(rest[1]) } }, ctx));
+    }
     case "revoke":
       requireCommandCapability(ctx, "contact.revoke");
       requireArgumentCount(rest, 1, "revoke requires: contact revoke CONTACT_ID");
@@ -106,20 +118,12 @@ async function manageInvite(args: string[], ctx: KernelContext): Promise<ExecRes
   const [action, ...rest] = args;
   if (action === "create") {
     requireCommandCapability(ctx, "contact.invite.create");
-    let expiresInSeconds: number | undefined;
-    for (let index = 0; index < rest.length; index += 1) {
-      const option = rest[index];
-      if (option !== "--expires") throw new Error(`unexpected invite option: ${option}`);
-      index += 1;
-      const durationMs = parseDurationMs(requireShellOptionValue(rest[index], option));
-      expiresInSeconds = Math.ceil(durationMs / 1_000);
-    }
-    return json(await handleContactInviteCreate({ expiresInSeconds }, ctx));
+    return json(await handleContactInviteCreate(parseInviteOptions(rest, true), ctx));
   }
   if (action === "accept") {
     requireCommandCapability(ctx, "contact.invite.accept");
-    requireArgumentCount(rest, 1, "invite accept requires: contact invite accept CODE");
-    return json(await handleContactInviteAccept({ code: rest[0] }, ctx));
+    const code = requireShellOptionValue(rest[0], "invite accept");
+    return json(await handleContactInviteAccept({ code, ...parseInviteOptions(rest.slice(1), false) }, ctx));
   }
   if (action === "list") {
     requireCommandCapability(ctx, "contact.invite.list");
@@ -144,6 +148,26 @@ async function manageInvite(args: string[], ctx: KernelContext): Promise<ExecRes
     return json(handleContactInviteCancel({ inviteId: rest[0] }, ctx));
   }
   throw new Error("invite requires create, accept, list, or cancel");
+}
+
+function parseHandling(value: string): boolean {
+  if (value === "manual") return false;
+  if (value === "ship") return true;
+  throw new Error("handling must be manual or ship");
+}
+
+function parseInviteOptions(args: string[], allowExpiry: boolean): ContactInviteCreateArgs {
+  let shipHandlesMessages: boolean | undefined;
+  let expiresInSeconds: number | undefined;
+  for (let index = 0; index < args.length; index += 2) {
+    const option = args[index];
+    const value = requireShellOptionValue(args[index + 1], option);
+    if (option === "--handling" && shipHandlesMessages === undefined) shipHandlesMessages = parseHandling(value);
+    else if (option === "--expires" && allowExpiry && expiresInSeconds === undefined) expiresInSeconds = Math.ceil(parseDurationMs(value) / 1_000);
+    else throw new Error(`unexpected or repeated invite option: ${option}`);
+  }
+  if (shipHandlesMessages === undefined) throw new Error("Ask the owner who should handle new messages, then use --handling manual|ship");
+  return { shipHandlesMessages, ...(expiresInSeconds !== undefined ? { expiresInSeconds } : undefined) };
 }
 
 async function manageRequest(args: string[], ctx: KernelContext): Promise<ExecResult> {
@@ -280,16 +304,20 @@ function contactUsage(): string {
     "  contact identity",
     "  contact list [--all] [--json]",
     "  contact alias CONTACT_ID NAME|--clear",
-    "  contact invite create [--expires DURATION]",
-    "  contact invite accept CODE",
+    "  contact invite create --handling manual|ship [--expires DURATION]",
+    "  contact invite accept LINK_OR_CODE --handling manual|ship",
     "  contact invite list [--all] [--json]",
     "  contact invite cancel INVITE_ID",
+    "  contact handling CONTACT_ID manual|ship --revision N",
     "  contact revoke CONTACT_ID",
     "  contact request list [--contact CONTACT_ID] [--all] [--json]",
     "  contact request create --contact CONTACT_ID --kind KIND --title TITLE [--details JSON] [--delivery-id ID]",
     "  contact request update REQUEST_ID --state STATE [--revision N] [--details JSON] [--delivery-id ID]",
     "",
-    "Pairing and revocation require the signed-in human or their canonical Ship. Send ordinary contact messages with",
+    "Ask the owner who should handle new messages unless they already chose. manual leaves messages for the owner;",
+    "ship lets Ship handle future incoming messages. The choice affects only this owner's side and can change later.",
+    "Share the returned invitation url. Use contact invite list to check acceptance; creating a link is not a connection.",
+    "Pairing, handling changes and revocation require the signed-in human or their canonical Ship. Send ordinary contact messages with",
     "`message send --to CONTACT_ID --message TEXT --also`.",
     "",
   ].join("\n");

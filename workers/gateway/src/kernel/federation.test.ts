@@ -26,6 +26,7 @@ import type {
 import {
   handleContactAliasSet,
   handleContactInviteCancel,
+  handleContactInviteCreate,
   handleContactInviteAccept,
   handleContactNoticeDismiss,
   handleContactRequestCreate,
@@ -36,6 +37,7 @@ import {
   processFederationDelivery,
 } from "./federation";
 import * as personalController from "./personal-controller";
+import { contactHandlingChoice } from "./federation/authority";
 
 const OWNER: ProcessIdentity = {
   uid: 1000,
@@ -49,6 +51,22 @@ const OWNER: ProcessIdentity = {
 describe("federation outbound boundary", () => {
   afterEach(() => {
     vi.restoreAllMocks();
+  });
+
+  it("requires the owner's handling choice and preference authority from their canonical Ship", async () => {
+    const limited = focusedContext({});
+    const ship = focusedContext({ processId: "proc:ship", peer: testPeer({ account: OWNER, calls: ["*"] }),
+      procs: focusedFixture({ get: () => ({ isPersonalController: true, ownerUid: OWNER.uid }) }) });
+    await expect(handleContactInviteCreate({ shipHandlesMessages: true }, limited)).rejects.toThrow("contact.preferences.update");
+    await expect(handleContactInviteAccept({ code: "unused", shipHandlesMessages: true }, limited)).rejects.toThrow("contact.preferences.update");
+    expect(contactHandlingChoice(true, ship)).toBe(true);
+    expect(contactHandlingChoice(false, ship)).toBe(false);
+    await expect(handleContactInviteCreate({}, ship)).rejects.toThrow("Ask the owner");
+    await expect(handleContactInviteAccept({ code: "unused" }, ship)).rejects.toThrow("Ask the owner");
+    expect(() => contactHandlingChoice(true, { ...ship, peer: limited.peer })).toThrow("contact.preferences.update");
+    const crew = { ...ship, procs: focusedFixture<KernelContext["procs"]>({ get: () => ({ isPersonalController: false, ownerUid: OWNER.uid }) }) };
+    await expect(handleContactInviteCreate({ shipHandlesMessages: true }, crew)).rejects.toThrow("signed-in human or their Ship");
+    await expect(handleContactInviteAccept({ code: "unused", shipHandlesMessages: true }, crew)).rejects.toThrow("signed-in human or their Ship");
   });
 
   it.each([

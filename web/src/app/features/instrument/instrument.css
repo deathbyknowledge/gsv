@@ -109,6 +109,7 @@
 }
 .instrument-view { min-width: 0; min-height: 0; height: 100%; }
 .instrument-view[hidden] { display: none; }
+.instrument-people-waiting { color: var(--accent); margin-left: 4px; font-size: 15px; line-height: 1; }
 
 /* ---------- shared chrome ---------- */
 .instrument-top {
@@ -270,9 +271,12 @@
 .prompt-line textarea:focus {
   text-shadow: var(--glow-focus);
 }
-.prompt-line textarea::placeholder {
-  color: #565199;
+.instrument :is(input, textarea)::placeholder {
+  color: var(--placeholder);
+  font-family: var(--gsv-font-mono);
+  font-weight: 400;
   letter-spacing: 0.06em;
+  opacity: 1;
 }
 .prompt-hint {
   font-size: 11px;
@@ -396,7 +400,7 @@
 .instrument.is-light .fleet .dot,
 .instrument.is-light .fleet-block h2 i { box-shadow: none; }
 .instrument.is-light .zen-approval { box-shadow: none; }
-.instrument.is-light .prompt-line textarea::placeholder { color: var(--faint); }
+.instrument.is-light { --placeholder: var(--faint); }
 
 /* ---------- narrow viewports, which is also what 200% zoom is ---------- */
 @container instrument (max-width: 1280px) {

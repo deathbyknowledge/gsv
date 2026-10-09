@@ -37,6 +37,7 @@ export function RelationshipPreferences({ contact, account, controls }: { contac
 
   return <section class="people-relationship" aria-label="Conversation preferences">
     {preferences && <div class="people-settings">
+      <p class="people-note">“Automatically handle new messages” lets Ship read and respond for you. When it’s off, replies to tasks you assign can still reach Ship until the task is finished.</p>
       <label class="people-setting"><span>Mute conversation<small>New messages won’t bring an archived conversation back.</small></span><input type="checkbox" role="switch" checked={preferences.muted} disabled={disabled} onChange={(event) => controls.update({ muted: event.currentTarget.checked })} /></label>
     </div>}
     <div class="people-contact-actions">

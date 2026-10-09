@@ -1,5 +1,4 @@
 import { MAX_FEDERATION_MESSAGE_RESOURCES, type ContactSummary, type OriginMessageRef } from "@humansandmachines/gsv/protocol";
-import { useInfiniteQuery } from "../../../services/navigation/viewQueries";
 import { useQueries } from "@tanstack/preact-query";
 import { useViewActive } from "../../../services/navigation/ViewActivity";
 import { useLayoutEffect, useRef } from "preact/hooks";
@@ -8,14 +7,14 @@ import { useGateway } from "../../../services/gateway/GatewayProvider";
 import { MAX_STAGED_RESOURCE_BYTES } from "../../../services/gateway/stagedResources";
 import type { ConsoleAccount } from "../../../domain/system/consoleModels";
 import { canConfigure } from "../settings/settingsModel";
-import { instrumentContactConversationKey, instrumentContactDeliveriesKey } from "../wire/queryKeys";
+import { instrumentContactDeliveriesKey } from "../wire/queryKeys";
 import { ZenDraftAttachment, ZenMedia } from "../zen/ZenMedia";
 import { zenAttachment } from "../zen/zenAttachments";
 import type { ContactDraft } from "./useContactDrafts";
 import { useConversationReadPosition } from "./useConversationReadPosition";
+import { useContactHistory } from "./useContactHistory";
 import { MessageDelivery } from "./MessageDelivery";
-
-const NO_SEQUENCE: number | null = null;
+import "../shared/senderBadge.css";
 
 export type ContactComposerProps = {
   draft: ContactDraft;
@@ -41,17 +40,7 @@ export function ContactConversation({ contact, account, draft, onDraft, onSend, 
   const scroll = useRef<HTMLDivElement>(null);
   const follow = useRef(true);
   const olderHeight = useRef<number | null>(null);
-  const history = useInfiniteQuery({
-    queryKey: instrumentContactConversationKey(contact.conversationId),
-    enabled: connected && mayRead,
-    initialPageParam: NO_SEQUENCE,
-    queryFn: ({ pageParam }) => client.conversation.history({
-      conversationId: contact.conversationId,
-      limit: 50,
-      beforeSequence: pageParam ?? undefined,
-    }),
-    getNextPageParam: (page) => page.hasMore ? page.messages[0]?.sequence : undefined,
-  });
+  const history = useContactHistory(contact.conversationId, mayRead);
   const messages = history.data?.pages.slice().reverse().flatMap((page) => page.messages) ?? [];
   useConversationReadPosition(contact.conversationId, scroll, messages.at(-1)?.sequence ?? 0, !!account && account.uid >= 1000 && canConfigure(account, "conversation.view.update"));
   const pendingMessages = draft.sent.filter((entry) => !entry.messageId || !messages.some((message) => message.id === entry.messageId));
@@ -115,12 +104,12 @@ export function ContactConversation({ contact, account, draft, onDraft, onSend, 
         const authorName = message.author.kind === "contact" ? message.author.displayName : message.author.kind === "process" ? "GSV" : "you";
         const authorKind = incoming ? (provenance === "process" ? "contact-ship" : provenance === "human" ? "contact-human" : "contact") : message.author.kind === "process" ? "your-ship" : "you";
         return <article key={message.id} data-message-sequence={message.sequence} data-author={authorKind} class="people-message">
-        <header><span class="people-message-author">{authorName}{provenance && <span class="people-message-badge">{provenance === "process" && <span class="people-message-dot" />}{provenance === "process" ? "GSV" : "PERSON"}</span>}</span><time dateTime={new Date(message.createdAt).toISOString()}>{new Date(message.createdAt).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}</time></header>
+        <header><span class="people-message-author">{authorName}{provenance && <span class="sender-badge">{provenance === "process" && <span class="sender-dot" />}{provenance === "process" ? "GSV" : "PERSON"}</span>}</span><time dateTime={new Date(message.createdAt).toISOString()}>{new Date(message.createdAt).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}</time></header>
         {message.social?.replyTo && <blockquote class="people-reply-quote">{messages.find((candidate) => sameReference(candidate.social?.reference, message.social!.replyTo!))?.text.slice(0, 240) || "Reply to an earlier message"}</blockquote>}
         {message.text && <p>{message.text}</p>}
         {message.media?.map((media, index) => <ZenMedia key={index} media={media} processId={message.processId ?? ""} onReady={followLatest} />)}
         <footer class="people-message-actions">
-          {message.social && contact.protocol?.features.includes("messages") && <button class="fleet-text-action people-message-reply" type="button" disabled={disabled} onClick={() => onDraft({ reply: { reference: message.social!.reference, author: message.author.kind === "contact" ? message.author.displayName : "you", preview: message.text.slice(0, 200) } })}>reply</button>}
+          {message.social && <button class="fleet-text-action people-message-reply" type="button" disabled={disabled} onClick={() => onDraft({ reply: { reference: message.social!.reference, author: message.author.kind === "contact" ? message.author.displayName : "you", preview: message.text.slice(0, 200) } })}>reply</button>}
           {message.author.kind !== "contact" && <MessageDelivery delivery={deliveryBySequence.get(message.sequence)} mayRetry={!!account && canConfigure(account, "contact.delivery.retry")} />}
         </footer>
       </article>;

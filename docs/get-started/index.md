@@ -71,6 +71,13 @@ The web console is called **Instrument** and has five views:
 
 The Settings sidebar highlights the section you're viewing.
 
+Open **People** to try making plans or working together with someone on GSV.
+**connect** creates a shareable invitation; accepting it opens your conversation.
+You can talk directly or choose **ask Ship** to prepare a request in your Ship chat.
+A dot beside **people** marks waiting activity, and Zen shows unread conversations
+and message requests above the prompt, including after a reload. See
+[Contact people](/how-to/contact-people) for the full flow.
+
 If your operator enables cloud browsers, Fleet also offers **start browser**.
 You can [sign in and save website logins](/how-to/cloud-browsers) there so Ship
 can use those sites while your personal devices are offline.

@@ -121,10 +121,11 @@ message send --to DESTINATION [--message TEXT] [--attach PATH]... [--mime TYPE] 
 contact identity
 contact list [--all] [--json]
 contact alias CONTACT_ID NAME|--clear
-contact invite create [--expires DURATION]
-contact invite accept CODE
+contact invite create --handling manual|ship [--expires DURATION]
+contact invite accept LINK_OR_CODE --handling manual|ship
 contact invite list [--all] [--json]
 contact invite cancel INVITE_ID
+contact handling CONTACT_ID manual|ship --revision N
 contact revoke CONTACT_ID
 contact request list [--contact CONTACT_ID] [--all] [--json]
 contact request create --contact CONTACT_ID --kind KIND --title TITLE [--details JSON] [--delivery-id ID]
@@ -313,12 +314,21 @@ automatic retry. An outcome that may have reached the provider is reported as
 `sent=false`, `delivery_confirmed=false`, and `delivery_state=ambiguous`.
 
 `contact` manages relationships with people on other GSV installations.
-`contact invite create` produces a short-lived one-use code; the other person
-accepts that code while signed in to their own GSV. Pairing and revocation may
+`contact invite create --handling manual|ship` returns a short-lived one-use code and a shareable `url`;
+the other person accepts either while signed in to their own GSV. The default
+lifetime is one hour; `--expires` accepts up to seven days. Pairing and revocation may
 be performed by the signed-in human or their canonical Ship. `contact list` prints the opaque contact id accepted
 by `message send --to`; `message destinations` exposes the same active contacts
 alongside messaging endpoints. `contact alias` changes only the local display
 name; the remote Ship's authenticated identity remains visible and unchanged.
+
+Creating and accepting through Shell require `--handling manual|ship`. Ship asks
+for the owner's choice unless it was already given: `manual` leaves new messages
+for the person, while `ship` enables automatic handling. Each side chooses
+independently. To change an existing contact, read `preferences.revision` from
+`contact list --json` and use `contact handling CONTACT_ID manual|ship --revision N`.
+The Kernel accepts changes from the owner or their canonical Ship, keeps capability
+and revision checks, and starts no work merely because the setting changed.
 
 `contact invite list --all` exposes retained invitation lifecycle metadata but
 never a recoverable code. `message history --with contact:...` reads the Contact
@@ -328,7 +338,7 @@ remote confirmation; use `message delivery show` with its delivery id.
 When Ship contacts someone for an existing task, pass `--responsibility ID` to
 associate replies with that open Ship responsibility. A reply continues the same
 work without enabling permanent handling of that contact. Acceptance and new
-messages stay in People unless the person chooses **Let Ship handle this**.
+messages stay in People unless the person chooses **Let Ship handle them**.
 
 Use `contact request create` and `contact request update` when the exchange has
 a durable lifecycle rather than being only a message. Request revisions prevent

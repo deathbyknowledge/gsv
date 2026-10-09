@@ -10,6 +10,35 @@ beforeEach(() => vi.stubGlobal("document", {}));
 afterEach(() => vi.unstubAllGlobals());
 
 describe("owner welcome", () => {
+  it("chooses an existing space for a contact invitation without resuming space creation", async () => {
+    const snapshot: WelcomeSnapshot = { revision: "saved", value: {
+      origin: "https://accounts.example.com", flow: "create", sessionSecret: "a".repeat(64), challenge: null,
+      inviteCode: "space-invite", inviteId: null, handle: null,
+    } };
+    const fetcher = vi.fn(async () => Response.json({ email: "owner@example.com", expiresAt: Date.now() + 60_000,
+      spaceDomain: "example.com", spaces: [{ handle: "bob", canonicalOrigin: "https://bob.example.com", state: "active" }], invites: [] }));
+    const save = vi.fn();
+    const client = new OwnerWelcome(snapshot, { save }, "https://accounts.example.com", fetcher);
+    const connect = vi.fn(async () => {});
+    const root = createTestRoot("Choose a contact recipient space");
+    let tree: ComponentChildren;
+    function Harness() {
+      tree = OwnerWelcomeScreen({ ready: true, resume: true, chooseSpace: true, initialStep: "email", load: async () => client,
+        onConnect: connect, context: <p>Alice invited you to connect.</p> });
+      return null;
+    }
+    try {
+      await root.render(<Harness />);
+      await vi.waitFor(() => expect(collectNodes(tree).some((node) => node.props.label === "bob")).toBe(true));
+      expect(collectText(tree)).toContain("Alice invited you to connect.");
+      expect(collectNodes(tree).some((node) => node.props.label === "Use an invite")).toBe(false);
+      await act(() => { collectNodes(tree).find((node) => node.props.label === "bob")!.props.onClick?.(); });
+      expect(connect).toHaveBeenCalledWith("https://bob.example.com");
+      expect(fetcher).toHaveBeenCalledTimes(1);
+      expect(save).not.toHaveBeenCalled();
+    } finally { await root.unmount(); }
+  });
+
   it.each([false, true])("requires agreement before sending a signup email (resumed: %s)", async (resumed) => {
     let snapshot: WelcomeSnapshot = { revision: "initial", value: resumed ? {
       origin: "https://accounts.example.com", flow: "create", sessionSecret: null,

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { spaceAddress } from "./spaceAddress";
 
-describe("Desktop space addresses", () => {
+describe("space addresses", () => {
   it.each([
     ["esteve", "https://esteve.gsv.space"],
     [" Studio-2 ", "https://studio-2.gsv.space"],
@@ -13,6 +13,8 @@ describe("Desktop space addresses", () => {
     ["wss://my.example/ws", "https://my.example"],
     ["localhost", "http://localhost"],
     ["localhost:8787/ws", "http://localhost:8787"],
+    ["my-space.localhost:8787", "http://my-space.localhost:8787"],
+    ["http://my-space.localhost:8787", "http://my-space.localhost:8787"],
     ["localhost:443", "http://localhost:443"],
     ["127.0.0.1:8787", "http://127.0.0.1:8787"],
     ["[::1]:8787", "http://[::1]:8787"],

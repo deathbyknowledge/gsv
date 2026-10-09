@@ -61,13 +61,14 @@ const NATIVE_COMMAND_DESCRIPTORS = defineNativeCommandDescriptors({
   ]),
   crontab: command("Manage recurring native shell jobs.", "Run a shell command repeatedly on a cron schedule such as every morning or each weekday.", ["schedule", "recurring", "automation", "cron", "daily", "weekly"], ["sched"]),
   codemode: command("Run a reusable JavaScript GSV tool workflow.", "Combine several shell, filesystem, or connected integration operations in one scripted workflow.", ["script", "workflow", "automation", "tools", "javascript"]),
-  contact: command("Manage trusted contacts with other GSV Ships.", "Pair with another Ship, inspect contacts, exchange structured requests, revoke access, or discover a contact destination for messaging.", ["contact", "ship", "federation", "pair", "invite", "request", "revoke"], [], [
+  contact: command("Manage trusted contacts with other GSV Ships.", "Connect people using an invitation link. Ask who should handle new messages, then create or accept with --handling manual|ship. Inspect contacts, exchange structured requests, or change handling and trust.", ["contact", "people", "friend", "social", "connect", "ship", "federation", "pair", "invite", "request", "revoke"], [], [
     "contact identity",
     "contact list [--all] [--json]",
-    "contact invite create [--expires DURATION]",
-    "contact invite accept CODE",
+    "contact invite create --handling manual|ship [--expires DURATION]",
+    "contact invite accept LINK_OR_CODE --handling manual|ship",
     "contact invite list [--all] [--json]",
     "contact invite cancel INVITE_ID",
+    "contact handling CONTACT_ID manual|ship --revision N",
     "contact revoke CONTACT_ID",
     "contact request list [--contact CONTACT_ID] [--all] [--json]",
     "contact request create --contact CONTACT_ID --kind KIND --title TITLE [--details JSON] [--delivery-id ID]",
