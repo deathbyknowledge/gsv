@@ -190,7 +190,9 @@ audio body through `ai.transcription.create`, with the current Process selecting
 the transcription configuration. The result inserts at the current draft cursor
 without sending. Enter finishes capture for review; scope changes, leaving Zen,
 hiding the tab, disconnecting and clearing the draft cancel capture or upload
-and fence late results. Failed uploads can retry the in-memory recording. Desktop retains its
+and fence late results. Voice input uses the composer's effective place from the
+first render, so loading the target list does not interrupt recording or transcription
+at the default cloud place. Failed uploads can retry the in-memory recording. Desktop retains its
 local continuous dictation and gesture controls.
 
 The guide uses an original 3D hand mesh with a shaped palm, independently curling

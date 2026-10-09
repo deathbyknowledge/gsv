@@ -27,6 +27,7 @@ import { ApprovalCard } from "../shared/ApprovalCard";
 let storage: Map<string, string>;
 let messages: ConversationMessage[];
 let targets: SysTargetSummary[];
+let targetsReady: Promise<void> | null;
 let hasMore: boolean;
 let ownerUid: number;
 let gateway: string;
@@ -56,6 +57,7 @@ beforeEach(() => {
   storage = new Map();
   messages = [];
   targets = [];
+  targetsReady = null;
   hasMore = false;
   ownerUid = 1000;
   gateway = "wss://space.example/ws";
@@ -82,7 +84,7 @@ beforeEach(() => {
     if (call === "proc.list") return { data: { processes: [{ pid: shipPid, uid: ownerUid, username: "algo", label: "ship",
       personal: true, interactive: true, parentPid: null, state: "idle", activeRunId: null, queuedCount: 0,
       createdAt: 1, lastActiveAt: 1, cwd: "/home/algo" }] } };
-    if (call === "sys.target.list") return { data: { targets } };
+    if (call === "sys.target.list") { await targetsReady; return { data: { targets } }; }
     if (call === "sys.config.get") return { data: { entries: [] } };
     if (call === "account.list") return { data: { accounts: [] } };
     if (call === "conversation.forProcess") return { data: { conversation: conversation(z.object({ pid: z.string() }).parse(args).pid) } };
@@ -144,6 +146,34 @@ describe("Zen conversation entry", () => {
         expect(zen.props(BrowserVoiceControls).pid).toBe("helper");
         expect(zen.props(BrowserVoiceControls).enabled).toBe(true);
       }
+    } finally { await zen.unmount(); }
+  });
+
+  it.each([false, true])("keeps voice input scoped to the default place while targets load: native=%s", async (native) => {
+    const pendingTargets = deferred<void>();
+    targetsReady = pendingTargets.promise;
+    targets = [{ targetId: "laptop", label: "Laptop", online: true, implements: ["shell.exec"], platform: "linux",
+      ownerUid: 1000, ownerUsername: "hank", description: "", version: "0.6.2", lastSeenAt: 1 }];
+    const zen = await mountedZen(undefined, undefined, native);
+    const voice = () => native ? zen.props(NativeVoiceControls) : zen.props(BrowserVoiceControls);
+    try {
+      expect(voice().enabled).toBe(true);
+      expect(zen.props(PromptLine).place.id).toBe("gsv");
+      const initialScope = voice().scope;
+      const placeButton = (name: string) => zen.nodes().find((node) => node.type === "button"
+        && node.props["aria-label"] === `Use ${name} for the next message or command`);
+
+      expect(placeButton("Laptop")).toBeUndefined();
+      await act(async () => { pendingTargets.resolve(); });
+      await vi.waitFor(() => expect(placeButton("Laptop")).toBeDefined());
+      expect(voice().enabled).toBe(true);
+      expect(voice().scope).toBe(initialScope);
+
+      await act(() => { placeButton("Laptop")!.props.onClick!(); });
+      expect(zen.props(PromptLine).place.id).toBe("laptop");
+      expect(voice().scope).not.toBe(initialScope);
+      await act(() => { placeButton("your cloud")!.props.onClick!(); });
+      expect(voice().scope).toBe(initialScope);
     } finally { await zen.unmount(); }
   });
 

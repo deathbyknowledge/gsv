@@ -17,7 +17,8 @@ Your existing draft is preserved underneath the recording surface and returns
 after transcription or cancellation. Pressing Enter during recording stops the recording;
 it does not send the transcript. Sending becomes available once transcription
 finishes. **cancel** or Escape discards the recording or pending transcription
-and keeps your typed draft.
+and keeps your typed draft. You can start recording while the places list is
+still loading; loading it does not interrupt voice input at your default cloud place.
 Leaving Zen, hiding the tab, switching conversations or places, disconnecting,
 or clearing the draft also cancels pending voice input. A late result cannot
 enter another conversation.

@@ -652,6 +652,7 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
     [attachments, conversation.conversation?.id, outbox.send, pid, scrolling.follow, where],
   );
 
+  const voiceScope = `${snapshot.url}:${snapshot.username}:${pid ?? ""}:${currentPlace.id}`;
   const voiceInput = useRef<NativeVoiceHandle>(null);
   const nativePanels = useRef<HTMLDivElement>(null);
   const voiceSurface = useRef<HTMLDivElement>(null);
@@ -1104,12 +1105,12 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
             {attachments.length > 0 && <button type="button" disabled={!connected || !pid || outbox.sending} onClick={() => promptRef.current?.submit()}>send</button>}
             <span class="zen-connection-status" role="status">{connected ? "" : "Reconnecting..."}</span>
             {nativeInput ? <NativeVoiceControls ref={voiceInput} prompt={promptRef} panelHost={nativePanels}
-              scope={`${snapshot.url}:${snapshot.username}:${pid ?? ""}:${where ?? ""}`}
+              scope={voiceScope}
               enabled={active && connected && pid !== null && pendingHil === null && !searchOpen && !connectingPlace}
               send={onSubmit} scroll={scrolling.move} />
               : <BrowserVoiceControls ref={voiceInput} prompt={promptRef} client={client} pid={pid}
                 surfaceHost={voiceSurface} onActiveChange={setRecordingVoice}
-                scope={`${snapshot.url}:${snapshot.username}:${pid ?? ""}:${where ?? ""}`}
+                scope={voiceScope}
                 enabled={active && connected && pid !== null && pendingHil === null && !searchOpen && !connectingPlace && !outbox.sending} />}
           </div>
           <div class="zen-place-section">
