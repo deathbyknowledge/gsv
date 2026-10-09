@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { randomBytes } from "node:crypto";
+import { createPairingCredential, createPairingSecret } from "@humansandmachines/gsv/protocol/pairing";
+import type { SysPairRedeemArgs } from "@humansandmachines/gsv/protocol/syscalls/pairing";
 import { z } from "zod";
 import { deletionStackHarness, NAMESPACES, SCOPES, STACK } from "./fixtures/deletion-stack-harness.ts";
 import { administerOperatorBootstrap } from "../src/operator-bootstrap.ts";
@@ -18,7 +19,7 @@ const createdSchema = z.object({ installation: z.object({ installationId: z.stri
 type AdminHeaders = { origin: string; "content-type": string; authorization?: string };
 type ResourceNamespace = { getByName(name: string): { inspectInstallationResource(): Promise<{ name?: string; empty: boolean }> } };
 type ClaimRedemption = { id: string; secret: string; proof: string; password: string };
-type PendingClaims = { invitation: ClaimRedemption; recovery: ClaimRedemption;
+type PendingClaims = { pairing: SysPairRedeemArgs; recovery: ClaimRedemption;
   authorization: Parameters<InstallationRecoveryGatewayService["authorizeRootRecovery"]>[0] };
 const origin = "https://accounts.example.invalid";
 const username = "same-owner";
@@ -112,13 +113,10 @@ describe("public multi-worker deletion acceptance", () => {
     expect(await (await storage.get(`installations/${a.installationId}/${path.slice(1)}`))?.text()).toBe("first-space");
     expect(await (await storage.get(`installations/${b.installation.installationId}/${path.slice(1)}`))?.text()).toBe("second-space");
 
-    const rootA = await setup("first", undefined, "root");
-    const rootB = await setup("second", undefined, "root");
     const pendingClaims: PendingClaims[] = [];
-    for (const [installationId, root] of [[a.installationId, rootA], [b.installation.installationId, rootB]] as const) {
-      const secret = Buffer.from(randomBytes(32)).toString("hex");
-      const invite = { id: crypto.randomUUID(), secret, username: "invited-member" };
-      expect(await ok(root, "account.invite.create", invite)).toMatchObject({ status: "pending" });
+    for (const [installationId, owner] of [[a.installationId, socketA], [b.installation.installationId, socketB]] as const) {
+      const pairing = { id: crypto.randomUUID(), secret: createPairingSecret(), targetId: "invited-device", label: "Invited device" };
+      expect(await ok(owner, "sys.pair.create", pairing)).toMatchObject({ pairing: { state: "pending" } });
       const recovery = { id: crypto.randomUUID(), secret: crypto.randomUUID() + crypto.randomUUID(),
         proof: crypto.randomUUID() + crypto.randomUUID(), password: "recovered-root-fixture-password" };
       const secretHash = Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(recovery.secret))),
@@ -126,7 +124,7 @@ describe("public multi-worker deletion acceptance", () => {
       const authorization = { installationId, attemptId: recovery.id, purpose: "root-password-reset" as const, secretHash, expiresAt: Date.now() + 300_000 };
       // Accounts' trusted binding grants the claim; no recovery SQL is seeded in the Kernel.
       expect(await (await accounts.getEnv()).ACCOUNTS_GATEWAY_RECOVERY.authorizeRootRecovery(authorization)).toEqual({ authorized: true });
-      pendingClaims.push({ invitation: { id: invite.id, secret, proof: Buffer.from(randomBytes(32)).toString("hex"), password: "invited-member-password" }, recovery, authorization });
+      pendingClaims.push({ pairing: { id: pairing.id, secret: pairing.secret, credential: createPairingCredential() }, recovery, authorization });
     }
     const oldEnrollment = await openSocket("first");
     const reset = await post(`/admin/api/installations/${a.installationId}/reset`, { operationId: "reset-first", confirmHandle: "first" });
@@ -136,20 +134,19 @@ describe("public multi-worker deletion acceptance", () => {
     let replacementSocket = await setup("first", new URL(replacement.onboarding.onboardingUrl).hash.slice(1));
     const replacementEnrollment = await openSocket("first");
     for (const socket of [oldEnrollment, replacementEnrollment]) {
-      expect(await rpc(socket, "account.invite.redeem", pendingClaims[0].invitation)).toMatchObject({ ok: false });
+      expect(await rpc(socket, "sys.pair.redeem", pendingClaims[0].pairing)).toMatchObject({ ok: false });
       expect(await rpc(socket, "account.recovery.redeem", pendingClaims[0].recovery)).toMatchObject({ ok: false });
     }
     await expect(async () => {
       await (await accounts.getEnv()).ACCOUNTS_GATEWAY_RECOVERY.authorizeRootRecovery(pendingClaims[0].authorization);
     }).rejects.toThrow("unavailable");
-    const replacementRoot = await setup("first", undefined, "root");
-    const replacementPeople = z.object({ people: z.array(z.object({ username: z.string() })) }).parse(await ok(replacementRoot, "account.people.list", {}));
-    expect(replacementPeople.people.some((person) => person.username === "invited-member")).toBe(false);
+    expect(await ok(replacementSocket, "sys.pair.list", {})).toEqual({ pairings: [] });
     const otherEnrollment = await openSocket("second");
-    expect(await ok(otherEnrollment, "account.invite.redeem", pendingClaims[1].invitation)).toMatchObject({ username: "invited-member" });
+    expect(await ok(otherEnrollment, "sys.pair.redeem", pendingClaims[1].pairing)).toMatchObject({ pairing: { username, targetId: "invited-device", state: "paired" } });
     expect(await ok(otherEnrollment, "account.recovery.redeem", pendingClaims[1].recovery)).toEqual({ username: "root" });
-    const retainedMember = await setup("second", undefined, "invited-member", pendingClaims[1].invitation.password);
-    expect(await ok(retainedMember, "account.list", {})).toMatchObject({ accounts: expect.arrayContaining([expect.objectContaining({ username: "invited-member" })]) });
+    const retainedDevice = await openSocket("second");
+    expect(await ok(retainedDevice, "sys.connect", { protocol: 4, peer: { id: "invited-device", version: "1", platform: "test", implements: ["fs.read"] },
+      auth: { username, token: pendingClaims[1].pairing.credential } })).toMatchObject({ peer: { principal: { kind: "machine" } } });
     await setup("second", undefined, "root", pendingClaims[1].recovery.password);
     expect(await ok(replacementSocket, "fs.read", { path })).toMatchObject({ ok: false });
     expect((await rpc(socketA, "proc.list", {})).ok).toBe(false);
