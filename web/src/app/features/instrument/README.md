@@ -25,7 +25,8 @@ configuration stays in Settings and Fleet. The session service owns the
 installation capability and signs in immediately after creating the account.
 Failed account creation keeps the form available for retry. If only sign-in
 fails, the ordinary login form shows the error and asks for the personal password.
-Administrator sign-in explicitly selects root; it is not the ordinary account.
+The muted **admin** text action in the sign-in footer explicitly selects root;
+the form heading identifies administrator sign-in once selected.
 
 Before choosing a space, Desktop presents two equal paths: create a space with
 an invite, or open an existing space. Open shows email sign-in beside direct

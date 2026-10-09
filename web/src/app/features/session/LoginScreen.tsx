@@ -85,13 +85,13 @@ export function LoginScreen({
                 />
               </div>
               {!administrator && <SessionLink href="/recover-member" class="gsv-auth-link gsv-login-recovery-link">Forgot your password?</SessionLink>}
-              <button type="button" class="gsv-auth-link" disabled={busy} onClick={() => onAdministrator(!administrator)}>{administrator ? "Back to personal sign-in" : "Administrator sign-in"}</button>
               </form>
             )}
           </div>
 
           <footer class="gsv-sublabel gsv-login-credit">
             <span>BY <a href="https://humansandmachin.es" target="_blank" rel="noreferrer">HUMANS &amp; MACHINES</a></span>
+            <button type="button" class="gsv-login-admin" aria-label={administrator ? "Back to personal sign-in" : "Administrator sign-in"} disabled={busy || loading} onClick={() => onAdministrator(!administrator)}>{administrator ? "personal sign-in" : "admin"}</button>
           </footer>
         </div>
     </AuthLayout>

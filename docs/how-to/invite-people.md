@@ -14,7 +14,7 @@ keep their account identity, home directory, credentials and connected devices.
 ## Recover personal access
 
 **Forgot password?** sends a code through an eligible messenger you previously
-linked. If you have no eligible link, choose **Administrator sign-in** and sign in
+linked. If you have no eligible link, choose the small **admin** link in the sign-in footer and sign in
 as root, then open **Settings → sign-in → Personal sign-in** to reset your personal
 password. Reset revokes personal sessions and messenger links; sign in again and
 reconnect those messengers. Your data, account identity and running work remain.
