@@ -1,7 +1,62 @@
 import { describe, expect, it, vi } from "vitest";
 import { evictDurableObject } from "cloudflare:test";
 import type { Process } from "./do";
-import { approvedRun, initProcess, offeredTools, ROOT_IDENTITY, runInProcess } from "./do-test-harness";
+import { approvedRun, initProcess, offeredTools, ROOT_IDENTITY, runInProcess, terminalTestConfig } from "./do-test-harness";
+import type { ProcessApprovalTarget } from "../protocol/process-frames";
+import { ProcessStore } from "./store";
+import { runSqlMigrations } from "../schema/runner";
+import { PROCESS_MIGRATIONS, PROCESS_SCHEMA_COMPONENT } from "./schema/migrations";
+
+const target: ProcessApprovalTarget = {
+  targetId: "browser", ownerUid: 1000, platform: "browser", route: { kind: "instance", instanceId: "original" },
+};
+
+describe("approval target persistence", () => {
+  it("upgrades v16 approvals without losing them and persists new target identities", async () => {
+    const stub = await initProcess("approval-v16-upgrade", ROOT_IDENTITY);
+    await runInProcess(stub, async (_process: Process, state: DurableObjectState) => {
+      await state.storage.deleteAll();
+      runSqlMigrations(state.storage, PROCESS_SCHEMA_COMPONENT, PROCESS_MIGRATIONS.filter(({ id }) => id <= 16));
+      state.storage.sql.exec(`INSERT INTO pending_hil (request_id, run_id, tool_call_id, tool_name, syscall, args_json, created_at)
+        VALUES ('old', 'run', 'call', 'Shell', 'shell.exec', '{"target":"browser","input":"page snapshot"}', 1)`);
+      runSqlMigrations(state.storage, PROCESS_SCHEMA_COMPONENT, PROCESS_MIGRATIONS);
+      runSqlMigrations(state.storage, PROCESS_SCHEMA_COMPONENT, PROCESS_MIGRATIONS);
+      const store = new ProcessStore(state.storage.sql);
+      const pending = store.tools.getPendingHil()!;
+      expect(pending).toMatchObject({ requestId: "old", args: { target: "browser", input: "page snapshot" } });
+      expect(pending.approvedTarget).toBeUndefined();
+      store.tools.setPendingHil({ ...pending, approvedTarget: target });
+      expect(store.tools.getPendingHil()?.approvedTarget).toEqual(target);
+    });
+  });
+
+  it("carries the originally checked target through human approval after eviction", async () => {
+    const stub = await initProcess("approval-target-restored", ROOT_IDENTITY);
+    await runInProcess(stub, async (process: Process) => {
+      process.runs.active = approvedRun("run", {
+        config: terminalTestConfig(process.pid), tools: offeredTools("Shell"), offeredToolNames: ["Shell"],
+        approvalPolicy: { default: "auto", rules: [
+          { match: "shell.exec", target: { route: "instance", platform: "browser" }, action: "ask" },
+        ] },
+      });
+      vi.spyOn(process.kernel, "resolveApprovalTarget").mockResolvedValue(target);
+      vi.spyOn(process, "sendSignal").mockResolvedValue(undefined);
+      process.store.tools.register("shell", "call", "run", "shell.exec", { target: "browser", input: "page snapshot" });
+      expect(await process.tools.processToolCalls("run")).toMatchObject({ approvedTarget: target });
+    });
+    await evictDurableObject(stub);
+    await runInProcess(stub, async (process: Process) => {
+      const pending = process.store.tools.getPendingHil()!;
+      expect(pending.approvedTarget).toEqual(target);
+      vi.spyOn(process.run, "schedule").mockResolvedValue(undefined);
+      vi.spyOn(process, "sendSignal").mockResolvedValue(undefined);
+      const launch = vi.spyOn(process.tools, "launchToolDispatch").mockImplementation(() => {});
+      expect(await process.controller.handleProcHil({ requestId: pending.requestId, decision: "approve" })).toMatchObject({ ok: true });
+      expect(launch).toHaveBeenCalledWith("run", "shell", "shell.exec", pending.args, process.runs.active?.approvalPolicy, undefined, target);
+      process.runs.active = null;
+    });
+  });
+});
 
 describe("stored CodeMode approval", () => {
   it.each(["net.fetch", "mail.send", "sys.mcp.call"] as const)("restores %s after eviction without expanding the model tool surface", async (syscall) => {

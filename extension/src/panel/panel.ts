@@ -96,6 +96,8 @@ function apply(response: RuntimeResponse): void {
 
 async function runAction(action: string): Promise<void> {
   if (busy) return;
+  const accessWasFocused = document.activeElement instanceof HTMLElement
+    && document.activeElement.dataset.focusKey === "browser-access";
   busy = action;
   render();
   try {
@@ -154,6 +156,9 @@ async function runAction(action: string): Promise<void> {
   } finally {
     busy = null;
     render();
+    if (accessWasFocused) {
+      appEl.querySelector<HTMLElement>('[data-focus-key="browser-access"]')?.focus({ preventScroll: true });
+    }
   }
 }
 
@@ -216,7 +221,7 @@ function render(): void {
     noticeBlock(),
     paired ? recent(state) : "",
     paired ? advanced(state) : "",
-    footer(state, paired),
+    paired ? `<div class="panel-bottom">${accessControl(state)}${footer(state, paired)}</div>` : footer(state, paired),
   ].join("");
   const form = appEl.querySelector<HTMLFormElement>("form[data-form='connection']");
   if (form) paintValidation(form);
@@ -234,10 +239,14 @@ function keepFormState(): () => void {
   const focused: FocusedField | null = (active instanceof HTMLInputElement || active instanceof HTMLTextAreaElement) && active.form && appEl.contains(active)
     ? { form: active.form.dataset.form ?? "", name: active.name, start: active.selectionStart, end: active.selectionEnd }
     : null;
+  const focusKey = active instanceof HTMLElement && appEl.contains(active) ? active.dataset.focusKey : undefined;
   const invitation = appEl.querySelector<HTMLTextAreaElement>(INVITATION)?.value ?? "";
   return () => {
     const textarea = appEl.querySelector<HTMLTextAreaElement>(INVITATION);
     if (textarea && invitation && !textarea.value) textarea.value = invitation;
+    if (focusKey) {
+      appEl.querySelector<HTMLElement>(`[data-focus-key="${CSS.escape(focusKey)}"]`)?.focus({ preventScroll: true });
+    }
     if (!focused) return;
     const field = appEl.querySelector<HTMLInputElement | HTMLTextAreaElement>(`form[data-form='${focused.form}'] [name='${focused.name}']`);
     if (!field) return;
@@ -282,7 +291,6 @@ function main(current: ExtensionUiState): string {
     const site = workingSite(current);
     title = "Your GSV is working here.";
     detail = site ? `It's using <span class="site">${escapeHtml(site)}</span> right now. ${liveSentence(current)}` : liveSentence(current);
-    actions.push(button("stop", "stop", "ibtn"));
   } else if (connected) {
     title = "Ready.";
     detail = "Your GSV can use this browser, signed in as you. Ask it from anywhere.";
@@ -292,14 +300,12 @@ function main(current: ExtensionUiState): string {
   } else if (paused) {
     title = "Paused.";
     detail = "Your GSV can't use this browser until you resume.";
-    actions.push(button("resume", "resume", "ibtn is-primary"));
   } else {
     title = "Can't reach your GSV.";
     detail = current.connection.message || "The connection dropped. It will retry on its own; you can also try now.";
     detailClass = "is-err";
     actions.push(button("retry", "try again", "ibtn is-primary"));
   }
-
   const grantLine = grant
     ? `<p>Recording is allowed on <span class="site">${escapeHtml(grant.title || grant.url || `tab ${grant.tabId}`)}</span> for ${escapeHtml(timeUntil(grant.expiresAt))}.</p>`
     : "";
@@ -309,13 +315,14 @@ function main(current: ExtensionUiState): string {
     ? `<div class="note"><p>Your GSV wants to record this tab. Chrome needs you to allow that here, once per recording.</p><div class="actions">${button("allow-recording", "allow recording", "ibtn is-primary")}</div></div>`
     : "";
   const bannerNote = showBannerNote
-    ? `<div class="note"><p>Chrome shows a banner at the top of a tab while your GSV works in it. That's normal, and it goes when it's done.</p><div class="actions">${textButton("dismiss-note", "got it")}</div></div>`
+    ? `<div class="note"><p>Chrome shows a banner at the top of a tab while your GSV works in it. That's normal, and it goes away when it's done!</p><div class="actions">${textButton("dismiss-note", "got it")}</div></div>`
     : "";
 
   return `
     <section class="say">
       <h1>${escapeHtml(title)}</h1>
       <p class="${detailClass}">${detail}</p>
+      ${connected ? `<p>You can close this ${isPage ? "page" : "sidebar"}. The extension will keep working.</p>` : ""}
       ${grantLine}
     </section>
     ${actions.length ? `<div class="actions">${actions.join("")}</div>` : ""}
@@ -327,8 +334,8 @@ function pairing(current: ExtensionUiState): string {
   const pending = busy === "pair";
   return `
     <section class="say">
-      <h1>Let your GSV use this browser.</h1>
-      <p>Once paired, it can work the sites you're signed into, from wherever you ask.</p>
+      <h1>Connect this browser to your GSV.</h1>
+      <p>Pair it to let your GSV help with tasks you give it on sites you're signed into. You can see recent activity here and pause the connection anytime.</p>
     </section>
     <form class="pair" data-form="pair">
       <ol>
@@ -338,7 +345,7 @@ function pairing(current: ExtensionUiState): string {
       </ol>
       <textarea name="invitation" placeholder="gsv-pair1_…" autocomplete="off" spellcheck="false" ${pending ? "disabled" : ""}></textarea>
       <div class="actions">
-        <button type="submit" class="ibtn is-primary" ${pending ? "disabled" : ""}>${pending ? "pairing…" : "pair this browser"}</button>
+        <button type="submit" class="ibtn is-primary" data-focus-key="pair-submit" ${pending ? "disabled" : ""}>${pending ? "pairing…" : "pair this browser"}</button>
         ${current.connection.message ? `<span class="tbtn" aria-hidden="true">${escapeHtml(truncateMiddle(current.connection.message, 48))}</span>` : ""}
       </div>
     </form>`;
@@ -378,10 +385,9 @@ function row(entry: ActivityEntry): string {
 
 function advanced(current: ExtensionUiState): string {
   const config = draft ?? current.config;
-  const paused = current.connection.reconnectSuppressed;
   return `
     <details class="advanced" ${advancedOpen ? "open" : ""}>
-      <summary>advanced</summary>
+      <summary data-focus-key="advanced-summary">advanced</summary>
       <div class="body">
         <section>
           <h3>connection</h3>
@@ -396,8 +402,7 @@ function advanced(current: ExtensionUiState): string {
             ${field("deviceId", "this browser's name", config.deviceId, "text", "laptop:chrome")}
             <label class="check"><input name="autoConnect" type="checkbox" ${config.autoConnect ? "checked" : ""}> connect when Chrome starts</label>
             <div class="actions">
-              <button type="submit" class="ibtn" ${busy === "save" ? "disabled" : ""}>${busy === "save" ? "saving…" : "save"}</button>
-              ${paused ? textButton("resume", "resume") : textButton("pause", "pause")}
+              <button type="submit" class="ibtn" data-focus-key="connection-submit" ${busy === "save" ? "disabled" : ""}>${busy === "save" ? "saving…" : "save"}</button>
             </div>
           </form>
         </section>
@@ -422,21 +427,37 @@ function advanced(current: ExtensionUiState): string {
     </details>`;
 }
 
+function accessControl(current: ExtensionUiState): string {
+  const paused = current.connection.reconnectSuppressed;
+  const active = liveAccessCount(current) > 0;
+  const action = active ? "stop" : paused ? "resume" : "pause";
+  return `<div class="access-control">${button(action, action, paused && !active ? "ibtn is-primary" : "ibtn", "browser-access")}</div>`;
+}
+
 function footer(current: ExtensionUiState, paired: boolean): string {
+  const website = paired ? new URL(current.config.gatewayUrl) : null;
+  if (website) {
+    website.protocol = website.protocol === "wss:" ? "https:" : "http:";
+    website.pathname = "/";
+    website.search = "";
+    website.hash = "";
+  }
   return `
     <footer class="foot">
       ${textButton("toggle-theme", effectiveTheme() === "light" ? "dark" : "light")}
-      <span class="host" title="${escapeHtml(current.config.gatewayUrl)}">${escapeHtml(paired ? current.gatewayHost : "not paired yet")}</span>
+      ${website
+        ? `<a class="host" href="${escapeHtml(website.toString())}" target="_blank" rel="noopener noreferrer" title="Open your GSV" data-focus-key="space-link">${escapeHtml(current.gatewayHost)}</a>`
+        : `<span class="host">not paired yet</span>`}
     </footer>`;
 }
 
 /* ---------- pieces ---------- */
 
-function button(action: string, label: string, className: string): string {
-  return `<button type="button" class="${className}" data-action="${escapeHtml(action)}" ${busy === action ? "disabled" : ""}>${escapeHtml(label)}</button>`;
+function button(action: string, label: string, className: string, focusKey = `main-${action}`): string {
+  return `<button type="button" class="${className}" data-action="${escapeHtml(action)}" data-focus-key="${escapeHtml(focusKey)}" ${busy === action ? "disabled" : ""}>${escapeHtml(label)}</button>`;
 }
 function textButton(action: string, label: string, extra = ""): string {
-  return `<button type="button" class="tbtn ${extra}" data-action="${escapeHtml(action)}" ${busy === action ? "disabled" : ""}>${escapeHtml(label)}</button>`;
+  return `<button type="button" class="tbtn ${extra}" data-action="${escapeHtml(action)}" data-focus-key="${escapeHtml(action)}" ${busy === action ? "disabled" : ""}>${escapeHtml(label)}</button>`;
 }
 function field(name: ConfigField, label: string, value: string, type: string, placeholder = ""): string {
   return `<label class="field" data-field="${name}"><span>${escapeHtml(label)}</span><input name="${name}" type="${type}" value="${escapeHtml(value)}" placeholder="${escapeHtml(placeholder)}" autocomplete="off"><small data-error></small></label>`;

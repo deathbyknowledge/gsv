@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { jsonObjectSchema } from "@humansandmachines/gsv/protocol";
+import { jsonObjectSchema, toolApprovalTargetSchema } from "@humansandmachines/gsv/protocol";
 import {
   aiToolsDeviceSchema,
   processIdentitySchema,
@@ -100,7 +100,7 @@ const toolApprovalPolicySchema = z.object({
   default: z.enum(["auto", "ask", "deny"]),
   rules: z.array(z.object({
     match: z.string(),
-    target: z.string().optional(),
+    target: toolApprovalTargetSchema.optional(),
     action: z.enum(["auto", "ask", "deny"]),
   })),
 });

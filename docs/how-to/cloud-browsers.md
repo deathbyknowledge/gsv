@@ -13,6 +13,13 @@ require you to sign in through the browser view.
 The browser list below Zen's prompt and in Fleet updates automatically as
 browsers start, become ready or stop. Opening Fleet or refreshing is unnecessary.
 
+By default, Ship can run commands, use the network and manage files in cloud
+browsers without asking for each action. This includes websites whose logins
+the browser remembers. To require approval, choose **Cloud browsers** in
+**Settings → permissions** and set the relevant actions to **Ask** or **Block**.
+Existing custom policies keep their rules. Connected personal browsers and
+computers retain their separate approval requirements.
+
 ## Watch and use the browser
 
 Ask Ship to use a browser. GSV reuses your account's current cloud browser,

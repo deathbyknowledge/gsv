@@ -45,6 +45,20 @@ FetchContent_Declare(tensorflow
 )
 FetchContent_MakeAvailable(litert tensorflow)
 set(TENSORFLOW_SOURCE_DIR "${tensorflow_SOURCE_DIR}" CACHE PATH "" FORCE)
+# Keep LiteRT's exact revisions while avoiding GitLab clones, including the
+# unused Eigen submodule in ml_dtypes. Both archives are checksum verified.
+set(OVERRIDABLE_FETCH_CONTENT_eigen_URL
+  https://storage.googleapis.com/mirror.tensorflow.org/gitlab.com/libeigen/eigen/-/archive/ea13a98decd497a8c5588fb5de71b57bcf10d864/eigen-ea13a98decd497a8c5588fb5de71b57bcf10d864.tar.gz
+)
+set(OVERRIDABLE_FETCH_CONTENT_eigen_URL_HASH
+  SHA256=35c6126e246585d9cf6600b65471582c2701aae64b784a6fd19168a90cfc841e
+)
+set(OVERRIDABLE_FETCH_CONTENT_ml_dtypes_URL
+  https://codeload.github.com/jax-ml/ml_dtypes/tar.gz/00d98cd92ade342fef589c0470379abb27baebe9
+)
+set(OVERRIDABLE_FETCH_CONTENT_ml_dtypes_URL_HASH
+  SHA256=f6e5880666661351e6cd084ac4178ddc4dabcde7e9a73722981c0d1500cf5937
+)
 add_subdirectory("${litert_SOURCE_DIR}/tflite" "${CMAKE_BINARY_DIR}/tflite" EXCLUDE_FROM_ALL)
 
 add_library(gsv_litert_bridge STATIC bridge.cc

@@ -1,10 +1,11 @@
 import { saveApprovalPolicy } from "./permissionService";
+import { isToolApprovalTargetSelector } from "@humansandmachines/gsv/protocol";
 import { useMutation, useQueryClient } from "@tanstack/preact-query";
 import { useQuery } from "../../../services/navigation/viewQueries";
 import { useState } from "preact/hooks";
 import { useGateway } from "../../../services/gateway/GatewayProvider";
 import { loadConsoleConfig, loadConsoleTargets } from "../../../services/system/consoleService";
-import { APPROVAL_ACTIONS, actionLabel, humanToolCapabilityLabel } from "../../../components/ui/agentToolApprovalOptions";
+import { APPROVAL_ACTIONS, actionLabel, humanToolCapabilityLabel, targetOptionValue, targetFromOptionValue } from "../../../components/ui/agentToolApprovalOptions";
 import { LoadingState } from "../../../components/ui/Spinner";
 import { defaultApprovalPolicyForConfig } from "../../../domain/system/consoleAgentBehavior";
 import { INSTRUMENT_TARGETS_KEY } from "../wire/queryKeys";
@@ -75,12 +76,12 @@ export function Permissions({ account, active, onDirty }: SettingsSectionProps) 
               {!rule.match && <option value="" disabled>Choose a tool</option>}
               {options.tools.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
             </select>{options.customToolLabel && <small>{options.customToolLabel}</small>}</label>
-            <label>Target<select aria-label={`Rule ${index + 1} target`} value={rule.target ?? ""} disabled={usesDefault} onChange={(event) => {
-              const target = event.currentTarget.value;
+            <label>Target<select aria-label={`Rule ${index + 1} target`} value={targetOptionValue(rule.target)} disabled={usesDefault} onChange={(event) => {
+              const target = targetFromOptionValue(event.currentTarget.value);
               const next: SettingsPolicy["rules"][number] = { match: rule.match, action: rule.action };
               if (target) next.target = target;
               update({ ...policy, rules: policy.rules.map((entry, at) => at === index ? next : entry) });
-            }}>{options.targets.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select>{rule.target && <small>{rule.target}</small>}</label>
+            }}>{options.targets.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select>{rule.target && !isToolApprovalTargetSelector(rule.target) && <small>{rule.target}</small>}</label>
             <label>Action<select aria-label={`Rule ${index + 1} action`} value={rule.action} disabled={usesDefault} onChange={(event) => update({ ...policy, rules: policy.rules.map((entry, at) => at === index ? { ...entry, action: settingsAction(event.currentTarget.value) } : entry) })}>{APPROVAL_ACTIONS.map((action) => <option key={action} value={action}>{actionLabel(action)}</option>)}</select></label>
             <div class="settings-actions">
               <button class="settings-text-action" type="button" disabled={usesDefault || index === 0} onClick={() => { const rules = [...policy.rules]; [rules[index - 1], rules[index]] = [rules[index], rules[index - 1]]; update({ ...policy, rules }); }}>move up</button>

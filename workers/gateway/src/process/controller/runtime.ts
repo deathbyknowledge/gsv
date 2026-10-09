@@ -1226,6 +1226,7 @@ export class ProcessController {
           pending.args,
           this.host.tools.resolveToolApprovalPolicy(run),
           pending.purpose,
+          pending.approvedTarget,
         );
       }
     } else {

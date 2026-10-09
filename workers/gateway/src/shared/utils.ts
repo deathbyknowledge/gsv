@@ -14,6 +14,7 @@ import type {
   InternalSyscallName,
   ProcessInboundFrame,
   ProcessOutboundFrame,
+  ProcessApprovalTarget,
 } from "../protocol/process-frames";
 import type { NetFetchArgs } from "@humansandmachines/gsv/protocol";
 import {
@@ -74,19 +75,22 @@ export function sendFrameToKernel<S extends SyscallName>(
   installationId: string,
   processId: string,
   frame: RequestFrame<S>,
+  approvedTarget?: ProcessApprovalTarget,
 ): Promise<ResponseFrame<S> | null>;
 export function sendFrameToKernel<F extends ProcessOutboundFrame>(
   installationId: string,
   processId: string,
   frame: F,
+  approvedTarget?: ProcessApprovalTarget,
 ): Promise<ResponseTo<F> | null>;
 export async function sendFrameToKernel(
   installationId: string,
   processId: string,
   frame: ProcessOutboundFrame,
+  approvedTarget?: ProcessApprovalTarget,
 ): Promise<Frame | InternalResponseFrame | null> {
   const kernel = await getKernelPtr(installationId);
-  return await kernel.recvFrame(processId, frame);
+  return await kernel.recvFrame(processId, frame, approvedTarget);
 }
 
 export async function attachProcessRunStream(

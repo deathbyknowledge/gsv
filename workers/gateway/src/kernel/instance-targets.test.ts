@@ -13,6 +13,7 @@ import { ShellSessionStore } from "./shell-sessions";
 import { runWithRealKernelSql } from "../test-support/real-kernel-sql";
 import { handleSysTargetDelete } from "./sys/target";
 import * as processTransport from "../shared/utils";
+import { DEFAULT_TOOL_APPROVAL_POLICY, resolveToolApproval } from "../process/approval";
 
 afterEach(() => { vi.restoreAllMocks(); });
 
@@ -45,6 +46,65 @@ const browserInstance: CloudInstance = {
 };
 
 describe("instance gateway boundary", () => {
+  it("classifies the actual cloud route for nested approval and binds automatic approval to that instance", async () => {
+    await runWithRealKernelSql(async sql => {
+      const instance = { ...browserInstance, implements: ["shell.exec"], expiresAt: Date.now() + 60000 };
+      const list = async () => ({ instances: [instance], handoffs: [], usage: {
+        periodStartsAt: 0, periodEndsAt: 1, usedSeconds: 0, reservedSeconds: 60, limitSeconds: 3600, activeInstances: 1, concurrentLimit: 2,
+      } });
+      const execute = vi.fn<InstallationInstances["execute"]>(async (_actor, _id, frame) => ({ type: "res", id: frame.id, ok: true, data: {} }));
+      const { ctx } = context({ list, execute }, "crew-process");
+      ctx.toolOwner = { runId: "run", requestId: "shell" };
+      const approve = vi.spyOn(processTransport, "sendFrameToProcess").mockImplementation(async (_installation, _pid, frame) => {
+        if (frame.type !== "req" || frame.call !== "proc.tool.authorize") throw new Error("Unexpected callback");
+        const args = frame.args;
+        return { type: "res", id: frame.id, ok: true, data: {
+          approved: resolveToolApproval(DEFAULT_TOOL_APPROVAL_POLICY, args.syscall, args.args, args.target).action === "auto",
+        } };
+      });
+      // SAFETY: An instance route uses only the durable session store from these dependencies.
+      const deps = { shellSessions: new ShellSessionStore(sql) } as DispatchDeps;
+      const request = () => dispatch({ type: "req", id: crypto.randomUUID(), call: "shell.exec", args: { target: "browser", input: "page snapshot" } },
+        { type: "process", id: "crew-process" }, ctx, deps);
+      ctx.approvedTarget = { targetId: "browser", ownerUid: 1000, platform: "browser", route: { kind: "instance", instanceId: "instance" } };
+      expect(await request()).toMatchObject({ response: { ok: true } });
+      expect(approve).toHaveBeenCalledWith("trusted-installation", "crew-process", expect.objectContaining({
+        args: expect.objectContaining({ syscall: "shell.exec", target: ctx.approvedTarget }),
+      }));
+      expect(execute).toHaveBeenCalledOnce();
+
+      ctx.approvedTarget = { targetId: "browser", ownerUid: 1000, platform: "browser", route: { kind: "machine", targetId: "browser" } };
+      expect(await request()).toMatchObject({ response: { ok: false, error: { code: 403 } } });
+      expect(execute).toHaveBeenCalledOnce();
+      ctx.approvedTarget = { targetId: "browser", ownerUid: 1000, platform: "browser", route: { kind: "instance", instanceId: "instance" } };
+      instance.instanceId = "replacement";
+      expect(await request()).toMatchObject({ response: { ok: false, error: { code: 403 } } });
+      expect(approve).toHaveBeenCalledOnce();
+      expect(execute).toHaveBeenCalledOnce();
+
+      ctx.targets.canAccess = () => true;
+      ctx.targets.get = () => ({
+        target_id: "browser", owner_uid: 1000, label: "Browser", description: "Personal browser", platform: "browser", version: "1",
+        implements: ["shell.exec"], online: true, first_seen_at: 0, last_seen_at: 0, connected_at: 0, disconnected_at: null,
+      });
+      expect(await request()).toMatchObject({ response: { ok: false, error: { code: 403 } } });
+      expect(execute).toHaveBeenCalledOnce();
+      delete ctx.approvedTarget;
+      expect(await request()).toMatchObject({ response: { ok: false, error: { code: 403 } } });
+      expect(approve).toHaveBeenLastCalledWith("trusted-installation", "crew-process", expect.objectContaining({
+        args: expect.objectContaining({ target: expect.objectContaining({ route: { kind: "machine", targetId: "browser" } }) }),
+      }));
+
+      ctx.targets.canAccess = () => false;
+      approve.mockImplementationOnce(async (_installation, _pid, frame) => {
+        instance.instanceId = "changed-during-approval";
+        return { type: "res", id: frame.id, ok: true, data: { approved: true } };
+      });
+      expect(await request()).toMatchObject({ response: { ok: false, error: { code: 403, message: expect.stringContaining("changed while awaiting approval") } } });
+      expect(execute).toHaveBeenCalledOnce();
+    });
+  });
+
   it("rejects a named start before dispatch and permits a fresh attempt without reusing the reserved ID", async () => {
     await runWithRealKernelSql(async sql => {
       const instance: CloudInstance = { ...browserInstance, implements: ["shell.exec"], expiresAt: Date.now() + 60000 };

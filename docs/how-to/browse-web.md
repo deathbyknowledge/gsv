@@ -25,6 +25,8 @@ available only on your device.
 3. Click its toolbar icon, paste the invitation from GSV, and choose **Pair this browser**.
 4. The panel says **Ready** once it's connected. Chrome shows a banner in a tab while your GSV works there; that's normal.
 
+You can close the sidebar after pairing. The extension keeps working while Chrome is open. The browser control stays near the bottom of the sidebar: **Pause** disconnects this browser from GSV until you choose **Resume**. When the panel shows active browser work, **Stop** ends network captures, tab recordings, and debugger sessions, then disconnects. Your pairing is saved, so you do not need a new invitation.
+
 ## Try it
 
 Ask your agent: *What can you do with my browser extension?*
