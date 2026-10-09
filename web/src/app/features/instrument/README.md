@@ -178,6 +178,13 @@ glyph loops as frames are first displayed, without blurred shadows or a bulk
 render on opening.
 
 Web Zen offers record, stop and cancel when no native input provider is present.
+Recording replaces the prompt's presentation with a live waveform: square bars,
+the Instrument accent colour, and quiet text actions. The draft remains mounted
+and returns for review after transcription or cancellation. Enter stops capture;
+Escape cancels. The waveform observes the same microphone stream locally, with
+no speaker connection, and closes its audio graph before transcription. Reduced
+motion slows visual updates. The waveform owns its animation; audio samples do
+not cause Zen or the conversation to rerender.
 The browser owns microphone capture and releases it before uploading a bounded
 audio body through `ai.transcription.create`, with the current Process selecting
 the transcription configuration. The result inserts at the current draft cursor

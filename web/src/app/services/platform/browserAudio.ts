@@ -10,7 +10,7 @@ export function browserRecordingUnavailable(): string | null {
 }
 
 /** Own the microphone until stop, failure or cancellation, including late permission grants. */
-export async function captureBrowserAudio(signal: AbortSignal, onStart: (stop: () => void) => void): Promise<Blob> {
+export async function captureBrowserAudio(signal: AbortSignal, onStart: (stop: () => void, stream: MediaStream) => void): Promise<Blob> {
   signal.throwIfAborted();
   const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
   const tracks = stream.getTracks();
@@ -63,7 +63,7 @@ export async function captureBrowserAudio(signal: AbortSignal, onStart: (stop: (
       try {
         recorder.start(1000);
         timer = setTimeout(stop, MAX_VOICE_SECONDS * 1000);
-        onStart(stop);
+        onStart(stop, stream);
       } catch (error) {
         cleanup();
         reject(error);

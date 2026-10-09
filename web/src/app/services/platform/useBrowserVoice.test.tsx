@@ -55,10 +55,12 @@ describe("web voice composition", () => {
     const app = await mounted();
     await app.start();
     expect(app.control().phase).toBe("recording");
+    expect(app.control().stream).toBe(app.input.stream);
     expect(app.request).not.toHaveBeenCalled();
     await app.stop();
     expect(app.input.stopTrack).toHaveBeenCalled();
     expect(app.control().phase).toBe("transcribing");
+    expect(app.control().stream).toBeNull();
     const [method, args, options] = app.request.mock.calls[0];
     expect(method).toBe("ai.transcription.create");
     expect(args).toEqual({ pid: "p-ship", audio: { mimeType: "audio/webm;codecs=opus" }, mode: "transcribe" });
@@ -117,6 +119,16 @@ describe("web voice composition", () => {
     expect(app.input.stopTrack).toHaveBeenCalled();
     expect(app.input.recorders).toHaveLength(0);
     expect(app.request).not.toHaveBeenCalled();
+  });
+
+  it("restores focus to the preserved draft when recording is cancelled explicitly", async () => {
+    const app = await mounted();
+    await app.start();
+    await settle(() => app.control().cancel(true));
+    expect(app.value()).toBe("typed");
+    expect(app.control().stream).toBeNull();
+    expect(app.input.stopTrack).toHaveBeenCalled();
+    expect(app.prompt.current.focus).toHaveBeenCalledOnce();
   });
 
   it("retries a failed upload with retained audio and the provider's error visible", async () => {

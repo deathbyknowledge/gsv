@@ -8,14 +8,16 @@ text before sending it.
 1. Open your space over HTTPS and go to Zen.
 2. Choose **record** below the composer and allow microphone access when your
    browser asks.
-3. Speak, then choose **stop recording**. A recording stops automatically after
-   five minutes.
-4. Wait for **Transcribing…**. The text appears at the current cursor in your
+3. The prompt becomes a live waveform that responds to your voice. Speak, then
+   choose **stop**. A recording stops automatically after five minutes.
+4. Wait for **transcribing…**. The text appears at the current cursor in your
    draft, keeping text you have already typed. Edit it and press Enter to send.
 
-Pressing Enter during recording stops the recording; it does not send the
-transcript. Sending becomes available once transcription finishes. **cancel**
-discards the recording or pending transcription and keeps your typed draft.
+Your existing draft is preserved underneath the recording surface and returns
+after transcription or cancellation. Pressing Enter during recording stops the recording;
+it does not send the transcript. Sending becomes available once transcription
+finishes. **cancel** or Escape discards the recording or pending transcription
+and keeps your typed draft.
 Leaving Zen, hiding the tab, switching conversations or places, disconnecting,
 or clearing the draft also cancels pending voice input. A late result cannot
 enter another conversation.

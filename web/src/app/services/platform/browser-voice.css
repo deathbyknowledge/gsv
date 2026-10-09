@@ -1,4 +1,17 @@
 .browser-voice-controls { display: flex; flex-wrap: wrap; align-items: center; gap: .75rem; margin-left: auto; min-width: 0; }
-.browser-voice-controls .browser-voice-stop { color: var(--accent); }
+.browser-voice-controls:empty { display: none; }
 .browser-voice-controls .browser-voice-error { color: var(--error); flex-basis: 100%; max-width: 36rem; overflow-wrap: anywhere; }
-.browser-voice-controls [role="status"]:empty { display: none; }
+.browser-voice-surface { display: grid; gap: .5rem; border-top: 1px solid var(--border); padding: 14px 0 .15rem; outline: none; }
+.browser-voice-waveform { display: block; width: 100%; height: 3.5rem; overflow: hidden; fill: none; stroke-width: 3; stroke-linecap: butt; shape-rendering: crispEdges; }
+.browser-voice-baseline { stroke: var(--text-dim); opacity: .2; }
+.browser-voice-trace { stroke: var(--accent); opacity: .8; }
+.browser-voice-surface.is-transcribing .browser-voice-trace { opacity: .3; }
+.browser-voice-caption { display: flex; align-items: center; justify-content: space-between; gap: 1rem; min-height: 1.5rem; font: .7rem/1.5 var(--gsv-font-mono); }
+.browser-voice-status { color: var(--text-dim); }
+.browser-voice-surface.is-recording .browser-voice-status { color: var(--accent); }
+.browser-voice-status::before { content: ""; display: inline-block; width: 5px; height: 5px; margin-right: .65rem; vertical-align: middle; background: currentColor; }
+.browser-voice-actions { display: flex; flex-shrink: 0; gap: 1.25rem; }
+.browser-voice-actions button { padding: .25rem 0; border: 0; background: none; color: var(--text-dim); font: inherit; cursor: pointer; }
+.browser-voice-actions .browser-voice-stop, .browser-voice-actions button:hover { color: var(--accent); }
+.browser-voice-actions kbd { margin-left: .3rem; color: var(--faint); font: inherit; font-size: .6rem; }
+.browser-voice-notice { color: var(--text-dim); font-size: .7rem; }

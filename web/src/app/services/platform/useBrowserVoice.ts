@@ -1,5 +1,5 @@
 import type { RefObject } from "preact";
-import { useLayoutEffect, useRef, useState } from "preact/hooks";
+import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
 import type { GSVClient } from "@humansandmachines/gsv";
 import type { PromptLineHandle } from "../../features/instrument/shared/PromptLine";
 import { frameBodyFromBlob } from "../gateway/frameBody";
@@ -18,29 +18,36 @@ export function useBrowserVoice({ client, prompt, pid, scope, enabled }: {
 }) {
   const [phase, setPhase] = useState<Phase>("idle");
   const [error, setError] = useState<string | null>(null);
-  const [seconds, setSeconds] = useState(0);
+  const [stream, setStream] = useState<MediaStream | null>(null);
   const current = useRef<Recording | null>(null);
+  const restoreFocus = useRef(false);
 
   const discard = () => {
     const recording = current.current;
     current.current = null;
+    restoreFocus.current = false;
     recording?.abort.abort();
   };
-  const cancel = () => { discard(); setPhase("idle"); setError(null); };
+  const cancel = (focus = false) => {
+    discard();
+    restoreFocus.current = focus;
+    setStream(null);
+    setPhase("idle");
+    setError(null);
+  };
 
   useLayoutEffect(() => {
     setPhase("idle");
     setError(null);
+    setStream(null);
     return discard;
   }, [client, prompt, pid, scope, enabled]);
 
-  useLayoutEffect(() => {
-    if (phase !== "recording") return;
-    const start = Date.now();
-    setSeconds(0);
-    const timer = setInterval(() => setSeconds(Math.floor((Date.now() - start) / 1000)), 1000);
-    return () => clearInterval(timer);
-  }, [phase]);
+  useEffect(() => {
+    if (phase !== "idle" || !restoreFocus.current) return;
+    restoreFocus.current = false;
+    if (enabled) prompt.current?.focus();
+  }, [phase, enabled, prompt]);
 
   useLayoutEffect(() => {
     const leave = () => cancel();
@@ -70,12 +77,12 @@ export function useBrowserVoice({ client, prompt, pid, scope, enabled }: {
         return;
       }
       current.current = null;
+      restoreFocus.current = true;
       setPhase("idle");
       if (composer) {
         const selection = composer.selection();
         const draft = composeVoice(selection.value.slice(0, selection.start), text, selection.value.slice(selection.start));
         composer.setValue(draft.value, draft.caret);
-        composer.focus();
       }
     } catch (error) {
       if (current.current !== recording) return;
@@ -91,17 +98,20 @@ export function useBrowserVoice({ client, prompt, pid, scope, enabled }: {
     setPhase("permission");
     setError(null);
     try {
-      const audio = await captureBrowserAudio(recording.abort.signal, (stop) => {
+      const audio = await captureBrowserAudio(recording.abort.signal, (stop, microphone) => {
         recording.stop = stop;
+        setStream(microphone);
         setPhase("recording");
       });
       if (current.current !== recording) return;
+      setStream(null);
       recording.stop = undefined;
       recording.audio = audio;
       await transcribe(recording, audio);
     } catch (error) {
       if (current.current !== recording) return;
       current.current = null;
+      setStream(null);
       setPhase("error");
       setError(error instanceof DOMException && error.name === "NotAllowedError"
         ? "Microphone access was denied. Allow it in your browser’s site settings and try again."
@@ -111,6 +121,7 @@ export function useBrowserVoice({ client, prompt, pid, scope, enabled }: {
   const stop = () => {
     if (!current.current?.stop) return;
     setPhase("transcribing");
+    setStream(null);
     current.current.stop();
   };
   const retry = () => {
@@ -125,5 +136,5 @@ export function useBrowserVoice({ client, prompt, pid, scope, enabled }: {
   };
   const onInput = (value: string) => { if (!value && current.current) cancel(); };
 
-  return { phase, error, seconds, canRetry: phase === "error" && !!current.current?.audio, start, stop, cancel, retry, onInput, interceptSubmit };
+  return { phase, error, stream, canRetry: phase === "error" && !!current.current?.audio, start, stop, cancel, retry, onInput, interceptSubmit };
 }
