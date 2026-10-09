@@ -1,5 +1,5 @@
 const INSTALL_URL = "https://install.gsv.space";
-const RELEASE_DOWNLOAD_URL = "https://github.com/deathbyknowledge/gsv/releases/download";
+const BROWSER_DOWNLOAD_URL = "https://gsv.space/browser";
 /** The GitHub release page listing every host download, including the beta Desktop app. */
 export const LATEST_RELEASE_PAGE_URL = "https://github.com/deathbyknowledge/gsv/releases/latest";
 
@@ -24,7 +24,7 @@ export function cliReleaseLabel(release: string): string {
 }
 
 export function browserExtensionDownloadUrl(release: string): string {
-  return `${RELEASE_DOWNLOAD_URL}/${releaseRef(release)}/gsv-browser-extension.zip`;
+  return `${BROWSER_DOWNLOAD_URL}?release=${releaseRef(release)}`;
 }
 
 function cliReleaseSelector(release: string): { name: "GSV_CHANNEL" | "GSV_VERSION"; value: string } {
