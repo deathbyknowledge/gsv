@@ -250,7 +250,7 @@ async function authenticatePeer(
     return { ok: false, error: "Authentication required" };
   }
 
-  const { username } = args.auth;
+  const username = args.auth.username ?? auth.getHumanAccount()?.username;
   if (!username) return { ok: false, error: "Username required" };
   const hasToken = !!args.auth.token;
   const hasPassword = !!args.auth.password;

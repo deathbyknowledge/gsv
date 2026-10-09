@@ -67,7 +67,7 @@ export type SessionSnapshot = {
 };
 
 export type SessionLoginInput = {
-  username: string;
+  username?: string;
   password?: string;
   token?: string;
 };
@@ -659,7 +659,7 @@ export function createSessionService(client: SessionClient, options: SessionServ
     cancelSilentReconnect();
     const generation = reconnectGeneration;
     const url = gatewayUrl();
-    const username = input.username.trim();
+    const username = input.username?.trim() ?? "";
     const password = input.password ?? "";
     const token = input.token?.trim() ?? "";
 
@@ -680,12 +680,13 @@ export function createSessionService(client: SessionClient, options: SessionServ
     try {
       const result = await client.connect(options);
       if (disposed || generation !== reconnectGeneration) throw new Error("Session ended");
-      storeValue(STORAGE_USERNAME, username, storage);
+      const signedInUsername = result.peer.principal.account.username;
+      storeValue(STORAGE_USERNAME, signedInUsername, storage);
 
       setSnapshot({
         phase: "ready",
         url,
-        username,
+        username: signedInUsername,
         connectionId: result.server.connectionId,
         server: result.server,
         message: null,
@@ -728,7 +729,7 @@ export function createSessionService(client: SessionClient, options: SessionServ
     cancelSilentReconnect();
     const setupGeneration = reconnectGeneration;
     const url = gatewayUrl();
-    const username = input.username.trim();
+    const username = input.username?.trim() ?? "";
     const password = input.password.trim();
 
     setSnapshot({
@@ -781,15 +782,15 @@ export function createSessionService(client: SessionClient, options: SessionServ
         if (options.onboarding) await options.onboarding.complete();
         else clearInstallationOnboardingToken();
       } catch (error) {
-        if (setupGeneration === reconnectGeneration) setSnapshot({ phase: "locked", url, username,
+        if (setupGeneration === reconnectGeneration) setSnapshot({ phase: "locked", url, username: result.user.username,
           connectionId: null, message: "Account created. Sign in to continue." });
         throw error;
       }
     }
     if (setupGeneration !== reconnectGeneration) return result;
 
-    storeValue(STORAGE_USERNAME, username, storage);
-    await login({ username, password });
+    storeValue(STORAGE_USERNAME, result.user.username, storage);
+    await login({ username: result.user.username, password });
     return result;
   };
 

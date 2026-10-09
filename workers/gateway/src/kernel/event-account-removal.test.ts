@@ -18,7 +18,7 @@ async function fixture(work: (kernel: Kernel, root: KernelContext) => Promise<vo
     for (const [uid, username] of [[1000, "removed"], [1001, "survivor"], [2000, "agent"]] as const) {
       kernel.auth.addUser({ username, uid, gid: uid, gecos: username, home: `/home/${username}`, shell: "/bin/init" });
       kernel.auth.addGroup({ name: username, gid: uid, members: [] });
-      if (uid < 2000) kernel.auth.setShadow(makeShadowEntry(username, password));
+      kernel.auth.setShadow(makeShadowEntry(username, uid === 1001 ? password : "!"));
       kernel.caps.grant(uid, "signal.watch");
     }
     const root = kernel.buildKernelContext({
@@ -64,20 +64,20 @@ describe("new Kernel event admission after account removal", () => {
     const send = eventTransport();
     const ensureShip = vi.spyOn(personalController, "ensurePersonalController").mockResolvedValue("proc:ship");
     try {
-      await fixture(async (kernel, root) => {
+      await fixture(async (kernel) => {
         const record = readyResponsibility(kernel, 1000);
         const control = readyResponsibility(kernel, 1001);
         await kernel.responsibilityRuntime.reconcileResponsibilityWake(1000);
         const state = kernel.responsibilities.wakeState(1000);
         if (timing === "before wake") {
-          await kernel.people.remove(1000, root);
+          kernel.ctx.storage.sql.exec("INSERT INTO account_access (uid, disabled_at) VALUES (1000, ?)", Date.now());
           await kernel.responsibilityRuntime.onResponsibilityWake(state, { id: state.taskId! });
         } else {
           const gate = Promise.withResolvers<Awaited<ReturnType<typeof kernel.onboarding.managedWorkGate>>>();
           const admission = vi.spyOn(kernel.onboarding, "managedWorkGate").mockImplementationOnce(() => gate.promise);
           const pending = kernel.responsibilityRuntime.onResponsibilityWake(state, { id: state.taskId! });
           expect(admission).toHaveBeenCalledTimes(1);
-          await kernel.people.remove(1000, root);
+          kernel.ctx.storage.sql.exec("INSERT INTO account_access (uid, disabled_at) VALUES (1000, ?)", Date.now());
           gate.resolve(timing === "during restricted gate"
             ? { allowed: false, code: 423, message: "Installation is restricted" }
             : { allowed: true });
@@ -103,13 +103,13 @@ describe("new Kernel event admission after account removal", () => {
     const ensureShip = vi.spyOn(personalController, "ensurePersonalController").mockResolvedValue("proc:ship");
     send.mockRejectedValueOnce(new Error("Saved event response was lost"));
     try {
-      await fixture(async (kernel, root) => {
+      await fixture(async (kernel) => {
         const first = readyResponsibility(kernel, 1000);
         await kernel.responsibilityRuntime.onResponsibilityWake(kernel.responsibilities.wakeState(1000));
         const batch = kernel.responsibilities.pendingBatch(1000)!;
         expect(batch).toMatchObject({ attemptCount: 1, responsibilities: [{ id: first.id }] });
         const later = readyResponsibility(kernel, 1000);
-        await kernel.people.remove(1000, root);
+        kernel.ctx.storage.sql.exec("INSERT INTO account_access (uid, disabled_at) VALUES (1000, ?)", Date.now());
         await kernel.responsibilityRuntime.onResponsibilityWake(kernel.responsibilities.wakeState(1000));
         expect(send).toHaveBeenCalledTimes(2);
         for (const call of send.mock.calls) {
@@ -127,14 +127,14 @@ describe("new Kernel event admission after account removal", () => {
   it.each(["person", "both"] as const)("fences a fresh %s watch event after owner removal during admission", async (audience) => {
     const send = eventTransport();
     try {
-      await fixture(async (kernel, root) => {
+      await fixture(async (kernel) => {
         const removed = targetWatch(kernel, 1000, 2000, audience);
         const control = targetWatch(kernel, 1001, 1001, audience);
         const gate = Promise.withResolvers<Awaited<ReturnType<typeof kernel.onboarding.managedWorkGate>>>();
         const admission = vi.spyOn(kernel.onboarding, "managedWorkGate").mockImplementationOnce(() => gate.promise);
         const pending = deliverTargetConnectionEvent(kernel, targetEvent, "transition:removal", kernel.signalWatches.matchTarget(targetEvent.targetId, "target.status"));
         expect(admission).toHaveBeenCalledTimes(1);
-        await kernel.people.remove(1000, root);
+        kernel.ctx.storage.sql.exec("INSERT INTO account_access (uid, disabled_at) VALUES (1000, ?)", Date.now());
         gate.resolve({ allowed: true });
         await pending;
         expect(send).toHaveBeenCalledTimes(1);
@@ -148,9 +148,9 @@ describe("new Kernel event admission after account removal", () => {
   it("fences a watch whose run-as account was removed while its owner remains active", async () => {
     const send = eventTransport();
     try {
-      await fixture(async (kernel, root) => {
+      await fixture(async (kernel) => {
         targetWatch(kernel, 1001, 1000, "both");
-        await kernel.people.remove(1000, root);
+        kernel.ctx.storage.sql.exec("INSERT INTO account_access (uid, disabled_at) VALUES (1000, ?)", Date.now());
         await deliverTargetConnectionEvent(kernel, targetEvent, "transition:run-as", kernel.signalWatches.matchTarget(targetEvent.targetId, "target.status"));
         expect(send).not.toHaveBeenCalled();
         expect(kernel.auth.isAccountDisabled(1001)).toBe(false);
@@ -169,11 +169,11 @@ describe("new Kernel event admission after account removal", () => {
       return { type: "res", id: frame.id, ok: true, data: { eventId: frame.args.eventId, runId: frame.args.eventId, queued: false } };
     });
     try {
-      await fixture(async (kernel, root) => {
+      await fixture(async (kernel) => {
         const watch = targetWatch(kernel, 1000, 2000, "both");
         const pending = deliverTargetConnectionEvent(kernel, targetEvent, "transition:admitted", kernel.signalWatches.matchTarget(targetEvent.targetId, "target.status"));
         await entered.promise;
-        await kernel.people.remove(1000, root);
+        kernel.ctx.storage.sql.exec("INSERT INTO account_access (uid, disabled_at) VALUES (1000, ?)", Date.now());
         release.resolve();
         await pending;
         expect(send).toHaveBeenCalledTimes(1);

@@ -970,10 +970,9 @@ metadata. Each queued delivery retains the wire version chosen when it was creat
 
 ### Public profiles and first messages
 
-Profiles are opt-in, owner-authenticated snapshots at `https://SPACE/@alias`. Reading the same
+Each space has one opt-in, owner-authenticated profile at `https://SPACE/profile`. Reading the same
 address with `Accept: application/json` returns its signed document. Publication is atomic;
-draft changes stay private until the next explicit publish. Aliases remain reserved to their
-owner after unpublishing. All profile mutations and first-contact decisions require the direct
+draft changes stay private until the next explicit publish. No public alias is required. All profile mutations and first-contact decisions require the direct
 signed-in human; Ship may resolve a public profile but cannot publish or accept on their behalf.
 
 ```ts
@@ -1033,9 +1032,14 @@ type ProfileAndApproachSyscalls = {
 };
 ```
 
-`ProfileFields` contains `alias`, `displayName`, `about`, `contactPolicy`
+`ProfileFields` contains `displayName`, `about`, `contactPolicy`
 (`requests`, `invitation` or `closed`) and `representation` (`human` or `human-and-ship`).
-`ProfileState` returns those fields as `draft`, a revision and optional published URL/revision.
+`ProfileState` returns those fields as `draft`, its canonical `url`, a revision and optional published URL/revision.
+New signed documents use version 3 and domain `gsv-federation/3/profile`; federation
+transport remains v2. Readers also verify legacy v2 documents. On upgrade, the
+Kernel re-signs only the previously published snapshot at `/profile`, retaining
+the old published alias for links. Legacy HTML links redirect; JSON requests return
+the signed document directly. Concurrent unpublishing fences this conversion.
 `profile.resolve` verifies the signed identity and checks existing contact pins.
 Creating a first message binds it to the exact recipient and profile revision the sender reviewed.
 
@@ -1783,7 +1787,7 @@ type SystemSyscalls = {
     args: {
       protocol: 4;
       peer: { id: string; version: string; platform: string; implements?: string[] };
-      auth?: { username: string; password?: string; token?: string };
+      auth?: { username?: string; password?: string; token?: string };
     };
     result: {
       protocol: 4;
@@ -1803,7 +1807,7 @@ type SystemSyscalls = {
   };
 
   "sys.setup": {
-    args: { username: string; password: string; rootPassword?: string; timezone?: string; ai?: { provider?: string; model?: string; apiKey?: string }; machine?: { peerId: string; label?: string; expiresAt?: number } };
+    args: { username?: string; password: string; rootPassword?: string; timezone?: string; ai?: { provider?: string; model?: string; apiKey?: string }; machine?: { peerId: string; label?: string; expiresAt?: number } };
     result: { server: { version: string; release: string; features?: string[] }; user: ProcessIdentity; rootLocked: boolean; bootstrap?: SystemSyscalls["sys.bootstrap"]["result"]; machineToken?: { tokenId: string; token: string; tokenPrefix: string; uid: number; kind: "machine"; label: string | null; peerId: string; createdAt: number; expiresAt: number | null } };
   };
 
@@ -1935,8 +1939,8 @@ type SystemSyscalls = {
   };
 
   "account.create": {
-    args: { kind: "human" | "agent"; username: string; password?: string; gecos?: string; persona?: string; contextFiles?: Array<{ name: string; text: string }> };
-    result: { account: ProcessIdentity; kind: "human" | "agent"; personalAgent?: ProcessIdentity };
+    args: { kind: "agent"; username: string; gecos?: string; persona?: string; contextFiles?: Array<{ name: string; text: string }> };
+    result: { account: ProcessIdentity; kind: "agent" };
   };
 
   "account.list": {
@@ -1951,27 +1955,22 @@ type SystemSyscalls = {
     args: { id: string; secret: string; proof: string; password: string };
     result: { username: "root" };
   };
-  "account.recovery.code.start": { args: { id: string; username: string; proof: string }; result: { accepted: true; expiresAt: number } };
+  "account.recovery.code.start": { args: { id: string; username?: string; proof: string }; result: { accepted: true; expiresAt: number } };
   "account.recovery.code.redeem": { args: { id: string; proof: string; code: string; password: string }; result: { username: string } };
-  "account.invite.create": { args: { id: string; secret: string; username: string }; result: HumanInvitation };
-  "account.invite.list": { args: {}; result: { invitations: HumanInvitation[] } };
-  "account.invite.cancel": { args: { id: string }; result: HumanInvitation };
-  "account.invite.redeem": {
-    args: { id: string; secret: string; proof: string; password: string };
-    result: { uid: number; username: string };
-  };
-  "account.people.list": { args: {}; result: { people: LocalPerson[] } };
-  "account.password.set": { args: { uid: number; password: string }; result: { updated: true } };
-  "account.remove": { args: { uid: number }; result: { removed: true } };
+  "account.password.set": { args: { uid?: number; password: string }; result: { updated: true } };
 };
 ```
 
 `sys.oauth.device.start` and `sys.oauth.device.poll` run the device
 authorization flow for providers that sign in with a code shown to the person,
 currently the OpenAI Codex account. `account.create` and `account.list` manage
-the accounts a human owns: a `human` account gets a personal agent and a separate
-Crew execution account, and an
-`agent` account is a non-login identity the owner can run processes as.
+the personal account and its agents. Setup creates the sole human, with Ship and
+Crew execution accounts. `account.create` creates only non-login agents.
+`sys.setup.username` is optional: new spaces derive the internal account name from
+the trusted space handle (or `owner` when that name is reserved or invalid).
+Existing callers may retain an explicit setup username. `sys.connect` without
+`auth.username` selects the personal account; root sign-in must name `root`.
+Existing account UIDs, homes and credentials are preserved.
 
 `account.owner.link` requires a signed-in root human and attests the Kernel's
 immutable installation identity to Accounts. The browser then verifies the
@@ -1986,7 +1985,8 @@ password cannot reuse a consumed claim. Secrets are excluded from the ledger.
 
 Member recovery is available before authentication through `account.recovery.code.start`
 and `account.recovery.code.redeem`. The browser persists its UUID and 32-byte proof
-before requesting a code. The Kernel resolves a previously direct-human-confirmed
+before requesting a code. The optional legacy username must match the personal
+account; new callers omit it. The Kernel resolves a previously direct-human-confirmed
 private messenger link for that member; callers cannot select the recipient, uid,
 or space. Manual and legacy links without that confirmation are ineligible. Root
 uses verified owner recovery instead. The start response does not disclose whether
@@ -1999,24 +1999,12 @@ Redemption rechecks the exact link generation and account credential epoch, then
 atomically replaces the member password, revokes existing credentials and messenger
 links, and commits the receipt. Identical retries cannot overwrite later credentials.
 
-Human invitations use a separate fixed `human-account` purpose; a device pairing
-cannot create a human. A signed-in root human fixes the username and supplies a
-UUID and 32-byte hexadecimal secret, which the Kernel stores hashed. Invitations
-expire after ten minutes; cancellation or root credential revocation prevents
-consumption. `/join` on the space's own hostname reads the invitation from its
-fragment and stores a recipient-generated proof before clearing the fragment.
-`account.invite.redeem` runs before authentication behind the installation work
-gate. It atomically creates the local account and stores the proof-and-password
-receipt; an identical retry completes home setup without changing credentials.
-The account gets its personal agent on first sign-in.
-
-`account.people.list`, invitation administration, `account.password.set` and
-`account.remove` require a root human session with credential provenance; a
-Process acting as root cannot invoke them. Password reset and removal apply to
-ordinary human accounts. Both revoke earlier credentials and linked messengers;
-removal also disables future sign-in and credential issuance. The uid, groups,
-data and already-admitted Processes remain. A removed uid cannot be linked to a
-messenger again. Enrollment secrets and new passwords never enter the ledger.
+`account.password.set` requires a root human session with credential provenance;
+a Process acting as root cannot invoke it. It resets the sole personal account.
+The optional legacy `uid` must match that account. Reset revokes its earlier
+credentials and messenger links, retaining its UID, groups, data and admitted
+Processes. The old local-human invitation, listing and removal syscalls are
+removed; contact invitations continue to connect separate spaces.
 
 ## AI: `ai.*`
 

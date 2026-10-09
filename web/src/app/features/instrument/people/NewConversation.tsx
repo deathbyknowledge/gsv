@@ -69,7 +69,7 @@ export function NewConversation({ account, draft, onChange, onSent, onBusy, cont
     </>}
     {profile && <>
       <div class="people-profile-preview">
-        <span class="people-kicker">@{profile.alias} · {new URL(profile.origin).host}</span>
+        <span class="people-kicker">{new URL(profile.origin).host}</span>
         <h2>{profile.displayName}</h2>{profile.about && <p>{profile.about}</p>}
         {profile.representation === "human-and-ship" && <p class="people-note">May reply through their Ship.</p>}
       </div>

@@ -17,8 +17,8 @@ impl GatewayAuth {
     }
 
     pub fn validate(&self) -> Result<(), Box<dyn std::error::Error>> {
-        if self.has_credential() && self.username.is_none() {
-            return Err("Username is required when using password/token authentication".into());
+        if self.password.is_some() && self.token.is_some() {
+            return Err("Use either password or token authentication".into());
         }
         Ok(())
     }

@@ -64,6 +64,13 @@ GSV is Linux-inspired because familiar, orthogonal semantics reduce instruction 
 
 ### Treat agents as real processes
 
+Each space has one personal human account, plus explicit root administration and
+non-login agent accounts. Setup derives the ordinary account name from the space
+handle; existing account identities and homes remain stable. Normal sign-in
+selects the personal account without asking for a username. Root remains explicit.
+People owns the space's public profile at `/profile` and cross-space contacts;
+contact invitations do not create local human accounts.
+
 Processes have identities, histories, permissions, queues, pending work, and lifecycles. Subagents and subprocesses are not special chat records. Preserve process invariants across normal completion, interruption, restart, and teardown.
 
 The personal agent account is the user's personal intelligence. Its canonical user-facing conversation is Ship. One Kernel-marked interactive process handles Ship across user interfaces; its pid is replaceable and otherwise follows ordinary process lifecycle. Other processes are visible work, even when they run as the same account. Kernel SQLite owns one durable responsibility ledger (`r12y`) for promises, delegated work, follow-ups, maintenance, and recovery that must survive a run. The Ship sees the owner ledger; a delegated child sees only its assignments and their ancestor records. A delegated process is an ordinary process acting in a worker role, not a second orchestration runtime.

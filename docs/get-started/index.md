@@ -6,7 +6,8 @@ You can use a hosting operator or run the same stack in your own Cloudflare acco
 ## Get a space
 
 If an operator has created a space for you, open its setup invitation and choose
-the username and password you'll use inside that space. Continue to review the
+the password you'll use inside that space. Your space has one personal account;
+you do not need to choose another username. Continue to review the
 early-access disclosure and confirm the age, Terms of Service and Privacy Policy
 agreement before creating your account. This checkbox is required inside the space
 as well as on the signup email step. **Back** lets you revise your credentials.
@@ -66,8 +67,8 @@ The web console is called **Instrument** and has five views:
 - **Chat** is your Ship conversation, and where you inspect what a run did.
 - **Fleet** lists your places, processes and responsibilities, and recently touched files.
 - **Memory** shows your personal knowledge pages.
-- **People** holds conversations, message requests and private contacts across GSV spaces.
-- **Settings** holds preferences (models), permissions, instructions, messengers, MCP connections and **Logs** for actions and their outcomes. The **people** and **sign-in** sections appear only for the root account.
+- **People** holds conversations, message requests and private contacts across GSV spaces, plus your public profile.
+- **Settings** holds preferences (models), permissions, instructions, messengers, MCP connections and **Logs** for actions and their outcomes. The **sign-in** section appears only for root, for personal password resets and verified-owner linking.
 
 The Settings sidebar highlights the section you're viewing.
 
@@ -101,6 +102,6 @@ move between views. The header stays above the scrolling content.
 - [Connect a messenger](/how-to/messengers).
 - [Add integrations](/how-to/integrations).
 - [Browse the web](/how-to/browse-web).
-- [Invite people](/how-to/invite-people).
+- [Personal access](/how-to/invite-people).
 - [Examples](/examples/index).
 - [FAQ](/get-started/faq).

@@ -26,7 +26,7 @@ Neither person needs to publish a profile. Acceptance opens the conversation.
 
 If someone gives you a link or an older contact code, choose **connect → I have an
 invitation** to paste it. These invitations are separate from
-[inviting an account into your space](/how-to/invite-people).
+[personal access to your own space](/how-to/invite-people).
 
 You can also ask Ship to create an invitation, or give it someone's invitation
 link to accept. Ship asks who should handle new messages unless you already told
@@ -40,8 +40,10 @@ name, choose who handles new messages, then send a first message.
 They make their own handling choice when accepting, or can decline it. Acceptance keeps that first message in the same
 conversation, opens it directly, and enables further messages and attachments.
 
-Your profile starts private. In **Settings → Profile**, save a draft, review it
-and explicitly publish it. A profile can accept message requests, require a private
+Your profile starts private. Click your display name at the bottom of the People
+sidebar, save a draft, review it and explicitly publish it. Your public address is
+`https://YOUR-SPACE/profile`; there is no separate alias to choose. Existing published
+profile links still work. Drafts remain when you return to a conversation. A profile can accept message requests, require a private
 invitation, or close new contact. Saving later edits does not change the public
 page until you publish again. Unpublishing removes the page; existing contacts and
 conversations remain. People who already viewed it may retain copies.

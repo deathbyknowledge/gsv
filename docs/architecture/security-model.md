@@ -26,6 +26,14 @@ but local OS permissions remain the final boundary on those machines.
 
 ## Authentication
 
+A space has one personal human account, plus root administration and non-login
+agent accounts. The Kernel enforces this at account creation and credential writes,
+including writes through the virtual `/etc/passwd` and `/etc/shadow` files.
+Normal sign-in omits the username; the Kernel resolves the personal account.
+Root must be selected explicitly. Setup uses the trusted space handle for the
+internal account name, while upgrades preserve existing UIDs, names and homes.
+Contact invitations connect people across spaces and never grant local accounts.
+
 `sys.connect` is the WebSocket login syscall. The request identifies the peer
 program and any syscalls it implements, but never claims an authority role. The
 Kernel derives a human, machine, or service principal from the credential:

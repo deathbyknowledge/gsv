@@ -7,7 +7,7 @@ import type { AuthStore } from "./auth-store";
 import type { KernelContext } from "./context";
 import type { IdentityLinkRecord } from "./identity-links";
 
-const startSchema = z.strictObject({ id: z.uuid(), username: z.string().regex(/^[a-z_][a-z0-9_-]{0,31}$/), proof: z.string().regex(/^[a-f0-9]{64}$/) });
+const startSchema = z.strictObject({ id: z.uuid(), username: z.string().regex(/^[a-z_][a-z0-9_-]{0,31}$/).optional(), proof: z.string().regex(/^[a-f0-9]{64}$/) });
 const redeemSchema = z.strictObject({ id: z.uuid(), proof: z.string().regex(/^[a-f0-9]{64}$/), code: z.string().regex(/^[a-fA-F0-9]{4}-?[a-fA-F0-9]{4}$/), password: z.string().min(8).max(1024) });
 const confirmedLinkSchema = z.object({ managed: z.literal(true), surfaceKind: z.literal("dm"), surfaceId: z.string().min(1), routeGeneration: z.string().min(1) });
 const codeLifetime = 5 * 60 * 1000;
@@ -22,8 +22,8 @@ export class MemberRecoveryStore {
   async start(input: ArgsOf<"account.recovery.code.start">, ctx: KernelContext): Promise<ResultOf<"account.recovery.code.start">> {
     const args = startSchema.parse(input);
     const response: ResultOf<"account.recovery.code.start"> = { accepted: true, expiresAt: Date.now() + codeLifetime };
-    const user = this.auth.getPasswdByUsername(args.username);
-    if (!user || !this.member(user.uid)) return response;
+    const user = this.auth.getHumanAccount();
+    if (!user || (args.username !== undefined && args.username !== user.username) || !this.member(user.uid)) return response;
     const selected = this.destination(user.uid, ctx);
     if (!selected) return response;
     const epoch = this.auth.credentialEpoch(user.uid);

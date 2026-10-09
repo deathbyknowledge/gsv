@@ -9,6 +9,7 @@ import {
   handleAccountCreate,
   handleAccountList,
 } from "./agents";
+import { ensureAccountHomeLayout } from "./account-home";
 import {
   PERSONAL_INTELLIGENCE_CONTEXT,
   PERSONAL_INTELLIGENCE_VOICE_CONTEXT,
@@ -266,18 +267,14 @@ describe("handleAccountCreate", () => {
 
   it("provisions human-owned shared memory while seeding the personal agent context", async () => {
     const { ctxFor, passwd, ripgitApplyBodies, createResponsibility } = createCtx();
-    const ctx = ctxFor(userIdentity(0, "root", ["*"]), { ripgit: true });
-
-    const result = await handleAccountCreate(
-      { kind: "human", username: "bob", password: "password-123" },
-      ctx,
-    );
-
-    const personalAgentUsername = passwd.find((u) => u.uid === result.personalAgent?.uid)?.username;
+    const ctx = ctxFor(userIdentity(1000, "alice", ["*"]), { ripgit: true });
+    await ensureAccountHomeLayout(ctx.env, principalOf(ctx)!.account);
+    const result = await ensurePersonalAgent(ctx, principalOf(ctx)!.account);
+    const personalAgentUsername = passwd.find((u) => u.uid === result.identity.uid)?.username;
     expect(personalAgentUsername).toBeTruthy();
 
     const bobOps = ripgitApplyBodies
-      .filter((body) => body.owner === "bob")
+      .filter((body) => body.owner === "alice")
       .flatMap((body) => body.ops);
     expect(bobOps).toContainEqual(
       expect.objectContaining({ type: "put", path: "context.d/.dir" }),
@@ -300,7 +297,7 @@ describe("handleAccountCreate", () => {
       expect.objectContaining({ type: "put", path: "context.d/00-boot.md" }),
     );
     expect(createResponsibility).toHaveBeenCalledWith(expect.objectContaining({
-      ownerUid: result.account.uid,
+      ownerUid: 1000,
       title: "Welcome to gsv",
       dedupeKey: "onboarding.initial",
     }));
@@ -330,7 +327,7 @@ describe("handleAccountCreate", () => {
     );
 
     const personalWiki = ripgitApplyBodies.find((body) =>
-      body.owner === "bob" && body.repo === "personal"
+      body.owner === "alice" && body.repo === "personal"
     );
     expect(personalWiki).toBeTruthy();
     expect(personalWiki?.ops).toEqual(expect.arrayContaining([
@@ -378,73 +375,23 @@ describe("handleAccountCreate", () => {
     );
   });
 
-  it("requires root to create a human account", async () => {
-    const { ctxFor } = createCtx();
-    const ctx = ctxFor(userIdentity(1000, "alice", ["account.create"]));
-
-    await expect(
-      handleAccountCreate({ kind: "human", username: "bob", password: "password-123" }, ctx),
-    ).rejects.toThrow(/root/i);
-  });
-
-  it("rejects a weak human password without mutating auth state", async () => {
-    const { ctxFor, auth, passwd, shadow } = createCtx();
-    const ctx = ctxFor(userIdentity(0, "root", ["*"]));
-
-    await expect(
-      handleAccountCreate({ kind: "human", username: "bob", password: "short" }, ctx),
-    ).rejects.toThrow(/password must be at least/i);
-
-    // No half-created account: passwd row and shadow are untouched, and the
-    // username stays available for a corrected retry.
+  it.each([0, 1000])("rejects another human account even for uid %s", async (uid) => {
+    const { ctxFor, auth } = createCtx();
+    const ctx = ctxFor(userIdentity(uid, uid === 0 ? "root" : "alice", ["*"]));
+    // Exercise a pre-upgrade or untyped client against the runtime boundary.
+    // @ts-expect-error human creation is intentionally absent from the public contract
+    await expect(handleAccountCreate({ kind: "human", username: "bob", password: "password-123" }, ctx)).rejects.toThrow("Only agent accounts");
     expect(auth.addUser).not.toHaveBeenCalled();
-    expect(passwd.find((u) => u.username === "bob")).toBeUndefined();
-    expect(shadow.has("bob")).toBe(false);
-
-    const retry = await handleAccountCreate(
-      { kind: "human", username: "bob", password: "password-123" },
-      ctx,
-    );
-    expect(retry.account.username).toBe("bob");
   });
 
-  it("creates a human (root) with login and a personal agent", async () => {
-    const { ctxFor, shadow, groups, personalAgents } = createCtx();
-    const ctx = ctxFor(userIdentity(0, "root", ["*"]));
-
-    const result = await handleAccountCreate(
-      { kind: "human", username: "bob", password: "password-123" },
-      ctx,
-    );
-
-    expect(result.kind).toBe("human");
-    expect(result.account.username).toBe("bob");
-    expect(result.account.gid).toBe(result.account.uid);
-    // Human can log in (hashed, not locked).
-    expect(shadow.get("bob")).toBeTruthy();
-    expect(shadow.get("bob")).not.toBe("!");
-    expect(groups.find((g) => g.name === "users")?.members).toContain("bob");
-    // A 1:1 personal agent was provisioned and mapped to the human.
-    expect(result.personalAgent).toBeTruthy();
-    expect(personalAgents.get(result.account.uid)).toBe(result.personalAgent?.uid);
-  });
-
-  // SAFETY: test fixture is constructed with the asserted kernel domain shape.
   it("uses a humanized personal agent username as the display name", async () => {
     const { ctxFor, passwd } = createCtx();
-    const ctx = ctxFor(userIdentity(0, "root", ["*"]));
-
-    const result = await handleAccountCreate(
-      { kind: "human", username: "bob", password: "password-123" },
-      ctx,
-    );
-
-    const personalAgent = passwd.find((u) => u.uid === result.personalAgent?.uid);
-    expect(personalAgent?.username).toBe("ship");
-    expect(personalAgent?.gecos).toBe("Ship");
+    const ctx = ctxFor(userIdentity(1000, "alice", ["*"]));
+    const result = await ensurePersonalAgent(ctx, principalOf(ctx)!.account);
+    expect(passwd.find((u) => u.uid === result.identity.uid)).toMatchObject({ username: "ship", gecos: "Ship" });
   });
 
-  it("gives each owner a separate Crew account without adopting occupied names", async () => {
+  it("provisions the personal Crew account without adopting occupied names", async () => {
     const { ctxFor, passwd, groups, shadow, ripgitApplyBodies } = createCtx();
     const aliceCtx = ctxFor(userIdentity(1000, "alice", ["*"]), { ripgit: true });
     await handleAccountCreate({ kind: "agent", username: "crew", persona: "Existing specialist" }, aliceCtx);
@@ -463,12 +410,6 @@ describe("handleAccountCreate", () => {
       .find((op) => op.path === "context.d/10-delegation.md");
     expect(new TextDecoder().decode(new Uint8Array(delegation?.contentBytes ?? []))).toContain("Crew account: `crew2`");
 
-    const bob = await handleAccountCreate({ kind: "human", username: "bob", password: "password-123" },
-      ctxFor(userIdentity(0, "root", ["*"])));
-    const bobCtx = ctxFor(userIdentity(bob.account.uid, "bob", ["account.list"]));
-    expect(handleAccountList({}, bobCtx).accounts.map((account) => account.username)).toContain("crew3");
-    expect(handleAccountList({}, bobCtx).accounts.map((account) => account.username)).not.toContain("crew2");
-    expect(handleAccountList({}, aliceCtx).accounts.map((account) => account.username)).not.toContain("crew3");
   });
 
   it("resumes Crew provisioning after a home write fails without changing customized instructions", async () => {

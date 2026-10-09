@@ -37,7 +37,8 @@
 .gsv-login-credit {
   display: flex;
   align-items: center;
-  justify-content: center;
+  justify-content: space-between;
+  gap: 16px;
   min-height: 30px;
   padding: 8px 18px;
   border-top: 1px solid var(--border);
@@ -45,11 +46,15 @@
   color: var(--text-dim);
   letter-spacing: .1em;
   line-height: 1.6;
-  text-align: center;
+  text-align: left;
 }
 .gsv-login-credit a { color: var(--accent); text-underline-offset: 3px; }
 .gsv-login-credit a:hover { color: var(--accent-bright); }
 .gsv-login-credit a:focus-visible { outline: 1px solid var(--accent); outline-offset: 4px; }
+.gsv-login-admin { flex-shrink: 0; min-height: 32px; padding: 6px 0; border: 0; background: none; color: var(--text-dim); font: inherit; font-size: 10px; letter-spacing: 0; text-transform: none; text-underline-offset: 3px; cursor: pointer; }
+.gsv-login-admin:is(:hover, :focus-visible) { color: var(--accent); text-decoration: underline; }
+.gsv-login-admin:focus-visible { outline: 1px solid var(--accent); outline-offset: 4px; }
+.gsv-login-admin:disabled { opacity: .45; cursor: default; }
 .gsv-login-submit {
   margin-top: 8px;
 }

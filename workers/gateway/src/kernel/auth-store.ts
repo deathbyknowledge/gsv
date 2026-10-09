@@ -103,7 +103,6 @@ export class AuthStore {
       ON CONFLICT(uid) DO UPDATE SET credential_epoch = credential_epoch + 1`, uid);
     this.sql.exec("UPDATE auth_tokens SET revoked_at = ?, revoked_reason = ? WHERE uid = ? AND revoked_at IS NULL", Date.now(), reason, uid);
     this.sql.exec("UPDATE device_pairings SET cancelled_at = ? WHERE owner_uid = ? AND redeemed_at IS NULL AND cancelled_at IS NULL", Date.now(), uid);
-    this.sql.exec("UPDATE human_invitations SET cancelled_at = ? WHERE issuer_uid = ? AND redeemed_at IS NULL AND cancelled_at IS NULL", Date.now(), uid);
   }
 
   /** The caller commits its reset receipt in the same transaction as these credential changes. */
@@ -196,7 +195,26 @@ export class AuthStore {
     return rows[0] ?? null;
   }
 
+  getHumanAccount(): PasswdEntry | null {
+    const humans = this.getPasswdEntries().filter((entry) => {
+      const shadow = this.getShadowByUsername(entry.username);
+      return entry.uid >= 1000 && shadow && !isLocked(shadow) && !this.isAccountDisabled(entry.uid);
+    });
+    if (humans.length > 1) throw new Error("A space supports one personal account");
+    return humans[0] ?? null;
+  }
+
+  private assertSingleHuman(passwd: PasswdEntry[], shadow: ShadowEntry[]): void {
+    const credentials = new Map(shadow.map((entry) => [entry.username, entry]));
+    const humans = passwd.filter((entry) => {
+      const credential = credentials.get(entry.username);
+      return entry.uid >= 1000 && credential && !isLocked(credential) && !this.isAccountDisabled(entry.uid);
+    });
+    if (humans.length > 1) throw new Error("A space supports one personal account");
+  }
+
   addUser(entry: PasswdEntry): void {
+    this.assertSingleHuman([...this.getPasswdEntries(), entry], this.getShadowEntries());
     this.sql.exec(
       "INSERT INTO passwd (username, uid, gid, gecos, home, shell) VALUES (?, ?, ?, ?, ?, ?)",
       entry.username, entry.uid, entry.gid, entry.gecos, entry.home, entry.shell,
@@ -206,6 +224,7 @@ export class AuthStore {
   updateUser(username: string, fields: Partial<Omit<PasswdEntry, "username">>): boolean {
     const existing = this.getPasswdByUsername(username);
     if (!existing) return false;
+    this.assertSingleHuman(this.getPasswdEntries().map((entry) => entry.username === username ? { ...entry, ...fields } : entry), this.getShadowEntries());
 
     this.sql.exec(
       "UPDATE passwd SET uid = ?, gid = ?, gecos = ?, home = ?, shell = ? WHERE username = ?",
@@ -254,6 +273,7 @@ export class AuthStore {
   }
 
   setShadow(entry: ShadowEntry): void {
+    this.assertSingleHuman(this.getPasswdEntries(), [...this.getShadowEntries().filter((current) => current.username !== entry.username), entry]);
     this.sql.exec(
       `INSERT OR REPLACE INTO shadow
         (username, hash, lastchanged, min, max, warn, inactive, expire, reserved)
@@ -267,6 +287,7 @@ export class AuthStore {
   async setPassword(username: string, hash: string): Promise<boolean> {
     const existing = this.getShadowByUsername(username);
     if (!existing) return false;
+    this.assertSingleHuman(this.getPasswdEntries(), this.getShadowEntries().map((entry) => entry.username === username ? { ...entry, hash } : entry));
 
     const daysSinceEpoch = Math.floor(Date.now() / 86_400_000).toString();
     this.sql.exec(
@@ -374,6 +395,7 @@ export class AuthStore {
     const user = this.getPasswdByUsername(username);
     if (!user) return { ok: false, error: "Unknown user" };
     if (this.isAccountDisabled(user.uid)) return { ok: false, error: "Authentication failed" };
+    if (user.uid !== 0 && this.getHumanAccount()?.uid !== user.uid) return { ok: false, error: "Authentication failed" };
     const epoch = this.credentialEpoch(user.uid);
 
     const shadow = this.getShadowByUsername(username);
@@ -626,12 +648,14 @@ export class AuthStore {
 
   importPasswd(raw: string): void {
     const entries = parsePasswd(raw);
+    this.assertSingleHuman(entries, this.getShadowEntries());
     this.sql.exec("DELETE FROM passwd");
     for (const e of entries) this.addUser(e);
   }
 
   importShadow(raw: string): void {
     const entries = parseShadow(raw);
+    this.assertSingleHuman(this.getPasswdEntries(), entries);
     this.sql.exec("DELETE FROM shadow");
     for (const e of entries) this.setShadow(e);
   }

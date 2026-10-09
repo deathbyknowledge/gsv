@@ -23,12 +23,26 @@ describe("public profile projection serving", () => {
   });
 
   it("uses exact alias and subject routes without admitting ambiguous paths", () => {
+    expect(matchPublicProfilePath("/profile")).toEqual({ locator: { space: true }, json: false });
     expect(matchPublicProfilePath("/@person")).toEqual({ locator: { alias: "person" }, json: false });
     expect(matchPublicProfilePath("/_gsv/federation/v2/subjects/subject%3Aone")).toEqual({ locator: { subjectId: "subject:one" }, json: true });
     for (const path of ["/@", "/@person/extra", "/@%70erson", "/@PERSON", "/_gsv/federation/v2/subjects/%2f", "/_gsv/federation/v2/subjects/%"]) {
       expect(matchPublicProfilePath(path)).toEqual({ invalid: true });
     }
     expect(matchPublicProfilePath("/zen")).toBeNull();
+  });
+
+  it("redirects old page links while returning signed JSON directly to federated readers", async () => {
+    const { alias: _alias, ...fields } = PROFILE;
+    const profile = { ...fields, version: 3 as const, domain: "gsv-federation/3/profile" as const, url: "https://profile.example/profile" };
+    const resolve = async () => ({ ...projection, profile });
+    const path = { locator: { alias: "person" }, json: false };
+    const page = await servePublicProfileRequest(new Request(PROFILE.url), path, resolve);
+    expect(page.status).toBe(308);
+    expect(page.headers.get("location")).toBe("/profile");
+    const json = await servePublicProfileRequest(new Request(PROFILE.url, { headers: { accept: "application/json" } }), path, resolve);
+    expect(json.status).toBe(200);
+    expect(await json.json()).toEqual(profile);
   });
 
   it("escapes published text, serves signed JSON separately, and rechecks before a 304", async () => {

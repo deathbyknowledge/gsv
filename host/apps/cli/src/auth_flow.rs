@@ -1,5 +1,5 @@
 use chrono::{TimeZone, Utc};
-use cliclack::{input, password};
+use cliclack::password;
 use gsv::config::CliConfig;
 use gsv::connection::GatewayRpcError;
 use gsv::kernel_client::{cli_peer_identity, BinaryBodyLimits, GatewayAuth, KernelClient};
@@ -132,12 +132,12 @@ struct LoginIssuedTokenPayload {
 
 async fn issue_and_store_user_session_token(
     url: &str,
-    username: String,
+    username: Option<String>,
     password: String,
     ttl_hours: u32,
 ) -> Result<GatewayAuth, Box<dyn std::error::Error>> {
     let auth = GatewayAuth {
-        username: Some(username.clone()),
+        username,
         password: Some(password),
         token: None,
     };
@@ -152,6 +152,16 @@ async fn issue_and_store_user_session_token(
         |_| {},
     )
     .await?;
+    let username = client
+        .connection()
+        .connect_result
+        .as_ref()
+        .ok_or("Gateway did not return an account identity")?
+        .peer
+        .principal
+        .account
+        .username
+        .clone();
     let expiry_ms = Utc::now().timestamp_millis() + (i64::from(ttl_hours) * 3_600_000);
     let payload = client
         .request_ok(
@@ -216,14 +226,10 @@ async fn resolve_interactive_gateway_auth(
     command_name: &str,
 ) -> Result<GatewayAuth, Box<dyn std::error::Error>> {
     let fresh_cfg = CliConfig::load();
-    let mut username = resolve_gateway_username(&fresh_cfg, cli_username.clone())
+    let username = resolve_gateway_username(&fresh_cfg, cli_username.clone())
         .or_else(|| resolve_gateway_username(cfg, cli_username));
     let mut password = normalize_auth_field(cli_password);
     let explicit_token = normalize_auth_field(token);
-
-    if username.is_none() && (password.is_some() || explicit_token.is_some()) {
-        return Err("Username is required when using password/token authentication".into());
-    }
 
     if let Some(token) = explicit_token {
         let auth = GatewayAuth {
@@ -247,12 +253,7 @@ async fn resolve_interactive_gateway_auth(
         }
     }
 
-    if username.is_none() && can_prompt_interactively() {
-        let prompt = format!("Gateway username for `{}`", command_name);
-        username = prompt_line(&prompt, None)?;
-    }
-
-    if username.is_some() && password.is_none() {
+    if password.is_none() {
         if can_prompt_interactively() {
             let prompt = format!("Gateway password for `{}`", command_name);
             password = prompt_secret(&prompt)?;
@@ -264,7 +265,6 @@ async fn resolve_interactive_gateway_auth(
         }
     }
 
-    let username = username.ok_or("Username required")?;
     let password = password.ok_or("Password required")?;
     issue_and_store_user_session_token(url, username, password, DEFAULT_USER_SESSION_TTL_HOURS)
         .await
@@ -311,25 +311,15 @@ pub(crate) async fn run_auth_login(
         return Err("--ttl-hours must be greater than 0".into());
     }
 
-    let mut username =
+    let username =
         normalize_auth_field(username).or_else(|| normalize_auth_field(cfg.gateway_username()));
     let mut password = normalize_auth_field(password);
-
-    if username.is_none() && can_prompt_interactively() {
-        username = prompt_line("Gateway username", None)?;
-    }
-    if username.is_none() {
-        return Err(
-            "Gateway username required (pass --username or configure gateway.username)".into(),
-        );
-    }
 
     if password.is_none() && can_prompt_interactively() {
         password = prompt_secret("Gateway password")?;
     }
     let password =
         password.ok_or("Gateway password required (pass --password or run interactively)")?;
-    let username = username.unwrap_or_default();
 
     let _ = issue_and_store_user_session_token(url, username, password, ttl_hours).await?;
     Ok(())
@@ -353,27 +343,6 @@ pub(crate) fn run_auth_logout() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     Ok(())
-}
-
-fn prompt_line(
-    prompt: &str,
-    default: Option<&str>,
-) -> Result<Option<String>, Box<dyn std::error::Error>> {
-    let mut prompt = input(prompt).required(false);
-    if let Some(value) = default {
-        prompt = prompt.default_input(value);
-    }
-    let value: String = prompt.interact()?;
-    let trimmed = value.trim();
-
-    if trimmed.is_empty() {
-        if let Some(value) = default {
-            return Ok(Some(value.to_string()));
-        }
-        return Ok(None);
-    }
-
-    Ok(Some(trimmed.to_string()))
 }
 
 pub(crate) fn prompt_secret(prompt: &str) -> Result<Option<String>, Box<dyn std::error::Error>> {

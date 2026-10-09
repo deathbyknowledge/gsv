@@ -66,16 +66,16 @@ describe("cross-GSV federation integration", () => {
 
   it("publishes one approved profile and resolves it from an independently routed space", async () => {
     expect((await first.profile.get({})).profile.published).toBeUndefined();
-    const draft = { alias: "public-first", displayName: "First person", about: "Published biography", contactPolicy: "requests" as const, representation: "human" as const };
+    const draft = { displayName: "First person", about: "Published biography", contactPolicy: "requests" as const, representation: "human" as const };
     await first.profile.update({ expectedRevision: 0, draft });
-    const url = new URL("/@public-first", firstOrigin).href;
+    const url = new URL("/profile", firstOrigin).href;
     const privatePage = await fetch(url);
     expect(privatePage.status).toBe(404);
     await privatePage.arrayBuffer();
     await first.profile.publish({ expectedRevision: 1 });
     await expect.poll(async () => (await first.profile.get({})).profile.published?.revision).toBe(1);
     const remote = await second.profile.resolve({ url });
-    expect(remote.profile).toMatchObject({ alias: draft.alias, about: draft.about, origin: firstOrigin.origin, revision: 1 });
+    expect(remote.profile).toMatchObject({ about: draft.about, origin: firstOrigin.origin, revision: 1 });
     expect(remote.profile).not.toHaveProperty("ownerUid");
     expect(remote.profile).not.toHaveProperty("username");
     expect((await second.profile.get({})).profile.published).toBeUndefined();
@@ -431,11 +431,11 @@ describe("cross-GSV federation integration", () => {
       for (const contact of contacts.filter((entry) => entry.state === "active")) await client.contact.revoke({ contactId: contact.id });
     }
     const initial = (await second.profile.get({})).profile;
-    const draft = { alias: "public-second", displayName: "Second person", about: "Message me about GSV", contactPolicy: "requests" as const, representation: "human" as const };
+    const draft = { displayName: "Second person", about: "Message me about GSV", contactPolicy: "requests" as const, representation: "human" as const };
     const saved = (await second.profile.update({ expectedRevision: initial.revision, draft })).profile;
     await second.profile.publish({ expectedRevision: saved.revision });
     await expect.poll(async () => (await second.profile.get({})).profile.published?.revision, { timeout: 20_000 }).toBe(saved.revision);
-    const profile = (await first.profile.resolve({ url: new URL("/@public-second", secondOrigin).href })).profile;
+    const profile = (await first.profile.resolve({ url: new URL("/profile", secondOrigin).href })).profile;
     const input = { profileUrl: profile.url, recipient: profile.actor, profileRevision: profile.revision,
       displayName: "First person", text: "An intentional first-contact message", idempotencyKey: "integration-approach" };
     const sent = (await first.approach.create(input)).approach;
