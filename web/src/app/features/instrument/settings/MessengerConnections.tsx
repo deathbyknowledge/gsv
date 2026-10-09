@@ -14,10 +14,10 @@ import { canConfigure } from "./settingsModel";
 import { SettingsError, type SettingsSectionProps } from "./settingsShared";
 
 const MESSENGERS: ReadonlyArray<{ id: ManagedMessengerId; name: string; blurb: string }> = [
+  { id: "whatsapp", name: "WhatsApp", blurb: "Talk to your Ship from WhatsApp." },
+  { id: "discord", name: "Discord", blurb: "Talk to your Ship from Discord DMs and servers." },
   { id: "telegram", name: "Telegram", blurb: "Talk to your Ship from Telegram." },
   { id: "slack", name: "Slack", blurb: "Talk to your Ship from your Slack workspace." },
-  { id: "discord", name: "Discord", blurb: "Talk to your Ship from Discord DMs and servers." },
-  { id: "whatsapp", name: "WhatsApp", blurb: "Talk to your Ship from WhatsApp." },
 ];
 
 export function MessengerConnections({ account, active }: Pick<SettingsSectionProps, "account" | "active">) {

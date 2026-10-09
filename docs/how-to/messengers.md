@@ -6,7 +6,7 @@ GSV adapters are extensible. This page documents the messenger implementations
 bundled with the current release; it is not a complete list of transports an
 adapter can implement.
 
-Your deployment operator enables the Telegram, Slack, Discord, and WhatsApp
+Your deployment operator enables the WhatsApp, Discord, Telegram, and Slack
 apps offered in **Messengers**. You link your human identity to a space by
 inspecting and confirming a short-lived code while signed in. You do not need
 to create a bot or paste its token into the space. If a code expires, message
