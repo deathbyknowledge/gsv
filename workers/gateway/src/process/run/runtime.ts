@@ -1474,6 +1474,16 @@ export class ProcessRun {
       } else {
         this.host.store.tools.fail(dispatchId, result.error, "failed");
       }
+      const output: JsonObject = result.ok
+        ? { action: result.action, finish: result.finish, delivery: result.delivery }
+        : {
+          action: result.action,
+          finish: false,
+          delivery: result.delivery,
+          failureKind: result.failureKind,
+          attempt,
+        };
+      if (result.ok && result.yieldError) output.yieldError = result.yieldError;
       this.host.store.messages.appendToolResult(
         toolCallId,
         registration.resultName,
@@ -1483,24 +1493,8 @@ export class ProcessRun {
         result.ok ? "completed" : "failed",
         undefined,
         result.ok
-          ? {
-            output: {
-              action: result.action,
-              finish: result.finish,
-              delivery: result.delivery,
-              ...(result.yieldError ? { yieldError: result.yieldError } : {}),
-            },
-          }
-          : {
-            output: {
-              action: result.action,
-              finish: false,
-              delivery: result.delivery,
-              failureKind: result.failureKind,
-              attempt,
-            },
-            error: { message: result.error },
-          },
+          ? { output }
+          : { output, error: { message: result.error } },
       );
       this.host.store.tools.clearRun(runId);
       return true;
