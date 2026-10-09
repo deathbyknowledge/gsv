@@ -16,7 +16,7 @@ import { People, type PeopleOpenRequest } from "./people/People";
 import { usePeopleActivity } from "./people/usePeopleActivity";
 import type { FleetReference } from "./fleet/fleetModel";
 import { WireSync } from "./wire/WireSync";
-import type { MemoryPageRef } from "./shared/navigation";
+import { replaceLegacyChatPath, type MemoryPageRef } from "./shared/navigation";
 import { InstrumentHeader } from "./shared/InstrumentHeader";
 import { SHELL_KEYS } from "./shared/shellKeys";
 import { useDismissOnOutsideClick } from "./shared/useDismissOnOutsideClick";
@@ -85,9 +85,7 @@ function InstrumentReady({ initialPath }: { initialPath: string }) {
   }, [client, status.state]);
   const [distance, setDistance] = useState<Distance>(() => distanceForPath(initialPath));
   useEffect(() => {
-    if (initialPath === "/zen" || initialPath === "/zen/settings") {
-      history.replaceState(null, "", DISTANCE_TO_PATH[distanceForPath(initialPath)]);
-    }
+    replaceLegacyChatPath();
   }, [initialPath]);
   const [fleetRequest, setFleetRequest] = useState<FleetProps["openRequest"]>(null);
   const [zenPrefill, setZenPrefill] = useState<string | null>(null);

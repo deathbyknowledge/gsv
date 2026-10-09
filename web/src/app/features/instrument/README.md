@@ -1,6 +1,6 @@
 # Instrument surfaces
 
-Instrument is the default web UI at `/`. Its views use `/chat`, `/people`, `/fleet`, `/memory` and `/chat/settings`. Older `/zen` and `/zen/settings` links replace their address with the Chat routes. The former desktop shell, console and standalone workspaces are retired; old deep links for those surfaces have no compatibility mapping. Login and `/onboarding` capabilities enter the same UI. Shared gateway and history logic lives under `app/services/`, with system types and model/approval logic under `app/domain/`. The design catalog and its retained examples load separately when opened.
+Instrument is the default web UI at `/`. Its views use `/chat`, `/people`, `/fleet`, `/memory` and `/chat/settings`. Older `/zen` and `/zen/settings` links replace their address with the Chat routes while preserving query parameters, fragments and history state. The former desktop shell, console and standalone workspaces are retired; old deep links for those surfaces have no compatibility mapping. Login and `/onboarding` capabilities enter the same UI. Shared gateway and history logic lives under `app/services/`, with system types and model/approval logic under `app/domain/`. The design catalog and its retained examples load separately when opened.
 
 The shared header reserves its own height above every view. Messages, lists and
 files cannot pass behind the header.
