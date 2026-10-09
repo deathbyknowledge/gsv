@@ -1,5 +1,5 @@
 import { useLayoutEffect, useRef, useState } from "preact/hooks";
-import { observeVoiceWaveform, VOICE_WAVEFORM_COLUMNS } from "./voiceWaveform";
+import { observeVoiceWaveform, VOICE_WAVEFORM_COLUMNS } from "./observeVoiceWaveform";
 
 const WIDTH = VOICE_WAVEFORM_COLUMNS * 8;
 const HEIGHT = 56;

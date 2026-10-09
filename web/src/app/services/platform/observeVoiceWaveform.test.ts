@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { deferred } from "../../testing/testHarness";
-import { observeVoiceWaveform, VOICE_WAVEFORM_COLUMNS } from "./voiceWaveform";
+import { observeVoiceWaveform, VOICE_WAVEFORM_COLUMNS } from "./observeVoiceWaveform";
 
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
