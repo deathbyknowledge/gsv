@@ -84,7 +84,8 @@ ends that association. The receiving person independently chooses who handles
 their side.
 
 A message’s **reply** action quotes that message in the same conversation and keeps
-its exact reference. Reply and successful delivery information appear on hover or
+its exact reference, including on the first incoming message before you have sent
+anything back. Reply and successful delivery information appear on hover or
 keyboard focus; touch screens keep the actions visible. Delivery problems remain
 visible until resolved.
 

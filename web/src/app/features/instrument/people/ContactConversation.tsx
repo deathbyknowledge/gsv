@@ -121,7 +121,7 @@ export function ContactConversation({ contact, account, draft, onDraft, onSend, 
         {message.text && <p>{message.text}</p>}
         {message.media?.map((media, index) => <ZenMedia key={index} media={media} processId={message.processId ?? ""} onReady={followLatest} />)}
         <footer class="people-message-actions">
-          {message.social && contact.protocol?.features.includes("messages") && <button class="fleet-text-action people-message-reply" type="button" disabled={disabled} onClick={() => onDraft({ reply: { reference: message.social!.reference, author: message.author.kind === "contact" ? message.author.displayName : "you", preview: message.text.slice(0, 200) } })}>reply</button>}
+          {message.social && <button class="fleet-text-action people-message-reply" type="button" disabled={disabled} onClick={() => onDraft({ reply: { reference: message.social!.reference, author: message.author.kind === "contact" ? message.author.displayName : "you", preview: message.text.slice(0, 200) } })}>reply</button>}
           {message.author.kind !== "contact" && <MessageDelivery delivery={deliveryBySequence.get(message.sequence)} mayRetry={!!account && canConfigure(account, "contact.delivery.retry")} />}
         </footer>
       </article>;
