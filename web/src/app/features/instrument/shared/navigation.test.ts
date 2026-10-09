@@ -10,7 +10,7 @@ describe("legacy Chat links", () => {
   ])("rewrites %s while preserving browser handoff and history state", (oldPath, newPath) => {
     const state = { selectedProcess: "process-1" };
     const location = new URL(`https://space.example${oldPath}?browserInstance=instance&browserHandoff=login#viewer`);
-    const replaceState = vi.fn((_state: unknown, _unused: string, _url: URL) => {});
+    const replaceState = vi.fn((_state: typeof state, _unused: string, _url: URL) => {});
     vi.stubGlobal("window", { location, history: { state, replaceState } });
 
     replaceLegacyChatPath();
