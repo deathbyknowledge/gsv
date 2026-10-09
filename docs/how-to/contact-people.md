@@ -40,11 +40,14 @@ name, choose who handles new messages, then send a first message.
 They make their own handling choice when accepting, or can decline it. Acceptance keeps that first message in the same
 conversation, opens it directly, and enables further messages and attachments.
 
-Your profile starts private. In **Settings → Profile**, save a draft, review it
-and explicitly publish it. A profile can accept message requests, require a private
-invitation, or close new contact. Saving later edits does not change the public
-page until you publish again. Unpublishing removes the page; existing contacts and
-conversations remain. People who already viewed it may retain copies.
+Your profile starts private. In **People → Me** at the bottom of the left rail,
+save a draft, review it and explicitly publish it. A profile can accept message
+requests, require a private invitation, or close new contact. Saving later edits
+does not change the public page until you publish again. Unpublishing removes the
+page; existing contacts and conversations remain. People who already viewed it
+may retain copies. After you
+save an alias, **Me** shows that alias, your display name and your new-conversation
+setting.
 
 ## Decide who handles it
 
