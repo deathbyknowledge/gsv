@@ -18,7 +18,7 @@ describe("cloud browser approval", () => {
         if (mode === "Ask") {
           await runtime.client.sys.config.set({ key: "users/1000/ai/tools/approval", value: JSON.stringify({
             ...DEFAULT_TOOL_APPROVAL_POLICY,
-            rules: [{ match: "shell.exec", target: "cloud-browsers/*", action: "ask" }, ...DEFAULT_TOOL_APPROVAL_POLICY.rules],
+            rules: [{ match: "shell.exec", target: { route: "instance", platform: "browser" }, action: "ask" }, ...DEFAULT_TOOL_APPROVAL_POLICY.rules],
           }) });
         }
         runtime.ai.enqueue(

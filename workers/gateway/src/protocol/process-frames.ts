@@ -14,19 +14,20 @@ import type {
 } from "@humansandmachines/gsv/protocol";
 import type { Frame, FrameBody, RequestFrame, SignalFrame } from "./frames";
 import type { SyscallName } from "../syscalls";
+import type { TargetDescriptor } from "../kernel/targets";
 
 /** Kernel-derived ownership for operations composed beneath a dispatched agent tool. */
 export type ProcessToolOwner = { runId: string; requestId: string };
 
 /** Kernel-resolved approval scope, carried outside model-controlled syscall frames. */
-export type ProcessApprovalTarget = { kind: "cloud-browser"; instanceId: string } | { kind: "other" };
+export type ProcessApprovalTarget = Pick<TargetDescriptor, "targetId" | "ownerUid" | "platform" | "route">;
 
 export type ProcessToolAuthorizeArgs = ProcessToolOwner & {
   syscall: SyscallName;
   args: JsonObject;
   defaultAction?: "ask";
   /** Derived from the Kernel's resolved route, never from syscall arguments. */
-  targetKind?: "cloud-browser";
+  target?: ProcessApprovalTarget;
 };
 
 export type ProcessAdapterWorkReturnedRuntimeEvent = {

@@ -1,8 +1,33 @@
+import { z } from "zod";
+
 export type ToolApprovalAction = "auto" | "ask" | "deny";
+
+export const toolApprovalTargetSelectorSchema = z.strictObject({
+  route: z.enum(["machine", "adapter", "instance"]),
+  platform: z.string().trim().min(1).optional(),
+});
+export const toolApprovalTargetSchema = z.union([z.string(), toolApprovalTargetSelectorSchema]);
+export type ToolApprovalTargetSelector = z.infer<typeof toolApprovalTargetSelectorSchema>;
+export type ToolApprovalTarget = z.infer<typeof toolApprovalTargetSchema>;
+
+export function isToolApprovalTargetSelector(target: ToolApprovalTarget): target is ToolApprovalTargetSelector {
+  return toolApprovalTargetSelectorSchema.safeParse(target).success;
+}
+
+export function normalizeToolApprovalTarget(target: ToolApprovalTarget | undefined): ToolApprovalTarget | undefined {
+  const parsed = z.string().safeParse(target);
+  if (!parsed.success) return target;
+  const trimmed = parsed.data.trim();
+  const lower = trimmed.toLowerCase();
+  if (!trimmed || trimmed === "*" || lower === "any") return undefined;
+  if (lower === "gateway" || lower === "local") return "gsv";
+  if (trimmed === "device" || trimmed === "devices/*") return "targets/*";
+  return trimmed;
+}
 
 export type ToolApprovalRule = {
   match: string;
-  target?: string;
+  target?: ToolApprovalTarget;
   action: ToolApprovalAction;
 };
 
@@ -18,9 +43,9 @@ export const DEFAULT_TOOL_APPROVAL_POLICY: ToolApprovalPolicy = {
     { match: "fs.*", target: "gsv", action: "auto" },
     { match: "shell.exec", target: "gsv", action: "auto" },
     { match: "net.fetch", target: "gsv", action: "auto" },
-    { match: "fs.*", target: "cloud-browsers/*", action: "auto" },
-    { match: "shell.exec", target: "cloud-browsers/*", action: "auto" },
-    { match: "net.fetch", target: "cloud-browsers/*", action: "auto" },
+    { match: "fs.*", target: { route: "instance", platform: "browser" }, action: "auto" },
+    { match: "shell.exec", target: { route: "instance", platform: "browser" }, action: "auto" },
+    { match: "net.fetch", target: { route: "instance", platform: "browser" }, action: "auto" },
     { match: "shell.exec", target: "targets/*", action: "ask" },
     { match: "net.fetch", target: "targets/*", action: "ask" },
     { match: "fs.*", target: "targets/*", action: "ask" },

@@ -12,7 +12,6 @@
  */
 
 import type {
-  FrameBody,
   RequestFrame,
   ResponseFrame,
   ResponseOkFrame,
@@ -22,7 +21,7 @@ import type { KernelContext } from "./context";
 import type { RouteOrigin } from "./routing";
 import type { KernelConnection, KernelConnectionState } from "./connection";
 import type { ShellSessionStore } from "./shell-sessions";
-import { jsonObjectSchema, type NetFetchArgs } from "@humansandmachines/gsv/protocol";
+import { jsonObjectSchema } from "@humansandmachines/gsv/protocol";
 import { authorizeNestedOperation, nestedToolOwner } from "./tool-approval";
 import { dispatchGsvTarget } from "../drivers/native/target";
 import type { FsDeviceTransport } from "../drivers/native/fs";
@@ -54,7 +53,7 @@ import { handleInstanceRequest } from "./sys/instance";
 import { requestInstanceTarget } from "./instance-targets";
 import { rejectBeforeDispatch } from "./request-rejection";
 import { handleSysLedgerList } from "./sys/ledger";
-import { normalizeNetFetchTimeoutMs } from "./net";
+import { normalizeNetFetchTimeoutMs, type NetFetchDeviceTransport } from "./net";
 import { handleSysBootstrap } from "./sys/bootstrap";
 import { handleSysFeedback } from "./sys/feedback";
 import { handleSysSetupAssist } from "./sys/setup-assist";
@@ -144,6 +143,8 @@ import {
 } from "./responsibilities";
 import {
   GSV_TARGET_ID,
+  approvalTargetIdentity,
+  matchesApprovalTarget,
   resolveVisibleTarget,
   targetCanHandle,
   type TargetDescriptor,
@@ -199,12 +200,7 @@ export type DispatchDeps = {
     cancel: (outcome?: "cancelled" | "failed") => void;
     attachBody: (body: CancellableFrameBody) => void;
   }>;
-  requestTarget: (
-    targetId: string,
-    call: "net.fetch",
-    args: NetFetchArgs,
-    options?: { ttlMs?: number; body?: FrameBody; signal?: AbortSignal },
-  ) => Promise<ResponseOkFrame<"net.fetch">>;
+  requestTarget: NetFetchDeviceTransport["requestTarget"];
   request: (
     frame: RequestFrame,
     ctx: KernelContext,
@@ -324,16 +320,23 @@ async function dispatchLocal(
   ctx: KernelContext,
   deps: DispatchDeps,
 ): Promise<ResponseFrame> {
-  if (ctx.approvedTarget?.kind === "cloud-browser") {
+  if (ctx.approvedTarget) {
     return rejectBeforeDispatch(frame, 403, "Approval target changed before dispatch; retry the operation");
   }
   const nativeContext = { ...ctx, toolOwner: nestedToolOwner(ctx) };
-  const requestTarget: DispatchDeps["requestTarget"] = async (targetId, call, args, options) => {
-    const signal = options?.signal ?? nativeContext.requestSignal;
+  const requestTarget: NetFetchDeviceTransport["requestTarget"] = async (targetId, call, args, options) => {
+    let signal = options?.signal ?? nativeContext.requestSignal;
+    if (options?.ttlMs !== undefined) {
+      const deadline = AbortSignal.timeout(options.ttlMs);
+      signal = signal ? AbortSignal.any([signal, deadline]) : deadline;
+    }
     try {
-      await authorizeNestedOperation({ ...nativeContext, requestSignal: signal }, call, { ...args, target: targetId });
-      signal?.throwIfAborted();
-      return await deps.requestTarget(targetId, call, args, options);
+      const response = await deps.request({
+        type: "req", id: crypto.randomUUID(), call, args: { ...args, target: targetId }, body: options?.body,
+      }, nativeContext, signal);
+      if (!response.ok) throw new Error(response.error.message);
+      // SAFETY: Kernel dispatch returns the response for this net.fetch request.
+      return response as ResponseOkFrame<"net.fetch">;
     } catch (error) {
       if (options?.body && !options.body.stream.locked) {
         await options.body.stream.cancel(error).catch(() => {});
@@ -939,10 +942,7 @@ async function routeToTarget(
   ctx: KernelContext,
   deps: DispatchDeps,
 ): Promise<DispatchResult> {
-  const cloudBrowser = target.route.kind === "instance" && target.platform === "browser";
-  if (ctx.approvedTarget && (ctx.approvedTarget.kind === "cloud-browser"
-    ? target.route.kind !== "instance" || !cloudBrowser || target.route.instanceId !== ctx.approvedTarget.instanceId
-    : cloudBrowser)) {
+  if (ctx.approvedTarget && !matchesApprovalTarget(target, ctx.approvedTarget)) {
     return { handled: true, response: rejectBeforeDispatch(frame, 403, "Approval target changed before dispatch; retry the operation") };
   }
   if (!target.online) {
@@ -961,7 +961,7 @@ async function routeToTarget(
 
   try {
     await authorizeNestedOperation(ctx, frame.call, jsonObjectSchema.parse({ ...frame.args, target: target.targetId }),
-      undefined, undefined, cloudBrowser ? "cloud-browser" : undefined);
+      undefined, undefined, approvalTargetIdentity(target));
     ctx.requestSignal?.throwIfAborted();
   } catch (error) {
     return {

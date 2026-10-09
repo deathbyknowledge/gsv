@@ -1,7 +1,7 @@
 import { REQUEST_CANCEL_SIGNAL, type JsonObject } from "@humansandmachines/gsv/protocol";
 import type { KernelContext } from "./context";
 import type { SyscallName } from "../syscalls";
-import type { ProcessToolOwner } from "../protocol/process-frames";
+import type { ProcessApprovalTarget, ProcessToolOwner } from "../protocol/process-frames";
 import { sendFrameToProcess } from "../shared/utils";
 import { raceWithAbort } from "../shared/abort";
 
@@ -19,7 +19,7 @@ export async function authorizeNestedOperation(
   args: JsonObject,
   defaultAction?: "ask",
   send: typeof sendFrameToProcess = sendFrameToProcess,
-  targetKind?: "cloud-browser",
+  target?: ProcessApprovalTarget,
 ): Promise<void> {
   if (!ctx.toolOwner) return;
   if (!ctx.processId) throw new Error("Agent operation has no owning process");
@@ -27,7 +27,7 @@ export async function authorizeNestedOperation(
   signal?.throwIfAborted();
   const id = `approval:${crypto.randomUUID()}`;
   const response = await raceWithAbort(send(ctx.installationId, ctx.processId, {
-    type: "req", id, call: "proc.tool.authorize", args: { ...ctx.toolOwner, syscall, args, defaultAction, targetKind },
+    type: "req", id, call: "proc.tool.authorize", args: { ...ctx.toolOwner, syscall, args, defaultAction, target },
   }), signal, {
     onAbort: () => {
       ctx.defer(send(ctx.installationId, ctx.processId!, {

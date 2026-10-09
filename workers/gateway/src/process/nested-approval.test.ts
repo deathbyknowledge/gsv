@@ -22,13 +22,14 @@ function prepareShell(process: Process): void {
 }
 
 describe("approval beneath a native command", () => {
-  it("uses the Kernel's cloud-browser classification for nested commands and still enforces capabilities", async () => {
+  it("uses the Kernel's target metadata for nested commands and still enforces capabilities", async () => {
     const stub = await initProcess("nested-cloud-browser", ROOT_IDENTITY);
     await runInProcess(stub, async (process: Process) => {
       prepareShell(process);
       const request: ProcessToolAuthorizeArgs = {
         runId: "run", requestId: "shell", syscall: "fs.write",
-        args: { target: "cloud", path: "/tmp/report.txt", content: "report" }, targetKind: "cloud-browser",
+        args: { target: "cloud", path: "/tmp/report.txt", content: "report" },
+        target: { targetId: "cloud", ownerUid: 1000, platform: "browser", route: { kind: "instance", instanceId: "instance" } },
       };
       const signal = new AbortController().signal;
       expect(await process.tools.authorizeNestedTool(request, signal)).toBe(true);

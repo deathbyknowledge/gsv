@@ -74,6 +74,9 @@ The Settings sidebar highlights the section you're viewing.
 If your operator enables cloud browsers, Fleet also offers **start browser**.
 You can [sign in and save website logins](/how-to/cloud-browsers) there so Ship
 can use those sites while your personal devices are offline.
+Ship can use cloud browsers without per-action approval by default. To change
+that, select **Cloud browsers** under **Settings → permissions** and choose
+**Ask** or **Block**; personal computers and browsers keep their existing rules.
 
 In Zen, **search** or `Ctrl/Cmd+F` finds earlier messages; `/` opens it in browse
 mode. Open a match to read the surrounding conversation. Closing search returns

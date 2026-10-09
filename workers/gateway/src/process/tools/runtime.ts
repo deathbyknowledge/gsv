@@ -18,7 +18,7 @@ import {
   CODE_MODE_NESTED_SYSCALL_TIMEOUT_MS, UNKNOWN_SHELL_SESSION_TARGET_MESSAGE,
 } from "../internal/lifecycle";
 import {
-  parseToolApprovalPolicy, resolveToolApproval, resolveToolApprovalTarget, takePurpose,
+  approvalNeedsTargetMetadata, parseToolApprovalPolicy, resolveToolApproval, resolveToolApprovalTarget, takePurpose,
   type ToolApprovalPolicy, type ToolApprovalResolution, type ToolApprovalRule,
 } from "../approval";
 import { approvalRuleKey } from "../context/formatters";
@@ -113,7 +113,7 @@ export class ProcessTools {
     if (!hasCapability(context.capabilities, args.syscall)) {
       throw new Error(`Permission denied: ${args.syscall}`);
     }
-    const approval = resolveToolApproval(context.approvalPolicy, args.syscall, args.args, args.targetKind);
+    const approval = resolveToolApproval(context.approvalPolicy, args.syscall, args.args, args.target);
     if (approval.action === "deny") return false;
     if (approval.action === "auto" && (approval.matchedRule || args.defaultAction !== "ask")) return true;
     const approved = await this.waitForCodeModeApproval(
@@ -148,11 +148,10 @@ export class ProcessTools {
     signal?: AbortSignal,
   ): Promise<ToolApprovalResolution> {
     const ordinary = resolveToolApproval(policy, syscall, args);
-    const browser = resolveToolApproval(policy, syscall, args, "cloud-browser");
-    // Most calls need no discovery. Only resolve provenance when it changes the decision.
-    if (ordinary.action === browser.action) return ordinary;
+    // Most calls need no discovery. Only resolve provenance when a metadata rule can change the decision.
+    if (!approvalNeedsTargetMetadata(policy, syscall, ordinary)) return ordinary;
     const approvedTarget = await this.host.kernel.resolveApprovalTarget(ordinary.target, signal);
-    return { ...(approvedTarget.kind === "cloud-browser" ? browser : ordinary), approvedTarget };
+    return { ...resolveToolApproval(policy, syscall, args, approvedTarget), approvedTarget };
   }
 
   prepareToolArgs(syscall: string, args: JsonObject): PreparedJsonToolArgs {
@@ -555,7 +554,13 @@ export class ProcessTools {
       return null;
     }
 
-    const { args, purpose } = takePurpose(jsonObjectSchema.parse(toolCall.args));
+    const { args: rawArgs, purpose } = takePurpose(jsonObjectSchema.parse(toolCall.args));
+    const prepared = this.prepareToolArgs(syscall, rawArgs);
+    if (prepared.missingShellSessionTarget) {
+      this.host.store.tools.fail(toolCall.dispatchId, UNKNOWN_SHELL_SESSION_TARGET_MESSAGE);
+      return null;
+    }
+    const args = prepared.args;
     let approval: ToolApprovalResolution;
     try {
       approval = await this.resolveApproval(approvalPolicy, syscall, args, this.host.run.runAbortSignal(run.runId));

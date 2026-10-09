@@ -30,6 +30,12 @@ reached through a WebSocket endpoint, a Worker service binding, or a native
 Kernel implementation. Transport does not determine the environment's meaning
 or authority.
 
+Approval rules can select the resolved target's route (`machine`, `adapter`, or
+`instance`) and platform. The Kernel supplies this metadata; tool arguments
+cannot claim it. A metadata-dependent decision stays bound to the target's
+owner, platform and route identity through dispatch. See
+[tool approval policy](../reference/configuration.md#tool-approval-policy).
+
 An adapter is not automatically a target. A transport-only Telegram account,
 for example, may expose only inbound and outbound messaging. An adapter account
 that also provides a coherent environment may independently offer a target.

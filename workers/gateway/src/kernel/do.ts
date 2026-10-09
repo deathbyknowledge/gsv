@@ -137,7 +137,7 @@ import {
   recoverManagedOutboundEnqueue,
   resolveOutboundMailReference as resolveKernelOutboundMailReference,
 } from "./outbound-mail";
-import { getVisibleTarget, resolveVisibleTarget } from "./targets";
+import { approvalTargetIdentity, getVisibleTarget, resolveVisibleTarget } from "./targets";
 import { runKernelSqlMigrations } from "./schema/migrations";
 import { LEDGER_PRUNE_PER_ALARM, LEDGER_WINDOW_ROWS, LedgerStore, argsText, ledgerTargetOf, outcomeOfResponse, errorOfResponse, usageOfResponse, type JsonLike } from "./ledger";
 import { LedgerFeed } from "./ledger-feed";
@@ -1024,9 +1024,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
     if (!ctx) throw new Error("Unknown process");
     const target = await resolveVisibleTarget(ctx, targetId, { includeOffline: true });
     if (!target) throw new Error(`Target unavailable for tool approval: ${targetId}`);
-    return target.route.kind === "instance" && target.platform === "browser"
-      ? { kind: "cloud-browser", instanceId: target.route.instanceId }
-      : { kind: "other" };
+    return approvalTargetIdentity(target);
   }
 
   async requestProcessNetFetch(

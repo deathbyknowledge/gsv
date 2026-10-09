@@ -35,10 +35,10 @@ target implementation receives the syscall.
 Agent approval follows the resolved destination for direct tools, CodeMode and
 nested native commands. The default policy allows these operations on `gsv` and
 GSV-provisioned cloud browsers. Personal browser and computer targets retain their
-approval requirements. The Kernel derives cloud-browser identity from its instance
-route; automatic approval cannot carry over to a replacement target. Capability
+approval requirements. The Kernel supplies resolved route and platform metadata; approval cannot carry
+over to a replacement target. Capability
 and owner checks still apply. See [tool approval policy](configuration.md#tool-approval-policy)
-for the `cloud-browsers/*` scope and custom policies.
+for target selectors and custom policies.
 
 ### Tool purpose
 

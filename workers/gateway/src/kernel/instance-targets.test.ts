@@ -59,24 +59,24 @@ describe("instance gateway boundary", () => {
         if (frame.type !== "req" || frame.call !== "proc.tool.authorize") throw new Error("Unexpected callback");
         const args = frame.args;
         return { type: "res", id: frame.id, ok: true, data: {
-          approved: resolveToolApproval(DEFAULT_TOOL_APPROVAL_POLICY, args.syscall, args.args, args.targetKind).action === "auto",
+          approved: resolveToolApproval(DEFAULT_TOOL_APPROVAL_POLICY, args.syscall, args.args, args.target).action === "auto",
         } };
       });
       // SAFETY: An instance route uses only the durable session store from these dependencies.
       const deps = { shellSessions: new ShellSessionStore(sql) } as DispatchDeps;
       const request = () => dispatch({ type: "req", id: crypto.randomUUID(), call: "shell.exec", args: { target: "browser", input: "page snapshot" } },
         { type: "process", id: "crew-process" }, ctx, deps);
-      ctx.approvedTarget = { kind: "cloud-browser", instanceId: "instance" };
+      ctx.approvedTarget = { targetId: "browser", ownerUid: 1000, platform: "browser", route: { kind: "instance", instanceId: "instance" } };
       expect(await request()).toMatchObject({ response: { ok: true } });
       expect(approve).toHaveBeenCalledWith("trusted-installation", "crew-process", expect.objectContaining({
-        args: expect.objectContaining({ syscall: "shell.exec", targetKind: "cloud-browser" }),
+        args: expect.objectContaining({ syscall: "shell.exec", target: ctx.approvedTarget }),
       }));
       expect(execute).toHaveBeenCalledOnce();
 
-      ctx.approvedTarget = { kind: "other" };
+      ctx.approvedTarget = { targetId: "browser", ownerUid: 1000, platform: "browser", route: { kind: "machine", targetId: "browser" } };
       expect(await request()).toMatchObject({ response: { ok: false, error: { code: 403 } } });
       expect(execute).toHaveBeenCalledOnce();
-      ctx.approvedTarget = { kind: "cloud-browser", instanceId: "instance" };
+      ctx.approvedTarget = { targetId: "browser", ownerUid: 1000, platform: "browser", route: { kind: "instance", instanceId: "instance" } };
       instance.instanceId = "replacement";
       expect(await request()).toMatchObject({ response: { ok: false, error: { code: 403 } } });
       expect(approve).toHaveBeenCalledOnce();
@@ -92,7 +92,7 @@ describe("instance gateway boundary", () => {
       delete ctx.approvedTarget;
       expect(await request()).toMatchObject({ response: { ok: false, error: { code: 403 } } });
       expect(approve).toHaveBeenLastCalledWith("trusted-installation", "crew-process", expect.objectContaining({
-        args: expect.objectContaining({ targetKind: undefined }),
+        args: expect.objectContaining({ target: expect.objectContaining({ route: { kind: "machine", targetId: "browser" } }) }),
       }));
     });
   });

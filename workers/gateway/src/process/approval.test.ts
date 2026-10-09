@@ -5,19 +5,51 @@ import {
   resolveToolApproval,
 } from "./approval";
 
+const browserTarget = (targetId: string) => ({
+  targetId, ownerUid: 1000, platform: "browser", route: { kind: "instance" as const, instanceId: "instance" },
+});
+
 describe("tool approval policy", () => {
+  it("matches existing route and platform metadata with narrower selectors first", () => {
+    const policy = parseToolApprovalPolicy(JSON.stringify({ default: "deny", rules: [
+      { match: "shell.exec", target: "targets/*", action: "deny" },
+      { match: "shell.exec", target: { route: "instance" }, action: "ask" },
+      { match: "shell.exec", target: { route: "instance", platform: "browser" }, action: "auto" },
+      { match: "shell.exec", target: { route: "machine", platform: "linux" }, action: "auto" },
+      { match: "shell.exec", target: { route: "adapter" }, action: "ask" },
+    ] }));
+    const args = { target: "browser-id" };
+    const browser = browserTarget(args.target);
+    expect(resolveToolApproval(policy, "shell.exec", args, browser).action).toBe("auto");
+    expect(resolveToolApproval(policy, "shell.exec", args, { ...browser, platform: "container" }).action).toBe("ask");
+    expect(resolveToolApproval(policy, "shell.exec", args, { ...browser, route: { kind: "machine", targetId: args.target } }).action).toBe("deny");
+    expect(resolveToolApproval(policy, "shell.exec", args, { ...browser, platform: "linux", route: { kind: "machine", targetId: args.target } }).action).toBe("auto");
+    expect(resolveToolApproval(policy, "shell.exec", args, { ...browser, route: {
+      kind: "adapter", adapter: "test", accountId: "a", actorId: "b", adapterTargetId: "c",
+    } }).action).toBe("ask");
+    expect(resolveToolApproval(policy, "shell.exec", args, browserTarget("different-target")).action).toBe("deny");
+  });
+
+  it("never widens an invalid metadata selector to all targets", () => {
+    const policy = parseToolApprovalPolicy(JSON.stringify({ default: "ask", rules: [
+      { match: "shell.exec", target: { platform: "browser" }, action: "auto" },
+      { match: "shell.exec", target: { route: "instance", unexpected: true }, action: "auto" },
+    ] }));
+    expect(policy).toEqual({ default: "ask", rules: [] });
+  });
+
   it.each(["shell.exec", "net.fetch", "fs.write", "fs.edit", "fs.delete", "fs.copy", "fs.transfer.receive"])(
     "allows %s on verified cloud browsers", (syscall) => {
       const args = { target: "browser-id" };
-      expect(resolveToolApproval(DEFAULT_TOOL_APPROVAL_POLICY, syscall, args, "cloud-browser").action).toBe("auto");
+      expect(resolveToolApproval(DEFAULT_TOOL_APPROVAL_POLICY, syscall, args, browserTarget("browser-id")).action).toBe("auto");
       expect(resolveToolApproval(DEFAULT_TOOL_APPROVAL_POLICY, syscall, args).action).toBe("ask");
     },
   );
 
   it("does not let syscall arguments or target names claim cloud-browser provenance", () => {
-    for (const target of ["browser-id", "cloud-browsers/*"]) {
+    for (const target of ["browser-id", "browser"]) {
       expect(resolveToolApproval(DEFAULT_TOOL_APPROVAL_POLICY, "shell.exec", {
-        target, targetKind: "cloud-browser", instance: { instanceId: "made-up" }, platform: "browser",
+        target, route: "instance", instance: { instanceId: "made-up" }, platform: "browser",
       }).action).toBe("ask");
     }
   });
@@ -27,19 +59,19 @@ describe("tool approval policy", () => {
       default: "deny",
       rules: [
         { match: "fs.read", target: "targets/*", action: "auto" },
-        { match: "fs.*", target: "cloud-browsers/*", action: "ask" },
+        { match: "fs.*", target: { route: "instance", platform: "browser" }, action: "ask" },
         { match: "fs.read", target: "private-browser", action: "deny" },
       ],
     }));
-    expect(resolveToolApproval(policy, "fs.read", { target: "cloud" }, "cloud-browser").action).toBe("ask");
-    expect(resolveToolApproval(policy, "fs.read", { target: "private-browser" }, "cloud-browser").action).toBe("deny");
+    expect(resolveToolApproval(policy, "fs.read", { target: "cloud" }, browserTarget("cloud")).action).toBe("ask");
+    expect(resolveToolApproval(policy, "fs.read", { target: "private-browser" }, browserTarget("private-browser")).action).toBe("deny");
     expect(resolveToolApproval(policy, "fs.read", { target: "personal-browser" }).action).toBe("auto");
   });
 
   it("preserves stored policies without adding cloud-browser allowances", () => {
     const policy = parseToolApprovalPolicy('{"default":"deny","rules":[{"match":"shell.exec","target":"targets/*","action":"ask"}]}');
-    expect(resolveToolApproval(policy, "shell.exec", { target: "cloud" }, "cloud-browser").action).toBe("ask");
-    expect(resolveToolApproval(policy, "fs.write", { target: "cloud" }, "cloud-browser").action).toBe("deny");
+    expect(resolveToolApproval(policy, "shell.exec", { target: "cloud" }, browserTarget("cloud")).action).toBe("ask");
+    expect(resolveToolApproval(policy, "fs.write", { target: "cloud" }, browserTarget("cloud")).action).toBe("deny");
   });
 
   it("parses policy JSON and keeps defaults on invalid input", () => {
