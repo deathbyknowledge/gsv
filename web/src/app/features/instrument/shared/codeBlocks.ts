@@ -11,6 +11,7 @@ export function enhanceCodeBlocks(container: HTMLElement): void {
     header.className = "markdown-code-header";
     const language = document.createElement("span");
     language.textContent = [...code.classList].find((name) => name.startsWith("language-"))?.slice(9) ?? "";
+    if (language.textContent === "text") block.classList.add("is-plain-text");
     const copy = document.createElement("button");
     copy.type = "button";
     copy.textContent = "copy";

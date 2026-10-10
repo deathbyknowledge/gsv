@@ -130,6 +130,21 @@ const MomentTime = memo(function MomentTime({ timestamp, today, timeZone }: { ti
   return <time class="when" dateTime={new Date(timestamp).toISOString()} title={when.title}>{when.label}</time>;
 });
 
+function MomentCopyButton({ text }: { text: string }) {
+  const [status, setStatus] = useState("");
+  useEffect(() => { setStatus(""); }, [text]);
+  return <div class="zen-message-actions">
+    <button type="button" class="zen-copy-message" aria-label={status || "Copy message"} aria-live="polite" onClick={async () => {
+      try {
+        await navigator.clipboard.writeText(text);
+        setStatus("copied");
+      } catch {
+        setStatus("couldn't copy");
+      }
+    }}>{status || "copy"}</button>
+  </div>;
+}
+
 const ActivityLine = memo(function ActivityLine({
   activity,
   who,
@@ -920,6 +935,7 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
           <div class="text"><ThinkingMark tick={tick} /></div>
         ) : null}
         {moment.media?.map((media, index) => <ZenMedia key={index} media={media} processId={moment.processId ?? pid ?? ""} />)}
+        {moment.text && <MomentCopyButton text={moment.text} />}
         {moment.outgoing && !moment.media?.length && Boolean(moment.outgoing.draft.media?.length) ? (
           <ul class="zen-draft-attachments" aria-label="Message attachments">
             {moment.outgoing.draft.media?.map((attachment, index) => <ZenDraftAttachment key={index} attachment={attachment} />)}

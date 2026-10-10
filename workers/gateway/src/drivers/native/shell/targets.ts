@@ -126,7 +126,7 @@ async function pairTarget(args: string[], ctx: KernelContext): Promise<ExecResul
   const code = encodeDevicePairingCode(gatewayUrl, pairing, secret);
   const instructions = platform === "browser" ? {
     extensionUrl: browserExtensionDownloadUrl(SERVER_RELEASE), code,
-    instructions: "Download and unzip Your GSV. Enable developer mode in chrome://extensions, load the folder, then open its toolbar panel and paste the invitation to pair this browser.",
+    instructions: "Download and unzip Your GSV. Enable developer mode in chrome://extensions and load the folder. Click the Your GSV icon in the toolbar, or find it under the Extensions button, then paste the invitation into its panel.",
   } : {
     installCommand: buildCliInstallCommand(platform === "windows" ? "windows" : "unix", SERVER_RELEASE),
     pairCommand: `${platform === "windows" ? "gsv.exe" : "gsv"} pair ${code}`,
