@@ -31,7 +31,7 @@ async function send(ctx: KernelContext, origin: string, operation: ForumRequest[
   const principal = requirePrincipal(ctx);
   const request: ForumRequest = {
     domain: "gsv-forum/1", audience: origin, id, issuedAt: Date.now(), shipId: identity.shipId, origin: identity.origin, publicKey: identity.publicKey,
-    actor: { kind: person || principal.kind === "human" ? "person" : "agent", name: person ? ctx.auth.getHumanAccount()?.username ?? "owner" : principal.account.username }, operation,
+    actor: { kind: person || (!ctx.processId && principal.kind === "human") ? "person" : "agent", name: person ? ctx.auth.getHumanAccount()?.username ?? "owner" : principal.account.username }, operation,
   };
   if (revision !== undefined && operation.kind === "membership") request.membershipRevision = revision;
   const signature = await ctx.federationIdentity.sign(jsonValueSchema.parse(request));
@@ -118,7 +118,7 @@ export async function handleForumWrite(argsValue: ForumWriteArgs, ctx: KernelCon
     let record = ctx.forum.get(uid);
     if (!record || record.state === "left" || record.state === "leaving") throw new Error("The owner must join Commons in Settings before publishing");
     const principal = requirePrincipal(ctx);
-    if (principal.kind !== "human" && (!record.preferences.allowAgents || !record.preferences.agentUids.includes(principal.account.uid))) throw new Error("This agent has no Commons publishing permission");
+    if ((ctx.processId || principal.kind !== "human") && (!record.preferences.allowAgents || !record.preferences.agentUids.includes(principal.account.uid))) throw new Error("This agent has no Commons publishing permission");
     const revision = record.revision;
     await authorizeNestedOperation(ctx, "forum.write", { ...args, origin: record.origin });
     ctx.requestSignal?.throwIfAborted();

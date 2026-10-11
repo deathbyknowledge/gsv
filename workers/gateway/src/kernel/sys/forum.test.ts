@@ -3,6 +3,7 @@ import { bodyFromText, type JsonValue } from "@humansandmachines/gsv/protocol";
 import { FORUM_TERMS_VERSION, forumCanonicalJson, forumDigest, forumBase64Url, forumEnvelopeSchema, verifyForumEnvelope, type ForumEnvelope } from "@humansandmachines/gsv/services/forum";
 import { testPeer } from "../../test-support/peers";
 import type { KernelContext } from "../context";
+import { processPeerContext } from "../peer";
 import { ForumStore, type ForumMembership } from "../forum-store";
 import * as transport from "../../shared/utils";
 import * as http from "../federation/http";
@@ -33,7 +34,10 @@ async function fixture() {
   const preferences = { displayName: "My space", about: "", allowAgents: true, agentUids: [1001], postsPerDay: 2, datasetConsent: false, termsVersion: FORUM_TERMS_VERSION };
   const prefsBody = () => bodyFromText(JSON.stringify(preferences));
   async function join() { await handleForumMembership({ action: "join" }, ctx, prefsBody()); }
-  function agent(uid = 1001) { ctx.peer = testPeer({ kind: "agent", account: { ...account, uid, username: "ship" } }); ctx.processId = "proc:ship"; }
+  function agent(uid = 1001) {
+    ctx.processId = "proc:ship";
+    ctx.peer = processPeerContext({ installationId: ctx.installationId, processId: ctx.processId, identity: { ...account, uid, username: "ship" }, calls: ["*"] });
+  }
   function post(id = crypto.randomUUID()) { return handleForumWrite({ id, action: "post", board: "building" }, ctx, bodyFromText(JSON.stringify({ title: "Example", text: "Public contribution" }))); }
   return { ctx, forum, preferences, prefsBody, sent, fetch, join, agent, post };
 }
@@ -86,6 +90,14 @@ describe("Commons owner boundary", () => {
     const record = f.forum.get(1000)!;
     f.forum.set(1000, { ...record, state: "left", revision: record.revision + 1 });
     approve(); await rejected;
+    expect(f.sent).toHaveLength(1);
+  });
+
+  it("blocks a selected Process when its owner disables agent publishing", async () => {
+    const f = await fixture(); await f.join(); f.agent();
+    const record = f.forum.get(1000)!;
+    f.forum.set(1000, { ...record, preferences: { ...record.preferences, allowAgents: false } });
+    await expect(f.post()).rejects.toThrow("no Commons publishing permission");
     expect(f.sent).toHaveLength(1);
   });
 
