@@ -1,5 +1,6 @@
 import { defineCommand, type ExecResult } from "just-bash";
-import { bodyFromText, cancelBinaryBody, type ForumReadArgs, type ForumWriteArgs } from "@humansandmachines/gsv/protocol";
+import { bodyFromText, cancelBinaryBody } from "@humansandmachines/gsv/protocol";
+import { forumMembershipSchema, forumReadSchema, forumWriteSchema, type ForumContent } from "@humansandmachines/gsv/services/forum";
 import type { KernelContext } from "../../../kernel/context";
 import type { NativeShellCommandOptions } from "./commands";
 import { requireCommandCapability, requireShellOptionValue } from "./common";
@@ -42,26 +43,34 @@ export function buildForumCommand(ctx: KernelContext, request?: NativeShellComma
       let response;
       if (["status", "open", "join", "update", "leave"].includes(command)) {
         requireCommandCapability(ctx, "forum.membership");
-        const action = command === "open" ? "session" : command as "status" | "join" | "update" | "leave";
-        const body = action === "join" || action === "update" ? bodyFromText(decodeShellStdin(shell.stdin)) : undefined;
-        response = await request({ type: "req", id: frameId, call: "forum.membership", args: { action, ...(options.has("origin") ? { origin: options.get("origin") } : {}) }, body }, shell.signal);
+        const args = forumMembershipSchema.parse({ action: command === "open" ? "session" : command });
+        const body = args.action === "join" || args.action === "update" ? bodyFromText(decodeShellStdin(shell.stdin)) : undefined;
+        if (options.has("origin")) args.origin = options.get("origin");
+        response = await request({ type: "req", id: frameId, call: "forum.membership", args, body }, shell.signal);
       } else if (["boards", "list", "read", "search", "inbox", "profile"].includes(command)) {
         requireCommandCapability(ctx, "forum.read");
-        const action = ({ list: "threads", read: "thread" } as const)[command as "list" | "read"] ?? command as ForumReadArgs["action"];
-        const args: ForumReadArgs = { action, board: options.get("board"), ...(action === "thread" ? { thread: positional[0] } : {}),
-          ...(["search", "profile"].includes(action) ? { query: positional.join(" ") } : {}), ...(options.has("cursor") ? { cursor: Number(options.get("cursor")) } : {}) };
+        const args = forumReadSchema.parse({ action: command === "list" ? "threads" : command === "read" ? "thread" : command });
+        if (options.has("board")) args.board = options.get("board");
+        if (args.action === "thread") args.thread = positional[0];
+        if (args.action === "search" || args.action === "profile") args.query = positional.join(" ");
+        if (options.has("cursor")) args.cursor = Number(options.get("cursor"));
         response = await request({ type: "req", id: frameId, call: "forum.read", args }, shell.signal);
       } else if (["post", "reply", "edit", "delete", "watch", "report"].includes(command)) {
         requireCommandCapability(ctx, "forum.write");
         const board = options.get("board");
         if (!board) throw new Error("--board is required");
         writeId = options.get("id") ?? crypto.randomUUID();
-        const args: ForumWriteArgs = { action: command as ForumWriteArgs["action"], id: writeId, board,
-          ...(command !== "post" ? { thread: positional[0] } : {}), ...(options.has("post") ? { post: options.get("post") } : {}),
-          ...(options.has("revision") ? { revision: Number(options.get("revision")) } : {}) };
-        const value = { ...(!["delete", "watch"].includes(command) ? { text: decodeShellStdin(shell.stdin) } : {}),
-          ...(command === "post" ? { title: options.get("title"), tags: options.get("tags")?.split(",").filter(Boolean) } : {}),
-          ...(command === "watch" ? { watching: !options.has("off") } : {}) };
+        const args = forumWriteSchema.parse({ action: command, id: writeId, board });
+        if (command !== "post") args.thread = positional[0];
+        if (options.has("post")) args.post = options.get("post");
+        if (options.has("revision")) args.revision = Number(options.get("revision"));
+        const value: ForumContent = {};
+        if (command !== "delete" && command !== "watch") value.text = decodeShellStdin(shell.stdin);
+        if (command === "post") {
+          value.title = options.get("title");
+          value.tags = options.get("tags")?.split(",").filter(Boolean);
+        }
+        if (command === "watch") value.watching = !options.has("off");
         response = await request({ type: "req", id: frameId, call: "forum.write", args, body: bodyFromText(JSON.stringify(value)) }, shell.signal);
       } else throw new Error(`Unknown command ${command}. Use forum --help`);
       if (!response.ok) throw new Error(response.error.message);

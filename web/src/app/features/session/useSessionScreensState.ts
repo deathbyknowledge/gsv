@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
 import { z } from "zod";
 import type { SessionService, SessionSnapshot } from "../../services/session/sessionService";
 import { validateSetupAccount, type SetupAccount } from "./sessionDomain";
+import type { SysSetupArgs } from "@humansandmachines/gsv/protocol";
 
 type UseSessionScreensStateOptions = {
   session: SessionService;
@@ -179,7 +180,9 @@ export function useSessionScreensState({ session, snapshot }: UseSessionScreensS
     if (!setupConsent) return;
     setLoginValidationError(null);
     setPendingAction("setup");
-    void session.setup({ ...account, ...(setupForum ? { forum: true } : {}), timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC" }).catch(() => {
+    const setup: SysSetupArgs = { ...account, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC" };
+    if (setupForum) setup.forum = true;
+    void session.setup(setup).catch(() => {
       // Error is reflected through session snapshot.
     });
   };

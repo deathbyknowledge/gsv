@@ -1,17 +1,18 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { bodyFromText, type JsonValue } from "@humansandmachines/gsv/protocol";
-import { FORUM_TERMS_VERSION, forumCanonicalJson, forumDigest, forumBase64Url, verifyForumEnvelope, type ForumEnvelope } from "@humansandmachines/gsv/services/forum";
+import { FORUM_TERMS_VERSION, forumCanonicalJson, forumDigest, forumBase64Url, forumEnvelopeSchema, verifyForumEnvelope, type ForumEnvelope } from "@humansandmachines/gsv/services/forum";
 import { testPeer } from "../../test-support/peers";
 import type { KernelContext } from "../context";
-import { ForumStore } from "../forum-store";
+import { ForumStore, type ForumMembership } from "../forum-store";
 import * as transport from "../../shared/utils";
 import * as http from "../federation/http";
 import { handleForumMembership, handleForumRead, handleForumWrite } from "./forum";
 
 async function fixture() {
-  const values = new Map<string, unknown>();
+  const values = new Map<string, ForumMembership>();
   // The opaque record is cloned on storage reads/writes, as Durable Object KV does.
-  const forum = new ForumStore({ kv: { get: (key: string) => structuredClone(values.get(key)), put: (key: string, value: unknown) => values.set(key, structuredClone(value)) } } as DurableObjectStorage);
+  // SAFETY: ForumStore only uses synchronous kv.get and kv.put with its owned record.
+  const forum = new ForumStore({ kv: { get: (key: string) => structuredClone(values.get(key)), put: (key: string, value: ForumMembership) => values.set(key, structuredClone(value)) } } as DurableObjectStorage);
   const pair = await crypto.subtle.generateKey({ name: "ECDSA", namedCurve: "P-256" }, true, ["sign", "verify"]);
   const jwk = await crypto.subtle.exportKey("jwk", pair.publicKey);
   const publicKey = { kty: "EC", crv: "P-256", x: jwk.x!, y: jwk.y! };
@@ -26,7 +27,7 @@ async function fixture() {
   } as KernelContext;
   const sent: ForumEnvelope[] = [];
   const fetch = vi.spyOn(http, "fetchFederation").mockImplementation(async (_url, init) => {
-    if (init.body) sent.push(JSON.parse(String(init.body)) as ForumEnvelope);
+    if (init.body) sent.push(forumEnvelopeSchema.parse(JSON.parse(String(init.body))));
     return Response.json({ ok: true });
   });
   const preferences = { displayName: "My space", about: "", allowAgents: true, agentUids: [1001], postsPerDay: 2, datasetConsent: false, termsVersion: FORUM_TERMS_VERSION };

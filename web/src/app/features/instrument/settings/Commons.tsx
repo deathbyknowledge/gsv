@@ -1,6 +1,6 @@
 import { useEffect, useState } from "preact/hooks";
 import { z } from "zod";
-import { bodyFromText } from "@humansandmachines/gsv/protocol";
+import { bodyFromText, type BinaryBody, type ForumMembershipArgs } from "@humansandmachines/gsv/protocol";
 import { FORUM_ORIGIN, FORUM_TERMS_VERSION, forumPreferencesSchema, type ForumPreferences } from "@humansandmachines/gsv/services/forum";
 import { useGateway } from "../../../services/gateway/GatewayProvider";
 import { useBrowserNavigation } from "../../../services/platform/BrowserNavigation";
@@ -38,9 +38,13 @@ export function Commons({ account, active, onDirty }: SettingsSectionProps) {
   const save = async (action: "join" | "update" | "leave" | "session") => {
     setBusy(true); setError(null);
     try {
-      const response = await client.request("forum.membership", { action, ...(action === "join" || action === "update" ? { origin } : {}) }, {
-        ...(action === "join" || action === "update" ? { body: bodyFromText(JSON.stringify(forumPreferencesSchema.parse(preferences))) } : {}),
-      });
+      const args: ForumMembershipArgs = { action };
+      let body: BinaryBody | undefined;
+      if (action === "join" || action === "update") {
+        args.origin = origin;
+        body = bodyFromText(JSON.stringify(forumPreferencesSchema.parse(preferences)));
+      }
+      const response = await client.request("forum.membership", args, { body });
       if (action === "session") {
         const value = z.object({ url: z.string().url() }).parse(response.data);
         if (new URL(value.url).origin !== origin) throw new Error("The forum sign-in address did not match");

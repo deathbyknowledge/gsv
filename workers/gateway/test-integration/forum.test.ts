@@ -1,4 +1,5 @@
 import { GSVClient } from "@humansandmachines/gsv";
+import type { SysSetupArgs } from "@humansandmachines/gsv/protocol";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { TestHarness } from "wrangler";
 import { createGatewayTestHarness, webSocketUrl } from "./harness";
@@ -11,7 +12,9 @@ describe.each([false, true])("Commons first boot (opt in: %s)", (participate) =>
   afterAll(async () => { clients.forEach(client => client.close()); await harness.close(); });
   it("persists the owner choice through fresh setup, shell access and Kernel eviction", async () => {
     const oneShot = new GSVClient();
-    const setup = await oneShot.requestOnce(url, "sys.setup", { onboardingToken: "integration-onboarding-default", password: "forum-password", ...(participate ? { forum: true } : {}) });
+    const args: SysSetupArgs = { onboardingToken: "integration-onboarding-default", password: "forum-password" };
+    if (participate) args.forum = true;
+    const setup = await oneShot.requestOnce(url, "sys.setup", args);
     const owner = new GSVClient({ url, password: "forum-password", peer: { id: "forum-owner" } });
     clients.push(owner); await owner.connect();
     const status = async () => (await owner.request("forum.membership", { action: "status" })).data;

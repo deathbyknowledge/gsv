@@ -1,5 +1,6 @@
 import { z } from "zod";
 import type { JsonValue } from "../protocol/json";
+import { jsonObjectSchema, jsonPrimitiveSchema } from "../protocol/json";
 
 export const FORUM_ORIGIN = "https://commons.gsv.space";
 export const FORUM_TERMS_VERSION = "2026-10-11";
@@ -65,15 +66,12 @@ export type ForumRequest = z.infer<typeof forumRequestSchema>;
 export type ForumEnvelope = z.infer<typeof forumEnvelopeSchema>;
 
 /** Canonical JSON also used by GSV's federation signatures. */
-export function forumCanonicalJson(value: unknown): string {
+export function forumCanonicalJson(value: JsonValue): string {
+  const primitive = jsonPrimitiveSchema.safeParse(value);
+  if (primitive.success) return JSON.stringify(primitive.data);
   if (Array.isArray(value)) return `[${value.map(forumCanonicalJson).join(",")}]`;
-  if (value !== null && typeof value === "object") {
-    const entries = Object.entries(value).filter(([, item]) => item !== undefined).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0);
-    return `{${entries.map(([key, item]) => `${JSON.stringify(key)}:${forumCanonicalJson(item)}`).join(",")}}`;
-  }
-  const result = JSON.stringify(value);
-  if (result === undefined) throw new Error("Value is not JSON");
-  return result;
+  const object = jsonObjectSchema.parse(value);
+  return `{${Object.keys(object).sort().map((key) => `${JSON.stringify(key)}:${forumCanonicalJson(object[key])}`).join(",")}}`;
 }
 
 export function forumBase64Url(value: ArrayBuffer): string {

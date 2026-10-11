@@ -1,4 +1,5 @@
 import { bodyToText, cancelBinaryBody, jsonValueSchema, type BinaryBody, type ForumMembershipArgs, type ForumReadArgs, type ForumWriteArgs, type JsonValue } from "@humansandmachines/gsv/protocol";
+import { z } from "zod";
 import { FORUM_MAX_BODY_BYTES, FORUM_MAX_RESPONSE_BYTES, FORUM_ORIGIN, forumCanonicalJson, forumContentSchema, forumDigest, forumMembershipSchema, forumPreferencesSchema, forumPublicOrigin, forumReadSchema, forumWriteSchema, type ForumRequest } from "@humansandmachines/gsv/services/forum";
 import { principalOf, requirePrincipal, resolveCallerOwnerUid, type KernelContext } from "../context";
 import type { ForumMembership } from "../forum-store";
@@ -15,10 +16,10 @@ function endpoint(value: string, ctx: KernelContext): string {
   return forumPublicOrigin(value);
 }
 
-async function content(body: BinaryBody | undefined, ctx: KernelContext): Promise<unknown> {
+async function content(body: BinaryBody | undefined, ctx: KernelContext): Promise<JsonValue> {
   if (!body) throw new Error("A forum request body is required");
   const bytes = await readFederationBody(body, FORUM_MAX_BODY_BYTES, ctx.requestSignal);
-  try { return JSON.parse(new TextDecoder().decode(bytes)); }
+  try { return jsonValueSchema.parse(JSON.parse(new TextDecoder().decode(bytes))); }
   catch { throw new Error("Invalid Commons request body"); }
 }
 
@@ -30,9 +31,9 @@ async function send(ctx: KernelContext, origin: string, operation: ForumRequest[
   const principal = requirePrincipal(ctx);
   const request: ForumRequest = {
     domain: "gsv-forum/1", audience: origin, id, issuedAt: Date.now(), shipId: identity.shipId, origin: identity.origin, publicKey: identity.publicKey,
-    ...(revision !== undefined && operation.kind === "membership" ? { membershipRevision: revision } : {}),
     actor: { kind: person || principal.kind === "human" ? "person" : "agent", name: person ? ctx.auth.getHumanAccount()?.username ?? "owner" : principal.account.username }, operation,
   };
+  if (revision !== undefined && operation.kind === "membership") request.membershipRevision = revision;
   const signature = await ctx.federationIdentity.sign(jsonValueSchema.parse(request));
   ctx.requestSignal?.throwIfAborted();
   if (revision !== undefined && ctx.forum.get(resolveCallerOwnerUid(ctx))?.revision !== revision) throw new Error("Commons permission changed before dispatch");
@@ -40,8 +41,8 @@ async function send(ctx: KernelContext, origin: string, operation: ForumRequest[
   if (!response.body) throw new Error("The forum returned an empty response");
   const result = jsonValueSchema.parse(JSON.parse(await bodyToText({ stream: response.body }, FORUM_MAX_RESPONSE_BYTES, ctx.requestSignal)));
   if (!response.ok) {
-    const object = result && typeof result === "object" && !Array.isArray(result) ? result : {};
-    const reference = typeof object.reference === "string" ? ` (reference ${object.reference})` : "";
+    const error = z.object({ reference: z.uuid().optional() }).safeParse(result);
+    const reference = error.success && error.data.reference ? ` (reference ${error.data.reference})` : "";
     throw new Error(`Commons request failed (${response.status})${reference}`);
   }
   return result;
