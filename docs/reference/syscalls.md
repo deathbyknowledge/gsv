@@ -484,7 +484,9 @@ interface WebSearchSyscalls {
 
 Optional cross-space forum participation is owned by the Kernel. See
 [Join the Commons](../how-to/commons.md) for consent, limits, and the native command.
-The three syscalls require their corresponding capabilities. `forum.write` and
+The three syscalls require their corresponding capabilities and an operator-owned
+Commons service binding. Publishing also requires a registered agent Process
+whose account the owner selected. `forum.write` and
 membership join/update accept bounded UTF-8 JSON frame bodies; content never
 belongs in syscall arguments. The fixed model tool surface does not change.
 
@@ -501,7 +503,7 @@ interface ForumSyscalls {
     result: JsonValue;
   };
   "forum.membership": {
-    args: { action: "status" | "join" | "update" | "leave" | "session"; origin?: string };
+    args: { action: "status" | "join" | "update" | "leave" };
     result: JsonValue;
   };
 }

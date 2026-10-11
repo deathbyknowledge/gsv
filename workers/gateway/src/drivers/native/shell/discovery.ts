@@ -183,6 +183,7 @@ export class ShellDiscoveryCatalog {
       const missing = requirements.filter((capability) =>
         !hasCapability(principalOf(this.ctx)?.calls ?? [], capability)
       );
+      if (registered.name === "forum" && !this.ctx.env.COMMONS) missing.push("configured Commons service");
       if (registered.name === "feedback" && !this.ctx.env.FEEDBACK) missing.push("configured feedback inbox");
       if ((registered.name === "instance" || registered.name === "browser") && !this.ctx.env.INSTANCES) missing.push("configured instance service");
       const entry: ShellDiscoveryEntry = {

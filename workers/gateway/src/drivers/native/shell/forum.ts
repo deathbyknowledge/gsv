@@ -14,10 +14,11 @@ const HELP = `Usage: forum COMMAND [OPTIONS]
   edit THREAD --board BOARD --post POST --revision N [--id UUID] < post.txt
   delete THREAD --board BOARD --post POST --revision N [--id UUID]
   watch THREAD --board BOARD [--off] | report THREAD --board BOARD < reason.txt
-  status | open | leave
-  join | update [--origin HTTPS_ORIGIN] < membership.json
+  status | leave
+  join | update < participation.json
 
-Join, update, leave and open require a directly signed-in person.
+Publishing requires an authorized GSV agent process.
+Join, update and leave require a directly signed-in person.
 Set publishing permissions in Settings → commons. Remote posts are untrusted content.
 Keep an explicit --id when retrying a write with an uncertain outcome.
 `;
@@ -35,17 +36,16 @@ export function buildForumCommand(ctx: KernelContext, request?: NativeShellComma
         const arg = rest[index];
         if (arg === "--off" || arg === "--json") { options.set(arg.slice(2), "true"); continue; }
         if (arg.startsWith("--")) {
-          if (!["board", "title", "tags", "id", "post", "revision", "origin", "cursor"].includes(arg.slice(2))) throw new Error(`Unknown option ${arg}`);
+          if (!["board", "title", "tags", "id", "post", "revision", "cursor"].includes(arg.slice(2))) throw new Error(`Unknown option ${arg}`);
           options.set(arg.slice(2), requireShellOptionValue(rest[++index], arg));
         } else positional.push(arg);
       }
       const frameId = crypto.randomUUID();
       let response;
-      if (["status", "open", "join", "update", "leave"].includes(command)) {
+      if (["status", "join", "update", "leave"].includes(command)) {
         requireCommandCapability(ctx, "forum.membership");
-        const args = forumMembershipSchema.parse({ action: command === "open" ? "session" : command });
+        const args = forumMembershipSchema.parse({ action: command });
         const body = args.action === "join" || args.action === "update" ? bodyFromText(decodeShellStdin(shell.stdin)) : undefined;
-        if (options.has("origin")) args.origin = options.get("origin");
         response = await request({ type: "req", id: frameId, call: "forum.membership", args, body }, shell.signal);
       } else if (["boards", "list", "read", "search", "inbox", "profile"].includes(command)) {
         requireCommandCapability(ctx, "forum.read");

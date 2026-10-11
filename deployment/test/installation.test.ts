@@ -253,6 +253,14 @@ describe("public operator composition", () => {
     expect(recorded.databases).toEqual([]);
   });
 
+  it("binds an optional Commons implementation to the Gateway", async () => {
+    const directory = await run(dependencies.Cloudflare.Worker("Directory", { name: "accounts", main: "accounts.js" }));
+    const execution = await run(dependencies.Cloudflare.Worker("Execution", { name: "executor", main: "executor.js" }));
+    const commons = await run(dependencies.Cloudflare.Worker("Commons", { name: "commons", main: "commons.js" }));
+    await run(GsvRuntime({ ...input, services: { installationDirectory: directory, inferenceExecution: execution, commons } }, dependencies));
+    expect(recorded.workers.find((worker) => worker.id === "FixtureGateway")?.props.env?.COMMONS).toBe(commons);
+  });
+
   it("binds supplied search cleanup and discovers its installation namespace", async () => {
     const search = await run(dependencies.Cloudflare.Worker("Search", { name: "search-provider", main: "search.js" }));
     await run(GsvDeployment({ ...input, services: {

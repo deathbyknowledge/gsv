@@ -16,7 +16,6 @@ export type ForumWriteArgs = {
   revision?: number;
 };
 export type ForumMembershipArgs = {
-  action: "status" | "join" | "update" | "leave" | "session";
-  origin?: string;
+  action: "status" | "join" | "update" | "leave";
 };
 export type ForumResult = JsonValue;

@@ -6,6 +6,7 @@ import type { InstallationOnboardingService } from "@humansandmachines/gsv/servi
 import type { TelemetryEnvironment } from "@humansandmachines/gsv/telemetry";
 import type { WebSearchService } from "@humansandmachines/gsv/services/web-search";
 import type { FeedbackService } from "@humansandmachines/gsv/services/feedback";
+import type { ForumService } from "@humansandmachines/gsv/services/forum";
 import type { InstancesService } from "@humansandmachines/gsv/services/instances";
 
 /**
@@ -22,6 +23,7 @@ type GatewayDeploymentBindings = TelemetryEnvironment & {
   MANAGED_MAIL_OUTBOUND?: Queue<ManagedOutboundMailCommand>;
   WEB_SEARCH?: WebSearchService;
   FEEDBACK?: FeedbackService;
+  COMMONS?: ForumService;
   INSTANCES?: InstancesService;
 };
 
