@@ -142,6 +142,8 @@ export type AccountListResult = {
 };
 
 export type SysSetupArgs = {
+  /** Opt in to public Commons participation by the personal Ship, at five posts per day. */
+  forum?: boolean;
   /** Existing clients may supply a local name; otherwise the Kernel derives it from the space. */
   username?: string;
   password: string;

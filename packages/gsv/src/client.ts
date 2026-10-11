@@ -226,6 +226,7 @@ export type GsvR12yNamespace = GsvClientNamespaces["r12y"];
 export type GsvRepoNamespace = GsvClientNamespaces["repo"];
 export type GsvSchedNamespace = GsvClientNamespaces["sched"];
 export type GsvShellNamespace = GsvClientNamespaces["shell"];
+export type GsvForumNamespace = GsvClientNamespaces["forum"];
 export type GsvWebNamespace = GsvClientNamespaces["web"];
 export type GsvSignalNamespace = GsvClientNamespaces["signal"];
 export type GsvSysNamespace = GsvClientNamespaces["sys"];
@@ -264,6 +265,7 @@ const DEFAULT_PEER_INFO: GsvPeerInfo = {
 };
 
 const SYSCALL_NAMES = [
+  "forum.read",
   "fs.write",
   "fs.edit",
   "fs.delete",
@@ -474,6 +476,7 @@ export class GSVClient {
   declare readonly ai: GsvAiNamespace;
   declare readonly codemode: GsvCodeModeNamespace;
   declare readonly conversation: GsvConversationNamespace;
+  declare readonly forum: GsvForumNamespace;
   declare readonly contact: GsvContactNamespace;
   declare readonly profile: GsvProfileNamespace;
   declare readonly approach: GsvApproachNamespace;

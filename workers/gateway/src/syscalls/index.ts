@@ -14,6 +14,7 @@ type SyscallDomain =
   | "shell"
   | "net"
   | "web"
+  | "forum"
   | "codemode"
   | "mail"
   | "proc"

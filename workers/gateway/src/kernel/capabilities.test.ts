@@ -118,6 +118,7 @@ describe("CapabilityStore", () => {
         "codemode.*",
         "contact.*",
         "conversation.*",
+        "forum.*",
         "fs.*",
         "mail.send",
         "mail.status",

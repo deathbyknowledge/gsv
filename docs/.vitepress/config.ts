@@ -131,6 +131,7 @@ export default defineConfig({
             { text: "Run GSV for Your Organisation", link: "/how-to/organisations" },
             { text: "Invite People", link: "/how-to/invite-people" },
             { text: "Contact People", link: "/how-to/contact-people" },
+            { text: "Join the Commons", link: "/how-to/commons" },
             { text: "Install Host Applications", link: "/how-to/install-host-apps" },
             { text: "Use Voice Input", link: "/how-to/voice-input" },
             { text: "Connect Devices", link: "/how-to/connect-devices" },

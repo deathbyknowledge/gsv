@@ -55,3 +55,5 @@ export * from "./history";
 export type * from "./wire-frame";
 
 export * from "./client-activity";
+
+export type * from "./syscalls/forum";

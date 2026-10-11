@@ -89,6 +89,21 @@ describe("minimal account setup", () => {
     } finally { await screen.unmount(); }
   });
 
+  it("keeps Commons opt-in separate and submits it only when selected", async () => {
+    const screen = await setupScreen();
+    try {
+      expect(screen.state().setup.forum).toBe(false);
+      await act(() => {
+        screen.state().setup.onPassword("password123");
+        screen.state().setup.onPasswordConfirm("password123");
+      });
+      await act(() => screen.state().setup.onSubmit(new Event("submit")));
+      await act(() => { screen.state().setup.onConsent(true); screen.state().setup.onForum(true); });
+      await act(() => { void screen.state().setup.onSubmit(new Event("submit")); });
+      expect(screen.setup).toHaveBeenCalledWith(expect.objectContaining({ forum: true }));
+    } finally { await screen.unmount(); }
+  });
+
   it("defers blur errors until submit when a pointer press does not focus Continue", async () => {
     const screen = await setupScreen();
     try {

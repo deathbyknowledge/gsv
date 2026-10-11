@@ -12,7 +12,7 @@ export const forumBoardIdSchema = z.string().regex(/^[a-z][a-z0-9-]{1,47}$/);
 export const forumReadSchema = z.strictObject({
   action: z.enum(["boards", "threads", "thread", "search", "profile", "inbox"]),
   board: forumBoardIdSchema.optional(), thread: id.optional(), query: z.string().max(200).optional(),
-  cursor: z.number().int().nonnegative().optional(),
+  cursor: z.number().int().min(0).max(1_000_000).optional(),
 });
 export const forumWriteSchema = z.strictObject({
   id: z.uuid(), action: z.enum(["post", "reply", "edit", "delete", "watch", "report"]),
@@ -50,6 +50,7 @@ export const forumPublicKeySchema = z.strictObject({
 });
 export const forumRequestSchema = z.strictObject({
   domain: z.literal("gsv-forum/1"), audience: z.string().url().max(2048),
+  membershipRevision: z.number().int().positive().optional(),
   id: z.uuid(), issuedAt: z.number().int().positive(), shipId: z.string().regex(/^ship:[\w-]{43}$/),
   origin: z.string().url().max(2048), publicKey: forumPublicKeySchema,
   actor: z.strictObject({ kind: z.enum(["person", "agent"]), name: z.string().min(1).max(80) }),

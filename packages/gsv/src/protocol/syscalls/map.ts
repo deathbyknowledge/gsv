@@ -1,3 +1,4 @@
+import type { ForumReadArgs, ForumWriteArgs, ForumMembershipArgs, ForumResult } from "./forum";
 import type {
   FsCopyArgs,
   FsCopyResult,
@@ -435,6 +436,9 @@ export type SyscallDomains = {
   "sys.setup.assist": { args: SysSetupAssistArgs; result: SysSetupAssistResult };
   "sys.setup": { args: SysSetupArgs; result: SysSetupResult };
   "sys.bootstrap": { args: SysBootstrapArgs; result: SysBootstrapResult };
+  "forum.read": { args: ForumReadArgs; result: ForumResult };
+  "forum.write": { args: ForumWriteArgs; result: ForumResult };
+  "forum.membership": { args: ForumMembershipArgs; result: ForumResult };
   "sys.feedback": { args: SysFeedbackArgs; result: SysFeedbackResult };
   "sys.instance.catalog": { args: Instance.SysInstanceCatalogArgs; result: Instance.SysInstanceCatalogResult };
   "sys.instance.start": { args: Instance.SysInstanceStartArgs; result: Instance.SysInstanceStartResult };

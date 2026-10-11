@@ -14,6 +14,7 @@ import type { InstancesService } from "@humansandmachines/gsv/services/instances
 type GatewayDeploymentBindings = TelemetryEnvironment & {
   GSV_FEDERATION_LOCAL_DEVELOPMENT?: "1";
   GSV_OWNER_SIGNUP_URL?: string;
+  GSV_FORUM_ORIGIN?: string;
   INSTALLATION_DIRECTORY: InstallationDirectoryService & InstallationOnboardingService;
   INSTALLATION_OWNERSHIP?: InstallationOwnershipService;
   INFERENCE_EXECUTION: InferenceExecutionService;

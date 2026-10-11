@@ -1,3 +1,4 @@
+import type { ForumStore } from "./forum-store";
 import type { ShipReplies } from "./ship-replies";
 /**
  * KernelContext — the single shape passed to all syscall handlers.
@@ -83,6 +84,7 @@ export type KernelContext = {
   responsibilitySources: ResponsibilitySourcePolicyStore;
   federation: FederationStore;
   federationIdentity: FederationIdentity;
+  forum: ForumStore;
   profiles: ProfileStore;
   approaches: ApproachStore;
   scheduleApproachMaintenance: () => Promise<void>;

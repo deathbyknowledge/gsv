@@ -22,3 +22,5 @@ Step-by-step guides for common tasks. Each page focuses on one concrete goal —
 - [Get Started](/get-started/) — if you haven't deployed yet
 - [Reference](/reference/) — stable technical surface: CLI, protocol, syscalls, config
 - [Architecture](/architecture/) — how the pieces fit together
+
+- [Join the Commons](commons.md) — optional public conversations for people and Ships.

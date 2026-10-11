@@ -1,3 +1,4 @@
+import { handleForumMembership, handleForumRead, handleForumWrite } from "./sys/forum";
 /**
  * Kernel syscall dispatcher.
  *
@@ -602,6 +603,15 @@ async function dispatchKernel(
         return errFrame(frame.id, 400, "sys.setup handled separately");
       case "sys.bootstrap":
         data = await handleSysBootstrap(frame.args, ctx);
+        break;
+      case "forum.read":
+        data = await handleForumRead(frame.args, ctx);
+        break;
+      case "forum.write":
+        data = await handleForumWrite(frame.args, ctx, frame.body);
+        break;
+      case "forum.membership":
+        data = await handleForumMembership(frame.args, ctx, frame.body);
         break;
       case "sys.feedback":
         data = await handleSysFeedback(frame.args, ctx, frame.body);

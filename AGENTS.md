@@ -118,6 +118,7 @@ Contact conversations have no mandatory Process handler. Pairing and first-messa
 - `host/crates/`: shared gateway transport, host configuration, Desktop IPC, gesture protocol contracts, and Windows SCM/process ownership primitives. `host/` owns their Cargo workspace and build artifacts.
 - `workers/adapters/`: platform-specific messaging workers and identity normalization.
 - `extension/`: browser-backed target and browser integration.
+- The optional Commons client lives beneath `forum.*` syscalls and the native `forum` command. Kernel owns membership, chosen agents and local limits; the independently hosted forum owns content, moderation and billing. Membership and dataset consent are separate owner choices.
 - `workers/instances/`: optional cloud browser provisioning, profiles, human control, metering, and instance-owned cleanup.
 - `workers/ripgit/`: git-backed repositories and filesystem storage operations.
 

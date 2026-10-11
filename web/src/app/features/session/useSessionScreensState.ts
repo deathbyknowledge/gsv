@@ -19,6 +19,7 @@ export function useSessionScreensState({ session, snapshot }: UseSessionScreensS
   const [loginPassword, setLoginPassword] = useState("");
   const [setupPassword, setSetupPassword] = useState("");
   const [setupPasswordConfirm, setSetupPasswordConfirm] = useState("");
+  const [setupForum, setSetupForum] = useState(false);
   const [setupConsent, setSetupConsent] = useState(false);
   const [setupConsentTouched, setSetupConsentTouched] = useState(false);
   const [setupStep, setSetupStep] = useState<"credentials" | "consent">("credentials");
@@ -137,6 +138,7 @@ export function useSessionScreensState({ session, snapshot }: UseSessionScreensS
       setSetupPasswordConfirm("");
       setSetupTouched({});
       setSetupConsent(false);
+      setSetupForum(false);
       setSetupConsentTouched(false);
       setSetupStep("credentials");
     }
@@ -177,7 +179,7 @@ export function useSessionScreensState({ session, snapshot }: UseSessionScreensS
     if (!setupConsent) return;
     setLoginValidationError(null);
     setPendingAction("setup");
-    void session.setup({ ...account, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC" }).catch(() => {
+    void session.setup({ ...account, ...(setupForum ? { forum: true } : {}), timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC" }).catch(() => {
       // Error is reflected through session snapshot.
     });
   };
@@ -204,6 +206,8 @@ export function useSessionScreensState({ session, snapshot }: UseSessionScreensS
       password: setupPassword,
       passwordConfirm: setupPasswordConfirm,
       consent: setupConsent,
+      forum: setupForum,
+      onForum: setSetupForum,
       consentError: setupConsentTouched && !setupConsent ? "Confirm your age and agreement to continue." : null,
       onPassword: setSetupPassword,
       onPasswordConfirm: setSetupPasswordConfirm,

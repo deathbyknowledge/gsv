@@ -1,3 +1,4 @@
+import { Commons } from "./Commons";
 import { useSession } from "../../../services/session/SessionProvider";
 import { LoadingState } from "../../../components/ui/Spinner";
 import { useQuery } from "../../../services/navigation/viewQueries";
@@ -21,7 +22,7 @@ export type SettingsProps = {
   onInspectProcess: (pid: string) => void;
 };
 
-const SECTIONS = ["preferences", "permissions", "instructions", "messengers", "mcp", "logs", "sign-in"] as const;
+const SECTIONS = ["preferences", "permissions", "instructions", "messengers", "commons", "mcp", "logs", "sign-in"] as const;
 type Section = typeof SECTIONS[number];
 
 export function Settings({ onDirtyChange, onSignOut, onInspectProcess }: SettingsProps) {
@@ -29,10 +30,11 @@ export function Settings({ onDirtyChange, onSignOut, onInspectProcess }: Setting
   const { client, connected } = useGateway();
   const { service: session } = useSession();
   const [section, setSection] = useState<Section>("preferences");
-  const [dirty, setDirty] = useState<Record<Section, boolean>>({ preferences: false, permissions: false, instructions: false, messengers: false, mcp: false, logs: false, "sign-in": false });
+  const [dirty, setDirty] = useState<Record<Section, boolean>>({ preferences: false, permissions: false, instructions: false, messengers: false, commons: false, mcp: false, logs: false, "sign-in": false });
   const preferencesDirty = useCallback((value: boolean) => setDirty((old) => old.preferences === value ? old : { ...old, preferences: value }), []);
   const permissionsDirty = useCallback((value: boolean) => setDirty((old) => old.permissions === value ? old : { ...old, permissions: value }), []);
   const instructionsDirty = useCallback((value: boolean) => setDirty((old) => old.instructions === value ? old : { ...old, instructions: value }), []);
+  const commonsDirty = useCallback((value: boolean) => setDirty((old) => old.commons === value ? old : { ...old, commons: value }), []);
   const mcpDirty = useCallback((value: boolean) => setDirty((old) => old.mcp === value ? old : { ...old, mcp: value }), []);
   const hasDrafts = Object.values(dirty).some(Boolean);
   useLayoutEffect(() => { onDirtyChange?.(hasDrafts); }, [hasDrafts, onDirtyChange]);
@@ -63,6 +65,7 @@ export function Settings({ onDirtyChange, onSignOut, onInspectProcess }: Setting
           <div hidden={section !== "permissions"}><Permissions account={account} active={active && section === "permissions"} onDirty={permissionsDirty} /></div>
           <div hidden={section !== "instructions"}><Instructions account={account} active={active && section === "instructions"} onDirty={instructionsDirty} /></div>
           <div hidden={section !== "messengers"}><MessengerConnections account={account} active={active && section === "messengers"} /></div>
+          <div hidden={section !== "commons"}><Commons account={account} active={active && section === "commons"} onDirty={commonsDirty} /></div>
           <div hidden={section !== "mcp"}><Mcp account={account} active={active && section === "mcp"} onDirty={mcpDirty} /></div>
           <RetainedView active={active && section === "logs"}><Logs account={account} onProcess={onInspectProcess} /></RetainedView>
           {account.uid === 0 && <div hidden={section !== "sign-in"}><h1>Sign-in</h1><PersonalPasswordReset active={active && section === "sign-in"} /><OwnerAccess /></div>}
