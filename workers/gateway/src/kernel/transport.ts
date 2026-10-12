@@ -433,7 +433,7 @@ handleSig(
         && hasCapability(peer.grant.calls, "conversation.send")
         && !this.host.auth.isAccountDisabled(peer.principal.account.uid)
         && (state.credentialEpoch ?? 0) === this.host.auth.credentialEpoch(peer.principal.account.uid)) {
-        this.host.shipReplies.recordClient(peer.principal.account.uid, connection.id);
+        this.host.shipReplies.recordClientActivity(peer.principal.account.uid, connection.id);
       }
       return;
     }
