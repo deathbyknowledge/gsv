@@ -71,39 +71,34 @@ eligibility. The adapter does not enforce or assume a geographic exception.
 Outside the 24-hour customer service window Meta accepts only a pre-approved
 template, and a template does not reopen the window; only the person's reply
 does, and a tap on a quick-reply button counts as a reply. Meta bills each
-template sent outside the window per message under its utility rate.
+template sent outside the window at the category assigned to it.
 
-The adapter uses one Utility template with a single body parameter and one
-quick-reply button. The operator files it once in the Meta app under
-**WhatsApp → Message templates → Create template** and waits for Meta's
-review, which usually completes within minutes but may take up to a day:
+The adapter uses a notification with no body parameters and one quick-reply
+button. File it in Meta's message template manager and wait for approval:
 
-- Category: **Utility**
-- Name: `gsv_message` (or the value of `WHATSAPP_TEMPLATE_NAME`)
-- Language: English (`en`, or the value of `WHATSAPP_TEMPLATE_LANGUAGE`)
+- Category: **Marketing** for this general notification; do not assume a
+  Utility classification or rate
+- Name: `gsv_message_notification` (or `WHATSAPP_TEMPLATE_NAME`)
+- Language: English (`en`, or `WHATSAPP_TEMPLATE_LANGUAGE`)
 - Header and footer: none
-- Body: `Your GSV: {{1}}`
-- Body parameter example (Meta asks for one during review):
-  `Your report is ready. Tap the button to read it here.`
-- Button: type **Quick reply**, label `Show me`
+- Body: `Your GSV has a message for you.`
+- Button: type **Quick reply**, label `Read message`
 
-The parameter receives the reply flattened to one line: paragraphs join with
-` · `, WhatsApp markers and code fences are removed, and whitespace collapses,
-because Meta refuses newlines, tabs and more than four consecutive spaces in a
-parameter. The value is cut to 1000 characters with an ellipsis so the rendered
-body stays under Meta's 1024 character cap.
+Deploy this notification contract with a matching approved template. The
+older `gsv_message` template with a body parameter is not compatible. Leave
+`WHATSAPP_TEMPLATE_NAME` empty until the replacement is approved.
 
 Behaviour once the template is approved:
 
 - When the peer's own receipt says the window is closed, or Meta answers a
   free-form send with error 131047, the template goes out instead.
-- A reply that fits the parameter is delivered by the template alone.
-- A longer reply, or an approval prompt whose buttons the template cannot
-  carry, is held in the peer's storage and reported to the Kernel as accepted.
-  The person's next message, or the tap on **Show me**, opens the window and
-  releases the held messages in order through the normal free-form path with
-  paragraph splitting, before their own message is relayed. The tap itself is
-  not relayed to the Process.
+- Every original reply, including short replies and approval prompts, is held
+  in the peer's storage and reported to the Kernel as accepted. The template
+  contains none of the original message.
+  The person's next message, or a tap on **Read message**, opens the window and
+  releases held messages in order through the normal free-form path with
+  paragraph splitting and approval buttons, before their message is relayed.
+  The tap itself is not relayed to the Process.
 - One template is pending at a time. While it is, further replies wait behind
   it rather than each sending a template. Held messages and the pending
   template expire after seven days.
@@ -127,8 +122,8 @@ The platform operator configures these Worker secrets and variables:
 - `WHATSAPP_BUSINESS_ACCOUNT_ID` — the WhatsApp Business Account id
 - `WHATSAPP_WEBHOOK_BASE_URL` — the adapter Worker's public origin
 - `WHATSAPP_DISPLAY_NUMBER` — the number people message, in E.164, shown in GSV
-- `WHATSAPP_TEMPLATE_NAME` — the Utility template sent outside the 24-hour
-  window; defaults to `gsv_message`, and an empty value switches templates off
+- `WHATSAPP_TEMPLATE_NAME` — the notification template sent outside the 24-hour
+  window; defaults to `gsv_message_notification`, and an empty value switches templates off
 - `WHATSAPP_TEMPLATE_LANGUAGE` — that template's language code; defaults to `en`
 - `WHATSAPP_ALLOWED_ACTOR_IDS` — optional comma-separated staging allowlist
 

@@ -213,9 +213,6 @@ async function templateMessages(): Promise<GraphRecord[]> {
   return (await sentMessages()).filter((record) => record.body.type === "template");
 }
 
-function templateParameter(record: GraphRecord | undefined): string | undefined {
-  return record?.body.template?.components.find((component) => component.type === "body")?.parameters[0]?.text;
-}
 
 /** Sends the fake Graph API refused on purpose, so an attempt can be told from a delivery. */
 async function rejectedSends(): Promise<RejectedRecord[]> {
@@ -725,15 +722,14 @@ describe("managed WhatsApp clean-instance flow", () => {
       actorId: ACTOR,
       routeGeneration: route.generation,
       text: "outside window marker quick note",
-    })).resolves.toMatchObject({ ok: true, messageId: expect.stringMatching(/^wamid\.out\./) });
+    })).resolves.toEqual({ ok: true });
     const templates = await templateMessages();
     expect(templates).toHaveLength(templatesBefore + 1);
     expect(templates.at(-1)!.body.to).toBe(ACTOR);
     expect(templates.at(-1)!.body.template).toEqual({
-      name: "gsv_message",
+      name: "gsv_message_notification",
       language: { code: "en" },
       components: [
-        { type: "body", parameters: [{ type: "text", text: "outside window marker quick note" }] },
         { type: "button", sub_type: "quick_reply", index: "0", parameters: [{ type: "payload", payload: "gsvt:show" }] },
       ],
     });
@@ -753,9 +749,11 @@ describe("managed WhatsApp clean-instance flow", () => {
     expect(await runInDurableObject(stub, async (_instance, context) => (
       (await context.storage.get<ManagedWhatsAppPeerState>(STATE_KEY))!.pendingTemplate
     ))).toBeUndefined();
+    expect((await sentMessages()).filter((record) => record.body.text?.body === "outside window marker quick note")).toHaveLength(1);
+    expect(await heldKeys(stub)).toEqual([]);
   });
 
-  it("holds longer replies and approvals behind one template until the person taps or writes back", async () => {
+  it("holds all replies and approvals behind one template until the person taps or writes back", async () => {
     // SAFETY: The test environment exposes the declared Durable Object namespace binding.
     const peers = env.MANAGED_WHATSAPP_PEER as DurableObjectNamespace<ManagedWhatsAppPeer>;
     const stub = peers.get(peers.idFromName(`managed:${ACTOR}`));
@@ -771,11 +769,9 @@ describe("managed WhatsApp clean-instance flow", () => {
     const templatesBefore = (await templateMessages()).length;
     const interactiveBefore = (await sentMessages()).filter((record) => record.body.type === "interactive").length;
 
-    // Two short replies racing after the window closed both fit the template's
-    // parameter, but the pending template is claimed durably before Meta is
-    // called: one delivery sends it and the other waits behind it. Both carry
-    // the marker that makes the fake Graph API fail their free-form release
-    // with a server error, so the waiting one later meets an unknown outcome.
+    // Both short replies stay held. Their shared notification is claimed
+    // durably before Meta is called, so the race sends just one template.
+    // Both releases encounter an ambiguous provider response below.
     const racing = ["first late note (graph fails ambiguously)", "second late note (graph fails ambiguously)"];
     const raceResults = await Promise.all(racing.map((raceText, index) => peer.sendMessage(route.installationId, {
       deliveryId: `outbound-closed-race-${index}`,
@@ -787,14 +783,10 @@ describe("managed WhatsApp clean-instance flow", () => {
     expect(raceResults.every((result) => result.ok)).toBe(true);
     expect(await templateMessages()).toHaveLength(templatesBefore + 1);
     const template = (await templateMessages()).at(-1)!;
-    const winner = racing.findIndex((raceText) => templateParameter(template) === raceText);
-    expect(winner).toBeGreaterThanOrEqual(0);
-    const heldRaceIndex = 1 - winner;
-    expect(raceResults[winner]).toMatchObject({ ok: true, messageId: template.result.id });
-    expect(raceResults[heldRaceIndex]).toEqual({ ok: true });
-    expect(await heldKeys(stub)).toEqual([
-      `managed_whatsapp_peer:v1:held:${encodeURIComponent(`outbound-closed-race-${heldRaceIndex}`)}`,
-    ]);
+    expect(raceResults).toEqual([{ ok: true }, { ok: true }]);
+    const racingKeys = racing.map((_, index) =>
+      `managed_whatsapp_peer:v1:held:${encodeURIComponent(`outbound-closed-race-${index}`)}`);
+    expect(await heldKeys(stub)).toEqual(racingKeys);
 
     // A longer reply waits behind the pending template instead of sending another.
     const sentBeforeHolding = (await sentMessages()).length;
@@ -873,15 +865,12 @@ describe("managed WhatsApp clean-instance flow", () => {
       kind: "read",
       body: expect.objectContaining({ status: "read", message_id: "wamid.in.10" }),
     }));
-    // The waiting racer's release met a server failure: its outcome is unknown,
-    // so its record is kept rather than resent or dropped, while the messages
-    // held after it still went out.
+    // Both racing releases met a server failure. Their outcomes stay unknown,
+    // while the messages held after them still went out.
     const ambiguousReleases = async (): Promise<RejectedRecord[]> => (await rejectedSends())
-      .filter((record) => record.status === 500 && record.body.text?.body === racing[heldRaceIndex]);
-    expect(await ambiguousReleases()).toHaveLength(1);
-    expect(await heldKeys(stub)).toEqual([
-      `managed_whatsapp_peer:v1:held:${encodeURIComponent(`outbound-closed-race-${heldRaceIndex}`)}`,
-    ]);
+      .filter((record) => record.status === 500 && racing.includes(record.body.text?.body ?? ""));
+    expect(await ambiguousReleases()).toHaveLength(2);
+    expect(await heldKeys(stub)).toEqual(racingKeys);
 
     // The released prompt resolves through proc.hil like any other.
     const approveOnce = released[2]!.body.interactive!.action.buttons[0]!.reply.id;
@@ -906,8 +895,8 @@ describe("managed WhatsApp clean-instance flow", () => {
         body: expect.objectContaining({ context: { message_id: "wamid.in.12" } }),
       }));
     });
-    expect(await ambiguousReleases()).toHaveLength(1);
-    expect(await heldKeys(stub)).toHaveLength(1);
+    expect(await ambiguousReleases()).toHaveLength(2);
+    expect(await heldKeys(stub)).toHaveLength(2);
 
     // With the window open again, replies are free-form and nothing new is held.
     await expect(peer.sendMessage(route.installationId, {
@@ -1028,6 +1017,8 @@ describe("managed WhatsApp clean-instance flow", () => {
     const { stub, peer, route } = await linkedPeer("closed");
     const templatesBefore = (await templateMessages()).length;
     const rejectedBefore = (await rejectedSends()).length;
+    // SAFETY: the managed test configuration exposes the fake Graph service.
+    await (env.WHATSAPP_API as Fetcher).fetch("https://graph.test/fail-next-template", { method: "POST" });
     await expect(peer.sendMessage(route.installationId, {
       deliveryId: "outbound-template-ambiguous",
       surface: { kind: "dm", id: ACTOR },
@@ -1058,7 +1049,7 @@ describe("managed WhatsApp clean-instance flow", () => {
       expect((await sentMessages()).at(-1)?.body.context?.message_id).toBe("wamid.in.ambiguous-template-reply");
     });
     expect((await sentMessages()).some((record) => record.body.text?.body === "Held after ambiguous template")).toBe(true);
-    expect((await sentMessages()).some((record) => record.body.text?.body === "template outcome unknown")).toBe(false);
+    expect((await sentMessages()).some((record) => record.body.text?.body === "template outcome unknown")).toBe(true);
     expect(await runInDurableObject(stub, async (_instance, context) => (
       (await context.storage.get<ManagedWhatsAppPeerState>(STATE_KEY))!.pendingTemplate
     ))).toBeUndefined();
@@ -1100,7 +1091,7 @@ describe("managed WhatsApp clean-instance flow", () => {
       expect((await sentMessages()).at(-1)?.body.context?.message_id).toBe("wamid.in.template-in-flight");
     });
     const messages = await sentMessages();
-    const templateIndex = messages.findIndex((record) => templateParameter(record)?.startsWith("Held during template send"));
+    const templateIndex = messages.findLastIndex((record) => record.body.type === "template");
     const heldIndex = messages.findIndex((record) => record.body.text?.body?.startsWith("Held during template send"));
     expect(templateIndex).toBeGreaterThanOrEqual(0);
     expect(heldIndex).toBeGreaterThan(templateIndex);

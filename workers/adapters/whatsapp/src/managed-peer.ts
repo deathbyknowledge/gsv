@@ -56,7 +56,6 @@ import {
 import { managedWhatsAppTemplate, type ManagedWhatsAppTemplateEnv } from "./managed-config";
 import {
   buildWhatsAppTemplatePayload,
-  flattenWhatsAppTemplateParameter,
   WHATSAPP_HELD_FULL_ERROR,
   WHATSAPP_HELD_TOO_LONG_ERROR,
   WHATSAPP_NO_TEMPLATE_ERROR,
@@ -973,9 +972,8 @@ export class ManagedWhatsAppPeer extends DurableObject<ManagedWhatsAppPeerEnv> {
 
   /**
    * Meta accepts only a pre-approved template outside the customer service
-   * window. A message that fits the template's parameter travels inside it; a
-   * longer one, or an approval prompt whose buttons the template cannot carry,
-   * waits until the person's reply reopens the window. One template at a
+   * window. The template notifies the person; every original message waits
+   * until their reply reopens the window. One template at a
    * time: while one is pending, further messages wait behind it instead of
    * each sending a template.
    */
@@ -990,22 +988,12 @@ export class ManagedWhatsAppPeer extends DurableObject<ManagedWhatsAppPeerEnv> {
     const template = managedWhatsAppTemplate(this.env);
     if (!template) return await fail("permanent", WHATSAPP_NO_TEMPLATE_ERROR);
     if (message.media?.length) return await fail("permanent", WHATSAPP_WINDOW_CLOSED_MEDIA_ERROR);
-    const parameter = flattenWhatsAppTemplateParameter(message.text);
-    // An approval prompt always waits: the template cannot carry its buttons.
-    const complete = parameter.complete && !options.approval;
-    const hold = async (): Promise<AdapterSendResult | null> => {
-      const input: HeldOutboundInput = { deliveryId: message.deliveryId, owner, markdown: message.text };
-      if (message.replyToId) input.replyToId = message.replyToId;
-      if (options.approval) input.approval = options.approval;
-      const held = await this.held.hold(input);
-      if (!held.held && held.reason === "full") return await fail("permanent", WHATSAPP_HELD_FULL_ERROR);
-      if (!held.held && held.reason === "too-long") return await fail("permanent", WHATSAPP_HELD_TOO_LONG_ERROR);
-      return null;
-    };
-    if (!complete) {
-      const refused = await hold();
-      if (refused) return refused;
-    }
+    const input: HeldOutboundInput = { deliveryId: message.deliveryId, owner, markdown: message.text };
+    if (message.replyToId) input.replyToId = message.replyToId;
+    if (options.approval) input.approval = options.approval;
+    const held = await this.held.hold(input);
+    if (!held.held && held.reason === "full") return await fail("permanent", WHATSAPP_HELD_FULL_ERROR);
+    if (!held.held && held.reason === "too-long") return await fail("permanent", WHATSAPP_HELD_TOO_LONG_ERROR);
     // The pending marker is claimed durably before provider I/O, so of two
     // concurrent deliveries only one sends a template; the other waits behind it.
     const claimedAt = await this.claimPendingTemplate(observed);
@@ -1016,10 +1004,6 @@ export class ManagedWhatsAppPeer extends DurableObject<ManagedWhatsAppPeerEnv> {
       return await fail("retryable", "WhatsApp window reopened before delivery");
     }
     if (claimedAt === null) {
-      if (complete) {
-        const refused = await hold();
-        if (refused) return refused;
-      }
       await this.deliveries.succeed(message.deliveryId, claim.attemptId);
       return { ok: true };
     }
@@ -1029,7 +1013,7 @@ export class ManagedWhatsAppPeer extends DurableObject<ManagedWhatsAppPeerEnv> {
         sent = await sendWhatsAppMessage(
           this.accessToken(),
           this.phoneNumberId(),
-          buildWhatsAppTemplatePayload(observed.surfaceId, template, parameter.text),
+          buildWhatsAppTemplatePayload(observed.surfaceId, template),
           this.whatsAppFetch(owner),
         );
       } catch (error) {
@@ -1039,16 +1023,14 @@ export class ManagedWhatsAppPeer extends DurableObject<ManagedWhatsAppPeerEnv> {
         // An ambiguous send may already have reached the person, so its claim
         // remains pending until their reply or its expiry.
         if (kind !== "ambiguous") await this.settlePendingTemplate(claimedAt, null);
-        if (kind === "permanent" && !complete) await this.held.remove(message.deliveryId);
+        if (kind === "permanent") await this.held.remove(message.deliveryId);
         return await fail(kind, error instanceof ManagedWhatsAppDeliveryError ? error.message : undefined, error);
       }
       try {
         await this.settlePendingTemplate(claimedAt, sent.messageId);
-        // A held prompt reports no id: its approval attaches to the interactive
-        // message that the person's reply releases.
-        const messageId = options.approval ? undefined : sent.messageId;
-        await this.deliveries.succeed(message.deliveryId, claim.attemptId, messageId);
-        return messageId ? { ok: true, messageId } : { ok: true };
+        // The notification is not the held message or its approval prompt.
+        await this.deliveries.succeed(message.deliveryId, claim.attemptId);
+        return { ok: true };
       } catch {
         return await fail("ambiguous");
       }
