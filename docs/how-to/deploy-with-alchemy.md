@@ -6,6 +6,11 @@ Workers, R2 storage and ripgit. H&M services are optional. The root deployment
 commands use the `operator` stage; they do not upgrade an existing singleton
 deployment in place.
 
+To try GSV without operating infrastructure, use [hosted GSV](https://gsv.space).
+GitHub Releases provide the host applications and browser extension. Self-hosters
+build the Workers and web UI from source; new releases do not include prebuilt
+Cloudflare deployment archives.
+
 ## Deploy a new operator
 
 Use a Cloudflare account and a domain in one of its DNS zones, plus Node.js 22 or
@@ -25,9 +30,10 @@ npm run deployment:plan
 npm run deployment:deploy
 ```
 
-Both deployment commands build the release manifest and Worker/web bundles
-before invoking Alchemy. Keep the same Alchemy state, account, resource names and
-`operator` stage for later updates. The default administration origin is
+Both deployment commands build the deployment manifest and Worker/web bundles
+in `dist/cloudflare/` before invoking Alchemy. You can run `npm run deployment:build`
+to produce these files without deploying. Keep the same Alchemy state, account,
+resource names and `operator` stage for later updates. The default administration origin is
 `https://accounts.<domain>`; space handles route under `<handle>.<domain>`.
 
 The [operator configuration reference](./operate-gsv.md) lists optional inputs,

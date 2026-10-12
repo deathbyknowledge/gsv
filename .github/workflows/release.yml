@@ -313,47 +313,6 @@ jobs:
           name: gsv-desktop-${{ matrix.platform }}
           path: release/*
 
-  # Build pre-bundled Cloudflare deployment artifacts.
-  build-cloudflare-bundles:
-    needs: [resolve]
-    runs-on: ubuntu-latest
-    env:
-      GSV_RELEASE_REF: ${{ needs.resolve.outputs.release_tag }}
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '24'
-          cache: 'npm'
-          cache-dependency-path: |
-            package-lock.json
-            workers/gateway/package-lock.json
-            web/package-lock.json
-            workers/ripgit/package-lock.json
-            workers/adapters/discord/package-lock.json
-            workers/adapters/telegram/package-lock.json
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: wasm32-unknown-unknown
-
-      - name: Build Cloudflare bundles
-        run: |
-          set -euo pipefail
-          npm run release:build:cloudflare -- "$GITHUB_WORKSPACE/release"
-
-      - name: Upload Cloudflare bundles
-        uses: actions/upload-artifact@v4
-        with:
-          name: gsv-cloudflare-bundles
-          path: |
-            release/gsv-cloudflare-*.tar.gz
-            release/gsv-cloudflare-deployment-manifest.json
-            release/cloudflare-checksums.txt
-
   build-browser-extension:
     needs: [resolve]
     runs-on: ubuntu-latest
@@ -381,7 +340,7 @@ jobs:
 
   # Create GitHub Release with all artifacts
   release:
-    needs: [resolve, build-host-tools, build-desktop, build-cloudflare-bundles, build-browser-extension]
+    needs: [resolve, build-host-tools, build-desktop, build-browser-extension]
     runs-on: ubuntu-latest
     env:
       KIND: ${{ needs.resolve.outputs.kind }}
@@ -414,11 +373,6 @@ jobs:
           cp artifacts/gsv-desktop-darwin-x64/* release/
           cp artifacts/gsv-desktop-darwin-arm64/* release/
           cp artifacts/gsv-desktop-windows-x64/* release/
-
-          # Cloudflare deploy bundles (modular, per component/adapter)
-          cp artifacts/gsv-cloudflare-bundles/gsv-cloudflare-*.tar.gz release/
-          cp artifacts/gsv-cloudflare-bundles/gsv-cloudflare-deployment-manifest.json release/
-          cp artifacts/gsv-cloudflare-bundles/cloudflare-checksums.txt release/
 
           # Browser extension
           cp artifacts/gsv-browser-extension/gsv-browser-extension.zip release/
@@ -494,12 +448,11 @@ jobs:
 
           ${DEV_CHANNEL_NOTE}
 
-          ### Cloudflare Bundles
+          ### Self-hosting
 
-          Cloudflare artifacts are split into component archives. The
-          checksum-verified \`gsv-cloudflare-deployment-manifest.json\` describes
-          the runtime and every bundled adapter, so deployment tools do not need
-          a hardcoded adapter list.
+          Build the Workers and web UI from this release's source tag to run GSV
+          in your own Cloudflare account. Follow the
+          [operator deployment guide](https://docs.gsv.space/how-to/deploy-with-alchemy).
 
           ### Browser Extension
 
@@ -607,21 +560,19 @@ jobs:
             release/gsv-vision-THIRD_PARTY.md
             release/gsv-desktop-darwin-x64.zip
             release/gsv-desktop-darwin-arm64.zip
-            release/gsv-cloudflare-*.tar.gz
-            release/gsv-cloudflare-deployment-manifest.json
-            release/cloudflare-checksums.txt
             release/gsv-browser-extension.zip
             release/install.sh
             release/install.ps1
             release/gsv-installer-animation.gz
             release/checksums.txt
 
-      - name: Remove retired desktop downloads
+      - name: Remove retired downloads
         if: needs.resolve.outputs.kind == 'dev'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release view "$RELEASE_TAG" --json assets --jq '.assets[].name | select(startswith("gsv-tauri-prototype-"))' > retired-desktop-assets.txt
+          set -euo pipefail
+          gh release view "$RELEASE_TAG" --json assets --jq '.assets[].name | select(startswith("gsv-tauri-prototype-") or startswith("gsv-cloudflare-") or . == "cloudflare-checksums.txt")' > retired-assets.txt
           while IFS= read -r asset; do
             gh release delete-asset "$RELEASE_TAG" "$asset" --yes
-          done < retired-desktop-assets.txt
+          done < retired-assets.txt

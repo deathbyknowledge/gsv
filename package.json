@@ -33,7 +33,7 @@
     "extension:package": "bash ./scripts/build-extension-package.sh",
     "adapters:check": "node ./scripts/adapter-catalog.mjs >/dev/null",
     "deployment:check": "npm run check --workspace deployment && npm run adapters:check",
-    "deployment:build": "bash ./scripts/build-cloudflare-bundles.sh ./release/local",
+    "deployment:build": "bash ./scripts/build-cloudflare-bundles.sh",
     "deployment:plan": "npm run deployment:build && alchemy plan --stage operator",
     "deployment:deploy": "npm run deployment:build && alchemy deploy --stage operator --yes",
     "deployment:bootstrap": "node deployment/src/operator-bootstrap-command.ts",
@@ -44,7 +44,6 @@
     "version:sync": "node ./scripts/version.mjs sync",
     "version:set": "node ./scripts/version.mjs set",
     "version:bump": "node ./scripts/version.mjs bump",
-    "release:build:cloudflare": "bash ./scripts/build-cloudflare-bundles.sh",
     "release:show:stable-tag": "node ./scripts/release.mjs stable-tag",
     "release:cut:stable": "node ./scripts/release.mjs cut-stable",
     "browser:build": "npm run build --workspace packages/browser"
