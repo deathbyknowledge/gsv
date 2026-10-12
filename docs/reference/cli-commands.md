@@ -476,6 +476,12 @@ Ship can create an invitation from Shell on `gsv` with
 space's release. `targets pair list` and `targets pair cancel INVITATION_ID`
 manage the human owner's invitations. See [Connect devices](../how-to/connect-devices.md).
 
+For `--platform browser`, the JSON result includes `extensionUrl` and `code`.
+The URL opens `https://gsv.space/browser?release=RELEASE` for the gateway's
+release. Download and unzip the extension, load its folder from
+`chrome://extensions` with developer mode enabled, then open **Your GSV** from
+the toolbar or Extensions button and paste `code` into its panel.
+
 Open **Fleet**, click **connect** beside Places, name the computer and create an invitation.
 After installing GSV, paste the provided command:
 
