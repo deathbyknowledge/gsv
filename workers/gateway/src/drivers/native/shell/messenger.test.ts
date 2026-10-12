@@ -186,4 +186,31 @@ describe("messenger pairing from the native shell", () => {
       expect(ctx.adapters.status.get("whatsapp", candidate.accountId)).toMatchObject({ connected: true, authenticated: true });
     });
   });
+
+  it.each(["cleanup", "preparation"])("finishes a reconnect cancelled during %s", async (phase) => {
+    await fixture("whatsapp", async (ctx, shell, service) => {
+      ctx.adapters.identityLinks.link("whatsapp", candidate.accountId, candidate.actorId, 1000, 1000, {
+        managed: true, humanConfirmed: true, surfaceKind: "dm", surfaceId: candidate.surfaceId,
+        routeGeneration: "previous-generation", operationId: "previous-operation",
+      });
+      const abort = new AbortController();
+      ctx.requestSignal = abort.signal;
+      if (phase === "cleanup") {
+        service.adapterPairingDisconnect.mockImplementation(async () => { abort.abort(); return { disconnected: true }; });
+      } else {
+        const prepare = service.adapterPairingPrepare.getMockImplementation()!;
+        service.adapterPairingPrepare.mockImplementation(async () => { abort.abort(); return prepare(); });
+      }
+      const deferred = vi.spyOn(ctx, "defer");
+      const result = await shell.exec("messenger connect whatsapp < /tmp/code.txt");
+      expect(result.exitCode, result.stderr).toBe(0);
+      expect(deferred).toHaveBeenCalledWith(expect.any(Promise));
+      expect(service.adapterPairingDisconnect).toHaveBeenCalledOnce();
+      expect(service.adapterPairingFinalize).toHaveBeenCalledOnce();
+      expect(ctx.adapters.identityLinks.get("whatsapp", candidate.accountId, candidate.actorId)).toMatchObject({
+        uid: 1000, linkedByUid: 1000, metadata: { humanConfirmed: true, routeGeneration: "generation-1" },
+      });
+      expect(ctx.adapters.status.get("whatsapp", candidate.accountId)).toMatchObject({ connected: true, authenticated: true });
+    });
+  });
 });

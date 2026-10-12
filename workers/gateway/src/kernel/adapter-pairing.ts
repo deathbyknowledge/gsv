@@ -73,6 +73,10 @@ function requirePairingOwner(ctx: KernelContext, syscall: string): number {
   return uid;
 }
 
+type PairingConfirmation = AdapterPairConfirmArgs & {
+  uid: number; credentialEpoch: number; operationId: string; canonicalOrigin: string; humanConfirmed: boolean;
+};
+
 export async function handleAdapterPairInfo(
   args: AdapterPairInfoArgs,
   ctx: KernelContext,
@@ -156,23 +160,40 @@ export async function handleAdapterPairConfirm(
   const humanConfirmed = !ctx.processId || (existingLink?.linkedByUid === uid
     && existingLink.metadata?.managed === true && existingLink.metadata.humanConfirmed !== false);
   const retainedLink = ctx.adapters.identityLinks.getForCleanup(adapter, existingCandidate.accountId, existingCandidate.actorId);
-  if (retainedLink && (!existingLink || (
+  const cleanup = retainedLink && (!existingLink || (
     retainedLink.metadata?.managed === true
     && retainedLink.metadata.operationId !== operationId
-  ))) {
+  )) ? retainedLink : null;
+  const completion = prepareAdapterPairing(ctx, service, existingCandidate, cleanup, {
+    adapter, code, uid, credentialEpoch, operationId, canonicalOrigin, humanConfirmed,
+  });
+  // Replacing a link owns completion from the first destructive operation.
+  if (cleanup) ctx.defer(completion);
+  return completion;
+}
+
+async function prepareAdapterPairing(
+  ctx: KernelContext,
+  service: AdapterPairingWorkerInterface,
+  existingCandidate: AdapterPairingCandidate,
+  cleanup: IdentityLinkRecord | null,
+  confirmation: PairingConfirmation,
+): Promise<AdapterPairConfirmResult> {
+  const { adapter, code, uid, credentialEpoch, operationId, canonicalOrigin } = confirmation;
+  if (cleanup) {
     // Only a live, inspected external claim may release a revoked or superseded route for a successor.
     if (existingCandidate.expiresAt <= Date.now()) throw new Error("Pairing code expired");
     if (ctx.auth.isAccountDisabled(uid) || ctx.auth.credentialEpoch(uid) !== credentialEpoch) {
       throw new Error("Account credentials changed during pairing; sign in again");
     }
-    if (retainedLink.metadata?.managed === true) {
-      await disconnectManagedIdentityLink(retainedLink, ctx);
+    if (cleanup.metadata?.managed === true) {
+      await disconnectManagedIdentityLink(cleanup, ctx);
     } else {
       ctx.adapters.identityLinks.unlink(adapter, existingCandidate.accountId, existingCandidate.actorId);
     }
   }
 
-  ctx.requestSignal?.throwIfAborted();
+  if (!cleanup) ctx.requestSignal?.throwIfAborted();
   const prepared = requirePairingPreparation(await service.adapterPairingPrepare!(
     adapterInstallationContext(ctx),
     {
@@ -183,7 +204,7 @@ export async function handleAdapterPairConfirm(
       canonicalOrigin,
     },
   ), ctx.installationId, uid);
-  ctx.requestSignal?.throwIfAborted();
+  if (!cleanup) ctx.requestSignal?.throwIfAborted();
   if (
     prepared.candidate.actorId !== existingCandidate.actorId
     || prepared.candidate.surfaceId !== existingCandidate.surfaceId
@@ -198,10 +219,8 @@ export async function handleAdapterPairConfirm(
     throw new Error("Account credentials changed during pairing; sign in again");
   }
   // Once activation starts, the Kernel owns completion even if the caller stops waiting.
-  const completion = completeAdapterPairing(ctx, service, prepared, {
-    adapter, code, uid, credentialEpoch, operationId, canonicalOrigin, humanConfirmed,
-  });
-  ctx.defer(completion);
+  const completion = completeAdapterPairing(ctx, service, prepared, confirmation);
+  if (!cleanup) ctx.defer(completion);
   return completion;
 }
 
@@ -209,9 +228,7 @@ async function completeAdapterPairing(
   ctx: KernelContext,
   service: AdapterPairingWorkerInterface,
   prepared: AdapterPairingPreparation,
-  { adapter, code, uid, credentialEpoch, operationId, canonicalOrigin, humanConfirmed }: AdapterPairConfirmArgs & {
-    uid: number; credentialEpoch: number; operationId: string; canonicalOrigin: string; humanConfirmed: boolean;
-  },
+  { adapter, code, uid, credentialEpoch, operationId, canonicalOrigin, humanConfirmed }: PairingConfirmation,
 ): Promise<AdapterPairConfirmResult> {
   ctx.adapters.identityLinks.link(
     adapter,

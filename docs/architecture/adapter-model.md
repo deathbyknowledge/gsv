@@ -383,10 +383,10 @@ they cannot authorize member password recovery. Reconnecting the same identity
 preserves an active, same-owner human confirmation, including its confirming uid.
 Revoked confirmations cannot be restored by a process.
 
-Cancellation stops pairing before activation. Once local linking and remote
-activation begin, the Kernel retains the completion promise through finalization,
-even if the caller stops waiting. Credential revocation remains authoritative
-throughout that operation.
+Cancellation stops a new link before activation. Reconnecting owns completion
+from the removal of its old link; a new pairing owns completion from local linking
+and remote activation. The Kernel retains that promise through finalization,
+even if the caller stops waiting. Credential revocation remains authoritative.
 
 `messenger setup ADAPTER` reads public connection instructions from the adapter.
 The user can paste its code into the conversation; Ship reads that code from a
