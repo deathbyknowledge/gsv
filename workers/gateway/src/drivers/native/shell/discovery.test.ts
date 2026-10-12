@@ -38,6 +38,12 @@ describe("native command availability", () => {
     const results = await catalog.search("web search");
     expect(results.find(entry => entry.name === "web")).toMatchObject({ available: true });
   });
+
+  it("discovers messenger setup and redemption without standing prompt instructions", async () => {
+    const catalog = fixture(false, ["adapter.list", "adapter.pair.*"]);
+    expect((await catalog.search("connect whatsapp")).find(entry => entry.name === "messenger")).toMatchObject({ available: true });
+    expect(catalog.renderCommandManual("messenger")).toContain("messenger connect ADAPTER < code.txt");
+  });
 });
 
 function fixture(configured: boolean, calls: string[]): ShellDiscoveryCatalog {
@@ -46,6 +52,6 @@ function fixture(configured: boolean, calls: string[]): ShellDiscoveryCatalog {
     ? { FEEDBACK: { submitFeedback: vi.fn() } } : {} } as KernelContext;
   // SAFETY: the stubbed workflow collectors never read the filesystem.
   const catalog = new ShellDiscoveryCatalog({} as GsvFs, identity, ctx);
-  catalog.registerCommands(["feedback", "web"].map(name => defineCommand(name, async () => ({ stdout: "", stderr: "", exitCode: 0 }))));
+  catalog.registerCommands(["feedback", "web", "messenger"].map(name => defineCommand(name, async () => ({ stdout: "", stderr: "", exitCode: 0 }))));
   return catalog;
 }

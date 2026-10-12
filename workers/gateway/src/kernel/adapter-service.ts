@@ -105,6 +105,7 @@ const pairingInfoSchema = z.object({
   configured: z.boolean(),
   botUsername: z.optional(z.string()),
   installUrl: z.optional(z.string().check(z.minLength(1))),
+  instructions: z.optional(z.string().check(z.minLength(1), z.maxLength(2048))),
 });
 
 export function adapterSupportsPairing(service: AdapterServiceBinding | null): service is AdapterServiceBinding & AdapterPairingWorkerInterface {

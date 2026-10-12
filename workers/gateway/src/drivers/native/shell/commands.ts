@@ -17,6 +17,7 @@ import { buildLlmCommand } from "./llm";
 import { buildMailCommand } from "./mail";
 import { buildMediaCommands } from "./media";
 import { buildMessageCommand } from "./message";
+import { buildMessengerCommand } from "./messenger";
 import { buildMcpCommand } from "./mcp";
 import { buildNetCommands } from "./net";
 import { buildOAuthCommand } from "./oauth";
@@ -73,6 +74,7 @@ export function buildCustomCommands(
   const targets = buildTargetsCommands(ctx);
   const mediaCommands = buildMediaCommands(fs, ctx, options?.fsTransport);
   const message = buildMessageCommand(fs, ctx);
+  const messenger = buildMessengerCommand(ctx);
   const yieldRun = defineCommand("yield", async (): Promise<ExecResult> => ({
     stdout: "",
     stderr: "yield: must be invoked as a direct Shell tool call to finish the active run\n",
@@ -108,6 +110,7 @@ export function buildCustomCommands(
     mail,
     ...mediaCommands,
     message,
+    messenger,
     yieldRun,
     skills,
     wiki,

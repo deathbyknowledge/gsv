@@ -9,7 +9,7 @@ import type { IdentityLinkRecord } from "./identity-links";
 
 const startSchema = z.strictObject({ id: z.uuid(), username: z.string().regex(/^[a-z_][a-z0-9_-]{0,31}$/).optional(), proof: z.string().regex(/^[a-f0-9]{64}$/) });
 const redeemSchema = z.strictObject({ id: z.uuid(), proof: z.string().regex(/^[a-f0-9]{64}$/), code: z.string().regex(/^[a-fA-F0-9]{4}-?[a-fA-F0-9]{4}$/), password: z.string().min(8).max(1024) });
-const confirmedLinkSchema = z.object({ managed: z.literal(true), surfaceKind: z.literal("dm"), surfaceId: z.string().min(1), routeGeneration: z.string().min(1) });
+const confirmedLinkSchema = z.object({ managed: z.literal(true), humanConfirmed: z.literal(true).optional(), surfaceKind: z.literal("dm"), surfaceId: z.string().min(1), routeGeneration: z.string().min(1) });
 const codeLifetime = 5 * 60 * 1000;
 const receiptLifetime = 30 * 24 * 60 * 60 * 1000;
 type RecoveryClaim = { id: string; uid: number; proof_hash: string; code_hash: string; credential_epoch: number; adapter: string; account_id: string; actor_id: string; surface_id: string; route_generation: string; created_at: number; expires_at: number; failed_attempts: number; redeemed_at: number | null; redemption_hash: string | null };

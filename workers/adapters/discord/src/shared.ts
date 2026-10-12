@@ -48,7 +48,10 @@ export class SharedDiscordChannel extends WorkerEntrypoint<SharedDiscordEnv> imp
     url.searchParams.set("client_id", applicationId);
     url.searchParams.set("scope", "bot");
     url.searchParams.set("permissions", "101376");
-    return { accountId: discordAccount(applicationId), configured, installUrl: url.toString() };
+    return {
+      accountId: discordAccount(applicationId), configured, installUrl: url.toString(),
+      instructions: "Add the bot to your server using the link, then send pair in a direct message to the bot to get a pairing code.",
+    };
   }
   async adapterPairingInspect(installation: AdapterInstallationContext, code: string): Promise<AdapterPairingCandidate> {
     parseAdapterInstallationContext(installation);
