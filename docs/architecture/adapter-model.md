@@ -378,9 +378,15 @@ derives the active human owner from its registry and honors the process's
 capabilities and tool policy. The caller cannot choose an installation or uid.
 Redemption commits a generation-fenced route; issuing or inspecting a code does
 not interrupt an existing link. Disconnect remains a direct human action.
-Links created by processes record the acting account and `humanConfirmed: false`;
-they cannot authorize member password recovery. Existing directly confirmed
-links retain recovery eligibility.
+New links created by processes record the acting account and `humanConfirmed: false`;
+they cannot authorize member password recovery. Reconnecting the same identity
+preserves an active, same-owner human confirmation, including its confirming uid.
+Revoked confirmations cannot be restored by a process.
+
+Cancellation stops pairing before activation. Once local linking and remote
+activation begin, the Kernel retains the completion promise through finalization,
+even if the caller stops waiting. Credential revocation remains authoritative
+throughout that operation.
 
 `messenger setup ADAPTER` reads public connection instructions from the adapter.
 The user can paste its code into the conversation; Ship reads that code from a

@@ -153,6 +153,8 @@ export async function handleAdapterPairConfirm(
   if (existingLink && existingLink.uid !== uid) {
     throw new Error("This external identity is linked to another user in this GSV");
   }
+  const humanConfirmed = !ctx.processId || (existingLink?.linkedByUid === uid
+    && existingLink.metadata?.managed === true && existingLink.metadata.humanConfirmed !== false);
   const retainedLink = ctx.adapters.identityLinks.getForCleanup(adapter, existingCandidate.accountId, existingCandidate.actorId);
   if (retainedLink && (!existingLink || (
     retainedLink.metadata?.managed === true
@@ -195,15 +197,31 @@ export async function handleAdapterPairConfirm(
   if (ctx.auth.isAccountDisabled(uid) || ctx.auth.credentialEpoch(uid) !== credentialEpoch) {
     throw new Error("Account credentials changed during pairing; sign in again");
   }
+  // Once activation starts, the Kernel owns completion even if the caller stops waiting.
+  const completion = completeAdapterPairing(ctx, service, prepared, {
+    adapter, code, uid, credentialEpoch, operationId, canonicalOrigin, humanConfirmed,
+  });
+  ctx.defer(completion);
+  return completion;
+}
+
+async function completeAdapterPairing(
+  ctx: KernelContext,
+  service: AdapterPairingWorkerInterface,
+  prepared: AdapterPairingPreparation,
+  { adapter, code, uid, credentialEpoch, operationId, canonicalOrigin, humanConfirmed }: AdapterPairConfirmArgs & {
+    uid: number; credentialEpoch: number; operationId: string; canonicalOrigin: string; humanConfirmed: boolean;
+  },
+): Promise<AdapterPairConfirmResult> {
   ctx.adapters.identityLinks.link(
     adapter,
     prepared.candidate.accountId,
     prepared.candidate.actorId,
     uid,
-    principalOf(ctx)!.account.uid,
+    humanConfirmed ? uid : principalOf(ctx)!.account.uid,
     {
       managed: true,
-      humanConfirmed: !ctx.processId,
+      humanConfirmed,
       surfaceKind: "dm",
       surfaceId: prepared.candidate.surfaceId,
       routeScope: pairingRouteScope(prepared.candidate),
@@ -220,7 +238,6 @@ export async function handleAdapterPairConfirm(
       canonicalOrigin,
     },
   ), ctx.installationId, uid);
-  ctx.requestSignal?.throwIfAborted();
   if (ctx.auth.isAccountDisabled(uid) || ctx.auth.credentialEpoch(uid) !== credentialEpoch) {
     throw new Error("Account credentials changed during pairing; sign in again");
   }
@@ -239,7 +256,6 @@ export async function handleAdapterPairConfirm(
     route: activated.route,
     canonicalOrigin,
   });
-  ctx.requestSignal?.throwIfAborted();
   if (ctx.auth.isAccountDisabled(uid) || ctx.auth.credentialEpoch(uid) !== credentialEpoch) {
     throw new Error("Account credentials changed during pairing; sign in again");
   }
