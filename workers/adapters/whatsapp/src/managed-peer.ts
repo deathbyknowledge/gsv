@@ -164,7 +164,7 @@ type DeliveryOptions = {
 /** One provider message of a delivery; resolves to the WhatsApp message id it produced. */
 type DeliveryPart = () => Promise<string | undefined>;
 type ClaimedDelivery = Extract<DeliveryClaim, { claimed: true }>;
-type PendingTemplateClaim = number | "window-open" | null;
+type PendingTemplateClaim = number | "window-open" | "full" | "too-long" | null;
 type FailDelivery = (kind: DeliveryFailureKind, detail?: string, cause?: unknown) => Promise<AdapterSendResult>;
 type PairingIssue = { code: string; claimId: string; expiresAt: number };
 type ManagedPairingStub = { initialize(input: ManagedWhatsAppPairingRecord): Promise<{ created: boolean }> };
@@ -991,16 +991,14 @@ export class ManagedWhatsAppPeer extends DurableObject<ManagedWhatsAppPeerEnv> {
     const input: HeldOutboundInput = { deliveryId: message.deliveryId, owner, markdown: message.text };
     if (message.replyToId) input.replyToId = message.replyToId;
     if (options.approval) input.approval = options.approval;
-    const held = await this.held.hold(input);
-    if (!held.held && held.reason === "full") return await fail("permanent", WHATSAPP_HELD_FULL_ERROR);
-    if (!held.held && held.reason === "too-long") return await fail("permanent", WHATSAPP_HELD_TOO_LONG_ERROR);
     // The pending marker is claimed durably before provider I/O, so of two
     // concurrent deliveries only one sends a template; the other waits behind it.
-    const claimedAt = await this.claimPendingTemplate(observed);
+    const claimedAt = await this.claimPendingTemplate(observed, input);
+    if (claimedAt === "full") return await fail("permanent", WHATSAPP_HELD_FULL_ERROR);
+    if (claimedAt === "too-long") return await fail("permanent", WHATSAPP_HELD_TOO_LONG_ERROR);
     if (claimedAt === "window-open") {
       // Nothing reached Meta. Let the Kernel retry through the now-open window
       // without a second held copy or an acknowledgement that loses retry ownership.
-      await this.held.remove(message.deliveryId);
       return await fail("retryable", "WhatsApp window reopened before delivery");
     }
     if (claimedAt === null) {
@@ -1022,8 +1020,12 @@ export class ManagedWhatsAppPeer extends DurableObject<ManagedWhatsAppPeerEnv> {
         // for good fails on retry too, so its held copy goes with it.
         // An ambiguous send may already have reached the person, so its claim
         // remains pending until their reply or its expiry.
-        if (kind !== "ambiguous") await this.settlePendingTemplate(claimedAt, null);
-        if (kind === "permanent") await this.held.remove(message.deliveryId);
+        if (kind !== "ambiguous") {
+          // A retryable refusal returns ownership to the Kernel too; keeping
+          // its held copy would send it again when that retry sees an open window.
+          await this.held.remove(message.deliveryId);
+          await this.settlePendingTemplate(claimedAt, null);
+        }
         return await fail(kind, error instanceof ManagedWhatsAppDeliveryError ? error.message : undefined, error);
       }
       try {
@@ -1045,7 +1047,7 @@ export class ManagedWhatsAppPeer extends DurableObject<ManagedWhatsAppPeerEnv> {
 
   /** Marks a template as pending unless one already is; returns the claim time, or null when another delivery owns it. */
   // A newer inbound receipt that opened the window returns "window-open" instead.
-  private async claimPendingTemplate(observed: ManagedWhatsAppPeerState): Promise<PendingTemplateClaim> {
+  private async claimPendingTemplate(observed: ManagedWhatsAppPeerState, input: HeldOutboundInput): Promise<PendingTemplateClaim> {
     return await this.ctx.storage.transaction(async (txn) => {
       const latest = await txn.get<ManagedWhatsAppPeerState>(STATE_KEY);
       if (!latest) throw new Error("Managed WhatsApp peer is not initialized");
@@ -1057,6 +1059,10 @@ export class ManagedWhatsAppPeer extends DurableObject<ManagedWhatsAppPeerEnv> {
       ) {
         return "window-open";
       }
+      // Reopening and holding are one decision: a release must never see a
+      // copy that this delivery is about to hand back to the Kernel for retry.
+      const held = await this.held.hold(input, txn);
+      if (!held.held && held.reason !== "duplicate") return held.reason;
       if (this.templateAttempt || whatsAppTemplatePending(latest, now)) return null;
       await txn.put(STATE_KEY, withPendingWhatsAppTemplate(latest, now, undefined));
       return now;

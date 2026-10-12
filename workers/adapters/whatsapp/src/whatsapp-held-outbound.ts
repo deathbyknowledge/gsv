@@ -66,30 +66,29 @@ export class WhatsAppHeldOutbound {
     this.now = options.now ?? Date.now;
   }
 
-  async hold(input: HeldOutboundInput): Promise<HoldOutcome> {
+  async hold(input: HeldOutboundInput, txn?: DurableObjectTransaction): Promise<HoldOutcome> {
+    if (!txn) return await this.storage.transaction((transaction) => this.hold(input, transaction));
     if (codePointLength(input.markdown) > HELD_OUTBOUND_MAX_TEXT) return { held: false, reason: "too-long" };
-    return await this.storage.transaction(async (txn) => {
-      this.options.retirement?.requireLive(input.owner);
-      const now = this.now();
-      const records = await this.live(txn, now);
-      const existing = records.find((record) => record.deliveryId === input.deliveryId);
-      if (existing) return { held: false, reason: "duplicate", record: existing };
-      if (records.length >= this.maxRecords) return { held: false, reason: "full" };
-      const sequence = records.reduce((highest, record) => Math.max(highest, record.sequence), 0) + 1;
-      const record: HeldOutboundRecord = {
-        version: 1,
-        deliveryId: input.deliveryId,
-        owner: input.owner,
-        markdown: input.markdown,
-        sequence,
-        heldAt: now,
-        expiresAt: now + this.retentionMs,
-      };
-      if (input.replyToId) record.replyToId = input.replyToId;
-      if (input.approval) record.approval = input.approval;
-      await txn.put(this.key(input.deliveryId), record);
-      return { held: true, record };
-    });
+    this.options.retirement?.requireLive(input.owner);
+    const now = this.now();
+    const records = await this.live(txn, now);
+    const existing = records.find((record) => record.deliveryId === input.deliveryId);
+    if (existing) return { held: false, reason: "duplicate", record: existing };
+    if (records.length >= this.maxRecords) return { held: false, reason: "full" };
+    const sequence = records.reduce((highest, record) => Math.max(highest, record.sequence), 0) + 1;
+    const record: HeldOutboundRecord = {
+      version: 1,
+      deliveryId: input.deliveryId,
+      owner: input.owner,
+      markdown: input.markdown,
+      sequence,
+      heldAt: now,
+      expiresAt: now + this.retentionMs,
+    };
+    if (input.replyToId) record.replyToId = input.replyToId;
+    if (input.approval) record.approval = input.approval;
+    await txn.put(this.key(input.deliveryId), record);
+    return { held: true, record };
   }
 
   /** Live held messages for one route, oldest first; expired ones are dropped on the way. */

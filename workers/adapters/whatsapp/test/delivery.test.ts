@@ -206,10 +206,11 @@ it("retries a reopened-window race without keeping a duplicate held copy", async
   message.text = "long reply ".repeat(300).trimEnd();
   await runInDurableObject(peer, async (instance, state) => {
     const claim = instance["claimPendingTemplate"];
-    instance["claimPendingTemplate"] = async (observed) => {
+    instance["claimPendingTemplate"] = async (observed, input) => {
       const current = (await state.storage.get<ManagedWhatsAppPeerState>(stateKey))!;
       await state.storage.put(stateKey, { ...current, lastInboundAt: Date.now() });
-      return await claim.call(instance, observed);
+      await instance["releaseHeld"](route);
+      return await claim.call(instance, observed, input);
     };
     try {
       expect(await instance.sendMessage(route.installationId, message)).toMatchObject({ ok: false, retryable: true });
@@ -217,6 +218,29 @@ it("retries a reopened-window race without keeping a duplicate held copy", async
     } finally {
       instance["claimPendingTemplate"] = claim;
     }
+  });
+  expect(await messages(actorId)).toEqual([]);
+  using retried = await peer.sendMessage(route.installationId, message);
+  expect(retried).toMatchObject({ ok: true });
+  expect((await messages(actorId)).map((record) => record.body.text?.body)).toEqual([message.text]);
+});
+
+it("returns a refused notification's held copy to the Kernel retry", async () => {
+  const actorId = "34690214446";
+  const { peer, route, message } = await seed(actorId, true);
+  await runInDurableObject(peer, async (instance, state) => {
+    const fetcher = instance["whatsAppFetch"];
+    instance["whatsAppFetch"] = () => async () => Response.json(
+      { error: { message: "Too many requests", code: 130429 } }, { status: 429 },
+    );
+    try {
+      expect(await instance.sendMessage(route.installationId, message)).toMatchObject({ ok: false, retryable: true });
+    } finally {
+      instance["whatsAppFetch"] = fetcher;
+    }
+    const current = (await state.storage.get<ManagedWhatsAppPeerState>(stateKey))!;
+    await state.storage.put(stateKey, { ...current, lastInboundAt: Date.now() });
+    await instance["releaseHeld"](route);
   });
   expect(await messages(actorId)).toEqual([]);
   using retried = await peer.sendMessage(route.installationId, message);
@@ -258,8 +282,8 @@ it.each([false, true])("does not dispatch after the route changes during prepara
     const release = instance["releaseHeld"];
     const claim = instance["claimPendingTemplate"];
     if (closed) {
-      instance["claimPendingTemplate"] = async (observed) => {
-        const result = await claim.call(instance, observed);
+      instance["claimPendingTemplate"] = async (observed, input) => {
+        const result = await claim.call(instance, observed, input);
         await relink();
         return result;
       };
