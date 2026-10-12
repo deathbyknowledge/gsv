@@ -1,5 +1,7 @@
 import type { ManagedWhatsAppPeerState } from "./managed-peer-state";
 
+// TODO: Remove this and its activation hook after all existing WhatsApp peers
+// have migrated, including dormant peers that migrate on their next activation.
 /**
  * Retire the previous adapter outbox on activation. These were delivery copies;
  * the canonical GSV conversation retains the original messages. The old store
