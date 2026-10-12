@@ -113,16 +113,18 @@ contact destinations remain fixed. Personal Ship replies follow the owner's curr
   not play a notification or act as though the response was directed to them.
 - Adapters buffer Process output and deliver only the committed message. Provider-specific reply
   threading remains transport metadata.
-- A human message to Ship selects its originating endpoint. Real foreground input in Web or Desktop
-  also selects that client, at most once every 30 seconds; connecting, focusing a window, history
-  reads and keepalives do not. This preference survives the end of a run and Process replacement.
+- A human message to Ship selects its originating endpoint. Clicking, scrolling and typing without
+  sending never select a destination. Activity in the selected Web or Desktop client refreshes its
+  idle timer, at most once every 30 seconds; connecting, focusing, history reads and keepalives do not.
+  This preference survives the end of a run and Process replacement.
 - When the selected client disconnects or has been inactive for five minutes, Ship uses the owner's
   last authorized linked private messenger destination. A new messenger message selects that
-  messenger; returning to interact with the app selects the app again. Without a usable destination,
+  messenger; sending a new message in the app selects that client again. Activity cannot revive an
+  expired selection. Without a usable destination,
   the message remains in canonical history.
 - Idle expiry includes 30 seconds of reporting grace so throttled input cannot cause an early
   fallback. Accepted inputs preserve their preference decision across retries without replacing
-  newer activity. The Kernel orders input before asynchronous preparation, so overlapping sends
+  newer messages. The Kernel orders input before asynchronous preparation, so overlapping sends
   select the newest input regardless of which preparation finishes first.
 - Each outgoing message records its delivery decision before the canonical append. Retrying an
   uncertain append does not notify a different endpoint after the preference changes. Receipts expire after

@@ -21,7 +21,7 @@ describe("Ship reply preference", () => {
   it("accepts activity only from the authenticated human connection with current credentials", async () => {
     await runWithRealKernelSql((_sql, storage) => {
       const shipReplies = new ShipReplies(storage);
-      const record = vi.spyOn(shipReplies, "recordClient");
+      const record = vi.spyOn(shipReplies, "recordClientActivity");
       // SAFETY: activity admission touches only these authenticated connection collaborators.
       const host = { shipReplies, auth: { isAccountDisabled: () => false, credentialEpoch: () => 1 } } as Kernel;
       const transport = new Transport(host);
@@ -39,6 +39,33 @@ describe("Ship reply preference", () => {
         transport.handleSig(connection, { type: "sig", signal: "client.activity" });
       }
       expect(record).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  it("refreshes only the selected client and requires a message to reclaim an expired selection", async () => {
+    await runWithRealKernelSql((sql, storage) => {
+      const clock = vi.spyOn(Date, "now").mockReturnValue(1_000);
+      const replies = new ShipReplies(storage);
+      const routes = new RunRouteStore(sql);
+      const web = humanConnection("web");
+      const desktop = humanConnection("desktop");
+      const connections = new Map([[web.id, web], [desktop.id, desktop]]);
+      replies.recordClientActivity(1000, web.id);
+      expect(replies.activeConnection(1000, connections)).toBeNull();
+
+      replies.recordClientInput(1000, web.id, "ship", "first-input", routes);
+      clock.mockReturnValue(1_000 + SHIP_CLIENT_IDLE_MS - 1);
+      replies.recordClientActivity(1000, desktop.id);
+      expect(replies.activeConnection(1000, connections)).toBe(web.id);
+      replies.recordClientActivity(1000, web.id);
+      clock.mockReturnValue(1_000 + SHIP_CLIENT_IDLE_MS);
+      expect(new ShipReplies(storage).activeConnection(1000, connections)).toBe(web.id);
+
+      clock.mockReturnValue(1_000 + 2 * SHIP_CLIENT_IDLE_MS - 1);
+      replies.recordClientActivity(1000, web.id);
+      expect(replies.activeConnection(1000, connections)).toBeNull();
+      replies.recordClientInput(1000, web.id, "ship", "next-input", routes);
+      expect(replies.activeConnection(1000, connections)).toBe(web.id);
     });
   });
 
@@ -79,7 +106,10 @@ describe("Ship reply preference", () => {
       const connections = new Map([[web.id, web]]);
       replies.recordClientInput(1000, web.id, "ship", "input", routes);
       const later = replies.reserveOrder(1000);
+      replies.recordClientActivity(1000, web.id);
       replies.recordAdapter(1000, later);
+      expect(replies.activeConnection(1000, connections)).toBeNull();
+      replies.recordClientActivity(1000, web.id);
       expect(replies.activeConnection(1000, connections)).toBeNull();
       replies.recordClientInput(1000, web.id, "ship", "input", routes);
       expect(replies.activeConnection(1000, connections)).toBeNull();

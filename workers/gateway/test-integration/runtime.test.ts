@@ -333,7 +333,7 @@ describe("gateway runtime integration", () => {
     );
   });
 
-  it("remembers Ship client activity and falls back to the linked messenger after disconnect", async () => {
+  it("selects Ship replies only on messages and falls back to the linked messenger after disconnect", async () => {
     const first = await setupClient();
     const challenge = inboundResult(await sendServiceFrame(harness, inboundFrame({
       id: "reply-link", deliveryId: "reply-link", messageId: "reply-link", text: "connect",
@@ -365,16 +365,33 @@ describe("gateway runtime integration", () => {
       received[index]!.push({ text: message.message.text, directed: message.directed });
     }));
     await second.connect();
-    const held = ai.hold({ kind: "message", text: "Reply in the active window." });
+    const messengerReply = ai.hold({ kind: "message", text: "Reply in the messenger." });
+    await sendServiceFrame(harness, inboundFrame({
+      id: "reply-stays", deliveryId: "reply-stays", messageId: "reply-stays", text: "Stay in this messenger.",
+    }));
+    await messengerReply.started;
+    first.sendSignal("client.activity");
+    second.sendSignal("client.activity");
+    await Promise.all([first.proc.list({}), second.proc.list({})]);
+    messengerReply.release();
+    expect((await waitForOutbound(harness, ACCOUNT_ID, 2)).at(-1)?.message.text).toContain("Reply in the messenger.");
+    await waitFor(() => received.every(messages => messages.some(message => message.text === "Reply in the messenger.")), "messenger reply synchronized to both windows");
+    for (const messages of received) expect(messages).toContainEqual({ text: "Reply in the messenger.", directed: false });
+    await waitFor(async () => {
+      const history = await first.proc.history({ pid });
+      return history.ok && history.activeRunId === null;
+    }, "messenger reply to finish");
+
+    const held = ai.hold({ kind: "message", text: "Reply in the sending window." });
     await first.conversation.send({ conversationId: conversation.id, text: "Continue here." });
     await held.started;
     second.sendSignal("client.activity");
     await second.proc.list({});
     held.release();
-    await waitFor(() => received.every(messages => messages.some(message => message.text === "Reply in the active window.")), "reply synchronized to both windows");
-    expect(received[1]).toContainEqual({ text: "Reply in the active window.", directed: true });
-    expect(received[0]).toContainEqual({ text: "Reply in the active window.", directed: false });
-    expect(await listOutbound(harness, ACCOUNT_ID)).toHaveLength(1);
+    await waitFor(() => received.every(messages => messages.some(message => message.text === "Reply in the sending window.")), "reply synchronized to both windows");
+    expect(received[0]).toContainEqual({ text: "Reply in the sending window.", directed: true });
+    expect(received[1]).toContainEqual({ text: "Reply in the sending window.", directed: false });
+    expect(await listOutbound(harness, ACCOUNT_ID)).toHaveLength(2);
     await waitFor(async () => {
       const history = await first.proc.history({ pid });
       return history.ok && history.activeRunId === null;
@@ -386,8 +403,10 @@ describe("gateway runtime integration", () => {
     first.close();
     const storage = await harness.getWorker("gsv").getDurableObjectStorage("KERNEL", { name: INTEGRATION_INSTALLATION_ID });
     await waitFor(async () => (await storage.exec("SELECT run_id FROM run_routes WHERE run_id = ?", sent.runId)).length === 0, "origin socket to close");
+    second.sendSignal("client.activity");
+    await second.proc.list({});
     delayed.release();
-    const outbound = await waitForOutbound(harness, ACCOUNT_ID, 2);
+    const outbound = await waitForOutbound(harness, ACCOUNT_ID, 3);
     expect(outbound.at(-1)?.message.text).toContain("Reply after closing the window.");
     await waitFor(() => received[1]!.some(message => message.text === "Reply after closing the window."), "observer to sync fallback reply");
     expect(received[1]).toContainEqual({ text: "Reply after closing the window.", directed: false });

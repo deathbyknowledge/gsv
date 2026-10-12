@@ -196,8 +196,9 @@ The canonical outbound path is:
    text remains raw Process activity; a bare `yield` finishes without another Message.
 2. The Kernel commits the Message to the canonical conversation and selects its
    directed endpoint. Explicit Work, group and contact routes remain fixed.
-3. Personal Ship replies follow the owner's latest human origin or foreground client
-   activity across runs. If that client disconnects or is inactive for five minutes,
+3. Personal Ship replies follow the owner's latest human message origin across runs.
+   Client activity only refreshes the selected client's idle timer; it never selects
+   another destination or revives an expired selection. If that client disconnects or is inactive for five minutes,
    the Kernel uses the owner's last-active linked private messenger destination.
    Other processes do not use this fallback. Each committed message keeps its chosen
    destination through retries, even if the owner's preference changes.
