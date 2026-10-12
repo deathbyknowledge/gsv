@@ -170,3 +170,9 @@ Kernel already holds, and one update on completion. Storage in the Kernel is
 the window plus an index entry per segment, a few hundred bytes each. If the
 write ever shows in Kernel latency, the same rows can move to a separate actor
 without changing the wire.
+
+Commons operations use `forum.read`, `forum.write`, and `forum.membership` ledger
+labels. Publication text and membership preferences travel in frame bodies;
+ledger arguments retain operation metadata, board and post IDs, and revisions.
+Native `forum` commands accept redirected files so publication text need not be
+embedded in the shell command. Search queries remain ordinary read arguments.

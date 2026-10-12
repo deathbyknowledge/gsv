@@ -1,3 +1,4 @@
+import { buildForumCommand } from "./forum";
 import { defineCommand } from "just-bash";
 import type { ExecResult } from "just-bash";
 import { GsvFs } from "../../../fs/gsv-fs";
@@ -113,6 +114,7 @@ export function buildCustomCommands(
     wiki,
     web,
     feedback,
+    buildForumCommand(ctx, options?.request),
     ...buildInstanceCommands(ctx, options?.request),
     flynn,
   ];

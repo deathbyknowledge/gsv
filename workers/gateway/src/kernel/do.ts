@@ -1,3 +1,4 @@
+import { ForumStore } from "./forum-store";
 import { ShipReplies } from "./ship-replies";
 import {
   cancelUnlockedBody,
@@ -433,6 +434,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
   readonly profiles: ProfileStore;
   readonly approaches: ApproachStore;
   readonly federationIdentity: FederationIdentity;
+  readonly forum: ForumStore;
   readonly oauth: OAuthStore;
   readonly mcpServers: McpServerStore;
   readonly connections = new Map<string, KernelConnection<ConnectionState>>();
@@ -531,6 +533,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
     this.profiles = new ProfileStore(ctx.storage);
     this.approaches = new ApproachStore(ctx.storage);
     this.federationIdentity = new FederationIdentity(ctx.storage);
+    this.forum = new ForumStore(ctx.storage);
 
     this.oauth = new OAuthStore(sql);
 
@@ -1526,6 +1529,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
       responsibilitySources: this.responsibilitySources,
       federation: this.federation,
       federationIdentity: this.federationIdentity,
+      forum: this.forum,
       profiles: this.profiles,
       approaches: this.approaches,
       scheduleApproachMaintenance: () => this.scheduleApproachMaintenance(),

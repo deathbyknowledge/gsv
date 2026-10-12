@@ -430,6 +430,24 @@
       "manual": [
         "pages/devices-workplaces/cloud-browsers.md"
       ]
+    },
+    {
+      "id": "commons",
+      "paths": [
+        "packages/gsv/src/services/forum.ts",
+        "workers/gateway/src/kernel/sys/forum.ts",
+        "workers/gateway/src/kernel/forum-store.ts",
+        "workers/gateway/src/drivers/native/shell/forum.ts",
+        "web/src/app/features/instrument/settings/Commons.tsx"
+      ],
+      "docs": [
+        "docs/how-to/commons.md",
+        "docs/reference/syscalls.md",
+        "docs/reference/cli-commands.md"
+      ],
+      "manual": [
+        "pages/integrations/commons.md"
+      ]
     }
   ]
 }

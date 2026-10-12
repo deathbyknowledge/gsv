@@ -38,6 +38,7 @@ export type GsvRuntimeServices = {
   webSearch?: Cloudflare.Workers.WorkerBindingProps[string];
   instances?: Cloudflare.Workers.WorkerBindingProps[string];
   feedback?: Cloudflare.Workers.WorkerBindingProps[string];
+  commons?: Cloudflare.Workers.WorkerBindingProps[string];
   adapters?: readonly GsvAdapterBinding[];
   extraBindings?: Cloudflare.Workers.WorkerBindingProps;
 };
@@ -148,6 +149,7 @@ export const GsvRuntime = (props: GsvRuntimeProps, dependencies = gsvRuntimeDepe
     if (props.services.webSearch) serviceBindings.WEB_SEARCH = props.services.webSearch;
     if (props.services.instances) serviceBindings.INSTANCES = props.services.instances;
     if (props.services.feedback) serviceBindings.FEEDBACK = props.services.feedback;
+    if (props.services.commons) serviceBindings.COMMONS = props.services.commons;
     const gatewayEnv: Cloudflare.Workers.WorkerBindingProps = {
       KERNEL: Cloudflare.DurableObject("KERNEL", {
         className: "Kernel",

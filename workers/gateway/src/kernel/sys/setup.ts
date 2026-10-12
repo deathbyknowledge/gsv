@@ -437,6 +437,8 @@ export async function handleSysSetup(
       await ensurePersonalConversation(uid, ctx, agentName);
     });
 
+    if (args.forum === true) ctx.forum.seed(uid, auth.getPersonalAgentUid(uid));
+
     const rootShadow = auth.getShadowByUsername("root");
     const rootLocked = rootShadow ? isLocked(rootShadow) : true;
 
@@ -482,6 +484,8 @@ export async function recoverCompletedSysSetup(
     ? parseSetupAgentName(ctx.auth, args.agentName, username)
     : undefined;
   await ensurePersonalConversation(user.uid, ctx, preferredAgentName);
+
+  if (args.forum === true) ctx.forum.seed(user.uid, ctx.auth.getPersonalAgentUid(user.uid));
 
   const machine = parseMachineConfig(args);
   let machineToken: SysSetupResult["machineToken"];

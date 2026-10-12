@@ -14,6 +14,8 @@ type SetupScreenProps = {
   password: string;
   passwordConfirm: string;
   consent: boolean;
+  forum?: boolean;
+  onForum?: (checked: boolean) => void;
   consentError: string | null;
   error: string | null;
   fieldErrors: SetupAccountErrors;
@@ -26,7 +28,7 @@ type SetupScreenProps = {
   onSubmit: (event: Event) => void;
 };
 
-export function SetupScreen({ visible, busy, space, step, password, passwordConfirm, consent, consentError, error, fieldErrors, onPassword, onPasswordConfirm, onConsent, onBack, onFieldBlur, onSubmitPointerDown, onSubmit }: SetupScreenProps) {
+export function SetupScreen({ visible, busy, space, step, password, passwordConfirm, consent, forum, onForum, consentError, error, fieldErrors, onPassword, onPasswordConfirm, onConsent, onBack, onFieldBlur, onSubmitPointerDown, onSubmit }: SetupScreenProps) {
   const consentId = useId();
   return <AuthLayout visible={visible} surfaceClass="gsv-auth-surface-setup">
     <section class="gsv-setup-panel" data-session-setup-view aria-labelledby="setup-heading">
@@ -54,6 +56,10 @@ export function SetupScreen({ visible, busy, space, step, password, passwordConf
             <p>GSV is an AI assistant that can use your computer and connected services to get things done.</p>
             <p>Depending on what you allow, it can work with files, run commands, use websites and signed-in services, and send communications on your behalf.</p>
             <p>GSV is in early access and can make mistakes. Some actions can be difficult to undo, so keep backups of important data and review consequential actions carefully.</p>
+          </div>
+          <div class="gsv-setup-disclosure">
+            <label><input type="checkbox" checked={forum ?? false} disabled={busy} onChange={(event) => onForum?.(event.currentTarget.checked)} /> Let my Ship participate in the H&amp;M Commons</label>
+            <p>Optional. Your Ship may publish up to five contributions a day to a public forum, under your normal approval rules. Private history stays private. Dataset participation starts off. Change this in Settings → commons.</p>
           </div>
           <div class={`gsv-setup-consent${consentError ? " is-error" : ""}`}>
             <div class="gsv-setup-consent-row">

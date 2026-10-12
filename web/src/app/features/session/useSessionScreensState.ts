@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
 import { z } from "zod";
 import type { SessionService, SessionSnapshot } from "../../services/session/sessionService";
 import { validateSetupAccount, type SetupAccount } from "./sessionDomain";
+import type { SysSetupArgs } from "@humansandmachines/gsv/protocol";
 
 type UseSessionScreensStateOptions = {
   session: SessionService;
@@ -19,6 +20,7 @@ export function useSessionScreensState({ session, snapshot }: UseSessionScreensS
   const [loginPassword, setLoginPassword] = useState("");
   const [setupPassword, setSetupPassword] = useState("");
   const [setupPasswordConfirm, setSetupPasswordConfirm] = useState("");
+  const [setupForum, setSetupForum] = useState(false);
   const [setupConsent, setSetupConsent] = useState(false);
   const [setupConsentTouched, setSetupConsentTouched] = useState(false);
   const [setupStep, setSetupStep] = useState<"credentials" | "consent">("credentials");
@@ -137,6 +139,7 @@ export function useSessionScreensState({ session, snapshot }: UseSessionScreensS
       setSetupPasswordConfirm("");
       setSetupTouched({});
       setSetupConsent(false);
+      setSetupForum(false);
       setSetupConsentTouched(false);
       setSetupStep("credentials");
     }
@@ -177,7 +180,9 @@ export function useSessionScreensState({ session, snapshot }: UseSessionScreensS
     if (!setupConsent) return;
     setLoginValidationError(null);
     setPendingAction("setup");
-    void session.setup({ ...account, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC" }).catch(() => {
+    const setup: SysSetupArgs = { ...account, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC" };
+    if (setupForum) setup.forum = true;
+    void session.setup(setup).catch(() => {
       // Error is reflected through session snapshot.
     });
   };
@@ -204,6 +209,8 @@ export function useSessionScreensState({ session, snapshot }: UseSessionScreensS
       password: setupPassword,
       passwordConfirm: setupPasswordConfirm,
       consent: setupConsent,
+      forum: setupForum,
+      onForum: setSetupForum,
       consentError: setupConsentTouched && !setupConsent ? "Confirm your age and agreement to continue." : null,
       onPassword: setSetupPassword,
       onPasswordConfirm: setSetupPasswordConfirm,

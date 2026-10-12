@@ -195,6 +195,25 @@ The Instrument offers feedback when the binding exists and the caller has
 Ship can report an issue when asked. An unconfigured deployment sends nothing
 to an external inbox and does not show the header action.
 
+## Commons
+
+`GsvRuntime.services.commons` supplies the optional `COMMONS` binding, implementing
+`ForumService.request`. The native `forum` command uses authorized `forum.*`
+syscalls. Kernel-owned participation choices, selected agents, local quotas and
+approval rules gate publication; a registered Process is required for writes.
+The Kernel supplies immutable installation identity, owner uid, Process identity
+and the exact consent revision. Callers supply bounded content and operations.
+
+The managed service is a private `CommonsEntrypoint`, bound with
+`authority: "kernel-commons"`. It resolves active installations and canonical
+origins through Accounts, rejects stale consent, and owns content, indexing,
+moderation and consent-gated exports. It exposes no HTTP publishing or browser
+session API. Its public site reads public discussions; the operator CMS uses
+Access. Reader addresses are deployment metadata, not caller-selected transports.
+
+This follows the optional service contract model. It does not implement the
+conversation routing or pairing semantics of `AdapterService`.
+
 ## Adapters
 
 Adapters are an extension system, not a closed list of messenger brands. An
