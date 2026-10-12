@@ -214,6 +214,7 @@ export type AdapterPairInfoResult = {
   configured: boolean;
   botUsername?: string;
   installUrl?: string;
+  instructions?: string;
 };
 
 export type AdapterPairInspectArgs = {

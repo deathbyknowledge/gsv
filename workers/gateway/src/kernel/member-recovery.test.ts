@@ -77,6 +77,8 @@ describe("member recovery through a confirmed messenger", () => {
       for (const username of ["missing", "root", "agent"]) expect(await store.start(attempt(username), ctx)).toMatchObject({ accepted: true });
       link(ctx, "generation-1", 0);
       await store.start(attempt(), ctx);
+      ctx.adapters.identityLinks.link("telegram", "managed", "actor-1", 1000, 1000, { managed: true, humanConfirmed: false, surfaceKind: "dm", surfaceId: "dm-1", routeGeneration: "process-paired" });
+      await store.start(attempt(), ctx);
       ctx.adapters.identityLinks.link("telegram", "managed", "actor-1", 1000, 1000, { surfaceKind: "dm", surfaceId: "dm-1" });
       await store.start(attempt(), ctx);
       expect(deliveries).toHaveLength(0);

@@ -1988,7 +1988,7 @@ and `account.recovery.code.redeem`. The browser persists its UUID and 32-byte pr
 before requesting a code. The optional legacy username must match the personal
 account; new callers omit it. The Kernel resolves a previously direct-human-confirmed
 private messenger link for that member; callers cannot select the recipient, uid,
-or space. Manual and legacy links without that confirmation are ineligible. Root
+or space. Manual, process-created, and legacy links without that confirmation are ineligible. Root
 uses verified owner recovery instead. The start response does not disclose whether
 an account or eligible link exists. At most one code is sent per member per minute;
 the eight hexadecimal digits expire after five minutes and permit five incorrect
@@ -2150,12 +2150,12 @@ Runtime behavior:
 
 | Syscall | Handler | Behavior |
 |---|---|---|
-| `adapter.list` | `handleAdapterList` | Lists arbitrary configured `CHANNEL_*` bindings, their validated descriptors, caller-visible account status, operator readiness (`enabled`), and the current human’s linking authority (`canLink`). Shared pairing requires the same advertised capability, configured application, and direct human authority at its Kernel boundary. |
+| `adapter.list` | `handleAdapterList` | Lists arbitrary configured `CHANNEL_*` bindings, their validated descriptors, caller-visible account status, operator readiness (`enabled`), and linking authority (`canLink`). Shared pairing requires the advertised capability, configured application, and an active signed-in human or an authorized process owned by one. |
 | `adapter.connect` | `handleAdapterConnect` | User-role only. Rejects foreign-owned accounts, serializes lifecycle operations per account, durably assigns new accounts to the caller's owning human, and calls `CHANNEL_<ADAPTER>.adapterConnect({ installationId }, accountId, config)`. Ownership survives failed provisioning so the owner can retry safely. |
 | `adapter.disconnect` | `handleAdapterDisconnect` | Owner-or-root only. Serializes with connect, calls adapter disconnect, upserts local status as disconnected and unauthenticated, then best-effort refreshes live status. |
-| `adapter.pair.info` | `handleAdapterPairInfo` | Direct signed-in human only. Returns public information for a platform-owned managed adapter, such as the official bot username. |
-| `adapter.pair.inspect` | `handleAdapterPairInspect` | Direct signed-in human only. Resolves a short-lived code to the external identity that requested it. It does not create or move a link. |
-| `adapter.pair.confirm` | `handleAdapterPairConfirm` | Direct signed-in human only. Binds the inspected external identity to the caller's current installation and local uid, activates a fresh route generation, writes the Kernel identity link, and finalizes retryable cleanup of any previous installation. Agent processes cannot invoke this flow. |
+| `adapter.pair.info` | `handleAdapterPairInfo` | Signed-in human or authorized owned process. Returns adapter-owned public setup information: official bot username, install link, and optional instructions for obtaining a code. |
+| `adapter.pair.inspect` | `handleAdapterPairInspect` | Signed-in human or authorized owned process. Resolves a short-lived code to the external identity that requested it. It does not create or move a link. |
+| `adapter.pair.confirm` | `handleAdapterPairConfirm` | Signed-in human or authorized owned process. The Kernel derives the active human owner from the authenticated session or process registry and honors process tool policy. Binds the external identity to that owner and the current installation, activates a fresh route generation, writes the Kernel identity link, and finalizes retryable cleanup of any previous installation. The caller cannot choose the destination uid or installation. |
 | `adapter.pair.disconnect` | `handleAdapterPairDisconnect` | Direct signed-in human only. Generation-fences and disables the managed peer route before removing the matching Kernel identity link. Generic `sys.unlink` refuses managed links so the two sides cannot be orphaned. |
 | `adapter.inbound` | `handleAdapterInbound` | Service-role only. Requires a stable account-scoped ingress `deliveryId`, derived from the provider's complete event identity, and claims its durable receipt before link, command, route, media, or Process side effects. Actor and surface remain authorization metadata rather than receipt-key components, so alias normalization cannot bypass replay protection and equal provider stanza ids from different participants remain distinct. A platform-owned adapter also supplies its peer-route generation; the Kernel requires the exact currently linked generation and retains it on the run route. Completed replays return the persisted disposition; a concurrent live claim reports `replayed: "in_progress"`, while an abandoned or post-restart claim is fenced and reclaimed. Optional media bytes are cancelled before staging on any replay. New ingress resolves the exact identity link, issues link challenges for unlinked DMs, and drops unlinked non-DM messages. A linked non-DM message is admitted only when the adapter sets `wasMentioned: true`. Normal messages resolve the canonical Ship, Work, or Group conversation, append the user Message idempotently, derive an opaque run id, install its exact directed endpoint, and reconcile through kernel-only `proc.adapter.deliver`. Immediate replies and link challenges carry deterministic outbound `deliveryId` values and use the adapter's ordinary outbound ledger. Persistent first-party adapters retain the provider payload before this call, then replace it with any terminal response state before provider delivery; transport failures and `in_progress` retry through their existing account alarm. |
 | `adapter.state.update` | `handleAdapterStateUpdate` | Service-role only. Updates status without changing ownership and broadcasts a minimal `adapter.status` invalidation to root, the account owner, and linked users. |
@@ -2197,7 +2197,7 @@ type AdapterSyscalls = {
 
   "adapter.pair.info": {
     args: { adapter: string };
-    result: { adapter: string; accountId: string; configured: boolean; botUsername?: string };
+    result: { adapter: string; accountId: string; configured: boolean; botUsername?: string; installUrl?: string; instructions?: string };
   };
 
   "adapter.pair.inspect": {

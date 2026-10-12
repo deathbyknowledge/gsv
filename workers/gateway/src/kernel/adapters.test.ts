@@ -5100,7 +5100,7 @@ describe("managed adapter pairing", () => {
     );
   });
 
-  it("never exposes pairing to background processes or root", async () => {
+  it("never exposes pairing to untrusted process contexts or root", async () => {
     const service = pairingService();
     const status = { upsert: vi.fn(), list: vi.fn(() => []) };
     const direct = makeContext(

@@ -448,6 +448,7 @@ export type AdapterPairingInfo = {
   configured: boolean;
   botUsername?: string;
   installUrl?: string;
+  instructions?: string;
 };
 
 export type AdapterPairingRouteScope = "surface" | "actor";

@@ -47,7 +47,7 @@ Messaging has its own two deliberate views:
 
 - `message destinations` is the agent-facing inventory of authorized observed
   conversations where a message can be delivered.
-- Adapter APIs and the Messengers console expose account connection, health,
+- The native `messenger` command, adapter APIs and the Messengers console expose account connection, health,
   identity-link, and administration state.
 
 This keeps a transport-only Telegram account from masquerading as a capability
@@ -371,11 +371,21 @@ to a local uid. That mapping is what allows inbound messages to reach the right
 process and lets authenticated native callbacks submit an exact pending
 human-in-the-loop decision as that linked human.
 
-The adapter issues a short-lived code without choosing a space. A direct,
-signed-in human inspects and confirms the provider identity through
-`adapter.pair.inspect` and `adapter.pair.confirm`. Confirmation supplies the
-immutable installation and local uid, and commits a generation-fenced route.
-Issuing or inspecting a code does not interrupt an existing link.
+The adapter issues a short-lived code without choosing a space. A signed-in
+human or an authorized process can inspect and redeem it through
+`adapter.pair.inspect` and `adapter.pair.confirm`. For a process, the Kernel
+derives the active human owner from its registry and honors the process's
+capabilities and tool policy. The caller cannot choose an installation or uid.
+Redemption commits a generation-fenced route; issuing or inspecting a code does
+not interrupt an existing link. Disconnect remains a direct human action.
+Links created by processes record the acting account and `humanConfirmed: false`;
+they cannot authorize member password recovery. Existing directly confirmed
+links retain recovery eligibility.
+
+`messenger setup ADAPTER` reads public connection instructions from the adapter.
+The user can paste its code into the conversation; Ship reads that code from a
+file through `messenger connect ADAPTER < code.txt`. This uses the existing
+pairing operation without a separate UI confirmation protocol or model tool.
 
 Without a link, addressed messages may request pairing; they do not enter a
 Process. The first message that requested the code is not replayed as agent
@@ -385,9 +395,9 @@ unfinished exact-generation remote cleanup remains durable retry state.
 A private message on the exact retained route of a password-revoked identity
 returns `revoked_identity`. Managed adapters respond with their own fresh pairing
 code; the revoked message never enters a Process. Removed accounts, unknown
-routes, and obsolete generations remain fenced. Pairing still requires a
-direct, signed-in confirmation, which releases the retained route before
-activating its replacement.
+routes, and obsolete generations remain fenced. Redeeming a fresh code through
+the signed-in human or an authorized owned process releases the retained route
+before activating its replacement.
 
 Linked group, channel, and thread traffic is not ambient input. The adapter must
 set `wasMentioned: true` when the bot was addressed according to that

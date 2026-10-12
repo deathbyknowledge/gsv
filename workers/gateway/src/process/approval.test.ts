@@ -114,6 +114,7 @@ describe("tool approval policy", () => {
     expect(resolveToolApproval(DEFAULT_TOOL_APPROVAL_POLICY, "fs.delete").action).toBe("auto");
     expect(resolveToolApproval(DEFAULT_TOOL_APPROVAL_POLICY, "sys.mcp.call").action).toBe("ask");
     expect(resolveToolApproval(DEFAULT_TOOL_APPROVAL_POLICY, "mail.send").action).toBe("ask");
+    expect(resolveToolApproval(DEFAULT_TOOL_APPROVAL_POLICY, "adapter.pair.confirm").action).toBe("auto");
     expect(resolveToolApproval(DEFAULT_TOOL_APPROVAL_POLICY, "fs.read").action).toBe("auto");
     expect(resolveToolApproval(DEFAULT_TOOL_APPROVAL_POLICY, "web.search")).toMatchObject({ action: "auto", matchedRule: "web.search" });
   });
