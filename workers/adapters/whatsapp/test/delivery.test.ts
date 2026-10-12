@@ -4,7 +4,6 @@ import { DeliveryLedger, fingerprintOutboundDelivery } from "../../shared/src/de
 import { binaryBodyFromOwnedBytes } from "../../shared/src/media-body";
 import type { ManagedWhatsAppPeerEnv } from "../src/managed-peer";
 import type { ManagedWhatsAppPeerState } from "../src/managed-peer-state";
-import { whatsAppDeliveryToken, type ManagedWhatsAppPeerEvent } from "../src/whatsapp-webhook";
 
 // SAFETY: the managed test configuration binds these Workers and namespaces.
 const bindings = env as ManagedWhatsAppPeerEnv & { WHATSAPP_API: Fetcher };
@@ -95,7 +94,7 @@ it.each([
   expect(await messages(actorId)).toHaveLength(1);
 });
 
-it("does not template or hold an already partially sent delivery after the window closes", async () => {
+it("does not template an already partially sent delivery after the window closes", async () => {
   const actorId = "34690204444";
   const { peer, route, message } = await partiallySent(actorId);
   await runInDurableObject(peer, async (_instance, state) => {
@@ -107,116 +106,24 @@ it("does not template or hold an already partially sent delivery after the windo
   expect(await messages(actorId)).toHaveLength(1);
   await runInDurableObject(peer, async (_instance, state) => {
     expect((await state.storage.list({ prefix: "managed_whatsapp_peer:v1:held:" })).size).toBe(0);
-    expect((await state.storage.get<ManagedWhatsAppPeerState>(stateKey))!.pendingTemplate).toBeUndefined();
   });
 });
 
-it("keeps a new delivery behind held output rejected with a retryable status", async () => {
-  const actorId = "34690212222";
-  const { peer, route, message } = await seed(actorId);
-  const older = "held-message-awaiting-retry";
-  await runInDurableObject(peer, async (instance) => {
-    await instance["held"].hold({ deliveryId: "earlier-delivery", owner: route, markdown: older });
-  });
-  await bindings.WHATSAPP_API.fetch("https://graph.test/throttle", { method: "POST", body: older });
-  try {
-    using blocked = await peer.sendMessage(route.installationId, message);
-    expect(blocked).toMatchObject({ ok: false, retryable: true });
-    expect(await messages(actorId)).toEqual([]);
-    await runInDurableObject(peer, async (_instance, state) => {
-      expect(await state.storage.get(`outbound_delivery:v1:record:${message.deliveryId}`)).toMatchObject({ state: "retryable" });
-    });
-  } finally {
-    await bindings.WHATSAPP_API.fetch("https://graph.test/throttle", { method: "POST", body: "" });
-  }
-  using retried = await peer.sendMessage(route.installationId, message);
-  expect(retried).toMatchObject({ ok: true });
-  expect((await messages(actorId)).map((record) => record.body.text?.body)).toEqual([older, message.text]);
-});
-
-it.each(["release", "message", "approval"] as const)("retries held output from an inbound %s without another webhook", async (kind) => {
-  const actorId = `3469021333${kind === "release" ? 1 : kind === "message" ? 2 : 3}`;
-  const { peer, route } = await seed(actorId);
-  const interactionId = `wamid.retry.${kind}`;
-  const heldText = `held-until-${kind}-retry`;
-  await runInDurableObject(peer, async (instance) => {
-    await instance["held"].hold({ deliveryId: interactionId, owner: route, markdown: heldText });
-  });
-  const event: ManagedWhatsAppPeerEvent = kind === "release"
-    ? { kind, tap: { actorId, surfaceId: actorId, interactionId, timestamp: Date.now() } }
-    : kind === "approval"
-      ? { kind, reply: { actorId, surfaceId: actorId, interactionId, providerMessageId: "wamid.old", data: "expired-button", timestamp: Date.now() } }
-      : { kind, inbound: { actorId, surfaceId: actorId, messageId: interactionId, deliveryId: interactionId, text: "hello", timestamp: Date.now(), unsupportedContent: false } };
-  const receiptId = kind === "message" ? interactionId : `${kind === "release" ? "release" : "interactive"}:${whatsAppDeliveryToken(interactionId)}`;
-  await bindings.WHATSAPP_API.fetch("https://graph.test/throttle", { method: "POST", body: heldText });
-  try {
-    await peer.handleWebhook(event);
-    await vi.waitFor(async () => {
-      const rejected = await (await bindings.WHATSAPP_API.fetch("https://graph.test/rejected")).json<Array<{ body: { to?: string } }>>();
-      expect(rejected.some((record) => record.body.to === actorId)).toBe(true);
-      await runInDurableObject(peer, async (instance, state) => {
-        await instance["drainInbound"]();
-        expect(await state.storage.get(`managed_whatsapp_peer:v1:inbound:${receiptId}`)).toMatchObject({ state: "provider" });
-        expect(await state.storage.getAlarm()).not.toBeNull();
-      });
-    });
-    expect(await messages(actorId)).toEqual([]);
-  } finally {
-    await bindings.WHATSAPP_API.fetch("https://graph.test/throttle", { method: "POST", body: "" });
-  }
+it("leaves a refused template with the Kernel for retry after the window reopens", async () => {
+  const actorId = "34690214446";
+  const { peer, route, message } = await seed(actorId, true);
   await runInDurableObject(peer, async (instance, state) => {
-    await instance.alarm();
-    expect(await state.storage.get(`managed_whatsapp_peer:v1:inbound:${receiptId}`)).toMatchObject({ state: "completed" });
-    expect(await instance["held"].list(route)).toEqual([]);
-  });
-  expect((await messages(actorId))[0]?.body.text?.body).toBe(heldText);
-  expect((await messages(actorId)).filter((record) => record.body.text?.body === heldText)).toHaveLength(1);
-});
-
-it("retains held output when the window expires during release preparation", async () => {
-  const actorId = "34690214445";
-  const { peer, route } = await seed(actorId);
-  await runInDurableObject(peer, async (instance, state) => {
-    const held = instance["held"];
-    await held.hold({ deliveryId: "window-expires", owner: route, markdown: "Still waiting" });
-    const list = held.list;
-    held.list = async (owner) => {
-      const records = await list.call(held, owner);
-      const current = (await state.storage.get<ManagedWhatsAppPeerState>(stateKey))!;
-      await state.storage.put(stateKey, { ...current, lastInboundAt: Date.now() - 25 * 60 * 60 * 1000 });
-      return records;
-    };
+    const fetcher = instance["whatsAppFetch"];
+    instance["whatsAppFetch"] = () => async () => Response.json(
+      { error: { message: "Too many requests", code: 130429 } }, { status: 429 },
+    );
     try {
-      expect(await instance["releaseHeld"](route)).toBe(false);
-      expect(await list.call(held, route)).toHaveLength(1);
+      expect(await instance.sendMessage(route.installationId, message)).toMatchObject({ ok: false, retryable: true });
     } finally {
-      held.list = list;
+      instance["whatsAppFetch"] = fetcher;
     }
     const current = (await state.storage.get<ManagedWhatsAppPeerState>(stateKey))!;
     await state.storage.put(stateKey, { ...current, lastInboundAt: Date.now() });
-    expect(await instance["releaseHeld"](route)).toBe(true);
-    expect(await held.list(route)).toEqual([]);
-  });
-  expect((await messages(actorId)).map((message) => message.body.text?.body)).toEqual(["Still waiting"]);
-});
-
-it("retries a reopened-window race without keeping a duplicate held copy", async () => {
-  const actorId = "34690214444";
-  const { peer, route, message } = await seed(actorId, true);
-  message.text = "long reply ".repeat(300).trimEnd();
-  await runInDurableObject(peer, async (instance, state) => {
-    const claim = instance["claimPendingTemplate"];
-    instance["claimPendingTemplate"] = async (observed) => {
-      const current = (await state.storage.get<ManagedWhatsAppPeerState>(stateKey))!;
-      await state.storage.put(stateKey, { ...current, lastInboundAt: Date.now() });
-      return await claim.call(instance, observed);
-    };
-    try {
-      expect(await instance.sendMessage(route.installationId, message)).toMatchObject({ ok: false, retryable: true });
-      expect(await instance["held"].list(route)).toEqual([]);
-    } finally {
-      instance["claimPendingTemplate"] = claim;
-    }
   });
   expect(await messages(actorId)).toEqual([]);
   using retried = await peer.sendMessage(route.installationId, message);
@@ -255,24 +162,17 @@ it.each([false, true])("does not dispatch after the route changes during prepara
       const current = (await state.storage.get<ManagedWhatsAppPeerState>(stateKey))!;
       await state.storage.put(stateKey, { ...current, activeRoute: { ...route, generation: "new-generation" } });
     };
-    const release = instance["releaseHeld"];
-    const claim = instance["claimPendingTemplate"];
-    if (closed) {
-      instance["claimPendingTemplate"] = async (observed) => {
-        const result = await claim.call(instance, observed);
-        await relink();
-        return result;
-      };
-    } else {
-      instance["releaseHeld"] = async (owner) => { const result = await release.call(instance, owner); await relink(); return result; };
-    }
+    const factory = instance["whatsAppFetch"];
+    instance["whatsAppFetch"] = (...args) => {
+      const fetcher = factory.apply(instance, args);
+      return async (input, init) => { await relink(); return await fetcher(input, init); };
+    };
     try {
       expect(await instance.sendMessage(route.installationId, message)).toMatchObject({
         ok: false, error: "WhatsApp route changed before delivery",
       });
     } finally {
-      instance["releaseHeld"] = release;
-      instance["claimPendingTemplate"] = claim;
+      instance["whatsAppFetch"] = factory;
     }
   });
   expect(await messages(actorId)).toEqual([]);
@@ -319,4 +219,40 @@ it("preserves Meta failure diagnostics when replaying a terminal delivery receip
   } });
   using replay = await peer.sendMessage(route.installationId, message);
   expect(replay).toEqual(first);
+});
+
+it("accepts the maximum delivery id without deriving a second replay id", async () => {
+  const { peer, route, message } = await seed("34690220000", true);
+  message.deliveryId = "x".repeat(200);
+  using sent = await peer.sendMessage(route.installationId, message);
+  expect(sent).toMatchObject({ ok: true, messageId: expect.any(String) });
+  using duplicate = await peer.sendMessage(route.installationId, message);
+  expect(duplicate).toMatchObject({ ...sent, deduplicated: true });
+  expect(await messages(message.actorId)).toHaveLength(1);
+});
+
+it("rejects out-of-window media explicitly and consumes its body", async () => {
+  const { peer, route, message } = await seed("34690221111", true);
+  const body = binaryBodyFromOwnedBytes(new Uint8Array([1, 2, 3, 4]));
+  using result = await peer.sendMessage(route.installationId, {
+    ...message, media: [{ type: "image", mimeType: "image/png", size: 4, body: { offset: 0, length: 4 } }],
+  }, body);
+  expect(result).toMatchObject({ ok: false, error: expect.stringContaining("cannot deliver attachments") });
+  expect(await messages(message.actorId)).toEqual([]);
+});
+
+it("reports disabled templates instead of claiming a delivery", async () => {
+  const { peer, route, message } = await seed("34690222222", true);
+  await runInDurableObject(peer, async (instance) => {
+    const previous = instance["env"].WHATSAPP_TEMPLATE_NAME;
+    instance["env"].WHATSAPP_TEMPLATE_NAME = "";
+    try {
+      expect(await instance.sendMessage(route.installationId, message)).toMatchObject({
+        ok: false, error: expect.stringContaining("no template is configured"),
+      });
+    } finally {
+      instance["env"].WHATSAPP_TEMPLATE_NAME = previous;
+    }
+  });
+  expect(await messages(message.actorId)).toEqual([]);
 });

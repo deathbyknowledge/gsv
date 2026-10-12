@@ -118,21 +118,22 @@ prompts arrive with reply buttons; the decision comes back as a reply quoting
 the prompt.
 
 WhatsApp accepts a free-form message from GSV only within 24 hours of your last
-message to the number. When Ship has something for you after that, you receive
-a short template message instead: `Your GSV:` followed by the reply on one
-line, with a **Show me** button. A short reply fits in that message entirely.
-A longer reply, or an approval prompt with its buttons, waits until you tap the
-button or write anything back; either reopens the window and the waiting
-messages arrive in order. GSV sends one such template at a time, so later
-replies wait behind it instead of each sending a template, and nothing waits
-longer than seven days. Meta bills the operator for each template sent outside
-the window; inside the window GSV never uses one.
+message to the number. After that, GSV uses an approved template to send the
+message, or a preview if it is too long. The full message remains in your GSV
+conversation. Open GSV to read it, or reply in WhatsApp to ask Ship about it.
+The **Show me** button sends an ordinary reply to Ship. Messages are not queued
+for automatic delivery when you return.
 
-The operator files the template once in the Meta app, where Meta reviews it.
-The exact template is described in the WhatsApp adapter README in the source
-tree under "Message templates": category Utility, body `Your GSV: {{1}}`, one
-quick-reply button labelled `Show me`, and the adapter's `WHATSAPP_TEMPLATE_NAME`
-and `WHATSAPP_TEMPLATE_LANGUAGE` values (`gsv_message` and `en` by default).
+Approval notifications outside the window ask you to review the request in
+GSV. Attachments require an open WhatsApp window or another authorized
+destination.
+
+The operator must configure the matching Meta-approved `gsv_message` template
+before out-of-window messages can be sent. It uses one body parameter and a
+quick-reply button labelled **Show me**. `WHATSAPP_TEMPLATE_NAME` and
+`WHATSAPP_TEMPLATE_LANGUAGE` select the template; an empty name disables it.
+Meta determines its category and bills each template accordingly. See the
+WhatsApp adapter README's "Message templates" section for the exact contract.
 
 Availability depends on the operator's Meta account and the current terms for
 this use of the WhatsApp Business Platform. Ask your operator whether the

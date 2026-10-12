@@ -90,11 +90,16 @@ export default defineConfig({
               let pausedSend = null;
               let resumeSend = null;
               let blockedSend = null;
+              let failNextTemplate = false;
               const windowRejections = new Set();
               let nextId = 100;
               export default {
                 async fetch(request) {
                   const url = new URL(request.url);
+                  if (request.method === "POST" && url.pathname === "/fail-next-template") {
+                    failNextTemplate = true;
+                    return Response.json({ ok: true });
+                  }
                   if (request.method === "GET" && url.pathname === "/records") {
                     return Response.json(records);
                   }
@@ -187,8 +192,8 @@ export default defineConfig({
                         { status: 400 },
                       );
                     }
-                    const templateText = body.template?.components?.find((component) => component.type === "body")?.parameters?.[0]?.text;
-                    if (templateText?.includes("template outcome unknown")) {
+                    if (body.type === "template" && failNextTemplate) {
+                      failNextTemplate = false;
                       rejected.push({ kind: "message", status: 500, body });
                       return Response.json({ error: { message: "unknown", type: "OAuthException", code: 2 } }, { status: 500 });
                     }
@@ -210,7 +215,8 @@ export default defineConfig({
                     }
                     // Meta refuses a free-form message outside the customer service
                     // window with 131047; tests carry this marker to provoke it.
-                    if (body.text?.body?.includes("outside window marker")) {
+                    if (body.text?.body?.includes("outside window marker") && !windowRejections.has(body.text.body)) {
+                      windowRejections.add(body.text.body);
                       return Response.json(
                         { error: { message: "Re-engagement message", type: "OAuthException", code: 131047, error_subcode: 2494010 } },
                         { status: 400 },
