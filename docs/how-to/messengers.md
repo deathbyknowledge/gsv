@@ -118,20 +118,22 @@ prompts arrive with reply buttons; the decision comes back as a reply quoting
 the prompt.
 
 WhatsApp accepts a free-form message from GSV only within 24 hours of your last
-message to the number. When Ship has something for you after that, you receive
-a notification: **Your GSV has a message for you.** Tap **Read message** or
-write anything back to receive the original messages, with their formatting
-and approval buttons. GSV sends one notification at a time, so later replies
-wait behind it. Waiting messages expire after seven days.
+message to the number. After that, GSV uses an approved template to send the
+message, or a preview if it is too long. The full message remains in your GSV
+conversation. Open GSV to read it, or reply in WhatsApp to ask Ship about it.
+The **Show me** button sends an ordinary reply to Ship. Messages are not queued
+for automatic delivery when you return.
 
-The operator must configure a matching template approved by Meta before
-notifications can be sent. Use `gsv_message_notification`, language `en`, the
-body above with no parameters, and a quick-reply button labelled `Read message`.
-`WHATSAPP_TEMPLATE_NAME` and `WHATSAPP_TEMPLATE_LANGUAGE` select that template;
-an empty name disables it. The previous `gsv_message` body-parameter template
-is not compatible. Meta determines the template category and bills each
-notification accordingly; this general notification is submitted as Marketing.
-See the WhatsApp adapter README's "Message templates" section for setup.
+Approval notifications outside the window ask you to review the request in
+GSV. Attachments require an open WhatsApp window or another authorized
+destination.
+
+The operator must configure the matching Meta-approved `gsv_message` template
+before out-of-window messages can be sent. It uses one body parameter and a
+quick-reply button labelled **Show me**. `WHATSAPP_TEMPLATE_NAME` and
+`WHATSAPP_TEMPLATE_LANGUAGE` select the template; an empty name disables it.
+Meta determines its category and bills each template accordingly. See the
+WhatsApp adapter README's "Message templates" section for the exact contract.
 
 Availability depends on the operator's Meta account and the current terms for
 this use of the WhatsApp Business Platform. Ask your operator whether the

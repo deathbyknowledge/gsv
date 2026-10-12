@@ -12,7 +12,7 @@ describe("managedWhatsAppTemplate", () => {
       name: DEFAULT_WHATSAPP_TEMPLATE_NAME,
       language: DEFAULT_WHATSAPP_TEMPLATE_LANGUAGE,
     });
-    expect(DEFAULT_WHATSAPP_TEMPLATE_NAME).toBe("gsv_message_notification");
+    expect(DEFAULT_WHATSAPP_TEMPLATE_NAME).toBe("gsv_message");
     expect(DEFAULT_WHATSAPP_TEMPLATE_LANGUAGE).toBe("en");
   });
 

@@ -51,21 +51,15 @@ import {
   prepareWhatsAppApproval,
   WHATSAPP_INTERACTIVE_BODY_LIMIT,
   type WhatsAppApprovalControls,
-  type WhatsAppApprovalSource,
 } from "./whatsapp-approval";
 import { managedWhatsAppTemplate, type ManagedWhatsAppTemplateEnv } from "./managed-config";
 import {
   buildWhatsAppTemplatePayload,
-  WHATSAPP_HELD_FULL_ERROR,
-  WHATSAPP_HELD_TOO_LONG_ERROR,
   WHATSAPP_NO_TEMPLATE_ERROR,
+  WHATSAPP_TEMPLATE_BUTTON_LABEL,
   WHATSAPP_WINDOW_CLOSED_MEDIA_ERROR,
 } from "./whatsapp-template";
-import {
-  WhatsAppHeldOutbound,
-  type HeldOutboundInput,
-  type HeldOutboundRecord,
-} from "./whatsapp-held-outbound";
+import { retireWhatsAppOutbox } from "./whatsapp-upgrade";
 import type {
   ManagedWhatsAppPairingEnv,
   ManagedWhatsAppPairingRecord,
@@ -78,10 +72,7 @@ import {
   MANAGED_WHATSAPP_ACCOUNT_ID,
   pairingCandidate,
   prepareManagedWhatsAppPairing,
-  whatsAppTemplatePending,
   whatsAppWindowOpen,
-  withoutPendingWhatsAppTemplate,
-  withPendingWhatsAppTemplate,
   type ManagedWhatsAppPeerRoute,
   type ManagedWhatsAppPeerState,
 } from "./managed-peer-state";
@@ -156,15 +147,10 @@ type ResponseContext =
 type DeliveryOptions = {
   splitParagraphs?: boolean;
   controls?: WhatsAppApprovalControls;
-  /** What to keep when an approval prompt has to wait for the person's reply. */
-  approval?: WhatsAppApprovalSource;
-  /** False while releasing held messages, so a closed window never holds them again. */
-  templateFallback?: boolean;
 };
 /** One provider message of a delivery; resolves to the WhatsApp message id it produced. */
 type DeliveryPart = () => Promise<string | undefined>;
 type ClaimedDelivery = Extract<DeliveryClaim, { claimed: true }>;
-type PendingTemplateClaim = number | "window-open" | "full" | "too-long" | null;
 type FailDelivery = (kind: DeliveryFailureKind, detail?: string, cause?: unknown) => Promise<AdapterSendResult>;
 type PairingIssue = { code: string; claimId: string; expiresAt: number };
 type ManagedPairingStub = { initialize(input: ManagedWhatsAppPairingRecord): Promise<{ created: boolean }> };
@@ -189,16 +175,13 @@ export class ManagedWhatsAppPeer extends DurableObject<ManagedWhatsAppPeerEnv> {
   private readonly lifecycle: AdapterPeerRetirement<ManagedWhatsAppPeerState>;
   private readonly deliveries: DeliveryLedger;
   private readonly inboundDeliveries: InboundDeliveryLedger<InboundPayload, ResponseContext>;
-  private readonly held: WhatsAppHeldOutbound;
   private drainPromise?: Promise<void>;
-  private releasePromise?: Promise<boolean>;
-  private templateAttempt?: Promise<AdapterSendResult>;
 
   constructor(ctx: DurableObjectState, env: ManagedWhatsAppPeerEnv) {
     super(ctx, env);
     runAdapterHilSqlMigrations(ctx.storage);
     this.deliveries = new DeliveryLedger(this.ctx.storage, { retirement: this.retirement });
-    this.held = new WhatsAppHeldOutbound(this.ctx.storage, { retirement: this.retirement });
+    this.ctx.blockConcurrencyWhile(() => retireWhatsAppOutbox(this.ctx.storage));
     this.inboundDeliveries = new InboundDeliveryLedger(
       this.ctx.storage,
       INBOUND_PREFIX,
@@ -210,7 +193,7 @@ export class ManagedWhatsAppPeer extends DurableObject<ManagedWhatsAppPeerEnv> {
     );
     this.lifecycle = new AdapterPeerRetirement(ctx.storage, this.retirement, {
       stateKey: STATE_KEY, inboundPrefix: INBOUND_PREFIX, inbound: this.inboundDeliveries,
-      outbound: this.deliveries, hil: true, stores: [this.held],
+      outbound: this.deliveries, hil: true,
       identity: (state) => ({ name: `managed:${state.surfaceId}`, understood: state.version === 1 && Boolean(state.actorId && state.surfaceId) }),
     });
   }
@@ -296,15 +279,14 @@ export class ManagedWhatsAppPeer extends DurableObject<ManagedWhatsAppPeerEnv> {
       const options: DeliveryOptions = {};
       if (approval && controls) {
         options.controls = controls;
-        options.approval = approval;
       }
       const result = await this.deliverMessage(renderedMessage, {
         kind: "installation",
         installationId,
         generation: message.routeGeneration,
       }, body, options);
-      // A prompt held behind a template reports no message id; the interactive
-      // message is attached when the person's reply releases it.
+      // A template carries no approval controls, so it must not become the
+      // provider message authorized to accept an approval callback.
       if (result.ok && controls) {
         await attachWhatsAppApprovalMessage(this.ctx.storage, controls.token, result.messageId);
       }
@@ -514,15 +496,26 @@ export class ManagedWhatsAppPeer extends DurableObject<ManagedWhatsAppPeerEnv> {
   private async forwardInbound(
     payload: InboundPayload,
   ): Promise<InboundDeliveryDisposition<ResponseContext>> {
-    if (payload.kind === "release" || payload.kind === "release-held") {
-      const state = await this.requireState();
-      const route = state.activeRoute;
-      if (!route || this.retirement.retired(route) || !payload.routeGeneration || route.generation !== payload.routeGeneration) {
-        return { terminal: true };
-      }
-      // The tap only reopens the window; the person hears nothing but the held messages.
-      if (payload.kind === "release") await this.markRead(payload.tap.interactionId, route);
-      return { terminal: await this.releaseHeld(route) };
+    // Retire old internal replay receipts without sending anything. The
+    // canonical conversation already retains those messages.
+    if (payload.kind === "release-held") return { terminal: true };
+    if (payload.kind === "release") {
+      if (!payload.routeGeneration) return { terminal: true };
+      const { tap } = payload;
+      payload = {
+        kind: "message",
+        routeGeneration: payload.routeGeneration,
+        inbound: {
+          deliveryId: `release:${whatsAppDeliveryToken(tap.interactionId)}`,
+          messageId: tap.interactionId,
+          actorId: tap.actorId,
+          surfaceId: tap.surfaceId,
+          text: tap.text ?? WHATSAPP_TEMPLATE_BUTTON_LABEL,
+          replyToId: tap.providerMessageId,
+          timestamp: tap.timestamp,
+          unsupportedContent: false,
+        },
+      };
     }
     if (payload.kind === "approval") {
       const state = await this.requireState();
@@ -530,7 +523,6 @@ export class ManagedWhatsAppPeer extends DurableObject<ManagedWhatsAppPeerEnv> {
       if (!route || this.retirement.retired(route) || !payload.routeGeneration || route.generation !== payload.routeGeneration) {
         return { terminal: true };
       }
-      if (!await this.releaseHeld(route)) return { terminal: false };
       const status = await handleWhatsAppApprovalReply(
         this.ctx.storage,
         this.env.GATEWAY,
@@ -569,21 +561,9 @@ export class ManagedWhatsAppPeer extends DurableObject<ManagedWhatsAppPeerEnv> {
     // it, so a delayed delivery cannot cross a relink.
     const linked: ResponseContext = { kind: "installation", installationId: route.installationId, generation: route.generation };
     await this.markRead(inbound.messageId, route);
-    // The person's message reopened the window: held replies go out first, then theirs is relayed.
-    const released = await this.releaseHeld(route);
     if (isManagedWhatsAppPairCommand(inbound.text)) {
-      if (!released) {
-        // Pairing can reply immediately while this owned receipt retries the held queue.
-        await this.inboundDeliveries.enqueueAndArm(
-          `held-after:${inbound.deliveryId}`,
-          { kind: "release-held", routeGeneration: route.generation },
-          Date.now() + INBOUND_RETRY_DELAY_MS,
-          route,
-        );
-      }
       return await this.pairingResponse(inbound, route.generation);
     }
-    if (!released) return { terminal: false };
     if (inbound.unsupportedContent) {
       return platformResponse(inbound, `managed-unsupported:${inbound.deliveryId}`, UNSUPPORTED_TEXT, linked);
     }
@@ -865,10 +845,9 @@ export class ManagedWhatsAppPeer extends DurableObject<ManagedWhatsAppPeerEnv> {
       return { ok: false, error, diagnostics };
     };
 
-    // Outside the customer service window Meta accepts only the template. The
-    // Kernel's own deliveries take that path; released held messages and
-    // platform responses do not, so a closed window never holds them again.
-    const fallbackOwner = owner !== null && options.templateFallback !== false ? owner : null;
+    // Platform pairing responses require an open window. Kernel deliveries
+    // can use the operator's approved template instead.
+    const fallbackOwner = owner;
     let sentInAttempt = 0;
     let attemptedProviderSend = false;
     let current = state;
@@ -878,13 +857,8 @@ export class ManagedWhatsAppPeer extends DurableObject<ManagedWhatsAppPeerEnv> {
       const issue = this.deliveryContextIssue(current, context);
       if (issue) throw new Error(issue);
       if (!whatsAppWindowOpen(current, Date.now())) {
-        if (options.templateFallback === false) return await fail("retryable", WHATSAPP_WINDOW_CLOSED_ERROR);
         if (!fallbackOwner || claim.progress.sent > 0) return await fail("permanent", WHATSAPP_WINDOW_CLOSED_ERROR);
         return await this.deliverOutsideWindow(message, fallbackOwner, claim, options, fail, current);
-      }
-      // Replies still held behind a template go out first so the person reads them in order.
-      if (fallbackOwner && !await this.releaseHeld(fallbackOwner)) {
-        return await fail("retryable", "Earlier WhatsApp messages are waiting to be delivered");
       }
       const token = this.accessToken();
       const phoneNumberId = this.phoneNumberId();
@@ -956,7 +930,6 @@ export class ManagedWhatsAppPeer extends DurableObject<ManagedWhatsAppPeerEnv> {
       return { ok: true, messageId: anchorMessageId };
     } catch (error) {
       if (error instanceof ManagedWhatsAppDeliveryError) {
-        if (error.windowClosed && options.templateFallback === false) return await fail("retryable", error.message);
         // Meta knows the window better than the local receipt: when it refuses
         // the first part, the template path takes the whole message.
         if (error.windowClosed && fallbackOwner && sentInAttempt === 0 && claim.progress.sent === 0) {
@@ -970,13 +943,7 @@ export class ManagedWhatsAppPeer extends DurableObject<ManagedWhatsAppPeerEnv> {
     }
   }
 
-  /**
-   * Meta accepts only a pre-approved template outside the customer service
-   * window. The template notifies the person; every original message waits
-   * until their reply reopens the window. One template at a
-   * time: while one is pending, further messages wait behind it instead of
-   * each sending a template.
-   */
+  /** A template is a delivery, never a promise to replay an adapter-owned copy. */
   private async deliverOutsideWindow(
     message: AdapterOutboundMessage,
     owner: AdapterDataOwner,
@@ -988,195 +955,33 @@ export class ManagedWhatsAppPeer extends DurableObject<ManagedWhatsAppPeerEnv> {
     const template = managedWhatsAppTemplate(this.env);
     if (!template) return await fail("permanent", WHATSAPP_NO_TEMPLATE_ERROR);
     if (message.media?.length) return await fail("permanent", WHATSAPP_WINDOW_CLOSED_MEDIA_ERROR);
-    const input: HeldOutboundInput = { deliveryId: message.deliveryId, owner, markdown: message.text };
-    if (message.replyToId) input.replyToId = message.replyToId;
-    if (options.approval) input.approval = options.approval;
-    // The pending marker is claimed durably before provider I/O, so of two
-    // concurrent deliveries only one sends a template; the other waits behind it.
-    const claimedAt = await this.claimPendingTemplate(observed, input);
-    if (claimedAt === "full") return await fail("permanent", WHATSAPP_HELD_FULL_ERROR);
-    if (claimedAt === "too-long") return await fail("permanent", WHATSAPP_HELD_TOO_LONG_ERROR);
-    if (claimedAt === "window-open") {
-      // Nothing reached Meta. Let the Kernel retry through the now-open window
-      // without a second held copy or an acknowledgement that loses retry ownership.
-      return await fail("retryable", "WhatsApp window reopened before delivery");
-    }
-    if (claimedAt === null) {
-      await this.deliveries.succeed(message.deliveryId, claim.attemptId);
-      return { ok: true };
-    }
-    const attempt = (async (): Promise<AdapterSendResult> => {
-      let sent: WhatsAppSentMessage;
-      try {
-        sent = await sendWhatsAppMessage(
-          this.accessToken(),
-          this.phoneNumberId(),
-          buildWhatsAppTemplatePayload(observed.surfaceId, template),
-          this.whatsAppFetch(owner),
-        );
-      } catch (error) {
-        const kind = error instanceof ManagedWhatsAppDeliveryError ? error.kind : "permanent";
-        // The next delivery may try a template again; a template Meta refuses
-        // for good fails on retry too, so its held copy goes with it.
-        // An ambiguous send may already have reached the person, so its claim
-        // remains pending until their reply or its expiry.
-        if (kind !== "ambiguous") {
-          // A retryable refusal returns ownership to the Kernel too; keeping
-          // its held copy would send it again when that retry sees an open window.
-          await this.held.remove(message.deliveryId);
-          await this.settlePendingTemplate(claimedAt, null);
-        }
-        return await fail(kind, error instanceof ManagedWhatsAppDeliveryError ? error.message : undefined, error);
-      }
-      try {
-        await this.settlePendingTemplate(claimedAt, sent.messageId);
-        // The notification is not the held message or its approval prompt.
-        await this.deliveries.succeed(message.deliveryId, claim.attemptId);
-        return { ok: true };
-      } catch {
-        return await fail("ambiguous");
-      }
-    })();
-    this.templateAttempt = attempt;
+    // Templates cannot carry approval buttons. Direct the person to the
+    // original request in GSV instead of attaching a fake interactive anchor.
+    const text = options.controls
+      ? "An action needs your approval. Open GSV to review it."
+      : message.text;
+    let sent: WhatsAppSentMessage;
     try {
-      return await attempt;
-    } finally {
-      if (this.templateAttempt === attempt) this.templateAttempt = undefined;
-    }
-  }
-
-  /** Marks a template as pending unless one already is; returns the claim time, or null when another delivery owns it. */
-  // A newer inbound receipt that opened the window returns "window-open" instead.
-  private async claimPendingTemplate(observed: ManagedWhatsAppPeerState, input: HeldOutboundInput): Promise<PendingTemplateClaim> {
-    return await this.ctx.storage.transaction(async (txn) => {
-      const latest = await txn.get<ManagedWhatsAppPeerState>(STATE_KEY);
-      if (!latest) throw new Error("Managed WhatsApp peer is not initialized");
-      const now = Date.now();
-      if (
-        whatsAppWindowOpen(latest, now)
-        && (latest.lastInboundAt !== observed.lastInboundAt
-          || latest.lastInboundMessageId !== observed.lastInboundMessageId)
-      ) {
-        return "window-open";
-      }
-      // Reopening and holding are one decision: a release must never see a
-      // copy that this delivery is about to hand back to the Kernel for retry.
-      const held = await this.held.hold(input, txn);
-      if (!held.held && held.reason !== "duplicate") return held.reason;
-      if (this.templateAttempt || whatsAppTemplatePending(latest, now)) return null;
-      await txn.put(STATE_KEY, withPendingWhatsAppTemplate(latest, now, undefined));
-      return now;
-    });
-  }
-
-  /**
-   * Records the sent template's id on the claim, or lifts the claim when the
-   * send failed. A claim the person's reply has already resolved is left alone.
-   */
-  private async settlePendingTemplate(claimedAt: number, messageId: string | undefined | null): Promise<void> {
-    await this.ctx.storage.transaction(async (txn) => {
-      const latest = await txn.get<ManagedWhatsAppPeerState>(STATE_KEY);
-      if (!latest || latest.pendingTemplate?.sentAt !== claimedAt) return;
-      await txn.put(
-        STATE_KEY,
-        messageId === null
-          ? withoutPendingWhatsAppTemplate(latest)
-          : withPendingWhatsAppTemplate(latest, claimedAt, messageId),
+      sent = await sendWhatsAppMessage(
+        this.accessToken(),
+        this.phoneNumberId(),
+        buildWhatsAppTemplatePayload(observed.surfaceId, template, text),
+        this.whatsAppFetch(owner),
       );
-    });
-  }
-
-  /**
-   * Sends the messages held behind a template once the person's reply
-   * reopened the window. Releases run one at a time in this instance, so an
-   * inbound message and a Kernel delivery arriving together cannot race each
-   * other for the same records.
-   */
-  private async releaseHeld(owner: AdapterDataOwner): Promise<boolean> {
-    // Webhook admission records the reply immediately, but a template request
-    // already sent to Meta must settle before its held messages are released.
-    if (this.templateAttempt) await this.templateAttempt;
-    while (this.releasePromise) {
-      await this.releasePromise;
+    } catch (error) {
+      return await fail(
+        error instanceof ManagedWhatsAppDeliveryError ? error.kind : "ambiguous",
+        error instanceof ManagedWhatsAppDeliveryError ? error.message : undefined,
+        error,
+      );
     }
-    const running = this.releaseHeldNow(owner);
-    this.releasePromise = running;
     try {
-      return await running;
-    } finally {
-      if (this.releasePromise === running) this.releasePromise = undefined;
+      const messageId = options.controls ? undefined : sent.messageId;
+      await this.deliveries.succeed(message.deliveryId, claim.attemptId, messageId);
+      return { ok: true, messageId };
+    } catch (error) {
+      return await fail("ambiguous", undefined, error);
     }
-  }
-
-  private async releaseHeldNow(owner: AdapterDataOwner): Promise<boolean> {
-    // A delayed receipt cannot release the queue until a fresh message opens the window.
-    if (!whatsAppWindowOpen(await this.requireState(), Date.now())) return true;
-    let held: HeldOutboundRecord[];
-    try {
-      held = await this.held.list(owner);
-    } catch {
-      return false;
-    }
-    for (const record of held) {
-      let result: AdapterSendResult;
-      try {
-        result = await this.deliverHeld(record, owner);
-      } catch {
-        console.warn(JSON.stringify({
-          component: "managed_whatsapp",
-          event: "held_release_failed",
-        }));
-        return false;
-      }
-      if (!result.ok) {
-        // A retryable failure keeps this message and the ones after it for the next reply.
-        if (result.retryable) return false;
-        // An unknown outcome keeps the record: the message may still be in
-        // flight or may have arrived, and only expiry decides. Later records
-        // still go out, since no ordering can be promised past an unknown.
-        if (result.ambiguous) {
-          console.warn(JSON.stringify({
-            component: "managed_whatsapp",
-            event: "held_release_ambiguous",
-          }));
-          continue;
-        }
-        console.warn(JSON.stringify({
-          component: "managed_whatsapp",
-          event: "held_release_rejected",
-        }));
-      }
-      // Delivered, or refused for good: nothing is left to release.
-      await this.held.remove(record.deliveryId);
-    }
-    return true;
-  }
-
-  private async deliverHeld(record: HeldOutboundRecord, owner: AdapterDataOwner): Promise<AdapterSendResult> {
-    const state = await this.requireState();
-    const message: AdapterOutboundMessage = {
-      deliveryId: `${record.deliveryId}:held`,
-      surface: { kind: "dm", id: state.surfaceId },
-      actorId: state.actorId,
-      routeGeneration: owner.generation,
-      text: record.markdown,
-    };
-    if (record.replyToId) message.replyToId = record.replyToId;
-    const controls = record.approval
-      ? await prepareWhatsAppApproval(this.ctx.storage, record.approval, owner)
-      : null;
-    const options: DeliveryOptions = { templateFallback: false };
-    if (controls) options.controls = controls;
-    const result = await this.deliverMessage(
-      controls ? { ...message, text: controls.text } : message,
-      { kind: "installation", installationId: owner.installationId, generation: owner.generation },
-      undefined,
-      options,
-    );
-    if (result.ok && controls) {
-      await attachWhatsAppApprovalMessage(this.ctx.storage, controls.token, result.messageId);
-    }
-    return result;
   }
 
   /** WhatsApp shows typing only as a companion to the read receipt of the person's last message. */

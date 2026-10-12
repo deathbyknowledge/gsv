@@ -6,7 +6,7 @@ const TEMPLATE_NAME_PATTERN = /^[a-z0-9_]{1,512}$/;
 /** Meta language codes such as `en`, `en_US` or `pt_BR`. */
 const TEMPLATE_LANGUAGE_PATTERN = /^[a-z]{2,3}(?:_[A-Z]{2})?$/;
 
-export const DEFAULT_WHATSAPP_TEMPLATE_NAME = "gsv_message_notification";
+export const DEFAULT_WHATSAPP_TEMPLATE_NAME = "gsv_message";
 export const DEFAULT_WHATSAPP_TEMPLATE_LANGUAGE = "en";
 
 export type ManagedWhatsAppTemplateEnv = {

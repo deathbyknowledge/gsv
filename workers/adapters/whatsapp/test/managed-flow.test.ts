@@ -705,211 +705,87 @@ describe("managed WhatsApp clean-instance flow", () => {
       && record.body.text?.body === delivery.text)).toHaveLength(1);
   });
 
-  it("sends the template when Meta refuses a free-form message and lets the person's reply clear it", async () => {
-    // SAFETY: The test environment exposes the declared Durable Object namespace binding.
-    const peers = env.MANAGED_WHATSAPP_PEER as DurableObjectNamespace<ManagedWhatsAppPeer>;
-    const stub = peers.get(peers.idFromName(`managed:${ACTOR}`));
-    const peer = typedStub<ManagedPeerStub>(stub);
-    const route = (await runInDurableObject(stub, async (_instance, context) => (
-      (await context.storage.get<ManagedWhatsAppPeerState>(STATE_KEY))!
-    ))).activeRoute!;
+  it("sends actual text when Meta rejects free-form delivery without replaying it later", async () => {
+    const { stub, peer, route } = await linkedPeer("open");
     const templatesBefore = (await templateMessages()).length;
-
-    // The local receipt still says the window is open, but Meta answers 131047.
     await expect(peer.sendMessage(route.installationId, {
-      deliveryId: "outbound-meta-closed",
-      surface: { kind: "dm", id: ACTOR },
-      actorId: ACTOR,
-      routeGeneration: route.generation,
-      text: "outside window marker quick note",
-    })).resolves.toEqual({ ok: true });
+      deliveryId: "outbound-meta-closed", surface: { kind: "dm", id: ACTOR },
+      actorId: ACTOR, routeGeneration: route.generation, text: "outside window marker quick note",
+    })).resolves.toMatchObject({ ok: true, messageId: expect.any(String) });
     const templates = await templateMessages();
     expect(templates).toHaveLength(templatesBefore + 1);
-    expect(templates.at(-1)!.body.to).toBe(ACTOR);
     expect(templates.at(-1)!.body.template).toEqual({
-      name: "gsv_message_notification",
-      language: { code: "en" },
+      name: "gsv_message", language: { code: "en" },
       components: [
+        { type: "body", parameters: [{ type: "text", text: "outside window marker quick note" }] },
         { type: "button", sub_type: "quick_reply", index: "0", parameters: [{ type: "payload", payload: "gsvt:show" }] },
       ],
     });
-    expect((await sentMessages()).some((record) => record.body.text?.body === "outside window marker quick note")).toBe(false);
-    const pending = await runInDurableObject(stub, async (_instance, context) => (
-      (await context.storage.get<ManagedWhatsAppPeerState>(STATE_KEY))!.pendingTemplate
-    ));
-    expect(pending).toMatchObject({ messageId: templates.at(-1)!.result.id });
-
-    // The person's next message answers the template and reopens the window.
     expect((await SELF.fetch(await text("wamid.in.8", "back again"))).status).toBe(200);
     await vi.waitFor(async () => {
-      expect(await sentMessages()).toContainEqual(expect.objectContaining({
-        body: expect.objectContaining({ context: { message_id: "wamid.in.8" } }),
-      }));
+      expect((await sentMessages()).at(-1)?.body.text?.body).toBe("Personal received back again");
     });
-    expect(await runInDurableObject(stub, async (_instance, context) => (
-      (await context.storage.get<ManagedWhatsAppPeerState>(STATE_KEY))!.pendingTemplate
-    ))).toBeUndefined();
-    expect((await sentMessages()).filter((record) => record.body.text?.body === "outside window marker quick note")).toHaveLength(1);
+    expect((await sentMessages()).some((record) => record.body.text?.body === "outside window marker quick note")).toBe(false);
     expect(await heldKeys(stub)).toEqual([]);
   });
 
-  it("holds all replies and approvals behind one template until the person taps or writes back", async () => {
-    // SAFETY: The test environment exposes the declared Durable Object namespace binding.
-    const peers = env.MANAGED_WHATSAPP_PEER as DurableObjectNamespace<ManagedWhatsAppPeer>;
-    const stub = peers.get(peers.idFromName(`managed:${ACTOR}`));
-    const peer = typedStub<ManagedPeerStub>(stub);
-    const state = await runInDurableObject(stub, async (_instance, context) => (
-      (await context.storage.get<ManagedWhatsAppPeerState>(STATE_KEY))!
-    ));
-    const route = state.activeRoute!;
-    const surface = { kind: "dm" as const, id: ACTOR };
-    await runInDurableObject(stub, async (_instance, context) => {
-      await context.storage.put(STATE_KEY, { ...state, lastInboundAt: Date.now() - 25 * 60 * 60 * 1000 });
-    });
+  it("delivers each closed-window message or preview and forwards button replies once to Ship", async () => {
+    const { stub, peer, route } = await linkedPeer("closed");
     const templatesBefore = (await templateMessages()).length;
+    const surface = { kind: "dm" as const, id: ACTOR };
+    const texts = ["First late note", "Second late note", "long reply ".repeat(300).trimEnd()];
+    const deliveries = texts.map((text, index) => ({
+      deliveryId: `outbound-late-${index}`, surface, actorId: ACTOR, routeGeneration: route.generation, text,
+    }));
+    for (const delivery of deliveries) {
+      await expect(peer.sendMessage(route.installationId, delivery)).resolves.toMatchObject({ ok: true });
+    }
+    const templates = (await templateMessages()).slice(templatesBefore);
+    expect(templates).toHaveLength(3);
+    expect(templates[0]!.body.template?.components[0]?.parameters[0]?.text).toBe(texts[0]);
+    expect(templates[1]!.body.template?.components[0]?.parameters[0]?.text).toBe(texts[1]);
+    expect(templates[2]!.body.template?.components[0]?.parameters[0]?.text).toMatch(/… Open GSV for the full message\.$/);
+    expect(await heldKeys(stub)).toEqual([]);
+    await expect(peer.sendMessage(route.installationId, deliveries[2]!)).resolves.toMatchObject({ ok: true });
+    expect(await templateMessages()).toHaveLength(templatesBefore + 3);
+
+    const tap = { type: "button", button: { payload: "gsvt:show", text: "Show me" }, context: { id: templates[2]!.result.id! } };
+    const callsBefore = (await gatewayCalls()).length;
+    expect((await SELF.fetch(await notification("wamid.in.tap", tap))).status).toBe(200);
+    await vi.waitFor(async () => {
+      expect((await sentMessages()).at(-1)?.body.text?.body).toBe("Personal received Show me");
+    });
+    expect((await SELF.fetch(await notification("wamid.in.tap", tap))).status).toBe(200);
+    await runInDurableObject(stub, async (instance) => { await instance.alarm(); });
+    expect((await gatewayCalls()).slice(callsBefore).filter((call) => call.args?.message?.text === "Show me")).toHaveLength(1);
+    expect((await sentMessages()).some((record) => texts.includes(record.body.text?.body ?? ""))).toBe(false);
+  });
+
+  it("directs a closed-window approval to GSV without assigning its buttons to a template", async () => {
+    const { stub, peer, route } = await linkedPeer("closed");
+    const surface = { kind: "dm" as const, id: ACTOR };
+    const context = {
+      deliveryId: "run-late:hil:request-late", accountId: "managed", actorId: ACTOR,
+      surface, routeGeneration: route.generation, processId: "proc-late", runId: "run-late", processMode: "ship" as const,
+      hil: {
+        pid: "proc-late", requestId: "request-late", runId: "run-late", callId: "call-late",
+        toolName: "Shell", syscall: "shell.exec", target: "gsv", args: { input: "uptime" },
+        purpose: "check uptime", createdAt: Date.now(),
+      },
+    };
+    await expect(peer.sendMessage(route.installationId, {
+      deliveryId: context.deliveryId, surface, actorId: ACTOR, routeGeneration: route.generation, text: "",
+    }, undefined, context)).resolves.toMatchObject({ ok: true, messageId: undefined });
+    expect((await templateMessages()).at(-1)?.body.template?.components[0]?.parameters[0]?.text)
+      .toBe("An action needs your approval. Open GSV to review it.");
+    expect(await heldKeys(stub)).toEqual([]);
+    // The next message goes to Ship; there is no deferred approval replay.
     const interactiveBefore = (await sentMessages()).filter((record) => record.body.type === "interactive").length;
-
-    // Both short replies stay held. Their shared notification is claimed
-    // durably before Meta is called, so the race sends just one template.
-    // Both releases encounter an ambiguous provider response below.
-    const racing = ["first late note (graph fails ambiguously)", "second late note (graph fails ambiguously)"];
-    const raceResults = await Promise.all(racing.map((raceText, index) => peer.sendMessage(route.installationId, {
-      deliveryId: `outbound-closed-race-${index}`,
-      surface,
-      actorId: ACTOR,
-      routeGeneration: route.generation,
-      text: raceText,
-    })));
-    expect(raceResults.every((result) => result.ok)).toBe(true);
-    expect(await templateMessages()).toHaveLength(templatesBefore + 1);
-    const template = (await templateMessages()).at(-1)!;
-    expect(raceResults).toEqual([{ ok: true }, { ok: true }]);
-    const racingKeys = racing.map((_, index) =>
-      `managed_whatsapp_peer:v1:held:${encodeURIComponent(`outbound-closed-race-${index}`)}`);
-    expect(await heldKeys(stub)).toEqual(racingKeys);
-
-    // A longer reply waits behind the pending template instead of sending another.
-    const sentBeforeHolding = (await sentMessages()).length;
-    const longText = `# Report\n\n${"word ".repeat(300).trimEnd()}\n\nAnything else?`;
-    const longDelivery = {
-      deliveryId: "outbound-closed-long",
-      surface,
-      actorId: ACTOR,
-      routeGeneration: route.generation,
-      text: longText,
-    };
-    await expect(peer.sendMessage(route.installationId, longDelivery)).resolves.toEqual({ ok: true });
-    expect(await templateMessages()).toHaveLength(templatesBefore + 1);
-    expect((await sentMessages()).length).toBe(sentBeforeHolding);
-
-    // An approval prompt waits too: the template cannot carry its buttons.
-    const lateHil = {
-      pid: "proc-late",
-      requestId: "request-late",
-      runId: "run-late",
-      callId: "call-late",
-      toolName: "Shell",
-      syscall: "shell.exec",
-      target: "gsv",
-      args: { input: "uptime" },
-      purpose: "check how long your cloud home has been running",
-      createdAt: 1_700_000_200_000,
-    };
-    const lateContext = {
-      deliveryId: "run-late:hil:request-late",
-      accountId: "managed",
-      actorId: ACTOR,
-      surface,
-      routeGeneration: route.generation,
-      processId: "proc-late",
-      runId: "run-late",
-      processMode: "ship" as const,
-      hil: lateHil,
-    };
-    await expect(peer.sendMessage(route.installationId, {
-      deliveryId: lateContext.deliveryId,
-      surface,
-      actorId: ACTOR,
-      routeGeneration: route.generation,
-      text: "",
-    }, undefined, lateContext)).resolves.toEqual({ ok: true });
-    expect(await templateMessages()).toHaveLength(templatesBefore + 1);
+    expect((await SELF.fetch(await text("wamid.in.after-approval", "hello"))).status).toBe(200);
+    await vi.waitFor(async () => {
+      expect((await sentMessages()).at(-1)?.body.text?.body).toBe("Personal received hello");
+    });
     expect((await sentMessages()).filter((record) => record.body.type === "interactive")).toHaveLength(interactiveBefore);
-
-    // The Kernel's retry of a held delivery is deduplicated by the ledger.
-    await expect(peer.sendMessage(route.installationId, longDelivery)).resolves.toMatchObject({ ok: true });
-    expect(await templateMessages()).toHaveLength(templatesBefore + 1);
-
-    // Tapping the button reopens the window and releases the held messages in
-    // order through the free-form path, paragraph by paragraph, without
-    // relaying the tap to the Process.
-    const recordsBeforeTap = (await graphRecords()).length;
-    expect((await SELF.fetch(await notification("wamid.in.10", {
-      type: "button",
-      context: { from: "34600000000", id: template.result.id! },
-      button: { payload: "gsvt:show", text: "Show me" },
-    }))).status).toBe(200);
-    await vi.waitFor(async () => {
-      const released = (await graphRecords()).slice(recordsBeforeTap).filter((record) => record.kind === "message");
-      expect(released.map((record) => record.body.type)).toEqual(["text", "text", "interactive"]);
-    });
-    const released = (await graphRecords()).slice(recordsBeforeTap).filter((record) => record.kind === "message");
-    expect(released[0]!.body.text?.body).toMatch(/^\*Report\*\n\nword word/);
-    expect(released[1]!.body.text?.body).toBe("Anything else?");
-    expect(released[2]!.body.interactive?.body.text).toContain("Check how long your cloud home has been running.");
-    expect(released[2]!.body.interactive?.body.text).not.toContain("\"uptime\"");
-    expect(released[2]!.body.interactive?.action.buttons.map((button) => button.reply.title))
-      .toEqual(["Approve once", "Always approve", "Deny"]);
-    expect((await gatewayCalls()).some((call) => call.call === "adapter.inbound" && call.args?.message?.text === "Show me")).toBe(false);
-    expect(await graphRecords()).toContainEqual(expect.objectContaining({
-      kind: "read",
-      body: expect.objectContaining({ status: "read", message_id: "wamid.in.10" }),
-    }));
-    // Both racing releases met a server failure. Their outcomes stay unknown,
-    // while the messages held after them still went out.
-    const ambiguousReleases = async (): Promise<RejectedRecord[]> => (await rejectedSends())
-      .filter((record) => record.status === 500 && racing.includes(record.body.text?.body ?? ""));
-    expect(await ambiguousReleases()).toHaveLength(2);
-    expect(await heldKeys(stub)).toEqual(racingKeys);
-
-    // The released prompt resolves through proc.hil like any other.
-    const approveOnce = released[2]!.body.interactive!.action.buttons[0]!.reply.id;
-    expect(approveOnce).toMatch(/^gsvh:[A-Za-z0-9_-]{16}:o$/);
-    expect((await SELF.fetch(await notification("wamid.in.11", {
-      type: "interactive",
-      context: { from: "34600000000", id: released[2]!.result.id! },
-      interactive: { type: "button_reply", button_reply: { id: approveOnce, title: "Approve once" } },
-    }))).status).toBe(200);
-    await vi.waitFor(async () => {
-      expect(await gatewayCalls()).toContainEqual(expect.objectContaining({
-        call: "proc.hil",
-        args: { pid: "proc-late", requestId: "request-late", decision: "approve", remember: false },
-      }));
-    });
-
-    // A later message from the person tries the release again: the ledger
-    // remembers the unknown outcome, so nothing is resent and the record stays.
-    expect((await SELF.fetch(await text("wamid.in.12", "still here"))).status).toBe(200);
-    await vi.waitFor(async () => {
-      expect(await sentMessages()).toContainEqual(expect.objectContaining({
-        body: expect.objectContaining({ context: { message_id: "wamid.in.12" } }),
-      }));
-    });
-    expect(await ambiguousReleases()).toHaveLength(2);
-    expect(await heldKeys(stub)).toHaveLength(2);
-
-    // With the window open again, replies are free-form and nothing new is held.
-    await expect(peer.sendMessage(route.installationId, {
-      deliveryId: "outbound-inside-window",
-      surface,
-      actorId: ACTOR,
-      routeGeneration: route.generation,
-      text: "welcome back",
-    })).resolves.toMatchObject({ ok: true });
-    expect(await sentMessages()).toContainEqual(expect.objectContaining({
-      body: expect.objectContaining({ type: "text", text: { preview_url: false, body: "welcome back" } }),
-    }));
-    expect(await templateMessages()).toHaveLength(templatesBefore + 1);
   });
 
   it("drops a reply whose route changed before it could be delivered", async () => {
@@ -986,148 +862,68 @@ describe("managed WhatsApp clean-instance flow", () => {
     expect((await sentMessages()).some((record) => record.body.context?.message_id === "wamid.in.13")).toBe(false);
   });
 
-  it("releases held messages before answering an unsupported inbound reply", async () => {
+  it("does not replay an ambiguous template and allows later deliveries and replies", async () => {
     const { stub, peer, route } = await linkedPeer("closed");
-    const marker = "Held after reaction";
-    const deliveryId = "outbound-unsupported-release";
-    await expect(peer.sendMessage(route.installationId, {
-      deliveryId,
-      surface: { kind: "dm", id: ACTOR },
-      actorId: ACTOR,
-      routeGeneration: route.generation,
-      text: `${marker} ${"word ".repeat(300).trimEnd()}`,
-    })).resolves.toMatchObject({ ok: true });
-    expect(await heldKeys(stub)).toContain(`managed_whatsapp_peer:v1:held:${deliveryId}`);
-
-    const before = (await sentMessages()).length;
-    expect((await SELF.fetch(await notification("wamid.in.unsupported-release", {
-      type: "reaction",
-      reaction: { message_id: "wamid.in.15", emoji: "👍" },
-    }))).status).toBe(200);
-    await vi.waitFor(async () => {
-      expect((await sentMessages()).at(-1)?.body.context?.message_id).toBe("wamid.in.unsupported-release");
-    });
-    const released = (await sentMessages()).slice(before);
-    expect(released[0]?.body.text?.body).toMatch(/^Held after reaction /);
-    expect(released.at(-1)?.body.text?.body).toContain("could not receive that message type");
-    expect(await heldKeys(stub)).not.toContain(`managed_whatsapp_peer:v1:held:${deliveryId}`);
-  });
-
-  it("keeps an ambiguous template pending and holds later output until an inbound reply", async () => {
-    const { stub, peer, route } = await linkedPeer("closed");
-    const templatesBefore = (await templateMessages()).length;
+    // SAFETY: The managed test configuration declares this Fetcher binding.
+    const api = env.WHATSAPP_API as Fetcher;
+    await api.fetch("https://graph.test/fail-next-template", { method: "POST" });
+    const message = {
+      deliveryId: "ambiguous-template", surface: { kind: "dm" as const, id: ACTOR },
+      actorId: ACTOR, routeGeneration: route.generation, text: "Uncertain notification",
+    };
+    await expect(peer.sendMessage(route.installationId, message)).resolves.toMatchObject({ ok: false, ambiguous: true });
     const rejectedBefore = (await rejectedSends()).length;
-    // SAFETY: the managed test configuration exposes the fake Graph service.
-    await (env.WHATSAPP_API as Fetcher).fetch("https://graph.test/fail-next-template", { method: "POST" });
-    await expect(peer.sendMessage(route.installationId, {
-      deliveryId: "outbound-template-ambiguous",
-      surface: { kind: "dm", id: ACTOR },
-      actorId: ACTOR,
-      routeGeneration: route.generation,
-      text: "template outcome unknown",
-    })).resolves.toMatchObject({ ok: false, ambiguous: true });
-    const pending = await runInDurableObject(stub, async (_instance, context) => (
-      (await context.storage.get<ManagedWhatsAppPeerState>(STATE_KEY))!.pendingTemplate
-    ));
-    expect(pending).toMatchObject({ sentAt: expect.any(Number), expiresAt: expect.any(Number) });
-
-    await expect(peer.sendMessage(route.installationId, {
-      deliveryId: "outbound-after-template-ambiguous",
-      surface: { kind: "dm", id: ACTOR },
-      actorId: ACTOR,
-      routeGeneration: route.generation,
-      text: "Held after ambiguous template",
-    })).resolves.toEqual({ ok: true });
-    expect(await templateMessages()).toHaveLength(templatesBefore);
-    expect(await rejectedSends()).toHaveLength(rejectedBefore + 1);
-
-    expect((await SELF.fetch(await notification("wamid.in.ambiguous-template-reply", {
-      type: "reaction",
-      reaction: { message_id: "wamid.in.unsupported-release", emoji: "👍" },
-    }))).status).toBe(200);
+    await expect(peer.sendMessage(route.installationId, message)).resolves.toMatchObject({ ok: false, ambiguous: true });
+    expect(await rejectedSends()).toHaveLength(rejectedBefore);
+    await expect(peer.sendMessage(route.installationId, { ...message, deliveryId: "later-template", text: "Later note" })).resolves.toMatchObject({ ok: true });
+    expect((await SELF.fetch(await text("wamid.in.after-ambiguous", "What did you say?"))).status).toBe(200);
     await vi.waitFor(async () => {
-      expect((await sentMessages()).at(-1)?.body.context?.message_id).toBe("wamid.in.ambiguous-template-reply");
+      expect((await sentMessages()).at(-1)?.body.text?.body).toBe("Personal received What did you say?");
     });
-    expect((await sentMessages()).some((record) => record.body.text?.body === "Held after ambiguous template")).toBe(true);
-    expect((await sentMessages()).some((record) => record.body.text?.body === "template outcome unknown")).toBe(true);
-    expect(await runInDurableObject(stub, async (_instance, context) => (
-      (await context.storage.get<ManagedWhatsAppPeerState>(STATE_KEY))!.pendingTemplate
-    ))).toBeUndefined();
+    expect(await heldKeys(stub)).toEqual([]);
   });
 
-  it("admits inbound replies while an active template settles before releasing held output", async () => {
-    const { stub, peer, route } = await linkedPeer("closed");
+  it("forwards inbound replies without waiting for an outbound template to settle", async () => {
+    const { peer, route } = await linkedPeer("closed");
     await pauseGraphSend("template");
     const sending = peer.sendMessage(route.installationId, {
-      deliveryId: "outbound-template-in-flight",
-      surface: { kind: "dm", id: ACTOR },
-      actorId: ACTOR,
-      routeGeneration: route.generation,
-      text: `Held during template send ${"word ".repeat(300).trimEnd()}`,
+      deliveryId: "outbound-template-in-flight", surface: { kind: "dm", id: ACTOR },
+      actorId: ACTOR, routeGeneration: route.generation, text: "Notification in flight",
     });
     try {
+      await vi.waitFor(async () => { expect(await pausedGraphSend()).toMatchObject({ type: "template" }); });
+      expect((await SELF.fetch(await text("wamid.in.template-in-flight", "hello while sending"))).status).toBe(200);
       await vi.waitFor(async () => {
-        expect(await pausedGraphSend()).toMatchObject({ type: "template" });
+        expect((await sentMessages()).at(-1)?.body.text?.body).toBe("Personal received hello while sending");
       });
-      expect((await SELF.fetch(await notification("wamid.in.template-in-flight", {
-        type: "reaction",
-        reaction: { message_id: "wamid.in.ambiguous-template-reply", emoji: "👍" },
-      }))).status).toBe(200);
-      await vi.waitFor(async () => {
-        expect(await graphRecords()).toContainEqual(expect.objectContaining({
-          kind: "read",
-          body: expect.objectContaining({ message_id: "wamid.in.template-in-flight" }),
-        }));
-      });
-      expect(await runInDurableObject(stub, async (_instance, context) => (
-        (await context.storage.get<ManagedWhatsAppPeerState>(STATE_KEY))!.lastInboundMessageId
-      ))).toBe("wamid.in.template-in-flight");
-      expect((await sentMessages()).some((record) => record.body.text?.body?.startsWith("Held during template send"))).toBe(false);
     } finally {
       await resumeGraphSend();
     }
     await expect(sending).resolves.toMatchObject({ ok: true });
-    await vi.waitFor(async () => {
-      expect((await sentMessages()).at(-1)?.body.context?.message_id).toBe("wamid.in.template-in-flight");
-    });
-    const messages = await sentMessages();
-    const templateIndex = messages.findLastIndex((record) => record.body.type === "template");
-    const heldIndex = messages.findIndex((record) => record.body.text?.body?.startsWith("Held during template send"));
-    expect(templateIndex).toBeGreaterThanOrEqual(0);
-    expect(heldIndex).toBeGreaterThan(templateIndex);
+    expect((await sentMessages()).filter((record) => record.body.text?.body === "Notification in flight")).toHaveLength(0);
   });
 
-  it("uses a newer inbound receipt instead of sending a template after a delayed window rejection", async () => {
+  it("delivers once even if a reply reopens the window while Meta rejects the earlier send", async () => {
     const { peer, route } = await linkedPeer("open");
-    const templatesBefore = (await templateMessages()).length;
     await pauseGraphSend("window-rejection");
     const message = {
-      deliveryId: "outbound-window-reopened",
-      surface: { kind: "dm" as const, id: ACTOR },
-      actorId: ACTOR,
-      routeGeneration: route.generation,
-      text: "reopen before template admission",
+      deliveryId: "outbound-reopening-window", surface: { kind: "dm" as const, id: ACTOR },
+      actorId: ACTOR, routeGeneration: route.generation, text: "reopen before template admission",
     };
+    const before = (await templateMessages()).length;
     const sending = peer.sendMessage(route.installationId, message);
     try {
-      await vi.waitFor(async () => {
-        expect(await pausedGraphSend()).toMatchObject({ type: "text" });
-      });
-      expect((await SELF.fetch(await notification("wamid.in.window-reopened", {
-        type: "reaction",
-        reaction: { message_id: "wamid.in.template-in-flight", emoji: "👍" },
-      }))).status).toBe(200);
-      await vi.waitFor(async () => {
-        expect((await sentMessages()).at(-1)?.body.context?.message_id).toBe("wamid.in.window-reopened");
-      });
+      await vi.waitFor(async () => { expect(await pausedGraphSend()).toMatchObject({ type: "text" }); });
+      expect((await SELF.fetch(await text("wamid.in.window-reopened", "hello again"))).status).toBe(200);
+      await vi.waitFor(async () => { expect((await sentMessages()).at(-1)?.body.text?.body).toBe("Personal received hello again"); });
     } finally {
       await resumeGraphSend();
     }
-    await expect(sending).resolves.toMatchObject({ ok: false, retryable: true });
+    await expect(sending).resolves.toMatchObject({ ok: true });
     await expect(peer.sendMessage(route.installationId, message)).resolves.toMatchObject({ ok: true });
-    expect(await templateMessages()).toHaveLength(templatesBefore);
-    expect((await sentMessages()).filter((record) => record.body.text?.body === message.text)).toHaveLength(1);
+    expect(await templateMessages()).toHaveLength(before + 1);
   });
+
 });
 
 it("does not export the retired linked-device entrypoints", async () => {

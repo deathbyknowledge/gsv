@@ -73,42 +73,44 @@ template, and a template does not reopen the window; only the person's reply
 does, and a tap on a quick-reply button counts as a reply. Meta bills each
 template sent outside the window at the category assigned to it.
 
-The adapter uses a notification with no body parameters and one quick-reply
+The adapter uses a template with one body parameter and one quick-reply
 button. File it in Meta's message template manager and wait for approval:
 
-- Category: **Marketing** for this general notification; do not assume a
-  Utility classification or rate
-- Name: `gsv_message_notification` (or `WHATSAPP_TEMPLATE_NAME`)
+- Category: **Marketing** for this general update; do not assume a Utility rate
+- Name: `gsv_message` (or `WHATSAPP_TEMPLATE_NAME`)
 - Language: English (`en`, or `WHATSAPP_TEMPLATE_LANGUAGE`)
 - Header and footer: none
-- Body: `Your GSV has a message for you.`
-- Button: type **Quick reply**, label `Read message`
+- Body: `Your GSV has an update about your request: {{1}} Tap below to continue in WhatsApp.`
+- Button: type **Quick reply**, label `Show me`
 
-Deploy this notification contract with a matching approved template. The
-older `gsv_message` template with a body parameter is not compatible. Leave
-`WHATSAPP_TEMPLATE_NAME` empty until the replacement is approved.
+Use this body contract even if you customize the template name: the adapter
+budgets the parameter against its surrounding text and Meta's 1,024-character
+body limit. Leave `WHATSAPP_TEMPLATE_NAME` empty until your template is approved.
 
-Behaviour once the template is approved:
+When the local receipt says the window is closed, or Meta rejects the first
+free-form part with error 131047, the template carries the actual message.
+Paragraphs become a single line. If the message is too long, it carries a
+preview ending with **Open GSV for the full message.** The complete original
+remains in the canonical GSV conversation, with its formatting and attachments.
+An approval notification directs the person to review the request in GSV;
+templates do not carry approval controls.
 
-- When the peer's own receipt says the window is closed, or Meta answers a
-  free-form send with error 131047, the template goes out instead.
-- Every original reply, including short replies and approval prompts, is held
-  in the peer's storage and reported to the Kernel as accepted. The template
-  contains none of the original message.
-  The person's next message, or a tap on **Read message**, opens the window and
-  releases held messages in order through the normal free-form path with
-  paragraph splitting and approval buttons, before their message is relayed.
-  The tap itself is not relayed to the Process.
-- One template is pending at a time. While it is, further replies wait behind
-  it rather than each sending a template. Held messages and the pending
-  template expire after seven days.
-- Attachments cannot wait behind a template; a send with media outside the
-  window fails with a specific error.
-- With `WHATSAPP_TEMPLATE_NAME` set to an empty value, no template is used and
-  a send outside the window fails with `WhatsApp customer service window is
-  closed: this number has not messaged GSV in the last 24 hours, and no
-  template is configured` and a pointer to this section. A template Meta does
-  not know or has paused fails with Meta's 1320xx code and the same pointer.
+There is no adapter outbox or automatic replay when the person replies. Each
+new message uses its own template; the delivery ledger still deduplicates
+retries and preserves ambiguous outcomes. **Show me** is an ordinary user
+reply forwarded to Ship, as is a typed follow-up such as “What did you say?”.
+Incoming replies do not wait for earlier outbound sends to finish.
+
+On upgrade, the adapter discards old outbox copies and pending notification
+markers; the canonical conversation retains the originals. Old internal
+replay receipts complete without sending. Replies admitted before the upgrade
+retain their original deduplication identity and route generation.
+
+Attachments cannot be sent through this text template: out-of-window media
+sends fail explicitly. Use another authorized destination or wait for a reply.
+With an empty template name, out-of-window delivery fails with a configuration
+error. A template Meta does not know or has paused fails with its 1320xx code.
+Neither failure is silently treated as delivery.
 
 ## Configuration
 
@@ -123,7 +125,7 @@ The platform operator configures these Worker secrets and variables:
 - `WHATSAPP_WEBHOOK_BASE_URL` — the adapter Worker's public origin
 - `WHATSAPP_DISPLAY_NUMBER` — the number people message, in E.164, shown in GSV
 - `WHATSAPP_TEMPLATE_NAME` — the notification template sent outside the 24-hour
-  window; defaults to `gsv_message_notification`, and an empty value switches templates off
+  window; defaults to `gsv_message`, and an empty value switches templates off
 - `WHATSAPP_TEMPLATE_LANGUAGE` — that template's language code; defaults to `en`
 - `WHATSAPP_ALLOWED_ACTOR_IDS` — optional comma-separated staging allowlist
 

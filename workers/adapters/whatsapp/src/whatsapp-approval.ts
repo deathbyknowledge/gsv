@@ -34,7 +34,7 @@ export type WhatsAppApprovalControls = {
 };
 
 /**
- * What the peer keeps to present an approval again later: the delivery
+ * What the peer needs to present an approval: the delivery
  * context, the request identity and the rendered presentation. The tool
  * arguments never leave the original request.
  */
@@ -54,7 +54,7 @@ export const WHATSAPP_INTERACTIVE_BODY_LIMIT = 1024;
 /** Meta allows three reply buttons with titles of at most twenty characters. */
 const REPLY_BUTTON_TITLE_LIMIT = 20;
 
-/** Reduces one approval send to what the peer may keep and present again. */
+/** Reduces one approval send to the identity and presentation used by its controls. */
 export function describeWhatsAppApproval(
   context: AdapterDeliveryContext,
   request: ProcHilRequest,
@@ -83,7 +83,7 @@ export function whatsAppApprovalPrompt(source: WhatsAppApprovalSource): string {
  * Persist a callback capability before exposing reply buttons. Returns null
  * when the prompt cannot be presented natively, so the caller falls back to
  * the plain text that directs the person to Chat. Preparing the same source
- * again yields the same token, so a held prompt can be presented later.
+ * again yields the same token, so a retried delivery keeps its controls.
  */
 export async function prepareWhatsAppApproval(
   storage: DurableObjectStorage,
