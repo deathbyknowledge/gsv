@@ -19,6 +19,7 @@ import {
   type McpServerRows,
 } from "./mcp-client";
 import { McpOAuthProvider, type OAuthKeyValueStorage } from "./mcp-oauth-provider";
+import { createMcpOAuthFixture } from "../../test-fixtures/mcp-oauth";
 
 const CALLBACK_URL = "https://gsv.example/oauth/callback";
 
@@ -893,6 +894,173 @@ describe("McpClientConnection discovery", () => {
     await new Promise((resolve) => setTimeout(resolve, 60));
     expect(connection.tools.map((tool) => tool.name)).toEqual(["stable"]);
     expect(connection.serverCapabilities).toBeUndefined();
+  });
+});
+
+describe("McpClientManager OAuth recovery", () => {
+  const managers: McpClientManager[] = [];
+
+  afterEach(async () => {
+    for (const manager of managers.splice(0)) {
+      await manager.whenIdle();
+      await Promise.all(Object.values(manager.mcpConnections).map((connection) => connection.close()));
+    }
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  async function setup() {
+    const origin = "https://mcp.example";
+    const fixture = createMcpOAuthFixture(origin);
+    vi.stubGlobal("fetch", (input: RequestInfo | URL, init?: RequestInit) =>
+      fixture.fetch(new Request(input, init)));
+    const rows = new FakeRows();
+    const storage = new FakeStorage();
+    const createProvider = () => new McpOAuthProvider(storage, "install-1", CALLBACK_URL);
+    const createManager = () => {
+      const manager = new McpClientManager({ name: "GSV Kernel", version: "0" }, {
+        rows, createAuthProvider: createProvider, retryBackoffMs: 0,
+      });
+      managers.push(manager);
+      return manager;
+    };
+    const manager = createManager();
+    const provider = createProvider();
+    provider.serverId = "mcp-1";
+    await manager.registerServer("mcp-1", {
+      url: `${origin}/mcp`, name: "tools", callbackUrl: CALLBACK_URL,
+      transport: { type: "streamable-http", authProvider: provider },
+    });
+    async function signIn(target = manager) {
+      const authUrl = rows.get("mcp-1")?.auth_url;
+      if (!authUrl) throw new Error("sign-in URL missing");
+      const authorize = await fixture.fetch(new Request(authUrl));
+      const callback = authorize.headers.get("location");
+      if (!callback) throw new Error("callback missing");
+      await expect(target.handleCallbackRequest(new Request(callback)))
+        .resolves.toEqual({ serverId: "mcp-1", authSuccess: true });
+      await target.establishConnection("mcp-1");
+      expect(target.mcpConnections["mcp-1"].connectionState).toBe("ready");
+      expect(rows.get("mcp-1")?.auth_url).toBeNull();
+    }
+    expect((await manager.connectToServer("mcp-1")).state).toBe("authenticating");
+    await signIn();
+    const connection = manager.mcpConnections["mcp-1"];
+    if (!(connection instanceof McpClientConnection)) throw new Error("connection missing");
+    return { manager, connection, fixture, rows, storage, provider, signIn, createManager };
+  }
+
+  it("renews valid tokens without asking for another sign-in", async () => {
+    const { manager, fixture, connection, rows } = await setup();
+    fixture.expire(true);
+    await manager.refreshConnection("mcp-1");
+    expect(connection.connectionState).toBe("ready");
+    expect(connection.connectionError).toBeNull();
+    expect(rows.get("mcp-1")?.auth_url).toBeNull();
+    expect(fixture.refreshes).toBe(1);
+    expect(fixture.exchanges).toBe(1);
+  });
+
+  it.each(["discovery", "tool", "notification"])("reauthorizes the same server after %s", async (source) => {
+    const { manager, fixture, connection, rows, signIn } = await setup();
+    const changes = vi.fn();
+    manager.onServerStateChanged(changes);
+    fixture.expire();
+    if (source === "discovery") {
+      await manager.refreshConnection("mcp-1");
+    } else if (source === "tool") {
+      await expect(manager.callTool({ serverId: "mcp-1", name: "operate" })).rejects.toThrow("Unauthorized");
+    } else {
+      connection.client.transport?.onmessage?.({ jsonrpc: "2.0", method: "notifications/tools/list_changed" });
+      await vi.waitFor(() => expect(connection.connectionState).toBe("authenticating"));
+    }
+    expect(connection.connectionState).toBe("authenticating");
+    expect(connection.connectionError).toBeNull();
+    expect(changes).toHaveBeenCalled();
+    const authUrl = rows.get("mcp-1")?.auth_url;
+    expect(authUrl).toContain("/authorize?");
+    await manager.refreshConnection("mcp-1");
+    expect(rows.get("mcp-1")?.auth_url).toBe(authUrl);
+    await expect(manager.callTool({ serverId: "mcp-1", name: "operate" })).rejects.toThrow("requires sign-in");
+    await signIn();
+    expect(fixture.exchanges).toBe(2);
+    expect(fixture.calls).toBe(0);
+    expect(rows.list()).toHaveLength(1);
+    await expect(manager.callTool({ serverId: "mcp-1", name: "operate" })).resolves.toMatchObject({ isError: false });
+    expect(fixture.calls).toBe(1);
+  });
+
+  it("finishes renewed authorization after restoring the manager", async () => {
+    const { manager, fixture, rows, signIn, createManager } = await setup();
+    fixture.expire();
+    await manager.refreshConnection("mcp-1");
+    const authUrl = rows.get("mcp-1")?.auth_url;
+    const restored = createManager();
+    restored.restoreConnectionsFromStorage();
+    expect(restored.mcpConnections["mcp-1"].connectionState).toBe("authenticating");
+    await restored.refreshConnection("mcp-1");
+    expect(rows.get("mcp-1")?.auth_url).toBe(authUrl);
+    await signIn(restored);
+    expect(rows.list()).toHaveLength(1);
+  });
+
+  it("replaces expired sign-in links on refresh", async () => {
+    const { manager, fixture, rows, signIn } = await setup();
+    fixture.expire();
+    await manager.refreshConnection("mcp-1");
+    const expired = rows.get("mcp-1")?.auth_url;
+    const now = Date.now();
+    vi.spyOn(Date, "now").mockReturnValue(now + 11 * 60 * 1000);
+    await manager.refreshConnection("mcp-1");
+    expect(rows.get("mcp-1")?.auth_url).toBeTruthy();
+    expect(rows.get("mcp-1")?.auth_url).not.toBe(expired);
+    await signIn();
+  });
+
+  it("reconnects a failed discovery instead of repeating it on the broken connection", async () => {
+    const { manager, connection } = await setup();
+    vi.spyOn(connection.client, "listTools").mockRejectedValueOnce(new Error("discovery failed"));
+    await manager.refreshConnection("mcp-1");
+    expect(connection.connectionState).toBe("connected");
+    expect(connection.connectionError).toContain("discovery failed");
+    const init = vi.spyOn(connection, "init");
+    await manager.refreshConnection("mcp-1");
+    expect(init).toHaveBeenCalledTimes(1);
+    expect(connection.connectionState).toBe("ready");
+    expect(connection.connectionError).toBeNull();
+  });
+
+  it("keeps one sign-in when rejected calls overlap and fences older discovery", async () => {
+    const { manager, fixture, connection, rows, signIn } = await setup();
+    let finishList!: (value: { tools: [] }) => void;
+    vi.spyOn(connection.client, "listTools").mockImplementationOnce(() =>
+      new Promise((resolve) => { finishList = resolve; }));
+    const discovery = manager.discoverIfConnected("mcp-1");
+    fixture.expire();
+    await Promise.allSettled([
+      manager.callTool({ serverId: "mcp-1", name: "operate" }),
+      manager.callTool({ serverId: "mcp-1", name: "operate" }),
+    ]);
+    await discovery;
+    expect(connection.connectionState).toBe("authenticating");
+    expect(rows.get("mcp-1")?.auth_url).toBeTruthy();
+    await signIn();
+    finishList({ tools: [] });
+    await Promise.resolve();
+    expect(connection.connectionState).toBe("ready");
+    expect(connection.tools.map((tool) => tool.name)).toEqual(["operate"]);
+    expect(fixture.calls).toBe(0);
+  });
+
+  it("leaves downstream OAuth errors and ordinary HTTP 403 outside connection authorization", async () => {
+    const { manager, fixture, connection, rows } = await setup();
+    fixture.toolError = true;
+    await expect(manager.callTool({ serverId: "mcp-1", name: "operate" })).resolves.toMatchObject({ isError: true });
+    fixture.forbidden = true;
+    await expect(manager.callTool({ serverId: "mcp-1", name: "operate" })).rejects.toThrow("Forbidden");
+    expect(connection.connectionState).toBe("ready");
+    expect(rows.get("mcp-1")?.auth_url).toBeNull();
+    expect(fixture.refreshes).toBe(0);
   });
 });
 

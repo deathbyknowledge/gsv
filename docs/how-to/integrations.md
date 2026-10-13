@@ -13,6 +13,13 @@ Servers that use OAuth show a **sign in** link on their row after they are added
 
 Adding a server requires the `sys.mcp.add` capability; calling a tool through it asks for approval by default (see the [approval policy](/reference/configuration#tool-approval-policy)).
 
+GSV renews OAuth tokens automatically when the server supports it. If the server
+requires you to authorise again, its row shows **authenticating** and a **sign in**
+link, including when this happens during discovery or a tool call. Follow that
+link to restore the existing connection; its server ID stays the same. **refresh**
+retries a failed connection or replaces an expired sign-in link. A tool call that
+required sign-in must be run again after authorization completes.
+
 ## From a shell
 
 ```bash
