@@ -353,7 +353,7 @@ describe("process history", () => {
           // SAFETY: test fixture is constructed with the asserted domain shape.
           const content = request.context.messages[0].content as string;
           transcript = content
-            .slice("Process history segment JSONL:\n".length)
+            .slice("Next process history segment JSONL (a record may continue across parts):\n".length)
             .split("\n\nWrite the replacement summary", 1)[0];
           return "Summary.";
         },
@@ -369,14 +369,12 @@ describe("process history", () => {
       }),
     );
     expect(response.data).toMatchObject({ ok: true, archivedMessages: 5 });
-    expect(transcript.length).toBeLessThanOrEqual(24_000);
-    const records = transcript.split("\n").map((line) => JSON.parse(line));
-    expect(records).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ record_truncated: true }),
-        expect.objectContaining({ omitted_messages: expect.any(Number) }),
-      ]),
-    );
+    expect(transcript.length).toBeLessThanOrEqual(256_000);
+    const records = transcript.trimEnd().split("\n").map((line) => JSON.parse(line));
+    expect(records).toHaveLength(5);
+    for (let index = 0; index < 5; index += 1) {
+      expect(JSON.stringify(records[index])).toContain(`${index}:${"x".repeat(index === 0 ? 50_000 : 10_000)}`);
+    }
 
     await runInProcess(stub, (process) => {
       process.runs.active = null;
@@ -912,11 +910,11 @@ describe("process history", () => {
       }, async (request: any) => {
         summaryCalls += 1;
         expect(request.options).toMatchObject({
-          maxTokens: 4096,
+          maxTokens: 187,
           reasoning: "off",
           timeoutMs: 180000,
         });
-        expect(JSON.stringify(request.context)).toContain("old context A");
+        expect(JSON.stringify(request.context)).toContain(summaryCalls === 1 ? "old context A" : "Auto compact summary.");
         return "Auto compact summary.";
       });
 
@@ -955,7 +953,7 @@ describe("process history", () => {
     });
 
     expect(emitted.generationCalls).toBe(2);
-    expect(emitted.summaryCalls).toBe(1);
+    expect(emitted.summaryCalls).toBeGreaterThan(1);
     expect(
       emitted.messages
         .filter((message: any) => message.role !== "toolResult")

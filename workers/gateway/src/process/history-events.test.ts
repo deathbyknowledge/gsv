@@ -7,6 +7,7 @@ import { decodeWireFrameJson } from "../protocol/decode-wire-frame";
 import { deferred, initProcess, ROOT_IDENTITY, runInProcess } from "./do-test-harness";
 import { PROCESS_RESET_AT_KEY } from "./internal/lifecycle";
 import { buildCompactionSummaryContext } from "./history/helpers";
+import { renderCompactionTranscriptChunks } from "./history/compaction-renderer";
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -40,7 +41,7 @@ describe("registered Process events", () => {
       expect(schedule).not.toHaveBeenCalled();
       process.store.messages.appendMessage("system", "retired approval notice", { record: { kind: "event", payload: event } });
       expect(await process.history.buildContextMessages()).toEqual([]);
-      const messages = process.store.messages.getMessages();
+      const messages = [...renderCompactionTranscriptChunks(process.store.messages.getMessages(), 24_000)].join("");
       expect(JSON.stringify(buildCompactionSummaryContext(messages))).not.toContain("retired approval notice");
       expect(JSON.stringify(buildCompactionSummaryContext(messages))).not.toContain("process.approval");
       expect(process.store.messages.getRecords()[0]).toMatchObject({ kind: "event", payload: event });

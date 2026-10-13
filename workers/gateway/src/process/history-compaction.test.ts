@@ -1,7 +1,7 @@
 import type { JsonValue, ProcHistoryRecordData } from "@humansandmachines/gsv/protocol";
 import { describe, expect, it } from "vitest";
 import { initProcess, ROOT_IDENTITY, runInProcess } from "./do-test-harness";
-import { renderCompactionTranscriptWindow } from "./history/compaction-renderer";
+import { renderCompactionTranscriptChunks } from "./history/compaction-renderer";
 import { buildCompactionSummaryContext, isCompactionSummaryMessage } from "./history/helpers";
 import { inferHistoryRecords } from "./storage/history-records";
 import { normalizeCompactionCut } from "./storage/record-codec";
@@ -42,7 +42,7 @@ describe("structured compaction transcript", () => {
       message(20, { role: "toolResult", toolCallId: "compatibility-call", records: [result("call:read", { count: 3 })] }),
       message(30, { role: "system", content: "Legacy runtime event" }),
     ];
-    const transcript = renderCompactionTranscriptWindow(source, 24_000);
+    const transcript = [...renderCompactionTranscriptChunks(source, 24_000)].join("").trimEnd();
     expect(lines(transcript)).toEqual([
       ...records.map((record, index) => ({ messageId: 10, index, generation: 1, runId: "run:summary", createdAt: 100, ...record })),
       { messageId: 20, index: 0, generation: 1, runId: "run:summary", createdAt: 100, ...result("call:read", { count: 3 }) },
@@ -53,45 +53,47 @@ describe("structured compaction transcript", () => {
     ]);
     expect(transcript).not.toContain("Obsolete compatibility prose");
     expect(transcript).not.toContain("tool_calls");
-    const context = buildCompactionSummaryContext(source, "Unchanged summary prompt");
+    const context = buildCompactionSummaryContext(transcript, "Unchanged summary prompt");
     expect(context.systemPrompt).toBe("Unchanged summary prompt");
     expect(context.messages[0]?.content).toContain(transcript);
   });
 
-  it("keeps bounded head and tail records with explicit omission and truncation", () => {
+  it("covers every record, including middle corrections and large tool results", () => {
     const source = Array.from({ length: 100 }, (_, index) => message(index + 1, {
-      records: [result(`call:${index}`, { nested: { text: `${index}:` + '"\\\n'.repeat(10_000) } })],
+      records: [result(`call:${index}`, { text: `${index}:` + '"\\\n'.repeat(1_000) })],
     }));
-    const transcript = renderCompactionTranscriptWindow(source, 2_000);
-    const parsed = lines(transcript);
-    expect(transcript.length).toBeLessThanOrEqual(2_000);
-    expect(parsed[0]).toMatchObject({ messageId: 1, kind: "result", record_truncated: true, payload_preview: expect.stringContaining('"output":{"nested":') });
-    expect(parsed.at(-1)).toMatchObject({ messageId: 100, kind: "result", record_truncated: true });
-    expect(parsed).toContainEqual({ omitted_records: 98, omitted_messages: 98 });
+    source[50] = message(51, { records: [note("Correction: the deadline is Friday, not Monday.")] });
+    const chunks = [...renderCompactionTranscriptChunks(source, 2_000)];
+    expect(chunks.length).toBeGreaterThan(1);
+    expect(chunks.every((chunk) => chunk.length <= 2_000)).toBe(true);
+    const parsed = lines(chunks.join("").trimEnd());
+    expect(parsed).toHaveLength(100);
+    expect(parsed[50]).toMatchObject({ messageId: 51, payload: { text: "Correction: the deadline is Friday, not Monday." } });
+    expect(parsed[0]).toMatchObject({ payload: source[0]!.records![0]!.payload });
+    expect(parsed.at(-1)).toMatchObject({ payload: source.at(-1)!.records![0]!.payload });
   });
 
-  it("bounds deeply nested payloads without recursively serializing the whole value", () => {
+  it("streams deeply nested payloads without recursive serialization or omissions", () => {
     let output: JsonValue = { text: "deep value" };
     for (let index = 0; index < 20_000; index += 1) output = { nested: output };
-    const transcript = renderCompactionTranscriptWindow([
+    const chunks = [...renderCompactionTranscriptChunks([
       message(1, { records: [result("call:deep", output)] }),
       message(2, { records: [note("The final state remains visible")] }),
-    ], 1_500);
-    expect(transcript.length).toBeLessThanOrEqual(1_500);
-    expect(lines(transcript)[0]).toMatchObject({ messageId: 1, kind: "result", record_truncated: true });
+    ], 1_500)];
+    expect(chunks.every((chunk) => chunk.length <= 1_500)).toBe(true);
+    const transcript = chunks.join("").trimEnd();
+    expect(transcript).toContain("deep value");
     expect(lines(transcript).at(-1)).toMatchObject({ messageId: 2, kind: "note", payload: { text: "The final state remains visible" } });
   });
 
-  it("emits only complete records for small windows and nothing for an empty transcript", () => {
-    expect(renderCompactionTranscriptWindow([], 100)).toBe("");
-    expect(renderCompactionTranscriptWindow([message(1)], 1)).toBe("");
-    const source = [message(1, { records: [note('Exact JSON: " \\ \n 😀')] })];
-    const full = renderCompactionTranscriptWindow(source, 24_000);
-    expect(renderCompactionTranscriptWindow(source, full.length)).toBe(full);
-    expect(lines(full)[0]).toMatchObject({ payload: { text: 'Exact JSON: " \\ \n 😀' } });
-    const shortened = renderCompactionTranscriptWindow(source, full.length - 1);
-    expect(shortened.length).toBeLessThan(full.length);
-    expect(() => lines(shortened)).not.toThrow();
+  it("preserves JSON escapes and Unicode across arbitrarily small chunks", () => {
+    expect([...renderCompactionTranscriptChunks([], 100)]).toEqual([]);
+    const text = 'Exact JSON: " \\ \n 😀';
+    const source = [message(1, { records: [note(text)] })];
+    for (const size of [1, 7, 24_000]) {
+      const transcript = [...renderCompactionTranscriptChunks(source, size)].join("").trimEnd();
+      expect(lines(transcript)[0]).toMatchObject({ payload: { text } });
+    }
   });
 });
 

@@ -2620,6 +2620,20 @@ describe("proc native command", () => {
     );
   });
 
+  it("submits a current-process handover without choosing history ids", async () => {
+    sendFrameToProcessMock.mockResolvedValueOnce({ type: "res", id: "handover", ok: true, data: { ok: true, pid: "task:shell", pending: true } });
+    const result = await handleShellExec({ input: "proc compact --summary 'The source is verified; write the report next.'" }, makeContext({
+      capabilities: ["proc.history.compact"],
+      procs: { get: vi.fn((pid: string) => makeProcess({ processId: pid })), getOwnerUid: vi.fn(() => IDENTITY.uid) },
+    }));
+    expect(result.status).toBe("completed");
+    expect(result.stdout).toContain("Handover saved");
+    expect(result.stdout).not.toContain("archived=");
+    expect(sendFrameToProcessMock).toHaveBeenCalledWith(TEST_INSTALLATION_ID, "task:shell", expect.objectContaining({
+      call: "proc.history.compact", args: { pid: "task:shell", summary: "The source is verified; write the report next." },
+    }));
+  });
+
   it("reads live process history from the native proc command surface", async () => {
     sendFrameToProcessMock.mockResolvedValueOnce({
       type: "res",

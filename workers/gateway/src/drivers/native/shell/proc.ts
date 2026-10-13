@@ -442,6 +442,9 @@ async function runProcCommand(args: string[], ctx: KernelContext): Promise<ExecR
       if (!result.ok) {
         return { stdout: "", stderr: `proc compact: ${result.error}\n`, exitCode: 1 };
       }
+      if ("pending" in result) {
+        return { stdout: "Handover saved. Compaction follows when the current tools finish.\n", stderr: "", exitCode: 0 };
+      }
       return {
         stdout: [
           `segment_id=${result.segment.id}`,
@@ -980,10 +983,10 @@ function parseProcCompactCommand(args: string[], ctx: KernelContext): ParsedProc
     Number(targetPressure !== undefined)
       + Number(keepLast !== undefined)
       + Number(throughMessageId !== undefined)
-    !== 1
+    > 1
   ) {
     throw new Error(
-      "provide exactly one of --target-pressure, --keep-last, or --through-message-id",
+      "provide at most one of --target-pressure, --keep-last, or --through-message-id",
     );
   }
 
@@ -1304,6 +1307,7 @@ function procUsage(): string {
     "  proc history [--pid PID] [--tail] [--limit N] [--offset N] [--json] [--full]",
     "  proc segment <segment-id> [--pid PID] [--limit N] [--offset N] [--json]",
     "  proc compact [--pid PID] (--target-pressure N | --keep-last N | --through-message-id ID) [--summary TEXT | --generate-summary]",
+    "  proc compact --summary TEXT  (handover from the current process)",
     "  proc fork (<segment-id> | --message-id ID) [--pid PID] [--label LABEL] [--segment-only]",
     "  proc send <pid> [--metadata-json json] <message>",
     "  proc call <pid> [--metadata-json json] [--timeout 60s] <message>",

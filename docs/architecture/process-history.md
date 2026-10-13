@@ -74,8 +74,9 @@ A deadline can therefore produce new model input without fabricating a ledger
 mutation. Event history and batch admission share the same deduplicated transaction.
 
 `process/history/compaction-renderer.ts` renders typed JSONL for summarization.
-The bounded transcript preserves head and tail records and explicitly marks
-omission and oversized payloads. Person-only events are excluded from summary
+Bounded sequential passes cover the complete transcript, including records
+that span a part boundary; each pass revises the cumulative handover.
+Person-only events are excluded from summary
 input as well. Prefix selection keeps storage coordinates while estimating only
 the corresponding provider messages; calls and their results remain together.
 The replacement is a `history.compacted` event with summary and segment identity.

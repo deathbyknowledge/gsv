@@ -548,7 +548,7 @@ export function momentsFromRows(rows: readonly ChatTranscriptRow[], activeRunId:
       return;
     }
     if (row.role === "system" && row.text.trim()) {
-      if (row.event?.audience === "model" && row.event.kind !== "history.compacted") return;
+      if (row.event?.audience === "model") return;
       moments.push({
         id: row.id,
         role: "note", event: row.event,
@@ -798,7 +798,7 @@ export function momentsFromConversation(
 
   for (const row of transcript) {
     if (row.role === "system" && row.text.trim()) {
-      if (row.event?.audience === "model" && row.event.kind !== "history.compacted") continue;
+      if (row.event?.audience === "model") continue;
       moments.push({ id: row.id, role: "note", event: row.event, text: row.text, streaming: false, thinking: false, runId: row.runId ?? null, processId: row.processId, timestamp: row.timestamp ?? null, activities: [], narration: "" });
       continue;
     }

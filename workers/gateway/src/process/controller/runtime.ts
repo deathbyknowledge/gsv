@@ -1983,7 +1983,7 @@ export class ProcessController {
         break;
       case "proc.history.compact":
         data = await this.handleCancellableRequest(frame.id, (signal) =>
-          this.host.history.handleHistoryCompact(frame.args, { signal }),
+          this.host.history.requestHistoryCompaction(frame.args, frame.toolOwner, signal),
         );
         break;
       case "proc.history.export":
