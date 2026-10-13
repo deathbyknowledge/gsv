@@ -1,4 +1,5 @@
 import { createServer, type Server } from "node:http";
+import type { AddressInfo } from "node:net";
 import { GSVClient } from "@humansandmachines/gsv";
 import type { TestHarness } from "wrangler";
 import { afterAll, beforeAll, expect, it, vi } from "vitest";
@@ -34,8 +35,8 @@ beforeAll(async () => {
     server.once("error", reject);
     server.listen(0, "127.0.0.1", resolve);
   });
-  const address = server.address();
-  if (!address || typeof address === "string") throw new Error("fixture address missing");
+  // SAFETY: the completed listen(0, "127.0.0.1") call binds a TCP address, not a pipe.
+  const address = server.address() as AddressInfo;
   origin = `http://127.0.0.1:${address.port}`;
   fixture = createMcpOAuthFixture(origin);
   harness = createGatewayTestHarness();

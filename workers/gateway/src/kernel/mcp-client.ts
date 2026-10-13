@@ -288,6 +288,7 @@ export class McpClientConnection implements McpConnection {
 
   cancelDiscovery(): void {
     this.discoveryAttempt += 1;
+    // SAFETY: this private counter object has exactly the ServerLists keys and never gains properties.
     for (const list of Object.keys(this.listGenerations) as Array<keyof ServerLists>) {
       this.listGenerations[list] += 1;
     }

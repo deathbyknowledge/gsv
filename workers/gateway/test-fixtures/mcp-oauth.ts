@@ -1,3 +1,4 @@
+import type { CallToolResult, InitializeResult, ListToolsResult } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 
 /** An isolated OAuth issuer and MCP resource; all credentials are fixture-only. */
@@ -80,7 +81,7 @@ export function createMcpOAuthFixture(origin: string) {
         id: z.union([z.number(), z.string()]).optional(), method: z.string(),
       }).parse(await request.json());
       if (message.id === undefined) return new Response(null, { status: 202 });
-      let result: unknown;
+      let result: InitializeResult | ListToolsResult | CallToolResult;
       if (message.method === "initialize") {
         result = { protocolVersion: "2025-11-25", capabilities: { tools: { listChanged: true } }, serverInfo: { name: "fixture", version: "1" } };
       } else if (message.method === "tools/list") {
