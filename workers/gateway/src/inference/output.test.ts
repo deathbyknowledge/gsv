@@ -50,6 +50,29 @@ describe("generation output classification", () => {
 });
 
 describe("generation output retries", () => {
+  it.each([
+    "ReadableStream received over RPC disconnected prematurely.",
+    "Network connection lost.",
+    "Connection closed: this Durable Object instance is no longer active. Reconnect or retry the request.",
+  ])("retries an interrupted inference transport: %s", (detail) => {
+    const failure = `Inference reference: diagnostic-id\n${detail}`;
+    const response: AssistantMessage = {
+      role: "assistant", content: [], api: "gsv-inference", provider: "gsv", model: "default",
+      stopReason: "error", errorMessage: failure, timestamp: 1,
+    };
+    expect(isRetryableGenerationErrorMessage(failure)).toBe(true);
+    expect(isRetryableAssistantResponseFailure(response, failure)).toBe(true);
+    expect(isRetryableAssistantResponseFailure({ ...response, stopReason: "aborted" }, failure)).toBe(false);
+  });
+
+  it.each([
+    "Durable Object's isolate exceeded its memory limit and was reset.",
+    "Inference request identity has already been used",
+    "No API key for provider: deepseek",
+  ])("does not replay a permanent or resource failure: %s", (failure) => {
+    expect(isRetryableGenerationErrorMessage(failure)).toBe(false);
+  });
+
   it("retries transient Cloudflare subrequest-depth failures", () => {
     const failure =
       "Subrequest depth limit exceeded. This request recursed through Workers too many times.";
