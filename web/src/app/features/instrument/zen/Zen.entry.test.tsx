@@ -351,6 +351,7 @@ describe("Zen conversation entry", () => {
     const zen = await mountedZen(undefined, target);
     const text = () => zen.text().replace(/\s+/g, " ");
     const feedbackText = () => {
+      // SAFETY: Only span nodes are inspected as span props.
       const feedback = zen.nodes().find((node) => node.type === "span" && (node.props as ComponentProps<"span">).role === "status" && !node.props.class);
       return feedback ? collectText(feedback).replace(/\s+/g, " ") : "";
     };
