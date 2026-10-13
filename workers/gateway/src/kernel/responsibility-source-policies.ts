@@ -79,6 +79,14 @@ const POLICY_DEFINITIONS = [
   },
 ] as const satisfies readonly PolicyDefinition[];
 
+export function requireConfigurableResponsibilitySourceId(value: string | undefined): ResponsibilityConfigurableSourcePolicyId {
+  const definition = POLICY_DEFINITIONS.find((candidate) => candidate.id === value);
+  if (definition?.control !== "configurable") {
+    throw new Error(`unknown configurable responsibility source: ${value ?? ""}`);
+  }
+  return definition.id;
+}
+
 type PolicyRow = {
   source_id: string;
   enabled: number;

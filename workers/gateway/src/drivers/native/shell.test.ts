@@ -3595,11 +3595,11 @@ describe("native administration shell commands", () => {
     expect(result.stderr).toBe("");
   });
 
-  it("lists and toggles built-in responsibility sources", async () => {
+  it.each(["mail.received", "memory.review"])("lists and toggles the %s responsibility source", async (sourceId) => {
     let enabled = true;
     const responsibilitySources = {
       list: vi.fn(() => [{
-        id: "mail.received",
+        id: sourceId,
         name: "Incoming mail",
         description: "Ask the Ship to review each newly received email.",
         control: "configurable",
@@ -3624,11 +3624,17 @@ describe("native administration shell commands", () => {
     });
 
     const listed = await handleShellExec({ input: "r12y sources" }, ctx);
-    const disabled = await handleShellExec({ input: "r12y source disable mail.received" }, ctx);
+    const disabled = await handleShellExec({ input: `r12y source disable ${sourceId}` }, ctx);
+    const reenabled = await handleShellExec({ input: `r12y source enable ${sourceId}` }, ctx);
+    const required = await handleShellExec({ input: "r12y source disable interaction.response" }, ctx);
 
-    expect(listed.stdout).toContain("mail.received\tenabled\tconfigurable\tIncoming mail");
+    expect(listed.stdout).toContain(`${sourceId}\tenabled\tconfigurable\tIncoming mail`);
     expect(disabled.stdout).toContain('"enabled":false');
-    expect(responsibilitySources.set).toHaveBeenCalledWith(IDENTITY.uid, "mail.received", false);
+    expect(reenabled.stdout).toContain('"enabled":true');
+    expect(required.status).toBe("failed");
+    expect(responsibilitySources.set).toHaveBeenCalledWith(IDENTITY.uid, sourceId, false);
+    expect(responsibilitySources.set).toHaveBeenCalledWith(IDENTITY.uid, sourceId, true);
+    expect(responsibilitySources.set).toHaveBeenCalledTimes(2);
   });
 
   it("installs and lists a user crontab", async () => {
