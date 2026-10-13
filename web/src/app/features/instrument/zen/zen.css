@@ -79,7 +79,7 @@
 .zen-history-status.is-err { color: var(--error); }
 .zen-moment {
   flex-shrink: 0;
-  max-width: min(var(--measure-response), 92%);
+  max-width: min(var(--measure-response), 92%, calc(100% - 24px));
   margin: 0 auto;
   width: 100%;
   padding: 2.2vh 0;
@@ -506,7 +506,7 @@
 .zen-moment.is-focus::before {
   content: "";
   position: absolute;
-  left: -22px;
+  left: clamp(-22px, -4%, -12px);
   top: 2.2vh;
   width: 8px;
   height: 1.1em;
