@@ -107,6 +107,32 @@ describe("gateway inference execution boundary", () => {
     expect(await stream.result()).toMatchObject({ stopReason: "error", errorMessage: expect.stringContaining("terminal") });
     expect(target.abort).toHaveBeenCalledOnce();
   });
+
+  it.each([true, false])("retains abort diagnostics after cancellation and only downgrades retryable RPC loss: retryable=%s", async (retryable) => {
+    const { target, service, request } = fixture(true);
+    target.generateStream.mockResolvedValue(new ReadableStream());
+    const cleanup = Promise.withResolvers<void>();
+    target.abort.mockImplementation(() => cleanup.promise);
+    const controller = new AbortController();
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      const stream = service.stream({ ...request, signal: controller.signal });
+      await vi.waitFor(() => expect(target.generateStream).toHaveBeenCalledOnce());
+      controller.abort(new Error("newer user message"));
+      expect(await stream.result()).toMatchObject({ stopReason: "aborted" });
+      cleanup.reject(Object.assign(new Error("Connection closed: this Durable Object instance is no longer active."), { retryable }));
+      await vi.waitFor(() => expect(log).toHaveBeenCalledTimes(2));
+      const records = log.mock.calls.map(([record]) => telemetryRecordSchema.parse(record));
+      expect(records).toEqual(expect.arrayContaining([expect.objectContaining({ event: expect.objectContaining({
+        name: "inference.client.finished", properties: expect.objectContaining({
+          phase: "abort", outcome: retryable ? "cancelled" : "failed", rpcRetryable: retryable,
+          exceptionMessage: expect.stringContaining("Connection closed"),
+        }),
+      }) })]));
+      expect(records.filter((record) => record.event.name === "inference.client.finished" && record.event.properties.phase === "stream"))
+        .toEqual([expect.objectContaining({ event: expect.objectContaining({ properties: expect.objectContaining({ outcome: "cancelled" }) }) })]);
+    } finally { log.mockRestore(); }
+  });
 });
 
 describe("gateway completed text generation", () => {

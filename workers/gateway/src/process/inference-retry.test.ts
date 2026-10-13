@@ -9,7 +9,7 @@ import {
 } from "./do-test-harness";
 
 describe("Process inference retry identity", () => {
-  it.each(["empty", "malformed", "retryable-error"] as const)(
+  it.each(["empty", "malformed", "retryable-error", "rpc-stream"] as const)(
     "dispatches three distinct provider attempts after %s results",
     async (failure) => {
       const pid = `inference-retry-${failure}`;
@@ -28,6 +28,10 @@ describe("Process inference retry identity", () => {
           terminalIds.add(request.attribution.logicalRequestId);
           if (terminalIds.size < 3) {
             if (failure === "retryable-error") throw new Error("LLM returned reasoning but no final response");
+            if (failure === "rpc-stream") return assistantResponse([messageAction("Must never execute", "incomplete-tool-call")], {
+              stopReason: "error", usage: testUsage(10, 1),
+              errorMessage: "Inference reference: fixture\nReadableStream received over RPC disconnected prematurely.",
+            });
             return assistantResponse(failure === "empty"
               ? [{ type: "thinking", thinking: "No final output" }]
               : [{ type: "text", text: "<tool_call>Shell<arg_key>input</arg_key><arg_value>pwd</arg_value></tool_call>" }],
@@ -38,7 +42,7 @@ describe("Process inference retry identity", () => {
         process.store.messages.appendMessage("user", "Retry this generation");
         process.runs.active = runStateSchema.parse(generationRun(runId, processTestConfig(pid, { generationStreaming: "off" })));
         await process.run.runTick(runId);
-        return { requests, signals, providerCalls: terminalIds.size, usage: process.store.state.getHistoryUsage() };
+        return { requests, signals, providerCalls: terminalIds.size, usage: process.store.state.getHistoryUsage(), history: process.store.messages.getMessages() };
       });
       expect(result.providerCalls).toBe(3);
       expect(result.requests).toHaveLength(3);
@@ -46,6 +50,7 @@ describe("Process inference retry identity", () => {
       expect(result.requests.map((request) => request.actor.runId)).toEqual([runId, runId, runId]);
       expect(result.signals.findLast((event) => event.signal === "proc.run.finished")?.payload).toMatchObject({ status: "ok" });
       expect(result.usage?.generations).toBe(failure === "retryable-error" ? 1 : 3);
+      if (failure === "rpc-stream") expect(JSON.stringify(result.history)).not.toContain("Must never execute");
     },
   );
 
@@ -54,6 +59,7 @@ describe("Process inference retry identity", () => {
     { name: "reasoning-only", content: [{ type: "thinking", thinking: "No final output" }], stopReason: "stop" },
     { name: "malformed", content: [{ type: "text", text: "<tool_call>Shell</tool_call>" }], stopReason: "stop" },
     { name: "output-limit", content: [], stopReason: "length" },
+    { name: "rpc-stream", content: [], stopReason: "error" },
   ])("uses the next model after exhausting $name responses", async ({ name, content, stopReason }) => {
     const pid = `inference-empty-fallback-${name}`;
     const runId = `run-${pid}`;
@@ -68,6 +74,8 @@ describe("Process inference retry identity", () => {
           : [messageAction("Fallback completed", "fallback-success")], {
           model: request.config.model,
           stopReason: request.config.model === "primary" ? stopReason : "stop",
+          errorMessage: request.config.model === "primary" && name === "rpc-stream"
+            ? "ReadableStream received over RPC disconnected prematurely." : undefined,
           usage: testUsage(10, 1),
         });
       }, async () => "unused");

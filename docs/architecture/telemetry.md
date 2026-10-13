@@ -53,6 +53,11 @@ one was observed; network, timeout, policy, admission, protocol, and settlement
 failures remain distinguishable when no response existed. Workload classes let
 operators separate interactive, background, delegated IPC, compaction, Kernel,
 and mail-intake reliability without exposing a durable process or request identifier.
+After a user cancels or supersedes a generation, a retryable RPC failure while
+aborting the old executor is recorded with outcome `cancelled`, including its
+diagnostics. An unexpected cleanup error or an active generation failure still
+records a failure.
+
 Retryable provider attempts that fail before a fallback route takes over are
 reported separately, so a recovered outage or rate limit remains observable
 without turning the logical request into a failure.

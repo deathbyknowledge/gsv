@@ -130,6 +130,10 @@ code blocks, lists, tables and quotations stay together. Approval
 prompts arrive with reply buttons; the decision comes back as a reply quoting
 the prompt.
 
+Markdown document uploads keep their `.md` filename and original contents;
+the WhatsApp adapter uploads them as plain text because Meta does not accept
+the Markdown MIME type.
+
 WhatsApp accepts a free-form message from GSV only within 24 hours of your last
 message to the number. After that, GSV uses an approved template to send the
 message, or a preview if it is too long. The full message remains in your GSV
