@@ -23,12 +23,15 @@ Once the daemon connects, the place appears as connected.
 
 ## Connect a browser
 
-Ship can also create a browser invitation and give you the extension download.
+Ship can also create a browser invitation and give you a download link matched to
+your GSV release. To get the current public release yourself,
+[click here to download the extension](https://gsv.space/browser).
 
 Choose **Browser** in the same flow. Download and unzip the extension, called
 **Your GSV**, enable developer mode at `chrome://extensions`, and load its folder.
-Click its toolbar icon to open the panel, paste the invitation, and choose
-**Pair this browser**.
+Click the **Your GSV** icon in the browser toolbar to open its panel. If it is
+not visible, click the **Extensions** (puzzle-piece) button and select
+**Your GSV**. Paste the invitation and choose **Pair this browser**.
 
 While your GSV works in a tab, Chrome shows a banner at the top of that tab.
 That is Chrome's notice that an extension is driving the page; it goes when the
