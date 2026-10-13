@@ -76,7 +76,7 @@ export async function admitMemoryReview(
     if (ctx.responsibilities.listActiveByDedupeKeyPrefix(ownerUid, "memory.review:").length) return false;
     ctx.responsibilities.create({
       ownerUid,
-      title: "Preserve useful personal memory",
+      title: "Update personal memory",
       details: {
         instructions: reviewInstructions,
         ...source,
