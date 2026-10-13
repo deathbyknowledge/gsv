@@ -170,9 +170,12 @@ under its owner's control.
 
 Archive installation atomically queues a memory-review source containing the
 immutable segment and the new message range. The Process delivers these ranges in
-order, with durable retry; an ambiguous admission reuses the segment's receipt.
-The Kernel accepts only canonical Ship sources and admits at most one unresolved
-review per owner. Each review is an ordinary low-priority responsibility, whose
+order, with durable retry, and transfers any remainder before teardown deletes its
+state. Kernel acceptance persists the source and a task together, independently of
+the replaceable pid and of restricted work admission. An ambiguous handoff reuses
+the queued source or the segment's responsibility receipt. Only canonical Ship can
+submit sources; the Kernel's ordered owner queue survives Ship replacement and
+admits at most one unresolved review per owner. Each review is an ordinary low-priority responsibility, whose
 brief asks Ship to delegate a bounded review to Crew while prioritizing user
 responses. Compaction and subsequent model calls do not wait for the review.
 
@@ -183,8 +186,9 @@ unresolved. Later ranges wait until that review is resolved or cancelled. Worker
 do not recursively schedule reviews of their own compactions. No historical
 backfill or periodic inference scan is introduced. Owners can disable new review
 admissions through the `memory.review` responsibility source; existing work stays
-inspectable and can be cancelled normally. Admission failures retain a private
-Process trace diagnostic and emit a content-free telemetry reference.
+inspectable and can be cancelled normally. Handoff failures retain a private
+Process trace; Kernel admission failures retain a private diagnostic in Kernel
+storage. Both emit a content-free telemetry reference.
 
 Chat does not display internal handovers as user messages or “Memory” notes.
 Process history and archive inspection retain them. Canonical Conversation

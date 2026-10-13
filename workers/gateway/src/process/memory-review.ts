@@ -14,6 +14,23 @@ function pendingReviews(host: Process) {
   return pendingSchema.parse(JSON.parse(host.store.state.getValue(PENDING_KEY) ?? "[]"));
 }
 
+async function transferMemoryReview(host: Process, review: z.infer<typeof pendingSchema>[number]): Promise<void> {
+  const { diagnosticId: _diagnosticId, ...source } = review;
+  await host.kernel.queueMemoryReview(source);
+  if (!host.killed) {
+    host.store.state.setValue(PENDING_KEY, JSON.stringify(pendingReviews(host).filter((item) => item.segmentId !== review.segmentId)));
+  }
+}
+
+/** Teardown must transfer every archived source before deleting Process state. */
+export async function handOffMemoryReviews(host: Process): Promise<void> {
+  while (true) {
+    const review = pendingReviews(host)[0];
+    if (!review) return;
+    await transferMemoryReview(host, review);
+  }
+}
+
 /** Called in the archive installation transaction. No inference or Kernel I/O. */
 export function enqueueMemoryReview(host: Process, review: Omit<ProcessMemoryReview, "afterMessageId">): void {
   if (!host.settings.interactive) return;
@@ -34,8 +51,7 @@ export async function deliverMemoryReview(host: Process, taskId: string): Promis
   const successor = host.tasks.enqueue(60, reviewTask, { idempotent: true, excludeTaskId: taskId });
   await host.tasks.arm();
   try {
-    const { diagnosticId: _diagnosticId, ...source } = review;
-    if (!await host.kernel.admitMemoryReview(source)) return;
+    await transferMemoryReview(host, review);
   } catch (error) {
     if (host.killed) return;
     const pending = pendingReviews(host);
@@ -56,9 +72,7 @@ export async function deliverMemoryReview(host: Process, taskId: string): Promis
     return;
   }
   if (host.killed) return;
-  const remaining = pendingReviews(host).filter((item) => item.segmentId !== review.segmentId);
-  host.store.state.setValue(PENDING_KEY, JSON.stringify(remaining));
-  if (remaining.length === 0) await host.tasks.cancel(successor.id);
+  if (pendingReviews(host).length === 0) await host.tasks.cancel(successor.id);
 }
 
 export async function recoverMemoryReviews(host: Process): Promise<void> {
