@@ -88,6 +88,7 @@ describe("feedback", () => {
     expect(element("textarea").props.disabled).toBe(true);
     await send();
     expect(fixture.request).not.toHaveBeenCalled();
+    // SAFETY: Feedback renders this button with the ElementProps click handler in preview mode.
     const preview = collectNodes(tree).find(node => node.type === "button" && collectText(node.props.children) === "View confirmation") as VNode<ElementProps>;
     await act(() => preview.props.onClick!());
     expect(collectText(tree)).toContain("Preview only — no feedback was sent.");
