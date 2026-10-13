@@ -93,6 +93,29 @@ describe("GSV inference provider", () => {
       .toBe(32_768);
   });
 
+  it.each([true, false])("retains cancellation cleanup diagnostics without paging for retryable RPC loss: retryable=%s", async (retryable) => {
+    const cleanup = Promise.withResolvers<void>();
+    const { service, target } = managedService(vi.fn(async () => new ReadableStream()), vi.fn(() => cleanup.promise));
+    const controller = new AbortController();
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      const factory = createGsvInferenceProviderFactory(service, { GSV_TELEMETRY_ENABLED: true });
+      const stream = providerStreamFromFactory(factory, controller.signal);
+      await vi.waitFor(() => expect(target.generateStream).toHaveBeenCalledOnce());
+      controller.abort(new Error("newer user message"));
+      expect(await stream.result()).toMatchObject({ stopReason: "aborted" });
+      cleanup.reject(Object.assign(new Error("Connection closed: this Durable Object instance is no longer active."), { retryable }));
+      await vi.waitFor(() => expect(log).toHaveBeenCalledTimes(2));
+      const records = log.mock.calls.map(([record]) => telemetryRecordSchema.parse(record));
+      expect(records).toEqual(expect.arrayContaining([expect.objectContaining({ event: expect.objectContaining({
+        name: "inference.client.finished", properties: expect.objectContaining({
+          phase: "abort", outcome: retryable ? "cancelled" : "failed", rpcRetryable: retryable,
+          exceptionMessage: expect.stringContaining("Connection closed"),
+        }),
+      }) })]));
+    } finally { log.mockRestore(); }
+  });
+
   it("preserves prompts, tools and history across pi-ai's transcript boundary", async () => {
     const generateStream = vi.fn(async () => eventStream({ type: "done", reason: "stop", message: RESULT }));
     const { service } = managedService(generateStream);
