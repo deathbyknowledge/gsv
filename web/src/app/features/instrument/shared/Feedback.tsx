@@ -25,6 +25,7 @@ export function Feedback({ view }: { view: Distance }) {
   const sending = useRef(false);
   const lifetime = useRef(new AbortController());
   const titleId = useId();
+  const contactId = useId();
   const detailsId = useId();
 
   useLayoutEffect(() => {
@@ -99,16 +100,18 @@ export function Feedback({ view }: { view: Distance }) {
         <button type="button" aria-label="Close feedback" onClick={() => setOpen(false)}>close <kbd>esc</kbd></button>
       </header>
       {state === "sent" ? <div class="feedback-sent" role="status">
-        <p>Thanks for the feedback.</p>
+        <p>Thank you! This really helps us make GSV better. :)</p>
         <button type="button" class="feedback-send" onClick={() => setOpen(false)}>Done</button>
       </div> : <form onSubmit={(event) => { event.preventDefault(); void submit(); }}>
-        <textarea aria-label="Feedback" aria-describedby={detailsId} autoFocus rows={6}
+        <p class="feedback-intro">Something broken, confusing, or missing? An idea or something you love? We read every message.</p>
+        <textarea aria-label="Feedback" aria-describedby={`${contactId} ${detailsId}`} autoFocus rows={6}
           maxLength={FEEDBACK_MAX_LENGTH} value={message} disabled={state === "sending"}
           onInput={(event) => {
             setMessage(event.currentTarget.value);
             submission.current = null;
             if (state === "error") setState("idle");
           }} />
+        <p id={contactId} class="feedback-contact">Want us to get back to you? Leave your email or Discord handle.</p>
         <div class="feedback-activity">
           <label><input type="checkbox" checked={activityState !== "off"} disabled={state === "sending" || !connected}
             onChange={(event) => { void selectActivity(event.currentTarget.checked); }} />

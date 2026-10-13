@@ -95,7 +95,7 @@ describe("feedback", () => {
     await send();
     expect(fixture.request.mock.calls[1][1]).toEqual(first[1]);
     expect(await reportContent(1)).toEqual(content);
-    expect(collectText(tree)).toContain("Thanks for the feedback.");
+    expect(collectText(tree)).toContain("Thank you! This really helps us make GSV better. :)");
     await act(() => element("button").props.onClick!());
     expect(element("textarea").props.value).toBe("");
   });
