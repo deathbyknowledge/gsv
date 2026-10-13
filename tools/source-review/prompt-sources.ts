@@ -12,7 +12,9 @@ import onboardingWelcome from "../../workers/gateway/src/prompts/onboarding/welc
 import crewRole from "../../workers/gateway/src/prompts/role-and-judgment/crew.md";
 import shipRole from "../../workers/gateway/src/prompts/role-and-judgment/ship.md";
 import compactionTask from "../../workers/gateway/src/prompts/tasks/compaction.md";
+import contextRunwayTask from "../../workers/gateway/src/prompts/tasks/context-runway.md";
 import delegatedTask from "../../workers/gateway/src/prompts/tasks/delegated.md";
+import memoryReviewTask from "../../workers/gateway/src/prompts/tasks/memory-review.md";
 import setupTask from "../../workers/gateway/src/prompts/tasks/setup-assist.md";
 import yieldTask from "../../workers/gateway/src/prompts/tasks/yield-correction.md";
 import shipVoice from "../../workers/gateway/src/prompts/voice/ship.md";
@@ -37,7 +39,9 @@ export const PROMPT_SOURCES: PromptSource[] = [
   { path: "role-and-judgment/crew.md", text: crewRole, scope: "crew" },
   { path: "role-and-judgment/ship.md", text: shipRole, scope: "ship" },
   { path: "tasks/compaction.md", text: compactionTask, scope: "task" },
+  { path: "tasks/context-runway.md", text: contextRunwayTask, scope: "task" },
   { path: "tasks/delegated.md", text: delegatedTask, scope: "task" },
+  { path: "tasks/memory-review.md", text: memoryReviewTask, scope: "task" },
   { path: "tasks/setup-assist.md", text: setupTask, scope: "task" },
   { path: "tasks/yield-correction.md", text: yieldTask, scope: "task" },
   { path: "voice/ship.md", text: shipVoice, scope: "ship" },
