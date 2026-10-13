@@ -5,6 +5,9 @@ import type {
 import { jsonValueSchema, profileFieldsSchema, publicProfileSchema } from "@humansandmachines/gsv/protocol";
 import { z } from "zod/mini";
 import type { KernelContext } from "./context";
+import { principalOf } from "./context";
+import { hasCapability } from "./capabilities";
+import { normalizeAccountDisplayName } from "./agents";
 import { isLocked } from "../auth/shadow";
 import { requireContactCaller, requireContactHuman } from "./federation/authority";
 import { fetchFederationJson } from "./federation/http";
@@ -17,9 +20,12 @@ export function handleProfileGet(ctx: KernelContext): ProfileGetResult {
   const ownerUid = requireContactHuman(ctx);
   const origin = profileOrigin(ctx);
   const existing = ctx.profiles.get(ownerUid, origin);
-  if (existing) return { profile: existing };
+  const shipUid = ctx.auth.getPersonalAgentUid(ownerUid);
+  const ship = shipUid === null ? null : ctx.auth.getPasswdByUid(shipUid);
+  const shipAccount = ship ? { uid: ship.uid, displayName: ship.gecos.trim() || ship.username } : undefined;
+  if (existing) return { profile: { ...existing, shipAccount } };
   const account = ctx.auth.getPasswdByUid(ownerUid)!;
-  return { profile: { revision: 0, url: `${origin}/profile`, draft: {
+  return { profile: { revision: 0, url: `${origin}/profile`, shipAccount, draft: {
     displayName: account.gecos || account.username, about: "", contactPolicy: "closed", representation: "human",
   } } };
 }
@@ -30,8 +36,28 @@ export function handleProfileUpdate(args: ProfileUpdateArgs, ctx: KernelContext)
   if (!draft.displayName.trim()) throw new Error("A public display name is required");
   const revision = revisionSchema.parse(args.expectedRevision);
   const account = ctx.auth.getPasswdByUid(ownerUid)!;
+  const shipUid = ctx.auth.getPersonalAgentUid(ownerUid);
+  const ship = shipUid === null ? null : ctx.auth.getPasswdByUid(shipUid);
+  draft.displayName = normalizeAccountDisplayName(draft.displayName);
+  if (draft.ship) {
+    if (!ship) throw new Error("The personal Ship account is unavailable");
+    draft.ship.displayName = normalizeAccountDisplayName(draft.ship.displayName);
+  }
+  const renamePerson = draft.displayName !== (account.gecos.trim() || account.username);
+  const renameShip = !!draft.ship && !!ship && draft.ship.displayName !== (ship.gecos.trim() || ship.username);
+  if ((renamePerson || renameShip) && !hasCapability(principalOf(ctx)!.calls, "account.update")) {
+    throw new Error("Changing a name requires account.update");
+  }
   const subject = ctx.federation.ensureSubject(ownerUid, account.gecos || account.username);
-  ctx.profiles.update(ownerUid, subject.id, revision, draft);
+  ctx.federation.transaction(() => {
+    ctx.profiles.update(ownerUid, subject.id, revision, draft);
+    if (renamePerson) {
+      ctx.auth.updateUser(account.username, { gecos: draft.displayName });
+      ctx.federation.renameSubject(ownerUid, draft.displayName);
+    }
+    if (renameShip) ctx.auth.updateUser(ship!.username, { gecos: draft.ship!.displayName });
+  });
+  if (renamePerson || renameShip) ctx.broadcastToUserUid(ownerUid, "account.changed");
   ctx.broadcastToUserUid(ownerUid, "profile.changed");
   return handleProfileGet(ctx);
 }
@@ -44,12 +70,15 @@ export async function handleProfilePublish(args: ProfilePublishArgs, ctx: Kernel
   const identity = await ctx.federationIdentity.ensure(profileOrigin(ctx));
   const subject = ctx.federation.subject(ownerUid);
   if (!subject) throw new Error("Profile subject is unavailable");
+  const { ship, ...person } = state.draft;
   const unsigned: Omit<SpacePublicProfile, "signature"> = {
-    ...state.draft, version: 3, domain: "gsv-federation/3/profile",
+    ...person,
+    version: 4, domain: "gsv-federation/4/profile",
     actor: { shipId: identity.shipId, subjectId: subject.id }, publicKey: identity.publicKey,
     origin: identity.origin, url: `${identity.origin}/profile`,
     revision, publishedAtMs: Date.now(),
   };
+  if (state.draft.representation === "human-and-ship" && ship) unsigned.ship = ship;
   const profile: PublicProfile = { ...unsigned, signature: await ctx.federationIdentity.sign(jsonValueSchema.parse(unsigned)) };
   requireContactHuman(ctx);
   ctx.profiles.publish(ownerUid, revision, profile);
@@ -104,7 +133,7 @@ export async function resolveSpacePublicProfile(locator: PublicProfileLocator, c
     const identity = await ctx.federationIdentity.ensure(profileOrigin(ctx));
     if (identity.shipId !== snapshot.actor.shipId) throw new Error("Published profile identity changed");
     const unsigned: Omit<SpacePublicProfile, "signature"> = {
-      ...snapshot, version: 3, domain: "gsv-federation/3/profile", origin: identity.origin, url: `${identity.origin}/profile`,
+      ...snapshot, version: 4, domain: "gsv-federation/4/profile", origin: identity.origin, url: `${identity.origin}/profile`,
     };
     const profile: SpacePublicProfile = { ...unsigned, signature: await ctx.federationIdentity.sign(jsonValueSchema.parse(unsigned)) };
     ctx.profiles.upgradePublication(previous.ownerUid, previous.profile.signature, profile);

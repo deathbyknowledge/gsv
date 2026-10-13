@@ -172,6 +172,18 @@ describe("assembleSystemPrompt", () => {
 });
 
 describe("createSystemContextProvider", () => {
+  it("renders the saved account identity separately from the model", async () => {
+    const provider = createSystemContextProvider();
+    const names = { agent: "Just Another Algorithm", owner: "John", personalAgent: true };
+    const input = makeInput({ config: { ...CONFIG, systemContextFiles: [], accountNames: names } });
+    expect(await provider.collect(input)).toEqual([{ name: "account_identity", text: JSON.stringify(names) }]);
+    const before = await assembleSystemPromptSnapshot(input, [provider]);
+    const after = await assembleSystemPromptSnapshot({ ...input, config: { ...input.config, model: "another-model" } }, [provider]);
+    expect(after).toEqual(before);
+    const renamed = await assembleSystemPromptSnapshot({ ...input, config: { ...input.config, accountNames: { ...names, agent: "星の旅人" } } }, [provider]);
+    expect(renamed.sources[0].sha256).not.toBe(before.sources[0].sha256);
+  });
+
   it.each(["{{r12y}}", "{{ r12y }}", "{{\n\tr12y\t\n}}"])(
     "records a rendered responsibility baseline for %s without changing the prompt",
     async (placeholder) => {

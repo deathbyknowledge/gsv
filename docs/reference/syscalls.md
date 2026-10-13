@@ -1947,6 +1947,10 @@ type SystemSyscalls = {
     args: { uid?: number };
     result: { accounts: Array<{ uid: number; username: string; displayName: string; relation: "self" | "personal-agent" | "agent" | "human"; runnable: boolean; capabilities?: string[]; gecos?: string }> };
   };
+  "account.update": {
+    args: { uid: number; displayName: string; expectedDisplayName: string };
+    result: { accounts: AccountSummary[]; profileRevision?: number };
+  };
   "account.owner.link": {
     args: { id: string; secret: string };
     result: { url: string; expiresAt: number };
@@ -1971,6 +1975,15 @@ the trusted space handle (or `owner` when that name is reserved or invalid).
 Existing callers may retain an explicit setup username. `sys.connect` without
 `auth.username` selects the personal account; root sign-in must name `root`.
 Existing account UIDs, homes and credentials are preserved.
+
+Account names are durable display names. `account.update` requires a signed-in
+human connection and renames an account the person owns, checking its previous
+display name. Processes cannot rename accounts. Spaces, Unicode and up to 80
+characters are supported; control characters and the passwd separator `:` are
+rejected. Internal usernames, homes and process identities stay stable.
+`profile.update` saves the human and optional Ship names atomically with the
+profile draft, requiring `account.update` when a name changes. Publishing remains
+an explicit human action.
 
 `account.owner.link` requires a signed-in root human and attests the Kernel's
 immutable installation identity to Accounts. The browser then verifies the

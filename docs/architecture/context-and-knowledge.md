@@ -21,6 +21,14 @@ block, and copy preserves the code's indentation and internal line breaks.
 
 ## Standing context
 
+The Kernel supplies the current account and human-owner display names as
+structured `account_identity` context, independently of model selection and
+editable standing files. The source manifest captures these names with the
+rendered prompt. Renaming changes that standing-context source for the next run
+and closes the previous epoch through the ordinary epoch transition; it does not
+rewrite archived context or an active generation. Public-profile introductions
+do not enter agent instructions.
+
 The human owner's context is for information that should shape nearly every
 interaction:
 

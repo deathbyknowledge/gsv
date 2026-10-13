@@ -209,6 +209,8 @@ export async function handleAiContext(
   const mcpUid = resolveCallerOwnerUid(ctx);
 
   const targetDiscovery = await discoverVisibleTargets(ctx);
+  const agentAccount = ctx.auth.getPasswdByUid(uid);
+  const ownerAccount = ctx.auth.getPasswdByUid(owner?.uid ?? uid);
   const result: AiContextResult = {
     mcpServers: canUseMcpTools ? listReadyMcpServerNames(ctx, mcpUid) : [],
     systemContextFiles: listConfigContextFiles(config, "config/ai/context.d"),
@@ -216,6 +218,11 @@ export async function handleAiContext(
       timezone: principalOf(ctx) ? ownerTimezone(config, resolveCallerOwnerUid(ctx)) : config.get("config/server/timezone") ?? "UTC",
     },
     skillIndexMode,
+  };
+  if (agentAccount && ownerAccount) result.accountNames = {
+    agent: agentAccount.gecos.trim() || agentAccount.username,
+    owner: ownerAccount.gecos.trim() || ownerAccount.username,
+    personalAgent: ctx.auth.getPersonalAgentUid(ownerAccount.uid) === uid,
   };
   if (targetDiscovery.complete) result.targets = targetDiscovery.targets.map(targetToAiTarget);
   if (skillIndex !== undefined) result.skillIndex = skillIndex;

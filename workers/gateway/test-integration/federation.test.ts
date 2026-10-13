@@ -18,6 +18,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createGatewayTestHarness, webSocketUrl } from "./harness";
 
 const FIRST_USER = "federation-first";
+const FIRST_DISPLAY_NAME = "First person";
 const SECOND_USER = "federation-second";
 const PASSWORD = "federation-integration-password";
 
@@ -66,7 +67,8 @@ describe("cross-GSV federation integration", () => {
 
   it("publishes one approved profile and resolves it from an independently routed space", async () => {
     expect((await first.profile.get({})).profile.published).toBeUndefined();
-    const draft = { displayName: "First person", about: "Published biography", contactPolicy: "requests" as const, representation: "human" as const };
+    const draft = { displayName: FIRST_DISPLAY_NAME, about: "Published biography", contactPolicy: "requests" as const, representation: "human-and-ship" as const,
+      ship: { displayName: "Just Another Algorithm", about: "A personal Ship" } };
     await first.profile.update({ expectedRevision: 0, draft });
     const url = new URL("/profile", firstOrigin).href;
     const privatePage = await fetch(url);
@@ -75,7 +77,8 @@ describe("cross-GSV federation integration", () => {
     await first.profile.publish({ expectedRevision: 1 });
     await expect.poll(async () => (await first.profile.get({})).profile.published?.revision).toBe(1);
     const remote = await second.profile.resolve({ url });
-    expect(remote.profile).toMatchObject({ about: draft.about, origin: firstOrigin.origin, revision: 1 });
+    expect(remote.profile).toMatchObject({ version: 4, about: draft.about, ship: draft.ship, origin: firstOrigin.origin, revision: 1 });
+    expect((await first.account.list({})).accounts.find((account) => account.relation === "personal-agent")?.displayName).toBe(draft.ship.displayName);
     expect(remote.profile).not.toHaveProperty("ownerUid");
     expect(remote.profile).not.toHaveProperty("username");
     expect((await second.profile.get({})).profile.published).toBeUndefined();
@@ -224,6 +227,7 @@ describe("cross-GSV federation integration", () => {
     expect(messagesWithText(secondHistory, messageArgs.text)).toHaveLength(1);
     const firstMessageOrigin = messagesWithText(firstHistory, messageArgs.text)[0]?.social;
     expect(firstMessageOrigin?.provenance).toEqual({ kind: "human" });
+    expect(firstMessageOrigin?.identity).toEqual({ displayName: FIRST_DISPLAY_NAME, ownerName: FIRST_DISPLAY_NAME, role: "human" });
     expect(messagesWithText(secondHistory, messageArgs.text)[0]?.social).toEqual(firstMessageOrigin);
     expect(firstHistory.conversation.handlerPid).toBeUndefined();
     expect(secondHistory.conversation.handlerPid).toBeUndefined();
@@ -231,7 +235,7 @@ describe("cross-GSV federation integration", () => {
       author: {
         kind: "contact",
         contactId: secondContact.id,
-        displayName: FIRST_USER,
+        displayName: FIRST_DISPLAY_NAME,
       },
       origin: {
         kind: "federation",

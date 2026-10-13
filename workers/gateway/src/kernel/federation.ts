@@ -683,6 +683,17 @@ export async function handleContactSend(
         ? { kind: "process", processId: localMessage.author.pid } : { kind: "human" },
       ...(replyTo ? { replyTo } : undefined),
     };
+    if (contact.protocol?.features.includes("identity")) {
+      const authorUid = localMessage.author.kind === "process" ? localMessage.author.uid : ownerUid;
+      const authorAccount = ctx.auth.getPasswdByUid(authorUid)!;
+      const ownerAccount = ctx.auth.getPasswdByUid(ownerUid)!;
+      localMessage.social.identity = {
+        displayName: (authorAccount.gecos.trim() || authorAccount.username).slice(0, 80),
+        ownerName: (ownerAccount.gecos.trim() || ownerAccount.username).slice(0, 80),
+        role: localMessage.author.kind !== "process" ? "human"
+          : ctx.auth.getPersonalAgentUid(ownerUid) === authorUid ? "ship" : "agent",
+      };
+    }
   }
   ctx.requestSignal?.throwIfAborted();
   const admitted = await ctx.coordinateFederationContact(contact.id, () => ctx.federation.transaction(() => {
@@ -1259,7 +1270,7 @@ export async function handleFederationHttpRequest(
           throw new PublicFederationError(400, "Ship discovery accepts no request body");
         }
       }
-      return jsonResponse(jsonValue(await localShipDocumentV2(ctx)));
+      return jsonResponse(jsonValue(await localShipDocumentV2(ctx, url.searchParams.get("features") === "identity")));
     }
     if (url.pathname === DELIVERY_V2_PATH && request.method === "POST") {
       return jsonResponse(jsonValue(await receiveRemoteDelivery(
@@ -2398,7 +2409,9 @@ function localOutboundMessage(input: {
       throw new Error("Contact sender process is unavailable");
     }
     const runId = input.ctx.processRunId ?? `run:${input.deliveryId}`;
+    const account = input.ctx.auth.getPasswdByUid(process.uid);
     author = { kind: "process", pid: input.ctx.processId, uid: process.uid };
+    if (account) author.displayName = account.gecos.trim() || account.username;
     origin = { kind: "process", pid: input.ctx.processId, runId };
     return {
       messageId: input.messageId,
@@ -2464,7 +2477,7 @@ function ensureLocalSubject(ownerUid: number, ctx: KernelContext): FederationSub
   if (!account) throw new Error("Contact owner account is unavailable");
   return ctx.federation.ensureSubject(
     ownerUid,
-    boundedText(account.username, "Contact display name", MAX_CONTACT_DISPLAY_NAME_BYTES, false),
+    boundedText(account.gecos.trim() || account.username, "Contact display name", MAX_CONTACT_DISPLAY_NAME_BYTES, false),
   );
 }
 

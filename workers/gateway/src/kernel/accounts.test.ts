@@ -391,6 +391,16 @@ describe("handleAccountCreate", () => {
     expect(passwd.find((u) => u.uid === result.identity.uid)).toMatchObject({ username: "ship", gecos: "Ship" });
   });
 
+  it("keeps a chosen name when the personal process is provisioned again", async () => {
+    const state = createCtx();
+    const ctx = state.ctxFor(userIdentity(1000, "alice", ["*"]));
+    const first = await ensurePersonalAgent(ctx, principalOf(ctx)!.account);
+    state.auth.updateUser(first.identity.username, { gecos: "alice's agent" });
+    const restored = await ensurePersonalAgent(ctx, principalOf(ctx)!.account);
+    expect(restored.identity).toEqual(first.identity);
+    expect(state.passwd.find((entry) => entry.uid === first.identity.uid)?.gecos).toBe("alice's agent");
+  });
+
   it("provisions the personal Crew account without adopting occupied names", async () => {
     const { ctxFor, passwd, groups, shadow, ripgitApplyBodies } = createCtx();
     const aliceCtx = ctxFor(userIdentity(1000, "alice", ["*"]), { ripgit: true });
@@ -453,8 +463,8 @@ describe("handleAccountCreate", () => {
     const result = await ensurePersonalAgent(ctx, principalOf(ctx)!.account);
 
     expect(result.created).toBe(false);
-    expect(state.auth.updateUser).toHaveBeenCalledWith("friday", { gecos: "Friday" });
-    expect(state.passwd.find((u) => u.username === "friday")?.gecos).toBe("Friday");
+    expect(state.auth.updateUser).not.toHaveBeenCalled();
+    expect(state.passwd.find((u) => u.username === "friday")?.gecos).toBe("alice's agent");
     const ops = state.ripgitApplyBodies.filter((body) => body.owner === "friday").flatMap((body) => body.ops);
     expect(ops).toEqual(expect.arrayContaining([
       expect.objectContaining({ type: "put", path: "context.d/05-voice.md" }),

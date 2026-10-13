@@ -44,8 +44,15 @@ describe("the contact notice", () => {
   it("counts waiting messages and identifies when the contact's Ship wrote the latest", () => {
     const three = { ...notice, messages: [message(1, "first"), message(2, "second"), message(3, "ok, sent it", true)] };
     const tree = ContactNoticePanel({ id: "people-panel", name: "Ada", notice: three, onClose: vi.fn(), onGoToChat: vi.fn() });
-    expect(text(tree)).toBe("Ada GSV close 3 messages open conversation ↗");
+    expect(text(tree)).toBe("Ada AGENT close 3 messages open conversation ↗");
     expect(collectNodes(tree).some((node) => node.props.class === "sender-dot")).toBe(true);
+  });
+
+  it("uses the named Ship role without changing the conversation's person", () => {
+    const latest = message(3, "Hello", true);
+    latest.social.identity = { displayName: "Just Another Algorithm", ownerName: "Ada", role: "ship" };
+    const tree = ContactNoticePanel({ id: "people-panel", name: "Ada", notice: { ...notice, messages: [latest] }, onClose: vi.fn(), onGoToChat: vi.fn() });
+    expect(text(tree)).toBe("Ada SHIP close 1 message open conversation ↗");
   });
 
   it("clips a preview to its first words", () => {

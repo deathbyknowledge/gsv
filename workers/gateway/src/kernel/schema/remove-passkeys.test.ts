@@ -56,7 +56,10 @@ describe("retiring passkey storage", () => {
       runKernelSqlMigrations(storage);
 
       expect(snapshot()).toEqual(before);
-      expect(sql.exec("SELECT gid, capability FROM group_capabilities ORDER BY gid, capability").toArray()).toEqual(preservedCapabilities);
+      expect(sql.exec("SELECT gid, capability FROM group_capabilities ORDER BY gid, capability").toArray()).toEqual(
+        [...preservedCapabilities, { gid: 100, capability: "account.update" }]
+          .sort((left, right) => left.gid - right.gid || left.capability.localeCompare(right.capability)),
+      );
       expect(listAppliedSqlMigrations(storage, KERNEL_SCHEMA_COMPONENT).filter((migration) => migration.id < 49)).toEqual(applied);
       expect(sql.exec("SELECT name FROM sqlite_master WHERE name LIKE 'account_passkey%'").toArray()).toEqual([]);
       expect(await auth.authenticate("root", "root-password")).toMatchObject({ ok: true });

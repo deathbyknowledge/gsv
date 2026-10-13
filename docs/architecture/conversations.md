@@ -55,6 +55,24 @@ Delegated Process work is not copied into Ship. A child returns a typed Process 
 the personal intelligence decides whether the result should become a canonical Message, cause more
 work, or remain silent.
 
+## Human and Ship names
+
+The human and personal agent account each own a display name. Renaming changes
+neither account identity, home, contact authority nor conversation identity.
+People edits those names and a separate publication draft in one Kernel
+transaction. A published profile is an explicit signed snapshot; later private
+edits leave it unchanged. Version 4 profiles may include a Ship name and
+introduction alongside the human. Readers also verify existing version 2 and 3
+snapshots; older readers need an upgrade to resolve version 4 publications.
+
+Federation v2 peers request `?features=identity` during discovery. Only callers
+requesting that extension receive it in the signed feature advertisement. New
+messages include the sender's display name, owner name and human/Ship/agent role
+only when the peer advertises support. The Kernel derives these fields from
+authenticated accounts and process ownership. They describe the sender; they
+never grant authority or select a handler. Messages and retries retain the name
+captured at send time. Legacy peers retain their existing message shape.
+
 ## Explicit delivery
 
 Ordinary assistant text is Process activity. It is never implicitly sent to a user. Human-facing

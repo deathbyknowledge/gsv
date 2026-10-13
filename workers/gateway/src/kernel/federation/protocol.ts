@@ -11,15 +11,16 @@ export const DELIVERY_V2_PATH = "/_gsv/federation/v2/deliver";
 const DOCUMENT_LIFETIME_MS = 10 * 60_000;
 const NEGOTIATION_CACHE_MS = 24 * 60 * 60_000;
 
-export async function localShipDocumentV2(ctx: KernelContext): Promise<FederationShipDocumentV2> {
+export async function localShipDocumentV2(ctx: KernelContext, identity = false): Promise<FederationShipDocumentV2> {
   const origin = ctx.installationIdentity?.canonicalOrigin;
   if (!origin) throw new Error("Installation has no canonical origin for federation");
-  const identity = await ctx.federationIdentity.ensure(origin);
+  const installation = await ctx.federationIdentity.ensure(origin);
   const now = Date.now();
   const unsigned: Omit<FederationShipDocumentV2, "signature"> = {
-    version: 2, domain: "gsv-federation/2/ship", shipId: identity.shipId,
-    origin: identity.origin, publicKey: identity.publicKey, protocols: ["gsv-federation/2"],
-    features: ["messages", "approaches"], issuedAtMs: now, expiresAtMs: now + DOCUMENT_LIFETIME_MS,
+    version: 2, domain: "gsv-federation/2/ship", shipId: installation.shipId,
+    origin: installation.origin, publicKey: installation.publicKey, protocols: ["gsv-federation/2"],
+    features: identity ? ["messages", "approaches", "identity"] : ["messages", "approaches"],
+    issuedAtMs: now, expiresAtMs: now + DOCUMENT_LIFETIME_MS,
   };
   return { ...unsigned, signature: await ctx.federationIdentity.sign(jsonValueSchema.parse(unsigned)) };
 }
@@ -44,7 +45,7 @@ export async function negotiateContactProtocol(contact: FederationContactRecord,
   if (contact.protocol && contact.protocol.checkedAtMs + NEGOTIATION_CACHE_MS > Date.now()) return contact;
   let document: FederationShipDocumentV2;
   try {
-    document = federationShipDocumentV2Schema.parse(await fetchFederationJson(`${contact.remoteOrigin}${SHIP_DOCUMENT_V2_PATH}`, {
+    document = federationShipDocumentV2Schema.parse(await fetchFederationJson(`${contact.remoteOrigin}${SHIP_DOCUMENT_V2_PATH}?features=identity`, {
       method: "POST", headers: { accept: "application/json" }, signal: ctx.requestSignal,
     }, ctx));
   } catch (error) {

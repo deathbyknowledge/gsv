@@ -21,9 +21,12 @@ import type {
   AccountListResult,
   AccountRelation,
   AccountSummary,
+  AccountUpdateArgs,
+  AccountUpdateResult,
   ProcessIdentity,
 } from "@humansandmachines/gsv/protocol";
 import { isLocked } from "../auth/shadow";
+import { z } from "zod/mini";
 import type { KernelContext } from "./context";
 import { principalOf } from "./context";
 import { resolveCallerOwnerUid } from "./context";
@@ -98,10 +101,6 @@ function pickAgentName(auth: AuthStore, preferred?: string): string {
   }
 }
 
-function legacyPersonalAgentDisplayName(ownerUsername: string): string {
-  return `${ownerUsername}'s agent`;
-}
-
 function personalAgentDisplayName(username: string): string {
   const words = username
     .split(/[-_]+/g)
@@ -113,19 +112,6 @@ function personalAgentDisplayName(username: string): string {
   return words
     .map((word) => `${word.slice(0, 1).toUpperCase()}${word.slice(1)}`)
     .join(" ");
-}
-
-function reconcilePersonalAgentDisplayName(
-  auth: AuthStore,
-  entry: { username: string; uid: number; gecos: string },
-  human: ProcessIdentity,
-): { username: string; uid: number; gid: number; gecos: string; home: string; shell: string } | null {
-  const displayName = entry.gecos.trim();
-  if (displayName !== legacyPersonalAgentDisplayName(human.username)) {
-    return auth.getPasswdByUid(entry.uid);
-  }
-  auth.updateUser(entry.username, { gecos: personalAgentDisplayName(entry.username) });
-  return auth.getPasswdByUid(entry.uid);
 }
 
 function normalizeContextFileName(value: string): string | null {
@@ -183,8 +169,7 @@ export async function ensurePersonalAgent(
   if (existingUid !== null) {
     const entry = auth.getPasswdByUid(existingUid);
     if (entry) {
-      const reconciled = reconcilePersonalAgentDisplayName(auth, entry, human) ?? entry;
-      const identity = accountIdentity(auth, reconciled);
+      const identity = accountIdentity(auth, entry);
       reconcileInitialOnboardingResponsibility(human.uid, ctx.responsibilities);
       await ensureAccountHomeLayout(ctx.env, identity, {
         seedPromptContext: true,
@@ -356,4 +341,56 @@ export function handleAccountList(
 
 function resolveAccountCapabilities(ctx: KernelContext, username: string, primaryGid: number): string[] {
   return ctx.caps.resolve(ctx.auth.resolveGids(username, primaryGid)).sort();
+}
+
+const accountDisplayNameSchema = z.string().check(z.minLength(1), z.maxLength(80), z.regex(/^[^:\p{Cc}]+$/u));
+
+export function normalizeAccountDisplayName(value: string): string {
+  return accountDisplayNameSchema.parse(value.trim());
+}
+
+const accountUpdateSchema = z.strictObject({
+  uid: z.int().check(z.nonnegative()),
+  displayName: accountDisplayNameSchema,
+  expectedDisplayName: z.string().check(z.maxLength(256)),
+});
+
+export function handleAccountUpdate(args: AccountUpdateArgs, ctx: KernelContext): AccountUpdateResult {
+  const input = accountUpdateSchema.parse(args);
+  const caller = principalOf(ctx);
+  if (!caller || caller.kind !== "human" || ctx.processId || !ctx.connection) throw new Error("Account naming requires a signed-in human owner");
+  const ownerUid = caller.account.uid === 0
+    ? ctx.auth.getHumanAccount()?.uid ?? 0
+    : resolveCallerOwnerUid(ctx);
+  const account = ctx.auth.getPasswdByUid(input.uid);
+  if (!account || !canOwnerRunAsAccount(ctx.auth, ownerUid, account, caller.account.uid === 0)) {
+    throw new Error("Account is not owned by this person");
+  }
+  const name = normalizeAccountDisplayName(input.displayName);
+  if ((account.gecos.trim() || account.username) !== input.expectedDisplayName) {
+    throw new Error("The name changed; reload before saving");
+  }
+  let profileRevision: number | undefined;
+  ctx.federation.transaction(() => {
+    ctx.auth.updateUser(account.username, { gecos: name });
+    if (account.uid === ownerUid) ctx.federation.renameSubject(ownerUid, name);
+    const origin = ctx.installationIdentity?.canonicalOrigin;
+    const personalShip = ctx.auth.getPersonalAgentUid(ownerUid) === account.uid;
+    if (origin && (account.uid === ownerUid || personalShip)) {
+      const profile = ctx.profiles.get(ownerUid, origin);
+      const owner = ctx.auth.getPasswdByUid(ownerUid)!;
+      const subject = ctx.federation.ensureSubject(ownerUid, owner.gecos.trim() || owner.username);
+      const draft = profile?.draft ?? {
+        displayName: owner.gecos.trim() || owner.username, about: "", contactPolicy: "closed" as const, representation: "human" as const,
+      };
+      ctx.profiles.update(ownerUid, subject.id, profile?.revision ?? 0, personalShip
+        ? { ...draft, ship: { about: draft.ship?.about ?? "", displayName: name } }
+        : { ...draft, displayName: name });
+      profileRevision = (profile?.revision ?? 0) + 1;
+    }
+  });
+  ctx.broadcastToUserUid(ownerUid, "account.changed");
+  ctx.broadcastToUserUid(ownerUid, "profile.changed");
+  if (caller.account.uid !== ownerUid) ctx.broadcastToUserUid(caller.account.uid, "account.changed");
+  return { ...handleAccountList({}, ctx), profileRevision };
 }

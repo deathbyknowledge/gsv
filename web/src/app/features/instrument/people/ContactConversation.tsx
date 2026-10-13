@@ -14,6 +14,7 @@ import type { ContactDraft } from "./useContactDrafts";
 import { useConversationReadPosition } from "./useConversationReadPosition";
 import { useContactHistory } from "./useContactHistory";
 import { MessageDelivery } from "./MessageDelivery";
+import { contactMessageBadge, contactMessageName } from "./peopleModel";
 import "../shared/senderBadge.css";
 
 export type ContactComposerProps = {
@@ -101,15 +102,15 @@ export function ContactConversation({ contact, account, draft, onDraft, onSend, 
         const incoming = message.author.kind === "contact";
         /* absent on historical and v1 messages, whose submission path is unknown: no badge rather than a guess */
         const provenance = incoming ? message.social?.provenance.kind ?? null : null;
-        const authorName = message.author.kind === "contact" ? message.author.displayName : message.author.kind === "process" ? "GSV" : "you";
+        const authorName = contactMessageName(message);
         const authorKind = incoming ? (provenance === "process" ? "contact-ship" : provenance === "human" ? "contact-human" : "contact") : message.author.kind === "process" ? "your-ship" : "you";
         return <article key={message.id} data-message-sequence={message.sequence} data-author={authorKind} class="people-message">
-        <header><span class="people-message-author">{authorName}{provenance && <span class="sender-badge">{provenance === "process" && <span class="sender-dot" />}{provenance === "process" ? "GSV" : "PERSON"}</span>}</span><time dateTime={new Date(message.createdAt).toISOString()}>{new Date(message.createdAt).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}</time></header>
+        <header><span class="people-message-author">{authorName}{provenance && <span class="sender-badge">{provenance === "process" && <span class="sender-dot" />}{contactMessageBadge(message)}</span>}</span><time dateTime={new Date(message.createdAt).toISOString()}>{new Date(message.createdAt).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}</time></header>
         {message.social?.replyTo && <blockquote class="people-reply-quote">{messages.find((candidate) => sameReference(candidate.social?.reference, message.social!.replyTo!))?.text.slice(0, 240) || "Reply to an earlier message"}</blockquote>}
         {message.text && <p>{message.text}</p>}
         {message.media?.map((media, index) => <ZenMedia key={index} media={media} processId={message.processId ?? ""} onReady={followLatest} />)}
         <footer class="people-message-actions">
-          {message.social && <button class="fleet-text-action people-message-reply" type="button" disabled={disabled} onClick={() => onDraft({ reply: { reference: message.social!.reference, author: message.author.kind === "contact" ? message.author.displayName : "you", preview: message.text.slice(0, 200) } })}>reply</button>}
+          {message.social && <button class="fleet-text-action people-message-reply" type="button" disabled={disabled} onClick={() => onDraft({ reply: { reference: message.social!.reference, author: authorName, preview: message.text.slice(0, 200) } })}>reply</button>}
           {message.author.kind !== "contact" && <MessageDelivery delivery={deliveryBySequence.get(message.sequence)} mayRetry={!!account && canConfigure(account, "contact.delivery.retry")} />}
         </footer>
       </article>;

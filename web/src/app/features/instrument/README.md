@@ -286,3 +286,10 @@ left sidebar. It uses the same retained view and draft protection as conversatio
 The sidebar list scrolls independently of this link. Save and publish remain
 separate; `/profile` is the public address without an alias choice. Existing
 published aliases continue to resolve. Profile queries share the signal-updated cache.
+
+The profile pairs the person with their named Ship, with separate introductions
+and an explicit choice to include the Ship publicly. Chat's chosen-name link
+opens the same editor. Saving names updates canonical account presentation;
+publishing updates the public snapshot. Model selection stays in Settings.
+The existing ASCII Ship is the identity illustration, with a monogram for the
+person. Names are free text without a separate abbreviation.

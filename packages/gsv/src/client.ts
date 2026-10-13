@@ -401,6 +401,7 @@ const SYSCALL_NAMES = [
   "sys.link.consume",
   "account.create",
   "account.list",
+  "account.update",
   "account.owner.link",
   "account.recovery.redeem",
   "account.recovery.code.start",

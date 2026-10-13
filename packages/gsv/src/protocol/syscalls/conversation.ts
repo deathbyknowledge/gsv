@@ -26,7 +26,7 @@ export type ConversationSummary = {
 
 export type ConversationMessageAuthor =
   | { kind: "user"; uid: number }
-  | { kind: "process"; pid: string; uid: number }
+  | { kind: "process"; pid: string; uid: number; displayName?: string }
   | {
       kind: "contact";
       contactId: string;

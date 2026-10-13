@@ -31,6 +31,17 @@ describe("federation version negotiation", () => {
     });
   });
 
+  it("advertises message identity only when the caller requests the extension", async () => {
+    await runWithRealKernelSql(async (_sql, storage) => {
+      const context = protocolContext(new FederationIdentity(storage));
+      expect((await localShipDocumentV2(context)).features).toEqual(["messages", "approaches"]);
+      const extended = await localShipDocumentV2(context, true);
+      expect(extended.features).toEqual(["messages", "approaches", "identity"]);
+      await expect(verifyShipDocumentV2(extended)).resolves.toBeUndefined();
+      await expect(verifyShipDocumentV2({ ...extended, features: ["messages"] })).rejects.toThrow("signature");
+    });
+  });
+
   it("falls back only for a missing endpoint and never downgrades an established v2 peer", async () => {
     await runWithRealKernelSql(async (_sql, storage) => {
       const identity = new FederationIdentity(storage);

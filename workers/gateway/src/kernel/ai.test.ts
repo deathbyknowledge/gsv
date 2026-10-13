@@ -420,6 +420,7 @@ describe("handleAiConfig", () => {
             }
           : null),
         resolveGids: vi.fn((_username: string, gid: number) => [gid]),
+        getPersonalAgentUid: vi.fn(() => 2000),
       },
       procs: {
         getOwnerUid: vi.fn(() => ownerUid),
@@ -556,6 +557,7 @@ describe("handleAiConfig", () => {
     const result = await handleAiContext({}, ctx);
 
     expect(result).toMatchObject({
+      accountNames: { agent: "sam", owner: "sam", personalAgent: false },
       targets: [expect.objectContaining({ id: "desktop" })],
       mcpServers: ["Search"],
       system: { timezone: "Europe/Amsterdam" },
@@ -564,6 +566,15 @@ describe("handleAiConfig", () => {
     });
     expect(result).not.toHaveProperty("apiKey");
     expect(result).not.toHaveProperty("model");
+  });
+
+  it("refreshes chosen account names independently of the model and connected principal", async () => {
+    const ctx = makeAiConfigContext({ "config/ai/model": "some-model" }, { uid: 2000, ownerUid: 1000, processId: "proc:ship" });
+    const owner = ctx.auth.getPasswdByUid(1000)!;
+    vi.mocked(ctx.auth.getPasswdByUid).mockImplementation((uid) => uid === 1000 ? { ...owner, gecos: "John" }
+      : { ...owner, uid: 2000, username: "friday", gecos: "Just Another Algorithm" });
+    expect((await handleAiContext({}, ctx)).accountNames).toEqual({ agent: "Just Another Algorithm", owner: "John", personalAgent: true });
+    expect(principalOf(ctx)?.account.username).toBe("friday");
   });
 
   it("omits an incomplete target catalog without discarding other context", async () => {

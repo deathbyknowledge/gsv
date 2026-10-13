@@ -101,6 +101,7 @@ describe("CapabilityStore", () => {
       expect(userCaps.map((r) => r.capability)).toEqual([
         "account.create",
         "account.list",
+        "account.update",
         "adapter.connect",
         "adapter.disconnect",
         "adapter.list",

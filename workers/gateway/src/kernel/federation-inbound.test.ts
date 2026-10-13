@@ -134,6 +134,7 @@ describe("federation inbound boundary", () => {
         threadId: contact.threadId,
         reference: { actor: { shipId: REMOTE_SHIP_ID, subjectId: REMOTE_SUBJECT_ID }, messageId: "origin:v2" },
         provenance: { kind: "process", processId: "proc:remote-helper" },
+        identity: { displayName: "星の旅人", ownerName: "Remote", role: "ship" },
       },
     };
     const envelope = await signedV2Envelope(payload, "delivery:v2");
@@ -158,6 +159,40 @@ describe("federation inbound boundary", () => {
     expect(rejected.status).toBe(409);
     await rejected.arrayBuffer();
     expect((await conversation.history()).messages).toHaveLength(1);
+  });
+
+  it.each([
+    ["human", true], ["ship", true], ["agent", true], ["ship", false],
+  ] as const)("captures the authenticated %s name only for identity-capable peers (%s)", async (role, supportsIdentity) => {
+    await runInDurableObject(kernel, async (instance: Kernel) => {
+      instance.auth.setShadow(makeShadowEntry(OWNER.username, "unlocked"));
+      instance.auth.updateUser(OWNER.username, { gecos: "John" });
+      const agent = { ...OWNER, uid: 1001, username: "named-agent", home: "/home/named-agent", cwd: "/home/named-agent" };
+      instance.auth.addUser({ ...agent, gecos: "Just Another Algorithm", shell: "/bin/false" });
+      instance.auth.setShadow(makeShadowEntry(agent.username, "!"));
+      if (role === "ship") instance.auth.setPersonalAgent(OWNER.uid, agent.uid);
+      const processId = role === "human" ? undefined : "proc:named-sender";
+      if (processId) instance.procs.spawn(processId, agent, { ownerUid: OWNER.uid });
+      instance.federation.setProtocol(contact.id, contact.generation, {
+        version: 2, features: supportsIdentity ? ["messages", "identity"] : ["messages"], checkedAtMs: Date.now(),
+      });
+      const ctx = instance.buildKernelContext({ peer: testPeer({ account: OWNER, calls: ["contact.*"] }), processId });
+      // SAFETY: direct human sending checks only connection presence; Process sending uses its registry identity.
+      ctx.connection = {} as KernelContext["connection"];
+      ctx.scheduleFederationDelivery = vi.fn(async () => {});
+      const result = await handleContactSend({ contactId: contact.id, text: "Hello from my space", idempotencyKey: "named-send" }, ctx);
+      const record = instance.federation.outbox(result.deliveryId)!;
+      expect(record.payload?.kind).toBe("message");
+      if (record.payload?.kind !== "message") throw new Error("Expected a message payload");
+      const identity = "social" in record.payload ? record.payload.social?.identity : undefined;
+      expect(identity).toEqual(supportsIdentity ? {
+        displayName: role === "human" ? "John" : "Just Another Algorithm", ownerName: "John", role,
+      } : undefined);
+      if (processId) expect(record.localMessage?.author).toMatchObject({ kind: "process", displayName: "Just Another Algorithm" });
+      instance.auth.updateUser(agent.username, { gecos: "Later name" });
+      expect(await handleContactSend({ contactId: contact.id, text: "Hello from my space", idempotencyKey: "named-send" }, ctx)).toEqual(result);
+      expect(instance.federation.outbox(result.deliveryId)?.payload).toEqual(record.payload);
+    });
   });
 
   it.each([

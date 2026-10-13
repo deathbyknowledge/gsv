@@ -218,7 +218,7 @@ export type FederationRateLimit = {
 
 const conversationMessageAuthorSchema = z.discriminatedUnion("kind", [
   z.strictObject({ kind: z.literal("user"), uid: z.number().int() }),
-  z.strictObject({ kind: z.literal("process"), pid: z.string(), uid: z.number().int() }),
+  z.strictObject({ kind: z.literal("process"), pid: z.string(), uid: z.number().int(), displayName: z.string().optional() }),
   z.strictObject({
     kind: z.literal("contact"),
     contactId: z.string(),
@@ -447,6 +447,10 @@ export class FederationStore {
       ownerUid,
     ).toArray()[0];
     return row ? { id: row.subject_id, displayName: row.display_name } : null;
+  }
+
+  renameSubject(ownerUid: number, displayName: string): void {
+    this.sql.exec("UPDATE federation_subjects SET display_name = ?, updated_at = ? WHERE owner_uid = ?", displayName, Date.now(), ownerUid);
   }
 
   subjectOwner(subjectId: string): number | null {

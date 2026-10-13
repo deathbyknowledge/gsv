@@ -14,6 +14,10 @@ The list under **Model order** is the fallback order: the top entry is labelled 
 
 Your models are stored at `users/{uid}/ai/models`, layered ahead of the installation list at `config/ai/models` and the deployment's base models; see the [configuration reference](/reference/configuration#ai-model-config). An agent or Process can prefer any entry by its stable ID.
 
+Your Ship's name belongs to its account and stays the same across model changes
+and fallbacks. Change it in **People → your profile → Ship name**. The model name
+in a reply's receipt identifies what powered that reply.
+
 Cloudflare's available models are listed at [developers.cloudflare.com/workers-ai/models](https://developers.cloudflare.com/workers-ai/models).
 ## See also
 

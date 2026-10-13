@@ -141,6 +141,14 @@ export type AccountListResult = {
   accounts: AccountSummary[];
 };
 
+export type AccountUpdateArgs = {
+  uid: number;
+  displayName: string;
+  expectedDisplayName: string;
+};
+
+export type AccountUpdateResult = AccountListResult & { profileRevision?: number };
+
 export type SysSetupArgs = {
   /** Existing clients may supply a local name; otherwise the Kernel derives it from the space. */
   username?: string;

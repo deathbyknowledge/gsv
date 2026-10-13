@@ -7,6 +7,7 @@ export type ProfileFields = {
   about: string;
   contactPolicy: "requests" | "invitation" | "closed";
   representation: "human" | "human-and-ship";
+  ship?: { displayName: string; about: string };
 };
 
 export type ProfileState = {
@@ -14,6 +15,7 @@ export type ProfileState = {
   url: string;
   draft: ProfileFields;
   published?: { url: string; revision: number };
+  shipAccount?: { uid: number; displayName: string };
 };
 
 type ProfilePublication = ProfileFields & {
@@ -27,12 +29,15 @@ type ProfilePublication = ProfileFields & {
 };
 
 export type SpacePublicProfile = ProfilePublication & {
-  version: 3;
-  domain: "gsv-federation/3/profile";
+  version: 4;
+  domain: "gsv-federation/4/profile";
 };
 
 /** Published v2 snapshots remain verifiable while other spaces upgrade. */
 export type PublicProfile = SpacePublicProfile | ProfilePublication & {
+  version: 3;
+  domain: "gsv-federation/3/profile";
+} | ProfilePublication & {
   version: 2;
   domain: "gsv-federation/2/profile";
   alias: string;
@@ -55,6 +60,10 @@ const profileFields = {
   about: z.string().check(z.maxLength(2_048)),
   contactPolicy: z.enum(["requests", "invitation", "closed"]),
   representation: z.enum(["human", "human-and-ship"]),
+  ship: z.optional(z.strictObject({
+    displayName: z.string().check(z.minLength(1), z.maxLength(80)),
+    about: z.string().check(z.maxLength(2_048)),
+  })),
 };
 export const profileFieldsSchema = z.strictObject(profileFields) satisfies z.ZodMiniType<ProfileFields>;
 const publicationFields = {
@@ -65,6 +74,7 @@ const publicationFields = {
   signature: z.string().check(z.minLength(1), z.maxLength(512)),
 };
 export const publicProfileSchema = z.discriminatedUnion("version", [
+  z.strictObject({ ...publicationFields, version: z.literal(4), domain: z.literal("gsv-federation/4/profile") }),
   z.strictObject({ ...publicationFields, version: z.literal(3), domain: z.literal("gsv-federation/3/profile") }),
   z.strictObject({ ...publicationFields, version: z.literal(2), domain: z.literal("gsv-federation/2/profile"), alias: publicProfileAliasSchema }),
 ]) satisfies z.ZodMiniType<PublicProfile>;

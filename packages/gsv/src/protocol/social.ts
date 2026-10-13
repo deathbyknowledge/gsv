@@ -23,9 +23,10 @@ export type SocialMessageMetadata = {
   reference: OriginMessageRef;
   provenance: SocialMessageProvenance;
   replyTo?: OriginMessageRef;
+  identity?: { displayName: string; ownerName: string; role: "human" | "ship" | "agent" };
 };
 
-export type FederationFeature = "messages" | "approaches";
+export type FederationFeature = "messages" | "approaches" | "identity";
 export type FederationShipDocumentV2 = {
   version: 2;
   domain: "gsv-federation/2/ship";
@@ -77,8 +78,13 @@ export const socialMessageMetadataSchema = z.strictObject({
   reference: originMessageRefSchema,
   provenance: socialMessageProvenanceSchema,
   replyTo: z.optional(originMessageRefSchema),
+  identity: z.optional(z.strictObject({
+    displayName: z.string().check(z.minLength(1), z.maxLength(80)),
+    ownerName: z.string().check(z.minLength(1), z.maxLength(80)),
+    role: z.enum(["human", "ship", "agent"]),
+  })),
 }) satisfies z.ZodMiniType<SocialMessageMetadata>;
-export const federationFeatureSchema = z.enum(["messages", "approaches"]);
+export const federationFeatureSchema = z.enum(["messages", "approaches", "identity"]);
 export const federationShipDocumentV2Schema = z.strictObject({
   version: z.literal(2),
   domain: z.literal("gsv-federation/2/ship"),
@@ -86,7 +92,7 @@ export const federationShipDocumentV2Schema = z.strictObject({
   origin: z.string().check(z.minLength(1), z.maxLength(2_048)),
   publicKey: federationPublicKeySchema,
   protocols: z.tuple([z.literal("gsv-federation/2")]),
-  features: z.array(federationFeatureSchema).check(z.maxLength(2)),
+  features: z.array(federationFeatureSchema).check(z.maxLength(3)),
   issuedAtMs: z.int().check(z.nonnegative()),
   expiresAtMs: z.int().check(z.nonnegative()),
   signature: z.string().check(z.minLength(1), z.maxLength(512)),

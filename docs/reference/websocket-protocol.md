@@ -320,6 +320,11 @@ Current principal defaults from `buildSignalList()`:
 
 ### Human peers
 
+- `account.changed`
+  - Invalidates the owner's account display names after a saved rename. Delivery
+    also requires `account.list`. Clients refresh account presentation without
+    replacing account IDs or conversation state.
+
 - `proc.changed`
   - Carries content-free history revision, generation, and reset-watermark hints
     even for owner connections that are not observing raw Process activity.
