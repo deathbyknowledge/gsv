@@ -61,7 +61,7 @@ beforeEach(() => {
   fixture.request.mockReset();
   root = createTestRoot("feedback");
 });
-afterEach(async () => { await root.unmount(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
+afterEach(async () => { await root.unmount(); vi.restoreAllMocks(); vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
 
 
 async function mount() {
@@ -77,6 +77,21 @@ describe("feedback", () => {
     fixture.available = false;
     await mount();
     expect(collectNodes(tree)).toHaveLength(0);
+  });
+
+  it("shows the dialog without sending when reviewing a preview", async () => {
+    vi.stubEnv("VITE_GSV_PREVIEW", "true");
+    fixture.available = false;
+    await mount();
+    expect(collectText(tree)).toContain("Something broken, confusing, or missing?");
+    expect(collectText(tree)).toContain("Preview only — sending feedback is unavailable here.");
+    expect(element("textarea").props.disabled).toBe(true);
+    await send();
+    expect(fixture.request).not.toHaveBeenCalled();
+    const preview = collectNodes(tree).find(node => node.type === "button" && collectText(node.props.children) === "View confirmation") as VNode<ElementProps>;
+    await act(() => preview.props.onClick!());
+    expect(collectText(tree)).toContain("Preview only — no feedback was sent.");
+    expect(collectText(tree)).toContain("Thank you! This really helps us make GSV better. :)");
   });
 
   it("retains a failed draft and retries the same report identity", async () => {

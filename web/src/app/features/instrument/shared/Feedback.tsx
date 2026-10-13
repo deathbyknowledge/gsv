@@ -14,6 +14,7 @@ export function Feedback({ view }: { view: Distance }) {
   const { snapshot } = useSession();
   const native = useNativeInput();
   const available = snapshot.server?.features?.includes(FEEDBACK_FEATURE) ?? false;
+  const preview = import.meta.env.VITE_GSV_PREVIEW === "true";
   const [open, setOpen] = useState(false);
   const [message, setMessage] = useState("");
   const [state, setState] = useState<"idle" | "sending" | "sent" | "error">("idle");
@@ -58,7 +59,7 @@ export function Feedback({ view }: { view: Distance }) {
   };
 
   const submit = async () => {
-    if (sending.current || !connected || !message.trim() || activityState === "loading" || activityState === "error") return;
+    if (sending.current || !available || !connected || !message.trim() || activityState === "loading" || activityState === "error") return;
     sending.current = true;
     setState("sending");
     if (!submission.current) {
@@ -86,7 +87,7 @@ export function Feedback({ view }: { view: Distance }) {
     }
   };
 
-  if (!available) return null;
+  if (!available && !preview) return null;
   return <>
     <button type="button" aria-haspopup="dialog" onClick={() => {
       if (state === "sent") setState("idle");
@@ -100,20 +101,24 @@ export function Feedback({ view }: { view: Distance }) {
         <button type="button" aria-label="Close feedback" onClick={() => setOpen(false)}>close <kbd>esc</kbd></button>
       </header>
       {state === "sent" ? <div class="feedback-sent" role="status">
+        {!available && <p class="feedback-preview">Preview only — no feedback was sent.</p>}
         <p>Thank you! This really helps us make GSV better. :)</p>
         <button type="button" class="feedback-send" onClick={() => setOpen(false)}>Done</button>
       </div> : <form onSubmit={(event) => { event.preventDefault(); void submit(); }}>
         <p class="feedback-intro">Something broken, confusing, or missing? An idea or something you love? We read every message.</p>
-        <textarea aria-label="Feedback" aria-describedby={`${contactId} ${detailsId}`} autoFocus rows={6}
-          maxLength={FEEDBACK_MAX_LENGTH} value={message} disabled={state === "sending"}
+        <textarea aria-label="Feedback" aria-describedby={available ? `${contactId} ${detailsId}` : contactId} autoFocus rows={6}
+          maxLength={FEEDBACK_MAX_LENGTH} value={message} disabled={!available || state === "sending"}
           onInput={(event) => {
             setMessage(event.currentTarget.value);
             submission.current = null;
             if (state === "error") setState("idle");
           }} />
         <p id={contactId} class="feedback-contact">Want us to get back to you? Leave your email or Discord handle.</p>
+        {!available && <p class="feedback-preview" role="status">
+          Preview only — sending feedback is unavailable here. <button type="button" onClick={() => setState("sent")}>View confirmation</button>
+        </p>}
         <div class="feedback-activity">
-          <label><input type="checkbox" checked={activityState !== "off"} disabled={state === "sending" || !connected}
+          <label><input type="checkbox" checked={activityState !== "off"} disabled={!available || state === "sending" || !connected}
             onChange={(event) => { void selectActivity(event.currentTarget.checked); }} />
             Include last {FEEDBACK_ACTIVITY_MESSAGES} Ship messages
           </label>
@@ -126,9 +131,9 @@ export function Feedback({ view }: { view: Distance }) {
           {activityState === "error" && <p role="alert">Could not load Ship activity. <button type="button" onClick={() => { void selectActivity(true); }}>Retry</button></p>}
         </div>
         <footer>
-          <span id={detailsId}>Includes your space and app version.</span>
+          {available && <span id={detailsId}>Includes your space and app version.</span>}
           <button type="submit" class="feedback-send" aria-label={state === "sending" ? "Sending feedback" : undefined}
-            aria-busy={state === "sending"} disabled={!connected || !message.trim() || state === "sending" || activityState === "loading" || activityState === "error"}>
+            aria-busy={state === "sending"} disabled={!available || !connected || !message.trim() || state === "sending" || activityState === "loading" || activityState === "error"}>
             {state === "sending" ? <Spinner /> : "Send"}
           </button>
         </footer>

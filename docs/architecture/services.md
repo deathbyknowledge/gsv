@@ -193,7 +193,9 @@ delivery error so report content cannot leak through errors or the syscall ledge
 The Instrument offers feedback when the binding exists and the caller has
 `sys.feedback`. The native `feedback` shell command uses the same syscall, so
 Ship can report an issue when asked. An unconfigured deployment sends nothing
-to an external inbox and does not show the header action.
+to an external inbox and does not show the header action. PR preview builds
+show a read-only feedback dialog for copy review when no service is bound;
+reviewers can inspect the confirmation, but no report is sent.
 
 ## Adapters
 

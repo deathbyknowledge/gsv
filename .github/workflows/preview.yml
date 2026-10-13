@@ -86,6 +86,8 @@ jobs:
           key: preview
       - name: Build the PR's public GSV stack
         if: steps.current.outputs.command == 'deploy'
+        env:
+          VITE_GSV_PREVIEW: 'true'
         run: npm run deployment:build
       - name: Install trusted cleanup dependencies
         if: steps.current.outputs.command == 'destroy'
