@@ -45,3 +45,53 @@ it("continues one active run through successive Shell handovers", async () => {
     await runtime.close();
   }
 });
+
+it("lets Crew read the exact archived slice after its source process is killed", async () => {
+  const runtime = await startProcessRuntimeHarness();
+  try {
+    const source = await runtime.spawn("remember personal preferences", { runAs: "process-runtime-agent" });
+    await runtime.configureAi(source.pid);
+    let afterMessageId = 0;
+    for (const message of ["previous-slice-marker: use blue", "new-slice-marker: use green"]) {
+      runtime.ai.enqueue({ kind: "message", text: "Noted." });
+      const sent = await runtime.client.proc.send({ pid: source.pid, message });
+      if (!sent.ok) throw new Error(sent.error);
+      await runtime.waitFor(() => runtime.signals.some(({ signal, payload }) =>
+        signal === "proc.run.finished" && payload.runId === sent.runId), "the source run to finish");
+      if (!afterMessageId) {
+        const history = await runtime.client.proc.history({ pid: source.pid });
+        if (!history.ok) throw new Error(history.error);
+        afterMessageId = history.messages.at(-1)!.id!;
+        expect(afterMessageId).toBeGreaterThan(0);
+      }
+    }
+    const compacted = await runtime.client.proc.history.compact({ pid: source.pid, keepLast: 0, summary: "Green is preferred." });
+    if (!compacted.ok) throw new Error(compacted.error);
+    if ("pending" in compacted) throw new Error("Expected idle compaction to finish");
+    expect(await runtime.client.proc.kill({ pid: source.pid, archive: false })).toMatchObject({ ok: true });
+    await expect(runtime.client.proc.history.segment.read({ pid: source.pid, segmentId: compacted.segment.id }))
+      .rejects.toThrow("Process not found");
+
+    const { archivePath, generation, toMessageId } = compacted.segment;
+    runtime.ai.enqueue(
+      { kind: "tool-calls", calls: [{ id: "read-archive", name: "Shell", arguments: {
+        target: "gsv",
+        input: `set -o pipefail; gzip -dc '${archivePath}' | jq -c 'select(.generation == ${generation} and .id > ${afterMessageId} and .id <= ${toMessageId})'`,
+      } }] },
+      { kind: "message", text: "Review complete." },
+    );
+    const crew = await runtime.spawn("review the archived slice", { runAs: "crew" });
+    await runtime.configureAi(crew.pid);
+    const sent = await runtime.client.proc.send({ pid: crew.pid, message: "Read the assigned archive." });
+    if (!sent.ok) throw new Error(sent.error);
+    await runtime.waitFor(() => runtime.signals.some(({ signal, payload }) =>
+      signal === "proc.run.finished" && payload.runId === sent.runId), "Crew to finish reading the archive");
+    const history = await runtime.client.proc.history({ pid: crew.pid });
+    if (!history.ok) throw new Error(history.error);
+    const read = history.messages.find(({ role, content }) => role === "toolResult" && JSON.stringify(content).includes("read-archive"));
+    expect(read?.content).toMatchObject({ isError: false, output: expect.stringContaining("new-slice-marker") });
+    expect(JSON.stringify(read?.content)).not.toContain("previous-slice-marker");
+  } finally {
+    await runtime.close();
+  }
+});

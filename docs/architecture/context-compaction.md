@@ -179,6 +179,10 @@ admits at most one unresolved review per owner. Each review is an ordinary low-p
 brief asks Ship to delegate a bounded review to Crew while prioritizing user
 responses. Compaction and subsequent model calls do not wait for the review.
 
+Crew reads the durable `archivePath` through the native filesystem using
+`gzip -dc`, filtering raw JSONL by generation and original message ID. This path
+remains readable after the source Process is killed; it does not depend on the
+live Process's segment registry. Filtered output is paged to avoid truncation.
 The review reads current memory and the new archived slice, ignores prior
 summaries and routine noise, and merges useful facts with revision-checked
 repository writes. Its resolution records the reviewed boundary; failures remain
