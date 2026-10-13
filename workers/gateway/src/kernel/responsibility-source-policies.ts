@@ -43,6 +43,13 @@ const POLICY_DEFINITIONS = [
     defaultEnabled: true,
   },
   {
+    id: "memory.review",
+    name: "Personal memory",
+    description: "Reviews newly archived Ship history for useful standing memory and personal wiki updates.",
+    control: "configurable",
+    defaultEnabled: true,
+  },
+  {
     id: "mail.received",
     name: "Incoming mail",
     description: "Triggers when a newly received email is ready for Ship to review.",

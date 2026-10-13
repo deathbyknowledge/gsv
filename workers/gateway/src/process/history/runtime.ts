@@ -51,6 +51,7 @@ import {
   buildProcContextState, estimateContextInputTokens, estimateContextMessagesTokens, measureContextInputTokens,
 } from "../context-pressure";
 import { formatContextRunwayAlertMessage } from "../../prompts/context-runway";
+import { enqueueMemoryReview } from "../memory-review";
 import {
   assembleSystemPromptSnapshot, contextProjectionFromManifest, contextProjectionsEqual, createContextProjection,
   countResponsibilityTemplates, parseContextProjection, type ContextProjection,
@@ -1256,6 +1257,10 @@ export class ProcessHistory {
           archivePath: archivedTo,
           summaryMessageId,
         });
+        enqueueMemoryReview(this.host, {
+          segmentId, archivePath: archivedTo, generation: snapshot.generation,
+          throughMessageId: snapshot.toMessageId,
+        });
         this.host.store.state.deleteContextState();
         if (snapshot.contextEpoch) {
           this.host.store.epochs.closeLiveContextEpoch(
@@ -1274,6 +1279,7 @@ export class ProcessHistory {
         }
       });
       installed = true;
+      await this.host.tasks.arm();
     } finally {
       if (!installed) {
         await this.deleteFailedCompactionArchive(archiveKey);

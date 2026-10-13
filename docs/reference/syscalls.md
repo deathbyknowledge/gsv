@@ -1405,6 +1405,7 @@ type ResponsibilitySourcePolicy =
     }
   | {
       id:
+        | "memory.review"
         | "mail.received"
         | "machine.added"
         | "adapter.connected"
@@ -1473,6 +1474,7 @@ type ResponsibilitySyscalls = {
   "r12y.source.update": {
     args: {
       id:
+        | "memory.review"
         | "mail.received"
         | "machine.added"
         | "adapter.connected"

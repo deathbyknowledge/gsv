@@ -17,11 +17,16 @@ import {
 } from "../kernel/net";
 import { routedFetchOptionsSchema } from "./internal/schemas";
 import type { Process } from "./do";
-import type { ProcessApprovalTarget, ProcessApprovalTargetRef } from "../protocol/process-frames";
+import type { ProcessApprovalTarget, ProcessApprovalTargetRef, ProcessMemoryReview } from "../protocol/process-frames";
 import { raceWithAbort } from "../shared/abort";
 
 export class ProcessKernelClient {
   constructor(private readonly host: Process) {}
+
+  async admitMemoryReview(review: ProcessMemoryReview): Promise<boolean> {
+    const kernel = await getKernelPtr(this.host.installationId);
+    return kernel.admitProcessMemoryReview(this.host.pid, review);
+  }
 
   async resolveApprovalTarget(ref: ProcessApprovalTargetRef, signal?: AbortSignal): Promise<ProcessApprovalTarget> {
     signal?.throwIfAborted();

@@ -19,6 +19,8 @@ import { InstallationRetirement, durableResourceName, stateWithRetirementStorage
 import { DurableObject } from "cloudflare:workers";
 import { ModelMetadataResolver } from "../inference/model-metadata";
 import { z } from "zod";
+import { processMemoryReviewSchema, type ProcessMemoryReview } from "../protocol/process-frames";
+import { admitMemoryReview } from "./memory-review";
 import { McpClientManager, SqlMcpServerRows } from "./mcp-client";
 import type {
   Frame,
@@ -1196,6 +1198,13 @@ export class Kernel extends DurableObject<GatewayEnv> {
     } finally {
       await cancelUnlockedBody(body, "Linked adapter request completed");
     }
+  }
+
+  async admitProcessMemoryReview(processId: string, input: ProcessMemoryReview): Promise<boolean> {
+    const review = processMemoryReviewSchema.parse(input);
+    const gate = await this.onboarding.managedWorkGate();
+    if (!gate.allowed) return false;
+    return admitMemoryReview(processId, review, this.buildKernelContext({}));
   }
 
   async acceptManagedInboundMail(

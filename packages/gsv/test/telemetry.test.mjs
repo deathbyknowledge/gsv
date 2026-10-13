@@ -24,6 +24,17 @@ const INPUT = {
 };
 
 describe("telemetry contract", () => {
+  it("reports memory admission failures without including memory contents", () => {
+    const event = {
+      stream: "operational", name: "memory.review.admission.failed",
+      properties: { diagnosticId: "11111111-1111-4111-8111-111111111111" },
+    };
+    assert.ok(telemetryRecordSchema.safeParse(createTelemetryRecord({ ...INPUT, event })).success);
+    assert.throws(() => createTelemetryRecord({ ...INPUT, component: "accounts", event }));
+    for (const field of ["error", "archivePath", "summary", "contents"]) {
+      assert.throws(() => createTelemetryRecord({ ...INPUT, event: { ...event, properties: { ...event.properties, [field]: "private" } } }));
+    }
+  });
   it("distinguishes an aborted delegation from a failed delegation", () => {
     for (const outcome of ["aborted", "failed"]) {
       const record = createTelemetryRecord({

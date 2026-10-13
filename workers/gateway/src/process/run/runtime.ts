@@ -54,6 +54,7 @@ import {
 } from "../../inference/output";
 import { extractCompletedText } from "../../inference/generated-text";
 import { incrementRunControlFailure, isRunControlFailureExhausted, runControlFailureAttempt, PROCESS_TASK_SCHEMA, type ProcessTask, type ProcessTaskCallback, contextSnapshotFromRun, withRunControlInstructions } from "./helpers";
+import { deliverMemoryReview } from "../memory-review";
 import { formatRunControlToolResult, renderToolExecutionError, renderHistoryEvent } from "../history/event-renderer";
 import { ProcessStore, stringifyAssistantMessageMeta, type MessageMetadata, type ContextEpochRecord } from "../store";
 import { resolveToolSyscall } from "../../syscalls/constants";
@@ -1894,6 +1895,9 @@ export class ProcessRun {
 
   async runScheduledTask(task: DurableTask<ProcessTask>): Promise<void> {
     switch (task.callback) {
+      case "onMemoryReview":
+        await deliverMemoryReview(this.host, task.id);
+        return;
       case "onMediaPreparationTimeout":
         await this.onMediaPreparationTimeout(task.payload);
         return;

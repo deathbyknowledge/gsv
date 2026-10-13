@@ -5,8 +5,8 @@ the selected model's input budget. It replaces enough of the oldest completed
 history with a handover to restore a configured amount of runway, and archives
 the exact records. An active agent can write its own handover while it still
 has the full context; automatic summarization remains the overflow fallback.
-Compaction does not write facts into the user's context or
-knowledge files.
+Compaction itself does not write facts into the user's context or knowledge
+files. Newly archived Ship history queues a separate memory review.
 
 ## Ownership
 
@@ -165,8 +165,26 @@ Compaction does not finish a responsibility or restart completed onboarding.
 All owned agents load the human's short standing `context.d` facts. Detailed
 knowledge belongs in the shared personal wiki, commitments in `r12y`, and exact
 history in archives. Agents save useful knowledge as they work; a handover should
-not become a duplicate of those stores. This operation does not schedule a
-background memory review or overwrite installed user-authored context files.
+not become a duplicate of those stores. Installed user-authored context remains
+under its owner's control.
+
+Archive installation atomically queues a memory-review source containing the
+immutable segment and the new message range. The Process delivers these ranges in
+order, with durable retry; an ambiguous admission reuses the segment's receipt.
+The Kernel accepts only canonical Ship sources and admits at most one unresolved
+review per owner. Each review is an ordinary low-priority responsibility, whose
+brief asks Ship to delegate a bounded review to Crew while prioritizing user
+responses. Compaction and subsequent model calls do not wait for the review.
+
+The review reads current memory and the new archived slice, ignores prior
+summaries and routine noise, and merges useful facts with revision-checked
+repository writes. Its resolution records the reviewed boundary; failures remain
+unresolved. Later ranges wait until that review is resolved or cancelled. Workers
+do not recursively schedule reviews of their own compactions. No historical
+backfill or periodic inference scan is introduced. Owners can disable new review
+admissions through the `memory.review` responsibility source; existing work stays
+inspectable and can be cancelled normally. Admission failures retain a private
+Process trace diagnostic and emit a content-free telemetry reference.
 
 Chat does not display internal handovers as user messages or “Memory” notes.
 Process history and archive inspection retain them. Canonical Conversation
