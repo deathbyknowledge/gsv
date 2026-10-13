@@ -20,6 +20,7 @@ import {
 import type { JsonObject } from "@humansandmachines/gsv/protocol";
 import { z } from "zod";
 import { McpOAuthProvider, parseOAuthState } from "./mcp-oauth-provider";
+import { McpOAuthClient, OAuthSSEClientTransport, OAuthStreamableHTTPClientTransport } from "./mcp-oauth-client";
 
 /**
  * MCP client sessions owned by the Kernel: one `Client` from the MCP SDK per
@@ -162,6 +163,7 @@ export class McpClientConnection implements McpConnection {
   private transport?: { kind: McpTransportKind; instance: McpClientTransport };
   private discoveryAbort?: AbortController;
   private discoveryAttempt = 0;
+  private readonly authorization?: McpOAuthClient;
 
   constructor(
     readonly url: URL,
@@ -171,6 +173,7 @@ export class McpClientConnection implements McpConnection {
     this.client = new Client(info, { jsonSchemaValidator: new CfWorkerJsonSchemaValidator() });
     const provider = options.transport.authProvider;
     if (provider) {
+      this.authorization = new McpOAuthClient(url, provider, options.transport.requestInit);
       provider.onAuthorizationRequired = () => {
         this.cancelDiscovery();
         this.connectionState = "authenticating";
@@ -302,6 +305,7 @@ export class McpClientConnection implements McpConnection {
     if (transport?.kind === "streamable-http" && transport.instance.sessionId) {
       await transport.instance.terminateSession?.().catch(() => undefined);
     }
+    await this.authorization?.close();
     await this.client.close();
   }
 
@@ -371,11 +375,15 @@ export class McpClientConnection implements McpConnection {
     if (this.options.createTransport) {
       return this.options.createTransport(kind, this.url, this.options.transport);
     }
-    const { authProvider, requestInit, sessionId } = this.options.transport;
+    const { requestInit, sessionId } = this.options.transport;
     if (kind === "streamable-http") {
-      return new StreamableHTTPClientTransport(this.url, { authProvider, requestInit, sessionId });
+      return this.authorization
+        ? new OAuthStreamableHTTPClientTransport(this.url, { requestInit, sessionId }, this.authorization)
+        : new StreamableHTTPClientTransport(this.url, { requestInit, sessionId });
     }
-    return new SSEClientTransport(this.url, { authProvider, requestInit });
+    return this.authorization
+      ? new OAuthSSEClientTransport(this.url, { requestInit }, this.authorization)
+      : new SSEClientTransport(this.url, { requestInit });
   }
 
   /**

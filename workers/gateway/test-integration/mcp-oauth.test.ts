@@ -96,6 +96,18 @@ it("recovers OAuth discovery and tool calls on the same server in a clean instal
     await expect(client.sys.mcp.call({ serverId, name: "operate" })).resolves.toMatchObject({ isError: false });
     expect(fixture.calls).toBe(1);
     expect(fixture.exchanges).toBe(3);
+
+    const refreshes = fixture.refreshes;
+    fixture.expire(true);
+    const results = await Promise.all([
+      client.sys.mcp.call({ serverId, name: "operate" }),
+      client.sys.mcp.call({ serverId, name: "operate" }),
+    ]);
+    expect(results.every((result) => result.isError === false)).toBe(true);
+    expect(fixture.refreshes).toBe(refreshes + 1);
+    expect(fixture.calls).toBe(3);
+    expect((await client.sys.mcp.list({})).servers[0])
+      .toMatchObject({ serverId, state: "ready", authUrl: null, error: null });
   } finally {
     client.close();
   }

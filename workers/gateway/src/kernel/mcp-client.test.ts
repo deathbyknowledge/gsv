@@ -914,9 +914,9 @@ describe("McpClientManager OAuth recovery", () => {
     vi.restoreAllMocks();
   });
 
-  async function setup() {
+  async function setup(transport: "streamable-http" | "sse" = "streamable-http") {
     const origin = "https://mcp.example";
-    const fixture = createMcpOAuthFixture(origin);
+    const fixture = createMcpOAuthFixture(origin, transport);
     vi.stubGlobal("fetch", (input: RequestInfo | URL, init?: RequestInit) =>
       fixture.fetch(new Request(input, init)));
     const rows = new FakeRows();
@@ -934,7 +934,7 @@ describe("McpClientManager OAuth recovery", () => {
     provider.serverId = "mcp-1";
     await manager.registerServer("mcp-1", {
       url: `${origin}/mcp`, name: "tools", callbackUrl: CALLBACK_URL,
-      transport: { type: "streamable-http", authProvider: provider },
+      transport: { type: transport, authProvider: provider },
     });
     async function signIn(target = manager) {
       const authUrl = rows.get("mcp-1")?.auth_url;
@@ -964,6 +964,69 @@ describe("McpClientManager OAuth recovery", () => {
     expect(rows.get("mcp-1")?.auth_url).toBeNull();
     expect(fixture.refreshes).toBe(1);
     expect(fixture.exchanges).toBe(1);
+  });
+
+  it.each(["streamable-http", "sse"] as const)("shares rotating-token renewal across concurrent %s calls", async (transport) => {
+    const { manager, fixture, connection, rows } = await setup(transport);
+    const release = Promise.withResolvers<void>();
+    const fetchFixture = fixture.fetch;
+    vi.spyOn(fixture, "fetch").mockImplementation(async (request) => {
+      const response = await fetchFixture(request);
+      if (new URL(request.url).pathname === "/token" && response.ok) await release.promise;
+      return response;
+    });
+    fixture.expire(true);
+    const calls = Promise.allSettled([
+      manager.callTool({ serverId: "mcp-1", name: "operate" }),
+      manager.callTool({ serverId: "mcp-1", name: "operate" }),
+    ]);
+    try {
+      await vi.waitFor(() => expect(fixture.refreshes).toBeGreaterThan(0));
+      expect(fixture.refreshes).toBe(1);
+    } finally {
+      release.resolve();
+    }
+    expect((await calls).map((call) => call.status)).toEqual(["fulfilled", "fulfilled"]);
+    expect(connection.connectionState).toBe("ready");
+    expect(rows.get("mcp-1")?.auth_url).toBeNull();
+    expect(fixture.exchanges).toBe(1);
+    expect(fixture.calls).toBe(2);
+  });
+
+  it.each(["streamable-http", "sse"] as const)("reuses renewed tokens for a delayed %s rejection", async (transport) => {
+    const { manager, fixture, connection, rows } = await setup(transport);
+    const release = Promise.withResolvers<void>();
+    const fetchFixture = fixture.fetch;
+    let rejected = 0;
+    vi.spyOn(fixture, "fetch").mockImplementation(async (request) => {
+      const response = await fetchFixture(request);
+      if (response.status === 401 && ++rejected === 2) await release.promise;
+      return response;
+    });
+    fixture.expire(true);
+    const first = manager.callTool({ serverId: "mcp-1", name: "operate" });
+    const calls = Promise.allSettled([first, manager.callTool({ serverId: "mcp-1", name: "operate" })]);
+    try {
+      await first;
+      expect(rejected).toBe(2);
+    } finally {
+      release.resolve();
+    }
+    expect((await calls).map((call) => call.status)).toEqual(["fulfilled", "fulfilled"]);
+    expect(fixture.refreshes).toBe(1);
+    expect(connection.connectionState).toBe("ready");
+    expect(rows.get("mcp-1")?.auth_url).toBeNull();
+  });
+
+  it.each(["streamable-http", "sse"] as const)("shares renewal across parallel %s discovery lists", async (transport) => {
+    const { manager, fixture, connection, rows } = await setup(transport);
+    fixture.expire(true);
+    await manager.refreshConnection("mcp-1");
+    expect(fixture.refreshes).toBe(1);
+    expect(connection.connectionState).toBe("ready");
+    expect(connection.connectionError).toBeNull();
+    expect(rows.get("mcp-1")?.auth_url).toBeNull();
+    expect(connection.tools.map((tool) => tool.name)).toEqual(["operate"]);
   });
 
   it("recreates a retained server after OAuth cleanup fails during removal", async () => {
@@ -1005,8 +1068,15 @@ describe("McpClientManager OAuth recovery", () => {
     expect(fixture.exchanges).toBe(2);
   });
 
-  it.each(["discovery", "tool", "notification"])("reauthorizes the same server after %s", async (source) => {
-    const { manager, fixture, connection, rows, signIn } = await setup();
+  it.each([
+    { transport: "streamable-http", source: "discovery" },
+    { transport: "streamable-http", source: "tool" },
+    { transport: "streamable-http", source: "notification" },
+    { transport: "sse", source: "discovery" },
+    { transport: "sse", source: "tool" },
+    { transport: "sse", source: "notification" },
+  ] as const)("reauthorizes the same $transport server after $source", async ({ transport, source }) => {
+    const { manager, fixture, connection, rows, signIn } = await setup(transport);
     const changes = vi.fn();
     manager.onServerStateChanged(changes);
     fixture.expire();
@@ -1105,6 +1175,43 @@ describe("McpClientManager OAuth recovery", () => {
     expect(connection.connectionState).toBe("ready");
     expect(rows.get("mcp-1")?.auth_url).toBeNull();
     expect(fixture.refreshes).toBe(0);
+  });
+
+  it("bounds authorization retries for insufficient scope", async () => {
+    const { manager, fixture, connection, rows } = await setup();
+    const fetchFixture = fixture.fetch;
+    vi.spyOn(fixture, "fetch").mockImplementation(async (request) => {
+      if (new URL(request.url).pathname === "/mcp" && request.method === "POST") {
+        return new Response("Forbidden", {
+          status: 403,
+          headers: { "www-authenticate": "Bearer error=\"insufficient_scope\", scope=\"extra\"" },
+        });
+      }
+      return fetchFixture(request);
+    });
+    await expect(manager.callTool({ serverId: "mcp-1", name: "operate" })).rejects.toThrow("Forbidden");
+    expect(fixture.refreshes).toBe(1);
+    expect(connection.connectionState).toBe("ready");
+    expect(rows.get("mcp-1")?.auth_url).toBeNull();
+  });
+
+  it("terminates the session without starting authorization during removal", async () => {
+    const { manager, fixture, connection, rows, storage } = await setup();
+    expect(connection.sessionId).toBe("fixture-session");
+    const fetchFixture = fixture.fetch;
+    let terminations = 0;
+    vi.spyOn(fixture, "fetch").mockImplementation(async (request) => {
+      if (request.method === "DELETE") {
+        terminations += 1;
+        return new Response(null, { status: 401 });
+      }
+      return fetchFixture(request);
+    });
+    await manager.removeServer("mcp-1");
+    expect(terminations).toBe(1);
+    expect(fixture.refreshes).toBe(0);
+    expect(rows.list()).toEqual([]);
+    expect(storage.keys()).toEqual([]);
   });
 });
 

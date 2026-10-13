@@ -206,18 +206,6 @@ export class McpOAuthProvider implements OAuthClientProvider {
    * under its challenge to the state nonce, so the callback can find it.
    */
   async redirectToAuthorization(authorizationUrl: URL): Promise<void> {
-    if (this.authorizationUrl) {
-      // Concurrent requests share the first sign-in, including its PKCE verifier.
-      if (this.authorizationUrl !== authorizationUrl.toString()) {
-        const state = authorizationUrl.searchParams.get("state");
-        const challenge = authorizationUrl.searchParams.get("code_challenge");
-        if (state) await this.discardState(state);
-        if (challenge && this.storedClientId) {
-          await this.storage.delete(this.challengeCodeVerifierKey(this.clientId, challenge));
-        }
-      }
-      return;
-    }
     this.authorizationUrl = authorizationUrl.toString();
     if (!this.storedClientId || !this.storedServerId) return;
     const state = authorizationUrl.searchParams.get("state");
