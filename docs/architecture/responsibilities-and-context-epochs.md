@@ -236,7 +236,10 @@ System-owned producers use the same ledger contract:
   criteria, outcomes and step-by-step instructions. Ship looks the user up only
   when asked or after they accept an offer; a name given as an introduction alone
   does not authorize a lookup. A name supplied during an accepted lookup needs no
-  second permission question, and Ship searches with the user's location.
+  second permission question, and Ship searches with the user's location. For an
+  accepted task, Ship uses suitable original or public sources to find task facts,
+  such as event dates and registration deadlines, rather than having the user
+  populate a list.
   Completion requires a useful first result or supported ongoing work actually
   configured with its scope, cadence and delivery confirmed. A connection alone
   does not complete onboarding. For an accepted task with later updates, Ship explains

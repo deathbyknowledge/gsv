@@ -551,7 +551,7 @@ function DirNode({
 }) {
   const rowKey: FleetRow = `dir:${place.id}:${path}`;
   const { client } = useGateway();
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(depth === 0 && place.id === CLOUD_TARGET_ID);
   const listing = useQuery({
     queryKey: ["fleet", "files", place.id, path],
     queryFn: () => readFilesPath(client, readArgsFor(place.id, path)),

@@ -108,7 +108,7 @@ function settleDuration(length: number): number {
 const SETTLE_ON_LOAD = 12;
 const SETTLE_STAGGER_MS = 6;
 /** Keys Zen answers in browse mode. Together with the shell's, they are the keys that never start writing; y and n are claimed only while an approval is pending. */
-const BROWSE_KEYS: ReadonlySet<string> = new Set(["j", "k", "g", "G", "o"]);
+const BROWSE_KEYS: ReadonlySet<string> = new Set(["j", "k", "ArrowDown", "ArrowUp", "g", "G", "o"]);
 const CLAIMED_KEYS: ReadonlySet<string> = new Set([...BROWSE_KEYS, ...SHELL_KEYS]);
 
 /** The element a key or paste would already edit, or null when it would reach nothing. */
@@ -824,9 +824,9 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
         if (focusedReceipt && focusedReceipt.anchorId !== focused.id) scrolling.select(moments.findIndex((moment) => moment.id === focusedReceipt.anchorId));
         return;
       }
-      if (browse !== null && (event.key === "j" || event.key === "k")) {
+      if (browse !== null && (event.key === "j" || event.key === "k" || event.key === "ArrowDown" || event.key === "ArrowUp")) {
         event.preventDefault();
-        scrolling.select(Math.max(0, Math.min(moments.length - 1, browse + (event.key === "j" ? 1 : -1))));
+        scrolling.select(Math.max(0, Math.min(moments.length - 1, browse + (event.key === "j" || event.key === "ArrowDown" ? 1 : -1))));
         return;
       }
       // Anything else printable starts writing: the prompt takes focus during keydown, so the keystroke itself lands in it.
@@ -1105,15 +1105,7 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
               place={currentPlace}
               showPlace={false}
               dir="~"
-              placeholder={
-                pendingHil
-                  ? "answer the approval first"
-                  : !promptFocused
-                    ? "Start chatting, or click here to chat"
-                    : currentPlace.online
-                      ? "Ask in plain words, or start with $ to run a terminal command yourself"
-                      : `Ask in plain words; ${currentPlace.label} will run it when it's back`
-              }
+              placeholder="What can I take care of?"
               disabled={!connected || !pid || recordingVoice}
               onSubmit={onSubmit}
               allowEmpty={attachments.length > 0}

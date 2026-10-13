@@ -21,6 +21,8 @@ the bottom and resumes following new replies.
 
 Chat does not show the active model or routine place readiness above the composer. Model attribution
 stays with each reply; errors appear when needed, and an offline place shows a warning by its selector.
+In Zen browse mode, `j`/Down and `k`/Up move between messages and activity. Arrow keys keep their
+normal input behavior while the composer is focused.
 
 ## Conversation kinds
 
