@@ -954,7 +954,7 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
   const cloudAlone = !!targetsQuery.data && !targetsQuery.isError && selectorPlaces.length === 1;
   const activeRun = connected ? runtime.activeRunId : null;
   const currentModel = runtime.context?.runId === activeRun ? runtime.context.model : null;
-  const showFeedback = note !== null || (pendingHil === null && activeRun !== null);
+  const showFeedback = note !== null || (pendingHil === null && activeRun !== null && Boolean(currentModel));
 
   const latestMessageIndex = useMemo(() => moments.reduce((latest, moment, index) =>
     moment.role === "human" || (moment.role === "ship" && (moment.text !== "" || moment.media?.length || moment.streaming)) ? index : latest, -1), [moments]);
@@ -1088,10 +1088,7 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
               onRemove={() => setAttachments((current) => current.filter((file) => file.id !== attachment.id))} />)}
           </ul>}
           {showFeedback && <div class="zen-feedback">
-            {activeRun !== null && pendingHil === null && <span role="status">
-              {currentModel && <>{currentModel} · </>}
-              {currentPlace.label} is {currentPlace.online ? "ready" : "offline"}
-            </span>}
+            {activeRun !== null && pendingHil === null && currentModel && <span role="status">{currentModel}</span>}
             {note ? <span class="is-err" role="alert">{note}</span> : null}
           </div>}
           <div class="zen-compose-line" hidden={recordingVoice}>

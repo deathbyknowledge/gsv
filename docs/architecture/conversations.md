@@ -19,6 +19,9 @@ messages and Ship's Markdown replies open in a new tab.
 When the reader scrolls above the latest chat message, a small button returns the transcript to
 the bottom and resumes following new replies.
 
+During a run, Chat shows the selected model above the composer once it is known. Routine place
+readiness does not appear there; an offline place still shows a warning by the place selector.
+
 ## Conversation kinds
 
 The Kernel owns the conversation directory and membership:
