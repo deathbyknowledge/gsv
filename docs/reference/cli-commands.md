@@ -210,6 +210,24 @@ with an error there. `proc list` labels the one canonical process as
 `kind=personal`; all other entries are `kind=work`, even when they run as the
 same personal-agent account.
 
+Inside an active process, `proc compact --summary '...'` saves a handover for
+installation after the current tool batch finishes. The original request and
+unseen tool results stay intact, alongside enough recent original exchanges to
+fill the configured low-water budget (40% by default, including instructions,
+tools and handover). History that already fits stays unchanged.
+No history ids or new process are needed.
+For an idle process, use `proc compact --pid PID` with one of `--keep-last N`,
+`--through-message-id ID` or `--target-pressure N`, and either `--summary TEXT`
+or `--generate-summary`. See [Context Compaction](../architecture/context-compaction.md).
+
+`proc history --archive PATH --generation N --after-message-id N
+--through-message-id N --offset N --limit 10 --full` pages an immutable gzip
+archive through normal filesystem permissions, including after the source
+process is killed. Message filters use the original IDs. Continue with the
+reported `next_offset` until `has_more=false`; `--json` returns the raw archived
+message page. The reader streams decompression instead of buffering the entire
+archive in a shell pipeline.
+
 `r12y` manages the Kernel's durable unresolved-work ledger. `list` omits
 terminal records unless `--all` is supplied. Waiting work must name a future
 check time or a blocker. Prefer `proc delegate --responsibility ID ...` for a

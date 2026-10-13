@@ -153,6 +153,12 @@ export const runStateSchema = z.object({
   mcpServers: z.array(z.string()).optional(),
   systemPrompt: z.string().optional(),
   contextEpochId: z.string().optional(),
+  pendingCompaction: z.object({
+    summary: z.string(),
+    throughMessageId: z.number().int().positive(),
+    historyGeneration: z.number().int(),
+    contextEpochId: z.string(),
+  }).optional(),
   generationContextId: z.string().optional(),
   approvalPolicy: toolApprovalPolicySchema.optional(),
   outputMedia: z.array(runOutputMediaSchema).optional(),

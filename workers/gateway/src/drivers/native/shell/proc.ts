@@ -30,6 +30,9 @@ import { z } from "zod";
 import type { RequestFrame } from "../../../protocol/frames";
 import { parseDurationMs, requireCommandCapability, requireShellOptionValue } from "./common";
 import { renderProcHistoryRecords } from "./history-renderer";
+import { readArchiveHistory, type ArchiveHistorySelection } from "./history-archive";
+import { archivedHistoryRecords } from "../../../process/history/archive";
+import { createNativeFileSystem } from "../filesystem";
 
 const DEFAULT_HISTORY_CONTENT_CHARS = 4000;
 
@@ -63,8 +66,9 @@ type ParsedProcSegmentRead = {
   offset?: number;
   json?: boolean;
 };
-type ParsedProcHistory = {
-  pid: string;
+type ParsedProcHistory = ArchiveHistorySelection & {
+  pid?: string;
+  archive?: string;
   limit?: number;
   offset?: number;
   beforeMessageId?: number;
@@ -389,8 +393,19 @@ async function runProcCommand(args: string[], ctx: KernelContext): Promise<ExecR
       };
     }
     case "history": {
-      requireCommandCapability(ctx, "proc.history");
       const parsed = parseProcHistoryCommand(rest, ctx);
+      if (parsed.archive) {
+        requireCommandCapability(ctx, "fs.read");
+        const opened = await createNativeFileSystem(ctx).openFile(parsed.archive);
+        if (!opened.body) throw new Error(`Could not open archive: ${parsed.archive}`);
+        const page = await readArchiveHistory(opened.body, parsed, ctx.requestSignal);
+        const stdout = parsed.json ? JSON.stringify(page) : [
+          ...renderProcHistoryRecords(archivedHistoryRecords(page.messages, parsed.generation ?? 0), parsed.full ? undefined : parsed.maxContentChars),
+          `offset=${page.offset} next_offset=${page.nextOffset} has_more=${page.hasMore}`,
+        ].join("\n");
+        return { stdout: `${stdout}\n`, stderr: "", exitCode: 0 };
+      }
+      requireCommandCapability(ctx, "proc.history");
       const historyArgs: ArgsOf<"proc.history"> = { pid: parsed.pid, format: 2 };
       if (parsed.limit !== undefined) historyArgs.limit = parsed.limit;
       if (parsed.offset !== undefined) historyArgs.offset = parsed.offset;
@@ -441,6 +456,9 @@ async function runProcCommand(args: string[], ctx: KernelContext): Promise<ExecR
       const result = await runProcessSyscall(ctx, "proc.history.compact", parsed);
       if (!result.ok) {
         return { stdout: "", stderr: `proc compact: ${result.error}\n`, exitCode: 1 };
+      }
+      if ("pending" in result) {
+        return { stdout: "Handover saved. Compaction follows when the current tools finish.\n", stderr: "", exitCode: 0 };
       }
       return {
         stdout: [
@@ -855,6 +873,9 @@ function parseProcSegmentReadCommand(
 
 function parseProcHistoryCommand(args: string[], ctx: KernelContext): ParsedProcHistory {
   let pid: string | undefined;
+  let archive: string | undefined;
+  let generation: number | undefined;
+  let throughMessageId: number | undefined;
   let limit: number | undefined;
   let offset: number | undefined;
   let beforeMessageId: number | undefined;
@@ -866,6 +887,16 @@ function parseProcHistoryCommand(args: string[], ctx: KernelContext): ParsedProc
 
   for (let index = 0; index < args.length; index += 1) {
     const current = args[index];
+    if (current === "--archive") {
+      archive = requireShellOptionValue(args[++index], current);
+      continue;
+    }
+    if (current === "--generation" || current === "--through-message-id") {
+      const value = parseNonNegativeShellInteger(requireShellOptionValue(args[++index], current), current);
+      if (current === "--generation") generation = value;
+      else throughMessageId = value;
+      continue;
+    }
     if (current === "--pid") {
       index += 1;
       pid = requireShellOptionValue(args[index], current);
@@ -888,7 +919,7 @@ function parseProcHistoryCommand(args: string[], ctx: KernelContext): ParsedProc
     }
     if (current === "--after-message-id") {
       index += 1;
-      afterMessageId = parsePositiveShellInteger(requireShellOptionValue(args[index], current), current);
+      afterMessageId = parseNonNegativeShellInteger(requireShellOptionValue(args[index], current), current);
       continue;
     }
     if (current === "--tail") {
@@ -911,8 +942,17 @@ function parseProcHistoryCommand(args: string[], ctx: KernelContext): ParsedProc
     throw new Error(`unexpected argument: ${current}`);
   }
 
+  if (archive && (pid || tail || beforeMessageId !== undefined)) {
+    throw new Error("--archive cannot be combined with --pid, --tail or --before-message-id");
+  }
+  if (!archive && (generation !== undefined || throughMessageId !== undefined)) {
+    throw new Error("--generation and --through-message-id require --archive");
+  }
   const parsed: ParsedProcHistory = {
-    pid: pid ?? requireCurrentProcessId(ctx),
+    pid: archive ? undefined : pid ?? requireCurrentProcessId(ctx),
+    archive,
+    generation,
+    throughMessageId,
     maxContentChars,
   };
   if (limit !== undefined) parsed.limit = limit;
@@ -980,10 +1020,10 @@ function parseProcCompactCommand(args: string[], ctx: KernelContext): ParsedProc
     Number(targetPressure !== undefined)
       + Number(keepLast !== undefined)
       + Number(throughMessageId !== undefined)
-    !== 1
+    > 1
   ) {
     throw new Error(
-      "provide exactly one of --target-pressure, --keep-last, or --through-message-id",
+      "provide at most one of --target-pressure, --keep-last, or --through-message-id",
     );
   }
 
@@ -1302,8 +1342,10 @@ function procUsage(): string {
     "  proc segments [--pid PID]",
     "  proc policy [--pid PID] [--overflow auto-compact|fail] [--compact-at N] [--compact-to N]",
     "  proc history [--pid PID] [--tail] [--limit N] [--offset N] [--json] [--full]",
+    "  proc history --archive PATH [--generation N] [--after-message-id N] [--through-message-id N] [--offset N] [--limit N] [--json] [--full]",
     "  proc segment <segment-id> [--pid PID] [--limit N] [--offset N] [--json]",
     "  proc compact [--pid PID] (--target-pressure N | --keep-last N | --through-message-id ID) [--summary TEXT | --generate-summary]",
+    "  proc compact --summary TEXT  (handover from the current process)",
     "  proc fork (<segment-id> | --message-id ID) [--pid PID] [--label LABEL] [--segment-only]",
     "  proc send <pid> [--metadata-json json] <message>",
     "  proc call <pid> [--metadata-json json] [--timeout 60s] <message>",
@@ -1313,6 +1355,7 @@ function procUsage(): string {
     "--summary, it asks the process model to generate the visible summary.",
     "proc fork branches a new process from a message or restores a compacted segment.",
     "proc history reads the live transcript for this process or another visible process.",
+    "--archive pages a readable gzip archive after its process is gone; filters use original message IDs.",
     "",
     "proc delegate creates a durable child process and returns a task handle",
     "immediately. --check-after controls non-destructive supervision (default 10m).",

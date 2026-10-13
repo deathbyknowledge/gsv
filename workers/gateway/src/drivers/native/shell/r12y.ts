@@ -1,7 +1,6 @@
 import { defineCommand } from "just-bash";
 import type { ExecResult } from "just-bash";
 import type {
-  ResponsibilityConfigurableSourcePolicyId,
   ResponsibilityCreateArgs,
   ResponsibilityPatch,
   ResponsibilityRecord,
@@ -18,6 +17,7 @@ import {
   handleResponsibilityUpdate,
 } from "../../../kernel/responsibilities";
 import { requireCommandCapability, requireShellOptionValue } from "./common";
+import { requireConfigurableResponsibilitySourceId } from "../../../kernel/responsibility-source-policies";
 import * as z from "zod/mini";
 
 const prioritySchema = z.enum(["low", "normal", "high", "critical"]);
@@ -103,7 +103,7 @@ async function runR12yCommand(args: string[], ctx: KernelContext): Promise<ExecR
           : null;
       if (enabled === null) throw new Error("source action must be enable or disable");
       const updated = handleResponsibilitySourceUpdate({
-        id: requireSourceId(rest[1]),
+        id: requireConfigurableResponsibilitySourceId(rest[1]),
         enabled,
       }, ctx);
       return result(`${JSON.stringify(updated)}\n`);
@@ -284,20 +284,6 @@ function requireId(value: string | undefined): string {
 function requireProcessId(value: string | undefined): string {
   if (!value || !value.startsWith("proc:")) throw new Error("missing process id");
   return value;
-}
-
-function requireSourceId(
-  value: string | undefined,
-): ResponsibilityConfigurableSourcePolicyId {
-  switch (value) {
-    case "mail.received":
-    case "machine.added":
-    case "adapter.connected":
-    case "adapter.auth_required":
-      return value;
-    default:
-      throw new Error(`unknown responsibility source: ${value ?? ""}`);
-  }
 }
 
 function requireArgumentCount(args: string[], count: number, message: string): void {

@@ -451,6 +451,21 @@ describe("proc handlers", () => {
     );
   });
 
+  it("derives handover ownership only for the calling process", async () => {
+    for (const pid of ["proc-1", "proc-2"]) {
+      sendFrameToProcessMock.mockResolvedValueOnce({ type: "res", id: "compact", ok: true, data: { ok: true, pid, pending: true } });
+      const ctx = makeForwardContext();
+      ctx.callerOwnerUid = IDENTITY.uid;
+      ctx.processId = "proc-1";
+      ctx.processRunId = "live-run";
+      ctx.requestId = "outer-tool";
+      await forwardToProcess({ type: "req", id: "compact", call: "proc.history.compact", args: { pid, summary: "Handover" } }, ctx);
+      expect(sendFrameToProcessMock).toHaveBeenLastCalledWith(TEST_INSTALLATION_ID, pid, expect.objectContaining({
+        toolOwner: pid === "proc-1" ? { runId: "live-run", requestId: "outer-tool" } : undefined,
+      }));
+    }
+  });
+
   it("routes proc.send results by the target process owner", async () => {
     sendFrameToProcessMock.mockResolvedValue({
       type: "res",

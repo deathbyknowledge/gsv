@@ -94,6 +94,7 @@ export const procHistoryEventPayloadSchemas = {
     current: contextProjectionSchema,
   }),
   "context.runway": z.strictObject({
+    handover: z.optional(z.literal(true)),
     epochId: z.string(),
     remainingInputTokens: z.number(),
     runwayBeforeBoundaryTokens: z.number(),
@@ -235,6 +236,8 @@ export type ProcHistoryIpcResponsePayload = {
 export type ProcHistoryEventPayloadMap = {
   "context.changed": { epochId: string; previous: ProcHistoryContextProjection; current: ProcHistoryContextProjection };
   "context.runway": {
+    /** New notices offer self-authored handovers; older records retain their original guidance. */
+    handover?: true;
     epochId: string;
     remainingInputTokens: number;
     runwayBeforeBoundaryTokens: number;

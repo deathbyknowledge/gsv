@@ -84,6 +84,15 @@ Every mutation increments the owner's ledger revision and appends one transition
 External producers use a stable deduplication key so a replay returns the same
 responsibility rather than creating another one.
 
+The `memory.review` source creates low-priority responsibilities for newly
+archived Ship slices. The Process retains sources until the Kernel durably queues
+them, transferring any remainder before teardown. The Kernel queue survives Ship
+replacement, serializes reviews per owner and deduplicates by source segment. Ship uses
+ordinary Crew delegation to review the bounded evidence and update shared memory.
+The review's resolution records completion, so repeated delivery cannot restart
+finished work. Disabling the source stops new admissions without deleting memory
+or cancelling an existing responsibility.
+
 ## Wake batches
 
 The existing Kernel durable-task scheduler owns responsibility deadlines. The Kernel

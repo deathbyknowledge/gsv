@@ -19,6 +19,8 @@ import { InstallationRetirement, durableResourceName, stateWithRetirementStorage
 import { DurableObject } from "cloudflare:workers";
 import { ModelMetadataResolver } from "../inference/model-metadata";
 import { z } from "zod";
+import { processMemoryReviewSchema, type ProcessMemoryReview } from "../protocol/process-frames";
+import { queueMemoryReview, runMemoryReview } from "./memory-review";
 import { McpClientManager, SqlMcpServerRows } from "./mcp-client";
 import type {
   Frame,
@@ -223,6 +225,7 @@ type AuthorizeGitHttpResult =
 type StoredInstallationIdentity = Omit<InstallationIdentity, "installationId">;
 
 type KernelTask =
+  | { callback: "onMemoryReview"; payload: number }
   | { callback: "onProcessApprovalNotice"; payload: { pid: string; runId: string; requestId: string } }
   | { callback: "onAdapterRouteDelivery"; payload: AdapterRouteDeliveryRetry }
   | { callback: "onIpcCallDelivery"; payload: string }
@@ -263,6 +266,7 @@ const adapterDeliveryRouteSchema = z.object({
 });
 
 const KERNEL_TASK_SCHEMA = z.discriminatedUnion("callback", [
+  z.object({ callback: z.literal("onMemoryReview"), payload: z.number().int().nonnegative() }),
   z.object({
     callback: z.literal("onAdapterRouteDelivery"),
     payload: z.object({
@@ -855,6 +859,9 @@ export class Kernel extends DurableObject<GatewayEnv> {
     task: DurableTask<KernelTask>,
   ): Promise<void> {
     switch (task.callback) {
+      case "onMemoryReview":
+        await runMemoryReview(this, task.payload, task.id);
+        return;
       case "onProcessApprovalNotice":
         // Child approvals reach the human through registry signals and adapter routes.
         return;
@@ -1196,6 +1203,12 @@ export class Kernel extends DurableObject<GatewayEnv> {
     } finally {
       await cancelUnlockedBody(body, "Linked adapter request completed");
     }
+  }
+
+  async queueProcessMemoryReview(processId: string, input: ProcessMemoryReview): Promise<void> {
+    this.retirement.assertActive();
+    const review = processMemoryReviewSchema.parse(input);
+    await queueMemoryReview(this, processId, review);
   }
 
   async acceptManagedInboundMail(

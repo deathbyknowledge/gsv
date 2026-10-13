@@ -29,6 +29,7 @@ describe("ResponsibilitySourcePolicyStore", () => {
         { id: "interaction.response", control: "required", enabled: true },
         { id: "process.delegation", control: "required", enabled: true },
         { id: "schedule.due", control: "required", enabled: true },
+        { id: "memory.review", control: "configurable", enabled: true },
         { id: "mail.received", control: "configurable", enabled: true },
         { id: "machine.added", control: "configurable", enabled: true },
         { id: "adapter.connected", control: "configurable", enabled: true },

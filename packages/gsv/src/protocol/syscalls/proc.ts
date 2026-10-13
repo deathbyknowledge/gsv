@@ -587,6 +587,7 @@ export type ProcHistorySegment = {
 
 export type ProcHistoryCompactArgs = {
   pid?: string;
+  /** An active process may submit its own handover without a history selector. */
   summary?: string;
   generateSummary?: boolean;
   /** Target fraction of the model input budget to retain after compaction. */
@@ -596,6 +597,7 @@ export type ProcHistoryCompactArgs = {
 };
 
 export type ProcHistoryCompactResult =
+  | { ok: true; pid: string; pending: true }
   | {
       ok: true;
       pid: string;

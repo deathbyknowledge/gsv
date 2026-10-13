@@ -1103,7 +1103,7 @@ Runtime behavior:
 | `proc.trace` | Process DO | Returns the bounded wall-clock span tree for recent runs. Run, context assembly, inference, reasoning, model output, tool execution, approval, and Message delivery spans carry timing plus references into `proc.history`; the trace does not duplicate private payloads. Trace state is cleared with Process history and removed by `proc.kill`. |
 | `proc.history.policy.get` | Process DO | Returns the process context-overflow policy. The default is `auto-compact` at 90% pressure with a 40% post-compaction target. |
 | `proc.history.policy.set` | Process DO | Sets the process context-overflow policy. Supported `overflow` values are `auto-compact` and `fail`; the policy is applied during run preflight and after a provider-confirmed overflow. Provider overflow does not advance the main generation fallback chain. |
-| `proc.history.compact` | Process DO | Archives an old history prefix, inserts a typed `history.compacted` summary event, and records a `compaction` segment. Requires a supplied or generated summary and exactly one of `keepLast`, `throughMessageId`, or `targetPressure`. |
+| `proc.history.compact` | Process DO | Archives an old history prefix, inserts a typed `history.compacted` summary event, and records a `compaction` segment. Idle calls require a supplied or generated summary and exactly one of `keepLast`, `throughMessageId`, or `targetPressure`. An active process may submit its own `summary` without a selector: the Kernel supplies its owning tool identity, and `{ ok: true, pid, pending: true }` acknowledges a handover queued for installation after current tools finish. |
 | `proc.history.segment.read` | Process DO | Reads a compacted segment without restoring active history. `format: 2` adds typed records with stable segment ordinals and explicit unknown historical timestamps/linkage. Pages do not have a live synchronization cursor. |
 | `proc.history.segments` | Process DO | Lists compacted segments and context epochs, including immutable archive paths for closed records. |
 | `proc.fork` | `handleProcFork` | Creates a new process from committed source history through a raw `throughMessageId`, a canonical Conversation message's `throughRunId`, or a compacted `segmentId`. Run selection resolves to the corresponding Process input boundary. Its label defaults to `Branch of <source label>` and the canonical label is returned. Segment restore includes the live suffix present at the compaction boundary unless `includeLiveSuffix: false`. Active work, queued input, tools, and HIL are not copied. |
@@ -1297,7 +1297,7 @@ type ProcessSyscalls = {
 
   "proc.history.compact": {
     args: { pid?: string; summary?: string; generateSummary?: boolean; keepLast?: number; throughMessageId?: number; targetPressure?: number };
-    result: { ok: true; pid: string; segment: ProcHistorySegment; archivedMessages: number; archivedTo: string; summaryMessageId: number } | OperationError;
+    result: { ok: true; pid: string; pending: true } | { ok: true; pid: string; segment: ProcHistorySegment; archivedMessages: number; archivedTo: string; summaryMessageId: number } | OperationError;
   };
 
   "proc.history.segment.read": {
@@ -1405,6 +1405,7 @@ type ResponsibilitySourcePolicy =
     }
   | {
       id:
+        | "memory.review"
         | "mail.received"
         | "machine.added"
         | "adapter.connected"
@@ -1473,6 +1474,7 @@ type ResponsibilitySyscalls = {
   "r12y.source.update": {
     args: {
       id:
+        | "memory.review"
         | "mail.received"
         | "machine.added"
         | "adapter.connected"

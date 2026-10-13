@@ -54,6 +54,7 @@ import {
 } from "../../inference/output";
 import { extractCompletedText } from "../../inference/generated-text";
 import { incrementRunControlFailure, isRunControlFailureExhausted, runControlFailureAttempt, PROCESS_TASK_SCHEMA, type ProcessTask, type ProcessTaskCallback, contextSnapshotFromRun, withRunControlInstructions } from "./helpers";
+import { deliverMemoryReview } from "../memory-review";
 import { formatRunControlToolResult, renderToolExecutionError, renderHistoryEvent } from "../history/event-renderer";
 import { ProcessStore, stringifyAssistantMessageMeta, type MessageMetadata, type ContextEpochRecord } from "../store";
 import { resolveToolSyscall } from "../../syscalls/constants";
@@ -1894,6 +1895,9 @@ export class ProcessRun {
 
   async runScheduledTask(task: DurableTask<ProcessTask>): Promise<void> {
     switch (task.callback) {
+      case "onMemoryReview":
+        await deliverMemoryReview(this.host, task.id);
+        return;
       case "onMediaPreparationTimeout":
         await this.onMediaPreparationTimeout(task.payload);
         return;
@@ -2335,6 +2339,10 @@ export class ProcessRun {
     state: RunTickContextState,
   ): Promise<boolean> {
     if (!(await this.rebuildRunTickContext(runId, state))) return false;
+    if (!state.contextState) return false;
+    const handover = await this.host.history.applyPendingCompaction(runId, state.contextState, state.context);
+    if (handover === "stopped") return false;
+    if (handover === "compacted" && !(await this.rebuildRunTickContext(runId, state))) return false;
     const policy = await this.applyRunTickContextPolicy(runId, state, "preflight");
     if (policy === "stopped") return false;
     const contextState = state.contextState;

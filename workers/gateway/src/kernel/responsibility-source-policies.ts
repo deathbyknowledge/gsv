@@ -43,6 +43,13 @@ const POLICY_DEFINITIONS = [
     defaultEnabled: true,
   },
   {
+    id: "memory.review",
+    name: "Personal memory",
+    description: "Reviews newly archived Ship history for useful standing memory and personal wiki updates.",
+    control: "configurable",
+    defaultEnabled: true,
+  },
+  {
     id: "mail.received",
     name: "Incoming mail",
     description: "Triggers when a newly received email is ready for Ship to review.",
@@ -71,6 +78,14 @@ const POLICY_DEFINITIONS = [
     defaultEnabled: true,
   },
 ] as const satisfies readonly PolicyDefinition[];
+
+export function requireConfigurableResponsibilitySourceId(value: string | undefined): ResponsibilityConfigurableSourcePolicyId {
+  const definition = POLICY_DEFINITIONS.find((candidate) => candidate.id === value);
+  if (definition?.control !== "configurable") {
+    throw new Error(`unknown configurable responsibility source: ${value ?? ""}`);
+  }
+  return definition.id;
+}
 
 type PolicyRow = {
   source_id: string;

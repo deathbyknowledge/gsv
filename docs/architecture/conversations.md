@@ -285,3 +285,7 @@ the Kernel has resolved owner, route, Process, and conversation identity.
 
 Conversation IDs are opaque. Installation identity remains the outer physical boundary for the
 Kernel, Conversation Durable Object names, and R2 keys.
+
+Internal compaction handovers remain in Process history and its archives. Chat
+does not present them as “Memory” messages or interrupt the composer when the
+working context changes.

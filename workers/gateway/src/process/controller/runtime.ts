@@ -59,6 +59,7 @@ import type { ResponseErrFrame, ResponseFrame, ResponseOkFrame, SignalFrame } fr
 import type { ResultOf, SyscallName } from "../../syscalls";
 import { formatAgentToolResponse, materializeToolResponse } from "../tool-response";
 import { deliverProcessEvent } from "./events";
+import { handOffMemoryReviews } from "../memory-review";
 
 const retiredWatchedSignalEnvelopeSchema = z.object({ watched: z.literal(true) });
 
@@ -633,6 +634,7 @@ async function killProcess(
         )
       : null;
 
+    if (initialized) await handOffMemoryReviews(host);
     if (args.archive !== false && initialized) {
       const archived = await host.history.archiveForKill();
       archive = archived.archive;
@@ -1983,7 +1985,7 @@ export class ProcessController {
         break;
       case "proc.history.compact":
         data = await this.handleCancellableRequest(frame.id, (signal) =>
-          this.host.history.handleHistoryCompact(frame.args, { signal }),
+          this.host.history.requestHistoryCompaction(frame.args, frame.toolOwner, signal),
         );
         break;
       case "proc.history.export":

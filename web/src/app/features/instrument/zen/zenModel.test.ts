@@ -532,6 +532,14 @@ describe("noteSummary", () => {
 });
 
 describe("momentsFromConversation", () => {
+  it("keeps compaction in process inspection rather than the conversation", () => {
+    const checkpoint = row({ id: "checkpoint", role: "system", text: "Internal handover", event: {
+      kind: "history.compacted", severity: "info", audience: "model",
+      payload: { summary: "Internal handover", segmentId: "segment", archivedMessages: 4, archivePath: "/archive.gz" },
+    } });
+    expect(momentsFromConversation([], [checkpoint], null)).toEqual([]);
+    expect(momentsFromRows([checkpoint], null)).toEqual([]);
+  });
   const message = (overrides: Partial<ChatTranscriptRow>): ChatTranscriptRow => ({
     id: "m", role: "assistant", text: "", time: "", timestamp: 1_000, ...overrides,
   });
