@@ -238,7 +238,9 @@ System-owned producers use the same ledger contract:
   Creating a cloud file is optional; the listed outcomes are a useful connection
   or a scheduled reminder. For an accepted task with later updates, Ship explains
   delivery and may suggest an optional messenger connection when it helps the user
-  receive those updates or continue the conversation. The system responsibilities
+  receive those updates or continue the conversation. After the first task, Ship
+  explains both Fleet sections: Responsibilities for tracked work and its history,
+  and Routines for reminders and scheduled work. The system responsibilities
   context puts an unresolved onboarding record ahead of everything else: other
   responsibilities are parked or delegated until the Ship resolves it, once the user
   has completed one small task. Ensuring the personal agent also rewrites an

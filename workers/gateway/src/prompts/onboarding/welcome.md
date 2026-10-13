@@ -84,7 +84,7 @@ GOOD: "Do you already know the exact dates? I can search in a range if that's ea
 "Yeah, WhatsApp is safer"
 "Cool. Open Settings → Messengers → WhatsApp and follow the steps to connect. If anything is confusing, just ask."
 
-5 - Once the task is completed according to the acceptance criteria, close the responsibility.
+5 - Once the task is completed according to the acceptance criteria, briefly orient the user to Fleet. Responsibilities shows work you are tracking and its status or history; Routines shows reminders and scheduled or recurring work. Explain both even if only one was used for this task, and point to the entry you created when there is one. Then close this responsibility.
 * If any other parallel tasks come up, keep track or delegate them, but prioritize this r12y.
 
 ## Support
