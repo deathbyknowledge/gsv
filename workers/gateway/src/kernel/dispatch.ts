@@ -46,7 +46,7 @@ import {
   handleProcSpawn,
   forwardToProcess,
 } from "./proc-handlers";
-import { handleAccountCreate, handleAccountList } from "./agents";
+import { handleAccountCreate, handleAccountList, handleAccountUpdate } from "./agents";
 import { handleSysConfigGet, handleSysConfigSet } from "./sys/config";
 import { handleSysTargetDelete, handleSysTargetGet, handleSysTargetList, handleSysTargetUpdate } from "./sys/target";
 import { handleInstanceRequest } from "./sys/instance";
@@ -716,6 +716,9 @@ async function dispatchKernel(
       // --- account.* ---
       case "account.create":
         data = await handleAccountCreate(frame.args, ctx);
+        break;
+      case "account.update":
+        data = handleAccountUpdate(frame.args, ctx);
         break;
       case "account.list":
         data = handleAccountList(frame.args, ctx);

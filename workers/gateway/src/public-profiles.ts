@@ -39,7 +39,7 @@ export async function servePublicProfileRequest(
   const etag = `"${await sha256Base64Url(body)}"`;
   const current = await resolve(path.locator);
   if (!current || current.profile.signature !== profile.signature || current.revision !== profile.revision) return unavailable();
-  if (!json && "alias" in path.locator && profile.version === 3) return new Response(null, { status: 308, headers: { location: "/profile", "cache-control": "no-store" } });
+  if (!json && "alias" in path.locator && profile.version !== 2) return new Response(null, { status: 308, headers: { location: "/profile", "cache-control": "no-store" } });
   const headers = new Headers({
     "content-type": json ? "application/json; charset=utf-8" : "text/html; charset=utf-8",
     "cache-control": "public, max-age=0, must-revalidate", vary: "Accept", etag,

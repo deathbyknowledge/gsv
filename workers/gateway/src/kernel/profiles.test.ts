@@ -7,11 +7,15 @@ import { createInstallationStorage } from "../installation/storage";
 import type { KernelContext } from "./context";
 import { FederationStore } from "./federation-store";
 import { FederationIdentity } from "./federation-crypto";
+import { CapabilityStore } from "./capabilities";
+import { handleAccountUpdate } from "./agents";
+import { AuthStore } from "./auth-store";
 import { ProfileStore } from "./profile-store";
 import { handleProfileGet, handleProfileUpdate, handleProfilePublish, handleProfileUnpublish, resolveSpacePublicProfile, verifyPublicProfile } from "./profiles";
 import { KERNEL_V045_ADD_HUMAN_INVITATIONS } from "./schema/v045_add_human_invitations";
 import { KERNEL_V069_SINGLE_HUMAN_SPACE } from "./schema/v069_single_human_space";
 import { jsonValueSchema } from "@humansandmachines/gsv/protocol";
+import { makeShadowEntry } from "../auth/shadow";
 
 const OWNER = { uid: 1000, gid: 1000, gids: [1000], username: "private-login", gecos: "Person", home: "/home/private-login", cwd: "/home/private-login" };
 const DRAFT: ProfileFields = { displayName: "Published name", about: "Hello from my space", contactPolicy: "requests", representation: "human-and-ship" };
@@ -43,12 +47,65 @@ describe("explicit profile publication", () => {
         expect(projection).toBeNull();
         expect(ctx.profiles.published({ space: true })).toBeNull();
       } else {
-        expect(projection?.profile).toMatchObject({ version: 3, url: "https://local.example/profile", about: DRAFT.about, revision: 1 });
+        expect(projection?.profile).toMatchObject({ version: 4, url: "https://local.example/profile", about: DRAFT.about, revision: 1 });
         expect(projection?.profile).not.toHaveProperty("alias");
         await verifyPublicProfile(projection!.profile, legacy.url);
         await verifyPublicProfile(projection!.profile, "https://local.example/profile");
         expect(await resolveSpacePublicProfile({ space: true }, ctx)).toEqual(projection);
       }
+    });
+  });
+
+  it("saves chosen names atomically and retains the published identity until republishing", async () => {
+    await runWithRealKernelSql(async (_sql, storage) => {
+      const ctx = profileContext(storage);
+      const shipBefore = ctx.auth.getPasswdByUid(1001)!;
+      const draft = { ...DRAFT, ship: { displayName: "Just Another Algorithm", about: "John’s Ship." } };
+      handleProfileUpdate({ expectedRevision: 0, draft }, ctx);
+      expect(ctx.auth.getPasswdByUid(1001)).toEqual({ ...shipBefore, gecos: "Just Another Algorithm" });
+      expect(ctx.federation.subject(OWNER.uid)?.displayName).toBe(DRAFT.displayName);
+      expect(() => handleProfileUpdate({ expectedRevision: 0, draft: { ...draft, ship: { ...draft.ship, displayName: "Stale rename" } } }, ctx)).toThrow("changed");
+      expect(ctx.auth.getPasswdByUid(1001)?.gecos).toBe("Just Another Algorithm");
+      await handleProfilePublish({ expectedRevision: 1 }, ctx);
+      const published = ctx.profiles.published({ space: true })!.profile;
+      expect(published).toMatchObject({ version: 4, ship: draft.ship });
+      await verifyPublicProfile(published, published.url);
+      const renamed = handleAccountUpdate({ uid: 1001, expectedDisplayName: "Just Another Algorithm", displayName: "星の旅人" }, ctx);
+      expect(renamed.profileRevision).toBe(2);
+      expect(handleProfileGet(ctx).profile).toMatchObject({ draft: { ship: { displayName: "星の旅人" } }, shipAccount: { displayName: "星の旅人" } });
+      expect(ctx.profiles.published({ space: true })!.profile).toEqual(published);
+      expect(() => handleAccountUpdate({ uid: 1001, expectedDisplayName: "Just Another Algorithm", displayName: "Lost update" }, ctx)).toThrow("changed");
+      handleProfileUpdate({ expectedRevision: 2, draft: { ...draft, ship: { ...draft.ship, displayName: "星の旅人" }, representation: "human" } }, ctx);
+      await handleProfilePublish({ expectedRevision: 3 }, ctx);
+      expect(ctx.profiles.published({ space: true })!.profile).not.toHaveProperty("ship");
+      expect(new AuthStore(storage.sql).getPasswdByUid(1001)?.gecos).toBe("星の旅人");
+    });
+  });
+
+  it("requires naming authority and refuses changes to unrelated accounts", async () => {
+    await runWithRealKernelSql(async (_sql, storage) => {
+      const ctx = profileContext(storage);
+      const limited = { ...ctx, peer: testPeer({ kind: "human", account: OWNER, calls: ["profile.*"] }) };
+      expect(() => handleProfileUpdate({ expectedRevision: 0, draft: DRAFT }, limited)).toThrow("account.update");
+      expect(ctx.profiles.get(OWNER.uid, "https://local.example")).toBeNull();
+      expect(() => handleAccountUpdate({ uid: 1001, displayName: "Accidental model name", expectedDisplayName: "Ship" }, { ...ctx, processId: "proc:ship" })).toThrow("signed-in human");
+      expect(() => handleAccountUpdate({ uid: 0, displayName: "Renamed", expectedDisplayName: "root" }, ctx)).toThrow("not owned");
+      expect(() => handleAccountUpdate({ uid: 1001, displayName: "Invalid:name", expectedDisplayName: "Ship" }, ctx)).toThrow();
+      expect(ctx.auth.getPasswdByUid(1001)?.gecos).toBe("Ship");
+    });
+  });
+
+  it("fences a first profile save after an administrator renames the Ship", async () => {
+    await runWithRealKernelSql(async (_sql, storage) => {
+      const ctx = profileContext(storage);
+      const root = { uid: 0, gid: 0, gids: [0], username: "root", home: "/root", cwd: "/root" };
+      const admin = { ...ctx, peer: testPeer({ kind: "human", account: root, calls: ["*"] }), callerOwnerUid: 0 };
+      const result = handleAccountUpdate({ uid: 1001, displayName: "Just Another Algorithm", expectedDisplayName: "Ship" }, admin);
+      expect(result.profileRevision).toBe(1);
+      expect(handleProfileGet(ctx).profile.draft.ship?.displayName).toBe("Just Another Algorithm");
+      expect(() => handleProfileUpdate({ expectedRevision: 0, draft: DRAFT }, ctx)).toThrow("changed");
+      expect(ctx.broadcastToUserUid).toHaveBeenCalledWith(OWNER.uid, "profile.changed");
+      expect(ctx.broadcastToUserUid).toHaveBeenCalledWith(0, "account.changed");
     });
   });
 
@@ -127,12 +184,18 @@ describe("explicit profile publication", () => {
 });
 
 function profileContext(storage: DurableObjectStorage): KernelContext {
+  const auth = new AuthStore(storage.sql);
+  auth.addUser({ ...OWNER, shell: "/bin/sh" });
+  auth.addUser({ uid: 1001, gid: 1001, username: "ship", gecos: "Ship", home: "/home/ship", shell: "/bin/false" });
+  auth.setPersonalAgent(OWNER.uid, 1001);
+  auth.setShadow(makeShadowEntry(OWNER.username, "unlocked"));
+  auth.setShadow(makeShadowEntry("ship", "!"));
   const context = {
     installationIdentity: { installationId: `inst_${crypto.randomUUID()}`, canonicalOrigin: "https://local.example", handle: "local" },
-    peer: testPeer({ kind: "human", account: OWNER, calls: ["profile.*"] }), callerOwnerUid: OWNER.uid, connection: {},
+    peer: testPeer({ kind: "human", account: OWNER, calls: ["profile.*", "account.update"] }), callerOwnerUid: OWNER.uid, connection: {},
     profiles: new ProfileStore(storage), federation: new FederationStore(storage), federationIdentity: new FederationIdentity(storage),
     env: { STORAGE: createInstallationStorage(env.STORAGE, `inst_${crypto.randomUUID()}`) },
-    auth: { getPasswdByUid: () => OWNER, getShadowByUsername: () => ({ hash: "unlocked" }), isPersonalAgentUid: () => false },
+    auth, caps: new CapabilityStore(storage.sql),
     broadcastToUserUid: vi.fn(),
   };
   // SAFETY: profile handlers use the real stores and the explicit account, storage and notification callbacks above.

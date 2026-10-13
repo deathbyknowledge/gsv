@@ -146,6 +146,7 @@ const labels = {
   "sys.link.list": "listed messaging identities",
   "sys.link.consume": "confirmed a messaging link",
   "account.create": "created an account",
+  "account.update": "renamed an account",
   "account.list": "listed accounts",
   "account.owner.link": "started owner verification",
   "account.recovery.redeem": "redeemed root recovery",

@@ -29,3 +29,10 @@ a:focus-visible { outline: 2px solid var(--accent); outline-offset: 5px; }
 .connect .connect-error { color: var(--text); }
 .connect :focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; }
 @media (max-width: 480px) { .public-profile { margin: 4vh auto; padding: 24px; } }
+
+.ship-profile { display: grid; grid-template-columns: 64px minmax(0, 1fr); gap: 24px; margin-top: 40px; padding-block: 32px; border-block: 1px solid var(--line); }
+.ship-emblem { display: grid; place-items: center; align-self: start; height: 64px; color: var(--accent); font-size: 46px; font-weight: 300; }
+.ship-label { margin: 0 0 12px; color: var(--accent); font: 11px/1.7 "Martian Mono", monospace; }
+.ship-profile h2 { margin: 0; font-size: clamp(26px, 5vw, 38px); line-height: 1.2; font-weight: 400; letter-spacing: -.025em; }
+.ship-profile .about { margin-bottom: 0; font-size: 17px; }
+@media (max-width: 480px) { .ship-profile { grid-template-columns: 36px minmax(0, 1fr); gap: 16px; } .ship-emblem { height: 36px; font-size: 30px; } }

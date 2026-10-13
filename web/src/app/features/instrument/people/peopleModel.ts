@@ -1,4 +1,4 @@
-import type { ApproachCreateArgs, ApproachSummary, PublicProfile, ContactSummary, ConversationInboxEntry } from "@humansandmachines/gsv/protocol";
+import type { ApproachCreateArgs, ApproachSummary, PublicProfile, ContactSummary, ConversationInboxEntry, ConversationMessage } from "@humansandmachines/gsv/protocol";
 import { randomId } from "../../../services/ids";
 
 export type ApproachDraft = {
@@ -68,4 +68,15 @@ export function inboxPreview(contact: ContactSummary, entry?: ConversationInboxE
 export function messagePreviewPrefix(preview: NonNullable<ConversationInboxEntry["preview"]>): string {
   return preview.author.kind === "user" ? "You: " : preview.author.kind === "process" ? "Your Ship: "
     : preview.provenance?.kind === "process" ? "Their Ship: " : "";
+}
+
+export function contactMessageName(message: ConversationMessage): string {
+  return message.author.kind === "contact" ? message.social?.identity?.displayName ?? message.author.displayName
+    : message.author.kind === "process" ? message.author.displayName ?? "Your agent" : "you";
+}
+
+export function contactMessageBadge(message: ConversationMessage): "PERSON" | "SHIP" | "AGENT" | null {
+  if (!message.social) return null;
+  if (message.social.provenance.kind === "human") return "PERSON";
+  return message.social.identity?.role === "ship" ? "SHIP" : "AGENT";
 }

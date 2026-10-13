@@ -8,6 +8,7 @@ import { useGateway } from "../../../services/gateway/GatewayProvider";
 import type { StagedResourceUpload } from "../../../services/gateway/stagedResources";
 import { canConfigure } from "../settings/settingsModel";
 import { ZenMedia } from "./ZenMedia";
+import { contactMessageBadge, contactMessageName } from "../people/peopleModel";
 import "../shared/senderBadge.css";
 
 /* the same ceiling the People composer applies */
@@ -60,8 +61,8 @@ export function preview(text: string, attachments = 0): string {
 }
 
 /* inline markup rather than a component, so the badge reads in the moment's own tree */
-function senderBadge(byShip: boolean) {
-  return <span class="sender-badge">{byShip && <span class="sender-dot" />}{byShip ? "GSV" : "PERSON"}</span>;
+function senderBadge(message: ContactNoticeMessage) {
+  return <span class="sender-badge">{message.social.provenance.kind === "process" && <span class="sender-dot" />}{contactMessageBadge(message)}</span>;
 }
 
 /**
@@ -82,7 +83,7 @@ export function ContactNoticePanel({ id, name, notice, panelRef, onClose, onGoTo
   const latest = notice?.messages.at(-1);
   return (
     <section id={id} ref={panelRef} tabIndex={-1} class="zen-people-panel" aria-label={`Messages from ${name}`}>
-      <header class="zen-people-heading"><span>{name}{latest && senderBadge(latest.social.provenance.kind === "process")}</span>
+      <header class="zen-people-heading"><span>{name}{latest && senderBadge(latest)}</span>
         <button type="button" class="fleet-text-action" onClick={onClose}>close</button></header>
       {children}
       <footer class="zen-people-foot"><span>{notice ? `${notice.messages.length} message${notice.messages.length === 1 ? "" : "s"}` : ""}</span>
@@ -140,6 +141,7 @@ export function ContactReplyBox({ notice, contact, account, draft, onDraft, onSe
     <div class="reply-box">
       <div class="reply-messages">{notice.messages.map((message) => (
         <div key={message.id} class="message">
+          <span class="people-message-author">{contactMessageName(message)}{senderBadge(message)}</span>
           <time dateTime={new Date(message.createdAt).toISOString()}>{new Date(message.createdAt).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })}</time>
           {message.text && <p class="ask">{message.text}</p>}
           {message.media?.map((media, index) => <ZenMedia key={index} media={media} processId="" />)}

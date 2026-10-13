@@ -71,6 +71,12 @@ selects the personal account without asking for a username. Root remains explici
 People owns the space's public profile at `/profile` and cross-space contacts;
 contact invitations do not create local human accounts.
 
+Human and Ship display names belong to their accounts, independently of model
+selection. Kernel account naming preserves stable identities and homes; People
+may save names and the private profile draft atomically. Public publication is a
+separate signed snapshot. Federation sender names are captured with messages and
+never determine authority or handling.
+
 Processes have identities, histories, permissions, queues, pending work, and lifecycles. Subagents and subprocesses are not special chat records. Preserve process invariants across normal completion, interruption, restart, and teardown.
 
 The personal agent account is the user's personal intelligence. Its canonical user-facing conversation is Ship. One Kernel-marked interactive process handles Ship across user interfaces; its pid is replaceable and otherwise follows ordinary process lifecycle. Other processes are visible work, even when they run as the same account. Kernel SQLite owns one durable responsibility ledger (`r12y`) for promises, delegated work, follow-ups, maintenance, and recovery that must survive a run. The Ship sees the owner ledger; a delegated child sees only its assignments and their ancestor records. A delegated process is an ordinary process acting in a worker role, not a second orchestration runtime.

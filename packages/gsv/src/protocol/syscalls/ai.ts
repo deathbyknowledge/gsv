@@ -29,6 +29,7 @@ export type AiToolsResult = {
 export type AiContextArgs = Record<string, never>;
 
 export type AiContextResult = {
+  accountNames?: { agent: string; owner: string; personalAgent: boolean };
   /** Omitted when discovery is incomplete; retain the last observed target projection. */
   targets?: AiToolsTarget[];
   mcpServers: string[];
@@ -171,6 +172,7 @@ export type AiTextExecutor =
     };
 
 export type AiConfigResult = {
+  accountNames?: AiContextResult["accountNames"];
   /** Saved preference absent from the owner's stack; the returned config inherits its defaults. */
   missingModelId?: string;
   /** Owning human's identity when the process runs as a distinct agent account. */

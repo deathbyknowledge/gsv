@@ -234,3 +234,54 @@
 .people-profile-representation input { flex-shrink: 0; width: 16px; height: 16px; margin: 0; accent-color: var(--accent); }
 .people-profile-address { color: var(--text-dim); font-size: 11px; overflow-wrap: anywhere; }
 .people-own-profile a { overflow-wrap: anywhere; }
+
+.people-own-profile { width: min(100%, 980px); padding: 36px clamp(24px, 4cqi, 56px) 48px; }
+.people-profile-heading { display: flex; align-items: center; justify-content: space-between; gap: 24px; margin-bottom: 28px; }
+.people-profile-heading h1 { font-size: clamp(28px, 3.4cqi, 40px); font-weight: 400; letter-spacing: -.035em; }
+.people-own-profile .people-kicker { margin: 0 0 12px; color: var(--text-dim); font: 10px/1.6 var(--gsv-font-mono); letter-spacing: .12em; }
+.people-profile-mode { display: flex; gap: 20px; font-size: 11px; }
+.people-profile-mode button { padding-block: 10px; color: var(--text-dim); border-bottom: 1px solid transparent; }
+.people-profile-mode button[aria-pressed="true"] { color: var(--accent); border-color: var(--accent); }
+.people-profile-publication { display: flex; align-items: baseline; flex-wrap: wrap; gap: 12px 20px; padding-bottom: 22px; border-bottom: 1px solid var(--border); }
+.people-profile-status { color: var(--text-dim); font-size: 10px; }
+.people-profile-status::before { content: ""; display: inline-block; width: 5px; height: 5px; border: 1px solid currentColor; border-radius: 50%; margin-right: 8px; }
+.people-profile-status.is-published { color: var(--accent); }
+.people-profile-status.is-published::before { background: currentColor; }
+.people-profile-person { display: grid; grid-template-columns: 80px minmax(0, 1fr); gap: 28px; padding-block: 32px; }
+.people-profile-monogram { width: 72px; height: 72px; display: grid; place-items: center; border: 1px solid var(--border); color: var(--text-title); font: 300 36px/1 var(--gsv-font-prose); }
+.people-profile-form label { display: grid; gap: 9px; color: var(--text-dim); font: 11px/1.5 var(--gsv-font-mono); }
+.people-profile-form label + label { margin-top: 20px; }
+.people-profile-form :is(input:not([type="checkbox"]), textarea, select) { box-sizing: border-box; width: 100%; min-width: 0; padding: 11px 12px; border: 1px solid var(--border); background: transparent; color: var(--text); font: 16px/1.5 var(--gsv-font-prose); border-radius: 0; }
+.people-profile-form textarea { resize: vertical; min-height: 98px; }
+.people-profile-form :is(input, textarea)::placeholder { color: var(--text-dim); opacity: .65; }
+.people-profile-form :is(input, textarea, select):focus-visible { outline: 1px solid var(--accent); outline-offset: 2px; }
+.people-profile-ship { display: grid; grid-template-columns: minmax(150px, .7fr) minmax(0, 1fr); gap: 28px; align-items: center; border-block: 1px solid var(--border); padding-block: 32px; }
+.people-profile-ship-art { min-width: 0; --glyph: var(--accent); --accent-bright: var(--accent); --text-hi: var(--text-title); }
+.people-profile-ship-art .gsv-auth-illustration { aspect-ratio: 1.1; }
+.people-profile-ship .people-kicker { color: var(--accent); }
+.people-profile-ship h2 { font-size: clamp(27px, 3.6cqi, 42px); font-weight: 400; letter-spacing: -.025em; overflow-wrap: anywhere; }
+.people-profile-person h2 { margin: 0 0 14px; font-size: 32px; }
+.people-profile-prose { margin: 0; color: var(--text); font: 17px/1.7 var(--gsv-font-prose); white-space: pre-wrap; overflow-wrap: anywhere; }
+.people-profile-sharing { display: grid; grid-template-columns: minmax(150px, .7fr) minmax(0, 1fr); gap: 28px; padding-block: 28px; }
+.people-profile-form .people-profile-representation { display: flex; gap: 12px; align-items: start; font: 15px/1.5 var(--gsv-font-prose); color: var(--text); }
+.people-profile-representation input { margin-top: 4px; }
+.people-profile-sharing .people-note, .people-profile-save .people-note, .people-profile-publish .people-note { margin: 0; font-size: 13px; }
+.people-profile-sharing-controls > .people-note { margin: 8px 0 0 28px; }
+.people-profile-save, .people-profile-publish { display: flex; align-items: center; justify-content: space-between; gap: 20px; }
+.people-profile-save > p { max-width: 44ch; }
+.people-profile-save .people-actions, .people-profile-publish .people-actions { flex-shrink: 0; margin: 0; }
+.people-profile-publish { border-top: 1px solid var(--border); padding-top: 24px; margin-top: 28px; }
+.people-profile-preview-policy { padding-top: 28px; color: var(--accent); font: 14px/1.6 var(--gsv-font-prose); }
+.people .people-self { align-items: center; }
+.people-self .people-self-names { display: grid; gap: 3px; }
+.people-self-names small { color: var(--text-dim); overflow: hidden; text-overflow: ellipsis; font: 11px/1.5 var(--gsv-font-prose); }
+@container instrument (max-width: 850px) {
+  .people-profile-person { grid-template-columns: 48px minmax(0, 1fr); gap: 20px; }
+  .people-profile-monogram { width: 44px; height: 44px; font-size: 25px; }
+  .people-profile-ship { grid-template-columns: minmax(0, 1fr); gap: 0; }
+  .people-profile-ship-art { width: min(100%, 280px); margin: -20px auto 0; }
+  .people-profile-ship-art .gsv-auth-illustration { aspect-ratio: 1.6; }
+  .people-profile-sharing { grid-template-columns: minmax(0, 1fr); gap: 16px; }
+  .people-profile-save, .people-profile-publish { align-items: start; flex-direction: column; }
+  .people-profile-heading { align-items: start; }
+}

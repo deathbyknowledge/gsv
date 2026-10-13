@@ -48,3 +48,6 @@ personal login asks only for a password; explicit Administrator sign-in selects 
 Profile editing and publication belong to People, reached through the display-name
 link at the bottom of its sidebar. Local second-person enrollment and removal are
 retired. Cross-space contact invitations remain in People.
+
+People also owns the human and Ship display names. Model preferences and editable
+instructions remain here; changing a model does not rename the Ship.

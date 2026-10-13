@@ -3,7 +3,7 @@ import { useEffect } from "preact/hooks";
 import { useGateway } from "../../../services/gateway/GatewayProvider";
 import { useTerminalSessions } from "../../../services/terminal/TerminalProvider";
 import type { ConsoleTarget } from "../../../domain/system/consoleModels";
-import { consoleMcpServersQueryKey } from "../../../services/system/useConsoleData";
+import { consoleAccountsQueryKey, consoleMcpServersQueryKey } from "../../../services/system/useConsoleData";
 import { instrumentProcessAiKey, INSTRUMENT_CONTACTS_KEY, INSTRUMENT_CONTACT_BLOCKS_KEY, INSTRUMENT_CONTACT_INVITES_KEY, INSTRUMENT_PROFILE_KEY, INSTRUMENT_APPROACHES_KEY, INSTRUMENT_INBOX_KEY, INSTRUMENT_TARGETS_KEY } from "./queryKeys";
 import { refreshContactQuery, syncContactDetailSignal } from "./contactSync";
 import { refreshMessengerConnections } from "./messengerSync";
@@ -49,6 +49,12 @@ export function WireSync(): null {
       }
       if (signal === "profile.changed") {
         void queryClient.cancelQueries({ queryKey: INSTRUMENT_PROFILE_KEY }).then(() => queryClient.invalidateQueries({ queryKey: INSTRUMENT_PROFILE_KEY }));
+        return;
+      }
+      if (signal === "account.changed") {
+        for (const queryKey of [["fleet", "accounts"], consoleAccountsQueryKey]) {
+          void queryClient.cancelQueries({ queryKey }).then(() => queryClient.invalidateQueries({ queryKey }));
+        }
         return;
       }
       if (signal === "r12y.changed" || signal === "r12y.source.changed" || signal === "sched.changed") {

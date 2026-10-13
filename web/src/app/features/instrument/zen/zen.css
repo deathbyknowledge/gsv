@@ -634,3 +634,8 @@
 .terminal-input input { min-width: 0; flex: 1; background: transparent; color: var(--text); border: 0; border-bottom: 1px solid var(--rule-inner); font: inherit; padding: 4px 0; }
 .terminal-input input:focus { outline: none; border-bottom-color: var(--accent); caret-color: var(--accent); }
 .terminal-note { color: var(--text-dim); }
+
+.zen-ship-identity { display: flex; align-items: baseline; justify-content: center; gap: 14px; flex-shrink: 0; padding: 12px 24px; color: var(--text-dim); }
+.zen-ship-identity > span { max-width: 60ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-title); font: 15px/1.5 var(--gsv-font-prose); }
+.zen-ship-identity > small { flex-shrink: 0; font: 10px/1.5 var(--gsv-font-mono); }
+.zen-ship-identity:hover > span { color: var(--accent); }

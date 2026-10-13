@@ -333,6 +333,9 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
   const config = useConsoleConfig();
   const accounts = useConsoleAccounts();
   const viewer = accounts.data?.find((account) => account.relation === "self");
+  const shipAccount = accounts.data?.find((account) => account.relation === "personal-agent");
+  const personName = viewer?.displayName ?? who;
+  const agentName = pidProp ? "Agent" : shipAccount?.displayName ?? "Ship";
 
   const timeZone = ownerTimeZone(config.data, viewer?.uid);
   const [today, setToday] = useState(Date.now);
@@ -876,7 +879,7 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
       const receipt = receipts.get(moment.id);
       return <>
         {moment.role === "human" || moment.text || moment.media?.length || moment.streaming ? <div class="who">
-          {moment.role === "human" ? who : "GSV"}
+          {moment.role === "human" ? personName : agentName}
           {moment.outgoing && moment.outgoing.status !== "failed" ? (
             <span class="zen-send-status" role="status" aria-label={moment.outgoing.status === "uploading" ? "Uploading attachments" : "Sending message"}>
               <Spinner size={14} />
@@ -936,7 +939,7 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
         ) : null}
       </>;
     });
-  }, [ready, moments, who, today, timeZone, places, openActivities, toggleActivity, onFleet,
+  }, [ready, moments, who, personName, agentName, today, timeZone, places, openActivities, toggleActivity, onFleet,
     receipts, memoryCollections.data, onMemory, pendingHil, settling, tick, onTextClick,
     pid, connected, outbox.sending, outbox.cancelUpload, outbox.retry, outbox.discard]);
 
@@ -970,6 +973,7 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
       }}>
       {draggingFiles && <div class="zen-drop-hint">drop to attach</div>}
 
+      {!pidProp && shipAccount && <button type="button" class="zen-ship-identity" onClick={() => onPeopleActivity?.({ profile: true })}><span>{shipAccount.displayName}</span><small>your Ship ↗</small></button>}
       <div class="zen-body">
         <div class="zen-timeline" aria-hidden="true">
           {moments.map((moment, index) => (

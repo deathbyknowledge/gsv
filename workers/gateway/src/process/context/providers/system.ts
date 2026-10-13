@@ -6,7 +6,11 @@ export function createSystemContextProvider(): PromptContextProvider {
   return {
     name: "system.context",
     async collect(input) {
-      return renderContextFiles(input.config.systemContextFiles, input);
+      const sections = renderContextFiles(input.config.systemContextFiles, input);
+      if (input.config.accountNames) {
+        sections.push({ name: "account_identity", text: JSON.stringify(input.config.accountNames) });
+      }
+      return sections;
     },
   };
 }

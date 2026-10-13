@@ -27,7 +27,7 @@ type PeopleView = "inbox" | "requests" | "contacts" | "profile";
 const NO_CURSOR: ApproachListArgs["before"] = undefined;
 const NO_INBOX_CURSOR: ConversationInboxArgs["before"] = undefined;
 
-export type PeopleOpenRequest = { contactId: string } | { requestId: string };
+export type PeopleOpenRequest = { contactId: string } | { requestId: string } | { profile: true };
 
 export function People({ onDirtyChange, onAsk, openRequest }: {
   onDirtyChange: (dirty: boolean) => void;
@@ -45,7 +45,7 @@ export function People({ onDirtyChange, onAsk, openRequest }: {
   const [contactId, setContactId] = useState<string | null>(null);
   const [requestId, setRequestId] = useState<string | null>(null);
   const [dialog, setDialog] = useState<"profile" | "invitation" | "blocked" | null>(() => invitation.code ? "invitation" : compose.url ? "profile" : null);
-  const [view, setView] = useState<PeopleView>("inbox");
+  const [view, setView] = useState<PeopleView>(() => new URLSearchParams(window.location.search).get("view") === "profile" ? "profile" : "inbox");
   const listView = view === "profile" ? "inbox" : view;
   const [direction, setDirection] = useState<"incoming" | "outgoing">("incoming");
   const [history, setHistory] = useState(false);
@@ -117,7 +117,8 @@ export function People({ onDirtyChange, onAsk, openRequest }: {
   };
   useLayoutEffect(() => {
     if (!openRequest) return;
-    if ("contactId" in openRequest) showConversation(openRequest.contactId);
+    if ("profile" in openRequest) { setDialog(null); setView("profile"); }
+    else if ("contactId" in openRequest) showConversation(openRequest.contactId);
     else { setDialog(null); setView("requests"); setDirection("incoming"); setHistory(false); setRequestId(openRequest.requestId); }
   }, [openRequest]);
   const sent = (value: ApproachSummary) => {
@@ -171,7 +172,7 @@ export function People({ onDirtyChange, onAsk, openRequest }: {
           <button class="people-action" disabled={busy} onClick={(event) => { event.currentTarget.closest("details")?.removeAttribute("open"); openList("inbox"); setArchived(!archived); }}>{archived ? "conversations" : "archived conversations"}</button>
           <button class="people-action" disabled={busy || !account || !canConfigure(account, "contact.block.list")} onClick={(event) => { event.currentTarget.closest("details")?.removeAttribute("open"); setDialog("blocked"); }}>blocked people</button>
         </div></details>
-        {human && <button class="people-self" aria-current={view === "profile" ? "page" : undefined} disabled={busy || !canConfigure(account!, "profile.get")} onClick={() => setView("profile")}><span>{profile.data?.draft.displayName || account?.displayName || account?.username}</span><small>your profile{profileDirty ? " ·" : ""}</small></button>}
+        {human && <button class="people-self" aria-current={view === "profile" ? "page" : undefined} disabled={busy || !canConfigure(account!, "profile.get")} onClick={() => setView("profile")}><span class="people-self-names">{profile.data?.draft.displayName || account?.displayName || account?.username}<small>{profile.data?.shipAccount?.displayName || "Your Ship"}</small></span><small>your profile{profileDirty ? " ·" : ""}</small></button>}
         {!connected && <span role="status">reconnecting…</span>}
       </footer>
     </aside>

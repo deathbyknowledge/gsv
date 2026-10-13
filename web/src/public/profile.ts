@@ -12,6 +12,7 @@ ${profile.contactPolicy === "requests" ? '<script type="module" src="/social/con
 <body><main class="public-profile"><header><span class="brand">GSV</span><span class="status">${policy}</span></header>
 <p class="alias">${escapeHtml(new URL(profile.origin).host)}</p><h1>${escapeHtml(profile.displayName)}</h1>
 ${profile.about ? `<p class="about">${escapeHtml(profile.about)}</p>` : ""}
+${profile.representation === "human-and-ship" && profile.ship ? `<section class="ship-profile" aria-label="${escapeHtml(profile.displayName)}’s Ship"><div class="ship-emblem" aria-hidden="true">✦</div><div><p class="ship-label">${escapeHtml(profile.displayName)}’s Ship</p><h2>${escapeHtml(profile.ship.displayName)}</h2>${profile.ship.about ? `<p class="about">${escapeHtml(profile.ship.about)}</p>` : ""}</div></section>` : ""}
 <p class="representation">${profile.representation === "human-and-ship" ? "You may hear from this person or their Ship. Each message shows who sent it." : "A personal profile."}</p>
 ${profile.contactPolicy === "requests" ? `<details class="connect"><summary>Message from your GSV <span aria-hidden="true">↗</span></summary>
 <form data-profile="${escapeHtml(profile.url)}"><label for="your-space">Your GSV address</label><div class="connect-input"><input id="your-space" name="space" placeholder="you.gsv.space" autocomplete="url" inputmode="url" required maxlength="2048"><button type="submit">open my GSV</button></div>

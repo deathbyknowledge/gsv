@@ -204,11 +204,11 @@ function installTransport(sender: TestSpace, recipient: TestSpace, profile: Publ
 function spaceContext(storage: DurableObjectStorage, name: string, installationId: string): KernelContext {
   const context = {
     installationId, installationIdentity: { installationId, canonicalOrigin: `https://${name}.example`, handle: name },
-    peer: testPeer({ kind: "human", account: OWNER, calls: ["approach.*", "profile.*", "contact.*"] }), callerOwnerUid: OWNER.uid, connection: {},
+    peer: testPeer({ kind: "human", account: OWNER, calls: ["approach.*", "profile.*", "contact.*", "account.update"] }), callerOwnerUid: OWNER.uid, connection: {},
     profiles: new ProfileStore(storage), approaches: new ApproachStore(storage), federation: new FederationStore(storage), federationIdentity: new FederationIdentity(storage),
     conversations: new ConversationRegistry(storage.sql), responsibilities: new ResponsibilityStore(storage),
     env: { STORAGE: createInstallationStorage(env.STORAGE, installationId) },
-    auth: { getPasswdByUid: () => OWNER, getShadowByUsername: () => ({ hash: "unlocked" }), isPersonalAgentUid: () => false, isAccountDisabled: () => false },
+    auth: { getPersonalAgentUid: () => null, updateUser: vi.fn(), getPasswdByUid: () => OWNER, getShadowByUsername: () => ({ hash: "unlocked" }), isPersonalAgentUid: () => false, isAccountDisabled: () => false },
     coordinateFederationContact: async <T>(_id: string, operation: () => T | Promise<T>) => operation(),
     broadcastToUserUid: vi.fn(), scheduleApproachMaintenance: vi.fn(async () => {}),
     reconcileResponsibilityWake: vi.fn(async () => {}),

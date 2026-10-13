@@ -110,6 +110,8 @@ import type {
   AccountCreateResult,
   AccountListArgs,
   AccountListResult,
+  AccountUpdateArgs,
+  AccountUpdateResult,
   ConnectArgs,
   ConnectResult,
   SysBootstrapArgs,
@@ -484,6 +486,7 @@ export type SyscallDomains = {
 
   "account.create": { args: AccountCreateArgs; result: AccountCreateResult };
   "account.list": { args: AccountListArgs; result: AccountListResult };
+  "account.update": { args: AccountUpdateArgs; result: AccountUpdateResult };
   "account.owner.link": { args: { id: string; secret: string }; result: { url: string; expiresAt: number } };
   "account.recovery.redeem": { args: { id: string; secret: string; proof: string; password: string }; result: { username: "root" } };
   "account.recovery.code.start": { args: { id: string; username?: string; proof: string }; result: { accepted: true; expiresAt: number } };
