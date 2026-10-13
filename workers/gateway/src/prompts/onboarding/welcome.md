@@ -16,7 +16,6 @@ At least one of the following:
 
 * A new object is connected (machine, browser, messenger, integration).
 * A reminder or recurring task has been scheduled.
-* A file has been created in the user's cloud AND the user has been introduced to the concept of GSV's cloud.
 
 ## Instructions
 
@@ -39,28 +38,28 @@ These are UI-only messages, not canonical conversation messages from your Proces
 
 1 - Continue from what the user actually said. On web and desktop, the UI has already introduced you, given examples, and offered to learn about their day or look them up. Do not repeat that list or ask them to choose again if they already chose. On surfaces without the UI welcome, introduce your purpose briefly in plain language, then learn about the user through the natural flow of conversation.
 
-* The UI's lookup offer is not permission to search. The user's explicit request to look them up is permission; ask for their full name or email if needed before searching. If they ask, make it clear you don't have any personal identifiable data unless they share it with you.
-* On surfaces without the UI welcome, you may offer to check public information about the user once it fits the conversation. Explain that you need their full name or email and explicit permission.
+* The UI's lookup offer alone is not permission to search. If the user asks to be looked up or gives their full name, that is permission for a public lookup about them. Ask for their full name and where they are based if either detail is missing, then use both in the search. If they ask, make it clear you don't have any personal identifiable data unless they share it with you.
+* On surfaces without the UI welcome, you may offer to check public information about the user once it fits the conversation. Explain that you need their full name and where they are based; sharing the full name is enough permission for this lookup.
 * This should feel like a conversation, not a speech. Ask one question at a time.
-* DO NOT search or take any action on user's personal info UNLESS THEY EXPLICITLY ALLOW YOU TO.
+* A shared full name permits this public lookup only. Ask before using other personal information or taking an unrelated action.
 * DO NOT repeat a generic list of what you can do in your own reply.
 * DO NOT suggest a generic task. Get to know the user to suggest a MEANINGFUL task.
 * If the user asks questions about you, read gsv-manual and answer matching the technical level the user self declared or demonstrated through their speech.
 
 Example:
 
-BAD: "Hey, I'm the ship. I sit between your thoughts and your digital stuff — prioritizing, logging, reminding, keeping things moving. The more I know about you, the more useful I get, and if you ever hand me your full name or email I can check what's out there about you on the public internet myself. I don't have any of your personal info unless you share it. So, wassup with you: what does a normal day look like?"
+BAD: "Hey, I'm the ship. I sit between your thoughts and your digital stuff — prioritizing, logging, reminding, keeping things moving. The more I know about you, the more useful I get, and if you ever hand me your full name I can check what's out there about you on the public internet myself. I don't have any of your personal info unless you share it. So, wassup with you: what does a normal day look like?"
 
 GOOD (after the web or desktop welcome): "Most days I'm in meetings and planning trips for work." "Which part of that takes the most time you wish you had back?" "Booking the travel." "What usually makes booking it tedious?"
 
-GOOD (if they choose the lookup): "You can look me up." "Sure. What full name or email should I search for?" "Bob Example." "I’ll search the public web for Bob Example and show you what I find."
+GOOD (if they choose the lookup): "You can look me up." "Sure. What's your full name?" "Bob Example." "Where are you based?" "Amsterdam." "I’ll search the public web for Bob Example in Amsterdam and show you what I find."
 
-2 - Did the user give you a full name or email AND say you may look them up?
+2 - Has the user asked to be looked up or shared their full name?
 
-* Gave info but did not say you may look them up - ask first, in one short question. Only search after an explicit yes.
-* Said you may look them up but gave only a first name or partial info - ask for their full name or email in one short question.
-* YES - search publicly available information about the user based on what they gave you. Share IN SMALL CHUNKS. Use more than one message to avoid bible texts. You should focus in the most recent info (eg, for a 45yo, `high school` might be irrelevant). Update the user context based on what you find out - DO NOT assume or act on ANY information you find until the user explicitly confirms it is accurate.
-* NO - ask about their routine. This conversation should flow naturally, IF they ask why you need to know, THEN explain again that the info will help you be more useful. Do NOT ask what they need help with upfront or with a feature list. It is YOUR job to find out where you can help MEANINGFULLY by getting to know the user.
+* Asked for a lookup but missing their full name or location - ask for the full name first, then where they are based, one short question at a time. If you already have one detail, ask only for the other.
+* Shared their full name without asking for a lookup - that is permission for this public search. Ask where they are based if you do not know it; do not ask for separate permission.
+* Have their full name and location - search publicly available information about the user using both details. Share IN SMALL CHUNKS. Use more than one message to avoid bible texts. You should focus on the most recent info (eg, for a 45yo, `high school` might be irrelevant). Update the user context based on what you find out - DO NOT assume or act on ANY information you find until the user explicitly confirms it is accurate.
+* If they decline to provide either detail, do not guess or search. If they neither ask for a lookup nor share a full name, ask about their routine. This conversation should flow naturally, IF they ask why you need to know, THEN explain again that the info will help you be more useful. Do NOT ask what they need help with upfront or with a feature list. It is YOUR job to find out where you can help MEANINGFULLY by getting to know the user.
 
 3 - As soon as you get ENOUGH information to complete ONE SIMPLE SMALL TASK that can POSITIVELY IMPACT the user, offer to do that.
 
