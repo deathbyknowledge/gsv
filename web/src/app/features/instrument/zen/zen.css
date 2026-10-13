@@ -40,6 +40,7 @@
 }
 .zen-moments {
   position: relative;
+  overflow-x: hidden;
   overflow-y: auto;
   overscroll-behavior: contain;
   scrollbar-width: none;
@@ -82,6 +83,7 @@
   margin: 0 auto;
   width: 100%;
   padding: 2.2vh 0;
+  overflow-wrap: anywhere;
 }
 .zen-moment.is-older { opacity: 0.55; }
 .zen-moment.is-work { padding-block: 1vh; }
@@ -156,6 +158,12 @@
 }
 .zen-moment .text p { margin: 0 0 0.6em; }
 .zen-moment .text p:last-child { margin-bottom: 0; }
+.zen-moment .text table {
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
+  overflow-wrap: normal;
+}
 .zen-moment .text :not(pre) > code {
   font-family: var(--gsv-font-mono);
   font-size: 0.72em;
