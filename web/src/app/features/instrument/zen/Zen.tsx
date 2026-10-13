@@ -545,8 +545,9 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
   const welcomeMoments = useShipWelcome({
     active, ready, ship: !pidProp, conversationId: conversation.conversation?.id ?? null,
     hasHistory: conversation.rows.length > 0 || Boolean(conversation.historyError),
-    firstHumanMessageAt: conversationMoments.reduce<number | null>((first, moment) =>
-      moment.role === "human" && moment.timestamp !== null ? Math.min(first ?? moment.timestamp, moment.timestamp) : first, null),
+    firstCommittedHumanMessageAt: conversation.rows.reduce<number | null>((first, row) =>
+      row.role === "user" && row.timestamp !== null ? Math.min(first ?? row.timestamp, row.timestamp) : first, null),
+    hasUncommittedHumanMessage: outbox.messages.length > 0,
     owner: `${snapshot.url}:${snapshot.username}`,
   });
   const moments = useMemo(() => [...conversationMoments, ...welcomeMoments]

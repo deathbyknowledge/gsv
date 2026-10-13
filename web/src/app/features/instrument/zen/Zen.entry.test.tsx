@@ -456,7 +456,7 @@ describe("Zen conversation entry", () => {
     window.clearTimeout = ((id: number) => { timers.delete(id); }) as typeof window.clearTimeout;
     const zen = await mountedZen();
     try {
-      let now = JSON.parse([...storage.values()][0]!).startedAt as number;
+      let now = Number(JSON.parse([...storage.values()][0]!).startedAt);
       vi.spyOn(Date, "now").mockImplementation(() => now);
       const fire = async (delay: number) => {
         const entry = [...timers].find(([, timer]) => timer.delay > 0 && timer.delay <= delay);
@@ -500,7 +500,7 @@ describe("Zen conversation entry", () => {
     const key = [...storage.keys()][0]!;
     const startedAt = Date.now() - 20_000;
     storage.set(key, JSON.stringify({ key, startedAt, firstShownAt: startedAt + 2_500,
-      secondShownAt: startedAt + 12_500, stopped: false }));
+      secondTypingStartedAt: startedAt + 11_000, secondShownAt: startedAt + 12_500, stopped: false }));
     await first.unmount();
 
     messages = [{ ...message("user", "My days are busy."), createdAt: Date.now() - 5_000 }];
@@ -521,7 +521,7 @@ describe("Zen conversation entry", () => {
     const key = [...storage.keys()][0]!;
     const startedAt = Date.now() - 20_000;
     storage.set(key, JSON.stringify({ key, startedAt, firstShownAt: startedAt + 2_500,
-      secondShownAt: null, stopped: false }));
+      secondTypingStartedAt: null, secondShownAt: null, stopped: false }));
     await first.unmount();
 
     messages = [{ ...message("user", "Help me sort my email."), createdAt: startedAt + 5_000 }];
@@ -539,11 +539,14 @@ describe("Zen conversation entry", () => {
   it("keeps a rendered welcome after an older message synchronizes from another client", async () => {
     const timers = new Map<number, { callback: () => void; delay: number }>();
     let nextTimer = 1;
+    // SAFETY: This test intercepts the function callbacks scheduled by useShipWelcome.
     window.setTimeout = ((callback: TimerHandler, delay?: number) => {
       const id = nextTimer++;
+      // SAFETY: useShipWelcome schedules a function callback, never a string handler.
       timers.set(id, { callback: callback as () => void, delay: delay ?? 0 });
       return id;
     }) as typeof window.setTimeout;
+    // SAFETY: This test issues numeric timer IDs through the intercepted setTimeout.
     window.clearTimeout = ((id: number) => { timers.delete(id); }) as typeof window.clearTimeout;
     let now = Date.now();
     vi.spyOn(Date, "now").mockImplementation(() => now);
@@ -569,11 +572,14 @@ describe("Zen conversation entry", () => {
   it("does not reconstruct an unseen second welcome after a suspended timer resumes", async () => {
     const timers = new Map<number, { callback: () => void; delay: number }>();
     let nextTimer = 1;
+    // SAFETY: This test intercepts the function callbacks scheduled by useShipWelcome.
     window.setTimeout = ((callback: TimerHandler, delay?: number) => {
       const id = nextTimer++;
+      // SAFETY: useShipWelcome schedules a function callback, never a string handler.
       timers.set(id, { callback: callback as () => void, delay: delay ?? 0 });
       return id;
     }) as typeof window.setTimeout;
+    // SAFETY: This test issues numeric timer IDs through the intercepted setTimeout.
     window.clearTimeout = ((id: number) => { timers.delete(id); }) as typeof window.clearTimeout;
     let now = Date.now();
     vi.spyOn(Date, "now").mockImplementation(() => now);
@@ -587,6 +593,43 @@ describe("Zen conversation entry", () => {
       expect(texts).toHaveLength(1);
       expect(texts[0]).toContain("Hi, I’m GSV");
       expect(zen.nodes().some((node) => node.type === ThinkingMark)).toBe(false);
+    } finally { await zen.unmount(); }
+  });
+
+  it("shows the second typing mark when its timer resumes late", async () => {
+    const timers = new Map<number, { callback: () => void; delay: number }>();
+    let nextTimer = 1;
+    // SAFETY: This test intercepts the function callbacks scheduled by useShipWelcome.
+    window.setTimeout = ((callback: TimerHandler, delay?: number) => {
+      const id = nextTimer++;
+      // SAFETY: useShipWelcome schedules a function callback, never a string handler.
+      timers.set(id, { callback: callback as () => void, delay: delay ?? 0 });
+      return id;
+    }) as typeof window.setTimeout;
+    // SAFETY: This test issues numeric timer IDs through the intercepted setTimeout.
+    window.clearTimeout = ((id: number) => { timers.delete(id); }) as typeof window.clearTimeout;
+    let now = Date.now();
+    vi.spyOn(Date, "now").mockImplementation(() => now);
+    const zen = await mountedZen();
+    try {
+      const firstTimer = [...timers.values()].find((timer) => timer.delay === 2_500);
+      expect(firstTimer).toBeDefined();
+      now += 2_500;
+      await act(() => { firstTimer!.callback(); });
+      expect(zen.nodes().filter((node) => node.type === ZenText)).toHaveLength(1);
+
+      const secondTypingTimer = [...timers.values()].find((timer) => timer.delay === 8_500);
+      expect(secondTypingTimer).toBeDefined();
+      now += 20_000;
+      await act(() => { secondTypingTimer!.callback(); });
+      expect(zen.nodes().filter((node) => node.type === ZenText)).toHaveLength(1);
+      expect(zen.nodes().some((node) => node.type === ThinkingMark)).toBe(true);
+
+      const secondMessageTimer = [...timers.values()].find((timer) => timer.delay === 1_500);
+      expect(secondMessageTimer).toBeDefined();
+      now += 1_500;
+      await act(() => { secondMessageTimer!.callback(); });
+      expect(zen.nodes().filter((node) => node.type === ZenText)).toHaveLength(2);
     } finally { await zen.unmount(); }
   });
 
@@ -652,6 +695,25 @@ describe("Zen conversation entry", () => {
       expect(zen.props(ZenText).text).toBe("My first question");
       expect(zen.dirty()).toBe(true);
       expect(zen.nodes().filter((node) => node.type === ZenText)).toHaveLength(1);
+    } finally { await zen.unmount(); }
+  });
+
+  it("restores the welcome after a failed first send is dismissed", async () => {
+    send.mockRejectedValueOnce(new Error("The message did not go through."));
+    let now = Date.now();
+    vi.spyOn(Date, "now").mockImplementation(() => now);
+    const zen = await mountedZen();
+    try {
+      await vi.waitFor(() => expect(zen.nodes().some((node) => node.type === ThinkingMark)).toBe(true));
+      await act(() => { zen.props(PromptLine).onSubmit("My first question"); });
+      await vi.waitFor(() => expect(zen.text()).toContain("The message did not go through."));
+      expect(zen.nodes().some((node) => node.type === ThinkingMark)).toBe(false);
+      const dismiss = zen.nodes().find((node) => node.type === "button" && collectText(node) === "dismiss");
+      expect(dismiss).toBeDefined();
+      now += 10_000;
+      await act(() => { dismiss!.props.onClick?.(); });
+      expect(zen.nodes().some((node) => node.type === ThinkingMark)).toBe(true);
+      expect(JSON.parse([...storage.values()][0]!)).toMatchObject({ stopped: false, startedAt: now });
     } finally { await zen.unmount(); }
   });
 
