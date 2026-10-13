@@ -43,6 +43,7 @@ import type { PeopleOpenRequest } from "../people/People";
 import { DelegatedApprovals } from "./DelegatedApprovals";
 import { useZenScroll } from "./useZenScroll";
 import { useZenProcess } from "./useZenProcess";
+import { useShipWelcome } from "./useShipWelcome";
 import { ZenText } from "./ZenText";
 import { ThinkingMark, THINKING_MARK } from "./ThinkingMark";
 import { ReceiptTimeline, RECEIPT_LAYOUT } from "./ReceiptTimeline";
@@ -489,7 +490,7 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
   const [settling, setSettling] = useState<ReadonlyMap<string, number>>(() => new Map());
 
   /* moments: the runtime's, plus the commands run by hand */
-  const { moments, receipts } = useMemo(() => {
+  const conversationMoments = useMemo(() => {
     const fromRuntime: Moment[] = momentsFromConversation(conversation.rows, runtime.rows, runtime.activeRunId, pid ?? undefined)
       .map((moment) => ({ ...moment, attribution: answerAttribution(moment, answerHistory.entries, answerHistory.through) }));
     for (const outgoing of outbox.messages) {
@@ -539,9 +540,16 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
         },
       ],
     }));
-    const moments = [...fromRuntime, ...fromLocal].sort((a, b) => (a.timestamp ?? 0) - (b.timestamp ?? 0));
-    return { moments, receipts: receiptsForMoments(moments, runtime.activeRunId, pid) };
+    return [...fromRuntime, ...fromLocal].sort((a, b) => (a.timestamp ?? 0) - (b.timestamp ?? 0));
   }, [answerHistory, conversation.rows, conversation.conversation?.id, outbox.messages, localRuns, runtime.activeRunId, runtime.rows, pid]);
+  const welcomeMoments = useShipWelcome({
+    active, ready, ship: !pidProp, conversationId: conversation.conversation?.id ?? null,
+    hasHistory: conversationMoments.length > 0 || Boolean(conversation.historyError),
+    owner: `${snapshot.url}:${snapshot.username}`,
+  });
+  const moments = useMemo(() => [...conversationMoments, ...welcomeMoments]
+    .sort((a, b) => (a.timestamp ?? 0) - (b.timestamp ?? 0)), [conversationMoments, welcomeMoments]);
+  const receipts = useMemo(() => receiptsForMoments(moments, runtime.activeRunId, pid), [moments, runtime.activeRunId, pid]);
 
   /* the glyph thinking mark moves on the same clock as settling text; the dot keeps its own time in the stylesheet */
   const marking = THINKING_MARK === "glyphs" && moments.some((moment) => !moment.text && (moment.thinking || moment.streaming));
@@ -956,7 +964,7 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
       <button type="button" disabled={!connected || conversation.historyFetching} onClick={() => void conversation.retryHistory()}>retry</button>
     </div>
   ) : null;
-  const empty = ready && moments.length === 0 && pid !== null && pendingHil === null;
+  const helperEmpty = ready && moments.length === 0 && pid !== null && Boolean(pidProp) && pendingHil === null;
 
   return (
     <main class={`zen${!promptFocused ? " is-browse" : ""}${draggingFiles ? " is-file-drop" : ""}`} aria-label="Chat"
@@ -976,13 +984,8 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
             <i key={moment.id} class={`${moment.role === "human" ? "is-human" : moment.role === "note" ? "is-note" : ""}${index === moments.length - 1 ? " is-here" : ""}${browse === index ? " is-focus" : ""}`} />
           ))}
         </div>
-        {empty ? (
-          <div class="zen-empty">
-            {pidProp ? <p>This helper has no messages yet.</p> : <>
-              <h1>Welcome to the ship.</h1>
-              <p class="zen-welcome-copy">I am the ship. Who are you?</p>
-            </>}
-          </div>
+        {helperEmpty ? (
+          <div class="zen-empty"><p>This helper has no messages yet.</p></div>
         ) : !ready ? (
           <div class="zen-moments" ref={momentsRef}>
             <div class="zen-content" ref={contentRef}>{historyFailure}</div>

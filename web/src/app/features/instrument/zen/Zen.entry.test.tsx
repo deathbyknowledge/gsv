@@ -364,7 +364,6 @@ describe("Zen conversation entry", () => {
       activeRunId = "active-run";
       await act(() => { for (const listener of signals) listener("proc.run.started", { pid: shipPid, runId: activeRunId }); });
       await vi.waitFor(() => expect(feedbackText()).toContain(readiness));
-      expect(zen.nodes().some((node) => node.type === ThinkingMark)).toBe(true);
       expect(text()).not.toContain("previous-model");
 
       runContext = { ...runContext, revision: 2, runId: activeRunId, model: "active-model", updatedAt: 2 };
@@ -376,7 +375,6 @@ describe("Zen conversation entry", () => {
       activeRunId = null;
       await act(() => { for (const listener of signals) listener("proc.run.finished", { pid: shipPid, runId: "active-run", status, queuedCount }); });
       await vi.waitFor(() => expect(feedbackText()).not.toContain(readiness));
-      expect(zen.nodes().some((node) => node.type === ThinkingMark)).toBe(false);
       expect(text()).not.toContain("attempting");
     } finally { await zen.unmount(); }
   });
@@ -427,13 +425,53 @@ describe("Zen conversation entry", () => {
     } finally { await zen.unmount(); }
   });
 
-  it("opens a fresh Ship at the ordinary composer without sending a message", async () => {
+  it("starts a fresh Ship with a typing mark and the ordinary composer without sending a message", async () => {
     const zen = await mountedZen();
     try {
-      await vi.waitFor(() => expect(zen.text()).toContain("I am the ship. Who are you?"));
+      await vi.waitFor(() => expect(zen.nodes().some((node) => node.type === ThinkingMark)).toBe(true));
+      expect(zen.text()).not.toContain("I am the ship. Who are you?");
+      expect(zen.nodes().filter((node) => node.type === ZenText)).toHaveLength(0);
       expect(zen.props<ComponentProps<typeof PromptLine>>(PromptLine).disabled).toBe(false);
       expect(send).not.toHaveBeenCalled();
-      expect([...storage.values()]).toEqual([]);
+      expect(storage.size).toBe(1);
+    } finally { await zen.unmount(); }
+  });
+
+  it("shows two scripted messages ten seconds apart, with typing before each", async () => {
+    const timers = new Map<number, { callback: () => void; delay: number }>();
+    let nextTimer = 1;
+    window.setTimeout = ((callback: TimerHandler, delay?: number) => {
+      const id = nextTimer++;
+      timers.set(id, { callback: callback as () => void, delay: delay ?? 0 });
+      return id;
+    }) as typeof window.setTimeout;
+    window.clearTimeout = ((id: number) => { timers.delete(id); }) as typeof window.clearTimeout;
+    const zen = await mountedZen();
+    try {
+      let now = Number([...storage.values()][0]);
+      vi.spyOn(Date, "now").mockImplementation(() => now);
+      const fire = async (delay: number) => {
+        const entry = [...timers].find(([, timer]) => timer.delay > 0 && timer.delay <= delay);
+        expect(entry).toBeDefined();
+        timers.delete(entry![0]);
+        now += delay;
+        await act(() => { entry![1].callback(); });
+      };
+
+      expect(zen.nodes().some((node) => node.type === ThinkingMark)).toBe(true);
+      await fire(1_200);
+      expect(zen.props(ZenText).text).toBe("Hi, I’m GSV, your personal assistant! Life is busy, so give me the stuff you'd rather not spend your time on.\n\nI can help with things like reservations, travel, your calendar, research, or things on your computer. Think of anything you would give to a friend with a computer and a free afternoon.");
+      expect(zen.nodes().some((node) => node.type === ThinkingMark)).toBe(false);
+
+      await fire(8_500);
+      expect(zen.nodes().filter((node) => node.type === ZenText)).toHaveLength(1);
+      expect(zen.nodes().some((node) => node.type === ThinkingMark)).toBe(true);
+
+      await fire(1_500);
+      expect(zen.nodes().filter((node) => node.type === ZenText)).toHaveLength(2);
+      expect(zen.nodes().filter((node) => node.type === ZenText)[1]?.props.text).toBe("Enough about me, tell me about you! Tell me what your average day looks like, or if you want: I can look up what’s out there on the web about you.");
+      expect(zen.nodes().some((node) => node.type === ThinkingMark)).toBe(false);
+      expect(send).not.toHaveBeenCalled();
     } finally { await zen.unmount(); }
   });
 
@@ -442,14 +480,35 @@ describe("Zen conversation entry", () => {
     const zen = await mountedZen();
     try {
       await vi.waitFor(() => expect(zen.props(ZenText).text).toBe("Your machine is online."));
-      expect(zen.text()).not.toContain("I am the ship. Who are you?");
+      expect(zen.text()).not.toContain("Hi, I’m GSV");
+      expect(storage.size).toBe(0);
       expect(send).not.toHaveBeenCalled();
     } finally { await zen.unmount(); }
+  });
+
+  it("keeps the local introduction after a reload and the first real message", async () => {
+    const first = await mountedZen();
+    await vi.waitFor(() => expect(first.nodes().some((node) => node.type === ThinkingMark)).toBe(true));
+    const key = [...storage.keys()][0]!;
+    storage.set(key, String(Date.now() - 20_000));
+    await first.unmount();
+
+    messages = [message("user", "My days are busy.")];
+    const reopened = await mountedZen();
+    try {
+      await vi.waitFor(() => expect(reopened.nodes().filter((node) => node.type === ZenText)).toHaveLength(3));
+      const texts = reopened.nodes().filter((node) => node.type === ZenText).map((node) => String(node.props.text));
+      expect(texts.some((text) => text.startsWith("Hi, I’m GSV"))).toBe(true);
+      expect(texts.some((text) => text.startsWith("Enough about me, tell me about you!"))).toBe(true);
+      expect(texts).toContain("My days are busy.");
+      expect(send).not.toHaveBeenCalled();
+    } finally { await reopened.unmount(); }
   });
 
   it("synchronizes another client's message without consuming the current draft", async () => {
     const zen = await mountedZen();
     try {
+      await vi.waitFor(() => expect(zen.nodes().some((node) => node.type === ThinkingMark)).toBe(true));
       await act(() => { zen.props<ComponentProps<typeof PromptLine>>(PromptLine).onInput?.("My unsent question"); });
       const remote = message("user", "Hello from my phone");
       await act(() => { for (const listener of signals) listener("message.committed", { message: { ...remote, author: { kind: "user", uid: ownerUid } }, directed: false }); });
@@ -464,7 +523,7 @@ describe("Zen conversation entry", () => {
     send.mockReturnValue(accepted.promise);
     const zen = await mountedZen();
     try {
-      await vi.waitFor(() => expect(zen.text()).toContain("I am the ship. Who are you?"));
+      await vi.waitFor(() => expect(zen.nodes().some((node) => node.type === ThinkingMark)).toBe(true));
       const prompt = () => zen.props<ComponentProps<typeof PromptLine>>(PromptLine);
       await act(() => { expect(prompt().onSubmit("Help me plan my week")).toBe(true); });
       expect(zen.props(ZenText).text).toBe("Help me plan my week");
@@ -533,7 +592,7 @@ describe("Zen conversation entry", () => {
     const zen = await mountedZen("helper");
     try {
       await vi.waitFor(() => expect(zen.text()).toContain("This helper has no messages yet."));
-      expect(zen.text()).not.toContain("I am the ship. Who are you?");
+      expect(zen.text()).not.toContain("Hi, I’m GSV");
       expect(send).not.toHaveBeenCalled();
     } finally { await zen.unmount(); }
   });

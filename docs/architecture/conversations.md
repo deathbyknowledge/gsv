@@ -25,11 +25,13 @@ The Kernel owns the conversation directory and membership:
 
 - **Ship** is the stable conversation with the user's personal intelligence. Web, Desktop, CLI,
   Telegram, Slack, and other private surfaces all contribute to the same Ship message stream.
-  The current personal Process is replaceable; the Ship conversation is not. In the web and
-  Desktop clients an empty Ship conversation shows the interface greeting ("Welcome to the ship."
-  / "I am the ship. Who are you?"); the CLI and messengers show none. Nothing is sent on the
-  user's behalf, and the Ship's onboarding responsibility tells it which surfaces saw the greeting
-  so it can treat the first message as the answer or introduce itself first.
+  The current personal Process is replaceable; the Ship conversation is not. In web and Desktop,
+  a new, empty Ship conversation shows a local introduction as two Ship-styled rows. A typing mark
+  precedes the first message; the second appears ten seconds after the first, with its own typing
+  mark. These rows are retained in that client's local storage across reloads, but are not canonical
+  messages and do not appear in the CLI or messengers. The user's first message still follows normal
+  conversation sending. The Ship's onboarding responsibility tells it about the staged introduction
+  so it can continue from the user's reply without repeating the welcome or assuming both rows appeared.
 - **Work** is a conversation handled by one explicit interactive work Process. Opening Work does not
   replace Ship or redefine the personal intelligence.
 - **Group** is tied to one normalized adapter surface and can retain multiple account and Process
