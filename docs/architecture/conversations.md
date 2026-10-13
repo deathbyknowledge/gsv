@@ -30,8 +30,9 @@ The Kernel owns the conversation directory and membership:
   Telegram, Slack, and other private surfaces all contribute to the same Ship message stream.
   The current personal Process is replaceable; the Ship conversation is not. In web and Desktop,
   a new, empty Ship conversation shows a local introduction as two Ship-styled rows. A typing mark
-  precedes the first message; the second appears ten seconds after the first, with its own typing
-  mark. These rows are retained in that client's local storage across reloads, but are not canonical
+  precedes the first message; the second offers a direct route into a task ten seconds after the
+  first, with its own typing mark. A user message suppresses scripted rows not yet shown. Rows
+  already shown are retained in that client's local storage across reloads, but are not canonical
   messages and do not appear in the CLI or messengers. The user's first message still follows normal
   conversation sending. The Ship's onboarding responsibility tells it about the staged introduction
   so it can continue from the user's reply without repeating the welcome or assuming both rows appeared.

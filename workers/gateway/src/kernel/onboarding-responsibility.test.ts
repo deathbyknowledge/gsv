@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import welcomeBrief from "../prompts/onboarding/welcome.md";
 import { runWithRealKernelSql } from "../test-support/real-kernel-sql";
 import { ensureInitialOnboardingResponsibility, INITIAL_ONBOARDING_DEDUPE_KEY, reconcileInitialOnboardingResponsibility } from "./onboarding-responsibility";
 import { ResponsibilityStore } from "./responsibility-store";
@@ -35,6 +36,20 @@ function seedPreviousContract(responsibilities: ResponsibilityStore, ownerUid: n
 }
 
 describe("initial onboarding responsibility", () => {
+  it.each([
+    { scenario: "email follow-up pain", guidance: [/Prefer the original source: the relevant inbox/, /BAD: "I can set up a follow-up tracker in your cloud/, /GOOD \(only if browser-based email access and recurring checks are supported/] },
+    { scenario: "suitable existing access", guidance: [/Reuse suitable existing access/, /instead of requesting browser pairing/] },
+    { scenario: "acceptance and next action", guidance: [/A direct user request already accepts that task/, /start the documented browser-pairing flow, not "Who are you waiting on\?"/] },
+    { scenario: "declined or unavailable access", guidance: [/suitable access is unavailable or declined/, /lowest-effort useful alternative without pressuring them to connect/, /offer a bounded one-time review/] },
+    { scenario: "unsupported monitoring", guidance: [/Browser pairing alone does not establish reliable recurring access/, /Do not claim checks or reminders are active until setup succeeds/] },
+    { scenario: "tracking versus sending", guidance: [/Agreement to track email follow-ups is not permission to send them/, /sending requires explicit user approval/] },
+    { scenario: "setup versus a useful outcome", guidance: [/A connection alone, an empty tracker, or a promise to monitor is not an outcome/, /actually configured a supported ongoing task/] },
+    { scenario: "user-facing storage language", guidance: [/technical terminology is not suggested wording for the user/, /do not introduce "your cloud," filesystem paths, targets, cron jobs/, /Storage — internal implementation detail/] },
+    { scenario: "optional public lookup", guidance: [/A name given as an introduction is not permission to search/, /name supplied within this accepted flow needs no second permission question/] },
+  ])("includes guidance for $scenario", ({ guidance }) => {
+    for (const rule of guidance) expect(welcomeBrief).toMatch(rule);
+  });
+
   it("creates one non-waking Ship responsibility carrying the welcome brief", async () => {
     await runWithRealKernelSql((_sql, storage) => {
       const responsibilities = new ResponsibilityStore(storage);

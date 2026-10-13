@@ -43,9 +43,10 @@ local credentials. A global owner session does not grant ordinary Kernel access.
 - Offer the existing computer enrollment flow after authentication. The user's
   first message remains their own; onboarding never inserts or sends prompt text.
   The empty conversation displays two local Ship-styled welcome rows with a typing
-  mark before each, ten seconds apart. The second asks about an average day or
-  offers a public web lookup. The Ship continues from the person's first message
-  without assuming both rows were seen.
+  mark before each, ten seconds apart. The second asks what the person wants off
+  their plate and offers a short conversation if they are unsure. A user message
+  suppresses any scripted row not yet shown. Ship continues from the person's
+  first message without assuming both rows were seen.
 
 The welcome screen owns these two choices. Each subsequent screen asks for the
 next necessary input and shows one primary action. Reuse the shared auth layout,

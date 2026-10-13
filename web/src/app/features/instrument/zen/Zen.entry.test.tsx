@@ -476,7 +476,7 @@ describe("Zen conversation entry", () => {
 
       await fire(1_500);
       expect(zen.nodes().filter((node) => node.type === ZenText)).toHaveLength(2);
-      expect(zen.nodes().filter((node) => node.type === ZenText)[1]?.props.text).toBe("Enough about me, tell me about you! Tell me what your average day looks like, or if you want: I can look up what’s out there on the web about you.");
+      expect(zen.nodes().filter((node) => node.type === ZenText)[1]?.props.text).toBe("What’s something you’d like off your plate? Something you’ve been putting off, or keep having to deal with. Not sure? Tell me a little about your day and we’ll find a starting point.");
       expect(zen.nodes().some((node) => node.type === ThinkingMark)).toBe(false);
       expect(send).not.toHaveBeenCalled();
     } finally { await zen.unmount(); }
@@ -500,15 +500,35 @@ describe("Zen conversation entry", () => {
     storage.set(key, String(Date.now() - 20_000));
     await first.unmount();
 
-    messages = [message("user", "My days are busy.")];
+    messages = [{ ...message("user", "My days are busy."), createdAt: Date.now() - 5_000 }];
     const reopened = await mountedZen();
     try {
       await vi.waitFor(() => expect(reopened.nodes().filter((node) => node.type === ZenText)).toHaveLength(3));
       const texts = reopened.nodes().filter((node) => node.type === ZenText).map((node) => String(node.props.text));
       expect(texts.some((text) => text.startsWith("Hi, I’m GSV"))).toBe(true);
-      expect(texts.some((text) => text.startsWith("Enough about me, tell me about you!"))).toBe(true);
+      expect(texts.some((text) => text.startsWith("What’s something you’d like off your plate?"))).toBe(true);
       expect(texts).toContain("My days are busy.");
       expect(send).not.toHaveBeenCalled();
+    } finally { await reopened.unmount(); }
+  });
+
+  it("keeps the first welcome and suppresses the second after an early user message", async () => {
+    const first = await mountedZen();
+    await vi.waitFor(() => expect(first.nodes().some((node) => node.type === ThinkingMark)).toBe(true));
+    const key = [...storage.keys()][0]!;
+    const startedAt = Date.now() - 20_000;
+    storage.set(key, String(startedAt));
+    await first.unmount();
+
+    messages = [{ ...message("user", "Help me sort my email."), createdAt: startedAt + 5_000 }];
+    const reopened = await mountedZen();
+    try {
+      await vi.waitFor(() => expect(reopened.nodes().filter((node) => node.type === ZenText)).toHaveLength(2));
+      const texts = reopened.nodes().filter((node) => node.type === ZenText).map((node) => String(node.props.text));
+      expect(texts.some((text) => text.startsWith("Hi, I’m GSV"))).toBe(true);
+      expect(texts).toContain("Help me sort my email.");
+      expect(texts.some((text) => text.startsWith("What’s something you’d like off your plate?"))).toBe(false);
+      expect(reopened.nodes().some((node) => node.type === ThinkingMark)).toBe(false);
     } finally { await reopened.unmount(); }
   });
 

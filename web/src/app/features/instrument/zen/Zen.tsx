@@ -545,6 +545,8 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
   const welcomeMoments = useShipWelcome({
     active, ready, ship: !pidProp, conversationId: conversation.conversation?.id ?? null,
     hasHistory: conversation.rows.length > 0 || Boolean(conversation.historyError),
+    firstHumanMessageAt: conversationMoments.reduce<number | null>((first, moment) =>
+      moment.role === "human" && moment.timestamp !== null ? Math.min(first ?? moment.timestamp, moment.timestamp) : first, null),
     owner: `${snapshot.url}:${snapshot.username}`,
   });
   const moments = useMemo(() => [...conversationMoments, ...welcomeMoments]
