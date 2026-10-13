@@ -5,6 +5,7 @@ import { binaryBodyFromOwnedBytes } from "../../shared/src/media-body";
 
 type TelegramApiMessage = {
   method: string;
+  sentAt: number;
   body: {
     chat_id?: string;
     text?: string;
@@ -198,12 +199,15 @@ function typedStub<T, V>(value: V): T {
 describe("managed Telegram clean-instance flow", () => {
   it("pairs a bot-first identity and routes later messages to the selected installation", async () => {
     expect((await SELF.fetch(update(1, 1, "hello"))).status).toBe(200);
-    await vi.waitFor(async () => {
-      expect(await telegramMessages()).toHaveLength(1);
-    });
-    const pairingText = (await telegramMessages())[0]?.body.text ?? "";
-    const code = pairingText.match(/[A-HJ-NP-Z2-9]{4}(?:-[A-HJ-NP-Z2-9]{4}){2}/)?.[0];
-    expect(code).toBeTruthy();
+    const pairingMessages = await vi.waitFor(async () => {
+      const messages = (await telegramMessages()).filter((message) => message.body.text);
+      expect(messages).toHaveLength(2);
+      return messages;
+    }, { timeout: 3_000 });
+    expect(pairingMessages[0]?.body.text).toBe("In GSV, open Settings → Messengers → Telegram and paste the code below.\nExpires in 10 minutes.");
+    const code = pairingMessages[1]?.body.text;
+    expect(code).toMatch(/^[A-HJ-NP-Z2-9]{4}(?:-[A-HJ-NP-Z2-9]{4}){2}$/);
+    expect(pairingMessages[1]!.sentAt - pairingMessages[0]!.sentAt).toBeGreaterThanOrEqual(1_000);
     const normalizedCode = code!.replaceAll("-", "");
     // SAFETY: The test environment exposes the declared Durable Object namespace binding.
     const namespace = env.MANAGED_TELEGRAM_PAIRING as DurableObjectNamespace;
@@ -407,10 +411,10 @@ describe("managed Telegram clean-instance flow", () => {
     const messagesBeforePairCommand = (await telegramMessages()).length;
     expect((await SELF.fetch(update(6, 5, "/start"))).status).toBe(200);
     await vi.waitFor(async () => {
-      const messages = await telegramMessages();
-      expect(messages.length).toBeGreaterThan(messagesBeforePairCommand);
-      expect(messages.at(-1)?.body.text).toContain("Pairing code:");
-    });
+      const messages = (await telegramMessages()).slice(messagesBeforePairCommand).filter((message) => message.body.text);
+      expect(messages).toHaveLength(2);
+      expect(messages.at(-1)?.body.text).toMatch(/^[A-HJ-NP-Z2-9]{4}(?:-[A-HJ-NP-Z2-9]{4}){2}$/);
+    }, { timeout: 3_000 });
     const relinkText = (await telegramMessages()).at(-1)?.body.text ?? "";
     const relinkCode = relinkText.match(/[A-HJ-NP-Z2-9]{4}(?:-[A-HJ-NP-Z2-9]{4}){2}/)?.[0];
     expect(relinkCode).toBeTruthy();
