@@ -717,15 +717,22 @@ export class McpClientManager {
     return this.track(serverId, this.connectAndDiscover(serverId));
   }
 
-  refreshConnection(serverId: string): Promise<void> {
+  async refreshConnection(serverId: string): Promise<void> {
     const inFlight = this.pending.get(serverId);
     if (inFlight) return inFlight;
-    return this.track(serverId, this.refreshRegisteredConnection(serverId));
+    let connection = this.mcpConnections[serverId];
+    if (!connection) {
+      const row = this.options.rows.get(serverId);
+      if (!row) throw new Error(`MCP server ${serverId} is not registered`);
+      connection = this.restoreConnection(row);
+      if (connection.connectionState !== "authenticating") {
+        return this.track(serverId, this.connectAndDiscover(serverId));
+      }
+    }
+    return this.track(serverId, this.refreshRegisteredConnection(serverId, connection));
   }
 
-  private async refreshRegisteredConnection(serverId: string): Promise<void> {
-    const connection = this.mcpConnections[serverId];
-    if (!connection) return;
+  private async refreshRegisteredConnection(serverId: string, connection: McpConnection): Promise<void> {
     if (connection.connectionState === "authenticating") {
       const provider = connection.options.transport.authProvider;
       const authUrl = this.options.rows.get(serverId)?.auth_url;
@@ -762,21 +769,8 @@ export class McpClientManager {
     if (this.restored) return;
     this.restored = true;
     for (const row of this.options.rows.list()) {
-      const stored = parseStoredTransport(row.server_options);
-      const transport: McpTransportOptions = { type: stored.type };
-      if (stored.requestInit !== undefined) transport.requestInit = stored.requestInit;
-      if (stored.sessionId !== undefined) transport.sessionId = stored.sessionId;
-      if (row.callback_url) {
-        const provider = this.options.createAuthProvider(row.callback_url);
-        provider.serverId = row.id;
-        if (row.client_id) provider.clientId = row.client_id;
-        transport.authProvider = provider;
-      }
-      const connection = this.createConnection(row.id, row.server_url, transport);
-      if (row.auth_url) {
-        connection.connectionState = "authenticating";
-        continue;
-      }
+      const connection = this.restoreConnection(row);
+      if (connection.connectionState === "authenticating") continue;
       this.track(row.id, this.connectAndDiscover(row.id));
     }
   }
@@ -939,6 +933,22 @@ export class McpClientManager {
     }
     this.options.rows.remove(serverId);
     this.fireStateChanged();
+  }
+
+  private restoreConnection(row: McpServerRow): McpConnection {
+    const stored = parseStoredTransport(row.server_options);
+    const transport: McpTransportOptions = { type: stored.type };
+    if (stored.requestInit !== undefined) transport.requestInit = stored.requestInit;
+    if (stored.sessionId !== undefined) transport.sessionId = stored.sessionId;
+    if (row.callback_url) {
+      const provider = this.options.createAuthProvider(row.callback_url);
+      provider.serverId = row.id;
+      if (row.client_id) provider.clientId = row.client_id;
+      transport.authProvider = provider;
+    }
+    const connection = this.createConnection(row.id, row.server_url, transport);
+    if (row.auth_url) connection.connectionState = "authenticating";
+    return connection;
   }
 
   private createConnection(

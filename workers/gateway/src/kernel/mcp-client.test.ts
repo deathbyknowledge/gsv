@@ -269,6 +269,11 @@ describe("McpClientManager", () => {
     expect(isBlockedUrl("https://tools.example/mcp")).toBe(false);
   });
 
+  it("rejects refresh when the server has no retained registration", async () => {
+    const { manager } = makeManager();
+    await expect(manager.refreshConnection("missing")).rejects.toThrow("MCP server missing is not registered");
+  });
+
   it("reports connection failures and stores the pending authorization", async () => {
     const { manager, storage, connections } = makeManager();
     await manager.registerServer("mcp-1", {
@@ -959,6 +964,45 @@ describe("McpClientManager OAuth recovery", () => {
     expect(rows.get("mcp-1")?.auth_url).toBeNull();
     expect(fixture.refreshes).toBe(1);
     expect(fixture.exchanges).toBe(1);
+  });
+
+  it("recreates a retained server after OAuth cleanup fails during removal", async () => {
+    const { manager, connection, rows, storage, fixture } = await setup();
+    storage.failDelete = new Error("storage unavailable");
+    await expect(manager.removeServer("mcp-1")).rejects.toThrow("sign-in records could not be deleted");
+    expect(manager.mcpConnections["mcp-1"]).toBeUndefined();
+    expect(rows.list()).toHaveLength(1);
+    storage.failDelete = null;
+
+    await Promise.all([manager.refreshConnection("mcp-1"), manager.refreshConnection("mcp-1")]);
+    const restored = manager.mcpConnections["mcp-1"];
+    expect(restored).toBeDefined();
+    expect(restored).not.toBe(connection);
+    expect(restored.connectionState).toBe("ready");
+    expect(restored.connectionError).toBeNull();
+    expect(restored.options.transport.type).toBe("streamable-http");
+    expect(restored.options.transport.authProvider?.registeredClientId).toBe("fixture-client");
+    expect(rows.list()).toHaveLength(1);
+    expect(fixture.exchanges).toBe(1);
+    await expect(manager.callTool({ serverId: "mcp-1", name: "operate" })).resolves.toMatchObject({ isError: false });
+  });
+
+  it("preserves a pending sign-in when refreshing after a failed removal", async () => {
+    const { manager, rows, storage, fixture, signIn } = await setup();
+    fixture.expire();
+    await manager.refreshConnection("mcp-1");
+    const authUrl = rows.get("mcp-1")?.auth_url;
+    storage.failDelete = new Error("storage unavailable");
+    await expect(manager.removeServer("mcp-1")).rejects.toThrow("sign-in records could not be deleted");
+    expect(manager.mcpConnections["mcp-1"]).toBeUndefined();
+    storage.failDelete = null;
+
+    await manager.refreshConnection("mcp-1");
+    expect(manager.mcpConnections["mcp-1"]?.connectionState).toBe("authenticating");
+    expect(rows.get("mcp-1")?.auth_url).toBe(authUrl);
+    await signIn();
+    expect(rows.list()).toHaveLength(1);
+    expect(fixture.exchanges).toBe(2);
   });
 
   it.each(["discovery", "tool", "notification"])("reauthorizes the same server after %s", async (source) => {

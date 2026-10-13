@@ -20,6 +20,9 @@ link to restore the existing connection; its server ID stays the same. **refresh
 retries a failed connection or replaces an expired sign-in link. A tool call that
 required sign-in must be run again after authorization completes.
 
+If removing a server fails, it stays listed. Retry **remove** to finish deleting
+it, or use **refresh** to reconnect the saved server.
+
 ## From a shell
 
 ```bash
