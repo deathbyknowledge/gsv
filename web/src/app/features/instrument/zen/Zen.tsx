@@ -952,9 +952,6 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
   const selectorPlaces = useMemo(() => orderPlaces(targetsQuery.data ?? []), [targetsQuery.data]);
   /* the cloud is always listed; once places are known and it is alone, it is not a choice, so it reads as plain text and offers to connect a place */
   const cloudAlone = !!targetsQuery.data && !targetsQuery.isError && selectorPlaces.length === 1;
-  const activeRun = connected ? runtime.activeRunId : null;
-  const currentModel = runtime.context?.runId === activeRun ? runtime.context.model : null;
-  const showFeedback = note !== null || (pendingHil === null && activeRun !== null && Boolean(currentModel));
 
   const latestMessageIndex = useMemo(() => moments.reduce((latest, moment, index) =>
     moment.role === "human" || (moment.role === "ship" && (moment.text !== "" || moment.media?.length || moment.streaming)) ? index : latest, -1), [moments]);
@@ -1087,9 +1084,8 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
             {attachments.map((attachment) => <ZenDraftAttachment key={attachment.id} attachment={attachment}
               onRemove={() => setAttachments((current) => current.filter((file) => file.id !== attachment.id))} />)}
           </ul>}
-          {showFeedback && <div class="zen-feedback">
-            {activeRun !== null && pendingHil === null && currentModel && <span role="status">{currentModel}</span>}
-            {note ? <span class="is-err" role="alert">{note}</span> : null}
+          {note !== null && <div class="zen-feedback">
+            <span class="is-err" role="alert">{note}</span>
           </div>}
           <div class="zen-compose-line" hidden={recordingVoice}>
             <input ref={fileInput} type="file" multiple hidden aria-label="Choose attachments" onChange={(event) => {

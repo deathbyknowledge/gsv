@@ -339,7 +339,7 @@ describe("Zen conversation entry", () => {
   it.each([
     { target: "gsv", readiness: "your cloud is ready", status: "completed", queuedCount: 0 },
     { target: "laptop", readiness: "laptop is offline", status: "aborted", queuedCount: 1 },
-  ])("shows the active model without place readiness and clears it when $status", async ({ target, readiness, status, queuedCount }) => {
+  ])("keeps run model and place readiness out of the composer when $status", async ({ target, readiness, status, queuedCount }) => {
     runContext = {
       revision: 1, runId: "previous-run", provider: "openai", model: "previous-model",
       contextWindowTokens: 1000, maxOutputTokens: 100, estimatedInputTokens: 100,
@@ -366,9 +366,13 @@ describe("Zen conversation entry", () => {
       expect(feedbackText()).toBe("");
       expect(text()).not.toContain("previous-model");
 
-      runContext = { ...runContext, revision: 2, runId: activeRunId, model: "active-model", updatedAt: 2 };
+      runContext = { ...runContext, revision: 2, runId: activeRunId, model: "default", updatedAt: 2 };
       await act(() => { for (const listener of signals) listener("proc.changed", { pid: shipPid, changes: ["context"], context: runContext }); });
-      await vi.waitFor(() => expect(feedbackText()).toBe("active-model"));
+      expect(feedbackText()).toBe("");
+
+      runContext = { ...runContext, revision: 3, model: "active-model", updatedAt: 3 };
+      await act(() => { for (const listener of signals) listener("proc.changed", { pid: shipPid, changes: ["context"], context: runContext }); });
+      expect(feedbackText()).toBe("");
       expect(text()).not.toContain("attempting");
       expect(feedbackText()).not.toContain(readiness);
 

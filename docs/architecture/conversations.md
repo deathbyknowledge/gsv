@@ -19,8 +19,8 @@ messages and Ship's Markdown replies open in a new tab.
 When the reader scrolls above the latest chat message, a small button returns the transcript to
 the bottom and resumes following new replies.
 
-During a run, Chat shows the selected model above the composer once it is known. Routine place
-readiness does not appear there; an offline place still shows a warning by the place selector.
+Chat does not show the active model or routine place readiness above the composer. Model attribution
+stays with each reply; errors appear when needed, and an offline place shows a warning by its selector.
 
 ## Conversation kinds
 
