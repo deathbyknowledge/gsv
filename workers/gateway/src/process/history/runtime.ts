@@ -1036,26 +1036,45 @@ export class ProcessHistory {
     return { ok: true, pid: this.host.pid, pending: true };
   }
 
-  async applyPendingCompaction(runId: string): Promise<boolean> {
+  async applyPendingCompaction(
+    runId: string,
+    state: ProcContextState,
+    context: Context,
+  ): Promise<"ready" | "compacted" | "stopped"> {
     const run = this.host.runs.active;
     const pending = run?.runId === runId ? run.pendingCompaction : undefined;
-    if (!pending) return true;
-    if (!this.host.store.tools.isRunResolved(runId) || this.host.store.tools.getPendingHilForRun(runId)) return false;
+    if (!pending) return "ready";
+    if (!this.host.store.tools.isRunResolved(runId) || this.host.store.tools.getPendingHilForRun(runId)) return "stopped";
     const epoch = this.host.store.epochs.getLiveContextEpoch();
+    const selected = this.selectActiveCompactionPrefix(runId, state, context, this.getHistoryContextPolicy(), {
+      throughMessageId: pending.throughMessageId,
+      summary: pending.summary,
+    });
+    // A smaller model request may already fit after configuration or history
+    // changes. Never discard recent messages just to install a redundant summary.
+    if (epoch?.id === pending.contextEpochId
+      && this.host.store.state.getHistoryGeneration() === pending.historyGeneration
+      && selected.length === 0) {
+      this.host.mutateActiveRun(runId, (current) => {
+        delete current.pendingCompaction;
+        return current;
+      });
+      return "ready";
+    }
     const result = epoch?.id === pending.contextEpochId
       && this.host.store.state.getHistoryGeneration() === pending.historyGeneration
-      ? await this.handleHistoryCompact({ summary: pending.summary, throughMessageId: pending.throughMessageId }, {
+      ? await this.handleHistoryCompact({ summary: pending.summary, throughMessageId: selected.at(-1)!.id }, {
         allowActive: true, activeRunId: runId, reason: "checkpoint",
       })
       : compactionFailure("Context changed before the handover could be installed");
-    if (this.host.handleRunStopped(runId)) return false;
+    if (this.host.handleRunStopped(runId)) return "stopped";
     if (!result.ok) {
       await this.host.run.failWithHistoryEvent(runId, {
         reason: "context.checkpoint.failed", error: result.error,
       });
-      return false;
+      return "stopped";
     }
-    return true;
+    return "compacted";
   }
 
   private captureCompactionSnapshot(
@@ -1595,7 +1614,7 @@ export class ProcessHistory {
       return "stopped";
     }
 
-    const selected = this.selectAutoCompactionPrefix(runId, state, context, policy, trigger);
+    const selected = this.selectActiveCompactionPrefix(runId, state, context, policy, { trigger });
     if (selected.length === 0) {
       await this.host.run.failWithHistoryEvent(runId, {
         reason: "context.auto_compact.empty", trigger, policy, pressure,
@@ -1647,12 +1666,12 @@ export class ProcessHistory {
     return "compacted";
   }
 
-  selectAutoCompactionPrefix(
+  selectActiveCompactionPrefix(
     runId: string,
     state: ProcContextState,
     context: Context,
     policy: ProcHistoryContextPolicy,
-    trigger: "preflight" | "provider-overflow",
+    options: { trigger?: "preflight" | "provider-overflow"; throughMessageId?: number; summary?: string },
   ): MessageRecord[] {
     const records = this.host.store.messages.getMessagesForGeneration();
     if (records.length <= 1) {
@@ -1660,7 +1679,9 @@ export class ProcessHistory {
     }
 
     const runInputMessageId = this.host.store.messages.getRunInputMessageId(runId);
-    const protectedIndex = records.length - 1;
+    const protectedIndex = options.throughMessageId === undefined
+      ? records.length - 1
+      : records.findLastIndex((message) => message.id <= options.throughMessageId!) + 1;
     if (protectedIndex <= 0) {
       return [];
     }
@@ -1669,7 +1690,7 @@ export class ProcessHistory {
     const inputBudgetTokens = state.inputBudgetTokens;
     const measuredInputTokens = Math.max(1, state.inputTokens);
     const effectiveInputTokens =
-      trigger === "provider-overflow" && inputBudgetTokens !== null
+      options.trigger === "provider-overflow" && inputBudgetTokens !== null
         ? Math.max(measuredInputTokens, inputBudgetTokens)
         : measuredInputTokens;
     return this.selectCompactionPrefixToPressure({
@@ -1684,6 +1705,7 @@ export class ProcessHistory {
       effectiveInputTokens,
       inputBudgetTokens,
       targetPressure: policy.compactToPressure,
+      summary: options.summary,
     });
   }
 
@@ -1696,6 +1718,7 @@ export class ProcessHistory {
     inputBudgetTokens: number | null;
     targetPressure: number;
     preserveMessageId?: number;
+    summary?: string;
   }): MessageRecord[] {
     const {
       records,
@@ -1734,7 +1757,7 @@ export class ProcessHistory {
           segmentId: "segment",
           archivedMessages: protectedIndex,
           archivePath: "/home/process/history/compactions/segment.jsonl.gz",
-          summary: "x".repeat(COMPACTION_SUMMARY_MAX_TOKENS * 4),
+          summary: input.summary ?? "x".repeat(COMPACTION_SUMMARY_MAX_TOKENS * 4),
         },
       }, Date.now()),
     ]);

@@ -7,31 +7,40 @@ it("continues one active run through successive Shell handovers", async () => {
     const request = "Check the deadline and citations; keep the report in /report.md.";
     const firstHandover = "Initial evidence verified. Next check the deadline.";
     const secondHandover = "The deadline was corrected to Friday. Check the source citations next.";
+    const process = await runtime.spawn("check deadline and citations", { runAs: "process-runtime-agent" });
+    await runtime.configureAi(process.pid, 64_000);
+    for (let step = 0; step < 10; step += 1) {
+      runtime.ai.enqueue({ kind: "message", text: `Noted evidence ${step}.` });
+      const sent = await runtime.client.proc.send({ pid: process.pid, message: `Evidence ${step}: ${"source ".repeat(850)}` });
+      if (!sent.ok) throw new Error(sent.error);
+      await runtime.waitFor(() => runtime.signals.some(({ signal, payload }) =>
+        signal === "proc.run.finished" && payload.runId === sent.runId), "the evidence turn to finish");
+    }
+    const firstCall = runtime.ai.requests.length;
     runtime.ai.enqueue(
-      { kind: "tool-calls", calls: [{ id: "first-evidence", name: "Shell", arguments: { target: "gsv", input: "printf first-evidence-marker" } }] },
+      { kind: "tool-calls", calls: [{ id: "first-evidence", name: "Shell", arguments: { target: "gsv", input: "printf first-evidence-marker; seq 1 3000" } }] },
       { kind: "tool-calls", calls: [{ id: "first-handover", name: "Shell", arguments: { target: "gsv", input: `proc compact --summary '${firstHandover}'` } }] },
-      { kind: "tool-calls", calls: [{ id: "second-evidence", name: "Shell", arguments: { target: "gsv", input: "printf second-evidence-marker" } }] },
+      { kind: "tool-calls", calls: [{ id: "second-evidence", name: "Shell", arguments: { target: "gsv", input: "printf second-evidence-marker; seq 1 3000" } }] },
       { kind: "tool-calls", calls: [{ id: "second-handover", name: "Shell", arguments: { target: "gsv", input: `proc compact --summary '${secondHandover}'` } }] },
       { kind: "message", text: "Both handovers complete." },
     );
-    const process = await runtime.spawn("check deadline and citations", { runAs: "process-runtime-agent" });
-    await runtime.configureAi(process.pid);
     const sent = await runtime.client.proc.send({ pid: process.pid, message: request });
     if (!sent.ok) throw new Error(sent.error);
     await runtime.waitFor(() => runtime.signals.some(({ signal, payload }) =>
       signal === "proc.run.finished" && payload.runId === sent.runId), "the continued run to finish");
 
-    expect(runtime.ai.requests).toHaveLength(5);
-    const firstContinuation = JSON.stringify(runtime.ai.requests[2]!.messages);
+    expect(runtime.ai.requests).toHaveLength(firstCall + 5);
+    const firstContinuation = JSON.stringify(runtime.ai.requests[firstCall + 2]!.messages);
     expect(firstContinuation).toContain(request);
     expect(firstContinuation).toContain(firstHandover);
     expect(firstContinuation).toContain("Handover saved. Compaction follows when the current tools finish.");
-    expect(firstContinuation).not.toContain("first-evidence-marker");
-    const secondContinuation = JSON.stringify(runtime.ai.requests[4]!.messages);
+    expect(firstContinuation).toContain("first-evidence-marker");
+    expect(firstContinuation).toContain("Evidence 9:");
+    expect(firstContinuation).not.toContain("Evidence 0:");
+    const secondContinuation = JSON.stringify(runtime.ai.requests[firstCall + 4]!.messages);
     expect(secondContinuation).toContain(request);
     expect(secondContinuation).toContain(secondHandover);
-    expect(secondContinuation).not.toContain(firstHandover);
-    expect(secondContinuation).not.toContain("second-evidence-marker");
+    expect(secondContinuation).toContain("second-evidence-marker");
 
     const history = await runtime.client.proc.history({ pid: process.pid, format: 2 });
     if (!history.ok || history.format !== 2) throw new Error("Typed history unavailable");

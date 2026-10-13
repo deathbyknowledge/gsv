@@ -8,13 +8,16 @@ const runId = "checkpoint-run";
 const owner = { runId, requestId: "checkpoint-dispatch" };
 const handover = "The user corrected the deadline to Friday. The report is in /report.md; verify its citations next. Onboarding is complete.";
 
-async function prepare(process: Process) {
+async function prepare(process: Process, historySize = 100) {
   vi.spyOn(process, "sendSignal").mockResolvedValue();
   vi.spyOn(process.kernel, "kernelRpc").mockResolvedValue({ responsibilities: [], count: 0, revision: 0 });
-  const run = { runId, tools: [], targets: [], mcpServers: [], config: { ...terminalTestConfig(process.pid), skillIndexMode: "off" as const } };
+  const run = { runId, tools: [], targets: [], mcpServers: [], config: { ...terminalTestConfig(process.pid), contextWindowTokens: 20_000, maxTokens: 1_000, skillIndexMode: "off" as const } };
   process.runs.active = run;
   const epoch = await process.history.ensureContextEpoch(runId, run, run.config);
   if (!epoch) throw new Error("Missing initial epoch");
+  for (let step = 0; step < historySize; step += 1) {
+    process.store.messages.appendMessage("assistant", `Older evidence ${step}: ${"evidence ".repeat(65)}`);
+  }
   const inputId = process.store.messages.appendMessage("user", "Prepare the report, without publishing it.", { runId });
   const finishedId = process.store.messages.appendMessage("assistant", "Verified the source and wrote /report.md.", { runId });
   const calls = ["checkpoint-call", "concurrent-call"].map((callId) => ({
@@ -25,6 +28,16 @@ async function prepare(process: Process) {
   process.store.tools.register(owner.requestId, "checkpoint-call", runId, "shell.exec", {});
   process.store.tools.register("concurrent-dispatch", "concurrent-call", runId, "shell.exec", {});
   return { inputId, finishedId, toolId, epochId: epoch.id };
+}
+
+async function applyHandover(process: Process) {
+  const context = {
+    systemPrompt: process.store.epochs.getLiveContextEpoch()?.systemPrompt ?? "",
+    messages: await process.history.buildContextMessages(),
+  };
+  const config = process.runs.active?.config ?? terminalTestConfig(process.pid);
+  const state = await process.history.updateContextState(runId, config, context);
+  return process.history.applyPendingCompaction(runId, state, context);
 }
 
 function finishTools(process: Process) {
@@ -43,7 +56,7 @@ describe("process-authored handover", () => {
       const fixture = await prepare(process);
       const before = process.store.messages.getMessages();
       expect(await process.history.requestHistoryCompaction({ summary: handover }, owner)).toEqual({ ok: true, pid: process.pid, pending: true });
-      expect(await process.history.applyPendingCompaction(runId)).toBe(false);
+      expect(await applyHandover(process)).toBe("stopped");
       expect(process.store.messages.getMessages()).toEqual(before);
       expect(process.store.history.listHistorySegments()).toHaveLength(0);
       return fixture;
@@ -54,11 +67,14 @@ describe("process-authored handover", () => {
       expect(process.runs.active?.pendingCompaction?.summary).toBe(handover);
       finishTools(process);
       const lateId = process.store.messages.appendMessage("system", "An unrelated completed task reported its result.");
-      expect(await process.history.applyPendingCompaction(runId)).toBe(true);
+      expect(await applyHandover(process)).toBe("compacted");
       const messages = process.store.messages.getMessages();
       expect(messages.find((message) => message.id === initial.inputId)?.content).toBe("Prepare the report, without publishing it.");
       expect(process.store.messages.getRunInputMessageId(runId)).toBe(initial.inputId);
-      expect(messages.find((message) => message.id === initial.finishedId)?.content).toContain(handover);
+      expect(messages.find((message) => message.id === initial.finishedId)?.content).toBe("Verified the source and wrote /report.md.");
+      expect(messages.some((message) => message.content.includes(handover))).toBe(true);
+      expect(messages.some((message) => message.content.startsWith("Older evidence 99:"))).toBe(true);
+      expect(messages.some((message) => message.content.startsWith("Older evidence 0:"))).toBe(false);
       expect(messages.find((message) => message.id === initial.toolId)?.records).toHaveLength(2);
       expect(messages.filter((message) => message.role === "toolResult")).toHaveLength(2);
       expect(messages.at(-1)?.id).toBe(lateId);
@@ -67,9 +83,24 @@ describe("process-authored handover", () => {
       expect(process.store.epochs.getContextEpoch(initial.epochId)?.state).toBe("closed");
       const [segment] = process.store.history.listHistorySegments();
       const archived = await process.history.handleHistorySegmentRead({ segmentId: segment!.id });
-      expect(archived.ok && archived.messages.some((message) => message.id === initial.finishedId && JSON.stringify(message.content).includes("Verified the source and wrote /report.md."))).toBe(true);
-      expect(await process.history.applyPendingCompaction(runId)).toBe(true);
+      expect(archived.ok && archived.messages.some((message) => JSON.stringify(message.content).includes("Older evidence 0:"))).toBe(true);
+      expect(await applyHandover(process)).toBe("ready");
       expect(process.store.history.listHistorySegments()).toHaveLength(1);
+      process.runs.active = null;
+    });
+  });
+
+  it("keeps all original messages when they already fit under the retention target", async () => {
+    const stub = await initProcess("checkpoint-already-fits", ROOT_IDENTITY);
+    await runInProcess(stub, async (process: Process) => {
+      await prepare(process, 0);
+      expect(await process.history.requestHistoryCompaction({ summary: handover }, owner)).toMatchObject({ ok: true });
+      finishTools(process);
+      const before = process.store.messages.getMessages();
+      expect(await applyHandover(process)).toBe("ready");
+      expect(process.store.messages.getMessages()).toEqual(before);
+      expect(process.store.history.listHistorySegments()).toHaveLength(0);
+      expect(process.runs.active?.pendingCompaction).toBeUndefined();
       process.runs.active = null;
     });
   });
@@ -113,6 +144,7 @@ describe("process-authored handover", () => {
         expect(process.runs.active?.contextEpochId).not.toBe(initial.epochId);
         expect(process.runs.active?.pendingCompaction).toBeUndefined();
         expect(process.store.history.listHistorySegments()).toHaveLength(1);
+        expect(prepared.contextState.pressure).toBeLessThanOrEqual(0.4);
         return null;
       });
       await process.run.runTick(runId);
@@ -129,7 +161,7 @@ describe("process-authored handover", () => {
       finishTools(process);
       const before = process.store.messages.getMessages();
       vi.spyOn(process.storage, "put").mockRejectedValueOnce(new Error("Synthetic archive failure"));
-      await expect(process.history.applyPendingCompaction(runId)).rejects.toThrow("Synthetic archive failure");
+      await expect(applyHandover(process)).rejects.toThrow("Synthetic archive failure");
       expect(process.store.messages.getMessages()).toEqual(before);
       expect(process.store.history.listHistorySegments()).toHaveLength(0);
       process.runs.active = null;
@@ -144,7 +176,7 @@ describe("process-authored handover", () => {
       process.runs.active = { runId: "new-input" };
       process.store.messages.appendMessage("user", "Stop the report; answer my new question.", { runId: "new-input" });
       finishTools(process);
-      expect(await process.history.applyPendingCompaction(runId)).toBe(true);
+      expect(await applyHandover(process)).toBe("ready");
       expect(process.store.history.listHistorySegments()).toHaveLength(0);
       expect(process.store.messages.getMessages().at(-3)?.content).toContain("new question");
       process.runs.active = null;

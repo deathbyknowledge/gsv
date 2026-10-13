@@ -65,7 +65,7 @@ describe("Process history audiences", () => {
       const state = measuredContext(process);
       const policy = { overflow: "auto-compact", compactAtPressure: 0.9, compactToPressure: 0.4, updatedAt: 100 } as const;
       for (const trigger of ["preflight", "provider-overflow"] as const) {
-        expect(process.history.selectAutoCompactionPrefix("current", state, context, policy, trigger)).toEqual([]);
+        expect(process.history.selectActiveCompactionPrefix("current", state, context, policy, { trigger })).toEqual([]);
       }
     });
   });
@@ -99,9 +99,9 @@ describe("Process history audiences", () => {
           measurement: { estimatedInputTokens: tokens, inputTokens: tokens, confirmedInputTokens: 0,
             estimatedTrailingInputTokens: tokens, source: "estimate" }, updatedAt: 100,
         });
-        const selected = process.history.selectAutoCompactionPrefix("current", state, context, {
+        const selected = process.history.selectActiveCompactionPrefix("current", state, context, {
           overflow: "auto-compact", compactAtPressure: 0.9, compactToPressure: 0.4, updatedAt: 100,
-        }, "preflight");
+        }, { trigger: "preflight" });
         const transcript = [...renderCompactionTranscriptChunks(process.store.messages.getMessages(), 250_000)].join("").trimEnd();
         expect(transcript).not.toContain("PERSON ONLY");
         expect(process.store.messages.getRecords().filter((record) => record.kind === "event")).toHaveLength(withNotices ? 2 : 0);

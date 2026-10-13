@@ -108,7 +108,12 @@ Process validates that tool against its active run and returns
 `{ ok: true, pid, pending: true }` after durably saving the request. This means
 accepted, not yet archived.
 
-The cut stops before the requesting tool batch, whose results the model has not
+The Process measures the full next request and uses the same low-water target
+as automatic compaction: 40% of the usable input budget by default, including
+standing instructions, tools, the handover and a recent verbatim tail. It archives
+only enough old complete exchanges to reach that target. If the request already
+fits, it clears the pending handover without changing history.
+The cut cannot reach the requesting tool batch, whose results the model has not
 seen. Installation follows result ingestion, before the next generation. The
 current input, the whole tool batch and later events remain in history. A restart
 retains the pending handover; interruption, reset or replacement cannot install

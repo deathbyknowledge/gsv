@@ -2338,8 +2338,11 @@ export class ProcessRun {
     runId: string,
     state: RunTickContextState,
   ): Promise<boolean> {
-    if (!(await this.host.history.applyPendingCompaction(runId))) return false;
     if (!(await this.rebuildRunTickContext(runId, state))) return false;
+    if (!state.contextState) return false;
+    const handover = await this.host.history.applyPendingCompaction(runId, state.contextState, state.context);
+    if (handover === "stopped") return false;
+    if (handover === "compacted" && !(await this.rebuildRunTickContext(runId, state))) return false;
     const policy = await this.applyRunTickContextPolicy(runId, state, "preflight");
     if (policy === "stopped") return false;
     const contextState = state.contextState;

@@ -212,7 +212,10 @@ same personal-agent account.
 
 Inside an active process, `proc compact --summary '...'` saves a handover for
 installation after the current tool batch finishes. The original request and
-unseen tool results stay intact. No history ids or new process are needed.
+unseen tool results stay intact, alongside enough recent original exchanges to
+fill the configured low-water budget (40% by default, including instructions,
+tools and handover). History that already fits stays unchanged.
+No history ids or new process are needed.
 For an idle process, use `proc compact --pid PID` with one of `--keep-last N`,
 `--through-message-id ID` or `--target-pressure N`, and either `--summary TEXT`
 or `--generate-summary`. See [Context Compaction](../architecture/context-compaction.md).
