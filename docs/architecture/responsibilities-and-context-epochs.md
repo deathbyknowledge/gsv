@@ -236,7 +236,9 @@ System-owned producers use the same ledger contract:
   criteria, outcomes and step-by-step instructions. A full name the user shares
   permits a public lookup; Ship asks where they are based and uses both details.
   Creating a cloud file is optional; the listed outcomes are a useful connection
-  or a scheduled reminder. The system responsibilities
+  or a scheduled reminder. For an accepted task with later updates, Ship explains
+  delivery and may suggest an optional messenger connection when it helps the user
+  receive those updates or continue the conversation. The system responsibilities
   context puts an unresolved onboarding record ahead of everything else: other
   responsibilities are parked or delegated until the Ship resolves it, once the user
   has completed one small task. Ensuring the personal agent also rewrites an
