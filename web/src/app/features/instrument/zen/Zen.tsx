@@ -544,7 +544,7 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
   }, [answerHistory, conversation.rows, conversation.conversation?.id, outbox.messages, localRuns, runtime.activeRunId, runtime.rows, pid]);
   const welcomeMoments = useShipWelcome({
     active, ready, ship: !pidProp, conversationId: conversation.conversation?.id ?? null,
-    hasHistory: conversationMoments.length > 0 || Boolean(conversation.historyError),
+    hasHistory: conversation.rows.length > 0 || Boolean(conversation.historyError),
     owner: `${snapshot.url}:${snapshot.username}`,
   });
   const moments = useMemo(() => [...conversationMoments, ...welcomeMoments]
@@ -1047,7 +1047,7 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
           </div>
         )}
         <div />
-        {!empty && ready && scrolling.awayFromBottom && <button type="button" class="zen-jump-bottom"
+        {!helperEmpty && ready && scrolling.awayFromBottom && <button type="button" class="zen-jump-bottom"
           aria-label="Jump to latest message" onClick={scrolling.follow}>↓ latest</button>}
       </div>
 

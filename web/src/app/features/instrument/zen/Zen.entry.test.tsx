@@ -440,11 +440,14 @@ describe("Zen conversation entry", () => {
   it("shows two scripted messages ten seconds apart, with typing before each", async () => {
     const timers = new Map<number, { callback: () => void; delay: number }>();
     let nextTimer = 1;
+    // SAFETY: This test intercepts the function callbacks scheduled by useShipWelcome.
     window.setTimeout = ((callback: TimerHandler, delay?: number) => {
       const id = nextTimer++;
+      // SAFETY: useShipWelcome schedules a function callback, never a string handler.
       timers.set(id, { callback: callback as () => void, delay: delay ?? 0 });
       return id;
     }) as typeof window.setTimeout;
+    // SAFETY: This test issues numeric timer IDs through the intercepted setTimeout.
     window.clearTimeout = ((id: number) => { timers.delete(id); }) as typeof window.clearTimeout;
     const zen = await mountedZen();
     try {
