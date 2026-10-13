@@ -438,7 +438,7 @@ describe("Zen conversation entry", () => {
       expect(zen.nodes().filter((node) => node.type === ZenText)).toHaveLength(0);
       expect(zen.props<ComponentProps<typeof PromptLine>>(PromptLine).disabled).toBe(false);
       expect(send).not.toHaveBeenCalled();
-      expect(storage.size).toBe(1);
+      await vi.waitFor(() => expect(storage.size).toBe(1));
     } finally { await zen.unmount(); }
   });
 
@@ -456,7 +456,7 @@ describe("Zen conversation entry", () => {
     window.clearTimeout = ((id: number) => { timers.delete(id); }) as typeof window.clearTimeout;
     const zen = await mountedZen();
     try {
-      let now = Number([...storage.values()][0]);
+      let now = JSON.parse([...storage.values()][0]!).startedAt as number;
       vi.spyOn(Date, "now").mockImplementation(() => now);
       const fire = async (delay: number) => {
         const entry = [...timers].find(([, timer]) => timer.delay > 0 && timer.delay <= delay);
@@ -498,7 +498,9 @@ describe("Zen conversation entry", () => {
     const first = await mountedZen();
     await vi.waitFor(() => expect(first.nodes().some((node) => node.type === ThinkingMark)).toBe(true));
     const key = [...storage.keys()][0]!;
-    storage.set(key, String(Date.now() - 20_000));
+    const startedAt = Date.now() - 20_000;
+    storage.set(key, JSON.stringify({ key, startedAt, firstShownAt: startedAt + 2_500,
+      secondShownAt: startedAt + 12_500, stopped: false }));
     await first.unmount();
 
     messages = [{ ...message("user", "My days are busy."), createdAt: Date.now() - 5_000 }];
@@ -518,7 +520,8 @@ describe("Zen conversation entry", () => {
     await vi.waitFor(() => expect(first.nodes().some((node) => node.type === ThinkingMark)).toBe(true));
     const key = [...storage.keys()][0]!;
     const startedAt = Date.now() - 20_000;
-    storage.set(key, String(startedAt));
+    storage.set(key, JSON.stringify({ key, startedAt, firstShownAt: startedAt + 2_500,
+      secondShownAt: null, stopped: false }));
     await first.unmount();
 
     messages = [{ ...message("user", "Help me sort my email."), createdAt: startedAt + 5_000 }];
@@ -531,6 +534,60 @@ describe("Zen conversation entry", () => {
       expect(texts.some((text) => text.startsWith("What’s something you’d like off your plate?"))).toBe(false);
       expect(reopened.nodes().some((node) => node.type === ThinkingMark)).toBe(false);
     } finally { await reopened.unmount(); }
+  });
+
+  it("keeps a rendered welcome after an older message synchronizes from another client", async () => {
+    const timers = new Map<number, { callback: () => void; delay: number }>();
+    let nextTimer = 1;
+    window.setTimeout = ((callback: TimerHandler, delay?: number) => {
+      const id = nextTimer++;
+      timers.set(id, { callback: callback as () => void, delay: delay ?? 0 });
+      return id;
+    }) as typeof window.setTimeout;
+    window.clearTimeout = ((id: number) => { timers.delete(id); }) as typeof window.clearTimeout;
+    let now = Date.now();
+    vi.spyOn(Date, "now").mockImplementation(() => now);
+    const zen = await mountedZen();
+    try {
+      expect(zen.nodes().some((node) => node.type === ThinkingMark)).toBe(true);
+      const firstTimer = [...timers.values()].find((timer) => timer.delay === 2_500);
+      expect(firstTimer).toBeDefined();
+      now += 2_500;
+      await act(() => { firstTimer!.callback(); });
+      expect(zen.props(ZenText).text).toContain("Hi, I’m GSV");
+
+      const remote = { ...message("user", "Hello from my phone"), createdAt: now - 5_000 };
+      await act(() => { for (const listener of signals) listener("message.committed", { message: remote, directed: false }); });
+      const texts = zen.nodes().filter((node) => node.type === ZenText).map((node) => String(node.props.text));
+      expect(texts.some((text) => text.startsWith("Hi, I’m GSV"))).toBe(true);
+      expect(texts).toContain("Hello from my phone");
+      expect(texts.some((text) => text.startsWith("What’s something you’d like off your plate?"))).toBe(false);
+      expect(zen.nodes().some((node) => node.type === ThinkingMark)).toBe(false);
+    } finally { await zen.unmount(); }
+  });
+
+  it("does not reconstruct an unseen second welcome after a suspended timer resumes", async () => {
+    const timers = new Map<number, { callback: () => void; delay: number }>();
+    let nextTimer = 1;
+    window.setTimeout = ((callback: TimerHandler, delay?: number) => {
+      const id = nextTimer++;
+      timers.set(id, { callback: callback as () => void, delay: delay ?? 0 });
+      return id;
+    }) as typeof window.setTimeout;
+    window.clearTimeout = ((id: number) => { timers.delete(id); }) as typeof window.clearTimeout;
+    let now = Date.now();
+    vi.spyOn(Date, "now").mockImplementation(() => now);
+    const zen = await mountedZen();
+    try {
+      const firstTimer = [...timers.values()].find((timer) => timer.delay === 2_500);
+      expect(firstTimer).toBeDefined();
+      now += 20_000;
+      await act(() => { firstTimer!.callback(); });
+      const texts = zen.nodes().filter((node) => node.type === ZenText).map((node) => String(node.props.text));
+      expect(texts).toHaveLength(1);
+      expect(texts[0]).toContain("Hi, I’m GSV");
+      expect(zen.nodes().some((node) => node.type === ThinkingMark)).toBe(false);
+    } finally { await zen.unmount(); }
   });
 
   it("synchronizes another client's message without consuming the current draft", async () => {
