@@ -220,6 +220,14 @@ For an idle process, use `proc compact --pid PID` with one of `--keep-last N`,
 `--through-message-id ID` or `--target-pressure N`, and either `--summary TEXT`
 or `--generate-summary`. See [Context Compaction](../architecture/context-compaction.md).
 
+`proc history --archive PATH --generation N --after-message-id N
+--through-message-id N --offset N --limit 10 --full` pages an immutable gzip
+archive through normal filesystem permissions, including after the source
+process is killed. Message filters use the original IDs. Continue with the
+reported `next_offset` until `has_more=false`; `--json` returns the raw archived
+message page. The reader streams decompression instead of buffering the entire
+archive in a shell pipeline.
+
 `r12y` manages the Kernel's durable unresolved-work ledger. `list` omits
 terminal records unless `--all` is supplied. Waiting work must name a future
 check time or a blocker. Prefer `proc delegate --responsibility ID ...` for a

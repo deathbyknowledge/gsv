@@ -85,7 +85,7 @@ it("lets Crew read the exact archived slice after its source process is killed",
     runtime.ai.enqueue(
       { kind: "tool-calls", calls: [{ id: "read-archive", name: "Shell", arguments: {
         target: "gsv",
-        input: `set -o pipefail; gzip -dc '${archivePath}' | jq -c 'select(.generation == ${generation} and .id > ${afterMessageId} and .id <= ${toMessageId})'`,
+        input: `proc history --archive '${archivePath}' --generation ${generation} --after-message-id ${afterMessageId} --through-message-id ${toMessageId} --full`,
       } }] },
       { kind: "message", text: "Review complete." },
     );

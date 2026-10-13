@@ -207,8 +207,6 @@ function createBash(
       // The returned stdout/stderr are truncated to config/shell/max_output_bytes
       // separately. Pipe traffic inside one invocation, including bytes that
       // only ever flow into files, keeps just-bash's own 256 MiB ceiling.
-      // Workers' zlib rejects maxOutputLength above 128 MiB, even for small gzip reads.
-      maxOutputSize: 128 * 1024 * 1024,
       maxExecutionTimeMs: timeoutMs + JUST_BASH_EXECUTION_BACKSTOP_GRACE_MS,
       maxExtensionCleanupTimeMs: JUST_BASH_EXTENSION_CLEANUP_TIME_MS,
     },

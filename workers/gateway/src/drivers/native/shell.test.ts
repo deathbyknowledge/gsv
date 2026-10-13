@@ -2748,6 +2748,31 @@ describe("proc native command", () => {
   });
 });
 
+describe("archived process history", () => {
+  it("requires file permission and preserves owner isolation after a process is gone", async () => {
+    const path = "/home/sam/history/owner-archive.jsonl.gz";
+    const content = JSON.stringify({ id: 7, generation: 1, role: "user", content: "Owner-only evidence" });
+    const compressed = new Blob([content]).stream().pipeThrough(new CompressionStream("gzip"));
+    await env.STORAGE.put(path.slice(1), await new Response(compressed).arrayBuffer(), {
+      customMetadata: { uid: "1000", gid: "1000", mode: "600" },
+    });
+    const input = `proc history --archive ${path} --generation 1 --full`;
+    const allowed = await handleShellExec({ input }, makeContext({ capabilities: ["fs.read"] }));
+    expect(allowed).toMatchObject({ status: "completed", stdout: expect.stringContaining("Owner-only evidence") });
+    expect(allowed.stdout).toContain("has_more=false");
+    const denied = await handleShellExec({ input }, makeContext({ capabilities: ["proc.history"] }));
+    expect(denied.status).toBe("failed");
+    expect(denied.error).toContain("fs.read");
+    await env.STORAGE.put("home/sam/history/other-owner.jsonl.gz", new Uint8Array(), {
+      customMetadata: { uid: "2000", gid: "2000", mode: "600" },
+    });
+    const other = await handleShellExec({ input: "proc history --archive /home/sam/history/other-owner.jsonl.gz" }, makeContext({ capabilities: ["fs.read"] }));
+    expect(other.status).toBe("failed");
+    expect(other.error).toContain("EACCES");
+    expect(sendFrameToProcessMock).not.toHaveBeenCalled();
+  });
+});
+
 describe("fs copy", () => {
   it("sends native transfer streams", async () => {
     const sourceKey = "home/sam/copy-test/stream-source.txt";
