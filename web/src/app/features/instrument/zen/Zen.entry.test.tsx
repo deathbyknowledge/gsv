@@ -462,7 +462,7 @@ describe("Zen conversation entry", () => {
       };
 
       expect(zen.nodes().some((node) => node.type === ThinkingMark)).toBe(true);
-      await fire(1_200);
+      await fire(2_500);
       expect(zen.props(ZenText).text).toBe("Hi, I’m GSV, your personal assistant! Life is busy, so give me the stuff you'd rather not spend your time on.\n\nI can help with things like reservations, travel, your calendar, research, or things on your computer. Think of anything you would give to a friend with a computer and a free afternoon.");
       expect(zen.nodes().some((node) => node.type === ThinkingMark)).toBe(false);
 

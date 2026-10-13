@@ -4,7 +4,7 @@ import type { Moment } from "./zenModel";
 const FIRST_MESSAGE = "Hi, I’m GSV, your personal assistant! Life is busy, so give me the stuff you'd rather not spend your time on.\n\nI can help with things like reservations, travel, your calendar, research, or things on your computer. Think of anything you would give to a friend with a computer and a free afternoon.";
 const SECOND_MESSAGE = "Enough about me, tell me about you! Tell me what your average day looks like, or if you want: I can look up what’s out there on the web about you.";
 
-const FIRST_TYPING_MS = 1_200;
+const FIRST_TYPING_MS = 2_500;
 const BETWEEN_MESSAGES_MS = 10_000;
 const SECOND_TYPING_MS = 1_500;
 
