@@ -47,8 +47,10 @@ it("offers fresh pairing after password revocation and waits for confirmation be
   expect((await SELF.fetch(update(501, "__identity_revoked__"))).status).toBe(200);
   let code = "";
   await vi.waitFor(async () => {
-    const text = (await telegramMessages()).slice(before).find((message) => message.body.text?.includes("Pairing code:"))?.body.text ?? "";
-    code = text.match(/[A-HJ-NP-Z2-9]{4}(?:-[A-HJ-NP-Z2-9]{4}){2}/)?.[0]?.replaceAll("-", "") ?? "";
+    const messages = (await telegramMessages()).slice(before);
+    expect(messages).toHaveLength(2);
+    const text = messages[1]?.body.text ?? "";
+    code = text.match(/^[A-HJ-NP-Z2-9]{4}(?:-[A-HJ-NP-Z2-9]{4}){2}$/)?.[0]?.replaceAll("-", "") ?? "";
     expect(code).toHaveLength(12);
   });
   await runInDurableObject(peer, async (_instance, state) => {

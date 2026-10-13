@@ -590,24 +590,20 @@ export class ManagedTelegramPeer extends DurableObject<ManagedTelegramPeerEnv> {
     const issue = await this.issuePairing();
     return {
       terminal: true,
-      responses: [{
+      responses: [
+        "In GSV, open Settings → Messengers → Telegram and paste the code below.\nExpires in 10 minutes.",
+        formatPairingCode(issue.code),
+      ].map((text, index) => ({
         message: {
-          deliveryId: `managed-pair:${issue.claimId}:${inbound.deliveryId}`,
+          deliveryId: `managed-pair:${issue.claimId}:${inbound.deliveryId}:${index}`,
           surface: { kind: "dm", id: inbound.surfaceId },
           actorId: inbound.actorId,
-          text: [
-            "Connect this Telegram identity to your GSV.",
-            "",
-            `Pairing code: ${formatPairingCode(issue.code)}`,
-            "",
-            "Open GSV → Messengers → Telegram, enter the code, and confirm the identity shown there.",
-            "This code expires in 10 minutes.",
-          ].join("\n"),
+          text,
           replyToId: inbound.messageId,
         },
         expiresAt: issue.expiresAt,
         context: { kind: "platform", claimId: issue.claimId },
-      }],
+      })),
     };
   }
 
