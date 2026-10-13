@@ -72,32 +72,7 @@ async addMcpServerConnection(input: McpAddConnectionInput): Promise<McpAddConnec
   }
 
 async refreshMcpServerConnection(serverId: string): Promise<void> {
-    const connection = this.host.mcp.mcpConnections[serverId];
-    if (connection?.connectionState === "connected" || connection?.connectionState === "ready") {
-      await this.host.mcp.discoverIfConnected(serverId);
-      return;
-    }
-    if (
-      connection?.connectionState === "authenticating"
-      || connection?.connectionState === "connecting"
-      || connection?.connectionState === "discovering"
-    ) {
-      return;
-    }
-
-    if (connection) {
-      connection.connectionError = null;
-    }
-    const result = await this.host.mcp.connectToServer(serverId);
-    if (result.state === "connected") {
-      await this.host.mcp.discoverIfConnected(serverId);
-    } else if (result.state === "failed") {
-      const failedConnection = this.host.mcp.mcpConnections[serverId];
-      if (failedConnection) {
-        failedConnection.connectionError = result.error;
-      }
-      this.broadcastMcpChanged();
-    }
+    await this.host.mcp.refreshConnection(serverId);
   }
 
 async removeMcpServer(serverId: string): Promise<void> {
