@@ -48,18 +48,77 @@ describe("owner welcome", () => {
     let tree: ComponentChildren;
     function Harness() {
       tree = OwnerWelcomeScreen({ ready: true, resume: true, chooseSpace: true, initialStep: "email", load: async () => client,
-        onConnect: connect, context: <p>Alice invited you to connect.</p> });
+        onConnect: connect, invitation: { name: "Alice", origin: "alice.example.com" }, compact: true });
       return null;
     }
     try {
       await root.render(<Harness />);
+      await vi.waitFor(() => expect(collectNodes(tree).find((node) => node.props["aria-label"] === "Continue")?.props.disabled).toBe(false));
+      expect(collectText(tree)).toContain("Alice invited you to GSV");
+      expect(collectText(tree)).toContain("alice.example.com");
+      expect(fetcher).not.toHaveBeenCalled();
+      // SAFETY: The screen's native form owns an Event-based submit handler.
+      const form = collectNodes(tree).find((node) => node.type === "form") as VNode<{ onSubmit: (event: Event) => void }>;
+      await act(() => form.props.onSubmit(new Event("submit")));
       await vi.waitFor(() => expect(collectNodes(tree).some((node) => node.props.label === "bob")).toBe(true));
-      expect(collectText(tree)).toContain("Alice invited you to connect.");
+      expect(collectText(tree)).toContain("Choose your space");
       expect(collectNodes(tree).some((node) => node.props.label === "Use an invite")).toBe(false);
       await act(() => { collectNodes(tree).find((node) => node.props.label === "bob")!.props.onClick?.(); });
       expect(connect).toHaveBeenCalledWith("https://bob.example.com");
       expect(fetcher).toHaveBeenCalledTimes(1);
       expect(save).not.toHaveBeenCalled();
+    } finally { await root.unmount(); }
+  });
+
+  it.each([false, true])("shows the invitation before signup and preserves it when switching accounts (friend: %s)", async (friend) => {
+    let snapshot: WelcomeSnapshot = { revision: "initial", value: {
+      origin: "https://accounts.example.com", flow: "create", sessionSecret: "a".repeat(64), challenge: null,
+      inviteCode: INVITE_CODE, inviteId: null, handle: null, contactInvite: friend ? "friend-invitation" : null,
+    } };
+    const fetcher = vi.fn(async (url: string) => {
+      if (url.endsWith("/logout")) return Response.json({ ok: true });
+      if (url.endsWith("/session")) return Response.json({ email: "owner@example.com", expiresAt: Date.now() + 60_000,
+        spaceDomain: "example.com", spaces: friend ? [{ handle: "friend", canonicalOrigin: "https://friend.example.com", state: "active" }] : [], invites: [] });
+      throw new Error(`Unexpected request: ${url}`);
+    });
+    const client = new OwnerWelcome(snapshot, { save: async (_revision, value) => snapshot = { revision: crypto.randomUUID(), value } }, "https://accounts.example.com", fetcher);
+    const connect = vi.fn();
+    const root = createTestRoot("Invitation account switching");
+    let tree: ComponentChildren;
+    function Harness() {
+      tree = OwnerWelcomeScreen({ ready: true, resume: true, chooseSpace: friend, signupContactCode: friend ? "friend-invitation" : undefined,
+        invitation: friend ? { name: "Alice" } : {}, compact: true, initialStep: "invite", load: async () => client, onConnect: connect,
+        addressPanel: () => <p>Address form</p> });
+      return null;
+    }
+    // SAFETY: The screen's native form owns an Event-based submit handler.
+    const form = () => collectNodes(tree).find((node) => node.type === "form") as VNode<{ onSubmit: (event: Event) => void }>;
+    try {
+      await root.render(<Harness />);
+      await vi.waitFor(() => expect(collectNodes(tree).find((node) => node.props["aria-label"] === "Continue")?.props.disabled).toBe(false));
+      expect(collectText(tree)).toContain(friend ? "Alice invited you to GSV" : "You’re invited to GSV");
+      expect(fetcher).not.toHaveBeenCalled();
+      expect(collectNodes(tree).some((node) => node.type === TextInput)).toBe(false);
+      expect(collectText(tree)).not.toContain("Address form");
+
+      await act(() => form().props.onSubmit(new Event("submit")));
+      await vi.waitFor(() => expect(collectText(tree)).toContain(friend ? "Choose your space" : "Before you begin"));
+      if (friend) {
+        const disclosure = collectNodes(tree).find((node) => node.type === "details");
+        expect(disclosure?.props).not.toHaveProperty("open", true);
+        expect(collectText(disclosure)).toContain("Use a space address");
+      }
+      await act(() => { collectNodes(tree).find((node) => node.type === "button" && collectText(node) === "Sign out")?.props.onClick?.(); });
+      await vi.waitFor(() => expect(client.state.sessionSecret).toBeNull());
+      expect(client.state.inviteCode).toBe(INVITE_CODE);
+      expect(client.state.contactInvite).toBe(friend ? "friend-invitation" : null);
+      await act(() => form().props.onSubmit(new Event("submit")));
+      await vi.waitFor(() => expect(collectNodes(tree).find((node) => node.type === TextInput && node.props.label === "Email")).toBeDefined());
+      expect(collectNodes(tree).find((node) => node.type === "input")?.props).toMatchObject({ checked: false });
+      expect(fetcher.mock.calls.map(([url]) => url)).toEqual([
+        "https://accounts.example.com/owner/api/session", "https://accounts.example.com/owner/api/logout",
+      ]);
+      expect(connect).not.toHaveBeenCalled();
     } finally { await root.unmount(); }
   });
 

@@ -11,7 +11,7 @@ import { parseCreationInvitation } from "@humansandmachines/gsv/protocol";
 import "./LoginScreen.css";
 import "./OwnerWelcomeScreen.css";
 
-type Step = "welcome" | "invite" | "email" | "code" | "spaces" | "consent" | "handle";
+type Step = "welcome" | "invitation" | "invite" | "email" | "code" | "spaces" | "consent" | "handle";
 type Props = {
   ready: boolean;
   resume: boolean;
@@ -21,12 +21,13 @@ type Props = {
   initialStep?: "welcome" | "invite" | "email";
   chooseSpace?: boolean;
   signupContactCode?: string;
-  context?: ComponentChildren;
+  invitation?: { name?: string; origin?: string };
+  compact?: boolean;
 };
 
-export function OwnerWelcomeScreen({ ready, resume, load, onConnect, addressPanel, initialStep = "welcome", chooseSpace = false, signupContactCode, context }: Props) {
+export function OwnerWelcomeScreen({ ready, resume, load, onConnect, addressPanel, initialStep = "welcome", chooseSpace = false, signupContactCode, invitation, compact = false }: Props) {
   const [flow, setFlow] = useState<OwnerWelcome | null>(null);
-  const [step, setStep] = useState<Step>(initialStep);
+  const [step, setStep] = useState<Step>(invitation ? "invitation" : initialStep);
   const [owner, setOwner] = useState<OwnerSession | null>(null);
   const [busy, setBusy] = useState(false);
   const pending = useRef(false);
@@ -90,7 +91,7 @@ export function OwnerWelcomeScreen({ ready, resume, load, onConnect, addressPane
       if (!mounted) return;
       setFlow(client);
       setEmail(client.state.challenge?.email ?? ""); setInviteCode(client.state.inviteCode ?? "");
-      if (resume || client.state.challenge || client.state.inviteCode || (client.state.flow === "create" && client.state.inviteId)) await advance(client);
+      if (!invitation && (resume || client.state.challenge || client.state.inviteCode || (client.state.flow === "create" && client.state.inviteId))) await advance(client);
     });
     return () => { mounted = false; };
   }, [ready]);
@@ -112,7 +113,7 @@ export function OwnerWelcomeScreen({ ready, resume, load, onConnect, addressPane
   }, [step, handle, flow]);
 
   const titles = {
-    welcome: "Welcome to GSV", invite: "Create your space", email: "Your email", code: "Check your email", spaces: "Your spaces", consent: "Before you begin", handle: "Choose your handle",
+    welcome: "Welcome to GSV", invitation: invitation?.name ? `${invitation.name} invited you to GSV` : "You’re invited to GSV", invite: "Create your space", email: "Your email", code: "Check your email", spaces: "Your spaces", consent: "Before you begin", handle: "Choose your handle",
   } satisfies Record<Step, string>;
   const friendSignup = !!signupContactCode && flow?.state.contactInvite === signupContactCode;
   const requiresConsent = (!chooseSpace || friendSignup) && (step === "consent" || (step === "email" && flow?.state.flow === "create"));
@@ -132,7 +133,10 @@ export function OwnerWelcomeScreen({ ready, resume, load, onConnect, addressPane
     if (requiresConsent && !consent) { setConsentTouched(true); return; }
     void run(async () => {
       if (!flow) return;
-      if (step === "invite") {
+      if (step === "invitation") {
+        if (chooseSpace || flow.state.inviteCode || flow.state.inviteId) await advance(flow);
+        else setStep("invite");
+      } else if (step === "invite") {
         await flow.save({ flow: "create", inviteCode: parseCreationInvitation(inviteCode), inviteId: null, handle: null });
         await advance(flow);
       } else if (step === "email") {
@@ -151,16 +155,22 @@ export function OwnerWelcomeScreen({ ready, resume, load, onConnect, addressPane
   const actionDisabled = !flow || busy || (step === "invite" ? !inviteCode.trim() : step === "email" ? !email.trim()
     : step === "code" ? code.length !== 6 : step === "handle" ? !handle.trim() || availability === "unavailable" : false);
   const opening = step === "spaces" || (step === "email" && (chooseSpace || flow?.state.flow !== "create"));
-  const split = opening && !!addressPanel;
+  const title = friendSignup && step === "email" ? "Join GSV"
+    : !opening ? titles[step] : !compact ? "Open your space" : step === "spaces" ? "Choose your space" : "Sign in";
+  const split = opening && !!addressPanel && !compact;
+  const address = () => addressPanel?.({ disabled: busy, connect: (origin) => run(async () => {
+    try { await onConnect(origin); }
+    catch { throw new Error("Could not open this space. Try again."); }
+  }) });
   const back = () => {
     setError("");
+    if (invitation && step !== "code") { setStep("invitation"); return; }
     setStep(step === "consent" ? flow?.state.inviteCode ? "invite" : "spaces"
       : step === "code" ? "email" : step === "email" && flow?.state.flow === "create" ? "invite" : "welcome");
   };
 
   return <AuthLayout visible surfaceClass="gsv-auth-surface-login"><section class={`desktop-welcome${step === "welcome" || split ? " desktop-welcome-wide" : ""}`}>
-    {context}
-    <h1>{friendSignup && step === "email" ? "Join GSV" : opening ? "Open your space" : titles[step]}</h1>
+    <h1>{title}</h1>
     {step === "welcome" ? <div class="desktop-welcome-columns desktop-welcome-choices">
       <button class="desktop-welcome-choice" type="button" aria-label="Create your space" disabled={!flow || busy} onClick={() => start("create")}>
         <WelcomeIllustration kind="create" />
@@ -175,8 +185,12 @@ export function OwnerWelcomeScreen({ ready, resume, load, onConnect, addressPane
       </div>
     </div> : <div class={split ? "desktop-welcome-columns" : "desktop-welcome-form"}>
       <div class="desktop-welcome-primary">
-      {opening && <h2>{step === "spaces" ? "Your spaces" : "Sign in with email"}</h2>}
+      {opening && !compact && <h2>{step === "spaces" ? "Your spaces" : "Sign in with email"}</h2>}
       <form key={step} class="gsv-login-fields" onSubmit={submit} aria-busy={busy}>
+        {step === "invitation" && <div class="desktop-welcome-invitation">
+          {invitation?.origin && <p class="desktop-welcome-detail">{invitation.origin}</p>}
+          <p>{chooseSpace ? friendSignup ? "Create your space, then connect with them." : "Open your space to connect." : "Create a space of your own."}</p>
+        </div>}
         {step === "invite" && <TextInput label="Invite code" value={inviteCode} onChange={setInviteCode} disabled={busy}
           placeholder="Paste your link or code" inputProps={{ autoFocus: true, autoComplete: "off", spellcheck: false, maxLength: 2048 }} />}
         {step === "email" && <TextInput label="Email" value={email} onChange={setEmail} disabled={busy} placeholder="you@example.com"
@@ -212,7 +226,7 @@ export function OwnerWelcomeScreen({ ready, resume, load, onConnect, addressPane
           {!owner?.spaces.length && (chooseSpace || !owner?.invites.some((invite) => ["claimed", "provisioning"].includes(invite.state))) && <p class="desktop-welcome-detail">No spaces yet.</p>}
           {!chooseSpace && <Button label="Use an invite" disabled={busy} block onClick={() => start("create")} />}
         </>}
-        {step !== "spaces" && <button class="gsv-btn gsv-btn-primary gsv-btn-block desktop-welcome-submit" type="submit" aria-label={step === "email" ? "Send code" : "Continue"} disabled={actionDisabled}>
+        {step !== "spaces" && <button class="gsv-btn gsv-btn-primary gsv-btn-block desktop-welcome-submit" type="submit" aria-label={step === "email" ? "Send code" : "Continue"} disabled={actionDisabled} autoFocus={step === "invitation"}>
           {busy ? <Spinner /> : <span class="gsv-btn-label">{step === "email" ? "Send code" : "Continue"}</span>}
         </button>}
         {step === "code" && <div class="desktop-welcome-links">
@@ -227,20 +241,25 @@ export function OwnerWelcomeScreen({ ready, resume, load, onConnect, addressPane
           })}>Send again</button>
           <button type="button" class="gsv-auth-link" disabled={busy} onClick={() => { setError(""); setCode(""); setStep("email"); }}>Change email</button>
         </div>}
-        {owner && <button type="button" class="gsv-auth-link" disabled={busy} onClick={() => void run(async () => {
-          await flow!.signOut(); setOwner(null); setEmail(""); setCode(""); setInviteCode(""); setConsent(false); setConsentTouched(false); setStep(chooseSpace ? "email" : "welcome");
+        {owner && step !== "invitation" && <button type="button" class="gsv-auth-link" disabled={busy} onClick={() => void run(async () => {
+          const unclaimed = invitation && flow!.state.inviteCode ? { flow: "create" as const, inviteCode: flow!.state.inviteCode, contactInvite: flow!.state.contactInvite } : null;
+          await flow!.signOut();
+          if (unclaimed) await flow!.save(unclaimed);
+          setOwner(null); setEmail(""); setCode(""); setInviteCode(unclaimed?.inviteCode ?? ""); setConsent(false); setConsentTouched(false);
+          setStep(invitation ? "invitation" : chooseSpace ? "email" : "welcome");
         })}>Sign out</button>}
       </form>
+      {compact && opening && addressPanel && <details class="desktop-welcome-address-disclosure">
+        <summary>Use a space address</summary>
+        {address()}
+      </details>}
       </div>
       {split && <div class="desktop-welcome-address"><h2>Enter a space address</h2>
-        {addressPanel!({ disabled: busy, connect: (origin) => run(async () => {
-          try { await onConnect(origin); }
-          catch { throw new Error("Could not open this space. Try again."); }
-        }) })}
+        {address()}
       </div>}
     </div>}
     {formError && <p class="gsv-login-error" role="alert">{formError}</p>}
-    {step !== "welcome" && !chooseSpace && <button class="gsv-auth-link desktop-welcome-back" type="button" disabled={busy} onClick={back}>Back</button>}
+    {step !== "welcome" && step !== "invitation" && (invitation || !chooseSpace) && <button class="gsv-auth-link desktop-welcome-back" type="button" disabled={busy} onClick={back}>Back</button>}
     {(loadError || (step === "welcome" && error)) && <button type="button" class="gsv-auth-link desktop-welcome-back" disabled={busy} onClick={() => flow ? void run(() => advance(flow)) : window.location.reload()}>Retry</button>}
   </section></AuthLayout>;
 }

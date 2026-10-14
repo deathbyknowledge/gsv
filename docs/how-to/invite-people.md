@@ -7,7 +7,8 @@ An operator can host separate spaces for a [whole team](/how-to/organisations).
 
 ## Create a space from an invitation
 
-Open the signup link you received, verify your email and choose a handle. The link
+Open the signup link you received. A centered invitation opens first; choose
+**Continue**, verify your email and choose a handle. The link
 already includes your invitation; you do not need to copy a separate code. You can
 also paste the whole link into the **Invite code** field. Existing invite codes
 continue to work.

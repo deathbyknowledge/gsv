@@ -10,6 +10,7 @@ import { SpaceAddressForm } from "../app/features/session/SpaceAddressForm";
 import { OwnerWelcome } from "../app/services/session/ownerWelcome";
 import { BrowserWelcomeStorage } from "./storage";
 import { DesktopAppLink } from "./DesktopAppLink";
+import { SignupDialog } from "./SignupDialog";
 import { signupDestination } from "./navigation";
 import { captureCreationInvitation } from "./invitation";
 import { contactInvitationDestination, parseCreationInvitation } from "@humansandmachines/gsv/protocol";
@@ -43,11 +44,11 @@ if (new URLSearchParams(window.location.hash.slice(1)).has("invite")) {
 }
 const invitationError = creationError || (invitationPreview && ("error" in invitationPreview ? invitationPreview.error
   : invitationPreview.expired ? `Your invitation from ${invitationPreview.name} has expired. Ask them for a new link.` : null));
-render(<AuthScene layout="welcome">{invitationError
+const invitation = invitationPreview && "name" in invitationPreview ? invitationPreview : supplied.has("invite") ? {} : undefined;
+render(<AuthScene layout="welcome"><SignupDialog>{invitationError
   ? <AuthLayout visible><section class="desktop-welcome"><h1>Connect on GSV</h1><p role="alert">{invitationError}</p>
     <a class="gsv-auth-link" href="/owner/signup/?resume=1" onClick={clearContactInvitation}>open my spaces</a></section></AuthLayout>
-  : <OwnerWelcomeScreen ready resume={resume} initialStep={resume ? "email" : "invite"}
-    chooseSpace={!!contactInvitation} signupContactCode={contactInvitation ?? undefined} context={invitationPreview && "name" in invitationPreview && <p class="desktop-welcome-detail">
-      {invitationPreview.name} invited you to GSV.</p>}
+  : <OwnerWelcomeScreen ready resume={resume} initialStep={resume ? "email" : "invite"} compact invitation={invitation}
+    chooseSpace={!!contactInvitation} signupContactCode={contactInvitation ?? undefined}
     addressPanel={contactInvitation ? ({ connect, disabled }) => <SpaceAddressForm disabled={disabled} onConnect={connect} /> : undefined}
-    load={load} onConnect={connect} />}{!contactInvitation && <DesktopAppLink />}</AuthScene>, app);
+    load={load} onConnect={connect} />}{!invitation && !contactInvitation && <DesktopAppLink />}</SignupDialog></AuthScene>, app);

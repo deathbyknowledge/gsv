@@ -19,7 +19,8 @@ Choose **connect**. If your operator provides signup invitations, the first step
 asks whether the person is **New to GSV** or **Already on GSV**. Neither is preselected;
 opening the chooser reserves nothing. For an existing user, choose who should handle new messages, then **create connection
 link** and share it wherever you already talk. It connects one person and lasts seven days; you can cancel it before it is
-accepted. In managed spaces, the link opens the existing Accounts space chooser.
+accepted. In managed spaces, the link opens a centered invitation showing who
+invited you. Choose **Continue** to sign in or select your space.
 The recipient chooses a listed space or enters its address, signs in if needed,
 and chooses who should handle their new messages before accepting the invitation. Entering an address also works for people
 using another operator or a space they do not own. Other deployments open the
