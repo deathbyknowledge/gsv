@@ -1010,11 +1010,11 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
             </>}
           </div>
         ) : !ready ? (
-          <div class="zen-moments" ref={momentsRef}>
+          <div class="zen-moments" ref={momentsRef} data-scroll-edge>
             <div class="zen-content" ref={contentRef}>{historyFailure}</div>
           </div>
         ) : (
-          <div class="zen-moments" ref={momentsRef}>
+          <div class="zen-moments" ref={momentsRef} data-scroll-edge>
             <div class={`zen-content${pendingHil ? " has-approval" : ""}`} ref={contentRef}>
               {historyFailure}
               {(conversation.loadingOlder || processRuntime.loadingOlderHistory) && <div class="zen-history-status"><LoadingState>loading earlier messages</LoadingState></div>}

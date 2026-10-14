@@ -7,6 +7,8 @@ behavior lives in agent workflows and the Wiki shell surface.
 
 Memory's Markdown reader shares the conversation's code blocks: long lines scroll within the
 block, and copy preserves the code's indentation and internal line breaks.
+Memory's scrolling panes show a lavender top edge only where it cuts through
+text; blank space between lines and sections leaves the edge clear.
 
 ## Layers
 

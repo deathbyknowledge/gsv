@@ -41,7 +41,7 @@ export function FleetDialog({ open, title, onClose, children }: {
       <button type="button" class="fleet-text-action" aria-label="Close inspector" onClick={onClose}>close <kbd>esc</kbd></button>
     </header>
     <RetainedView active={open}>
-      <section class="fleet-inspector">{children}</section>
+      <section class="fleet-inspector" data-scroll-edge>{children}</section>
     </RetainedView>
   </dialog>;
 }

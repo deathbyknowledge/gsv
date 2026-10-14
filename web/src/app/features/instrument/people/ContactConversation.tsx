@@ -86,7 +86,7 @@ export function ContactConversation({ contact, account, draft, onDraft, onSend, 
 
   return <section class="people-conversation" aria-label="Contact messages">
     {!mayRead && <p class="note">Your account cannot read this conversation.</p>}
-    {mayRead && <div class="people-history" ref={scroll} onScroll={(event) => {
+    {mayRead && <div class="people-history" ref={scroll} data-scroll-edge onScroll={(event) => {
       const element = event.currentTarget;
       follow.current = element.scrollHeight - element.scrollTop - element.clientHeight < 40;
     }}>

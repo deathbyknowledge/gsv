@@ -22,6 +22,7 @@ import { SHELL_KEYS } from "./shared/shellKeys";
 import { useDismissOnOutsideClick } from "./shared/useDismissOnOutsideClick";
 import { useTabAttention } from "./shared/useTabAttention";
 import { useInstrumentViewport } from "./shared/useInstrumentViewport";
+import { useScrollEdges } from "./shared/useScrollEdges";
 import { RetainedView } from "../../services/navigation/ViewActivity";
 import { ClientControlError, useClientControl } from "../../services/platform/ClientControl";
 import { useGateway } from "../../services/gateway/GatewayProvider";
@@ -86,6 +87,7 @@ function InstrumentReady({ initialPath }: { initialPath: string }) {
     });
   }, [client, status.state]);
   const [distance, setDistance] = useState<Distance>(() => distanceForPath(initialPath));
+  const scrollEdgesRef = useScrollEdges(distance);
   useEffect(() => {
     replaceLegacyChatPath();
   }, [initialPath]);
@@ -366,7 +368,7 @@ function InstrumentReady({ initialPath }: { initialPath: string }) {
           </>}
         </aside>
       ) : null}
-      <div class="distance" data-view={distance}>
+      <div class="distance" data-view={distance} ref={scrollEdgesRef}>
         <BrowserControlOverlay />
         <RetainedView active={distance === "zen"}>
           <Zen key={zenPid ?? "ship"} searchRequested={searchRequested} onSearchRequestHandled={() => setSearchRequested(false)} onDraftChange={setZenDirty} onFleet={(reference) => move("fleet", reference ?? null)} onMemory={(page) => {

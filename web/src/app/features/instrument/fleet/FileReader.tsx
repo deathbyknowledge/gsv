@@ -130,7 +130,7 @@ export function FileReader({ file, account, onClose, onDirtyChange }: {
     {removing && <div class="file-reader-confirm"><p>Delete {file.name} from {file.target}?</p><button class="file-reader-action is-danger" disabled={busy} onClick={() => remove.mutate()}>delete permanently</button><button class="file-reader-action" disabled={busy} onClick={() => setRemoving(false)}>cancel</button></div>}
     {read.isPending && connected ? <LoadingState variant="panel">Reading file…</LoadingState> : draft ? (
       <textarea autoFocus class="file-reader-editor" aria-label="File text" spellcheck={false} disabled={busy} value={draft.text} onInput={(event) => setDraft({ ...draft, text: event.currentTarget.value })} />
-    ) : <div class="file-reader-content">
+    ) : <div class="file-reader-content" data-scroll-edge>
       {text !== null ? <pre>{text}</pre> : imageUrl ? <img src={imageUrl} alt={file.name} /> : data ? <p class="note">Download this file to open it.</p> : null}
       {data?.kind === "text" && data.size > EDIT_LIMIT && <p class="note">Files larger than 1 MiB open as downloads.</p>}
     </div>}

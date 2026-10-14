@@ -20,6 +20,8 @@ The invitation lasts ten minutes. You can close the panel and return to it in th
 same browser tab. If the connection drops during pairing, run `gsv pair` without
 a code to resume. The saved credential lets the CLI recover a lost response.
 Once the daemon connects, the place appears as connected.
+While scrolling Fleet's lists or inspectors, a lavender line marks text clipped
+at the top edge. The line disappears between lines and rows.
 
 ## Connect a browser
 

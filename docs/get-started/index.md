@@ -108,6 +108,8 @@ Open its chooser to select another destination for your next message or command;
 your draft and selected place stay while you move between views.
 The header stays above the scrolling content. Tap a message once to select it
 and show its timestamp and copy action.
+A thin lavender line marks the top of a scrolling pane while text is cut off
+there, disappearing in the gaps between lines and rows.
 
 ## Next steps
 

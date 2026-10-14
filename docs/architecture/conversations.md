@@ -18,6 +18,8 @@ Chat renders human messages as plain text with clickable web URLs. External web 
 messages and Ship's Markdown replies open in a new tab.
 The Chat transcript scrolls vertically. Long words, URLs and compaction notes wrap within the
 reading column; wide tables and code blocks scroll horizontally within their own bounds.
+Chat and contact history mark the top scroll boundary with a lavender line only
+while it intersects text, clearing the line in gaps between text and messages.
 When the reader scrolls above the latest chat message, a small button returns the transcript to
 the bottom and resumes following new replies.
 The Chat composer always uses "Message your ship" as its empty-field placeholder, across focus,

@@ -231,7 +231,7 @@ export function Memory({ initialPage, onAsk, onDirtyChange }: MemoryProps) {
         </div>
       ) : (
         <div class="memory-body">
-          <aside class="memory-rail">
+          <aside class="memory-rail" data-scroll-edge>
             <div class="memory-tools">
               {collections.length > 1 || (collections.length > 0 && !collection) ? (
                 <div class="collections" role="tablist" aria-label="Collections">
@@ -345,7 +345,7 @@ export function Memory({ initialPage, onAsk, onDirtyChange }: MemoryProps) {
                   </span>
                 </div>
                 {createError || (creating && save.error) ? <p class="memory-editor-error" role="alert">{createError ?? save.error?.message}</p> : null}
-                <div class="page-content">
+                <div class="page-content" data-scroll-edge>
                   {pageQuery.isError ? <div class="memory-none" role="alert">Could not refresh this page: {pageQuery.error.message}</div> : null}
                   {editing ? (
                     <textarea

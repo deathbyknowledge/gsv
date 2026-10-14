@@ -136,6 +136,13 @@
 }
 .instrument-view { min-width: 0; min-height: 0; height: 100%; }
 .instrument-view[hidden] { display: none; }
+.instrument [data-scroll-edge] {
+  /* Reserve the hairline even while clear so revealing it never moves the text. */
+  border-top: 1px solid transparent;
+}
+.instrument [data-scroll-clipped] {
+  border-top-color: color-mix(in srgb, var(--accent) 65%, transparent);
+}
 .instrument-people-waiting { color: var(--accent); margin-left: 4px; font-size: 15px; line-height: 1; }
 
 /* ---------- shared chrome ---------- */

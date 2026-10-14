@@ -309,7 +309,7 @@ export function Fleet({ openRequest, onZen, onCommand, onDirtyChange }: FleetPro
         requestAnimationFrame(() => { if (manifestRef.current) manifestRef.current.scrollTop = savedScroll.current; });
       }} />}
       <div class="fleet-body" hidden={Boolean(expandedFile)}>
-        <div ref={manifestRef} class="fleet-manifest" onFocusCapture={(event) => {
+        <div ref={manifestRef} class="fleet-manifest" data-scroll-edge onFocusCapture={(event) => {
           const row = event.target instanceof HTMLElement ? event.target.closest<HTMLElement>("[data-row]") : null;
           const key = row?.dataset.row;
           if (isFleetRow(key)) focusedRow.current = key;

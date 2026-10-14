@@ -134,7 +134,7 @@ export function People({ onDirtyChange, onAsk, openRequest }: {
 
   return <main class={`people${hasSelection ? " has-selection" : ""}${firstVisit ? " is-new" : ""}`} aria-label="People">
     <aside class="people-list" aria-label="People and conversations">
-      <div class="people-list-scroll">
+      <div class="people-list-scroll" data-scroll-edge>
       <header class="people-list-heading"><h1>{listView === "inbox" ? "People" : listView === "contacts" ? "Contacts" : history ? "Past requests" : direction === "outgoing" ? "Sent requests" : "Requests"}</h1>
         {listView !== "requests" && <div class="people-list-heading-actions">
           {listView === "inbox" && <button class="people-action" disabled={busy} onClick={() => openList("contacts")}>contacts</button>}

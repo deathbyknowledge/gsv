@@ -47,8 +47,8 @@ export function Settings({ onDirtyChange, onSignOut, onInspectProcess }: Setting
   const account = accounts.data?.find((entry) => entry.relation === "self");
   return <main class="settings" aria-label="Settings">
     <div class="settings-body">
-      <nav class="settings-sections" aria-label="Settings sections">{SECTIONS.filter((entry) => entry !== "sign-in" || account?.uid === 0).map((entry) => <button class="ibtn" aria-current={section === entry ? "page" : undefined} onClick={() => setSection(entry)} key={entry}>{entry}{dirty[entry] ? " ·" : ""}</button>)}</nav>
-      <div class="settings-content">
+      <nav class="settings-sections" aria-label="Settings sections" data-scroll-edge>{SECTIONS.filter((entry) => entry !== "sign-in" || account?.uid === 0).map((entry) => <button class="ibtn" aria-current={section === entry ? "page" : undefined} onClick={() => setSection(entry)} key={entry}>{entry}{dirty[entry] ? " ·" : ""}</button>)}</nav>
+      <div class="settings-content" data-scroll-edge>
         <div class="settings-account"><span>{account?.username ?? "Your session"}</span><button class="settings-text-action" type="button" onClick={() => {
           if (onSignOut) { onSignOut(); return; }
           if (hasDrafts && !window.confirm("Discard your unsaved settings changes and sign out?")) return;
