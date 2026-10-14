@@ -419,7 +419,7 @@
         "workers/gateway/src/kernel/mailbox-store.ts",
         "workers/gateway/src/kernel/outbound-mail.ts",
         "workers/gateway/src/kernel/outbound-status.ts",
-        "workers/adapters/email/src/"
+        "workers/adapters/email/src/**"
       ],
       "docs": [
         "docs/reference/syscalls.md",
