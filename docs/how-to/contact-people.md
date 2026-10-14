@@ -15,7 +15,9 @@ your conversation opens, so you can turn it into a request to Ship.
 
 ## Start a conversation
 
-Choose **connect**, choose who should handle new messages, then **create invitation
+Choose **connect**. If your operator provides signup invitations, **Invite a friend
+to GSV** is for someone who has not joined yet; choose **Already on GSV? Connect**
+for an existing user. Choose who should handle new messages, then **create connection
 link** and share it wherever you already talk. It connects one person and lasts seven days; you can cancel it before it is
 accepted. In managed spaces, the link opens the existing Accounts space chooser.
 The recipient chooses a listed space or enters its address, signs in if needed,
@@ -24,8 +26,8 @@ using another operator or a space they do not own. Other deployments open the
 space-address form directly.
 Neither person needs to publish a profile. Acceptance opens the conversation.
 
-If someone gives you a link or an older contact code, choose **connect → I have an
-invitation** to paste it. These invitations are separate from
+If someone gives you a link or an older contact code, open the existing-user flow
+and choose **I have an invitation** to paste it. These invitations are separate from
 [personal access to your own space](/how-to/invite-people).
 
 You can also ask Ship to create an invitation, or give it someone's invitation
@@ -34,8 +36,8 @@ it, then completes the connection with that choice. It can also change the choic
 later when you ask. This works in your ordinary Ship conversation, including
 messaging apps; opening People is optional.
 
-If your operator provides signup invitations, **Include a new GSV Space** reserves
-one of your available places when you create the link. A friend can verify their
+**Invite a friend to GSV → create invite link** reserves one of your available
+signup places. The form shows how many invites remain. A friend can verify their
 email and create their own Space, then accept your contact invitation. Someone
 who already has GSV opens that Space instead. Each of you chooses **Me** or **Ship**
 for handling new messages; neither choice changes the other person's settings.
@@ -46,7 +48,7 @@ allowance comes from your plan. In Shell, add `--new-space` to
 `contact invite create --handling manual`; `contact invite list --json` includes
 the signup allowance where available.
 
-Choose **connect → use a profile address** to find a saved contact by name or enter
+Choose **use a profile address** in the existing-user flow to find a saved contact by name or enter
 someone's public profile address. Review the profile and your prefilled display
 name, choose who handles new messages, then send a first message.
 They make their own handling choice when accepting, or can decline it. Acceptance keeps that first message in the same

@@ -10,7 +10,7 @@ import { canConfigure } from "../settings/settingsModel";
 import { INSTRUMENT_CONTACTS_KEY, INSTRUMENT_CONTACT_INVITES_KEY } from "../wire/queryKeys";
 import { ContactHandlingChoice } from "./ContactHandlingChoice";
 
-export type InvitationDraft = { code: string; issued: ContactInviteCreateResult | null; shipHandlesMessages: boolean | null };
+export type InvitationDraft = { kind: "friend" | "contact"; code: string; issued: ContactInviteCreateResult | null; shipHandlesMessages: boolean | null };
 
 export function InviteContact({ account, draft, onChange, onAdded, onBusy, onProfile }: {
   account: ConsoleAccount | undefined;
@@ -27,26 +27,26 @@ export function InviteContact({ account, draft, onChange, onAdded, onBusy, onPro
   const [accepting, setAccepting] = useState(!!draft.code);
   const [entering, setEntering] = useState(!draft.code);
   const [now, setNow] = useState(Date.now());
-  const [includeSignup, setIncludeSignup] = useState(true);
   const allowed = (name: string) => connected && !!account && canConfigure(account, name);
   const invites = useQuery({ queryKey: INSTRUMENT_CONTACT_INVITES_KEY, enabled: allowed("contact.invite.list"),
     queryFn: async () => client.contact.invite.list({ includeTerminal: true, includeSignupAllowance: true }) });
   const allowance = invites.data?.signupAllowance;
+  const invitingFriend = draft.kind === "friend" && !!allowance;
   const issued = draft.issued;
   const current = invites.data?.invites.find((item) => item.inviteId === issued?.inviteId);
   const refreshInvites = () => cache.invalidateQueries({ queryKey: INSTRUMENT_CONTACT_INVITES_KEY });
   const create = useMutation({ mutationFn: () => {
     if (draft.shipHandlesMessages === null) throw new Error("Choose who should handle new messages");
     return client.contact.invite.create({ expiresInSeconds: 7 * 24 * 60 * 60, shipHandlesMessages: draft.shipHandlesMessages,
-      includeSignup: !!allowance && includeSignup });
+      includeSignup: invitingFriend });
   },
-    onSuccess: (invite) => { onChange({ ...draft, issued: invite }); setCopyStatus(""); void refreshInvites(); } });
+    onSuccess: (invite) => { onChange({ ...draft, kind: invitingFriend ? "friend" : "contact", issued: invite }); setCopyStatus(""); void refreshInvites(); } });
   const accept = useMutation({ mutationFn: () => {
     if (draft.shipHandlesMessages === null) throw new Error("Choose who should handle new messages");
     return client.contact.invite.accept({ code: draft.code.trim(), shipHandlesMessages: draft.shipHandlesMessages });
   },
     onSuccess: async ({ contact }) => {
-      clearContactInvitation(); onChange({ code: "", issued: null, shipHandlesMessages: null });
+      clearContactInvitation(); onChange({ ...draft, code: "", issued: null, shipHandlesMessages: null });
       await cache.invalidateQueries({ queryKey: INSTRUMENT_CONTACTS_KEY }); onAdded(contact.id);
     } });
   const cancel = useMutation({ mutationFn: (inviteId: string) => client.contact.invite.cancel({ inviteId }),
@@ -60,7 +60,7 @@ export function InviteContact({ account, draft, onChange, onAdded, onBusy, onPro
   }, [active, issued]);
   useEffect(() => {
     if (active && current?.state === "accepted" && current.contactId) {
-      onChange({ code: "", issued: null, shipHandlesMessages: null }); onAdded(current.contactId);
+      onChange({ ...draft, code: "", issued: null, shipHandlesMessages: null }); onAdded(current.contactId);
     }
   }, [active, current?.state, current?.contactId]);
   const preview = draft.code.trim() ? contactInvitationPreview(draft.code) : null;
@@ -69,6 +69,10 @@ export function InviteContact({ account, draft, onChange, onAdded, onBusy, onPro
   const error = create.error ?? accept.error ?? cancel.error ?? invites.error;
   const pendingInvites = invites.data?.invites.filter((item) => item.state === "pending" && item.expiresAtMs > Date.now() && item.inviteId !== issued?.inviteId) ?? [];
   const choice = <ContactHandlingChoice value={draft.shipHandlesMessages} disabled={busy || !allowed("contact.preferences.update")} onChange={(shipHandlesMessages) => onChange({ ...draft, shipHandlesMessages })} />;
+  const switchKind = (kind: InvitationDraft["kind"]) => {
+    create.reset(); cancel.reset(); setCopyStatus("");
+    onChange({ ...draft, kind, issued: null, shipHandlesMessages: null });
+  };
 
   return <section class="people-invite">
     {accepting ? <>
@@ -80,10 +84,12 @@ export function InviteContact({ account, draft, onChange, onAdded, onBusy, onPro
         <button class="ibtn is-primary" type="submit" disabled={busy || !allowed("contact.invite.accept") || draft.shipHandlesMessages === null || !preview || "error" in preview || preview.expired}>{accept.isPending ? "connecting…" : "accept invitation"}</button>
       </form>
       <div class="people-actions">{!entering && <button class="people-action" disabled={busy} onClick={() => setEntering(true)}>use a different invitation</button>}
-        <button class="people-action" disabled={busy} onClick={() => { clearContactInvitation(); onChange({ code: "", issued: null, shipHandlesMessages: null }); setAccepting(false); setEntering(true); }}>invite someone instead</button></div>
+        <button class="people-action" disabled={busy} onClick={() => { clearContactInvitation(); onChange({ ...draft, kind: "contact", code: "", issued: null, shipHandlesMessages: null }); setAccepting(false); setEntering(true); }}>share a link instead</button></div>
     </> : <>
-      <h2>Bring someone along.</h2>
-      <p class="people-note">Share a link. Once they join, you’re in each other’s contacts.</p>
+      <h2>{invitingFriend ? "Invite a friend to GSV" : "Connect on GSV"}</h2>
+      <p class="people-note">{invitingFriend
+        ? "For friends who haven’t joined yet. Once they join, you’re in each other’s contacts."
+        : "Share a link with someone already on GSV."}</p>
       {issued && link ? <div class="people-invite-link">
         {expired || current?.state === "cancelled" ? <p role="status">This invitation {expired ? "has expired" : "was cancelled"}.</p> : <>
           <label>Invitation link<input aria-label="Invitation link" value={link} readOnly onFocus={(event) => event.currentTarget.select()} /></label>
@@ -93,16 +99,18 @@ export function InviteContact({ account, draft, onChange, onAdded, onBusy, onPro
           }}>copy link</button><span class="people-note" role="status">{copyStatus || "Ready to share"}</span></div>
           <p class="people-note">For one person · expires {new Date(issued.expiresAtMs).toLocaleDateString(undefined, { month: "short", day: "numeric" })}</p>
         </>}
-        <div class="people-actions"><button class="people-action" disabled={busy} onClick={() => onChange({ ...draft, issued: null, shipHandlesMessages: null })}>invite another person</button>
+        <div class="people-actions"><button class="people-action" disabled={busy} onClick={() => onChange({ ...draft, issued: null, shipHandlesMessages: null })}>{invitingFriend ? "invite another friend" : "connect with someone else"}</button>
           {!expired && current?.state !== "cancelled" && <button class="people-action" disabled={busy || !allowed("contact.invite.cancel")} onClick={() => cancel.mutate(issued.inviteId)}>cancel this invitation</button>}</div>
       </div> : <>
-        {allowance && <label class="people-invite-signup"><input type="checkbox" checked={includeSignup} disabled={busy}
-          onChange={(event) => setIncludeSignup(event.currentTarget.checked)} />
-          <span>Include a new GSV Space <span class="people-note">{allowance.available} of {allowance.total} available</span></span>
-        </label>}
-        {choice}<button class="ibtn is-primary" disabled={busy || invites.isPending || !allowed("contact.invite.create") || draft.shipHandlesMessages === null
-          || !!(allowance && includeSignup && allowance.available === 0)} onClick={() => create.mutate()}>{create.isPending ? "creating link…" : "create invitation link"}</button></>}
-      <div class="people-compose-footer"><button class="people-action" disabled={busy || !allowed("contact.invite.accept")} onClick={() => { onChange({ ...draft, issued: null, shipHandlesMessages: null }); setAccepting(true); }}>I have an invitation</button><button class="people-action" disabled={busy} onClick={onProfile}>use a profile address</button></div>
+        {invitingFriend && <p class="people-invite-allowance">{allowance.available} of {allowance.total} invites available</p>}
+        {choice}<button class="ibtn is-primary" disabled={busy || !invites.isSuccess || !allowed("contact.invite.create") || draft.shipHandlesMessages === null
+          || invitingFriend && allowance.available === 0} onClick={() => create.mutate()}>{create.isPending ? "creating link…" : invitingFriend ? "create invite link" : "create connection link"}</button></>}
+      <div class="people-compose-footer">{invitingFriend
+        ? <button class="people-action" disabled={busy} onClick={() => switchKind("contact")}>Already on GSV? Connect</button>
+        : <><button class="people-action" disabled={busy || !allowed("contact.invite.accept")} onClick={() => { onChange({ ...draft, issued: null, shipHandlesMessages: null }); setAccepting(true); }}>I have an invitation</button>
+          <button class="people-action" disabled={busy} onClick={onProfile}>use a profile address</button>
+          {allowance && <button class="people-action" disabled={busy} onClick={() => switchKind("friend")}>invite a friend to GSV</button>}</>}
+      </div>
       {pendingInvites.length > 0 && <details class="people-details-fold"><summary>{pendingInvites.length} pending invitation{pendingInvites.length === 1 ? "" : "s"}</summary>
         {pendingInvites.map((item) => <div class="people-actions" key={item.inviteId}><span class="people-note">Expires {new Date(item.expiresAtMs).toLocaleDateString()}</span><button class="people-action" disabled={busy || !allowed("contact.invite.cancel")} onClick={() => cancel.mutate(item.inviteId)}>cancel</button></div>)}
       </details>}

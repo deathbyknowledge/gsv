@@ -196,8 +196,7 @@
 .people-invite h2 { margin: 12px 0 16px; color: var(--text-title); font: 400 30px/1.15 var(--gsv-font-prose); letter-spacing: -.025em; }
 .people-invite > .people-note { margin-bottom: 28px; font-size: 16px; }
 .people-invite-link { border-top: 1px solid var(--border); padding-top: 24px; }
-.people-invite-signup { display: flex; align-items: baseline; gap: 10px; margin: 0 0 24px; font-size: 13px; }
-.people-invite-signup .people-note { display: block; margin-top: 6px; }
+.people-invite-allowance { margin: 0 0 24px; color: var(--accent); font-size: 13px; }
 .people-invite-link label { display: grid; gap: 10px; color: var(--text-dim); font-size: 11px; }
 .people-invite-link input { text-overflow: ellipsis; font-size: 13px !important; }
 .people-invite-link > .people-actions { margin-top: 18px; }
