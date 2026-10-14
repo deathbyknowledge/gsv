@@ -118,7 +118,10 @@ The existing provisioning ledger owns progress and diagnostic references.
 `installations.owner_setup` identifies setups an owner may resume. The forward
 migration preserves this marker for Spaces created through legacy signup codes;
 an upgrade trigger also covers old workers completing signup during rollout.
-the retired invitation table remains historical data, never admission authority.
+Claim issuance is versioned at the database boundary: an old worker must retry
+instead of overwriting a new setup token. Previously issued capabilities remain
+valid until used, expired or reissued.
+The retired invitation table remains historical data, never admission authority.
 Old Desktop clients retain owner sign-in; their retired registration endpoints
 return an instruction to update the app.
 

@@ -30,6 +30,26 @@ async function provisioningInstallation(suffix: string): Promise<{
 }
 
 describe("installation onboarding claims", () => {
+  it("rejects old-worker issuance before and after a new owner setup claim", async () => {
+    const fixture = await provisioningInstallation("old-issuer");
+    const db = env.INSTALLATIONS_DB;
+    await db.prepare("UPDATE installations SET owner_setup = 1 WHERE id = ?").bind(fixture.installationId).run();
+    const oldIssue = () => db.prepare(`INSERT INTO installation_onboarding_claims
+      (id, installation_id, token_prefix, token_hash, expires_at, completed_at, revoked_at, created_at)
+      VALUES (?, ?, 'legacy', 'legacy-hash', ?, NULL, NULL, ?)
+      ON CONFLICT (installation_id) DO UPDATE SET
+        token_prefix = excluded.token_prefix, token_hash = excluded.token_hash,
+        expires_at = excluded.expires_at, completed_at = NULL, revoked_at = NULL, created_at = excluded.created_at`)
+      .bind(`onboarding_${crypto.randomUUID()}`, fixture.installationId, Date.now() + 60_000, Date.now()).run();
+    await expect(oldIssue()).rejects.toThrow("onboarding issuer has changed");
+    const onboarding = new InstallationOnboardingStore(db, fixture.accounts, "onboarding-rollout-test-".repeat(4));
+    const issued = await onboarding.begin(fixture.installationId);
+    await expect(oldIssue()).rejects.toThrow("onboarding issuer has changed");
+    expect(await onboarding.begin(fixture.installationId)).toEqual(issued);
+    expect(await onboarding.authorize({ installationId: fixture.installationId, token: new URL(issued.onboardingUrl).hash.slice(1) }))
+      .toMatchObject({ ok: true });
+  });
+
   it("resumes one usable bearer across concurrent clients and rotates only after expiry", async () => {
     const fixture = await provisioningInstallation("concurrent-resume");
     const secret = "onboarding-resume-test-".repeat(4);

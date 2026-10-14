@@ -114,8 +114,8 @@ export class InstallationOnboardingStore {
     const result = await this.db.prepare(
       `INSERT INTO installation_onboarding_claims (
          id, installation_id, token_prefix, token_hash,
-         expires_at, completed_at, revoked_at, created_at
-       ) SELECT ?, i.id, ?, ?, ?, NULL, NULL, ?
+         expires_at, completed_at, revoked_at, created_at, issuer_version
+       ) SELECT ?, i.id, ?, ?, ?, NULL, NULL, ?, 1
          FROM installations i JOIN provisioning_operations p ON p.installation_id = i.id AND p.kind = 'create'
          WHERE i.id = ? AND i.state = 'provisioning' AND p.state = 'provisioning'
        ON CONFLICT (installation_id) DO UPDATE SET
@@ -124,7 +124,8 @@ export class InstallationOnboardingStore {
          expires_at = excluded.expires_at,
          completed_at = NULL,
          revoked_at = NULL,
-         created_at = excluded.created_at
+         created_at = excluded.created_at,
+         issuer_version = excluded.issuer_version
        WHERE ? = 0 OR installation_onboarding_claims.token_hash = ?`,
     ).bind(
       claimId,
@@ -177,8 +178,8 @@ export class InstallationOnboardingStore {
     const installationId = parseOpaqueId(installationIdValue, "installationId");
     await this.db.prepare(
       `INSERT INTO installation_onboarding_claims (
-         id, installation_id, token_prefix, token_hash, expires_at, completed_at, revoked_at, created_at
-       ) SELECT ?, i.id, ?, ?, ?, NULL, NULL, ?
+         id, installation_id, token_prefix, token_hash, expires_at, completed_at, revoked_at, created_at, issuer_version
+       ) SELECT ?, i.id, ?, ?, ?, NULL, NULL, ?, 1
        FROM installations i JOIN provisioning_operations p ON p.installation_id = i.id AND p.kind = 'create'
        WHERE i.id = ? AND i.state = 'provisioning' AND p.state = 'provisioning'
        ON CONFLICT (installation_id) DO NOTHING`,
