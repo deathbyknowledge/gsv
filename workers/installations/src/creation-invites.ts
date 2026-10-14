@@ -26,9 +26,11 @@ type Row = {
   id: string; token_prefix: string; policy_ref: string | null; note: string; created_at: number; expires_at: number | null;
   revoked_at: number | null; principal_id: string | null; claimed_at: number | null; installation_id: string | null;
   last_error: CreationInvite["lastError"]; handle: string | null; canonical_origin: string | null; activated_at: number | null;
+  friend_released_at: number | null; friend_expires_at: number | null;
 };
-const projection = `SELECT c.*, i.handle, i.canonical_origin, i.activated_at FROM installation_creation_invites c
-  LEFT JOIN installations i ON i.id = c.installation_id`;
+const projection = `SELECT c.*, i.handle, i.canonical_origin, i.activated_at,
+  f.released_at AS friend_released_at, f.expires_at AS friend_expires_at FROM installation_creation_invites c
+  LEFT JOIN installations i ON i.id = c.installation_id LEFT JOIN friend_invitations f ON f.id = c.id`;
 
 /** A claimed invitation is durable authority to finish one space's first setup. */
 export class InstallationCreationInvites {
@@ -69,20 +71,23 @@ export class InstallationCreationInvites {
     const hash = await sha256Hex(code);
     await this.db.prepare(`UPDATE installation_creation_invites SET principal_id = ?, claimed_at = ?, updated_at = ?
       WHERE token_hash = ? AND principal_id IS NULL AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at > ?)
+      AND NOT EXISTS (SELECT 1 FROM friend_invitations f WHERE f.id = installation_creation_invites.id AND f.released_at IS NOT NULL)
       AND EXISTS (SELECT 1 FROM principals WHERE id = ? AND state = 'active' AND email_verified_at IS NOT NULL)`)
       .bind(principalId, now, now, hash, now, principalId).run();
     const row = await this.db.prepare(`${projection} WHERE c.token_hash = ? AND c.principal_id = ? AND c.revoked_at IS NULL
       AND EXISTS (SELECT 1 FROM principals WHERE id = ? AND state = 'active' AND email_verified_at IS NOT NULL)`)
       .bind(hash, principalId, principalId).first<Row>();
     if (!row) throw new Error("Invite is unavailable or already claimed");
-    return fromRow(row, now);
+    const invite = fromRow(row, now);
+    if (invite.state === "revoked" || invite.state === "expired") throw new Error("Invite is unavailable or already claimed");
+    return invite;
   }
 
   async revoke(idValue: string): Promise<void> {
     const id = parseOpaqueId(idValue, "invitationId");
     const result = await this.db.prepare(`UPDATE installation_creation_invites SET revoked_at = COALESCE(revoked_at, ?), updated_at = ?
       WHERE id = ? AND installation_id IS NULL`).bind(Date.now(), Date.now(), id).run();
-    if (result.meta.changes !== 1) throw new Error("Invite is unavailable or has already created a space");
+    if (result.meta.changes < 1) throw new Error("Invite is unavailable or has already created a space");
   }
 
   async available(handleValue: string): Promise<boolean> {
@@ -135,7 +140,8 @@ export class InstallationCreationInvites {
 
 function fromRow(row: Row, now = Date.now()): CreationInvite {
   return { id: row.id, prefix: row.token_prefix, policyRef: row.policy_ref, note: row.note,
-    state: row.activated_at !== null ? "active" : row.installation_id ? "provisioning" : row.revoked_at !== null ? "revoked"
+    state: row.activated_at !== null ? "active" : row.installation_id ? "provisioning" : row.revoked_at !== null || row.friend_released_at !== null ? "revoked"
+      : row.friend_expires_at !== null && row.friend_expires_at <= now ? "expired"
       : row.principal_id ? "claimed" : row.expires_at !== null && row.expires_at <= now ? "expired" : "issued",
     createdAt: row.created_at, expiresAt: row.expires_at, claimedAt: row.claimed_at, principalId: row.principal_id,
     installationId: row.installation_id, handle: row.handle, canonicalOrigin: row.canonical_origin, lastError: row.last_error };

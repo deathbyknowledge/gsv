@@ -128,7 +128,7 @@ async function manageInvite(args: string[], ctx: KernelContext): Promise<ExecRes
   if (action === "list") {
     requireCommandCapability(ctx, "contact.invite.list");
     const flags = parseOnlyFlags(rest, new Set(["--all", "--json"]));
-    const result = handleContactInviteList({ includeTerminal: flags.has("--all") }, ctx);
+    const result = await handleContactInviteList({ includeTerminal: flags.has("--all"), includeSignupAllowance: true }, ctx);
     if (flags.has("--json")) return json(result);
     const lines = ["INVITE\tSTATE\tEXPIRES\tCONTACT"];
     for (const invite of result.invites) {
@@ -145,7 +145,7 @@ async function manageInvite(args: string[], ctx: KernelContext): Promise<ExecRes
   if (action === "cancel") {
     requireCommandCapability(ctx, "contact.invite.cancel");
     requireArgumentCount(rest, 1, "invite cancel requires: contact invite cancel INVITE_ID");
-    return json(handleContactInviteCancel({ inviteId: rest[0] }, ctx));
+    return json(await handleContactInviteCancel({ inviteId: rest[0] }, ctx));
   }
   throw new Error("invite requires create, accept, list, or cancel");
 }
@@ -159,15 +159,18 @@ function parseHandling(value: string): boolean {
 function parseInviteOptions(args: string[], allowExpiry: boolean): ContactInviteCreateArgs {
   let shipHandlesMessages: boolean | undefined;
   let expiresInSeconds: number | undefined;
-  for (let index = 0; index < args.length; index += 2) {
+  let includeSignup: boolean | undefined;
+  for (let index = 0; index < args.length; index += 1) {
     const option = args[index];
-    const value = requireShellOptionValue(args[index + 1], option);
+    if (option === "--new-space" && allowExpiry && includeSignup === undefined) { includeSignup = true; continue; }
+    const value = requireShellOptionValue(args[++index], option);
     if (option === "--handling" && shipHandlesMessages === undefined) shipHandlesMessages = parseHandling(value);
     else if (option === "--expires" && allowExpiry && expiresInSeconds === undefined) expiresInSeconds = Math.ceil(parseDurationMs(value) / 1_000);
     else throw new Error(`unexpected or repeated invite option: ${option}`);
   }
   if (shipHandlesMessages === undefined) throw new Error("Ask the owner who should handle new messages, then use --handling manual|ship");
-  return { shipHandlesMessages, ...(expiresInSeconds !== undefined ? { expiresInSeconds } : undefined) };
+  return { shipHandlesMessages, ...(expiresInSeconds !== undefined ? { expiresInSeconds } : undefined),
+    ...(includeSignup !== undefined ? { includeSignup } : undefined) };
 }
 
 async function manageRequest(args: string[], ctx: KernelContext): Promise<ExecResult> {
@@ -304,7 +307,7 @@ function contactUsage(): string {
     "  contact identity",
     "  contact list [--all] [--json]",
     "  contact alias CONTACT_ID NAME|--clear",
-    "  contact invite create --handling manual|ship [--expires DURATION]",
+    "  contact invite create --handling manual|ship [--new-space] [--expires DURATION]",
     "  contact invite accept LINK_OR_CODE --handling manual|ship",
     "  contact invite list [--all] [--json]",
     "  contact invite cancel INVITE_ID",

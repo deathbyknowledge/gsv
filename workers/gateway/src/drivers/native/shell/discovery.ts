@@ -65,7 +65,7 @@ const NATIVE_COMMAND_DESCRIPTORS = defineNativeCommandDescriptors({
   contact: command("Manage trusted contacts with other GSV Ships.", "Connect people using an invitation link. Ask who should handle new messages, then create or accept with --handling manual|ship. Inspect contacts, exchange structured requests, or change handling and trust.", ["contact", "people", "friend", "social", "connect", "ship", "federation", "pair", "invite", "request", "revoke"], [], [
     "contact identity",
     "contact list [--all] [--json]",
-    "contact invite create --handling manual|ship [--expires DURATION]",
+    "contact invite create --handling manual|ship [--new-space] [--expires DURATION]",
     "contact invite accept LINK_OR_CODE --handling manual|ship",
     "contact invite list [--all] [--json]",
     "contact invite cancel INVITE_ID",

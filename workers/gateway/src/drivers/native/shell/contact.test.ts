@@ -20,6 +20,8 @@ describe("contact invitation handling", () => {
     const bash = shell();
     expect((await bash.exec("contact invite create --handling ship --expires 7d")).exitCode).toBe(0);
     expect(create).toHaveBeenCalledWith({ shipHandlesMessages: true, expiresInSeconds: 604800 }, expect.anything());
+    expect((await bash.exec("contact invite create --handling manual --new-space")).exitCode).toBe(0);
+    expect(create).toHaveBeenLastCalledWith({ shipHandlesMessages: false, includeSignup: true }, expect.anything());
     expect((await bash.exec("contact invite accept 'https://example.com/connect#contact=code' --handling manual")).stderr).toContain("reached acceptance");
     expect(accept).toHaveBeenCalledWith({ code: "https://example.com/connect#contact=code", shipHandlesMessages: false }, expect.anything());
   });

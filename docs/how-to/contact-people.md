@@ -34,6 +34,18 @@ it, then completes the connection with that choice. It can also change the choic
 later when you ask. This works in your ordinary Ship conversation, including
 messaging apps; opening People is optional.
 
+If your operator provides signup invitations, **Include a new GSV Space** reserves
+one of your available places when you create the link. A friend can verify their
+email and create their own Space, then accept your contact invitation. Someone
+who already has GSV opens that Space instead. Each of you chooses **Me** or **Ship**
+for handling new messages; neither choice changes the other person's settings.
+
+Cancellation, expiry, or acceptance with an existing Space returns the reserved
+place. Once the invitation creates a Space, the place stays used. The displayed
+allowance comes from your plan. In Shell, add `--new-space` to
+`contact invite create --handling manual`; `contact invite list --json` includes
+the signup allowance where available.
+
 Choose **connect → use a profile address** to find a saved contact by name or enter
 someone's public profile address. Review the profile and your prefilled display
 name, choose who handles new messages, then send a first message.

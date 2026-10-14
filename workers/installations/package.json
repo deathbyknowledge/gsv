@@ -27,6 +27,7 @@
     "./owner-service": "./src/owner-service.ts",
     "./owner-front-door": "./src/owner-front-door.ts",
     "./creation-invites": "./src/creation-invites.ts",
+    "./friend-invitations": "./src/friend-invitations.ts",
     "./admin/invites": "./src/admin/invites.ts"
   },
   "scripts": {

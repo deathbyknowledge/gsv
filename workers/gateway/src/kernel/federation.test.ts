@@ -6,6 +6,8 @@ import type {
 import {
   federationDeliveryEnvelopeSchema,
   jsonValueSchema,
+  parseContactInvitation,
+  parseCreationInvitation,
 } from "@humansandmachines/gsv/protocol";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { testPeer } from "../test-support/peers";
@@ -51,6 +53,27 @@ const OWNER: ProcessIdentity = {
 describe("federation outbound boundary", () => {
   afterEach(() => {
     vi.restoreAllMocks();
+  });
+
+  it("reserves a signup place for the Kernel's installation before returning one combined link", async () => {
+    const ctx = focusedResourceContext(() => activeContact());
+    ctx.peer = testPeer({ kind: "human", account: OWNER, calls: ["contact.*"] });
+    Object.assign(ctx.federation, {
+      prune: vi.fn(), transaction: (operation: () => unknown) => operation(),
+      outstandingInviteCount: () => 0, consumeRateLimits: () => null,
+      createInvite: () => ({ inviteId: "invite:friend" }),
+    });
+    const reserve = vi.fn(async () => {});
+    ctx.env.GSV_OWNER_SIGNUP_URL = "https://signup.example.com/";
+    ctx.env.SPACE_INVITATIONS = { reserve, cancel: vi.fn(), accept: vi.fn(), getAllowance: vi.fn() };
+    const supplied = { includeSignup: true, shipHandlesMessages: false, installationId: "untrusted" };
+    const result = await handleContactInviteCreate(supplied, ctx);
+    const contact = parseContactInvitation(result.url!).invitation;
+    expect(parseCreationInvitation(result.url!)).toBe(`invite_${contact.token}`);
+    expect(reserve).toHaveBeenCalledExactlyOnceWith({ version: 1, installationId: "installation:test",
+      contactInviteId: result.inviteId, code: `invite_${contact.token}`, expiresAt: result.expiresAtMs });
+    reserve.mockRejectedValue(new Error("All invitation places are in use"));
+    await expect(handleContactInviteCreate(supplied, ctx)).rejects.toThrow("places are in use");
   });
 
   it("requires the owner's handling choice and preference authority from their canonical Ship", async () => {
@@ -133,7 +156,7 @@ describe("federation outbound boundary", () => {
     expect(broadcastToUserUid).toHaveBeenCalledOnce();
   });
 
-  it("notifies invitation cancellation once, after the saved transition", () => {
+  it("notifies invitation cancellation once, after the saved transition", async () => {
     let state: "issued" | "cancelled" = "issued";
     const broadcastToUserUid = vi.fn();
     const ctx = focusedContext({
@@ -147,8 +170,8 @@ describe("federation outbound boundary", () => {
       broadcastToUserUid,
     });
     broadcastToUserUid.mockImplementation(() => expect(state).toBe("cancelled"));
-    handleContactInviteCancel({ inviteId: "invite:test" }, ctx);
-    handleContactInviteCancel({ inviteId: "invite:test" }, ctx);
+    await handleContactInviteCancel({ inviteId: "invite:test" }, ctx);
+    await handleContactInviteCancel({ inviteId: "invite:test" }, ctx);
     expect(broadcastToUserUid).toHaveBeenCalledExactlyOnceWith(OWNER.uid, "contact.invite.changed");
   });
 

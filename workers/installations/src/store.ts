@@ -148,7 +148,9 @@ export class AccountStore {
            FROM principals
            WHERE id = ? AND state = 'active' AND email_verified_at IS NOT NULL
              AND (? IS NULL OR EXISTS (SELECT 1 FROM installation_creation_invites c
-               WHERE c.id = ? AND c.principal_id = principals.id AND c.revoked_at IS NULL AND c.installation_id IS NULL))`,
+               WHERE c.id = ? AND c.principal_id = principals.id AND c.revoked_at IS NULL AND c.installation_id IS NULL
+               AND NOT EXISTS (SELECT 1 FROM friend_invitations f WHERE f.id = c.id
+                 AND (f.released_at IS NOT NULL OR f.expires_at <= ?))))`,
         ).bind(
           identity.installationId,
           identity.handle,
@@ -159,6 +161,7 @@ export class AccountStore {
           principalId,
           inviteId,
           inviteId,
+          now,
         ),
         this.db.prepare(
           `INSERT INTO hostnames (

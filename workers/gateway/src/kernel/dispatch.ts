@@ -812,10 +812,10 @@ async function dispatchKernel(
         data = await handleContactInviteAccept(frame.args, ctx);
         break;
       case "contact.invite.list":
-        data = handleContactInviteList(frame.args, ctx);
+        data = await handleContactInviteList(frame.args, ctx);
         break;
       case "contact.invite.cancel":
-        data = handleContactInviteCancel(frame.args, ctx);
+        data = await handleContactInviteCancel(frame.args, ctx);
         break;
       case "contact.list":
         data = handleContactList(frame.args, ctx);

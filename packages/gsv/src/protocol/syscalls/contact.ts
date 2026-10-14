@@ -110,6 +110,8 @@ export type ContactIdentityResult = {
 
 export type ContactInviteCreateArgs = {
   expiresInSeconds?: number;
+  /** Reserve one operator-provided signup place for the recipient. */
+  includeSignup?: boolean;
   /** Owner's choice for the new contact. Ship must supply it; older human clients may omit it. */
   shipHandlesMessages?: boolean;
 };
@@ -148,10 +150,12 @@ export type ContactInviteSummary = {
 
 export type ContactInviteListArgs = {
   includeTerminal?: boolean;
+  includeSignupAllowance?: boolean;
 };
 
 export type ContactInviteListResult = {
   invites: ContactInviteSummary[];
+  signupAllowance?: { total: number; reserved: number; used: number; available: number };
 };
 
 export type ContactInviteCancelArgs = {
