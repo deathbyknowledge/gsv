@@ -77,6 +77,13 @@ with the operator; the loop owns deadlines, first-output fallback, cancellation,
 response-body cleanup and usage projection. Workers AI remains a transport
 adapter over this loop. Changing a funded provider does not change the
 `gsv/default` identity or the Gateway/client contract.
+Routes distinguish the operator's provider identity from the provider's model ID.
+Two providers can therefore serve the same model in an ordered fallback chain,
+with separate credentials, prices and attempt telemetry. Older deployments may
+omit the provider field until their operator migrates the routing configuration.
+Telemetry producers classify that identity with `inferenceProviderFromName`:
+unknown transports use `other`, preserving the event without exporting arbitrary
+operator configuration.
 Managed inference telemetry identifies the executing provider; failures before
 a provider is selected use `gsv` rather than naming a provider that was not called.
 

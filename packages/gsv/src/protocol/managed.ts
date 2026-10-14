@@ -100,6 +100,8 @@ export interface ManagedInferenceUsageService {
 }
 
 export type ManagedInferenceModelRouting = {
+  /** Operator transport identity. Omitted only by deployments predating provider-aware routing. */
+  provider?: string;
   modelId: string;
   displayName: string;
   contextWindow: number;
