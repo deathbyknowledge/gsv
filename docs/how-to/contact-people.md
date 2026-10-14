@@ -30,9 +30,10 @@ If someone gives you a link or an older contact code, open the existing-user flo
 and choose **I have an invitation** to paste it. These invitations are separate from
 [personal access to your own space](/how-to/invite-people).
 
-You can also ask Ship to create an invitation, or give it someone's invitation
-link to accept. Ship asks who should handle new messages unless you already told
-it, then completes the connection with that choice. It can also change the choice
+You can also ask Ship to invite a friend who is new to GSV, connect someone who
+already has it, or accept an invitation link. Ship asks which case applies and
+who should handle new messages unless you already told it, then creates the link
+or accepts the invitation with that choice. It can also change the choice
 later when you ask. This works in your ordinary Ship conversation, including
 messaging apps; opening People is optional.
 
