@@ -5,6 +5,6 @@ import "./DesktopAppLink.css";
 export function DesktopAppLink() {
   return <p class="signup-desktop-app">
     Prefer an app? <a class="gsv-auth-link" href={LATEST_RELEASE_PAGE_URL} target="_blank" rel="noreferrer">Try the beta desktop app</a> for
-    macOS and Linux. Your invite code works there too.
+    macOS and Linux.
   </p>;
 }

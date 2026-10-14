@@ -2,7 +2,7 @@ import { z } from "zod";
 import { readJsonObject } from "./http";
 import { InstallationOwnerAuthStore, OwnerAuthError, type OwnerAuthErrorCode } from "./owner-auth-store";
 import { InstallationOwnerStore } from "./owner-store";
-import { InstallationCreationInvites, type CreationInvite } from "./creation-invites";
+import { InstallationSignup, type PendingSetup } from "./signup";
 import { sendOwnerVerification } from "./owner-verification";
 import { parseBaseDomain } from "./domain";
 
@@ -14,16 +14,15 @@ const cors = { "access-control-allow-origin": "*", "access-control-allow-methods
   "access-control-allow-headers": "Authorization, Content-Type", "cache-control": "no-store" };
 type OwnerApiReply = Awaited<ReturnType<typeof sendOwnerVerification>>
   | { email: string; expiresAt: number }
-  | { email: string; expiresAt: number; spaceDomain: string; spaces: Awaited<ReturnType<InstallationOwnerStore["spaces"]>>; invites: ReturnType<typeof ownedInvite>[] }
-  | ReturnType<typeof ownedInvite>
-  | { invite: ReturnType<typeof ownedInvite>; origin: string; handle: string; onboardingToken: string | null; expiresAt: number | null }
+  | { email: string; expiresAt: number; spaceDomain: string; spaces: Awaited<ReturnType<InstallationOwnerStore["spaces"]>>; setups: PendingSetup[]; signupEnabled: boolean; invites: never[] }
+  | Awaited<ReturnType<InstallationSignup["prepare"]>>
   | { ok: true } | { available: boolean }
-  | { error: string; code?: OwnerAuthErrorCode | "signed_out"; retryAt?: number };
+  | { error: string; code?: OwnerAuthErrorCode | "signed_out" | "space_exists"; retryAt?: number };
 
 /** Explicit bearer authentication; browser cookies never authorize this native API. */
 export class InstallationOwnerApi {
   constructor(private readonly auth: InstallationOwnerAuthStore, private readonly owners: InstallationOwnerStore,
-    private readonly invites: InstallationCreationInvites, private readonly mail: SendEmail, private readonly from: string,
+    private readonly signup: InstallationSignup, private readonly mail: SendEmail, private readonly from: string,
     private readonly origin: string, private readonly baseDomain: string) {}
 
   async handle(request: Request): Promise<Response | null> {
@@ -49,26 +48,21 @@ export class InstallationOwnerApi {
       const session = token ? await this.auth.session(token) : null;
       if (!session || !token) return json({ error: "Sign in to continue.", code: "signed_out" }, 401);
       if (request.method === "GET" && url.pathname === "/owner/api/session") {
-        const [spaces, invites] = await Promise.all([this.owners.spaces(session.principalId), this.invites.owned(session.principalId)]);
-        return json({ email: session.email, expiresAt: session.expiresAt, spaceDomain: parseBaseDomain(this.baseDomain), spaces, invites: invites.map(ownedInvite) });
+        const [spaces, setups] = await Promise.all([this.owners.spaces(session.principalId), this.signup.pending(session.principalId)]);
+        return json({ email: session.email, expiresAt: session.expiresAt, spaceDomain: parseBaseDomain(this.baseDomain), spaces, setups, signupEnabled: this.signup.enabled, invites: [] });
       }
       if (request.method === "POST" && url.pathname === "/owner/api/logout") {
         await this.auth.logout(token);
         return json({ ok: true });
       }
-      if (request.method === "POST" && url.pathname === "/owner/api/invites/claim") {
-        const input = z.strictObject({ code: z.string().max(128) }).parse(await readJsonObject(request));
-        return json(ownedInvite(await this.invites.claim(input.code, session.principalId)));
-      }
+      // Older Desktop releases can still sign in; signup requires the new code-free client.
+      if (url.pathname.startsWith("/owner/api/invites/")) return json({ error: "Update GSV to create your Space." }, 410);
       if (request.method === "GET" && url.pathname === "/owner/api/handle") {
-        return json({ available: await this.invites.available(handle.parse(url.searchParams.get("value") ?? "")) });
+        return json({ available: await this.signup.available(handle.parse(url.searchParams.get("value") ?? "")) });
       }
-      const prepare = /^\/owner\/api\/invites\/([A-Za-z0-9_-]{1,128})\/space$/.exec(url.pathname);
-      if (request.method === "POST" && prepare) {
-        const input = z.strictObject({ handle }).parse(await readJsonObject(request));
-        const result = await this.invites.prepare(prepare[1], session.principalId, input.handle);
-        return json({ invite: ownedInvite(result.invite), origin: result.space.canonicalOrigin,
-          handle: result.space.handle, onboardingToken: result.onboardingToken, expiresAt: result.expiresAt });
+      if (request.method === "POST" && url.pathname === "/owner/api/spaces") {
+        const input = z.strictObject({ operationId: z.string().min(1).max(128), handle }).parse(await readJsonObject(request));
+        return json(await this.signup.prepare(input.operationId, session.principalId, input.handle));
       }
       return json({ error: "Not found" }, 404);
     } catch (error) {
@@ -81,13 +75,12 @@ export class InstallationOwnerApi {
       if (error instanceof Error && error.message === "handle is invalid") {
         return json({ error: "Use letters, numbers or hyphens. Start and end with a letter or number." }, 400);
       }
-      const message = error instanceof Error && /^(Invite is unavailable|handle is |Space setup is temporarily)/.test(error.message)
+      if (error instanceof Error && error.message.startsWith("You already have a Space")) {
+        return json({ error: error.message, code: "space_exists" }, 409);
+      }
+      const message = error instanceof Error && /^(handle is |Space setup is unavailable|Space setup failed|Space registration is currently closed)/.test(error.message)
         ? error.message : error instanceof z.ZodError ? "Check the details and try again." : "Could not complete setup. Try again.";
       return json({ error: message }, 400);
     }
   }
-}
-
-function ownedInvite(invite: CreationInvite) {
-  return { id: invite.id, state: invite.state, handle: invite.handle, origin: invite.canonicalOrigin, lastError: invite.lastError };
 }

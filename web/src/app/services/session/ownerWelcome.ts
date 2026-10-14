@@ -1,5 +1,4 @@
 import { z } from "zod";
-import { parseCreationInvitation } from "@humansandmachines/gsv/protocol";
 
 export const ONBOARDING_KEY = "gsv.ui.installation-onboarding.v1";
 export type WelcomeState = {
@@ -7,8 +6,7 @@ export type WelcomeState = {
   flow: "open" | "create";
   sessionSecret: string | null;
   challenge: { id: string; email: string; browserSecret: string } | null;
-  inviteCode: string | null;
-  inviteId: string | null;
+  operationId: string | null;
   handle: string | null;
   contactInvite?: string | null;
 };
@@ -19,19 +17,18 @@ type OwnerFetch = (url: string, init: {
 }) => Promise<Pick<Response, "ok" | "text">>;
 type OwnerRequest = { challengeId: string; email: string; browserSecret: string; resend: boolean }
   | { challengeId: string; browserSecret: string; sessionSecret: string; code: string }
-  | { code: string } | { handle: string } | Record<string, never>;
+  | { operationId: string; handle: string } | Record<string, never>;
 type OwnerHeaders = { "content-type": string; authorization?: string };
 const deliverySchema = z.object({ deliveryStatus: z.enum(["sent", "sending", "failed"]) });
 const verifiedSchema = z.object({ email: z.string(), expiresAt: z.number() });
 const availableSchema = z.object({ available: z.boolean() });
 const loggedOutSchema = z.object({ ok: z.literal(true) });
-const invitationSchema = z.object({ id: z.string(), state: z.enum(["issued", "claimed", "provisioning", "active", "revoked", "expired"]),
-  handle: z.string().nullable(), origin: z.string().nullable(), lastError: z.string().nullable() });
-export type OwnedInvite = z.infer<typeof invitationSchema>;
-const sessionSchema = z.object({ email: z.string(), expiresAt: z.number(), spaceDomain: z.string().min(1),
-  spaces: z.array(z.object({ handle: z.string(), canonicalOrigin: z.string(), state: z.enum(["active", "restricted"]) })), invites: z.array(invitationSchema) });
+export const pendingSetupSchema = z.object({ operationId: z.string(), handle: z.string(), origin: z.string() });
+export type PendingSetup = z.infer<typeof pendingSetupSchema>;
+const sessionSchema = z.object({ email: z.string(), expiresAt: z.number(), spaceDomain: z.string().min(1), signupEnabled: z.boolean(),
+  spaces: z.array(z.object({ handle: z.string(), canonicalOrigin: z.string(), state: z.enum(["active", "restricted"]) })), setups: z.array(pendingSetupSchema) });
 export type OwnerSession = z.infer<typeof sessionSchema>;
-const preparationSchema = z.object({ invite: invitationSchema, origin: z.string(), handle: z.string(),
+const preparationSchema = z.object({ origin: z.string(), handle: z.string(),
   onboardingToken: z.string().regex(/^onboard_[A-Za-z0-9_-]{43}$/).nullable(), expiresAt: z.number().nullable() });
 export type PreparedSpace = z.infer<typeof preparationSchema>;
 const failureSchema = z.object({ error: z.string().optional(), code: z.string().optional(), deliveryStatus: z.string().optional() });
@@ -46,7 +43,7 @@ export class OwnerWelcome {
     private readonly accountsOrigin: string, private readonly fetcher: OwnerFetch = (input, init) => fetch(input, init)) {}
 
   get state(): WelcomeState {
-    return this.snapshot.value ?? { origin: this.accountsOrigin, flow: "open", sessionSecret: null, challenge: null, inviteCode: null, inviteId: null, handle: null };
+    return this.snapshot.value ?? { origin: this.accountsOrigin, flow: "open", sessionSecret: null, challenge: null, operationId: null, handle: null };
   }
 
   async save(change: Partial<WelcomeState>): Promise<void> {
@@ -78,27 +75,20 @@ export class OwnerWelcome {
     await this.save({ challenge: null });
   }
 
-  async claim(): Promise<OwnedInvite> {
-    if (!this.state.inviteCode) throw new Error("Enter your invite code.");
-    const invite = await this.request("/invites/claim", invitationSchema, { code: parseCreationInvitation(this.state.inviteCode) });
-    await this.save({ inviteCode: null, inviteId: invite.id, handle: invite.handle });
-    return invite;
-  }
-
   async available(handle: string): Promise<boolean> {
     return (await this.request(`/handle?value=${encodeURIComponent(handle)}`, availableSchema)).available;
   }
 
-  async prepare(inviteId: string, handle: string): Promise<PreparedSpace> {
-    await this.save({ inviteId, handle });
-    const prepared = await this.request(`/invites/${encodeURIComponent(inviteId)}/space`, preparationSchema, { handle });
+  async prepare(handle: string, operationId = this.state.operationId ?? crypto.randomUUID()): Promise<PreparedSpace> {
+    await this.save({ flow: "create", operationId, handle });
+    const prepared = await this.request("/spaces", preparationSchema, { operationId, handle });
     if (!prepared.onboardingToken) await this.completeCreation();
     return prepared;
   }
 
   async completeCreation(): Promise<void> {
     if (this.state.flow !== "create") return;
-    const change: Partial<WelcomeState> = { flow: "open", challenge: null, inviteCode: null, inviteId: null, handle: null };
+    const change: Partial<WelcomeState> = { flow: "open", challenge: null, operationId: null, handle: null };
     if (this.state.contactInvite !== undefined) change.contactInvite = null;
     await this.save(change);
   }

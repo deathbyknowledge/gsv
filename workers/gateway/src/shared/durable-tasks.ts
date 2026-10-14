@@ -118,12 +118,6 @@ export class DurableTaskScheduler<Spec extends DurableTaskSpec> {
     return result.rowsWritten > 0;
   }
 
-  has(id: string): boolean {
-    return this.storage.sql.exec<{ id: string }>(
-      "SELECT id FROM cf_agents_schedules WHERE id = ? AND owner_path_key IS NULL", id,
-    ).toArray().length > 0;
-  }
-
   async alarm(): Promise<void> {
     const now = Math.floor(Date.now() / 1_000);
     const due = this.storage.sql.exec<DurableTaskRow>(
@@ -135,7 +129,11 @@ export class DurableTaskScheduler<Spec extends DurableTaskSpec> {
     ).toArray();
 
     for (const row of due) {
-      if (!this.has(row.id)) continue;
+      const stillPending = this.storage.sql.exec<{ id: string }>(
+        "SELECT id FROM cf_agents_schedules WHERE id = ? AND owner_path_key IS NULL",
+        row.id,
+      ).toArray()[0];
+      if (!stillPending) continue;
 
       const task = taskFromRow(row, this.decode);
       await this.invokeWithRetry(task);

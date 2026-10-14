@@ -4,6 +4,7 @@ import { InstallationOwnerStore } from "./owner-store";
 
 export const OPERATOR_REGISTRY_PRINCIPAL_ID = "principal_operator_registry";
 export type InstallationOwnerEnvironment = {
+  GSV_SIGNUP_ENABLED?: string;
   INSTALLATIONS_DB: D1Database;
   GSV_ADMIN_ORIGIN: string;
   GSV_BASE_DOMAIN: string;

@@ -12,43 +12,45 @@ import { BrowserWelcomeStorage } from "./storage";
 import { DesktopAppLink } from "./DesktopAppLink";
 import { SignupDialog } from "./SignupDialog";
 import { signupDestination } from "./navigation";
-import { captureCreationInvitation } from "./invitation";
-import { contactInvitationDestination, parseCreationInvitation } from "@humansandmachines/gsv/protocol";
+import { captureContactInvitation } from "./invitation";
+import { contactInvitationDestination } from "@humansandmachines/gsv/protocol";
 import { pendingContactInvitation, contactInvitationPreview, clearContactInvitation } from "../app/services/session/contactInvitationIntent";
 
 const accountsOrigin = window.location.origin;
 const storage = new BrowserWelcomeStorage(accountsOrigin);
-const supplied = new URLSearchParams(window.location.hash.slice(1));
-if (supplied.has("invite") && !supplied.has("contact")) clearContactInvitation();
-let contactInvitation = pendingContactInvitation();
-const invitationPreview = contactInvitation ? contactInvitationPreview(contactInvitation) : null;
-async function load() {
-  const client = new OwnerWelcome(await storage.load(), storage, accountsOrigin);
-  contactInvitation = await captureCreationInvitation(client, window.location.href, (url) => window.history.replaceState(null, "", url), contactInvitation);
-  return client;
-}
-async function connect(origin: string, onboardingToken?: string | null) {
-  const destination = onboardingToken ? signupDestination(origin, onboardingToken, contactInvitation)
-    : contactInvitation ? contactInvitationDestination(origin, contactInvitation) : signupDestination(origin);
-  clearContactInvitation();
-  window.location.assign(destination);
-}
-
 const app = document.querySelector<HTMLElement>("#app");
 if (!app) throw new Error("Missing #app mount");
-const resume = !!contactInvitation || new URLSearchParams(window.location.search).get("resume") === "1";
-let creationError: string | null = null;
-if (new URLSearchParams(window.location.hash.slice(1)).has("invite")) {
-  try { parseCreationInvitation(window.location.href); }
-  catch { creationError = "This invitation link is incomplete. Ask for the full link."; }
+
+async function startSignup() {
+  const client = new OwnerWelcome(await storage.load(), storage, accountsOrigin);
+  const contactInvitation = await captureContactInvitation(client, pendingContactInvitation());
+  const preview = contactInvitation ? contactInvitationPreview(contactInvitation) : null;
+  const invitationError = preview && ("error" in preview ? preview.error
+    : preview.expired ? `Your invitation from ${preview.name} has expired. Ask them for a new link.` : null);
+  const resume = new URLSearchParams(window.location.search).get("resume") === "1";
+  if (!resume || contactInvitation) await client.save({ flow: "create" });
+  // Old signup links remain useful destinations, but their codes no longer authorize creation.
+  const url = new URL(window.location.href);
+  const fragment = new URLSearchParams(url.hash.slice(1));
+  if (fragment.has("invite")) { fragment.delete("invite"); url.hash = fragment.toString(); window.history.replaceState(null, "", url); }
+  const connect = async (origin: string, onboardingToken?: string | null) => {
+    const destination = onboardingToken ? signupDestination(origin, onboardingToken, contactInvitation)
+      : contactInvitation ? contactInvitationDestination(origin, contactInvitation) : signupDestination(origin);
+    if (contactInvitation) await client.save({ contactInvite: null });
+    clearContactInvitation();
+    window.location.assign(destination);
+  };
+  render(<AuthScene layout="welcome"><SignupDialog>{invitationError
+    ? <AuthLayout visible><section class="desktop-welcome"><h1>Connect on GSV</h1><p role="alert">{invitationError}</p>
+      <a class="gsv-auth-link" href="/owner/signup/?resume=1" onClick={async (event) => {
+        event.preventDefault(); await client.save({ contactInvite: null }); clearContactInvitation(); window.location.assign("/owner/signup/?resume=1");
+      }}>open my spaces</a></section></AuthLayout>
+    : <OwnerWelcomeScreen ready resume initialStep="email" compact
+      invitation={preview && "name" in preview ? preview : undefined} chooseSpace={!!contactInvitation}
+      addressPanel={contactInvitation ? ({ connect, disabled }) => <SpaceAddressForm disabled={disabled} onConnect={connect} /> : undefined}
+      load={async () => client} onConnect={connect} />}{!contactInvitation && <DesktopAppLink />}</SignupDialog></AuthScene>, app!);
 }
-const invitationError = creationError || (invitationPreview && ("error" in invitationPreview ? invitationPreview.error
-  : invitationPreview.expired ? `Your invitation from ${invitationPreview.name} has expired. Ask them for a new link.` : null));
-const invitation = invitationPreview && "name" in invitationPreview ? invitationPreview : supplied.has("invite") ? {} : undefined;
-render(<AuthScene layout="welcome"><SignupDialog>{invitationError
-  ? <AuthLayout visible><section class="desktop-welcome"><h1>Connect on GSV</h1><p role="alert">{invitationError}</p>
-    <a class="gsv-auth-link" href="/owner/signup/?resume=1" onClick={clearContactInvitation}>open my spaces</a></section></AuthLayout>
-  : <OwnerWelcomeScreen ready resume={resume} initialStep={resume ? "email" : "invite"} compact invitation={invitation}
-    chooseSpace={!!contactInvitation} signupContactCode={contactInvitation ?? undefined}
-    addressPanel={contactInvitation ? ({ connect, disabled }) => <SpaceAddressForm disabled={disabled} onConnect={connect} /> : undefined}
-    load={load} onConnect={connect} />}{!invitation && !contactInvitation && <DesktopAppLink />}</SignupDialog></AuthScene>, app);
+
+void startSignup().catch(() => render(<AuthScene layout="welcome"><SignupDialog><AuthLayout visible>
+  <p role="alert">Could not load sign-in. Reload to try again.</p>
+</AuthLayout></SignupDialog></AuthScene>, app));

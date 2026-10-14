@@ -344,7 +344,6 @@ function makeContext(options?: {
       options?.conversations ?? {},
     ),
     connection: null,
-    coordinateFederationContact: async (_key, operation) => operation(),
     peer: testPeer({ kind: "human", account: identity, calls: options?.capabilities ?? ["repo.refs", "repo.log"] }),
     processId: options?.processId === null ? undefined : options?.processId ?? "task:shell",
     processRunId: options?.processRunId,
@@ -931,7 +930,7 @@ describe("native shell capability discovery", () => {
 
     expect(result.ok).toBe(true);
     expect(result.stdout).toContain("GSV live capability manual");
-    expect(result.stdout).toContain("contact      Invite friends to GSV or connect existing spaces");
+    expect(result.stdout).toContain("contact      Manage trusted contacts with other GSV Ships");
     expect(result.stdout).toContain("message      Send messages, attach files, and route conversations");
     expect(result.stdout).toContain("yield        Finish the active agent run");
     expect(result.stdout).toContain("skills       Inspect and maintain reusable agent workflows");
@@ -4379,7 +4378,7 @@ describe("native administration shell commands", () => {
         isPersonalAgentUid: vi.fn(() => false),
         getShadowByUsername: vi.fn(() => ({ username: IDENTITY.username, hash: "unlocked" })),
       },
-      federation: { cancelInvite, invite: vi.fn(() => ({ ownerUid: IDENTITY.uid, state: "issued" })), transaction: <T>(operation: () => T): T => operation() },
+      federation: { cancelInvite, invite: vi.fn(() => null) },
       processId: "proc:ship",
     });
     const shipResult = await handleShellExec(

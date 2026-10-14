@@ -5,13 +5,16 @@ To connect with another person, invite them through [People](/how-to/contact-peo
 They use their own space; a contact invitation does not create an account in yours.
 An operator can host separate spaces for a [whole team](/how-to/organisations).
 
-## Create a space from an invitation
+## Create a space
 
-Open the signup link you received. A centered invitation opens first; choose
-**Continue**, verify your email and choose a handle. The link
-already includes your invitation; you do not need to copy a separate code. You can
-also paste the whole link into the **Invite code** field. Existing invite codes
-continue to work.
+Open your operator's signup page or choose **Create your space** in Desktop.
+Verify your email, agree to the terms and choose a handle. Registration needs no
+invite code when the operator enables it. One verified email can create one
+self-service Space; existing Spaces remain accessible through **My spaces**.
+
+A friend's contact link opens their invitation first. After signup, continue in
+your Space to choose who handles incoming messages and accept the connection.
+If setup is interrupted, sign in with the same email and continue your saved setup.
 
 ## Sign in
 

@@ -248,8 +248,6 @@ export async function handleContactInviteCreate(
   ctx: KernelContext,
 ): Promise<ContactInviteCreateResult> {
   const ownerUid = requireContactCaller(ctx, true);
-  const includeSignup = z.boolean().optional().parse(args.includeSignup);
-  if (includeSignup && !ctx.env.SPACE_INVITATIONS) throw new Error("Signup invitations are unavailable");
   const shipHandlesMessages = contactHandlingChoice(args.shipHandlesMessages, ctx);
   const now = Date.now();
   pruneFederationState(ctx, now);
@@ -266,7 +264,6 @@ export async function handleContactInviteCreate(
   const token = randomBase64Url(32);
   const tokenHash = await sha256Base64Url(token);
   const expiresAtMs = now + lifetimeMs;
-  let cleanupTaskId: string | undefined;
   const invite = ctx.federation.transaction(() => {
     if (ctx.federation.outstandingInviteCount(ownerUid, now) >= MAX_OUTSTANDING_INVITES_PER_OWNER) {
       throw new Error("Outstanding contact invite limit reached");
@@ -277,7 +274,7 @@ export async function handleContactInviteCreate(
       maximum: MAX_INVITES_CREATED_PER_HOUR,
       windowMs: 60 * 60_000,
     }], now, "Contact invite rate limit reached");
-    const created = ctx.federation.createInvite({
+    return ctx.federation.createInvite({
       ownerUid,
       shipHandlesMessages,
       tokenHash,
@@ -286,8 +283,6 @@ export async function handleContactInviteCreate(
       expiresAtMs,
       now,
     });
-    if (includeSignup) cleanupTaskId = ctx.signupInvitationCleanup.enqueue(created.inviteId, now + 60_000);
-    return created;
   });
   const code = encodeContactInvitation({
     version: 1,
@@ -298,76 +293,36 @@ export async function handleContactInviteCreate(
     expiresAtMs,
   });
   ctx.broadcastToUserUid(ownerUid, "contact.invite.changed");
-  let url = contactInvitationUrl(code, ctx.env.GSV_OWNER_SIGNUP_URL ?? `${document.origin}/connect`);
-  if (includeSignup) {
-    const creationCode = `invite_${token}`;
-    await ctx.coordinateFederationContact(`invitation:${invite.inviteId}`, async () => {
-      try {
-        await ctx.signupInvitationCleanup.arm();
-        if (ctx.federation.invite(invite.inviteId)?.state !== "issued") throw new Error("Contact invitation was cancelled");
-        await ctx.env.SPACE_INVITATIONS!.reserve({ version: 1, installationId: ctx.installationId,
-          contactInviteId: invite.inviteId, code: creationCode, expiresAt: expiresAtMs });
-        if (ctx.federation.invite(invite.inviteId)?.state !== "issued") throw new Error("Contact invitation was cancelled");
-        await ctx.signupInvitationCleanup.complete(cleanupTaskId!);
-        if (ctx.federation.invite(invite.inviteId)?.state !== "issued") throw new Error("Contact invitation was cancelled");
-      } catch (error) {
-        ctx.federation.transaction(() => {
-          const current = ctx.federation.invite(invite.inviteId);
-          if (current?.state === "issued" && current.expiresAtMs > Date.now()) ctx.federation.cancelInvite(invite.inviteId, ownerUid);
-          ctx.signupInvitationCleanup.enqueue(invite.inviteId);
-        });
-        ctx.broadcastToUserUid(ownerUid, "contact.invite.changed");
-        await ctx.signupInvitationCleanup.arm();
-        throw error;
-      }
-    });
-    const signup = new URL(url);
-    const fragment = new URLSearchParams(signup.hash.slice(1));
-    fragment.set("invite", creationCode);
-    signup.hash = fragment.toString();
-    url = signup.href;
-  }
+  const url = contactInvitationUrl(code, ctx.env.GSV_OWNER_SIGNUP_URL ?? `${document.origin}/connect`);
   return { inviteId: invite.inviteId, code, url, expiresAtMs };
 }
 
-export async function handleContactInviteList(
+export function handleContactInviteList(
   args: ContactInviteListArgs,
   ctx: KernelContext,
-): Promise<ContactInviteListResult> {
+): ContactInviteListResult {
   const ownerUid = requireContactCaller(ctx, false);
   const now = Date.now();
   pruneFederationState(ctx, now);
-  const result: ContactInviteListResult = {
+  return {
     invites: ctx.federation
       .listInvites(ownerUid, args.includeTerminal ?? false, now)
       .map((invite) => contactInviteSummary(invite, now)),
   };
-  if (args.includeSignupAllowance && ctx.env.SPACE_INVITATIONS) {
-    result.signupAllowance = await ctx.env.SPACE_INVITATIONS.getAllowance({ version: 1, installationId: ctx.installationId });
-  }
-  return result;
 }
 
-export async function handleContactInviteCancel(
+export function handleContactInviteCancel(
   args: ContactInviteCancelArgs,
   ctx: KernelContext,
-): Promise<ContactInviteCancelResult> {
+): ContactInviteCancelResult {
   const ownerUid = requireContactCaller(ctx, true);
   const now = Date.now();
   const inviteId = args.inviteId.trim();
   if (!inviteId.startsWith("invite:")) throw new Error("Contact invite id is invalid");
-  let changed = false;
-  const invite = ctx.federation.transaction(() => {
-    const previous = ctx.federation.invite(inviteId);
-    if (!previous || previous.ownerUid !== ownerUid) throw new Error("Contact invite not found");
-    if (previous.purpose === "approach") throw new Error("Use the message request decision to withdraw this invitation");
-    const invite = ctx.federation.cancelInvite(inviteId, ownerUid, now);
-    if (ctx.env.SPACE_INVITATIONS) ctx.signupInvitationCleanup.enqueue(inviteId);
-    changed = previous.state !== invite.state;
-    return invite;
-  });
-  if (changed) ctx.broadcastToUserUid(ownerUid, "contact.invite.changed");
-  if (ctx.env.SPACE_INVITATIONS) await ctx.signupInvitationCleanup.arm();
+  const previous = ctx.federation.invite(inviteId);
+  if (previous?.purpose === "approach") throw new Error("Use the message request decision to withdraw this invitation");
+  const invite = ctx.federation.cancelInvite(inviteId, ownerUid, now);
+  if (previous?.state !== invite.state) ctx.broadcastToUserUid(ownerUid, "contact.invite.changed");
   return { invite: contactInviteSummary(invite, now) };
 }
 
@@ -1636,11 +1591,7 @@ async function acceptRemoteInvite(
   });
   const acceptance = await ctx.coordinateFederationContact(
     `pairing:${invite.ownerUid}:${input.document.shipId}:${remoteSubject.id}`,
-    async () => {
-      await ctx.env.SPACE_INVITATIONS?.accept({ version: 1, installationId: ctx.installationId,
-        contactInviteId: invite.inviteId, recipientOrigin: input.document.origin });
-      return claim();
-    },
+    claim,
   );
   if (contactChanged) {
     ctx.broadcastToUserUid(invite.ownerUid, "contact.changed");

@@ -11,7 +11,6 @@ The current contracts are:
 
 - `directory`: hostname and installation identity resolution
 - `onboarding`: one-time installation setup authorization and completion
-- `invitations`: optional signup reservations associated with ordinary contact invitations
 - `entitlements`: a versioned, cacheable map of deployment policy values
 - `inference`: streamed model inference and cancellation
 - `mail`: Gateway mail transport and operational mail inspection
@@ -50,18 +49,6 @@ mode. Preserve existing operator resource identities when adopting the public
 components, as described in the [deployment guide](../how-to/deploy-with-alchemy.md).
 
 ## Entitlements
-
-The optional `SPACE_INVITATIONS` binding lets the Kernel reserve a signup place
-for a contact link. Accounts enforces the installation's allowance atomically,
-stores only a hash of the signup code, and owns cancellation, expiry and creation
-receipts. The Kernel supplies its trusted installation identity and verifies the
-recipient's signed Space identity before accepting the contact. Signup claims do
-not extend reservations; starting Space creation consumes a place durably.
-Existing-space acceptance releases the place. Contact authorization and generation
-fences remain in the Kernel, including each owner's independent handling choice.
-The Kernel revokes contact links locally and persists signup cleanup in its
-existing durable scheduler. An interrupted reservation is cancelled and released;
-Accounts retains cancellations so a delayed reservation cannot recreate them.
 
 Entitlements answer what an installation may use. Keys are strings such as
 `inference.included` or `email.daily_messages`; values are booleans, numbers, or

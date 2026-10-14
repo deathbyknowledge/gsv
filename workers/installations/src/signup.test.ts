@@ -1,0 +1,92 @@
+import { env } from "cloudflare:workers";
+import type { D1Migration } from "cloudflare:test";
+import { describe, expect, it, vi } from "vitest";
+import { AccountStore } from "./store";
+import { InstallationOnboardingStore } from "./onboarding";
+import { InstallationSignup } from "./signup";
+
+const db = env.INSTALLATIONS_DB;
+const accounts = new AccountStore(db, "example.com");
+const onboarding = new InstallationOnboardingStore(db, accounts);
+const signup = new InstallationSignup(db, accounts, onboarding, true);
+const handle = () => `space-${crypto.randomUUID()}`;
+async function owner(verified = true) {
+  const id = `owner_${crypto.randomUUID()}`;
+  await accounts.createPrincipal({ principalId: id, email: `${id}@example.com`, displayName: "Owner", verified });
+  return id;
+}
+
+describe("open registration", () => {
+  it("migrates unfinished code-based setup into the same owner recovery flow", async () => {
+    const principalId = await owner(), operationId = `invite_${crypto.randomUUID()}`, name = handle();
+    const space = await accounts.reserveInstallation({ principalId, operationId, handle: name });
+    await db.prepare(`INSERT INTO installation_creation_invites
+      (id, token_hash, token_prefix, created_at, principal_id, claimed_at, installation_id, updated_at)
+      VALUES (?, ?, 'retired', 1, ?, 1, ?, 1)`)
+      .bind(operationId, crypto.randomUUID(), principalId, space.installationId).run();
+    // SAFETY: The test configuration supplies the exact shipped migration statements.
+    const migrations = (env as Env & { TEST_MIGRATIONS: D1Migration[] }).TEST_MIGRATIONS;
+    const migration = migrations.find((item) => item.name === "0023_open_signup.sql")!;
+    await db.batch(migration.queries.slice(1).map((query) => db.prepare(query)));
+    expect(await signup.pending(principalId)).toEqual([{ operationId, handle: name, origin: space.canonicalOrigin }]);
+    expect((await signup.prepare(operationId, principalId, name)).onboardingToken).toBeTruthy();
+  });
+
+  it("requires a verified owner and rejects closed registration without allocating state", async () => {
+    await expect(signup.prepare(crypto.randomUUID(), await owner(false), handle())).rejects.toThrow("Verified owner");
+    const operationId = crypto.randomUUID();
+    await expect(new InstallationSignup(db, accounts, onboarding, false).prepare(operationId, await owner(), handle())).rejects.toThrow("closed");
+    expect(await accounts.getReservationByOperation(operationId)).toBeNull();
+  });
+
+  it("resumes the same setup after reopening without a signup code", async () => {
+    const principalId = await owner(), operationId = crypto.randomUUID(), name = handle();
+    const first = await signup.prepare(operationId, principalId, name);
+    const space = (await accounts.getReservationByOperation(operationId))!;
+    expect(await accounts.resolveHostname(`${name}.example.com`)).toMatchObject({ ownerSetupRecovery: true });
+    expect(await signup.pending(principalId)).toEqual([{ operationId, handle: name, origin: first.origin }]);
+    const again = await new InstallationSignup(db, accounts, onboarding, false).prepare(operationId, principalId, name);
+    expect(again.origin).toBe(first.origin);
+    const authorization = await onboarding.authorize({ installationId: space.installationId, token: again.onboardingToken! });
+    if (!authorization.ok) throw new Error("Expected authorization");
+    await onboarding.complete({ installationId: space.installationId, claimId: authorization.claimId });
+    expect((await signup.prepare(operationId, principalId, name)).onboardingToken).toBeNull();
+    expect(await signup.pending(principalId)).toEqual([]);
+    await expect(signup.prepare(operationId, await owner(), name)).rejects.toThrow("different reservation");
+    expect(await db.prepare("SELECT COUNT(*) AS count FROM installations WHERE owner_principal_id = ?").bind(principalId).first()).toEqual({ count: 1 });
+  });
+
+  it("atomically allows one self-service space even with concurrent requests from different clients", async () => {
+    const principalId = await owner();
+    const outcomes = await Promise.allSettled([signup.prepare(crypto.randomUUID(), principalId, handle()), signup.prepare(crypto.randomUUID(), principalId, handle())]);
+    expect(outcomes.filter((result) => result.status === "fulfilled")).toHaveLength(1);
+    expect(await db.prepare("SELECT COUNT(*) AS count FROM installations WHERE owner_principal_id = ?").bind(principalId).first()).toEqual({ count: 1 });
+  });
+
+  it("keeps an unavailable handle retryable and does not adopt an operator setup", async () => {
+    const name = handle();
+    await accounts.reserveInstallation({ principalId: await owner(), operationId: crypto.randomUUID(), handle: name });
+    const principalId = await owner(), operationId = crypto.randomUUID();
+    await expect(signup.prepare(operationId, principalId, name)).rejects.toThrow("handle is unavailable");
+    expect(await accounts.getReservationByOperation(operationId)).toBeNull();
+    expect((await signup.prepare(operationId, principalId, handle())).onboardingToken).toBeTruthy();
+    const operatorOwner = await owner();
+    const operator = await accounts.reserveInstallation({ principalId: operatorOwner, operationId: crypto.randomUUID(), handle: handle() });
+    await expect(signup.prepare(operator.operationId, operatorOwner, operator.handle)).rejects.toThrow("unavailable");
+  });
+
+  it("retains policy failures for inspection and only issues setup after policy succeeds", async () => {
+    const principalId = await owner(), operationId = crypto.randomUUID(), name = handle();
+    const policy = { prepare: vi.fn(async (): Promise<void> => { throw new Error("Plan service unavailable"); }) };
+    const managed = new InstallationSignup(db, accounts, onboarding, true, policy);
+    await expect(managed.prepare(operationId, principalId, name)).rejects.toThrow("Reference:");
+    const space = (await accounts.getReservationByOperation(operationId))!;
+    expect(space.state).toBe("reserved");
+    expect(await db.prepare("SELECT 1 FROM installation_onboarding_claims WHERE installation_id = ?").bind(space.installationId).first()).toBeNull();
+    const failure = await db.prepare("SELECT last_error FROM provisioning_operations WHERE operation_id = ?").bind(operationId).first<{ last_error: string }>();
+    expect(JSON.parse(failure!.last_error)).toMatchObject({ diagnosticId: expect.any(String), exceptionMessage: "Plan service unavailable" });
+    await db.prepare("UPDATE installations SET reservation_expires_at = 1 WHERE id = ?").bind(space.installationId).run();
+    policy.prepare.mockResolvedValue(undefined);
+    expect((await managed.prepare(operationId, principalId, name)).onboardingToken).toBeTruthy();
+  });
+});

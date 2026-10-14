@@ -7,7 +7,6 @@ import type { TelemetryEnvironment } from "@humansandmachines/gsv/telemetry";
 import type { WebSearchService } from "@humansandmachines/gsv/services/web-search";
 import type { FeedbackService } from "@humansandmachines/gsv/services/feedback";
 import type { InstancesService } from "@humansandmachines/gsv/services/instances";
-import type { SpaceInvitationsService } from "@humansandmachines/gsv/services/invitations";
 
 /**
  * Deployment service contracts augment the generated platform bindings.
@@ -23,7 +22,6 @@ type GatewayDeploymentBindings = TelemetryEnvironment & {
   WEB_SEARCH?: WebSearchService;
   FEEDBACK?: FeedbackService;
   INSTANCES?: InstancesService;
-  SPACE_INVITATIONS?: SpaceInvitationsService;
 };
 
 export type GatewayEnv = Omit<Env, "INFERENCE_EXECUTION"> & GatewayDeploymentBindings;

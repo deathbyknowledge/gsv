@@ -6,26 +6,24 @@ import { TextInput } from "../../components/ui/TextInput";
 import { Spinner } from "../../components/ui/Spinner";
 import { WelcomeIllustration } from "./backgrounds/WelcomeIllustration";
 import { PrivacyPolicyLink, TermsOfServiceLink } from "./PolicyLinks";
-import { OwnerWelcome, OwnerApiError, type OwnerSession, type OwnedInvite, type WelcomeState } from "../../services/session/ownerWelcome";
-import { parseCreationInvitation } from "@humansandmachines/gsv/protocol";
+import { OwnerWelcome, OwnerApiError, type OwnerSession, type PendingSetup, type WelcomeState } from "../../services/session/ownerWelcome";
 import "./LoginScreen.css";
 import "./OwnerWelcomeScreen.css";
 
-type Step = "welcome" | "invitation" | "invite" | "email" | "code" | "spaces" | "consent" | "handle";
+type Step = "welcome" | "invitation" | "email" | "code" | "spaces" | "consent" | "handle";
 type Props = {
   ready: boolean;
   resume: boolean;
   load(): Promise<OwnerWelcome>;
   onConnect(origin: string, onboardingToken?: string | null): Promise<void>;
   addressPanel?: (options: { disabled: boolean; connect(origin: string): Promise<void> }) => ComponentChildren;
-  initialStep?: "welcome" | "invite" | "email";
+  initialStep?: "welcome" | "email";
   chooseSpace?: boolean;
-  signupContactCode?: string;
   invitation?: { name?: string; origin?: string };
   compact?: boolean;
 };
 
-export function OwnerWelcomeScreen({ ready, resume, load, onConnect, addressPanel, initialStep = "welcome", chooseSpace = false, signupContactCode, invitation, compact = false }: Props) {
+export function OwnerWelcomeScreen({ ready, resume, load, onConnect, addressPanel, initialStep = "welcome", chooseSpace = false, invitation, compact = false }: Props) {
   const [flow, setFlow] = useState<OwnerWelcome | null>(null);
   const [step, setStep] = useState<Step>(invitation ? "invitation" : initialStep);
   const [owner, setOwner] = useState<OwnerSession | null>(null);
@@ -33,7 +31,6 @@ export function OwnerWelcomeScreen({ ready, resume, load, onConnect, addressPane
   const pending = useRef(false);
   const [error, setError] = useState("");
   const [loadError, setLoadError] = useState("");
-  const [inviteCode, setInviteCode] = useState("");
   const [email, setEmail] = useState("");
   const [consent, setConsent] = useState(false);
   const [consentTouched, setConsentTouched] = useState(false);
@@ -49,14 +46,14 @@ export function OwnerWelcomeScreen({ ready, resume, load, onConnect, addressPane
     try { await operation(); }
     catch (failure) {
       setError(failure instanceof Error ? failure.message : "Could not continue. Try again.");
+      if (failure instanceof OwnerApiError && failure.code === "space_exists" && flow) await advance(flow);
       if (failure instanceof OwnerApiError && failure.code === "signed_out") { setOwner(null); setStep("email"); }
     } finally { pending.current = false; setBusy(false); }
   };
-  const openInvite = async (client: OwnerWelcome, invite: OwnedInvite) => {
-    await client.save({ flow: "create", inviteId: invite.id, handle: invite.handle });
+  const openSetup = async (client: OwnerWelcome, setup: PendingSetup) => {
+    await client.save({ flow: "create", operationId: setup.operationId, handle: setup.handle });
     if (!consent) { setStep("consent"); return; }
-    if (!invite.handle) { setHandle(""); setStep("handle"); return; }
-    const prepared = await client.prepare(invite.id, invite.handle);
+    const prepared = await client.prepare(setup.handle, setup.operationId);
     await onConnect(prepared.origin, prepared.onboardingToken);
   };
   const advance = async (client: OwnerWelcome) => {
@@ -64,18 +61,14 @@ export function OwnerWelcomeScreen({ ready, resume, load, onConnect, addressPane
     setOwner(session);
     if (!session) { setStep(client.state.challenge ? "code" : "email"); return; }
     if (client.state.challenge) await client.save({ challenge: null });
-    const friendSignup = signupContactCode && client.state.contactInvite === signupContactCode;
-    if (chooseSpace && (!friendSignup || session.spaces.some((space) => space.state === "active"))) { setStep("spaces"); return; }
-    if (client.state.flow === "create" && client.state.inviteCode) {
-      // Signing in or restoring a session does not imply agreement to create a space.
-      if (!consent) { setStep("consent"); return; }
-      setStep("invite");
-      await openInvite(client, await client.claim());
-    } else if (client.state.flow === "create" && client.state.inviteId) {
-      const invite = session.invites.find((item) => item.id === client.state.inviteId && !["revoked", "expired"].includes(item.state));
-      if (invite) await openInvite(client, invite);
-      else setStep("spaces");
-    } else setStep("spaces");
+    const pendingSetup = session.setups.find((setup) => setup.operationId === client.state.operationId);
+    if (pendingSetup) { await openSetup(client, pendingSetup); return; }
+    if (session.spaces.length || session.setups.length || client.state.flow === "open" || !session.signupEnabled) {
+      setStep("spaces"); return;
+    }
+    // Signing in or restoring a session does not imply agreement to create a space.
+    if (!consent) { setStep("consent"); return; }
+    setHandle(client.state.handle ?? ""); setStep("handle");
   };
 
   useEffect(() => {
@@ -90,8 +83,8 @@ export function OwnerWelcomeScreen({ ready, resume, load, onConnect, addressPane
       }
       if (!mounted) return;
       setFlow(client);
-      setEmail(client.state.challenge?.email ?? ""); setInviteCode(client.state.inviteCode ?? "");
-      if (!invitation && (resume || client.state.challenge || client.state.inviteCode || (client.state.flow === "create" && client.state.inviteId))) await advance(client);
+      setEmail(client.state.challenge?.email ?? "");
+      if (!invitation && (resume || client.state.challenge || client.state.operationId)) await advance(client);
     });
     return () => { mounted = false; };
   }, [ready]);
@@ -113,21 +106,18 @@ export function OwnerWelcomeScreen({ ready, resume, load, onConnect, addressPane
   }, [step, handle, flow]);
 
   const titles = {
-    welcome: "Welcome to GSV", invitation: invitation?.name ? `${invitation.name} invited you to GSV` : "You’re invited to GSV", invite: "Create your space", email: "Your email", code: "Check your email", spaces: "Your spaces", consent: "Before you begin", handle: "Choose your handle",
+    welcome: "Welcome to GSV", invitation: invitation?.name ? `${invitation.name} invited you to GSV` : "You’re invited to GSV", email: "Your email", code: "Check your email", spaces: "Your spaces", consent: "Before you begin", handle: "Choose your handle",
   } satisfies Record<Step, string>;
-  const friendSignup = !!signupContactCode && flow?.state.contactInvite === signupContactCode;
-  const requiresConsent = (!chooseSpace || friendSignup) && (step === "consent" || (step === "email" && flow?.state.flow === "create"));
+  const requiresConsent = step === "consent" || (step === "email" && flow?.state.flow === "create");
   const consentError = requiresConsent && consentTouched && !consent;
   const formError = error === handleError ? loadError : error || loadError;
   const start = (intent: "open" | "create") => void run(async () => {
     setConsent(false); setConsentTouched(false);
     if (intent === "open") setStep("email");
     if (!flow) return;
-    const change: Partial<WelcomeState> = { flow: intent, inviteCode: null, inviteId: null, handle: null };
-    if (flow.state.contactInvite !== undefined) change.contactInvite = null;
+    const change: Partial<WelcomeState> = { flow: intent, operationId: null, handle: null };
     await flow.save(change);
-    if (intent === "create") setStep("invite");
-    else await advance(flow);
+    await advance(flow);
   });
   const submit = (event: Event) => {
     event.preventDefault();
@@ -135,28 +125,24 @@ export function OwnerWelcomeScreen({ ready, resume, load, onConnect, addressPane
     void run(async () => {
       if (!flow) return;
       if (step === "invitation") {
-        if (chooseSpace || flow.state.inviteCode || flow.state.inviteId) await advance(flow);
-        else setStep("invite");
-      } else if (step === "invite") {
-        await flow.save({ flow: "create", inviteCode: parseCreationInvitation(inviteCode), inviteId: null, handle: null });
-        await advance(flow);
-      } else if (step === "email") {
+        await flow.save({ flow: "create" });
+        await advance(flow);      } else if (step === "email") {
         await flow.sendCode(email.trim().toLowerCase()); setStep("code");
       } else if (step === "code") {
         await flow.verify(code); setCode(""); await advance(flow);
       } else if (step === "consent") {
         await advance(flow);
-      } else if (step === "handle" && flow.state.inviteId) {
+      } else if (step === "handle") {
         if (!consent) { setStep("consent"); return; }
-        const prepared = await flow.prepare(flow.state.inviteId, handle.trim());
+        const prepared = await flow.prepare(handle.trim());
         await onConnect(prepared.origin, prepared.onboardingToken);
       }
     });
   };
-  const actionDisabled = !flow || busy || (step === "invite" ? !inviteCode.trim() : step === "email" ? !email.trim()
+  const actionDisabled = !flow || busy || (step === "email" ? !email.trim()
     : step === "code" ? code.length !== 6 : step === "handle" ? !handle.trim() || availability === "unavailable" : false);
   const opening = step === "spaces" || (step === "email" && (chooseSpace || flow?.state.flow !== "create"));
-  const title = friendSignup && step === "email" ? "Join GSV"
+  const title = invitation && step === "email" ? "Join GSV"
     : !opening ? titles[step] : !compact ? "Open your space" : step === "spaces" ? "Choose your space" : "Sign in";
   const split = opening && !!addressPanel && !compact;
   const address = () => addressPanel?.({ disabled: busy, connect: (origin) => run(async () => {
@@ -166,8 +152,7 @@ export function OwnerWelcomeScreen({ ready, resume, load, onConnect, addressPane
   const back = () => {
     setError("");
     if (invitation && step !== "code") { setStep("invitation"); return; }
-    setStep(step === "consent" ? flow?.state.inviteCode ? "invite" : "spaces"
-      : step === "code" ? "email" : step === "email" && flow?.state.flow === "create" ? "invite" : "welcome");
+    setStep(step === "code" ? "email" : "welcome");
   };
 
   return <AuthLayout visible surfaceClass="gsv-auth-surface-login"><section class={`desktop-welcome${step === "welcome" || split ? " desktop-welcome-wide" : ""}`}>
@@ -176,7 +161,6 @@ export function OwnerWelcomeScreen({ ready, resume, load, onConnect, addressPane
       <button class="desktop-welcome-choice" type="button" aria-label="Create your space" disabled={!flow || busy} onClick={() => start("create")}>
         <WelcomeIllustration kind="create" />
         <span class="desktop-welcome-choice-title">Create your space <span aria-hidden="true">→</span></span>
-        <span class="desktop-welcome-detail">Use an invite code</span>
       </button>
       <div class="desktop-welcome-choice desktop-welcome-choice-interactive">
         <WelcomeIllustration kind="open" />
@@ -190,10 +174,8 @@ export function OwnerWelcomeScreen({ ready, resume, load, onConnect, addressPane
       <form key={step} class="gsv-login-fields" onSubmit={submit} aria-busy={busy}>
         {step === "invitation" && <div class="desktop-welcome-invitation">
           {invitation?.origin && <p class="desktop-welcome-detail">{invitation.origin}</p>}
-          <p>{chooseSpace ? friendSignup ? "Create your space, then connect with them." : "Open your space to connect." : "Create a space of your own."}</p>
+          <p>Join GSV or open your space to connect.</p>
         </div>}
-        {step === "invite" && <TextInput label="Invite code" value={inviteCode} onChange={setInviteCode} disabled={busy}
-          placeholder="Paste your link or code" inputProps={{ autoFocus: true, autoComplete: "off", spellcheck: false, maxLength: 2048 }} />}
         {step === "email" && <TextInput label="Email" value={email} onChange={setEmail} disabled={busy} placeholder="you@example.com"
           inputProps={{ autoFocus: true, type: "email", autoComplete: "email", maxLength: 254, required: true }} />}
         {requiresConsent && <div class={`gsv-owner-consent${consentError ? " is-error" : ""}`}>
@@ -221,11 +203,13 @@ export function OwnerWelcomeScreen({ ready, resume, load, onConnect, addressPane
           <p class="desktop-welcome-detail">{owner?.email}</p>
           {owner?.spaces.map((space) => <Button key={space.canonicalOrigin} label={space.handle} variant="secondary" block disabled={busy}
             onClick={() => void run(() => onConnect(space.canonicalOrigin))} />)}
-          {!chooseSpace && owner?.invites.filter((invite) => ["claimed", "provisioning"].includes(invite.state)).map((invite) => <Button key={invite.id}
-            label={invite.handle ? `Continue ${invite.handle}` : "Choose your handle"} variant="secondary" block disabled={busy}
-            onClick={() => void run(() => openInvite(flow!, invite))} />)}
-          {!owner?.spaces.length && (chooseSpace || !owner?.invites.some((invite) => ["claimed", "provisioning"].includes(invite.state))) && <p class="desktop-welcome-detail">No spaces yet.</p>}
-          {!chooseSpace && <Button label="Use an invite" disabled={busy} block onClick={() => start("create")} />}
+          {owner?.setups.map((setup) => <Button key={setup.operationId}
+            label={`Continue ${setup.handle}`} variant="secondary" block disabled={busy}
+            onClick={() => void run(() => openSetup(flow!, setup))} />)}
+          {!owner?.spaces.length && !owner?.setups.length && <>
+            {owner?.signupEnabled ? <Button label="Create your space" disabled={busy} block onClick={() => start("create")} />
+              : <p class="desktop-welcome-detail">Registration is currently closed.</p>}
+          </>}
         </>}
         {step !== "spaces" && <button class="gsv-btn gsv-btn-primary gsv-btn-block desktop-welcome-submit" type="submit" aria-label={step === "email" ? "Send code" : "Continue"} disabled={actionDisabled} autoFocus={step === "invitation"}>
           {busy ? <Spinner /> : <span class="gsv-btn-label">{step === "email" ? "Send code" : "Continue"}</span>}
@@ -243,10 +227,10 @@ export function OwnerWelcomeScreen({ ready, resume, load, onConnect, addressPane
           <button type="button" class="gsv-auth-link" disabled={busy} onClick={() => { setError(""); setCode(""); setStep("email"); }}>Change email</button>
         </div>}
         {owner && step !== "invitation" && <button type="button" class="gsv-auth-link" disabled={busy} onClick={() => void run(async () => {
-          const unclaimed = invitation && flow!.state.inviteCode ? { flow: "create" as const, inviteCode: flow!.state.inviteCode, contactInvite: flow!.state.contactInvite } : null;
+          const contactInvite = flow!.state.contactInvite;
           await flow!.signOut();
-          if (unclaimed) await flow!.save(unclaimed);
-          setOwner(null); setEmail(""); setCode(""); setInviteCode(unclaimed?.inviteCode ?? ""); setConsent(false); setConsentTouched(false);
+          if (contactInvite) await flow!.save({ flow: "create", contactInvite });
+          setOwner(null); setEmail(""); setCode(""); setConsent(false); setConsentTouched(false);
           setStep(invitation ? "invitation" : chooseSpace ? "email" : "welcome");
         })}>Sign out</button>}
       </form>

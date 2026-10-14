@@ -15,42 +15,29 @@ your conversation opens, so you can turn it into a request to Ship.
 
 ## Start a conversation
 
-Choose **connect**. If your operator provides signup invitations, the first step
-asks whether the person is **New to GSV** or **Already on GSV**. Neither is preselected;
-opening the chooser reserves nothing. For an existing user, choose who should handle new messages, then **create connection
-link** and share it wherever you already talk. It connects one person and lasts seven days; you can cancel it before it is
-accepted. In managed spaces, the link opens a centered invitation showing who
-invited you. Choose **Continue** to sign in or select your space.
-The recipient chooses a listed space or enters its address, signs in if needed,
-and chooses who should handle their new messages before accepting the invitation. Entering an address also works for people
-using another operator or a space they do not own. Other deployments open the
-space-address form directly.
-Neither person needs to publish a profile. Acceptance opens the conversation.
+Choose **connect**, choose who should handle new messages, then **create invitation
+link**. Share it wherever you already talk. The same link works for someone new
+to GSV or someone with an existing Space. It connects one person and lasts seven
+days; you can cancel it before acceptance.
 
-If someone gives you a link or an older contact code, open the existing-user flow
-and choose **I have an invitation** to paste it. These invitations are separate from
-[personal access to your own space](/how-to/invite-people).
+In managed spaces, the link opens a centered invitation showing who invited you.
+Choose **Continue**. Existing users select their Space; new users verify their
+email and create one. The contact invitation stays with them through signup and
+setup. In their Space, they choose **Me** or **Ship** and accept the connection.
+Each person's choice affects only their own incoming messages. Neither person
+needs to publish a profile.
 
-You can also ask Ship to invite a friend who is new to GSV, connect someone who
-already has it, or accept an invitation link. Ship asks which case applies and
-who should handle new messages unless you already told it, then creates the link
-or accepts the invitation with that choice. It can also change the choice
-later when you ask. This works in your ordinary Ship conversation, including
-messaging apps; opening People is optional.
+The recipient can also enter a Space address, including a Space on another
+operator. Deployments without a signup service open that address form directly.
+If someone shares a link or a contact code, **I have an invitation** lets you
+paste it in People.
 
-**New to GSV → create invite link** reserves one of your available
-signup places. The form shows how many invites remain. A friend can verify their
-email and create their own Space, then accept your contact invitation. Someone
-who already has GSV opens that Space instead. Each of you chooses **Me** or **Ship**
-for handling new messages; neither choice changes the other person's settings.
+Ship can create or accept these same invitations when asked, after you choose
+who handles new messages. In Shell, use `contact invite create --handling manual`
+or `--handling ship`. There are no signup-place reservations or registration
+codes. Ordinary contact expiry, cancellation and rate limits still apply.
 
-Cancellation, expiry, or acceptance with an existing Space returns the reserved
-place. Once the invitation creates a Space, the place stays used. The displayed
-allowance comes from your plan. In Shell, add `--new-space` to
-`contact invite create --handling manual`; `contact invite list --json` includes
-the signup allowance where available.
-
-Choose **use a profile address** in the existing-user flow to find a saved contact by name or enter
+Choose **use a profile address** to find a saved contact by name or enter
 someone's public profile address. Review the profile and your prefilled display
 name, choose who handles new messages, then send a first message.
 They make their own handling choice when accepting, or can decline it. Acceptance keeps that first message in the same

@@ -6,8 +6,6 @@ import type {
 import {
   federationDeliveryEnvelopeSchema,
   jsonValueSchema,
-  parseContactInvitation,
-  parseCreationInvitation,
 } from "@humansandmachines/gsv/protocol";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { testPeer } from "../test-support/peers";
@@ -53,35 +51,6 @@ const OWNER: ProcessIdentity = {
 describe("federation outbound boundary", () => {
   afterEach(() => {
     vi.restoreAllMocks();
-  });
-
-  it("reserves a signup place for the Kernel's installation before returning one combined link", async () => {
-    const ctx = focusedResourceContext(() => activeContact());
-    let state: "issued" | "cancelled" = "issued";
-    const cancelInvite = vi.fn(() => { state = "cancelled"; });
-    ctx.peer = testPeer({ kind: "human", account: OWNER, calls: ["contact.*"] });
-    Object.assign(ctx.federation, {
-      prune: vi.fn(), transaction: <T>(operation: () => T): T => operation(),
-      outstandingInviteCount: () => 0, consumeRateLimits: () => null,
-      createInvite: () => ({ inviteId: "invite:friend" }),
-      invite: () => ({ state, expiresAtMs: Date.now() + 60_000 }), cancelInvite,
-    });
-    ctx.signupInvitationCleanup = focusedFixture({ enqueue: vi.fn(() => "cleanup"), arm: vi.fn(async () => {}), complete: vi.fn(async () => true) });
-    const reserve = vi.fn(async () => {});
-    ctx.env.GSV_OWNER_SIGNUP_URL = "https://signup.example.com/";
-    ctx.env.SPACE_INVITATIONS = { reserve, cancel: vi.fn(), accept: vi.fn(), getAllowance: vi.fn() };
-    const supplied = { includeSignup: true, shipHandlesMessages: false, installationId: "untrusted" };
-    const result = await handleContactInviteCreate(supplied, ctx);
-    const contact = parseContactInvitation(result.url!).invitation;
-    expect(parseCreationInvitation(result.url!)).toBe(`invite_${contact.token}`);
-    expect(reserve).toHaveBeenCalledExactlyOnceWith({ version: 1, installationId: "installation:test",
-      contactInviteId: result.inviteId, code: `invite_${contact.token}`, expiresAt: result.expiresAtMs });
-    reserve.mockRejectedValue(new Error("All invitation places are in use"));
-    await expect(handleContactInviteCreate(supplied, ctx)).rejects.toThrow("places are in use");
-    expect(state).toBe("cancelled");
-    expect(cancelInvite).toHaveBeenCalledWith("invite:friend", OWNER.uid);
-    expect(ctx.signupInvitationCleanup.enqueue).toHaveBeenLastCalledWith("invite:friend");
-    expect(ctx.signupInvitationCleanup.complete).toHaveBeenCalledOnce();
   });
 
   it("requires the owner's handling choice and preference authority from their canonical Ship", async () => {
@@ -164,13 +133,12 @@ describe("federation outbound boundary", () => {
     expect(broadcastToUserUid).toHaveBeenCalledOnce();
   });
 
-  it("revokes locally without waiting for Accounts and notifies the saved transition once", async () => {
+  it("notifies invitation cancellation once, after the saved transition", () => {
     let state: "issued" | "cancelled" = "issued";
     const broadcastToUserUid = vi.fn();
     const ctx = focusedContext({
       federation: focusedFixture({
-        transaction: <T>(operation: () => T): T => operation(),
-        invite: () => ({ state, ownerUid: OWNER.uid }),
+        invite: () => ({ state }),
         cancelInvite: () => {
           state = "cancelled";
           return { inviteId: "invite:test", state, createdAtMs: 0, cancelledAtMs: Date.now(), expiresAtMs: Date.now() + 60_000 };
@@ -178,16 +146,10 @@ describe("federation outbound boundary", () => {
       }),
       broadcastToUserUid,
     });
-    const cancel = vi.fn(async () => { throw new Error("Accounts unavailable"); });
-    ctx.env.SPACE_INVITATIONS = { cancel, reserve: vi.fn(), accept: vi.fn(), getAllowance: vi.fn() };
-    ctx.signupInvitationCleanup = focusedFixture({ enqueue: vi.fn(() => "cleanup"), arm: vi.fn(async () => {}) });
     broadcastToUserUid.mockImplementation(() => expect(state).toBe("cancelled"));
-    await handleContactInviteCancel({ inviteId: "invite:test" }, ctx);
-    await handleContactInviteCancel({ inviteId: "invite:test" }, ctx);
+    handleContactInviteCancel({ inviteId: "invite:test" }, ctx);
+    handleContactInviteCancel({ inviteId: "invite:test" }, ctx);
     expect(broadcastToUserUid).toHaveBeenCalledExactlyOnceWith(OWNER.uid, "contact.invite.changed");
-    expect(ctx.signupInvitationCleanup.enqueue).toHaveBeenCalledWith("invite:test");
-    expect(ctx.signupInvitationCleanup.arm).toHaveBeenCalled();
-    expect(cancel).not.toHaveBeenCalled();
   });
 
   it("aborts invite discovery without contacting the acceptance endpoint", async () => {

@@ -6,7 +6,7 @@ const snapshotSchema = z.object({
   value: z.object({
     origin: z.string(), flow: z.enum(["open", "create"]), sessionSecret: z.string().nullable(),
     challenge: z.object({ id: z.string(), email: z.string(), browserSecret: z.string() }).nullable(),
-    inviteCode: z.string().nullable(), inviteId: z.string().nullable(), handle: z.string().nullable(),
+    operationId: z.string().nullable().default(null), handle: z.string().nullable(),
     contactInvite: z.string().nullable().optional(),
   }).nullable(),
 });

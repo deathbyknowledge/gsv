@@ -1,3 +1,4 @@
+import type { TelemetryEnvironment } from "@humansandmachines/gsv/telemetry";
 import { WorkerEntrypoint } from "cloudflare:workers";
 import type { InstallationDirectoryResult, InstallationDirectoryService } from "@humansandmachines/gsv/services/directory";
 import type {
@@ -7,8 +8,7 @@ import type {
   InstallationOnboardingAuthorization,
   InstallationOnboardingService,
 } from "@humansandmachines/gsv/services/onboarding";
-import { InstallationCreationInvites } from "./creation-invites";
-import { InstallationInvitesAdminHttp } from "./admin/invites";
+import { InstallationSignup } from "./signup";
 import { AccountStore } from "./store";
 import { InstallationOnboardingStore } from "./onboarding";
 import { InstallationAdminHttp } from "./admin/http";
@@ -22,7 +22,7 @@ import { createAccountsDeletionRuntime } from "./deletion-runtime";
 import { configuredDeletionEnvironment, type DeletionResourceEnvironment } from "./deletion-verifier";
 export { InstallationOwnershipEntrypoint } from "./owner-service";
 
-export default class InstallationService extends WorkerEntrypoint<Env & InstallationOwnerEnvironment & DeletionResourceEnvironment>
+export default class InstallationService extends WorkerEntrypoint<Env & InstallationOwnerEnvironment & DeletionResourceEnvironment & TelemetryEnvironment>
   implements InstallationDirectoryService, InstallationOnboardingService {
   async scheduled(): Promise<void> {
     await cleanExpiredOwnerAuthentication(this.env);
@@ -33,8 +33,8 @@ export default class InstallationService extends WorkerEntrypoint<Env & Installa
     if (request.method === "GET" && new URL(request.url).pathname === "/health") {
       return Response.json({ status: "healthy" });
     }
-    const invitations = new InstallationCreationInvites(this.env.INSTALLATIONS_DB, this.accounts(), this.onboarding());
-    const ownerResponse = await handleInstallationOwnerRequest(request, this.env, OPERATOR_REGISTRY_PRINCIPAL_ID, invitations);
+    const signup = new InstallationSignup(this.env.INSTALLATIONS_DB, this.accounts(), this.onboarding(), this.env.GSV_SIGNUP_ENABLED === "true", undefined, this.env);
+    const ownerResponse = await handleInstallationOwnerRequest(request, this.env, OPERATOR_REGISTRY_PRINCIPAL_ID, signup);
     if (ownerResponse) return ownerResponse;
     if (new URL(request.url).origin !== this.env.GSV_ADMIN_ORIGIN) return new Response("Forbidden", { status: 403 });
     const accounts = this.accounts();
@@ -49,10 +49,8 @@ export default class InstallationService extends WorkerEntrypoint<Env & Installa
       environment: this.env.ENVIRONMENT, origin: this.env.GSV_ADMIN_ORIGIN,
       teamDomain: this.env.GSV_ADMIN_ACCESS_TEAM_DOMAIN, audience: this.env.GSV_ADMIN_ACCESS_AUD,
     }));
-    const inviteResponse = await new InstallationInvitesAdminHttp(invitations, access, this.env.GSV_ADMIN_ORIGIN, undefined, this.env.GSV_OWNER_SIGNUP_ORIGIN).handle(request);
-    if (inviteResponse) return inviteResponse;
     const api = new InstallationAdminHttp(administration, access, this.env.GSV_ADMIN_ORIGIN,
-      { navigation: [{ section: "invites", href: "/admin/invites", label: "Invites" }] },
+      {},
       createAccountsDeletionRuntime(this.env.INSTALLATIONS_DB, configuredDeletionEnvironment(this.env.INSTALLATIONS_DB, this.env)),
     );
     const response = await api.handle(request);
