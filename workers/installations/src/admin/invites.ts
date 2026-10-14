@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { creationInvitationUrl } from "@humansandmachines/gsv/protocol";
 import { InstallationCreationInvites, type CreationInvite } from "../creation-invites";
 import type { InstallationAdminAccess } from "./access";
 import { adminPageResponse, escapeHtml, formatDate } from "./page";
@@ -6,11 +7,11 @@ import { adminRedirect, readAdminForm, requireAdminMutationOrigin, AdminForbidde
 import { readJsonObject } from "../http";
 
 type InvitePolicy = { choices(): Promise<{ id: string; name: string }[]> };
-type InviteAdminReply = { ok: true } | { error: string } | { invites: CreationInvite[] } | { invite: CreationInvite; code: string };
+type InviteAdminReply = { ok: true } | { error: string } | { invites: CreationInvite[] } | { invite: CreationInvite; code: string; url: string };
 
 export class InstallationInvitesAdminHttp {
   constructor(private readonly invitations: InstallationCreationInvites, private readonly access: InstallationAdminAccess,
-    private readonly origin: string, private readonly policy?: InvitePolicy) {}
+    private readonly origin: string, private readonly policy?: InvitePolicy, private readonly signupOrigin?: string) {}
 
   async handle(request: Request): Promise<Response | null> {
     const path = new URL(request.url).pathname;
@@ -37,7 +38,7 @@ export class InstallationInvitesAdminHttp {
         if (plans ? !plans.some((plan) => plan.id === input.policyRef) : input.policyRef) throw new Error("Choose an available plan.");
         invites = api ? [] : await this.invitations.list();
         const issued = await this.invitations.create(input);
-        if (api) return json(issued, 201);
+        if (api) return json({ ...issued, url: this.inviteUrl(issued.code) }, 201);
         issuedCode = issued.code;
         invites = [issued.invite, ...invites].slice(0, 200);
       } else if (request.method === "GET") {
@@ -50,7 +51,7 @@ export class InstallationInvitesAdminHttp {
         <td>${invite.installationId ? `<a href="/admin/installations/${encodeURIComponent(invite.installationId)}">${escapeHtml(invite.handle ?? "Space")}</a>` : "—"}</td>
         <td>${invite.claimedAt ? formatDate(invite.claimedAt) : "—"}</td><td>${invite.installationId || invite.state === "revoked" ? "" : `<form method="post" action="/admin/invites/${encodeURIComponent(invite.id)}/revoke"><button class="secondary">Revoke</button></form>`}</td></tr>`).join("");
       return adminPageResponse({ title: "Invites", section: "invites", navigation: [{ section: "invites", href: "/admin/invites", label: "Invites" }], content: `<section class="stack"><h1>Invites</h1>
-        ${issuedCode ? `<section class="panel"><label>Copy this code<textarea readonly rows="2">${escapeHtml(issuedCode)}</textarea></label><p>It is shown once.</p></section>` : ""}
+        ${issuedCode ? `<section class="panel"><label>Invite link<textarea readonly rows="2">${escapeHtml(this.inviteUrl(issuedCode))}</textarea></label><p>It is shown once.</p></section>` : ""}
         <form method="post" action="/admin/invites" class="panel stack"><label>Note<input name="note" maxlength="160"></label>
           ${plans ? `<label>Plan<select name="policyRef" required>${plans.map((plan) => `<option value="${escapeHtml(plan.id)}">${escapeHtml(plan.name)}</option>`).join("")}</select></label>` : ""}
           <label>Expiry (UTC, optional)<input name="expiresAt" type="datetime-local"></label><button ${plans?.length === 0 ? "disabled" : ""}>Create invite</button>
@@ -64,5 +65,9 @@ export class InstallationInvitesAdminHttp {
         : adminPageResponse({ title: "Invites", section: "invites", status: forbidden ? 403 : 400,
           content: `<section class="narrow stack"><p role="alert">${escapeHtml(message)}</p><a href="/admin/invites">Back to invites</a></section>` });
     }
+  }
+
+  private inviteUrl(code: string): string {
+    return creationInvitationUrl(code, this.signupOrigin ?? new URL("/owner/signup/", this.origin).href);
   }
 }

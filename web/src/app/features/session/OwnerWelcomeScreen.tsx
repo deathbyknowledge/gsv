@@ -173,7 +173,7 @@ export function OwnerWelcomeScreen({ ready, resume, load, onConnect, addressPane
       {opening && <h2>{step === "spaces" ? "Your spaces" : "Sign in with email"}</h2>}
       <form key={step} class="gsv-login-fields" onSubmit={submit} aria-busy={busy}>
         {step === "invite" && <TextInput label="Invite code" value={inviteCode} onChange={setInviteCode} disabled={busy}
-          placeholder="Paste your code" inputProps={{ autoFocus: true, autoComplete: "off", spellcheck: false, maxLength: 128 }} />}
+          placeholder="Paste your link or code" inputProps={{ autoFocus: true, autoComplete: "off", spellcheck: false, maxLength: 2048 }} />}
         {step === "email" && <TextInput label="Email" value={email} onChange={setEmail} disabled={busy} placeholder="you@example.com"
           inputProps={{ autoFocus: true, type: "email", autoComplete: "email", maxLength: 254, required: true }} />}
         {requiresConsent && <div class={`gsv-owner-consent${consentError ? " is-error" : ""}`}>

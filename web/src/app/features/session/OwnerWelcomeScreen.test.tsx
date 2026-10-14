@@ -6,6 +6,8 @@ import { OwnerWelcome, type OwnedInvite, type WelcomeSnapshot } from "../../serv
 import { collectNodes, collectText, createTestRoot, deferred } from "../../testing/testHarness";
 import { OwnerWelcomeScreen } from "./OwnerWelcomeScreen";
 
+const INVITE_CODE = `invite_${"x".repeat(43)}`;
+
 beforeEach(() => vi.stubGlobal("document", {}));
 afterEach(() => vi.unstubAllGlobals());
 
@@ -42,7 +44,7 @@ describe("owner welcome", () => {
   it.each([false, true])("requires agreement before sending a signup email (resumed: %s)", async (resumed) => {
     let snapshot: WelcomeSnapshot = { revision: "initial", value: resumed ? {
       origin: "https://accounts.example.com", flow: "create", sessionSecret: null,
-      challenge: null, inviteCode: "invite_fixture", inviteId: null, handle: null,
+      challenge: null, inviteCode: INVITE_CODE, inviteId: null, handle: null,
     } : null };
     const invite = { id: "invite_fixture", state: "claimed", handle: null, origin: null, lastError: null };
     const fetcher = vi.fn(async (url: string) => {
@@ -72,7 +74,7 @@ describe("owner welcome", () => {
       await root.render(<Harness />);
       if (!resumed) {
         await vi.waitFor(() => expect(field("Invite code")?.props.disabled).toBe(false));
-        await act(() => { field("Invite code").props.onChange?.("invite_fixture"); });
+        await act(() => { field("Invite code").props.onChange?.(INVITE_CODE); });
         await act(() => form().props.onSubmit(new Event("submit")));
       }
       await vi.waitFor(() => expect(field("Email")?.props.disabled).toBe(false));
@@ -105,7 +107,7 @@ describe("owner welcome", () => {
     const invites = hasInvite ? [invite] : [];
     let snapshot: WelcomeSnapshot = { revision: "initial", value: ["sign-in", "resume-empty"].includes(entry) ? null : {
       origin: "https://accounts.example.com", flow: entry === "listed-invite" ? "open" : "create", sessionSecret: "a".repeat(64),
-      challenge: null, inviteCode: entry === "saved-code" ? "invite_fixture" : null,
+      challenge: null, inviteCode: entry === "saved-code" ? INVITE_CODE : null,
       inviteId: hasInvite && entry !== "listed-invite" ? invite.id : null, handle: invite.handle,
     } };
     const fetcher = vi.fn(async (url: string) => {
@@ -159,7 +161,7 @@ describe("owner welcome", () => {
           expect(collectText(tree)).toContain("No spaces yet.");
           await act(() => { button("Use an invite").props.onClick?.(); });
           await vi.waitFor(() => expect(field("Invite code")?.props.disabled).toBe(false));
-          await act(() => { field("Invite code")!.props.onChange?.("invite_fixture"); });
+          await act(() => { field("Invite code")!.props.onChange?.(INVITE_CODE); });
           await act(() => form().props.onSubmit(new Event("submit")));
         }
       } else if (entry === "listed-invite") {

@@ -49,7 +49,7 @@ export default class InstallationService extends WorkerEntrypoint<Env & Installa
       environment: this.env.ENVIRONMENT, origin: this.env.GSV_ADMIN_ORIGIN,
       teamDomain: this.env.GSV_ADMIN_ACCESS_TEAM_DOMAIN, audience: this.env.GSV_ADMIN_ACCESS_AUD,
     }));
-    const inviteResponse = await new InstallationInvitesAdminHttp(invitations, access, this.env.GSV_ADMIN_ORIGIN).handle(request);
+    const inviteResponse = await new InstallationInvitesAdminHttp(invitations, access, this.env.GSV_ADMIN_ORIGIN, undefined, this.env.GSV_OWNER_SIGNUP_ORIGIN).handle(request);
     if (inviteResponse) return inviteResponse;
     const api = new InstallationAdminHttp(administration, access, this.env.GSV_ADMIN_ORIGIN,
       { navigation: [{ section: "invites", href: "/admin/invites", label: "Invites" }] },

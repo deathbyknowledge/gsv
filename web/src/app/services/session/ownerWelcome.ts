@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { parseCreationInvitation } from "@humansandmachines/gsv/protocol";
 
 export const ONBOARDING_KEY = "gsv.ui.installation-onboarding.v1";
 export type WelcomeState = {
@@ -78,7 +79,7 @@ export class OwnerWelcome {
 
   async claim(): Promise<OwnedInvite> {
     if (!this.state.inviteCode) throw new Error("Enter your invite code.");
-    const invite = await this.request("/invites/claim", invitationSchema, { code: this.state.inviteCode });
+    const invite = await this.request("/invites/claim", invitationSchema, { code: parseCreationInvitation(this.state.inviteCode) });
     await this.save({ inviteCode: null, inviteId: invite.id, handle: invite.handle });
     return invite;
   }

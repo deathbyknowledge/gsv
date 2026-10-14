@@ -11,14 +11,19 @@ import { OwnerWelcome } from "../app/services/session/ownerWelcome";
 import { BrowserWelcomeStorage } from "./storage";
 import { DesktopAppLink } from "./DesktopAppLink";
 import { signupDestination } from "./navigation";
-import { contactInvitationDestination } from "@humansandmachines/gsv/protocol";
+import { captureCreationInvitation } from "./invitation";
+import { contactInvitationDestination, parseCreationInvitation } from "@humansandmachines/gsv/protocol";
 import { pendingContactInvitation, contactInvitationPreview, clearContactInvitation } from "../app/services/session/contactInvitationIntent";
 
 const accountsOrigin = window.location.origin;
 const storage = new BrowserWelcomeStorage(accountsOrigin);
 const contactInvitation = pendingContactInvitation();
 const invitationPreview = contactInvitation ? contactInvitationPreview(contactInvitation) : null;
-async function load() { return new OwnerWelcome(await storage.load(), storage, accountsOrigin); }
+async function load() {
+  const client = new OwnerWelcome(await storage.load(), storage, accountsOrigin);
+  await captureCreationInvitation(client, window.location.href, (url) => window.history.replaceState(null, "", url));
+  return client;
+}
 async function connect(origin: string, onboardingToken?: string | null) {
   const destination = contactInvitation ? contactInvitationDestination(origin, contactInvitation) : signupDestination(origin, onboardingToken);
   clearContactInvitation();
@@ -28,8 +33,13 @@ async function connect(origin: string, onboardingToken?: string | null) {
 const app = document.querySelector<HTMLElement>("#app");
 if (!app) throw new Error("Missing #app mount");
 const resume = !!contactInvitation || new URLSearchParams(window.location.search).get("resume") === "1";
-const invitationError = invitationPreview && ("error" in invitationPreview ? invitationPreview.error
-  : invitationPreview.expired ? `Your invitation from ${invitationPreview.name} has expired. Ask them for a new link.` : null);
+let creationError: string | null = null;
+if (new URLSearchParams(window.location.hash.slice(1)).has("invite")) {
+  try { parseCreationInvitation(window.location.href); }
+  catch { creationError = "This invitation link is incomplete. Ask for the full link."; }
+}
+const invitationError = creationError || (invitationPreview && ("error" in invitationPreview ? invitationPreview.error
+  : invitationPreview.expired ? `Your invitation from ${invitationPreview.name} has expired. Ask them for a new link.` : null));
 render(<AuthScene layout="welcome">{invitationError
   ? <AuthLayout visible><section class="desktop-welcome"><h1>Connect on GSV</h1><p role="alert">{invitationError}</p>
     <a class="gsv-auth-link" href="/owner/signup/?resume=1" onClick={clearContactInvitation}>open my spaces</a></section></AuthLayout>
