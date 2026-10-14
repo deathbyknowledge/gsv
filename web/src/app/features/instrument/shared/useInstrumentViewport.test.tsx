@@ -4,7 +4,7 @@ import { useInstrumentViewport } from "./useInstrumentViewport";
 
 async function screen(hasViewport = true) {
   const viewport = Object.assign(new EventTarget(), { height: 844, offsetTop: 0, scale: 1 });
-  const browser = Object.assign(new EventTarget(), { visualViewport: hasViewport ? viewport : null, scrollY: 0 });
+  const browser = Object.assign(new EventTarget(), { visualViewport: hasViewport ? viewport : null });
   const properties = new Map<string, string>();
   const element = { clientHeight: 844, style: {
     setProperty: (key: string, value: string) => { properties.set(key, value); },
@@ -94,36 +94,6 @@ describe("instrument viewport", () => {
     } finally { await view.unmount(); }
   });
 
-  it("keeps the background covering the viewport when iOS scrolls the document for the keyboard", async () => {
-    const view = await screen();
-    try {
-      view.browser.scrollY = 403;
-      view.browser.dispatchEvent(new Event("scroll"));
-      view.viewport.height = 471;
-      view.viewport.offsetTop = 341;
-      view.viewport.dispatchEvent(new Event("scroll"));
-      expect(view.frames.size).toBe(1);
-      view.flush();
-      expect(view.properties.get("--instrument-document-top")).toBe("403px");
-      expect(view.properties.get("--instrument-viewport-top")).toBe("341px");
-      expect(view.properties.get("--instrument-viewport-height")).toBe("471px");
-
-      view.browser.scrollY = 40;
-      view.browser.dispatchEvent(new Event("scroll"));
-      view.viewport.offsetTop = 0;
-      view.viewport.height = 844;
-      view.viewport.dispatchEvent(new Event("resize"));
-      view.flush();
-      expect(view.properties.get("--instrument-document-top")).toBe("40px");
-      expect(view.properties.get("--instrument-viewport-height")).toBe("844px");
-
-      view.browser.scrollY = -12;
-      view.browser.dispatchEvent(new Event("scroll"));
-      view.flush();
-      expect(view.properties.get("--instrument-document-top")).toBe("0px");
-    } finally { await view.unmount(); }
-  });
-
   it("leaves CSS sizing in charge when the viewport API is unavailable", async () => {
     const view = await screen(false);
     try {
@@ -143,7 +113,6 @@ describe("instrument viewport", () => {
     view.viewport.dispatchEvent(new Event("resize"));
     view.viewport.dispatchEvent(new Event("scroll"));
     view.browser.dispatchEvent(new Event("resize"));
-    view.browser.dispatchEvent(new Event("scroll"));
     expect(view.frames.size).toBe(0);
   });
 });

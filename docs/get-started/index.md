@@ -77,8 +77,6 @@ closes the menu and keeps your drafts. Tap **GSV** to return to Chat.
 In the browser and when added to your Home Screen, the header and bottom controls
 leave room for your phone's notch and home indicator. The star field still fills
 the screen, continuing behind the home indicator in the Home Screen app.
-In Safari, the background can also show beneath the browser's translucent controls;
-the header and prompt stay inside the visible page area.
 Opening the keyboard keeps the composer above it; closing the keyboard
 restores the conversation's available space. Sign-in and setup use the same layout.
 

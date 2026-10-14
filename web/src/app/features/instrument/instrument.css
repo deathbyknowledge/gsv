@@ -15,10 +15,8 @@
   /* the instrument's own faces: Martian Mono for the machine, Host Grotesk for the person and the ship */
   --gsv-font-mono: "Martian Mono", "IBM Plex Mono", "JetBrains Mono", monospace;
   --gsv-font-prose: "Host Grotesk", "Avenir Next", "Segoe UI", sans-serif;
-  /* Safari clips fixed backgrounds above its browser controls. Keep the sky in
-   * the document and anchor only the transparent content viewport below. */
-  position: absolute;
-  inset: var(--instrument-document-top, 0px) 0 auto;
+  position: fixed;
+  inset: 0 0 auto;
   /* iOS standalone can size the dynamic viewport short of the screen. Keep the
    * background at the large viewport height; only the content follows the keyboard. */
   height: 100%;
@@ -84,11 +82,10 @@
 /* Apply device insets before text zoom; background layers still fill the entire screen.
  * The keyboard covers the home indicator, so its occlusion consumes the bottom safe area. */
 .instrument-viewport {
-  position: fixed;
-  height: var(--instrument-height);
+  position: absolute;
   inset: calc(var(--instrument-viewport-top, 0px) + var(--instrument-safe-top))
     var(--instrument-safe-right)
-    auto
+    calc(var(--instrument-viewport-bottom, 0px) + var(--instrument-safe-bottom))
     var(--instrument-safe-left);
 }
 /* Modal dialogs enter the browser's top layer, outside the content box's positioning. */

@@ -15,7 +15,8 @@
   -webkit-font-smoothing: antialiased;
 }
 .gsv-auth-scene {
-  inset: var(--instrument-document-top, 0px) 0 auto;
+  position: fixed;
+  inset: 0 0 auto;
 }
 .gsv-auth-header {
   position: absolute;
