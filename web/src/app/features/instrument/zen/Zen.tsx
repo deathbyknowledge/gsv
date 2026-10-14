@@ -1123,15 +1123,7 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
               place={currentPlace}
               showPlace={false}
               dir="~"
-              placeholder={
-                pendingHil
-                  ? "answer the approval first"
-                  : !promptFocused
-                    ? "Start chatting, or click here to chat"
-                    : currentPlace.online
-                      ? "Ask in plain words, or start with $ to run a terminal command yourself"
-                      : `Ask in plain words; ${currentPlace.label} will run it when it's back`
-              }
+              placeholder="Message your ship"
               disabled={!connected || !pid || recordingVoice}
               onSubmit={onSubmit}
               allowEmpty={attachments.length > 0}

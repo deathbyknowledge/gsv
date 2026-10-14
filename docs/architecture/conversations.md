@@ -20,6 +20,8 @@ The Chat transcript scrolls vertically. Long words, URLs and compaction notes wr
 reading column; wide tables and code blocks scroll horizontally within their own bounds.
 When the reader scrolls above the latest chat message, a small button returns the transcript to
 the bottom and resumes following new replies.
+The Chat composer always uses "Message your ship" as its empty-field placeholder, across focus,
+connection and approval states.
 
 ## Conversation kinds
 

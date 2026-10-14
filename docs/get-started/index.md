@@ -95,7 +95,8 @@ Press `Ctrl+K` from any view to open the same search. In Chat, `/` opens search 
 mode, and `Ctrl/Cmd+F` also works while typing. Open a match to read the
 surrounding conversation. Closing search returns to your place and draft.
 
-The composer starts on **your cloud** (`gsv`). Choose another place explicitly
+The composer always shows **Message your ship** when empty. It starts on
+**your cloud** (`gsv`). Choose another place explicitly
 when you want a message or command to target it; that choice stays while you
 move between views. The header stays above the scrolling content.
 
