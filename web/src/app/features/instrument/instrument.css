@@ -16,7 +16,11 @@
   --gsv-font-mono: "Martian Mono", "IBM Plex Mono", "JetBrains Mono", monospace;
   --gsv-font-prose: "Host Grotesk", "Avenir Next", "Segoe UI", sans-serif;
   position: fixed;
-  inset: 0;
+  inset: 0 0 auto;
+  /* iOS standalone can size the dynamic viewport short of the screen. Keep the
+   * background at the large viewport height; only the content follows the keyboard. */
+  height: 100%;
+  height: 100lvh;
   background: var(--void);
   color: var(--text);
   font-family: var(--gsv-font-mono);
@@ -85,10 +89,11 @@
     var(--instrument-safe-left);
 }
 /* Modal dialogs enter the browser's top layer, outside the content box's positioning. */
+/* Their bottom edge is relative to the browser viewport, not the taller star field. */
 .instrument-viewport dialog:modal {
   inset: calc((var(--instrument-viewport-top, 0px) + var(--instrument-safe-top)) / var(--type-scale))
     calc(var(--instrument-safe-right) / var(--type-scale))
-    calc((var(--instrument-viewport-bottom, 0px) + var(--instrument-safe-bottom)) / var(--type-scale))
+    calc(100% - (var(--instrument-viewport-top, 0px) + var(--instrument-viewport-height, 100dvh) - var(--instrument-safe-bottom)) / var(--type-scale))
     calc(var(--instrument-safe-left) / var(--type-scale));
   max-width: calc((100vw - var(--instrument-safe-left) - var(--instrument-safe-right)) / var(--type-scale) - 12px);
 }

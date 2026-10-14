@@ -10,7 +10,7 @@ body,
   margin: 0;
   width: 100%;
   height: 100%;
-  height: 100dvh;
+  height: 100lvh;
   overflow: hidden;
   overscroll-behavior: none;
 }
