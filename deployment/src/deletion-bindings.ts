@@ -41,7 +41,7 @@ export function GsvDeletionDiscoveryBindings(
 
 type ManifestResource = InstallationDeletionManifest["owners"][number]["resources"][number];
 export type GsvDeletionResourceScopes = Record<string, {
-  kind: Exclude<ManifestResource["kind"], "durable-object">; namespace: string;
+  kind: Exclude<ManifestResource["kind"], "durable-object">; namespace: string; r2Prefix?: "installation-root";
 }[]>;
 
 /** Declares ownership only. External cleanup remains unknown until the operator records scoped evidence. */
@@ -57,11 +57,16 @@ export function GsvDeletionResourceBindings(
       throw new Error("Deletion scopes require the application owners and a separately declared operator catalog");
     }
     for (const resources of Object.values(owners)) for (const resource of resources) {
-      if (resource.kind === "r2" && !catalog.some((entry) => entry.source === "cloudflare-r2-multipart" && entry.namespace === resource.namespace)) {
+      if (resource.kind === "r2" && !catalog.some((entry) => entry.source === "cloudflare-r2-multipart" && entry.namespace === resource.namespace
+        && entry.r2Prefix === resource.r2Prefix)) {
         throw new Error("Deletion inventory must account for multipart uploads in every application bucket");
       }
     }
-    return { ...owners, [OPERATOR_RESOURCE_OWNER]: catalog.map(({ kind, namespace }) => ({ kind, namespace })) };
+    return { ...owners, [OPERATOR_RESOURCE_OWNER]: catalog.map(({ kind, namespace, r2Prefix }) => {
+      const resource: GsvDeletionResourceScopes[string][number] = { kind, namespace };
+      if (r2Prefix) resource.r2Prefix = r2Prefix;
+      return resource;
+    }) };
   }));
   return directory.bind(logicalId, { bindings: [
     { type: "json", name: "DELETION_RESOURCE_SCOPES", json: scopes },

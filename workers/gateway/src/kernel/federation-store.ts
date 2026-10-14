@@ -53,6 +53,7 @@ type FederationInviteBase = {
   inviteId: string;
   purpose: "private" | "approach";
   ownerUid: number;
+  shipHandlesMessages: boolean;
   tokenHash: string;
   issuingShipId: string;
   issuingOrigin: string;
@@ -78,6 +79,7 @@ export type FederationInviteRecord = FederationInviteBase & (
 type FederationPairingAttemptBase = {
   tokenHash: string;
   ownerUid: number;
+  shipHandlesMessages: boolean;
   expiresAtMs: number;
   remoteShipId: string;
   remoteSubjectId: string;
@@ -311,6 +313,7 @@ const CONTACT_SELECT = `SELECT c.*, EXISTS (
 ) AS actor_blocked FROM federation_contacts c`;
 
 type InviteRow = {
+  ship_handles_messages: number;
   purpose: "private" | "approach";
   invite_id: string;
   owner_uid: number;
@@ -331,6 +334,7 @@ type InviteRow = {
 };
 
 type PairingAttemptRow = {
+  ship_handles_messages: number;
   token_hash: string;
   owner_uid: number;
   expires_at: number;
@@ -577,6 +581,7 @@ export class FederationStore {
 
   createInvite(input: {
     purpose?: "private" | "approach";
+    shipHandlesMessages?: boolean;
     ownerUid: number;
     tokenHash: string;
     issuingShipId: string;
@@ -589,8 +594,8 @@ export class FederationStore {
     this.sql.exec(
       `INSERT INTO federation_invites
        (invite_id, owner_uid, token_hash, issuing_ship_id, issuing_origin,
-        state, expires_at, created_at, purpose)
-       VALUES (?, ?, ?, ?, ?, 'issued', ?, ?, ?)`,
+        state, expires_at, created_at, purpose, ship_handles_messages)
+       VALUES (?, ?, ?, ?, ?, 'issued', ?, ?, ?, ?)`,
       inviteId,
       input.ownerUid,
       input.tokenHash,
@@ -599,6 +604,7 @@ export class FederationStore {
       input.expiresAtMs,
       now,
       input.purpose ?? "private",
+      input.shipHandlesMessages ? 1 : 0,
     );
     return this.inviteByTokenHash(input.tokenHash)!;
   }
@@ -621,6 +627,7 @@ export class FederationStore {
   }
 
   beginPairingAttempt(input: {
+    shipHandlesMessages?: boolean;
     tokenHash: string;
     ownerUid: number;
     expiresAtMs: number;
@@ -645,6 +652,10 @@ export class FederationStore {
       ) {
         throw new Error("Contact pairing attempt identity changed");
       }
+      if (existing.state === "pending" && input.shipHandlesMessages !== undefined
+        && existing.shipHandlesMessages !== input.shipHandlesMessages) {
+        throw new Error("This invitation is already connecting with a different handling choice; keep that choice until connected, then change it in People");
+      }
       return existing;
     }
     const now = input.now ?? Date.now();
@@ -661,8 +672,8 @@ export class FederationStore {
     this.sql.exec(
       `INSERT INTO federation_pairing_attempts (
          token_hash, owner_uid, expires_at, remote_ship_id, remote_subject_id,
-         remote_origin, remote_public_key_json, state, created_at, updated_at
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)`,
+         remote_origin, remote_public_key_json, state, created_at, updated_at, ship_handles_messages
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?)`,
       input.tokenHash,
       input.ownerUid,
       input.expiresAtMs,
@@ -672,6 +683,7 @@ export class FederationStore {
       JSON.stringify(input.remotePublicKey),
       now,
       now,
+      input.shipHandlesMessages ? 1 : 0,
     );
     return this.pairingAttempt(input.tokenHash)!;
   }
@@ -783,6 +795,7 @@ export class FederationStore {
     preferredContactId?: string;
     preferredConversationId?: string;
     saved?: boolean;
+    shipHandlesMessages?: boolean;
     now?: number;
   }): FederationContactRecord {
     if (this.isActorBlocked(input.ownerUid, { shipId: input.remoteShipId, subjectId: input.remoteSubject.id })) {
@@ -814,7 +827,7 @@ export class FederationStore {
     );
     if (existing) {
       if (existing.generation !== input.generation) {
-        this.sql.exec("UPDATE federation_contacts SET ship_handles_messages = 0, policy_revision = policy_revision + 1 WHERE contact_id = ?", existing.id);
+        this.sql.exec("UPDATE federation_contacts SET ship_handles_messages = ?, policy_revision = policy_revision + 1 WHERE contact_id = ?", input.shipHandlesMessages ? 1 : 0, existing.id);
         this.sql.exec(
           `UPDATE federation_requests SET
              state = 'cancelled', revision = revision + 1, updated_at = ?,
@@ -889,8 +902,8 @@ export class FederationStore {
          contact_id, owner_uid, state, generation, remote_ship_id,
          remote_subject_id, remote_display_name, remote_origin,
          remote_public_key_json, shared_secret, conversation_id, thread_id,
-         created_at, updated_at, saved
-       ) VALUES (?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         created_at, updated_at, saved, ship_handles_messages
+       ) VALUES (?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       contactId,
       input.ownerUid,
       input.generation,
@@ -905,6 +918,7 @@ export class FederationStore {
       now,
       now,
       input.saved === false ? 0 : 1,
+      input.shipHandlesMessages ? 1 : 0,
     );
     return this.get(contactId)!;
   }
@@ -1971,6 +1985,7 @@ function contactFromRow(row: ContactRow): FederationContactRecord {
 
 function inviteFromRow(row: InviteRow): FederationInviteRecord {
   const base: FederationInviteBase = {
+    shipHandlesMessages: row.ship_handles_messages === 1,
     inviteId: row.invite_id,
     purpose: row.purpose,
     ownerUid: row.owner_uid,
@@ -2011,6 +2026,7 @@ function inviteFromRow(row: InviteRow): FederationInviteRecord {
 
 function pairingAttemptFromRow(row: PairingAttemptRow): FederationPairingAttemptRecord {
   const base: FederationPairingAttemptBase = {
+    shipHandlesMessages: row.ship_handles_messages === 1,
     tokenHash: row.token_hash,
     ownerUid: row.owner_uid,
     expiresAtMs: row.expires_at,

@@ -14,6 +14,12 @@ conversation. Users can inspect the referenced Process while it exists or read i
 Web and Desktop render Ship's Markdown code blocks at a readable monospace size with a copy action.
 Long lines scroll inside the block. Copy preserves indentation and internal line breaks without
 adding the renderer's final newline to the clipboard.
+Chat renders human messages as plain text with clickable web URLs. External web links in human
+messages and Ship's Markdown replies open in a new tab.
+The Chat transcript scrolls vertically. Long words, URLs and compaction notes wrap within the
+reading column; wide tables and code blocks scroll horizontally within their own bounds.
+When the reader scrolls above the latest chat message, a small button returns the transcript to
+the bottom and resumes following new replies.
 
 ## Conversation kinds
 
@@ -109,16 +115,18 @@ contact destinations remain fixed. Personal Ship replies follow the owner's curr
   not play a notification or act as though the response was directed to them.
 - Adapters buffer Process output and deliver only the committed message. Provider-specific reply
   threading remains transport metadata.
-- A human message to Ship selects its originating endpoint. Real foreground input in Web or Desktop
-  also selects that client, at most once every 30 seconds; connecting, focusing a window, history
-  reads and keepalives do not. This preference survives the end of a run and Process replacement.
+- A human message to Ship selects its originating endpoint. Clicking, scrolling and typing without
+  sending never select a destination. Activity in the selected Web or Desktop client refreshes its
+  idle timer, at most once every 30 seconds; connecting, focusing, history reads and keepalives do not.
+  This preference survives the end of a run and Process replacement.
 - When the selected client disconnects or has been inactive for five minutes, Ship uses the owner's
   last authorized linked private messenger destination. A new messenger message selects that
-  messenger; returning to interact with the app selects the app again. Without a usable destination,
+  messenger; sending a new message in the app selects that client again. Activity cannot revive an
+  expired selection. Without a usable destination,
   the message remains in canonical history.
 - Idle expiry includes 30 seconds of reporting grace so throttled input cannot cause an early
   fallback. Accepted inputs preserve their preference decision across retries without replacing
-  newer activity. The Kernel orders input before asynchronous preparation, so overlapping sends
+  newer messages. The Kernel orders input before asynchronous preparation, so overlapping sends
   select the newest input regardless of which preparation finishes first.
 - Each outgoing message records its delivery decision before the canonical append. Retrying an
   uncertain append does not notify a different endpoint after the preference changes. Receipts expire after
@@ -133,6 +141,12 @@ was streamed: a match sends the remainder as one last delta, a difference aborts
 the client drops the preview and shows the committed message. A Send that fails validation, a
 generation that fails or retries, and a run that is interrupted, superseded, reset or killed also abort
 their projections, so no partial text outlives its message. Adapters never see the projection.
+
+Sending a message and yielding remain separate even when requested in one call. If
+outstanding responsibilities prevent a requested yield, the valid message still commits
+and stays visible while the Process continues working. The tool result identifies the
+remaining work and confirms that the message was sent, so Ship can finish or defer the
+work and yield without sending the same reply again.
 
 New Ship approval notifications use the same reply preference and authorized messenger fallback.
 Delegated Work retains its inherited approval route. An already queued adapter delivery keeps its
@@ -161,6 +175,20 @@ small Process-owned index, while reasoning, tool arguments, results, and message
 owner and are resolved only when a user inspects a span.
 
 ## Storage and retention
+
+Instrument's People indicator and Zen activity strip read the ordinary owner-scoped
+inbox with `attentionOnly: true` and the incoming request list. The Kernel filters
+unread, active, unmuted, unblocked conversations before pagination; the caller selects
+the usual archived state. Existing `conversation.changed`, `contact.changed` and
+`approach.changed` signals invalidate those bounded reads, and reconnect refreshes
+them. Attention survives reload through the private inbox projection. Zen and People
+observe the same paginated conversation cache; Zen has no separate live-message or
+replied-notice store. Only unfinished reply drafts and their submitted send identities
+remain local. A draft retains the read position where it began, so reads elsewhere do
+not hide its context or pull older read history into the panel. Each send retains the
+exact sequence it answers, so a later arrival stays unread when that reply completes.
+A failed read update leaves the inbox authoritative
+and surfaces the error without repeating the successful send.
 
 The Kernel Durable Object stores the conversation directory, membership, optional handler, surface
 mapping, latest sequence and private inbox projection. Contact previews, read positions and archive
@@ -205,7 +233,8 @@ native saves apply to the attachment blobs resolved by the authenticated fronten
 
 ## Search
 
-Zen opens conversation search with `/` in browse mode or `Ctrl/Cmd+F`; People uses the same search
+Chat opens conversation search from its header action or with `Ctrl+K` from any view.
+`/` in browse mode and `Ctrl/Cmd+F` in Chat remain available. People uses the same search
 dialog and syscall for the selected contact conversation. Selecting a result shows the
 original message and surrounding messages in the dialog, preserving the conversation position and
 any draft when the dialog closes.
@@ -256,3 +285,7 @@ the Kernel has resolved owner, route, Process, and conversation identity.
 
 Conversation IDs are opaque. Installation identity remains the outer physical boundary for the
 Kernel, Conversation Durable Object names, and R2 keys.
+
+Internal compaction handovers remain in Process history and its archives. Chat
+does not present them as “Memory” messages or interrupt the composer when the
+working context changes.

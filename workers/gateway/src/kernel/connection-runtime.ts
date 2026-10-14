@@ -176,11 +176,13 @@ async handleSysConnect(
     frame: RequestFrame<"sys.connect">,
   ): Promise<void> {
     const ctx = this.host.buildContext(connection);
-    const username = frame.args.auth?.username;
+    const username = frame.args.auth?.username ?? (frame.args.auth ? ctx.auth.getHumanAccount()?.username : undefined);
     const existingAccount = username ? ctx.auth.getPasswdByUsername(username) : null;
     const credentialEpoch = existingAccount ? ctx.auth.credentialEpoch(existingAccount.uid) : 0;
-
-    const outcome = await handleConnect(frame.args, ctx);
+    const args = frame.args.auth && username
+      ? { ...frame.args, auth: { ...frame.args.auth, username } }
+      : frame.args;
+    const outcome = await handleConnect(args, ctx);
 
     if (!outcome.ok) {
       this.host.transport.sendError(connection, frame.id, outcome.code, outcome.message, outcome.details);

@@ -1,7 +1,7 @@
 import type { ConsoleModelListing } from "./consoleSettings";
 import type { ConsoleConfigEntry } from "./consoleModels";
 import { z } from "zod";
-import { DEFAULT_TOOL_APPROVAL_POLICY } from "@humansandmachines/gsv/protocol";
+import { DEFAULT_TOOL_APPROVAL_POLICY, toolApprovalTargetSchema, type ToolApprovalTarget } from "@humansandmachines/gsv/protocol";
 import {
   approvalTargetFromValue,
   protectManagedMailApproval,
@@ -46,7 +46,7 @@ type ApprovalWireValue = z.input<typeof approvalValueSchema>;
 const legacyApprovalTargetSchema = z.object({ target: z.string().optional() });
 const approvalRuleWireSchema = z.object({
   match: z.string().catch(""),
-  target: z.string().optional().catch(undefined),
+  target: toolApprovalTargetSchema.optional(),
   when: approvalValueSchema.optional(),
   action: approvalValueSchema,
 });
@@ -193,7 +193,7 @@ export function approvalActionFromValue(value: ApprovalWireValue): AgentApproval
   return parsed.success ? parsed.data : "ask";
 }
 
-function legacyApprovalTarget(value: ApprovalWireValue): string | undefined {
+function legacyApprovalTarget(value: ApprovalWireValue): ToolApprovalTarget | undefined {
   const parsed = legacyApprovalTargetSchema.safeParse(value);
   if (!parsed.success) return undefined;
   return approvalTargetFromValue(parsed.data.target === "device" ? "targets/*" : parsed.data.target);

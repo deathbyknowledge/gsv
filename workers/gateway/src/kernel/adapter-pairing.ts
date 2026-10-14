@@ -1,4 +1,5 @@
-import { canLinkAdapter, interactivePairingOwner } from "./adapter-pairing-policy";
+import { adapterPairingOwner, canLinkAdapter, interactivePairingOwner } from "./adapter-pairing-policy";
+import { authorizeNestedOperation } from "./tool-approval";
 import type {
   AdapterPairingCandidate,
   AdapterPairingPreparation,
@@ -15,7 +16,7 @@ import type {
   AdapterPairInspectResult,
 } from "@humansandmachines/gsv/protocol";
 import * as z from "zod/mini";
-import type { KernelContext } from "./context";
+import { principalOf, type KernelContext } from "./context";
 import type { IdentityLinkRecord } from "./identity-links";
 import {
   stableOpaqueId,
@@ -65,18 +66,22 @@ const managedIdentityLinkMetadataSchema = z.looseObject({
   routeGeneration: z.string().check(z.minLength(1)),
 });
 
-function requireInteractivePairingOwner(ctx: KernelContext, syscall: string): number {
-  const uid = interactivePairingOwner(ctx);
-  if (uid === null) throw new Error(`${syscall} requires a direct signed-in user with an active human account`);
+function requirePairingOwner(ctx: KernelContext, syscall: string): number {
+  const uid = syscall === "adapter.pair.disconnect" ? interactivePairingOwner(ctx) : adapterPairingOwner(ctx);
+  if (uid === null) throw new Error(`${syscall} requires a direct signed-in user or an authorized process owned by an active human account`);
   if (syscall === "adapter.pair.confirm" && !canLinkAdapter(ctx)) throw new Error("This account cannot complete messenger linking");
   return uid;
 }
+
+type PairingConfirmation = AdapterPairConfirmArgs & {
+  uid: number; credentialEpoch: number; operationId: string; canonicalOrigin: string; humanConfirmed: boolean;
+};
 
 export async function handleAdapterPairInfo(
   args: AdapterPairInfoArgs,
   ctx: KernelContext,
 ): Promise<AdapterPairInfoResult> {
-  requireInteractivePairingOwner(ctx, "adapter.pair.info");
+  requirePairingOwner(ctx, "adapter.pair.info");
   const adapter = normalizeAdapterName(args.adapter);
   const service = await requirePairingService(ctx, adapter);
   const info = await readAdapterPairingInfo(service, ctx);
@@ -87,6 +92,7 @@ export async function handleAdapterPairInfo(
   };
   if (info.botUsername) result.botUsername = info.botUsername;
   if (info.installUrl) result.installUrl = info.installUrl;
+  if (info.instructions) result.instructions = info.instructions;
   return result;
 }
 
@@ -94,7 +100,7 @@ export async function handleAdapterPairInspect(
   args: AdapterPairInspectArgs,
   ctx: KernelContext,
 ): Promise<AdapterPairInspectResult> {
-  requireInteractivePairingOwner(ctx, "adapter.pair.inspect");
+  requirePairingOwner(ctx, "adapter.pair.inspect");
   const adapter = normalizeAdapterName(args.adapter);
   const code = normalizePairingCode(args.code);
   const service = await requirePairingService(ctx, adapter);
@@ -110,10 +116,12 @@ export async function handleAdapterPairConfirm(
   args: AdapterPairConfirmArgs,
   ctx: KernelContext,
 ): Promise<AdapterPairConfirmResult> {
-  const uid = requireInteractivePairingOwner(ctx, "adapter.pair.confirm");
+  const uid = requirePairingOwner(ctx, "adapter.pair.confirm");
   const credentialEpoch = ctx.auth.credentialEpoch(uid);
   const adapter = normalizeAdapterName(args.adapter);
   const code = normalizePairingCode(args.code);
+  await authorizeNestedOperation(ctx, "adapter.pair.confirm", { adapter });
+  ctx.requestSignal?.throwIfAborted();
   const service = await requirePairingService(ctx, adapter);
   if (!(await readAdapterPairingInfo(service, ctx)).configured) throw new Error("The operator has not enabled this messenger");
   const canonicalOrigin = ctx.installationIdentity?.canonicalOrigin;
@@ -130,6 +138,7 @@ export async function handleAdapterPairConfirm(
     adapterInstallationContext(ctx),
     code,
   ).catch(async () => {
+    ctx.requestSignal?.throwIfAborted();
     const prepared = await service.adapterPairingPrepare!(adapterInstallationContext(ctx), {
       code,
       installationId: ctx.installationId,
@@ -139,6 +148,7 @@ export async function handleAdapterPairConfirm(
     });
     return requirePairingPreparation(prepared, ctx.installationId, uid).candidate;
   }));
+  ctx.requestSignal?.throwIfAborted();
   const existingLink = ctx.adapters.identityLinks.get(
     adapter,
     existingCandidate.accountId,
@@ -147,23 +157,43 @@ export async function handleAdapterPairConfirm(
   if (existingLink && existingLink.uid !== uid) {
     throw new Error("This external identity is linked to another user in this GSV");
   }
+  const humanConfirmed = !ctx.processId || (existingLink?.linkedByUid === uid
+    && existingLink.metadata?.managed === true && existingLink.metadata.humanConfirmed !== false);
   const retainedLink = ctx.adapters.identityLinks.getForCleanup(adapter, existingCandidate.accountId, existingCandidate.actorId);
-  if (retainedLink && (!existingLink || (
+  const cleanup = retainedLink && (!existingLink || (
     retainedLink.metadata?.managed === true
     && retainedLink.metadata.operationId !== operationId
-  ))) {
+  )) ? retainedLink : null;
+  const completion = prepareAdapterPairing(ctx, service, existingCandidate, cleanup, {
+    adapter, code, uid, credentialEpoch, operationId, canonicalOrigin, humanConfirmed,
+  });
+  // Replacing a link owns completion from the first destructive operation.
+  if (cleanup) ctx.defer(completion);
+  return completion;
+}
+
+async function prepareAdapterPairing(
+  ctx: KernelContext,
+  service: AdapterPairingWorkerInterface,
+  existingCandidate: AdapterPairingCandidate,
+  cleanup: IdentityLinkRecord | null,
+  confirmation: PairingConfirmation,
+): Promise<AdapterPairConfirmResult> {
+  const { adapter, code, uid, credentialEpoch, operationId, canonicalOrigin } = confirmation;
+  if (cleanup) {
     // Only a live, inspected external claim may release a revoked or superseded route for a successor.
     if (existingCandidate.expiresAt <= Date.now()) throw new Error("Pairing code expired");
     if (ctx.auth.isAccountDisabled(uid) || ctx.auth.credentialEpoch(uid) !== credentialEpoch) {
       throw new Error("Account credentials changed during pairing; sign in again");
     }
-    if (retainedLink.metadata?.managed === true) {
-      await disconnectManagedIdentityLink(retainedLink, ctx);
+    if (cleanup.metadata?.managed === true) {
+      await disconnectManagedIdentityLink(cleanup, ctx);
     } else {
       ctx.adapters.identityLinks.unlink(adapter, existingCandidate.accountId, existingCandidate.actorId);
     }
   }
 
+  if (!cleanup) ctx.requestSignal?.throwIfAborted();
   const prepared = requirePairingPreparation(await service.adapterPairingPrepare!(
     adapterInstallationContext(ctx),
     {
@@ -174,6 +204,7 @@ export async function handleAdapterPairConfirm(
       canonicalOrigin,
     },
   ), ctx.installationId, uid);
+  if (!cleanup) ctx.requestSignal?.throwIfAborted();
   if (
     prepared.candidate.actorId !== existingCandidate.actorId
     || prepared.candidate.surfaceId !== existingCandidate.surfaceId
@@ -187,14 +218,27 @@ export async function handleAdapterPairConfirm(
   if (ctx.auth.isAccountDisabled(uid) || ctx.auth.credentialEpoch(uid) !== credentialEpoch) {
     throw new Error("Account credentials changed during pairing; sign in again");
   }
+  // Once activation starts, the Kernel owns completion even if the caller stops waiting.
+  const completion = completeAdapterPairing(ctx, service, prepared, confirmation);
+  if (!cleanup) ctx.defer(completion);
+  return completion;
+}
+
+async function completeAdapterPairing(
+  ctx: KernelContext,
+  service: AdapterPairingWorkerInterface,
+  prepared: AdapterPairingPreparation,
+  { adapter, code, uid, credentialEpoch, operationId, canonicalOrigin, humanConfirmed }: PairingConfirmation,
+): Promise<AdapterPairConfirmResult> {
   ctx.adapters.identityLinks.link(
     adapter,
     prepared.candidate.accountId,
     prepared.candidate.actorId,
     uid,
-    uid,
+    humanConfirmed ? uid : principalOf(ctx)!.account.uid,
     {
       managed: true,
+      humanConfirmed,
       surfaceKind: "dm",
       surfaceId: prepared.candidate.surfaceId,
       routeScope: pairingRouteScope(prepared.candidate),
@@ -275,7 +319,7 @@ export async function handleAdapterPairDisconnect(
   args: AdapterPairDisconnectArgs,
   ctx: KernelContext,
 ): Promise<AdapterPairDisconnectResult> {
-  const uid = requireInteractivePairingOwner(ctx, "adapter.pair.disconnect");
+  const uid = requirePairingOwner(ctx, "adapter.pair.disconnect");
   const adapter = normalizeAdapterName(args.adapter);
   const accountId = args.accountId.trim();
   const actorId = args.actorId.trim();

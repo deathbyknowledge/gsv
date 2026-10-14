@@ -2283,6 +2283,7 @@ mod tests {
         })
         .expect("body channel");
         let descriptor = FrameBodyDescriptor {
+            delivery: None,
             stream_id: 7,
             length: Some(64),
         };
@@ -2444,6 +2445,7 @@ mod tests {
             .unwrap();
         let body = channel
             .receive(gateway_client::FrameBodyDescriptor {
+                delivery: None,
                 stream_id: 41,
                 length: Some(1),
             })

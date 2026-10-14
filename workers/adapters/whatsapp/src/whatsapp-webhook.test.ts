@@ -194,7 +194,7 @@ describe("WhatsApp webhook normalization", () => {
     });
   });
 
-  it("turns a quick-reply tap on the template into a release event that is not relayed", () => {
+  it("preserves the template button text as a human reply", () => {
     const result = normalizeWhatsAppWebhook(notification([{
       from: "34611111189", id: "wamid.tap", type: "button", timestamp: "1700000200",
       context: { from: "34600000000", id: "wamid.template" },
@@ -206,6 +206,7 @@ describe("WhatsApp webhook normalization", () => {
         kind: "release",
         tap: {
           interactionId: "wamid.tap",
+          text: "Show me",
           actorId: "34611111189",
           surfaceId: "34611111189",
           providerMessageId: "wamid.template",

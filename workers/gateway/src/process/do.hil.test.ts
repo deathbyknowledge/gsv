@@ -58,6 +58,7 @@ describe("proc.hil", () => {
         "fs.read",
         { path: "/root/allowed.txt" },
         undefined,
+        undefined,
       );
       expect(process.store.tools.getResults(runId)).toMatchObject([
         {
@@ -139,6 +140,7 @@ describe("proc.hil", () => {
         "dispatch-offered-read-after-codemode",
         "fs.read",
         { path: "/root/allowed.txt" },
+        undefined,
         undefined,
       );
       expect(process.store.tools.getResults(runId)).toMatchObject([
@@ -712,6 +714,7 @@ describe("proc.hil", () => {
         "fs.read",
         { path: "/private/input" },
         process.runs.active.approvalPolicy,
+        undefined,
         undefined,
       );
       expect(process.sendSignal).toHaveBeenCalledWith(

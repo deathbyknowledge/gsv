@@ -17,7 +17,7 @@ export function SessionScreens({ session, snapshot }: SessionScreensProps) {
   return <section class="session-screen" data-session-screen data-session-view={visibleView} hidden={visibleView === "ready"} ref={state.screenRef}>
     <div class={`session-stage${visibleView === "booting" ? " session-stage-booting" : ""}`}>
       <LoginScreen visible={visibleView === "login" || visibleView === "booting"} loading={visibleView === "booting"}
-        busy={state.busy} {...state.login} />
+        busy={state.busy} space={new URL(snapshot.url).host} {...state.login} />
       <SetupScreen visible={visibleView === "setup"} busy={state.busy} space={new URL(snapshot.url).host} {...state.setup} />
       {visibleView === "setup-recovery" && <AuthLayout background="galaxy" visible surfaceClass="gsv-auth-surface-login">
         <div class="gsv-login-panel">

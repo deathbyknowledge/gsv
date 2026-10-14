@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { ProcHistoryRecordData } from "@humansandmachines/gsv/protocol";
 import { initProcess, ROOT_IDENTITY, runInProcess } from "./do-test-harness";
 import { buildProcContextState, estimateContextInputTokens } from "./context-pressure";
-import { renderCompactionTranscriptWindow } from "./history/compaction-renderer";
+import { renderCompactionTranscriptChunks } from "./history/compaction-renderer";
 import type { Process } from "./do";
 
 const personNotice: ProcHistoryRecordData = { kind: "event", payload: {
@@ -65,7 +65,7 @@ describe("Process history audiences", () => {
       const state = measuredContext(process);
       const policy = { overflow: "auto-compact", compactAtPressure: 0.9, compactToPressure: 0.4, updatedAt: 100 } as const;
       for (const trigger of ["preflight", "provider-overflow"] as const) {
-        expect(process.history.selectAutoCompactionPrefix("current", state, context, policy, trigger)).toEqual([]);
+        expect(process.history.selectActiveCompactionPrefix("current", state, context, policy, { trigger })).toEqual([]);
       }
     });
   });
@@ -99,10 +99,10 @@ describe("Process history audiences", () => {
           measurement: { estimatedInputTokens: tokens, inputTokens: tokens, confirmedInputTokens: 0,
             estimatedTrailingInputTokens: tokens, source: "estimate" }, updatedAt: 100,
         });
-        const selected = process.history.selectAutoCompactionPrefix("current", state, context, {
+        const selected = process.history.selectActiveCompactionPrefix("current", state, context, {
           overflow: "auto-compact", compactAtPressure: 0.9, compactToPressure: 0.4, updatedAt: 100,
-        }, "preflight");
-        const transcript = renderCompactionTranscriptWindow(process.store.messages.getMessages(), 250_000);
+        }, { trigger: "preflight" });
+        const transcript = [...renderCompactionTranscriptChunks(process.store.messages.getMessages(), 250_000)].join("").trimEnd();
         expect(transcript).not.toContain("PERSON ONLY");
         expect(process.store.messages.getRecords().filter((record) => record.kind === "event")).toHaveLength(withNotices ? 2 : 0);
         return {

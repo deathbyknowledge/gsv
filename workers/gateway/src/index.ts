@@ -58,6 +58,7 @@ export { Process } from "./process/do";
 export { Conversation } from "./conversation/do";
 export { GatewayLifecycleEntrypoint } from "./installation/deletion-entrypoint";
 export { GatewayRecoveryEntrypoint } from "./installation/recovery-entrypoint";
+export { InstancesGatewayEntrypoint } from "./installation/instances-entrypoint";
 
 export default {
   async fetch(request, env): Promise<Response> {

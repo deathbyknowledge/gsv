@@ -54,6 +54,44 @@ async function fixture() {
 }
 
 describe("Accounts deletion runtime", () => {
+  it("imports and deletes installation-owned browsers without requiring adapter inventory imports", async () => {
+    const state = await fixture();
+    const instances = new ExternalOwner();
+    const erase = vi.spyOn(instances, "eraseInstallation");
+    const gateway: InstallationDeletionDiscoveryService = {
+      inspectInstallationDeletion: vi.fn(),
+      importInstallationDeletionInventory: vi.fn(async (input) => ({ installationId: input.installationId,
+        discoverySha256: input.discoverySha256, outcome: "verified" as const, verifiedAt: state.manifest.capturedAt })),
+    };
+    const namespaceId = "b".repeat(32);
+    const resources: InstallationDeletionInventoryImport["resources"] = [
+      { kind: "kernel", objectId: "a".repeat(64), name: state.old.installationId },
+    ];
+    state.manifest.owners.find((owner) => owner.id === "gateway")!.resources = resources.map((resource) => ({
+      kind: "durable-object", namespace: resource.kind, resourceId: resource.objectId, name: resource.name,
+    }));
+    state.manifest.owners.push({ id: "instances", resources: [
+      { kind: "durable-object", namespace: namespaceId, resourceId: "b".repeat(64), name: state.old.installationId },
+      { kind: "r2", namespace: "browser-profiles", resourceId: `${state.old.installationId}/` },
+    ], evidence: [{ id: "browser-scan", reference: "test://scan/instances", sha256: "b".repeat(64), capturedAt: state.manifest.capturedAt }] });
+    const makeRuntime = () => new AccountsDeletionRuntime(state.db, { ...state.owners, instances }, state.resolver, 20,
+      () => state.manifest.capturedAt, { gateway, namespaces: { [namespaceId]: { ownerId: "instances", kind: "instance-installation" } } });
+    const runtime = makeRuntime();
+    await runtime.retire(state.old.installationId, { operationId: state.operationId, confirmHandle: state.old.handle });
+    const registered = await runtime.registerInventory(state.old.installationId, state.manifest);
+    expect(await runtime.importInventory(state.old.installationId, {
+      installationId: state.old.installationId, discoverySha256: registered.sha256, resources,
+    })).toMatchObject({ outcome: "verified" });
+    await runtime.begin(state.old.installationId, { operationId: state.operationId, inventorySha256: registered.sha256 });
+    const restarted = makeRuntime();
+    let status = await restarted.status(state.old.installationId);
+    for (let attempt = 0; attempt < 15 && status.phase !== "live-erased"; attempt++) status = await restarted.retry(state.old.installationId);
+    expect(status.phase).toBe("live-erased");
+    expect(erase).toHaveBeenCalledWith({ version: 1, operationId: state.operationId, installationId: state.old.installationId });
+    expect(gateway.importInstallationDeletionInventory).toHaveBeenCalledOnce();
+    expect(await state.accounts.resolveInstallation(state.second.installationId)).toMatchObject({ state: "active" });
+  });
+
   it("drains owner verification records in bounded batches while retaining global owner access", async () => {
     const f = await fixture();
     const attempt = await f.db.prepare("SELECT id FROM installation_owner_attempts WHERE installation_id = ? LIMIT 1")

@@ -159,6 +159,9 @@ failed delivery closes that connection so reconnect recovers it too.
 
 The ledger labels `conversation.search` as “searched a conversation”; its query remains
 inspectable in the owning user's ledger arguments like other syscall inputs.
+An explicit `sys.browser.profile.save` is labeled “save browser state”; its
+arguments identify the instance, while cookies and website storage stay inside
+the instance service and never enter ledger arguments.
 
 ## Cost
 

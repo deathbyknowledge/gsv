@@ -65,6 +65,9 @@ export function hasRawToolCallMarkupOutput(response: AssistantMessage): boolean 
 export function isRetryableGenerationErrorMessage(message: string): boolean {
   const normalized = message.toLowerCase();
   return normalized.includes("subrequest depth limit exceeded") ||
+    normalized.includes("readablestream received over rpc disconnected prematurely") ||
+    normalized.includes("network connection lost") ||
+    normalized.includes("connection closed: this durable object instance is no longer active") ||
     normalized.includes("reasoning but no final response") ||
     normalized.includes("malformed tool call markup") ||
     normalized.includes("generation returned no text") ||

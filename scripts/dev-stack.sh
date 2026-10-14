@@ -8,11 +8,12 @@ DEV_STATE_DIR="$(cd "$DEV_STATE_DIR" && pwd -P)"
 
 cd "$ROOT_DIR"
 npm run gsv:build
+npm run browser:build
 npm run build --workspace web
 
 (
   cd "$ROOT_DIR/workers/installations"
-  CI=1 npm exec --workspaces=false -- wrangler d1 migrations apply INSTALLATIONS_DB \
+  CI=1 "$ROOT_DIR/node_modules/.bin/wrangler" d1 migrations apply INSTALLATIONS_DB \
     --config wrangler.dev.jsonc --local --persist-to "$DEV_STATE_DIR"
 )
 
@@ -22,9 +23,12 @@ printf 'Listening on 127.0.0.1 only; administration uses the configured localhos
 printf 'State: %s\n\n' "$DEV_STATE_DIR"
 
 cd "$ROOT_DIR/workers/ripgit"
-exec env CLOUDFLARE_INCLUDE_PROCESS_ENV=false npm exec --workspaces=false -- wrangler dev \
+exec env CLOUDFLARE_INCLUDE_PROCESS_ENV=false node \
+  --import "$ROOT_DIR/tools/instances/dev-browser-version.mjs" \
+  "$ROOT_DIR/node_modules/.bin/wrangler" dev \
   --config "$ROOT_DIR/workers/gateway/wrangler.dev.jsonc" \
   --config "$ROOT_DIR/workers/installations/wrangler.dev.jsonc" \
   --config "$ROOT_DIR/workers/inference/wrangler.dev.jsonc" \
+  --config "$ROOT_DIR/workers/instances/wrangler.dev.jsonc" \
   --config "$ROOT_DIR/workers/ripgit/wrangler.dev.jsonc" \
   --ip 127.0.0.1 --port 8976 --local --persist-to "$DEV_STATE_DIR"

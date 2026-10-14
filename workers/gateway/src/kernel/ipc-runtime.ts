@@ -320,6 +320,9 @@ completeIpcCallsForProcessSignal(
     };
     if (payload?.result?.media?.length) response.media = payload.result.media;
     const status = payload?.status ?? "ok";
+    if (status !== "ok" && status !== "error" && status !== "aborted") {
+      throw new Error("Invalid process run completion status");
+    }
     const reason = payload?.reason ?? null;
     const error = payload?.error
       ? payload.error
@@ -339,6 +342,7 @@ completeIpcCallsForProcessSignal(
       uid: ownerUid,
       targetPid: processId,
       runId,
+      runStatus: status,
       response,
       error,
     });
@@ -365,11 +369,13 @@ returnDelegatedResponsibility(call: IpcCallRecord): void {
 
     const outcome = call.status === "timed_out"
       ? "timed_out"
-      : call.error?.toLowerCase().includes("killed")
-        ? "killed"
-        : call.error
-          ? "failed"
-          : "completed";
+      : call.runStatus === "aborted"
+        ? "aborted"
+        : call.error?.toLowerCase().includes("killed")
+          ? "killed"
+          : call.error
+            ? "failed"
+            : "completed";
     const eventType = `process.delegation.${outcome}`;
     const completedAtMs = Date.now();
     const delegation: JsonObject = {
@@ -380,6 +386,7 @@ returnDelegatedResponsibility(call: IpcCallRecord): void {
       status: call.status,
       completedAtMs,
     };
+    if (call.runStatus) delegation.runStatus = call.runStatus;
     if (call.sourceRunId) delegation.sourceRunId = call.sourceRunId;
     if (call.error) delegation.error = call.error.slice(0, 2_000);
     const updated = this.host.responsibilities.update({

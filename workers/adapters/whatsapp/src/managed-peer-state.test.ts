@@ -7,13 +7,10 @@ import {
   finalizeManagedWhatsAppPairing,
   prepareManagedWhatsAppPairing,
   WHATSAPP_CUSTOMER_SERVICE_WINDOW_MS,
-  whatsAppTemplatePending,
   whatsAppWindowOpen,
-  withPendingWhatsAppTemplate,
   type ManagedWhatsAppPeerRoute,
   type ManagedWhatsAppPeerState,
 } from "./managed-peer-state";
-import { HELD_OUTBOUND_RETENTION_MS } from "./whatsapp-held-outbound";
 
 const previousRoute: ManagedWhatsAppPeerRoute = {
   installationId: "installation-old",
@@ -72,42 +69,17 @@ describe("managed WhatsApp peer state", () => {
     expect(whatsAppWindowOpen({ version: 1, actorId: "1", surfaceId: "1" }, now)).toBe(false);
   });
 
-  it("resolves a pending template with the person's next message and keeps it across replays", () => {
+  it("does not reopen the window for duplicate or delayed receipts", () => {
     const now = 1_700_000_000_000;
     const identity = { actorId: "34611111189", surfaceId: "34611111189" };
-    const base = bindManagedWhatsAppPeerIdentity(undefined, { ...identity, messageId: "wamid.one", timestamp: now - 5_000 }, now);
-    const pending = withPendingWhatsAppTemplate(base, now, "wamid.template");
-    expect(pending.pendingTemplate).toEqual({
-      sentAt: now,
-      expiresAt: now + HELD_OUTBOUND_RETENTION_MS,
-      messageId: "wamid.template",
-    });
-    expect(whatsAppTemplatePending(pending, now)).toBe(true);
-    expect(whatsAppTemplatePending(pending, now + HELD_OUTBOUND_RETENTION_MS)).toBe(false);
-    expect(whatsAppTemplatePending(base, now)).toBe(false);
-
-    const replay = bindManagedWhatsAppPeerIdentity(pending, { ...identity, messageId: "wamid.zero", timestamp: now - 60_000 }, now);
-    expect(replay.pendingTemplate).toEqual(pending.pendingTemplate);
-    const duplicate = bindManagedWhatsAppPeerIdentity(pending, { ...identity, messageId: "wamid.one", timestamp: now - 5_000 }, now);
-    expect(duplicate.pendingTemplate).toEqual(pending.pendingTemplate);
-    const distinctSameTime = bindManagedWhatsAppPeerIdentity(pending, { ...identity, messageId: "wamid.other", timestamp: now - 5_000 }, now);
-    expect(distinctSameTime.pendingTemplate).toBeUndefined();
-    const answered = bindManagedWhatsAppPeerIdentity(pending, { ...identity, messageId: "wamid.two", timestamp: now + 1_000 }, now + 1_000);
-    expect(answered.pendingTemplate).toBeUndefined();
-    expect(answered).toMatchObject({ lastInboundAt: now + 1_000, lastInboundMessageId: "wamid.two" });
-  });
-
-  it("keeps the pending template when a newer receipt is still outside the service window", () => {
-    const now = 1_700_000_000_000;
-    const identity = { actorId: "34611111189", surfaceId: "34611111189" };
-    const before = bindManagedWhatsAppPeerIdentity(undefined, { ...identity, messageId: "wamid.old", timestamp: now - 2 * WHATSAPP_CUSTOMER_SERVICE_WINDOW_MS }, now);
-    const pending = withPendingWhatsAppTemplate(before, now, "wamid.template");
-    const delayed = bindManagedWhatsAppPeerIdentity(pending, { ...identity, messageId: "wamid.delayed", timestamp: now - WHATSAPP_CUSTOMER_SERVICE_WINDOW_MS }, now);
+    const old = { ...identity, messageId: "wamid.old", timestamp: now - 2 * WHATSAPP_CUSTOMER_SERVICE_WINDOW_MS };
+    const before = bindManagedWhatsAppPeerIdentity(undefined, old, now);
+    const duplicate = bindManagedWhatsAppPeerIdentity(before, { ...old, timestamp: now }, now);
+    expect(duplicate.lastInboundAt).toBe(before.lastInboundAt);
+    const delayed = bindManagedWhatsAppPeerIdentity(before, { ...identity, messageId: "wamid.delayed", timestamp: now - WHATSAPP_CUSTOMER_SERVICE_WINDOW_MS }, now);
     expect(whatsAppWindowOpen(delayed, now)).toBe(false);
-    expect(delayed.pendingTemplate).toEqual(pending.pendingTemplate);
     const fresh = bindManagedWhatsAppPeerIdentity(delayed, { ...identity, messageId: "wamid.fresh", timestamp: now }, now);
     expect(whatsAppWindowOpen(fresh, now)).toBe(true);
-    expect(fresh.pendingTemplate).toBeUndefined();
   });
 
   it("keeps the old route live until explicit confirmation activates the new one", () => {

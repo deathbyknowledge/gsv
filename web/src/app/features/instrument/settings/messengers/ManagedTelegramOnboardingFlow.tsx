@@ -186,7 +186,6 @@ function ManagedMessengerOnboardingFlow({
     key: `managed-${adapterId}`,
     navLabel: platform.toUpperCase(),
     parentLabel: "MESSENGERS",
-    icon: installsApp ? "chat" : isWhatsApp ? "whatsapp" : "telegram",
     title: `Connect ${platform}`,
     blurb: installsApp
       ? `Install the GSV app, mention it in ${platform}, then confirm your identity here.`

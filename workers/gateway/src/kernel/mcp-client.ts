@@ -20,6 +20,7 @@ import {
 import type { JsonObject } from "@humansandmachines/gsv/protocol";
 import { z } from "zod";
 import { McpOAuthProvider, parseOAuthState } from "./mcp-oauth-provider";
+import { McpOAuthClient, OAuthSSEClientTransport, OAuthStreamableHTTPClientTransport } from "./mcp-oauth-client";
 
 /**
  * MCP client sessions owned by the Kernel: one `Client` from the MCP SDK per
@@ -105,6 +106,7 @@ export type McpClientTransport = Transport & {
 
 export type McpConnectionOptions = {
   transport: McpTransportOptions;
+  onAuthorizationRequired?: () => void;
   /** Called after a server-announced list change has been applied. */
   onListsChanged?: () => void;
   /** Test seam; production connections build the SDK transports. */
@@ -161,6 +163,7 @@ export class McpClientConnection implements McpConnection {
   private transport?: { kind: McpTransportKind; instance: McpClientTransport };
   private discoveryAbort?: AbortController;
   private discoveryAttempt = 0;
+  private readonly authorization?: McpOAuthClient;
 
   constructor(
     readonly url: URL,
@@ -168,6 +171,16 @@ export class McpClientConnection implements McpConnection {
     readonly options: McpConnectionOptions,
   ) {
     this.client = new Client(info, { jsonSchemaValidator: new CfWorkerJsonSchemaValidator() });
+    const provider = options.transport.authProvider;
+    if (provider) {
+      this.authorization = new McpOAuthClient(url, provider, options.transport.requestInit);
+      provider.onAuthorizationRequired = () => {
+        this.cancelDiscovery();
+        this.connectionState = "authenticating";
+        this.connectionError = null;
+        this.options.onAuthorizationRequired?.();
+      };
+    }
   }
 
   get sessionId(): string | undefined {
@@ -210,7 +223,9 @@ export class McpClientConnection implements McpConnection {
 
   /** Connect the transport. Returns the error message when the connection failed. */
   async init(): Promise<string | undefined> {
+    const attempt = this.discoveryAttempt;
     const probe = await this.tryConnect(this.options.transport.type);
+    if (attempt !== this.discoveryAttempt && probe.state !== "authenticating") return undefined;
     this.connectionState = probe.state;
     return probe.state === "failed" ? probe.error : undefined;
   }
@@ -256,12 +271,14 @@ export class McpClientConnection implements McpConnection {
           );
         }),
       ]);
+      if (attempt !== this.discoveryAttempt) return { success: false };
       this.connectionState = "ready";
       this.connectionError = null;
       return { success: true };
     } catch (error) {
       // Stop the list requests still in flight so a late answer cannot land.
       abort.abort();
+      if (attempt !== this.discoveryAttempt) return { success: false };
       this.connectionState = "connected";
       const message = errorMessage(error);
       this.connectionError = `Failed to discover MCP server capabilities: ${message}`;
@@ -273,6 +290,11 @@ export class McpClientConnection implements McpConnection {
   }
 
   cancelDiscovery(): void {
+    this.discoveryAttempt += 1;
+    // SAFETY: this private counter object has exactly the ServerLists keys and never gains properties.
+    for (const list of Object.keys(this.listGenerations) as Array<keyof ServerLists>) {
+      this.listGenerations[list] += 1;
+    }
     this.discoveryAbort?.abort();
     this.discoveryAbort = undefined;
   }
@@ -283,6 +305,7 @@ export class McpClientConnection implements McpConnection {
     if (transport?.kind === "streamable-http" && transport.instance.sessionId) {
       await transport.instance.terminateSession?.().catch(() => undefined);
     }
+    await this.authorization?.close();
     await this.client.close();
   }
 
@@ -352,11 +375,15 @@ export class McpClientConnection implements McpConnection {
     if (this.options.createTransport) {
       return this.options.createTransport(kind, this.url, this.options.transport);
     }
-    const { authProvider, requestInit, sessionId } = this.options.transport;
+    const { requestInit, sessionId } = this.options.transport;
     if (kind === "streamable-http") {
-      return new StreamableHTTPClientTransport(this.url, { authProvider, requestInit, sessionId });
+      return this.authorization
+        ? new OAuthStreamableHTTPClientTransport(this.url, { requestInit, sessionId }, this.authorization)
+        : new StreamableHTTPClientTransport(this.url, { requestInit, sessionId });
     }
-    return new SSEClientTransport(this.url, { authProvider, requestInit });
+    return this.authorization
+      ? new OAuthSSEClientTransport(this.url, { requestInit }, this.authorization)
+      : new SSEClientTransport(this.url, { requestInit });
   }
 
   /**
@@ -422,6 +449,7 @@ export class McpClientConnection implements McpConnection {
     list: K,
     fetch: (signal?: AbortSignal) => Promise<ServerLists[K]>,
   ): Promise<void> {
+    if (this.connectionState === "authenticating") return;
     if (await this.refreshList(list, fetch)) this.options.onListsChanged?.();
   }
 
@@ -654,11 +682,7 @@ export class McpClientManager {
           return { state: "failed", error: "OAuth configuration incomplete: missing authUrl" };
         }
         const clientId = provider.registeredClientId;
-        const row = this.options.rows.get(id);
-        if (row) {
-          this.options.rows.save({ ...row, auth_url: authUrl, client_id: clientId ?? null });
-          this.fireStateChanged();
-        }
+        this.publishAuthorization(id, connection);
         return clientId === undefined
           ? { state: "authenticating", authUrl }
           : { state: "authenticating", authUrl, clientId };
@@ -701,6 +725,48 @@ export class McpClientManager {
     return this.track(serverId, this.connectAndDiscover(serverId));
   }
 
+  async refreshConnection(serverId: string): Promise<void> {
+    const inFlight = this.pending.get(serverId);
+    if (inFlight) return inFlight;
+    let connection = this.mcpConnections[serverId];
+    if (!connection) {
+      const row = this.options.rows.get(serverId);
+      if (!row) throw new Error(`MCP server ${serverId} is not registered`);
+      connection = this.restoreConnection(row);
+      if (connection.connectionState !== "authenticating") {
+        return this.track(serverId, this.connectAndDiscover(serverId));
+      }
+    }
+    return this.track(serverId, this.refreshRegisteredConnection(serverId, connection));
+  }
+
+  private async refreshRegisteredConnection(serverId: string, connection: McpConnection): Promise<void> {
+    if (connection.connectionState === "authenticating") {
+      const provider = connection.options.transport.authProvider;
+      const authUrl = this.options.rows.get(serverId)?.auth_url;
+      const state = authUrl ? new URL(authUrl).searchParams.get("state") : null;
+      if (provider && state && (await provider.checkState(state)).valid) return;
+      if (this.mcpConnections[serverId] !== connection || connection.connectionState !== "authenticating") {
+        return;
+      }
+    } else if (
+      connection.connectionState === "connecting" || connection.connectionState === "discovering"
+    ) {
+      return;
+    } else if (
+      connection.connectionState === "ready"
+      || (connection.connectionState === "connected" && !connection.connectionError)
+    ) {
+      await this.discoverIfConnected(serverId);
+      return;
+    }
+    connection.options.transport.authProvider?.clearAuthorization();
+    this.clearAuthUrl(serverId);
+    connection.connectionState = "connecting";
+    connection.connectionError = null;
+    await this.connectAndDiscover(serverId);
+  }
+
   /**
    * Recreate the sessions for every stored server. Rows are registered right
    * away; connecting and discovery run detached, so a slow or unreachable
@@ -711,21 +777,8 @@ export class McpClientManager {
     if (this.restored) return;
     this.restored = true;
     for (const row of this.options.rows.list()) {
-      const stored = parseStoredTransport(row.server_options);
-      const transport: McpTransportOptions = { type: stored.type };
-      if (stored.requestInit !== undefined) transport.requestInit = stored.requestInit;
-      if (stored.sessionId !== undefined) transport.sessionId = stored.sessionId;
-      if (row.callback_url) {
-        const provider = this.options.createAuthProvider(row.callback_url);
-        provider.serverId = row.id;
-        if (row.client_id) provider.clientId = row.client_id;
-        transport.authProvider = provider;
-      }
-      const connection = this.createConnection(row.id, row.server_url, transport);
-      if (row.auth_url) {
-        connection.connectionState = "authenticating";
-        continue;
-      }
+      const connection = this.restoreConnection(row);
+      if (connection.connectionState === "authenticating") continue;
       this.track(row.id, this.connectAndDiscover(row.id));
     }
   }
@@ -853,6 +906,9 @@ export class McpClientManager {
   ): Promise<McpToolCallResult> {
     const connection = this.mcpConnections[params.serverId];
     if (!connection) throw new Error(`MCP server ${params.serverId} is not connected`);
+    if (connection.connectionState === "authenticating") {
+      throw new UnauthorizedError("MCP server requires sign-in");
+    }
     const call: McpToolCallParams = { name: params.name };
     if (params.arguments !== undefined) call.arguments = params.arguments;
     return connection.callTool(call, options);
@@ -887,6 +943,22 @@ export class McpClientManager {
     this.fireStateChanged();
   }
 
+  private restoreConnection(row: McpServerRow): McpConnection {
+    const stored = parseStoredTransport(row.server_options);
+    const transport: McpTransportOptions = { type: stored.type };
+    if (stored.requestInit !== undefined) transport.requestInit = stored.requestInit;
+    if (stored.sessionId !== undefined) transport.sessionId = stored.sessionId;
+    if (row.callback_url) {
+      const provider = this.options.createAuthProvider(row.callback_url);
+      provider.serverId = row.id;
+      if (row.client_id) provider.clientId = row.client_id;
+      transport.authProvider = provider;
+    }
+    const connection = this.createConnection(row.id, row.server_url, transport);
+    if (row.auth_url) connection.connectionState = "authenticating";
+    return connection;
+  }
+
   private createConnection(
     id: string,
     url: string,
@@ -899,6 +971,7 @@ export class McpClientManager {
     const connection = create(new URL(url), this.info, {
       transport,
       onListsChanged: () => this.fireStateChanged(),
+      onAuthorizationRequired: () => this.publishAuthorization(id, connection),
     });
     this.mcpConnections[id] = connection;
     return connection;
@@ -939,7 +1012,7 @@ export class McpClientManager {
     }
     if (result.state === "connected") {
       const discovery = await this.discoverIfConnected(serverId);
-      if (discovery && !discovery.success) {
+      if (discovery?.error !== undefined && discovery.state !== "authenticating") {
         console.error(`[MCP] Error discovering ${serverId}:`, discovery.error);
       }
     }
@@ -993,10 +1066,24 @@ export class McpClientManager {
     if (row && row.auth_url !== null) this.options.rows.save({ ...row, auth_url: null });
   }
 
+  private publishAuthorization(serverId: string, connection: McpConnection): void {
+    if (this.mcpConnections[serverId] !== connection) return;
+    const row = this.options.rows.get(serverId);
+    const provider = connection.options.transport.authProvider;
+    if (!row || !provider?.authUrl) return;
+    this.options.rows.save({
+      ...row,
+      auth_url: provider.authUrl,
+      client_id: provider.registeredClientId ?? null,
+    });
+    this.fireStateChanged();
+  }
+
   private failConnection(serverId: string, error: string): McpCallbackResult {
     this.clearAuthUrl(serverId);
     const connection = this.mcpConnections[serverId];
     if (connection) {
+      connection.options.transport.authProvider?.clearAuthorization();
       connection.connectionState = "failed";
       connection.connectionError = error;
     }
@@ -1023,6 +1110,7 @@ export class McpClientManager {
 
   private callbackSuccess(serverId: string, connection: McpConnection): McpCallbackResult {
     this.clearAuthUrl(serverId);
+    connection.options.transport.authProvider?.clearAuthorization();
     connection.connectionError = null;
     this.fireStateChanged();
     return { serverId, authSuccess: true };

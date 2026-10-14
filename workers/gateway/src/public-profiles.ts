@@ -7,6 +7,7 @@ const SUBJECT_PATH = "/_gsv/federation/v2/subjects/";
 export type PublicProfilePath = { locator: PublicProfileLocator; json: boolean } | { invalid: true };
 
 export function matchPublicProfilePath(path: string): PublicProfilePath | null {
+  if (path === "/profile") return { locator: { space: true }, json: false };
   if (path.startsWith("/@")) {
     const alias = publicProfileAliasSchema.safeParse(path.slice(2));
     return alias.success ? { locator: { alias: alias.data }, json: false } : { invalid: true };
@@ -37,7 +38,8 @@ export async function servePublicProfileRequest(
   const body = json ? source : renderPublicProfile(profile);
   const etag = `"${await sha256Base64Url(body)}"`;
   const current = await resolve(path.locator);
-  if (!current || current.profile.signature !== profile.signature || current.revision !== profile.revision || current.alias !== profile.alias) return unavailable();
+  if (!current || current.profile.signature !== profile.signature || current.revision !== profile.revision) return unavailable();
+  if (!json && "alias" in path.locator && profile.version === 3) return new Response(null, { status: 308, headers: { location: "/profile", "cache-control": "no-store" } });
   const headers = new Headers({
     "content-type": json ? "application/json; charset=utf-8" : "text/html; charset=utf-8",
     "cache-control": "public, max-age=0, must-revalidate", vary: "Accept", etag,

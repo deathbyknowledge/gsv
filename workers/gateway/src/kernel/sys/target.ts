@@ -12,12 +12,14 @@ import type {
 } from "@humansandmachines/gsv/protocol";
 import {
   getVisibleTarget,
-  listVisibleTargets,
+  listAllVisibleTargets,
+  resolveVisibleTarget,
   targetToDetail,
   targetToSummary,
   updateTargetMetadata,
 } from "../targets";
 import { z } from "zod";
+import { handleInstanceRequest } from "./instance";
 
 const targetArgsSchema = z.object({
   includeOffline: z.boolean().optional(),
@@ -27,10 +29,10 @@ const targetArgsSchema = z.object({
 });
 type TargetMetadata = { label?: string; description?: string };
 
-export function handleSysTargetList(
+export async function handleSysTargetList(
   args: SysTargetListArgs,
   ctx: KernelContext,
-): SysTargetListResult {
+): Promise<SysTargetListResult> {
   if (!principalOf(ctx)?.account) {
     throw new Error("Authentication required");
   }
@@ -39,14 +41,14 @@ export function handleSysTargetList(
   const includeOffline = raw.includeOffline === true;
 
   return {
-    targets: listVisibleTargets(ctx, { includeOffline }).map(targetToSummary),
+    targets: (await listAllVisibleTargets(ctx, { includeOffline })).map(targetToSummary),
   };
 }
 
-export function handleSysTargetGet(
+export async function handleSysTargetGet(
   args: SysTargetGetArgs,
   ctx: KernelContext,
-): SysTargetGetResult {
+): Promise<SysTargetGetResult> {
   if (!principalOf(ctx)?.account) {
     throw new Error("Authentication required");
   }
@@ -57,7 +59,7 @@ export function handleSysTargetGet(
     throw new Error("sys.target.get requires targetId");
   }
 
-  const target = getVisibleTarget(ctx, targetId, { includeOffline: true });
+  const target = await resolveVisibleTarget(ctx, targetId, { includeOffline: true });
 
   return {
     target: target ? targetToDetail(target) : null,
@@ -95,10 +97,10 @@ export function handleSysTargetUpdate(
   };
 }
 
-export function handleSysTargetDelete(
+export async function handleSysTargetDelete(
   args: SysTargetDeleteArgs,
   ctx: KernelContext,
-): SysTargetDeleteResult {
+): Promise<SysTargetDeleteResult> {
   const identity = principalOf(ctx)?.account;
   if (!identity) {
     throw new Error("Authentication required");
@@ -111,6 +113,15 @@ export function handleSysTargetDelete(
   }
 
   const device = ctx.targets.get(targetId);
+  if (!device) {
+    const target = await resolveVisibleTarget(ctx, targetId, { includeOffline: true });
+    if (target?.route.kind === "instance") {
+      const id = target.route.instanceId;
+      const response = await handleInstanceRequest({ type: "req", id: crypto.randomUUID(), call: "sys.instance.stop", args: { instanceId: id } }, ctx);
+      if (!response.ok) throw new Error(response.error.message);
+      return { deleted: false, targetId, revokedTokens: 0 };
+    }
+  }
   if (!device || !ctx.targets.canAccess(targetId, identity.uid, identity.gids)) {
     return { deleted: false, targetId: targetId, revokedTokens: 0 };
   }

@@ -141,7 +141,7 @@ export class AccountsDeletionRuntime {
     return manifest.owners.flatMap((owner) => {
       const namespaces = Object.entries(this.discovery.namespaces ?? {}).filter(([, namespace]) => namespace.ownerId === owner.id && namespace.kind.startsWith("adapter-"));
       if (!namespaces.length) {
-        if (!["accounts", "gateway", "ripgit", "inference", "mail"].includes(owner.id) && owner.resources.some((resource) => resource.kind === "durable-object")) {
+        if (!["accounts", "gateway", "ripgit", "inference", "mail", "instances"].includes(owner.id) && owner.resources.some((resource) => resource.kind === "durable-object")) {
           throw new Error("installation adapter inventory namespace is not configured");
         }
         return [];

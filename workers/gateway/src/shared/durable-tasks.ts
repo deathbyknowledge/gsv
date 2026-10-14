@@ -80,13 +80,17 @@ export class DurableTaskScheduler<Spec extends DurableTaskSpec> {
     spec: Spec,
     options: DurableTaskOptions = {},
   ): Promise<DurableTask<Spec>> {
+    const task = this.enqueue(when, spec, options);
+    await this.arm();
+    return task;
+  }
+
+  /** Persist alongside owned state in a synchronous transaction, then call arm(). */
+  enqueue(when: Date | number, spec: Spec, options: DurableTaskOptions = {}): DurableTask<Spec> {
     const task = normalizeTaskInput(when, spec, options);
     if (options.idempotent) {
       const existing = this.findIdempotentTask(task, options.excludeTaskId);
-      if (existing) {
-        await this.updateAlarm();
-        return existing;
-      }
+      if (existing) return existing;
     }
 
     this.storage.sql.exec(
@@ -102,7 +106,6 @@ export class DurableTaskScheduler<Spec extends DurableTaskSpec> {
       task.delayInSeconds ?? null,
       task.retry ? JSON.stringify(task.retry) : null,
     );
-    await this.updateAlarm();
     return task;
   }
 
@@ -111,7 +114,7 @@ export class DurableTaskScheduler<Spec extends DurableTaskSpec> {
       "DELETE FROM cf_agents_schedules WHERE id = ? AND owner_path_key IS NULL",
       id,
     );
-    await this.updateAlarm();
+    await this.arm();
     return result.rowsWritten > 0;
   }
 
@@ -139,7 +142,7 @@ export class DurableTaskScheduler<Spec extends DurableTaskSpec> {
         task.id,
       );
     }
-    await this.updateAlarm();
+    await this.arm();
   }
 
   private findIdempotentTask(task: DurableTask<Spec>, excludeTaskId?: string): DurableTask<Spec> | null {
@@ -188,7 +191,7 @@ export class DurableTaskScheduler<Spec extends DurableTaskSpec> {
     );
   }
 
-  private updateAlarm(): Promise<void> {
+  arm(): Promise<void> {
     const update = this.alarmUpdate.then(async () => {
       const next = this.storage.sql.exec<{ time: number }>(
         `SELECT time FROM cf_agents_schedules

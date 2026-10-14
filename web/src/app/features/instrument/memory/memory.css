@@ -65,7 +65,6 @@
   letter-spacing: 0.02em;
   caret-color: var(--accent);
 }
-.memory-rail .search input::placeholder { color: var(--faint); }
 .memory-rail .search .clear { color: var(--text-dim); cursor: pointer; }
 .memory-rail .pages {
   padding: 8px 0 24px;

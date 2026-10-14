@@ -11,7 +11,7 @@ you only need the pairing command. Tell Ship when it finishes so it can check th
 
 To create the invitation yourself:
 
-1. Open **Fleet** and click **connect** beside Places. While your cloud is the only place, Zen offers the same panel: hover **your cloud** below the composer and click **+ connect place**.
+1. Open **Fleet** and click **connect** beside Places. While your cloud is the only place, Chat offers the same panel: hover **your cloud** below the composer and click **+ connect place**.
 2. Enter a name, such as **My macbook**. The target ID starts as **my-macbook** and follows the name until you edit it yourself.
 3. Choose the platform and click **create invitation**.
 4. Run the install command on that computer, then the `gsv pair CODE` command. It supplies the gateway, account and target identity and starts the background daemon.
@@ -23,16 +23,24 @@ Once the daemon connects, the place appears as connected.
 
 ## Connect a browser
 
-Ship can also create a browser invitation and give you the extension download.
+Ship can also create a browser invitation and give you a download link matched to
+your GSV release. To get the current public release yourself,
+[click here to download the extension](https://gsv.space/browser).
 
 Choose **Browser** in the same flow. Download and unzip the extension, called
 **Your GSV**, enable developer mode at `chrome://extensions`, and load its folder.
-Click its toolbar icon to open the panel, paste the invitation, and choose
-**Pair this browser**.
+Click the **Your GSV** icon in the browser toolbar to open its panel. If it is
+not visible, click the **Extensions** (puzzle-piece) button and select
+**Your GSV**. Paste the invitation and choose **Pair this browser**.
 
 While your GSV works in a tab, Chrome shows a banner at the top of that tab.
 That is Chrome's notice that an extension is driving the page; it goes when the
 work is done.
+
+For websites you need while personal devices are offline, an enabled operator
+can also provide [cloud browsers](/how-to/cloud-browsers). Start one from Fleet
+and sign in directly in its browser view. Ship can show a browser request in Chat
+when it needs your help; finishing that request returns control to Ship.
 
 ## Try it
 
@@ -46,7 +54,7 @@ With the machine connected, ask your agent things like:
 
 ## Permissions
 
-When GSV asks to run a command, Zen and Fleet show the same approval card. Expand
+When GSV asks to run a command, Chat and Fleet show the same approval card. Expand
 **show the command** to inspect it, then **full request** for all execution
 arguments. Choose **run it** to approve once or **don't** to decline.
 **Always allow** approves this command and remembers shell access to that

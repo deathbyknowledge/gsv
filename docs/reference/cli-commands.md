@@ -17,7 +17,7 @@ gsv --url wss://example.workers.dev/ws chat "hello"
 | `--url <URL>` | `GSV_URL` | Gateway WebSocket URL. Defaults to `gateway.url` in local config, then `ws://localhost:8787/ws`. |
 | `-u, --user <USER>` | | Gateway username override. |
 | `-p, --password <PASS>` | | Password for non-interactive login/setup. |
-| `-t, --token <TOKEN>` | `GSV_TOKEN` | Non-interactive credential. User commands require a username with token auth. |
+| `-t, --token <TOKEN>` | `GSV_TOKEN` | Non-interactive credential. User commands default to the personal account; device credentials retain their enrolled username. |
 
 Local CLI config is stored at `~/.config/gsv/config.toml`. Remote user commands use
 the cached session token from `gsv auth login`, or prompt/login when needed.
@@ -65,6 +65,45 @@ intelligence process. Set `GSV_CLIENT_DEBUG=1` to trace run-signal matching.
 Commands run inside the gateway OS context, not directly on your local machine.
 Use `:quit`, `:exit`, or `:q` to leave.
 
+The gateway shell exposes messenger pairing to Ship and signed-in users:
+
+```bash
+messenger list
+messenger setup whatsapp
+messenger inspect whatsapp < code.txt
+messenger connect whatsapp < code.txt
+```
+
+`setup` returns adapter-owned instructions for getting a code. The user can
+paste it into their conversation and let Ship connect it for them. Save the
+code to a file with Write, read it through stdin, then remove the file; avoid
+putting it in logged shell command text. `connect` returns `paired: true` only
+after redemption completes. Processes link their human owner's account, subject
+to their capabilities and tool policy. See [Connect a messenger](/how-to/messengers).
+
+With the optional cloud instance service enabled, the gateway shell also exposes
+`instance catalog`, `instance start browser --request-id ID --wait`, `instance list`,
+`instance get ID`, and `instance stop ID --wait`. Starting reuses the account's current
+browser and reports `created` or `reused`; `--new` explicitly creates a separate
+temporary one. `--wait` waits for readiness for up to 60 seconds by default
+(`--timeout MS`, maximum 120000). Cancelling the wait leaves the instance running.
+Get and stop accept the displayed target ID or full instance ID. Ordinary browsers
+save before stopping. Partial saves report `persistence.issues` for affected
+sites and permit normal stop; other sites are saved. A whole-save failure leaves
+the browser running and reports its cause and diagnostic. Stop `--wait`
+waits for termination and release of saved state. Retry a save with
+`browser profile save ID`, or explicitly discard unsaved changes with
+`instance stop ID --force --wait`. Force is not a persistence test and cannot fix
+unsupported website storage. Inspect save status and per-site usage with
+`browser profile get PROFILE_ID`; `browser profile delete PROFILE_ID` forgets
+saved logins and stops the browser using them.
+Ordinary browsers
+remember logins automatically. Use `browser handoff` when Ship needs a human to
+complete a sign-in; opening Fleet's browser view otherwise leaves Ship running
+and accepts direct input. These are native target commands, available to Ship
+through Shell as well. See [cloud browsers](/how-to/cloud-browsers) for saved
+logins, recovery after a lost response, and the complete sign-in flow.
+
 Inside the gateway shell, `proc` is the process IPC userland command.
 `message` inspects and uses external chat reply routes. `sched add --ship`
 creates recurring or one-shot Ship responsibilities; `sched add --here`
@@ -98,10 +137,11 @@ message send --to DESTINATION [--message TEXT] [--attach PATH]... [--mime TYPE] 
 contact identity
 contact list [--all] [--json]
 contact alias CONTACT_ID NAME|--clear
-contact invite create [--expires DURATION]
-contact invite accept CODE
+contact invite create --handling manual|ship [--expires DURATION]
+contact invite accept LINK_OR_CODE --handling manual|ship
 contact invite list [--all] [--json]
 contact invite cancel INVITE_ID
+contact handling CONTACT_ID manual|ship --revision N
 contact revoke CONTACT_ID
 contact request list [--contact CONTACT_ID] [--all] [--json]
 contact request create --contact CONTACT_ID --kind KIND --title TITLE [--details JSON] [--delivery-id ID]
@@ -169,6 +209,24 @@ shell, `proc self` prints the current process id and the shell exports it as
 with an error there. `proc list` labels the one canonical process as
 `kind=personal`; all other entries are `kind=work`, even when they run as the
 same personal-agent account.
+
+Inside an active process, `proc compact --summary '...'` saves a handover for
+installation after the current tool batch finishes. The original request and
+unseen tool results stay intact, alongside enough recent original exchanges to
+fill the configured low-water budget (40% by default, including instructions,
+tools and handover). History that already fits stays unchanged.
+No history ids or new process are needed.
+For an idle process, use `proc compact --pid PID` with one of `--keep-last N`,
+`--through-message-id ID` or `--target-pressure N`, and either `--summary TEXT`
+or `--generate-summary`. See [Context Compaction](../architecture/context-compaction.md).
+
+`proc history --archive PATH --generation N --after-message-id N
+--through-message-id N --offset N --limit 10 --full` pages an immutable gzip
+archive through normal filesystem permissions, including after the source
+process is killed. Message filters use the original IDs. Continue with the
+reported `next_offset` until `has_more=false`; `--json` returns the raw archived
+message page. The reader streams decompression instead of buffering the entire
+archive in a shell pipeline.
 
 `r12y` manages the Kernel's durable unresolved-work ledger. `list` omits
 terminal records unless `--all` is supplied. Waiting work must name a future
@@ -258,7 +316,8 @@ default.
 `IMAGE` accepts the same target-qualified source forms as `cp`: a local path,
 `gsv:/path`, `target:/path`, or `[target-with-colons]:/path`. A target image is
 streamed directly through the filesystem transfer boundary into image reading;
-the command does not stage a temporary GSV copy.
+the command does not stage a temporary GSV copy. Cloud browser screenshots use
+the same source forms and ownership checks as files on connected devices.
 
 Query and OCR structured output accepts `text`, `json`, `xml`, `markdown`, or
 `csv`. A JSON `--schema` is added to the caller's instruction, then the result
@@ -294,12 +353,21 @@ automatic retry. An outcome that may have reached the provider is reported as
 `sent=false`, `delivery_confirmed=false`, and `delivery_state=ambiguous`.
 
 `contact` manages relationships with people on other GSV installations.
-`contact invite create` produces a short-lived one-use code; the other person
-accepts that code while signed in to their own GSV. Pairing and revocation may
+`contact invite create --handling manual|ship` returns a short-lived one-use code and a shareable `url`;
+the other person accepts either while signed in to their own GSV. The default
+lifetime is one hour; `--expires` accepts up to seven days. Pairing and revocation may
 be performed by the signed-in human or their canonical Ship. `contact list` prints the opaque contact id accepted
 by `message send --to`; `message destinations` exposes the same active contacts
 alongside messaging endpoints. `contact alias` changes only the local display
 name; the remote Ship's authenticated identity remains visible and unchanged.
+
+Creating and accepting through Shell require `--handling manual|ship`. Ship asks
+for the owner's choice unless it was already given: `manual` leaves new messages
+for the person, while `ship` enables automatic handling. Each side chooses
+independently. To change an existing contact, read `preferences.revision` from
+`contact list --json` and use `contact handling CONTACT_ID manual|ship --revision N`.
+The Kernel accepts changes from the owner or their canonical Ship, keeps capability
+and revision checks, and starts no work merely because the setting changed.
 
 `contact invite list --all` exposes retained invitation lifecycle metadata but
 never a recoverable code. `message history --with contact:...` reads the Contact
@@ -309,7 +377,7 @@ remote confirmation; use `message delivery show` with its delivery id.
 When Ship contacts someone for an existing task, pass `--responsibility ID` to
 associate replies with that open Ship responsibility. A reply continues the same
 work without enabling permanent handling of that contact. Acceptance and new
-messages stay in People unless the person chooses **Let Ship handle this**.
+messages stay in People unless the person chooses **Let Ship handle them**.
 
 Use `contact request create` and `contact request update` when the exchange has
 a durable lifecycle rather than being only a message. Request revisions prevent
@@ -447,6 +515,12 @@ Ship can create an invitation from Shell on `gsv` with
 space's release. `targets pair list` and `targets pair cancel INVITATION_ID`
 manage the human owner's invitations. See [Connect devices](../how-to/connect-devices.md).
 
+For `--platform browser`, the JSON result includes `extensionUrl` and `code`.
+The URL opens `https://gsv.space/browser?release=RELEASE` for the gateway's
+release. Download and unzip the extension, load its folder from
+`chrome://extensions` with developer mode enabled, then open **Your GSV** from
+the toolbar or Extensions button and paste `code` into its panel.
+
 Open **Fleet**, click **connect** beside Places, name the computer and create an invitation.
 After installing GSV, paste the provided command:
 
@@ -559,7 +633,10 @@ Initialize a new space through its Accounts-issued browser setup invitation.
 The old `gsv auth setup` wizard and automatic setup probes are removed. Login
 and commands operate on a space whose authorized setup has completed.
 
-`login` creates a short-lived user token with `sys.token.create` and caches it
+`login` asks only for a password when no credential is cached. Omit the username
+to use the personal account, or pass `--username root` for administration. Existing
+configured usernames remain supported. The authenticated identity returned by the
+Kernel is saved with the session. `login` creates a short-lived user token with `sys.token.create` and caches it
 locally. The default TTL is 8 hours. `logout` clears only the cached local session
 token.
 

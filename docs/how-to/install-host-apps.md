@@ -72,6 +72,11 @@ to use text explicitly.
 
 ## Sign-in and multiple windows
 
+**Open your space** lets you choose an owned space or enter a handle or domain.
+The address form also works for spaces owned by someone else or served by another
+operator. Contact invitation links use the same address entry before your normal
+space sign-in and explicit acceptance.
+
 Desktop and browser windows can stay connected to the same space at once. They
 receive new conversation messages live and refresh server state after a
 reconnect. A remembered space sign-in lasts 30 days and renews during use.

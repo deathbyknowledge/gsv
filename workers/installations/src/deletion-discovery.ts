@@ -51,6 +51,10 @@ export async function inspectDeletionResources(
         requireOwner(["mail"]);
         owner = configuration.owners?.mail;
         break;
+      case "instance-installation":
+        requireOwner(["instances"]);
+        owner = configuration.owners?.instances;
+        break;
       default: {
         if (!namespace || namespace.kind !== resource.kind) throw new Error("installation inspection namespace is not configured for this resource kind");
         owner = configuration.owners?.[namespace.ownerId];

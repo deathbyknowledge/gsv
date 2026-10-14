@@ -8,6 +8,8 @@ export type ApproachCreateArgs = {
   displayName: string;
   text: string;
   idempotencyKey: string;
+  /** Local owner's choice for new messages once the request is accepted. */
+  shipHandlesMessages?: boolean;
 };
 export type ApproachGetArgs = { approachId: string };
 export type ApproachResult = { approach: ApproachSummary };
@@ -25,5 +27,7 @@ export type ApproachDecideArgs = {
   approachId: string;
   expectedRevision: number;
   decision: "accept" | "decline" | "withdraw";
+  /** Local owner's choice when accepting; ignored for decline and withdraw. */
+  shipHandlesMessages?: boolean;
 };
 export type ApproachRetryArgs = { approachId: string; expectedRevision: number };

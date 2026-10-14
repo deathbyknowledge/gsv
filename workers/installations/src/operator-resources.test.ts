@@ -98,6 +98,15 @@ function pausePhaseUpdate(db: D1Database, timing: "before" | "after") {
 }
 
 describe("operator resource evidence", () => {
+  it("binds browser multipart evidence to its declared installation prefix", () => {
+    const browser = operatorResourceCatalogSchema.parse([{ ...catalog[0], r2Prefix: "installation-root" }]);
+    expect(operatorResourceSelector(browser[0], "inst_one")).toBe("inst_one/");
+    expect(operatorResourceManifestResources(browser, "inst_one")).toEqual([
+      { kind: "r2", namespace: "historical-bucket", resourceId: "inst_one/" },
+    ]);
+    expect(operatorResourceSelector(catalog[0], "inst_one")).toBe("installations/inst_one/");
+    expect(() => operatorResourceCatalogSchema.parse([{ ...catalog[1], r2Prefix: "installation-root" }])).toThrow("requires an R2 resource");
+  });
   it("cleans application owners independently while external live scopes remain unknown", async () => {
     const state = await fixture();
     await state.cleanApplications();

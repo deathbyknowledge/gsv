@@ -1,0 +1,46 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Cloud browser authentication fixture</title>
+<script>
+  window.submissions = [];
+  window.authentication = (async () => {
+    const denied = async operation => {
+      try { await operation(); return "unexpected-success"; }
+      catch (error) { return error.name; }
+    };
+    const get = await denied(() => navigator.credentials.get({
+      publicKey: { challenge: new Uint8Array(32), timeout: 60000 }, mediation: "required",
+    }));
+    const create = await denied(() => navigator.credentials.create({ publicKey: {
+      challenge: new Uint8Array(32), rp: { name: "GSV fixture" },
+      user: { id: new Uint8Array([1]), name: "fixture", displayName: "Fixture" },
+      pubKeyCredParams: [{ type: "public-key", alg: -7 }], timeout: 60000,
+    } }));
+    const platform = await PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable();
+    const conditional = await PublicKeyCredential.isConditionalMediationAvailable();
+    const capabilities = PublicKeyCredential.getClientCapabilities ? await PublicKeyCredential.getClientCapabilities() : {};
+    const password = await navigator.credentials.create({ password: { id: "fixture@example.invalid", password: "public-fixture" } });
+    const silent = await navigator.credentials.get({ password: true, mediation: "silent" }).then(value => value === null, error => error.name);
+    return { get, create, platform, conditional, capabilities, password: password instanceof PasswordCredential, silent };
+  })();
+  document.addEventListener("submit", event => {
+    event.preventDefault();
+    window.submissions.push({ trusted: event.isTrusted, submitter: event.submitter.id });
+  });
+</script>
+<style>body{font:20px system-ui;padding:40px}input,button{display:block;margin:20px 0;padding:12px}</style>
+<h1>Password sign-in alongside an unavailable passkey</h1>
+<form><label>Password <input id="password" type="password" required></label><button id="signin">Sign in</button></form>
+<a id="popup" href="/passkeys?popup" target="_blank">Open sign-in popup</a>
+<script>
+  authentication.then(result => {
+    window.authenticationResult = result;
+    document.body.dataset.authentication = "done";
+  });
+  if (!location.search) {
+    const frame = document.createElement("iframe");
+    frame.id = "authentication-frame";
+    frame.src = "/passkeys?frame";
+    document.body.append(frame);
+  }
+</script>

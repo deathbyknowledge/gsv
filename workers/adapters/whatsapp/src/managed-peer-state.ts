@@ -7,7 +7,6 @@ import type {
   AdapterPairingPreparation,
   AdapterPairingRoute,
 } from "./types";
-import { HELD_OUTBOUND_RETENTION_MS } from "./whatsapp-held-outbound";
 import type { ManagedWhatsAppInbound } from "./whatsapp-webhook";
 
 export const MANAGED_WHATSAPP_ACCOUNT_ID = "managed";
@@ -16,17 +15,6 @@ export const WHATSAPP_CUSTOMER_SERVICE_WINDOW_MS = 24 * 60 * 60 * 1000;
 
 export type ManagedWhatsAppPeerRoute = AdapterPeerRoute;
 export type ManagedWhatsAppPairingState = AdapterPeerPairing;
-
-/**
- * A template sent outside the customer service window and not yet answered.
- * Only one is pending at a time; later messages wait behind it instead of
- * each sending a template, and the person's next message resolves it.
- */
-export type WhatsAppPendingTemplate = {
-  sentAt: number;
-  expiresAt: number;
-  messageId?: string;
-};
 
 export type ManagedWhatsAppPeerState = {
   version: 1;
@@ -38,7 +26,6 @@ export type ManagedWhatsAppPeerState = {
   lastInboundAt?: number;
   /** The most recent inbound message id, used for read receipts and the typing indicator. */
   lastInboundMessageId?: string;
-  pendingTemplate?: WhatsAppPendingTemplate;
   activeRoute?: ManagedWhatsAppPeerRoute;
   pairing?: ManagedWhatsAppPairingState;
   lastDisconnect?: {
@@ -78,43 +65,12 @@ export function bindManagedWhatsAppPeerIdentity(
     pairing: state?.pairing,
     lastDisconnect: state?.lastDisconnect,
   };
-  // The person's latest message answers the pending template; the messages
-  // held behind it are released by the peer once this receipt is recorded.
-  if ((!latest || !whatsAppWindowOpen(next, now)) && state?.pendingTemplate) next.pendingTemplate = state.pendingTemplate;
   return next;
 }
 
 export function whatsAppWindowOpen(state: ManagedWhatsAppPeerState, now: number): boolean {
   return state.lastInboundAt !== undefined
     && now - state.lastInboundAt < WHATSAPP_CUSTOMER_SERVICE_WINDOW_MS;
-}
-
-export function whatsAppTemplatePending(state: ManagedWhatsAppPeerState, now: number): boolean {
-  return state.pendingTemplate !== undefined && state.pendingTemplate.expiresAt > now;
-}
-
-/** Lifts a template claim whose send failed, so the next delivery may try again. */
-export function withoutPendingWhatsAppTemplate(state: ManagedWhatsAppPeerState): ManagedWhatsAppPeerState {
-  const { pendingTemplate: _, ...rest } = state;
-  return rest;
-}
-
-/**
- * Claims or records a template: without a message id it marks a send in
- * progress, with one it marks the template sent. Either way later messages
- * wait behind it until the person replies.
- */
-export function withPendingWhatsAppTemplate(
-  state: ManagedWhatsAppPeerState,
-  sentAt: number,
-  messageId: string | undefined,
-): ManagedWhatsAppPeerState {
-  const pendingTemplate: WhatsAppPendingTemplate = {
-    sentAt,
-    expiresAt: sentAt + HELD_OUTBOUND_RETENTION_MS,
-  };
-  if (messageId) pendingTemplate.messageId = messageId;
-  return { ...state, pendingTemplate };
 }
 
 export function pairingCandidate(

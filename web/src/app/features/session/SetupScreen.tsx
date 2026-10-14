@@ -3,7 +3,7 @@ import { TextInput } from "../../components/ui/TextInput";
 import { AuthLayout } from "./AuthLayout";
 import { PrivacyPolicyLink, TermsOfServiceLink } from "./PolicyLinks";
 import { SessionError } from "./SessionChrome";
-import { USERNAME_FORMAT_DESCRIPTION, type SetupAccount, type SetupAccountErrors } from "./sessionDomain";
+import type { SetupAccount, SetupAccountErrors } from "./sessionDomain";
 import "./SetupScreen.css";
 
 type SetupScreenProps = {
@@ -11,14 +11,12 @@ type SetupScreenProps = {
   busy: boolean;
   space: string;
   step: "credentials" | "consent";
-  username: string;
   password: string;
   passwordConfirm: string;
   consent: boolean;
   consentError: string | null;
   error: string | null;
   fieldErrors: SetupAccountErrors;
-  onUsername: (value: string) => void;
   onPassword: (value: string) => void;
   onPasswordConfirm: (value: string) => void;
   onConsent: (checked: boolean) => void;
@@ -28,7 +26,7 @@ type SetupScreenProps = {
   onSubmit: (event: Event) => void;
 };
 
-export function SetupScreen({ visible, busy, space, step, username, password, passwordConfirm, consent, consentError, error, fieldErrors, onUsername, onPassword, onPasswordConfirm, onConsent, onBack, onFieldBlur, onSubmitPointerDown, onSubmit }: SetupScreenProps) {
+export function SetupScreen({ visible, busy, space, step, password, passwordConfirm, consent, consentError, error, fieldErrors, onPassword, onPasswordConfirm, onConsent, onBack, onFieldBlur, onSubmitPointerDown, onSubmit }: SetupScreenProps) {
   const consentId = useId();
   return <AuthLayout visible={visible} surfaceClass="gsv-auth-surface-setup">
     <section class="gsv-setup-panel" data-session-setup-view aria-labelledby="setup-heading">
@@ -38,14 +36,11 @@ export function SetupScreen({ visible, busy, space, step, username, password, pa
           <p class="gsv-setup-progress">Step {step === "credentials" ? 1 : 2} of 2</p>
         </div>
         <h1 id="setup-heading" data-setup-heading tabIndex={-1}>{step === "credentials" ? "Welcome to your space" : "Before you begin"}</h1>
-        {step === "credentials" ? <p>Create your sign-in for this space, and let's make your life easier.</p> : null}
+        {step === "credentials" ? <p>Choose a password for your space.</p> : null}
       </div>
       <form class="gsv-setup-form" data-session-setup-form aria-busy={busy} noValidate onSubmit={onSubmit}>
         {step === "credentials" ? <>
-          <TextInput label="Username" value={username} disabled={busy} info={USERNAME_FORMAT_DESCRIPTION}
-            status={fieldErrors.username ? "error" : "none"} message={fieldErrors.username}
-            placeholder="Choose a username" onChange={onUsername}
-            inputProps={{ autoComplete: "username", autoCapitalize: "none", autoCorrect: "off", spellcheck: false, maxLength: 32, "data-setup-username": true, onBlur: (event) => onFieldBlur("username", event.relatedTarget) }} />
+          <input type="hidden" name="username" autoComplete="username" value={space} />
           <TextInput label="Password" type="password" value={password} disabled={busy} clearable={false}
             status={fieldErrors.password ? "error" : "none"} message={fieldErrors.password}
             placeholder="At least 8 characters" onChange={onPassword}

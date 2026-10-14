@@ -4,6 +4,7 @@ import {
 } from "@humansandmachines/gsv/protocol";
 import { syscallToolName } from "../../syscalls/constants";
 import type { SyscallName } from "../../syscalls";
+import { processApprovalTargetSchema } from "../../protocol/process-frames";
 import { wireRequestSchemaRefs } from "../../protocol/generated/wire-frame-schema.js";
 import {
   normalizeStoredToolResultOutcome, resolvedToolResultOutcome, toolCallStatusSchema, type PendingHilRecord,
@@ -223,8 +224,8 @@ export class ProcessToolRepository {
     this.store.sql.exec(
       `INSERT INTO pending_hil (
         request_id, run_id, owner_dispatch_id, tool_call_id,
-        tool_name, syscall, args_json, purpose, created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        tool_name, syscall, args_json, purpose, created_at, approved_target_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       record.requestId,
       record.runId,
       record.ownerDispatchId ?? null,
@@ -234,6 +235,7 @@ export class ProcessToolRepository {
       JSON.stringify(record.args),
       record.purpose ?? null,
       record.createdAt,
+      record.approvedTarget ? JSON.stringify(record.approvedTarget) : null,
     );
     const dispatchId = record.ownerDispatchId ?? this.store.first<{ dispatch_id: string }>(
       `SELECT dispatch_id FROM pending_tool_calls
@@ -269,6 +271,7 @@ export class ProcessToolRepository {
         tool_name: string;
         syscall: string;
         args_json: string;
+        approved_target_json: string | null;
         purpose: string | null;
         created_at: number;
       }>(
@@ -291,6 +294,7 @@ export class ProcessToolRepository {
       args: jsonObjectSchema.parse(JSON.parse(row.args_json)),
       createdAt: row.created_at,
     };
+    if (row.approved_target_json) record.approvedTarget = processApprovalTargetSchema.parse(JSON.parse(row.approved_target_json));
     if (row.owner_dispatch_id) {
       record.ownerDispatchId = row.owner_dispatch_id;
     }

@@ -1,4 +1,5 @@
 import * as z from "zod/mini";
+import { exceptionDiagnostics, type ExceptionDiagnostics } from "../diagnostics.js";
 import { emitTelemetry, inferenceWorkloadSchema, type TelemetryEnvironment, type TelemetryEvent } from "../telemetry.js";
 
 type ClientResult = Extract<TelemetryEvent, { name: "inference.client.finished" }>["properties"];
@@ -19,11 +20,12 @@ export function inferenceDiagnosticId(value?: string): string {
 }
 
 /** Only explicitly enumerated exception metadata crosses the telemetry boundary. */
-export function inferenceErrorMetadata(cause: unknown): Pick<ClientResult, "errorType" | "httpStatus" | "rpcRemote" | "rpcRetryable" | "rpcOverloaded"> {
+export function inferenceErrorMetadata(cause: unknown): Pick<ClientResult, "errorType" | "httpStatus" | "rpcRemote" | "rpcRetryable" | "rpcOverloaded"> & ExceptionDiagnostics {
   const parsed = errorFieldsSchema.safeParse(cause);
-  if (!parsed.success) return { errorType: "unknown" };
+  if (!parsed.success) return { errorType: "unknown", ...exceptionDiagnostics(cause) };
   const fields = parsed.data;
   const metadata: ReturnType<typeof inferenceErrorMetadata> = {
+    ...exceptionDiagnostics(cause),
     // SAFETY: Membership in the closed set above matches the telemetry enum.
     errorType: fields.name && errorTypes.has(fields.name) ? fields.name as ClientResult["errorType"] : "unknown",
   };

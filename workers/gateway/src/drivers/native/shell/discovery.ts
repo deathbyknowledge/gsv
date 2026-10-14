@@ -39,7 +39,10 @@ function defineNativeCommandDescriptors<T extends NativeCommandDescriptorMap>(va
 }
 
 const NATIVE_COMMAND_DESCRIPTORS = defineNativeCommandDescriptors({
+  messenger: command("Connect a messenger for your human owner.", "List enabled messengers, get setup instructions, then redeem the code the user pastes in the conversation. Read the code from a file through stdin to keep it out of logged commands.", ["messenger", "adapter", "pair", "connect", "whatsapp", "telegram", "slack", "discord"], [], ["messenger list", "messenger setup ADAPTER", "messenger inspect ADAPTER < code.txt", "messenger connect ADAPTER < code.txt"], ["adapter.list", "adapter.pair.info", "adapter.pair.inspect", "adapter.pair.confirm"]),
   feedback: command("Send feedback to the space operator.", "Read a report from a file when the user asks you to share it. Keep report text out of the logged shell command.", ["feedback", "bug", "report", "suggestion", "support"], [], ["feedback [--id UUID] < report.txt"], ["sys.feedback"]),
+  instance: command("Start and stop cloud environments.", "Start or reuse a browser, wait for readiness, and inspect its lifetime and allowance. When browser work is finished, export any files you need and stop it with instance stop ID --wait. Keep it open if the user asks or ongoing work still needs it.", ["browser", "cloud", "instance", "offline", "start", "stop"], [], ["instance catalog", "instance start browser --request-id ID --wait", "instance stop ID --wait"], ["sys.instance.list"]),
+  browser: command("Manage saved browser logins and human handoffs.", "Use a saved profile across browser instances or ask the owner to sign in through GSV.", ["browser", "login", "profile", "sign in", "human", "handoff"], [], ["browser profile list", "browser handoff --help"], ["sys.browser.profile.list"]),
   whoami: command("Print the current program account name.", "Identify which user or agent account the shell is running as.", ["identity", "account", "username"]),
   id: command("Print the current uid, gid, and supplementary groups.", "Inspect the current program identity and group membership.", ["identity", "permissions", "groups"]),
   hostname: command("Print the native GSV server name.", "Identify the GSV instance running the native shell.", ["server", "instance", "machine"]),
@@ -60,13 +63,14 @@ const NATIVE_COMMAND_DESCRIPTORS = defineNativeCommandDescriptors({
   ]),
   crontab: command("Manage recurring native shell jobs.", "Run a shell command repeatedly on a cron schedule such as every morning or each weekday.", ["schedule", "recurring", "automation", "cron", "daily", "weekly"], ["sched"]),
   codemode: command("Run a reusable JavaScript GSV tool workflow.", "Combine several shell, filesystem, or connected integration operations in one scripted workflow.", ["script", "workflow", "automation", "tools", "javascript"]),
-  contact: command("Manage trusted contacts with other GSV Ships.", "Pair with another Ship, inspect contacts, exchange structured requests, revoke access, or discover a contact destination for messaging.", ["contact", "ship", "federation", "pair", "invite", "request", "revoke"], [], [
+  contact: command("Manage trusted contacts with other GSV Ships.", "Connect people using an invitation link. Ask who should handle new messages, then create or accept with --handling manual|ship. Inspect contacts, exchange structured requests, or change handling and trust.", ["contact", "people", "friend", "social", "connect", "ship", "federation", "pair", "invite", "request", "revoke"], [], [
     "contact identity",
     "contact list [--all] [--json]",
-    "contact invite create [--expires DURATION]",
-    "contact invite accept CODE",
+    "contact invite create --handling manual|ship [--expires DURATION]",
+    "contact invite accept LINK_OR_CODE --handling manual|ship",
     "contact invite list [--all] [--json]",
     "contact invite cancel INVITE_ID",
+    "contact handling CONTACT_ID manual|ship --revision N",
     "contact revoke CONTACT_ID",
     "contact request list [--contact CONTACT_ID] [--all] [--json]",
     "contact request create --contact CONTACT_ID --kind KIND --title TITLE [--details JSON] [--delivery-id ID]",
@@ -184,6 +188,7 @@ export class ShellDiscoveryCatalog {
       if (registered.name === "mail" && managedMailAddressForOwner(resolveCallerOwnerUid(this.ctx), this.ctx) === null) {
         missing.push("managed mailbox");
       }
+      if ((registered.name === "instance" || registered.name === "browser") && !this.ctx.env.INSTANCES) missing.push("configured instance service");
       const entry: ShellDiscoveryEntry = {
         kind: "command",
         name: registered.name,

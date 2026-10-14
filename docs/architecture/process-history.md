@@ -74,8 +74,9 @@ A deadline can therefore produce new model input without fabricating a ledger
 mutation. Event history and batch admission share the same deduplicated transaction.
 
 `process/history/compaction-renderer.ts` renders typed JSONL for summarization.
-The bounded transcript preserves head and tail records and explicitly marks
-omission and oversized payloads. Person-only events are excluded from summary
+Bounded sequential passes cover the complete transcript, including records
+that span a part boundary; each pass revises the cumulative handover.
+Person-only events are excluded from summary
 input as well. Prefix selection keeps storage coordinates while estimating only
 the corresponding provider messages; calls and their results remain together.
 The replacement is a `history.compacted` event with summary and segment identity.
@@ -85,7 +86,7 @@ the ordinary retry and fallback path and leaves the history unchanged.
 
 Web, Desktop, CLI, and the native agent shell switch on record kind. They use
 explicit call routing, result outcomes, and event severity instead of inferring
-meaning from prose or JSON-looking strings. Zen presents committed Conversation
+meaning from prose or JSON-looking strings. Chat presents committed Conversation
 messages with Process working folded beneath them. A new client explicitly
 reports an unsupported history format when connected to an older gateway.
 

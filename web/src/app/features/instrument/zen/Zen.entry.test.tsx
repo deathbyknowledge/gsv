@@ -14,16 +14,21 @@ import { chatConversationHistoryKey } from "../../../services/chat/hooks/useChat
 import { collectNodes, collectText, createTestRoot, deferred } from "../../../testing/testHarness";
 import { PromptLine, type PromptLineHandle } from "../shared/PromptLine";
 import { NativeVoiceControls } from "../../../services/platform/NativeVoiceControls";
+import { BrowserVoiceControls } from "../../../services/platform/BrowserVoiceControls";
+import { NativeInputProvider, type NativeInput } from "../../../services/platform/PlatformProvider";
 import { Zen } from "./Zen";
+import { BrowserRequests } from "../browser/BrowserControl";
 import { ConnectPlace } from "../fleet/ConnectPlace";
 import { FleetDialog } from "../fleet/FleetDialog";
 import { ZenText } from "./ZenText";
 import { ThinkingMark } from "./ThinkingMark";
 import { ApprovalCard } from "../shared/ApprovalCard";
+import { ConversationSearch } from "../shared/ConversationSearch";
 
 let storage: Map<string, string>;
 let messages: ConversationMessage[];
 let targets: SysTargetSummary[];
+let targetsReady: Promise<void> | null;
 let hasMore: boolean;
 let ownerUid: number;
 let gateway: string;
@@ -53,6 +58,7 @@ beforeEach(() => {
   storage = new Map();
   messages = [];
   targets = [];
+  targetsReady = null;
   hasMore = false;
   ownerUid = 1000;
   gateway = "wss://space.example/ws";
@@ -79,7 +85,7 @@ beforeEach(() => {
     if (call === "proc.list") return { data: { processes: [{ pid: shipPid, uid: ownerUid, username: "algo", label: "ship",
       personal: true, interactive: true, parentPid: null, state: "idle", activeRunId: null, queuedCount: 0,
       createdAt: 1, lastActiveAt: 1, cwd: "/home/algo" }] } };
-    if (call === "sys.target.list") return { data: { targets } };
+    if (call === "sys.target.list") { await targetsReady; return { data: { targets } }; }
     if (call === "sys.config.get") return { data: { entries: [] } };
     if (call === "account.list") return { data: { accounts: [] } };
     if (call === "conversation.forProcess") return { data: { conversation: conversation(z.object({ pid: z.string() }).parse(args).pid) } };
@@ -97,18 +103,25 @@ beforeEach(() => {
 });
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
-async function mountedZen(pid?: string, initialTarget?: string) {
+async function mountedZen(pid?: string, initialTarget?: string, native = false, searchRequested = false) {
   const root = createTestRoot("Zen entry");
   const cache = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
   let tree: ComponentChildren;
   const draftChange = vi.fn();
   const onFleet = vi.fn();
-  function Harness() { tree = Zen({ pid, initialTarget, onFleet, onDraftChange: draftChange }); return null; }
+  const input: NativeInput = {
+    subscribe: () => { throw new Error("Zen entry tests inspect controls without mounting them"); },
+    acknowledge: async () => {}, command: async () => {},
+  };
+  const searchHandled = vi.fn();
+  function Harness() { tree = Zen({ pid, initialTarget, onFleet, onDraftChange: draftChange, searchRequested, onSearchRequestHandled: searchHandled }); return null; }
   const render = () => root.render(<GatewayProvider><SessionProvider createService={(client) => {
     const service = createSessionService(client);
     return { ...service, start: async () => {}, subscribe: () => () => {},
       snapshot: () => ({ ...service.snapshot(), url: gateway, username: "hank" }) };
-  }}><TerminalProvider><QueryClientProvider client={cache}><Harness /></QueryClientProvider></TerminalProvider></SessionProvider></GatewayProvider>);
+  }}><TerminalProvider><QueryClientProvider client={cache}>
+    {native ? <NativeInputProvider input={input}><Harness /></NativeInputProvider> : <Harness />}
+  </QueryClientProvider></TerminalProvider></SessionProvider></GatewayProvider>);
   await render();
   await vi.waitFor(() => expect(collectNodes(tree).some((entry) => entry.type === PromptLine && entry.props.disabled === false)).toBe(true));
   await render();
@@ -118,7 +131,7 @@ async function mountedZen(pid?: string, initialTarget?: string) {
     // SAFETY: The VNode was selected by the exact component whose props type P describes.
     return node.props as P;
   };
-  return { render, props, onFleet, text: () => collectText(tree), dirty: () => draftChange.mock.lastCall?.[0] === true,
+  return { render, props, onFleet, searchHandled, text: () => collectText(tree), dirty: () => draftChange.mock.lastCall?.[0] === true,
     nodes: () => collectNodes(tree),
     async unmount() { await root.unmount(); cache.clear(); },
     async refreshHistory() { await act(async () => { await cache.invalidateQueries({ queryKey: chatConversationHistoryKey("canonical-ship") }); }); },
@@ -126,6 +139,61 @@ async function mountedZen(pid?: string, initialTarget?: string) {
 }
 
 describe("Zen conversation entry", () => {
+  it.each([false, true])("selects browser recording or native dictation for the active platform: native=%s", async (native) => {
+    const zen = await mountedZen("helper", undefined, native);
+    try {
+      expect(zen.nodes().some((node) => node.type === NativeVoiceControls)).toBe(native);
+      expect(zen.nodes().some((node) => node.type === BrowserVoiceControls)).toBe(!native);
+      if (!native) {
+        expect(zen.props(BrowserVoiceControls).pid).toBe("helper");
+        expect(zen.props(BrowserVoiceControls).enabled).toBe(true);
+      }
+    } finally { await zen.unmount(); }
+  });
+
+  it.each([false, true])("keeps voice input scoped to the default place while targets load: native=%s", async (native) => {
+    const pendingTargets = deferred<void>();
+    targetsReady = pendingTargets.promise;
+    targets = [{ targetId: "laptop", label: "Laptop", online: true, implements: ["shell.exec"], platform: "linux",
+      ownerUid: 1000, ownerUsername: "hank", description: "", version: "0.6.2", lastSeenAt: 1 }];
+    const zen = await mountedZen(undefined, undefined, native);
+    const voice = () => native ? zen.props(NativeVoiceControls) : zen.props(BrowserVoiceControls);
+    try {
+      expect(voice().enabled).toBe(true);
+      expect(zen.props(PromptLine).place.id).toBe("gsv");
+      const initialScope = voice().scope;
+      const placeButton = (name: string) => zen.nodes().find((node) => node.type === "button"
+        && node.props["aria-label"] === `Use ${name} for the next message or command`);
+
+      expect(placeButton("Laptop")).toBeUndefined();
+      await act(async () => { pendingTargets.resolve(); });
+      await vi.waitFor(() => expect(placeButton("Laptop")).toBeDefined());
+      expect(voice().enabled).toBe(true);
+      expect(voice().scope).toBe(initialScope);
+
+      await act(() => { placeButton("Laptop")!.props.onClick!(); });
+      expect(zen.props(PromptLine).place.id).toBe("laptop");
+      expect(voice().scope).not.toBe(initialScope);
+      await act(() => { placeButton("your cloud")!.props.onClick!(); });
+      expect(voice().scope).toBe(initialScope);
+    } finally { await zen.unmount(); }
+  });
+
+  it.each([undefined, "helper"])("keeps browser requests on Ship after its process loads, with selection %s", async pid => {
+    const zen = await mountedZen(pid);
+    try {
+      expect(zen.nodes().some(node => node.type === BrowserRequests)).toBe(pid === undefined);
+    } finally { await zen.unmount(); }
+  });
+
+  it("opens conversation search requested from the header", async () => {
+    const zen = await mountedZen(undefined, undefined, false, true);
+    try {
+      await vi.waitFor(() => expect(zen.nodes().some((node) => node.type === ConversationSearch)).toBe(true));
+      expect(zen.searchHandled).toHaveBeenCalledOnce();
+    } finally { await zen.unmount(); }
+  });
+
   it.each([false, true])("sends the exact Ship approval with an explicit remember choice: %s", async (remember) => {
     activeRunId = "shell-run";
     const zen = await mountedZen();
@@ -163,7 +231,7 @@ describe("Zen conversation entry", () => {
         selection: () => ({ value: "Keep typing", start: 5, end: 5 }),
         append: vi.fn(), blur: vi.fn(), submit: vi.fn(),
       };
-      zen.props(NativeVoiceControls).prompt.current = input;
+      zen.props(BrowserVoiceControls).prompt.current = input;
       await act(() => {
         zen.props(PromptLine).onFocusChange?.(true);
         zen.props(PromptLine).onInput?.("Keep typing");
@@ -210,7 +278,7 @@ describe("Zen conversation entry", () => {
         selection: () => ({ value: "Keep this draft", start: 15, end: 15 }),
         append: vi.fn(), blur: vi.fn(), submit: vi.fn(),
       };
-      zen.props(NativeVoiceControls).prompt.current = input;
+      zen.props(BrowserVoiceControls).prompt.current = input;
       await act(() => { prompt().onInput?.("Keep this draft"); });
       const cloud = () => zen.nodes().find((node) => node.type === "button"
         && node.props["aria-label"] === "Use your cloud for the next message or command")!;
@@ -269,8 +337,8 @@ describe("Zen conversation entry", () => {
   });
 
   it.each([
-    { target: "gsv", readiness: "your cloud ready", status: "completed", queuedCount: 0 },
-    { target: "laptop", readiness: "laptop offline", status: "aborted", queuedCount: 1 },
+    { target: "gsv", readiness: "your cloud is ready", status: "completed", queuedCount: 0 },
+    { target: "laptop", readiness: "laptop is offline", status: "aborted", queuedCount: 1 },
   ])("shows run feedback before streaming and clears it when $status", async ({ target, readiness, status, queuedCount }) => {
     runContext = {
       revision: 1, runId: "previous-run", provider: "openai", model: "previous-model",
@@ -282,8 +350,12 @@ describe("Zen conversation entry", () => {
     send.mockResolvedValueOnce({ message: message("user", "Keep working"), handlerPid: shipPid, runId: "active-run" });
     const zen = await mountedZen(undefined, target);
     const text = () => zen.text().replace(/\s+/g, " ");
+    const feedbackText = () => {
+      const feedback = zen.nodes().find((node) => node.type === "span" && node.props.role === "status" && !node.props.class);
+      return feedback ? collectText(feedback).replace(/\s+/g, " ") : "";
+    };
     try {
-      expect(text()).not.toContain(readiness);
+      expect(feedbackText()).not.toContain(readiness);
       expect(text()).not.toContain("attempting");
       await act(() => { zen.props(PromptLine).onSubmit("Keep working"); });
       await vi.waitFor(() => expect(send).toHaveBeenCalledOnce());
@@ -291,7 +363,7 @@ describe("Zen conversation entry", () => {
 
       activeRunId = "active-run";
       await act(() => { for (const listener of signals) listener("proc.run.started", { pid: shipPid, runId: activeRunId }); });
-      await vi.waitFor(() => expect(text()).toContain(readiness));
+      await vi.waitFor(() => expect(feedbackText()).toContain(readiness));
       expect(zen.nodes().some((node) => node.type === ThinkingMark)).toBe(true);
       expect(text()).not.toContain("previous-model");
 
@@ -299,18 +371,18 @@ describe("Zen conversation entry", () => {
       await act(() => { for (const listener of signals) listener("proc.changed", { pid: shipPid, changes: ["context"], context: runContext }); });
       await vi.waitFor(() => expect(text()).toContain("active-model"));
       expect(text()).not.toContain("attempting");
-      expect(text()).toContain(readiness);
+      expect(feedbackText()).toContain(readiness);
 
       activeRunId = null;
       await act(() => { for (const listener of signals) listener("proc.run.finished", { pid: shipPid, runId: "active-run", status, queuedCount }); });
-      await vi.waitFor(() => expect(text()).not.toContain(readiness));
+      await vi.waitFor(() => expect(feedbackText()).not.toContain(readiness));
       expect(zen.nodes().some((node) => node.type === ThinkingMark)).toBe(false);
       expect(text()).not.toContain("attempting");
     } finally { await zen.unmount(); }
   });
 
   it.each(["$ pwd", "!pwd"])("routes a finalized native %s prompt to the terminal without sending it to Ship", async (text) => {
-    const zen = await mountedZen();
+    const zen = await mountedZen(undefined, undefined, true);
     try {
       await act(() => { expect(zen.props(NativeVoiceControls).send(text)).toBe(true); });
       await vi.waitFor(() => expect(vi.mocked(GSVClient.prototype.request).mock.calls.some(([call, args]) =>
@@ -321,7 +393,7 @@ describe("Zen conversation entry", () => {
   });
 
   it("switches the place for a native @ prompt and reports an unknown place without sending either to Ship", async () => {
-    const zen = await mountedZen(undefined, "laptop");
+    const zen = await mountedZen(undefined, "laptop", true);
     try {
       await vi.waitFor(() => expect(zen.props(PromptLine).place.id).toBe("laptop"));
       await act(() => { expect(zen.props(NativeVoiceControls).send("@cloud")).toBe(true); });
@@ -333,7 +405,7 @@ describe("Zen conversation entry", () => {
   });
 
   it("rejects native commands with attachments instead of submitting a chat message", async () => {
-    const zen = await mountedZen();
+    const zen = await mountedZen(undefined, undefined, true);
     try {
       await act(() => { zen.props(PromptLine).onFiles?.([new File(["fixture"], "note.txt", { type: "text/plain" })]); });
       for (const text of ["$ pwd", "$", "!"]) {
@@ -347,7 +419,7 @@ describe("Zen conversation entry", () => {
 
   it("sends ordinary native text through the conversation outbox", async () => {
     send.mockResolvedValueOnce({ message: message("user", "Hello from voice"), handlerPid: shipPid, runId: "voice" });
-    const zen = await mountedZen();
+    const zen = await mountedZen(undefined, undefined, true);
     try {
       await act(() => { expect(zen.props(NativeVoiceControls).send("Hello from voice")).toBe(true); });
       await vi.waitFor(() => expect(send).toHaveBeenCalledOnce());

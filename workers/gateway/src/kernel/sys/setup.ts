@@ -107,16 +107,19 @@ function ensureSingleUserBootstrap(passwd: PasswdEntry[]): void {
   }
 }
 
-function parseSetupIdentity(args: SysSetupArgs): SetupIdentity {
-  if (!args.username.trim()) {
+function parseSetupIdentity(args: SysSetupArgs, ctx: KernelContext): SetupIdentity {
+  const handle = ctx.installationIdentity?.handle ?? "owner";
+  const defaultUsername = USERNAME_RE.test(handle) && !["root", "users", "drivers", "services", "ship", "crew"].includes(handle) ? handle : "owner";
+  const requestedUsername = args.username ?? ctx.auth.getHumanAccount()?.username ?? defaultUsername;
+  if (!requestedUsername.trim()) {
     throw new Error("username is required");
   }
   // Validate the raw (untrimmed) value so padded names like " alice " are
   // rejected at the syscall boundary, not only in the web wizard.
-  if (!USERNAME_RE.test(args.username)) {
+  if (!USERNAME_RE.test(requestedUsername)) {
     throw new Error("username must match ^[a-z_][a-z0-9_-]{0,31}$");
   }
-  const username = args.username;
+  const username = requestedUsername;
 
   const password = readRequiredString(args.password, "password");
   if (password.length < 8) {
@@ -251,7 +254,7 @@ export async function handleSysSetup(
   ctx: KernelContext,
 ): Promise<SysSetupResult> {
   const { auth, config } = ctx;
-  const requestedUsername = args.username.trim().length > 0
+  const requestedUsername = args.username?.trim()
     ? args.username.trim()
     : "<unknown>";
   const startedAt = Date.now();
@@ -261,7 +264,7 @@ export async function handleSysSetup(
     throw new Error("System already initialized");
   }
 
-  const { username, password } = parseSetupIdentity(args);
+  const { username, password } = parseSetupIdentity(args, ctx);
   const serverFeatures = gsvInferenceFeaturesFromEnv(ctx.env);
   const managedInferenceAvailable = serverFeatures.includes(GSV_INFERENCE_FEATURE);
   const ai = resolveSetupAiConfig(
@@ -461,7 +464,7 @@ export async function recoverCompletedSysSetup(
   args: SysSetupArgs,
   ctx: KernelContext,
 ): Promise<SysSetupResult> {
-  const { username, password } = parseSetupIdentity(args);
+  const { username, password } = parseSetupIdentity(args, ctx);
   const humans = ctx.auth.getPasswdEntries().filter((entry) => {
     const shadow = ctx.auth.getShadowByUsername(entry.username);
     return entry.uid >= 1000 && shadow && !isLocked(shadow);

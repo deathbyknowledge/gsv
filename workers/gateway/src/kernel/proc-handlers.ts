@@ -775,11 +775,12 @@ export async function forwardToProcess(
     throw new Error(`Permission denied: cannot access process ${pid}`);
   }
 
-  const owner = frame.call === "codemode.run" ? nestedToolOwner(ctx) : undefined;
-  if (owner && pid !== ctx.processId) {
+  const ownedCall = frame.call === "codemode.run" || frame.call === "proc.history.compact";
+  const owner = ownedCall && pid === ctx.processId ? nestedToolOwner(ctx) : undefined;
+  if (frame.call === "codemode.run" && nestedToolOwner(ctx) && pid !== ctx.processId) {
     throw new Error("Agent CodeMode execution must belong to its calling process");
   }
-  const processFrame = frame.call === "codemode.run"
+  const processFrame = ownedCall
     ? { ...frame, toolOwner: owner }
     : frame.call === "proc.send"
       ? withProcSendOrigin(frame, ctx)
@@ -852,6 +853,7 @@ export async function forwardToProcess(
           processId: pid,
           uid: proc.ownerUid,
           connectionId: ctx.connection.id,
+          clientPlatform: ctx.connection.state.clientPlatform?.trim() || undefined,
         });
       }
       const result: ForwardedProcessResult = {

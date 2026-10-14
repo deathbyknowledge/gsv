@@ -2,6 +2,7 @@ import type { ComponentChildren } from "preact";
 import { createContext } from "preact";
 import { useContext, useEffect, useState } from "preact/hooks";
 import { GSVClient, type GsvClientStatus, type GsvPeerInfo } from "@humansandmachines/gsv/client";
+import { detectClientPlatform } from "./clientPlatform";
 import { createMockGatewayClient, mockGatewayRequested } from "./mockGateway";
 
 type GatewayContextValue = {
@@ -18,8 +19,8 @@ type GatewayProviderProps = {
 
 export const WEB_PEER: GsvPeerInfo = {
   id: "gsv-ui",
-  version: "0.6.6",
-  platform: "browser",
+  version: "0.7.0",
+  platform: detectClientPlatform(),
 };
 
 function createWebGsvClient(): GSVClient {

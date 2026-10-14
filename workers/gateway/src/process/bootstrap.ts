@@ -1,9 +1,11 @@
 import { errorMessageFromUnknown } from "../inference/errors";
 import type { Process } from "./do";
+import { recoverMemoryReviews } from "./memory-review";
 
 /** Reconciles durable work that may have been interrupted by object eviction. */
 export async function recoverProcess(host: Process): Promise<void> {
   if (host.killed) return;
+  await recoverMemoryReviews(host);
 
   const recoveredRun = host.runs.active;
   if (

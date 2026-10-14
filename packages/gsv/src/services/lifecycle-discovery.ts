@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 export const installationResourceKindSchema = z.enum([
-  "kernel", "process", "conversation", "ripgit", "mail",
+  "kernel", "process", "conversation", "ripgit", "mail", "instance-installation",
   "adapter-peer", "adapter-pairing", "adapter-account", "adapter-application", "adapter-installation", "inference-executor", "inference-installation", "web-search-installation",
 ]);
 const objectId = z.string().regex(/^[a-f0-9]{64}$/);

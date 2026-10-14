@@ -2,16 +2,63 @@ import { describe, expect, it, vi } from "vitest";
 import type { AiAssistantMessage, AiTextGenerateArgs } from "@humansandmachines/gsv/protocol";
 import type { InferenceExecutor } from "@humansandmachines/gsv/services/inference-execution";
 import type { GatewayEnv } from "../runtime-env";
+import type { Process } from "./do";
 import { createGenerationService } from "../inference/execution-client";
 import { extractGeneratedText } from "../inference/generated-text";
 import { adaptGeneratedAssistantMessage } from "./internal/messages";
 import { initProcess, processTestConfig, ROOT_IDENTITY, runInProcess, testUsage } from "./do-test-harness";
+import { estimateContextInputTokens } from "./context-pressure";
 
 /** The shape Cerebras returned for a compaction request whose reasoning stayed on. */
 const PLANNING = "We need answer user's request: summarize a compacted GSV process conversation segment. Let's extract important facts: the user asked about deployment and the assistant answered.";
 const SUMMARY = "The user asked for the deployment checklist. The assistant listed three steps: build the web assets, plan the deployment, then apply it.";
 
 type Executor = "process" | "kernel";
+
+it("fits cumulative summary passes into a small fallback context", async () => {
+  const stub = await initProcess("small-context-compaction", ROOT_IDENTITY);
+  await runInProcess(stub, async (process: Process) => {
+    process.store.messages.appendMessage("user", `Keep this first constraint. ${"evidence ".repeat(500)} Final correction.`);
+    const config = processTestConfig(process.pid, {
+      contextWindowTokens: 128_000,
+      fallbacks: [{ provider: "custom", model: "small", apiKey: "test", contextWindowTokens: 1_000 }],
+    });
+    process.history.resolveCheckpointConfig = async () => config;
+    const inputs: string[] = [];
+    const summary = "Keep this first constraint.";
+    vi.spyOn(process.run, "generateCompactionText").mockImplementation(async ({ context, options }) => {
+      expect(options.maxTokens).toBe(125);
+      expect(estimateContextInputTokens(context) + options.maxTokens!).toBeLessThanOrEqual(1_000);
+      if (inputs.length) expect(JSON.stringify(context)).toContain(summary);
+      inputs.push(JSON.stringify(context));
+      return summary;
+    });
+    expect(await process.history.generateHistoryCompactionSummary(process.store.messages.getMessagesForGeneration())).toBe(summary);
+    expect(inputs.length).toBeGreaterThan(1);
+    expect(inputs.join("")).toContain("Final correction.");
+  });
+});
+
+it("keeps the original history if a later summary pass fails", async () => {
+  const stub = await initProcess("multi-pass-compaction-failure", ROOT_IDENTITY);
+  await runInProcess(stub, async (process: Process) => {
+    const original = Array.from({ length: 300 }, (_, index) => `Source ${index}: ${"evidence ".repeat(100)}`);
+    for (const text of original) process.store.messages.appendMessage("user", text);
+    process.history.resolveCheckpointConfig = async () => processTestConfig(process.pid);
+    let calls = 0;
+    vi.spyOn(process.run, "generateCompactionText").mockImplementation(async ({ context }) => {
+      calls += 1;
+      if (calls === 1) return "Keep the user's first constraint through every pass.";
+      expect(JSON.stringify(context)).toContain("Keep the user's first constraint through every pass.");
+      throw new Error("Synthetic failure in a later summary pass");
+    });
+    const result = await process.history.handleHistoryCompact({ keepLast: 1, generateSummary: true });
+    expect(calls).toBe(2);
+    expect(result).toMatchObject({ ok: false, error: expect.stringContaining("Synthetic failure") });
+    expect(process.store.messages.getMessagesForGeneration().map((message) => message.content)).toEqual(original);
+    expect(process.store.history.listHistorySegments()).toEqual([]);
+  });
+});
 
 function cerebrasResponse(
   content: AiAssistantMessage["content"],

@@ -1,4 +1,5 @@
 import { expect, it } from "vitest";
+import type { Context } from "@humansandmachines/gsv/services/inference-context";
 import { initProcess, ROOT_IDENTITY, runInProcess, generationRun, processTestConfig, setHistoryPolicy, mockGeneration, terminalTestResponse, messageAction } from "./do-test-harness";
 
 it("compacts history containing retained multi-megabyte fallback metadata", async () => {
@@ -7,9 +8,11 @@ it("compacts history containing retained multi-megabyte fallback metadata", asyn
   const stub = await initProcess(pid, ROOT_IDENTITY);
   const result = await runInProcess(stub, async (process) => {
     let summaries = 0;
+    const summaryInputs: string[] = [];
     process.sendSignal = async () => {};
-    mockGeneration(process, async () => terminalTestResponse([messageAction("done", "large-metadata-done")]), async () => {
+    mockGeneration(process, async () => terminalTestResponse([messageAction("done", "large-metadata-done")]), async ({ context }: { context: Context }) => {
       summaries += 1;
+      summaryInputs.push(JSON.stringify(context));
       return "Synthetic compacted summary.";
     });
     for (let index = 0; index < 438; index += 1) {
@@ -32,9 +35,13 @@ it("compacts history containing retained multi-megabyte fallback metadata", asyn
     const epoch = process.store.epochs.listContextEpochs().find((entry: { state: string }) => entry.state === "closed");
     if (!epoch?.archivePath) throw new Error("Compaction did not retain its context epoch archive");
     const archived = await process.storage.head(epoch.archivePath.replace(/^\/+/, ""));
+    const transcript = summaryInputs.join("");
+    expect(transcript).toContain("Synthetic message 200");
+    expect(transcript).not.toContain("x".repeat(100));
+    expect(summaryInputs.slice(1).every((input) => input.includes("Synthetic compacted summary."))).toBe(true);
     return { summaries, segments: process.store.history.listHistorySegments(), active: process.runs.active !== null, epochArchived: archived !== null };
   });
-  expect(result.summaries).toBe(1);
+  expect(result.summaries).toBeGreaterThan(1);
   expect(result.segments).toHaveLength(1);
   expect(result.segments[0].toMessageId).toBeGreaterThan(200);
   expect(result.active).toBe(false);

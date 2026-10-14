@@ -47,7 +47,7 @@ Messaging has its own two deliberate views:
 
 - `message destinations` is the agent-facing inventory of authorized observed
   conversations where a message can be delivered.
-- Adapter APIs and the Messengers console expose account connection, health,
+- The native `messenger` command, adapter APIs and the Messengers console expose account connection, health,
   identity-link, and administration state.
 
 This keeps a transport-only Telegram account from masquerading as a capability
@@ -196,8 +196,9 @@ The canonical outbound path is:
    text remains raw Process activity; a bare `yield` finishes without another Message.
 2. The Kernel commits the Message to the canonical conversation and selects its
    directed endpoint. Explicit Work, group and contact routes remain fixed.
-3. Personal Ship replies follow the owner's latest human origin or foreground client
-   activity across runs. If that client disconnects or is inactive for five minutes,
+3. Personal Ship replies follow the owner's latest human message origin across runs.
+   Client activity only refreshes the selected client's idle timer; it never selects
+   another destination or revives an expired selection. If that client disconnects or is inactive for five minutes,
    the Kernel uses the owner's last-active linked private messenger destination.
    Other processes do not use this fallback. Each committed message keeps its chosen
    destination through retries, even if the owner's preference changes.
@@ -371,11 +372,27 @@ to a local uid. That mapping is what allows inbound messages to reach the right
 process and lets authenticated native callbacks submit an exact pending
 human-in-the-loop decision as that linked human.
 
-The adapter issues a short-lived code without choosing a space. A direct,
-signed-in human inspects and confirms the provider identity through
-`adapter.pair.inspect` and `adapter.pair.confirm`. Confirmation supplies the
-immutable installation and local uid, and commits a generation-fenced route.
-Issuing or inspecting a code does not interrupt an existing link.
+The adapter issues a short-lived code without choosing a space. A signed-in
+human or an authorized process can inspect and redeem it through
+`adapter.pair.inspect` and `adapter.pair.confirm`. For a process, the Kernel
+derives the active human owner from its registry and honors the process's
+capabilities and tool policy. The caller cannot choose an installation or uid.
+Redemption commits a generation-fenced route; issuing or inspecting a code does
+not interrupt an existing link. Disconnect remains a direct human action.
+New links created by processes record the acting account and `humanConfirmed: false`;
+they cannot authorize member password recovery. Reconnecting the same identity
+preserves an active, same-owner human confirmation, including its confirming uid.
+Revoked confirmations cannot be restored by a process.
+
+Cancellation stops a new link before activation. Reconnecting owns completion
+from the removal of its old link; a new pairing owns completion from local linking
+and remote activation. The Kernel retains that promise through finalization,
+even if the caller stops waiting. Credential revocation remains authoritative.
+
+`messenger setup ADAPTER` reads public connection instructions from the adapter.
+The user can paste its code into the conversation; Ship reads that code from a
+file through `messenger connect ADAPTER < code.txt`. This uses the existing
+pairing operation without a separate UI confirmation protocol or model tool.
 
 Without a link, addressed messages may request pairing; they do not enter a
 Process. The first message that requested the code is not replayed as agent
@@ -385,9 +402,9 @@ unfinished exact-generation remote cleanup remains durable retry state.
 A private message on the exact retained route of a password-revoked identity
 returns `revoked_identity`. Managed adapters respond with their own fresh pairing
 code; the revoked message never enters a Process. Removed accounts, unknown
-routes, and obsolete generations remain fenced. Pairing still requires a
-direct, signed-in confirmation, which releases the retained route before
-activating its replacement.
+routes, and obsolete generations remain fenced. Redeeming a fresh code through
+the signed-in human or an authorized owned process releases the retained route
+before activating its replacement.
 
 Linked group, channel, and thread traffic is not ambient input. The adapter must
 set `wasMentioned: true` when the bot was addressed according to that
@@ -541,3 +558,9 @@ multiple surfaces into the same computer.
 - [Connect a Messenger](../how-to/messengers)
 - [Routing Reference](../reference/routing.md)
 - [Architecture Overview](./index.md)
+
+Adapter delivery diagnostics travel with failed or ambiguous `adapter.send`
+results. The provider owner selects bounded error fields; durable delivery
+receipts preserve them across retries, and Gateway reports the terminal failure
+stage and redacted details. Message bodies, recipient identifiers and provider
+request/response objects are excluded from telemetry.

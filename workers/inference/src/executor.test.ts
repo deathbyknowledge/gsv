@@ -3,6 +3,7 @@ import { createExecutionContext, listDurableObjectIds, runInDurableObject, runDu
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { type JsonValue, decodeInferenceExecutionStream } from "@humansandmachines/gsv/protocol";
 import type { InferenceExecutionRequest, InferenceExecutionService, InferenceExecutor } from "@humansandmachines/gsv/services/inference-execution";
+import type { ManagedInferenceResult } from "@humansandmachines/gsv/services/inference";
 import { RoutedInferenceTransport } from "../../gateway/src/inference/transport";
 import { ExecutorStore } from "../../../packages/inference/src/executor/store";
 import { executorLimits } from "../../../packages/inference/src/executor/config";
@@ -22,6 +23,14 @@ function request(installationId: string, logicalRequestId = crypto.randomUUID())
 function completion(): Response {
   const chunk = (data: JsonValue) => `data: ${JSON.stringify(data)}\n\n`;
   return new Response(chunk({ id: "response", choices: [{ index: 0, delta: { content: "hello" } }] }) + chunk({ choices: [{ index: 0, delta: {}, finish_reason: "stop" }], usage: { prompt_tokens: 2, completion_tokens: 1, total_tokens: 3 } }) + "data: [DONE]\n\n", { headers: { "content-type": "text/event-stream" } });
+}
+async function generate(executor: InferenceExecutor, input: InferenceExecutionRequest, streaming: boolean): Promise<ManagedInferenceResult> {
+  if (!streaming) return executor.generate(input);
+  for await (const event of decodeInferenceExecutionStream(await executor.generateStream(input))) {
+    if (event.type === "done") return event.message;
+    if (event.type === "error") return event.error;
+  }
+  throw new Error("Missing terminal inference result");
 }
 async function rows(id: string) {
   return runInDurableObject(env.INFERENCE_EXECUTORS.getByName(id), (_instance, state) => ({
@@ -64,6 +73,90 @@ function transportedRequest(id: string): InferenceExecutionRequest {
 }
 
 describe("public inference executor RPC", () => {
+  it.each([false, true])("recovers native connection failures before output, streaming=%s", async (streaming) => {
+    const bindingFetch = vi.fn<typeof fetch>()
+      .mockRejectedValueOnce(new Error("Network connection lost."))
+      .mockRejectedValueOnce(new Error("Network connection lost."))
+      .mockImplementationOnce(async () => completion());
+    vi.stubGlobal("fetch", bindingFetch);
+    const id = `space_connection_retry_${streaming}`;
+    const executor = await service.getExecutor(id);
+    const result = await generate(executor, request(id), streaming);
+    expect(result).toMatchObject({ stopReason: "stop", content: [{ type: "text", text: "hello" }] });
+    expect(result.errorMessage).toBeUndefined();
+    expect(bindingFetch).toHaveBeenCalledTimes(3);
+    const metadata = bindingFetch.mock.calls.map(([, init]) => JSON.parse(new Headers(init?.headers).get("cf-aig-metadata")!));
+    expect(new Set(metadata.map((value) => value["gsv.request_id"])).size).toBe(1);
+    expect(new Set(metadata.map((value) => value["gsv.attempt_id"])).size).toBe(3);
+    const settled = await rows(id);
+    expect(settled.requests).toHaveLength(1);
+    expect(settled.requests[0]).toMatchObject({ state: "completed", reserved_tokens: 0, output_tokens: 1 });
+  });
+
+  it.each([false, true])("bounds failed acquisition and retains its private cause, streaming=%s", async (streaming) => {
+    const bindingFetch = vi.fn<typeof fetch>(async () => { throw new Error("Fixture transport unavailable"); });
+    vi.stubGlobal("fetch", bindingFetch);
+    const id = `space_connection_failure_${streaming}`;
+    const executor = await service.getExecutor(id);
+    expect(await generate(executor, request(id), streaming)).toMatchObject({
+      stopReason: "error", errorMessage: "Connection error.\nTransport cause: Fixture transport unavailable",
+    });
+    expect(bindingFetch).toHaveBeenCalledTimes(3);
+    expect((await rows(id)).requests).toMatchObject([{ state: "error", reserved_tokens: 0 }]);
+  });
+
+  it("does not retry a permanent provider rejection", async () => {
+    const bindingFetch = vi.fn<typeof fetch>(async () => Response.json({ error: { message: "Fixture unauthorized" } }, { status: 401 }));
+    vi.stubGlobal("fetch", bindingFetch);
+    const id = "space_connection_unauthorized";
+    const executor = await service.getExecutor(id);
+    expect(await executor.generate(request(id))).toMatchObject({ stopReason: "error", errorMessage: expect.stringContaining("Fixture unauthorized") });
+    expect(bindingFetch).toHaveBeenCalledOnce();
+  });
+
+  it.each([false, true])("cancels native retry backoff without another dispatch, streaming=%s", async (streaming) => {
+    const dispatched = Promise.withResolvers<void>();
+    const bindingFetch = vi.fn<typeof fetch>(async () => {
+      dispatched.resolve();
+      throw new Error("Network connection lost.");
+    });
+    vi.stubGlobal("fetch", bindingFetch);
+    const id = `space_connection_cancel_${streaming}`;
+    const input = request(id);
+    const executor = await service.getExecutor(id);
+    const pending = generate(executor, input, streaming);
+    await dispatched.promise;
+    await env.INFERENCE_EXECUTORS.getByName(id).abort(input.logicalRequestId);
+    expect(await pending).toMatchObject({ stopReason: "aborted" });
+    expect(bindingFetch).toHaveBeenCalledOnce();
+    expect((await rows(id)).requests).toMatchObject([{ state: "cancelled", reserved_tokens: 0 }]);
+  });
+
+  it("does not restart a native request after response output begins", async () => {
+    let controller!: ReadableStreamDefaultController<Uint8Array>;
+    const bindingFetch = vi.fn<typeof fetch>(async () => new Response(new ReadableStream<Uint8Array>({
+      start(value) {
+        controller = value;
+        value.enqueue(new TextEncoder().encode('data: {"choices":[{"index":0,"delta":{"content":"partial"}}]}\n\n'));
+      },
+    }), { headers: { "content-type": "text/event-stream" } }));
+    vi.stubGlobal("fetch", bindingFetch);
+    const id = "space_connection_stream_failure";
+    const executor = await service.getExecutor(id);
+    const events = [];
+    for await (const event of decodeInferenceExecutionStream(await executor.generateStream(request(id)))) {
+      events.push(event);
+      if (event.type === "text_delta") {
+        await runInDurableObject(env.INFERENCE_EXECUTORS.getByName(id), () => {
+          controller.error(new Error("Network connection lost."));
+        });
+      }
+    }
+    expect(events.some((event) => event.type === "text_delta" && event.delta === "partial")).toBe(true);
+    expect(events.at(-1)).toMatchObject({ type: "error", error: { errorMessage: "Network connection lost." } });
+    expect(bindingFetch).toHaveBeenCalledOnce();
+  });
+
   it("reports metadata outcomes with optional lookup correlation", async () => {
     const log = vi.spyOn(console, "log").mockImplementation(() => {});
     const bindings: unknown = env;

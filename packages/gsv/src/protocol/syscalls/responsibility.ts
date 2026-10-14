@@ -15,6 +15,7 @@ export type ResponsibilityRequiredSourcePolicyId =
   | "schedule.due";
 
 export type ResponsibilityConfigurableSourcePolicyId =
+  | "memory.review"
   | "mail.received"
   | "machine.added"
   | "adapter.connected"

@@ -6,7 +6,8 @@ You can use a hosting operator or run the same stack in your own Cloudflare acco
 ## Get a space
 
 If an operator has created a space for you, open its setup invitation and choose
-the username and password you'll use inside that space. Continue to review the
+the password you'll use inside that space. Your space has one personal account;
+you do not need to choose another username. Continue to review the
 early-access disclosure and confirm the age, Terms of Service and Privacy Policy
 agreement before creating your account. This checkbox is required inside the space
 as well as on the signup email step. **Back** lets you revise your credentials.
@@ -63,17 +64,32 @@ Existing standalone deployments should read the
 
 The web console is called **Instrument** and has five views:
 
-- **Zen** is your Ship conversation, and where you inspect what a run did.
+- **Chat** is your Ship conversation, and where you inspect what a run did.
 - **Fleet** lists your places, processes and responsibilities, and recently touched files.
 - **Memory** shows your personal knowledge pages.
-- **People** holds conversations, message requests and private contacts across GSV spaces.
-- **Settings** holds preferences (models), permissions, instructions, messengers, MCP connections and **Logs** for actions and their outcomes. The **people** and **sign-in** sections appear only for the root account.
+- **People** holds conversations, message requests and private contacts across GSV spaces, plus your public profile.
+- **Settings** holds preferences (models), permissions, instructions, messengers, MCP connections and **Logs** for actions and their outcomes. The **sign-in** section appears only for root, for personal password resets and verified-owner linking.
 
 The Settings sidebar highlights the section you're viewing.
 
-In Zen, **search** or `Ctrl/Cmd+F` finds earlier messages; `/` opens it in browse
-mode. Open a match to read the surrounding conversation. Closing search returns
-to your place and draft.
+Open **People** to try making plans or working together with someone on GSV.
+**connect** creates a shareable invitation; accepting it opens your conversation.
+You can talk directly or choose **ask Ship** to prepare a request in your Ship chat.
+A dot beside **people** marks waiting activity, and Zen shows unread conversations
+and message requests above the prompt, including after a reload. See
+[Contact people](/how-to/contact-people) for the full flow.
+
+If your operator enables cloud browsers, Fleet also offers **start browser**.
+You can [sign in and save website logins](/how-to/cloud-browsers) there so Ship
+can use those sites while your personal devices are offline.
+Ship can use cloud browsers without per-action approval by default. To change
+that, select **Cloud browsers** under **Settings → permissions** and choose
+**Ask** or **Block**; personal computers and browsers keep their existing rules.
+
+Open **Help** in the header and choose **Search Chat** to find earlier messages.
+Press `Ctrl+K` from any view to open the same search. In Chat, `/` opens search in browse
+mode, and `Ctrl/Cmd+F` also works while typing. Open a match to read the
+surrounding conversation. Closing search returns to your place and draft.
 
 The composer starts on **your cloud** (`gsv`). Choose another place explicitly
 when you want a message or command to target it; that choice stays while you
@@ -86,6 +102,6 @@ move between views. The header stays above the scrolling content.
 - [Connect a messenger](/how-to/messengers).
 - [Add integrations](/how-to/integrations).
 - [Browse the web](/how-to/browse-web).
-- [Invite people](/how-to/invite-people).
+- [Personal access](/how-to/invite-people).
 - [Examples](/examples/index).
 - [FAQ](/get-started/faq).

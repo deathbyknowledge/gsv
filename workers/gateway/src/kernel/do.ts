@@ -19,6 +19,8 @@ import { InstallationRetirement, durableResourceName, stateWithRetirementStorage
 import { DurableObject } from "cloudflare:workers";
 import { ModelMetadataResolver } from "../inference/model-metadata";
 import { z } from "zod";
+import { processMemoryReviewSchema, type ProcessMemoryReview } from "../protocol/process-frames";
+import { queueMemoryReview, runMemoryReview } from "./memory-review";
 import { McpClientManager, SqlMcpServerRows } from "./mcp-client";
 import type {
   Frame,
@@ -53,7 +55,6 @@ import { AuthStore } from "./auth-store";
 import { DevicePairingStore } from "./device-pairings";
 import { MemberRecoveryStore } from "./member-recovery";
 import { AccountRecoveryStore } from "./account-recovery";
-import { PeopleStore } from "./people";
 import type { AuthorizeRootRecoveryInput } from "@humansandmachines/gsv/services/ownership";
 import { CapabilityStore, hasCapability } from "./capabilities";
 import { ConfigStore } from "./config";
@@ -78,7 +79,8 @@ import { IpcCallStore } from "./ipc-calls";
 import {
   ScheduleStore,
 } from "./scheduler";
-import { dispatch, rejectBeforeDispatch, type DispatchDeps } from "./dispatch";
+import { dispatch, type DispatchDeps } from "./dispatch";
+import { rejectBeforeDispatch } from "./request-rejection";
 import { raceWithAbort } from "../shared/abort";
 import type { KernelContext } from "./context";
 import { resolveCallerOwnerUid, principalOf, requirePrincipal } from "./context";
@@ -99,7 +101,7 @@ import {
   assertAdapterMessageDestinationAccess,
   identityLinkRouteGeneration,
 } from "./adapter-destinations";
-import type { InternalResponseFrame } from "../protocol/process-frames";
+import type { InternalResponseFrame, ProcessApprovalTarget, ProcessApprovalTargetRef } from "../protocol/process-frames";
 import type {
   ProcessOutboundFrame,
 } from "../protocol/process-frames";
@@ -115,7 +117,7 @@ import {
 import { FederationStore } from "./federation-store";
 import { ProfileStore, type PublicProfileLocator, type PublicProfileProjection } from "./profile-store";
 import { ApproachStore } from "./approach-store";
-import { profileOwnerActive } from "./profiles";
+import { resolveSpacePublicProfile } from "./profiles";
 import { processApproachMaintenance } from "./approaches/runtime";
 import { MANAGED_LIFECYCLE_RECHECK_MS } from "../installation/lifecycle";
 import { FederationIdentity } from "./federation-crypto";
@@ -136,7 +138,7 @@ import {
   recoverManagedOutboundEnqueue,
   resolveOutboundMailReference as resolveKernelOutboundMailReference,
 } from "./outbound-mail";
-import { getVisibleTarget } from "./targets";
+import { approvalTargetIdentity, getVisibleTarget, resolveVisibleTarget } from "./targets";
 import { runKernelSqlMigrations } from "./schema/migrations";
 import { LEDGER_PRUNE_PER_ALARM, LEDGER_WINDOW_ROWS, LedgerStore, argsText, ledgerTargetOf, outcomeOfResponse, errorOfResponse, usageOfResponse, type JsonLike } from "./ledger";
 import { LedgerFeed } from "./ledger-feed";
@@ -191,6 +193,7 @@ import type {
 } from "./do-shared";
 import { ConnectionRuntime } from "./connection-runtime";
 import { Transport } from "./transport";
+import { BrowserHandoffRuntime } from "./browser-handoff-runtime";
 type ProcessNetFetchOptions = {
   ttlMs?: number;
   internalPurpose?: "model-transport";
@@ -222,6 +225,7 @@ type AuthorizeGitHttpResult =
 type StoredInstallationIdentity = Omit<InstallationIdentity, "installationId">;
 
 type KernelTask =
+  | { callback: "onMemoryReview"; payload: number }
   | { callback: "onProcessApprovalNotice"; payload: { pid: string; runId: string; requestId: string } }
   | { callback: "onAdapterRouteDelivery"; payload: AdapterRouteDeliveryRetry }
   | { callback: "onIpcCallDelivery"; payload: string }
@@ -240,7 +244,8 @@ type KernelTask =
       callback: "onResponsibilityWake";
       payload: { ownerUid: number; generation: number };
     }
-  | { callback: "onLedgerRotate"; payload: string };
+  | { callback: "onLedgerRotate"; payload: string }
+  | { callback: "onBrowserHandoffs"; payload: null };
 
 type KernelTaskCallback = KernelTask["callback"];
 
@@ -261,6 +266,7 @@ const adapterDeliveryRouteSchema = z.object({
 });
 
 const KERNEL_TASK_SCHEMA = z.discriminatedUnion("callback", [
+  z.object({ callback: z.literal("onMemoryReview"), payload: z.number().int().nonnegative() }),
   z.object({
     callback: z.literal("onAdapterRouteDelivery"),
     payload: z.object({
@@ -315,6 +321,7 @@ const KERNEL_TASK_SCHEMA = z.discriminatedUnion("callback", [
     }),
   }),
   z.object({ callback: z.literal("onLedgerRotate"), payload: z.string() }),
+  z.object({ callback: z.literal("onBrowserHandoffs"), payload: z.null() }),
 ]);
 const processMessageStreamSignalSchema = z.object({
   type: z.literal("sig"),
@@ -385,6 +392,7 @@ export function kernelRuntimes(host: Kernel) {
     processOutput: new ProcessOutput(host),
     federationRuntime: new FederationRuntime(host),
     responsibilityRuntime: new ResponsibilityRuntime(host),
+    browserHandoffs: new BrowserHandoffRuntime(host),
     ipc: new IpcRuntime(host),
     scheduleRuntime: new ScheduleRuntime(host),
     onboarding: new ManagedOnboarding(host),
@@ -406,7 +414,6 @@ export class Kernel extends DurableObject<GatewayEnv> {
   readonly pairings: DevicePairingStore;
   readonly accountRecovery: AccountRecoveryStore;
   readonly memberRecovery: MemberRecoveryStore;
-  readonly people: PeopleStore;
   readonly caps: CapabilityStore;
   readonly config: ConfigStore;
   readonly modelMetadata: ModelMetadataResolver;
@@ -434,6 +441,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
   readonly mcpServers: McpServerStore;
   readonly connections = new Map<string, KernelConnection<ConnectionState>>();
   readonly tasks: DurableTaskScheduler<KernelTask>;
+  declare readonly browserHandoffs: BrowserHandoffRuntime;
   mcp: McpClientManager;
                       readonly ctx: DurableObjectState<{}>;
   readonly env: GatewayEnv;
@@ -493,7 +501,6 @@ export class Kernel extends DurableObject<GatewayEnv> {
     this.targets = new TargetRegistry(sql);
     this.pairings = new DevicePairingStore(ctx.storage, this.auth, this.targets);
     this.accountRecovery = new AccountRecoveryStore(ctx.storage, this.auth, this.installationId);
-    this.people = new PeopleStore(ctx.storage, this.auth);
     this.memberRecovery = new MemberRecoveryStore(ctx.storage, this.auth);
 
     this.routes = new RoutingTable(sql);
@@ -559,6 +566,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
       );
     }));
     ctx.blockConcurrencyWhile(async () => {
+      await this.browserHandoffs.recover();
       for (const pending of this.mailboxes.pendingOutboundEnqueues()) {
         await this.scheduleManagedOutboundEnqueue(pending.outboundId, pending.nextAt ?? Date.now() + outboundEnqueueRetryDelay(1));
       }
@@ -689,13 +697,22 @@ export class Kernel extends DurableObject<GatewayEnv> {
     return this.installationIdentity ?? null;
   }
 
+  async instancesChanged(ownerUid: number): Promise<void> {
+    this.retirement.assertActive();
+    const gate = await this.onboarding.managedWorkGate();
+    if (!gate.allowed || !this.auth.getPasswdByUid(ownerUid) || this.auth.isAccountDisabled(ownerUid)) return;
+    this.retirement.assertActive();
+    this.connectionRuntime.broadcastToUserUid(ownerUid, "instance.changed");
+  }
+
   async getPublicProfileProjection(locator: PublicProfileLocator): Promise<PublicProfileProjection | null> {
     this.retirement.assertActive();
     const gate = await this.onboarding.managedWorkGate();
     if (!gate.allowed) return null;
     this.retirement.assertActive();
-    const projection = this.profiles.published(locator);
-    return projection && profileOwnerActive(projection.ownerUid, this.buildKernelContext({})) ? projection : null;
+    const projection = await resolveSpacePublicProfile(locator, this.buildKernelContext({}));
+    this.retirement.assertActive();
+    return projection;
   }
 
   async scheduleApproachMaintenance(runningTaskId?: string): Promise<void> {
@@ -842,6 +859,9 @@ export class Kernel extends DurableObject<GatewayEnv> {
     task: DurableTask<KernelTask>,
   ): Promise<void> {
     switch (task.callback) {
+      case "onMemoryReview":
+        await runMemoryReview(this, task.payload, task.id);
+        return;
       case "onProcessApprovalNotice":
         // Child approvals reach the human through registry signals and adapter routes.
         return;
@@ -888,6 +908,9 @@ export class Kernel extends DurableObject<GatewayEnv> {
       case "onResponsibilityWake":
         await this.responsibilityRuntime.onResponsibilityWake(task.payload, task);
         return;
+      case "onBrowserHandoffs":
+        await this.browserHandoffs.run(task.id);
+        return;
       case "onLedgerRotate":
         await this.onLedgerRotate(task.payload, task.id);
         return;
@@ -904,6 +927,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
   async recvFrame(
     processId: string,
     frame: ProcessOutboundFrame,
+    approvedTarget?: ProcessApprovalTarget,
   ): Promise<Frame | InternalResponseFrame<"proc.message.commit"> | null> {
     try { this.retirement.assertActive(); } catch (error) {
       await cancelUnlockedBody("body" in frame ? frame.body : undefined, "Installation admission is closed");
@@ -929,7 +953,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
         }
       }
       try {
-        return await this.handleProcessReq(processId, frame);
+        return await this.handleProcessReq(processId, frame, approvedTarget);
       } finally {
         await cancelUnlockedBody(frame.body, "Process request completed");
       }
@@ -996,6 +1020,18 @@ export class Kernel extends DurableObject<GatewayEnv> {
       console.warn("[Kernel] Process run stream ended before completion");
     });
     return true;
+  }
+
+  /** Runtime approval metadata; target discovery is not an extra agent capability. */
+  async resolveProcessApprovalTarget(processId: string, ref: ProcessApprovalTargetRef): Promise<ProcessApprovalTarget> {
+    this.retirement.assertActive();
+    const ctx = this.buildProcessContext(processId);
+    if (!ctx) throw new Error("Unknown process");
+    const targetId = "sessionId" in ref ? this.shellSessions.get(ref.sessionId)?.targetId : ref.targetId;
+    if (!targetId) throw new Error("Unknown shell session");
+    const target = await resolveVisibleTarget(ctx, targetId, { includeOffline: true });
+    if (!target) throw new Error(`Target unavailable for tool approval: ${targetId}`);
+    return approvalTargetIdentity(target);
   }
 
   async requestProcessNetFetch(
@@ -1167,6 +1203,12 @@ export class Kernel extends DurableObject<GatewayEnv> {
     } finally {
       await cancelUnlockedBody(body, "Linked adapter request completed");
     }
+  }
+
+  async queueProcessMemoryReview(processId: string, input: ProcessMemoryReview): Promise<void> {
+    this.retirement.assertActive();
+    const review = processMemoryReviewSchema.parse(input);
+    await queueMemoryReview(this, processId, review);
   }
 
   async acceptManagedInboundMail(
@@ -1380,11 +1422,12 @@ export class Kernel extends DurableObject<GatewayEnv> {
     };
   }
 
-                                      async handleProcessReq(processId: string, frame: RequestFrame): Promise<ResponseFrame | null> {
+                                      async handleProcessReq(processId: string, frame: RequestFrame, approvedTarget?: ProcessApprovalTarget): Promise<ResponseFrame | null> {
     const ctx = this.buildProcessContext(processId, frame.runId);
     if (!ctx) {
       return errFrame(frame.id, 404, "Unknown process");
     }
+    ctx.approvedTarget = approvedTarget;
 
     return await this.dispatchPeerRequest(
       frame,
@@ -1473,7 +1516,6 @@ export class Kernel extends DurableObject<GatewayEnv> {
       pairings: this.pairings,
       accountRecovery: this.accountRecovery,
       memberRecovery: this.memberRecovery,
-      people: this.people,
       invalidateAccountConnections: (uid) => this.connectionRuntime.invalidateAccountConnections(uid),
       caps: this.caps,
       config: this.config,
@@ -1517,6 +1559,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
         await this.cancelSchedule(wakeScheduleId);
       },
       reconcileResponsibilityWake: this.responsibilityRuntime.reconcileResponsibilityWake.bind(this.responsibilityRuntime),
+      trackBrowserHandoff: this.browserHandoffs.track.bind(this.browserHandoffs),
       scheduleManagedOutboundEnqueue: async (outboundId, dueAtMs) => {
         await this.scheduleManagedOutboundEnqueue(outboundId, dueAtMs);
       },
@@ -1707,10 +1750,9 @@ export class Kernel extends DurableObject<GatewayEnv> {
       const ownerUid = resolveCallerOwnerUid(ctx);
       // SAFETY: request args are the wire JSON the frame decoder accepted; the ledger keeps them as text.
       // Enrollment authorization stays out of the ledger even when a caller lacks its grant.
-      const args = (frame.call === "account.owner.link" || frame.call === "account.recovery.redeem" || frame.call === "account.invite.redeem"
+      const args = (frame.call === "account.owner.link" || frame.call === "account.recovery.redeem"
         || frame.call === "account.recovery.code.start" || frame.call === "account.recovery.code.redeem"
         ? { id: frame.args.id }
-        : frame.call === "account.invite.create" ? { id: frame.args.id, username: frame.args.username }
         : frame.call === "account.password.set" ? { uid: frame.args.uid }
         : frame.call === "sys.pair.create"
         ? { id: frame.args.id, targetId: frame.args.targetId, label: frame.args.label }

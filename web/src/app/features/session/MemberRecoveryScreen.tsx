@@ -12,7 +12,6 @@ import "./LoginScreen.css";
 export function MemberRecoveryScreen() {
   const { service, snapshot } = useSession();
   const [attempt, setAttempt] = useState(() => { try { return readMemberRecoveryAttempt(); } catch { return null; } });
-  const [username, setUsername] = useState(attempt?.username ?? "");
   const [code, setCode] = useState("");
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
@@ -23,7 +22,7 @@ export function MemberRecoveryScreen() {
     if (busy) return;
     setBusy(true); setError(null);
     try {
-      const next = createMemberRecoveryAttempt(username);
+      const next = createMemberRecoveryAttempt();
       setAttempt(next); setCode("");
       await startMemberRecovery(service.client, snapshot.url, next);
     } catch (cause) { setError(cause instanceof Error ? cause.message : "Could not request recovery"); }
@@ -42,14 +41,13 @@ export function MemberRecoveryScreen() {
   return <AuthLayout background="galaxy" visible surfaceClass="gsv-auth-surface-login"><div class="gsv-login-panel">
     <SectionHeader title="RECOVER ACCOUNT" titleSize="title" divider />
     <div class="gsv-login-body gsv-recovery-body">
-      {done ? <><p>Your password has changed. Sign in as {done} with the new password.</p><SessionLink href="/" class="gsv-auth-link">Return to sign-in</SessionLink></> : <>
+      {done ? <><p>Your password has changed. Sign in with the new password.</p><SessionLink href="/" class="gsv-auth-link">Return to sign-in</SessionLink></> : <>
         <p>Use a messenger you previously confirmed in this space. To recover root, use your operator’s owner sign-in page.</p>
         <form class="gsv-login-fields" onSubmit={(event) => void start(event)}>
-          <TextInput label="USERNAME" placeholder="e.g. captain" value={username} onChange={setUsername} inputProps={{ autoComplete: "username", pattern: "[a-z_][a-z0-9_-]{0,31}", maxLength: 32 }} />
-          <Button variant="secondary" block type="submit" label={busy ? "PLEASE WAIT…" : attempt ? "REQUEST A NEW CODE" : "REQUEST A CODE"} disabled={busy || !username.trim()} />
+          <Button variant="secondary" block type="submit" label={busy ? "PLEASE WAIT…" : attempt ? "REQUEST A NEW CODE" : "REQUEST A CODE"} disabled={busy} />
         </form>
         {attempt && <form class="gsv-login-fields" onSubmit={(event) => void redeem(event)}>
-          <p>If {attempt.username} has a confirmed messenger, check it for a code. Enter it here within five minutes. If delivery fails, wait at least one minute before requesting a new code, or ask root to reset your password.</p>
+          <p>If you have a confirmed messenger, check it for a code. Enter it here within five minutes. If delivery fails, wait at least one minute before requesting a new code, or use administrator access to reset your password.</p>
           <TextInput label="RECOVERY CODE" placeholder="Your code" value={code} onChange={setCode} clearable={false} inputProps={{ autoComplete: "one-time-code", maxLength: 9 }} />
           <TextInput label="NEW PASSWORD" placeholder="••••••••••••" type="password" value={password} onChange={setPassword} clearable={false} inputProps={{ autoComplete: "new-password", minLength: 8, maxLength: 1024 }} />
           <p>Existing credentials and messenger links for this account will stop working. Link your messenger again after signing in.</p>

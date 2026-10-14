@@ -4,16 +4,11 @@ import { z } from "zod";
 
 export type AccountRecoveryAttempt = { id: string; secret: string; proof: string };
 const RECOVERY_STORAGE = "gsv.ui.account-recovery.v1";
-const INVITATION_STORAGE = "gsv.ui.human-invitation.v1";
 const attemptSchema = z.strictObject({ id: z.uuid(), secret: z.string().min(32).max(256), proof: z.string().min(32).max(256) });
 
 /** Persist the receiver's proof before a redeem request; a lost reply never permits a second receiver. */
 export function readAccountRecoveryAttempt(): AccountRecoveryAttempt | null {
   return readCredentialClaim(RECOVERY_STORAGE);
-}
-
-export function readHumanInvitationAttempt(): AccountRecoveryAttempt | null {
-  return readCredentialClaim(INVITATION_STORAGE);
 }
 
 function readCredentialClaim(storageKey: string): AccountRecoveryAttempt | null {
@@ -38,10 +33,4 @@ function readCredentialClaim(storageKey: string): AccountRecoveryAttempt | null 
 export async function redeemAccountRecovery(client: Pick<GSVClient, "requestOnce">, url: string, attempt: AccountRecoveryAttempt, password: string): Promise<void> {
   await client.requestOnce(url, "account.recovery.redeem", { ...attempt, password });
   window.sessionStorage.removeItem(RECOVERY_STORAGE);
-}
-
-export async function redeemHumanInvitation(client: Pick<GSVClient, "requestOnce">, url: string, attempt: AccountRecoveryAttempt, password: string): Promise<{ uid: number; username: string }> {
-  const result = await client.requestOnce(url, "account.invite.redeem", { ...attempt, password });
-  window.sessionStorage.removeItem(INVITATION_STORAGE);
-  return result;
 }

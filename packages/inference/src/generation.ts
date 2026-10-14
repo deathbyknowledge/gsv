@@ -1,3 +1,4 @@
+import { exceptionDiagnostics, type ExceptionDiagnostics } from "@humansandmachines/gsv/telemetry";
 import {
   normalizeContext,
   type AssistantMessage,
@@ -47,6 +48,7 @@ export type InferenceAttempt = {
   model: InferenceModelRouting;
   result?: InferenceResult;
   failure?: InferenceFailure;
+  diagnostics?: ExceptionDiagnostics;
   accepted: boolean;
   startedAt: number;
   completedAt?: number;
@@ -324,6 +326,8 @@ function fetchForAttempt(
     try {
       const response = await providerFetch(request, init);
       attempt.providerStatusCode = response.status;
+      const requestId = response.headers.get("x-request-id") ?? response.headers.get("request-id");
+      if (requestId) attempt.diagnostics = { ...attempt.diagnostics, ...exceptionDiagnostics({ requestId }) };
       if (response.ok) attempt.accepted = true;
       if (signal.aborted) {
         void response.body?.cancel(signal.reason).catch(() => {});
@@ -334,6 +338,7 @@ function fetchForAttempt(
       return new Response(body, response);
     } catch (error) {
       attempt.transportFailed = true;
+      attempt.diagnostics = { ...attempt.diagnostics, ...exceptionDiagnostics(error) };
       throw error;
     }
   };
@@ -424,6 +429,7 @@ async function nextAttemptEvent(
     ));
   }
   if (outcome.kind === "failure") {
+    attempt.diagnostics = { ...attempt.diagnostics, ...exceptionDiagnostics(outcome.error) };
     return inferenceErrorEvent(
       signal.aborted,
       outcome.error,
@@ -450,7 +456,8 @@ function classifyAttemptFailure(
   };
   if (attempt?.providerStatusCode !== undefined) input.statusCode = attempt.providerStatusCode;
   if (message !== undefined) input.message = message;
-  return classifyProviderFailure(input);
+  const failure = classifyProviderFailure(input);
+  return { ...failure, diagnostics: { ...failure.diagnostics, ...attempt?.diagnostics } };
 }
 
 function generationEndEvent(

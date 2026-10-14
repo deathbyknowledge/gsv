@@ -59,7 +59,12 @@ export async function sendWhatsAppMediaMessage(
         "permanent",
       );
     }
-    attachment = { id: await api.upload(bytes, media.mimeType, whatsAppMediaFilename(media)) };
+    // Markdown is plain text, but Meta rejects its more specific MIME type.
+    const mimeType = media.mimeType.split(";", 1)[0]!.trim().toLowerCase();
+    const uploadMimeType = media.type === "document" && (mimeType === "text/markdown" || mimeType === "text/x-markdown")
+      ? "text/plain"
+      : media.mimeType;
+    attachment = { id: await api.upload(bytes, uploadMimeType, whatsAppMediaFilename(media)) };
   } else if (media.url) {
     attachment = { link: media.url };
   } else {
@@ -99,6 +104,8 @@ export function whatsAppMediaFilename(media: AdapterMedia): string {
     "image/jpeg": "jpg",
     "image/png": "png",
     "image/webp": "webp",
+    "text/markdown": "md",
+    "text/x-markdown": "md",
     "text/plain": "txt",
     "video/3gpp": "3gp",
     "video/mp4": "mp4",

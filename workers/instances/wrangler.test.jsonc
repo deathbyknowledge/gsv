@@ -1,0 +1,12 @@
+{
+  "name": "gsv-instances-test",
+  "main": "test/worker.ts",
+  "keep_names": false,
+  "compatibility_date": "2026-08-22",
+  "compatibility_flags": ["nodejs_compat"],
+  "durable_objects": { "bindings": [{ "name": "INSTANCES", "class_name": "InstanceCoordinator" }] },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["InstanceCoordinator"] }],
+  "r2_buckets": [{ "binding": "PROFILES", "bucket_name": "profiles-test" }],
+  "services": [{ "binding": "INSTANCE_EVENTS", "service": "gsv-instances-test", "entrypoint": "TestInstanceEvents" }],
+  "vars": { "BROWSER_LIMITS": { "enabled": true, "concurrentInstances": 2, "periodSeconds": 36000, "maxInstanceSeconds": 1800, "savedProfiles": 5, "profileStorageBytes": 16777216 } }
+}

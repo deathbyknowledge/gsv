@@ -39,7 +39,10 @@ def check(case, animated=True, exit_code=0):
                    TERM="xterm-256color", GSV_VERSION="v-test", GSV_INSTALLER_RELEASE_BOUND="1",
                    GSV_INSTALL_DIR=str(root / "installed with spaces"), GSV_TEST_RELEASE_DIR=str(release),
                    GSV_TEST_DESKTOP_LOG=str(root / "desktop.log"),
-                   GSV_TEST_DOWNLOAD_DELAY="7" if case in ("resize", "grow") else "1")
+                   GSV_TEST_DOWNLOAD_DELAY="1")
+        download_gate = root / "release-download"
+        if case in ("success", "resize", "grow", "small", "narrow", "short"):
+            env["GSV_TEST_DOWNLOAD_GATE"] = str(download_gate)
         if case == "default-path":
             env.pop("GSV_INSTALL_DIR")
             env["GSV_LEGACY_INSTALL_DIR"] = str(root / "legacy")
@@ -134,6 +137,8 @@ exec /usr/bin/cp "$@"
                         if resize_sizes:
                             size = resize_sizes.pop(0)
                             fcntl.ioctl(terminal, termios.TIOCSWINSZ, struct.pack("HHHH", *size, 0, 0))
+                        elif "GSV_TEST_DOWNLOAD_GATE" in env:
+                            download_gate.touch()
             else:
                 raise AssertionError(f"{case}: installer did not finish")
             while time.monotonic() < deadline:

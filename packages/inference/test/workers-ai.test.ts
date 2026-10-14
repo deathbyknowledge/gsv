@@ -252,12 +252,12 @@ describe("shared Workers AI inference", () => {
     expect(input).toEqual(original);
   });
 
-  it("captures content-free diagnostics for provider HTTP failures", async () => {
+  it("captures redacted diagnostics and request IDs for provider HTTP failures", async () => {
     const run = vi.fn(async () => new Response(JSON.stringify({
-      error: { message: "provider-specific private detail" },
+      error: { message: "provider rate limit; token=private-provider-token" },
     }), {
       status: 429,
-      headers: { "content-type": "application/json" },
+      headers: { "content-type": "application/json", "x-request-id": "provider-request-123" },
     }));
     const generation = createWorkersAiGeneration(
       REQUEST,
@@ -272,9 +272,10 @@ describe("shared Workers AI inference", () => {
       stage: "provider",
       retryable: true,
       providerStatusCode: 429,
+      diagnostics: { exceptionMessage: "429: provider rate limit; token=[redacted]", providerRequestId: "provider-request-123" },
     });
     expect(JSON.stringify(generation.failure(result.errorMessage)))
-      .not.toContain("private detail");
+      .not.toContain("private-provider-token");
   });
 
   it("falls back after a retryable failure before output is exposed", async () => {
@@ -425,6 +426,7 @@ describe("shared Workers AI inference", () => {
       kind: "network",
       stage: "provider",
       retryable: true,
+      diagnostics: { exceptionName: "TypeError", exceptionMessage: "fetch failed", exceptionStack: expect.stringContaining("TypeError: fetch failed") },
     });
   });
 

@@ -25,9 +25,12 @@ export async function syncContactDetailSignal(cache: QueryClient, signal: string
     await Promise.all([
       cache.cancelQueries({ queryKey: INSTRUMENT_INBOX_KEY }).then(() => cache.invalidateQueries({ queryKey: INSTRUMENT_INBOX_KEY })),
       refreshContactQuery(cache, conversationViewKey(parsed.data.conversationId)),
+      ...(!parsed.data.viewOnly ? [
+        cache.cancelQueries({ queryKey: instrumentContactConversationKey(parsed.data.conversationId) })
+          .then(() => cache.invalidateQueries({ queryKey: instrumentContactConversationKey(parsed.data.conversationId) })),
+      ] : []),
     ]);
-    if (parsed.data.viewOnly) return;
-    key = instrumentContactConversationKey(parsed.data.conversationId);
+    return;
   } else return;
   await cache.cancelQueries({ queryKey: key });
   await cache.invalidateQueries({ queryKey: key });

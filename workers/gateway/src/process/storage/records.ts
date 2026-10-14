@@ -5,6 +5,7 @@ import type {
   ProcTraceSpanKind, ProcTraceSpanStatus, ResponsibilityRecord,
 } from "@humansandmachines/gsv/protocol";
 import type { SyscallName } from "../../syscalls";
+import type { ProcessApprovalTarget } from "../../protocol/process-frames";
 import type { ThinkingContent, ToolCall } from "@humansandmachines/gsv/services/inference-context";
 
 export const DEFAULT_MESSAGE_READ_LIMIT = 200;
@@ -129,6 +130,7 @@ export type PendingHilRecord = {
   toolName: string;
   syscall: SyscallName;
   args: JsonObject;
+  approvedTarget?: ProcessApprovalTarget;
   purpose?: string;
   createdAt: number;
 };

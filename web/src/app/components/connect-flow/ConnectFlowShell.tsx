@@ -1,4 +1,3 @@
-import { Icon } from "../ui/Icon";
 import { SectionHeader } from "../ui/SectionHeader";
 import { StatusMeta } from "../ui/StatusDot";
 import { Stepper } from "../ui/Stepper";
@@ -21,7 +20,7 @@ export interface ConnectFlowShellProps {
 
 /** ConnectFlowShell — the simplified connect-new page chrome, shared by all four
  *  flows. Row 1+2: breadcrumb + SectionHeader (page title + status). Row 3: the
- *  action bar (icon tile + 2-line description + Stepper). Then the current
+ *  action bar (2-line description + Stepper). Then the current
  *  step's body. */
 export function ConnectFlowShell({ flow, current, onStep }: ConnectFlowShellProps) {
   const lastIndex = flow.steps.length - 1;
@@ -52,12 +51,9 @@ export function ConnectFlowShell({ flow, current, onStep }: ConnectFlowShellProp
         actions={step.tone && step.status ? <StatusMeta tone={step.tone} label={step.status} /> : undefined}
       />
 
-      {/* Action bar — icon tile + 2-line description, with the stepper below. */}
+      {/* Action bar — 2-line description, with the stepper below. */}
       <div class="gsv-cf-bar">
         <div class="gsv-cf-bar-lead">
-          <span class="gsv-cf-icon">
-            <Icon name={flow.icon} size={30} />
-          </span>
           <p class="gsv-cf-desc gsv-prose">
             {descPrimary}
             {descSecondary ? (

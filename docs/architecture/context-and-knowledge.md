@@ -134,6 +134,14 @@ directly, delegating when duration, parallelism, or context needs justify a work
 Ship and Crew use the same human-owned `personal` collection while keeping their
 instructions in separate account homes.
 
+Newly archived Ship history also produces a bounded memory-review responsibility.
+Only one review is admitted per owner at a time. Its brief asks Ship to delegate
+the new slice, merge it with current memory using revision-checked writes, and
+resolve the responsibility only after successful review. This supplements saving
+useful facts during ordinary work; compaction never waits for it. The
+`memory.review` responsibility source controls new admissions. See
+[Context Compaction](./context-compaction.md) for delivery and checkpoint ownership.
+
 This keeps the prompt small and the behavior inspectable:
 
 - always-loaded context stays compact

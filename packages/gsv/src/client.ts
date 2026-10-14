@@ -356,6 +356,21 @@ const SYSCALL_NAMES = [
   "sys.setup.assist",
   "sys.setup",
   "sys.bootstrap",
+  "sys.instance.catalog",
+  "sys.instance.start",
+  "sys.instance.list",
+  "sys.instance.get",
+  "sys.instance.stop",
+  "sys.browser.profile.create",
+  "sys.browser.profile.list",
+  "sys.browser.profile.get",
+  "sys.browser.profile.save",
+  "sys.browser.profile.delete",
+  "sys.browser.handoff.request",
+  "sys.browser.handoff.get",
+  "sys.browser.handoff.cancel",
+  "sys.browser.handoff.open",
+  "sys.browser.handoff.finish",
   "sys.config.get",
   "sys.config.set",
   "sys.target.list",
@@ -390,13 +405,7 @@ const SYSCALL_NAMES = [
   "account.recovery.redeem",
   "account.recovery.code.start",
   "account.recovery.code.redeem",
-  "account.invite.create",
-  "account.invite.list",
-  "account.invite.cancel",
-  "account.invite.redeem",
-  "account.people.list",
   "account.password.set",
-  "account.remove",
   "sched.list",
   "sched.add",
   "sched.update",
@@ -603,9 +612,6 @@ export class GSVClient {
     if (!url) {
       throw new Error("Gateway URL is required");
     }
-    if (!username) {
-      throw new Error("Username is required");
-    }
     if (!password && !token) {
       throw new Error("Password or token is required");
     }
@@ -649,13 +655,12 @@ export class GSVClient {
 
     let connectResult: ConnectResult;
     try {
+      const auth: NonNullable<ConnectArgs["auth"]> = token ? { token } : { password };
+      if (username) auth.username = username;
       const connectArgs: ConnectArgs = {
         protocol: PROTOCOL_VERSION,
         peer: merged.peer,
-        auth: {
-          username,
-          ...(token ? { token } : { password }),
-        },
+        auth,
       };
       connectResult = (await this.request("sys.connect", connectArgs)).data;
       if (connectResult.protocol !== PROTOCOL_VERSION) {
@@ -678,7 +683,7 @@ export class GSVClient {
     this.setStatus({
       state: "connected",
       url,
-      username,
+      username: connectResult.peer.principal.account.username,
       connectionId: connectResult.server.connectionId,
       message: null,
     });

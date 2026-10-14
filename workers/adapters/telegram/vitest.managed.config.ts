@@ -134,7 +134,7 @@ export default defineConfig({
                       return Response.json({ ok: true });
                     }
                     const result = { message_id: nextMessageId++ };
-                    messages.push({ method, body: { ...body, text }, result });
+                    messages.push({ method, body: { ...body, text }, result, sentAt: Date.now() });
                     return Response.json({ ok: true, result });
                   }
                   if (["sendPhoto", "sendVideo", "sendAudio", "sendDocument"].includes(method)) {

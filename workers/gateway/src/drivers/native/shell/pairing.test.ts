@@ -35,8 +35,9 @@ describe("native target pairing", () => {
       const invite = decodeDevicePairingCode(platform === "browser" ? output.code : output.pairCommand.split(" ").at(-1));
       expect(invite).toMatchObject({ username: "owner", label: "My computer", targetId: "my-computer", gatewayUrl: "wss://test.staging.gsv.space/ws" });
       if (platform === "browser") {
-        expect(output.extensionUrl).toMatch(/\/dev\/gsv-browser-extension.zip$/);
+        expect(output.extensionUrl).toBe("https://gsv.space/browser?release=dev");
         expect(output.instructions).toContain("chrome://extensions");
+        expect(output.instructions).toContain("Extensions button");
         expect(output.pairCommand).toBeUndefined();
       } else {
         expect(output.installCommand).toContain(platform === "windows" ? "install.ps1" : "GSV_CHANNEL=dev bash");

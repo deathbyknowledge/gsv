@@ -17,7 +17,6 @@ of the window. Only the content panes scroll; neither can pass behind the header
 - Messengers lists the signed-in person's saved Telegram and Slack identities, with transport status, reconnect and explicit unlink controls. Availability and pairing support come from adapter discovery. Linking retains the existing inspect-then-confirm flow; unlinking uses the personal pairing operation. Reloads recover saved links, owner-scoped adapter status signals refresh the active connection snapshot, and closed sections wait until reopened. Failed reads or mutations remain visible without claiming a connection was removed. The current identity records expose provider IDs; the UI does not invent remembered names. No credential or connection operation is performed until the person invokes its control.
 - MCP lists connected servers first. A quiet add action opens the form; cancellation preserves a dirty draft unless explicitly discarded, and successful creation returns to the list. Existing servers offer sign-in, refresh, and removal controls according to ownership and capabilities.
 - Logs shows action history, live outcomes, older pages and an inspector for request details and failures. Its process links open Fleet. The section mounts when opened and pauses reads, notifications and shortcuts while hidden. Fleet's activity summaries share the same ledger cache; ordinary live updates do not refetch it.
-- Public profile shows the signed-in human's private draft, its preview and its publication state. Save and publish are separate actions; public aliases are independent of login names. Drafts survive section changes and failed saves, concurrent revisions require reloading, and unpublish remains available during publication. Only published snapshots appear at `/@alias`; root and Process accounts cannot publish through this flow.
 
 Section and Instrument view switches preserve drafts without a discard dialog.
 Instrument retains Settings until the signed-in session ends; hiding it pauses
@@ -37,20 +36,15 @@ continue to use their existing default connection.
 
 Custom MCP headers are an optional disclosure in the add-server form. Values remain masked, empty rows are ignored, and malformed or duplicate names cannot be submitted. Header drafts survive section and view changes and participate in sign-out and reload protection. Successful creation clears the values; failed creation retains them. Headers use the existing MCP transport contract and are never saved into browser storage.
 
-The existing settings surfaces remain available pending the retirement inventory. The old approval editor also only supports tool/target/action rules; it does not implement arbitrary conditional rules or an account-grant editor. Contacts, invitations, conversations and cross-Ship request management belong to Fleet. Future operator-owned WhatsApp Business and other adapter changes follow the [hosting plan](../../../../../../engineering/unified-hosting-and-web-release.md). Production prompt defaults are unchanged.
+The existing settings surfaces remain available pending the retirement inventory. The old approval editor also only supports tool/target/action rules; it does not implement arbitrary conditional rules or an account-grant editor. Contacts, invitations, conversations, public profiles and cross-Ship request management belong to People. Future operator-owned WhatsApp Business and other adapter changes follow the [hosting plan](../../../../../../engineering/unified-hosting-and-web-release.md). Production prompt defaults are unchanged.
 
 Settings includes a quiet sign-out action beside the current username. Unsaved work across all retained Instrument views requires confirmation before signing out; the shared session service clears the stored credential, revokes the current UI token and returns to login.
 
-Root has a People section for local human access: create and cancel a private,
-expiring invitation; see active and removed accounts; set a member's password;
-or remove their access after an inline confirmation. These local enrollments are
-distinct from Fleet's cross-space contact invitations. People never asks root to
-choose the invitee's initial password. The invitee opens `/join` on the space's
-own hostname, chooses a password, and retains the same recipient proof across a
-lost-reply retry. Password reset and removal explain credential and messenger
-revocation; removal preserves data and already-running work. People drafts use
-the same retention and teardown protection as the other Settings sections.
+Root's Sign-in section holds personal password reset and verified-owner linking.
+A reset selects the sole personal account and explains credential and messenger
+revocation. The password field is cleared when the section is hidden. Ordinary
+personal login asks only for a password; explicit Administrator sign-in selects root.
 
-Root's Sign-in section holds the verified-owner linking control. Local accounts
-sign in with their password through the existing session service and token
-rotation. No credential material is kept in UI drafts.
+Profile editing and publication belong to People, reached through the display-name
+link at the bottom of its sidebar. Local second-person enrollment and removal are
+retired. Cross-space contact invitations remain in People.

@@ -30,9 +30,20 @@ contracts, but they do not embed one another's runtime or state ownership.
 These crates contain contracts and transport primitives. They do not own a
 machine lifecycle, a CLI interaction, or Desktop UI state.
 
+Binary bodies preserve the shared delivery mode. `delivery: "realtime"` uses
+a 32 KiB initial and replenishment window so live browser images stay close to
+the viewer; ordinary file transfers retain the default 4 MiB window. Both modes
+use the same cancellation and byte-credit protocol.
+
 The host applications, helpers, and shared crates form one Cargo workspace
 rooted at `host/`. Its lockfile and build output belong to that boundary;
 `workers/ripgit/` remains an independent Rust project.
+
+The gesture runtime's CMake build downloads Eigen from TensorFlow's archive
+mirror and ml_dtypes from GitHub, both at LiteRT's pinned revisions with SHA-256
+verification. It does not clone Eigen from GitLab or fetch ml_dtypes' unused
+Eigen submodule. This source selection applies to local builds and every desktop
+release platform, including builds without a dependency cache.
 
 ## `gsvd`
 
@@ -119,6 +130,11 @@ Daemon-writable configuration never selects the service pipe's owner.
 
 ## `gsv`
 
+`gsv auth login` defaults to the personal account and asks only for its password.
+`--username root` selects administration; machine enrollment retains its explicit
+account identity. The shared gateway client accepts omitted human usernames and
+the CLI stores the identity returned by the Kernel with its session token.
+
 `gsv` is an operator client. It owns gateway administration, authentication,
 chat and process commands, deployment, OS service installation/control for
 `gsvd`, and the client sides of local Desktop and daemon control.
@@ -192,7 +208,7 @@ exits hands-free. The thumb counts independently and any finger combination
 is accepted. A control palm and action fist scroll together. The tutorial uses
 lesson-scoped observations and accepts only its current gesture. Voice events
 retain request and segment identity so stale output cannot change a later draft.
-The input lease expires on suspension and is released when leaving Zen.
+The input lease expires on suspension and is released when leaving Chat.
 
 Local control supports activation, redacted status, new Process creation,
 selection of an accessible Process, and microphone discovery and selection.
@@ -201,7 +217,7 @@ and attachment paths never cross this channel. Requests are correlated through
 a frontend channel. Cancellation, timeout, disconnect and reload invalidate
 pending work before UI mutations. If a Process spawn has already committed when
 cancelled, the Process remains durable and inspectable, without being selected.
-Microphone commands use the active Zen input owner and never start capture.
+Microphone commands use the active Chat input owner and never start capture.
 
 Closing the window follows the same unsent-work guard and credential flush as
 Quit, stops local control, waits for helper shutdown and exits. A second launch

@@ -1,6 +1,6 @@
 # GSV App Surface Design
 
-GSV's web UI is Instrument: Zen, People, Fleet, Memory and Settings share one shell. These surfaces should make important state and actions obvious, avoid generic dashboard behavior, and expose raw data only for a specific inspection or recovery job. The native Desktop host uses the same Instrument UI.
+GSV's web UI is Instrument: Chat, People, Fleet, Memory and Settings share one shell. These surfaces should make important state and actions obvious, avoid generic dashboard behavior, and expose raw data only for a specific inspection or recovery job. The native Desktop host uses the same Instrument UI.
 
 ## Start With The App Job
 
@@ -15,9 +15,9 @@ Write down:
 If you cannot state the app's job clearly, stop and design first.
 
 Examples:
-- `Zen` owns conversation, messages, run activity, approvals and direct shell commands
+- `Chat` owns conversation, messages, run activity, approvals and direct shell commands
 - `Fleet` owns places, processes, responsibilities, routines and files
-- `People` owns contact conversations, message requests and the private address book
+- `People` owns contact conversations, message requests, the private address book and your public profile
 - `Memory` owns reading, finding, creating and correcting pages
 - `Settings` owns model preferences, instructions, permissions, connections, timezone and the full ledger
 
@@ -90,9 +90,9 @@ For example, inside a tutorial, repeating “practice” in every label adds no 
 Do not casually merge responsibilities because the data is nearby. If a concern belongs to another app, link to that app instead of re-implementing it.
 
 Examples:
-- a place inspector can open its files or a command in Zen
+- a place inspector can open its files or a command in Chat
 - Settings manages preferences and connections; Fleet inspects live work
-- a process inspector can open its visibly labelled conversation in Zen
+- a process inspector can open its visibly labelled conversation in Chat
 
 A GSV app surface should have a clear center of gravity.
 
@@ -120,7 +120,7 @@ The app should feel like a serious workstation tool.
 
 Use [Instrument](../web/src/app/features/instrument/README.md) and [Settings](../web/src/app/features/instrument/settings/README.md) as the product and interaction contracts.
 
-Instrument is the default web entrypoint. The former desktop and console routes have no compatibility mapping. Login and installation onboarding enter the same UI; the first-day introduction is Zen's empty state. Shared components remain only where current surfaces depend on them; the retired design catalogue and previews are preserved in Git history.
+Instrument is the default web entrypoint. The former desktop and console routes have no compatibility mapping. Login and installation onboarding enter the same UI; the first-day introduction is Chat's empty state. Shared components remain only where current surfaces depend on them; the retired design catalogue and previews are preserved in Git history.
 
 Core rules:
 - global navigation chooses the kind of work; tables and inspectors choose the object
@@ -129,6 +129,15 @@ Core rules:
 - apply the documented text/block button policy consistently
 - show permission state before actions
 - keep shared gateway, history, file, contact and model logic in browser services and domain modules, independent of presentation
+
+The current visual language uses Martian Mono for controls, Host Grotesk for
+prose, thin rules and square corners. The star field and Departure Mono ASCII
+art carry the space theme. Use named text actions and contextual keyboard hints
+instead of decorative icon tiles. The former dot-matrix SVG library and mask
+renderer are retired; the PNGs under `web/public/icons` are installation and
+application identity assets, not a UI icon system. Browser windows follow the
+same contract: quiet text controls around an edge-to-edge live page, without
+rounded framing, glow or a blurred backdrop.
 
 ## Match Controls To Data
 

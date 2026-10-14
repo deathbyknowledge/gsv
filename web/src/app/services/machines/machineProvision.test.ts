@@ -19,13 +19,13 @@ describe("machineProvision", () => {
 
   it("uses the gateway release for the extension download", () => {
     expect(browserExtensionDownloadUrl("v0.4.0")).toBe(
-      "https://github.com/deathbyknowledge/gsv/releases/download/v0.4.0/gsv-browser-extension.zip",
+      "https://gsv.space/browser?release=v0.4.0",
     );
     expect(browserExtensionDownloadUrl("dev")).toBe(
-      "https://github.com/deathbyknowledge/gsv/releases/download/dev/gsv-browser-extension.zip",
+      "https://gsv.space/browser?release=dev",
     );
     expect(browserExtensionDownloadUrl("unexpected")).toBe(
-      "https://github.com/deathbyknowledge/gsv/releases/download/dev/gsv-browser-extension.zip",
+      "https://gsv.space/browser?release=dev",
     );
   });
 

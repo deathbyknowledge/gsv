@@ -24,7 +24,7 @@ export type ManagedWhatsAppConfigEnv = ManagedWhatsAppTemplateEnv & {
   WHATSAPP_DISPLAY_NUMBER?: string;
 };
 
-/** The Utility template Meta requires outside the customer service window. */
+/** The notification template used outside the customer service window. */
 export type ManagedWhatsAppTemplate = {
   name: string;
   language: string;

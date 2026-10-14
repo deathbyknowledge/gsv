@@ -3,6 +3,8 @@ import type { KernelContext } from "../context";
 import { principalOf, resolveCallerOwnerUid } from "../context";
 import { isLocked } from "../../auth/shadow";
 import type { FederationContactRecord } from "../federation-store";
+import { hasCapability } from "../capabilities";
+import { z } from "zod/mini";
 
 export function requireContactCaller(ctx: KernelContext, directHuman: boolean): number {
   if (principalOf(ctx)?.kind !== "human") throw new Error("Contact operations require a user");
@@ -70,6 +72,18 @@ export function requireOwnedContact(
 export function requireContactHuman(ctx: KernelContext): number {
   if (ctx.processId || !ctx.connection) throw new Error("This contact operation requires a signed-in human");
   return requireContactCaller(ctx, true);
+}
+
+export function contactHandlingChoice(value: boolean | undefined, ctx: KernelContext): boolean {
+  if (value === undefined) {
+    if (ctx.processId) throw new Error("Ask the owner who should handle new messages, then provide shipHandlesMessages explicitly");
+    return false;
+  }
+  requireContactCaller(ctx, true);
+  if (!hasCapability(principalOf(ctx)!.calls, "contact.preferences.update")) {
+    throw new Error("Changing contact handling requires contact.preferences.update");
+  }
+  return z.boolean().parse(value);
 }
 
 export function contactSummary(contact: FederationContactRecord): ContactSummary {

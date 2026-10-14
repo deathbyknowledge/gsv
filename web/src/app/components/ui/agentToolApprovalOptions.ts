@@ -1,3 +1,6 @@
+import {
+  isToolApprovalTargetSelector, toolApprovalTargetSchema, type ToolApprovalTarget,
+} from "@humansandmachines/gsv/protocol";
 import type { SelectOption } from "./Select";
 import type {
   ApprovalPolicyAction,
@@ -137,6 +140,14 @@ const APPROVAL_MATCH_LABELS = new Map(
     family.options.map((option) => [option.match, option.label] as const)
   ),
 );
+export function targetOptionValue(target: ToolApprovalTarget | undefined): string {
+  return target === undefined ? "" : JSON.stringify(target);
+}
+
+export function targetFromOptionValue(value: string): ToolApprovalTarget | undefined {
+  return value ? toolApprovalTargetSchema.parse(JSON.parse(value)) : undefined;
+}
+
 export const BUILTIN_TARGET_OPTIONS: SelectOption[] = [
   {
     label: "All machines",
@@ -144,13 +155,17 @@ export const BUILTIN_TARGET_OPTIONS: SelectOption[] = [
   },
   {
     label: "GSV computer",
-    value: "gsv",
+    value: targetOptionValue("gsv"),
+  },
+  {
+    label: "Cloud browsers",
+    value: targetOptionValue({ route: "instance", platform: "browser" }),
   },
 ];
 const LEGACY_EXTERNAL_TARGET_OPTION: SelectOption = {
   group: "Stored machine",
   label: "All machines",
-  value: "targets/*",
+  value: targetOptionValue("targets/*"),
 };
 
 export function humanToolCapabilityLabel(capability: string): string {
@@ -212,7 +227,7 @@ function selectOptionValue(option: SelectOption): string {
   return "value" in candidate ? String(candidate.value ?? candidate.label) : String(option);
 }
 
-export function targetOptionsForRule(target: string | undefined, targets: readonly AgentToolTarget[]): SelectOption[] {
+export function targetOptionsForRule(target: ToolApprovalTarget | undefined, targets: readonly AgentToolTarget[]): SelectOption[] {
   const targetOptions = targets
     .filter((candidate) => candidate.id.trim().length > 0)
     .map((candidate) => {
@@ -220,7 +235,7 @@ export function targetOptionsForRule(target: string | undefined, targets: readon
       return {
         group: "Machines",
         label,
-        value: candidate.id,
+        value: targetOptionValue(candidate.id),
       };
     });
   const knownValues = new Set([
@@ -230,33 +245,37 @@ export function targetOptionsForRule(target: string | undefined, targets: readon
   const baseOptions = target === "targets/*"
     ? [...BUILTIN_TARGET_OPTIONS, LEGACY_EXTERNAL_TARGET_OPTION, ...targetOptions]
     : [...BUILTIN_TARGET_OPTIONS, ...targetOptions];
-  if (!target || knownValues.has(target) || target === "targets/*") {
+  if (!target || knownValues.has(targetOptionValue(target)) || target === "targets/*") {
     return baseOptions;
   }
   return [
     ...baseOptions,
     {
       group: "Stored machine",
-      label: target,
-      value: target,
+      label: targetLabelForRule(target, targets),
+      value: targetOptionValue(target),
     },
   ];
 }
 
-export function targetIndexForRule(target: string | undefined, targets: readonly AgentToolTarget[]): number {
+export function targetIndexForRule(target: ToolApprovalTarget | undefined, targets: readonly AgentToolTarget[]): number {
   const options = targetOptionsForRule(target, targets);
-  const value = target ?? "";
+  const value = targetOptionValue(target);
   const index = options.findIndex((option) => selectOptionValue(option) === value);
   return index >= 0 ? index : 0;
 }
 
 /** Human label for a rule's machine scope (mirrors the target Select options). */
-export function targetLabelForRule(target: string | undefined, targets: readonly AgentToolTarget[]): string {
+export function targetLabelForRule(target: ToolApprovalTarget | undefined, targets: readonly AgentToolTarget[]): string {
   if (!target || target === "targets/*") {
     return "All machines";
   }
   if (target === "gsv") {
     return "GSV computer";
+  }
+  if (isToolApprovalTargetSelector(target)) {
+    if (target.route === "instance" && target.platform === "browser") return "Cloud browsers";
+    return target.platform ? `${target.route} · ${target.platform}` : target.route;
   }
   const known = targets.find((candidate) => candidate.id === target);
   return known?.label?.trim() || target;

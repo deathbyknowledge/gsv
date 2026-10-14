@@ -7,10 +7,23 @@ bundled with the current release; it is not a complete list of transports an
 adapter can implement.
 
 Your deployment operator enables the Telegram, Slack, Discord, and WhatsApp
-apps offered in **Messengers**. You link your human identity to a space by
-inspecting and confirming a short-lived code while signed in. You do not need
-to create a bot or paste its token into the space. If a code expires, message
-the app again.
+apps offered in **Messengers**. You link your identity with a short-lived code.
+You do not need to create a bot or paste its token into the space.
+
+## Ask Ship to connect
+
+Ask Ship to connect the messenger you want. It gets the current connection
+instructions from that messenger's adapter and shares the link or bot name.
+Follow those instructions, then paste the code back into your conversation.
+Ship redeems it for your account and tells you when the connection succeeds.
+No visit to Settings is needed. If the code expires, request a new one.
+To also use that messenger for password recovery, connect it directly in Settings.
+
+Only share a code from your own messenger account. If it is already connected
+to another space, redeeming the code moves that connection to this space.
+Send another message in the messenger after pairing to start talking to Ship.
+
+You can also connect through **Settings → Messengers**, using the steps below.
 
 ## Telegram
 
@@ -117,22 +130,27 @@ code blocks, lists, tables and quotations stay together. Approval
 prompts arrive with reply buttons; the decision comes back as a reply quoting
 the prompt.
 
-WhatsApp accepts a free-form message from GSV only within 24 hours of your last
-message to the number. When Ship has something for you after that, you receive
-a short template message instead: `Your GSV:` followed by the reply on one
-line, with a **Show me** button. A short reply fits in that message entirely.
-A longer reply, or an approval prompt with its buttons, waits until you tap the
-button or write anything back; either reopens the window and the waiting
-messages arrive in order. GSV sends one such template at a time, so later
-replies wait behind it instead of each sending a template, and nothing waits
-longer than seven days. Meta bills the operator for each template sent outside
-the window; inside the window GSV never uses one.
+Markdown document uploads keep their `.md` filename and original contents;
+the WhatsApp adapter uploads them as plain text because Meta does not accept
+the Markdown MIME type.
 
-The operator files the template once in the Meta app, where Meta reviews it.
-The exact template is described in the WhatsApp adapter README in the source
-tree under "Message templates": category Utility, body `Your GSV: {{1}}`, one
-quick-reply button labelled `Show me`, and the adapter's `WHATSAPP_TEMPLATE_NAME`
-and `WHATSAPP_TEMPLATE_LANGUAGE` values (`gsv_message` and `en` by default).
+WhatsApp accepts a free-form message from GSV only within 24 hours of your last
+message to the number. After that, GSV uses an approved template to send the
+message, or a preview if it is too long. The full message remains in your GSV
+conversation. Open GSV to read it, or reply in WhatsApp to ask Ship about it.
+The **Show me** button sends an ordinary reply to Ship. Messages are not queued
+for automatic delivery when you return.
+
+Approval notifications outside the window ask you to review the request in
+GSV. Attachments require an open WhatsApp window or another authorized
+destination.
+
+The operator must configure the matching Meta-approved `gsv_message` template
+before out-of-window messages can be sent. It uses one body parameter and a
+quick-reply button labelled **Show me**. `WHATSAPP_TEMPLATE_NAME` and
+`WHATSAPP_TEMPLATE_LANGUAGE` select the template; an empty name disables it.
+Meta determines its category and bills each template accordingly. See the
+WhatsApp adapter README's "Message templates" section for the exact contract.
 
 Availability depends on the operator's Meta account and the current terms for
 this use of the WhatsApp Business Platform. Ask your operator whether the

@@ -53,7 +53,7 @@ describe("GSV inference provider", () => {
   afterEach(() => vi.useRealTimers());
 
   it.each(["acquisition", "request", "stream"])("preserves %s failures and exports only safe diagnostics", async (phase) => {
-    const failure = Object.assign(new TypeError("synthetic private failure detail"), { remote: true, retryable: true });
+    const failure = Object.assign(new TypeError("Remote RPC disconnected; token=private-rpc-token"), { remote: true, retryable: true });
     const { service, target } = managedService(async () => {
       if (phase === "request") throw failure;
       return new ReadableStream({ start(controller) { controller.error(failure); } });
@@ -64,7 +64,7 @@ describe("GSV inference provider", () => {
       const factory = createGsvInferenceProviderFactory(service, { GSV_TELEMETRY_ENABLED: true });
       const result = await providerStreamFromFactory(factory, new AbortController().signal).result();
       expect(result.stopReason).toBe("error");
-      expect(result.errorMessage).toContain(`Managed inference ${phase} failed: synthetic private failure detail`);
+      expect(result.errorMessage).toContain(`Managed inference ${phase} failed: Remote RPC disconnected; token=private-rpc-token`);
       const records = log.mock.calls.map(([record]) => telemetryRecordSchema.parse(record));
       expect(records).toHaveLength(1);
       if (records[0]!.event.name !== "inference.client.finished") throw new Error("Missing inference client telemetry");
@@ -75,7 +75,8 @@ describe("GSV inference provider", () => {
         },
       } });
       expect(result.errorMessage).toContain(records[0]!.event.properties.diagnosticId);
-      expect(JSON.stringify(records)).not.toContain("synthetic private failure detail");
+      expect(records[0]!.event.properties).toMatchObject({ exceptionName: "TypeError", exceptionMessage: "Remote RPC disconnected; token=[redacted]" });
+      expect(JSON.stringify(records)).not.toContain("private-rpc-token");
       expect(target.abort).toHaveBeenCalledTimes(phase === "acquisition" ? 0 : 1);
     } finally { log.mockRestore(); }
   });
@@ -90,6 +91,29 @@ describe("GSV inference provider", () => {
 
     expect(models.getModel(GSV_INFERENCE_PROVIDER, GSV_INFERENCE_MODEL)?.maxTokens)
       .toBe(32_768);
+  });
+
+  it.each([true, false])("retains cancellation cleanup diagnostics without paging for retryable RPC loss: retryable=%s", async (retryable) => {
+    const cleanup = Promise.withResolvers<void>();
+    const { service, target } = managedService(vi.fn(async () => new ReadableStream()), vi.fn(() => cleanup.promise));
+    const controller = new AbortController();
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      const factory = createGsvInferenceProviderFactory(service, { GSV_TELEMETRY_ENABLED: true });
+      const stream = providerStreamFromFactory(factory, controller.signal);
+      await vi.waitFor(() => expect(target.generateStream).toHaveBeenCalledOnce());
+      controller.abort(new Error("newer user message"));
+      expect(await stream.result()).toMatchObject({ stopReason: "aborted" });
+      cleanup.reject(Object.assign(new Error("Connection closed: this Durable Object instance is no longer active."), { retryable }));
+      await vi.waitFor(() => expect(log).toHaveBeenCalledTimes(2));
+      const records = log.mock.calls.map(([record]) => telemetryRecordSchema.parse(record));
+      expect(records).toEqual(expect.arrayContaining([expect.objectContaining({ event: expect.objectContaining({
+        name: "inference.client.finished", properties: expect.objectContaining({
+          phase: "abort", outcome: retryable ? "cancelled" : "failed", rpcRetryable: retryable,
+          exceptionMessage: expect.stringContaining("Connection closed"),
+        }),
+      }) })]));
+    } finally { log.mockRestore(); }
   });
 
   it("preserves prompts, tools and history across pi-ai's transcript boundary", async () => {

@@ -16,6 +16,7 @@ export type TestNodeProps = {
   message?: string;
   onChange?: (value: string) => void;
   onClick?: () => void | Promise<void>;
+  role?: string;
   status?: string;
   sub?: string;
   text?: string;

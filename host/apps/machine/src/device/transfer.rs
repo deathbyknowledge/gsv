@@ -338,6 +338,7 @@ mod tests {
         tokio::fs::create_dir_all(&workspace).await.unwrap();
         let channel = body_channel();
         let descriptor = FrameBodyDescriptor {
+            delivery: None,
             stream_id: 23,
             length: Some(4),
         };
@@ -381,6 +382,7 @@ mod tests {
         let channel = body_channel();
         let body = channel
             .receive(FrameBodyDescriptor {
+                delivery: None,
                 stream_id: 30,
                 length: Some(1),
             })
@@ -438,6 +440,7 @@ mod tests {
         .unwrap();
         let body = channel
             .receive(FrameBodyDescriptor {
+                delivery: None,
                 stream_id: 41,
                 length: Some(1),
             })

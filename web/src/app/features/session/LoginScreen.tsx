@@ -11,10 +11,11 @@ type LoginScreenProps = {
   /** While booting/initializing, render the box as a progressive skeleton. */
   loading?: boolean;
   busy: boolean;
+  space: string;
   error: string | null;
-  username: string;
+  administrator: boolean;
   password: string;
-  onUsername: (value: string) => void;
+  onAdministrator: (value: boolean) => void;
   onPassword: (value: string) => void;
   onSubmit: (event: Event) => void;
 };
@@ -23,10 +24,6 @@ type LoginScreenProps = {
 function LoginSkeleton() {
   return (
     <div class="gsv-login-skeleton" role="status" aria-label="Loading" aria-busy="true">
-      <div class="gsv-skel-field">
-        <span class="gsv-skel gsv-skel-label" />
-        <span class="gsv-skel gsv-skel-input" />
-      </div>
       <div class="gsv-skel-field">
         <span class="gsv-skel gsv-skel-label" />
         <span class="gsv-skel gsv-skel-input" />
@@ -40,30 +37,25 @@ export function LoginScreen({
   visible,
   loading = false,
   busy,
+  space,
   error,
-  username,
+  administrator,
   password,
-  onUsername,
+  onAdministrator,
   onPassword,
   onSubmit,
 }: LoginScreenProps) {
   return (
     <AuthLayout background="galaxy" visible={visible} surfaceClass="gsv-auth-surface-login">
       <div class="gsv-login-panel" data-session-login-view>
-          <SectionHeader title="WELCOME BACK" titleSize="title" divider />
+          <SectionHeader title={administrator ? "ADMINISTRATOR SIGN-IN" : "WELCOME BACK"} titleSize="title" divider />
 
           <div class="gsv-login-body">
             {loading ? (
               <LoginSkeleton />
             ) : (
               <form class="gsv-login-fields" onSubmit={onSubmit}>
-              <TextInput
-                label="USERNAME"
-                placeholder="e.g. captain"
-                value={username}
-                onChange={(value) => onUsername(value.toLowerCase())}
-                inputProps={{ autoComplete: "username", "data-session-username": true }}
-              />
+              <input type="hidden" name="username" autoComplete="username" value={administrator ? "root" : space} />
               <TextInput
                 label="PASSWORD"
                 type="password"
@@ -92,13 +84,14 @@ export function LoginScreen({
                   type="submit"
                 />
               </div>
-              <SessionLink href="/recover-member" class="gsv-auth-link gsv-login-recovery-link">Forgot your password?</SessionLink>
+              {!administrator && <SessionLink href="/recover-member" class="gsv-auth-link gsv-login-recovery-link">Forgot your password?</SessionLink>}
               </form>
             )}
           </div>
 
           <footer class="gsv-sublabel gsv-login-credit">
             <span>BY <a href="https://humansandmachin.es" target="_blank" rel="noreferrer">HUMANS &amp; MACHINES</a></span>
+            <button type="button" class="gsv-login-admin" aria-label={administrator ? "Back to personal sign-in" : "Administrator sign-in"} disabled={busy || loading} onClick={() => onAdministrator(!administrator)}>{administrator ? "personal sign-in" : "admin"}</button>
           </footer>
         </div>
     </AuthLayout>
