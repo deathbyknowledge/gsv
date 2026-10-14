@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import welcomeBrief from "../prompts/onboarding/welcome.md";
 import { runWithRealKernelSql } from "../test-support/real-kernel-sql";
 import { ensureInitialOnboardingResponsibility, INITIAL_ONBOARDING_DEDUPE_KEY, reconcileInitialOnboardingResponsibility } from "./onboarding-responsibility";
 import { ResponsibilityStore } from "./responsibility-store";
@@ -35,6 +36,24 @@ function seedPreviousContract(responsibilities: ResponsibilityStore, ownerUid: n
 }
 
 describe("initial onboarding responsibility", () => {
+  it.each([
+    { scenario: "discovery and alternatives", guidance: [/A hobby or interest can support a worthwhile task/, /If they ask "what else\?"/, /If they say "I don't know"/] },
+    { scenario: "email follow-up pain", guidance: [/Use appropriate access to the original source/, /Do not ask the user to populate a tracker/, /Tracking never implies permission to send/] },
+    { scenario: "event registration", guidance: [/research discoverable facts yourself/, /actual registration status/, /change-triggered watch with truthful cadence and delivery/] },
+    { scenario: "suitable existing access", guidance: [/Reuse suitable existing access/, /No paired personal browser does not imply public browsing is unavailable/] },
+    { scenario: "acceptance and next action", guidance: [/A direct user request already establishes the task/, /take the next necessary action/, /start the documented connection flow/] },
+    { scenario: "declined or unavailable access", guidance: [/suitable access is unavailable or declined/, /lowest-effort useful alternative without pressuring them to connect/, /offer a bounded review/] },
+    { scenario: "unsupported monitoring", guidance: [/Browser pairing alone does not establish reliable recurring access/, /Do not claim checks or reminders are active until setup succeeds/] },
+    { scenario: "tracking versus sending", guidance: [/Agreement to research, track, or draft is not permission to send messages/, /Obtain explicit user approval before sending/] },
+    { scenario: "monitoring reliability", guidance: [/Failure is not proof of no change/, /A daily check can support an alert after a check detects a change/] },
+    { scenario: "setup versus a useful outcome", guidance: [/A connection alone, an empty tracker, or a promise to monitor is not an outcome/, /actually configured a supported ongoing task/] },
+    { scenario: "user-facing storage language", guidance: [/technical terminology is not suggested wording for the user/, /do not introduce "your cloud," filesystem paths, targets, cron jobs/, /Storage — internal implementation detail/] },
+    { scenario: "optional public lookup", guidance: [/A name given as an introduction is not permission to search/, /do not always require both a full name and location/, /Save only confirmed personal facts in their context/] },
+    { scenario: "handover without a tour", guidance: [/Do not give a compulsory tour of Responsibilities and Routines/, /Closing onboarding must not resolve or cancel the ongoing responsibility/] },
+  ])("includes guidance for $scenario", ({ guidance }) => {
+    for (const rule of guidance) expect(welcomeBrief).toMatch(rule);
+  });
+
   it("creates one non-waking Ship responsibility carrying the welcome brief", async () => {
     await runWithRealKernelSql((_sql, storage) => {
       const responsibilities = new ResponsibilityStore(storage);
@@ -59,8 +78,9 @@ describe("initial onboarding responsibility", () => {
       for (const heading of ["## Goal", "## Acceptance criteria", "## Outcome", "## Instructions", "## Support"]) {
         expect(text).toContain(heading);
       }
-      expect(text).toContain("0 - On the website or in the desktop app the interface already said your first line for you");
-      expect(text).toContain("5 - Once the task is completed");
+      expect(text).toContain("### 0 - Respect the welcome and conversation surface");
+      expect(text).toContain("On the website or in the desktop app, Zen displays a local welcome as two Ship messages");
+      expect(text).toContain("### 5 - Hand over clearly and close onboarding");
       expect(replay).toEqual({
         record: first.record,
         created: false,
