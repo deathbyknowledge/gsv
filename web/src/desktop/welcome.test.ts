@@ -12,12 +12,13 @@ function fixture() {
   return { fetcher, save, reopen, stored: () => stored };
 }
 const invite = { id: "invite_owned", state: "claimed", handle: null, origin: null, lastError: null };
+const inviteCode = `invite_${"x".repeat(43)}`;
 
 describe("desktop invite recovery", () => {
   it("persists verification secrets before sending and authenticates after a lost verification response", async () => {
     const f = fixture();
     let client = f.reopen();
-    await client.save({ flow: "create", inviteCode: "invite_private" });
+    await client.save({ flow: "create", inviteCode });
     let sessionSecret = "";
     f.fetcher.mockImplementationOnce(async (_url, options) => {
       const input = JSON.parse(String(options?.body));
@@ -35,13 +36,13 @@ describe("desktop invite recovery", () => {
       return Response.json({ email: "tester@example.com", expiresAt: Date.now() + 60_000, spaceDomain: "gsv.space", spaces: [], invites: [] });
     });
     expect((await client.session())?.email).toBe("tester@example.com");
-    expect(f.stored().value?.inviteCode).toBe("invite_private");
+    expect(f.stored().value?.inviteCode).toBe(inviteCode);
   });
 
   it("saves the selected invite and handle before allocation and retries the same operation after reopening", async () => {
     const f = fixture();
     let client = f.reopen();
-    await client.save({ sessionSecret: "a".repeat(64), inviteCode: "invite_private" });
+    await client.save({ sessionSecret: "a".repeat(64), inviteCode });
     f.fetcher.mockResolvedValueOnce(Response.json(invite));
     await client.claim();
     expect(f.stored().value).toMatchObject({ inviteCode: null, inviteId: invite.id });
