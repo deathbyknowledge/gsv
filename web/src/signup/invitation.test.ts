@@ -1,11 +1,29 @@
 import { describe, expect, it, vi } from "vitest";
 import { OwnerWelcome, type WelcomeSnapshot } from "../app/services/session/ownerWelcome";
 import { captureCreationInvitation } from "./invitation";
+import { encodeContactInvitation } from "@humansandmachines/gsv/protocol";
+import { signupDestination } from "./navigation";
 
 const origin = "https://accounts.example.com";
 const code = `invite_${"x".repeat(43)}`;
 
 describe("signup invitation links", () => {
+  it("restores the contact handoff after the browser loses session storage", async () => {
+    let snapshot: WelcomeSnapshot = { revision: "initial", value: null };
+    const storage = { save: async (_revision: string, value: WelcomeSnapshot["value"]) => snapshot = { revision: "saved", value } };
+    const contact = encodeContactInvitation({ version: 1, origin: "https://sponsor.example", shipId: "ship:sponsor",
+      subject: { id: "subject:sponsor", displayName: "Sponsor" }, token: "x".repeat(43), expiresAtMs: Date.now() + 60_000 });
+    const first = new OwnerWelcome(snapshot, storage, origin);
+    await captureCreationInvitation(first, `${origin}/#invite=${code}`, vi.fn(), contact);
+    await first.save({ inviteCode: null, inviteId: "claimed-invitation" });
+    const reopened = new OwnerWelcome(snapshot, storage, origin);
+    const restored = await captureCreationInvitation(reopened, `${origin}/?resume=1`, vi.fn());
+    const destination = new URL(signupDestination("https://friend.example", `onboard_${"x".repeat(43)}`, restored));
+    expect(new URLSearchParams(destination.hash.slice(1)).get("contact")).toBe(contact);
+    expect(reopened.state.inviteId).toBe("claimed-invitation");
+    expect(await captureCreationInvitation(reopened, `${origin}/#invite=${code}`, vi.fn())).toBeNull();
+    expect(reopened.state.contactInvite).toBeNull();
+  });
   it("keeps browser contact state out of an ordinary Desktop welcome record", async () => {
     const client = new OwnerWelcome({ revision: "initial", value: null }, {
       save: async (_revision, value) => ({ revision: "saved", value }),

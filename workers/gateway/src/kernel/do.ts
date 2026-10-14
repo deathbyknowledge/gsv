@@ -148,6 +148,7 @@ const LEDGER_ROTATION_SOON_MS = 5_000;
 const LEDGER_ROTATION_RETRY_MS = 60_000;
 const LEDGER_ROTATION_DAILY_MS = 24 * 60 * 60 * 1000;
 import { ManualUpdater } from "./sys/manual";
+import { SignupInvitationCleanup } from "./federation/invitation-cleanup";
 import { SERVER_VERSION } from "../version";
 import { parseInstallationId } from "../installation/identity";
 import type { InstallationIdentity } from "../installation/identity";
@@ -232,6 +233,7 @@ type KernelTask =
   | { callback: "onIpcCallTimeout"; payload: IpcCallTimeout }
   | { callback: "onManagedOutboundEnqueue"; payload: string }
   | { callback: "onFederationDelivery"; payload: string }
+  | { callback: "onSignupInvitationCleanup"; payload: string }
   | { callback: "onApproachMaintenance"; payload: "intake" }
   | {
       callback: "onFederationInbox";
@@ -287,6 +289,7 @@ const KERNEL_TASK_SCHEMA = z.discriminatedUnion("callback", [
   }),
   z.object({ callback: z.literal("onManagedOutboundEnqueue"), payload: z.string() }),
   z.object({ callback: z.literal("onFederationDelivery"), payload: z.string() }),
+  z.object({ callback: z.literal("onSignupInvitationCleanup"), payload: z.string() }),
   z.object({ callback: z.literal("onApproachMaintenance"), payload: z.literal("intake") }),
   z.object({
     callback: z.literal("onFederationInbox"),
@@ -391,6 +394,7 @@ export function kernelRuntimes(host: Kernel) {
     adapterDelivery: new AdapterDelivery(host),
     processOutput: new ProcessOutput(host),
     federationRuntime: new FederationRuntime(host),
+    signupInvitationCleanup: new SignupInvitationCleanup(host),
     responsibilityRuntime: new ResponsibilityRuntime(host),
     browserHandoffs: new BrowserHandoffRuntime(host),
     ipc: new IpcRuntime(host),
@@ -451,6 +455,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
   declare readonly ipc: IpcRuntime;
   declare readonly responsibilityRuntime: ResponsibilityRuntime;
   declare readonly federationRuntime: FederationRuntime;
+  declare readonly signupInvitationCleanup: SignupInvitationCleanup;
   declare readonly processOutput: ProcessOutput;
   declare readonly adapterDelivery: AdapterDelivery;
   declare readonly connectionRuntime: ConnectionRuntime;
@@ -879,6 +884,9 @@ export class Kernel extends DurableObject<GatewayEnv> {
         return;
       case "onFederationDelivery":
         await this.federationRuntime.onFederationDelivery(task.payload);
+        return;
+      case "onSignupInvitationCleanup":
+        await this.signupInvitationCleanup.run(task.payload, task.id);
         return;
       case "onApproachMaintenance": {
         const gate = await this.onboarding.managedWorkGate();
@@ -1564,6 +1572,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
         await this.scheduleManagedOutboundEnqueue(outboundId, dueAtMs);
       },
       scheduleFederationDelivery: this.federationRuntime.scheduleFederationDelivery.bind(this.federationRuntime),
+      signupInvitationCleanup: this.signupInvitationCleanup,
       scheduleFederationInbox: this.federationRuntime.scheduleFederationInbox.bind(this.federationRuntime),
       coordinateFederationInbound: this.federationRuntime.coordinateFederationInbound.bind(this.federationRuntime),
       coordinateFederationContact: this.federationRuntime.coordinateFederationContact.bind(this.federationRuntime),

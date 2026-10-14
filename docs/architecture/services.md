@@ -59,6 +59,9 @@ recipient's signed Space identity before accepting the contact. Signup claims do
 not extend reservations; starting Space creation consumes a place durably.
 Existing-space acceptance releases the place. Contact authorization and generation
 fences remain in the Kernel, including each owner's independent handling choice.
+The Kernel revokes contact links locally and persists signup cleanup in its
+existing durable scheduler. An interrupted reservation is cancelled and released;
+Accounts retains cancellations so a delayed reservation cannot recreate them.
 
 Entitlements answer what an installation may use. Keys are strings such as
 `inference.included` or `email.daily_messages`; values are booleans, numbers, or

@@ -6,7 +6,7 @@ import { TextInput } from "../../components/ui/TextInput";
 import { Spinner } from "../../components/ui/Spinner";
 import { WelcomeIllustration } from "./backgrounds/WelcomeIllustration";
 import { PrivacyPolicyLink, TermsOfServiceLink } from "./PolicyLinks";
-import { OwnerWelcome, OwnerApiError, type OwnerSession, type OwnedInvite } from "../../services/session/ownerWelcome";
+import { OwnerWelcome, OwnerApiError, type OwnerSession, type OwnedInvite, type WelcomeState } from "../../services/session/ownerWelcome";
 import { parseCreationInvitation } from "@humansandmachines/gsv/protocol";
 import "./LoginScreen.css";
 import "./OwnerWelcomeScreen.css";
@@ -123,8 +123,9 @@ export function OwnerWelcomeScreen({ ready, resume, load, onConnect, addressPane
     setConsent(false); setConsentTouched(false);
     if (intent === "open") setStep("email");
     if (!flow) return;
-    await flow.save({ flow: intent, inviteCode: null, inviteId: null, handle: null,
-      ...(flow.state.contactInvite !== undefined ? { contactInvite: null } : {}) });
+    const change: Partial<WelcomeState> = { flow: intent, inviteCode: null, inviteId: null, handle: null };
+    if (flow.state.contactInvite !== undefined) change.contactInvite = null;
+    await flow.save(change);
     if (intent === "create") setStep("invite");
     else await advance(flow);
   });

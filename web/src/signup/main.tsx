@@ -20,11 +20,11 @@ const accountsOrigin = window.location.origin;
 const storage = new BrowserWelcomeStorage(accountsOrigin);
 const supplied = new URLSearchParams(window.location.hash.slice(1));
 if (supplied.has("invite") && !supplied.has("contact")) clearContactInvitation();
-const contactInvitation = pendingContactInvitation();
+let contactInvitation = pendingContactInvitation();
 const invitationPreview = contactInvitation ? contactInvitationPreview(contactInvitation) : null;
 async function load() {
   const client = new OwnerWelcome(await storage.load(), storage, accountsOrigin);
-  await captureCreationInvitation(client, window.location.href, (url) => window.history.replaceState(null, "", url), contactInvitation);
+  contactInvitation = await captureCreationInvitation(client, window.location.href, (url) => window.history.replaceState(null, "", url), contactInvitation);
   return client;
 }
 async function connect(origin: string, onboardingToken?: string | null) {

@@ -44,8 +44,8 @@ export class FriendInvitations implements SpaceInvitationsService {
         .bind(hash, input.code.slice(0, 16), policy.policyRef, now, now, id),
     ]);
     const row = await this.db.prepare(`SELECT f.*, c.token_hash FROM friend_invitations f
-      JOIN installation_creation_invites c ON c.id = f.id WHERE f.sponsor_installation_id = ? AND f.contact_invite_id = ?`)
-      .bind(input.installationId, input.contactInviteId).first<Reservation & { token_hash: string }>();
+      LEFT JOIN installation_creation_invites c ON c.id = f.id WHERE f.sponsor_installation_id = ? AND f.contact_invite_id = ?`)
+      .bind(input.installationId, input.contactInviteId).first<Reservation & { token_hash: string | null }>();
     if (!row) throw new Error("All invitation places are in use");
     if (row.token_hash !== hash || row.expires_at !== input.expiresAt || row.released_at !== null || row.consumed_at !== null) {
       throw new Error("Invitation reservation has changed");
@@ -54,10 +54,15 @@ export class FriendInvitations implements SpaceInvitationsService {
 
   async cancel(value: SpaceInvitationScope): Promise<void> {
     const input = scope.parse(value);
+    const now = Date.now();
     await this.db.batch([
-      this.db.prepare(`UPDATE friend_invitations SET released_at = COALESCE(released_at, ?)
-        WHERE sponsor_installation_id = ? AND contact_invite_id = ? AND consumed_at IS NULL`)
-        .bind(Date.now(), input.installationId, input.contactInviteId),
+      // Retain cancellation even if a delayed reserve has not reached D1 yet.
+      this.db.prepare(`INSERT INTO friend_invitations (id, sponsor_installation_id, contact_invite_id, expires_at, released_at)
+        SELECT ?, ?, ?, ?, ? WHERE EXISTS (SELECT 1 FROM installations WHERE id = ?)
+        ON CONFLICT(sponsor_installation_id, contact_invite_id) DO UPDATE
+        SET released_at = COALESCE(friend_invitations.released_at, excluded.released_at)
+        WHERE friend_invitations.consumed_at IS NULL`)
+        .bind(`invite_${crypto.randomUUID()}`, input.installationId, input.contactInviteId, now, now, input.installationId),
       this.db.prepare(`UPDATE installation_creation_invites SET revoked_at = COALESCE(revoked_at, ?), updated_at = ?
         WHERE installation_id IS NULL AND id IN (SELECT id FROM friend_invitations
           WHERE sponsor_installation_id = ? AND contact_invite_id = ? AND released_at IS NOT NULL)`)

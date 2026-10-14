@@ -23,6 +23,19 @@ async function invitation(space: Awaited<ReturnType<typeof sponsor>>) {
 }
 
 describe("friend signup places", () => {
+  it("keeps cancellation final when it overtakes a delayed reservation", async () => {
+    const space = await sponsor(), input = await invitation(space);
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const delayed = new FriendInvitations(db, async () => { await gate; return { total: 5, policyRef: "early-access" }; });
+    const reservation = delayed.reserve(input);
+    const rejected = expect(reservation).rejects.toThrow("reservation has changed");
+    await friends.cancel({ ...space, contactInviteId: input.contactInviteId });
+    release();
+    await rejected;
+    expect(await friends.getAllowance(space)).toEqual({ total: 5, used: 0, reserved: 0, available: 5 });
+    await expect(creation.claim(input.code, await owner())).rejects.toThrow("unavailable");
+  });
   it("admits exactly five concurrent reservations and makes exact retries free", async () => {
     const space = await sponsor();
     const inputs = await Promise.all(Array.from({ length: 6 }, () => invitation(space)));

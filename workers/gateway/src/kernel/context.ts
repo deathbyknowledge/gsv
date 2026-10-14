@@ -42,6 +42,7 @@ import type { ResponsibilityStore } from "./responsibility-store";
 import type { ResponsibilitySourcePolicyStore } from "./responsibility-source-policies";
 import type { FederationStore } from "./federation-store";
 import type { FederationIdentity } from "./federation-crypto";
+import type { SignupInvitationCleanup } from "./federation/invitation-cleanup";
 import type { ProfileStore } from "./profile-store";
 import type { ApproachStore } from "./approach-store";
 import type { McpAddConnectionInput, McpAddConnectionResult } from "./sys/mcp";
@@ -83,6 +84,7 @@ export type KernelContext = {
   responsibilitySources: ResponsibilitySourcePolicyStore;
   federation: FederationStore;
   federationIdentity: FederationIdentity;
+  signupInvitationCleanup: SignupInvitationCleanup;
   profiles: ProfileStore;
   approaches: ApproachStore;
   scheduleApproachMaintenance: () => Promise<void>;

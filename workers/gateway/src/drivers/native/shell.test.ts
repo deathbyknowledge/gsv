@@ -4379,7 +4379,7 @@ describe("native administration shell commands", () => {
         isPersonalAgentUid: vi.fn(() => false),
         getShadowByUsername: vi.fn(() => ({ username: IDENTITY.username, hash: "unlocked" })),
       },
-      federation: { cancelInvite, invite: vi.fn(() => ({ ownerUid: IDENTITY.uid, state: "issued" })) },
+      federation: { cancelInvite, invite: vi.fn(() => ({ ownerUid: IDENTITY.uid, state: "issued" })), transaction: <T>(operation: () => T): T => operation() },
       processId: "proc:ship",
     });
     const shipResult = await handleShellExec(

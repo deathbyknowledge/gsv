@@ -98,8 +98,9 @@ export class OwnerWelcome {
 
   async completeCreation(): Promise<void> {
     if (this.state.flow !== "create") return;
-    await this.save({ flow: "open", challenge: null, inviteCode: null, inviteId: null, handle: null,
-      ...(this.state.contactInvite !== undefined ? { contactInvite: null } : {}) });
+    const change: Partial<WelcomeState> = { flow: "open", challenge: null, inviteCode: null, inviteId: null, handle: null };
+    if (this.state.contactInvite !== undefined) change.contactInvite = null;
+    await this.save(change);
   }
 
   async signOut(): Promise<void> {
