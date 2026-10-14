@@ -1,16 +1,22 @@
 import { AccountStore } from "./store";
 import { InstallationOnboardingStore } from "./onboarding";
 import { parseOpaqueId } from "./domain";
+import { OwnerAuthError } from "./owner-auth-store";
 import { emitTelemetry, exceptionDiagnostics, type TelemetryEnvironment } from "@humansandmachines/gsv/telemetry";
 
 export type PendingSetup = { operationId: string; handle: string; origin: string };
-export type SignupPolicy = { prepare(input: { operationId: string; installationId: string }): Promise<void> };
+export type SignupPolicy = {
+  allowsEmail?(email: string): boolean;
+  prepare(input: { operationId: string; installationId: string }): Promise<void>;
+};
 
 /** Verified owners resume the same provisioning operation after a lost response or restart. */
 export class InstallationSignup {
   constructor(private readonly db: D1Database, private readonly accounts: AccountStore,
     private readonly onboarding: InstallationOnboardingStore, readonly enabled: boolean, private readonly policy?: SignupPolicy,
     private readonly telemetry?: TelemetryEnvironment) {}
+
+  allowsEmail(email: string): boolean { return this.policy?.allowsEmail?.(email) ?? true; }
 
   async pending(principalId: string): Promise<PendingSetup[]> {
     const rows = await this.db.prepare(`SELECT p.operation_id AS operationId, i.handle, i.canonical_origin AS origin
@@ -32,6 +38,7 @@ export class InstallationSignup {
     if (!principal || principal.state !== "active" || principal.emailVerifiedAt === null) throw new Error("Verified owner is required");
     const existing = await this.accounts.getReservationByOperation(operationId);
     if (!existing && !this.enabled) throw new Error("Space registration is currently closed.");
+    if (!existing && !this.allowsEmail(principal.email)) throw new OwnerAuthError("email_restricted");
     const space = await this.accounts.reserveInstallation({ principalId, operationId, handle, ownerSetup: true });
     const owned = await this.db.prepare("SELECT 1 FROM installations WHERE id = ? AND owner_setup = 1 AND owner_principal_id = ?")
       .bind(space.installationId, principalId).first();

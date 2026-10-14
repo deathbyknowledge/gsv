@@ -69,7 +69,8 @@ export class InstallationOwnerApi {
       if (error instanceof OwnerAuthError) {
         const message = error.code === "invalid" ? "Check the code and try again." : error.code === "expired" ? "This code has expired. Request a new one."
           : error.code === "rate_limited" ? "Wait before requesting another code." : error.code === "locked" ? "Too many attempts. Request a new code."
-          : error.code === "credential_unavailable" ? "Use your existing sign-in method." : "Could not verify. Try again.";
+          : error.code === "credential_unavailable" ? "Use your existing sign-in method."
+          : error.code === "email_restricted" ? "Use another email address to sign up." : "Could not verify. Try again.";
         return json({ error: message, code: error.code, retryAt: error.retryAt }, error.code === "rate_limited" ? 429 : 400);
       }
       if (error instanceof Error && error.message === "handle is invalid") {

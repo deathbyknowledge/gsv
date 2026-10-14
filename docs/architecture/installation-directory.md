@@ -133,6 +133,10 @@ compositions assign their configured default plan through the signup policy
 before setup authorization is issued. Plan assignment is idempotent and preserves
 later operator edits. Closing registration prevents new allocations while
 allowing already-admitted setups to finish.
+An optional signup email policy rejects new native owner credentials before mail
+delivery and again during verification, and rejects new Space allocations before
+reservation. Existing credentials can still sign in and admitted setups can resume.
+The managed composition uses this to prevent GSV mailboxes from registering more Spaces.
 
 Contact invitations remain entirely Kernel-owned. The browser carries a pending
 contact link through signup and local setup, then presents the normal acceptance

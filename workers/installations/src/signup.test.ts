@@ -54,6 +54,17 @@ describe("open registration", () => {
     expect(await accounts.getReservationByOperation(operationId)).toBeNull();
   });
 
+  it("checks email policy before allocation while preserving already-admitted setups", async () => {
+    const principalId = await owner(), operationId = crypto.randomUUID(), name = handle();
+    const policy = { allowsEmail: () => false, prepare: vi.fn(async () => {}) };
+    const restricted = new InstallationSignup(db, accounts, onboarding, true, policy);
+    await expect(restricted.prepare(operationId, principalId, name)).rejects.toMatchObject({ code: "email_restricted" });
+    expect(await accounts.getReservationByOperation(operationId)).toBeNull();
+    expect(policy.prepare).not.toHaveBeenCalled();
+    const first = await signup.prepare(operationId, principalId, name);
+    expect((await restricted.prepare(operationId, principalId, name)).onboardingToken).toBe(first.onboardingToken);
+  });
+
   it("resumes the same setup after reopening without a signup code", async () => {
     const principalId = await owner(), operationId = crypto.randomUUID(), name = handle();
     const first = await signup.prepare(operationId, principalId, name);

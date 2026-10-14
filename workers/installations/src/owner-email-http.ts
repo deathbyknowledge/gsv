@@ -149,6 +149,7 @@ function authErrorMessage(code: OwnerAuthErrorCode): string {
     case "locked": return "Too many incorrect attempts. Start again for a new code.";
     case "rate_limited": return "Too many requests. Wait before requesting another code.";
     case "credential_unavailable": return "This email uses another sign-in method. Continue with your existing identity provider.";
+    case "email_restricted": return "Use another email address to sign up.";
     default: return "Verification could not complete. Retry, or start again if this attempt has expired.";
   }
 }
