@@ -147,16 +147,38 @@
 .instrument-header .keys { display: flex; align-items: center; gap: 14px; justify-self: end; margin-right: -8px; }
 .instrument-header .keys [aria-current="page"] { color: var(--text-hi); }
 .instrument-header .keys [aria-current="page"] .view-label { text-decoration: underline; text-underline-offset: 4px; }
+.instrument-menu-toggle, .instrument-current-view { display: none; }
 @container instrument (max-width: 900px) {
   .instrument-header { padding-inline: 18px; gap: 8px; }
   .instrument-header .keys { gap: 8px; }
   .instrument-header .keys kbd { display: none; }
 }
 @container instrument (max-width: 600px) {
-  .distance, .instrument-header, .instrument-help { --instrument-header-height: 68px; }
-  .instrument-header { grid-template-columns: auto minmax(0, 1fr); }
-  .instrument-header .instrument-identity { grid-column: 1 / -1; max-width: 100%; gap: 16px; }
-  .instrument-header .keys { grid-row: 2; grid-column: 1 / -1; justify-self: start; max-width: 100%; overflow-x: auto; white-space: nowrap; }
+  .distance, .instrument-header, .instrument-help { --instrument-header-height: 52px; }
+  .instrument-header { grid-template-columns: minmax(0, 1fr) auto; }
+  .instrument-header .instrument-identity { max-width: 100%; gap: 16px; }
+  .instrument-header .instrument-identity > button { min-height: 44px; }
+  .instrument-current-view { display: inline; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .instrument-menu-toggle { display: flex; align-items: center; justify-content: center; min-width: 44px; min-height: 44px; margin-right: -8px; font-size: 12px; }
+  .instrument-header .keys {
+    display: none;
+    position: absolute;
+    inset: var(--instrument-header-height) 18px auto;
+    margin: 0;
+    padding: 8px 16px;
+    justify-self: stretch;
+    align-items: stretch;
+    flex-direction: column;
+    gap: 0;
+    background: var(--panel);
+    border: 1px solid var(--border-raised);
+    max-height: calc(var(--instrument-height) / var(--type-scale) - var(--instrument-header-height) - 18px);
+    overflow-y: auto;
+    font-size: 14px;
+  }
+  .instrument-header .keys[data-open="true"] { display: flex; }
+  .instrument-header .keys button { min-height: 44px; text-align: left; }
+  .instrument-header .keys button[aria-controls="instrument-help"] { border-top: 1px solid var(--border); margin-top: 8px; color: var(--text-dim); }
 }
 .instrument kbd {
   font: inherit;

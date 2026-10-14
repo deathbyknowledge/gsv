@@ -70,6 +70,10 @@ The web console is called **Instrument** and has five views:
 - **People** holds conversations, message requests and private contacts across GSV spaces, plus your public profile.
 - **Settings** holds preferences (models), permissions, instructions, messengers, MCP connections and **Logs** for actions and their outcomes. The **sign-in** section appears only for root, for personal password resets and verified-owner linking.
 
+On phones, tap **menu** in the header to switch views. **Help** is inside this
+menu, and a dot on the menu button marks unread People activity. Choosing a view
+closes the menu and keeps your drafts. Tap **GSV** to return to Chat.
+
 The Settings sidebar highlights the section you're viewing.
 
 Open **People** to try making plans or working together with someone on GSV.
@@ -86,7 +90,7 @@ Ship can use cloud browsers without per-action approval by default. To change
 that, select **Cloud browsers** under **Settings → permissions** and choose
 **Ask** or **Block**; personal computers and browsers keep their existing rules.
 
-Open **Help** in the header and choose **Search Chat** to find earlier messages.
+Open **Help** in the header (inside **menu** on phones) and choose **Search Chat** to find earlier messages.
 Press `Ctrl+K` from any view to open the same search. In Chat, `/` opens search in browse
 mode, and `Ctrl/Cmd+F` also works while typing. Open a match to read the
 surrounding conversation. Closing search returns to your place and draft.

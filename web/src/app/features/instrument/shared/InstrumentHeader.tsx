@@ -15,20 +15,31 @@ type InstrumentHeaderProps = {
   onHelp: () => void;
   /** The keys button, so the panel it opens can tell a press on it from one outside. */
   helpButtonRef: RefObject<HTMLButtonElement>;
+  navigationOpen: boolean;
+  onNavigationToggle: () => void;
+  navigationButtonRef: RefObject<HTMLButtonElement>;
+  navigationRef: RefObject<HTMLElement>;
 };
 
-export function InstrumentHeader({ distance, onNavigate, peopleWaiting, helper, onShip, help, onHelp, helpButtonRef }: InstrumentHeaderProps) {
+export function InstrumentHeader({ distance, onNavigate, peopleWaiting, helper, onShip, help, onHelp, helpButtonRef,
+  navigationOpen, onNavigationToggle, navigationButtonRef, navigationRef }: InstrumentHeaderProps) {
   return (
     <header class="instrument-top instrument-header">
       <div class="instrument-identity">
         <button type="button" aria-label="GSV · Open Chat" onClick={() => onNavigate("zen")}>
           <Wordmark />
         </button>
+        {distance !== "zen" && <span class="instrument-current-view">{distance}</span>}
         <Feedback view={distance} />
         <PlatformIdentity />
         {helper && <span class="instrument-helper">helper · <button type="button" onClick={onShip}>back to your Ship</button></span>}
       </div>
-      <nav class="keys" aria-label="Views">
+      <button type="button" class="instrument-menu-toggle" ref={navigationButtonRef}
+        aria-expanded={navigationOpen} aria-controls="instrument-navigation" onClick={onNavigationToggle}>
+        {navigationOpen ? "close" : "menu"}
+        {distance !== "people" && peopleWaiting && <span class="instrument-people-waiting" aria-label="Unread messages or requests">•</span>}
+      </button>
+      <nav id="instrument-navigation" class="keys" aria-label="Views" ref={navigationRef} data-open={navigationOpen}>
         <button type="button" aria-current={distance === "zen" ? "page" : undefined} aria-keyshortcuts="c" onClick={() => onNavigate("zen")}>
           <kbd>c</kbd><span class="view-label">chat</span>
         </button>

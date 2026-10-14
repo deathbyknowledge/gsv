@@ -102,9 +102,12 @@ function InstrumentReady({ initialPath }: { initialPath: string }) {
   useTabAttention();
   const [scale, setScale] = useState<Scale>(() => storedScale());
   const [help, setHelp] = useState(false);
+  const [navigationOpen, setNavigationOpen] = useState(false);
   const [searchRequested, setSearchRequested] = useState(false);
   const helpRef = useRef<HTMLElement>(null);
   const helpButtonRef = useRef<HTMLButtonElement>(null);
+  const navigationRef = useRef<HTMLElement>(null);
+  const navigationButtonRef = useRef<HTMLButtonElement>(null);
   const cycleScale = useCallback(() => {
     setScale((current) => {
       const next = SCALES[(SCALES.indexOf(current) + 1) % SCALES.length];
@@ -162,6 +165,7 @@ function InstrumentReady({ initialPath }: { initialPath: string }) {
   const move = useCallback(
     (to: Distance, reference: FleetReference | null = null) => {
       if (reference && fleetDirty && !window.confirm("Discard unsaved Fleet edits and open this item?")) return false;
+      setNavigationOpen(false);
       if (to === distance) {
         if (reference) setFleetRequest({ reference });
         return true;
@@ -194,6 +198,20 @@ function InstrumentReady({ initialPath }: { initialPath: string }) {
   }, [help]);
   /* a press anywhere else closes the keys; the panel and its button do not */
   useDismissOnOutsideClick(help, () => [helpRef.current, helpButtonRef.current], () => setHelp(false));
+
+  useDismissOnOutsideClick(navigationOpen, () => [navigationRef.current, navigationButtonRef.current], () => setNavigationOpen(false));
+  useLayoutEffect(() => {
+    if (!navigationOpen) return;
+    const dismissNavigation = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      event.stopPropagation();
+      setNavigationOpen(false);
+      navigationButtonRef.current?.focus();
+    };
+    window.addEventListener("keydown", dismissNavigation, true);
+    return () => window.removeEventListener("keydown", dismissNavigation, true);
+  }, [navigationOpen]);
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -241,6 +259,7 @@ function InstrumentReady({ initialPath }: { initialPath: string }) {
       }
       if (event.key === "?") {
         event.preventDefault();
+        setNavigationOpen(false);
         setHelp((open) => !open);
       }
     };
@@ -253,10 +272,20 @@ function InstrumentReady({ initialPath }: { initialPath: string }) {
       <InstrumentBackdrop />
       <WireSync />
       <div class="instrument-scaled">
-      <InstrumentHeader distance={distance} onNavigate={move} peopleWaiting={peopleActivity.conversations.length > 0 || peopleActivity.requests.length > 0} helper={distance === "zen" && zenPid !== null}
+      <InstrumentHeader distance={distance} onNavigate={(to) => {
+        if (move(to) && navigationOpen) navigationButtonRef.current?.focus();
+      }} peopleWaiting={peopleActivity.conversations.length > 0 || peopleActivity.requests.length > 0} helper={distance === "zen" && zenPid !== null}
         onShip={() => {
           if (!zenDirty || window.confirm("Discard your unsent message and attachments?")) setZenPid(null);
-        }} help={help} onHelp={() => setHelp((open) => !open)} helpButtonRef={helpButtonRef} />
+        }} help={help} onHelp={() => {
+          setNavigationOpen(false);
+          setHelp((open) => !open);
+          if (navigationOpen) navigationButtonRef.current?.focus();
+        }} helpButtonRef={helpButtonRef} navigationOpen={navigationOpen} navigationRef={navigationRef}
+        navigationButtonRef={navigationButtonRef} onNavigationToggle={() => {
+          setHelp(false);
+          setNavigationOpen((open) => !open);
+        }} />
       {help ? (
         <aside id="instrument-help" class="instrument-help" aria-label="Help" ref={helpRef}>
           <button type="button" class="instrument-help-search" disabled={status.state !== "connected"} aria-keyshortcuts="Control+K" onClick={openSearch}>

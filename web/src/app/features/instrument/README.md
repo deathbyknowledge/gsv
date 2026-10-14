@@ -6,6 +6,11 @@ The shared header reserves its own height above every view. Messages, lists and
 files cannot pass behind the header.
 The star field continues behind both regions without an opaque header backdrop.
 
+On narrow screens, the header uses one row with a menu button. The same view
+actions open in a vertical menu with touch-sized rows; Help is a secondary action
+inside it. Choosing a view, tapping outside or pressing Escape closes the menu.
+The menu button retains the unread People indicator while navigation is closed.
+
 Chat, Fleet, Memory and Settings mount on their first visit and retain their local
 state until the signed-in session ends. Moving between them keeps drafts,
 attachments, open forms, selection and reading position without a discard
