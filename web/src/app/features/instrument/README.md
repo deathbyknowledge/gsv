@@ -4,8 +4,8 @@ Instrument is the default web UI at `/`. Its views use `/chat`, `/people`, `/fle
 
 The shared header reserves its own height above every view. Messages, lists and
 files cannot pass behind the header.
-Scrollable panes mark their top edge with a lavender hairline only while that
-edge intersects rendered text. It clears in line spacing, padding and gaps
+Scrollable panes mark their top edge with a lavender hairline and the cursor's
+soft glow only while that edge intersects rendered text. It clears in line spacing, padding and gaps
 between messages or rows. The shared shell observes only the active view;
 scrolling, message selection and text selection remain owned by each surface.
 The star field continues behind both regions without an opaque header backdrop.

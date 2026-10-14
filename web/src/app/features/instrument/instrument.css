@@ -141,7 +141,8 @@
   border-top: 1px solid transparent;
 }
 .instrument [data-scroll-clipped] {
-  border-top-color: color-mix(in srgb, var(--accent) 65%, transparent);
+  border-top-color: var(--accent);
+  box-shadow: inset 0 8px 8px -8px var(--accent);
 }
 .instrument-people-waiting { color: var(--accent); margin-left: 4px; font-size: 15px; line-height: 1; }
 
