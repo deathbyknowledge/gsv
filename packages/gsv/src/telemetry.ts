@@ -176,6 +176,8 @@ const delegationFinishedSchema = z.strictObject({
   }),
 });
 
+export const inferenceProviderSchema = z.enum(["workers-ai", "modal", "together", "gsv", "other"]);
+
 const inferenceRequestFinishedSchema = z.strictObject({
   stream: z.literal("operational"),
   name: z.literal("inference.request.finished"),
@@ -186,7 +188,7 @@ const inferenceRequestFinishedSchema = z.strictObject({
     purpose: z.enum(["agent", "mail-intake"]),
     // Optional only for compatibility with producers during rolling upgrades.
     workload: z.optional(inferenceWorkloadSchema),
-    provider: z.enum(["workers-ai", "modal", "gsv"]),
+    provider: inferenceProviderSchema,
     model: z.optional(modelNameSchema),
     stopReason: z.optional(z.enum([
       "stop",
@@ -219,7 +221,7 @@ const inferenceProviderAttemptFailedSchema = z.strictObject({
     diagnosticId: z.optional(z.string().check(z.uuid())),
     purpose: z.enum(["agent", "mail-intake"]),
     workload: inferenceWorkloadSchema,
-    provider: z.enum(["workers-ai", "modal", "gsv"]),
+    provider: inferenceProviderSchema,
     model: modelNameSchema,
     attempt: positiveIntegerSchema,
     durationMs: nonNegativeIntegerSchema,
@@ -466,6 +468,7 @@ export type TelemetryComponent = z.infer<typeof telemetryComponentSchema>;
 export type TelemetryEvent = z.infer<typeof telemetryEventSchema>;
 export type TelemetryRecord = z.infer<typeof telemetryRecordSchema>;
 export type InferenceWorkload = z.infer<typeof inferenceWorkloadSchema>;
+export type InferenceProvider = z.infer<typeof inferenceProviderSchema>;
 export type InferenceFailureKind = z.infer<typeof inferenceFailureKindSchema>;
 export type InferenceFailureStage = z.infer<
   typeof inferenceFailureStageSchema
@@ -485,6 +488,13 @@ const INTEGRATION_PROVIDER_DOMAINS: ReadonlyArray<
   ["slack", ["slack.com"]],
   ["atlassian", ["atlassian.com", "atlassian.net"]],
 ];
+
+/** Keep operator-selected transport names out of telemetry without losing the event. */
+export function inferenceProviderFromName(name?: string): InferenceProvider {
+  if (name === undefined) return "gsv";
+  const parsed = inferenceProviderSchema.safeParse(name);
+  return parsed.success ? parsed.data : "other";
+}
 
 function isIntegrationProvider(value: string): value is IntegrationProvider {
   return integrationProviderSchema.safeParse(value).success;
