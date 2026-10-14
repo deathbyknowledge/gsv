@@ -126,7 +126,8 @@ export function OwnerWelcomeScreen({ ready, resume, load, onConnect, addressPane
       if (!flow) return;
       if (step === "invitation") {
         await flow.save({ flow: "create" });
-        await advance(flow);      } else if (step === "email") {
+        await advance(flow);
+      } else if (step === "email") {
         await flow.sendCode(email.trim().toLowerCase()); setStep("code");
       } else if (step === "code") {
         await flow.verify(code); setCode(""); await advance(flow);

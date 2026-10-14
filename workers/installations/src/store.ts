@@ -147,7 +147,7 @@ export class AccountStore {
            FROM principals
            WHERE id = ? AND state = 'active' AND email_verified_at IS NOT NULL
              AND (? = 0 OR NOT EXISTS (SELECT 1 FROM installations i
-               WHERE i.owner_principal_id = principals.id AND i.state NOT IN ('cancelled', 'deleted')))` ,
+               WHERE i.owner_principal_id = principals.id AND i.state NOT IN ('cancelled', 'deleted')))`,
         ).bind(
           identity.installationId,
           identity.handle,
