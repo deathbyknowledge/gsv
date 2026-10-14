@@ -10,10 +10,14 @@ in landscape, before applying text zoom. It follows visual viewport resize and
 scroll events so the keyboard leaves the header and composer reachable; pinch
 zoom retains the existing layout. Keyboard occlusion consumes the bottom safe
 inset instead of leaving a second gap above the keyboard. Login and setup share
-this viewport; their forms remain scrollable. The document and fixed shell use
+this viewport; their forms remain scrollable. The document and background use
 the large viewport height (`100lvh`) so iOS Home Screen launches cover the whole
 screen, including behind the home indicator. The star field keeps that height
-while the content follows the visible viewport and the keyboard.
+while the content follows the visible viewport and the keyboard. The stars live
+in the document so Safari can draw them beneath its translucent controls; the
+transparent content viewport stays fixed above the browser controls. Document
+scrolling caused by keyboard focus moves the background's document anchor without
+changing the content's visible-viewport position.
 The composer omits routine model and target-readiness feedback, retaining errors,
 offline warnings and reconnecting. Its keyboard return hint is Send; iOS's native
 field-navigation accessory bar remains controlled by the browser.
