@@ -12,6 +12,28 @@ beforeEach(() => vi.stubGlobal("document", {}));
 afterEach(() => vi.unstubAllGlobals());
 
 describe("owner welcome", () => {
+  it.each([false, true])("offers signup only to a friend without an existing Space (existing: %s)", async (existing) => {
+    let snapshot: WelcomeSnapshot = { revision: "initial", value: {
+      origin: "https://accounts.example.com", flow: "create", sessionSecret: "a".repeat(64), challenge: null,
+      inviteCode: INVITE_CODE, inviteId: null, handle: null, contactInvite: "friend-invitation",
+    } };
+    const fetcher = vi.fn(async (_url: string) => Response.json({ email: "friend@example.com", expiresAt: Date.now() + 60_000,
+      spaceDomain: "example.com", spaces: existing ? [{ handle: "friend", canonicalOrigin: "https://friend.example.com", state: "active" }] : [], invites: [] }));
+    const client = new OwnerWelcome(snapshot, { save: async (_revision, value) => snapshot = { revision: "saved", value } }, "https://accounts.example.com", fetcher);
+    const root = createTestRoot("Friend joins or connects");
+    let tree: ComponentChildren;
+    function Harness() {
+      tree = OwnerWelcomeScreen({ ready: true, resume: true, chooseSpace: true, signupContactCode: "friend-invitation",
+        initialStep: "email", load: async () => client, onConnect: vi.fn() });
+      return null;
+    }
+    try {
+      await root.render(<Harness />);
+      await vi.waitFor(() => expect(collectText(tree)).toContain(existing ? "Your spaces" : "Before you begin"));
+      expect(fetcher).toHaveBeenCalledTimes(1);
+      expect(fetcher.mock.calls[0][0]).toBe("https://accounts.example.com/owner/api/session");
+    } finally { await root.unmount(); }
+  });
   it("chooses an existing space for a contact invitation without resuming space creation", async () => {
     const snapshot: WelcomeSnapshot = { revision: "saved", value: {
       origin: "https://accounts.example.com", flow: "create", sessionSecret: "a".repeat(64), challenge: null,

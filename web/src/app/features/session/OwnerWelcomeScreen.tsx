@@ -7,6 +7,7 @@ import { Spinner } from "../../components/ui/Spinner";
 import { WelcomeIllustration } from "./backgrounds/WelcomeIllustration";
 import { PrivacyPolicyLink, TermsOfServiceLink } from "./PolicyLinks";
 import { OwnerWelcome, OwnerApiError, type OwnerSession, type OwnedInvite } from "../../services/session/ownerWelcome";
+import { parseCreationInvitation } from "@humansandmachines/gsv/protocol";
 import "./LoginScreen.css";
 import "./OwnerWelcomeScreen.css";
 
@@ -19,10 +20,11 @@ type Props = {
   addressPanel?: (options: { disabled: boolean; connect(origin: string): Promise<void> }) => ComponentChildren;
   initialStep?: "welcome" | "invite" | "email";
   chooseSpace?: boolean;
+  signupContactCode?: string;
   context?: ComponentChildren;
 };
 
-export function OwnerWelcomeScreen({ ready, resume, load, onConnect, addressPanel, initialStep = "welcome", chooseSpace = false, context }: Props) {
+export function OwnerWelcomeScreen({ ready, resume, load, onConnect, addressPanel, initialStep = "welcome", chooseSpace = false, signupContactCode, context }: Props) {
   const [flow, setFlow] = useState<OwnerWelcome | null>(null);
   const [step, setStep] = useState<Step>(initialStep);
   const [owner, setOwner] = useState<OwnerSession | null>(null);
@@ -61,7 +63,8 @@ export function OwnerWelcomeScreen({ ready, resume, load, onConnect, addressPane
     setOwner(session);
     if (!session) { setStep(client.state.challenge ? "code" : "email"); return; }
     if (client.state.challenge) await client.save({ challenge: null });
-    if (chooseSpace) { setStep("spaces"); return; }
+    const friendSignup = signupContactCode && client.state.contactInvite === signupContactCode;
+    if (chooseSpace && (!friendSignup || session.spaces.some((space) => space.state === "active"))) { setStep("spaces"); return; }
     if (client.state.flow === "create" && client.state.inviteCode) {
       // Signing in or restoring a session does not imply agreement to create a space.
       if (!consent) { setStep("consent"); return; }
@@ -111,14 +114,16 @@ export function OwnerWelcomeScreen({ ready, resume, load, onConnect, addressPane
   const titles = {
     welcome: "Welcome to GSV", invite: "Create your space", email: "Your email", code: "Check your email", spaces: "Your spaces", consent: "Before you begin", handle: "Choose your handle",
   } satisfies Record<Step, string>;
-  const requiresConsent = !chooseSpace && (step === "consent" || (step === "email" && flow?.state.flow === "create"));
+  const friendSignup = !!signupContactCode && flow?.state.contactInvite === signupContactCode;
+  const requiresConsent = (!chooseSpace || friendSignup) && (step === "consent" || (step === "email" && flow?.state.flow === "create"));
   const consentError = requiresConsent && consentTouched && !consent;
   const formError = error === handleError ? loadError : error || loadError;
   const start = (intent: "open" | "create") => void run(async () => {
     setConsent(false); setConsentTouched(false);
     if (intent === "open") setStep("email");
     if (!flow) return;
-    await flow.save({ flow: intent, inviteCode: null, inviteId: null, handle: null });
+    await flow.save({ flow: intent, inviteCode: null, inviteId: null, handle: null,
+      ...(flow.state.contactInvite !== undefined ? { contactInvite: null } : {}) });
     if (intent === "create") setStep("invite");
     else await advance(flow);
   });
@@ -128,7 +133,7 @@ export function OwnerWelcomeScreen({ ready, resume, load, onConnect, addressPane
     void run(async () => {
       if (!flow) return;
       if (step === "invite") {
-        await flow.save({ flow: "create", inviteCode: inviteCode.trim(), inviteId: null, handle: null });
+        await flow.save({ flow: "create", inviteCode: parseCreationInvitation(inviteCode), inviteId: null, handle: null });
         await advance(flow);
       } else if (step === "email") {
         await flow.sendCode(email.trim().toLowerCase()); setStep("code");

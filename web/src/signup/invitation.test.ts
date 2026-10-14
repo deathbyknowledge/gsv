@@ -6,6 +6,14 @@ const origin = "https://accounts.example.com";
 const code = `invite_${"x".repeat(43)}`;
 
 describe("signup invitation links", () => {
+  it("keeps browser contact state out of an ordinary Desktop welcome record", async () => {
+    const client = new OwnerWelcome({ revision: "initial", value: null }, {
+      save: async (_revision, value) => ({ revision: "saved", value }),
+    }, origin);
+    await client.save({ flow: "create", inviteId: "invite_id" });
+    await client.completeCreation();
+    expect(client.state).not.toHaveProperty("contactInvite");
+  });
   it("saves the invitation before removing its fragment, without claiming it", async () => {
     let snapshot: WelcomeSnapshot = { revision: "initial", value: null };
     const save = vi.fn(async (_revision, value) => snapshot = { revision: "saved", value });

@@ -10,6 +10,7 @@ export type WelcomeState = {
   inviteCode: string | null;
   inviteId: string | null;
   handle: string | null;
+  contactInvite?: string | null;
 };
 export type WelcomeSnapshot = { revision: string; value: WelcomeState | null };
 export type WelcomeStorage = { save(revision: string, value: WelcomeState | null): Promise<WelcomeSnapshot> };
@@ -97,7 +98,8 @@ export class OwnerWelcome {
 
   async completeCreation(): Promise<void> {
     if (this.state.flow !== "create") return;
-    await this.save({ flow: "open", challenge: null, inviteCode: null, inviteId: null, handle: null });
+    await this.save({ flow: "open", challenge: null, inviteCode: null, inviteId: null, handle: null,
+      ...(this.state.contactInvite !== undefined ? { contactInvite: null } : {}) });
   }
 
   async signOut(): Promise<void> {

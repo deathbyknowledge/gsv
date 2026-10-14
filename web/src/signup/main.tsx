@@ -17,15 +17,18 @@ import { pendingContactInvitation, contactInvitationPreview, clearContactInvitat
 
 const accountsOrigin = window.location.origin;
 const storage = new BrowserWelcomeStorage(accountsOrigin);
+const supplied = new URLSearchParams(window.location.hash.slice(1));
+if (supplied.has("invite") && !supplied.has("contact")) clearContactInvitation();
 const contactInvitation = pendingContactInvitation();
 const invitationPreview = contactInvitation ? contactInvitationPreview(contactInvitation) : null;
 async function load() {
   const client = new OwnerWelcome(await storage.load(), storage, accountsOrigin);
-  await captureCreationInvitation(client, window.location.href, (url) => window.history.replaceState(null, "", url));
+  await captureCreationInvitation(client, window.location.href, (url) => window.history.replaceState(null, "", url), contactInvitation);
   return client;
 }
 async function connect(origin: string, onboardingToken?: string | null) {
-  const destination = contactInvitation ? contactInvitationDestination(origin, contactInvitation) : signupDestination(origin, onboardingToken);
+  const destination = onboardingToken ? signupDestination(origin, onboardingToken, contactInvitation)
+    : contactInvitation ? contactInvitationDestination(origin, contactInvitation) : signupDestination(origin);
   clearContactInvitation();
   window.location.assign(destination);
 }
@@ -44,7 +47,7 @@ render(<AuthScene layout="welcome">{invitationError
   ? <AuthLayout visible><section class="desktop-welcome"><h1>Connect on GSV</h1><p role="alert">{invitationError}</p>
     <a class="gsv-auth-link" href="/owner/signup/?resume=1" onClick={clearContactInvitation}>open my spaces</a></section></AuthLayout>
   : <OwnerWelcomeScreen ready resume={resume} initialStep={resume ? "email" : "invite"}
-    chooseSpace={!!contactInvitation} context={invitationPreview && "name" in invitationPreview && <p class="desktop-welcome-detail">
-      {invitationPreview.name} invited you to connect. Choose your space or enter its address, then accept their invitation.</p>}
+    chooseSpace={!!contactInvitation} signupContactCode={contactInvitation ?? undefined} context={invitationPreview && "name" in invitationPreview && <p class="desktop-welcome-detail">
+      {invitationPreview.name} invited you to GSV.</p>}
     addressPanel={contactInvitation ? ({ connect, disabled }) => <SpaceAddressForm disabled={disabled} onConnect={connect} /> : undefined}
     load={load} onConnect={connect} />}{!contactInvitation && <DesktopAppLink />}</AuthScene>, app);
