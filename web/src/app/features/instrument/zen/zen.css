@@ -123,7 +123,6 @@
   opacity: 0;
   transition: opacity var(--dur-fast);
 }
-.zen-moment:hover > .who .when,
 .zen-moment:focus-within > .who .when,
 .zen-moment.is-focus > .who .when { opacity: 1; }
 .zen-moment .answer-model {
@@ -162,8 +161,14 @@
   pointer-events: none;
   transition: opacity var(--dur-fast);
 }
-.zen-moment:hover .zen-copy-message,
+.zen-moment.is-focus .zen-copy-message,
+.zen-moment:focus-within .zen-copy-message,
 .zen-copy-message:focus-visible { opacity: 1; pointer-events: auto; }
+/* Touch browsers emulate hover before click; revealing controls there consumes the first tap. */
+@media (hover: hover) {
+  .zen-moment:hover > .who .when { opacity: 1; }
+  .zen-moment:hover .zen-copy-message { opacity: 1; pointer-events: auto; }
+}
 .zen-moment.is-ship.is-older .text {
   font-size: clamp(17px, 1.6vw, 22px);
 }

@@ -185,6 +185,8 @@ Pointer selection leaves the transcript in place, including long messages and
 text selection. Wheel, touch and native gesture scrolling update the same selected
 message used by keyboard navigation. Its highlight stays visible while the prompt
 has focus; browse shortcuts become available again after leaving the input.
+On touchscreens, one tap selects a message and reveals its timestamp and copy
+action. Hover reveals these controls only on devices with a hover-capable pointer.
 
 Process history synchronization keeps its historical page boundary separate from revision deltas. Late companions and media replacements remain available without moving that boundary past unloaded messages; a delayed page cannot advance a different window established by reconnect.
 
