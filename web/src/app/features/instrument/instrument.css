@@ -178,7 +178,7 @@
   }
   .instrument-header .keys[data-open="true"] { display: flex; }
   .instrument-header .keys button { min-height: 44px; text-align: left; }
-  .instrument-header .keys button[aria-controls="instrument-help"] { border-top: 1px solid var(--border); margin-top: 8px; color: var(--text-dim); }
+  .instrument-header .keys button[aria-controls="instrument-help"] { display: none; }
 }
 .instrument kbd {
   font: inherit;
