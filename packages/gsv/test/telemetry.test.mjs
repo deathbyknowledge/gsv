@@ -4,6 +4,8 @@ import { describe, it, mock } from "node:test";
 import {
   createTelemetryRecord,
   emitTelemetry,
+  inferenceProviderFromName,
+  inferenceProviderSchema,
   integrationProviderFromName,
   integrationProviderFromUrl,
   integrationProviderSchema,
@@ -24,6 +26,14 @@ const INPUT = {
 };
 
 describe("telemetry contract", () => {
+  it("classifies custom inference transports without exporting their names", () => {
+    for (const name of ["workers-ai", "modal", "together", "gsv", "other"]) {
+      assert.equal(inferenceProviderFromName(name), name);
+    }
+    assert.equal(inferenceProviderFromName(), "gsv");
+    assert.equal(inferenceProviderFromName("private-provider-name"), "other");
+    assert.equal(inferenceProviderSchema.safeParse("private-provider-name").success, false);
+  });
   it("reports memory admission failures without including memory contents", () => {
     const event = {
       stream: "operational", name: "memory.review.admission.failed",
@@ -138,7 +148,7 @@ describe("telemetry contract", () => {
     });
 
     assert.equal(telemetryRecordSchema.safeParse(failure).success, true);
-    for (const provider of ["modal", "together", "gsv"]) {
+    for (const provider of ["modal", "together", "gsv", "other"]) {
       assert.equal(telemetryRecordSchema.safeParse({
         ...failure, event: { ...failure.event, properties: { ...failure.event.properties, provider } },
       }).success, true);
@@ -178,7 +188,7 @@ describe("telemetry contract", () => {
     });
 
     assert.equal(telemetryRecordSchema.safeParse(failure).success, true);
-    for (const provider of ["modal", "together"]) {
+    for (const provider of ["modal", "together", "other"]) {
       assert.equal(telemetryRecordSchema.safeParse({
         ...failure, event: { ...failure.event, properties: { ...failure.event.properties, provider } },
       }).success, true);
