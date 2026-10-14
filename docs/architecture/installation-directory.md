@@ -85,8 +85,12 @@ owner signup page with `?resume=1`; the public composition supplies it when owne
 email sign-in is configured. Accounts sets `ownerSetupRecovery` in the directory
 only for an installation created through verified-owner signup. The Kernel
 includes the recovery URL only for those spaces; this link carries no authority.
-A verified owner resumes the same provisioning operation and receives fresh setup
-authorization if it is still needed. Clients clear rejected capabilities so an
+A verified owner resumes the same provisioning operation and receives the same
+setup authorization while it remains valid. Accounts derives that bearer using
+its stable owner-authentication secret and the claim's issuance times; D1 stores
+only the hash. Concurrent resumes cannot invalidate each other. Expiry rotates
+the bearer while preserving the claim identity retained by the Kernel.
+Clients clear rejected capabilities so an
 already activated space returns to ordinary sign-in. Operator-issued setup links
 instead direct the person to request a replacement from the operator.
 
@@ -113,6 +117,7 @@ The owner session lists unfinished setups independently of browser storage.
 The existing provisioning ledger owns progress and diagnostic references.
 `installations.owner_setup` identifies setups an owner may resume. The forward
 migration preserves this marker for Spaces created through legacy signup codes;
+an upgrade trigger also covers old workers completing signup during rollout.
 the retired invitation table remains historical data, never admission authority.
 Old Desktop clients retain owner sign-in; their retired registration endpoints
 return an instruction to update the app.

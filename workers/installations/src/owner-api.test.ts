@@ -17,7 +17,7 @@ async function fixture() {
   await accounts.createPrincipal({ principalId: registry, email: `${registry}@example.com`, displayName: "Registry", verified: true });
   const owners = new InstallationOwnerStore(env.INSTALLATIONS_DB, registry);
   const auth = new InstallationOwnerAuthStore(env.INSTALLATIONS_DB, "api-test-secret-".repeat(4));
-  const onboarding = new InstallationOnboardingStore(env.INSTALLATIONS_DB, accounts);
+  const onboarding = new InstallationOnboardingStore(env.INSTALLATIONS_DB, accounts, "api-test-secret-".repeat(4));
   const signup = new InstallationSignup(env.INSTALLATIONS_DB, accounts, onboarding, true);
   let code = "";
   const send = vi.fn(async (message: EmailMessage | EmailMessageBuilder): Promise<EmailSendResult> => {

@@ -30,6 +30,32 @@ async function provisioningInstallation(suffix: string): Promise<{
 }
 
 describe("installation onboarding claims", () => {
+  it("resumes one usable bearer across concurrent clients and rotates only after expiry", async () => {
+    const fixture = await provisioningInstallation("concurrent-resume");
+    const secret = "onboarding-resume-test-".repeat(4);
+    const firstStore = new InstallationOnboardingStore(env.INSTALLATIONS_DB, fixture.accounts, secret);
+    const secondStore = new InstallationOnboardingStore(env.INSTALLATIONS_DB, fixture.accounts, secret);
+    const now = Date.now();
+    const first = await Promise.all([firstStore.begin(fixture.installationId, now), secondStore.begin(fixture.installationId, now)]);
+    expect(first[0]).toEqual(first[1]);
+    const originalToken = new URL(first[0].onboardingUrl).hash.slice(1);
+    const original = await firstStore.authorize({ installationId: fixture.installationId, token: originalToken });
+    expect(original.ok).toBe(true);
+    expect(await secondStore.begin(fixture.installationId, now + 1)).toEqual(first[0]);
+    const renewed = await Promise.all([firstStore.begin(fixture.installationId, first[0].expiresAt), secondStore.begin(fixture.installationId, first[0].expiresAt)]);
+    expect(renewed[0]).toEqual(renewed[1]);
+    const renewedToken = new URL(renewed[0].onboardingUrl).hash.slice(1);
+    expect(renewedToken).not.toBe(originalToken);
+    expect(await firstStore.authorize({ installationId: fixture.installationId, token: originalToken }, first[0].expiresAt)).toEqual({ ok: false });
+    expect(await secondStore.authorize({ installationId: fixture.installationId, token: renewedToken }, first[0].expiresAt)).toEqual(original);
+    const stored = await env.INSTALLATIONS_DB.prepare("SELECT token_hash FROM installation_onboarding_claims WHERE installation_id = ?")
+      .bind(fixture.installationId).first<{ token_hash: string }>();
+    expect(stored?.token_hash).not.toBe(renewedToken);
+    if (!original.ok) throw new Error("Expected authorization");
+    await firstStore.complete({ installationId: fixture.installationId, claimId: original.claimId });
+    await expect(secondStore.begin(fixture.installationId)).rejects.toThrow("not awaiting onboarding");
+  });
+
   it("authorizes only the capability bound to the provisioning installation", async () => {
     const fixture = await provisioningInstallation("authorize");
     const other = await provisioningInstallation("authorize-other");

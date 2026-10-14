@@ -587,10 +587,13 @@ export class AccountStore {
            )`,
       ).bind(now, operationId, principalId),
     ]);
-    if (results.some((result) => (result.meta.changes ?? 0) !== 1)) {
+    const current = await this.requireOwnedReservation(operationId, principalId);
+    const resumed = results.every((result) => (result.meta.changes ?? 0) === 0)
+      && current.state === "provisioning" && current.operationState === "provisioning";
+    if (!resumed && results.some((result) => (result.meta.changes ?? 0) !== 1)) {
       throw new Error("installation could not enter provisioning");
     }
-    return await this.requireOwnedReservation(operationId, principalId);
+    return current;
   }
 
   async completeInstallationOnboarding(

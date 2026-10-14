@@ -7,7 +7,7 @@ import { InstallationSignup } from "./signup";
 
 const db = env.INSTALLATIONS_DB;
 const accounts = new AccountStore(db, "example.com");
-const onboarding = new InstallationOnboardingStore(db, accounts);
+const onboarding = new InstallationOnboardingStore(db, accounts, "signup-test-secret-".repeat(4));
 const signup = new InstallationSignup(db, accounts, onboarding, true);
 const handle = () => `space-${crypto.randomUUID()}`;
 async function owner(verified = true) {
@@ -17,6 +17,21 @@ async function owner(verified = true) {
 }
 
 describe("open registration", () => {
+  it("preserves setup admitted by an older worker after the migration", async () => {
+    const principalId = await owner(), operationId = `invite_${crypto.randomUUID()}`, name = handle();
+    await db.prepare(`INSERT INTO installation_creation_invites
+      (id, token_hash, token_prefix, created_at, principal_id, claimed_at, updated_at)
+      VALUES (?, ?, 'retired', 1, ?, 1, 1)`).bind(operationId, crypto.randomUUID(), principalId).run();
+    const space = await accounts.reserveInstallation({ principalId, operationId, handle: name });
+    expect(await signup.pending(principalId)).toEqual([]);
+    await db.prepare("UPDATE installation_creation_invites SET installation_id = ? WHERE id = ?")
+      .bind(space.installationId, operationId).run();
+    expect(await signup.pending(principalId)).toEqual([{ operationId, handle: name, origin: space.canonicalOrigin }]);
+    const prepared = await Promise.all([signup.prepare(operationId, principalId, name), signup.prepare(operationId, principalId, name)]);
+    expect(prepared[0].onboardingToken).toBe(prepared[1].onboardingToken);
+    expect(await onboarding.authorize({ installationId: space.installationId, token: prepared[0].onboardingToken! })).toMatchObject({ ok: true });
+  });
+
   it("migrates unfinished code-based setup into the same owner recovery flow", async () => {
     const principalId = await owner(), operationId = `invite_${crypto.randomUUID()}`, name = handle();
     const space = await accounts.reserveInstallation({ principalId, operationId, handle: name });
