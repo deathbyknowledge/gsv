@@ -74,6 +74,11 @@ On phones, tap **menu** in the header to switch views. A dot on the menu button
 marks unread People activity. Choosing a view
 closes the menu and keeps your drafts. Tap **GSV** to return to Chat.
 
+In the browser and when added to your Home Screen, the header and bottom controls
+leave room for your phone's notch and home indicator. The star field still fills
+the screen. Opening the keyboard keeps the composer above it; closing the keyboard
+restores the conversation's available space. Sign-in and setup use the same layout.
+
 The Settings sidebar highlights the section you're viewing.
 
 Open **People** to try making plans or working together with someone on GSV.

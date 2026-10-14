@@ -6,7 +6,11 @@
   /* type scale: 1, 1.5 or 2; the x key cycles it. zoom scales layout with the type, and the container
    * queries below see the zoomed width, so 2x on a wide screen reflows like a narrow one. */
   --type-scale: 1;
-  --instrument-height: 100dvh;
+  --instrument-safe-top: env(safe-area-inset-top, 0px);
+  --instrument-safe-right: env(safe-area-inset-right, 0px);
+  --instrument-safe-bottom: max(0px, calc(env(safe-area-inset-bottom, 0px) - var(--instrument-viewport-top, 0px) - var(--instrument-viewport-bottom, 0px)));
+  --instrument-safe-left: env(safe-area-inset-left, 0px);
+  --instrument-height: calc(var(--instrument-viewport-height, 100dvh) - var(--instrument-safe-top) - var(--instrument-safe-bottom));
   --instrument-header-height: 44px;
   /* the instrument's own faces: Martian Mono for the machine, Host Grotesk for the person and the ship */
   --gsv-font-mono: "Martian Mono", "IBM Plex Mono", "JetBrains Mono", monospace;
@@ -69,6 +73,24 @@
   inset: 0;
   pointer-events: none;
   background: radial-gradient(ellipse 86% 84% at 50% 50%, transparent 66%, rgba(0, 0, 0, 0.38) 100%);
+}
+
+/* Apply device insets before text zoom; background layers still fill the entire screen.
+ * The keyboard covers the home indicator, so its occlusion consumes the bottom safe area. */
+.instrument-viewport {
+  position: absolute;
+  inset: calc(var(--instrument-viewport-top, 0px) + var(--instrument-safe-top))
+    var(--instrument-safe-right)
+    calc(var(--instrument-viewport-bottom, 0px) + var(--instrument-safe-bottom))
+    var(--instrument-safe-left);
+}
+/* Modal dialogs enter the browser's top layer, outside the content box's positioning. */
+.instrument-viewport dialog:modal {
+  inset: calc((var(--instrument-viewport-top, 0px) + var(--instrument-safe-top)) / var(--type-scale))
+    calc(var(--instrument-safe-right) / var(--type-scale))
+    calc((var(--instrument-viewport-bottom, 0px) + var(--instrument-safe-bottom)) / var(--type-scale))
+    calc(var(--instrument-safe-left) / var(--type-scale));
+  max-width: calc((100vw - var(--instrument-safe-left) - var(--instrument-safe-right)) / var(--type-scale) - 12px);
 }
 
 /* the scaled layer: laid out at 1/scale of the box and scaled back up by a transform, which every engine
@@ -253,7 +275,7 @@
   display: block;
   min-width: 0;
   min-height: 1.4em;
-  max-height: min(168px, calc(30vh / var(--type-scale)));
+  max-height: min(168px, calc(var(--instrument-height) / var(--type-scale) * .3));
   margin: 0;
   resize: none;
   overflow-y: auto;

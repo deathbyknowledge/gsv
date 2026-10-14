@@ -21,6 +21,7 @@ import { InstrumentHeader } from "./shared/InstrumentHeader";
 import { SHELL_KEYS } from "./shared/shellKeys";
 import { useDismissOnOutsideClick } from "./shared/useDismissOnOutsideClick";
 import { useTabAttention } from "./shared/useTabAttention";
+import { useInstrumentViewport } from "./shared/useInstrumentViewport";
 import { RetainedView } from "../../services/navigation/ViewActivity";
 import { ClientControlError, useClientControl } from "../../services/platform/ClientControl";
 import { useGateway } from "../../services/gateway/GatewayProvider";
@@ -74,6 +75,7 @@ export function Instrument({ initialPath }: { initialPath: string }) {
 }
 
 function InstrumentReady({ initialPath }: { initialPath: string }) {
+  const viewportRef = useInstrumentViewport();
   const { service: session } = useSession();
   const { client, status } = useGateway();
   useEffect(() => {
@@ -268,9 +270,10 @@ function InstrumentReady({ initialPath }: { initialPath: string }) {
   }, [cycleScale, move, openSearch, status.state, toggleTheme]);
 
   return (
-    <div class={`instrument${theme === "light" ? " is-light" : ""}${scale === 1.5 ? " is-scale-15" : scale === 2 ? " is-scale-2" : ""}`}>
+    <div ref={viewportRef} class={`instrument${theme === "light" ? " is-light" : ""}${scale === 1.5 ? " is-scale-15" : scale === 2 ? " is-scale-2" : ""}`}>
       <InstrumentBackdrop />
       <WireSync />
+      <div class="instrument-viewport">
       <div class="instrument-scaled">
       <InstrumentHeader distance={distance} onNavigate={(to) => {
         if (move(to) && navigationOpen) navigationButtonRef.current?.focus();
@@ -414,6 +417,7 @@ function InstrumentReady({ initialPath }: { initialPath: string }) {
             }}
           />
         </RetainedView>
+      </div>
       </div>
       </div>
     </div>

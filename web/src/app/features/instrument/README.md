@@ -5,6 +5,15 @@ Instrument is the default web UI at `/`. Its views use `/chat`, `/people`, `/fle
 The shared header reserves its own height above every view. Messages, lists and
 files cannot pass behind the header.
 The star field continues behind both regions without an opaque header backdrop.
+The unscaled content viewport reserves the device's safe-area insets, including
+in landscape, before applying text zoom. It follows visual viewport resize and
+scroll events so the keyboard leaves the header and composer reachable; pinch
+zoom retains the existing layout. Keyboard occlusion consumes the bottom safe
+inset instead of leaving a second gap above the keyboard. Login and setup share
+this viewport; their forms remain scrollable. The star field stays full screen.
+The composer omits routine model and target-readiness feedback, retaining errors,
+offline warnings and reconnecting. Its keyboard return hint is Send; iOS's native
+field-navigation accessory bar remains controlled by the browser.
 
 On narrow screens, the header uses one row with a menu button. The same view
 actions open in a vertical menu with touch-sized rows; the Help button is hidden.

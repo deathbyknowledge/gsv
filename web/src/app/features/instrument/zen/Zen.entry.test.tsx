@@ -337,9 +337,9 @@ describe("Zen conversation entry", () => {
   });
 
   it.each([
-    { target: "gsv", readiness: "your cloud is ready", status: "completed", queuedCount: 0 },
-    { target: "laptop", readiness: "laptop is offline", status: "aborted", queuedCount: 1 },
-  ])("shows run feedback before streaming and clears it when $status", async ({ target, readiness, status, queuedCount }) => {
+    { target: "gsv", status: "completed", queuedCount: 0 },
+    { target: "laptop", status: "aborted", queuedCount: 1 },
+  ])("keeps routine run status out of the composer through $status", async ({ target, status, queuedCount }) => {
     runContext = {
       revision: 1, runId: "previous-run", provider: "openai", model: "previous-model",
       contextWindowTokens: 1000, maxOutputTokens: 100, estimatedInputTokens: 100,
@@ -350,34 +350,44 @@ describe("Zen conversation entry", () => {
     send.mockResolvedValueOnce({ message: message("user", "Keep working"), handlerPid: shipPid, runId: "active-run" });
     const zen = await mountedZen(undefined, target);
     const text = () => zen.text().replace(/\s+/g, " ");
-    const feedbackText = () => {
-      const feedback = zen.nodes().find((node) => node.type === "span" && node.props.role === "status" && !node.props.class);
-      return feedback ? collectText(feedback).replace(/\s+/g, " ") : "";
+    const expectQuietComposer = () => {
+      expect(text()).not.toContain("your cloud is ready");
+      expect(text()).not.toContain("previous-model");
+      expect(text()).not.toContain("active-model");
+      expect(text()).not.toContain("attempting");
+      expect(text().includes("laptop is offline · view place")).toBe(target === "laptop");
     };
     try {
-      expect(feedbackText()).not.toContain(readiness);
-      expect(text()).not.toContain("attempting");
+      expectQuietComposer();
       await act(() => { zen.props(PromptLine).onSubmit("Keep working"); });
       await vi.waitFor(() => expect(send).toHaveBeenCalledOnce());
       await vi.waitFor(() => expect(zen.nodes().some((node) => node.props["aria-label"] === "Sending message")).toBe(false));
 
       activeRunId = "active-run";
       await act(() => { for (const listener of signals) listener("proc.run.started", { pid: shipPid, runId: activeRunId }); });
-      await vi.waitFor(() => expect(feedbackText()).toContain(readiness));
-      expect(zen.nodes().some((node) => node.type === ThinkingMark)).toBe(true);
-      expect(text()).not.toContain("previous-model");
+      await vi.waitFor(() => expect(zen.nodes().some((node) => node.type === ThinkingMark)).toBe(true));
+      expectQuietComposer();
 
       runContext = { ...runContext, revision: 2, runId: activeRunId, model: "active-model", updatedAt: 2 };
       await act(() => { for (const listener of signals) listener("proc.changed", { pid: shipPid, changes: ["context"], context: runContext }); });
-      await vi.waitFor(() => expect(text()).toContain("active-model"));
-      expect(text()).not.toContain("attempting");
-      expect(feedbackText()).toContain(readiness);
+      await zen.render();
+      expectQuietComposer();
 
       activeRunId = null;
       await act(() => { for (const listener of signals) listener("proc.run.finished", { pid: shipPid, runId: "active-run", status, queuedCount }); });
-      await vi.waitFor(() => expect(feedbackText()).not.toContain(readiness));
-      expect(zen.nodes().some((node) => node.type === ThinkingMark)).toBe(false);
-      expect(text()).not.toContain("attempting");
+      await vi.waitFor(() => expect(zen.nodes().some((node) => node.type === ThinkingMark)).toBe(false));
+      expectQuietComposer();
+    } finally { await zen.unmount(); }
+  });
+
+  it("still shows reconnecting when the gateway connection drops", async () => {
+    const zen = await mountedZen();
+    try {
+      expect(zen.text()).not.toContain("Reconnecting...");
+      await act(() => { for (const listener of statuses) listener(status("connecting")); });
+      expect(zen.text()).toContain("Reconnecting...");
+      await act(() => { for (const listener of statuses) listener(status("connected")); });
+      expect(zen.text()).not.toContain("Reconnecting...");
     } finally { await zen.unmount(); }
   });
 

@@ -288,6 +288,7 @@ export const PromptLine = forwardRef<PromptLineHandle, PromptLineProps>(function
           rows={1}
           placeholder={placeholder}
           aria-label="Prompt"
+          enterkeyhint="send"
           spellcheck={false}
           disabled={disabled}
           onKeyDown={onKeyDown}
