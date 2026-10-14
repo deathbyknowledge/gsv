@@ -15,9 +15,9 @@ your conversation opens, so you can turn it into a request to Ship.
 
 ## Start a conversation
 
-Choose **connect**. If your operator provides signup invitations, **Invite a friend
-to GSV** is for someone who has not joined yet; choose **Already on GSV? Connect**
-for an existing user. Choose who should handle new messages, then **create connection
+Choose **connect**. If your operator provides signup invitations, the first step
+asks whether the person is **New to GSV** or **Already on GSV**. Neither is preselected;
+opening the chooser reserves nothing. For an existing user, choose who should handle new messages, then **create connection
 link** and share it wherever you already talk. It connects one person and lasts seven days; you can cancel it before it is
 accepted. In managed spaces, the link opens the existing Accounts space chooser.
 The recipient chooses a listed space or enters its address, signs in if needed,
@@ -36,7 +36,7 @@ it, then completes the connection with that choice. It can also change the choic
 later when you ask. This works in your ordinary Ship conversation, including
 messaging apps; opening People is optional.
 
-**Invite a friend to GSV → create invite link** reserves one of your available
+**New to GSV → create invite link** reserves one of your available
 signup places. The form shows how many invites remain. A friend can verify their
 email and create their own Space, then accept your contact invitation. Someone
 who already has GSV opens that Space instead. Each of you chooses **Me** or **Ship**
