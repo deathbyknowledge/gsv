@@ -160,7 +160,7 @@ export function OwnerWelcomeScreen({ ready, resume, load, onConnect, addressPane
 
   return <AuthLayout visible surfaceClass="gsv-auth-surface-login"><section class={`desktop-welcome${step === "welcome" || split ? " desktop-welcome-wide" : ""}`}>
     {context}
-    <h1>{opening ? "Open your space" : titles[step]}</h1>
+    <h1>{friendSignup && step === "email" ? "Join GSV" : opening ? "Open your space" : titles[step]}</h1>
     {step === "welcome" ? <div class="desktop-welcome-columns desktop-welcome-choices">
       <button class="desktop-welcome-choice" type="button" aria-label="Create your space" disabled={!flow || busy} onClick={() => start("create")}>
         <WelcomeIllustration kind="create" />

@@ -161,7 +161,7 @@ describe("federation outbound boundary", () => {
     const broadcastToUserUid = vi.fn();
     const ctx = focusedContext({
       federation: focusedFixture({
-        invite: () => ({ state }),
+        invite: () => ({ state, ownerUid: OWNER.uid }),
         cancelInvite: () => {
           state = "cancelled";
           return { inviteId: "invite:test", state, createdAtMs: 0, cancelledAtMs: Date.now(), expiresAtMs: Date.now() + 60_000 };

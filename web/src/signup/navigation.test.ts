@@ -19,7 +19,12 @@ describe("browser signup handoff", () => {
     expect(signupDestination("https://new.gsv.space", null)).toBe("https://new.gsv.space/");
   });
 
-  it.each(["javascript:alert(1)", "https://user:secret@gsv.space", "https://gsv.space/path", "https://gsv.space#token", "http://space.example"])("rejects an invalid destination %s", (origin) => {
+  it("supports a local Space during the complete signup flow", () => {
+    expect(new URL(signupDestination("http://friend.localhost:8978", `onboard_${"x".repeat(43)}`)).origin)
+      .toBe("http://friend.localhost:8978");
+  });
+
+  it.each(["javascript:alert(1)", "https://user:secret@gsv.space", "https://gsv.space/path", "https://gsv.space#token", "http://space.example", "http://localhost.example", "http://notlocalhost"])("rejects an invalid destination %s", (origin) => {
     expect(() => signupDestination(origin)).toThrow();
   });
 });

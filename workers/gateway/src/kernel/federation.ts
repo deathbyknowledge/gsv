@@ -298,8 +298,8 @@ export async function handleContactInviteCreate(
   let url = contactInvitationUrl(code, ctx.env.GSV_OWNER_SIGNUP_URL ?? `${document.origin}/connect`);
   if (args.includeSignup) {
     const creationCode = `invite_${token}`;
-    await ctx.env.SPACE_INVITATIONS!.reserve({ version: 1, installationId: ctx.installationId,
-      contactInviteId: invite.inviteId, code: creationCode, expiresAt: expiresAtMs });
+    await ctx.coordinateFederationContact(`invitation:${invite.inviteId}`, () => ctx.env.SPACE_INVITATIONS!.reserve({
+      version: 1, installationId: ctx.installationId, contactInviteId: invite.inviteId, code: creationCode, expiresAt: expiresAtMs }));
     const signup = new URL(url);
     const fragment = new URLSearchParams(signup.hash.slice(1));
     fragment.set("invite", creationCode);
@@ -334,12 +334,15 @@ export async function handleContactInviteCancel(
   const now = Date.now();
   const inviteId = args.inviteId.trim();
   if (!inviteId.startsWith("invite:")) throw new Error("Contact invite id is invalid");
-  const previous = ctx.federation.invite(inviteId);
-  if (previous?.purpose === "approach") throw new Error("Use the message request decision to withdraw this invitation");
-  const invite = ctx.federation.cancelInvite(inviteId, ownerUid, now);
-  await ctx.env.SPACE_INVITATIONS?.cancel({ version: 1, installationId: ctx.installationId, contactInviteId: inviteId });
-  if (previous?.state !== invite.state) ctx.broadcastToUserUid(ownerUid, "contact.invite.changed");
-  return { invite: contactInviteSummary(invite, now) };
+  return ctx.coordinateFederationContact(`invitation:${inviteId}`, async () => {
+    const previous = ctx.federation.invite(inviteId);
+    if (!previous || previous.ownerUid !== ownerUid) throw new Error("Contact invite not found");
+    if (previous.purpose === "approach") throw new Error("Use the message request decision to withdraw this invitation");
+    await ctx.env.SPACE_INVITATIONS?.cancel({ version: 1, installationId: ctx.installationId, contactInviteId: inviteId });
+    const invite = ctx.federation.cancelInvite(inviteId, ownerUid, now);
+    if (previous.state !== invite.state) ctx.broadcastToUserUid(ownerUid, "contact.invite.changed");
+    return { invite: contactInviteSummary(invite, now) };
+  });
 }
 
 export async function handleContactInviteAccept(
