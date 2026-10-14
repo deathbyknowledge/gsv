@@ -95,10 +95,12 @@ Press `Ctrl+K` from any view to open the same search. In Chat, `/` opens search 
 mode, and `Ctrl/Cmd+F` also works while typing. Open a match to read the
 surrounding conversation. Closing search returns to your place and draft.
 
-The composer always shows **Message your ship** when empty. It starts on
-**your cloud** (`gsv`). Choose another place explicitly
-when you want a message or command to target it; that choice stays while you
-move between views. The header stays above the scrolling content.
+The composer always shows **Message your ship** when empty. **send** appears beside
+the prompt when you have a draft or attachments. The action row below groups **+**
+for attachments, the current place, and **record**. The place starts on **your cloud** (`gsv`).
+Open its chooser to select another destination for your next message or command;
+your draft and selected place stay while you move between views.
+The header stays above the scrolling content.
 
 ## Next steps
 

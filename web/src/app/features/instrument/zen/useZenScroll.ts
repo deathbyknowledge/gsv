@@ -99,26 +99,28 @@ export function useZenScroll({ moments, ready, promptFocused, hasOlder, loadingO
     setSelected(following.current ? null : anchors.current[0]?.id ?? null);
     if (!following.current && element.scrollTop < 80) readOlder();
   }, [capture, readOlder]);
-  const select = useCallback((index: number) => {
+  const select = useCallback((index: number, reveal = true) => {
     const moment = current.current.moments[index];
     const element = viewport.current;
     const focused = moment && nodes.current.byId.get(key(moment.id));
     if (!element || !focused || !current.current.active) return;
     setSelected(key(moment.id));
-    // keep the focused moment inside the reading area with a margin, scrolling the container itself
-    const margin = 24;
-    const top = focused.offsetTop;
-    const height = focused.offsetHeight;
-    const bottom = top + height;
-    const padding = inset();
-    const viewportHeight = element.clientHeight;
-    const scrollTop = element.scrollTop;
-    const available = viewportHeight - padding - margin;
-    if (height > available || top < scrollTop + padding) write(top - padding);
-    else if (bottom > scrollTop + viewportHeight - margin) write(bottom + margin - viewportHeight);
-    following.current = atBottom(element);
+    if (reveal) {
+      // keep the focused moment inside the reading area with a margin, scrolling the container itself
+      const margin = 24;
+      const top = focused.offsetTop;
+      const height = focused.offsetHeight;
+      const bottom = top + height;
+      const padding = inset();
+      const viewportHeight = element.clientHeight;
+      const scrollTop = element.scrollTop;
+      const available = viewportHeight - padding - margin;
+      if (height > available || top < scrollTop + padding) write(top - padding);
+      else if (bottom > scrollTop + viewportHeight - margin) write(bottom + margin - viewportHeight);
+    }
+    following.current = reveal && atBottom(element);
     capture();
-    if (index === 0) readOlder();
+    if (reveal && index === 0) readOlder();
   }, [capture, inset, readOlder, write]);
   const page = useCallback((direction: "up" | "down" | "start" | "end") => {
     const element = viewport.current;
@@ -145,29 +147,39 @@ export function useZenScroll({ moments, ready, promptFocused, hasOlder, loadingO
     observer.observe(element);
     observer.observe(body);
     const wheel = (event: WheelEvent) => { if (event.deltaY < 0) stopFollowing(); };
+    const click = (event: MouseEvent) => {
+      const row = event.target instanceof Element ? event.target.closest<HTMLElement>("[data-moment-id]") : null;
+      if (!row) return;
+      select(current.current.moments.findIndex((moment) => key(moment.id) === key(row.dataset.momentId!)), false);
+    };
     element.addEventListener("scroll", scrolled, { passive: true });
+    element.addEventListener("click", click);
     element.addEventListener("wheel", wheel, { passive: true });
     element.addEventListener("touchmove", stopFollowing, { passive: true });
     element.addEventListener("pointerdown", stopFollowing, { passive: true });
     return () => {
       observer.disconnect();
       element.removeEventListener("scroll", scrolled);
+      element.removeEventListener("click", click);
       element.removeEventListener("wheel", wheel);
       element.removeEventListener("touchmove", stopFollowing);
       element.removeEventListener("pointerdown", stopFollowing);
     };
-  }, [active, ready, moments.length === 0, scrolled, stopFollowing, sync]);
+  }, [active, ready, moments.length === 0, scrolled, select, stopFollowing, sync]);
 
   const move = useCallback((delta: number) => {
     const element = viewport.current;
     if (!element || !current.current.active || !current.current.ready) return;
     stopFollowing();
     write(element.scrollTop + delta);
+    following.current = atBottom(element);
     capture();
+    setSelected(following.current ? null : anchors.current[0]?.id ?? null);
     if (element.scrollTop < 80) readOlder();
   }, [capture, readOlder, stopFollowing, write]);
 
   const selectedIndex = selected === null ? -1 : moments.findIndex((moment) => key(moment.id) === selected);
-  const browse = promptFocused || moments.length === 0 ? null : selectedIndex < 0 ? moments.length - 1 : selectedIndex;
-  return { viewport, content, browse, awayFromBottom, select, page, follow, stopFollowing, readOlder, move };
+  const selection = moments.length === 0 ? null : selectedIndex < 0 ? moments.length - 1 : selectedIndex;
+  const browse = promptFocused ? null : selection;
+  return { viewport, content, browse, selection, awayFromBottom, select, page, follow, stopFollowing, readOlder, move };
 }

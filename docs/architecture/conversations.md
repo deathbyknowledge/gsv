@@ -22,6 +22,9 @@ When the reader scrolls above the latest chat message, a small button returns th
 the bottom and resumes following new replies.
 The Chat composer always uses "Message your ship" as its empty-field placeholder, across focus,
 connection and approval states.
+Clicking or tapping a message selects it without scrolling. Scrolling selects the first visible
+message, or the latest message at the bottom, even while the composer has focus. The selection
+stays visible while typing; after leaving the input, `j` and `k` continue from that same message.
 
 ## Conversation kinds
 

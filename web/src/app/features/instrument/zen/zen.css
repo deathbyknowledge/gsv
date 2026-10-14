@@ -370,9 +370,11 @@
   margin-inline: auto;
 }
 .zen-composer { position: relative; }
-.zen-compose-line { display: flex; align-items: flex-start; gap: 8px; border-top: 1px solid var(--border); padding-top: 14px; }
-.zen-compose-line .prompt-line { flex: 1; min-width: 0; border: 0; padding: 0; }
-.zen-attach { flex: 0 0 32px; width: 32px; height: 32px; margin-top: -7px; padding: 0; border: 0; background: none; color: var(--text-dim); font: inherit; font-size: 16px; line-height: 1; cursor: pointer; }
+.zen-compose-line { display: flex; align-items: flex-start; gap: 12px; border-top: 1px solid var(--border); padding-top: 8px; }
+.zen-compose-line .prompt-line { flex: 1; min-width: 0; border: 0; padding: 11px 0; }
+.zen-submit { flex: none; min-height: 44px; min-width: 44px; padding: 0; border: 0; background: none; color: var(--accent); font: inherit; font-size: 12px; cursor: pointer; }
+.zen-submit:disabled { opacity: .45; cursor: not-allowed; }
+.zen-compose-actions .zen-attach { flex: 0 0 36px; width: 36px; margin-left: -10px; font-size: 20px; line-height: 1; }
 .zen-attach:hover { color: var(--accent); }
 .zen-attach:focus-visible { outline: 1px solid var(--accent); outline-offset: -2px; }
 .zen-delegated-approvals {
@@ -381,27 +383,26 @@
   margin-bottom: 14px;
 }
 .zen-delegated-approvals .zen-approval { margin: 8px 0; }
-.zen-place-section { margin-top: 12px; }
+.zen-place-section { position: absolute; z-index: 5; bottom: calc(100% + 8px); left: 0; width: min(360px, 100%); max-height: min(360px, 50vh); overflow-y: auto; box-sizing: border-box; padding: 8px 12px; border: 1px solid var(--border-raised); background: var(--panel); }
+.zen-place-section[hidden] { display: none; }
 .zen-places {
   display: flex;
-  flex-wrap: nowrap;
-  overflow-x: auto;
-  scrollbar-width: thin;
-  scrollbar-color: var(--border-raised) transparent;
-  gap: 8px 18px;
+  flex-direction: column;
+  gap: 4px;
   margin: 0;
-  padding: 0 0 8px;
+  padding: 0;
   list-style: none;
-  font-size: 11px;
+  font-size: 12px;
   color: var(--text-dim);
 }
-.zen-places li { display: flex; flex: none; align-items: center; gap: 8px; min-width: 0; }
+.zen-places li { display: flex; flex: none; align-items: center; flex-wrap: wrap; gap: 0 16px; min-width: 0; }
 .zen-place {
   display: flex;
   align-items: center;
   gap: 7px;
+  min-height: 44px;
   min-width: 0;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
   text-align: left;
 }
 .zen-place:enabled:hover, .zen-place:focus-visible { color: var(--text); }
@@ -410,7 +411,7 @@
 /* the only place reads as plain text; hovering or focusing its row underlines it and reveals the offer to connect another */
 .zen-place.is-alone { color: var(--text-dim); text-decoration: none; }
 .zen-places li:hover .zen-place.is-alone, .zen-places li:focus-within .zen-place.is-alone { color: var(--text); text-decoration: underline; text-underline-offset: 5px; }
-.zen-connect-place { visibility: hidden; white-space: nowrap; color: var(--text-dim); }
+.zen-connect-place { visibility: hidden; min-height: 44px; white-space: nowrap; color: var(--text-dim); }
 .zen-places li:hover .zen-connect-place, .zen-places li:focus-within .zen-connect-place { visibility: visible; }
 .zen-connect-place:hover, .zen-connect-place:focus-visible { color: var(--accent); }
 @media (hover: none) { .zen-connect-place { visibility: visible; } }
@@ -575,8 +576,12 @@
 .zen-picker .pick .id { color: var(--text-dim); margin-left: auto; font-size: 11px; }
 .zen-picker .hint { font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--faint); padding: 6px 10px 2px; }
 
-.zen-compose-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 1rem; margin-top: .65rem; font-size: .7rem; color: var(--text-dim); }
-.zen-connection-status { min-height: 1.5em; white-space: nowrap; }
+.zen-compose-actions { display: flex; align-items: center; gap: 4px 8px; font-size: 12px; color: var(--text-dim); }
+.zen-compose-actions button { min-height: 44px; }
+.zen-compose-actions .zen-place-trigger { display: flex; align-items: center; gap: 7px; min-width: 0; max-width: 50%; color: var(--text); }
+.zen-place-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.zen-input-actions { display: flex; flex-shrink: 0; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 0 16px; min-width: 0; max-width: 60%; margin-left: auto; }
+.zen-connection-status { display: block; min-height: 1.5em; font-size: 11px; color: var(--text-dim); }
 .zen-connection-status:empty { display: none; }
 
 .zen-search-dialog { position: fixed; inset: 0; box-sizing: border-box; width: min(760px, calc(100vw / var(--type-scale) - 32px)); max-width: none; height: min(680px, calc(var(--instrument-height) / var(--type-scale) - 32px)); max-height: calc(var(--instrument-height) / var(--type-scale) - 32px); margin: auto; padding: 0; border: 1px solid var(--border-raised); background: var(--panel); color: var(--text); font: inherit; overflow: hidden; }

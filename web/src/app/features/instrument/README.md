@@ -92,6 +92,13 @@ changes another process's policy or remembers a denial.
 
 Chat owns the conversation. A fresh conversation shows the welcome ("Welcome to the ship." / "I am the ship. Who are you?") and the ordinary composer; the CLI and messengers have no such greeting. The person's first message answers that question and goes through normal conversation sending; entering the space never sends an introduction on their behalf. Existing messages and drafts keep their ordinary behavior. Ship's durable onboarding responsibility owns the introduction and any guidance after that first message. Helpers have a simple empty conversation state.
 
+The composer puts send beside the draft and keeps one action row below: attachments
+and the current place on the left, platform voice controls on the right.
+The current place opens the existing places and live-browser
+list. Choosing a destination preserves the draft; Escape, an outside press or
+returning to the prompt closes the list. Desktop keeps its voice and hands-free
+controls in the same row.
+
 Sending moves the text and attachments into the conversation immediately and clears the composer. A small spinner beside the person's name remains until the send is acknowledged. A committed message arriving before its acknowledgement shares that row using the exact message identity, independently of its text. Failed sends retain their contents and selected place with inline retry and dismiss actions; retry reuses the original send identity and leaves a newer draft alone. Unacknowledged messages remain local to the retained Chat view and participate in warnings before its teardown, including reload and sign-out.
 
 Markdown code blocks share readable monospace sizing, contained horizontal scrolling and a quiet copy action across Chat, search excerpts and Memory. Copy preserves code whitespace without adding the renderer's final newline. Copy feedback stays outside the glyph animation; inline code wraps long tokens without widening the conversation.
@@ -160,7 +167,12 @@ twinkle phase. The sphere is not recomputed during animation.
 
 Chat opens in browse mode at the latest message. Typing any printable key that no shortcut claims focuses the prompt and lands in it, as does pasting text or files; clicking the prompt works too. Escape leaves input and stays in browse when already there. Keys held with a modifier, the shell's and Chat's shortcut letters, and the keys of a pending approval do not start typing. An explicit command or message prefill, target picker, or attachment action focuses the prompt. Mode changes install their keyboard handlers before paint, and reconnecting preserves an existing browse position. Help lists navigation and appearance controls plus shortcuts for the current view, separating Chat browse and input behavior. Chat browse uses j/k for messages and activity, gg for the start of loaded history and G for the latest messages. App shortcuts must work on a compact keyboard without a number pad or extended navigation keys. Ctrl+u/d still scroll half a page and Shift+Enter still inserts a new line, but neither is listed in Help. A sent message keeps the line breaks a person typed; runs of blank lines fold to one.
 
-Chat follows the bottom until the reader scrolls away. A small latest button appears above the composer while the transcript is away from the bottom and returns to the newest message. Focusing the prompt does not resume following; sending a message, running a command, pressing G or scrolling back to the bottom does. Reading retains the visible message and its offset through new replies, growing content, composer and viewport resizing, detail expansion, older-page insertion and reconnects. Selecting a long message aligns its beginning below the header. Reaching the top loads earlier conversation and process history; loaded pages remain available across reconnects. Scroll ownership belongs to Chat, while the shared conversation hook owns page retention.
+Chat follows the bottom until the reader scrolls away. A small latest button appears above the composer while the transcript is away from the bottom and returns to the newest message. Focusing the prompt does not resume following; sending a message, running a command, pressing G or scrolling back to the bottom does. Reading retains the visible message and its offset through new replies, growing content, composer and viewport resizing, detail expansion, older-page insertion and reconnects. Keyboard navigation to a long message aligns its beginning below the header. Reaching the top loads earlier conversation and process history; loaded pages remain available across reconnects. Scroll ownership belongs to Chat, while the shared conversation hook owns page retention.
+
+Pointer selection leaves the transcript in place, including long messages and
+text selection. Wheel, touch and native gesture scrolling update the same selected
+message used by keyboard navigation. Its highlight stays visible while the prompt
+has focus; browse shortcuts become available again after leaving the input.
 
 Process history synchronization keeps its historical page boundary separate from revision deltas. Late companions and media replacements remain available without moving that boundary past unloaded messages; a delayed page cannot advance a different window established by reconnect.
 
