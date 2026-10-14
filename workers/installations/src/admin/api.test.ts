@@ -13,7 +13,7 @@ const registry = { id: "principal_test_operator", email: "operator@example.com",
 function stack() {
   const accounts = new AccountStore(env.INSTALLATIONS_DB, "example.com");
   const service = new InstallationAdminService(env.INSTALLATIONS_DB, accounts,
-    new InstallationOnboardingStore(env.INSTALLATIONS_DB, accounts), registry, {});
+    new InstallationOnboardingStore(env.INSTALLATIONS_DB, accounts, "admin-production-secret-".repeat(4)), registry, {});
   const api = new InstallationAdminApi(service,
     new CloudflareInstallationAdminAccess({ environment: "development", origin }), origin);
   return { accounts, service, api };

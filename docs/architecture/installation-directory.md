@@ -119,8 +119,10 @@ The existing provisioning ledger owns progress and diagnostic references.
 migration preserves this marker for Spaces created through legacy signup codes;
 an upgrade trigger also covers old workers completing signup during rollout.
 Claim issuance is versioned at the database boundary: an old worker must retry
-instead of overwriting a new setup token. Previously issued capabilities remain
-valid until used, expired or reissued.
+instead of overwriting a new setup token. The migration retains the hash and
+original expiry of a capability issued before this fence, so an in-flight old
+response remains usable after owner setup resumes. This does not extend its
+lifetime. An explicit operator reissue invalidates both bearers.
 The retired invitation table remains historical data, never admission authority.
 Old Desktop clients retain owner sign-in; their retired registration endpoints
 return an instruction to update the app.

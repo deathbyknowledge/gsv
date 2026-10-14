@@ -26,6 +26,9 @@ export type IssuedInstallationOnboarding = {
 type OnboardingClaimRow = {
   id: string;
   token_hash: string;
+  expires_at: number;
+  legacy_token_hash: string | null;
+  legacy_expires_at: number | null;
   installation_id: string;
   handle: string;
   canonical_origin: string;
@@ -41,6 +44,7 @@ export class InstallationOnboardingStore {
   async begin(
     installationIdValue: string,
     now = Date.now(),
+    mode: "issue" | "resume" = "issue",
   ): Promise<IssuedInstallationOnboarding> {
     const installationId = parseOpaqueId(installationIdValue, "installationId");
     const operation = await this.db.prepare(
@@ -62,7 +66,7 @@ export class InstallationOnboardingStore {
         operation.principal_id,
       );
     }
-    return await this.issue(installationId, now, Boolean(this.resumeSecret));
+    return await this.issue(installationId, now, mode === "resume");
   }
 
   async issue(
@@ -110,7 +114,7 @@ export class InstallationOnboardingStore {
     const claimId = installation.claim_id ?? `onboarding_${crypto.randomUUID()}`;
     const createdAt = Math.max(now, (installation.created_at ?? 0) + 1);
     const expiresAt = now + ONBOARDING_TOKEN_TTL_MS;
-    const token = resume ? await this.resumeToken(installationId, claimId, createdAt, expiresAt) : await createOpaqueToken("onboard");
+    const token = resume || this.resumeSecret ? await this.resumeToken(installationId, claimId, createdAt, expiresAt) : await createOpaqueToken("onboard");
     const result = await this.db.prepare(
       `INSERT INTO installation_onboarding_claims (
          id, installation_id, token_prefix, token_hash,
@@ -125,7 +129,9 @@ export class InstallationOnboardingStore {
          completed_at = NULL,
          revoked_at = NULL,
          created_at = excluded.created_at,
-         issuer_version = excluded.issuer_version
+         issuer_version = excluded.issuer_version,
+         legacy_token_hash = CASE WHEN ? THEN installation_onboarding_claims.legacy_token_hash ELSE NULL END,
+         legacy_expires_at = CASE WHEN ? THEN installation_onboarding_claims.legacy_expires_at ELSE NULL END
        WHERE ? = 0 OR installation_onboarding_claims.token_hash = ?`,
     ).bind(
       claimId,
@@ -134,6 +140,8 @@ export class InstallationOnboardingStore {
       expiresAt,
       createdAt,
       installationId,
+      resume ? 1 : 0,
+      resume ? 1 : 0,
       resume ? 1 : 0,
       installation.token_hash,
     ).run();
@@ -199,30 +207,33 @@ export class InstallationOnboardingStore {
     now = Date.now(),
   ): Promise<InstallationOnboardingAuthorization> {
     let installationId: string;
-    let prefix: string;
     try {
       installationId = parseOpaqueId(input?.installationId, "installationId");
-      prefix = tokenPrefix(input?.token);
+      tokenPrefix(input?.token);
     } catch {
       return { ok: false };
     }
 
     const claim = await this.db.prepare(
       `SELECT
-         c.id, c.token_hash, c.installation_id,
+         c.id, c.token_hash, c.expires_at, c.legacy_token_hash, c.legacy_expires_at, c.installation_id,
          i.handle, i.canonical_origin
        FROM installation_onboarding_claims c
        JOIN installations i ON i.id = c.installation_id
        JOIN provisioning_operations p
          ON p.installation_id = i.id AND p.kind = 'create'
-       WHERE c.token_prefix = ? AND c.installation_id = ?
+       WHERE c.installation_id = ?
          AND c.completed_at IS NULL AND c.revoked_at IS NULL
-         AND c.expires_at > ?
+         AND (c.expires_at > ? OR c.legacy_expires_at > ?)
          AND i.state = 'provisioning' AND p.state = 'provisioning'
        LIMIT 1`,
-    ).bind(prefix, installationId, now).first<OnboardingClaimRow>();
+    ).bind(installationId, now, now).first<OnboardingClaimRow>();
     if (!claim) return { ok: false };
-    if (!constantTimeEqual(await sha256Hex(input.token), claim.token_hash)) {
+    const hash = await sha256Hex(input.token);
+    const current = claim.expires_at > now && constantTimeEqual(hash, claim.token_hash);
+    const legacy = claim.legacy_token_hash !== null && claim.legacy_expires_at !== null
+      && claim.legacy_expires_at > now && constantTimeEqual(hash, claim.legacy_token_hash);
+    if (!current && !legacy) {
       return { ok: false };
     }
     return {

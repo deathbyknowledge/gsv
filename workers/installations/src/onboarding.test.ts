@@ -1,7 +1,9 @@
 import { env } from "cloudflare:workers";
+import type { D1Migration } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
 import { InstallationOnboardingStore } from "./onboarding";
 import { AccountStore } from "./store";
+import { createOpaqueToken } from "./tokens";
 
 async function provisioningInstallation(suffix: string): Promise<{
   accounts: AccountStore;
@@ -30,6 +32,43 @@ async function provisioningInstallation(suffix: string): Promise<{
 }
 
 describe("installation onboarding claims", () => {
+  it("preserves a pre-fence bearer without extending it, while admin reissue revokes both", async () => {
+    const fixture = await provisioningInstallation("pre-fence");
+    const db = env.INSTALLATIONS_DB;
+    await db.prepare("UPDATE installations SET owner_setup = 1 WHERE id = ?").bind(fixture.installationId).run();
+    // Reconstruct the pre-upgrade schema and commit the old request before installing the fence.
+    await db.batch([
+      "DROP TRIGGER installation_onboarding_claims_issuer_insert",
+      "ALTER TABLE installation_onboarding_claims DROP COLUMN issuer_version",
+      "ALTER TABLE installation_onboarding_claims DROP COLUMN legacy_token_hash",
+      "ALTER TABLE installation_onboarding_claims DROP COLUMN legacy_expires_at",
+    ].map((sql) => db.prepare(sql)));
+    const legacy = await createOpaqueToken("onboard");
+    const now = Date.now(), expiresAt = now + 60_000;
+    await db.prepare(`INSERT INTO installation_onboarding_claims
+      (id, installation_id, token_prefix, token_hash, expires_at, completed_at, revoked_at, created_at)
+      VALUES ('onboarding_pre_fence', ?, ?, ?, ?, NULL, NULL, ?)`)
+      .bind(fixture.installationId, legacy.prefix, legacy.hash, expiresAt, now).run();
+    // SAFETY: The test configuration supplies the exact shipped migration statements.
+    const migrations = (env as Env & { TEST_MIGRATIONS: D1Migration[] }).TEST_MIGRATIONS;
+    for (const name of ["0025_onboarding_issuer.sql", "0026_onboarding_rollout_bearer.sql"]) {
+      await db.batch(migrations.find((migration) => migration.name === name)!.queries.map((sql) => db.prepare(sql)));
+    }
+    const onboarding = new InstallationOnboardingStore(db, fixture.accounts, "pre-fence-test-secret-".repeat(4));
+    const resumed = await onboarding.begin(fixture.installationId, now + 1, "resume");
+    const current = new URL(resumed.onboardingUrl).hash.slice(1);
+    const authorize = (token: string, time = now + 2) => onboarding.authorize({ installationId: fixture.installationId, token }, time);
+    expect(await authorize(legacy.raw)).toMatchObject({ ok: true, claimId: "onboarding_pre_fence" });
+    expect(await authorize(current)).toEqual(await authorize(legacy.raw));
+    expect(await authorize(legacy.raw, expiresAt)).toEqual({ ok: false });
+    expect(await authorize(current, expiresAt)).toMatchObject({ ok: true });
+    const reissued = await onboarding.begin(fixture.installationId, now + 3);
+    expect(await authorize(current, now + 4)).toEqual({ ok: false });
+    expect(await authorize(legacy.raw, now + 4)).toEqual({ ok: false });
+    expect(await authorize(new URL(reissued.onboardingUrl).hash.slice(1), now + 4)).toMatchObject({ ok: true });
+    expect(await onboarding.begin(fixture.installationId, now + 5, "resume")).toEqual(reissued);
+  });
+
   it("rejects old-worker issuance before and after a new owner setup claim", async () => {
     const fixture = await provisioningInstallation("old-issuer");
     const db = env.INSTALLATIONS_DB;
@@ -43,9 +82,9 @@ describe("installation onboarding claims", () => {
       .bind(`onboarding_${crypto.randomUUID()}`, fixture.installationId, Date.now() + 60_000, Date.now()).run();
     await expect(oldIssue()).rejects.toThrow("onboarding issuer has changed");
     const onboarding = new InstallationOnboardingStore(db, fixture.accounts, "onboarding-rollout-test-".repeat(4));
-    const issued = await onboarding.begin(fixture.installationId);
+    const issued = await onboarding.begin(fixture.installationId, Date.now(), "resume");
     await expect(oldIssue()).rejects.toThrow("onboarding issuer has changed");
-    expect(await onboarding.begin(fixture.installationId)).toEqual(issued);
+    expect(await onboarding.begin(fixture.installationId, Date.now(), "resume")).toEqual(issued);
     expect(await onboarding.authorize({ installationId: fixture.installationId, token: new URL(issued.onboardingUrl).hash.slice(1) }))
       .toMatchObject({ ok: true });
   });
@@ -56,13 +95,13 @@ describe("installation onboarding claims", () => {
     const firstStore = new InstallationOnboardingStore(env.INSTALLATIONS_DB, fixture.accounts, secret);
     const secondStore = new InstallationOnboardingStore(env.INSTALLATIONS_DB, fixture.accounts, secret);
     const now = Date.now();
-    const first = await Promise.all([firstStore.begin(fixture.installationId, now), secondStore.begin(fixture.installationId, now)]);
+    const first = await Promise.all([firstStore.begin(fixture.installationId, now, "resume"), secondStore.begin(fixture.installationId, now, "resume")]);
     expect(first[0]).toEqual(first[1]);
     const originalToken = new URL(first[0].onboardingUrl).hash.slice(1);
     const original = await firstStore.authorize({ installationId: fixture.installationId, token: originalToken });
     expect(original.ok).toBe(true);
-    expect(await secondStore.begin(fixture.installationId, now + 1)).toEqual(first[0]);
-    const renewed = await Promise.all([firstStore.begin(fixture.installationId, first[0].expiresAt), secondStore.begin(fixture.installationId, first[0].expiresAt)]);
+    expect(await secondStore.begin(fixture.installationId, now + 1, "resume")).toEqual(first[0]);
+    const renewed = await Promise.all([firstStore.begin(fixture.installationId, first[0].expiresAt, "resume"), secondStore.begin(fixture.installationId, first[0].expiresAt, "resume")]);
     expect(renewed[0]).toEqual(renewed[1]);
     const renewedToken = new URL(renewed[0].onboardingUrl).hash.slice(1);
     expect(renewedToken).not.toBe(originalToken);

@@ -41,7 +41,7 @@ export class InstallationSignup {
     const startedAt = Date.now();
     try {
       await this.policy?.prepare({ operationId, installationId: space.installationId });
-      const issued = await this.onboarding.begin(space.installationId);
+      const issued = await this.onboarding.begin(space.installationId, Date.now(), "resume");
       await this.db.prepare("UPDATE provisioning_operations SET last_error = NULL WHERE operation_id = ?").bind(operationId).run();
       return { origin: space.canonicalOrigin, handle: space.handle,
         onboardingToken: new URL(issued.onboardingUrl).hash.slice(1), expiresAt: issued.expiresAt };
