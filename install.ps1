@@ -255,7 +255,7 @@ function Ensure-HostRuntimes {
 }
 
 function Install-GsvHost {
-  if (-not [Environment]::Is64BitOperatingSystem) { throw "GSV requires 64-bit Windows" }
+  if (-not [Environment]::Is64BitOperatingSystem) { throw "Ship requires 64-bit Windows" }
   if (-not [System.IO.Path]::IsPathRooted($InstallDir)) { throw "GSV_INSTALL_DIR must be an absolute path" }
   $resolvedInstallDir = ([System.IO.Path]::GetFullPath($InstallDir)).TrimEnd("\")
   $volumeRoot = ([System.IO.Path]::GetPathRoot($resolvedInstallDir)).TrimEnd("\")
@@ -263,7 +263,7 @@ function Install-GsvHost {
   if ($resolvedInstallDir -eq $volumeRoot -or $resolvedInstallDir -eq $userProfile) {
     throw "GSV_INSTALL_DIR must name a dedicated binary directory"
   }
-  if ([Environment]::OSVersion.Version.Major -lt 10) { throw 'GSV requires Windows 10 or newer' }
+  if ([Environment]::OSVersion.Version.Major -lt 10) { throw 'Ship requires Windows 10 or newer' }
   if ($env:PROCESSOR_ARCHITECTURE -match 'ARM64' -or $env:PROCESSOR_ARCHITEW6432 -match 'ARM64') {
     throw 'This release supports Windows x64 only'
   }
@@ -359,7 +359,7 @@ function Install-GsvHost {
 }
 
 Write-Host ""
-Write-Host "GSV host installer · Windows x64" -ForegroundColor Cyan
+Write-Host "Ship host installer · Windows x64" -ForegroundColor Cyan
 Write-Host ""
 Install-GsvHost
 Set-Content -LiteralPath (Join-Path $InstallDir 'ship.cmd') -Value '@"%~dp0gsv.exe" %*' -Encoding Ascii
