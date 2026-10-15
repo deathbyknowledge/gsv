@@ -1,5 +1,5 @@
 import type * as Cloudflare from "alchemy/Cloudflare";
-import { deploymentPresentationSchema, type PublicDeploymentConfig } from "../../packages/gsv/src/services/deployment.ts";
+import { configuredOriginAliases, deploymentPresentationSchema, type PublicDeploymentConfig } from "../../packages/gsv/src/services/deployment.ts";
 import { operatorUpdateCatalogSchema, type OperatorUpdateCatalog } from "../../packages/gsv/src/services/operator-updates.ts";
 import * as Output from "alchemy/Output";
 import { operatorResourceCatalogSchema, type OperatorResourceCatalog } from "../../workers/installations/src/operator-resource-contracts.ts";
@@ -156,6 +156,8 @@ export const GsvDeployment = (props: GsvDeploymentProps, dependencies = gsvRunti
   const publicConfiguration = JSON.stringify(deploymentPresentationSchema.parse({
     ...props.presentation, primaryDomain: props.domain, legacyDomains: props.domainAliases ?? [],
   }));
+  const ownerOriginAliases = JSON.stringify(props.installations.ownerOriginAliases ?? []);
+  configuredOriginAliases(ownerOriginAliases);
   const observability = { enabled: true, logs: { enabled: true, invocationLogs: false, persist: false }, traces: { enabled: false } };
   let directory = props.services?.installationDirectory;
   let database: Cloudflare.D1.Database | undefined;
@@ -176,7 +178,7 @@ export const GsvDeployment = (props: GsvDeploymentProps, dependencies = gsvRunti
       GSV_OWNER_OIDC_ISSUER: props.installations.ownerIdentity?.issuer ?? "",
       GSV_OWNER_OIDC_CLIENT_ID: props.installations.ownerIdentity?.clientId ?? "",
       GSV_OWNER_SIGNUP_ORIGIN: props.installations.ownerSignupOrigin ?? "",
-      GSV_OWNER_ORIGIN_ALIASES: JSON.stringify(props.installations.ownerOriginAliases ?? []),
+      GSV_OWNER_ORIGIN_ALIASES: ownerOriginAliases,
     };
     if (props.installations.ownerIdentity?.clientSecret) bindings.GSV_OWNER_OIDC_CLIENT_SECRET = props.installations.ownerIdentity.clientSecret;
     if (props.installations.ownerEmail) {

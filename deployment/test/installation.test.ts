@@ -110,6 +110,19 @@ describe("public operator composition", () => {
       .toBe("https://join.example.com");
   });
 
+  it.each([
+    { label: "a path", aliases: ["https://owners.example/path"] },
+    { label: "HTTP", aliases: ["http://owners.example"] },
+    { label: "credentials", aliases: ["https://user:password@owners.example"] },
+    { label: "too many origins", aliases: Array.from({ length: 17 }, (_, index) => `https://owner-${index}.example`) },
+  ])("rejects owner aliases with $label before allocating resources", async ({ aliases }) => {
+    await expect(run(GsvDeployment({ ...input, installations: {
+      ...input.installations, ownerOriginAliases: aliases,
+    } }, dependencies))).rejects.toThrow();
+    expect(recorded.workers).toEqual([]);
+    expect(recorded.databases).toEqual([]);
+  });
+
   it.each([undefined, input.adminOrigin])("does not duplicate Accounts routing for signup origin %s", async (ownerSignupOrigin) => {
     await run(GsvDeployment({ ...input, routing: { zoneId: "zone" }, installations: {
       ...input.installations, ownerSignupOrigin,

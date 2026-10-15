@@ -38,6 +38,9 @@ changing a live domain. `GSV_OWNER_ORIGIN_ALIASES` accepts a JSON array of addit
 HTTPS origins for owner signup and account access; administration remains at its
 configured origin. Add each origin to an OIDC provider's callback allowlist if used.
 Cookies remain local to each browser origin, so the new address may require login.
+Custom compositions pass these as `GsvDeployment.installations.ownerOriginAliases`.
+The composition validates the same HTTPS-origin rules as Accounts before creating
+resources; paths, credentials and more than 16 aliases are rejected.
 
 Gateway embeds the public configuration in the HTML, exposes it at
 `/.well-known/gsv/deployment.json` on accepted installation hosts, and includes it
