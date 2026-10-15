@@ -9,16 +9,20 @@
   overflow: hidden;
 }
 .zen-body {
+  --zen-gutter: 56px;
   position: relative;
   display: grid;
-  grid-template-columns: 56px 1fr 56px;
+  grid-template-columns: var(--zen-gutter) minmax(0, 1fr) var(--zen-gutter);
   grid-template-rows: minmax(0, 1fr);
   overflow: hidden;
 }
 @container instrument (max-width: 720px) {
-  .zen-body { grid-template-columns: 18px 1fr 18px; }
+  .zen-body { --zen-gutter: 18px; }
 }
 .zen-timeline {
+  grid-area: 1 / 1;
+  z-index: 1;
+  pointer-events: none;
   display: flex;
   flex-direction: column;
   justify-content: center;
@@ -40,6 +44,7 @@
   background: var(--idle);
 }
 .zen-moments {
+  grid-area: 1 / 1 / 2 / -1;
   position: relative;
   overflow-x: hidden;
   overflow-y: auto;
@@ -51,6 +56,7 @@
 }
 .zen-content {
   position: relative;
+  margin-inline: var(--zen-gutter);
   min-height: 100%;
   padding: 5vh 0 6vh;
   display: flex;
@@ -444,6 +450,7 @@
   .prompt-line .dir { display: none; }
 }
 .zen-empty {
+  grid-area: 1 / 2;
   font-family: var(--gsv-font-prose);
   font-size: clamp(20px, 2.3vw, 30px);
   line-height: 1.28;

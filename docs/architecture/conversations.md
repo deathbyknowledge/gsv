@@ -22,6 +22,10 @@ Ship replies use ordinary line wrapping rather than paragraph balancing, filling
 with the words that fit. Explicit line breaks in a message remain intact.
 Chat and contact history mark the top scroll boundary with a lavender line only
 while it intersects text, clearing the line in gaps between text and messages.
+Chat's scroll boundary spans the full view width while its messages retain their reading column.
+Initial rendering, font loading and padding changes keep Chat at the bottom unless the
+reader scrolls away. This includes content updates that briefly shrink and restore the
+transcript before the browser delivers a scroll event.
 When the reader scrolls above the latest chat message, a small button returns the transcript to
 the bottom and resumes following new replies.
 The Chat composer always uses "Message your ship" as its empty-field placeholder, across focus,

@@ -9,6 +9,8 @@ soft glow only while that edge intersects rendered text. The glow occupies only
 the top eight pixels of the pane. It clears in line spacing, padding and gaps
 between messages or rows. The shared shell observes only the active view;
 scrolling, message selection and text selection remain owned by each surface.
+Chat's scrolling pane spans the view, with its existing gutters inside the content,
+so the glow reaches both page edges without widening the messages.
 The star field continues behind both regions without an opaque header backdrop.
 The unscaled content viewport reserves the device's top and side safe-area insets,
 including in landscape, before applying text zoom. Scroll panes in Fleet, Memory,
@@ -190,6 +192,11 @@ twinkle phase. The sphere is not recomputed during animation.
 Chat opens in browse mode at the latest message. Typing any printable key that no shortcut claims focuses the prompt and lands in it, as does pasting text or files; clicking the prompt works too. Escape leaves input and stays in browse when already there. Keys held with a modifier, the shell's and Chat's shortcut letters, and the keys of a pending approval do not start typing. An explicit command or message prefill, target picker, or attachment action focuses the prompt. Mode changes install their keyboard handlers before paint, and reconnecting preserves an existing browse position. Help lists navigation and appearance controls plus shortcuts for the current view, separating Chat browse and input behavior. Chat browse uses j/k for messages and activity, gg for the start of loaded history and G for the latest messages. App shortcuts must work on a compact keyboard without a number pad or extended navigation keys. Ctrl+u/d still scroll half a page and Shift+Enter still inserts a new line, but neither is listed in Help. A sent message keeps the line breaks a person typed; runs of blank lines fold to one.
 
 Chat follows the bottom until the reader scrolls away. A small latest button appears above the composer while the transcript is away from the bottom and returns to the newest message. Focusing the prompt does not resume following; sending a message, running a command, pressing G or scrolling back to the bottom does. Reading retains the visible message and its offset through new replies, growing content, composer and viewport resizing, detail expansion, older-page insertion and reconnects. Keyboard navigation to a long message aligns its beginning below the header. Reaching the top loads earlier conversation and process history; loaded pages remain available across reconnects. Scroll ownership belongs to Chat, while the shared conversation hook owns page retention.
+
+The scroll owner reconciles rendered-content changes and font loading as well as
+size changes, including padding. A temporary shrink can clamp the browser's scroll position even
+when the content returns to the same height; that layout adjustment must not be
+treated as the reader leaving the bottom. Hidden views disconnect these observers.
 
 Pointer selection leaves the transcript in place, including long messages and
 text selection. Wheel, touch and native gesture scrolling update the same selected

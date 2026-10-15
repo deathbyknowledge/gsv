@@ -20,6 +20,7 @@ export function useZenScroll({ moments, ready, promptFocused, hasOlder, loadingO
   const content = useRef<HTMLDivElement>(null);
   const following = useRef(true);
   const anchors = useRef<Anchor[]>([]);
+  const capturedTop = useRef(0);
   const writtenTop = useRef<number | null>(null);
   const loading = useRef(false);
   const nodes = useRef<{ ordered: HTMLElement[]; byId: Map<string, HTMLElement> }>({ ordered: [], byId: new Map() });
@@ -33,6 +34,7 @@ export function useZenScroll({ moments, ready, promptFocused, hasOlder, loadingO
     if (!element || !current.current.active) return;
     const all = nodes.current.ordered;
     const scrollTop = element.scrollTop;
+    capturedTop.current = scrollTop;
     const top = scrollTop + inset();
     // Moments are laid out in transcript order; locate the first visible row without measuring every earlier row.
     let low = 0;
@@ -93,8 +95,9 @@ export function useZenScroll({ moments, ready, promptFocused, hasOlder, loadingO
       return;
     }
     writtenTop.current = null;
-    following.current = atBottom(element);
-    setAwayFromBottom(!following.current);
+    const bottom = atBottom(element);
+    following.current = bottom && (following.current || element.scrollTop >= capturedTop.current);
+    setAwayFromBottom(!bottom);
     capture();
     setSelected(following.current ? null : anchors.current[0]?.id ?? null);
     if (!following.current && element.scrollTop < 80) readOlder();
@@ -144,8 +147,15 @@ export function useZenScroll({ moments, ready, promptFocused, hasOlder, loadingO
     const body = content.current;
     if (!active || !element || !body) return;
     const observer = new ResizeObserver(sync);
-    observer.observe(element);
-    observer.observe(body);
+    observer.observe(element, { box: "border-box" });
+    observer.observe(body, { box: "border-box" });
+    // Rendering can briefly shrink the transcript and clamp scrollTop before restoring
+    // the same height. Reconcile those edits before the browser reports its scroll.
+    // Paint changes must not interrupt the reader's scrolling momentum.
+    const mutations = new MutationObserver(() => { if (following.current) sync(); });
+    mutations.observe(body, { childList: true, characterData: true, subtree: true,
+      attributes: true, attributeFilter: ["class", "style", "open"] });
+    document.fonts.addEventListener("loadingdone", sync);
     const wheel = (event: WheelEvent) => { if (event.deltaY < 0) stopFollowing(); };
     const click = (event: MouseEvent) => {
       const row = event.target instanceof Element ? event.target.closest<HTMLElement>("[data-moment-id]") : null;
@@ -159,6 +169,8 @@ export function useZenScroll({ moments, ready, promptFocused, hasOlder, loadingO
     element.addEventListener("pointerdown", stopFollowing, { passive: true });
     return () => {
       observer.disconnect();
+      mutations.disconnect();
+      document.fonts.removeEventListener("loadingdone", sync);
       element.removeEventListener("scroll", scrolled);
       element.removeEventListener("click", click);
       element.removeEventListener("wheel", wheel);
@@ -172,7 +184,7 @@ export function useZenScroll({ moments, ready, promptFocused, hasOlder, loadingO
     if (!element || !current.current.active || !current.current.ready) return;
     stopFollowing();
     write(element.scrollTop + delta);
-    following.current = atBottom(element);
+    following.current = delta >= 0 && atBottom(element);
     capture();
     setSelected(following.current ? null : anchors.current[0]?.id ?? null);
     if (element.scrollTop < 80) readOlder();

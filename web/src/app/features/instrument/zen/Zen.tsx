@@ -1069,7 +1069,6 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
             </div>
           </div>
         )}
-        <div />
         {!empty && ready && scrolling.awayFromBottom && <button type="button" class="zen-jump-bottom"
           aria-label="Jump to latest message" onClick={scrolling.follow}>↓ latest</button>}
       </div>

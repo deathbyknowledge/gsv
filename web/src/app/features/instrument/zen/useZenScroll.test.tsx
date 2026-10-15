@@ -17,6 +17,8 @@ async function transcript(promptFocused = false) {
   const listeners = new Map<string, Set<EventListener>>();
   let top = 0;
   let resize = () => {};
+  let mutate = () => {};
+  const fontListeners = new Set<() => void>();
   const viewport = {
     scrollHeight: 1220, clientHeight: 300,
     get scrollTop() { return top; },
@@ -28,11 +30,19 @@ async function transcript(promptFocused = false) {
     removeEventListener(type: string, listener: EventListener) { listeners.get(type)?.delete(listener); },
   };
   const content: Partial<HTMLDivElement> = { querySelectorAll: vi.fn().mockReturnValue(rows) };
-  vi.stubGlobal("document", {});
+  vi.stubGlobal("document", { fonts: {
+    addEventListener: (_: string, listener: () => void) => fontListeners.add(listener),
+    removeEventListener: (_: string, listener: () => void) => fontListeners.delete(listener),
+  } });
   vi.stubGlobal("Element", Row);
   vi.stubGlobal("getComputedStyle", () => ({ scrollPaddingTop: "12px" }));
   vi.stubGlobal("ResizeObserver", class {
     constructor(callback: () => void) { resize = callback; }
+    observe() {}
+    disconnect() {}
+  });
+  vi.stubGlobal("MutationObserver", class {
+    constructor(callback: () => void) { mutate = callback; }
     observe() {}
     disconnect() {}
   });
@@ -58,12 +68,57 @@ async function transcript(promptFocused = false) {
   return { rows, viewport, emit, state: () => scrolling, unmount: root.unmount,
     focus: () => root.render(<Harness focused />),
     resize: () => act(() => resize()),
+    mutate: () => act(() => mutate()),
+    fontsLoaded: () => act(() => { for (const listener of fontListeners) listener(); }),
   };
 }
 
 afterEach(() => { vi.unstubAllGlobals(); });
 
 describe("transcript selection", () => {
+  it("stays at the bottom when rendering briefly shrinks and restores the transcript before a scroll event", async () => {
+    const chat = await transcript();
+    try {
+      await chat.emit("scroll");
+      const top = chat.viewport.scrollTop;
+      chat.viewport.scrollHeight -= 40;
+      chat.viewport.scrollTop = top;
+      expect(chat.viewport.scrollTop).toBe(top - 40);
+      chat.viewport.scrollHeight += 40;
+      await chat.mutate();
+      await chat.emit("scroll");
+      expect(chat.viewport.scrollTop).toBe(top);
+      expect(chat.state().awayFromBottom).toBe(false);
+      expect(chat.state().selection).toBe(5);
+
+      chat.viewport.scrollHeight += 50;
+      await chat.fontsLoaded();
+      await chat.emit("scroll");
+      expect(chat.viewport.scrollTop).toBe(top + 50);
+      expect(chat.state().awayFromBottom).toBe(false);
+    } finally { await chat.unmount(); }
+  });
+
+  it.each([0.5, 4])("keeps a small upward scroll of %spx while initial content is still settling", async (distance) => {
+    const chat = await transcript();
+    try {
+      await chat.emit("scroll");
+      await chat.emit("pointerdown");
+      chat.viewport.scrollTop -= distance;
+      await chat.emit("scroll");
+      const top = chat.viewport.scrollTop;
+      await chat.mutate();
+      expect(chat.viewport.scrollTop).toBe(top);
+      expect(chat.state().awayFromBottom).toBe(false);
+
+      chat.viewport.scrollHeight += 50;
+      await chat.mutate();
+      await chat.resize();
+      expect(chat.viewport.scrollTop).toBe(top);
+      expect(chat.state().awayFromBottom).toBe(true);
+    } finally { await chat.unmount(); }
+  });
+
   it("selects a clicked message without moving it, then continues keyboard navigation from there", async () => {
     const chat = await transcript();
     try {
@@ -93,7 +148,7 @@ describe("transcript selection", () => {
     } finally { await chat.unmount(); }
   });
 
-  it("keeps pointer selection and reading position through focus and content resizing", async () => {
+  it.each(["resize", "fontsLoaded"] as const)("keeps pointer selection and reading position through focus and %s", async (change) => {
     const chat = await transcript();
     try {
       await chat.emit("click", chat.rows[4]);
@@ -103,7 +158,7 @@ describe("transcript selection", () => {
       const offset = chat.rows[4].offsetTop - chat.viewport.scrollTop;
       for (const row of chat.rows.slice(3)) row.offsetTop += 100;
       chat.viewport.scrollHeight += 100;
-      await chat.resize();
+      await chat[change]();
       await chat.emit("scroll");
       expect(chat.rows[4].offsetTop - chat.viewport.scrollTop).toBe(offset);
       expect(chat.state().selection).toBe(4);
