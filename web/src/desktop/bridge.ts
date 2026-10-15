@@ -48,7 +48,7 @@ declare global {
 }
 
 export function invoke<C extends keyof DesktopCommands>(command: C, ...args: CommandArguments<C>): Promise<DesktopCommands[C]["result"]> {
-  if (!window.__TAURI__) return Promise.reject(new Error("Open this frontend in GSV."));
+  if (!window.__TAURI__) return Promise.reject(new Error("Open this frontend in Ship."));
   return window.__TAURI__.core.invoke(command, ...args);
 }
 
@@ -111,7 +111,7 @@ export async function disconnectSpace(service: SessionService, storage: NativeSe
 export function nativeInput(generation: string): NativeInput {
   return {
     subscribe: (receive, practice = false) => {
-      if (!window.__TAURI__) throw new Error("Open this frontend in GSV.");
+      if (!window.__TAURI__) throw new Error("Open this frontend in Ship.");
       const updates = new window.__TAURI__.core.Channel<NativeUpdate>(receive);
       const initial = invoke("input_attach", { generation, updates, practice });
       let disposed = false;

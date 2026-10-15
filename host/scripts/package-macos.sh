@@ -105,6 +105,9 @@ mkdir -p "$macos_dir" "$resources_dir"
 
 sed "s/__GSV_VERSION__/$version/g" "$plist_template" > "$app/Contents/Info.plist"
 printf 'APPL????' > "$app/Contents/PkgInfo"
+mkdir -p "$resources_dir/en.lproj"
+install -m 0644 "$host_root/packaging/macos/en.lproj/InfoPlist.strings" \
+  "$resources_dir/en.lproj/InfoPlist.strings"
 for binary in "${binaries[@]}"; do
   install -m 0755 "$binary_dir/$binary" "$macos_dir/$binary"
 done
@@ -166,7 +169,7 @@ codesign --force --sign - --entitlements "$host_root/apps/desktop/Entitlements.p
 codesign --verify --deep --strict "$app"
 
 app_path="$output_dir/GSV.app"
-zip_path="$output_dir/GSV-$version-$architecture-$profile.zip"
+zip_path="$output_dir/Ship-$version-$architecture-$profile.zip"
 [[ "$(basename "$app_path")" == "GSV.app" ]] || die "unsafe app output path"
 rm -rf "$app_path"
 rm -f "$zip_path"

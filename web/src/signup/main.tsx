@@ -31,7 +31,7 @@ const resume = !!contactInvitation || new URLSearchParams(window.location.search
 const invitationError = invitationPreview && ("error" in invitationPreview ? invitationPreview.error
   : invitationPreview.expired ? `Your invitation from ${invitationPreview.name} has expired. Ask them for a new link.` : null);
 render(<AuthScene layout="welcome">{invitationError
-  ? <AuthLayout visible><section class="desktop-welcome"><h1>Connect on GSV</h1><p role="alert">{invitationError}</p>
+  ? <AuthLayout visible><section class="desktop-welcome"><h1>Connect on Ship</h1><p role="alert">{invitationError}</p>
     <a class="gsv-auth-link" href="/owner/signup/?resume=1" onClick={clearContactInvitation}>open my spaces</a></section></AuthLayout>
   : <OwnerWelcomeScreen ready resume={resume} initialStep={resume ? "email" : "invite"}
     chooseSpace={!!contactInvitation} context={invitationPreview && "name" in invitationPreview && <p class="desktop-welcome-detail">

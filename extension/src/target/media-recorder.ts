@@ -342,7 +342,7 @@ async function getTabMediaStreamId(tabId?: number): Promise<string> {
         ? `Unable to start tab media capture for tab ${tabId}.`
         : "Unable to start tab media capture for the active tab.",
       "Chrome only grants tab capture after the extension has been invoked for the tab.",
-      "Ask the person to focus the tab, open Your GSV from the toolbar, and choose Allow recording; then retry. Each allowance starts one recording.",
+      "Ask the person to focus the tab, open Your Ship from the toolbar, and choose Allow recording; then retry. Each allowance starts one recording.",
       message,
     ].filter(Boolean).join(" "));
   }
@@ -362,7 +362,7 @@ async function ensureOffscreenDocument(): Promise<void> {
       chrome.offscreen.Reason.AUDIO_PLAYBACK,
       chrome.offscreen.Reason.BLOBS,
     ],
-    justification: "Record tab media requested by the GSV browser target.",
+    justification: "Record tab media requested by the Ship browser target.",
   });
 }
 

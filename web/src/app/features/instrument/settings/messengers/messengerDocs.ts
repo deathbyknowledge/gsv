@@ -1,15 +1,13 @@
 // External documentation per adapter (GSV docs site).
-export const ADAPTER_DOC_URLS = {
-  telegram: "https://docs.gsv.space/how-to/messengers#telegram",
-  slack: "https://docs.gsv.space/how-to/messengers#slack",
-  discord: "https://docs.gsv.space/how-to/messengers#discord",
-} satisfies Record<string, string>;
-
-const ADAPTERS_ROOT_URL = "https://docs.gsv.space/how-to/messengers";
-
+import { publicDeployment } from "../../../../services/deployment";
 // Returns the doc URL for an adapter, falling back to the adapters root.
 export function adapterDocUrl(adapter: string): string {
-  return Object.entries(ADAPTER_DOC_URLS).find(([key]) => key === adapter.toLowerCase())?.[1] ?? ADAPTERS_ROOT_URL;
+  const docsRoot = publicDeployment().docsUrl;
+  const root = docsRoot
+    ? new URL("how-to/messengers", docsRoot.endsWith("/") ? docsRoot : `${docsRoot}/`).href
+    : "https://github.com/deathbyknowledge/gsv/blob/main/docs/how-to/messengers.md";
+  const id = adapter.toLowerCase();
+  return ["telegram", "slack", "discord"].includes(id) ? `${root}#${id}` : root;
 }
 
 // Telegram BotFather (where users create a bot + get a token).
@@ -28,18 +26,18 @@ export interface MessengerCapability {
 export const MESSENGER_CAPABILITIES: MessengerCapability[] = [
   {
     title: "Check remote files",
-    detail: "Browse and pull files from your GSV from anywhere.",
+    detail: "Browse and pull files from your Ship from anywhere.",
   },
   {
     title: "Approve tasks remotely",
     detail: "Review and approve pending tasks without opening the console.",
   },
   {
-    title: "Message your GSV",
-    detail: "Chat with your GSV and get replies straight in the messenger.",
+    title: "Message your Ship",
+    detail: "Chat with your Ship and get replies straight in the messenger.",
   },
   {
     title: "Stay in control",
-    detail: "Run commands and steer your GSV remotely, wherever you are.",
+    detail: "Run commands and steer your Ship remotely, wherever you are.",
   },
 ];

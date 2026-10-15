@@ -52,6 +52,7 @@ import type { ServicePeerProfile } from "./kernel/peer";
 import { isFederationPublicPath } from "./kernel/federation";
 import { matchPublicProfilePath, servePublicProfileRequest } from "./public-profiles";
 import type { GatewayEnv } from "./runtime-env";
+import { DEPLOYMENT_PRESENTATION_PATH, deploymentPresentation, deploymentPresentationScript } from "@humansandmachines/gsv/services/deployment";
 
 export { Kernel } from "./kernel/do";
 export { Process } from "./process/do";
@@ -89,6 +90,12 @@ export default {
     });
     if (!route) {
       return new Response("Not Found", { status: 404 });
+    }
+
+    if (url.pathname === DEPLOYMENT_PRESENTATION_PATH && request.method === "GET") {
+      return Response.json(deploymentPresentation(env.GSV_PUBLIC_CONFIG), {
+        headers: { "cache-control": "no-store" },
+      });
     }
 
     if (url.pathname === "/.well-known/oauth-client/gsv.json" && request.method === "GET") {
@@ -162,11 +169,22 @@ export default {
     }
 
     if (request.method === "GET" || request.method === "HEAD") {
-      return await env.ASSETS.fetch(request);
+      return withPublicDeploymentConfig(await env.ASSETS.fetch(request), env);
     }
     return new Response("Not Found", { status: 404 });
   },
 } satisfies ExportedHandler<GatewayEnv>;
+
+function withPublicDeploymentConfig(response: Response, env: GatewayEnv): Response {
+  if (!response.headers.get("content-type")?.includes("text/html")) return response;
+  const script = deploymentPresentationScript(deploymentPresentation(env.GSV_PUBLIC_CONFIG));
+  const headers = new Headers(response.headers);
+  headers.delete("etag");
+  headers.delete("content-length");
+  headers.set("cache-control", "no-store");
+  return new HTMLRewriter().on("head", { element(element) { element.prepend(script, { html: true }); } })
+    .transform(new Response(response.body, { status: response.status, statusText: response.statusText, headers }));
+}
 
 const ADAPTER_SERVICE_CALLS = [
   "adapter.inbound",

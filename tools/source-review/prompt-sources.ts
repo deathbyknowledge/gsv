@@ -8,6 +8,7 @@ import delegationFacts from "../../workers/gateway/src/prompts/instance-facts/sh
 import ownerFacts from "../../workers/gateway/src/prompts/instance-facts/user.md";
 import interaction from "../../workers/gateway/src/prompts/interaction/shared.md";
 import sharedKnowledge from "../../workers/gateway/src/prompts/knowledge/shared.md";
+import previousOnboardingWelcome from "../../workers/gateway/src/prompts/onboarding/previous-welcome.md";
 import onboardingWelcome from "../../workers/gateway/src/prompts/onboarding/welcome.md";
 import crewRole from "../../workers/gateway/src/prompts/role-and-judgment/crew.md";
 import shipRole from "../../workers/gateway/src/prompts/role-and-judgment/ship.md";
@@ -15,6 +16,7 @@ import compactionTask from "../../workers/gateway/src/prompts/tasks/compaction.m
 import contextRunwayTask from "../../workers/gateway/src/prompts/tasks/context-runway.md";
 import delegatedTask from "../../workers/gateway/src/prompts/tasks/delegated.md";
 import memoryReviewTask from "../../workers/gateway/src/prompts/tasks/memory-review.md";
+import operatorUpdateTask from "../../workers/gateway/src/prompts/tasks/operator-update.md";
 import setupTask from "../../workers/gateway/src/prompts/tasks/setup-assist.md";
 import yieldTask from "../../workers/gateway/src/prompts/tasks/yield-correction.md";
 import shipVoice from "../../workers/gateway/src/prompts/voice/ship.md";
@@ -35,6 +37,7 @@ export const PROMPT_SOURCES: PromptSource[] = [
   { path: "instance-facts/user.md", text: ownerFacts, scope: "owner" },
   { path: "interaction/shared.md", text: interaction, scope: "shared" },
   { path: "knowledge/shared.md", text: sharedKnowledge, scope: "shared" },
+  { path: "onboarding/previous-welcome.md", text: previousOnboardingWelcome, scope: "task" },
   { path: "onboarding/welcome.md", text: onboardingWelcome, scope: "task" },
   { path: "role-and-judgment/crew.md", text: crewRole, scope: "crew" },
   { path: "role-and-judgment/ship.md", text: shipRole, scope: "ship" },
@@ -42,6 +45,7 @@ export const PROMPT_SOURCES: PromptSource[] = [
   { path: "tasks/context-runway.md", text: contextRunwayTask, scope: "task" },
   { path: "tasks/delegated.md", text: delegatedTask, scope: "task" },
   { path: "tasks/memory-review.md", text: memoryReviewTask, scope: "task" },
+  { path: "tasks/operator-update.md", text: operatorUpdateTask, scope: "task" },
   { path: "tasks/setup-assist.md", text: setupTask, scope: "task" },
   { path: "tasks/yield-correction.md", text: yieldTask, scope: "task" },
   { path: "voice/ship.md", text: shipVoice, scope: "ship" },

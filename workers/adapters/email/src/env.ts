@@ -27,6 +27,7 @@ export type MailEnv = Omit<
   | "EMAIL"
 > & {
   MAIL_DOMAIN: string;
+  MAIL_RECEIVING_DOMAINS?: string;
   GSV_BASE_DOMAIN: string;
   ENTITLEMENTS?: EntitlementsService;
   MAIL_MAX_MESSAGE_BYTES?: number | string;

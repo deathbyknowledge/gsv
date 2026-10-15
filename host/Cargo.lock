@@ -1886,6 +1886,7 @@ dependencies = [
  "serde",
  "tempfile",
  "toml 0.8.23",
+ "url",
  "windows-host",
 ]
 

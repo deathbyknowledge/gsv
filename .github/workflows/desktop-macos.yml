@@ -66,6 +66,7 @@ jobs:
       - name: Build and package app
         env:
           CARGO_BUILD_TARGET: ${{ matrix.target }}
+          VITE_GSV_PUBLIC_CONFIG: ${{ vars.GSV_PUBLIC_CONFIG }}
         run: host/scripts/package-macos.sh --release --output release
       - name: Check app permissions and executables
         run: |

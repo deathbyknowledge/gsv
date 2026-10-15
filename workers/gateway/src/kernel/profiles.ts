@@ -7,7 +7,7 @@ import { z } from "zod/mini";
 import type { KernelContext } from "./context";
 import { isLocked } from "../auth/shadow";
 import { requireContactCaller, requireContactHuman } from "./federation/authority";
-import { fetchFederationJson } from "./federation/http";
+import { fetchFederation, readFederationJson } from "./federation/http";
 import { canonicalJson, normalizeFederationOrigin, sha256Base64Url, verifySignedValue } from "./federation-crypto";
 import type { PublicProfileLocator, PublicProfileProjection } from "./profile-store";
 
@@ -66,11 +66,22 @@ export async function handleProfileUnpublish(args: ProfileUnpublishArgs, ctx: Ke
 
 export async function handleProfileResolve(args: ProfileResolveArgs, ctx: KernelContext): Promise<ProfileResolveResult> {
   const ownerUid = requireContactCaller(ctx, false);
-  const input = z.string().check(z.maxLength(2_048)).parse(args.url);
-  const url = new URL(input);
-  if (url.pathname === "/") url.pathname = "/profile";
-  if (!isProfilePath(url.pathname) || url.search || url.hash || url.username || url.password) throw new Error("Enter one public GSV profile address");
-  const profile = publicProfileSchema.parse(await fetchFederationJson(url.href, { method: "GET", headers: { accept: "application/json" }, signal: ctx.requestSignal }, ctx));
+  let url = publicProfileUrl(args.url);
+  let profile: PublicProfile;
+  for (let redirects = 0; ; redirects++) {
+    const response = await fetchFederation(url.href, {
+      method: "GET", headers: { accept: "application/json" }, signal: ctx.requestSignal,
+    }, ctx);
+    const location = response.headers.get("location");
+    if ([301, 302, 303, 307, 308].includes(response.status) && location) {
+      await response.body?.cancel();
+      if (redirects >= 3) throw new Error("Too many public profile redirects");
+      url = publicProfileUrl(new URL(location, url).href);
+      continue;
+    }
+    profile = publicProfileSchema.parse(await readFederationJson(response, ctx.requestSignal));
+    break;
+  }
   await verifyPublicProfile(profile, url.href);
   requireContactCaller(ctx, false);
   const pinned = ctx.federation.getByRemote(ownerUid, profile.actor.shipId, profile.actor.subjectId);
@@ -78,6 +89,13 @@ export async function handleProfileResolve(args: ProfileResolveArgs, ctx: Kernel
     throw new Error("This profile differs from the pinned contact identity");
   }
   return { profile };
+}
+
+function publicProfileUrl(value: string): URL {
+  const url = new URL(z.string().check(z.maxLength(2_048)).parse(value));
+  if (url.pathname === "/") url.pathname = "/profile";
+  if (!isProfilePath(url.pathname) || url.search || url.hash || url.username || url.password) throw new Error("Enter one public Ship profile address");
+  return url;
 }
 
 export async function verifyPublicProfile(profile: PublicProfile, expectedUrl: string): Promise<void> {

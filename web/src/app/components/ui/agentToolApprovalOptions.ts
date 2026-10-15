@@ -154,7 +154,7 @@ export const BUILTIN_TARGET_OPTIONS: SelectOption[] = [
     value: "",
   },
   {
-    label: "GSV computer",
+    label: "Ship computer",
     value: targetOptionValue("gsv"),
   },
   {
@@ -271,7 +271,7 @@ export function targetLabelForRule(target: ToolApprovalTarget | undefined, targe
     return "All machines";
   }
   if (target === "gsv") {
-    return "GSV computer";
+    return "Ship computer";
   }
   if (isToolApprovalTargetSelector(target)) {
     if (target.route === "instance" && target.platform === "browser") return "Cloud browsers";

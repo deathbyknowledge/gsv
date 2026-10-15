@@ -118,7 +118,7 @@ export function DesktopApp() {
       } };
       setSession(value);
       setResumeSetup(!mock && !!value.values[ONBOARDING_KEY]);
-    }).catch(() => setError("Open this frontend with GSV Desktop."));
+    }).catch(() => setError("Open this frontend with Ship Desktop."));
   }, [mock]);
 
   useEffect(() => {
@@ -145,7 +145,7 @@ export function DesktopApp() {
   return <BrowserNavigationProvider navigate={openInBrowser}><div class="desktop-root">
     <dialog ref={confirmationDialog} class="desktop-confirm" role="alertdialog" aria-label="Discard unsent work?"
       onCancel={(event) => { event.preventDefault(); cancel(); }} onKeyDown={(event) => event.stopPropagation()}>
-      <p>Quit GSV? Unsent work will be discarded.</p>
+      <p>Quit Ship? Unsent work will be discarded.</p>
       <button type="button" onClick={cancel}>keep working</button>
       <button type="button" onClick={quit}>quit</button>
     </dialog>

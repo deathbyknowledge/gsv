@@ -10,7 +10,7 @@ type FakeDocument = { title: string; visibilityState: DocumentVisibilityState; h
 
 function page() {
   let focused = false;
-  const document: FakeDocument = { title: "GSV", visibilityState: "hidden", hasFocus: () => focused };
+  const document: FakeDocument = { title: "Ship", visibilityState: "hidden", hasFocus: () => focused };
   const icon = { ...ICON };
   const badges: Badge[] = [];
   const attention = createTabAttention({
@@ -36,8 +36,8 @@ const settled = () => new Promise<void>((next) => { setTimeout(next, 0); });
 
 describe("tab attention", () => {
   it("prefixes the title with the count", () => {
-    expect(attentionTitle("GSV", 0)).toBe("GSV");
-    expect(attentionTitle("GSV", 3)).toBe("(3) GSV");
+    expect(attentionTitle("Ship", 0)).toBe("Ship");
+    expect(attentionTitle("Ship", 3)).toBe("(3) Ship");
   });
 
   it("counts a committed message once, and only while the tab is out of view", () => {
@@ -45,15 +45,15 @@ describe("tab attention", () => {
     tab.show();
     tab.attention.arrived("m1");
     expect(tab.attention.count()).toBe(0);
-    expect(tab.document.title).toBe("GSV");
+    expect(tab.document.title).toBe("Ship");
 
     tab.hide();
     tab.attention.arrived("m2");
-    expect(tab.document.title).toBe("(1) GSV");
+    expect(tab.document.title).toBe("(1) Ship");
     tab.attention.arrived("m3");
     tab.attention.arrived("m3");
     expect(tab.attention.count()).toBe(2);
-    expect(tab.document.title).toBe("(2) GSV");
+    expect(tab.document.title).toBe("(2) Ship");
   });
 
   it("counts while the window lacks focus even when the document is visible", () => {
@@ -79,7 +79,7 @@ describe("tab attention", () => {
     expect(tab.icon.href).toBe(DOT);
 
     tab.show();
-    expect(tab.document.title).toBe("GSV");
+    expect(tab.document.title).toBe("Ship");
     expect(tab.icon).toEqual(ICON);
 
     tab.hide();
@@ -102,7 +102,7 @@ describe("tab attention", () => {
     tab.attention.arrived("m1");
     tab.badges[0].reject(new Error("no image"));
     await settled();
-    expect(tab.document.title).toBe("(1) GSV");
+    expect(tab.document.title).toBe("(1) Ship");
     expect(tab.icon).toEqual(ICON);
   });
 
@@ -110,7 +110,7 @@ describe("tab attention", () => {
     const tab = page();
     tab.attention.arrived("m1");
     tab.attention.dispose();
-    expect(tab.document.title).toBe("GSV");
+    expect(tab.document.title).toBe("Ship");
     expect(tab.attention.count()).toBe(0);
   });
 });

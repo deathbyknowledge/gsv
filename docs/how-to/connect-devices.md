@@ -1,12 +1,12 @@
 # Connect your devices
 
-This is the distributed part. Connecting a device turns it into part of one computer your GSV can act across — read a file on your home server and push from your laptop in the same breath, even when those machines are asleep.
+This is the distributed part. Connecting a device turns it into part of one computer your Ship can act across — read a file on your home server and push from your laptop in the same breath, even when those machines are asleep.
 
 ## Connect a machine
 
 In Chat, choose **+ → connect a computer**, or ask Ship directly. The shortcut fills the composer with editable text; add a name and say whether it runs
 macOS, Linux or Windows. Ship can create the invitation and share the install and
-`gsv pair CODE` commands for you to run on that computer. If GSV is already installed,
+`gsv pair CODE` commands for you to run on that computer. If Ship is already installed,
 you only need the pairing command. Tell Ship when it finishes so it can check the connection.
 
 To create the invitation yourself:
@@ -38,16 +38,16 @@ until you choose **send**.
 ## Connect a browser
 
 Ship can also create a browser invitation and give you a download link matched to
-your GSV release. To get the current public release yourself,
+your Ship release. To get the current public release yourself,
 [click here to download the extension](https://gsv.space/browser).
 
 Choose **Browser** in the same flow. Download and unzip the extension, called
-**Your GSV**, enable developer mode at `chrome://extensions`, and load its folder.
-Click the **Your GSV** icon in the browser toolbar to open its panel. If it is
+**Your Ship**, enable developer mode at `chrome://extensions`, and load its folder.
+Click the **Your Ship** icon in the browser toolbar to open its panel. If it is
 not visible, click the **Extensions** (puzzle-piece) button and select
-**Your GSV**. Paste the invitation and choose **Pair this browser**.
+**Your Ship**. Paste the invitation and choose **Pair this browser**.
 
-While your GSV works in a tab, Chrome shows a banner at the top of that tab.
+While your Ship works in a tab, Chrome shows a banner at the top of that tab.
 That is Chrome's notice that an extension is driving the page; it goes when the
 work is done.
 
@@ -68,14 +68,14 @@ With the machine connected, ask your agent things like:
 
 ## Permissions
 
-When GSV asks to run a command, Chat and Fleet show the same approval card. Expand
+When Ship asks to run a command, Chat and Fleet show the same approval card. Expand
 **show the command** to inspect it, then **full request** for all execution
 arguments. Choose **run it** to approve once or **don't** to decline.
 **Always allow** approves this command and remembers shell access to that
 computer for the requesting process. Its tooltip explains the scope; other
 processes still use their own approval rules.
 
-Some actions — reading your screen, controlling apps — need extra permissions from your operating system, not just GSV. Your OS will prompt you the first time an agent tries one; grant what you're comfortable with. You can connect a machine and use the basics without granting these.
+Some actions — reading your screen, controlling apps — need extra permissions from your operating system, not just Ship. Your OS will prompt you the first time an agent tries one; grant what you're comfortable with. You can connect a machine and use the basics without granting these.
 
 ## Cancel or reconnect
 
@@ -102,5 +102,5 @@ cancelled before creating another if its code was lost.
 ## See also
 
 - [Get Started](/get-started/)
-- [Connect a Messenger](/how-to/messengers) — reach GSV from your phone via Telegram, Discord, or Slack
+- [Connect a Messenger](/how-to/messengers) — reach Ship from your phone via Telegram, Discord, or Slack
 - [Architecture: The Adapter Model](/architecture/adapter-model)

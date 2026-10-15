@@ -43,6 +43,10 @@ export async function fetchFederation(url: string, init: RequestInit, ctx: Kerne
 
 export async function fetchFederationJson(url: string, init: RequestInit, ctx: KernelContext): Promise<JsonValue> {
   const response = await fetchFederation(url, init, ctx);
+  return readFederationJson(response, init.signal ?? undefined);
+}
+
+export async function readFederationJson(response: Response, signal?: AbortSignal): Promise<JsonValue> {
   if (!response.ok) {
     await response.body?.cancel().catch(() => {});
     throw new FederationHttpError(response.status, `Remote Ship rejected the request (${response.status})`);
@@ -51,7 +55,7 @@ export async function fetchFederationJson(url: string, init: RequestInit, ctx: K
   const lengthHeader = response.headers.get("content-length");
   const bytes = await bodyToBytes({
     stream: response.body, length: lengthHeader ? Number(lengthHeader) : undefined,
-  }, MAX_PUBLIC_JSON_BYTES, init.signal ?? undefined);
+  }, MAX_PUBLIC_JSON_BYTES, signal);
   return jsonValueSchema.parse(JSON.parse(new TextDecoder().decode(bytes)));
 }
 

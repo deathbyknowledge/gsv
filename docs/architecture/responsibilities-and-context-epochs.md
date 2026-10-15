@@ -343,3 +343,18 @@ Callers cannot select another owner's ledger or assign work to a foreign Process
   or archived Process Activity.
 - Epoch closure either installs a complete new baseline and archive reference or
   leaves the old epoch live.
+
+## Operator release responsibilities
+
+An operator may deploy a bounded catalog of release briefs. During reconciliation
+of an existing personal agent, Kernel creates ordinary `operator.update` records,
+deduplicated by owner, publisher ID and update ID. Terminal records retain that
+deduplication. The initial onboarding responsibility's creation time excludes
+historical updates for new owners; older accounts without that record remain
+eligible. Future-dated briefs are skipped until an eligible later reconciliation.
+
+The records wait for a suitable user conversation and do not schedule a wake just
+for an announcement. Their revisions enter Process context through normal ledger
+observation. Publisher identity and brief remain inspectable, and user edits or
+resolutions are preserved. This adds no fleet scan, DO fanout, alternate prompt
+channel, or new scheduler.

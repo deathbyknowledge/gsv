@@ -65,7 +65,7 @@ export function NewConversation({ account, draft, onChange, onSent, onBusy, cont
     {!profile && <>
       {saved.length > 0 ? <ul class="people-recipient-list" aria-label="Saved contacts">{saved.map((contact) => <li key={contact.id}>
         <button class="people-recipient" disabled={busy} onClick={() => onOpen(contact.id)}><span>{contactDisplayName(contact)}</span><small>{profileAddressLabel(contact.remoteOrigin)}</small></button>
-      </li>)}</ul> : draft.url.trim() && !profileAddress && <p class="people-note">No saved contact matches. Enter a handle or a full GSV address to reach someone new.</p>}
+      </li>)}</ul> : draft.url.trim() && !profileAddress && <p class="people-note">No saved contact matches. Enter a handle or a full Ship address to reach someone new.</p>}
     </>}
     {profile && <>
       <div class="people-profile-preview">

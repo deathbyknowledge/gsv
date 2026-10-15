@@ -1830,7 +1830,7 @@ describe("handleAiConfig", () => {
       preferredModelId: null,
       models: [
         expect.objectContaining({ id: "mine", source: "personal", hasCredential: true }),
-        expect.objectContaining({ id: "gsv-included", name: "GSV Included", source: "base", hasCredential: false }),
+        expect.objectContaining({ id: "gsv-included", name: "Ship Included", source: "base", hasCredential: false }),
       ],
     });
     expect(JSON.stringify(handleAiModels(ctx))).not.toContain("sk-mine");

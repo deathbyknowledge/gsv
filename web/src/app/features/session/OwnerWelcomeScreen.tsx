@@ -5,7 +5,7 @@ import { Button } from "../../components/ui/Button";
 import { TextInput } from "../../components/ui/TextInput";
 import { Spinner } from "../../components/ui/Spinner";
 import { WelcomeIllustration } from "./backgrounds/WelcomeIllustration";
-import { PrivacyPolicyLink, TermsOfServiceLink } from "./PolicyLinks";
+import { PolicyConsentLabel } from "./PolicyLinks";
 import { OwnerWelcome, OwnerApiError, type OwnerSession, type OwnedInvite } from "../../services/session/ownerWelcome";
 import "./LoginScreen.css";
 import "./OwnerWelcomeScreen.css";
@@ -109,7 +109,7 @@ export function OwnerWelcomeScreen({ ready, resume, load, onConnect, addressPane
   }, [step, handle, flow]);
 
   const titles = {
-    welcome: "Welcome to GSV", invite: "Create your space", email: "Your email", code: "Check your email", spaces: "Your spaces", consent: "Before you begin", handle: "Choose your handle",
+    welcome: "Welcome to Ship", invite: "Create your space", email: "Your email", code: "Check your email", spaces: "Your spaces", consent: "Before you begin", handle: "Choose your handle",
   } satisfies Record<Step, string>;
   const requiresConsent = !chooseSpace && (step === "consent" || (step === "email" && flow?.state.flow === "create"));
   const consentError = requiresConsent && consentTouched && !consent;
@@ -183,8 +183,7 @@ export function OwnerWelcomeScreen({ ready, resume, load, onConnect, addressPane
               aria-describedby={consentError ? `${consentId}-error` : undefined}
               onInvalid={() => setConsentTouched(true)}
               onChange={(event) => { setConsent(event.currentTarget.checked); setConsentTouched(true); }} />
-            <span id={`${consentId}-label`}><label for={consentId}>I confirm that I’m 18 or older and agree to the </label>
-              <TermsOfServiceLink /> <label for={consentId}>and acknowledge the </label><PrivacyPolicyLink />.</span>
+            <PolicyConsentLabel id={consentId} />
           </div>
           {consentError && <p class="gsv-owner-consent-error" id={`${consentId}-error`} role="alert">Confirm your age and agreement to continue.</p>}
         </div>}

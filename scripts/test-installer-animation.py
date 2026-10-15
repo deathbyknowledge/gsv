@@ -19,7 +19,7 @@ repository, fixtures, fake_bin = map(Path, sys.argv[1:])
 enter = b"\x1b[?1049h"
 restore = b"\x1b[0m\x1b[?25h\x1b[?1049l"
 sgr = re.compile(rb"\x1b\[[0-9;]*m")
-rendered_frame = re.compile(rb"\x1b\[(\d+);1H( *)GSV\x1b\[K\r?\n\r?\n(.*?)Downloading GSV\x1b\[K\x1b\[J", re.DOTALL)
+rendered_frame = re.compile(rb"\x1b\[(\d+);1H( *)Ship\x1b\[K\r?\n\r?\n(.*?)Downloading Ship\x1b\[K\x1b\[J", re.DOTALL)
 
 
 def check(case, animated=True, exit_code=0):
@@ -166,7 +166,7 @@ exec /usr/bin/cp "$@"
         if case in ("small", "narrow", "short"):
             assert rendered_sizes == [(0, 0)], rendered_sizes
         if case == "success":
-            assert b"Downloading GSV\x1b[K" in output, output[-2500:]
+            assert b"Downloading Ship\x1b[K" in output, output[-2500:]
         if case == "hangup":
             assert {path.name for path in (root / "installed").iterdir()} == set(installed_names)
             assert all(path.read_bytes() == original for path in (root / "installed").iterdir())

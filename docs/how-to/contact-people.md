@@ -1,6 +1,6 @@
-# Contact people on other GSVs
+# Contact people on other Ships
 
-**People** holds conversations with people on other GSV spaces. Open it with `p`.
+**People** holds conversations with people on other Ship spaces. Open it with `p`.
 It opens your conversations and unread messages. **Requests**, above the list, opens
 first messages from new people; its count shows the loaded active requests, with
 `+` when more remain. **contacts**, beside the heading, opens your private address
@@ -39,7 +39,7 @@ messaging apps; opening People is optional.
 
 Choose **connect → use a profile address** to find a saved contact by name or enter
 a handle such as `esteve` or `@esteve`, or someone's public profile address.
-Handles resolve on `gsv.space`; full addresses still reach other operators.
+Handles resolve on the operator’s configured primary domain. Accepted legacy domains also display as handles; overlapping domains use the most specific match. Full addresses still reach other operators.
 Chat’s **+ → find a person** uses the same lookup and lets you mention the profile
 in your draft without contacting them. Review the profile and your prefilled display
 name, choose who handles new messages, then send a first message.
@@ -53,7 +53,7 @@ profile links still work. Drafts remain when you return to a conversation. A pro
 invitation, or close new contact. Saving later edits does not change the public
 page until you publish again. Unpublishing removes the page; existing contacts and
 conversations remain. People who already viewed it may retain copies.
-The published page uses GSV's cursor icon in the browser tab, the same pale block on a dark square as the app.
+The published page uses Ship's cursor icon in the browser tab, the same pale block on a dark square as the app.
 On phones, the profile editor keeps its title and back arrow above the scrolling
 form. The same lavender edge used in conversations appears only while text crosses
 that scroll boundary.
@@ -88,7 +88,7 @@ The activity line above the Ship prompt keeps unread conversations and incoming
 requests beside ongoing plans, including after reload or reconnect. New messages update
 the line without opening a panel or moving your place in the Ship conversation.
 Select a person's name to read and reply in a compact panel. A **PERSON** or
-**GSV** badge identifies who wrote the latest message. **Open conversation** takes
+**Ship** badge identifies who wrote the latest message. **Open conversation** takes
 you to the full history in People; selecting a connection request opens it there.
 Conversation previews label outgoing messages **You** or **Your Ship**, so they
 cannot be mistaken for a new reply from the other person.
@@ -130,9 +130,9 @@ conversation Details and a message request's controls offer block and unblock.
 
 Open **details → Work requests** in the conversation to inspect shared work.
 
-The person offering work can cancel an unaccepted offer. The person receiving it can accept or reject it, then start, complete or cancel accepted work. GSV shows only the actions available to your side.
+The person offering work can cancel an unaccepted offer. The person receiving it can accept or reject it, then start, complete or cancel accepted work. Ship shows only the actions available to your side.
 
-An update takes effect locally before the other GSV confirms it. **Awaiting confirmation** keeps the request open, including a completion or cancellation. **Update not confirmed** means delivery failed; it does not claim the other person accepted that outcome. Older records can show **Confirmation unavailable**.
+An update takes effect locally before the other Ship confirms it. **Awaiting confirmation** keeps the request open, including a completion or cancellation. **Update not confirmed** means delivery failed; it does not claim the other person accepted that outcome. Older records can show **Confirmation unavailable**.
 
 ## Delivery
 

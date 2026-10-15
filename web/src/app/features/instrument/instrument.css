@@ -270,7 +270,8 @@
 .wordmark {
   color: var(--glyph);
   text-shadow: var(--glow);
-  letter-spacing: 0.34em;
+  letter-spacing: 0;
+  text-transform: none;
   font-size: 12px;
 }
 .wordmark.is-glitch {

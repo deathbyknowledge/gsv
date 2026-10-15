@@ -151,3 +151,11 @@ searchable personal memory.
 - [Configuration](./configuration.md)
 - [Context and Knowledge](../architecture/context-and-knowledge.md)
 - [Guides](../how-to/)
+
+## Ship naming
+
+Standing runtime context names the product Ship while retaining GSV technical
+identifiers and `.gsv` paths. The welcome responsibility uses the same product
+name. Only an untouched, unresolved welcome seed is upgraded automatically;
+user-edited and terminal records remain unchanged. Operator release information
+arrives as an ordinary responsibility, not as a rewrite of personal context.

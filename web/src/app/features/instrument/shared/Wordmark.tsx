@@ -14,5 +14,5 @@ export function Wordmark() {
     }, GLITCH_EVERY_MS);
     return () => window.clearInterval(every);
   }, []);
-  return <span class={`wordmark${glitch ? " is-glitch" : ""}`}>GSV</span>;
+  return <span class={`wordmark${glitch ? " is-glitch" : ""}`}>Ship</span>;
 }

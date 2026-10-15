@@ -154,7 +154,7 @@ describe("console settings domain", () => {
       models: [
         { id: profiles[0].id, name: "Fast", provider: "openai", model: "gpt-5.4", source: "personal" as const, hasCredential: true },
         { id: "shared", name: "Shared", provider: "anthropic", model: "claude-sonnet-5", source: "system" as const, hasCredential: true },
-        { id: "gsv-included", name: "GSV Included", provider: "gsv", model: "default", source: "base" as const, hasCredential: false },
+        { id: "gsv-included", name: "Ship Included", provider: "gsv", model: "default", source: "base" as const, hasCredential: false },
       ],
     };
 
@@ -172,7 +172,7 @@ describe("console settings domain", () => {
   it("reserves ids and names across every visible layer when creating a model", () => {
     const included: ConsoleModelProfile = {
       id: "gsv-included",
-      name: "GSV Included",
+      name: "Ship Included",
       values: { "config/ai/provider": "gsv", "config/ai/model": "default" },
       source: "base",
       createdAt: 0,
@@ -180,14 +180,14 @@ describe("console settings domain", () => {
     };
 
     // "GSV-Included" is a different name but slugifies to the reserved id.
-    const created = createModelProfile([], "GSV-Included", {
+    const created = createModelProfile([], "Ship-Included", {
       "config/ai/provider": "openai",
       "config/ai/model": "gpt-5.4",
     }, 1000, "personal", [included]);
     expect(created).toHaveLength(1);
     expect(created[0].id).not.toBe("gsv-included");
     expect(created[0].source).toBe("personal");
-    expect(() => createModelProfile([], "GSV Included", {
+    expect(() => createModelProfile([], "Ship Included", {
       "config/ai/provider": "openai",
       "config/ai/model": "gpt-5.4",
     }, 1000, "personal", [included])).toThrow("Model name already exists");
@@ -199,7 +199,7 @@ describe("console settings domain", () => {
       models: [
         { id: "a", name: "A", provider: "openai", model: "gpt-5.4", source: "personal" as const, hasCredential: false },
         { id: "b", name: "B", provider: "anthropic", model: "claude-sonnet-5", source: "personal" as const, hasCredential: false },
-        { id: "gsv-included", name: "GSV Included", provider: "gsv", model: "default", source: "base" as const, hasCredential: false },
+        { id: "gsv-included", name: "Ship Included", provider: "gsv", model: "default", source: "base" as const, hasCredential: false },
       ],
     };
 
@@ -353,6 +353,6 @@ describe("console settings domain", () => {
     expect(modelStackDisplayName({
       "config/ai/provider": "gsv",
       "config/ai/model": "default",
-    })).toBe("GSV included");
+    })).toBe("Ship included");
   });
 });

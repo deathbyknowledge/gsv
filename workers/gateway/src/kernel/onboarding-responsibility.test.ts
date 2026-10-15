@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { runWithRealKernelSql } from "../test-support/real-kernel-sql";
 import { ensureInitialOnboardingResponsibility, INITIAL_ONBOARDING_DEDUPE_KEY, reconcileInitialOnboardingResponsibility } from "./onboarding-responsibility";
 import { ResponsibilityStore } from "./responsibility-store";
+import previousWelcomeBrief from "../prompts/onboarding/previous-welcome.md";
 
 const PREVIOUS_CONTRACT = {
   title: "Get to know the user and finish initial GSV setup",
@@ -35,6 +36,27 @@ function seedPreviousContract(responsibilities: ResponsibilityStore, ownerUid: n
 }
 
 describe("initial onboarding responsibility", () => {
+  it.each([false, true])("updates the previous welcome only while untouched (edited: %s)", async (edited) => {
+    await runWithRealKernelSql((_sql, storage) => {
+      const responsibilities = new ResponsibilityStore(storage);
+      const seeded = responsibilities.create({
+        ownerUid: 1000,
+        title: "Welcome to gsv",
+        details: { responsibilityType: "onboarding.initial", instructions: previousWelcomeBrief.trim() + (edited ? "\nMy own note" : "") },
+        blocker: "Waiting for the user's first message. Follow the instructions in this responsibility's details before replying.",
+        source: { kind: "system", component: "onboarding" },
+        actor: { kind: "system", component: "onboarding" },
+        assignee: { kind: "ship" }, state: "waiting", priority: "high",
+        dedupeKey: INITIAL_ONBOARDING_DEDUPE_KEY, observedByShip: true, now: 1_000,
+      });
+      const migrated = reconcileInitialOnboardingResponsibility(1000, responsibilities, 2_000);
+      expect(migrated?.id).toBe(seeded.record.id);
+      expect(migrated?.title).toBe(edited ? "Welcome to gsv" : "Welcome to Ship");
+      if (edited) expect(migrated).toEqual(seeded.record);
+      expect(responsibilities.nextWakeAt(1000, 2_000)).toBeNull();
+    });
+  });
+
   it("creates one non-waking Ship responsibility carrying the welcome brief", async () => {
     await runWithRealKernelSql((_sql, storage) => {
       const responsibilities = new ResponsibilityStore(storage);
@@ -44,7 +66,7 @@ describe("initial onboarding responsibility", () => {
       expect(first.created).toBe(true);
       expect(first.record).toMatchObject({
         ownerUid: 1000,
-        title: "Welcome to gsv",
+        title: "Welcome to Ship",
         source: { kind: "system", component: "onboarding" },
         assignee: { kind: "ship" },
         state: "waiting",
@@ -55,7 +77,7 @@ describe("initial onboarding responsibility", () => {
       const brief = first.record.details?.instructions;
       expect(brief).toEqual(expect.any(String));
       const text = String(brief);
-      expect(text.startsWith("# Welcome to gsv")).toBe(true);
+      expect(text.startsWith("# Welcome to Ship")).toBe(true);
       for (const heading of ["## Goal", "## Acceptance criteria", "## Outcome", "## Instructions", "## Support"]) {
         expect(text).toContain(heading);
       }
@@ -80,7 +102,7 @@ describe("initial onboarding responsibility", () => {
 
       expect(migrated.created).toBe(false);
       expect(migrated.record.id).toBe(seeded.record.id);
-      expect(migrated.record.title).toBe("Welcome to gsv");
+      expect(migrated.record.title).toBe("Welcome to Ship");
       expect(String(migrated.record.details?.instructions)).toContain("## Instructions");
       expect(migrated.record.details).not.toHaveProperty("summary");
       expect(migrated.record.state).toBe("waiting");
@@ -101,7 +123,7 @@ describe("initial onboarding responsibility", () => {
       const seeded = seedPreviousContract(responsibilities, 1001, 1_000);
       const migrated = reconcileInitialOnboardingResponsibility(1001, responsibilities, 2_000);
       expect(migrated?.id).toBe(seeded.record.id);
-      expect(migrated?.title).toBe("Welcome to gsv");
+      expect(migrated?.title).toBe("Welcome to Ship");
 
       const current = ensureInitialOnboardingResponsibility(1002, responsibilities, 1_000);
       const unchanged = reconcileInitialOnboardingResponsibility(1002, responsibilities, 2_000);

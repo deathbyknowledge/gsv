@@ -1,19 +1,23 @@
 import { describe, expect, it } from "vitest";
 import type { PublicProfile } from "@humansandmachines/gsv/protocol";
-import { approachSendIntent, emptyApproachDraft, profileAddress, profileAddressLabel } from "./peopleModel";
+import { approachSendIntent, emptyApproachDraft, profileAddress as address, profileAddressLabel as label } from "./peopleModel";
+
+const deployment = { primaryDomain: "fleet.example", legacyDomains: ["old.example"] };
+const profileAddress = (value: string) => address(value, deployment);
+const profileAddressLabel = (value: string) => label(value, deployment);
 
 describe("person addresses", () => {
   it("opens managed handles with or without @", () => {
-    for (const value of ["esteve", "@esteve", " @Esteve "]) expect(profileAddress(value)).toBe("https://esteve.gsv.space/profile");
-    expect(profileAddress("a")).toBe("https://a.gsv.space/profile");
-    expect(profileAddress("alex-river")).toBe("https://alex-river.gsv.space/profile");
+    for (const value of ["esteve", "@esteve", " @Esteve "]) expect(profileAddress(value)).toBe("https://esteve.fleet.example/profile");
+    expect(profileAddress("a")).toBe("https://a.fleet.example/profile");
+    expect(profileAddress("alex-river")).toBe("https://alex-river.fleet.example/profile");
   });
 
   it("keeps explicit federated hosts, ports and profile paths", () => {
     expect(profileAddress("person.example")).toBe("https://person.example/");
     expect(profileAddress("https://person.example/@person")).toBe("https://person.example/@person");
     expect(profileAddress("http://localhost:8787/profile")).toBe("http://localhost:8787/profile");
-    expect(profileAddress("esteve.gsv.space/profile")).toBe("https://esteve.gsv.space/profile");
+    expect(profileAddress("esteve.fleet.example/profile")).toBe("https://esteve.fleet.example/profile");
   });
 
   it("rejects names, malformed handles, credentials and non-web schemes", () => {
@@ -23,10 +27,20 @@ describe("person addresses", () => {
   });
 
   it("shortens only exact managed origins", () => {
-    expect(profileAddressLabel("https://esteve.gsv.space")).toBe("@esteve");
-    for (const host of ["gsv.space", "person.example", "esteve.gsv.space.evil.example", "person.esteve.gsv.space", "esteve.gsv.space:8787"]) {
+    expect(profileAddressLabel("https://esteve.fleet.example")).toBe("@esteve");
+    expect(profileAddressLabel("https://esteve.old.example")).toBe("@esteve");
+    expect(address("esteve", { legacyDomains: [] })).toBeNull();
+    for (const host of ["fleet.example", "person.example", "esteve.fleet.example.evil.example", "person.esteve.fleet.example", "esteve.fleet.example:8787"]) {
       expect(profileAddressLabel(`https://${host}`)).toBe(host);
     }
+  });
+
+  it("uses the most specific configured domain when profile domains overlap", () => {
+    const nested = { primaryDomain: "example.com", legacyDomains: ["old.example.com", "fleet.old.example.com"] };
+    expect(label("https://alex.old.example.com", nested)).toBe("@alex");
+    expect(label("https://alex.fleet.old.example.com", nested)).toBe("@alex");
+    expect(label("https://old.example.com", nested)).toBe("old.example.com");
+    expect(label("https://team.alex.old.example.com", nested)).toBe("team.alex.old.example.com");
   });
 });
 

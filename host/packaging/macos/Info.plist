@@ -29,13 +29,13 @@
   <key>LSMultipleInstancesProhibited</key>
   <true/>
   <key>NSCameraUsageDescription</key>
-  <string>GSV uses the camera for local hand gesture recognition. Camera frames stay on this Mac.</string>
+  <string>Ship uses the camera for local hand gesture recognition. Camera frames stay on this Mac.</string>
   <key>NSCameraUseContinuityCameraDeviceType</key>
   <true/>
   <key>NSHighResolutionCapable</key>
   <true/>
   <key>NSMicrophoneUsageDescription</key>
-  <string>GSV uses the microphone for local speech transcription. Audio stays on this Mac.</string>
+  <string>Ship uses the microphone for local speech transcription. Audio stays on this Mac.</string>
   <key>NSSupportsAutomaticGraphicsSwitching</key>
   <true/>
 </dict>

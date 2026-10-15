@@ -272,6 +272,22 @@ one attempt per hour, a stable daemon never follows a `dev` gateway, and
 `~/.gsv/logs/auto-update.log`. The CLI and Desktop are never replaced under a
 person; the CLI prints one hint when the gateway is newer.
 
+Update plans use the operator's `installUrl` from a successful handshake or the
+installer URL supplied with a protocol error. Older gateways without either
+setting use `https://install.ship.space`. Windows installer selection resolves
+a Unix script URL to the sibling `install.ps1`, or appends that filename to a
+download directory. Protocol errors give Windows peers the directory so older
+daemons, which always append `/install.ps1`, can upgrade too.
+For URLs with a query or fragment, the protocol hint names the Windows script
+and ends with an empty fragment. An older daemon's appended filename then stays
+in that fragment, which HTTP does not send; the original query reaches the
+installer unchanged. Current hosts discard the fragment when resolving the script.
+
+CLI update hints, native `targets pair` setup commands, and the daemon's manual
+recovery commands use the same advertised installer and gateway release. Manual
+daemon updates also preserve the current installation directory. Host applications
+share installer URL resolution and shell quoting in `host-config`.
+
 Published host artifacts cover Linux x64/ARM64 and macOS Intel/Apple Silicon
 for Desktop, `gsv-transcribe`, `gsv-vision`, `gsv`, and `gsvd`, plus Windows x64
 for all five host executables. Checksums cover every release asset, including the vision
@@ -307,3 +323,12 @@ The Windows workflow separately tests SCM, IPC, shell process trees and installe
 rollback, then builds Desktop and helpers and runs recorded gesture parity.
 Physical microphone/camera permissions, GUI onboarding/UAC and reboot recovery
 also need a Windows release smoke test on an actual computer.
+
+## Product and command names
+
+Ship is the displayed product name. The external CLI command remains `gsv`.
+Native executable names, the `space.gsv.desktop` bundle identifier, service names
+and stored paths remain stable. macOS keeps `GSV.app` on disk so an upgrade
+replaces the existing bundle and preserves launch paths. Its localized bundle
+name is Ship; the base plist name matches the filename so Finder uses that
+display name.
