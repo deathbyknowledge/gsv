@@ -8,7 +8,7 @@
   --type-scale: 1;
   --instrument-safe-top: env(safe-area-inset-top, 0px);
   --instrument-safe-right: env(safe-area-inset-right, 0px);
-  --instrument-safe-bottom: max(0px, calc(env(safe-area-inset-bottom, 0px) - var(--instrument-viewport-top, 0px) - var(--instrument-viewport-bottom, 0px)));
+  --instrument-safe-bottom: max(0px, calc(env(safe-area-inset-bottom, 0px) - max(0px, 100lvh - var(--instrument-viewport-height, 100dvh))));
   --instrument-safe-left: env(safe-area-inset-left, 0px);
   --instrument-height: calc(var(--instrument-viewport-height, 100dvh) - var(--instrument-safe-top) - var(--instrument-safe-bottom));
   --instrument-header-height: 44px;
@@ -82,12 +82,15 @@
 /* Apply device insets before text zoom; background layers still fill the entire screen.
  * The keyboard covers the home indicator, so its occlusion consumes the bottom safe area. */
 /* Surfaces own the bottom inset as padding, letting their scroll panes reach the screen edge. */
+/* Size content directly from the visible viewport. Safari can resize the larger
+ * background after a viewport event; a measured bottom inset then goes stale. */
 .instrument-viewport {
   position: absolute;
   inset: calc(var(--instrument-viewport-top, 0px) + var(--instrument-safe-top))
     var(--instrument-safe-right)
-    var(--instrument-viewport-bottom, 0px)
+    auto
     var(--instrument-safe-left);
+  height: calc(var(--instrument-viewport-height, 100dvh) - var(--instrument-safe-top));
 }
 /* Modal dialogs enter the browser's top layer, outside the content box's positioning. */
 /* Their bottom edge is relative to the browser viewport, not the taller star field. */
@@ -300,7 +303,7 @@
   display: block;
   min-width: 0;
   min-height: 1.4em;
-  max-height: min(168px, calc(var(--instrument-height) / var(--type-scale) * .3));
+  max-height: min(168px, calc((var(--instrument-height) / var(--type-scale) - var(--instrument-header-height)) * .3));
   margin: 0;
   resize: none;
   overflow-y: auto;

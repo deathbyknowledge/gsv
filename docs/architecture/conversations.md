@@ -32,8 +32,9 @@ The Chat composer always uses "Message your ship" as its empty-field placeholder
 connection and approval states.
 The composer shows connection problems, errors and an offline selected place; ordinary model
 and target readiness do not add a status line. Run activity remains visible in the transcript.
-On phones, the composer follows the visible area above the keyboard, and the keyboard's return
-key requests a Send action. iOS owns the field-navigation and Done bar above its keyboard;
+On phones, both the prompt and its attachment, place and recording controls follow the visible
+area as the browser toolbar or keyboard opens and closes. The star field keeps its full height.
+The keyboard's return key requests a Send action. iOS owns the field-navigation and Done bar above its keyboard;
 the web app cannot hide that bar through a supported browser API.
 Clicking or tapping a message selects it without scrolling. Scrolling selects the first visible
 message, or the latest message at the bottom, even while the composer has focus. The selection

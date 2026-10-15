@@ -19,7 +19,9 @@ inset added inside their content padding. Chat and People reserve that same
 clearance for their bottom controls. The physical inset stays constant at every
 text size. The viewport follows visual viewport resize and scroll events so the
 keyboard leaves the header and composer reachable; pinch zoom retains the existing
-layout. Keyboard occlusion consumes the bottom safe inset instead of leaving a
+layout. Content takes its height directly from the visible viewport, independently
+of the taller star field, so Safari toolbar changes keep both composer rows visible.
+Keyboard occlusion consumes the bottom safe inset instead of leaving a
 second gap above the keyboard. The document and fixed shell use
 the large viewport height (`100lvh`) so iOS Home Screen launches cover the whole
 screen, including behind the home indicator. The star field keeps that height

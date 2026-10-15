@@ -26,6 +26,7 @@ async function screen(hasViewport = true) {
   function Harness() {
     const ref = useInstrumentViewport();
     // SAFETY: The hook only reads the root height and writes these CSS properties.
+    // The visible viewport now supplies the height independently of the root.
     ref.current = element as HTMLDivElement;
     return null;
   }
@@ -54,7 +55,6 @@ describe("instrument viewport", () => {
       expect(view.frames.size).toBe(1);
       view.flush();
       expect(view.properties.get("--instrument-viewport-top")).toBe("80px");
-      expect(view.properties.get("--instrument-viewport-bottom")).toBe("284px");
       expect(view.properties.get("--instrument-viewport-height")).toBe("480px");
 
       view.viewport.height = 844;
@@ -62,8 +62,17 @@ describe("instrument viewport", () => {
       view.viewport.dispatchEvent(new Event("resize"));
       view.flush();
       expect(view.properties.get("--instrument-viewport-top")).toBe("0px");
-      expect(view.properties.get("--instrument-viewport-bottom")).toBe("0px");
       expect(view.properties.get("--instrument-viewport-height")).toBe("844px");
+    } finally { await view.unmount(); }
+  });
+
+  it("uses the visible height before the background has resized", async () => {
+    const view = await screen();
+    try {
+      view.viewport.height = 874;
+      view.viewport.dispatchEvent(new Event("resize"));
+      view.flush();
+      expect(view.properties.get("--instrument-viewport-height")).toBe("874px");
     } finally { await view.unmount(); }
   });
 
@@ -83,7 +92,6 @@ describe("instrument viewport", () => {
       view.flush();
       expect(view.properties.get("--instrument-viewport-height")).toBe("390px");
       expect(view.properties.get("--instrument-viewport-top")).toBe("0px");
-      expect(view.properties.get("--instrument-viewport-bottom")).toBe("0px");
 
       view.viewport.scale = 1;
       view.viewport.height = 390;
