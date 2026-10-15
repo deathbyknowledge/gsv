@@ -5,7 +5,8 @@ It appears in Fleet alongside your connected browsers and computers. Your
 operator must enable cloud browsers; the local development stack enables them.
 
 For website tasks, Ship defaults to the cloud browser: it reuses your account's
-running one or starts one when needed. You do not need to connect a personal
+ordinary browser when one is running, and otherwise starts one. A temporary
+browser or one using a separately created profile is not reused for ordinary work. You do not need to connect a personal
 browser or explicitly ask Ship to create one. If browser access is unavailable,
 Ship should explain the actual availability or startup problem. A website may
 separately require you to sign in through the browser view.
