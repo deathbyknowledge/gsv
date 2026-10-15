@@ -721,7 +721,7 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
 
   const onSubmit = useCallback(
     (raw: string) => {
-      if (outbox.sending) return false;
+      if (!connected || !pid || outbox.sending) return false;
       setNote(null);
       if (raw) setInputHistory((current) => [...current.filter((entry) => entry !== raw), raw].slice(-50));
       setHistoryIndex(null);
@@ -739,7 +739,7 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
       }
       return say(intent.text);
     },
-    [attachments.length, outbox.sending, places, runDirectly, say],
+    [attachments.length, connected, outbox.sending, pid, places, runDirectly, say],
   );
 
   const onHistory = useCallback(
@@ -1128,7 +1128,7 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
               showPlace={false}
               dir="~"
               placeholder="Message your ship"
-              disabled={!connected || !pid || recordingVoice}
+              disabled={!pid || recordingVoice}
               onSubmit={onSubmit}
               allowEmpty={attachments.length > 0}
               onFiles={addFiles}

@@ -380,14 +380,35 @@ describe("Zen conversation entry", () => {
     } finally { await zen.unmount(); }
   });
 
-  it("still shows reconnecting when the gateway connection drops", async () => {
+  it.each(["connecting", "disconnected"] as const)("keeps drafting available while %s and waits for an explicit send after reconnect", async (state) => {
+    send.mockReturnValue(deferred<ConversationSendResult>().promise);
     const zen = await mountedZen();
     try {
+      const prompt = () => zen.props(PromptLine);
+      const sendButton = () => zen.nodes().find((node) => node.type === "button" && node.props.class === "zen-submit");
+      await act(() => { prompt().onInput?.("Keep this draft"); });
       expect(zen.text()).not.toContain("Reconnecting...");
-      await act(() => { for (const listener of statuses) listener(status("connecting")); });
+      await act(() => { for (const listener of statuses) listener(status(state)); });
       expect(zen.text()).toContain("Reconnecting...");
+      expect(prompt().disabled).toBe(false);
+      expect(sendButton()?.props.disabled).toBe(true);
+      await act(() => {
+        prompt().onInput?.("Keep this draft and keep writing");
+        expect(prompt().onSubmit("Keep this draft and keep writing")).toBe(false);
+        expect(prompt().onSubmit("$ pwd")).toBe(false);
+      });
+      expect(zen.dirty()).toBe(true);
+      expect(send).not.toHaveBeenCalled();
+      expect(vi.mocked(GSVClient.prototype.request).mock.calls.some(([call]) => call === "shell.exec")).toBe(false);
+
       await act(() => { for (const listener of statuses) listener(status("connected")); });
       expect(zen.text()).not.toContain("Reconnecting...");
+      expect(prompt().disabled).toBe(false);
+      expect(sendButton()?.props.disabled).toBe(false);
+      expect(zen.dirty()).toBe(true);
+      expect(send).not.toHaveBeenCalled();
+      await act(() => { expect(prompt().onSubmit("Keep this draft and keep writing")).toBe(true); });
+      await vi.waitFor(() => expect(send).toHaveBeenCalledWith(expect.objectContaining({ text: "Keep this draft and keep writing" })));
     } finally { await zen.unmount(); }
   });
 

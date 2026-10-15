@@ -108,6 +108,8 @@ the prompt when you have a draft or attachments. The action row below groups **+
 for attachments, the current place, and **record**. The place starts on **your cloud** (`gsv`).
 Open its chooser to select another destination for your next message or command;
 your draft and selected place stay while you move between views.
+While reconnecting, you can keep editing your draft and adding attachments.
+Sending becomes available when the connection returns; your draft is not sent automatically.
 The header stays above the scrolling content. Tap a message once to select it
 and show its timestamp and copy action.
 A thin, softly glowing lavender line marks the top of a scrolling pane while
