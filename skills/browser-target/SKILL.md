@@ -26,16 +26,17 @@ use the id returned by discovery or provisioning.
    calls for that profile, and a temporary one only for work that needs no
    login. An empty list does not rule out cloud provisioning. `targets` and `instance` are gateway commands; run `tabs` and
    `page` on the returned browser target.
-2. For cloud work with no running cloud browser, run `instance catalog` on `gsv`. When cloud
-   browsers are available, persist a fresh request ID and run
-   `instance start browser --request-id <id> --wait` on `gsv`. It returns when
-   ready and says `disposition: created` or `reused`. When the catalog says
-   saved logins are available, an ordinary start restores the account's website
-   logins and `--new` starts a separate temporary browser without them; when
-   it says they are not available, start with `--profile` and an existing
-   saved profile from `browser profile list`, or with `--new`. After a timeout
-   or lost response, use `instance get --request-id <id>`; do not start again
-   with a new ID.
+2. For cloud work with no suitable running cloud browser, run `instance catalog`
+   on `gsv`. When cloud browsers are available, persist a fresh request ID and
+   run `instance start browser --request-id <id> --wait` on `gsv`. It returns
+   when ready and says `disposition: created` or `reused`. When the catalog
+   says saved logins are available, an ordinary start restores the account's
+   website logins; when it says they are not available, start with `--profile`
+   and an existing saved profile from `browser profile list`, or with `--new`.
+   Whenever the task calls for a named saved profile, pass `--profile <id>`
+   regardless of what the catalog says; `--new` starts a separate temporary
+   browser without any saved logins. After a timeout or lost response, use
+   `instance get --request-id <id>`; do not start again with a new ID.
 3. On the browser target, inspect `tabs list` and `page snapshot`. Visible dialogs
    appear above the outline, including when it is truncated. An empty
    `page snapshot | grep ...` can mean a dialog hides background content; inspect
