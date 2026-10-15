@@ -180,7 +180,7 @@ export const PromptLine = forwardRef<PromptLineHandle, PromptLineProps>(function
   useLayoutEffect(() => {
     if (!active || !autoFocus || disabled || autoFocusHandled.current) return;
     autoFocusHandled.current = true;
-    if (document.activeElement === document.body || document.activeElement === null) inputRef.current?.focus();
+    if (document.activeElement === document.body || document.activeElement === null) inputRef.current?.focus({ preventScroll: true });
   }, [active, autoFocus, disabled]);
   useEffect(() => {
     const field = fieldRef.current;
@@ -218,11 +218,11 @@ export const PromptLine = forwardRef<PromptLineHandle, PromptLineProps>(function
     append(text) {
       const input = inputRef.current;
       if (!input || disabled) return;
-      input.focus();
+      input.focus({ preventScroll: true });
       input.setRangeText(text, input.value.length, input.value.length, "end");
       changed();
     },
-    focus: () => inputRef.current?.focus(),
+    focus: () => inputRef.current?.focus({ preventScroll: true }),
     blur: () => inputRef.current?.blur(),
     submit: () => { void send(); },
   }));

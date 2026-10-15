@@ -95,7 +95,9 @@ Fleet, Memory and Settings scroll to the bottom edge, with extra space after the
 last item so it can rest above the home indicator.
 Opening the keyboard reduces the content area between the header and composer;
 the page itself stays fixed. Lists and message history scroll within that area.
-Closing the keyboard restores the conversation's available space. Sign-in and setup use the same layout.
+Closing the keyboard restores the conversation's available space. The content
+height eases between sizes; reduced motion makes the change immediate. Sign-in and
+setup use the same layout.
 
 The Settings sidebar highlights the section you're viewing.
 

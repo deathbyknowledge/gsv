@@ -340,7 +340,17 @@ The shell locks document scrolling and sizes the visible content from
 `VisualViewport`, keeping the header and composer outside the scrolling content.
 The viewport requests `interactive-widget=resizes-content` where supported;
 visual-viewport tracking also handles browsers that pan or resize only the visible
-area. The star field keeps its independent full-screen size.
+area. The shell accounts for its actual position when the browser scrolls the
+document and briefly samples around input focus changes to catch delayed geometry.
+Touch WebKit’s first tap focuses text inputs with `preventScroll`, preventing the
+initial native page pan. Already-focused inputs, long presses and scroll gestures
+keep their native behavior. Programmatic composer focus also prevents page scroll.
+Position corrections apply immediately. A reported keyboard-height jump eases
+over 180ms, while incremental browser updates and reduced motion apply directly.
+Near-unit scale rounding is accepted; actual pinch zoom preserves the layout.
+Safari controls when it exposes the keyboard’s viewport geometry, so the height
+transition begins when that geometry is available. The star field keeps its
+independent full-screen size.
 
 ### Withdrawing the local typed-request experiment
 

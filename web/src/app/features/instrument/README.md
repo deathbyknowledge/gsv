@@ -19,15 +19,23 @@ including in landscape, before applying text zoom. Scroll panes in Fleet, Memory
 Settings, login and setup extend to the visible bottom edge, with the bottom safe
 inset added inside their content padding. Chat and People reserve that same
 clearance for their bottom controls. The physical inset stays constant at every
-text size. The viewport follows visual viewport resize and scroll events so the
-keyboard leaves the header and composer reachable; pinch zoom retains the existing
-layout. Content takes its height directly from the visible viewport, independently
+text size. The viewport follows visual viewport and window resize/scroll events,
+with brief frame tracking around input focus changes. Position corrections are
+immediate; a single reported keyboard-height jump eases over 180ms, reducing only
+the content between the header and composer. Reduced motion applies the height
+immediately. Browser-supplied intermediate heights are followed directly. Pinch
+zoom retains the existing layout, with a tolerance for Safari’s near-unit scale
+rounding. Touch WebKit’s first tap focuses text inputs with `preventScroll`,
+letting the shell reveal the keyboard without a native page pan. Already-focused
+inputs, long presses, dragging and pinch gestures retain native behavior.
+Content takes its height directly from the visible viewport, independently
 of the taller star field, so Safari toolbar changes keep both composer rows visible.
 Keyboard occlusion consumes the bottom safe inset instead of leaving a
-second gap above the keyboard. The document and fixed shell use
-the large viewport height (`100lvh`) so iOS Home Screen launches cover the whole
-screen, including behind the home indicator. The star field keeps that height
-while the content follows the visible viewport and the keyboard.
+second gap above the keyboard. The document stays fixed to its containing
+viewport; the star-field shell uses the large viewport height (`100lvh`) so iOS
+Home Screen launches cover the whole screen, including behind the home indicator.
+The star field keeps that height while the content follows the visible viewport
+and the keyboard.
 The composer omits routine model and target-readiness feedback, retaining errors,
 offline warnings and reconnecting. Its keyboard return hint is Send; iOS's native
 field-navigation accessory bar remains controlled by the browser.
