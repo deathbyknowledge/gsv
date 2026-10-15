@@ -18,7 +18,6 @@ export function conversationMessageRow(
     conversationSequence: message.sequence,
     role: message.author.kind === "user" ? "user" : "assistant",
     text: message.text,
-    action: message.action,
     media: message.media,
     timestamp: message.createdAt,
     time: formatTime(message.createdAt),

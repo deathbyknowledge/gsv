@@ -5,7 +5,6 @@ import { PlaceTree, type OpenFile } from "../shared/PlaceFiles";
 import { FleetDialog } from "./FleetDialog";
 import { assignedTo, useResponsibilities } from "../shared/Responsibilities";
 import { useDraftGuard } from "../shared/useDraftGuard";
-import type { ConversationAction } from "@humansandmachines/gsv/protocol";
 import type { ActivityRequest } from "../zen/chatContextModel";
 import type { GSVClient } from "@humansandmachines/gsv/client";
 import { ConnectPlace } from "./ConnectPlace";
@@ -61,7 +60,7 @@ export type FleetProps = {
   /** The row to land on, when Zen sent us here from a reference. */
   openRequest: { reference: FleetReference } | null;
   /** Back to Zen, optionally with text placed in the prompt (a file reference, for instance) and a process to open instead of the ship. */
-  onZen: (prefill?: string, pid?: string, action?: ConversationAction) => void;
+  onZen: (prefill?: string, pid?: string, request?: string) => void;
   onActivity: (request: ActivityRequest) => void;
 };
 
@@ -417,7 +416,7 @@ export function Fleet({ openRequest, onZen, onCommand, onDirtyChange, onActivity
                 <button type="button" class="fleet-text-action chat-context-back" onClick={() => setFilesPlace(null)}>← {filesPlace.label}</button>
                 <div class="fleet-tree"><PlaceTree key={filesPlace.id} place={filesPlace} enabled={connected && filesPlace.online} onOpenFile={selectFile} initiallyOpen /></div>
               </RetainedView>}
-              {openFile && <FilePreview file={openFile} placeLabel={placeLabel(openFile.target)} onClose={() => { if (filesPlace) setOpenFile(null); else closeInspector(); }} onAsk={(action) => onZen(undefined, undefined, action)} onExpand={() => {
+              {openFile && <FilePreview file={openFile} placeLabel={placeLabel(openFile.target)} onClose={() => { if (filesPlace) setOpenFile(null); else closeInspector(); }} onAsk={(text) => onZen(undefined, undefined, text)} onExpand={() => {
               savedScroll.current = manifestRef.current?.scrollTop ?? 0;
               setExpandedFile(openFile);
             }} />}
@@ -537,7 +536,7 @@ type ProcessInspectorProps = {
   responsibilities: number;
   canEditAi: boolean;
   now: number;
-  onZen: (prefill?: string, pid?: string, action?: ConversationAction) => void;
+  onZen: (prefill?: string, pid?: string, request?: string) => void;
   lines: LedgerLine[];
   placeLabelFor: (placeId: string) => string;
 };

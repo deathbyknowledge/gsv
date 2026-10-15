@@ -1,7 +1,6 @@
 import type { MessageAttachment } from "./proc";
 import type { ResourceBlock } from "../resource";
 import type { SocialMessageMetadata } from "../social";
-import type { ConversationAction } from "../conversation-action";
 
 export type ConversationKind = "ship" | "work" | "group" | "contact";
 
@@ -70,8 +69,6 @@ export type ConversationMessage = {
   sequence: number;
   author: ConversationMessageAuthor;
   text: string;
-  /** Optional structured human request. Text remains its complete readable projection. */
-  action?: ConversationAction;
   /** Absent on historical and v1 messages whose remote submission path is unspecified. */
   social?: SocialMessageMetadata;
   /** Target selected for this message, independently of its source and reply endpoint. */
@@ -176,7 +173,6 @@ export type ConversationSearchResult = {
 export type ConversationSendArgs = {
   conversationId: string;
   text: string;
-  action?: ConversationAction;
   /** Optional target context for this message; does not change process defaults or permissions. */
   selectedTarget?: string;
   media?: ResourceBlock[];

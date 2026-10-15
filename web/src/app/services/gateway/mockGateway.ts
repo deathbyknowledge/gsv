@@ -1,4 +1,3 @@
-import { conversationActionSchema, validateConversationAction, type ConversationAction } from "@humansandmachines/gsv/protocol";
 /**
  * A gateway that lives in this tab, so Zen's states can be looked at on demand.
  *
@@ -651,7 +650,7 @@ async function resolve(run: OpenRun, trigger: string): Promise<void> {
 
 type Sent = { message: ConversationMessage; runId: string };
 
-function receive(text: string, action?: ConversationAction): Sent {
+function receive(text: string): Sent {
   const trigger = text.trim().toLowerCase();
   const open = world.run;
   if (open && !open.approval && (trigger === "/reply" || trigger === "/stream")) {
@@ -667,7 +666,6 @@ function receive(text: string, action?: ConversationAction): Sent {
     interrupt(open);
   }
   const question = record("you", text, Date.now(), "");
-  if (action) question.action = action;
   const runId = `run-${question.sequence}`;
   window.setTimeout(() => {
     broadcast("message.committed", { message: question, directed: true });
@@ -682,7 +680,7 @@ const pidArgs = z.object({ pid: z.string() });
 const historyArgs = z.object({ pid: z.string(), since: z.string().optional() });
 const conversationArgs = z.object({ conversationId: z.string(), beforeSequence: z.number().optional(), afterSequence: z.number().optional(), limit: z.number().optional() });
 const searchArgs = z.object({ conversationId: z.string().optional(), query: z.string(), beforeSequence: z.number().optional(), limit: z.number().optional() });
-const sendArgs = z.object({ conversationId: z.string(), text: z.string(), action: z.unknown().transform((value) => conversationActionSchema.parse(value)).optional() });
+const sendArgs = z.object({ conversationId: z.string(), text: z.string() });
 const connectArgs = z.object({ protocol: z.number() });
 const tokenArgs = z.object({ expiresAt: z.number().nullable().optional() });
 const hilArgs = z.object({ pid: z.string().optional(), requestId: z.string(), decision: z.enum(["approve", "deny"]) });
@@ -764,8 +762,7 @@ function route(socket: MockSocket, id: string, call: string, args: JsonValue): s
     }
     case "conversation.send": {
       const input = sendArgs.parse(args);
-      if (input.action) validateConversationAction(input.action, input.text);
-      const sent = receive(input.text, input.action);
+      const sent = receive(input.text);
       return respond(id, { message: sent.message, handlerPid: SHIP.pid, runId: sent.runId });
     }
     case "contact.list": return respond(id, { contacts: [] });

@@ -1,4 +1,4 @@
-import { contactDisplayName, type ConversationAction } from "@humansandmachines/gsv/protocol";
+import { contactDisplayName } from "@humansandmachines/gsv/protocol";
 import { useMutation } from "@tanstack/preact-query";
 import { useLayoutEffect, useRef, useState } from "preact/hooks";
 import { useGateway } from "../../../services/gateway/GatewayProvider";
@@ -14,7 +14,7 @@ import type { ChatContext } from "./chatContextModel";
 export function ChatPerson({ account, request, onAsk, onPeople, onDirty }: {
   account?: ConsoleAccount;
   request: Extract<ChatContext, { kind: "person" }>;
-  onAsk: (action: ConversationAction) => void;
+  onAsk: (text: string) => void;
   onPeople: (request: PeopleOpenRequest) => void;
   onDirty: (dirty: boolean) => void;
 }) {
@@ -84,7 +84,7 @@ export function ChatPerson({ account, request, onAsk, onPeople, onDirty }: {
         <span class="people-kicker">{new URL(preview.origin).host}</span><h3>{preview.displayName}</h3>
         {preview.about && <p>{preview.about}</p>}
         <div class="fleet-actions">
-          <button type="button" class="fleet-text-action is-primary" onClick={() => onAsk({ kind: "profile.discuss", name: preview.displayName, url: preview.url })}>mention in message</button>
+          <button type="button" class="fleet-text-action is-primary" onClick={() => onAsk(`Help me with ${JSON.stringify(preview.displayName)}'s GSV profile: ${preview.url}`)}>mention in message</button>
           <button type="button" class="fleet-text-action" onClick={() => selectedContact ? onPeople({ contactId: selectedContact.id }) : setContacting(true)}>{selectedContact ? "open conversation" : "contact"}</button>
         </div>
       </div> : <ul class="people-recipient-list" aria-label="Saved people">

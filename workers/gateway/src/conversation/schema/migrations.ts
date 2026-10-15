@@ -6,10 +6,11 @@ import { CONVERSATION_V004_SELECTED_TARGET } from "./v004_selected_target";
 import { CONVERSATION_V005_SEARCH } from "./v005_search";
 
 import { CONVERSATION_V006_MESSAGE_ORIGINS } from "./v006_message_origins";
-import { CONVERSATION_V007_MESSAGE_ACTION } from "./v007_message_action";
 
 export const CONVERSATION_SCHEMA_COMPONENT = "conversation";
 
+// ID 7 is reserved for the withdrawn local message_action experiment. Do not reuse it.
+// Existing local columns/receipts are left intact; fresh databases stop at v6.
 export const CONVERSATION_MIGRATIONS: readonly SqlMigration[] = [
   CONVERSATION_V001_INITIAL_SCHEMA,
   CONVERSATION_V002_RENAME_HOME_TO_SHIP,
@@ -17,7 +18,6 @@ export const CONVERSATION_MIGRATIONS: readonly SqlMigration[] = [
   CONVERSATION_V004_SELECTED_TARGET,
   CONVERSATION_V005_SEARCH,
   CONVERSATION_V006_MESSAGE_ORIGINS,
-  CONVERSATION_V007_MESSAGE_ACTION,
 ];
 
 export function runConversationSqlMigrations(storage: DurableObjectStorage): void {

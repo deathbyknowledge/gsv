@@ -96,7 +96,7 @@ Examples:
 
 A GSV app surface should have a clear center of gravity.
 
-Chat’s `+` menu attaches files and stages requests to Ship. Creation requests use the ordinary composer; selecting one never sends it. A structured request may show an object-specific message, but its readable text must remain inspectable and reach Ship unchanged. Responsibilities and routines open in contextual panels within Chat, without adding another top-level destination.
+Chat’s `+` menu attaches files and stages requests to Ship. Creation requests use the ordinary composer; selecting one never sends it. The complete request is editable text and uses the ordinary message send and history paths, without special wire metadata or sent-message rendering. Responsibilities and routines open in contextual panels within Chat, without adding another top-level destination.
 
 ## Use The Shared Instrument Shell
 

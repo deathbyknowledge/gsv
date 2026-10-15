@@ -7,7 +7,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import { memo } from "preact/compat";
 import { useQuery } from "../../../services/navigation/viewQueries";
 import type { JSX } from "preact";
-import { conversationActionText, type ConversationAction, type ProcHilArgs, type ProcHilRequest } from "@humansandmachines/gsv/protocol";
+import type { ProcHilArgs, ProcHilRequest } from "@humansandmachines/gsv/protocol";
 import { useGateway } from "../../../services/gateway/GatewayProvider";
 import { useSession } from "../../../services/session/SessionProvider";
 import { LoadingState, Spinner } from "../../../components/ui/Spinner";
@@ -28,10 +28,9 @@ import { terminalFinished } from "../../../services/terminal/terminalSessions";
 import { TerminalControls } from "./TerminalControls";
 import { fleetReferenceRow, orderPlaces, type FleetReference } from "../fleet/fleetModel";
 import { ChatPanels } from "./ChatPanels";
-import { ActionMessage } from "./ActionMessage";
 import { canConfigure } from "../settings/settingsModel";
 import { flushSync } from "preact/compat";
-import { actionTitle, type ActivityRequest, type ChatContext } from "./chatContextModel";
+import type { ActivityRequest, ChatContext } from "./chatContextModel";
 import { INSTRUMENT_MEMORY_KEY, INSTRUMENT_TARGETS_KEY } from "../wire/queryKeys";
 import type { MemoryPageRef } from "../shared/navigation";
 import { PromptLine, type PromptLineHandle, type PromptPlace } from "../shared/PromptLine";
@@ -98,7 +97,7 @@ export type ZenProps = {
   searchRequested?: boolean;
   onSearchRequestHandled?: () => void;
   activityRequest?: ActivityRequest;
-  actionPrefill?: ConversationAction | null;
+  requestPrefill?: string | null;
 };
 
 const HISTORY_LIMIT = 400;
@@ -342,7 +341,7 @@ function NoteMoment({
   );
 }
 
-export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, onPrefillUsed, pid: pidProp, onDraftChange, contactReplies, peopleActivity, onPeopleActivity, searchRequested, onSearchRequestHandled, activityRequest, actionPrefill }: ZenProps) {
+export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, onPrefillUsed, pid: pidProp, onDraftChange, contactReplies, peopleActivity, onPeopleActivity, searchRequested, onSearchRequestHandled, activityRequest, requestPrefill }: ZenProps) {
   const active = useViewActive();
   const browserControl = useBrowserControl();
   const { client, connected } = useGateway();
@@ -381,7 +380,6 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
   const [places, setPlaces] = useState<Place[]>([]);
   const [where, setWhere] = useState<string | null>(initialTarget ?? null);
   const [attachments, setAttachments] = useState<ZenAttachment[]>([]);
-  const [draftAction, setDraftAction] = useState<ConversationAction | null>(null);
   const [context, setContext] = useState<ChatContext | null>(null);
   const [contextDirty, setContextDirty] = useState(false);
   const [addOpen, setAddOpen] = useState(false);
@@ -395,7 +393,7 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
   const fileInput = useRef<HTMLInputElement>(null);
   const dragDepth = useRef(0);
   const [draggingFiles, setDraggingFiles] = useState(false);
-  const dirty = hasDraft || !!draftAction || contextDirty || attachments.length > 0 || outbox.messages.length > 0 || (contactReplies?.dirty ?? false);
+  const dirty = hasDraft || contextDirty || attachments.length > 0 || outbox.messages.length > 0 || (contactReplies?.dirty ?? false);
   useLayoutEffect(() => { onDraftChange?.(dirty); }, [dirty, onDraftChange]);
   useLayoutEffect(() => () => onDraftChange?.(false), [onDraftChange]);
   useEffect(() => {
@@ -494,38 +492,24 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
   const [historyIndex, setHistoryIndex] = useState<number | null>(null);
   const [tick, setTick] = useState(0);
   const promptRef = useRef<PromptLineHandle>(null);
-  const stageAction = useCallback((action: ConversationAction) => {
+  const stageRequest = useCallback((text: string) => {
     // Release the modal's focus trap within the tap, before focusing the mobile composer.
     flushSync(() => setContext(null));
-    setDraftAction(action);
-    if (action.note) {
-      const current = promptRef.current?.selection().value ?? "";
-      promptRef.current?.setValue(current ? `${current}\n\n${action.note}` : action.note);
-    }
+    const current = promptRef.current?.selection().value ?? "";
+    promptRef.current?.setValue(current ? `${text}\n\n${current}` : text);
     setAddOpen(false);
     setPlacesOpen(false);
     promptRef.current?.focus();
   }, []);
   useLayoutEffect(() => {
-    if (!active || !actionPrefill) return;
-    stageAction(actionPrefill);
+    if (!active || !requestPrefill) return;
+    stageRequest(requestPrefill);
     if (!prefill) onPrefillUsed?.();
-  }, [active, actionPrefill, prefill, onPrefillUsed, stageAction]);
+  }, [active, requestPrefill, prefill, onPrefillUsed, stageRequest]);
   useLayoutEffect(() => {
     if (active && addOpen) addMenu.current?.querySelector<HTMLButtonElement>("button:not(:disabled)")?.focus();
     if (!active) setAddOpen(false);
   }, [active, addOpen]);
-  const openAction = useCallback((action: ConversationAction) => {
-    switch (action.kind) {
-      case "routine.create": setContext({ kind: "activity", request: { tab: "routines" } }); break;
-      case "routine.discuss": setContext({ kind: "activity", request: { row: `routine:${action.id}` } }); break;
-      case "responsibility.discuss": setContext({ kind: "activity", request: { row: `work:${action.id}` } }); break;
-      case "profile.discuss": setContext({ kind: "person", url: action.url }); break;
-      case "file.discuss": setContext({ kind: "files", file: { target: action.target, path: action.path } }); break;
-      case "machine.connect": setContext({ kind: "connect" }); break;
-      case "browser.start": setPlacesOpen(true); break;
-    }
-  }, []);
 
   /* places, from the instrument's targets cache; WireSync keeps it current from the wire */
   const targetsQuery = useQuery({
@@ -576,7 +560,6 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
       } else {
         fromRuntime.push({
           id: `outgoing:${outgoing.id}`, role: "human", text: outgoing.draft.message,
-          action: outgoing.draft.action,
           timestamp: outgoing.createdAt, processId: outgoing.draft.pid,
           runId: null, streaming: false, thinking: false, activities: [], narration: "", outgoing,
         });
@@ -734,17 +717,15 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
       }
       const accepted = outbox.send({
         pid, conversationId: conversation.conversation?.id,
-        message: draftAction ? conversationActionText({ ...draftAction, note: text || undefined }) : text,
-        ...(draftAction ? { action: { ...draftAction, note: text || undefined } } : undefined),
+        message: text,
         media: [...attachments], selectedTarget: where ?? defaultPlace(),
       });
       if (!accepted) return false;
       scrolling.follow();
       setAttachments([]);
-      setDraftAction(null);
       return true;
     },
-    [attachments, conversation.conversation?.id, draftAction, outbox.send, pid, scrolling.follow, where],
+    [attachments, conversation.conversation?.id, outbox.send, pid, scrolling.follow, where],
   );
 
   const voiceScope = `${snapshot.url}:${snapshot.username}:${pid ?? ""}:${currentPlace.id}`;
@@ -774,12 +755,8 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
     (raw: string) => {
       if (!connected || !pid || outbox.sending) return false;
       setNote(null);
-      if (raw && !draftAction) setInputHistory((current) => [...current.filter((entry) => entry !== raw), raw].slice(-50));
+      if (raw) setInputHistory((current) => [...current.filter((entry) => entry !== raw), raw].slice(-50));
       setHistoryIndex(null);
-      if (draftAction) {
-        if (raw.length > 32_768) { setNote("This request is too long. Shorten it before sending."); return false; }
-        return say(raw);
-      }
       const intent = parsePromptInput(raw);
       if (!intent) return !raw.trim() && attachments.length > 0 ? say("") : false;
       if (intent.kind === "switch") {
@@ -794,7 +771,7 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
       }
       return say(intent.text);
     },
-    [attachments.length, connected, draftAction, outbox.sending, pid, places, runDirectly, say],
+    [attachments.length, connected, outbox.sending, pid, places, runDirectly, say],
   );
 
   const onHistory = useCallback(
@@ -829,7 +806,6 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
     if (!input || input.disabled) return;
     setWhere(initialTarget ?? null);
     setAttachments([]);
-    setDraftAction(null);
     input.setValue(prefill);
     input.focus();
     onPrefillUsed?.();
@@ -997,8 +973,7 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
           />
         ) : null}
         {moment.role === "human" ? (
-          moment.action ? <ActionMessage action={moment.action} onOpen={openAction} />
-            : <ZenText text={moment.text} markdown={false} progress={settleProgress(moment)} tick={settling.has(moment.id) ? tick : 0} />
+          <ZenText text={moment.text} markdown={false} progress={settleProgress(moment)} tick={settling.has(moment.id) ? tick : 0} />
         ) : moment.text ? (
           <ZenText text={moment.text} places={places} markdown progress={moment.streaming ? -1 : settleProgress(moment)} tick={moment.streaming || settling.has(moment.id) ? tick : 0} onClick={onTextClick} />
         ) : moment.thinking || moment.streaming ? (
@@ -1023,7 +998,7 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
       </>;
     });
   }, [ready, moments, who, today, timeZone, places, openActivities, toggleActivity, onFleet,
-    receipts, memoryCollections.data, onMemory, pendingHil, settling, tick, onTextClick, openAction,
+    receipts, memoryCollections.data, onMemory, pendingHil, settling, tick, onTextClick,
     pid, connected, outbox.sending, outbox.cancelUpload, outbox.retry, outbox.discard]);
 
   /* the status line */
@@ -1162,11 +1137,6 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
             </div>
           ) : null}
 
-          {draftAction && <div class="zen-draft-action" aria-label="Request to send">
-            <span class="zen-draft-action-mark" aria-hidden="true">↗</span>
-            <span>{actionTitle(draftAction)}</span>
-            <button type="button" aria-label="Remove request" onClick={() => { setDraftAction(null); promptRef.current?.focus(); }}>×</button>
-          </div>}
           {attachments.length > 0 && <ul class="zen-draft-attachments" aria-label="Attachments to send">
             {attachments.map((attachment) => <ZenDraftAttachment key={attachment.id} attachment={attachment}
               onRemove={() => setAttachments((current) => current.filter((file) => file.id !== attachment.id))} />)}
@@ -1191,12 +1161,11 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
               placeholder="Message your ship"
               disabled={!pid || recordingVoice}
               onSubmit={onSubmit}
-              allowEmpty={attachments.length > 0 || !!draftAction}
-              commands={!draftAction}
+              allowEmpty={attachments.length > 0}
               onFiles={addFiles}
               onHistory={onHistory}
             />
-            {(hasDraft || attachments.length > 0 || draftAction) && <button type="button" class="zen-submit"
+            {(hasDraft || attachments.length > 0) && <button type="button" class="zen-submit"
               onPointerDown={(event) => { if (promptFocused) event.preventDefault(); }}
               disabled={!connected || !pid || outbox.sending || recordingVoice} onClick={() => promptRef.current?.submit()}>send</button>}
           </div>
@@ -1226,9 +1195,9 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
               <button type="button" role="menuitem" disabled={!viewer || (!canConfigure(viewer, "profile.resolve") && !canConfigure(viewer, "contact.list"))} onClick={() => { setAddOpen(false); setContext({ kind: "person" }); }}>find a person</button>
               <button type="button" role="menuitem" disabled={!viewer || !canConfigure(viewer, "fs.read")} onClick={() => { setAddOpen(false); setContext({ kind: "files" }); }}>reference a file</button>
               <div class="zen-add-rule" role="separator" />
-              <button type="button" role="menuitem" disabled={!viewer || !canConfigure(viewer, "conversation.send")} onClick={() => stageAction({ kind: "routine.create" })}>create a routine <span>ask Ship</span></button>
-              <button type="button" role="menuitem" disabled={!viewer || !canConfigure(viewer, "conversation.send")} onClick={() => stageAction({ kind: "machine.connect" })}>connect a computer <span>ask Ship</span></button>
-              <button type="button" role="menuitem" disabled={!viewer || !canConfigure(viewer, "conversation.send")} onClick={() => stageAction({ kind: "browser.start" })}>start a browser <span>ask Ship</span></button>
+              <button type="button" role="menuitem" disabled={!viewer || !canConfigure(viewer, "conversation.send")} onClick={() => stageRequest("Help me create a routine.")}>create a routine <span>ask Ship</span></button>
+              <button type="button" role="menuitem" disabled={!viewer || !canConfigure(viewer, "conversation.send")} onClick={() => stageRequest("Help me connect a computer to this space.")}>connect a computer <span>ask Ship</span></button>
+              <button type="button" role="menuitem" disabled={!viewer || !canConfigure(viewer, "conversation.send")} onClick={() => stageRequest("Start a browser for me.")}>start a browser <span>ask Ship</span></button>
             </div>
             <button ref={placeButtonRef} type="button" class="zen-place-trigger"
               aria-label={`Choose a place, currently ${currentPlace.label}`} aria-expanded={placesOpen} aria-controls="zen-places"
@@ -1288,7 +1257,7 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
       <ChatPanels context={context} active={active} account={viewer} targets={targetsQuery.data ?? []}
         ready={connected && !!targetsQuery.data && !targetsQuery.isError} onClose={() => setContext(null)} onDirty={setContextDirty}
         onConnected={(target) => { setWhere(target); setContext(null); promptRef.current?.focus(); }}
-        onAsk={stageAction} onFleet={(reference) => { setContext(null); onFleet(reference); }}
+        onAsk={stageRequest} onFleet={(reference) => { setContext(null); onFleet(reference); }}
         onPeople={(request) => { setContext(null); onPeopleActivity?.(request); }} />
       {active && searchOpen && conversation.conversation && <ConversationSearch key={conversation.conversation.id}
         conversationId={conversation.conversation.id} timeZone={timeZone} onClose={closeSearch} />}

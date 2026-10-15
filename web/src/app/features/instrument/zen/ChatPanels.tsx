@@ -1,4 +1,3 @@
-import type { ConversationAction } from "@humansandmachines/gsv/protocol";
 import { useLayoutEffect, useRef, useState } from "preact/hooks";
 import type { ConsoleAccount, ConsoleTarget } from "../../../domain/system/consoleModels";
 import { RetainedView, useViewActive } from "../../../services/navigation/ViewActivity";
@@ -23,7 +22,7 @@ export function ChatPanels({ context, active, account, targets, ready, onClose, 
   ready: boolean;
   onClose: () => void;
   onConnected: (target: string) => void;
-  onAsk: (action: ConversationAction) => void;
+  onAsk: (text: string) => void;
   onFleet: (reference: FleetReference) => void;
   onPeople: (request: PeopleOpenRequest) => void;
   onDirty: (dirty: boolean) => void;
@@ -59,7 +58,7 @@ function ChatFiles({ request, targets, ready, allowed, onAsk }: {
   targets: readonly ConsoleTarget[];
   ready: boolean;
   allowed: boolean;
-  onAsk: (action: ConversationAction) => void;
+  onAsk: (text: string) => void;
 }) {
   const active = useViewActive();
   const [file, setFile] = useState(request.file);

@@ -1,4 +1,3 @@
-import type { ConversationAction } from "@humansandmachines/gsv/protocol";
 import { useEffect, useLayoutEffect, useState } from "preact/hooks";
 import { useQuery } from "../../../services/navigation/viewQueries";
 import { useViewActive } from "../../../services/navigation/ViewActivity";
@@ -15,7 +14,7 @@ import type { ActivityRequest, ActivityRow } from "./chatContextModel";
 export function ChatActivity({ account, request, onAsk, onFleet, onDirty }: {
   account?: ConsoleAccount;
   request?: ActivityRequest;
-  onAsk: (action: ConversationAction) => void;
+  onAsk: (text: string) => void;
   onFleet: (reference: FleetReference) => void;
   onDirty: (dirty: boolean) => void;
 }) {
@@ -68,19 +67,19 @@ export function ChatActivity({ account, request, onAsk, onFleet, onDirty }: {
         <ResponsibilityInspector key={record.id} record={record} account={account}
           processName={(pid) => processes.data?.find((process) => process.pid === pid)?.label ?? pid}
           onProcess={(pid) => { if (pid) onFleet(`proc:${pid}`); }} />
-        <button type="button" class="fleet-text-action is-primary" disabled={!account || !canConfigure(account, "conversation.send")} onClick={() => onAsk({ kind: "responsibility.discuss", id: record.id, name: record.title })}>ask Ship</button>
+        <button type="button" class="fleet-text-action is-primary" disabled={!account || !canConfigure(account, "conversation.send")} onClick={() => onAsk(`Help me with the responsibility ${JSON.stringify(record.title)} (${record.id}).`)}>ask Ship</button>
         {record.source.kind === "schedule" && <button type="button" class="fleet-text-action" onClick={() => {
           if (record.source.kind === "schedule") { setTab("routines"); select(`routine:${record.source.scheduleId}`); }
         }}>view routine</button>}
       </> : routine ? <>
         <RoutineInspector key={routine.id} schedule={routine} account={account} onDirty={setDirty} onSelect={(id) => { setDirty(false); setRow(`routine:${id}`); }} />
         <button type="button" class="fleet-text-action is-primary" disabled={!account || !canConfigure(account, "conversation.send")}
-          onClick={() => onAsk({ kind: "routine.discuss", id: routine.id, name: routine.name })}>ask Ship</button>
+          onClick={() => onAsk(`Help me with the routine ${JSON.stringify(routine.name)} (${routine.id}).`)}>ask Ship</button>
       </> : account && !canConfigure(account, responsibilityId ? "r12y.get" : "sched.list") ? <p class="note">Your account cannot read this item.</p>
         : (responsibilityId ? responsibility.isPending : work.routines.isPending || work.routines.isFetchingNextPage) ? <LoadingState>Loading…</LoadingState>
         : <p class="note" role="status">{responsibility.error?.message ?? work.routines.error?.message ?? "This item is no longer available."}</p>}
     </> : tab === "standing" ? <StandingResponsibilities account={account} />
-      : tab === "routines" ? <RoutinesSection work={work} account={account} now={now} onSelect={select} onCreate={() => onAsk({ kind: "routine.create" })} />
+      : tab === "routines" ? <RoutinesSection work={work} account={account} now={now} onSelect={select} onCreate={() => onAsk("Help me create a routine.")} />
         : <ResponsibilitiesSection work={work} account={account} now={now} processes={processes.data ?? []} onSelect={select} />}
   </div>;
 }

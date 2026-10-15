@@ -1,5 +1,4 @@
 import type {
-  ConversationAction,
   InteractionOrigin,
   ProcContextState,
   ProcHilRequest,
@@ -93,7 +92,6 @@ export type ChatBackupModelInfo = {
 };
 
 export type ChatTranscriptRow = {
-  action?: ConversationAction;
   id: string;
   isError?: boolean;
   text: string;

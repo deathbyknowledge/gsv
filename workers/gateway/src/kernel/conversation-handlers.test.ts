@@ -94,7 +94,6 @@ function canonicalMessage(input: any): ConversationMessage {
     sequence: 1,
     author: input.author,
     text: input.text,
-    ...(input.action ? { action: input.action } : undefined),
     ...(input.selectedTarget ? { selectedTarget: input.selectedTarget } : undefined),
     ...(input.media ? { media: input.media } : undefined),
     origin: input.origin,
@@ -105,24 +104,6 @@ function canonicalMessage(input: any): ConversationMessage {
 }
 
 describe("conversation handlers", () => {
-  it("rejects action metadata that would conceal a different request", async () => {
-    await expect(handleConversationSend({ conversationId: SHIP.id, text: "Delete my files", action: { kind: "browser.start" } }, context()))
-      .rejects.toThrow("does not match its text");
-    expect(sendFrameToProcessMock).not.toHaveBeenCalled();
-  });
-
-  it("stores structured requests while admitting the same readable text to the Process", async () => {
-    const action = { kind: "machine.connect" as const, note: "My Linux computer" };
-    const text = "Help me connect a computer to this space.\n\nMy Linux computer";
-    const append = vi.fn(async (input: Parameters<typeof canonicalMessage>[0]) => ({ created: true, message: canonicalMessage(input) }));
-    getConversationByIdMock.mockReturnValue({ append });
-    sendFrameToProcessMock.mockImplementation(async (_installationId, _pid, frame) => ({
-      type: "res", id: frame.id, ok: true, data: { ok: true, runId: `run:${frame.args.interaction?.messageId}`, queued: false, status: "started" },
-    }));
-    const result = await handleConversationSend({ conversationId: SHIP.id, text, action }, context());
-    expect(result.message).toMatchObject({ text, action });
-    expect(sendFrameToProcessMock.mock.calls[0][2]).toMatchObject({ call: "proc.send", args: { message: text } });
-  });
   it("does not turn a message to a contact into input for Ship, including a legacy handler record", async () => {
     const ctx = context();
     vi.mocked(ctx.conversations.get).mockReturnValue({ ...SHIP, kind: "contact" });

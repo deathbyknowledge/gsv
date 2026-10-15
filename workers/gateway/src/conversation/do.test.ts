@@ -25,23 +25,6 @@ function message(sequence: number) {
 }
 
 describe("Conversation Durable Object", () => {
-  it("retains action requests across eviction and rejects changed or misleading replays", async () => {
-    const stub = conversation("action");
-    await stub.initialize({ ownerUid: 1000, kind: "ship" });
-    const action = { kind: "routine.create" as const, note: "Check my calendar each morning" };
-    const input = { ...message(1), text: "Help me create a routine.\n\nCheck my calendar each morning", action };
-    const first = await stub.append(input);
-    await evictDurableObject(stub);
-    expect((await stub.history()).messages).toEqual([first.message]);
-    expect(first.message.action).toEqual(action);
-    expect(await stub.append(input)).toEqual({ message: first.message, created: false });
-    await expect(runInDurableObject(stub, (instance: Conversation) => instance.append({ ...input, action: undefined })))
-      .rejects.toThrow("idempotency key payload changed");
-    await expect(runInDurableObject(stub, (instance: Conversation) => instance.append({ ...input, text: "A different request" })))
-      .rejects.toThrow("does not match its text");
-    await expect(runInDurableObject(stub, (instance: Conversation) => instance.append({ ...input, author: { kind: "process", uid: 1001, pid: "ship" } })))
-      .rejects.toThrow("require a human author");
-  });
   it("searches literal words and prefixes with stable pagination and plain snippets", async () => {
     const stub = conversation("search");
     await stub.initialize({ ownerUid: 1000, kind: "ship" });
@@ -143,8 +126,7 @@ describe("Conversation Durable Object", () => {
     };
     await runInDurableObject(stub, async (instance: Conversation) => {
       for (let index = 1; index <= 1_001; index += 1) {
-        await instance.append({ ...message(index), selectedTarget: index === 1 ? "macbook" : undefined, social: index === 1 ? social : undefined,
-          ...(index === 3 ? { text: "Help me create a routine.", action: { kind: "routine.create" as const } } : undefined) });
+        await instance.append({ ...message(index), selectedTarget: index === 1 ? "macbook" : undefined, social: index === 1 ? social : undefined });
       }
     });
     await stub.compact();
@@ -156,7 +138,6 @@ describe("Conversation Durable Object", () => {
     expect(archived.messages.map((item) => item.text)).toEqual(["message 1", "message 2"]);
     expect(archived.messages[0]?.selectedTarget).toBe("macbook");
     expect(archived.messages[1]?.selectedTarget).toBeUndefined();
-    expect((await stub.history({ beforeSequence: 4, limit: 1 })).messages[0]?.action).toEqual({ kind: "routine.create" });
     const aroundArchiveBoundary = await stub.history({ afterSequence: 498, limit: 4 });
     expect(aroundArchiveBoundary.messages.map((message) => message.sequence)).toEqual([499, 500, 501, 502]);
     expect(aroundArchiveBoundary.hasMore).toBe(true);

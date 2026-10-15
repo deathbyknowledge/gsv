@@ -1,5 +1,6 @@
 import { GSVClient, type GsvClientStatus } from "@humansandmachines/gsv/client";
 import type { ConversationMessage, ConversationSendArgs, ConversationSendResult, ConversationSummary, ProcContextState, ProcHilArgs, ProcHistoryRecord, SysTargetSummary } from "@humansandmachines/gsv/protocol";
+import { resourceBlockSchema } from "@humansandmachines/gsv/protocol";
 import { conversationSendMessageId } from "@humansandmachines/gsv/protocol/stable-id";
 import { QueryClient, QueryClientProvider } from "@tanstack/preact-query";
 import type { ComponentChildren, ComponentProps, ComponentType } from "preact";
@@ -19,8 +20,6 @@ import { NativeInputProvider, type NativeInput } from "../../../services/platfor
 import { Zen } from "./Zen";
 import { BrowserRequests } from "../browser/BrowserControl";
 import { ChatPanels } from "./ChatPanels";
-import { ActionMessage } from "./ActionMessage";
-import { conversationActionSchema, conversationActionText } from "@humansandmachines/gsv/protocol";
 import { ZenText } from "./ZenText";
 import { ThinkingMark } from "./ThinkingMark";
 import { ApprovalCard } from "../shared/ApprovalCard";
@@ -40,7 +39,7 @@ let processRecords: ProcHistoryRecord[];
 const signals = new Set<Parameters<GSVClient["onSignal"]>[0]>();
 const statuses = new Set<Parameters<GSVClient["onStatus"]>[0]>();
 const send = vi.fn<(args: ConversationSendArgs) => Promise<ConversationSendResult>>();
-const sendArgs = z.object({ conversationId: z.string(), text: z.string(), action: z.optional(conversationActionSchema), selectedTarget: z.string().optional(), idempotencyKey: z.string() });
+const sendArgs = z.strictObject({ conversationId: z.string(), text: z.string(), media: z.array(resourceBlockSchema).optional(), selectedTarget: z.string().optional(), idempotencyKey: z.string() });
 
 function conversation(pid = shipPid): ConversationSummary {
   return { id: "canonical-ship", kind: "ship", ownerUid, title: null, handlerPid: pid,
@@ -140,33 +139,72 @@ async function mountedZen(pid?: string, initialTarget?: string, native = false, 
 }
 
 describe("Zen conversation entry", () => {
-  it("stages an action without sending, treats dollar text as a note, and preserves it through commit signals", async () => {
+  it.each([
+    ["create a routine", "Help me create a routine."],
+    ["connect a computer", "Help me connect a computer to this space."],
+    ["start a browser", "Start a browser for me."],
+  ])("stages %s as editable text and sends only the edited message", async (label, request) => {
     const zen = await mountedZen();
     try {
       const setValue = vi.fn();
       zen.props(BrowserVoiceControls).prompt.current = {
         focus: vi.fn(), setValue,
-        selection: () => ({ value: "", start: 0, end: 0 }),
+        selection: () => ({ value: "$30 is my daily budget", start: 0, end: 0 }),
       };
-      const action = { kind: "routine.create" as const, note: "$30 is my daily budget" };
-      const text = conversationActionText(action);
-      const committed = { ...message("user", text), action };
-      send.mockResolvedValueOnce({ message: committed, handlerPid: shipPid, runId: "run:action" });
-      const option = zen.nodes().find((node) => node.type === "button" && node.props.role === "menuitem" && collectText(node).includes("create a routine"))!;
+      const option = zen.nodes().find((node) => node.type === "button" && node.props.role === "menuitem" && collectText(node).includes(label))!;
       await act(() => option.props.onClick!());
       expect(send).not.toHaveBeenCalled();
-      expect(zen.props(PromptLine).commands).toBe(false);
-      expect(zen.props(PromptLine).allowEmpty).toBe(true);
-      await act(() => { zen.props(PromptLine).onSubmit(action.note); });
-      await vi.waitFor(() => expect(send).toHaveBeenCalledWith(expect.objectContaining({ text, action })));
+      expect(setValue).toHaveBeenCalledWith(`${request}\n\n$30 is my daily budget`);
+      expect(zen.props(PromptLine).allowEmpty).toBe(false);
+      const text = "Actually, just explain the options.\n\n$30 is my daily budget";
+      const committed = message("user", text);
+      send.mockResolvedValueOnce({ message: committed, handlerPid: shipPid, runId: "run:request" });
+      await act(() => { zen.props(PromptLine).onSubmit(text); });
+      await vi.waitFor(() => expect(send).toHaveBeenCalledWith({
+        conversationId: "canonical-ship", text, selectedTarget: "gsv", idempotencyKey: expect.any(String),
+      }));
       await act(() => { for (const listener of signals) listener("message.committed", { message: committed, directed: true }); });
-      expect(zen.props(ActionMessage).action).toEqual(action);
-      expect(zen.props(PromptLine).commands).toBe(true);
+      expect(zen.props(ZenText).text).toBe(text);
       await act(() => zen.props(PromptLine).onHistory?.(-1));
-      expect(setValue).not.toHaveBeenCalled();
+      expect(setValue).toHaveBeenLastCalledWith(text);
       messages = [committed];
       await zen.refreshHistory();
-      expect(zen.props(ActionMessage).action).toEqual(action);
+      expect(zen.props(ZenText).text).toBe(text);
+    } finally { await zen.unmount(); }
+  });
+
+  it("keeps contextual references in the editable draft without hidden send state", async () => {
+    const zen = await mountedZen();
+    try {
+      const setValue = vi.fn();
+      zen.props(BrowserVoiceControls).prompt.current = {
+        focus: vi.fn(), setValue, selection: () => ({ value: "My existing draft", start: 0, end: 0 }),
+      };
+      await act(() => zen.props(PromptLine).onFiles?.([new File(["note"], "note.txt", { type: "text/plain" })]));
+      for (const text of [
+        'Help me with the responsibility "A task" (r12y:1).',
+        'Help me with the routine "Morning" (routine:1).',
+        "Help me with Ada's GSV profile: https://ada.gsv.space/profile",
+        "Use this file as context: @gsv /home/ada/notes.txt",
+      ]) {
+        await act(() => zen.props(ChatPanels).onAsk(text));
+        expect(setValue).toHaveBeenLastCalledWith(`${text}\n\nMy existing draft`);
+        expect(zen.props(PromptLine).allowEmpty).toBe(true);
+        expect(zen.dirty()).toBe(true);
+      }
+      expect(send).not.toHaveBeenCalled();
+      expect(zen.nodes().some((node) => node.props["aria-label"] === "Request to send")).toBe(false);
+    } finally { await zen.unmount(); }
+  });
+
+  it("renders legacy experimental history as ordinary readable text", async () => {
+    const text = "Help me create a routine.\n\nCheck my calendar.";
+    const legacy = { ...message("user", text), action: { kind: "routine.create", note: "Check my calendar." } };
+    messages = [legacy];
+    const zen = await mountedZen();
+    try {
+      expect(zen.props(ZenText).text).toBe(text);
+      expect(zen.nodes().some((node) => node.props.class === "zen-action-message")).toBe(false);
     } finally { await zen.unmount(); }
   });
 

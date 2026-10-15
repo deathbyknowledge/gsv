@@ -1,4 +1,3 @@
-import type { ConversationAction } from "@humansandmachines/gsv/protocol";
 import { LoadingState } from "../../../components/ui/Spinner";
 import { useGateway } from "../../../services/gateway/GatewayProvider";
 import { useQuery } from "../../../services/navigation/viewQueries";
@@ -25,7 +24,7 @@ export function FilePreview({
   onExpand?: () => void;
   placeLabel: string;
   onClose: () => void;
-  onAsk: (action: ConversationAction) => void;
+  onAsk: (text: string) => void;
   enabled?: boolean;
 }) {
   const { client, connected } = useGateway();
@@ -67,7 +66,7 @@ export function FilePreview({
       </div>
       <div class="fleet-actions">
         {onExpand && <button type="button" class="fleet-text-action" onClick={onExpand}>expand</button>}
-        <button type="button" class="fleet-text-action is-primary" onClick={() => onAsk({ kind: "file.discuss", target: file.target, path: file.path })}>
+        <button type="button" class="fleet-text-action is-primary" onClick={() => onAsk(`Use this file as context: @${file.target} ${file.path}`)}>
           talk about it
         </button>
         <button type="button" class="fleet-text-action" onClick={() => void navigator.clipboard?.writeText(file.path)}>

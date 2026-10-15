@@ -1,4 +1,3 @@
-import type { ConversationAction } from "@humansandmachines/gsv/protocol";
 import { useDraftGuard } from "../shared/useDraftGuard";
 import { LoadingState } from "../../../components/ui/Spinner";
 import { useMutation, useQueryClient } from "@tanstack/preact-query";
@@ -22,7 +21,7 @@ import "./memory.css";
 export type MemoryProps = {
   onDirtyChange?: (dirty: boolean) => void;
   initialPage?: MemoryPageRef | null;
-  onAsk: (action: ConversationAction) => void;
+  onAsk: (text: string) => void;
 };
 
 /**
@@ -325,7 +324,7 @@ export function Memory({ initialPage, onAsk, onDirtyChange }: MemoryProps) {
                   {creating ? <input autoFocus class="memory-page-name" value={newName} aria-label="New page name" placeholder="Page name" disabled={save.isPending} onInput={(event) => setNewName(event.currentTarget.value)} /> : <span class="path">{note?.path}</span>}
                   <span class="actions">
                     {pageStatus ? <span class={`status${pageStatus.error ? " is-error" : ""}`} role={pageStatus.error ? "alert" : "status"}>{pageStatus.text}</span> : null}
-                    {!editing && collection && note ? <button type="button" class="page-action" onClick={() => onAsk({ kind: "file.discuss", target: "gsv", path: `/src/repos/${collection.repo}/${libraryPathInDb(note.path, selectedDb)}` })}>ask about this</button> : null}
+                    {!editing && collection && note ? <button type="button" class="page-action" onClick={() => onAsk(`Use this file as context: @gsv /src/repos/${collection.repo}/${libraryPathInDb(note.path, selectedDb)}`)}>ask about this</button> : null}
                     {editing ? (
                       <>
                         <button type="button" class="ibtn is-primary" disabled={save.isPending || !connected || !writable} onClick={() => saveEdit()}>

@@ -1,5 +1,4 @@
 import type {
-  ConversationAction,
   ProcAbortResult,
   ProcAiConfigGetResult,
   ProcAiConfigSetArgs,
@@ -74,7 +73,6 @@ export type ChatSendDraft = {
   pid?: string;
   conversationId?: string;
   message: string;
-  action?: ConversationAction;
   selectedTarget?: string;
   media?: ChatMediaUpload[];
   /** Reuse for retries of the same draft, including its staged attachment paths. */

@@ -317,13 +317,11 @@ computer or start a browser. Selecting a request keeps the current text and
 attachments. The person can add details, remove the request, or send it normally.
 No selection creates a schedule, connects a device or contacts another person.
 
-A sent request has optional typed `action` metadata alongside its readable `text`.
-Instrument renders the object’s title, type and user note, with the full request
-available under **request**. Copies and clients without this rendering use the
-same readable text. The Kernel validates that the action’s text projection exactly
-matches the submitted text before admission. Only human-authored messages carry
-actions; they grant no authority. Action metadata participates in idempotency and
-survives SQLite migrations, history reads, live commits and R2 archiving.
+Requests are ordinary editable text in the composer, not hidden instructions or
+structured message actions. The whole request, including object IDs, profile URLs
+or file paths, can be changed or removed before sending. Sending uses the existing
+`conversation.send` text/media contract and the normal text history renderer; no
+request-specific gateway support or database migration is required.
 
 The **plans** shortcut opens responsibilities, routines and standing policies in
 Chat. Responsibilities retain hierarchy and show blockers before ordinary
@@ -332,3 +330,19 @@ record. Routines show their cadence and state, with pause/enable and edit contro
 creating one stages a request to Ship. These panels use the existing authorized
 syscalls and signal-driven caches. Closing them preserves drafts and pauses hidden
 reads. Fleet retains places and processes, with files opened from a place.
+
+### Withdrawing the local typed-request experiment
+
+The unshipped `message_action` migration (conversation ID 7) is no longer run.
+That ID remains reserved: subsequent migrations must start at 8. A local database
+that already applied it keeps its nullable `action_json` column and migration
+receipt untouched; ordinary text reads and inserts do not need either. Fresh
+conversations use the existing v6 schema. No down migration, archive rewrite,
+receipt deletion or database reset is part of this rollback.
+
+Previously stored experimental messages already contain the complete readable
+text. Instrument ignores their old metadata, including in archived messages.
+Their old idempotency hashes may include the removed metadata, so retrying an
+in-flight experimental send after changing versions can fail with a payload
+conflict. Inspect canonical history before deciding whether to submit again;
+do not delete receipts or automatically issue a new send identity.

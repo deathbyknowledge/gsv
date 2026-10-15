@@ -1,4 +1,3 @@
-import type { ConversationAction } from "@humansandmachines/gsv/protocol";
 import type { ActivityRequest } from "./zen/chatContextModel";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
 import { useColorTheme } from "../../components/ui/useColorTheme";
@@ -131,7 +130,7 @@ function InstrumentReady({ initialPath }: { initialPath: string }) {
   /* which process Zen shows: null is the ship; Fleet can open a helper's conversation */
   const [zenPid, setZenPid] = useState<string | null>(null);
   const [activityRequest, setActivityRequest] = useState<ActivityRequest>();
-  const [zenActionPrefill, setZenActionPrefill] = useState<ConversationAction | null>(null);
+  const [zenRequestPrefill, setZenRequestPrefill] = useState<string | null>(null);
   /* Ship's contact notices live here, above the keyed Zen view, so opening a helper and coming back keeps them */
   const accounts = useConsoleAccounts();
   const viewer = accounts.data?.find((account) => account.relation === "self");
@@ -390,19 +389,19 @@ function InstrumentReady({ initialPath }: { initialPath: string }) {
             if (page && memoryDirty && !window.confirm("Discard your unsaved page changes and open this page?")) return;
             if (!move("memory")) return;
             if (page) setSelectedMemoryPage({ ...page });
-          }} initialTarget={zenTarget} prefill={zenPrefill} actionPrefill={zenActionPrefill} activityRequest={activityRequest}
-          onPrefillUsed={() => { setZenPrefill(null); setZenActionPrefill(null); }} pid={zenPid}
+          }} initialTarget={zenTarget} prefill={zenPrefill} requestPrefill={zenRequestPrefill} activityRequest={activityRequest}
+          onPrefillUsed={() => { setZenPrefill(null); setZenRequestPrefill(null); }} pid={zenPid}
           contactReplies={zenPid ? undefined : contactReplies}
           peopleActivity={zenPid ? undefined : peopleActivity}
           onPeopleActivity={(request) => { if (move("people") && request) setPeopleRequest(request); }} />
         </RetainedView>
         <RetainedView active={distance === "memory"}>
-          <Memory onDirtyChange={setMemoryDirty} initialPage={selectedMemoryPage} onAsk={(action) => {
+          <Memory onDirtyChange={setMemoryDirty} initialPage={selectedMemoryPage} onAsk={(text) => {
             if (zenPid && zenDirty && !window.confirm("Discard your unsent message and return to Ship?")) return;
             if (!move("zen")) return;
             setZenPid(null);
             setZenTarget(null);
-            setZenPrefill(null); setZenActionPrefill(action);
+            setZenPrefill(null); setZenRequestPrefill(text);
           }} />
         </RetainedView>
         <RetainedView active={distance === "settings"}>
@@ -412,10 +411,10 @@ function InstrumentReady({ initialPath }: { initialPath: string }) {
           }} />
         </RetainedView>
         <RetainedView active={distance === "people"}>
-          <People onDirtyChange={setPeopleDirty} openRequest={peopleRequest} onAsk={(action) => {
+          <People onDirtyChange={setPeopleDirty} openRequest={peopleRequest} onAsk={(text) => {
             if (zenPid && zenDirty && !window.confirm("Discard your unsent message and return to Ship?")) return;
             if (!move("zen")) return;
-            setZenPid(null); setZenTarget(null); setZenPrefill(null); setZenActionPrefill(action);
+            setZenPid(null); setZenTarget(null); setZenPrefill(null); setZenRequestPrefill(text);
           }} />
         </RetainedView>
         <RetainedView active={distance === "fleet"}>
@@ -427,12 +426,12 @@ function InstrumentReady({ initialPath }: { initialPath: string }) {
             }}
             onDirtyChange={setFleetDirty}
             openRequest={fleetRequest}
-            onZen={(prefill, pid, action) => {
+            onZen={(prefill, pid, request) => {
               if ((Boolean(prefill) || (pid ?? null) !== zenPid) && zenDirty && !window.confirm("Discard your unsent message and attachments?")) return;
               if (!move("zen")) return;
               if (prefill || (pid ?? null) !== zenPid) setZenTarget(null);
               if (prefill) setZenPrefill(prefill);
-              if (action) setZenActionPrefill(action);
+              if (request) setZenRequestPrefill(request);
               setZenPid(pid ?? null);
             }}
           />

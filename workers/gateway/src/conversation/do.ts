@@ -9,7 +9,7 @@ import type {
   ResourceBlock,
   OriginMessageRef,
 } from "@humansandmachines/gsv/protocol";
-import { resourceBlockSchema, socialMessageMetadataSchema, originMessageRefSchema, validateConversationAction } from "@humansandmachines/gsv/protocol";
+import { resourceBlockSchema, socialMessageMetadataSchema, originMessageRefSchema } from "@humansandmachines/gsv/protocol";
 import { createInstallationStorage } from "../installation/storage";
 import { parseConversationDurableObjectName } from "../installation/routing";
 import type { GatewayEnv } from "../runtime-env";
@@ -473,10 +473,6 @@ function requireAppendInput(input: ConversationAppendRequest): void {
   requireNonempty(input.messageId, "messageId");
   requireNonempty(input.idempotencyKey, "idempotencyKey");
   if (input.social) socialMessageMetadataSchema.parse(input.social);
-  if (input.action !== undefined) {
-    if (input.author.kind !== "user") throw new Error("Message actions require a human author");
-    validateConversationAction(input.action, input.text);
-  }
   if (!input.text.trim() && !input.media?.length) {
     throw new Error("Conversation message requires text or media");
   }
@@ -494,7 +490,6 @@ async function hashAppendInput(
     text: input.text,
     selectedTarget: input.selectedTarget,
     ...(input.social ? { social: input.social } : undefined),
-    ...(input.action ? { action: input.action } : undefined),
     media: input.media ?? [],
     origin: input.origin,
     processId: input.processId ?? null,

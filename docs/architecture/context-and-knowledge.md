@@ -10,6 +10,11 @@ block, and copy preserves the code's indentation and internal line breaks.
 Memory's scrolling panes show a lavender top edge only where it cuts through
 text; blank space between lines and sections leaves the edge clear.
 
+Memory’s **ask about this** control adds the page’s GSV repository path to the
+Chat composer as ordinary editable text, preserving the existing draft and
+attachments. It does not send or edit the page. The eventual message uses the
+normal conversation text contract, without request-specific metadata.
+
 ## Layers
 
 | Layer | Location | Purpose |

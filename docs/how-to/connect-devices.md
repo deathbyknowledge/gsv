@@ -4,7 +4,7 @@ This is the distributed part. Connecting a device turns it into part of one comp
 
 ## Connect a machine
 
-In Chat, choose **+ → connect a computer**, or ask Ship directly. The shortcut stages a request; add a name and say whether it runs
+In Chat, choose **+ → connect a computer**, or ask Ship directly. The shortcut fills the composer with editable text; add a name and say whether it runs
 macOS, Linux or Windows. Ship can create the invitation and share the install and
 `gsv pair CODE` commands for you to run on that computer. If GSV is already installed,
 you only need the pairing command. Tell Ship when it finishes so it can check the connection.
@@ -26,6 +26,9 @@ On phones, Fleet's page and file reader scroll to the bottom of the visible
 screen. Their end padding leaves the last row or line clear of the home indicator.
 Fleet shows compact place and process rows on phones. Open a place for its details
 and **browse files**; responsibilities and routines are under **plans** in Chat.
+A file preview’s **talk about it** control adds its target and path to your Chat
+draft as editable text, keeping existing text and attachments. It sends nothing
+until you choose **send**.
 
 ## Connect a browser
 

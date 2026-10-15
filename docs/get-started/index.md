@@ -65,7 +65,7 @@ Existing standalone deployments should read the
 The web console is called **Instrument** and has five views:
 
 - **Chat** is your Ship conversation, and where you inspect what a run did.
-- **Fleet** lists your places, processes and responsibilities, and recently touched files.
+- **Fleet** lists your places and processes, with files opened from a place.
 - **Memory** shows your personal knowledge pages.
 - **People** holds conversations, message requests and private contacts across GSV spaces, plus your public profile.
 - **Settings** holds preferences (models), permissions, instructions, messengers, MCP connections and **Logs** for actions and their outcomes. The **sign-in** section appears only for root, for personal password resets and verified-owner linking.
@@ -74,10 +74,15 @@ On phones, tap **menu** in the header to switch views. A dot on the menu button
 marks unread People activity. Choosing a view
 closes the menu and keeps your drafts. Tap **GSV** to return to Chat.
 
-In Chat, **plans** opens your current responsibilities at the top of Fleet. Its
-count shows how many are still outstanding. Each responsibility shows its status
-or blocker and next check; tap it for details. **history** shows completed items.
-Your Chat draft stays intact while you look. Routines remain further down in Fleet.
+In Chat, **plans** opens a panel with your current responsibilities, routines and
+standing policies. Its count shows how many responsibilities are still outstanding.
+Each responsibility shows its status or blocker and next check; tap it for details.
+**history** shows completed items. Your Chat draft stays intact while you look.
+
+The **+** menu attaches files, finds people and files, and prepares requests to
+create a routine, connect a computer or start a browser. These requests and
+**ask Ship** controls add ordinary editable text to your draft. Review or change
+it before sending; selecting a request does not send it.
 
 In the browser and when added to your Home Screen, the header and bottom controls
 leave room for your phone's notch and home indicator. The star field still fills

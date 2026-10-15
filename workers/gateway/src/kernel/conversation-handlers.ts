@@ -19,7 +19,7 @@ import type {
   BinaryBody,
 } from "@humansandmachines/gsv/protocol";
 import type { InternalRequestFrame } from "../protocol/process-frames";
-import { REQUEST_CANCEL_SIGNAL, validateConversationAction } from "@humansandmachines/gsv/protocol";
+import { REQUEST_CANCEL_SIGNAL } from "@humansandmachines/gsv/protocol";
 import type { RequestFrame, ResponseFrame } from "../protocol/frames";
 import { raceWithAbort } from "../shared/abort";
 import { getConversationById, sendFrameToProcess } from "../shared/utils";
@@ -121,7 +121,6 @@ export async function handleConversationSend(
     throw new Error("Use contact.send to message a contact; conversation.send submits input to a local process");
   }
   const text = args.text;
-  const action = args.action === undefined ? undefined : validateConversationAction(args.action, text);
   if (!text.trim() && !(Array.isArray(args.media) && args.media.length > 0)) {
     throw new Error("conversation.send requires text or media");
   }
@@ -155,7 +154,6 @@ export async function handleConversationSend(
     idempotencyKey,
     author: { kind: "user", uid: conversation.ownerUid },
     text,
-    ...(action ? { action } : undefined),
     selectedTarget,
     media,
     mediaOwner: processMediaOwner(conversation.handlerPid, handler),

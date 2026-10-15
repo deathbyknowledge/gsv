@@ -29,24 +29,6 @@
 .zen-add-menu > button:hover, .zen-add-menu > button:focus-visible { color: var(--accent); background: var(--selected); outline: none; }
 .zen-add-rule { height: 1px; margin: 6px 16px; background: var(--rule-inner); }
 .zen-compose-actions { position: relative; }
-.zen-draft-action {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 4px 0 12px;
-  color: var(--accent);
-  font: 12px/1.5 var(--gsv-font-mono);
-}
-.zen-draft-action > span:nth-child(2) { overflow-wrap: anywhere; }
-.zen-draft-action > button { border: 0; background: none; color: var(--text-dim); cursor: pointer; font: inherit; min-width: 36px; min-height: 36px; }
-.zen-action-message { border-left: 1px solid var(--border-raised); padding: 4px 0 4px 16px; }
-.zen-action-kind { display: block; color: var(--text-dim); font: 10px/1.6 var(--gsv-font-mono); overflow-wrap: anywhere; }
-.zen-action-title { display: block; border: 0; padding: 4px 0; background: transparent; color: var(--accent); text-align: left; font: 500 20px/1.4 var(--gsv-font-prose); cursor: pointer; overflow-wrap: anywhere; }
-.zen-action-title > span { font-size: 12px; color: var(--text-dim); }
-.zen-action-note { margin: 8px 0 0; color: var(--text); font: 18px/1.5 var(--gsv-font-prose); white-space: pre-wrap; overflow-wrap: anywhere; }
-.zen-action-request { margin-top: 6px; font: 10px/1.5 var(--gsv-font-mono); color: var(--faint); }
-.zen-action-request summary { cursor: pointer; width: fit-content; }
-.zen-action-request p { white-space: pre-wrap; overflow-wrap: anywhere; color: var(--text-dim); }
 .chat-context-panel {
   width: min(560px, calc(100vw / var(--type-scale) - 32px));
   margin-right: max(16px, calc((100vw / var(--type-scale) - 1500px) / 2));

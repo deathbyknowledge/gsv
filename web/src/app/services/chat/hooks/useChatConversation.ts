@@ -6,7 +6,7 @@ import type {
   ConversationMessage,
   ConversationMessageOrigin,
 } from "@humansandmachines/gsv/protocol";
-import { resourceBlockSchema, socialMessageMetadataSchema, conversationActionSchema } from "@humansandmachines/gsv/protocol";
+import { resourceBlockSchema, socialMessageMetadataSchema } from "@humansandmachines/gsv/protocol";
 import type { GSVClient } from "@humansandmachines/gsv/client";
 import { z } from "zod";
 import { useGateway } from "../../gateway/GatewayProvider";
@@ -60,7 +60,6 @@ const messageSchema = z.object({
     z.object({ kind: z.literal("contact"), contactId: z.string(), shipId: z.string(), subjectId: z.string(), displayName: z.string() }),
   ]),
   text: z.string(),
-  action: z.optional(conversationActionSchema),
   social: z.optional(socialMessageMetadataSchema),
   media: z.array(z.union([resourceBlockSchema, mediaInputSchema])).optional(),
   origin: originSchema,
