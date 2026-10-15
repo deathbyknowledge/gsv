@@ -76,6 +76,34 @@ async function transcript(promptFocused = false) {
 afterEach(() => { vi.unstubAllGlobals(); });
 
 describe("transcript selection", () => {
+  it("selects the middle message in either scroll direction and the outer messages at the ends", async () => {
+    const chat = await transcript();
+    try {
+      chat.viewport.clientHeight = 600;
+      for (const [top, selected] of [[210, 2], [410, 3], [210, 2], [0, 0], [620, 5]]) {
+        chat.viewport.scrollTop = top;
+        await chat.emit("scroll");
+        expect(chat.state().selection).toBe(selected);
+      }
+    } finally { await chat.unmount(); }
+  });
+
+  it("selects the nearer message across gaps and stays on a tall message containing the center", async () => {
+    const chat = await transcript();
+    try {
+      for (const [top, selected] of [[30, 0], [50, 1]]) {
+        chat.viewport.scrollTop = top;
+        await chat.emit("scroll");
+        expect(chat.state().selection).toBe(selected);
+      }
+      chat.rows[1].offsetHeight = 560;
+      for (const row of chat.rows.slice(2)) row.offsetTop += 400;
+      chat.viewport.scrollHeight += 400;
+      chat.viewport.scrollTop = 400;
+      await chat.emit("scroll");
+      expect(chat.state().selection).toBe(1);
+    } finally { await chat.unmount(); }
+  });
   it("stays at the bottom when rendering briefly shrinks and restores the transcript before a scroll event", async () => {
     const chat = await transcript();
     try {
@@ -169,7 +197,7 @@ describe("transcript selection", () => {
     const chat = await transcript(true);
     try {
       await act(() => chat.state().move(-450));
-      expect(chat.state().selection).toBe(2);
+      expect(chat.state().selection).toBe(3);
       expect(chat.state().awayFromBottom).toBe(true);
       await act(() => chat.state().follow());
       expect(chat.state().selection).toBe(5);

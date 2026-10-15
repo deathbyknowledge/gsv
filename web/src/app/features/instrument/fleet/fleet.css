@@ -103,16 +103,14 @@
 .fleet tr[data-row] {
   cursor: pointer;
 }
-.fleet tr[data-row]:hover td {
-  background: var(--hover);
+@media (hover: hover) and (pointer: fine) {
+  .fleet tr[data-row]:hover td { background: var(--hover); }
 }
-.fleet tr[data-row]:focus-within td {
+.fleet tr[data-row]:focus-visible td {
   background: var(--selected);
 }
-.fleet tr[data-row]:focus-within td:first-child {
-  box-shadow: inset 3px 0 0 var(--accent);
-}
 .fleet tr[data-row]:focus-visible td:first-child {
+  box-shadow: inset 3px 0 0 var(--accent);
   text-decoration: underline;
   text-underline-offset: 0.25em;
 }
@@ -391,8 +389,7 @@
   }
   .fleet .fleet-places-table td:first-child, .fleet .fleet-processes-table td.name { font: 18px/1.4 var(--gsv-font-prose); }
   .fleet-places-table td:nth-child(2) { grid-column: 1; grid-row: 2; font-size: 11px; }
-  .fleet-places-table td:nth-child(3) { grid-column: 2; grid-row: 1 / 3; align-self: center; font-size: 11px; }
-  .fleet-places-table td:nth-child(4), .fleet-places-table td:nth-child(5),
+  .fleet-places-table td:nth-child(3), .fleet-places-table td:nth-child(4), .fleet-places-table td:nth-child(5),
   .fleet-processes-table td:nth-child(2), .fleet-processes-table td:nth-child(5), .fleet-processes-table td:nth-child(6) { display: none; }
   .fleet-processes-table td:nth-child(3) { grid-column: 1; grid-row: 2; font-size: 11px; }
   .fleet-processes-table td:nth-child(4) { grid-column: 2; grid-row: 1 / 3; align-self: center; font-size: 11px; }
@@ -443,8 +440,10 @@
 
 /* ledger rows are rows: hover, selection, and the accent inset, as in the tables */
 .fleet-ledger .row { cursor: pointer; }
-.fleet-ledger .row:hover { background: var(--hover); }
-.fleet-ledger .row:focus-within { background: var(--selected); box-shadow: inset 3px 0 0 var(--accent); }
+@media (hover: hover) and (pointer: fine) {
+  .fleet-ledger .row:hover { background: var(--hover); }
+}
+.fleet-ledger .row:focus-visible { background: var(--selected); box-shadow: inset 3px 0 0 var(--accent); }
 .fleet-ledger .row > span { padding: 1px 0; }
 .fleet-ledger .row:focus-visible .what { text-decoration: underline; text-underline-offset: 0.25em; }
 .fleet .line-detail { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; color: var(--label); }

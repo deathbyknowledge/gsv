@@ -89,7 +89,7 @@ export function Feedback({ view }: { view: Distance }) {
 
   if (!available && !preview) return null;
   return <>
-    <button type="button" aria-haspopup="dialog" onClick={() => {
+    <button type="button" class="feedback-trigger" aria-haspopup="dialog" onClick={() => {
       if (state === "sent") setState("idle");
       setOpen(true);
     }}>feedback</button>

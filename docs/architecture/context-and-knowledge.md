@@ -15,6 +15,8 @@ On phones, Memory shows either the full-height page browser or the reader/editor
 **continue editing →** returns to that draft. Wider screens keep both panes visible.
 The page browser and reader each center a large spinner while their data loads,
 with a loading label for screen readers and no visible caption.
+Touch scrolling does not highlight pages or folders; tapping opens them. Mouse hover and
+keyboard focus retain their navigation feedback.
 
 Memory’s **ask Ship** control adds the page’s GSV repository path to the
 Chat composer as ordinary editable text, preserving the existing draft and

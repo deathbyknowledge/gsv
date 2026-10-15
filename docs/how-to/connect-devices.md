@@ -25,9 +25,10 @@ at the top edge. The line and its glow fade gently between lines and rows;
 Reduce Motion makes the change immediate.
 On phones, Fleet's page and file reader scroll to the bottom of the visible
 screen. Their end padding leaves the last row or line clear of the home indicator.
-Fleet shows compact place and process rows on phones. Open a place for its details
-and **browse files**; responsibilities and routines open from the summary above
-Chat’s prompt or **+ → plans**. In a place’s file list, **../** moves up from the
+Fleet shows compact place and process rows on phones. A place's status square
+indicates its connection; tap the row for details and **browse files**.
+Responsibilities and routines open from the activity line above Chat's prompt.
+In a place’s file list, **../** moves up from the
 current starting folder and stops at that target’s filesystem root.
 **Chat → + → reference a file** selects a file into your draft in one tap.
 A file preview’s **talk about it** control adds its target and path to your Chat

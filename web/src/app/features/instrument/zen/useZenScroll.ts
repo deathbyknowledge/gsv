@@ -6,6 +6,17 @@ type Anchor = { id: string; offset: number };
 const key = (id: string) => id.replace(/^conversation-draft:/, "conversation:");
 const atBottom = (element: HTMLElement) => element.scrollHeight - element.clientHeight - element.scrollTop < 24;
 
+function firstRowEndingAfter(rows: readonly HTMLElement[], offset: number): number {
+  let low = 0;
+  let high = rows.length;
+  while (low < high) {
+    const middle = (low + high) >>> 1;
+    if (rows[middle].offsetTop + rows[middle].offsetHeight <= offset) low = middle + 1;
+    else high = middle;
+  }
+  return low;
+}
+
 /** Follow the bottom until the reader moves away; retain a message and its offset through layout changes. */
 export function useZenScroll({ moments, ready, promptFocused, hasOlder, loadingOlder, loadOlder }: {
   moments: readonly Moment[];
@@ -37,18 +48,24 @@ export function useZenScroll({ moments, ready, promptFocused, hasOlder, loadingO
     capturedTop.current = scrollTop;
     const top = scrollTop + inset();
     // Moments are laid out in transcript order; locate the first visible row without measuring every earlier row.
-    let low = 0;
-    let high = all.length;
-    while (low < high) {
-      const middle = (low + high) >>> 1;
-      const node = all[middle];
-      if (node.offsetTop + node.offsetHeight <= top) low = middle + 1;
-      else high = middle;
-    }
+    const low = firstRowEndingAfter(all, top);
     const first = low < all.length ? low : 0;
     anchors.current = all.slice(first, first + 3).map((node) => ({
       id: key(node.dataset.momentId!), offset: node.offsetTop - scrollTop,
     }));
+  }, [inset]);
+  const reading = useCallback(() => {
+    const element = viewport.current;
+    const all = nodes.current.ordered;
+    if (!element || !all.length) return null;
+    if (element.scrollTop <= 1) return key(all[0].dataset.momentId!);
+    if (atBottom(element)) return key(all[all.length - 1].dataset.momentId!);
+    const center = element.scrollTop + (inset() + element.clientHeight) / 2;
+    let index = Math.min(firstRowEndingAfter(all, center), all.length - 1);
+    const previous = all[index - 1];
+    if (previous && center < all[index].offsetTop
+      && center - previous.offsetTop - previous.offsetHeight < all[index].offsetTop - center) index -= 1;
+    return key(all[index].dataset.momentId!);
   }, [inset]);
   const write = useCallback((top: number) => {
     const element = viewport.current;
@@ -99,9 +116,9 @@ export function useZenScroll({ moments, ready, promptFocused, hasOlder, loadingO
     following.current = bottom && (following.current || element.scrollTop >= capturedTop.current);
     setAwayFromBottom(!bottom);
     capture();
-    setSelected(following.current ? null : anchors.current[0]?.id ?? null);
+    setSelected(following.current ? null : reading());
     if (!following.current && element.scrollTop < 80) readOlder();
-  }, [capture, readOlder]);
+  }, [capture, readOlder, reading]);
   const select = useCallback((index: number, reveal = true) => {
     const moment = current.current.moments[index];
     const element = viewport.current;
@@ -132,9 +149,9 @@ export function useZenScroll({ moments, ready, promptFocused, hasOlder, loadingO
     write(direction === "start" ? 0 : direction === "end" ? element.scrollHeight : element.scrollTop + (direction === "up" ? -distance : distance));
     following.current = atBottom(element);
     capture();
-    setSelected(following.current ? null : anchors.current[0]?.id ?? null);
+    setSelected(following.current ? null : reading());
     if (element.scrollTop < 80) readOlder();
-  }, [capture, inset, readOlder, write]);
+  }, [capture, inset, readOlder, reading, write]);
 
   useLayoutEffect(() => {
     if (!active) return;
@@ -186,9 +203,9 @@ export function useZenScroll({ moments, ready, promptFocused, hasOlder, loadingO
     write(element.scrollTop + delta);
     following.current = delta >= 0 && atBottom(element);
     capture();
-    setSelected(following.current ? null : anchors.current[0]?.id ?? null);
+    setSelected(following.current ? null : reading());
     if (element.scrollTop < 80) readOlder();
-  }, [capture, readOlder, stopFollowing, write]);
+  }, [capture, readOlder, reading, stopFollowing, write]);
 
   const selectedIndex = selected === null ? -1 : moments.findIndex((moment) => key(moment.id) === selected);
   const selection = moments.length === 0 ? null : selectedIndex < 0 ? moments.length - 1 : selectedIndex;

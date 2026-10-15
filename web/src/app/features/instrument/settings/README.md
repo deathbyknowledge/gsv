@@ -19,6 +19,9 @@ of the window. Only the content panes scroll; neither can pass behind the header
 - Logs shows action history, live outcomes, older pages and an inspector for request details and failures. Its process links open Fleet. The section mounts when opened and pauses reads, notifications and shortcuts while hidden. Fleet's activity summaries share the same ledger cache; ordinary live updates do not refetch it.
 
 Section and Instrument view switches preserve drafts without a discard dialog.
+On phones, Logs stacks the action/outcome above its place/time. The inspector holds
+arguments, purpose and process details; raw changes the action label without introducing
+horizontal table scrolling.
 Instrument retains Settings until the signed-in session ends; hiding it pauses
 background reads, UI notifications and model sign-in polling. Unsaved changes
 are reported for sign-out and browser unload handling. Retention does not save

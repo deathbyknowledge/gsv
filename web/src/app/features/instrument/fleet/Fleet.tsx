@@ -325,7 +325,7 @@ export function Fleet({ openRequest, onZen, onCommand, onDirtyChange, onActivity
                     onClick={() => selectRow(targetRow(place.id))}
                   >
                     <td>
-                      <span class={`dot ${place.kind === "cloud" ? "is-on" : place.online ? "is-on" : "is-idle"}`} />
+                      <span class={`dot ${place.kind === "cloud" ? "is-on" : place.online ? "is-on" : "is-idle"}`} role="img" aria-label={placeStateLabel(place)} />
                       {place.label}
                     </td>
                     <td class="kind">{place.kind}</td>

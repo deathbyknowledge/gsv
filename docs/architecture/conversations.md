@@ -36,9 +36,12 @@ On phones, both the prompt and its attachment, place and recording controls foll
 area as the browser toolbar or keyboard opens and closes. The star field keeps its full height.
 The keyboard's return key requests a Send action. iOS owns the field-navigation and Done bar above its keyboard;
 the web app cannot hide that bar through a supported browser API.
-Clicking or tapping a message selects it without scrolling. Scrolling selects the first visible
-message, or the latest message at the bottom, even while the composer has focus. The selection
+Clicking or tapping a message selects it without scrolling. Scrolling selects the message nearest
+the center of the visible transcript, or the first/latest message at either end, even while the composer has focus. The selection
 stays visible while typing; after leaving the input, `j` and `k` continue from that same message.
+On phones, the return-to-latest control is a down arrow at the right edge. Completed action
+receipts use a small **details** link in the message footer; tap it to expand the actions.
+Running work, failed actions, fallback notices and approvals remain visible in the transcript.
 
 ## Conversation kinds
 

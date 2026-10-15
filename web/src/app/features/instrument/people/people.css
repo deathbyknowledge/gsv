@@ -18,7 +18,9 @@
 .people input.people-filter { border: 0; background: transparent; padding: 4px 0; font-size: 15px; }
 .people-rows { list-style: none; padding: 0; margin: 0; }
 .people .people-row { width: 100%; min-height: 88px; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-content: center; column-gap: 12px; row-gap: 6px; padding: 20px 24px; text-align: left; border-left: 2px solid transparent; }
-.people-row:hover { background: color-mix(in srgb, var(--accent) 5%, transparent); }
+@media (hover: hover) and (pointer: fine) {
+  .people-row:hover { background: color-mix(in srgb, var(--accent) 5%, transparent); }
+}
 .people-row.is-selected { background: color-mix(in srgb, var(--accent) 9%, transparent); border-left-color: var(--accent); }
 .people-row-name { color: var(--text-title); font: 500 16px/1.3 var(--gsv-font-prose); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .people-row time { font-size: 9px; color: var(--faint); padding-top: 3px; }
@@ -132,11 +134,18 @@
   .people.is-inbox .people-list-heading h1 { display: none; }
   .people-list-heading-actions { flex: 1; justify-content: space-between; }
   .people-list-tools { padding: 4px 18px 12px; }
-  .people .people-row { min-height: 74px; padding: 14px 18px; gap: 4px 12px; }
+  .people .people-row { min-height: 104px; padding: 24px 18px; gap: 8px 12px; }
+  .people input.people-filter { min-height: 44px; padding: 10px 12px; border: 1px solid var(--border-raised); background: var(--panel-2); }
+  .people input.people-filter::placeholder { color: var(--text-dim); }
   .people-list-footer { position: relative; padding: 4px 18px; gap: 20px; border-top: 1px solid var(--border); }
   .people-list-footer .people-list-more { width: auto; }
   .people-list-more > div { position: absolute; z-index: 2; bottom: calc(100% + 4px); left: 12px; right: 12px; padding: 12px 18px; border: 1px solid var(--border); background: var(--panel); }
-  .people .people-list-footer .people-self { flex: 1; width: auto; border: 0; padding: 0; justify-content: flex-end; }
+  .people .people-list-footer .people-self { flex: 1; width: auto; border: 0; padding: 0; justify-content: flex-end; align-items: center; }
+  .people-list-footer .people-list-more > summary { display: flex; align-items: center; min-height: 44px; padding: 0; list-style: none; }
+  .people-list-footer .people-list-more > summary::-webkit-details-marker { display: none; }
+  .people-list-footer .people-list-more > summary::before { content: "▸"; margin-right: 6px; text-decoration: none; }
+  .people-list-footer .people-list-more[open] > summary::before { content: "▾"; }
+  .people-list-footer .people-self > small { font-size: 11px; line-height: 1.5; }
   .people-self > span { display: none; }
   .people .people-back { display: block; }
   .people-compose h1, .people-request h1 { font-size: 27px; }

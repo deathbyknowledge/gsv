@@ -246,14 +246,19 @@ const Receipt = memo(function Receipt({ receipt, who, places, collections, open,
   const worked = moment.activities.filter((activity) => !activity.you);
   const pages = onMemory ? memoryPagesForMoment(moment, collections) : [];
   const replies = receipt.replies.filter((reply) => reply.attribution);
+  const fallback = replies.some((reply) => reply.attribution?.fallbacks.length);
+  const quiet = receipt.replies.length > 0 && !live && !waitingCallId && !fallback && !summary.some((part) => part.tone === "failed");
   return (
-    <div class={`receipt${open ? " is-open" : ""}${live ? " is-live" : ""}`}>
+    <div class={`receipt${open ? " is-open" : ""}${live ? " is-live" : ""}${quiet ? " is-quiet" : ""}`}>
       <div class="line">
         <button type="button" class="receipt-toggle" aria-expanded={open} onClick={() => onToggleDetail(receipt.key)}>
-          <span class="receipt-chevron" aria-hidden="true">›</span>
-          {running ? <span class="pulse blink" /> : null}
-          {summary.map((part, index) => part.tone ? <span key={index} class={part.tone === "place" ? "place" : "is-failed"}>{part.text}</span> : part.text)}
-          {replies.some((reply) => reply.attribution?.fallbacks.length) ? <span class="is-failed"> · fallback used</span> : null}
+          <span class="receipt-compact">details</span>
+          <span class="receipt-summary">
+            <span class="receipt-chevron" aria-hidden="true">›</span>
+            {running ? <span class="pulse blink" /> : null}
+            {summary.map((part, index) => part.tone ? <span key={index} class={part.tone === "place" ? "place" : "is-failed"}>{part.text}</span> : part.text)}
+            {fallback ? <span class="is-failed"> · fallback used</span> : null}
+          </span>
         </button>
       </div>
       {open ? (
@@ -1098,7 +1103,7 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
           </div>
         )}
         {!empty && ready && scrolling.awayFromBottom && <button type="button" class="zen-jump-bottom"
-          aria-label="Jump to latest message" onClick={scrolling.follow}>↓ latest</button>}
+          aria-label="Jump to latest message" onClick={scrolling.follow}>↓<span> latest</span></button>}
       </div>
 
       <div class="zen-bottom">
@@ -1190,13 +1195,18 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
                 }
                 if (event.key === "Tab") setAddOpen(false);
               }}>
-              <button type="button" role="menuitem" onClick={() => { setAddOpen(false); fileInput.current?.click(); }}>attach a file</button>
-              <button type="button" role="menuitem" disabled={!viewer || (!canConfigure(viewer, "profile.resolve") && !canConfigure(viewer, "contact.list"))} onClick={() => { setAddOpen(false); setContext({ kind: "person" }); }}>find a person</button>
-              <button type="button" role="menuitem" disabled={!viewer || !canConfigure(viewer, "fs.read")} onClick={() => { setAddOpen(false); setContext({ kind: "files" }); }}>reference a file</button>
-              <div class="zen-add-rule" role="separator" />
-              <button type="button" role="menuitem" disabled={!viewer || !canConfigure(viewer, "conversation.send")} onClick={() => stageRequest("Help me create a routine.")}>create a routine <span>ask Ship</span></button>
-              <button type="button" role="menuitem" disabled={!viewer || !canConfigure(viewer, "conversation.send")} onClick={() => stageRequest("Help me connect a computer to this space.")}>connect a computer <span>ask Ship</span></button>
-              <button type="button" role="menuitem" disabled={!viewer || !canConfigure(viewer, "conversation.send")} onClick={() => stageRequest("Start a browser for me.")}>start a browser <span>ask Ship</span></button>
+              <div class="zen-add-section" role="group" aria-labelledby="zen-add-context-label">
+                <div class="zen-add-heading" id="zen-add-context-label">add context</div>
+                <button type="button" role="menuitem" class="is-file" onClick={() => { setAddOpen(false); fileInput.current?.click(); }}>attach a file <small>this device</small></button>
+                <button type="button" role="menuitem" class="is-person" disabled={!viewer || (!canConfigure(viewer, "profile.resolve") && !canConfigure(viewer, "contact.list"))} onClick={() => { setAddOpen(false); setContext({ kind: "person" }); }}>find a person <small>@handle</small></button>
+                <button type="button" role="menuitem" class="is-file" disabled={!viewer || !canConfigure(viewer, "fs.read")} onClick={() => { setAddOpen(false); setContext({ kind: "files" }); }}>reference a file <small>your places</small></button>
+              </div>
+              <div class="zen-add-section" role="group" aria-labelledby="zen-add-ship-label">
+                <div class="zen-add-heading" id="zen-add-ship-label">ask Ship</div>
+                <button type="button" role="menuitem" disabled={!viewer || !canConfigure(viewer, "conversation.send")} onClick={() => stageRequest("Help me create a routine.")}>create a routine</button>
+                <button type="button" role="menuitem" disabled={!viewer || !canConfigure(viewer, "conversation.send")} onClick={() => stageRequest("Help me connect a computer to this space.")}>connect a computer</button>
+                <button type="button" role="menuitem" disabled={!viewer || !canConfigure(viewer, "conversation.send")} onClick={() => stageRequest("Start a browser for me.")}>start a browser</button>
+              </div>
             </div>
             <button ref={placeButtonRef} type="button" class="zen-place-trigger"
               aria-label={`Choose a place, currently ${currentPlace.label}`} aria-expanded={placesOpen} aria-controls="zen-places"
@@ -1206,7 +1216,7 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
               onClick={() => { setPickerQuery(null); setPlacesOpen((open) => !open); }}>
               <span class={`zen-place-status${currentPlace.online ? " is-online" : ""}`} aria-hidden="true" />
               <span class="zen-place-label">{currentPlace.label}</span>
-              <span aria-hidden="true">⌄</span>
+              <span class="zen-place-chevron" aria-hidden="true" />
             </button>
             <div class="zen-input-actions">
               {nativeInput ? <NativeVoiceControls ref={voiceInput} prompt={promptRef} panelHost={nativePanels}

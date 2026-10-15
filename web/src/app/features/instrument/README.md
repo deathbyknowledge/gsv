@@ -138,6 +138,9 @@ Sending moves the text and attachments into the conversation immediately and cle
 Markdown code blocks share readable monospace sizing, contained horizontal scrolling and a quiet copy action across Chat, search excerpts and Memory. Copy preserves code whitespace without adding the renderer's final newline. Copy feedback stays outside the glyph animation; inline code wraps long tokens without widening the conversation.
 
 Each Ship message separates receipts. The work leading to a message stays in the receipt before it; further work starts a new receipt below that message, even within the same run. Replies keep their own content, order and model attribution. A receipt's identity follows its process, run and previous sent message, so open actions stay open when the next reply streams, commits or finishes. Calls without a run identity stay separate, and direct commands retain their terminal controls.
+On phones, a completed receipt with a reply collapses to a details link in the message footer.
+Expanding it restores the receipt above the reply. Live work, failures, fallbacks and approvals
+keep their summary visible. The latest-message button becomes a right-aligned down arrow.
 
 The receipt has three levels: work between messages, action purpose, evidence. Closed, active work names its current purpose; otherwise the receipt shows its action count and places. There is no thinking label, elapsed counter or timing annotation inside the receipt. Failures and retries remain visible, including retries continued after a message. Shell retry links require the same full command, working directory and session context on the same target; sharing an executable name is not enough. Opening the receipt shows an ordered list of purposes with small state indicators. Opening a purpose reveals its readable request, result, place, retry relationship and preceding working notes. Shell commands use the same `who@target $ command` presentation as approvals, with terminal output beneath. Files show paths and content, writes show their content, edits show before/after text, and searches show matching lines. Long content scrolls without a second UI truncation. Unattached notes have their own fold inside that receipt. Calls without a purpose use the same generated wording as approvals. Memory references and the reply's model attribution sit inside its receipt; approval decisions remain visible outside these folds, and only the receipt owning a pending action shows its waiting state. The earlier layout, grouped by place, stays behind `RECEIPT_LAYOUT` in `ReceiptTimeline.tsx`.
 
@@ -212,7 +215,8 @@ treated as the reader leaving the bottom. Hidden views disconnect these observer
 
 Pointer selection leaves the transcript in place, including long messages and
 text selection. Wheel, touch and native gesture scrolling update the same selected
-message used by keyboard navigation. Its highlight stays visible while the prompt
+message used by keyboard navigation: the message nearest the visible transcript's center,
+with the first/latest selected at either end. Its highlight stays visible while the prompt
 has focus; browse shortcuts become available again after leaving the input.
 On touchscreens, one tap selects a message and reveals its timestamp and copy
 action. Hover reveals these controls only on devices with a hover-capable pointer.
@@ -343,7 +347,7 @@ Approvals accept the ordinary controls and shortcuts. A new message or interrupt
 
 Text actions are the default. Choose the style from the control's role and placement:
 
-- Use text for toolbars, actions beside content, opening add/edit flows, and secondary actions such as back, cancel, refresh and discard. Header shortcuts and file toolbars stay text.
+- Use text for toolbars, actions beside content, opening add/edit flows, and secondary actions such as back, cancel, refresh and discard. Give these unboxed actions a subtle underline so they read as controls. Header shortcuts and file toolbars stay text.
 - Use blocks for grouped selectors such as Settings sections, with equal sizes and centered labels, and for the main confirmation within a focused form. Opening Add MCP server is a text action; submitting the resulting form uses a block.
 - Destructive actions use red and appropriate confirmation independently of shape. A contextual delete and its inline confirmation can both be text actions.
 - Preserve semantic buttons or links, keyboard focus, disabled states and usable click areas. An unboxed control still needs a usable target.

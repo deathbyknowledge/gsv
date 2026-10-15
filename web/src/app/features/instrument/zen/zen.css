@@ -58,6 +58,15 @@
 }
 .zen-jump-bottom:hover { color: var(--accent); border-color: var(--accent); }
 .zen-jump-bottom:focus-visible { outline: 1px solid var(--accent); outline-offset: 2px; }
+@container instrument (max-width: 720px) {
+  .zen .zen-jump-bottom { left: auto; right: 18px; transform: none; width: 44px; min-height: 44px; padding: 0; font-size: 20px; }
+  .zen-jump-bottom > span { display: none; }
+  .zen-moment:has(> .receipt.is-quiet:not(.is-open)) { padding-bottom: max(2.2vh, 32px); }
+  .receipt.is-quiet:not(.is-open) { position: absolute; left: 0; bottom: 0; border: 0; padding: 0; margin: 0; }
+  .receipt.is-quiet:not(.is-open) .receipt-toggle { min-height: 28px; color: var(--text-dim); font: 10px/1.4 var(--gsv-font-mono); text-decoration: underline; text-underline-offset: 3px; }
+  .receipt.is-quiet:not(.is-open) .receipt-summary { display: none; }
+  .receipt.is-quiet:not(.is-open) .receipt-compact { display: inline; }
+}
 .zen-history-status { display: flex; justify-content: center; gap: 16px; font-size: 11px; color: var(--text-dim); }
 .zen-history-status.is-err { color: var(--error); }
 .zen-moment {
@@ -263,6 +272,7 @@
 }
 .receipt-toggle:hover, .zen .work-link:hover { color: var(--text-hi); }
 .receipt-toggle { color: var(--label); }
+.receipt-compact { display: none; }
 .receipt-chevron { display: inline-block; width: 1ch; margin-right: 8px; color: var(--faint); }
 .receipt-toggle[aria-expanded="true"] .receipt-chevron { transform: rotate(90deg); }
 .receipt.is-live .receipt-toggle { font-family: var(--gsv-font-prose); font-size: 14px; letter-spacing: 0; }
@@ -573,6 +583,8 @@
 .zen-compose-actions button { min-height: 44px; }
 .zen-compose-actions .zen-place-trigger { display: flex; align-items: center; gap: 7px; min-width: 0; max-width: 50%; color: var(--text); }
 .zen-place-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.zen-place-chevron { flex: none; width: 6px; height: 6px; border-right: 1px solid currentColor; border-bottom: 1px solid currentColor; transform: translateY(-2px) rotate(45deg); }
+.zen-place-trigger[aria-expanded="true"] .zen-place-chevron { transform: translateY(2px) rotate(225deg); }
 .zen-input-actions { display: flex; flex-shrink: 0; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 0 16px; min-width: 0; max-width: 60%; margin-left: auto; }
 .zen-connection-status { display: block; min-height: 1.5em; font-size: 11px; color: var(--text-dim); }
 .zen-connection-status:empty { display: none; }

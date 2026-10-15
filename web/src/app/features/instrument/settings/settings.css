@@ -13,6 +13,17 @@
 .settings-logs-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 1rem; }
 .settings-logs-list { overflow-x: auto; margin-bottom: 1rem; }
 .settings-logs .fleet-ledger { min-width: 48rem; }
+@container instrument (max-width: 720px) {
+  .settings-logs-list { overflow-x: visible; }
+  .settings-logs .fleet-ledger { min-width: 0; display: block; }
+  .settings-logs .fleet-ledger .row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 5px 16px; padding: 16px 0; border-top: 1px solid var(--rule-inner); }
+  .settings-logs .fleet-ledger .row > span { min-width: 0; white-space: normal; overflow-wrap: anywhere; }
+  .settings-logs .fleet-ledger .what { grid-area: 1 / 1; font: 16px/1.4 var(--gsv-font-prose); color: var(--text); }
+  .settings-logs .fleet-ledger .outcome { grid-area: 1 / 2; font-size: 10px; }
+  .settings-logs .fleet-ledger .place { grid-area: 2 / 1; font-size: 10px; }
+  .settings-logs .fleet-ledger .t { display: block; grid-area: 2 / 2; font-size: 10px; text-align: right; }
+  .settings-logs .fleet-ledger .detail, .settings-logs .fleet-ledger .who { display: none; }
+}
 .settings h1 { font-size: 1.3rem; text-transform: lowercase; }
 .settings h2 { margin-top: 2.5rem; }
 .settings p { line-height: 1.7; }

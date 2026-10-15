@@ -28,6 +28,7 @@
   --inspector-bg: rgba(10, 8, 32, 0.55);
   line-height: 1.5;
   overflow: hidden;
+  touch-action: pan-x pan-y;
   -webkit-font-smoothing: antialiased;
 }
 /* :where keeps the reset at element specificity, so .ibtn and friends win the way the prototype's did */
@@ -45,6 +46,12 @@
 .instrument :is(button, a, summary):focus-visible {
   text-decoration: underline;
   text-underline-offset: 0.25em;
+}
+.instrument :is(.fleet-heading-action, .fleet-text-action, .settings-text-action, .people-action, .page-action, .file-reader-action, .memory-new-page, .memory-resume, .memory-browse, .zen-plans, .zen-submit, .zen-copy-message, .people-list-more > summary, .people-self > small, .instrument-menu-toggle, .feedback-trigger, .browser-voice-controls > button, .native-input-trigger) {
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, currentColor 45%, transparent);
+  text-underline-offset: .25em;
+  text-decoration-thickness: 1px;
 }
 :where(.instrument) a {
   color: var(--accent);
@@ -215,7 +222,7 @@
   .instrument-header { grid-template-columns: minmax(0, 1fr) auto; }
   .instrument-header .instrument-identity { max-width: 100%; gap: 16px; }
   .instrument-header .instrument-identity > button { min-height: 44px; }
-  .instrument-current-view { display: inline; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .instrument-current-view { display: inline; color: var(--text-hi); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .instrument-menu-toggle { display: flex; align-items: center; justify-content: center; min-width: 44px; min-height: 44px; margin-right: -8px; font-size: 12px; }
   .instrument-header .keys {
     display: none;
