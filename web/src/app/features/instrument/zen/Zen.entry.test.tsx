@@ -186,7 +186,7 @@ describe("Zen conversation entry", () => {
       for (const text of [
         'Help me with the responsibility "A task" (r12y:1).',
         'Help me with the routine "Morning" (routine:1).',
-        "Help me with Ada's GSV profile: https://ada.gsv.space/profile",
+        "Help me with Ada's Ship profile: https://ada.gsv.space/profile",
         "Use this file as context: @gsv /home/ada/notes.txt",
       ]) {
         await act(() => zen.props(ChatPanels).onAsk(text));

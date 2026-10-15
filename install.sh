@@ -296,7 +296,7 @@ play_animation() {
     trap 'exit 0' INT TERM HUP
     local resized=1
     trap 'resized=1' WINCH
-    local frames=() record size cols rows width height left top picture status index frame=0 title="GSV"
+    local frames=() record size cols rows width height left top picture status index frame=0 title="Ship"
     while true; do
         if [ "$resized" -eq 1 ]; then
             resized=0
@@ -353,7 +353,7 @@ start_animation() {
     download_file "$url" "$TMP_DIR/$asset" 3 >/dev/null 2>&1 && \
         verify_asset "$asset" "$TMP_DIR/$asset" "$TMP_DIR/checksums.txt" >/dev/null 2>&1 && \
         gzip -dc "$TMP_DIR/$asset" > "$TMP_DIR/animation.frames" 2>/dev/null || return 0
-    printf 'Downloading GSV' > "$TMP_DIR/animation.status"
+    printf 'Downloading Ship' > "$TMP_DIR/animation.status"
     exec 3>&1 4>&2
     ANIMATION_ACTIVE=1
     exec > "$TMP_DIR/install.log" 2>&1
@@ -434,7 +434,7 @@ explain_existing_install_dir() {
         info "Updating the existing installation in $INSTALL_DIR"
         return
     fi
-    warn "Updating the existing installation in $INSTALL_DIR. Automatic daemon updates need a directory this user can write; to move to the default, run: curl -fsSL https://install.gsv.space | GSV_INSTALL_DIR=\"\$HOME/.gsv/bin\" bash, then remove the old gsv, gsvd, gsv-desktop, gsv-transcribe, and gsv-vision files from $INSTALL_DIR and run gsv daemon install."
+    warn "Updating the existing installation in $INSTALL_DIR. Automatic daemon updates need a directory this user can write; to move to the default, run: curl -fsSL https://raw.githubusercontent.com/deathbyknowledge/gsv/main/install.sh | GSV_INSTALL_DIR=\"\$HOME/.gsv/bin\" bash, then remove the old gsv, gsvd, gsv-desktop, gsv-transcribe, and gsv-vision files from $INSTALL_DIR and run gsv daemon install."
 }
 
 PATH_MARKER="# Added by the GSV installer"
@@ -497,7 +497,7 @@ open_desktop() {
     [ "${GSV_NO_LAUNCH:-0}" != 1 ] && [ -z "${CI:-}${SSH_CONNECTION:-}${SSH_TTY:-}" ] || return 0
     [ -t 1 ] && [ -t 2 ] || return 0
     if [ "$OS" = linux ] && [ -z "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ]; then return 0; fi
-    info "Opening GSV Desktop"
+    info "Opening Ship Desktop"
     if ! "$INSTALL_DIR/gsv" desktop; then
         warn "Desktop could not open. Installation succeeded; retry with: \"$INSTALL_DIR/gsv\" desktop"
     fi
@@ -698,6 +698,7 @@ set_release_channel_in_config() {
 }
 
 persist_release_channel() {
+    ln -sfn gsv "${INSTALL_DIR}/ship"
     if [ -z "$VERSION" ]; then
         "${INSTALL_DIR}/gsv" config --local set release.channel "$CHANNEL" >/dev/null 2>&1 || \
             warn "Could not persist release.channel"
@@ -766,7 +767,7 @@ main() {
     EXECUTABLES=(1 1 1 1 1 0 0 0 0 0)
 
     echo ""
-    echo -e "  ${BOLD}GSV host installer${NC} · ${PLATFORM} · ${release_ref}"
+    echo -e "  ${BOLD}Ship host installer${NC} · ${PLATFORM} · ${release_ref}"
     echo ""
     info "Downloading release manifest"
     local checksum_url

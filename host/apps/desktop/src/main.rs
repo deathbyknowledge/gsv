@@ -359,7 +359,7 @@ fn main() {
                 .open(directory.join("desktop.lock"))?;
             instance_lock
                 .try_lock_exclusive()
-                .map_err(|_| std::io::Error::other("GSV is already running."))?;
+                .map_err(|_| std::io::Error::other("Ship is already running."))?;
             // Import the explicitly supported upgrade once; never read CLI or driver credentials.
             if let Some(parent) = directory.parent() {
                 SessionStore::import_previous_session(
@@ -424,7 +424,7 @@ fn main() {
             Ok(())
         })
         .build(tauri::generate_context!())
-        .expect("start GSV");
+        .expect("start Ship");
     app.run(|app, event| match event {
         tauri::RunEvent::ExitRequested { api, .. } => {
             let host = app.state::<Host>();

@@ -17,7 +17,7 @@ export async function openPersistenceBackend(): Promise<FsPersistenceBackend> {
   try {
     return { kind: "indexeddb", db: await openFsDatabase() };
   } catch (error) {
-    console.warn("GSV browser target IndexedDB filesystem unavailable, using memory", error);
+    console.warn("Ship browser target IndexedDB filesystem unavailable, using memory", error);
     return { kind: "memory" };
   }
 }

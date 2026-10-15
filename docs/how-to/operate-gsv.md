@@ -1,4 +1,4 @@
-# Run GSV for your people
+# Run Ship for your people
 
 One operator deployment serves multiple isolated installations. The public
 composition includes the installation directory, administration, Gateway,

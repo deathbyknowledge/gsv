@@ -63,7 +63,7 @@ export function ModelEditor({ account, config, models, profile, active, onDirty,
   const codex = provider === "openai-codex";
   const custom = provider === "custom";
   const model = fixedModel ?? values["config/ai/model"] ?? "";
-  const displayName = name.trim() || (fixedModel ? "GSV included" : model.trim().slice(0, 80));
+  const displayName = name.trim() || (fixedModel ? "Ship included" : model.trim().slice(0, 80));
   const profiles = modelProfilesFromListing(models, [], account.uid);
   const duplicateName = profiles.some((candidate) => candidate.id !== initial.profile?.id && candidate.name.toLowerCase() === displayName.toLowerCase());
   const connectionChanged = !!initial.profile && modelConnectionChanged(initial.values, values);

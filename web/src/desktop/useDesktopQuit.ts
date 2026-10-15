@@ -10,7 +10,7 @@ export function useDesktopQuit(flush: (() => Promise<void>) | undefined, onError
     quitting.current = true;
     void Promise.resolve().then(() => flush?.()).then(() => invoke("desktop_quit")).catch(() => {
       quitting.current = false;
-      onError("Could not quit GSV.");
+      onError("Could not quit Ship.");
     });
   }, [flush, onError]);
   const requestQuit = useCallback(() => {

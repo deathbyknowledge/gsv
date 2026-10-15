@@ -307,3 +307,11 @@ The Windows workflow separately tests SCM, IPC, shell process trees and installe
 rollback, then builds Desktop and helpers and runs recorded gesture parity.
 Physical microphone/camera permissions, GUI onboarding/UAC and reboot recovery
 also need a Windows release smoke test on an actual computer.
+
+## Product and command names
+
+Ship is the displayed product name. The `ship` external command delegates to the
+existing `gsv` executable and shares its configuration, permissions and transport.
+Native executable names, the `space.gsv.desktop` bundle identifier, service names
+and stored paths remain stable. macOS bundles use `Ship.app`; the CLI can still
+locate an existing `GSV.app`.

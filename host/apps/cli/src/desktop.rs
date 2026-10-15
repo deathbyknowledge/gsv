@@ -129,7 +129,7 @@ where
             }
             Err(error) if desktop_is_starting(&error) => {
                 return Err(format!(
-                    "GSV Desktop did not expose its control endpoint within {startup_timeout:?}"
+                    "Ship Desktop did not expose its control endpoint within {startup_timeout:?}"
                 )
                 .into());
             }
@@ -151,7 +151,7 @@ fn desktop_is_starting(error: &Error) -> bool {
 
 fn not_running_error(error: Error) -> DynError {
     if desktop_is_absent(&error) {
-        "GSV Desktop is not running; start it with `gsv desktop`".into()
+        "Ship Desktop is not running; start it with `gsv desktop`".into()
     } else {
         error.into()
     }
@@ -203,17 +203,23 @@ fn resolve_desktop_executable() -> Result<PathBuf, DynError> {
         return Ok(path.canonicalize().unwrap_or(path));
     }
 
-    Err("Could not find the `gsv-desktop` executable. Install the complete GSV distribution or set GSV_DESKTOP_PATH."
+    Err("Could not find the `gsv-desktop` executable. Install the complete Ship distribution or set GSV_DESKTOP_PATH."
         .to_string()
         .into())
 }
 
 #[cfg(target_os = "macos")]
 fn macos_bundle_executable(cli_parent: &Path) -> Option<PathBuf> {
-    let app_bundle = cli_parent.parent()?.join("GSV.app");
-    ["gsv-desktop"]
+    let directory = cli_parent.parent()?;
+    ["Ship.app", "GSV.app"]
         .into_iter()
-        .map(|name| app_bundle.join("Contents").join("MacOS").join(name))
+        .map(|name| {
+            directory
+                .join(name)
+                .join("Contents")
+                .join("MacOS")
+                .join("gsv-desktop")
+        })
         .find(|candidate| candidate.is_file())
 }
 
@@ -261,7 +267,7 @@ fn launch_desktop(executable: &Path) -> Result<(), DynError> {
         .map(|_| ())
         .map_err(|error| {
             format!(
-                "Failed to launch GSV Desktop at {}: {error}",
+                "Failed to launch Ship Desktop at {}: {error}",
                 executable.display()
             )
             .into()

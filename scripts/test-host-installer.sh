@@ -175,6 +175,7 @@ run_installer() {
 
 run_installer
 test "$("$INSTALL_DIR/gsv")" = "gsv-v1"
+test "$("$INSTALL_DIR/ship")" = "gsv-v1"
 test "$("$INSTALL_DIR/gsvd")" = "gsvd-v1"
 test "$("$INSTALL_DIR/gsv-desktop")" = "desktop-v1"
 test "$("$INSTALL_DIR/gsv-transcribe")" = "transcribe-v1"

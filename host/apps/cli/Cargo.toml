@@ -1,7 +1,12 @@
 [package]
 name = "gsv"
+default-run = "gsv"
 version.workspace = true
 edition = "2021"
+
+[[bin]]
+name = "ship"
+path = "src/ship.rs"
 
 [dependencies]
 daemon-protocol = { path = "../../crates/daemon-protocol" }

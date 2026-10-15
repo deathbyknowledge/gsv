@@ -69,7 +69,7 @@ jobs:
         run: host/scripts/package-macos.sh --release --output release
       - name: Check app permissions and executables
         run: |
-          app="release/GSV.app"
+          app="release/Ship.app"
           plutil -lint "$app/Contents/Info.plist"
           plutil -extract NSCameraUsageDescription raw "$app/Contents/Info.plist"
           plutil -extract NSMicrophoneUsageDescription raw "$app/Contents/Info.plist"

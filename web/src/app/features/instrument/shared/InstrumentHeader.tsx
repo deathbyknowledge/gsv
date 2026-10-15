@@ -26,7 +26,7 @@ export function InstrumentHeader({ distance, onNavigate, peopleWaiting, helper, 
   return (
     <header class="instrument-top instrument-header">
       <div class="instrument-identity">
-        <button type="button" aria-label="GSV · Open Chat" onClick={() => onNavigate("zen")}>
+        <button type="button" aria-label="Ship · Open Chat" onClick={() => onNavigate("zen")}>
           <Wordmark />
         </button>
         {distance !== "zen" && <span class="instrument-current-view">{distance}</span>}

@@ -1,6 +1,6 @@
-# Install and upgrade GSV host applications
+# Install and upgrade Ship host applications
 
-The GSV release is one versioned host distribution. The operator CLI (`gsv`),
+The Ship release is one versioned host distribution. The operator CLI (`gsv`),
 machine daemon (`gsvd`), Desktop, and Desktop's transcription and gesture-vision
 helpers share the version in the repository root `VERSION` file. The CLI
 refuses to manage a mismatched daemon.
@@ -23,18 +23,18 @@ not currently published.
 On Linux or macOS:
 
 ```bash
-curl -fsSL https://install.gsv.space | bash
+curl -fsSL https://raw.githubusercontent.com/deathbyknowledge/gsv/main/install.sh | bash
 ```
 
 On Windows, download `gsv-desktop-windows-x64-setup.exe` from the release and
 run it, or use Windows PowerShell 5.1 or PowerShell 7:
 
 ```powershell
-irm https://install.gsv.space/install.ps1 | iex
+irm https://raw.githubusercontent.com/deathbyknowledge/gsv/main/install.ps1 | iex
 ```
 
 After a successful installation in a local graphical terminal, the script opens
-GSV Desktop automatically. Set `GSV_NO_LAUNCH=1` to skip opening it. Headless,
+Ship Desktop automatically. Set `GSV_NO_LAUNCH=1` to skip opening it. Headless,
 SSH, CI and redirected sessions do not launch Desktop. A launch failure leaves
 the installation intact and prints the error so you can fix it and run
 `gsv desktop` again.
@@ -45,12 +45,12 @@ directory selected during the previous setup. The ZIP contains the same payload 
 `install.ps1`; extract it and run `./install.ps1 -AssetDirectory .`.
 Desktop needs WebView2 and the Visual C++ x64 runtime; the installer downloads
 and verifies Microsoft's installers when either is missing. Internet access is
-needed for missing runtimes even when the GSV payload is already downloaded.
+needed for missing runtimes even when the Ship payload is already downloaded.
 
 For a Windows server without Desktop:
 
 ```powershell
-Invoke-WebRequest -UseBasicParsing https://install.gsv.space/install.ps1 -OutFile install.ps1
+Invoke-WebRequest -UseBasicParsing https://raw.githubusercontent.com/deathbyknowledge/gsv/main/install.ps1 -OutFile install.ps1
 ./install.ps1 -Headless
 ```
 
@@ -72,7 +72,7 @@ to use text explicitly.
 
 ## Sign-in and multiple windows
 
-Look for the ASCII ship icon to open GSV Desktop. It matches the ship on the
+Look for the ASCII ship icon to open Ship Desktop. It matches the ship on the
 sign-in page and the browser's Home Screen shortcut.
 
 **Open your space** lets you choose an owned space or enter a handle or domain.
@@ -129,7 +129,7 @@ whole, so the installer leaves it and its service alone and adds a separate
 command-line installation in the default directory. To migrate by hand:
 
 ```bash
-curl -fsSL https://install.gsv.space | GSV_INSTALL_DIR="$HOME/.gsv/bin" bash
+curl -fsSL https://raw.githubusercontent.com/deathbyknowledge/gsv/main/install.sh | GSV_INSTALL_DIR="$HOME/.gsv/bin" bash
 sudo rm /usr/local/bin/gsv /usr/local/bin/gsvd /usr/local/bin/gsv-desktop \
   /usr/local/bin/gsv-transcribe /usr/local/bin/gsv-vision
 gsv daemon install
@@ -158,7 +158,7 @@ Services. Use UNC paths for network shares and grant that account access.
 Reinstallation and upgrades preserve administrator-configured service settings,
 including its account, startup mode, recovery policy and state-directory access.
 A conflicting `gsvd`
-registration must be resolved by an administrator before GSV can replace it.
+registration must be resolved by an administrator before Ship can replace it.
 
 The protected executable lives at `%ProgramFiles%\GSV\service\gsvd.exe`.
 Daemon enrollment and logs live at `%ProgramData%\GSV\daemon`; CLI and Desktop
@@ -166,7 +166,7 @@ credentials stay in your profile. Only the enrolling user and administrators
 can manage this service. One machine service has one enrolled owner; another
 Windows user cannot silently replace it. `gsv daemon uninstall` stops and
 removes the service and its workspace access grant while retaining enrollment,
-logs, protected service binaries and workspace data. Removing GSV through Apps
+logs, protected service binaries and workspace data. Removing Ship through Apps
 also removes the user applications, shortcut and PATH entry. Saved service
 state remains available for reinstall by the same owner.
 Uninstall still removes the stopped service if its configuration is damaged or
@@ -271,7 +271,7 @@ sudo apt-get install libwebkit2gtk-4.1-0 gstreamer1.0-plugins-base gstreamer1.0-
 ```
 
 macOS releases also include `gsv-desktop-darwin-arm64.zip` and
-`gsv-desktop-darwin-x64.zip`, each containing `GSV.app` with the CLI, daemon and
+`gsv-desktop-darwin-x64.zip`, each containing `Ship.app` with the CLI, daemon and
 helpers. The developer app is ad-hoc signed and unnotarized. After the first
 blocked launch, use System Settings → Privacy & Security → Open Anyway.
 Replace the bundle to update it. Windows includes both local helpers; microphone
@@ -306,4 +306,17 @@ microphone. Its first run downloads the same verified model used by Desktop.
 
 Windows release artifacts are unsigned unless the release runner has a signing
 certificate configured. SmartScreen may show an unknown-publisher warning.
-The installer still checks every GSV asset against the release manifest.
+The installer still checks every Ship asset against the release manifest.
+
+## The Ship command and existing installations
+
+Use `ship` for the external CLI after installing this release. `gsv` remains a
+compatible command and shares the same configuration and credentials. Unix
+installers create a `ship` symlink; Windows installers create `ship.cmd`; Cargo
+installs also provide a `ship` launcher. The macOS application is displayed as
+Ship and packaged as `Ship.app`. Bundle identifiers, executable names, service
+registrations, release asset names and `.gsv` storage paths remain stable.
+
+Updating the Gateway does not update an already-installed native CLI or Desktop.
+Keep using `gsv` until the host distribution is updated. Do not rename existing
+configuration directories or daemon services.

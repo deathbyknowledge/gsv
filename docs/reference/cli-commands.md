@@ -1,6 +1,6 @@
 # CLI Command Reference
 
-The `gsv` binary controls a GSV gateway, the local Desktop application, the
+The `ship` command (also available as `gsv`) controls a Ship gateway, the local Desktop application, the
 machine daemon, the process tree, and adapters. Most commands talk to the Kernel
 syscall surface over WebSocket; `desktop` uses a same-user local endpoint.
 
@@ -9,7 +9,7 @@ syscall surface over WebSocket; `desktop` uses a same-user local endpoint.
 `--url` is a top-level option, so place it before the subcommand:
 
 ```bash
-gsv --url wss://example.workers.dev/ws chat "hello"
+ship --url wss://example.workers.dev/ws chat "hello"
 ```
 
 | Option | Env | Description |
@@ -48,8 +48,8 @@ destination. The header action appears only when `sys.connect` advertises
 `operator-feedback` for the caller.
 
 ```bash
-gsv chat [MESSAGE] [--pid PID]
-gsv shell
+ship chat [MESSAGE] [--pid PID]
+ship shell
 ```
 
 `chat` resolves the Ship or selected Work conversation and sends with
@@ -253,7 +253,7 @@ the match's sequence plus one as `--before` and `--limit 1` to read it in full.
 `message current` reports the current run's directed endpoint and exact reply
 commands. For an adapter run, text and JSON also include an opaque destination
 id suitable for a later or additional `message send --to`; raw provider ids
-stay hidden. `message attach` adds one or more GSV filesystem files to the run's
+stay hidden. `message attach` adds one or more Ship filesystem files to the run's
 next current-conversation message; it does not create an extra message. The
 Process retains each exact source revision in its immutable media archive before
 committing the message. `--mime` can classify a single attachment for
@@ -276,7 +276,7 @@ additional outbound message or sends to another authorized destination.
 `message destinations` lists observed destinations that are online; `--all`
 also includes known authorized destinations whose adapter account is offline.
 Group, channel, and thread entries appear only after the linked actor addresses
-GSV on that exact surface. Entries use opaque GSV ids and generic labels;
+Ship on that exact surface. Entries use opaque Ship ids and generic labels;
 provider account, actor, surface, and message ids are not printed.
 
 `message route show` and `message route list` inspect adapter routing. `route
@@ -311,7 +311,7 @@ default.
 `IMAGE` accepts the same target-qualified source forms as `cp`: a local path,
 `gsv:/path`, `target:/path`, or `[target-with-colons]:/path`. A target image is
 streamed directly through the filesystem transfer boundary into image reading;
-the command does not stage a temporary GSV copy. Cloud browser screenshots use
+the command does not stage a temporary Ship copy. Cloud browser screenshots use
 the same source forms and ownership checks as files on connected devices.
 
 Query and OCR structured output accepts `text`, `json`, `xml`, `markdown`, or
@@ -328,9 +328,9 @@ and `message send` as separate direct Shell tool calls without `--to` or
 `--also`. It works whether the run came from a WebSocket client, Desktop, or an
 adapter. An explicit destination send during an active run requires `--also`,
 acknowledging that it is an additional delivery. Repeat its `--attach` option
-to stream multiple GSV filesystem files in one delivery. `--mime` supplies the
+to stream multiple Ship filesystem files in one delivery. `--mime` supplies the
 delivery type only when exactly one attachment is present. Copy a file from a
-connected target to GSV before attaching it:
+connected target to Ship before attaching it:
 
 ```bash
 cp laptop:/home/alice/report.pdf /tmp/report.pdf
@@ -347,9 +347,9 @@ also report that id, including a failure while reopening the file for the
 automatic retry. An outcome that may have reached the provider is reported as
 `sent=false`, `delivery_confirmed=false`, and `delivery_state=ambiguous`.
 
-`contact` manages relationships with people on other GSV installations.
+`contact` manages relationships with people on other Ship installations.
 `contact invite create --handling manual|ship` returns a short-lived one-use code and a shareable `url`;
-the other person accepts either while signed in to their own GSV. The default
+the other person accepts either while signed in to their own Ship. The default
 lifetime is one hour; `--expires` accepts up to seven days. Pairing and revocation may
 be performed by the signed-in human or their canonical Ship. `contact list` prints the opaque contact id accepted
 by `message send --to`; `message destinations` exposes the same active contacts
@@ -383,7 +383,7 @@ recorded update stays pending until the peer confirms it. Failed confirmation
 leaves the exchange unsettled, even if the recorded work state is completed.
 Resources attached with
 `message send --to contact:...` remain immutable references and are streamed by
-the receiving GSV only when opened.
+the receiving Ship only when opened.
 
 Use `sched add --ship` when every firing should become one durable Ship
 responsibility. It works from top-level and process-backed shells. Use
@@ -397,7 +397,7 @@ Use `sched add --to DESTINATION` for direct scheduled text delivery. It creates
 an `adapter.send` scheduled action and does not run the agent. Destination
 resolution includes known authorized offline destinations because the account
 may be online when the schedule fires. Run `message destinations --all` and
-copy its opaque GSV destination id; provider account, actor, and surface ids are
+copy its opaque Ship destination id; provider account, actor, and surface ids are
 not part of the agent-facing command contract.
 A successful `responsibility` firing records durable responsibility creation, not
 completion of its work. A successful `process.event` firing records event admission,
@@ -431,12 +431,12 @@ mean all users. `sched add --json` is a low-level compatibility path for direct
 ## Process Commands
 
 ```bash
-gsv proc list [--uid UID]
-gsv proc spawn [--as ACCOUNT] [--label LABEL] [--model MODEL_ID] [--effort LEVEL] [--prompt TEXT] [--parent PID]
-gsv proc send MESSAGE --pid PID
-gsv proc history --pid PID [--tail] [--limit N] [--offset N]
-gsv proc reset --pid PID
-gsv proc kill PID [--no-archive]
+ship proc list [--uid UID]
+ship proc spawn [--as ACCOUNT] [--label LABEL] [--model MODEL_ID] [--effort LEVEL] [--prompt TEXT] [--parent PID]
+ship proc send MESSAGE --pid PID
+ship proc history --pid PID [--tail] [--limit N] [--offset N]
+ship proc reset --pid PID
+ship proc kill PID [--no-archive]
 ```
 
 Processes are the agent-facing execution model. `spawn` creates a new process;
@@ -451,13 +451,13 @@ commands above; the settings apply before the optional initial prompt starts.
 ## Desktop Commands
 
 ```bash
-gsv desktop
-gsv desktop status [--json]
-gsv desktop new
-gsv desktop use PID
-gsv desktop microphone list
-gsv desktop microphone use NAME
-gsv desktop microphone default
+ship desktop
+ship desktop status [--json]
+ship desktop new
+ship desktop use PID
+ship desktop microphone list
+ship desktop microphone use NAME
+ship desktop microphone default
 ```
 
 `gsv desktop` focuses a running Desktop or launches the sibling
@@ -513,15 +513,15 @@ manage the human owner's invitations. See [Connect devices](../how-to/connect-de
 For `--platform browser`, the JSON result includes `extensionUrl` and `code`.
 The URL opens `https://gsv.space/browser?release=RELEASE` for the gateway's
 release. Download and unzip the extension, load its folder from
-`chrome://extensions` with developer mode enabled, then open **Your GSV** from
+`chrome://extensions` with developer mode enabled, then open **Your Ship** from
 the toolbar or Extensions button and paste `code` into its panel.
 
 Open **Fleet**, click **connect** beside Places, name the computer and create an invitation.
-After installing GSV, paste the provided command:
+After installing Ship, paste the provided command:
 
 ```bash
-gsv pair CODE [--workspace PATH] [--no-install]
-gsv pair  # resume an interrupted exchange
+ship pair CODE [--workspace PATH] [--no-install]
+ship pair  # resume an interrupted exchange
 ```
 
 Use `gsv pair -` to read the invitation from stdin instead of exposing it in
@@ -536,17 +536,17 @@ pairing without changing operating-system services. Closing the web panel or
 cancelling an already-used invitation does not revoke the resulting connection.
 
 ```bash
-gsv daemon install [--id ID] [--workspace PATH]
-gsv daemon start
-gsv daemon restart
-gsv daemon stop
-gsv daemon uninstall
-gsv daemon status
-gsv daemon doctor
-gsv daemon reload
-gsv daemon reconnect
-gsv daemon diagnostics [--json]
-gsv daemon logs [-l N] [--follow]
+ship daemon install [--id ID] [--workspace PATH]
+ship daemon start
+ship daemon restart
+ship daemon stop
+ship daemon uninstall
+ship daemon status
+ship daemon doctor
+ship daemon reload
+ship daemon reconnect
+ship daemon diagnostics [--json]
+ship daemon logs [-l N] [--follow]
 ```
 
 The device daemon exposes local hardware-style capabilities to the Kernel:
@@ -616,12 +616,12 @@ the bundled daemon is missing or has changed during approval.
 ## Auth Commands
 
 ```bash
-gsv auth login [--username USER] [--password PASS] [--ttl-hours N]
-gsv auth logout
-gsv auth link [CODE]
-gsv auth link --adapter ID --account-id ACCOUNT --actor-id ACTOR [--uid UID]
-gsv auth link-list [--uid UID]
-gsv auth unlink --adapter ID --account-id ACCOUNT --actor-id ACTOR
+ship auth login [--username USER] [--password PASS] [--ttl-hours N]
+ship auth logout
+ship auth link [CODE]
+ship auth link --adapter ID --account-id ACCOUNT --actor-id ACTOR [--uid UID]
+ship auth link-list [--uid UID]
+ship auth unlink --adapter ID --account-id ACCOUNT --actor-id ACTOR
 ```
 
 Initialize a new space through its Accounts-issued browser setup invitation.
@@ -644,10 +644,10 @@ See [messenger setup](../how-to/messengers.md).
 ### Auth Tokens
 
 ```bash
-gsv auth token create [--kind machine|service|human] [--uid UID] [--label LABEL] \
+ship auth token create [--kind machine|service|human] [--uid UID] [--label LABEL] \
   [--peer PEER_ID] [--expires-at UNIX_MS]
-gsv auth token list [--uid UID]
-gsv auth token revoke TOKEN_ID [--reason TEXT] [--uid UID]
+ship auth token list [--uid UID]
+ship auth token revoke TOKEN_ID [--reason TEXT] [--uid UID]
 ```
 
 `machine` is the default token kind. `--peer` (alias `--device`) binds a machine
@@ -657,18 +657,18 @@ tokens. `--uid` is for root-managed token operations.
 ## Config Commands
 
 ```bash
-gsv config get [KEY]
-gsv config set KEY VALUE
-gsv config --local get KEY
-gsv config --local set KEY VALUE
+ship config get [KEY]
+ship config set KEY VALUE
+ship config --local get KEY
+ship config --local set KEY VALUE
 ```
 
 Without `--local`, commands use Kernel `sys.config.get` and `sys.config.set`.
 Keys use ConfigStore paths, for example:
 
 ```bash
-gsv config get config/ai/models
-gsv config set users/1000/ai/preferred_model primary
+ship config get config/ai/models
+ship config set users/1000/ai/preferred_model primary
 ```
 
 Omit `KEY` on remote `get` to list visible entries. Sensitive remote values are
@@ -689,9 +689,9 @@ locally configured provider URLs or tokens.
 ## Adapter Commands
 
 ```bash
-gsv adapter connect --adapter ID [--account-id ACCOUNT] [--config-json JSON]
-gsv adapter disconnect --adapter ID [--account-id ACCOUNT]
-gsv adapter status --adapter ID [--account-id ACCOUNT]
+ship adapter connect --adapter ID [--account-id ACCOUNT] [--config-json JSON]
+ship adapter disconnect --adapter ID [--account-id ACCOUNT]
+ship adapter status --adapter ID [--account-id ACCOUNT]
 ```
 
 These generic lifecycle commands apply only when an adapter advertises the
@@ -706,8 +706,8 @@ and WhatsApp QR setup are not supported by the current deployment.
 ## Version
 
 ```bash
-gsv version
-gsv --version
+ship version
+ship --version
 ```
 
 Prints build metadata for the installed CLI.

@@ -67,7 +67,7 @@ export async function executeTerminalCommand(
       if (input.start) {
         const legacyDaemon = error.message === `Unknown shell session: ${input.sessionId}`;
         if (legacyDaemon || rejectedStartSchema.safeParse(error.details).success) {
-          const message = legacyDaemon ? "Update GSV on this computer before running commands here." : error.message;
+          const message = legacyDaemon ? "Update Ship on this computer before running commands here." : error.message;
           return normalizeTranscriptEntry({ status: "failed", error: message, output: "" }, startedAt, input);
         }
       } else if (!input.sessionId) {
@@ -89,7 +89,7 @@ export async function cancelTerminalCommand(client: TerminalClient, sessionId: s
     return (await client.request("shell.cancel", { sessionId }, { signal })).data;
   } catch (error) {
     if (error instanceof GsvClientError && error.code === 400 && error.message.endsWith("does not implement shell.cancel")) {
-      throw new Error("Update GSV on this computer to use Stop.");
+      throw new Error("Update Ship on this computer to use Stop.");
     }
     throw error;
   }

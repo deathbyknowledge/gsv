@@ -34,7 +34,7 @@ printf 'int main(void) { return 0; }\n' | clang -x c - -o "$scratch/executable"
 # Start with unsigned helpers on both architectures so signing order is tested.
 codesign --force --sign - "$scratch/executable"
 codesign --remove-signature "$scratch/executable"
-for binary in gsv-desktop gsv gsvd gsv-vision gsv-transcribe; do
+for binary in gsv-desktop gsv ship gsvd gsv-vision gsv-transcribe; do
   cp "$scratch/executable" "$binary_dir/$binary"
 done
 
@@ -49,13 +49,13 @@ bash "$fixture/host/scripts/package-macos.sh" --release --skip-build --output "$
 archives=("$output/"*.zip)
 [[ "${#archives[@]}" == 1 && -f "${archives[0]}" ]]
 ditto -x -k "${archives[0]}" "$scratch/unpacked"
-app="$scratch/unpacked/GSV.app"
+app="$scratch/unpacked/Ship.app"
 codesign --verify --deep --strict "$app"
 plutil -lint "$app/Contents/Info.plist"
 cmp "$repository_root/host/helpers/transcriber/THIRD_PARTY.md" \
   "$app/Contents/Resources/licenses/transcriber/THIRD_PARTY.md"
 [[ ! -e "$app/Contents/MacOS/THIRD_PARTY.md" ]]
-for binary in gsv-desktop gsv gsvd gsv-vision gsv-transcribe; do
+for binary in gsv-desktop gsv ship gsvd gsv-vision gsv-transcribe; do
   codesign --verify --strict "$app/Contents/MacOS/$binary"
 done
 codesign --verify --strict "$app/Contents/MacOS/gsv-transcribe-runtime/libtranscribe.dylib"

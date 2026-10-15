@@ -4,15 +4,15 @@ Unicode true
 !include "x64.nsh"
 !include "WinVer.nsh"
 !include "${STAGE}\setup-bootstrap.nsh"
-Name "GSV"
+Name "Ship"
 OutFile "${OUTPUT}\gsv-desktop-windows-x64-setup.exe"
 InstallDir "$LOCALAPPDATA\Programs\gsv\bin"
 InstallDirRegKey HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\GSV" "InstallLocation"
 RequestExecutionLevel user
 SetCompressor /SOLID lzma
 VIProductVersion "${VERSION}.0"
-VIAddVersionKey /LANG=1033 "ProductName" "GSV"
-VIAddVersionKey /LANG=1033 "FileDescription" "GSV host installer"
+VIAddVersionKey /LANG=1033 "ProductName" "Ship"
+VIAddVersionKey /LANG=1033 "FileDescription" "Ship host installer"
 VIAddVersionKey /LANG=1033 "FileVersion" "${VERSION}"
 VIAddVersionKey /LANG=1033 "LegalCopyright" "GSV contributors"
 !insertmacro MUI_PAGE_WELCOME
@@ -25,11 +25,11 @@ VIAddVersionKey /LANG=1033 "LegalCopyright" "GSV contributors"
 
 Function .onInit
   ${IfNot} ${RunningX64}
-    MessageBox MB_ICONSTOP "GSV requires Windows 10 x64 or newer."
+    MessageBox MB_ICONSTOP "Ship requires Windows 10 x64 or newer."
     Abort
   ${EndIf}
   ${IfNot} ${AtLeastWin10}
-    MessageBox MB_ICONSTOP "GSV requires Windows 10 or newer."
+    MessageBox MB_ICONSTOP "Ship requires Windows 10 or newer."
     Abort
   ${EndIf}
   ${DisableX64FSRedirection}
@@ -39,7 +39,7 @@ Function un.onInit
   ${DisableX64FSRedirection}
 FunctionEnd
 
-Section "GSV"
+Section "Ship"
   InitPluginsDir
   SetOutPath "$PLUGINSDIR\payload"
   File /x setup-bootstrap.nsh "${STAGE}\*"
@@ -50,14 +50,14 @@ Section "GSV"
   System::Call 'kernel32::SetEnvironmentVariableW(w "GSV_SETUP_SOURCE", p 0)'
   System::Call 'kernel32::SetEnvironmentVariableW(w "GSV_SETUP_DESTINATION", p 0)'
   ${If} $0 != 0
-    MessageBox MB_ICONSTOP "Installation failed. Close GSV Desktop and retry. See the installer details for the error."
+    MessageBox MB_ICONSTOP "Installation failed. Close Ship Desktop and retry. See the installer details for the error."
     SetErrorLevel 1
     Abort
   ${EndIf}
   SetOutPath "$INSTDIR"
   File "uninstall.ps1"
   WriteUninstaller "$INSTDIR\uninstall.exe"
-  WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\GSV" "DisplayName" "GSV"
+  WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\GSV" "DisplayName" "Ship"
   WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\GSV" "DisplayVersion" "${VERSION}"
   WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\GSV" "UninstallString" '$\"$INSTDIR\uninstall.exe$\"'
   WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\GSV" "InstallLocation" "$INSTDIR"
@@ -71,6 +71,7 @@ Section "Uninstall"
     Abort
   ${EndIf}
   Delete "$INSTDIR\gsv.exe"
+  Delete "$INSTDIR\ship.cmd"
   Delete "$INSTDIR\gsvd.exe"
   Delete "$INSTDIR\gsv-desktop.exe"
   Delete "$INSTDIR\gsv-transcribe.exe"
@@ -84,5 +85,6 @@ Section "Uninstall"
   Delete "$INSTDIR\uninstall.exe"
   RMDir "$INSTDIR"
   Delete "$SMPROGRAMS\GSV.lnk"
+  Delete "$SMPROGRAMS\Ship.lnk"
   DeleteRegKey HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\GSV"
 SectionEnd

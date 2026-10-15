@@ -1,6 +1,6 @@
 # Get Started
 
-A GSV space contains your accounts, conversations, memory and connected machines.
+A Ship space contains your accounts, conversations, memory and connected machines.
 You can use a hosting operator or run the same stack in your own Cloudflare account.
 
 ## Get a space
@@ -67,12 +67,12 @@ The web console is called **Instrument** and has five views:
 - **Chat** is your Ship conversation, and where you inspect what a run did.
 - **Fleet** lists your places and processes, with files opened from a place.
 - **Memory** shows your personal knowledge pages.
-- **People** holds conversations, message requests and private contacts across GSV spaces, plus your public profile.
+- **People** holds conversations, message requests and private contacts across Ship spaces, plus your public profile.
 - **Settings** holds preferences (models), standing responsibilities, permissions, instructions, messengers, MCP connections and **Logs** for actions and their outcomes. The **sign-in** section appears only for root, for personal password resets and verified-owner linking.
 
 On phones, tap **menu** in the header to switch views. A dot on the menu button
 marks unread People activity. Choosing a view
-closes the menu and keeps your drafts. Tap **GSV** to return to Chat.
+closes the menu and keeps your drafts. Tap **Ship** to return to Chat.
 View changes stay in the app and create browser history entries. **Back** and
 **Forward** retrace those views, including People conversations and your profile,
 without reloading the page or clearing drafts.
@@ -88,7 +88,7 @@ The **+** menu attaches files, finds people and files, and prepares requests to
 create a routine, connect a computer or start a browser. These requests and
 **ask Ship** controls add ordinary editable text to your draft. Review or change
 it before sending; selecting a request does not send it. **Find a person** accepts
-a handle such as `@esteve` or a full address for another GSV. **Reference a file**
+a handle such as `@esteve` or a full address for another Ship. **Reference a file**
 adds a file’s target and path as soon as you select its name. Use **../** at the
 top of a place’s file list to move toward its filesystem root.
 
@@ -113,7 +113,7 @@ side by side.
 
 The Settings sidebar highlights the section you're viewing.
 
-Open **People** to try making plans or working together with someone on GSV.
+Open **People** to try making plans or working together with someone on Ship.
 **connect** creates a shareable invitation; accepting it opens your conversation.
 You can talk directly or choose **ask Ship** to prepare a request in your Ship chat.
 A dot beside **people** marks waiting activity, and Zen shows unread conversations

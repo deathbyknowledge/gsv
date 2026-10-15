@@ -1,6 +1,6 @@
-# GSV
+# Ship
 
-<img src="web/public/brand/gsv-ship.png" alt="GSV's ASCII ship" width="240" height="240" />
+<img src="web/public/brand/gsv-ship.png" alt="Ship's ASCII ship" width="240" height="240" />
 
 > ***a mind for your machines***
 
@@ -13,9 +13,11 @@
 
 **🚀 Public beta is here! Issues and PRs very welcome.**
 
-**GSV is an open-source, user-owned personal intelligence system.** It gives you one intelligence layer with durable memory, processes, permissions, and the ability to act across all your machines while remaining under your control.
+**Ship is your personal spaceship.** It stays in orbit while you live your life down here on Earth. Talk to your Ship, give it work, and keep your files and projects aboard. It uses the technology you connect to it and keeps work running while you are away.
 
-Most personal AI agents run on one host you pick and keep alive — a laptop, VPS, or container. GSV instead deploys a lightweight, always-reachable control plane into your own Cloudflare account and turns your laptop, server, phone, and browser into one computer. Your GSV control plane and state remain in infrastructure you control; the model provider you configure necessarily receives the inference data routed to it. The public composition includes CodeMode and requires [Workers Paid](https://developers.cloudflare.com/dynamic-workers/pricing/), plus model usage.
+Ship is open source and user owned, with durable memory, processes, permissions, and the ability to act across your machines under your control.
+
+Most personal AI agents run on one host you pick and keep alive — a laptop, VPS, or container. Ship instead deploys a lightweight, always-reachable control plane into your own Cloudflare account and turns your laptop, server, phone, and browser into one computer. Your Ship control plane and state remain in infrastructure you control; the model provider you configure necessarily receives the inference data routed to it. The public composition includes CodeMode and requires [Workers Paid](https://developers.cloudflare.com/dynamic-workers/pricing/), plus model usage.
 
 ## What you can do
 
@@ -27,7 +29,7 @@ Most personal AI agents run on one host you pick and keep alive — a laptop, VP
 - Keep your repositories and knowledge source-inspectable through a built-in git remote.
 - Hand your agent the browser. The web extension lets it drive your real browser — your tabs and logged-in sessions — so it works the sites you already use, not just the public web.
 
-Under the hood, GSV is a distributed operating environment: agents are durable processes with identities, history, permissions, and a capability-gated syscall surface. Named after the sentient ships from Iain M. Banks' Culture series, GSV (General Systems Vehicle) is a foundation for personal intelligence that lives across the edge and the machines you already own.
+Under the hood, GSV is the distributed operating environment: agents are durable processes with identities, history, permissions, and a capability-gated syscall surface. Named after the sentient ships from Iain M. Banks' Culture series, GSV (General Systems Vehicle) is a foundation for personal intelligence that lives across the edge and the machines you already own.
 
 ## Quick Start
 
@@ -85,7 +87,7 @@ To connect a messenger (Discord / Telegram / Slack), add more devices, and see w
 
 ## Connect a Device
 
-Connected devices are reachable by your agents from anywhere — outbound-only, so no open ports, no inbound connections, no VPN. Add one via **GSV > Devices** in the Web UI, or the CLI:
+Connected devices are reachable by your agents from anywhere — outbound-only, so no open ports, no inbound connections, no VPN. Add one via **Ship > Devices** in the Web UI, or the CLI:
 
 ```bash
 gsv auth token create --kind machine --peer macbook --label Macbook  # note the token
@@ -94,18 +96,18 @@ gsv daemon install --id macbook --workspace ~/  # background service
 gsv daemon status
 ```
 
-Now GSV can use the shell and read/write files on that machine. Set up adapters under **GSV > Integrations**.
+Now Ship can use the shell and read/write files on that machine. Set up adapters under **Ship > Integrations**.
 
-## How GSV Works
+## How Ship Works
 
-GSV uses Linux as a design model (not POSIX, though). Familiar, composable primitives make the system understandable to both people and models.
+Ship uses Linux as a design model (not POSIX, though). Familiar, composable primitives make the system understandable to both people and models.
 
 - **Cloud computer** — a small, globally reachable hub running in your Cloudflare account. It coordinates identity, state, routing, schedules, and agent loops rather than performing heavy local computation.
 - **Kernel and syscalls** — humans, agents, and the CLI use the same capability-gated primitives for processes, files, shells, networking, repositories, and configuration. The public client exposes those contracts to other clients.
 - **Processes** — agents are durable processes with PIDs, histories, permissions, pending work, and subprocesses (`gsv proc list|spawn|send|kill`).
 - **Targets** — the cloud runtime and connected devices implement the same targetable filesystem, shell, and network contracts. The browser extension exposes the browser through the same filesystem and shell shape. Changing the target changes where work runs, not what the syscall means.
 - **Agent tools** — models see a deliberately small surface: Read, Write, Edit, Delete, Search, Shell, CodeMode, and Send. Devices and integrations extend the system underneath those tools instead of making the tool list grow forever.
-- **Adapters** — independently deployed Workers translate external services into stable GSV actors, surfaces, and messages. The repository bundles several implementations, while the `AdapterService` contract remains open to new providers.
+- **Adapters** — independently deployed Workers translate external services into stable Ship actors, surfaces, and messages. The repository bundles several implementations, while the `AdapterService` contract remains open to new providers.
 
 ## Development
 
@@ -127,7 +129,7 @@ Requires [Rust](https://rustup.rs) and Node.js 22 or newer with
 
 ## 🤝 Get Involved
 
-GSV is actively evolving, and we want you to be part of the network! We welcome contributions of all sizes.
+Ship is actively evolving, and we want you to be part of the network! We welcome contributions of all sizes.
 Whether you want to submit a pull request, share a wild idea, or just say hi, please don't hesitate to reach out. :)
 
 - **Join the Community:** Come hang out, talk shop, and share ideas on our [Discord Server](https://discord.gg/hy9ExJJFvn).

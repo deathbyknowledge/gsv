@@ -1179,6 +1179,7 @@ mod tests {
 
     fn server(version: &str, release: Option<&str>) -> ServerInfo {
         ServerInfo {
+            deployment: None,
             version: version.to_string(),
             release: release.unwrap_or_default().to_string(),
             features: Vec::new(),

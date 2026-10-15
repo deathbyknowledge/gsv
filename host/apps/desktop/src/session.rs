@@ -71,7 +71,7 @@ impl SessionStore {
             .open(previous.join("prototype.lock"))
             .map_err(|_| "Cannot open the previous Desktop session.")?;
         lock.try_lock_exclusive()
-            .map_err(|_| "Close the older GSV window before upgrading.")?;
+            .map_err(|_| "Close the older Ship window before upgrading.")?;
         let previous = Self::open(previous.to_owned())?;
         let mut destination = Self::open(directory.to_owned())?;
         destination.commit(previous.current, previous.pending_revokes)
