@@ -24,7 +24,7 @@ export const IMPLEMENTATIONS = ["shell.exec", "fs.read", "fs.write", "fs.edit", 
 export function browserTemplate(limits: BrowserLimits): InstanceTemplate {
   return {
     templateId: "browser", revision: "1", kind: "browser", label: "Cloud browser",
-    description: "A browser with tabs, page interaction, screenshots, and temporary files.",
+    description: "A browser with tabs, page interaction, screenshots, and temporary files. Ordinary starts remember and restore this account's website logins across instances; the lifetime caps one instance, not the saved logins. --new starts a separate temporary browser that does not share them.",
     implements: [...IMPLEMENTATIONS], defaultLifetimeSeconds: Math.min(1800, limits.maxInstanceSeconds),
     maxLifetimeSeconds: limits.maxInstanceSeconds, capacityUnits: 1,
   };

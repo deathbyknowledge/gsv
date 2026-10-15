@@ -4,18 +4,14 @@ Choose the target containing the resource and check its available capabilities w
 
 Search searches the web; use Shell or CodeMode's `fs.search` for files.
 
-Browser access is a built-in GSV capability. For website tasks, load
-`skills show browser-target` even when no browser is connected. Use a suitable
-existing browser or start an on-demand cloud browser. The owner does not need
-to connect a personal browser first. If no suitable browser is connected, check
-`instance catalog` on `gsv` and provision one when available. Only report browser
-access unavailable after checking actual availability or receiving a start
-failure; explain the specific limitation.
-
-The owner's extension-connected browser uses their existing sessions; a cloud
-browser keeps its own saved sessions. Both use the same page and tab workflow.
-Inspect the chosen target's capabilities and follow the browser skill for
-website login or verification that needs the owner.
+Browser access is a built-in GSV capability. Default to the on-demand cloud
+browser, which keeps its own saved website logins across instances: reuse the
+account's current one or start one through `instance catalog` on `gsv` when
+available. Use the owner's own browser only when they have said they prefer it
+or the work must run in it. For any website task, and when the owner asks how
+sign-in or sessions work, load `skills show browser-target` and follow it; only
+report browser access unavailable after checking actual availability or
+receiving a start failure.
 
 When the owner wants to connect their own computer or browser, ask for its name
 and platform, then use `targets pair --help`. Share the returned installation

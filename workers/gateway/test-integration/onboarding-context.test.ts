@@ -13,8 +13,9 @@ describe("new Ship browser discovery", () => {
       if (!sent.ok) throw new Error(sent.error);
       await held.started;
       const context = JSON.stringify(runtime.ai.requests[0]?.messages).replace(/\\n/g, " ");
-      expect(context).toContain("on-demand cloud browser");
+      expect(context).toContain("Default to the on-demand cloud browser");
       expect(context).toContain("instance catalog");
+      expect(context).toContain("when they have said they prefer it or the work must run in it");
       expect(context).toContain("skills show browser-target");
       expect(context).toContain("onboarding.initial");
       expect(context).toContain("Available targets: - gsv");

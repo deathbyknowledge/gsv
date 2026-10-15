@@ -12,13 +12,25 @@ personal browser is connected. Ask for the task; Ship checks for a suitable
 browser and starts one when needed. Ship reuses your account's current cloud
 browser, and website logins are remembered automatically. Click the browser in
 Fleet to watch Ship's cursor and clicks or enter input yourself. Watching and
-closing the view leave Ship running.
+closing the view leave Ship running. The cloud browser is Ship's default; ask
+how signed-in sessions work and it explains both routes and their tradeoffs for
+your site.
+
+## Private steps
+
+Ship builds trust at your pace. Routine steps on a site you have already given
+it access to just happen, like reading your Instagram posts once you have signed
+in. The first time a task reaches a private step, such as signing in or paying,
+Ship says so and lets you choose: do that step yourself in the browser, or let
+Ship do it for you. After a step has gone well, it offers to take it over next
+time if you would like.
 
 ## Connect your browser
 
-Connecting your personal browser is optional. Use it when you want Ship to work
-in its existing tabs and signed-in sessions, or when a site needs a feature
-available only on your device.
+Connecting your personal browser is optional. Ship uses it when you say you
+prefer it, or when the work has to happen there: a site needs your existing
+signed-in session, a passkey or hardware key, or a feature available only on
+your device. Tabs Ship opens there are closed once the work is done.
 
 1. In GSV, open **Fleet**, click **connect** beside Places, and choose **Browser.** Give it a name or leave the default.
 2. Download the extension, **Your GSV**, and load it at `chrome://extensions` with developer mode on.

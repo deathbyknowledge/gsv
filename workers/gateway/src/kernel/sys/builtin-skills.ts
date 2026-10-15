@@ -1,4 +1,7 @@
 import browserTargetSkill from "../../../../../skills/browser-target/SKILL.md";
+import browserTargetFiles from "../../../../../skills/browser-target/files.md";
+import browserTargetPages from "../../../../../skills/browser-target/pages.md";
+import browserTargetProfileAndCapture from "../../../../../skills/browser-target/profile-and-capture.md";
 import gsvManualSkill from "../../../../../skills/gsv-manual/SKILL.md";
 import imageReadingSkill from "../../../../../skills/image-reading/SKILL.md";
 import memorySkill from "../../../../../skills/memory/SKILL.md";
@@ -83,8 +86,15 @@ export const BUILTIN_SKILL_FILES = [
       "78f679e2688356fb1579f9aae400bb3deb9d2f05e2c23059fdb3cd0c1e245673",
       // Untouched skill before closing cloud browsers when work is finished.
       "8d99e5d48add62320e0e8fec91f7daaddd8f4ab3a04d58ab01bd80439cf57096",
+      // Untouched skill before the cloud-first browser choice and sign-in routes.
+      "a3a63d79ea483b2407507699e1dab6d9fa353f6ed8ccaa5d1793faf54010315b",
     ],
   },
+  // Reference files the browser-target skill points to with `skills read`.
+  // They are new paths, so existing homes receive them without a hash check.
+  { path: "browser-target/pages.md", content: browserTargetPages },
+  { path: "browser-target/files.md", content: browserTargetFiles },
+  { path: "browser-target/profile-and-capture.md", content: browserTargetProfileAndCapture },
   {
     path: "gsv-manual/SKILL.md",
     content: gsvManualSkill,
