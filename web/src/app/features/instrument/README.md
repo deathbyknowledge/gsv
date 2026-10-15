@@ -32,8 +32,10 @@ Content takes its height directly from the visible viewport, independently
 of the taller star field, so Safari toolbar changes keep both composer rows visible.
 Keyboard occlusion consumes the bottom safe inset instead of leaving a
 second gap above the keyboard. The document stays fixed to its containing
-viewport; the star-field shell uses the large viewport height (`100lvh`) so iOS
-Home Screen launches cover the whole screen, including behind the home indicator.
+viewport. In an installed PWA, both the document and the star-field shell use the
+large viewport height (`100lvh`) so iOS Home Screen launches cover the whole screen,
+including behind the home indicator. Sizing only the star field leaves the
+document's percentage-height viewport short on some Home Screen launches.
 The star field keeps that height while the content follows the visible viewport
 and the keyboard.
 The composer omits routine model and target-readiness feedback, retaining errors,

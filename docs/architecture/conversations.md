@@ -34,6 +34,8 @@ The composer shows connection problems, errors and an offline selected place; or
 and target readiness do not add a status line. Run activity remains visible in the transcript.
 On phones, both the prompt and its attachment, place and recording controls follow the visible
 area as the browser toolbar or keyboard opens and closes. The star field keeps its full height.
+Installed PWAs fill the screen, including the home-indicator area. The bottom safe-area inset
+is padding inside each surface; it does not shorten the page or its star field.
 The keyboard's return key requests a Send action. iOS owns the field-navigation and Done bar above its keyboard;
 the web app cannot hide that bar through a supported browser API.
 Clicking or tapping a message selects it without scrolling. Scrolling selects the message nearest

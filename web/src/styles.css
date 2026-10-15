@@ -14,6 +14,17 @@ body,
   overscroll-behavior: none;
 }
 
+/* A Home Screen launch can report a percentage viewport short of the screen.
+ * Fill the document as well as the star field; surfaces keep the safe-area inset
+ * inside their padding and the Instrument viewport still follows the keyboard. */
+@media (display-mode: standalone), (display-mode: fullscreen) {
+  html,
+  body,
+  #app {
+    height: 100lvh;
+  }
+}
+
 [hidden] {
   display: none !important;
 }
