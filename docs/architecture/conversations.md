@@ -341,7 +341,8 @@ conversations use the existing v6 schema. No down migration, archive rewrite,
 receipt deletion or database reset is part of this rollback.
 
 Previously stored experimental messages already contain the complete readable
-text. Instrument ignores their old metadata, including in archived messages.
+text. Archive reads omit the retired metadata field without changing the stored
+bytes or checksum; Instrument displays the ordinary text.
 Their old idempotency hashes may include the removed metadata, so retrying an
 in-flight experimental send after changing versions can fail with a payload
 conflict. Inspect canonical history before deciding whether to submit again;

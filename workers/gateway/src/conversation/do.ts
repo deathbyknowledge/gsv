@@ -454,7 +454,9 @@ export class Conversation extends DurableObject<GatewayEnv> {
       throw new Error("Conversation archive payload is invalid");
     }
     // SAFETY: archive rows are written from ConversationMessage values and the count was verified above.
-    return parsed as ConversationMessage[];
+    // Older local archives may carry the withdrawn request field. Keep their bytes/checksum
+    // untouched, but never return that field through the ordinary conversation contract.
+    return parsed.map(({ action: _retiredAction, ...message }: ConversationMessage & { action?: unknown }) => message);
   }
 }
 
