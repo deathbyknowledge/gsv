@@ -18,12 +18,13 @@ use the id returned by discovery or provisioning.
 ## Quick Start
 
 1. Choose the browser as described under Choosing A Browser. On `gsv`, run
-   `targets list --kind browser`; for cloud work, reuse a running cloud browser
-   only when its description fits the task: for signed-in work the one on the
-   account's automatic profile (its description names the profile; `browser
-   profile list` marks which one is automatic), a named profile only when the
-   task calls for that profile, and a temporary one only for work that needs
-   no login. An empty list does not rule out cloud provisioning. `targets` and `instance` are gateway commands; run `tabs` and
+   `targets list --search browser --json`, which includes each target's
+   description; for cloud work, reuse a running cloud browser only when its
+   description fits the task: for signed-in work the one on the account's
+   automatic profile (the description names the profile; `browser profile
+   list` marks which one is automatic), a named profile only when the task
+   calls for that profile, and a temporary one only for work that needs no
+   login. An empty list does not rule out cloud provisioning. `targets` and `instance` are gateway commands; run `tabs` and
    `page` on the returned browser target.
 2. For cloud work with no running cloud browser, run `instance catalog` on `gsv`. When cloud
    browsers are available, persist a fresh request ID and run
@@ -103,7 +104,7 @@ From the native `gsv` target, identify the browser target and inspect its
 descriptor:
 
 ```bash
-targets list --kind browser
+targets list --search browser --json
 targets show rearden:brave
 ```
 
