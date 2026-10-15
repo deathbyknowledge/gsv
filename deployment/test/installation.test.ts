@@ -77,6 +77,26 @@ const catalog: OperatorResourceCatalog = [
 ];
 
 describe("public operator composition", () => {
+  it("passes public configuration and aliases to their owning services", async () => {
+    const presentation = { operatorName: "Example operator", accountsOrigin: input.adminOrigin, docsUrl: "https://docs.example.com" };
+    const operatorUpdates = { publisher: { id: "example", name: "Example operator" }, updates: [
+      { id: "new-domain", publishedAtMs: 1000, title: "A new address", brief: "Your old address still works." },
+    ] };
+    await run(GsvDeployment({ ...input, domainAliases: ["old.example"], presentation, operatorUpdates,
+      installations: { ...input.installations, ownerOriginAliases: ["https://join.example.com"] },
+    }, dependencies));
+    const accounts = recorded.workers.find((worker) => worker.id === "FixtureInstallations")!.props.env!;
+    const gateway = recorded.workers.find((worker) => worker.id === "FixtureGateway")!.props.env!;
+    expect(accounts.GSV_BASE_DOMAIN).toBe(input.domain);
+    expect(JSON.parse(String(accounts.GSV_DOMAIN_ALIASES))).toEqual(["old.example"]);
+    expect(JSON.parse(String(accounts.GSV_OWNER_ORIGIN_ALIASES))).toEqual(["https://join.example.com"]);
+    const config = { ...presentation, primaryDomain: input.domain, legacyDomains: ["old.example"] };
+    expect(JSON.parse(String(accounts.GSV_PUBLIC_CONFIG))).toEqual(config);
+    expect(JSON.parse(String(gateway.GSV_PUBLIC_CONFIG))).toEqual(config);
+    expect(JSON.parse(String(gateway.GSV_OPERATOR_UPDATES))).toEqual(operatorUpdates);
+    expect(accounts).not.toHaveProperty("GSV_OPERATOR_UPDATES");
+  });
+
   it("routes a configured signup alias to Accounts alongside the administration hostname", async () => {
     await run(GsvDeployment({ ...input, routing: { zoneId: "zone" }, installations: {
       ...input.installations, ownerSignupOrigin: "https://join.example.com",

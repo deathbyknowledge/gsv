@@ -1,5 +1,7 @@
 import type { ApproachCreateArgs, ApproachSummary, PublicProfile, ContactSummary, ConversationInboxEntry } from "@humansandmachines/gsv/protocol";
 import { randomId } from "../../../services/ids";
+import { publicDeployment } from "../../../services/deployment";
+import { deploymentDomains, type PublicDeploymentConfig } from "@humansandmachines/gsv/services/deployment";
 
 export type ApproachDraft = {
   url: string;
@@ -14,10 +16,10 @@ export function emptyApproachDraft(url = ""): ApproachDraft {
   return { url, profile: null, displayName: null, text: "", shipHandlesMessages: null, intent: null };
 }
 
-export function profileAddress(value: string): string | null {
+export function profileAddress(value: string, deployment: PublicDeploymentConfig = publicDeployment()): string | null {
   const text = value.trim();
   const handle = text.replace(/^@/, "").toLowerCase();
-  if (/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(handle)) return `https://${handle}.gsv.space/profile`;
+  if (/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(handle)) return deployment.primaryDomain ? `https://${handle}.${deployment.primaryDomain}/profile` : null;
   if (!text || (!/^https?:\/\//i.test(text) && !text.includes("."))) return null;
   if (/^[a-z][a-z0-9+.-]*:\/\//i.test(text) && !/^https?:\/\//i.test(text)) return null;
   try {
@@ -27,10 +29,11 @@ export function profileAddress(value: string): string | null {
   } catch { return null; }
 }
 
-export function profileAddressLabel(origin: string): string {
+export function profileAddressLabel(origin: string, deployment: PublicDeploymentConfig = publicDeployment()): string {
   const { hostname, host, port } = new URL(origin);
-  const managed = /^([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)\.gsv\.space$/.exec(hostname);
-  return managed && !port ? `@${managed[1]}` : host;
+  const domain = deploymentDomains(deployment).find((candidate) => hostname.endsWith(`.${candidate}`));
+  const handle = domain ? hostname.slice(0, -(domain.length + 1)) : "";
+  return !port && /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(handle) ? `@${handle}` : host;
 }
 
 export function approachSendIntent(draft: ApproachDraft): ApproachCreateArgs {

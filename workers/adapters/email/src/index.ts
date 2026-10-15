@@ -153,6 +153,7 @@ export async function handleIncomingMail(
       message.to,
       env.MAIL_DOMAIN,
       env.GSV_BASE_DOMAIN,
+      env.MAIL_RECEIVING_DOMAINS ? configuredDomainAliases(env.MAIL_RECEIVING_DOMAINS) : [env.MAIL_DOMAIN],
     );
   } catch (error) {
     await cancelStream(message.raw, error instanceof Error ? error : new Error(String(error)));
@@ -289,3 +290,4 @@ async function cancelStream(
 ): Promise<void> {
   if (!stream.locked) await stream.cancel(reason).catch(() => {});
 }
+import { configuredDomainAliases } from "@humansandmachines/gsv/services/deployment";

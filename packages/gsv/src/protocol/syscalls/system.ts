@@ -1,5 +1,6 @@
 import type { JsonObject } from "../json";
 import type { CloudInstanceState } from "./instance";
+import type { PublicDeploymentConfig } from "../../services/deployment";
 
 export type ProcessIdentity = {
   uid: number;
@@ -56,6 +57,7 @@ export type ServerBuild = {
   version: string;
   release: string;
   features?: string[];
+  deployment?: PublicDeploymentConfig;
 };
 
 export type FeedbackActivity = {

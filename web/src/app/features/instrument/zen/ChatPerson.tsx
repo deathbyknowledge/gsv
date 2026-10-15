@@ -84,7 +84,7 @@ export function ChatPerson({ account, request, onAsk, onPeople, onDirty }: {
         <span class="people-kicker">{profileAddressLabel(preview.origin)}</span><h3>{preview.displayName}</h3>
         {preview.about && <p>{preview.about}</p>}
         <div class="fleet-actions">
-          <button type="button" class="fleet-text-action is-primary" onClick={() => onAsk(`Help me with ${JSON.stringify(preview.displayName)}'s GSV profile: ${preview.url}`)}>mention in message</button>
+          <button type="button" class="fleet-text-action is-primary" onClick={() => onAsk(`Help me with ${JSON.stringify(preview.displayName)}'s Ship profile: ${preview.url}`)}>mention in message</button>
           <button type="button" class="fleet-text-action" onClick={() => selectedContact ? onPeople({ contactId: selectedContact.id }) : setContacting(true)}>{selectedContact ? "open conversation" : "contact"}</button>
         </div>
       </div> : <ul class="people-recipient-list" aria-label="Saved people" data-scroll-edge>
@@ -92,7 +92,7 @@ export function ChatPerson({ account, request, onAsk, onPeople, onDirty }: {
           onClick={() => { if (!mayReplace()) return; revision.current++; resolve.reset(); setDraft(emptyApproachDraft()); setAddress(`${contact.remoteOrigin}/profile`); setSelectedContactId(contact.id); }}>
           <span>{contactDisplayName(contact)}</span><small>{profileAddressLabel(contact.remoteOrigin)}</small>
         </button></li>)}
-        {!found.length && <li class="people-note">Enter a handle to find someone on gsv.space, or their full address for another GSV.</li>}
+        {!found.length && <li class="people-note">Enter a handle or another Ship's full address.</li>}
       </ul>}
       {!connected && <p class="people-note" role="status">Reconnecting…</p>}
     </>}

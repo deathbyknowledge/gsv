@@ -1850,6 +1850,7 @@ mod tests {
         ConnectResult {
             protocol: gateway_client::protocol::PROTOCOL_VERSION,
             server: ServerInfo {
+                deployment: None,
                 version: version.to_string(),
                 release: release.to_string(),
                 features: Vec::new(),

@@ -1,4 +1,4 @@
-# Deploy GSV with Alchemy
+# Deploy Ship with Alchemy
 
 The public Alchemy stack deploys one operator environment into your Cloudflare
 account. It serves isolated spaces with public Accounts, Gateway and inference
@@ -6,12 +6,80 @@ Workers, R2 storage and ripgit. H&M services are optional. The root deployment
 commands use the `operator` stage; they do not upgrade an existing singleton
 deployment in place.
 
-To try GSV without operating infrastructure, use [hosted GSV](https://gsv.space).
+To try Ship without operating infrastructure, use [hosted Ship](https://gsv.space).
 GitHub Releases provide the host applications and browser extension. Self-hosters
 build the Workers and web UI from source; new releases do not include prebuilt
 Cloudflare deployment archives.
 
 ## Deploy a new operator
+
+### Public domains and operator links
+
+The product is Ship; the GSV runtime and infrastructure identifiers stay stable.
+`GSV_DOMAIN` chooses the domain for new installations. Configure public UI values
+with `GSV_PUBLIC_CONFIG`, a JSON object containing optional `operatorName`,
+`accountsOrigin`, `docsUrl`, `installUrl`, `termsUrl` and `privacyUrl`. URLs must use
+HTTPS. The composition adds `primaryDomain` and `legacyDomains` from its routing
+configuration. Custom compositions pass the same values as `GsvDeployment.presentation`.
+
+For a domain transition, `GSV_DOMAIN_ALIASES='["old.example"]'` lets Accounts
+materialize `handle.new.example` for an existing, recorded `handle.old.example`.
+The alias points to the same installation, with its original canonical origin.
+Public profiles redirect to that signed origin; profile lookup validates each
+redirect and the final signature, so a new address finds the existing contact.
+Unknown handles create no installation. New installations receive only the new
+domain. Reset moves all active accepted hostnames together to the replacement
+installation; retired aliases stay retired.
+
+These settings do not move DNS or create routes in another zone. Preserve the
+existing zone, routes and Worker resource identities in your operator composition,
+and add the new zone's routes to the same Workers. Inspect the Alchemy plan before
+changing a live domain. `GSV_OWNER_ORIGIN_ALIASES` accepts a JSON array of additional
+HTTPS origins for owner signup and account access; administration remains at its
+configured origin. Add each origin to an OIDC provider's callback allowlist if used.
+Cookies remain local to each browser origin, so the new address may require login.
+
+Gateway embeds the public configuration in the HTML, exposes it at
+`/.well-known/gsv/deployment.json` on accepted installation hosts, and includes it
+in `sys.connect` as `server.deployment`. It contains no credentials or authority.
+Desktop release builds accept the same JSON through `VITE_GSV_PUBLIC_CONFIG`;
+the release workflow reads the repository variable `GSV_PUBLIC_CONFIG`. After
+connecting, clients use that server's settings. Without a configured primary
+domain, users enter a full address. Documentation builds accept `GSV_DOCS_ORIGIN`
+for the sitemap and `GSV_PRODUCT_URL` for the product link.
+
+### Release briefs for existing Ships
+
+Set `GSV_OPERATOR_UPDATES_FILE` to an operator-owned JSON file, or pass an
+`operatorUpdates` catalog to `GsvDeployment`:
+
+```json
+{
+  "publisher": { "id": "example-operator", "name": "Example Operator" },
+  "updates": [{
+    "id": "new-address-v1",
+    "publishedAtMs": 1792051200000,
+    "title": "Explain the new address",
+    "brief": "Describe the change, what still works, and any action the owner needs."
+  }]
+}
+```
+
+The Gateway binding is `GSV_OPERATOR_UPDATES`. The catalog is limited to 32 briefs.
+Keep publisher and update IDs stable, and use a fixed publication time rather
+than the current deployment time. Changes to a previously delivered brief need a
+new ID. Future briefs wait until an eligible reconciliation after publication.
+New owners skip briefs published before their initial onboarding responsibility.
+
+When an existing personal agent is next initialized or reconciled, Kernel creates
+one ordinary `operator.update` responsibility per unseen brief. Resolved and
+cancelled rows still deduplicate. No account scan or request to every Durable
+Object is needed. Ship receives the ledger change through its normal context and
+explains relevant updates in a suitable conversation, without waking solely to
+announce them or changing user files. The owner can inspect or resolve the record
+through the usual responsibility controls.
+
+### Install the stack
 
 Use a Cloudflare account and a domain in one of its DNS zones, plus Node.js 22 or
 newer, npm and Rust for the source build. The composition includes CodeMode

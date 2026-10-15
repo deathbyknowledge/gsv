@@ -11,12 +11,22 @@ const PROFILE: PublicProfile = {
 const projection = { ownerUid: 1000, alias: "person", revision: 1, profile: PROFILE };
 
 describe("public profile projection serving", () => {
+  it.each(["text/html", "application/json"])("redirects hostname aliases to the published identity for %s", async (accept) => {
+    const request = new Request("https://person.new.example/profile", { headers: { accept } });
+    const path = { locator: { space: true as const }, json: false };
+    const response = await servePublicProfileRequest(request, path, async () => projection);
+    expect(response.status).toBe(308);
+    expect(response.headers.get("location")).toBe(PROFILE.url);
+    expect(response.headers.get("cache-control")).toBe("no-store");
+    expect((await servePublicProfileRequest(request, path, async () => null)).status).toBe(404);
+  });
+
   it("hands off only the reviewed public profile address without creating an approach", async () => {
     const response = await servePublicProfileRequest(new Request(PROFILE.url), { locator: { alias: "person" }, json: false }, async () => ({ ...projection, profile: { ...PROFILE, contactPolicy: "requests" } }));
     const html = await response.text();
     expect(html).toContain('data-profile="https://profile.example/@person"');
     expect(html).toContain('src="/social/connect.js"');
-    expect(html).toContain("Your GSV address");
+    expect(html).toContain("Your Ship’s address");
     expect(html).not.toContain("approach.create");
     expect(html).not.toContain("ownerUid");
     expect(response.headers.get("content-security-policy")).toContain("script-src 'self'");

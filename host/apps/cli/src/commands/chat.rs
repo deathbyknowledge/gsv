@@ -830,12 +830,12 @@ fn release_hint(current: &str, server: &gateway_client::protocol::ServerInfo) ->
         return None;
     }
     let command = if cfg!(windows) {
-        "irm https://install.gsv.space/install.ps1 | iex"
+        "irm https://raw.githubusercontent.com/deathbyknowledge/gsv/main/install.ps1 | iex"
     } else {
-        "curl -fsSL https://install.gsv.space | bash"
+        "curl -fsSL https://raw.githubusercontent.com/deathbyknowledge/gsv/main/install.sh | bash"
     };
     Some(format!(
-        "GSV {} is available; this CLI is {current}. Update with: {command}",
+        "Ship {} is available; this CLI is {current}. Update with: {command}",
         stable_tag(available)
     ))
 }
@@ -847,6 +847,7 @@ mod release_hint_tests {
 
     fn server(version: &str, release: Option<&str>) -> ServerInfo {
         ServerInfo {
+            deployment: None,
             version: version.to_string(),
             release: release.unwrap_or_default().to_string(),
             features: Vec::new(),
@@ -857,7 +858,7 @@ mod release_hint_tests {
     #[test]
     fn hints_only_for_a_newer_stable_gateway() {
         let hint = release_hint("0.4.1", &server("0.4.2", Some("v0.4.2"))).expect("newer hints");
-        assert!(hint.starts_with("GSV v0.4.2 is available; this CLI is 0.4.1."));
+        assert!(hint.starts_with("Ship v0.4.2 is available; this CLI is 0.4.1."));
         assert_eq!(
             release_hint("0.4.1", &server("0.4.1", Some("v0.4.1"))),
             None

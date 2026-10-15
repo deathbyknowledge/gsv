@@ -7,6 +7,7 @@ import { handleConnect, PROTOCOL_VERSION } from "./connect";
 const protocolOnlyContext = (): any => ({
   connection: { id: "connection-1" },
   serverVersion: "0.4.1",
+  env: { GSV_PUBLIC_CONFIG: JSON.stringify({ installUrl: "https://install.operator.example" }) },
 });
 
 describe("sys.connect protocol mismatch", () => {
@@ -26,8 +27,8 @@ describe("sys.connect protocol mismatch", () => {
       supportedProtocol: PROTOCOL_VERSION,
       serverVersion: "0.4.1",
       serverRelease: "dev",
-      installer: "https://install.gsv.space",
+      installer: "https://install.operator.example",
     });
-    expect(outcome.message).toContain("https://install.gsv.space");
+    expect(outcome.message).toContain("https://install.operator.example");
   });
 });

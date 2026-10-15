@@ -1,12 +1,16 @@
+import { publicDeployment } from "../deployment";
+import type { PublicDeploymentConfig } from "@humansandmachines/gsv/services/deployment";
+
 type SpaceAddress = { origin: string | null; suffix: string };
 
 /** Resolve human input here; the native session still accepts only a canonical origin. */
-export function spaceAddress(input: string): SpaceAddress {
+export function spaceAddress(input: string, deployment: PublicDeploymentConfig = publicDeployment()): SpaceAddress {
   const value = input.trim();
   const handle = value.toLowerCase() !== "localhost" && /^[a-z0-9-]*$/i.test(value);
-  const suffix = handle ? ".gsv.space" : "";
+  const suffix = handle && deployment.primaryDomain ? `.${deployment.primaryDomain}` : "";
   const invalid = { origin: null, suffix };
   if (!value || /[\s\\]/.test(value)) return invalid;
+  if (handle && !deployment.primaryDomain) return invalid;
   if (handle && !/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/i.test(value)) return invalid;
 
   try {
