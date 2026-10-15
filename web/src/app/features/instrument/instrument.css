@@ -141,20 +141,30 @@
 }
 .instrument-view { min-width: 0; min-height: 0; height: 100%; }
 .instrument-view[hidden] { display: none; }
-.instrument [data-scroll-edge] {
-  /* Reserve the hairline even while clear so revealing it never moves the text. */
-  border-top: 1px solid transparent;
+@property --instrument-scroll-edge-color {
+  syntax: "<color>";
+  inherits: false;
+  initial-value: transparent;
 }
-.instrument [data-scroll-clipped] {
-  border-top-color: var(--accent);
+.instrument [data-scroll-edge] {
+  --instrument-scroll-edge-color: transparent;
+  /* Reserve the hairline even while clear so revealing it never moves the text. */
+  border-top: 1px solid var(--instrument-scroll-edge-color);
   background-image: linear-gradient(to bottom,
-    color-mix(in srgb, var(--accent) 35%, transparent),
-    color-mix(in srgb, var(--accent) 12%, transparent) 35%,
+    color-mix(in srgb, var(--instrument-scroll-edge-color) 35%, transparent),
+    color-mix(in srgb, var(--instrument-scroll-edge-color) 12%, transparent) 35%,
     transparent);
   background-size: 100% 8px;
   background-repeat: no-repeat;
   background-position: top;
   background-attachment: scroll;
+  transition: --instrument-scroll-edge-color 120ms ease-out;
+}
+.instrument [data-scroll-clipped] {
+  --instrument-scroll-edge-color: var(--accent);
+}
+@media (prefers-reduced-motion: reduce) {
+  .instrument [data-scroll-edge] { transition: none; }
 }
 .instrument-people-waiting { color: var(--accent); margin-left: 4px; font-size: 15px; line-height: 1; }
 

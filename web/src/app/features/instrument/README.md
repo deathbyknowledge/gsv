@@ -6,8 +6,10 @@ The shared header reserves its own height above every view. Messages, lists and
 files cannot pass behind the header.
 Scrollable panes mark their top edge with a lavender hairline and the cursor's
 soft glow only while that edge intersects rendered text. The glow occupies only
-the top eight pixels of the pane. It clears in line spacing, padding and gaps
-between messages or rows. The shared shell observes only the active view;
+the top eight pixels of the pane. The line and glow fade together over 120ms as
+text crosses the edge, clearing in line spacing, padding and gaps between messages
+or rows. Reduced motion changes the edge immediately. The shared shell observes
+only the active view;
 scrolling, message selection and text selection remain owned by each surface.
 Chat's scrolling pane spans the view, with its existing gutters inside the content,
 so the glow reaches both page edges without widening the messages.
