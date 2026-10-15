@@ -122,6 +122,11 @@ Runtime behavior:
 
 Device routing errors are frame-level errors: `403` for access denied, `503` for offline or missing connection, `400` for unsupported syscall, and `504` for route timeout.
 
+Native directory reads classify entries with a bounded number of concurrent
+metadata lookups. They preserve listing order and follow directory symlinks; an
+entry that cannot be statted remains in the file list, as before. This avoids
+serial storage round trips for each child in cloud-backed folders.
+
 ```ts
 type FilesystemSyscalls = {
   "fs.read": {
