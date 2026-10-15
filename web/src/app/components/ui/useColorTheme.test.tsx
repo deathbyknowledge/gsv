@@ -4,12 +4,10 @@ import { createTestRoot } from "../../testing/testHarness";
 import type { ColorThemeState } from "./useColorTheme";
 
 const THEME_KEY = "gsv.instrument.theme";
-type Listener = (event: Event) => void;
 
 /** The slice of `window` the hook touches: storage, the system appearance query and page events. */
 function fakeWindow(options: { systemLight: boolean; stored?: string; blocked?: boolean }) {
   const stored = new Map<string, string>(options.stored === undefined ? [] : [[THEME_KEY, options.stored]]);
-  const listeners = new Map<string, Set<Listener>>();
   const systemListeners = new Set<() => void>();
   const blocked = () => { if (options.blocked) throw new Error("storage blocked"); };
   const query = {
@@ -17,24 +15,14 @@ function fakeWindow(options: { systemLight: boolean; stored?: string; blocked?: 
     addEventListener: (_type: string, listener: () => void) => { systemListeners.add(listener); },
     removeEventListener: (_type: string, listener: () => void) => { systemListeners.delete(listener); },
   };
-  const page = {
+  const page = Object.assign(new EventTarget(), {
     localStorage: {
       getItem: (key: string) => { blocked(); return stored.get(key) ?? null; },
       setItem: (key: string, value: string) => { blocked(); stored.set(key, value); },
       removeItem: (key: string) => { blocked(); stored.delete(key); },
     },
     matchMedia: () => query,
-    addEventListener: (type: string, listener: Listener) => {
-      const set = listeners.get(type) ?? new Set<Listener>();
-      set.add(listener);
-      listeners.set(type, set);
-    },
-    removeEventListener: (type: string, listener: Listener) => { listeners.get(type)?.delete(listener); },
-    dispatchEvent: (event: Event) => {
-      for (const listener of listeners.get(event.type) ?? []) listener(event);
-      return true;
-    },
-  };
+  });
   vi.stubGlobal("document", {});
   vi.stubGlobal("window", page);
   return {

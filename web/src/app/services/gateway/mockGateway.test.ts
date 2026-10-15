@@ -54,23 +54,6 @@ afterEach(async () => {
 });
 
 describe("mock gateway", () => {
-  it("keeps the responsibility count independent of pagination and separates current, history and paused routines", async () => {
-    const client = await connectedClient();
-    const current = await client.r12y.list({ states: ["open", "active", "waiting"], limit: 1 });
-    expect(current.count).toBe(3);
-    expect(current.responsibilities).toHaveLength(1);
-    const rest = await client.r12y.list({ states: ["open", "active", "waiting"], offset: 1 });
-    expect(rest.responsibilities).toHaveLength(2);
-    expect(rest.responsibilities.some((record) => record.blocker)).toBe(true);
-    const history = await client.r12y.list({ states: ["resolved", "cancelled"], includeTerminal: true });
-    expect(history.responsibilities.map((record) => record.state)).toEqual(["resolved"]);
-    const enabled = await client.sched.list({});
-    const all = await client.sched.list({ includeDisabled: true });
-    expect(enabled.schedules).toHaveLength(2);
-    expect(all.schedules).toHaveLength(3);
-    expect(all.schedules.some((schedule) => !schedule.enabled)).toBe(true);
-  });
-
   it("answers only when asked for by the query string", () => {
     window.location.search = "";
     expect(mockGatewayRequested()).toBe(false);

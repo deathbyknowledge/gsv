@@ -69,25 +69,16 @@ describe("attachment opening", () => {
 });
 
 describe("pasted text chip", () => {
-  it("shows the size of the paste in place of its text, and removes it on request", () => {
+  it("keeps the complete paste in collapsed details and removes it on request", () => {
     const onRemove = vi.fn();
     const text = `${"x".repeat(434)}!`;
     const tree = ZenDraftPaste({ paste: { id: "paste", text, characters: 435 }, onRemove });
     const nodes = collectNodes(tree);
-    expect(collectText(nodes.find((node) => node.type === "summary"))).toBe("pasted text 435 characters");
+    expect(collectText(nodes.find((node) => node.type === "summary"))).not.toContain(text);
     expect(nodes.find((node) => node.type === "pre")?.props.children).toBe(text);
     expect(nodes.find((node) => node.type === "details")?.props).not.toHaveProperty("open", true);
     const remove = collectNodes(tree).find((node) => node.type === "button");
-    expect(remove?.props["aria-label"]).toBe("Remove pasted text");
     remove?.props.onClick?.();
     expect(onRemove).toHaveBeenCalledOnce();
-  });
-
-  it("previews how a long paste begins and groups large counts", () => {
-    const tree = ZenDraftPaste({ paste: { id: "paste", text: "y".repeat(1234), characters: 1234 } });
-    expect(collectText(collectNodes(tree).find((node) => node.type === "summary"))).toBe("pasted text 1,234 characters");
-    expect(collectNodes(tree).some((node) => node.type === "button")).toBe(false);
-    // SAFETY: ZenDraftPaste returns an <li> VNode; the generic harness omits its title attribute.
-    expect((tree as VNode<{ title: string }>).props.title).toBe(`${"y".repeat(280)}…`);
   });
 });

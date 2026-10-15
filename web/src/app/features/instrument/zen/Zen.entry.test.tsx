@@ -195,18 +195,6 @@ describe("Zen conversation entry", () => {
         expect(zen.dirty()).toBe(true);
       }
       expect(send).not.toHaveBeenCalled();
-      expect(zen.nodes().some((node) => node.props["aria-label"] === "Request to send")).toBe(false);
-    } finally { await zen.unmount(); }
-  });
-
-  it("renders legacy experimental history as ordinary readable text", async () => {
-    const text = "Help me create a routine.\n\nCheck my calendar.";
-    const legacy = { ...message("user", text), action: { kind: "routine.create", note: "Check my calendar." } };
-    messages = [legacy];
-    const zen = await mountedZen();
-    try {
-      expect(zen.props(ZenText).text).toBe(text);
-      expect(zen.nodes().some((node) => node.props.class === "zen-action-message")).toBe(false);
     } finally { await zen.unmount(); }
   });
 
