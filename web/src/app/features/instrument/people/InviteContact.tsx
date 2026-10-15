@@ -80,7 +80,7 @@ export function InviteContact({ account, draft, onChange, onAdded, onBusy, onPro
         <button class="people-action" disabled={busy} onClick={() => { clearContactInvitation(); onChange({ code: "", issued: null, shipHandlesMessages: null }); setAccepting(false); setEntering(true); }}>invite someone instead</button></div>
     </> : <>
       <h2>Bring someone along.</h2>
-      <p class="people-note">Send a link to a friend, partner, or colleague who has GSV. Once they accept, you can talk here and put your Ships to work together.</p>
+      <p class="people-note">Send a link to a friend, partner, or colleague who has Ship. Once they accept, you can talk here and put your Ships to work together.</p>
       {issued && link ? <div class="people-invite-link">
         {expired || current?.state === "cancelled" ? <p role="status">This invitation {expired ? "has expired" : "was cancelled"}.</p> : <>
           <label>Invitation link<input aria-label="Invitation link" value={link} readOnly onFocus={(event) => event.currentTarget.select()} /></label>

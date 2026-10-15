@@ -62,11 +62,11 @@ jobs:
               echo "Stable release tag must match ${EXPECTED_TAG}, got ${RELEASE_TAG}" >&2
               exit 1
             fi
-            RELEASE_NAME="GSV ${RELEASE_TAG}"
+            RELEASE_NAME="Ship ${RELEASE_TAG}"
             PRERELEASE="false"
           else
             RELEASE_TAG="$(node ./scripts/release.mjs dev-tag)"
-            RELEASE_NAME="GSV (dev)"
+            RELEASE_NAME="Ship (dev)"
             PRERELEASE="true"
           fi
 
@@ -224,6 +224,8 @@ jobs:
           workspaces: host -> target
           key: desktop-release-${{ matrix.target }}
       - name: Build shared desktop frontend
+        env:
+          VITE_GSV_PUBLIC_CONFIG: ${{ vars.GSV_PUBLIC_CONFIG }}
         run: |
           npm ci --ignore-scripts --workspace web --workspace packages/gsv --include-workspace-root=false
           npm run gsv:build
@@ -404,13 +406,13 @@ jobs:
         run: |
           if [ "$KIND" = "stable" ]; then
             TITLE="${RELEASE_NAME}"
-            INSTALL_CMD='curl -fsSL https://install.gsv.space | bash'
-            INSTALL_CMD_PS='irm https://install.gsv.space/install.ps1 | iex'
+            INSTALL_CMD='curl -fsSL https://install.ship.space | bash'
+            INSTALL_CMD_PS='irm https://install.ship.space/install.ps1 | iex'
             DEV_CHANNEL_NOTE=""
           else
             TITLE="${RELEASE_NAME}"
-            INSTALL_CMD='curl -fsSL https://install.gsv.space | GSV_CHANNEL=dev bash'
-            INSTALL_CMD_PS='$env:GSV_CHANNEL="dev"; irm https://install.gsv.space/install.ps1 | iex'
+            INSTALL_CMD='curl -fsSL https://install.ship.space | GSV_CHANNEL=dev bash'
+            INSTALL_CMD_PS='$env:GSV_CHANNEL="dev"; irm https://install.ship.space/install.ps1 | iex'
             DEV_CHANNEL_NOTE=$(cat <<'DEV_NOTE'
           ### Dev Channel
 
@@ -419,7 +421,7 @@ jobs:
           DEV_NOTE
             )
           fi
-          INSTALL_TAG_CMD_PS="\$env:GSV_VERSION='${RELEASE_TAG}'; irm https://install.gsv.space/install.ps1 | iex"
+          INSTALL_TAG_CMD_PS="\$env:GSV_VERSION='${RELEASE_TAG}'; irm https://install.ship.space/install.ps1 | iex"
 
           cat > body.md <<BODY
           ## ${TITLE}
@@ -439,7 +441,7 @@ jobs:
           Pin a specific release tag:
 
           \`\`\`bash
-          curl -fsSL https://install.gsv.space | GSV_VERSION=${RELEASE_TAG} bash
+          curl -fsSL https://install.ship.space | GSV_VERSION=${RELEASE_TAG} bash
           \`\`\`
 
           \`\`\`powershell
@@ -452,7 +454,7 @@ jobs:
 
           Build the Workers and web UI from this release's source tag to run GSV
           in your own Cloudflare account. Follow the
-          [operator deployment guide](https://docs.gsv.space/how-to/deploy-with-alchemy).
+          [operator deployment guide](https://github.com/deathbyknowledge/gsv/blob/main/docs/how-to/deploy-with-alchemy.md).
 
           ### Browser Extension
 

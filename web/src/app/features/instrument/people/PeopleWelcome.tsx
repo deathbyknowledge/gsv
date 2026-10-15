@@ -17,7 +17,7 @@ export function PeopleWelcome({ idea, onIdea, onConnect, disabled }: {
   return <section class="people-welcome" aria-labelledby="people-welcome-title">
     <span class="people-kicker">YOUR PEOPLE. YOUR SHIPS.</span>
     <h2 id="people-welcome-title">Life happens<br />with other people.</h2>
-    <p class="people-welcome-intro">Connect with someone on GSV. Talk directly, share things, or ask Ship to help you make something happen together.</p>
+    <p class="people-welcome-intro">Connect with someone on Ship. Talk directly, share things, or ask Ship to help you make something happen together.</p>
     <div class="people-examples" aria-label="Things to try together">
       <div class="people-example-tabs" role="tablist" aria-label="Examples">{PEOPLE_IDEAS.map((example, index) =>
         <button key={example.title} role="tab" id={`people-example-${index}`} aria-selected={idea === index} aria-controls="people-example" tabIndex={idea === index ? 0 : -1}

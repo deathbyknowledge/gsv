@@ -94,7 +94,7 @@ export class ManualUpdater {
       );
       this.assertCurrent(generation);
       if (!this.ctx.config.get("repos/root/gsv-manual/created_at")) {
-        registerRepo(this.ctx, ROOT_GSV_MANUAL_REPO, "GSV Manual");
+        registerRepo(this.ctx, ROOT_GSV_MANUAL_REPO, "Ship Manual");
         setRepoVisibility(ROOT_GSV_MANUAL_REPO, "public", this.ctx.config);
       } else if (imported.changed) {
         this.ctx.config.set("repos/root/gsv-manual/updated_at", String(Date.now()));

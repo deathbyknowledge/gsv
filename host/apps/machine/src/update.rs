@@ -18,6 +18,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use gateway_client::connection::GatewayRpcError;
 use gateway_client::protocol::{ServerInfo, PROTOCOL_VERSION};
+use host_config::installer::{install_command, installer_script_url};
 use host_config::release::{parse_version, stable_tag, ReleaseVersion, DEV_RELEASE_TAG};
 use host_config::CliConfig;
 use serde::{Deserialize, Serialize};
@@ -30,7 +31,7 @@ fn is_release_tag(tag: &str) -> bool {
 }
 
 /// Where the public installer lives when the gateway does not name one.
-pub const DEFAULT_INSTALLER_URL: &str = "https://install.gsv.space";
+pub use host_config::installer::DEFAULT_INSTALLER_URL;
 /// The daemon starts at most one installer per hour, whatever the outcome.
 pub const MIN_ATTEMPT_INTERVAL: Duration = Duration::from_secs(60 * 60);
 const INSTALLER_DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(60);
@@ -77,6 +78,7 @@ pub enum UpdateError {
     /// installer would need sudo, which an unattended service cannot give.
     Unwritable {
         dir: PathBuf,
+        command: String,
     },
     /// The daemon lives inside a macOS application bundle that Desktop owns.
     AppBundle {
@@ -84,12 +86,12 @@ pub enum UpdateError {
     },
     /// Nothing would restart the daemon after the installer replaced it.
     NotServiceManaged {
-        dir: PathBuf,
+        command: String,
     },
     /// The installer could not be kept out of the daemon's own service, so
     /// stopping the service would kill it mid-update.
     NoDetachment {
-        dir: PathBuf,
+        command: String,
     },
     State(String),
     Download(String),
@@ -113,18 +115,13 @@ impl UpdateError {
 }
 
 /// The command a person runs to update the installation in `dir` by hand.
-pub fn manual_install_command(dir: &Path) -> String {
-    if cfg!(windows) {
-        format!(
-            "$env:GSV_INSTALL_DIR='{}'; irm https://install.gsv.space/install.ps1 | iex",
-            dir.display()
-        )
-    } else {
-        format!(
-            "curl -fsSL https://install.gsv.space | GSV_INSTALL_DIR=\"{}\" bash",
-            dir.display()
-        )
-    }
+pub fn manual_install_command(dir: &Path, target: &UpdateTarget) -> Result<String, String> {
+    install_command(
+        &target.installer_url,
+        &target.release,
+        Some(dir),
+        cfg!(windows),
+    )
 }
 
 impl Display for UpdateError {
@@ -136,26 +133,23 @@ impl Display for UpdateError {
                 "the last update attempt was {} minutes ago; the next one waits until an hour has passed",
                 since.as_secs() / 60
             ),
-            Self::Unwritable { dir } => write!(
+            Self::Unwritable { dir, command } => write!(
                 f,
-                "{} is not writable by this user. Run the installer yourself: {}",
-                dir.display(),
-                manual_install_command(dir)
+                "{} is not writable by this user. Run the installer yourself: {command}",
+                dir.display()
             ),
             Self::AppBundle { dir } => write!(
                 f,
                 "{} is part of the Desktop application, which updates it",
                 dir.display()
             ),
-            Self::NotServiceManaged { dir } => write!(
+            Self::NotServiceManaged { command } => write!(
                 f,
-                "this daemon is not run by a service manager, so nothing would restart it after an update. Run the installer yourself: {}",
-                manual_install_command(dir)
+                "this daemon is not run by a service manager, so nothing would restart it after an update. Run the installer yourself: {command}"
             ),
-            Self::NoDetachment { dir } => write!(
+            Self::NoDetachment { command } => write!(
                 f,
-                "automatic updates need systemd-run on this machine, and it is not installed. Run the installer yourself: {}",
-                manual_install_command(dir)
+                "automatic updates need systemd-run on this machine, and it is not installed. Run the installer yourself: {command}"
             ),
             Self::State(error) => write!(f, "could not record the update attempt: {error}"),
             Self::Download(error) => write!(f, "could not download the installer: {error}"),
@@ -397,7 +391,13 @@ impl AutoUpdater {
         Some(UpdateTarget {
             release,
             reason: UpdateReason::NewerRelease,
-            installer_url: DEFAULT_INSTALLER_URL.to_string(),
+            installer_url: server
+                .deployment
+                .as_ref()
+                .and_then(|deployment| deployment.install_url.as_deref())
+                .filter(|url| url.starts_with("https://"))
+                .unwrap_or(DEFAULT_INSTALLER_URL)
+                .to_string(),
         })
     }
 
@@ -427,16 +427,26 @@ impl AutoUpdater {
         }
         let install_dir = install_dir()?;
         let Some(manager) = detect_service_manager() else {
-            return Err(UpdateError::NotServiceManaged { dir: install_dir });
+            return Err(UpdateError::NotServiceManaged {
+                command: manual_install_command(&install_dir, target)
+                    .map_err(UpdateError::Download)?,
+            });
         };
         let Some(strategy) = detach_strategy(manager, systemd_run_path()) else {
-            return Err(UpdateError::NoDetachment { dir: install_dir });
+            return Err(UpdateError::NoDetachment {
+                command: manual_install_command(&install_dir, target)
+                    .map_err(UpdateError::Download)?,
+            });
         };
         if is_app_bundle_dir(&install_dir) {
             return Err(UpdateError::AppBundle { dir: install_dir });
         }
         if !dir_writable(&install_dir) {
-            return Err(UpdateError::Unwritable { dir: install_dir });
+            return Err(UpdateError::Unwritable {
+                command: manual_install_command(&install_dir, target)
+                    .map_err(UpdateError::Download)?,
+                dir: install_dir,
+            });
         }
         self.check_allowed(SystemTime::now())?;
         self.record_attempt(&target.release, SystemTime::now())?;
@@ -597,7 +607,7 @@ impl AutoUpdater {
 
     async fn download_installer(&self, base_url: &str) -> Result<PathBuf, String> {
         self.ensure_work_dir().map_err(|error| error.to_string())?;
-        let url = installer_script_url(base_url);
+        let url = installer_script_url(base_url, cfg!(windows))?;
         let client = reqwest::Client::builder()
             .timeout(INSTALLER_DOWNLOAD_TIMEOUT)
             .build()
@@ -692,15 +702,6 @@ fn installer_script_name() -> &'static str {
         "install.ps1"
     } else {
         "install.sh"
-    }
-}
-
-fn installer_script_url(base_url: &str) -> String {
-    let base = base_url.trim_end_matches('/');
-    if cfg!(windows) {
-        format!("{base}/install.ps1")
-    } else {
-        base.to_string()
     }
 }
 
@@ -1179,6 +1180,7 @@ mod tests {
 
     fn server(version: &str, release: Option<&str>) -> ServerInfo {
         ServerInfo {
+            deployment: None,
             version: version.to_string(),
             release: release.unwrap_or_default().to_string(),
             features: Vec::new(),
@@ -1604,6 +1606,41 @@ mod tests {
     }
 
     #[test]
+    fn a_successful_handshake_uses_the_operator_installer() {
+        let updater = updater(true, ReleaseChannel::Stable, "0.4.1");
+        let mut newer = server("0.5.0", Some("v0.5.0"));
+        for (configured, expected) in [
+            (
+                Some("https://downloads.example/host/install.sh"),
+                "https://downloads.example/host/install.sh",
+            ),
+            (
+                Some("http://downloads.example/host/install.sh"),
+                DEFAULT_INSTALLER_URL,
+            ),
+            (None, DEFAULT_INSTALLER_URL),
+        ] {
+            newer.deployment = Some(
+                serde_json::from_value(json!({
+                    "legacyDomains": [],
+                    "installUrl": configured,
+                }))
+                .expect("public deployment config"),
+            );
+            let target = updater.plan_for_server(&newer).expect("newer release");
+            assert_eq!(target.installer_url, expected);
+        }
+        newer.deployment = None;
+        assert_eq!(
+            updater
+                .plan_for_server(&newer)
+                .expect("legacy gateway")
+                .installer_url,
+            DEFAULT_INSTALLER_URL
+        );
+    }
+
+    #[test]
     fn a_gateway_behind_this_build_is_not_an_update() {
         let updater = updater(true, ReleaseChannel::Stable, "0.4.1");
         let older = protocol_error(u64::from(PROTOCOL_VERSION) - 1, "0.3.0", None);
@@ -1738,13 +1775,36 @@ mod tests {
 
     #[test]
     fn the_manual_command_keeps_the_installation_where_it_is() {
-        let message = UpdateError::Unwritable {
-            dir: PathBuf::from("/usr/local/bin"),
+        let dir = PathBuf::from("/usr/local/bin");
+        let target = UpdateTarget {
+            release: "v0.5.0".to_string(),
+            reason: UpdateReason::NewerRelease,
+            installer_url: "https://downloads.example/host/install.sh?channel=stable".to_string(),
+        };
+        let command = manual_install_command(&dir, &target).expect("manual command");
+        for error in [
+            UpdateError::Unwritable {
+                dir,
+                command: command.clone(),
+            },
+            UpdateError::NotServiceManaged {
+                command: command.clone(),
+            },
+            UpdateError::NoDetachment { command },
+        ] {
+            let message = error.to_string();
+            let script = if cfg!(windows) {
+                "install.ps1"
+            } else {
+                "install.sh"
+            };
+            assert!(message.contains(&format!(
+                "https://downloads.example/host/{script}?channel=stable"
+            )));
+            assert!(message.contains("GSV_VERSION='v0.5.0'"));
+            assert!(message.contains("GSV_INSTALL_DIR='/usr/local/bin'"));
+            assert!(!message.contains("install.ship.space"));
         }
-        .to_string();
-        assert!(message.starts_with("/usr/local/bin is not writable by this user."));
-        assert!(message.contains("GSV_INSTALL_DIR"));
-        assert!(message.contains("/usr/local/bin"));
     }
 
     #[test]
@@ -1784,15 +1844,5 @@ mod tests {
         assert!(!dir_writable(&dir));
         fs::set_permissions(&dir, fs::Permissions::from_mode(0o700)).expect("restore");
         fs::remove_dir_all(&dir).expect("remove probe dir");
-    }
-
-    #[test]
-    fn the_installer_url_matches_the_platform_script() {
-        let url = installer_script_url("https://install.gsv.space/");
-        if cfg!(windows) {
-            assert_eq!(url, "https://install.gsv.space/install.ps1");
-        } else {
-            assert_eq!(url, "https://install.gsv.space");
-        }
     }
 }

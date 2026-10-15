@@ -150,6 +150,10 @@ Sending moves the text and attachments into the conversation immediately and cle
 
 Markdown code blocks share readable monospace sizing, contained horizontal scrolling and a quiet copy action across Chat, search excerpts and Memory. Copy preserves code whitespace without adding the renderer's final newline. Copy feedback stays outside the glyph animation; inline code wraps long tokens without widening the conversation.
 
+Human messages align right, including the sender label; the timestamp precedes the name.
+Their text uses balanced wrapping while preserving explicit line breaks. Ship's messages
+align left with ordinary line wrapping.
+
 Each Ship message separates receipts. The work leading to a message stays in the receipt before it; further work starts a new receipt below that message, even within the same run. Replies keep their own content, order and model attribution. A receipt's identity follows its process, run and previous sent message, so open actions stay open when the next reply streams, commits or finishes. Calls without a run identity stay separate, and direct commands retain their terminal controls.
 On phones, closed completed receipts with a reply are hidden. Live work, failures, fallbacks,
 approvals and receipts the reader has already opened remain visible. Action records are also

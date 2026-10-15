@@ -99,6 +99,8 @@ jobs:
           key: windows-host-native-v1
           cache-workspace-crates: true
       - name: Build shared frontend
+        env:
+          VITE_GSV_PUBLIC_CONFIG: ${{ vars.GSV_PUBLIC_CONFIG }}
         run: |
           npm ci --ignore-scripts --workspace web --workspace packages/gsv --include-workspace-root=false
           if ($LASTEXITCODE) { exit $LASTEXITCODE }

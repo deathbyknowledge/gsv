@@ -83,7 +83,7 @@ pub fn resolve_gsvd_executable() -> Result<PathBuf, DynError> {
     }
 
     Err(format!(
-        "Could not find the sibling `{executable_name}` executable. Install the complete GSV distribution or set GSV_GSVD_PATH."
+        "Could not find the sibling `{executable_name}` executable. Install the complete Ship distribution or set GSV_GSVD_PATH."
     )
     .into())
 }
@@ -93,7 +93,7 @@ fn validate_gsvd_version(executable: &Path) -> Result<(), DynError> {
     let version = parse_gsvd_version(&version_output).ok_or("Invalid gsvd version output")?;
     if version != build_info::PACKAGE_VERSION {
         return Err(format!(
-            "gsv {} cannot control gsvd {version}; install a complete matching GSV distribution",
+            "gsv {} cannot control gsvd {version}; install a complete matching Ship distribution",
             build_info::PACKAGE_VERSION,
         )
         .into());

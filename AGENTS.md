@@ -2,6 +2,8 @@
 
 GSV is an open-source, user-owned personal intelligence operating environment. Its gateway is a lightweight, globally reachable control plane; agents are durable processes; capabilities gate syscalls; targets are Unix-shaped capability environments backed by GSV, machines, browsers, or services; and adapters own messaging transport.
 
+Ship is the product name. GSV remains the runtime, protocol, package and resource identity; `.gsv` paths and the `gsv` target remain stable. The external CLI command remains `gsv`. Operators own public domains, accepted legacy aliases, presentation links and update catalogs. Accounts may lazily materialize a preferred-domain alias only from a recorded canonical hostname; aliases never change the installation ID or its canonical federation origin. Kernel-owned reconciliation turns operator release briefs into deduplicated ordinary responsibilities during personal-agent access, without a fleet-wide write or an announcement-only wake.
+
 This document is the root engineering contract for the repository. It explains how to change GSV without eroding that model. Use the code as the source of truth, and update this file when the architecture deliberately changes.
 
 ## Architecture principles

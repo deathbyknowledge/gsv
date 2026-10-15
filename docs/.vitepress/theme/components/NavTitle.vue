@@ -1,7 +1,12 @@
+<script setup>
+import { useData } from "vitepress";
+const { theme } = useData();
+</script>
+
 <template>
   <div class="nav-title">
-    <a href="https://gsv.space" class="nav-title-gsv">GSV</a>
-    <a href="https://docs.gsv.space" class="nav-title-docs">documentation</a>
+    <a :href="theme.productUrl" class="nav-title-gsv">Ship</a>
+    <a href="/" class="nav-title-docs">documentation</a>
   </div>
 </template>
 

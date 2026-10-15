@@ -5,7 +5,8 @@ import { parseHandle } from "./domain";
 
 const origin = "https://accounts.example.com";
 const alias = "https://signup.example.com";
-const config = { GSV_ADMIN_ORIGIN: origin, GSV_OWNER_SIGNUP_ORIGIN: alias, ASSETS: env.ASSETS };
+const config = { GSV_ADMIN_ORIGIN: origin, GSV_OWNER_SIGNUP_ORIGIN: alias,
+  GSV_PUBLIC_CONFIG: JSON.stringify({ primaryDomain: "fleet.example", operatorName: "Example Operator" }), ASSETS: env.ASSETS };
 
 describe("browser signup assets", () => {
   it("serves the built shared welcome screen and its assets under the owner prefix", async () => {
@@ -15,6 +16,8 @@ describe("browser signup assets", () => {
     expect(response?.headers.get("referrer-policy")).toBe("no-referrer");
     expect(response?.headers.get("content-security-policy")).toContain("frame-ancestors 'none'");
     const html = await response!.text();
+    expect(html).toContain('"primaryDomain":"fleet.example"');
+    expect(html).toContain('id="gsv-deployment"');
     const script = html.match(/src="(\/owner\/signup\/assets\/[^"]+\.js)"/)?.[1];
     expect(script).toBeTruthy();
     const asset = await handleOwnerSignupRequest(new Request(origin + script), config, true);

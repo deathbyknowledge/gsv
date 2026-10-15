@@ -8,7 +8,7 @@ describe("operator base model stack", () => {
   it("delegates the default provider to the operator's inference service", () => {
     expect(baseAiModelStack()).toEqual([{
       id: GSV_INCLUDED_MODEL_ID,
-      name: "GSV Included",
+      name: "Ship Included",
       provider: "gsv",
       model: "default",
       maxTokens: DEFAULT_TEXT_GENERATION_MAX_TOKENS,

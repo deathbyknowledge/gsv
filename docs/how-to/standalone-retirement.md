@@ -1,6 +1,6 @@
 # Standalone retirement
 
-GSV now deploys one operator stack with public Accounts, Gateway and inference
+Ship now deploys one operator stack with public Accounts, Gateway and inference
 Workers. Each space has an immutable installation identity, trusted directory
 routing and scoped storage. An operator may run one space or many; there is no
 separate singleton runtime or per-person messenger application setup.
