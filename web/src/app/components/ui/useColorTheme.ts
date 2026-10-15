@@ -1,12 +1,20 @@
 import { useCallback, useEffect, useState } from "preact/hooks";
 
 export type ColorTheme = "light" | "dark";
-export type ColorThemeState = { theme: ColorTheme; toggleTheme: () => void };
+/** "system" follows the operating system's appearance; light or dark pins this device. */
+export type ColorThemePreference = ColorTheme | "system";
+export type ColorThemeState = {
+  theme: ColorTheme;
+  preference: ColorThemePreference;
+  setPreference: (next: ColorThemePreference) => void;
+  toggleTheme: () => void;
+};
 const THEME_KEY = "gsv.instrument.theme";
 const THEME_CHANGE = "gsv-color-theme-change";
-let pagePreference: ColorTheme | null = null;
+let pagePreference: ColorThemePreference | null = null;
 
-function effectiveTheme(): ColorTheme {
+/** An absent or unrecognised stored value follows the system, as it always has. */
+function storedPreference(): ColorThemePreference {
   if (pagePreference) return pagePreference;
   try {
     const value = window.localStorage.getItem(THEME_KEY);
@@ -14,15 +22,37 @@ function effectiveTheme(): ColorTheme {
   } catch {
     // storage blocked: the choice lasts for this page only
   }
+  return "system";
+}
+
+function effectiveTheme(preference: ColorThemePreference): ColorTheme {
+  if (preference !== "system") return preference;
   return window.matchMedia?.("(prefers-color-scheme: light)").matches ? "light" : "dark";
+}
+
+function writePreference(next: ColorThemePreference): void {
+  try {
+    if (next === "system") window.localStorage.removeItem(THEME_KEY);
+    else window.localStorage.setItem(THEME_KEY, next);
+    pagePreference = null;
+  } catch {
+    // a private window or blocked storage: the choice lasts for this page only
+    pagePreference = next;
+  }
+  window.dispatchEvent(new Event(THEME_CHANGE));
 }
 
 /** One device preference across the signed-out and signed-in surfaces; otherwise follow the system. */
 export function useColorTheme(): ColorThemeState {
-  const [theme, setTheme] = useState<ColorTheme>(effectiveTheme);
+  const [preference, setPreferenceState] = useState<ColorThemePreference>(storedPreference);
+  const [theme, setTheme] = useState<ColorTheme>(() => effectiveTheme(storedPreference()));
   useEffect(() => {
     const query = window.matchMedia?.("(prefers-color-scheme: light)");
-    const refresh = () => setTheme(effectiveTheme());
+    const refresh = () => {
+      const next = storedPreference();
+      setPreferenceState(next);
+      setTheme(effectiveTheme(next));
+    };
     const storage = (event: StorageEvent) => {
       if (event.key === THEME_KEY || event.key === null) {
         pagePreference = null;
@@ -39,17 +69,10 @@ export function useColorTheme(): ColorThemeState {
       window.removeEventListener(THEME_CHANGE, refresh);
     };
   }, []);
+  const setPreference = useCallback((next: ColorThemePreference) => writePreference(next), []);
+  /* the l key and the sign-in screens pin the opposite of what is showing now */
   const toggleTheme = useCallback(() => {
-    const next = effectiveTheme() === "light" ? "dark" : "light";
-    try {
-      window.localStorage.setItem(THEME_KEY, next);
-      pagePreference = null;
-    } catch {
-      // a private window or blocked storage: the choice lasts for this page only
-      pagePreference = next;
-    }
-    setTheme(next);
-    window.dispatchEvent(new Event(THEME_CHANGE));
+    writePreference(effectiveTheme(storedPreference()) === "light" ? "dark" : "light");
   }, []);
-  return { theme, toggleTheme };
+  return { theme, preference, setPreference, toggleTheme };
 }

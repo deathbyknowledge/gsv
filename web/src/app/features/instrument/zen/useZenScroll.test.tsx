@@ -76,6 +76,28 @@ async function transcript(promptFocused = false) {
 afterEach(() => { vi.unstubAllGlobals(); });
 
 describe("transcript selection", () => {
+  it.each([1, 2])("holds a fold control through browser clamping at %sx text size", async (scale) => {
+    const chat = await transcript();
+    try {
+      Object.assign(chat.viewport, { offsetHeight: 300, getBoundingClientRect: () => ({ top: 50, height: 300 * scale }) });
+      chat.viewport.scrollTop = 700;
+      await chat.emit("scroll");
+      let controlTop = 800;
+      // SAFETY: Pinning uses only connection state and this element's vertical rectangle.
+      const control = { isConnected: true, getBoundingClientRect: () => ({ top: 50 + (controlTop - chat.viewport.scrollTop) * scale }) } as HTMLElement;
+      await act(() => chat.state().pin(control));
+      controlTop -= 500;
+      chat.viewport.scrollHeight -= 500;
+      chat.viewport.scrollTop = 700;
+      expect(chat.viewport.scrollTop).toBe(420);
+      await chat.emit("scroll");
+      await chat.mutate();
+      await chat.resize();
+      expect(chat.viewport.scrollTop).toBe(200);
+      expect(chat.state().awayFromBottom).toBe(true);
+    } finally { await chat.unmount(); }
+  });
+
   it("selects the middle message in either scroll direction and the outer messages at the ends", async () => {
     const chat = await transcript();
     try {

@@ -50,8 +50,10 @@ import { ZenText } from "./ZenText";
 import { ThinkingMark, THINKING_MARK } from "./ThinkingMark";
 import { ReceiptTimeline, RECEIPT_LAYOUT } from "./ReceiptTimeline";
 import { receiptsForMoments, type RunReceipt } from "./runReceipts";
-import { ZenDraftAttachment, ZenMedia } from "./ZenMedia";
-import { zenAttachment, type ZenAttachment } from "./zenAttachments";
+import { ZenDraftAttachment, ZenDraftPaste, ZenMedia } from "./ZenMedia";
+import { longPaste, zenAttachment, zenDraftMessage, type ZenAttachment, type ZenPaste } from "./zenAttachments";
+import { FeedbackNote, NoteMoment, zenFailure, zenNotice, type ZenNote } from "./ZenNotes";
+import type { ChatErrorContext } from "../../../services/chat/domain/errorPresentation";
 import {
   activityDuration,
   answerAttribution,
@@ -67,7 +69,6 @@ import {
   PLACE_REFERENCE_PREFIX,
   placeLabel,
   resolvePlace,
-  noteSummary,
   receiptSummary,
   startsWriting,
   CLOUD_PLACE_ID,
@@ -115,6 +116,10 @@ const SETTLE_STAGGER_MS = 6;
 /** Keys Zen answers in browse mode. Together with the shell's, they are the keys that never start writing; y and n are claimed only while an approval is pending. */
 const BROWSE_KEYS: ReadonlySet<string> = new Set(["j", "k", "g", "G", "o"]);
 const CLAIMED_KEYS: ReadonlySet<string> = new Set([...BROWSE_KEYS, ...SHELL_KEYS]);
+/* what each status-line failure was attempting, for causes the client cannot name */
+const SHIP_UNREACHABLE: ChatErrorContext = { summary: "Could not reach your ship.", action: "Check your connection, then reload the page." };
+const ACTIVITY_UNAVAILABLE: ChatErrorContext = { summary: "Could not load the work behind this conversation.", action: "Reload the page to try again." };
+const DECISION_FAILED: ChatErrorContext = { summary: "The decision did not go through.", action: "Try again in a moment." };
 
 /** The element a key or paste would already edit, or null when it would reach nothing. */
 function editableElement(target: EventTarget | null): HTMLElement | null {
@@ -315,38 +320,6 @@ const Receipt = memo(function Receipt({ receipt, who, places, collections, open,
   );
 });
 
-function NoteMoment({
-  moment,
-  open,
-  focus,
-  index,
-  phase,
-  onToggle,
-}: {
-  moment: Moment;
-  open: boolean;
-  focus: boolean;
-  index: number;
-  /** Where the note is in the load cascade: waiting its turn, taking it, or settled. */
-  phase: "pending" | "materialising" | "settled";
-  onToggle: () => void;
-}) {
-  return (
-    <div
-      data-index={index}
-      data-moment-id={moment.id}
-      class={`zen-moment is-note${open ? " is-open" : ""}${focus ? " is-focus" : ""}${phase === "pending" ? " is-pending" : phase === "materialising" ? " is-materialising" : ""}`}
-    >
-      <div class="who">{moment.event && moment.event.kind !== "history.compacted" ? moment.event.severity === "error" ? "error" : "event" : "memory"}</div>
-      <button type="button" class="note-line" aria-expanded={open} onClick={onToggle}>
-        <span class="tri">{open ? "▾" : "▸"}</span>
-        <span class="note-summary">{noteSummary(moment.text)}</span>
-      </button>
-      {open ? <div class="note-text">{moment.text}</div> : null}
-    </div>
-  );
-}
-
 export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, onPrefillUsed, pid: pidProp, onDraftChange, contactReplies, peopleActivity, onPeopleActivity, searchRequested, onSearchRequestHandled, activityRequest, requestPrefill }: ZenProps) {
   const active = useViewActive();
   const browserControl = useBrowserControl();
@@ -368,7 +341,7 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
     return () => window.clearTimeout(timer);
   }, [active, today, timeZone]);
 
-  const [note, setNote] = useState<string | null>(null);
+  const [note, setNote] = useState<ZenNote | null>(null);
   const [searchOpen, setSearchOpen] = useState(false);
   const closeSearch = useCallback(() => setSearchOpen(false), []);
   useEffect(() => { if (!active) setSearchOpen(false); }, [active]);
@@ -377,7 +350,8 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
     setSearchOpen(true);
     onSearchRequestHandled?.();
   }, [active, searchRequested, onSearchRequestHandled]);
-  const pid = useZenProcess(pidProp, setNote);
+  const reportShipError = useCallback((message: string) => setNote(zenFailure(message, SHIP_UNREACHABLE)), []);
+  const pid = useZenProcess(pidProp, reportShipError);
   /* the conversation is what was actually said, both ways; the process transcript is what the ship did */
   const conversation = useChatConversation({ processId: pid ?? "", enabled: pid !== null });
   const outbox = useChatOutbox(conversation.acceptMessage);
@@ -395,11 +369,13 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
   useLayoutEffect(() => {
     if (activityRequest) setContext({ kind: "activity", request: activityRequest });
   }, [activityRequest]);
+  const [pastes, setPastes] = useState<ZenPaste[]>([]);
   const [hasDraft, setHasDraft] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
   const dragDepth = useRef(0);
   const [draggingFiles, setDraggingFiles] = useState(false);
-  const dirty = hasDraft || contextDirty || attachments.length > 0 || outbox.messages.length > 0 || (contactReplies?.dirty ?? false);
+  const extras = attachments.length > 0 || pastes.length > 0;
+  const dirty = hasDraft || contextDirty || extras || outbox.messages.length > 0 || (contactReplies?.dirty ?? false);
   useLayoutEffect(() => { onDraftChange?.(dirty); }, [dirty, onDraftChange]);
   useLayoutEffect(() => () => onDraftChange?.(false), [onDraftChange]);
   useEffect(() => {
@@ -544,7 +520,7 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
   /* both halves of the transcript, what was said and what was done, are shown together or not yet */
   const ready = historyLoaded && conversation.loaded;
   useEffect(() => {
-    if (processRuntime.history.error) setNote(processRuntime.history.error.message);
+    if (processRuntime.history.error) setNote(zenFailure(processRuntime.history.error.message, ACTIVITY_UNAVAILABLE));
   }, [processRuntime.history.error]);
 
   /* the run clock and the resolve animation */
@@ -622,7 +598,7 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
   const scrolling = useZenScroll({ moments, ready, promptFocused,
     hasOlder: conversation.hasMore || processRuntime.hasOlderHistory,
     loadingOlder: conversation.loadingOlder || processRuntime.loadingOlderHistory, loadOlder });
-  const { browse, selection, viewport: momentsRef, content: contentRef } = scrolling;
+  const { browse, selection, viewport: momentsRef, content: contentRef, pin } = scrolling;
   const hasMemoryRead = useMemo(() => [...receipts.values()].some((receipt) => receipt.work.activities.some((activity) =>
     !activity.you && activity.target === "gsv" && activity.calls.some((call) =>
       call.syscall === "fs.read" && call.finished && !call.failed && call.filePath?.startsWith("/src/repos/"),
@@ -638,6 +614,9 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
   const streamedMomentsRef = useRef<Set<string>>(new Set());
   /* the committed message lands under a new id, so a reply that streamed is also known by its run */
   const streamedRunsRef = useRef<Set<string>>(new Set());
+  /** Whether the reader watched this message arrive live, under its own id or its run's. */
+  const streamed = useCallback((moment: Moment): boolean => moment.streaming
+    || streamedMomentsRef.current.has(moment.id) || (moment.runId !== null && streamedRunsRef.current.has(moment.runId)), []);
   useLayoutEffect(() => {
     if (!active || !ready) return;
     for (const moment of moments) {
@@ -663,12 +642,7 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
     const fresh = whole.filter((id) => !seen.has(id));
     if (fresh.length === 0) return;
     for (const id of fresh) seen.add(id);
-    const streamed = (id: string): boolean => {
-      if (streamedMomentsRef.current.has(id)) return true;
-      const runId = moments.find((moment) => moment.id === id)?.runId ?? null;
-      return runId !== null && streamedRunsRef.current.has(runId);
-    };
-    const arrived = fresh.filter((id) => !streamed(id));
+    const arrived = moments.filter((moment) => fresh.includes(moment.id) && !streamed(moment)).map((moment) => moment.id);
     if (arrived.length === 0 || reducedMotion()) return;
     const startedAt = Date.now();
     setSettling((current) => {
@@ -676,7 +650,7 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
       for (const id of arrived) next.set(id, startedAt);
       return next;
     });
-  }, [active, moments, ready]);
+  }, [active, moments, ready, streamed]);
   useEffect(() => {
     if (!active || settling.size === 0) return;
     const done = [...settling].filter(([id, startedAt]) => {
@@ -712,26 +686,39 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
   const addFiles = useCallback((files: File[]) => {
     const accepted = files.filter((file) => file.size <= MAX_CHAT_PROCESS_MEDIA_BYTES);
     setAttachments((current) => [...current, ...accepted.map(zenAttachment)]);
-    setNote(accepted.length < files.length ? "Each attachment must be 25 MiB or smaller." : null);
+    setNote(accepted.length < files.length ? zenNotice("Each attachment must be 25 MiB or smaller.") : null);
     promptRef.current?.focus();
+  }, []);
+  /* a long paste waits beside the prompt as a chip; a command keeps its paste inline, since it runs as typed,
+     whether the prompt already starts with one or the paste itself would */
+  const foldPaste = useCallback((text: string) => {
+    const selection = promptRef.current?.selection();
+    const prospective = selection ? selection.value.slice(0, selection.start) + text : text;
+    if (/^\s*[$!]/.test(prospective)) return false;
+    const paste = longPaste(text);
+    if (!paste) return false;
+    setPastes((current) => [...current, paste]);
+    promptRef.current?.focus();
+    return true;
   }, []);
   const say = useCallback(
     (text: string) => {
       if (!pid) {
-        setNote("Your ship is still starting.");
+        setNote(zenNotice("Your ship is still starting."));
         return false;
       }
       const accepted = outbox.send({
         pid, conversationId: conversation.conversation?.id,
-        message: text,
+        message: zenDraftMessage(text, pastes),
         media: [...attachments], selectedTarget: where ?? defaultPlace(),
       });
       if (!accepted) return false;
       scrolling.follow();
       setAttachments([]);
+      setPastes([]);
       return true;
     },
-    [attachments, conversation.conversation?.id, outbox.send, pid, scrolling.follow, where],
+    [attachments, conversation.conversation?.id, outbox.send, pastes, pid, scrolling.follow, where],
   );
 
   const voiceScope = `${snapshot.url}:${snapshot.username}:${pid ?? ""}:${currentPlace.id}`;
@@ -750,7 +737,7 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
         setOpenActivities((current) => new Set([...current, id]));
         return true;
       } catch (error) {
-        setNote(error instanceof Error ? error.message : "The command did not run.");
+        setNote(zenNotice(error instanceof Error ? error.message : "The command did not run."));
         return false;
       }
     },
@@ -764,20 +751,20 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
       if (raw) setInputHistory((current) => [...current.filter((entry) => entry !== raw), raw].slice(-50));
       setHistoryIndex(null);
       const intent = parsePromptInput(raw);
-      if (!intent) return !raw.trim() && attachments.length > 0 ? say("") : false;
+      if (!intent) return !raw.trim() && extras ? say("") : false;
       if (intent.kind === "switch") {
         const id = resolvePlace(intent.name, places);
         if (id) setWhere(id);
-        else setNote(`No place called ${intent.name}.`);
+        else setNote(zenNotice(`No place called ${intent.name}.`));
         return true;
       }
       if (intent.kind === "run") {
-        if (attachments.length > 0) { setNote("Remove attachments before running a command, or send them to your Ship in plain words."); return false; }
+        if (extras) { setNote(zenNotice("Remove attachments and pasted text before running a command, or send them to your Ship in plain words.")); return false; }
         return runDirectly(intent.command);
       }
       return say(intent.text);
     },
-    [attachments.length, connected, outbox.sending, pid, places, runDirectly, say],
+    [extras, connected, outbox.sending, pid, places, runDirectly, say],
   );
 
   const onHistory = useCallback(
@@ -800,7 +787,7 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
         if (remember) args.remember = true;
         await decideChatHil(client, args);
       } catch (error) {
-        setNote(error instanceof Error ? error.message : "The decision did not go through.");
+        setNote(zenFailure(error instanceof Error ? error.message : "", DECISION_FAILED));
       }
     },
     [client, pendingHil, pid],
@@ -812,6 +799,7 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
     if (!input || input.disabled) return;
     setWhere(initialTarget ?? null);
     setAttachments([]);
+    setPastes([]);
     input.setValue(prefill);
     input.focus();
     onPrefillUsed?.();
@@ -907,11 +895,11 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
       if (files.length === 0 && !text) return;
       event.preventDefault();
       if (files.length > 0) addFiles(files);
-      else input.append(text);
+      else if (!foldPaste(text)) input.append(text);
     };
     window.addEventListener("paste", onPaste);
     return () => window.removeEventListener("paste", onPaste);
-  }, [active, addFiles, pendingHil]);
+  }, [active, addFiles, foldPaste, pendingHil]);
 
   /* references to places inside ship text */
   const onTextClick = useCallback(
@@ -979,9 +967,10 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
           />
         ) : null}
         {moment.role === "human" ? (
-          <ZenText text={moment.text} markdown={false} progress={settleProgress(moment)} tick={settling.has(moment.id) ? tick : 0} />
+          <ZenText text={moment.text} markdown={false} progress={settleProgress(moment)} tick={settling.has(moment.id) ? tick : 0} onFold={pin} />
         ) : moment.text ? (
-          <ZenText text={moment.text} places={places} markdown progress={moment.streaming ? -1 : settleProgress(moment)} tick={moment.streaming || settling.has(moment.id) ? tick : 0} onClick={onTextClick} />
+          <ZenText text={moment.text} places={places} markdown progress={moment.streaming ? -1 : settleProgress(moment)} tick={moment.streaming || settling.has(moment.id) ? tick : 0}
+            opened={streamed(moment)} onClick={onTextClick} onFold={pin} />
         ) : moment.thinking || moment.streaming ? (
           <div class="text"><ThinkingMark tick={tick} /></div>
         ) : null}
@@ -1004,7 +993,7 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
       </>;
     });
   }, [ready, moments, who, today, timeZone, places, openActivities, toggleActivity, onFleet,
-    receipts, memoryCollections.data, onMemory, pendingHil, settling, tick, onTextClick,
+    receipts, memoryCollections.data, onMemory, pendingHil, settling, tick, onTextClick, pin, streamed,
     pid, connected, outbox.sending, outbox.cancelUpload, outbox.retry, outbox.discard]);
 
   /* the status line */
@@ -1141,12 +1130,14 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
             </div>
           ) : null}
 
-          {attachments.length > 0 && <ul class="zen-draft-attachments" aria-label="Attachments to send">
+          {extras && <ul class="zen-draft-attachments" aria-label="Attachments to send">
             {attachments.map((attachment) => <ZenDraftAttachment key={attachment.id} attachment={attachment}
               onRemove={() => setAttachments((current) => current.filter((file) => file.id !== attachment.id))} />)}
+            {pastes.map((paste) => <ZenDraftPaste key={paste.id} paste={paste}
+              onRemove={() => setPastes((current) => current.filter((entry) => entry.id !== paste.id))} />)}
           </ul>}
           {note && <div class="zen-feedback">
-            <span class="is-err" role="alert">{note}</span>
+            <FeedbackNote note={note} />
           </div>}
           <div class="zen-compose-line" hidden={recordingVoice}>
             <input ref={fileInput} type="file" multiple hidden aria-label="Choose attachments" onChange={(event) => {
@@ -1165,11 +1156,12 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
               placeholder="Message your ship"
               disabled={!pid || recordingVoice}
               onSubmit={onSubmit}
-              allowEmpty={attachments.length > 0}
+              allowEmpty={extras}
               onFiles={addFiles}
+              onPasteText={foldPaste}
               onHistory={onHistory}
             />
-            {(hasDraft || attachments.length > 0) && <button type="button" class="zen-submit"
+            {(hasDraft || extras) && <button type="button" class="zen-submit"
               onPointerDown={(event) => { if (promptFocused) event.preventDefault(); }}
               disabled={!connected || !pid || outbox.sending || recordingVoice} onClick={() => promptRef.current?.submit()}>send</button>}
           </div>
