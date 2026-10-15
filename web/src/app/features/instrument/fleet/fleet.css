@@ -23,7 +23,7 @@
   scroll-padding-top: 12px;
   scrollbar-width: thin;
   scrollbar-color: var(--border) transparent;
-  padding: 0 24px var(--space-5);
+  padding: 0 24px calc(var(--space-5) + var(--instrument-bottom-padding));
 }
 .fleet-block {
   padding: 18px var(--space-5) 6px;
@@ -434,7 +434,7 @@
 .fleet-contact-request dd { margin: 4px 0 0 12px; white-space: pre-wrap; }
 
 
-.fleet-file-reader { height: 100%; min-height: 0; display: flex; flex-direction: column; padding: 0 24px 20px; background: transparent; }
+.fleet-file-reader { height: 100%; min-height: 0; display: flex; flex-direction: column; padding: 0 24px; background: transparent; }
 .file-reader-head { display: flex; align-items: baseline; gap: 20px; padding: 22px 0 18px; border-bottom: 1px solid var(--border); }
 .file-reader-path { flex: 1; min-width: 0; overflow-wrap: anywhere; color: var(--path); font-size: 12px; }
 .file-reader-actions { display: flex; gap: 18px; align-items: baseline; }
@@ -443,11 +443,11 @@
 .file-reader-action:disabled { opacity: .45; cursor: default; }
 .file-reader-action.is-primary { color: var(--accent); }
 .file-reader-action.is-danger { color: var(--error); }
-.file-reader-content { flex: 1; min-height: 0; overflow: auto; padding-top: 22px; }
+.file-reader-content { flex: 1; min-height: 0; overflow: auto; padding: 22px 0 calc(20px + var(--instrument-bottom-padding)); }
 .file-reader-content pre { margin: 0; font: 13px/1.65 var(--gsv-font-mono); tab-size: 2; color: var(--text); }
 .file-reader-content img { max-width: 100%; }
 .file-reader-content, .file-reader-editor { scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
-.file-reader-editor { flex: 1; min-height: 0; width: 100%; resize: none; border: 0; background: transparent; color: var(--text); padding: 22px 0; font: 13px/1.65 var(--gsv-font-mono); tab-size: 2; }
+.file-reader-editor { flex: 1; min-height: 0; width: 100%; resize: none; border: 0; background: transparent; color: var(--text); padding: 22px 0 calc(42px + var(--instrument-bottom-padding)); font: 13px/1.65 var(--gsv-font-mono); tab-size: 2; }
 .file-reader-confirm { padding: 12px 0; color: var(--error); }
 .file-reader-confirm button { margin-right: 18px; }
 @media (max-width: 720px) { .fleet-file-reader { padding-left: 16px; padding-right: 16px; } .file-reader-head { flex-wrap: wrap; gap: 14px; } .file-reader-path { flex-basis: 60%; } }

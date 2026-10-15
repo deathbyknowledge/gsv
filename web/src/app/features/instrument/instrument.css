@@ -81,11 +81,12 @@
 
 /* Apply device insets before text zoom; background layers still fill the entire screen.
  * The keyboard covers the home indicator, so its occlusion consumes the bottom safe area. */
+/* Surfaces own the bottom inset as padding, letting their scroll panes reach the screen edge. */
 .instrument-viewport {
   position: absolute;
   inset: calc(var(--instrument-viewport-top, 0px) + var(--instrument-safe-top))
     var(--instrument-safe-right)
-    calc(var(--instrument-viewport-bottom, 0px) + var(--instrument-safe-bottom))
+    var(--instrument-viewport-bottom, 0px)
     var(--instrument-safe-left);
 }
 /* Modal dialogs enter the browser's top layer, outside the content box's positioning. */
@@ -104,6 +105,7 @@
  * Auto sizing between all four edges fills the parent; manually dividing viewport dimensions
  * again leaves WebKit's zoomed layer smaller than the window. */
 .instrument-scaled {
+  --instrument-bottom-padding: calc(var(--instrument-safe-bottom) / var(--type-scale));
   position: absolute;
   inset: 0;
   zoom: var(--type-scale);

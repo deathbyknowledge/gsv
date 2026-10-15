@@ -16,6 +16,7 @@
 .memory-rail {
   min-width: 0;
   min-height: 0;
+  padding-bottom: var(--instrument-bottom-padding);
   overflow-y: auto;
   overscroll-behavior: contain;
   scrollbar-width: none;
@@ -150,7 +151,7 @@
 .memory-page .page-head .page-action:hover { color: var(--accent); text-decoration: underline; text-underline-offset: 0.25em; }
 .memory-page .page-head :is(.ibtn, .page-action) kbd { margin-right: 6px; }
 .memory-page .prose {
-  padding: 5vh 40px 10vh;
+  padding: 5vh 40px calc(10vh + var(--instrument-bottom-padding));
   max-width: var(--measure-prose);
   font-family: var(--gsv-font-prose);
   font-size: var(--prose-size, 16px);
@@ -172,7 +173,7 @@
   width: 100%;
   max-width: var(--measure-prose);
   margin: 0;
-  padding: 5vh 40px 10vh;
+  padding: 5vh 40px calc(10vh + var(--instrument-bottom-padding));
   background: transparent;
   border: 0;
   outline: 0;
@@ -196,7 +197,7 @@
 
 @container instrument (max-width: 720px) {
   .memory-body { grid-template-columns: 1fr; grid-template-rows: minmax(120px, 35%) minmax(0, 1fr); }
-  .memory-rail { border-right: 0; border-bottom: 1px solid var(--border); }
+  .memory-rail { border-right: 0; border-bottom: 1px solid var(--border); padding-bottom: 0; }
   .memory-tools { position: static; }
   .memory-page { padding-top: 0; }
   .memory-page .page-head { padding: 10px 18px; flex-wrap: wrap; }

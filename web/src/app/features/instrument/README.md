@@ -10,12 +10,15 @@ the top eight pixels of the pane. It clears in line spacing, padding and gaps
 between messages or rows. The shared shell observes only the active view;
 scrolling, message selection and text selection remain owned by each surface.
 The star field continues behind both regions without an opaque header backdrop.
-The unscaled content viewport reserves the device's safe-area insets, including
-in landscape, before applying text zoom. It follows visual viewport resize and
-scroll events so the keyboard leaves the header and composer reachable; pinch
-zoom retains the existing layout. Keyboard occlusion consumes the bottom safe
-inset instead of leaving a second gap above the keyboard. Login and setup share
-this viewport; their forms remain scrollable. The document and fixed shell use
+The unscaled content viewport reserves the device's top and side safe-area insets,
+including in landscape, before applying text zoom. Scroll panes in Fleet, Memory,
+Settings, login and setup extend to the visible bottom edge, with the bottom safe
+inset added inside their content padding. Chat and People reserve that same
+clearance for their bottom controls. The physical inset stays constant at every
+text size. The viewport follows visual viewport resize and scroll events so the
+keyboard leaves the header and composer reachable; pinch zoom retains the existing
+layout. Keyboard occlusion consumes the bottom safe inset instead of leaving a
+second gap above the keyboard. The document and fixed shell use
 the large viewport height (`100lvh`) so iOS Home Screen launches cover the whole
 screen, including behind the home indicator. The star field keeps that height
 while the content follows the visible viewport and the keyboard.

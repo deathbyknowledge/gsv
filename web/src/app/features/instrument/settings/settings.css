@@ -1,11 +1,11 @@
 .settings { position: relative; height: 100%; min-height: 0; display: flex; flex-direction: column; }
 .settings-body { position: relative; min-height: 0; flex: 1; display: grid; grid-template-columns: minmax(12rem, max-content) minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); }
 .settings-body::before { content: ""; position: absolute; grid-area: 1 / 1 / 2 / 2; top: calc(-1 * var(--instrument-header-height)); right: 0; bottom: 0; width: 1px; background: var(--border); pointer-events: none; z-index: 2; }
-.settings-sections { min-width: 0; min-height: 0; display: flex; flex-direction: column; align-items: stretch; gap: 1rem; padding: 2rem 1.5rem 2rem; overflow-y: auto; }
+.settings-sections { min-width: 0; min-height: 0; display: flex; flex-direction: column; align-items: stretch; gap: 1rem; padding: 2rem 1.5rem calc(2rem + var(--instrument-bottom-padding)); overflow-y: auto; }
 .settings-sections button { flex: 0 0 auto; width: 100%; text-align: center; white-space: nowrap; }
 .settings-sections .ibtn { color: var(--text-dim); }
 .settings-sections .ibtn[aria-current="page"] { color: var(--text-hi); border-color: var(--accent); background: var(--selected); }
-.settings-content { overflow: auto; min-height: 0; padding: 2rem clamp(1.25rem, 4cqw, 4rem) 5rem; }
+.settings-content { overflow: auto; min-height: 0; padding: 2rem clamp(1.25rem, 4cqw, 4rem) calc(5rem + var(--instrument-bottom-padding)); }
 .settings-content:has(> .gsv-loading-state.is-panel) { flex: 1; padding: 0; }
 .settings-content section { max-width: 54rem; }
 .settings h1, .settings h2 { font: inherit; color: var(--text); margin: 0 0 1.5rem; }
@@ -99,7 +99,7 @@
   .settings-body::before { display: none; }
   .settings-sections { flex-direction: row; gap: 1rem; padding: 1rem 1rem 1rem; overflow-x: auto; overflow-y: hidden; border-right: 0; border-bottom: 1px solid var(--border); flex-shrink: 0; }
   .settings-sections button { width: auto; min-width: 9rem; }
-  .settings-content { padding: 1.5rem 1rem 4rem; }
+  .settings-content { padding: 1.5rem 1rem calc(4rem + var(--instrument-bottom-padding)); }
   .settings-content:has(> .gsv-loading-state.is-panel) { padding: 0; }
   .settings-rules label { width: 100%; }
   .settings-model-stack > li { grid-template-columns: minmax(0, 1fr) auto; gap: .8rem; }

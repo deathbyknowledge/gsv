@@ -22,6 +22,8 @@ a code to resume. The saved credential lets the CLI recover a lost response.
 Once the daemon connects, the place appears as connected.
 While scrolling Fleet's lists or inspectors, a lavender line marks text clipped
 at the top edge. The line disappears between lines and rows.
+On phones, Fleet's page and file reader scroll to the bottom of the visible
+screen. Their end padding leaves the last row or line clear of the home indicator.
 
 ## Connect a browser
 
