@@ -1,5 +1,5 @@
 import { useDraftGuard } from "../shared/useDraftGuard";
-import { LoadingState } from "../../../components/ui/Spinner";
+import { LoadingState, Spinner } from "../../../components/ui/Spinner";
 import { useMutation, useQueryClient } from "@tanstack/preact-query";
 import { useQuery } from "../../../services/navigation/viewQueries";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "preact/hooks";
@@ -301,7 +301,7 @@ export function Memory({ initialPage, onAsk, onDirtyChange }: MemoryProps) {
             <nav class="pages" ref={pagesRef} aria-label={asked ? "Matches" : "Pages"} onFocusCapture={(event) => {
               if (event.target instanceof HTMLElement && event.target.matches(".page, .memory-folder > summary")) focusedRow.current = event.target;
             }}>
-              {!asked && (collectionsQuery.isLoading || pagesQuery.isLoading) ? <div class="ph"><LoadingState>Loading memory…</LoadingState></div> : null}
+              {!asked && (collectionsQuery.isLoading || pagesQuery.isLoading) ? <div class="memory-loading" role="status" aria-label="Loading memory"><Spinner size={160} /></div> : null}
               {!asked && pagesQuery.isError ? <div class="ph" role="alert">{pagesQuery.error.message}</div> : null}
               {asked ? (
                 <div class="ph">
@@ -375,7 +375,7 @@ export function Memory({ initialPage, onAsk, onDirtyChange }: MemoryProps) {
                 </div>
               </>
             ) : collectionsQuery.isLoading || pageQuery.isLoading || pagesQuery.isLoading ? (
-              <div class="memory-none memory-loading"><LoadingState variant="panel">Loading memory…</LoadingState></div>
+              <div class="memory-loading" role="status" aria-label="Loading memory"><Spinner size={160} /></div>
             ) : (
               <div class="memory-none" role={pageQuery.isError || pagesQuery.isError || (db !== null && !collection) ? "alert" : undefined}>
                 {pageQuery.error?.message || pagesQuery.error?.message ||

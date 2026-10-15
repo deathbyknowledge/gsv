@@ -13,7 +13,8 @@ text; blank space between lines and sections leaves the edge clear.
 On phones, Memory shows either the full-height page browser or the reader/editor.
 **← pages** returns to the browser with its position and any editor draft intact;
 **continue editing →** returns to that draft. Wider screens keep both panes visible.
-The page browser and reader each show loading feedback while their data loads.
+The page browser and reader each center a large spinner while their data loads,
+with a loading label for screen readers and no visible caption.
 
 Memory’s **ask Ship** control adds the page’s GSV repository path to the
 Chat composer as ordinary editable text, preserving the existing draft and
