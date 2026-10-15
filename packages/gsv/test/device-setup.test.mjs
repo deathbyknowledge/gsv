@@ -1,6 +1,16 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { browserExtensionDownloadUrl, buildCliInstallCommand } from "../dist/device-setup.js";
+import { browserExtensionDownloadUrl, buildCliInstallCommand, DEFAULT_INSTALL_URL, machineUpdateInstallerUrl } from "../dist/device-setup.js";
+
+test("protocol-error installer hints preserve the older Windows directory contract", () => {
+  const windows = machineUpdateInstallerUrl("windows");
+  assert.equal(`${windows.replace(/\/$/, "")}/install.ps1`, "https://raw.githubusercontent.com/deathbyknowledge/gsv/main/install.ps1");
+  assert.equal(machineUpdateInstallerUrl("linux"), DEFAULT_INSTALL_URL);
+  assert.equal(machineUpdateInstallerUrl(undefined), DEFAULT_INSTALL_URL);
+  assert.equal(machineUpdateInstallerUrl("windows", "https://downloads.example/host/install.sh"), "https://downloads.example/host");
+  assert.equal(machineUpdateInstallerUrl("windows", "https://downloads.example/host/install.ps1"), "https://downloads.example/host");
+  assert.equal(machineUpdateInstallerUrl("windows", "https://downloads.example"), "https://downloads.example");
+});
 
 test("operator installer URLs remain literal shell arguments", () => {
   assert.equal(buildCliInstallCommand("unix", "v0.7.0", "https://downloads.example/it's/install.sh"),

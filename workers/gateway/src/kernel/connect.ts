@@ -24,7 +24,7 @@ import { FEEDBACK_FEATURE } from "@humansandmachines/gsv/services/feedback";
 import type { KernelContext } from "./context";
 import type { TargetRecord } from "./target-registry";
 import { SERVER_RELEASE } from "../version";
-import { DEFAULT_INSTALL_URL } from "@humansandmachines/gsv/device-setup";
+import { machineUpdateInstallerUrl } from "@humansandmachines/gsv/device-setup";
 import { deploymentPresentation } from "@humansandmachines/gsv/services/deployment";
 import { ensureAccountHomeLayout } from "./account-home";
 import { ensurePublicAssetStorageLayout } from "../public-assets";
@@ -104,7 +104,7 @@ export async function handleConnect(
   }
 
   if (args.protocol !== PROTOCOL_VERSION) {
-    const installerUrl = deploymentPresentation(ctx.env.GSV_PUBLIC_CONFIG).installUrl ?? DEFAULT_INSTALL_URL;
+    const installerUrl = machineUpdateInstallerUrl(args.peer?.platform, deploymentPresentation(ctx.env.GSV_PUBLIC_CONFIG).installUrl);
     return {
       ok: false,
       code: 102,

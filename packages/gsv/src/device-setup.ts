@@ -4,6 +4,15 @@ export const LATEST_RELEASE_PAGE_URL = "https://github.com/deathbyknowledge/gsv/
 
 export type CliInstallPlatform = "unix" | "windows";
 
+/** Older Windows daemons append /install.ps1 to the protocol-error installer URL. */
+export function machineUpdateInstallerUrl(platform: string | undefined, installUrl = DEFAULT_INSTALL_URL): string {
+  if (!platform?.toLowerCase().startsWith("win")) return installUrl;
+  const url = new URL(installUrl);
+  if (!/\.(?:sh|ps1)$/.test(url.pathname)) return installUrl;
+  url.pathname = url.pathname.slice(0, url.pathname.lastIndexOf("/"));
+  return url.href;
+}
+
 export function buildCliInstallCommand(
   platform: CliInstallPlatform,
   release: string,

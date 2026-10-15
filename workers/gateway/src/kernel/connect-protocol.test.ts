@@ -11,6 +11,18 @@ const protocolOnlyContext = (): any => ({
 });
 
 describe("sys.connect protocol mismatch", () => {
+  it("lets an older Windows daemon append its installer filename to the default URL", async () => {
+    const ctx = protocolOnlyContext();
+    ctx.env = {};
+    const outcome = await handleConnect({
+      protocol: PROTOCOL_VERSION - 1,
+      peer: { id: "machine-1", version: "0.3.0", platform: "windows" },
+    }, ctx);
+    expect(outcome.ok).toBe(false);
+    if (outcome.ok) return;
+    expect(`${outcome.details?.installer}/install.ps1`).toBe("https://raw.githubusercontent.com/deathbyknowledge/gsv/main/install.ps1");
+  });
+
   it("names the server version, release, and installer an outdated client needs", async () => {
     const outcome = await handleConnect(
       {

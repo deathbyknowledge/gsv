@@ -397,7 +397,13 @@ impl AutoUpdater {
         Some(UpdateTarget {
             release,
             reason: UpdateReason::NewerRelease,
-            installer_url: DEFAULT_INSTALLER_URL.to_string(),
+            installer_url: server
+                .deployment
+                .as_ref()
+                .and_then(|deployment| deployment.install_url.as_deref())
+                .filter(|url| url.starts_with("https://"))
+                .unwrap_or(DEFAULT_INSTALLER_URL)
+                .to_string(),
         })
     }
 
@@ -597,7 +603,7 @@ impl AutoUpdater {
 
     async fn download_installer(&self, base_url: &str) -> Result<PathBuf, String> {
         self.ensure_work_dir().map_err(|error| error.to_string())?;
-        let url = installer_script_url(base_url);
+        let url = installer_script_url(base_url, cfg!(windows))?;
         let client = reqwest::Client::builder()
             .timeout(INSTALLER_DOWNLOAD_TIMEOUT)
             .build()
@@ -695,13 +701,20 @@ fn installer_script_name() -> &'static str {
     }
 }
 
-fn installer_script_url(base_url: &str) -> String {
-    let base = base_url.trim_end_matches('/');
-    if cfg!(windows) {
-        format!("{base}/install.ps1")
-    } else {
-        base.to_string()
+fn installer_script_url(base_url: &str, windows: bool) -> Result<String, String> {
+    let mut url =
+        reqwest::Url::parse(base_url).map_err(|error| format!("invalid installer URL: {error}"))?;
+    if windows {
+        let path = url.path().trim_end_matches('/');
+        let directory = if path.ends_with(".sh") || path.ends_with(".ps1") {
+            path.rsplit_once('/').map_or("", |(directory, _)| directory)
+        } else {
+            path
+        };
+        let script_path = format!("{directory}/install.ps1");
+        url.set_path(&script_path);
     }
+    Ok(url.into())
 }
 
 /// The installer command with the release and destination pinned. The
@@ -1605,6 +1618,41 @@ mod tests {
     }
 
     #[test]
+    fn a_successful_handshake_uses_the_operator_installer() {
+        let updater = updater(true, ReleaseChannel::Stable, "0.4.1");
+        let mut newer = server("0.5.0", Some("v0.5.0"));
+        for (configured, expected) in [
+            (
+                Some("https://downloads.example/host/install.sh"),
+                "https://downloads.example/host/install.sh",
+            ),
+            (
+                Some("http://downloads.example/host/install.sh"),
+                DEFAULT_INSTALLER_URL,
+            ),
+            (None, DEFAULT_INSTALLER_URL),
+        ] {
+            newer.deployment = Some(
+                serde_json::from_value(json!({
+                    "legacyDomains": [],
+                    "installUrl": configured,
+                }))
+                .expect("public deployment config"),
+            );
+            let target = updater.plan_for_server(&newer).expect("newer release");
+            assert_eq!(target.installer_url, expected);
+        }
+        newer.deployment = None;
+        assert_eq!(
+            updater
+                .plan_for_server(&newer)
+                .expect("legacy gateway")
+                .installer_url,
+            DEFAULT_INSTALLER_URL
+        );
+    }
+
+    #[test]
     fn a_gateway_behind_this_build_is_not_an_update() {
         let updater = updater(true, ReleaseChannel::Stable, "0.4.1");
         let older = protocol_error(u64::from(PROTOCOL_VERSION) - 1, "0.3.0", None);
@@ -1789,11 +1837,45 @@ mod tests {
 
     #[test]
     fn the_installer_url_matches_the_platform_script() {
-        let url = installer_script_url("https://install.gsv.space/");
-        if cfg!(windows) {
-            assert_eq!(url, "https://install.gsv.space/install.ps1");
-        } else {
-            assert_eq!(url, "https://install.gsv.space");
+        for (base, windows_url) in [
+            (
+                "https://downloads.example",
+                "https://downloads.example/install.ps1",
+            ),
+            (
+                "https://downloads.example/",
+                "https://downloads.example/install.ps1",
+            ),
+            (
+                "https://downloads.example/host",
+                "https://downloads.example/host/install.ps1",
+            ),
+            (
+                "https://downloads.example/host/",
+                "https://downloads.example/host/install.ps1",
+            ),
+            (
+                "https://raw.githubusercontent.com/deathbyknowledge/gsv/main/install.sh",
+                "https://raw.githubusercontent.com/deathbyknowledge/gsv/main/install.ps1",
+            ),
+            (
+                "https://downloads.example/host/install.ps1",
+                "https://downloads.example/host/install.ps1",
+            ),
+            (
+                "https://downloads.example/host/install.sh?channel=dev",
+                "https://downloads.example/host/install.ps1?channel=dev",
+            ),
+        ] {
+            assert_eq!(
+                installer_script_url(base, true).expect("Windows script"),
+                windows_url
+            );
+            assert_eq!(
+                installer_script_url(base, false).expect("Unix script"),
+                reqwest::Url::parse(base).expect("valid URL").as_str()
+            );
         }
+        assert!(installer_script_url("not a URL", true).is_err());
     }
 }

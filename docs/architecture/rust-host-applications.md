@@ -272,6 +272,13 @@ one attempt per hour, a stable daemon never follows a `dev` gateway, and
 `~/.gsv/logs/auto-update.log`. The CLI and Desktop are never replaced under a
 person; the CLI prints one hint when the gateway is newer.
 
+Update plans use the operator's `installUrl` from a successful handshake or the
+installer URL supplied with a protocol error. Older gateways without either
+setting use the existing public installer. Windows installer selection resolves
+a Unix script URL to the sibling `install.ps1`, or appends that filename to a
+download directory. Protocol errors give Windows peers the directory so older
+daemons, which always append `/install.ps1`, can upgrade too.
+
 Published host artifacts cover Linux x64/ARM64 and macOS Intel/Apple Silicon
 for Desktop, `gsv-transcribe`, `gsv-vision`, `gsv`, and `gsvd`, plus Windows x64
 for all five host executables. Checksums cover every release asset, including the vision
