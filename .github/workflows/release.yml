@@ -406,13 +406,13 @@ jobs:
         run: |
           if [ "$KIND" = "stable" ]; then
             TITLE="${RELEASE_NAME}"
-            INSTALL_CMD='curl -fsSL https://raw.githubusercontent.com/deathbyknowledge/gsv/main/install.sh | bash'
-            INSTALL_CMD_PS='irm https://raw.githubusercontent.com/deathbyknowledge/gsv/main/install.ps1 | iex'
+            INSTALL_CMD='curl -fsSL https://install.ship.space | bash'
+            INSTALL_CMD_PS='irm https://install.ship.space/install.ps1 | iex'
             DEV_CHANNEL_NOTE=""
           else
             TITLE="${RELEASE_NAME}"
-            INSTALL_CMD='curl -fsSL https://raw.githubusercontent.com/deathbyknowledge/gsv/main/install.sh | GSV_CHANNEL=dev bash'
-            INSTALL_CMD_PS='$env:GSV_CHANNEL="dev"; irm https://raw.githubusercontent.com/deathbyknowledge/gsv/main/install.ps1 | iex'
+            INSTALL_CMD='curl -fsSL https://install.ship.space | GSV_CHANNEL=dev bash'
+            INSTALL_CMD_PS='$env:GSV_CHANNEL="dev"; irm https://install.ship.space/install.ps1 | iex'
             DEV_CHANNEL_NOTE=$(cat <<'DEV_NOTE'
           ### Dev Channel
 
@@ -421,7 +421,7 @@ jobs:
           DEV_NOTE
             )
           fi
-          INSTALL_TAG_CMD_PS="\$env:GSV_VERSION='${RELEASE_TAG}'; irm https://raw.githubusercontent.com/deathbyknowledge/gsv/main/install.ps1 | iex"
+          INSTALL_TAG_CMD_PS="\$env:GSV_VERSION='${RELEASE_TAG}'; irm https://install.ship.space/install.ps1 | iex"
 
           cat > body.md <<BODY
           ## ${TITLE}
@@ -441,7 +441,7 @@ jobs:
           Pin a specific release tag:
 
           \`\`\`bash
-          curl -fsSL https://raw.githubusercontent.com/deathbyknowledge/gsv/main/install.sh | GSV_VERSION=${RELEASE_TAG} bash
+          curl -fsSL https://install.ship.space | GSV_VERSION=${RELEASE_TAG} bash
           \`\`\`
 
           \`\`\`powershell
