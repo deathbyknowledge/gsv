@@ -18,8 +18,8 @@ use the id returned by discovery or provisioning.
 ## Quick Start
 
 1. Choose the browser as described under Choosing A Browser. On `gsv`, run
-   `targets list --search browser --json`, which includes each target's
-   description; for cloud work, reuse a running cloud browser only when its
+   `targets list --online --search browser --json`, which includes each
+   target's description and leaves out stopped browsers; for cloud work, reuse a running cloud browser only when its
    description fits the task: for signed-in work the one on the account's
    automatic profile (the description names the profile; `browser profile
    list` marks which one is automatic), a named profile only when the task
@@ -105,7 +105,7 @@ From the native `gsv` target, identify the browser target and inspect its
 descriptor:
 
 ```bash
-targets list --search browser --json
+targets list --online --search browser --json
 targets show rearden:brave
 ```
 
