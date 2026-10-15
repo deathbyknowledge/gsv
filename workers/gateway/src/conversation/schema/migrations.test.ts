@@ -5,6 +5,22 @@ import { ConversationStore } from "../store";
 import { CONVERSATION_MIGRATIONS, CONVERSATION_SCHEMA_COMPONENT, runConversationSqlMigrations } from "./migrations";
 
 describe("conversation schema upgrades", () => {
+  it("upgrades the last shipped schema and persists action metadata on new messages", async () => {
+    await runWithRealKernelSql((sql, storage) => {
+      runSqlMigrations(storage, CONVERSATION_SCHEMA_COMPONENT, CONVERSATION_MIGRATIONS.slice(0, 6));
+      sql.exec("INSERT INTO conversation_meta (conversation_id, owner_uid, kind, created_at) VALUES ('conversation', 1000, 'ship', 1)");
+      sql.exec("INSERT INTO messages (message_id, idempotency_key, author_json, text, origin_json, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+        "old", "old", JSON.stringify({ kind: "user", uid: 1000 }), "Existing conversation", JSON.stringify({ kind: "client" }), 1);
+      runConversationSqlMigrations(storage);
+      const store = new ConversationStore(sql);
+      expect(store.messageAt(1)?.action).toBeUndefined();
+      const action = { kind: "machine.connect" as const };
+      store.append({ messageId: "new", idempotencyKey: "new", payloadHash: "fixture", text: "Help me connect a computer to this space.", action,
+        author: { kind: "user", uid: 1000 }, origin: { kind: "client" }, createdAt: 2 });
+      runConversationSqlMigrations(storage);
+      expect(new ConversationStore(sql).messageAt(2)?.action).toEqual(action);
+    });
+  });
   it("preserves old messages without inventing a selected target", async () => {
     await runWithRealKernelSql((sql, storage) => {
       runSqlMigrations(storage, CONVERSATION_SCHEMA_COMPONENT, CONVERSATION_MIGRATIONS.slice(0, 3));
@@ -15,6 +31,7 @@ describe("conversation schema upgrades", () => {
       const store = new ConversationStore(sql);
       expect(store.messageAt(1)).toMatchObject({ id: "message", text: "Original text" });
       expect(store.messageAt(1)?.selectedTarget).toBeUndefined();
+      expect(store.messageAt(1)?.action).toBeUndefined();
       expect(store.search('"Original"*', 2, 10)).toEqual([]);
       const appended = store.append({ messageId: "selected", idempotencyKey: "selected", payloadHash: "fixture", text: "New text", selectedTarget: "macbook",
         author: { kind: "user", uid: 1000 }, origin: { kind: "client" }, createdAt: 2 });

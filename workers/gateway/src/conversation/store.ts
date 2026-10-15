@@ -1,5 +1,6 @@
 import type {
   ConversationKind,
+  ConversationAction,
   ConversationMessage,
   ConversationMessageAuthor,
   ConversationMessageOrigin,
@@ -8,7 +9,7 @@ import type {
   SocialMessageMetadata,
   OriginMessageRef,
 } from "@humansandmachines/gsv/protocol";
-import { socialMessageMetadataSchema } from "@humansandmachines/gsv/protocol";
+import { socialMessageMetadataSchema, conversationActionSchema } from "@humansandmachines/gsv/protocol";
 
 const SEARCH_STORAGE_BUDGET_BYTES = 6_000_000_000;
 
@@ -27,6 +28,7 @@ type MessageRow = {
   text: string;
   selected_target: string | null;
   social_json: string | null;
+  action_json: string | null;
   media_json: string | null;
   origin_json: string;
   process_id: string | null;
@@ -40,6 +42,7 @@ export type ConversationAppendInput = {
   author: ConversationMessageAuthor;
   text: string;
   selectedTarget?: string;
+  action?: ConversationAction;
   social?: SocialMessageMetadata;
   media?: ResourceBlock[];
   origin: ConversationMessageOrigin;
@@ -120,15 +123,16 @@ export class ConversationStore {
     }
     this.sql.exec(
       `INSERT OR IGNORE INTO messages
-       (message_id, idempotency_key, author_json, text, selected_target, social_json, media_json, origin_json,
+       (message_id, idempotency_key, author_json, text, selected_target, social_json, action_json, media_json, origin_json,
         process_id, run_id, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       input.messageId,
       input.idempotencyKey,
       JSON.stringify(input.author),
       input.text,
       input.selectedTarget ?? null,
       input.social ? JSON.stringify(input.social) : null,
+      input.action ? JSON.stringify(input.action) : null,
       input.media?.length ? JSON.stringify(input.media) : null,
       JSON.stringify(input.origin),
       input.processId ?? null,
@@ -377,5 +381,6 @@ function toMessage(conversationId: string, row: MessageRow): ConversationMessage
   if (row.selected_target !== null) message.selectedTarget = row.selected_target;
   if (row.run_id) message.runId = row.run_id;
   if (row.social_json) message.social = socialMessageMetadataSchema.parse(JSON.parse(row.social_json));
+  if (row.action_json) message.action = conversationActionSchema.parse(JSON.parse(row.action_json));
   return message;
 }

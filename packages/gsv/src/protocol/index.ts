@@ -38,6 +38,7 @@ export type * from "./syscalls/map";
 export * from "./adapters";
 export * from "./adapter-media-body";
 export * from "./body";
+export * from "./conversation-action";
 export * from "./binary-frame";
 export * from "./binary-body-channel";
 export * from "./browser-view-stream";

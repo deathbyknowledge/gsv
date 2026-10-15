@@ -647,6 +647,7 @@ type ConversationMessage = {
     | { kind: "contact"; contactId: string; shipId: string; subjectId: string; displayName: string };
   text: string;
   selectedTarget?: string;
+  action?: ConversationAction;
   media?: MessageAttachment[];
   origin: ConversationMessageOrigin;
   processId?: string;
@@ -679,7 +680,7 @@ type ConversationSyscalls = {
     };
   };
   "conversation.send": {
-    args: { conversationId: string; text: string; selectedTarget?: string; media?: ResourceBlock[]; idempotencyKey?: string };
+    args: { conversationId: string; text: string; action?: ConversationAction; selectedTarget?: string; media?: ResourceBlock[]; idempotencyKey?: string };
     result: { message: ConversationMessage; handlerPid: string; runId: string; queued?: boolean };
   };
   "conversation.media.read": {
@@ -695,6 +696,19 @@ selection is stored with that message and rendered as `[Selected target: ID]` fo
 the model. It does not change the message origin, reply endpoint, process defaults,
 or syscall permissions. Omission does not inherit an earlier message's selection.
 Changing the selection changes the conversation message's idempotency payload.
+
+`conversation.send` also accepts a typed human request in `action`. Supported kinds
+are `routine.create`, `machine.connect`, `browser.start`, `routine.discuss`,
+`responsibility.discuss`, `profile.discuss` and `file.discuss`. Discussing a routine
+or responsibility supplies its `id` and `name`; a profile supplies `name` and an
+HTTP(S) `url`; a file supplies `target` and `path`. Each kind accepts an optional
+`note` (up to 32,768 characters). IDs and names are bounded to 256 characters,
+profile URLs to 2,048 and file paths to 4,096. Unknown fields are rejected.
+`conversationActionText` in the public SDK produces the required readable `text`;
+a mismatch is rejected before the message or Process input is admitted. The
+canonical message retains both forms, including through archival and retry. This
+metadata controls presentation only and never authorizes an action or hides an
+additional instruction from the readable request.
 
 ## Contacts And Cross-GSV Requests: `contact.*`
 
