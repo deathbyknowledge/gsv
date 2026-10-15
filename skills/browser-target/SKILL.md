@@ -55,7 +55,7 @@ use the id returned by discovery or provisioning.
 
 ## Signed-In Sessions: Two Routes
 
-When the user asks, explain both in simple words and recommend one for their case.
+When the user asks, check `instance catalog` first, then explain both in simple words and recommend one for their case. If the catalog says saved logins are not available to this account, describe the cloud route as a temporary browser whose sign-in does not carry over, and recommend their own browser for anything that must stay signed in.
 
 **Cloud browser with saved logins.** Lead with convenience: it keeps working without their computer turned on, while they do something else. They sign in once through a link that opens the live browser view; the login is remembered from then on, and credentials stay out of chat. To test first, they can watch GSV work in their own browser through the extension before giving it any logins. Limits, when relevant: no passkeys or hardware security keys; device-bound sign-in or a site that rejects cloud browsers needs their own browser; nothing is copied from their personal browser; some sites ask to sign in again because session storage and service-worker caches are not saved; a website can still expire a session; each instance has a fixed lifetime, and saved logins return after a restart.
 
