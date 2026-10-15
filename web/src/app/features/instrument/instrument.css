@@ -188,6 +188,9 @@
 .instrument-header .instrument-identity { display: flex; align-items: center; gap: 24px; justify-self: start; margin-left: -8px; }
 .instrument-helper { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .instrument-helper button { color: var(--accent); }
+.instrument-header .instrument-responsibilities { display: flex; align-items: center; gap: 8px; min-width: 0; white-space: nowrap; letter-spacing: 0; text-transform: none; }
+.instrument-responsibilities > span:first-child { overflow: hidden; text-overflow: ellipsis; }
+.instrument-responsibility-count { flex-shrink: 0; color: var(--accent); font-variant-numeric: tabular-nums; }
 .instrument-header .keys { display: flex; align-items: center; gap: 14px; justify-self: end; margin-right: -8px; }
 .instrument-header .keys [aria-current="page"] { color: var(--text-hi); }
 .instrument-header .keys [aria-current="page"] .view-label { text-decoration: underline; text-underline-offset: 4px; }

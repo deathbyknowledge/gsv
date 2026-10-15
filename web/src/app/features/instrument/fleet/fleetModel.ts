@@ -12,7 +12,8 @@ export const CLOUD_TARGET_LABEL = "your cloud";
 
 export type FleetApprovalReference = { kind: "approval"; pid: string; requestId: string };
 export type FleetConnectReference = { kind: "connect"; to: "place" };
-export type FleetReference = FleetRow | FleetApprovalReference | FleetConnectReference;
+export type FleetSectionReference = { kind: "section"; section: "responsibilities" };
+export type FleetReference = FleetRow | FleetApprovalReference | FleetConnectReference | FleetSectionReference;
 
 export function isApprovalReference(reference: FleetReference | null): reference is FleetApprovalReference {
   return reference !== null && typeof reference === "object" && reference.kind === "approval";
@@ -22,8 +23,12 @@ export function isConnectReference(reference: FleetReference | null): reference 
   return reference !== null && typeof reference === "object" && reference.kind === "connect";
 }
 
+export function isSectionReference(reference: FleetReference | null): reference is FleetSectionReference {
+  return reference !== null && typeof reference === "object" && reference.kind === "section";
+}
+
 export function fleetReferenceRow(reference: FleetReference | null): FleetRow | null {
-  return isApprovalReference(reference) ? processRow(reference.pid) : isConnectReference(reference) ? null : reference;
+  return isApprovalReference(reference) ? processRow(reference.pid) : isConnectReference(reference) || isSectionReference(reference) ? null : reference;
 }
 
 /** A link must never authorize a different request that subsequently occupies the same process. */

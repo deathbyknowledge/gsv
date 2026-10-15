@@ -74,6 +74,11 @@ On phones, tap **menu** in the header to switch views. A dot on the menu button
 marks unread People activity. Choosing a view
 closes the menu and keeps your drafts. Tap **GSV** to return to Chat.
 
+In Chat, **plans** opens your current responsibilities at the top of Fleet. Its
+count shows how many are still outstanding. Each responsibility shows its status
+or blocker and next check; tap it for details. **history** shows completed items.
+Your Chat draft stays intact while you look. Routines remain further down in Fleet.
+
 In the browser and when added to your Home Screen, the header and bottom controls
 leave room for your phone's notch and home indicator. The star field still fills
 the screen, continuing behind the home indicator in the Home Screen app.

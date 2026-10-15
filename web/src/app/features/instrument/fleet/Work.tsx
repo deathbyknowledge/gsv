@@ -51,13 +51,12 @@ function nextTime(value: number, now: number): string {
 }
 type WorkProps = { work: Work; account?: ConsoleAccount; processes: ConsoleProcess[]; onSelect: (row: FleetRow) => void; onCreate: () => void; onSources: () => void; now: number };
 
-export function WorkSections({ work, account, processes, onSelect, onCreate, onSources, now }: WorkProps) {
+export function ResponsibilitiesSection({ work, account, processes, onSelect, onSources, now }: Omit<WorkProps, "onCreate">) {
   const query = work.history ? work.past : work.current;
   const filter = processes.find((process) => process.pid === work.filterPid);
   const records = work.filterPid ? work.records.filter((record) => assignedTo(record, filter ?? { pid: work.filterPid!, personal: false })) : work.records;
   const name = (record: ResponsibilityRecord) => record.assignee.kind === "ship" ? "ship" : processes.find((process) => record.assignee.kind === "process" && process.pid === record.assignee.processId)?.label ?? record.assignee.processId.slice(0, 8);
-  return <>
-    <section class="fleet-block" id="fleet-responsibilities" aria-label="Responsibilities">
+  return <section class="fleet-block fleet-responsibilities" id="fleet-responsibilities" aria-label="Responsibilities" tabIndex={-1}>
       <h2><i />Responsibilities<button class="fleet-heading-action" onClick={onSources} disabled={!account || !canConfigure(account, "r12y.source.list")}>standing</button><span class="count">{query.data?.pages[0]?.count ?? "-"}</span></h2>
       <div class="fleet-work-filters" role="group" aria-label="Responsibility filters">
         <button type="button" aria-pressed={!work.history} onClick={() => work.setHistory(false)}>current</button><button type="button" aria-pressed={work.history} onClick={() => work.setHistory(true)}>history</button>
@@ -65,21 +64,30 @@ export function WorkSections({ work, account, processes, onSelect, onCreate, onS
       </div>
       {query.error && <p class="error" role="alert">{query.error.message}</p>}
       {account && !canConfigure(account, "r12y.list") ? <p class="fleet-empty">Your account cannot list responsibilities.</p> : query.isPending ? <LoadingState>Loading responsibilities…</LoadingState> : <>
-        {records.length ? <div class="tablewrap"><table><thead><tr><th>Responsibility</th><th>Assignee</th><th>State</th><th>Next check</th></tr></thead><tbody>{records.map((record) => <tr key={record.id} data-row={`work:${record.id}`} tabIndex={0} onClick={() => onSelect(`work:${record.id}`)}>
-          <td class="grow">{record.title}</td><td class="dim">{name(record)}</td><td><span class={`dot ${record.state === "active" ? "is-live" : record.state === "waiting" ? "is-warn" : record.state === "resolved" ? "is-on" : ""}`} />{record.state}</td><td class="dim">{record.nextCheckAtMs ? nextTime(record.nextCheckAtMs, now) : "-"}</td>
-        </tr>)}</tbody></table></div> : <p class="fleet-empty">{work.history ? "No completed responsibilities here yet." : work.filterPid ? "No current responsibilities for this process." : "Nothing outstanding. Promises and follow-ups appear here."}</p>}
+        {records.length ? <ul class="fleet-work-list">{records.map((record) => <li key={record.id}>
+          <button type="button" class="fleet-work-row" data-row={`work:${record.id}`} onClick={() => onSelect(`work:${record.id}`)}>
+            <span class="fleet-work-title">{record.title}</span>
+            <span class="fleet-work-summary">
+              <span class="fleet-work-state" data-state={record.state}>{record.state === "waiting" && record.blocker ? record.blocker : record.state === "active" ? "in progress" : record.state}</span>
+              {record.assignee.kind === "process" && <span>{name(record)}</span>}
+              {record.nextCheckAtMs !== undefined && <span title={new Date(record.nextCheckAtMs).toLocaleString()}>check {record.nextCheckAtMs <= now ? "due " : ""}{nextTime(record.nextCheckAtMs, now)}</span>}
+            </span>
+          </button>
+        </li>)}</ul> : <p class="fleet-empty">{work.history ? "No completed responsibilities here yet." : work.filterPid ? "No current responsibilities for this process." : "Nothing outstanding. Promises and follow-ups appear here."}</p>}
         {query.hasNextPage && <button class="fleet-heading-action" disabled={query.isFetchingNextPage} onClick={() => void query.fetchNextPage()}>{query.isFetchingNextPage ? "loading…" : "show more responsibilities"}</button>}
       </>}
-    </section>
-    <section class="fleet-block" aria-label="Routines">
+    </section>;
+}
+
+export function RoutinesSection({ work, account, onSelect, onCreate, now }: Pick<WorkProps, "work" | "account" | "onSelect" | "onCreate" | "now">) {
+  return <section class="fleet-block" aria-label="Routines">
       <h2><i />Routines<button type="button" class="fleet-heading-action" onClick={onCreate} disabled={!account || !canConfigure(account, "sched.add")}>new routine</button><span class="count">{work.routines.data?.pages[0]?.count ?? "-"}</span></h2>
       {work.routines.error && <p class="error" role="alert">{work.routines.error.message}</p>}
       {account && !canConfigure(account, "sched.list") ? <p class="fleet-empty">Your account cannot list routines.</p> : work.routines.isPending ? <LoadingState>Loading routines…</LoadingState> : work.schedules.length ? <div class="tablewrap"><table><thead><tr><th>Routine</th><th>Repeat</th><th>State</th><th>Next run</th></tr></thead><tbody>{work.schedules.map((schedule) => <tr key={schedule.id} tabIndex={0} data-row={`routine:${schedule.id}`} onClick={() => onSelect(`routine:${schedule.id}`)}>
         <td class="grow">{schedule.name}</td><td class="dim grow">{cadenceLabel(schedule.expression)}</td><td><span class={`dot ${schedule.state.runningAtMs ? "is-live" : schedule.state.lastStatus === "error" ? "is-err" : schedule.enabled ? "is-on" : ""}`} />{schedule.state.runningAtMs ? "running" : !schedule.enabled ? "paused" : schedule.state.lastStatus === "error" ? "failed" : schedule.state.nextRunAtMs ? "ready" : "finished"}</td><td class="dim">{schedule.state.nextRunAtMs ? nextTime(schedule.state.nextRunAtMs, now) : "-"}</td>
       </tr>)}</tbody></table></div> : <p class="fleet-empty">Give Ship something to take care of regularly.</p>}
       {work.routines.hasNextPage && <button class="fleet-heading-action" disabled={work.routines.isFetchingNextPage} onClick={() => void work.routines.fetchNextPage()}>show more routines</button>}
-    </section>
-  </>;
+    </section>;
 }
 
 function isDetailRecord(value: JsonValue): value is { [key: string]: JsonValue } {

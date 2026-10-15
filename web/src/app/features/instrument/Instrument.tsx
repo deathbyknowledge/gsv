@@ -8,6 +8,7 @@ import { DevicePairingProvider } from "../../services/machines/DevicePairingProv
 import { Zen } from "./zen/Zen";
 import { useContactReplies } from "./people/useContactReplies";
 import { useConsoleAccounts } from "../../services/system/useConsoleData";
+import { useQuery } from "../../services/navigation/viewQueries";
 import { Fleet, type FleetProps } from "./fleet/Fleet";
 import { BrowserControlProvider, BrowserControlOverlay } from "./browser/BrowserControl";
 import { Memory } from "./memory/Memory";
@@ -16,6 +17,8 @@ import { People, type PeopleOpenRequest } from "./people/People";
 import { usePeopleActivity } from "./people/usePeopleActivity";
 import type { FleetReference } from "./fleet/fleetModel";
 import { WireSync } from "./wire/WireSync";
+import { INSTRUMENT_RESPONSIBILITIES_KEY } from "./wire/queryKeys";
+import { canConfigure } from "./settings/settingsModel";
 import { replaceLegacyChatPath, type MemoryPageRef } from "./shared/navigation";
 import { InstrumentHeader } from "./shared/InstrumentHeader";
 import { SHELL_KEYS } from "./shared/shellKeys";
@@ -128,6 +131,12 @@ function InstrumentReady({ initialPath }: { initialPath: string }) {
   /* Ship's contact notices live here, above the keyed Zen view, so opening a helper and coming back keeps them */
   const accounts = useConsoleAccounts();
   const viewer = accounts.data?.find((account) => account.relation === "self");
+  const canReadResponsibilities = Boolean(viewer && canConfigure(viewer, "r12y.list"));
+  const responsibilities = useQuery({
+    queryKey: [...INSTRUMENT_RESPONSIBILITIES_KEY, "count"],
+    enabled: distance === "zen" && zenPid === null && status.state === "connected" && canReadResponsibilities,
+    queryFn: async () => (await client.r12y.list({ states: ["open", "active", "waiting"], limit: 1 })).count,
+  });
   const contactReplies = useContactReplies(viewer);
   /* unsaved work the instrument guards as a whole: the chat's prompt, and replies typed under Ship's notices even while a helper is shown */
   const unsaved = zenDirty || contactReplies.dirty;
@@ -279,7 +288,9 @@ function InstrumentReady({ initialPath }: { initialPath: string }) {
       <div class="instrument-scaled">
       <InstrumentHeader distance={distance} onNavigate={(to) => {
         if (move(to) && navigationOpen) navigationButtonRef.current?.focus();
-      }} peopleWaiting={peopleActivity.conversations.length > 0 || peopleActivity.requests.length > 0} helper={distance === "zen" && zenPid !== null}
+      }} peopleWaiting={peopleActivity.conversations.length > 0 || peopleActivity.requests.length > 0}
+        onResponsibilities={canReadResponsibilities ? () => move("fleet", { kind: "section", section: "responsibilities" }) : undefined}
+        responsibilityCount={responsibilities.isError ? undefined : responsibilities.data} helper={distance === "zen" && zenPid !== null}
         onShip={() => {
           if (!zenDirty || window.confirm("Discard your unsent message and attachments?")) setZenPid(null);
         }} help={help} onHelp={() => {

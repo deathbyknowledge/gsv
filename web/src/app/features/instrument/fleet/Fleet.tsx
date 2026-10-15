@@ -1,7 +1,7 @@
 import { useLedger } from "../wire/useLedger";
 import { FileReader } from "./FileReader";
 import { FleetDialog } from "./FleetDialog";
-import { assignedTo, ResponsibilityInspector, RoutineInspector, StandingResponsibilities, useFleetWork, WorkSections } from "./Work";
+import { assignedTo, ResponsibilitiesSection, ResponsibilityInspector, RoutineInspector, RoutinesSection, StandingResponsibilities, useFleetWork } from "./Work";
 import { RoutineEditor } from "./RoutineEditor";
 import { useDraftGuard } from "../shared/useDraftGuard";
 import type { GSVClient } from "@humansandmachines/gsv/client";
@@ -44,6 +44,7 @@ import {
   fleetReferenceRow,
   isApprovalReference,
   isConnectReference,
+  isSectionReference,
   type FleetReference,
 } from "./fleetModel";
 import { PlaceActions } from "./PlaceActions";
@@ -94,6 +95,7 @@ export function Fleet({ openRequest, onZen, onCommand, onDirtyChange }: FleetPro
   const initialReference = openRequest?.reference ?? null;
   const initialRow = fleetReferenceRow(initialReference);
   const initialConnect = isConnectReference(initialReference) ? initialReference.to : null;
+  const initialSection = isSectionReference(initialReference) ? initialReference.section : null;
   const approvalReference = isApprovalReference(initialReference) ? initialReference : null;
 
   const targetsQuery = useQuery({
@@ -209,6 +211,19 @@ export function Fleet({ openRequest, onZen, onCommand, onDirtyChange }: FleetPro
   // Full log rows now live in Settings; navigation follows the remaining manifest rows.
   const manifestRef = useRef<HTMLDivElement>(null);
   const focusedRow = useRef<FleetRow | null>(initialRow);
+  useLayoutEffect(() => {
+    if (initialSection !== "responsibilities") return;
+    work.setHistory(false);
+    work.setFilterPid(null);
+    focusedRow.current = null;
+    const frame = requestAnimationFrame(() => {
+      const manifest = manifestRef.current;
+      if (!manifest) return;
+      manifest.scrollTop = 0;
+      manifest.querySelector<HTMLElement>("#fleet-responsibilities")?.focus({ preventScroll: true });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [openRequest, initialSection, work.setHistory, work.setFilterPid]);
   useEffect(() => {
     if (!active || !inspectorOpen || !selected) return;
     const row = Array.from(manifestRef.current?.querySelectorAll<HTMLElement>("[data-row]") ?? []).find((entry) => entry.dataset.row === selected);
@@ -318,6 +333,8 @@ export function Fleet({ openRequest, onZen, onCommand, onDirtyChange }: FleetPro
           const row = event.target.closest<HTMLElement>("[data-row]");
           if (row && !event.target.closest("button, a[href]")) row.focus({ preventScroll: true });
         }}>
+          <ResponsibilitiesSection work={work} account={viewer} processes={processes} onSelect={selectRow} onSources={() => openWorkPanel("sources")} now={now} />
+
           <section class="fleet-block">
             <h2>
               <i /> Places
@@ -426,7 +443,7 @@ export function Fleet({ openRequest, onZen, onCommand, onDirtyChange }: FleetPro
             </div>
           </section>
 
-          <WorkSections work={work} account={viewer} processes={processes} onSelect={selectRow} onCreate={() => openWorkPanel("new")} onSources={() => openWorkPanel("sources")} now={now} />
+          <RoutinesSection work={work} account={viewer} onSelect={selectRow} onCreate={() => openWorkPanel("new")} now={now} />
 
           <section class="fleet-block">
             <h2>

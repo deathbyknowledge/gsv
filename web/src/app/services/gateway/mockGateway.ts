@@ -42,6 +42,8 @@ import {
   type ProcHistoryRecordsResult,
   type ProcListEntry,
   type ProcMessageMetadata,
+  type ResponsibilityRecord,
+  type ScheduleRecord,
   type SysLedgerLine,
   type SysTargetSummary,
   type SysTokenCreateResult,
@@ -124,8 +126,34 @@ const targets: SysTargetSummary[] = [
 ];
 
 const accounts: AccountSummary[] = [
-  { uid: OWNER.uid, username: OWNER.username, displayName: "Esteve", relation: "self", runnable: false, capabilities: ["sys.ledger.list", "sys.target.list", "proc.list"] },
+  { uid: OWNER.uid, username: OWNER.username, displayName: "Esteve", relation: "self", runnable: false, capabilities: ["sys.ledger.list", "sys.target.list", "proc.list", "r12y.list", "r12y.source.list", "sched.list"] },
   { uid: SHIP.uid, username: SHIP.username, displayName: "Ship", relation: "personal-agent", runnable: true },
+];
+
+const responsibilityBase = {
+  ownerUid: OWNER.uid, source: { kind: "account" as const, uid: OWNER.uid, username: OWNER.username },
+  assignee: { kind: "ship" as const }, priority: "normal" as const, revision: 1,
+  createdAtMs: at(1, 9, 0), updatedAtMs: at(0, 8, 0),
+};
+const responsibilities: ResponsibilityRecord[] = [
+  { ...responsibilityBase, id: "mock-notes", title: "Organise the notes from this week", state: "active", assignee: { kind: "process", processId: HELPER.pid }, details: { outcome: "Keep the action items together and archive the older notes." } },
+  { ...responsibilityBase, id: "mock-pricing", title: "Follow up on pricing with Mara", state: "waiting", blocker: "Waiting for Mara’s reply", details: { outcome: "Confirm the revised quote before Thursday." } },
+  { ...responsibilityBase, id: "mock-backup", title: "Check that the studio backup finishes", state: "open", nextCheckAtMs: Date.now() + 2 * 3_600_000 },
+  { ...responsibilityBase, id: "mock-intro", title: "Introduce Lena to Mara", state: "resolved", resolvedAtMs: at(0, 8, 6), resolution: { result: "Lena accepted the introduction." } },
+];
+const scheduleBase = {
+  ownerUid: OWNER.uid, creator: { kind: "user" as const, uid: OWNER.uid, username: OWNER.username },
+  runAs: { kind: "user" as const, uid: OWNER.uid, username: OWNER.username },
+  enabled: true, overlapPolicy: "skip" as const, createdAtMs: at(7, 9, 0), updatedAtMs: at(0, 8, 0),
+};
+const scheduleState = {
+  nextRunAtMs: Date.now() + 8 * 3_600_000, runningAtMs: null, lastRunAtMs: at(0, 8, 0),
+  lastStatus: "ok" as const, lastError: null, lastDurationMs: 12_000, runCount: 7,
+};
+const schedules: ScheduleRecord[] = [
+  { ...scheduleBase, id: "mock-briefing", name: "Morning briefing", expression: { kind: "cron", expr: "0 8 * * *", timezone: "Europe/Amsterdam" }, target: { kind: "responsibility", message: "Bring together today’s plans and anything that needs my attention." }, state: scheduleState },
+  { ...scheduleBase, id: "mock-backup-routine", name: "Studio backup", expression: { kind: "cron", expr: "0 2 * * *", timezone: "Europe/Amsterdam" }, target: { kind: "responsibility", message: "Check the overnight backup and tell me if it needs attention." }, state: { ...scheduleState, nextRunAtMs: Date.now() + 14 * 3_600_000 } },
+  { ...scheduleBase, id: "mock-review", name: "Review the week", enabled: false, expression: { kind: "cron", expr: "0 17 * * 5", timezone: "Europe/Amsterdam" }, target: { kind: "responsibility", message: "Review this week’s notes and bring forward the unfinished items." }, state: { ...scheduleState, nextRunAtMs: null } },
 ];
 
 /* ---------- the scripted runs: what Ship does, step by step ---------- */
@@ -654,6 +682,8 @@ const connectArgs = z.object({ protocol: z.number() });
 const tokenArgs = z.object({ expiresAt: z.number().nullable().optional() });
 const hilArgs = z.object({ pid: z.string().optional(), requestId: z.string(), decision: z.enum(["approve", "deny"]) });
 const abortArgs = z.object({ pid: z.string().optional() });
+const responsibilityListArgs = z.object({ states: z.array(z.enum(["open", "active", "waiting", "resolved", "cancelled"])).optional(), includeTerminal: z.boolean().optional(), offset: z.number().optional(), limit: z.number().optional() });
+const scheduleListArgs = z.object({ includeDisabled: z.boolean().optional(), offset: z.number().optional(), limit: z.number().optional() });
 
 function respond<T>(id: string, data: T): string {
   return JSON.stringify({ type: "res", id, ok: true, data });
@@ -735,9 +765,17 @@ function route(socket: MockSocket, id: string, call: string, args: JsonValue): s
     case "contact.invite.list": return respond(id, { invites: [] });
     case "contact.request.list": return respond(id, { requests: [] });
     case "sys.link.list": return respond(id, { links: [] });
-    case "r12y.list": return respond(id, { responsibilities: [], count: 0, revision: 0 });
+    case "r12y.list": {
+      const { states, includeTerminal, offset = 0, limit = 100 } = responsibilityListArgs.parse(args);
+      const records = responsibilities.filter((record) => states ? states.includes(record.state) : includeTerminal || !["resolved", "cancelled"].includes(record.state));
+      return respond(id, { responsibilities: records.slice(offset, offset + limit), count: records.length, revision: 1 });
+    }
     case "r12y.source.list": return respond(id, { sources: [] });
-    case "sched.list": return respond(id, { schedules: [], count: 0 });
+    case "sched.list": {
+      const { includeDisabled, offset = 0, limit = 100 } = scheduleListArgs.parse(args);
+      const records = schedules.filter((record) => includeDisabled || record.enabled);
+      return respond(id, { schedules: records.slice(offset, offset + limit), count: records.length });
+    }
     case "sys.mcp.list": return respond(id, { servers: [] });
     case "repo.list": return respond(id, { repos: [] });
     default: return refuse(id, 501, `The mock gateway does not implement ${call}.`);
