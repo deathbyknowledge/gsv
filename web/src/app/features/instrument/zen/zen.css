@@ -13,7 +13,7 @@
   position: relative;
   display: grid;
   grid-template-columns: var(--zen-gutter) minmax(0, 1fr) var(--zen-gutter);
-  grid-template-rows: minmax(0, 1fr) auto;
+  grid-template-rows: minmax(0, 1fr);
   overflow: hidden;
 }
 @container instrument (max-width: 720px) {
@@ -424,6 +424,12 @@
   .zen-bottom { padding: 0 18px 14px; }
   .prompt-line { font-size: 15px; }
   .prompt-line .dir { display: none; }
+}
+@container instrument (max-width: 360px) {
+  .zen-bottom { padding-bottom: calc(14px / var(--type-scale)); }
+  .zen-compose-line { padding-top: calc(8px / var(--type-scale)); }
+  .zen-compose-line .prompt-line { padding-block: calc(11px / var(--type-scale)); }
+  .zen .zen-compose-actions button, .zen-submit { min-height: max(24px, calc(44px / var(--type-scale))); }
 }
 .zen-empty {
   grid-area: 1 / 2;

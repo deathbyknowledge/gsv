@@ -324,8 +324,10 @@ or file paths, can be changed or removed before sending. Sending uses the existi
 `conversation.send` text/media contract and the normal text history renderer; no
 request-specific gateway support or database migration is required.
 
-A summary above the prompt and **+ → plans** open the same contextual panel in
-Chat, with one level of tabs: **ongoing**, **routines** and **history**.
+One activity line above the prompt combines the ongoing responsibility count and
+People activity. Its **N ongoing** button (or **plans** when none are active) opens
+the contextual panel, with one level of tabs: **ongoing**, **routines** and **history**.
+The `+` menu contains attachments and requests, without a second plans entry.
 Responsibilities retain hierarchy and show blockers before ordinary follow-ups.
 Rows use a short state label; the full blocker is readable prose in the inspector.
 Standing policies are configured in **Settings → standing**. Details allow inspection, cancellation and asking Ship about the exact
@@ -347,7 +349,9 @@ initial native page pan. Already-focused inputs, long presses and scroll gesture
 keep their native behavior. Programmatic composer focus also prevents page scroll.
 Position corrections apply immediately. A reported keyboard-height jump eases
 over 180ms, while incremental browser updates and reduced motion apply directly.
-Near-unit scale rounding is accepted; actual pinch zoom preserves the layout.
+Keyboard resizing uses the zoom present when an input gains or loses focus,
+including Safari's retained fractional zoom. Pinching between focus transitions
+magnifies the existing layout without reflowing it.
 Safari controls when it exposes the keyboard’s viewport geometry, so the height
 transition begins when that geometry is available. The star field keeps its
 independent full-screen size.

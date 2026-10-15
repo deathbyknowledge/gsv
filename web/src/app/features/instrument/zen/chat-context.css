@@ -29,24 +29,31 @@
 .zen-add-menu > button:hover, .zen-add-menu > button:focus-visible { color: var(--accent); background: var(--selected); outline: none; }
 .zen-add-rule { height: 1px; margin: 6px 16px; background: var(--rule-inner); }
 .zen-compose-actions { position: relative; }
-.zen-plans {
-  grid-area: 2 / 2;
-  width: 100%;
-  max-width: min(var(--measure-response), 92%);
-  margin-inline: auto;
+.zen-context-bar {
+  position: relative;
   display: flex;
   align-items: center;
-  gap: 12px;
-  min-height: 44px;
+  gap: 18px;
+  min-height: max(24px, calc(44px / var(--type-scale)));
+}
+.zen-context-bar:empty { display: none; }
+.zen-plans {
+  flex: none;
+  display: flex;
+  align-items: center;
+  min-height: max(24px, calc(44px / var(--type-scale)));
   text-align: left;
   color: var(--text-dim);
-  font: 11px/1.5 var(--gsv-font-mono);
+  font: 10px/1.5 var(--gsv-font-mono);
 }
-.zen-body:has(.zen-plans) .zen-jump-bottom { bottom: 56px; }
-.zen-plans-count { flex: none; color: var(--accent); }
-.zen-plans-preview { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
-.zen-plans-preview > span { color: var(--faint); }
-.zen-plans:hover .zen-plans-preview, .zen-plans:focus-visible .zen-plans-preview { color: var(--text); }
+.zen-plans:hover, .zen-plans:focus-visible { color: var(--accent); }
+.zen-context-bar .zen-people { position: static; flex: 1; min-width: 0; min-height: max(24px, calc(44px / var(--type-scale))); border: 0; gap: 14px; }
+.zen-context-bar .zen-people-title { min-height: max(24px, calc(44px / var(--type-scale))); }
+.zen-context-bar .zen-people-items { gap: 16px; }
+.zen-context-bar .zen-people-item { flex-shrink: 0; max-width: min(360px, 100%); padding-block: calc(12px / var(--type-scale)); }
+@container instrument (max-width: 360px) {
+  .zen-context-bar .zen-people-title { display: none; }
+}
 .chat-context-panel {
   width: min(560px, calc(100vw / var(--type-scale) - 32px));
   margin-right: max(16px, calc((100vw / var(--type-scale) - 1500px) / 2));

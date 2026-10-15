@@ -96,7 +96,7 @@ Examples:
 
 A GSV app surface should have a clear center of gravity.
 
-Chat’s `+` menu attaches files and stages requests to Ship. Creation requests use the ordinary composer; selecting one never sends it. The complete request is editable text and uses the ordinary message send and history paths, without special wire metadata or sent-message rendering. Responsibilities and routines open from a quiet summary above the prompt or the `+` menu. Their contextual panel has one level of tabs: ongoing, routines and history. Standing responsibility policies belong in Settings. These controls do not add a top-level destination.
+Chat’s `+` menu attaches files and stages requests to Ship. Creation requests use the ordinary composer; selecting one never sends it. The complete request is editable text and uses the ordinary message send and history paths, without special wire metadata or sent-message rendering. One compact activity line above the prompt combines ongoing plans and People messages. Responsibilities and routines open from its count, with a plans label when none are active. Their contextual panel has one level of tabs: ongoing, routines and history. Standing responsibility policies belong in Settings. These controls do not add a top-level destination.
 
 ## Use The Shared Instrument Shell
 

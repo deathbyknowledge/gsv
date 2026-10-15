@@ -74,8 +74,9 @@ On phones, tap **menu** in the header to switch views. A dot on the menu button
 marks unread People activity. Choosing a view
 closes the menu and keeps your drafts. Tap **GSV** to return to Chat.
 
-In Chat, a compact summary above the prompt shows your outstanding responsibilities.
-Tap it, or choose **+ → plans**, to open **ongoing**, **routines** or **history**.
+In Chat, one compact activity line above the prompt combines ongoing plans and
+People messages. Tap **N ongoing** (or **plans** when none are active) to open
+**ongoing**, **routines** or **history**.
 Each responsibility shows a short status and its next check; tap it to read the
 full waiting explanation, inspect details or ask Ship about it. Your draft stays
 intact while you look. Event-driven policies live in **Settings → standing**.
@@ -98,6 +99,12 @@ the page itself stays fixed. Lists and message history scroll within that area.
 Closing the keyboard restores the conversation's available space. The content
 height eases between sizes; reduced motion makes the change immediate. Sign-in and
 setup use the same layout.
+
+On phones, **Memory** opens a full-height page browser. Select a page to read it,
+then use **← pages** to return. Loading feedback appears in the visible pane.
+**new page** and **edit** open the editor; returning to the browser keeps the draft,
+with **continue editing →** to resume it. Wider screens show the browser and reader
+side by side.
 
 The Settings sidebar highlights the section you're viewing.
 
