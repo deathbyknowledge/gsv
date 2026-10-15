@@ -156,10 +156,13 @@ export class InstanceStore {
   private profileCount(): number {
     return this.sql.exec<{ count: number }>("SELECT count(*) AS count FROM profiles WHERE json_extract(record, '$.state') != 'deleted'").one().count;
   }
-  /** Whether an ordinary start for this owner can use or create its automatic saved-login profile. */
+  /**
+   * Whether an ordinary start for this owner can use or create its automatic
+   * saved-login profile. Admission reuses an existing automatic profile without
+   * a quota check, so one that already exists stays usable at any allowance.
+   */
   savedLoginsAvailable(ownerUid: number, limits: BrowserLimits): boolean {
-    return limits.enabled && limits.savedProfiles > 0
-      && (this.defaultProfile(ownerUid) !== null || this.profileCount() < limits.savedProfiles);
+    return limits.enabled && (this.defaultProfile(ownerUid) !== null || this.profileCount() < limits.savedProfiles);
   }
   ownedProfile(actor: InstanceActor, id: string): ProfileRow | null { return this.sql.exec<ProfileRow>("SELECT * FROM profiles WHERE owner_uid = ? AND id = ?", actor.ownerUid, id).toArray()[0] ?? null; }
   putProfile(value: BrowserProfile): void {

@@ -483,6 +483,10 @@ describe("human browser control", () => {
     for (let index = 1; index < limits.savedProfiles; index += 1) store.createProfile(actor, `explicit-${index}`, `Explicit ${index}`, limits);
     expect((await object.catalog(actor)).templates[0]?.description).toContain("remember and restore");
     expect((await object.catalog(other)).templates[0]?.description).toContain("start with --new");
+    // Lowering the allowance to zero keeps an existing automatic profile usable; admission reuses it without a quota check.
+    vi.spyOn(InstancePolicy.prototype, "limits").mockResolvedValue({ ...limits, savedProfiles: 0 });
+    expect((await object.catalog(actor)).templates[0]?.description).toContain("remember and restore");
+    expect((await object.catalog(other)).templates[0]?.description).toContain("start with --new");
   }));
 
   it("keeps admission capabilities tied to the admitted template when policy is disabled", () => fixture(async (object, _store, instanceId) => {
