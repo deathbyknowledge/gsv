@@ -151,7 +151,7 @@
   font-size: clamp(20px, 2.3vw, 32px);
   line-height: 1.28;
   color: var(--accent);
-  text-wrap: pretty;
+  text-wrap: wrap;
 }
 .zen-message-actions { position: absolute; inset-inline-end: 0; bottom: 4px; }
 .zen-copy-message {
