@@ -18,9 +18,10 @@ use the id returned by discovery or provisioning.
 ## Quick Start
 
 1. Choose the browser as described under Choosing A Browser. On `gsv`, run
-   `targets list --kind browser`; for cloud work, reuse the account's running
-   cloud browser when there is one. An empty list does not rule out cloud
-   provisioning. `targets` and `instance` are gateway commands; run `tabs` and
+   `targets list --kind browser`; for cloud work, reuse a running cloud browser
+   only when its description fits the task: the one that remembers this
+   account's logins for signed-in work, a temporary one only for work that
+   needs no login. An empty list does not rule out cloud provisioning. `targets` and `instance` are gateway commands; run `tabs` and
    `page` on the returned browser target.
 2. For cloud work with no running cloud browser, run `instance catalog` on `gsv`. When cloud
    browsers are available, persist a fresh request ID and run
