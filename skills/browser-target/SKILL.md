@@ -18,16 +18,19 @@ use the id returned by discovery or provisioning.
 ## Quick Start
 
 1. Choose the browser as described under Choosing A Browser. On `gsv`, run
-   `targets list --online --search browser --limit 100 --json`, which includes
-   each target's description, leaves out stopped browsers, and covers the
-   largest concurrency allowance in one page; for cloud work, reuse a running cloud browser only when its
-   description fits the task: for signed-in work the one on the account's
-   automatic profile (the description names the profile; `browser profile
-   list` marks which one is automatic), a named profile only when the task
-   calls for that profile, and a temporary one for work that needs no login
-   or for a site the person already signed into in that instance, while it
-   runs. An empty list does not rule out cloud provisioning. `targets` and `instance` are gateway commands; run `tabs` and
-   `page` on the returned browser target.
+   `instance list` for the account's active cloud browsers, including ones
+   still starting: each entry's `profileId` names its saved-login profile and
+   `isolated` marks a temporary one. For connected personal browsers, run
+   `targets list --online --search browser --limit 100 --json` and follow its
+   `--offset` paging when the JSON `total` exceeds the page. For cloud work,
+   reuse an active cloud browser only when it fits the task: for signed-in
+   work the one on the account's automatic profile (`browser profile list`
+   marks which profile is automatic), a named profile only when the task calls
+   for that profile, and a temporary one for work that needs no login or for a
+   site the person already signed into in that instance, while it runs. Wait
+   for a starting browser with `instance get` rather than starting another. An
+   empty list does not rule out cloud provisioning. `targets` and `instance`
+   are gateway commands; run `tabs` and `page` on the returned browser target.
 2. For cloud work with no suitable running cloud browser, run `instance catalog`
    on `gsv`. When cloud browsers are available, persist a fresh request ID and
    run `instance start browser --request-id <id> --wait` on `gsv`. It returns
