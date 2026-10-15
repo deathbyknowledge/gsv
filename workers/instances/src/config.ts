@@ -27,7 +27,7 @@ export function browserTemplate(limits: BrowserLimits, savedLogins = limits.save
     templateId: "browser", revision: "1", kind: "browser", label: "Cloud browser",
     description: savedLogins
       ? "A browser with tabs, page interaction, screenshots, and temporary files. Ordinary starts remember and restore this account's website logins across instances; the lifetime caps one instance, not the saved logins. --new starts a separate temporary browser that does not share them."
-      : "A browser with tabs, page interaction, screenshots, and temporary files. Saved website logins are not available for this account, so an ordinary start would fail; start with --new for a temporary browser.",
+      : "A browser with tabs, page interaction, screenshots, and temporary files. An ordinary start cannot use or create this account's automatic saved-login profile and would fail; start with --new for a temporary browser, or with --profile and an existing saved profile from `browser profile list`.",
     implements: [...IMPLEMENTATIONS], defaultLifetimeSeconds: Math.min(1800, limits.maxInstanceSeconds),
     maxLifetimeSeconds: limits.maxInstanceSeconds, capacityUnits: 1,
   };

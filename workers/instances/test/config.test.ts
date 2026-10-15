@@ -11,6 +11,6 @@ describe("browserTemplate", () => {
 
   it("defaults availability to the saved-profile allowance", () => {
     expect(browserTemplate({ ...base, savedProfiles: 1 }).description).toContain("remember and restore");
-    expect(browserTemplate({ ...base, savedProfiles: 0 }).description).toContain("not available for this account");
+    expect(browserTemplate({ ...base, savedProfiles: 0 }).description).toContain("cannot use or create this account's automatic saved-login profile");
   });
 });

@@ -22,8 +22,10 @@ Ship builds trust at your pace. Routine steps on a site you have already given
 it access to just happen, like reading your Instagram posts once you have signed
 in. The first time a task reaches a private step, such as signing in or paying,
 Ship says so and lets you choose: do that step yourself in the browser, or let
-Ship do it for you. After a step has gone well, it offers to take it over next
-time if you would like.
+Ship do it when the browser already holds that login or a payment method the
+site has saved. A first sign-in always happens in the browser view, never in
+chat. After a step has gone well, Ship offers to take it over next time where
+that is possible.
 
 ## Connect your browser
 
