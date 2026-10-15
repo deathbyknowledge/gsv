@@ -115,7 +115,7 @@ export function Fleet({ openRequest, onZen, onCommand, onDirtyChange, onActivity
     enabled: connected,
   });
   const viewer = accountsQuery.data?.find((account) => account.relation === "self");
-  const work = useResponsibilities(viewer, false);
+  const work = useResponsibilities(viewer, { routines: false });
 
   const places = useMemo(() => orderPlaces(targetsQuery.data ?? []), [targetsQuery.data]);
   const processes = useMemo(() => orderProcesses(processesQuery.data ?? []), [processesQuery.data]);

@@ -105,6 +105,7 @@
       "id": "settings-shell",
       "paths": [
         "web/src/app/features/instrument/settings/Settings.tsx",
+        "web/src/app/features/instrument/settings/StandingResponsibilities.tsx",
         "web/src/app/features/instrument/settings/settingsModel.ts",
         "web/src/app/features/instrument/settings/settingsService.ts"
       ],

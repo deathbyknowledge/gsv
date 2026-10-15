@@ -8,8 +8,6 @@ type InstrumentHeaderProps = {
   distance: Distance;
   onNavigate: (distance: Distance) => void;
   peopleWaiting?: boolean;
-  onResponsibilities?: () => void;
-  responsibilityCount?: number;
   helper: boolean;
   /** Back to the ship's own conversation. */
   onShip: () => void;
@@ -23,7 +21,7 @@ type InstrumentHeaderProps = {
   navigationRef: RefObject<HTMLElement>;
 };
 
-export function InstrumentHeader({ distance, onNavigate, peopleWaiting, onResponsibilities, responsibilityCount, helper, onShip, help, onHelp, helpButtonRef,
+export function InstrumentHeader({ distance, onNavigate, peopleWaiting, helper, onShip, help, onHelp, helpButtonRef,
   navigationOpen, onNavigationToggle, navigationButtonRef, navigationRef }: InstrumentHeaderProps) {
   return (
     <header class="instrument-top instrument-header">
@@ -32,9 +30,6 @@ export function InstrumentHeader({ distance, onNavigate, peopleWaiting, onRespon
           <Wordmark />
         </button>
         {distance !== "zen" && <span class="instrument-current-view">{distance}</span>}
-        {distance === "zen" && !helper && onResponsibilities && <button type="button" class="instrument-responsibilities" onClick={onResponsibilities} title="Responsibilities and routines">
-          <span>plans</span>{responsibilityCount !== undefined && responsibilityCount > 0 && <span class="instrument-responsibility-count">{responsibilityCount}</span>}
-        </button>}
         <Feedback view={distance} />
         <PlatformIdentity />
         {helper && <span class="instrument-helper">helper · <button type="button" onClick={onShip}>back to your Ship</button></span>}

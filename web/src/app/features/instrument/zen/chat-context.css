@@ -29,6 +29,24 @@
 .zen-add-menu > button:hover, .zen-add-menu > button:focus-visible { color: var(--accent); background: var(--selected); outline: none; }
 .zen-add-rule { height: 1px; margin: 6px 16px; background: var(--rule-inner); }
 .zen-compose-actions { position: relative; }
+.zen-plans {
+  grid-area: 2 / 2;
+  width: 100%;
+  max-width: min(var(--measure-response), 92%);
+  margin-inline: auto;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 44px;
+  text-align: left;
+  color: var(--text-dim);
+  font: 11px/1.5 var(--gsv-font-mono);
+}
+.zen-body:has(.zen-plans) .zen-jump-bottom { bottom: 56px; }
+.zen-plans-count { flex: none; color: var(--accent); }
+.zen-plans-preview { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.zen-plans-preview > span { color: var(--faint); }
+.zen-plans:hover .zen-plans-preview, .zen-plans:focus-visible .zen-plans-preview { color: var(--text); }
 .chat-context-panel {
   width: min(560px, calc(100vw / var(--type-scale) - 32px));
   margin-right: max(16px, calc((100vw / var(--type-scale) - 1500px) / 2));
@@ -44,6 +62,13 @@
 .chat-responsibility-children { margin: 0 0 12px 12px; padding-left: 12px; border-left: 1px solid var(--rule-inner); }
 .chat-responsibility-children > summary { color: var(--text-dim); font-size: 11px; cursor: pointer; padding: 6px 0; }
 .chat-responsibility-children .fleet-work-title { font-size: 15px; }
+.responsibility-blocker { margin: 24px 0; }
+.responsibility-blocker > h4 { margin: 0 0 8px; color: var(--label); font: 11px/1.6 var(--gsv-font-mono); }
+.responsibility-blocker > p { margin: 0; color: var(--text); font: 17px/1.6 var(--gsv-font-prose); white-space: pre-wrap; overflow-wrap: anywhere; }
+.chat-context-panel.is-person .fleet-inspector > .instrument-view { height: 100%; }
+.chat-person.is-searching { height: 100%; min-height: 0; display: flex; flex-direction: column; }
+.chat-person.is-searching > .people-form { flex: none; margin-top: 0; }
+.chat-person.is-searching > .people-recipient-list { flex: 1; min-height: 0; max-height: none; overscroll-behavior: contain; }
 .chat-profile-preview { padding: 20px 0; border-top: 1px solid var(--rule-inner); }
 .chat-profile-preview > p { font: 17px/1.5 var(--gsv-font-prose); white-space: pre-wrap; overflow-wrap: anywhere; }
 @container instrument (max-width: 720px) {

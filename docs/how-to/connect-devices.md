@@ -26,7 +26,10 @@ Reduce Motion makes the change immediate.
 On phones, Fleet's page and file reader scroll to the bottom of the visible
 screen. Their end padding leaves the last row or line clear of the home indicator.
 Fleet shows compact place and process rows on phones. Open a place for its details
-and **browse files**; responsibilities and routines are under **plans** in Chat.
+and **browse files**; responsibilities and routines open from the summary above
+Chat’s prompt or **+ → plans**. In a place’s file list, **../** moves up from the
+current starting folder and stops at that target’s filesystem root.
+**Chat → + → reference a file** selects a file into your draft in one tap.
 A file preview’s **talk about it** control adds its target and path to your Chat
 draft as editable text, keeping existing text and attachments. It sends nothing
 until you choose **send**.

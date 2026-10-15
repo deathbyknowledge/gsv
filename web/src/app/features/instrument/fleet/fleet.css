@@ -512,10 +512,7 @@
 .fleet-work-form input:focus, .fleet-work-form textarea:focus, .fleet-work-form select:focus { outline: none; border-color: var(--accent); box-shadow: none; }
 .file-reader-editor:focus { outline: none; caret-color: var(--accent); }
 .fleet-work-form .fleet-work-checkbox { display: flex; align-items: center; }
-.fleet-work-form .fleet-work-checkbox input, .fleet-work-source input { width: 14px; height: 14px; accent-color: var(--accent); }
+.fleet-work-form .fleet-work-checkbox input { width: 14px; height: 14px; accent-color: var(--accent); }
 .fleet-work-interval { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
 .fleet-work-actions { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 16px; margin-top: 18px; }
-.fleet-work-source { border-top: 1px solid var(--rule-inner); padding: 16px 0 6px; }
-.fleet-work-source label { display: flex; justify-content: space-between; align-items: center; gap: 14px; font-size: 13px; }
-.fleet-work-source p { color: var(--text-dim); font-size: 12px; line-height: 1.6; }
 .fleet-line-error .line-detail { max-height: 280px; overflow: auto; }

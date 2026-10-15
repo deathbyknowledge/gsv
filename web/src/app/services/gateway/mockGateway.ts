@@ -809,9 +809,12 @@ function route(socket: MockSocket, id: string, call: string, args: JsonValue): s
       return respond(id, { schedule });
     }
     case "fs.read": {
-      const { path } = z.object({ path: z.string() }).parse(args);
-      const directory = path === "~" || path === "." || path === "/home/esteve";
-      if (directory) return respond(id, { ok: true, path, files: ["notes.md"] });
+      const { path: requestedPath } = z.object({ path: z.string() }).parse(args);
+      const path = ["~", "."].includes(requestedPath) ? "/home/esteve" : requestedPath;
+      if (path === "/") return respond(id, { ok: true, path, files: [], directories: ["home"] });
+      if (path === "/home") return respond(id, { ok: true, path, files: [], directories: ["esteve"] });
+      if (path === "/home/esteve") return respond(id, { ok: true, path, files: ["notes.md"], directories: ["notes"] });
+      if (path === "/home/esteve/notes") return respond(id, { ok: true, path, files: ["backups.md"], directories: [] });
       return socket.textResponse(id, { ok: true, path, kind: "text", contentType: "text/markdown", lines: 8, size: NOTES.length }, NOTES);
     }
     case "sys.mcp.list": return respond(id, { servers: [] });

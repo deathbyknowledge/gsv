@@ -35,7 +35,10 @@ later when you ask. This works in your ordinary Ship conversation, including
 messaging apps; opening People is optional.
 
 Choose **connect → use a profile address** to find a saved contact by name or enter
-someone's public profile address. Review the profile and your prefilled display
+a handle such as `esteve` or `@esteve`, or someone's public profile address.
+Handles resolve on `gsv.space`; full addresses still reach other operators.
+Chat’s **+ → find a person** uses the same lookup and lets you mention the profile
+in your draft without contacting them. Review the profile and your prefilled display
 name, choose who handles new messages, then send a first message.
 They make their own handling choice when accepting, or can decline it. Acceptance keeps that first message in the same
 conversation, opens it directly, and enables further messages and attachments.

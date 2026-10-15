@@ -6,7 +6,7 @@ import { loadConsoleProcesses } from "../../../services/system/consoleService";
 import type { ConsoleAccount } from "../../../domain/system/consoleModels";
 import { LoadingState } from "../../../components/ui/Spinner";
 import { canConfigure } from "../settings/settingsModel";
-import { ResponsibilitiesSection, ResponsibilityInspector, RoutinesSection, RoutineInspector, StandingResponsibilities, useResponsibilities } from "../shared/Responsibilities";
+import { ResponsibilitiesSection, ResponsibilityInspector, RoutinesSection, RoutineInspector, useResponsibilities } from "../shared/Responsibilities";
 import { INSTRUMENT_PROCESSES_KEY, INSTRUMENT_RESPONSIBILITIES_KEY } from "../wire/queryKeys";
 import type { FleetReference } from "../fleet/fleetModel";
 import type { ActivityRequest, ActivityRow } from "./chatContextModel";
@@ -20,8 +20,8 @@ export function ChatActivity({ account, request, onAsk, onFleet, onDirty }: {
 }) {
   const active = useViewActive();
   const { client, connected } = useGateway();
-  const work = useResponsibilities(account);
-  const [tab, setTab] = useState<"current" | "routines" | "standing">("current");
+  const [tab, setTab] = useState<NonNullable<ActivityRequest["tab"]>>("ongoing");
+  const work = useResponsibilities(account, { history: tab === "history" });
   const [row, setRow] = useState<ActivityRow | null>(request?.row ?? null);
   const [dirty, setDirty] = useState(false);
   const [now, setNow] = useState(Date.now);
@@ -32,7 +32,7 @@ export function ChatActivity({ account, request, onAsk, onFleet, onDirty }: {
     setRow(request?.row ?? null);
     work.setFilterPid(request?.processId ?? null);
     if (request?.row?.startsWith("routine:")) setTab("routines");
-    else if (request) setTab(request.tab ?? "current");
+    else if (request) setTab(request.tab ?? "ongoing");
   }, [request, work.setFilterPid]);
   useEffect(() => {
     if (!active) return;
@@ -58,7 +58,7 @@ export function ChatActivity({ account, request, onAsk, onFleet, onDirty }: {
 
   return <div class="chat-activity">
     <nav class="chat-context-tabs" aria-label="Ship activity">
-      {(["current", "routines", "standing"] as const).map((value) => <button type="button" aria-pressed={tab === value}
+      {(["ongoing", "routines", "history"] as const).map((value) => <button type="button" aria-pressed={tab === value}
         onClick={() => { if (leaveDetail()) { setDirty(false); setRow(null); setTab(value); } }}>{value}</button>)}
     </nav>
     {row ? <>
@@ -78,8 +78,7 @@ export function ChatActivity({ account, request, onAsk, onFleet, onDirty }: {
       </> : account && !canConfigure(account, responsibilityId ? "r12y.get" : "sched.list") ? <p class="note">Your account cannot read this item.</p>
         : (responsibilityId ? responsibility.isPending : work.routines.isPending || work.routines.isFetchingNextPage) ? <LoadingState>Loading…</LoadingState>
         : <p class="note" role="status">{responsibility.error?.message ?? work.routines.error?.message ?? "This item is no longer available."}</p>}
-    </> : tab === "standing" ? <StandingResponsibilities account={account} />
-      : tab === "routines" ? <RoutinesSection work={work} account={account} now={now} onSelect={select} onCreate={() => onAsk("Help me create a routine.")} />
+    </> : tab === "routines" ? <RoutinesSection work={work} account={account} now={now} onSelect={select} onCreate={() => onAsk("Help me create a routine.")} />
         : <ResponsibilitiesSection work={work} account={account} now={now} processes={processes.data ?? []} onSelect={select} />}
   </div>;
 }

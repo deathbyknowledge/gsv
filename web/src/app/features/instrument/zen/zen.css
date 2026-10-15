@@ -13,35 +13,11 @@
   position: relative;
   display: grid;
   grid-template-columns: var(--zen-gutter) minmax(0, 1fr) var(--zen-gutter);
-  grid-template-rows: minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr) auto;
   overflow: hidden;
 }
 @container instrument (max-width: 720px) {
   .zen-body { --zen-gutter: 18px; }
-}
-.zen-timeline {
-  grid-area: 1 / 1;
-  z-index: 1;
-  pointer-events: none;
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-  align-items: center;
-  gap: 10px;
-  padding-bottom: 20px;
-}
-.zen-timeline i {
-  width: 5px;
-  height: 5px;
-  background: var(--faint);
-  display: block;
-}
-.zen-timeline i.is-here {
-  background: var(--accent);
-  box-shadow: 0 0 8px var(--accent);
-}
-.zen-timeline i.is-human {
-  background: var(--idle);
 }
 .zen-moments {
   grid-area: 1 / 1 / 2 / -1;
@@ -497,7 +473,6 @@
 }
 
 /* a folded note: the ship's memory, one line unless opened */
-.zen-timeline i.is-note { background: transparent; border: 1px solid var(--faint); }
 .zen-moment.is-note { padding: 1.2vh 0; }
 .zen-moment.is-note .who { color: var(--faint); }
 .zen-moment.is-note .note-line {
@@ -537,7 +512,6 @@
   height: 1.1em;
 }
 .zen-moment.is-focus.is-older { opacity: 0.85; }
-.zen-timeline i.is-focus { background: var(--accent); box-shadow: 0 0 8px var(--accent); }
 .zen.is-browse .prompt-line { opacity: 0.55; }
 
 /* the ship's own narration, folded: it is not a message */

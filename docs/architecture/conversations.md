@@ -312,7 +312,7 @@ working context changes.
 
 ## Contextual requests in Instrument
 
-Chat’s `+` menu can attach a file, find a person by saved name or GSV address,
+Chat’s `+` menu can attach a file, find a person by handle, saved name or GSV address,
 reference a file on a place, or stage a request to create a routine, connect a
 computer or start a browser. Selecting a request keeps the current text and
 attachments. The person can add details, remove the request, or send it normally.
@@ -324,13 +324,23 @@ or file paths, can be changed or removed before sending. Sending uses the existi
 `conversation.send` text/media contract and the normal text history renderer; no
 request-specific gateway support or database migration is required.
 
-The **plans** shortcut opens responsibilities, routines and standing policies in
-Chat. Responsibilities retain hierarchy and show blockers before ordinary
-follow-ups. Details allow inspection, cancellation and asking Ship about the exact
+A summary above the prompt and **+ → plans** open the same contextual panel in
+Chat, with one level of tabs: **ongoing**, **routines** and **history**.
+Responsibilities retain hierarchy and show blockers before ordinary follow-ups.
+Rows use a short state label; the full blocker is readable prose in the inspector.
+Standing policies are configured in **Settings → standing**. Details allow inspection, cancellation and asking Ship about the exact
 record. Routines show their cadence and state, with pause/enable and edit controls;
 creating one stages a request to Ship. These panels use the existing authorized
 syscalls and signal-driven caches. Closing them preserves drafts and pauses hidden
-reads. Fleet retains places and processes, with files opened from a place.
+reads. The shared file browser can move above the home directory using **../**,
+stopping at the selected target’s root. Chat selects a file immediately into the
+draft; Fleet retains its file inspector. Fleet retains places and processes.
+
+The shell locks document scrolling and sizes the visible content from
+`VisualViewport`, keeping the header and composer outside the scrolling content.
+The viewport requests `interactive-widget=resizes-content` where supported;
+visual-viewport tracking also handles browsers that pan or resize only the visible
+area. The star field keeps its independent full-screen size.
 
 ### Withdrawing the local typed-request experiment
 

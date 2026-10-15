@@ -68,29 +68,34 @@ The web console is called **Instrument** and has five views:
 - **Fleet** lists your places and processes, with files opened from a place.
 - **Memory** shows your personal knowledge pages.
 - **People** holds conversations, message requests and private contacts across GSV spaces, plus your public profile.
-- **Settings** holds preferences (models), permissions, instructions, messengers, MCP connections and **Logs** for actions and their outcomes. The **sign-in** section appears only for root, for personal password resets and verified-owner linking.
+- **Settings** holds preferences (models), standing responsibilities, permissions, instructions, messengers, MCP connections and **Logs** for actions and their outcomes. The **sign-in** section appears only for root, for personal password resets and verified-owner linking.
 
 On phones, tap **menu** in the header to switch views. A dot on the menu button
 marks unread People activity. Choosing a view
 closes the menu and keeps your drafts. Tap **GSV** to return to Chat.
 
-In Chat, **plans** opens a panel with your current responsibilities, routines and
-standing policies. Its count shows how many responsibilities are still outstanding.
-Each responsibility shows its status or blocker and next check; tap it for details.
-**history** shows completed items. Your Chat draft stays intact while you look.
+In Chat, a compact summary above the prompt shows your outstanding responsibilities.
+Tap it, or choose **+ → plans**, to open **ongoing**, **routines** or **history**.
+Each responsibility shows a short status and its next check; tap it to read the
+full waiting explanation, inspect details or ask Ship about it. Your draft stays
+intact while you look. Event-driven policies live in **Settings → standing**.
 
 The **+** menu attaches files, finds people and files, and prepares requests to
 create a routine, connect a computer or start a browser. These requests and
 **ask Ship** controls add ordinary editable text to your draft. Review or change
-it before sending; selecting a request does not send it.
+it before sending; selecting a request does not send it. **Find a person** accepts
+a handle such as `@esteve` or a full address for another GSV. **Reference a file**
+adds a file’s target and path as soon as you select its name. Use **../** at the
+top of a place’s file list to move toward its filesystem root.
 
 In the browser and when added to your Home Screen, the header and bottom controls
 leave room for your phone's notch and home indicator. The star field still fills
 the screen, continuing behind the home indicator in the Home Screen app.
 Fleet, Memory and Settings scroll to the bottom edge, with extra space after the
 last item so it can rest above the home indicator.
-Opening the keyboard keeps the composer above it; closing the keyboard
-restores the conversation's available space. Sign-in and setup use the same layout.
+Opening the keyboard reduces the content area between the header and composer;
+the page itself stays fixed. Lists and message history scroll within that area.
+Closing the keyboard restores the conversation's available space. Sign-in and setup use the same layout.
 
 The Settings sidebar highlights the section you're viewing.
 

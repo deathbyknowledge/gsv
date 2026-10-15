@@ -10,7 +10,6 @@ body,
   margin: 0;
   width: 100%;
   height: 100%;
-  height: 100lvh;
   overflow: hidden;
   overscroll-behavior: none;
 }
@@ -20,6 +19,8 @@ body,
 }
 
 body {
+  position: fixed;
+  inset: 0;
   background: var(--void);
   -webkit-text-size-adjust: 100%;
   text-size-adjust: 100%;

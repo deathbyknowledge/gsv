@@ -6,7 +6,7 @@ import type { ConsoleAccount } from "../../../domain/system/consoleModels";
 import { LoadingState } from "../../../components/ui/Spinner";
 import { useContacts } from "../people/Contacts";
 import { NewConversation } from "../people/NewConversation";
-import { emptyApproachDraft, profileAddress } from "../people/peopleModel";
+import { emptyApproachDraft, profileAddress, profileAddressLabel } from "../people/peopleModel";
 import type { PeopleOpenRequest } from "../people/People";
 import { canConfigure } from "../settings/settingsModel";
 import type { ChatContext } from "./chatContextModel";
@@ -54,7 +54,7 @@ export function ChatPerson({ account, request, onAsk, onPeople, onDirty }: {
     } else lookup(url);
   }, [request, connected, account?.uid, contacts.data]);
   const found = (contacts.data?.contacts ?? []).filter((contact) => contact.state === "active" && !contact.blocked
-    && `${contactDisplayName(contact)} ${contact.remoteOrigin}`.toLocaleLowerCase().includes(address.trim().toLocaleLowerCase()));
+    && `${contactDisplayName(contact)} ${contact.remoteOrigin}`.toLocaleLowerCase().includes(address.trim().replace(/^@/, "").toLocaleLowerCase()));
   const profile = draft.profile;
   const selectedContact = contacts.data?.contacts.find((contact) => contact.id === selectedContactId && contact.state === "active" && !contact.blocked);
   const preview = selectedContact ? {
@@ -62,7 +62,7 @@ export function ChatPerson({ account, request, onAsk, onPeople, onDirty }: {
     url: `${selectedContact.remoteOrigin}/profile`, about: undefined,
   } : profile && profileAddress(address) === profile.url ? profile : undefined;
   const allowed = connected && !!account && canConfigure(account, "profile.resolve");
-  return <div class="chat-person">
+  return <div class={`chat-person${!contacting && !preview ? " is-searching" : ""}`}>
     {contacting ? <>
       <button type="button" class="fleet-text-action chat-context-back" disabled={busy} onClick={() => setContacting(false)}>← profile</button>
       {sent ? <p role="status">Message request sent.</p> : <NewConversation account={account} draft={draft} onChange={setDraft}
@@ -73,7 +73,7 @@ export function ChatPerson({ account, request, onAsk, onPeople, onDirty }: {
         event.preventDefault(); const url = profileAddress(address);
         if (url && allowed) lookup(url);
       }}>
-        <label>Find a person<input placeholder="GSV address or saved name" value={address} autoComplete="off" spellcheck={false}
+        <label>Find a person<input placeholder="@handle, name or address" value={address} autoComplete="off" autoCapitalize="none" spellcheck={false}
           onInput={(event) => { revision.current++; resolve.reset(); setAddress(event.currentTarget.value); if (!draft.text) setDraft(emptyApproachDraft()); setSent(false); setSelectedContactId(null); }} /></label>
         {profileAddress(address) && <button type="submit" class="fleet-text-action" disabled={!allowed || resolve.isPending}>
           {resolve.isPending ? <LoadingState>opening profile…</LoadingState> : "open profile"}
@@ -81,18 +81,18 @@ export function ChatPerson({ account, request, onAsk, onPeople, onDirty }: {
       </form>
       {(resolve.error ?? contacts.error) && <p class="people-error" role="alert">{(resolve.error ?? contacts.error)?.message}</p>}
       {preview ? <div class="chat-profile-preview">
-        <span class="people-kicker">{new URL(preview.origin).host}</span><h3>{preview.displayName}</h3>
+        <span class="people-kicker">{profileAddressLabel(preview.origin)}</span><h3>{preview.displayName}</h3>
         {preview.about && <p>{preview.about}</p>}
         <div class="fleet-actions">
           <button type="button" class="fleet-text-action is-primary" onClick={() => onAsk(`Help me with ${JSON.stringify(preview.displayName)}'s GSV profile: ${preview.url}`)}>mention in message</button>
           <button type="button" class="fleet-text-action" onClick={() => selectedContact ? onPeople({ contactId: selectedContact.id }) : setContacting(true)}>{selectedContact ? "open conversation" : "contact"}</button>
         </div>
-      </div> : <ul class="people-recipient-list" aria-label="Saved people">
+      </div> : <ul class="people-recipient-list" aria-label="Saved people" data-scroll-edge>
         {found.map((contact) => <li key={contact.id}><button type="button" class="people-recipient"
           onClick={() => { if (!mayReplace()) return; revision.current++; resolve.reset(); setDraft(emptyApproachDraft()); setAddress(`${contact.remoteOrigin}/profile`); setSelectedContactId(contact.id); }}>
-          <span>{contactDisplayName(contact)}</span><small>{new URL(contact.remoteOrigin).host}</small>
+          <span>{contactDisplayName(contact)}</span><small>{profileAddressLabel(contact.remoteOrigin)}</small>
         </button></li>)}
-        {!found.length && <li class="people-note">Paste a GSV profile address to find someone.</li>}
+        {!found.length && <li class="people-note">Enter a handle to find someone on gsv.space, or their full address for another GSV.</li>}
       </ul>}
       {!connected && <p class="people-note" role="status">Reconnecting…</p>}
     </>}

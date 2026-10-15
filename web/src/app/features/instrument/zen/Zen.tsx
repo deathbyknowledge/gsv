@@ -27,6 +27,7 @@ import { useTerminalSessions } from "../../../services/terminal/TerminalProvider
 import { terminalFinished } from "../../../services/terminal/terminalSessions";
 import { TerminalControls } from "./TerminalControls";
 import { fleetReferenceRow, orderPlaces, type FleetReference } from "../fleet/fleetModel";
+import { ChatPlans } from "./ChatPlans";
 import { ChatPanels } from "./ChatPanels";
 import { canConfigure } from "../settings/settingsModel";
 import { flushSync } from "preact/compat";
@@ -1029,11 +1030,6 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
       {draggingFiles && <div class="zen-drop-hint">drop to attach</div>}
 
       <div class="zen-body">
-        <div class="zen-timeline" aria-hidden="true">
-          {moments.map((moment, index) => (
-            <i key={moment.id} class={`${moment.role === "human" ? "is-human" : moment.role === "note" ? "is-note" : ""}${index === moments.length - 1 ? " is-here" : ""}${selection === index ? " is-focus" : ""}`} />
-          ))}
-        </div>
         {empty ? (
           <div class="zen-empty">
             {pidProp ? <p>This helper has no messages yet.</p> : <>
@@ -1103,6 +1099,7 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
         )}
         {!empty && ready && scrolling.awayFromBottom && <button type="button" class="zen-jump-bottom"
           aria-label="Jump to latest message" onClick={scrolling.follow}>↓ latest</button>}
+        {!pidProp && <ChatPlans account={viewer} onOpen={() => setContext({ kind: "activity", request: { tab: "ongoing" } })} />}
       </div>
 
       <div class="zen-bottom">
@@ -1194,6 +1191,7 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
               <button type="button" role="menuitem" onClick={() => { setAddOpen(false); fileInput.current?.click(); }}>attach a file</button>
               <button type="button" role="menuitem" disabled={!viewer || (!canConfigure(viewer, "profile.resolve") && !canConfigure(viewer, "contact.list"))} onClick={() => { setAddOpen(false); setContext({ kind: "person" }); }}>find a person</button>
               <button type="button" role="menuitem" disabled={!viewer || !canConfigure(viewer, "fs.read")} onClick={() => { setAddOpen(false); setContext({ kind: "files" }); }}>reference a file</button>
+              <button type="button" role="menuitem" disabled={!viewer || (!canConfigure(viewer, "r12y.list") && !canConfigure(viewer, "sched.list"))} onClick={() => { setAddOpen(false); setContext({ kind: "activity" }); }}>plans <span>responsibilities & routines</span></button>
               <div class="zen-add-rule" role="separator" />
               <button type="button" role="menuitem" disabled={!viewer || !canConfigure(viewer, "conversation.send")} onClick={() => stageRequest("Help me create a routine.")}>create a routine <span>ask Ship</span></button>
               <button type="button" role="menuitem" disabled={!viewer || !canConfigure(viewer, "conversation.send")} onClick={() => stageRequest("Help me connect a computer to this space.")}>connect a computer <span>ask Ship</span></button>
