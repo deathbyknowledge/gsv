@@ -86,7 +86,7 @@ if ((skip_build == 0)); then
   cargo build "${cargo_args[@]}"
 fi
 
-binaries=(gsv-desktop gsv ship gsvd gsv-vision gsv-transcribe)
+binaries=(gsv-desktop gsv gsvd gsv-vision gsv-transcribe)
 for binary in "${binaries[@]}"; do
   path="$binary_dir/$binary"
   [[ -x "$path" ]] || die "missing executable $path"

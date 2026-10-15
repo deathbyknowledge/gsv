@@ -34,7 +34,14 @@ printf 'int main(void) { return 0; }\n' | clang -x c - -o "$scratch/executable"
 # Start with unsigned helpers on both architectures so signing order is tested.
 codesign --force --sign - "$scratch/executable"
 codesign --remove-signature "$scratch/executable"
-for binary in gsv-desktop gsv ship gsvd gsv-vision gsv-transcribe; do
+binary_names="$(cargo metadata --locked --no-deps --format-version 1 --manifest-path "$repository_root/host/Cargo.toml" | python3 -c '
+import json, sys
+packages = {"desktop", "gsv", "machine", "gestures", "transcriber"}
+print(" ".join(target["name"] for package in json.load(sys.stdin)["packages"] if package["name"] in packages
+    for target in package["targets"] if "bin" in target["kind"]))
+')"
+read -r -a binaries <<< "$binary_names"
+for binary in "${binaries[@]}"; do
   cp "$scratch/executable" "$binary_dir/$binary"
 done
 
@@ -55,7 +62,7 @@ plutil -lint "$app/Contents/Info.plist"
 cmp "$repository_root/host/helpers/transcriber/THIRD_PARTY.md" \
   "$app/Contents/Resources/licenses/transcriber/THIRD_PARTY.md"
 [[ ! -e "$app/Contents/MacOS/THIRD_PARTY.md" ]]
-for binary in gsv-desktop gsv ship gsvd gsv-vision gsv-transcribe; do
+for binary in "${binaries[@]}"; do
   codesign --verify --strict "$app/Contents/MacOS/$binary"
 done
 codesign --verify --strict "$app/Contents/MacOS/gsv-transcribe-runtime/libtranscribe.dylib"
