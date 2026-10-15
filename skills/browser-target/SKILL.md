@@ -17,11 +17,12 @@ use the id returned by discovery or provisioning.
 
 ## Quick Start
 
-1. On `gsv`, run `targets list --kind browser`. Reuse the account's running
+1. Choose the browser as described under Choosing A Browser. On `gsv`, run
+   `targets list --kind browser`; for cloud work, reuse the account's running
    cloud browser when there is one. An empty list does not rule out cloud
    provisioning. `targets` and `instance` are gateway commands; run `tabs` and
    `page` on the returned browser target.
-2. If no cloud browser is running, run `instance catalog` on `gsv`. When cloud
+2. For cloud work with no running cloud browser, run `instance catalog` on `gsv`. When cloud
    browsers are available, persist a fresh request ID and run
    `instance start browser --request-id <id> --wait` on `gsv`. It returns when
    ready and says `disposition: created` or `reused`. When the catalog says
@@ -65,7 +66,7 @@ When the user asks, check `instance catalog` first, then explain both in simple 
 
 Match checking to the stakes. Once the user has given you access to a site, do routine reading there without asking again: asked to check their Instagram, have them sign in once through the handoff, then read the posts without confirming each one. Check back before anything that leaves a trace: posting, sending, paying, deleting.
 
-The first time a task reaches a step that touches their private data, such as signing in or paying, say so and offer the choice: they do that step themselves in the browser, or they let you. Say which you would pick and why in one sentence, then follow their choice. Once a step has gone well with them doing it, mention that you can take it over next time.
+The first time a task reaches a step that touches their private data, such as signing in or paying, say so and offer the choice: they do that step themselves in the live browser, or you do it when the browser already holds a usable session or a method the site has saved. A first-time sign-in always goes through the handoff; never take a password or code in chat. Say which you would pick and why in one sentence, then follow their choice. Once a step has gone well with them doing it, mention that you can take it over next time where that is possible.
 
 Example: booking a train ticket, find the connection and fill in the passenger details they gave you. At checkout, send the handoff link so they pay themselves in the live browser; never take card details in chat. Once they have paid and the booking succeeded, mention that next time you can complete the payment with a payment method the site has saved.
 
