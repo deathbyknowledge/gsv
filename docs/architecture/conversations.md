@@ -23,6 +23,8 @@ with the words that fit. Explicit line breaks in a message remain intact.
 Chat and contact history mark the top scroll boundary with a lavender line only
 while it intersects text, clearing the line in gaps between text and messages.
 Chat's scroll boundary spans the full view width while its messages retain their reading column.
+When the activity line appears above the composer, Chat marks its bottom scroll boundary with
+the same lavender edge only while it cuts through text. Gaps and the end of the transcript stay clear.
 Initial rendering, font loading and padding changes keep Chat at the bottom unless the
 reader scrolls away. This includes content updates that briefly shrink and restore the
 transcript before the browser delivers a scroll event.
@@ -41,13 +43,18 @@ the web app cannot hide that bar through a supported browser API.
 Clicking or tapping a message selects it without scrolling. Scrolling selects the message nearest
 the center of the visible transcript, or the first/latest message at either end, even while the composer has focus. The selection
 stays visible while typing; after leaving the input, `j` and `k` continue from that same message.
-On phones, the return-to-latest control is a down arrow at the right edge. Completed action
-receipts use a small **details** link in the message footer; tap it to expand the actions.
-Running work, failed actions, fallback notices and approvals remain visible in the transcript.
+On phones, the return-to-latest control is a down arrow at the right edge. Closed completed action
+receipts are hidden once they have a reply; action records remain inspectable in Settings → Logs.
+Running work, failed actions, fallback notices, approvals and already-open receipts remain visible.
+Direct `$` commands use a compact target header on phones, with running, unavailable or failed
+states when relevant. Expand it to read the complete command, output and terminal controls.
 
 A very long message in Zen folds behind **read more** once it has finished arriving, and **show
-less** folds it again. A reply the user watched stream in stays open. Opening or folding keeps the
-reading position, and the message text itself is unchanged.
+less** folds it again. Folding uses the rendered height at the current width and text size:
+messages up to eighteen line-heights remain whole; longer messages show twelve line-heights
+with a short fade at the end. A reply the user watched stream in stays open. Opening or folding
+keeps the reading position, and the message text itself is unchanged. Selected text uses a solid
+lavender highlight with contrasting text in both themes.
 
 ## Conversation kinds
 

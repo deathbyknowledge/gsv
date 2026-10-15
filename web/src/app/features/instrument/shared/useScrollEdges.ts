@@ -1,13 +1,18 @@
 import { useLayoutEffect, useRef } from "preact/hooks";
 
 /** Test text fragments, not row boxes: padding and the gaps between lines stay unmarked. */
-function clipsTextAtTop(pane: HTMLElement): boolean {
-  if (pane.scrollTop <= 0 || pane.clientHeight === 0) return false;
-  const overflow = getComputedStyle(pane).overflowY;
+function clipsTextAtEdge(pane: HTMLElement, edge: "top" | "bottom"): boolean {
+  if (pane.clientHeight === 0) return false;
+  if (edge === "top" ? pane.scrollTop <= 0 : pane.scrollTop + pane.clientHeight >= pane.scrollHeight - 1) return false;
+  const style = getComputedStyle(pane);
+  const overflow = style.overflowY;
   if (overflow !== "auto" && overflow !== "scroll") return false;
   const bounds = pane.getBoundingClientRect();
   const scale = bounds.height / pane.offsetHeight;
-  const top = bounds.top + pane.clientTop * scale;
+  // clientTop/clientHeight round fractional borders at text zoom, which can put
+  // the hit test in the adjacent toolbar instead of just inside the scroll pane.
+  const border = parseFloat(edge === "top" ? style.borderTopWidth : style.borderBottomWidth) * scale;
+  const boundary = edge === "top" ? bounds.top + border : bounds.bottom - border;
   const left = bounds.left + pane.clientLeft * scale;
   const right = left + pane.clientWidth * scale;
   const range = document.createRange();
@@ -19,7 +24,7 @@ function clipsTextAtTop(pane: HTMLElement): boolean {
       if (element.matches("textarea, input, select, script, style, [aria-hidden='true']")) return NodeFilter.FILTER_REJECT;
       const rect = element.getBoundingClientRect();
       // Prune whole messages, sections and table rows before inspecting their text.
-      if (rect.width && (rect.top > top || rect.bottom <= top || rect.left >= right || rect.right <= left)) return NodeFilter.FILTER_REJECT;
+      if (rect.width && (rect.top > boundary || rect.bottom <= boundary || rect.left >= right || rect.right <= left)) return NodeFilter.FILTER_REJECT;
       const style = getComputedStyle(element);
       if (style.display === "none" || style.visibility === "hidden" || style.opacity === "0" || style.position === "fixed") return NodeFilter.FILTER_REJECT;
       return NodeFilter.FILTER_SKIP;
@@ -30,9 +35,10 @@ function clipsTextAtTop(pane: HTMLElement): boolean {
     for (const rect of range.getClientRects()) {
       const start = Math.max(left, rect.left);
       const end = Math.min(right, rect.right);
-      if (rect.top >= top || rect.bottom <= top || end <= start) continue;
+      if (rect.top >= boundary || rect.bottom <= boundary || end <= start) continue;
       // A sticky toolbar can cover text that geometrically crosses the pane's edge.
-      const hit = document.elementFromPoint((start + end) / 2, top + Math.min(0.5, (rect.bottom - top) / 2));
+      const inside = edge === "top" ? Math.min(0.5, (rect.bottom - boundary) / 2) : -Math.min(0.5, (boundary - rect.top) / 2);
+      const hit = document.elementFromPoint((start + end) / 2, boundary + inside);
       if (hit && (node.parentElement?.contains(hit) || hit.contains(node))) return true;
     }
   }
@@ -68,8 +74,14 @@ export function useScrollEdges(view: string) {
         if (!observed.has(element)) { resize.observe(element); observed.add(element); }
       }
       // Finish geometry reads before changing paint, without re-rendering the view.
-      const clipped = panes.map((pane) => clipsTextAtTop(pane));
-      panes.forEach((pane, index) => pane.toggleAttribute("data-scroll-clipped", clipped[index]));
+      const clipped = panes.map((pane) => ({
+        top: clipsTextAtEdge(pane, "top"),
+        bottom: pane.hasAttribute("data-scroll-edge-bottom") && clipsTextAtEdge(pane, "bottom"),
+      }));
+      panes.forEach((pane, index) => {
+        pane.toggleAttribute("data-scroll-clipped", clipped[index].top);
+        pane.toggleAttribute("data-scroll-bottom-clipped", clipped[index].bottom);
+      });
     };
     const mutations = new MutationObserver(schedule);
     mutations.observe(root, { subtree: true, childList: true, characterData: true, attributes: true,
@@ -87,7 +99,10 @@ export function useScrollEdges(view: string) {
       root.removeEventListener("load", schedule, true);
       document.fonts.removeEventListener("loadingdone", schedule);
       document.removeEventListener("visibilitychange", schedule);
-      for (const pane of panes) pane.removeAttribute("data-scroll-clipped");
+      for (const pane of panes) {
+        pane.removeAttribute("data-scroll-clipped");
+        pane.removeAttribute("data-scroll-bottom-clipped");
+      }
     };
   }, [view]);
   return ref;

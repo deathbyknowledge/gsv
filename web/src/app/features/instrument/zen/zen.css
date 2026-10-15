@@ -30,6 +30,9 @@
   overflow-anchor: none;
   min-height: 0;
 }
+.zen:not(:has(.zen-context-bar:not(:empty))) .zen-moments {
+  --instrument-scroll-bottom-color: transparent;
+}
 .zen-content {
   position: relative;
   margin-inline: var(--zen-gutter);
@@ -61,11 +64,7 @@
 @container instrument (max-width: 720px) {
   .zen .zen-jump-bottom { left: auto; right: 18px; transform: none; width: 44px; min-height: 44px; padding: 0; font-size: 20px; }
   .zen-jump-bottom > span { display: none; }
-  .zen-moment:has(> .receipt.is-quiet:not(.is-open)) { padding-bottom: max(2.2vh, 32px); }
-  .receipt.is-quiet:not(.is-open) { position: absolute; left: 0; bottom: 0; border: 0; padding: 0; margin: 0; }
-  .receipt.is-quiet:not(.is-open) .receipt-toggle { min-height: 28px; color: var(--text-dim); font: 10px/1.4 var(--gsv-font-mono); text-decoration: underline; text-underline-offset: 3px; }
-  .receipt.is-quiet:not(.is-open) .receipt-summary { display: none; }
-  .receipt.is-quiet:not(.is-open) .receipt-compact { display: inline; }
+  .receipt.is-quiet:not(.is-open) { display: none; }
 }
 .zen-history-status { display: flex; justify-content: center; gap: 16px; font-size: 11px; color: var(--text-dim); }
 .zen-history-status.is-err { color: var(--error); }
@@ -189,8 +188,8 @@
   /* the line count is set inline from zenFold.ts; this holds where lh is unknown */
   max-height: 60vh;
   overflow: clip;
-  -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 4em), transparent);
-  mask-image: linear-gradient(to bottom, #000 calc(100% - 4em), transparent);
+  -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 1.3em), transparent);
+  mask-image: linear-gradient(to bottom, #000 calc(100% - 1.3em), transparent);
 }
 .zen-fold-toggle {
   margin-top: 0.65rem;
@@ -252,6 +251,16 @@
   color: var(--faint);
   width: 1ch;
   display: inline-block;
+  flex-shrink: 0;
+}
+.activity-summary { min-width: 0; }
+.activity-compact { display: none; }
+@container instrument (max-width: 720px) {
+  .activity.is-you .activity-summary { display: none; }
+  .activity-compact { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 4px 8px; flex: 1; min-width: 0; }
+  .activity-compact .place { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .activity-compact .activity-state { grid-column: 2; }
+  .activity-compact .is-failed { color: var(--warn); }
 }
 .activity.is-open .tri { color: var(--accent); }
 .activity .place { color: var(--target); }
@@ -293,7 +302,6 @@
 }
 .receipt-toggle:hover, .zen .work-link:hover { color: var(--text-hi); }
 .receipt-toggle { color: var(--label); }
-.receipt-compact { display: none; }
 .receipt-chevron { display: inline-block; width: 1ch; margin-right: 8px; color: var(--faint); }
 .receipt-toggle[aria-expanded="true"] .receipt-chevron { transform: rotate(90deg); }
 .receipt.is-live .receipt-toggle { font-family: var(--gsv-font-prose); font-size: 14px; letter-spacing: 0; }
@@ -583,6 +591,7 @@
   height: 1.1em;
 }
 .zen-moment.is-focus.is-older { opacity: 0.85; }
+.zen.has-text-selection .zen-moment.is-older { opacity: 1; }
 .zen.is-browse .prompt-line { opacity: 0.55; }
 
 /* the ship's own narration, folded: it is not a message */

@@ -201,6 +201,10 @@ const ActivityLine = memo(function ActivityLine({
       </span>
     </>
   );
+  const state = unavailable ? "status unavailable"
+    : activity.terminal?.status === "stopped" ? "stopped"
+    : activity.terminal?.status === "failed" || activity.calls.some((call) => call.failed) ? "failed"
+    : activity.live ? "running…" : "";
   return (
     <div class={`activity${open ? " is-open" : ""}${activity.you ? " is-you" : ""}`}>
       <div
@@ -208,6 +212,7 @@ const ActivityLine = memo(function ActivityLine({
         role="button"
         tabIndex={0}
         aria-expanded={open}
+        aria-label={activity.you ? `Command on ${label}${state ? ` · ${state}` : ""}` : undefined}
         onClick={() => onToggle(activity.key)}
         onKeyDown={(event) => {
           if (event.key === "Enter" || event.key === " ") {
@@ -217,7 +222,11 @@ const ActivityLine = memo(function ActivityLine({
         }}
       >
         <span class="tri">{open ? "▾" : "▸"}</span>
-        {head}
+        <span class="activity-summary">{head}</span>
+        {activity.you && <span class="activity-compact" aria-hidden="true">
+          <span>$</span><span class="place" title={label}>{label}</span>
+          {state && <span class={`activity-state${state === "failed" || unavailable ? " is-failed" : ""}`}>{state}</span>}
+        </span>}
       </div>
       {open ? (
         <div class="detail">
@@ -257,13 +266,10 @@ const Receipt = memo(function Receipt({ receipt, who, places, collections, open,
     <div class={`receipt${open ? " is-open" : ""}${live ? " is-live" : ""}${quiet ? " is-quiet" : ""}`}>
       <div class="line">
         <button type="button" class="receipt-toggle" aria-expanded={open} onClick={() => onToggleDetail(receipt.key)}>
-          <span class="receipt-compact">details</span>
-          <span class="receipt-summary">
-            <span class="receipt-chevron" aria-hidden="true">›</span>
-            {running ? <span class="pulse blink" /> : null}
-            {summary.map((part, index) => part.tone ? <span key={index} class={part.tone === "place" ? "place" : "is-failed"}>{part.text}</span> : part.text)}
-            {fallback ? <span class="is-failed"> · fallback used</span> : null}
-          </span>
+          <span class="receipt-chevron" aria-hidden="true">›</span>
+          {running ? <span class="pulse blink" /> : null}
+          {summary.map((part, index) => part.tone ? <span key={index} class={part.tone === "place" ? "place" : "is-failed"}>{part.text}</span> : part.text)}
+          {fallback ? <span class="is-failed"> · fallback used</span> : null}
         </button>
       </div>
       {open ? (
@@ -599,6 +605,19 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
     hasOlder: conversation.hasMore || processRuntime.hasOlderHistory,
     loadingOlder: conversation.loadingOlder || processRuntime.loadingOlderHistory, loadOlder });
   const { browse, selection, viewport: momentsRef, content: contentRef, pin } = scrolling;
+  const [selectingText, setSelectingText] = useState(false);
+  useEffect(() => {
+    const transcript = momentsRef.current;
+    if (!active || !transcript) return;
+    const update = () => {
+      const selected = document.getSelection();
+      setSelectingText(Boolean(selected && !selected.isCollapsed
+        && (transcript.contains(selected.anchorNode) || transcript.contains(selected.focusNode))));
+    };
+    update();
+    document.addEventListener("selectionchange", update);
+    return () => document.removeEventListener("selectionchange", update);
+  }, [active, ready, moments.length === 0, momentsRef]);
   const hasMemoryRead = useMemo(() => [...receipts.values()].some((receipt) => receipt.work.activities.some((activity) =>
     !activity.you && activity.target === "gsv" && activity.calls.some((call) =>
       call.syscall === "fs.read" && call.finished && !call.failed && call.filePath?.startsWith("/src/repos/"),
@@ -1012,7 +1031,7 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
   const empty = ready && moments.length === 0 && pid !== null && pendingHil === null;
 
   return (
-    <main class={`zen${!promptFocused ? " is-browse" : ""}${draggingFiles ? " is-file-drop" : ""}`} aria-label="Chat"
+    <main class={`zen${!promptFocused ? " is-browse" : ""}${draggingFiles ? " is-file-drop" : ""}${selectingText ? " has-text-selection" : ""}`} aria-label="Chat"
       onDragEnter={(event) => { if (event.dataTransfer?.types.includes("Files")) { event.preventDefault(); dragDepth.current++; setDraggingFiles(true); } }}
       onDragOver={(event) => { if (event.dataTransfer?.types.includes("Files")) { event.preventDefault(); event.dataTransfer.dropEffect = "copy"; } }}
       onDragLeave={(event) => { if (event.dataTransfer?.types.includes("Files") && --dragDepth.current <= 0) { dragDepth.current = 0; setDraggingFiles(false); } }}
@@ -1032,11 +1051,11 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
             </>}
           </div>
         ) : !ready ? (
-          <div class="zen-moments" ref={momentsRef} data-scroll-edge>
+          <div class="zen-moments" ref={momentsRef} data-scroll-edge data-scroll-edge-bottom>
             <div class="zen-content" ref={contentRef}>{historyFailure}</div>
           </div>
         ) : (
-          <div class="zen-moments" ref={momentsRef} data-scroll-edge>
+          <div class="zen-moments" ref={momentsRef} data-scroll-edge data-scroll-edge-bottom>
             <div class={`zen-content${pendingHil ? " has-approval" : ""}`} ref={contentRef}>
               {historyFailure}
               {(conversation.loadingOlder || processRuntime.loadingOlderHistory) && <div class="zen-history-status"><LoadingState>loading earlier messages</LoadingState></div>}

@@ -153,22 +153,38 @@
   inherits: false;
   initial-value: transparent;
 }
+@property --instrument-scroll-bottom-color {
+  syntax: "<color>";
+  inherits: false;
+  initial-value: transparent;
+}
 .instrument [data-scroll-edge] {
   --instrument-scroll-edge-color: transparent;
+  --instrument-scroll-bottom-color: transparent;
   /* Reserve the hairline even while clear so revealing it never moves the text. */
   border-top: 1px solid var(--instrument-scroll-edge-color);
   background-image: linear-gradient(to bottom,
     color-mix(in srgb, var(--instrument-scroll-edge-color) 35%, transparent),
     color-mix(in srgb, var(--instrument-scroll-edge-color) 12%, transparent) 35%,
+    transparent),
+    linear-gradient(to top,
+    color-mix(in srgb, var(--instrument-scroll-bottom-color) 35%, transparent),
+    color-mix(in srgb, var(--instrument-scroll-bottom-color) 12%, transparent) 35%,
     transparent);
   background-size: 100% 8px;
   background-repeat: no-repeat;
-  background-position: top;
+  background-position: top, bottom;
   background-attachment: scroll;
-  transition: --instrument-scroll-edge-color 120ms ease-out;
+  transition: --instrument-scroll-edge-color 120ms ease-out, --instrument-scroll-bottom-color 120ms ease-out;
 }
 .instrument [data-scroll-clipped] {
   --instrument-scroll-edge-color: var(--accent);
+}
+.instrument [data-scroll-edge-bottom] {
+  border-bottom: 1px solid var(--instrument-scroll-bottom-color);
+}
+.instrument [data-scroll-bottom-clipped] {
+  --instrument-scroll-bottom-color: var(--accent);
 }
 @media (prefers-reduced-motion: reduce) {
   .instrument [data-scroll-edge] { transition: none; }

@@ -13,6 +13,9 @@ only the active view;
 scrolling, message selection and text selection remain owned by each surface.
 Chat's scrolling pane spans the view, with its existing gutters inside the content,
 so the glow reaches both page edges without widening the messages.
+When Chat's activity line is present, the transcript's bottom edge uses the same
+line and inward glow while it clips text. It clears in gaps and at the end of the
+transcript. Without that activity line, the composer's existing rule is the boundary.
 The star field continues behind both regions without an opaque header backdrop.
 The unscaled content viewport reserves the device's top and side safe-area insets,
 including in landscape, before applying text zoom. Scroll panes in Fleet, Memory,
@@ -140,9 +143,9 @@ Sending moves the text and attachments into the conversation immediately and cle
 Markdown code blocks share readable monospace sizing, contained horizontal scrolling and a quiet copy action across Chat, search excerpts and Memory. Copy preserves code whitespace without adding the renderer's final newline. Copy feedback stays outside the glyph animation; inline code wraps long tokens without widening the conversation.
 
 Each Ship message separates receipts. The work leading to a message stays in the receipt before it; further work starts a new receipt below that message, even within the same run. Replies keep their own content, order and model attribution. A receipt's identity follows its process, run and previous sent message, so open actions stay open when the next reply streams, commits or finishes. Calls without a run identity stay separate, and direct commands retain their terminal controls.
-On phones, a completed receipt with a reply collapses to a details link in the message footer.
-Expanding it restores the receipt above the reply. Live work, failures, fallbacks and approvals
-keep their summary visible. The latest-message button becomes a right-aligned down arrow.
+On phones, closed completed receipts with a reply are hidden. Live work, failures, fallbacks,
+approvals and receipts the reader has already opened remain visible. Action records are also
+inspectable in Settings → Logs. The latest-message button becomes a right-aligned down arrow.
 
 The receipt has three levels: work between messages, action purpose, evidence. Closed, active work names its current purpose; otherwise the receipt shows its action count and places. There is no thinking label, elapsed counter or timing annotation inside the receipt. Failures and retries remain visible, including retries continued after a message. Shell retry links require the same full command, working directory and session context on the same target; sharing an executable name is not enough. Opening the receipt shows an ordered list of purposes with small state indicators. Opening a purpose reveals its readable request, result, place, retry relationship and preceding working notes. Shell commands use the same `who@target $ command` presentation as approvals, with terminal output beneath. Files show paths and content, writes show their content, edits show before/after text, and searches show matching lines. Long content scrolls without a second UI truncation. Unattached notes have their own fold inside that receipt. Calls without a purpose use the same generated wording as approvals. Memory references and the reply's model attribution sit inside its receipt; approval decisions remain visible outside these folds, and only the receipt owning a pending action shows its waiting state. The earlier layout, grouped by place, stays behind `RECEIPT_LAYOUT` in `ReceiptTimeline.tsx`.
 
@@ -286,6 +289,9 @@ Normal Chat messages carry the prompt's selected place as structured message con
 Explicit start rejections finish the command as failed and remove its live controls. The Kernel marks rejections before dispatch in structured error details; a timeout or disconnect after dispatch remains unavailable and recoverable. A legacy daemon's unknown-session rejection finishes with the update instruction, without retrying the command.
 
 Scrollbar and selection colors use the current light or dark theme, including prompt text and native controls. Chat retains its existing hidden transcript scrollbar.
+Text selection uses a solid accent highlight with contrasting foreground. Selecting
+transcript text temporarily restores older messages to full opacity so their
+selection stays legible.
 
 People opens the conversation list. A counted Requests entry opens incoming first-message decisions, with sent and past requests secondary; Contacts in the heading opens the private address book. Both offer a direct return to conversations. New conversation filters saved people locally or opens a public profile address. These are separate jobs rather than equal tabs. Conversation selection, scroll and drafts stay mounted while visiting Requests or Contacts, with hidden queries paused.
 
