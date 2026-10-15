@@ -36,8 +36,10 @@ for (const size of [192, 512]) {
 }
 resize(180, "web/public/icons/apple-touch-icon.png");
 
-// The extension shows the cursor in the toolbar and the ship wherever the icon is larger.
+// The extension shows the cursor in the toolbar and the ship wherever the icon is larger. Chrome picks the
+// toolbar image by display scale, so the action keeps cursor art at 48 and 64 under their own names.
 for (const size of [16, 24, 32]) cursor(size, `extension/public/icons/gsv-${size}.png`);
+for (const size of [48, 64]) cursor(size, `extension/public/icons/cursor-${size}.png`);
 for (const size of [48, 64, 96, 128, 256]) resize(size, `extension/public/icons/gsv-${size}.png`);
 
 const favicon = resolve(root, "web/public/favicon.ico");

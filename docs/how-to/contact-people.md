@@ -53,7 +53,7 @@ profile links still work. Drafts remain when you return to a conversation. A pro
 invitation, or close new contact. Saving later edits does not change the public
 page until you publish again. Unpublishing removes the page; existing contacts and
 conversations remain. People who already viewed it may retain copies.
-The published page uses GSV's ASCII ship icon in the browser tab.
+The published page uses GSV's cursor icon in the browser tab, the same pale block on a dark square as the app.
 On phones, the profile editor keeps its title and back arrow above the scrolling
 form. The same lavender edge used in conversations appears only while text crosses
 that scroll boundary.
