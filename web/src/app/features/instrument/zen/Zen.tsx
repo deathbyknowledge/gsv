@@ -1209,7 +1209,7 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
               <div class="zen-add-section" role="group" aria-labelledby="zen-add-context-label">
                 <div class="zen-add-heading" id="zen-add-context-label">add context</div>
                 <button type="button" role="menuitem" class="is-file" onClick={() => { setAddOpen(false); fileInput.current?.click(); }}>attach a file <small>this device</small></button>
-                <button type="button" role="menuitem" class="is-person" disabled={!viewer || (!canConfigure(viewer, "profile.resolve") && !canConfigure(viewer, "contact.list"))} onClick={() => { setAddOpen(false); setContext({ kind: "person" }); }}>find a person <small>@handle</small></button>
+                <button type="button" role="menuitem" disabled={!viewer || (!canConfigure(viewer, "profile.resolve") && !canConfigure(viewer, "contact.list"))} onClick={() => { setAddOpen(false); setContext({ kind: "person" }); }}>find a person <small>@handle</small></button>
                 <button type="button" role="menuitem" class="is-file" disabled={!viewer || !canConfigure(viewer, "fs.read")} onClick={() => { setAddOpen(false); setContext({ kind: "files" }); }}>reference a file <small>your places</small></button>
               </div>
               <div class="zen-add-section" role="group" aria-labelledby="zen-add-ship-label">

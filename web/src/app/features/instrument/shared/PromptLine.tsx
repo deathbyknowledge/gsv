@@ -108,12 +108,16 @@ export const PromptLine = forwardRef<PromptLineHandle, PromptLineProps>(function
     const { fontSize, lineHeight } = metrics.current;
     const width = input.clientWidth;
     const at = input.selectionStart;
+    const selecting = at !== input.selectionEnd;
     const focused = document.activeElement === input && !input.disabled;
     const previous = measured.current;
     if (previous && previous.value === input.value && previous.start === at && previous.end === input.selectionEnd
       && previous.width === width && previous.top === input.scrollTop && previous.left === input.scrollLeft
       && previous.focused === focused
       && (!reveal || previous.reveal)) return;
+    // iOS uses caret-color for its native selection UI too. Restore that tint
+    // for a range while keeping our block cursor for an insertion point.
+    input.toggleAttribute("data-text-selected", selecting);
     if (!mirrorText.current) {
       const before = document.createTextNode("");
       const marker = document.createElement("span");
@@ -135,13 +139,13 @@ export const PromptLine = forwardRef<PromptLineHandle, PromptLineProps>(function
       const height = `${mirror.offsetHeight}px`;
       if (input.style.height !== height) input.style.height = height;
     }
-    if (reveal && focused && input.selectionStart === input.selectionEnd) {
+    if (reveal && focused && !selecting) {
       const bottom = lineTop + lineHeight;
       if (lineTop < input.scrollTop) input.scrollTop = lineTop;
       else if (bottom > input.scrollTop + input.clientHeight) input.scrollTop = bottom - input.clientHeight;
     }
     if (chip) chip.style.transform = `translateY(${-input.scrollTop}px)`;
-    const visible = focused && input.selectionStart === input.selectionEnd;
+    const visible = focused && !selecting;
     // Cursor geometry belongs to this measurement, without a component update after the frame callback.
     caret.style.transform = `translate(${left - input.scrollLeft}px, ${lineTop + (lineHeight - fontSize) / 2 - input.scrollTop}px)`;
     caret.style.visibility = visible ? "visible" : "hidden";
@@ -299,6 +303,7 @@ export const PromptLine = forwardRef<PromptLineHandle, PromptLineProps>(function
           disabled={disabled}
           onKeyDown={onKeyDown}
           onScroll={() => scheduleMeasure()}
+          onSelect={() => scheduleMeasure(true)}
           onInput={changed}
           onPaste={(event) => {
             const files = Array.from(event.clipboardData?.files ?? []);

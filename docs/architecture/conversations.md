@@ -55,6 +55,8 @@ messages up to eighteen line-heights remain whole; longer messages show twelve l
 with a short fade at the end. A reply the user watched stream in stays open. Opening or folding
 keeps the reading position, and the message text itself is unchanged. Selected text uses a solid
 lavender highlight with contrasting text in both themes.
+Inside the prompt, selected text stays light on a stronger purple highlight. Selecting a range
+restores the native selection tint and handles on iOS; a collapsed selection uses the block cursor.
 
 ## Conversation kinds
 

@@ -28,7 +28,6 @@
 }
 .zen-add-menu button > small { color: var(--text-dim); font-size: 9px; white-space: nowrap; }
 .zen-add-menu button.is-file { color: var(--path); }
-.zen-add-menu button.is-person { color: var(--sender-external); }
 .zen-add-menu button + button { border-top: 1px solid var(--rule-inner); }
 .zen-add-menu button:focus-visible { color: var(--accent); background: var(--selected); outline: none; }
 @media (hover: hover) and (pointer: fine) {

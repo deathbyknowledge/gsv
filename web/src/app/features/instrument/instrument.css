@@ -344,6 +344,12 @@
   color: var(--text-hi);
   caret-color: transparent;
 }
+.prompt-line textarea[data-text-selected] { caret-color: var(--accent); }
+.prompt-line textarea::selection {
+  color: var(--text-hi);
+  background: var(--primary-hi);
+}
+.instrument.is-light .prompt-line textarea::selection { color: var(--void); }
 /* the mirror measures the text before the caret; the block is the same cursor the transcript shows */
 .prompt-line .mirror {
   position: absolute;
