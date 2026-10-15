@@ -172,13 +172,13 @@ function resolveSetupAiConfig(
 ): SetupAiConfig {
   if (ai.provider === GSV_INFERENCE_PROVIDER) {
     if (!managedInferenceAvailable) {
-      throw new Error("GSV included inference is not available");
+      throw new Error("Ship included inference is not available");
     }
     if (ai.model !== undefined && ai.model !== GSV_INFERENCE_MODEL) {
-      throw new Error("GSV included inference does not accept a model selection");
+      throw new Error("Ship included inference does not accept a model selection");
     }
     if (ai.apiKey?.trim()) {
-      throw new Error("GSV included inference does not accept an API key");
+      throw new Error("Ship included inference does not accept an API key");
     }
     return {
       provider: GSV_INFERENCE_PROVIDER,
