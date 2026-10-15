@@ -25,9 +25,9 @@ use the id returned by discovery or provisioning.
    browsers are available, persist a fresh request ID and run
    `instance start browser --request-id <id> --wait` on `gsv`. It returns when
    ready and says `disposition: created` or `reused`. When the catalog says
-   saved logins are enabled, an ordinary start restores the account's website
+   saved logins are available, an ordinary start restores the account's website
    logins and `--new` starts a separate temporary browser without them; when
-   it says they are not enabled, start with `--new`. After a timeout or lost
+   it says they are not available, start with `--new`. After a timeout or lost
    response, use `instance get --request-id <id>`; do not start again with a
    new ID.
 3. On the browser target, inspect `tabs list` and `page snapshot`. Visible dialogs
@@ -51,7 +51,7 @@ use the id returned by discovery or provisioning.
 - Default to the cloud browser.
 - Use the user's own browser, or ask to connect it, only when they have said they prefer it (for example, they do not want to share their logins with GSV; do not argue the point again), when the work must run in their browser itself (their existing signed-in session, a passkey, hardware key or device-bound sign-in, their tabs, history, bookmarks or another device-only feature, or a site that rejects cloud browsers), or when cloud browsing is unavailable.
 - Do not volunteer the comparison below. Give it when the user asks how sign-in, sessions or credentials work, briefly and with the tradeoffs that matter for their site.
-- The catalog states only whether saved logins are enabled; do not infer other limits from it or from an instance lifetime. For details, consult the manual: `wiki search 'cloud browser logins' --prefix gsv-manual`.
+- The catalog states only whether saved logins are available to this account; do not infer other limits from it or from an instance lifetime. For details, consult the manual: `wiki search 'cloud browser logins' --prefix gsv-manual`.
 
 ## Signed-In Sessions: Two Routes
 

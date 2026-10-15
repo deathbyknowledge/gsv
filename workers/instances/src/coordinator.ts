@@ -117,9 +117,10 @@ export class InstanceCoordinator extends DurableObject<Environment> implements I
   }
 
   async catalog(raw: InstanceActor) {
-    instanceActorSchema.parse(raw);
+    const actor = instanceActorSchema.parse(raw);
     const limits = await this.#policy.limits();
-    return { templates: limits.enabled ? [browserTemplate(limits)] : [], usage: this.#store.usage(limits) };
+    const templates = limits.enabled ? [browserTemplate(limits, this.#store.savedLoginsAvailable(actor.ownerUid, limits))] : [];
+    return { templates, usage: this.#store.usage(limits) };
   }
   async start(rawActor: InstanceActor, rawArgs: Parameters<InstallationInstances["start"]>[1]) {
     const actor = instanceActorSchema.parse(rawActor), args = instanceStartSchema.parse(rawArgs);
