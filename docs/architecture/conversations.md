@@ -18,8 +18,45 @@ Chat renders human messages as plain text with clickable web URLs. External web 
 messages and Ship's Markdown replies open in a new tab.
 The Chat transcript scrolls vertically. Long words, URLs and compaction notes wrap within the
 reading column; wide tables and code blocks scroll horizontally within their own bounds.
+Ship replies use ordinary line wrapping rather than paragraph balancing, filling each line
+with the words that fit. Explicit line breaks in a message remain intact.
+Chat and contact history mark the top scroll boundary with a lavender line only
+while it intersects text, clearing the line in gaps between text and messages.
+Chat's scroll boundary spans the full view width while its messages retain their reading column.
+When the activity line appears above the composer, Chat marks its bottom scroll boundary with
+the same lavender edge only while it cuts through text. Gaps and the end of the transcript stay clear.
+Initial rendering, font loading and padding changes keep Chat at the bottom unless the
+reader scrolls away. This includes content updates that briefly shrink and restore the
+transcript before the browser delivers a scroll event.
 When the reader scrolls above the latest chat message, a small button returns the transcript to
 the bottom and resumes following new replies.
+The Chat composer always uses "Message your ship" as its empty-field placeholder, across focus,
+connection and approval states.
+The composer shows connection problems, errors and an offline selected place; ordinary model
+and target readiness do not add a status line. Run activity remains visible in the transcript.
+On phones, both the prompt and its attachment, place and recording controls follow the visible
+area as the browser toolbar or keyboard opens and closes. The star field keeps its full height.
+Installed PWAs fill the screen, including the home-indicator area. The bottom safe-area inset
+is padding inside each surface; it does not shorten the page or its star field.
+The keyboard's return key requests a Send action. iOS owns the field-navigation and Done bar above its keyboard;
+the web app cannot hide that bar through a supported browser API.
+Clicking or tapping a message selects it without scrolling. Scrolling selects the message nearest
+the center of the visible transcript, or the first/latest message at either end, even while the composer has focus. The selection
+stays visible while typing; after leaving the input, `j` and `k` continue from that same message.
+On phones, the return-to-latest control is a down arrow at the right edge. Closed completed action
+receipts are hidden once they have a reply; action records remain inspectable in Settings → Logs.
+Running work, failed actions, fallback notices, approvals and already-open receipts remain visible.
+Direct `$` commands use a compact target header on phones, with running, unavailable or failed
+states when relevant. Expand it to read the complete command, output and terminal controls.
+
+A very long message in Zen folds behind **read more** once it has finished arriving, and **show
+less** folds it again. Folding uses the rendered height at the current width and text size:
+messages up to eighteen line-heights remain whole; longer messages show twelve line-heights
+with a short fade at the end. A reply the user watched stream in stays open. Opening or folding
+keeps the reading position, and the message text itself is unchanged. Selected text uses a solid
+lavender highlight with contrasting text in both themes.
+Inside the prompt, selected text stays light on a stronger purple highlight. Selecting a range
+restores the native selection tint and handles on iOS; a collapsed selection uses the block cursor.
 
 ## Conversation kinds
 
@@ -165,6 +202,11 @@ explains that this remembers all shell commands on that target for the requestin
 process, not just the displayed command. Other processes and targets still use
 their own approval rules; ordinary approval and denial never remember a rule.
 
+Web and Desktop present a failed run, and a failure reported above the composer, as a plain-language
+summary with a recommended next step, such as trying again, waiting a few minutes or restarting the
+process. The client derives that summary from the event kind and error text; the gateway's original
+error stays under **details** for diagnosis.
+
 Opening a Process activity inspector calls `proc.observe`. Raw Process signals then reach that
 specific client in addition to any connection that owns the active run. Closing the inspector calls
 `proc.unobserve`. Observation is explicit so every connected client does not receive every model
@@ -221,6 +263,12 @@ active run independently of its transcript, including context preparation and re
 visible work arrives. A streaming reply takes over that feedback; a run that continues after sending
 shows activity again until it ends. The model label identifies the run's selected model, not whether
 the provider has started returning tokens.
+
+A paste of more than 400 characters or eight lines waits beside the prompt as a chip showing its
+character count instead of filling the input; a paste into a `$` or `!` command stays inline. Tap
+the chip to inspect its full text, or remove it before sending. Sending
+joins the typed words and then each pasted block, in paste order and separated by blank lines, into
+one message. Pasted text preserves its whitespace, with line endings normalized to match the textarea.
 
 Instrument resolves attachment bytes through its authenticated gateway connection. Browser clients
 use ordinary image links and downloads; Desktop opens raster images in an in-app preview and saves
@@ -289,3 +337,67 @@ Kernel, Conversation Durable Object names, and R2 keys.
 Internal compaction handovers remain in Process history and its archives. Chat
 does not present them as “Memory” messages or interrupt the composer when the
 working context changes.
+
+
+## Contextual requests in Instrument
+
+Chat’s `+` menu can attach a file, find a person by handle, saved name or GSV address,
+reference a file on a place, or stage a request to create a routine, connect a
+computer or start a browser. Selecting a request keeps the current text and
+attachments. The person can add details, remove the request, or send it normally.
+No selection creates a schedule, connects a device or contacts another person.
+
+Requests are ordinary editable text in the composer, not hidden instructions or
+structured message actions. The whole request, including object IDs, profile URLs
+or file paths, can be changed or removed before sending. Sending uses the existing
+`conversation.send` text/media contract and the normal text history renderer; no
+request-specific gateway support or database migration is required.
+
+One activity line above the prompt combines the ongoing responsibility count and
+People activity. Its **N ongoing** button (or **plans** when none are active) opens
+the contextual panel, with one level of tabs: **ongoing**, **routines** and **history**.
+The `+` menu contains attachments and requests, without a second plans entry.
+Responsibilities retain hierarchy and show blockers before ordinary follow-ups.
+Rows use a short state label; the full blocker is readable prose in the inspector.
+Standing policies are configured in **Settings → standing**. Details allow inspection, cancellation and asking Ship about the exact
+record. Routines show their cadence and state, with pause/enable and edit controls;
+creating one stages a request to Ship. These panels use the existing authorized
+syscalls and signal-driven caches. Closing them preserves drafts and pauses hidden
+reads. The shared file browser can move above the home directory using **../**,
+stopping at the selected target’s root. Chat selects a file immediately into the
+draft; Fleet retains its file inspector. Fleet retains places and processes.
+
+The shell locks document scrolling and sizes the visible content from
+`VisualViewport`, keeping the header and composer outside the scrolling content.
+The viewport requests `interactive-widget=resizes-content` where supported;
+visual-viewport tracking also handles browsers that pan or resize only the visible
+area. The shell accounts for its actual position when the browser scrolls the
+document and briefly samples around input focus changes to catch delayed geometry.
+Touch WebKit’s first tap focuses text inputs with `preventScroll`, preventing the
+initial native page pan. Already-focused inputs, long presses and scroll gestures
+keep their native behavior. Programmatic composer focus also prevents page scroll.
+Position corrections apply immediately. A reported keyboard-height jump eases
+over 180ms, while incremental browser updates and reduced motion apply directly.
+Keyboard resizing uses the zoom present when an input gains or loses focus,
+including Safari's retained fractional zoom. Pinching between focus transitions
+magnifies the existing layout without reflowing it.
+Safari controls when it exposes the keyboard’s viewport geometry, so the height
+transition begins when that geometry is available. The star field keeps its
+independent full-screen size.
+
+### Withdrawing the local typed-request experiment
+
+The unshipped `message_action` migration (conversation ID 7) is no longer run.
+That ID remains reserved: subsequent migrations must start at 8. A local database
+that already applied it keeps its nullable `action_json` column and migration
+receipt untouched; ordinary text reads and inserts do not need either. Fresh
+conversations use the existing v6 schema. No down migration, archive rewrite,
+receipt deletion or database reset is part of this rollback.
+
+Previously stored experimental messages already contain the complete readable
+text. Archive reads omit the retired metadata field without changing the stored
+bytes or checksum; Instrument displays the ordinary text.
+Their old idempotency hashes may include the removed metadata, so retrying an
+in-flight experimental send after changing versions can fail with a payload
+conflict. Inspect canonical history before deciding whether to submit again;
+do not delete receipts or automatically issue a new send identity.

@@ -1,6 +1,6 @@
 # GSV
 
-![gsv](https://github.com/user-attachments/assets/e50a394b-e568-4306-bb48-e3b532c01eda)
+<img src="web/public/brand/gsv-ship.png" alt="GSV's ASCII ship" width="240" height="240" />
 
 > ***a mind for your machines***
 

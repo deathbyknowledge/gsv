@@ -1,5 +1,6 @@
 import { GSVClient, type GsvClientStatus } from "@humansandmachines/gsv/client";
 import type { ConversationMessage, ConversationSendArgs, ConversationSendResult, ConversationSummary, ProcContextState, ProcHilArgs, ProcHistoryRecord, SysTargetSummary } from "@humansandmachines/gsv/protocol";
+import { resourceBlockSchema } from "@humansandmachines/gsv/protocol";
 import { conversationSendMessageId } from "@humansandmachines/gsv/protocol/stable-id";
 import { QueryClient, QueryClientProvider } from "@tanstack/preact-query";
 import type { ComponentChildren, ComponentProps, ComponentType } from "preact";
@@ -18,12 +19,13 @@ import { BrowserVoiceControls } from "../../../services/platform/BrowserVoiceCon
 import { NativeInputProvider, type NativeInput } from "../../../services/platform/PlatformProvider";
 import { Zen } from "./Zen";
 import { BrowserRequests } from "../browser/BrowserControl";
-import { ConnectPlace } from "../fleet/ConnectPlace";
-import { FleetDialog } from "../fleet/FleetDialog";
+import { ChatPanels } from "./ChatPanels";
 import { ZenText } from "./ZenText";
 import { ThinkingMark } from "./ThinkingMark";
 import { ApprovalCard } from "../shared/ApprovalCard";
 import { ConversationSearch } from "../shared/ConversationSearch";
+import { ZenDraftPaste } from "./ZenMedia";
+import { FeedbackNote } from "./ZenNotes";
 
 let storage: Map<string, string>;
 let messages: ConversationMessage[];
@@ -39,7 +41,7 @@ let processRecords: ProcHistoryRecord[];
 const signals = new Set<Parameters<GSVClient["onSignal"]>[0]>();
 const statuses = new Set<Parameters<GSVClient["onStatus"]>[0]>();
 const send = vi.fn<(args: ConversationSendArgs) => Promise<ConversationSendResult>>();
-const sendArgs = z.object({ conversationId: z.string(), text: z.string(), selectedTarget: z.string().optional(), idempotencyKey: z.string() });
+const sendArgs = z.strictObject({ conversationId: z.string(), text: z.string(), media: z.array(resourceBlockSchema).optional(), selectedTarget: z.string().optional(), idempotencyKey: z.string() });
 
 function conversation(pid = shipPid): ConversationSummary {
   return { id: "canonical-ship", kind: "ship", ownerUid, title: null, handlerPid: pid,
@@ -139,6 +141,63 @@ async function mountedZen(pid?: string, initialTarget?: string, native = false, 
 }
 
 describe("Zen conversation entry", () => {
+  it.each([
+    ["create a routine", "Help me create a routine."],
+    ["connect a computer", "Help me connect a computer to this space."],
+    ["start a browser", "Start a browser for me."],
+  ])("stages %s as editable text and sends only the edited message", async (label, request) => {
+    const zen = await mountedZen();
+    try {
+      const setValue = vi.fn();
+      zen.props(BrowserVoiceControls).prompt.current = {
+        focus: vi.fn(), setValue,
+        selection: () => ({ value: "$30 is my daily budget", start: 0, end: 0 }),
+      };
+      const option = zen.nodes().find((node) => node.type === "button" && node.props.role === "menuitem" && collectText(node).includes(label))!;
+      await act(() => option.props.onClick!());
+      expect(send).not.toHaveBeenCalled();
+      expect(setValue).toHaveBeenCalledWith(`${request}\n\n$30 is my daily budget`);
+      expect(zen.props(PromptLine).allowEmpty).toBe(false);
+      const text = "Actually, just explain the options.\n\n$30 is my daily budget";
+      const committed = message("user", text);
+      send.mockResolvedValueOnce({ message: committed, handlerPid: shipPid, runId: "run:request" });
+      await act(() => { zen.props(PromptLine).onSubmit(text); });
+      await vi.waitFor(() => expect(send).toHaveBeenCalledWith({
+        conversationId: "canonical-ship", text, selectedTarget: "gsv", idempotencyKey: expect.any(String),
+      }));
+      await act(() => { for (const listener of signals) listener("message.committed", { message: committed, directed: true }); });
+      expect(zen.props(ZenText).text).toBe(text);
+      await act(() => zen.props(PromptLine).onHistory?.(-1));
+      expect(setValue).toHaveBeenLastCalledWith(text);
+      messages = [committed];
+      await zen.refreshHistory();
+      expect(zen.props(ZenText).text).toBe(text);
+    } finally { await zen.unmount(); }
+  });
+
+  it("keeps contextual references in the editable draft without hidden send state", async () => {
+    const zen = await mountedZen();
+    try {
+      const setValue = vi.fn();
+      zen.props(BrowserVoiceControls).prompt.current = {
+        focus: vi.fn(), setValue, selection: () => ({ value: "My existing draft", start: 0, end: 0 }),
+      };
+      await act(() => zen.props(PromptLine).onFiles?.([new File(["note"], "note.txt", { type: "text/plain" })]));
+      for (const text of [
+        'Help me with the responsibility "A task" (r12y:1).',
+        'Help me with the routine "Morning" (routine:1).',
+        "Help me with Ada's GSV profile: https://ada.gsv.space/profile",
+        "Use this file as context: @gsv /home/ada/notes.txt",
+      ]) {
+        await act(() => zen.props(ChatPanels).onAsk(text));
+        expect(setValue).toHaveBeenLastCalledWith(`${text}\n\nMy existing draft`);
+        expect(zen.props(PromptLine).allowEmpty).toBe(true);
+        expect(zen.dirty()).toBe(true);
+      }
+      expect(send).not.toHaveBeenCalled();
+    } finally { await zen.unmount(); }
+  });
+
   it.each([false, true])("selects browser recording or native dictation for the active platform: native=%s", async (native) => {
     const zen = await mountedZen("helper", undefined, native);
     try {
@@ -304,20 +363,19 @@ describe("Zen conversation entry", () => {
       const connect = () => zen.nodes().find((node) => node.type === "button" && node.props.class === "zen-connect-place")!;
       expect(cloud().props.class).toBe("zen-place is-alone");
       expect(connect()).toBeDefined();
-      expect(zen.props(FleetDialog).open).toBe(false);
+      expect(zen.props(ChatPanels).context).toBeNull();
 
       await act(() => { connect().props.onClick!(); });
-      expect(zen.props(FleetDialog).open).toBe(true);
-      expect(zen.props(FleetDialog).title).toBe("Connect a place");
-      expect(zen.props(ConnectPlace).targets).toEqual([]);
+      expect(zen.props(ChatPanels).context).toEqual({ kind: "connect" });
+      expect(zen.props(ChatPanels).targets).toEqual([]);
 
-      await act(() => { zen.props(ConnectPlace).onClose(); });
-      expect(zen.props(FleetDialog).open).toBe(false);
+      await act(() => { zen.props(ChatPanels).onClose(); });
+      expect(zen.props(ChatPanels).context).toBeNull();
       expect(zen.props(PromptLine).place.id).toBe("gsv");
 
       await act(() => { connect().props.onClick!(); });
-      await act(() => { zen.props(ConnectPlace).onConnected("laptop"); });
-      expect(zen.props(FleetDialog).open).toBe(false);
+      await act(() => { zen.props(ChatPanels).onConnected("laptop"); });
+      expect(zen.props(ChatPanels).context).toBeNull();
       expect(zen.props(PromptLine).place.id).toBe("laptop");
       expect(zen.onFleet).not.toHaveBeenCalled();
     } finally { await zen.unmount(); }
@@ -332,14 +390,14 @@ describe("Zen conversation entry", () => {
         && node.props["aria-label"] === "Use your cloud for the next message or command")!;
       expect(cloud.props.class).toBe("zen-place is-selected");
       expect(zen.nodes().some((node) => node.props.class === "zen-connect-place")).toBe(false);
-      expect(zen.props(FleetDialog).open).toBe(false);
+      expect(zen.props(ChatPanels).context).toBeNull();
     } finally { await zen.unmount(); }
   });
 
   it.each([
-    { target: "gsv", readiness: "your cloud is ready", status: "completed", queuedCount: 0 },
-    { target: "laptop", readiness: "laptop is offline", status: "aborted", queuedCount: 1 },
-  ])("shows run feedback before streaming and clears it when $status", async ({ target, readiness, status, queuedCount }) => {
+    { target: "gsv", status: "completed", queuedCount: 0 },
+    { target: "laptop", status: "aborted", queuedCount: 1 },
+  ])("keeps routine run status out of the composer through $status", async ({ target, status, queuedCount }) => {
     runContext = {
       revision: 1, runId: "previous-run", provider: "openai", model: "previous-model",
       contextWindowTokens: 1000, maxOutputTokens: 100, estimatedInputTokens: 100,
@@ -350,34 +408,65 @@ describe("Zen conversation entry", () => {
     send.mockResolvedValueOnce({ message: message("user", "Keep working"), handlerPid: shipPid, runId: "active-run" });
     const zen = await mountedZen(undefined, target);
     const text = () => zen.text().replace(/\s+/g, " ");
-    const feedbackText = () => {
-      const feedback = zen.nodes().find((node) => node.type === "span" && node.props.role === "status" && !node.props.class);
-      return feedback ? collectText(feedback).replace(/\s+/g, " ") : "";
+    const expectQuietComposer = () => {
+      expect(text()).not.toContain("your cloud is ready");
+      expect(text()).not.toContain("previous-model");
+      expect(text()).not.toContain("active-model");
+      expect(text()).not.toContain("attempting");
+      expect(text().includes("laptop is offline · view place")).toBe(target === "laptop");
     };
     try {
-      expect(feedbackText()).not.toContain(readiness);
-      expect(text()).not.toContain("attempting");
+      expectQuietComposer();
       await act(() => { zen.props(PromptLine).onSubmit("Keep working"); });
       await vi.waitFor(() => expect(send).toHaveBeenCalledOnce());
       await vi.waitFor(() => expect(zen.nodes().some((node) => node.props["aria-label"] === "Sending message")).toBe(false));
 
       activeRunId = "active-run";
       await act(() => { for (const listener of signals) listener("proc.run.started", { pid: shipPid, runId: activeRunId }); });
-      await vi.waitFor(() => expect(feedbackText()).toContain(readiness));
-      expect(zen.nodes().some((node) => node.type === ThinkingMark)).toBe(true);
-      expect(text()).not.toContain("previous-model");
+      await vi.waitFor(() => expect(zen.nodes().some((node) => node.type === ThinkingMark)).toBe(true));
+      expectQuietComposer();
 
       runContext = { ...runContext, revision: 2, runId: activeRunId, model: "active-model", updatedAt: 2 };
       await act(() => { for (const listener of signals) listener("proc.changed", { pid: shipPid, changes: ["context"], context: runContext }); });
-      await vi.waitFor(() => expect(text()).toContain("active-model"));
-      expect(text()).not.toContain("attempting");
-      expect(feedbackText()).toContain(readiness);
+      await zen.render();
+      expectQuietComposer();
 
       activeRunId = null;
       await act(() => { for (const listener of signals) listener("proc.run.finished", { pid: shipPid, runId: "active-run", status, queuedCount }); });
-      await vi.waitFor(() => expect(feedbackText()).not.toContain(readiness));
-      expect(zen.nodes().some((node) => node.type === ThinkingMark)).toBe(false);
-      expect(text()).not.toContain("attempting");
+      await vi.waitFor(() => expect(zen.nodes().some((node) => node.type === ThinkingMark)).toBe(false));
+      expectQuietComposer();
+    } finally { await zen.unmount(); }
+  });
+
+  it.each(["connecting", "disconnected"] as const)("keeps drafting available while %s and waits for an explicit send after reconnect", async (state) => {
+    send.mockReturnValue(deferred<ConversationSendResult>().promise);
+    const zen = await mountedZen();
+    try {
+      const prompt = () => zen.props(PromptLine);
+      const sendButton = () => zen.nodes().find((node) => node.type === "button" && node.props.class === "zen-submit");
+      await act(() => { prompt().onInput?.("Keep this draft"); });
+      expect(zen.text()).not.toContain("Reconnecting...");
+      await act(() => { for (const listener of statuses) listener(status(state)); });
+      expect(zen.text()).toContain("Reconnecting...");
+      expect(prompt().disabled).toBe(false);
+      expect(sendButton()?.props.disabled).toBe(true);
+      await act(() => {
+        prompt().onInput?.("Keep this draft and keep writing");
+        expect(prompt().onSubmit("Keep this draft and keep writing")).toBe(false);
+        expect(prompt().onSubmit("$ pwd")).toBe(false);
+      });
+      expect(zen.dirty()).toBe(true);
+      expect(send).not.toHaveBeenCalled();
+      expect(vi.mocked(GSVClient.prototype.request).mock.calls.some(([call]) => call === "shell.exec")).toBe(false);
+
+      await act(() => { for (const listener of statuses) listener(status("connected")); });
+      expect(zen.text()).not.toContain("Reconnecting...");
+      expect(prompt().disabled).toBe(false);
+      expect(sendButton()?.props.disabled).toBe(false);
+      expect(zen.dirty()).toBe(true);
+      expect(send).not.toHaveBeenCalled();
+      await act(() => { expect(prompt().onSubmit("Keep this draft and keep writing")).toBe(true); });
+      await vi.waitFor(() => expect(send).toHaveBeenCalledWith(expect.objectContaining({ text: "Keep this draft and keep writing" })));
     } finally { await zen.unmount(); }
   });
 
@@ -399,7 +488,7 @@ describe("Zen conversation entry", () => {
       await act(() => { expect(zen.props(NativeVoiceControls).send("@cloud")).toBe(true); });
       expect(zen.props(PromptLine).place.id).toBe("gsv");
       await act(() => { zen.props(NativeVoiceControls).send("@missing"); });
-      expect(zen.text()).toContain("No place called missing.");
+      expect(zen.props(FeedbackNote).note).toEqual({ kind: "notice", text: "No place called missing." });
       expect(send).not.toHaveBeenCalled();
     } finally { await zen.unmount(); }
   });
@@ -413,6 +502,35 @@ describe("Zen conversation entry", () => {
       }
       expect(zen.props(PromptLine).allowEmpty).toBe(true);
       expect(send).not.toHaveBeenCalled();
+      expect(vi.mocked(GSVClient.prototype.request).mock.calls.some(([call]) => call === "shell.exec")).toBe(false);
+    } finally { await zen.unmount(); }
+  });
+
+  it("folds a long paste into a chip and sends it after the typed words", async () => {
+    send.mockResolvedValueOnce({ message: message("user", "joined"), handlerPid: shipPid, runId: "paste" });
+    const log = Array.from({ length: 12 }, (_, index) => `error ${index}`).join("\n");
+    const zen = await mountedZen();
+    try {
+      const pastes = () => zen.nodes().filter((node) => node.type === ZenDraftPaste);
+      await act(() => { expect(zen.props(PromptLine).onPasteText?.("a short paste")).toBe(false); });
+      // A long paste that is itself a command stays inline so it runs directly, even into an empty prompt.
+      await act(() => { expect(zen.props(PromptLine).onPasteText?.(`$ ${"x".repeat(500)}`)).toBe(false); });
+      expect(pastes()).toHaveLength(0);
+      await act(() => { expect(zen.props(PromptLine).onPasteText?.("z".repeat(500))).toBe(true); });
+      await act(() => { expect(zen.props(PromptLine).onPasteText?.(log)).toBe(true); });
+      expect(pastes()).toHaveLength(2);
+      expect(zen.props(PromptLine).allowEmpty).toBe(true);
+      expect(zen.dirty()).toBe(true);
+      await act(() => { expect(zen.props(PromptLine).onSubmit("$ pwd")).toBe(false); });
+      expect(zen.props(FeedbackNote).note).toEqual({ kind: "notice", text: "Remove attachments and pasted text before running a command, or send them to your Ship in plain words." });
+      await act(() => { zen.props(ZenDraftPaste).onRemove?.(); });
+      expect(pastes()).toHaveLength(1);
+      expect(zen.props(ZenDraftPaste).paste.text).toBe(log);
+      await act(() => { expect(zen.props(PromptLine).onSubmit("What failed?")).toBe(true); });
+      await vi.waitFor(() => expect(send).toHaveBeenCalledOnce());
+      expect(send.mock.calls[0]?.[0].text).toBe(`What failed?\n\n${log}`);
+      expect(pastes()).toHaveLength(0);
+      expect(zen.props(PromptLine).allowEmpty).toBe(false);
       expect(vi.mocked(GSVClient.prototype.request).mock.calls.some(([call]) => call === "shell.exec")).toBe(false);
     } finally { await zen.unmount(); }
   });
@@ -442,6 +560,8 @@ describe("Zen conversation entry", () => {
     const zen = await mountedZen();
     try {
       await vi.waitFor(() => expect(zen.props(ZenText).text).toBe("Your machine is online."));
+      // History was not watched arriving, so a long message from it folds.
+      expect(zen.props(ZenText).opened).toBe(false);
       expect(zen.text()).not.toContain("I am the ship. Who are you?");
       expect(send).not.toHaveBeenCalled();
     } finally { await zen.unmount(); }

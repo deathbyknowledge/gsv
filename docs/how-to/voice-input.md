@@ -6,12 +6,13 @@ text before sending it.
 ## Record in the web UI
 
 1. Open your space over HTTPS and go to Zen.
-2. Choose **record** below the composer and allow microphone access when your
-   browser asks.
+2. Choose **record** in the action row below the prompt, beside the attachment
+   and place controls, and allow microphone access when your browser asks.
 3. The prompt becomes a live waveform that responds to your voice. Speak, then
    choose **stop**. A recording stops automatically after five minutes.
 4. Wait for **transcribing…**. The text appears at the current cursor in your
-   draft, keeping text you have already typed. Edit it and press Enter to send.
+   draft, keeping text you have already typed. Edit it and choose **send** or
+   press Enter.
 
 Your existing draft is preserved underneath the recording surface and returns
 after transcription or cancellation. Pressing Enter during recording stops the recording;

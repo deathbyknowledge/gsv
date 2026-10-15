@@ -3,16 +3,23 @@ import { AppProviders, type AppProviderDependencies } from "./providers/AppProvi
 import { Instrument } from "./features/instrument/Instrument";
 import { AccountRecoveryScreen } from "./features/session/AccountRecoveryScreen";
 import { AuthScene } from "./features/session/AuthLayout";
-import { useSessionLocation } from "./features/session/sessionNavigation";
+import { navigateApp, useAppLocation } from "./services/navigation/appNavigation";
 import { useSession } from "./services/session/SessionProvider";
 import { ContactInvitationScreen } from "./features/session/ContactInvitationScreen";
 import { pendingContactInvitation } from "./services/session/contactInvitationIntent";
-import { useState } from "preact/hooks";
+import { useLayoutEffect, useState } from "preact/hooks";
 
 function AppRoutes() {
-  const { pathname, revision } = useSessionLocation();
+  const { pathname, revision } = useAppLocation();
   const { snapshot } = useSession();
-  const [contactInvitation] = useState(pendingContactInvitation);
+  const [contactInvitation, setContactInvitation] = useState(pendingContactInvitation);
+  useLayoutEffect(() => {
+    if (snapshot.phase !== "ready" || !contactInvitation || pathname === "/recover" || pathname === "/recover-member") return;
+    setContactInvitation(null);
+    const destination = new URL(window.location.href);
+    destination.pathname = "/people";
+    navigateApp(destination.href, { replace: true });
+  }, [snapshot.phase, contactInvitation, pathname]);
   const recovery = pathname === "/recover-member" ? <MemberRecoveryScreen key={revision} />
     : pathname === "/recover" ? <AccountRecoveryScreen key={revision} /> : null;
   if (recovery || snapshot.phase !== "ready") {
@@ -20,11 +27,11 @@ function AppRoutes() {
       {recovery ?? <Instrument initialPath={pathname} />}
     </AuthScene>;
   }
-  return <Instrument initialPath={contactInvitation ? "/people" : pathname} />;
+  return <Instrument initialPath={pathname} />;
 }
 
 export function App(dependencies: AppProviderDependencies = {}) {
-  const { pathname } = useSessionLocation();
+  const { pathname } = useAppLocation();
   if (pathname === "/connect") return <AuthScene layout="welcome"><ContactInvitationScreen /></AuthScene>;
   return <AppProviders {...dependencies}><AppRoutes /></AppProviders>;
 }

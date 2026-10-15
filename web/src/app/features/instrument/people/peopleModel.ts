@@ -16,12 +16,21 @@ export function emptyApproachDraft(url = ""): ApproachDraft {
 
 export function profileAddress(value: string): string | null {
   const text = value.trim();
+  const handle = text.replace(/^@/, "").toLowerCase();
+  if (/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(handle)) return `https://${handle}.gsv.space/profile`;
   if (!text || (!/^https?:\/\//i.test(text) && !text.includes("."))) return null;
+  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(text) && !/^https?:\/\//i.test(text)) return null;
   try {
     const url = new URL(/^https?:\/\//i.test(text) ? text : `https://${text}`);
     if (!["https:", "http:"].includes(url.protocol) || url.username || url.password) return null;
     return url.href;
   } catch { return null; }
+}
+
+export function profileAddressLabel(origin: string): string {
+  const { hostname, host, port } = new URL(origin);
+  const managed = /^([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)\.gsv\.space$/.exec(hostname);
+  return managed && !port ? `@${managed[1]}` : host;
 }
 
 export function approachSendIntent(draft: ApproachDraft): ApproachCreateArgs {

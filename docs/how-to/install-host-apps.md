@@ -72,6 +72,9 @@ to use text explicitly.
 
 ## Sign-in and multiple windows
 
+Look for the ASCII ship icon to open GSV Desktop. It matches the ship on the
+sign-in page and the browser's Home Screen shortcut.
+
 **Open your space** lets you choose an owned space or enter a handle or domain.
 The address form also works for spaces owned by someone else or served by another
 operator. Contact invitation links use the same address entry before your normal

@@ -64,7 +64,7 @@ architecture="$(uname -m)"
 output_dir="${output_override:-$target_root/package/macos/$architecture/$profile}"
 binary_dir="$target_root/${CARGO_BUILD_TARGET:+$CARGO_BUILD_TARGET/}$profile"
 plist_template="$host_root/packaging/macos/Info.plist"
-icon_source="$repository_root/web/public/icons/gsv-512.png"
+icon_source="$repository_root/web/public/brand/gsv-ship.png"
 version="$(awk -F '"' '/^version = "/ { print $2; exit }' "$host_root/Cargo.toml")"
 [[ -n "$version" ]] || die "could not read the workspace version"
 

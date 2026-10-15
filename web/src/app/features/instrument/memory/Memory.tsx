@@ -1,5 +1,5 @@
 import { useDraftGuard } from "../shared/useDraftGuard";
-import { LoadingState } from "../../../components/ui/Spinner";
+import { LoadingState, Spinner } from "../../../components/ui/Spinner";
 import { useMutation, useQueryClient } from "@tanstack/preact-query";
 import { useQuery } from "../../../services/navigation/viewQueries";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "preact/hooks";
@@ -21,7 +21,7 @@ import "./memory.css";
 export type MemoryProps = {
   onDirtyChange?: (dirty: boolean) => void;
   initialPage?: MemoryPageRef | null;
-  onAsk: (page: MemoryPageRef, prompt: string) => void;
+  onAsk: (text: string) => void;
 };
 
 /**
@@ -36,6 +36,7 @@ export function Memory({ initialPage, onAsk, onDirtyChange }: MemoryProps) {
   const { client, connected } = useGateway();
   const queryClient = useQueryClient();
   const [locationPage] = useState(() => memoryLinkFromUrl(new URL(window.location.href)));
+  const [reading, setReading] = useState(Boolean(initialPage ?? locationPage));
   const [db, setDb] = useState<string | null>(initialPage?.db ?? locationPage?.db ?? null);
   const [path, setPath] = useState<string | null>(initialPage?.path ?? locationPage?.path ?? null);
   const [fragment, setFragment] = useState(initialPage ? "" : locationPage?.fragment ?? "");
@@ -55,6 +56,7 @@ export function Memory({ initialPage, onAsk, onDirtyChange }: MemoryProps) {
     setDb(initialPage.db);
     setPath(initialPage.path);
     setFragment("");
+    setReading(true);
     setEditor(null);
     setStatus(null);
   }, [initialPage]);
@@ -131,11 +133,13 @@ export function Memory({ initialPage, onAsk, onDirtyChange }: MemoryProps) {
     if (!writable || !connected || !canLeaveEditor()) return;
     setNewName(""); setCreateError(null); save.reset(); setStatus(null);
     setEditor({ db: selectedDb, path: "", markdown: "", createOnly: true });
+    setReading(true);
   };
 
   const open = useCallback((entry: LibraryEntry) => {
     if (!canLeaveEditor()) return;
     setPath(entry.path);
+    setReading(true);
     setFragment("");
     setEditor(null);
     setStatus(null);
@@ -143,6 +147,7 @@ export function Memory({ initialPage, onAsk, onDirtyChange }: MemoryProps) {
   const openLink = useCallback((link: MemoryLink) => {
     if (!canLeaveEditor()) return;
     setDb(link.db);
+    setReading(true);
     setPath(link.path);
     setFragment(link.fragment);
     setEditor(null);
@@ -150,6 +155,7 @@ export function Memory({ initialPage, onAsk, onDirtyChange }: MemoryProps) {
   }, [dirty, save.isPending]);
   const beginEdit = useCallback(() => {
     if (!note || !writable) return;
+    setReading(true);
     setEditor({ db: selectedDb, path: note.path, markdown: note.markdown, expectedMarkdown: note.markdown });
     setStatus(null);
   }, [note, selectedDb, writable]);
@@ -178,6 +184,7 @@ export function Memory({ initialPage, onAsk, onDirtyChange }: MemoryProps) {
       }
       if (typing || event.metaKey || event.ctrlKey || event.altKey) return;
       if (event.key === "j" || event.key === "ArrowDown" || event.key === "k" || event.key === "ArrowUp") {
+        if (!pagesRef.current?.getClientRects().length) return;
         event.preventDefault();
         // Read the visible tree structure without measuring every row or changing the open page.
         const rows = Array.from(pagesRef.current?.querySelectorAll<HTMLElement>(".page, .memory-folder > summary") ?? []).filter((row) => {
@@ -199,7 +206,8 @@ export function Memory({ initialPage, onAsk, onDirtyChange }: MemoryProps) {
         // Space and Enter activate the focused button/summary through the browser's native behavior.
       } else if (event.key === "/") {
         event.preventDefault();
-        searchRef.current?.focus();
+        setReading(false);
+        requestAnimationFrame(() => searchRef.current?.focus({ preventScroll: true }));
       } else if (event.key === "e") {
         event.preventDefault();
         beginEdit();
@@ -219,7 +227,7 @@ export function Memory({ initialPage, onAsk, onDirtyChange }: MemoryProps) {
   const empty = connected && collectionsQuery.isSuccess && collections.length === 0;
 
   return (
-    <main class="memory" aria-label="Memory">
+    <main class={`memory${reading ? " is-reading" : ""}`} aria-label="Memory">
       {collectionsQuery.isError ? (
         <div class="memory-empty" role="alert">{collectionsQuery.error.message}</div>
       ) : empty ? (
@@ -231,7 +239,7 @@ export function Memory({ initialPage, onAsk, onDirtyChange }: MemoryProps) {
         </div>
       ) : (
         <div class="memory-body">
-          <aside class="memory-rail">
+          <aside class="memory-rail" data-scroll-edge>
             <div class="memory-tools">
               {collections.length > 1 || (collections.length > 0 && !collection) ? (
                 <div class="collections" role="tablist" aria-label="Collections">
@@ -289,9 +297,11 @@ export function Memory({ initialPage, onAsk, onDirtyChange }: MemoryProps) {
               </form>
             </div>
             {writable && <button type="button" class="memory-new-page" disabled={!connected || save.isPending} onClick={newPage}>new page</button>}
+            {editing && <button type="button" class="memory-resume" onClick={() => setReading(true)}>continue editing →</button>}
             <nav class="pages" ref={pagesRef} aria-label={asked ? "Matches" : "Pages"} onFocusCapture={(event) => {
               if (event.target instanceof HTMLElement && event.target.matches(".page, .memory-folder > summary")) focusedRow.current = event.target;
             }}>
+              {!asked && (collectionsQuery.isLoading || pagesQuery.isLoading) ? <div class="memory-loading" role="status" aria-label="Loading memory"><Spinner size={160} /></div> : null}
               {!asked && pagesQuery.isError ? <div class="ph" role="alert">{pagesQuery.error.message}</div> : null}
               {asked ? (
                 <div class="ph">
@@ -318,16 +328,14 @@ export function Memory({ initialPage, onAsk, onDirtyChange }: MemoryProps) {
           </aside>
 
           <section class={`memory-page${editing ? " is-editing" : ""}`}>
+            <button type="button" class="memory-browse" onClick={() => setReading(false)}>← pages</button>
             {note || creating ? (
               <>
                 <div class="page-head">
                   {creating ? <input autoFocus class="memory-page-name" value={newName} aria-label="New page name" placeholder="Page name" disabled={save.isPending} onInput={(event) => setNewName(event.currentTarget.value)} /> : <span class="path">{note?.path}</span>}
                   <span class="actions">
                     {pageStatus ? <span class={`status${pageStatus.error ? " is-error" : ""}`} role={pageStatus.error ? "alert" : "status"}>{pageStatus.text}</span> : null}
-                    {!editing && collection && note ? <button type="button" class="page-action" onClick={() => onAsk(
-                      { db: selectedDb, path: note.path },
-                      `Tell me about the memory page “${note.title}” (gsv:/src/repos/${collection.repo}/${libraryPathInDb(note.path, selectedDb)}). `,
-                    )}>ask about this</button> : null}
+                    {!editing && collection && note ? <button type="button" class="page-action" onClick={() => onAsk(`Use this file as context: @gsv /src/repos/${collection.repo}/${libraryPathInDb(note.path, selectedDb)}`)}>ask Ship</button> : null}
                     {editing ? (
                       <>
                         <button type="button" class="ibtn is-primary" disabled={save.isPending || !connected || !writable} onClick={() => saveEdit()}>
@@ -339,13 +347,13 @@ export function Memory({ initialPage, onAsk, onDirtyChange }: MemoryProps) {
                       </>
                     ) : writable ? (
                       <button type="button" class="page-action" onClick={beginEdit}>
-                        <kbd>e</kbd>correct this
+                        <kbd>e</kbd>edit
                       </button>
                     ) : null}
                   </span>
                 </div>
                 {createError || (creating && save.error) ? <p class="memory-editor-error" role="alert">{createError ?? save.error?.message}</p> : null}
-                <div class="page-content">
+                <div class="page-content" data-scroll-edge>
                   {pageQuery.isError ? <div class="memory-none" role="alert">Could not refresh this page: {pageQuery.error.message}</div> : null}
                   {editing ? (
                     <textarea
@@ -367,7 +375,7 @@ export function Memory({ initialPage, onAsk, onDirtyChange }: MemoryProps) {
                 </div>
               </>
             ) : collectionsQuery.isLoading || pageQuery.isLoading || pagesQuery.isLoading ? (
-              <div class="memory-none memory-loading"><LoadingState variant="panel">Loading memory…</LoadingState></div>
+              <div class="memory-loading" role="status" aria-label="Loading memory"><Spinner size={160} /></div>
             ) : (
               <div class="memory-none" role={pageQuery.isError || pagesQuery.isError || (db !== null && !collection) ? "alert" : undefined}>
                 {pageQuery.error?.message || pagesQuery.error?.message ||

@@ -4,7 +4,10 @@
 It opens your conversations and unread messages. **Requests**, above the list, opens
 first messages from new people; its count shows the loaded active requests, with
 `+` when more remain. **contacts**, beside the heading, opens your private address
-book. Both have a **← conversations** action to return to your previous conversation.
+book. Both have a **← conversations** action to return to the conversation list.
+Browser **Back** and **Forward** also restore the People list, selected conversation,
+requests and profile. These destinations have their own URLs; unsent drafts stay
+in the current session while you move between them.
 Search inside a conversation with **search** or `Ctrl/Cmd+F`. Open **details** for
 the private name, mute and connection controls. **Save contact** adds someone to Contacts without
 changing their permissions or how Ship handles the conversation.
@@ -35,18 +38,25 @@ later when you ask. This works in your ordinary Ship conversation, including
 messaging apps; opening People is optional.
 
 Choose **connect → use a profile address** to find a saved contact by name or enter
-someone's public profile address. Review the profile and your prefilled display
+a handle such as `esteve` or `@esteve`, or someone's public profile address.
+Handles resolve on `gsv.space`; full addresses still reach other operators.
+Chat’s **+ → find a person** uses the same lookup and lets you mention the profile
+in your draft without contacting them. Review the profile and your prefilled display
 name, choose who handles new messages, then send a first message.
 They make their own handling choice when accepting, or can decline it. Acceptance keeps that first message in the same
 conversation, opens it directly, and enables further messages and attachments.
 
-Your profile starts private. Click your display name at the bottom of the People
-sidebar, save a draft, review it and explicitly publish it. Your public address is
+Your profile starts private. Choose **your profile** at the bottom of People,
+save a draft, review it and explicitly publish it. Your public address is
 `https://YOUR-SPACE/profile`; there is no separate alias to choose. Existing published
 profile links still work. Drafts remain when you return to a conversation. A profile can accept message requests, require a private
 invitation, or close new contact. Saving later edits does not change the public
 page until you publish again. Unpublishing removes the page; existing contacts and
 conversations remain. People who already viewed it may retain copies.
+The published page uses GSV's ASCII ship icon in the browser tab.
+On phones, the profile editor keeps its title and back arrow above the scrolling
+form. The same lavender edge used in conversations appears only while text crosses
+that scroll boundary.
 
 ## Decide who handles it
 
@@ -56,8 +66,14 @@ choice stays with the invitation or request, even if acceptance happens later.
 Existing contacts keep their settings. Ship-led invitations use the same explicit
 choice; creating or accepting one does not silently choose automatic handling.
 
-**Automatically handle new messages**, beside the person's name, changes this
-choice. When on, Ship can respond using its ordinary permissions and approval
+**Automatically handle new messages**, in the conversation's **details**, changes
+this choice. On phones, **more** opens **ask Ship**, **search** and **details**;
+the back arrow returns to the full-height conversation list. The short handling
+status beneath the person's name also opens details when space permits.
+The composer uses Chat's growing prompt and selection styling. Its **+** opens the
+file picker for attachments, and **send** appears beside the prompt when there is
+text or an attachment to send. Ship's target and request controls remain in Chat.
+When on, Ship can respond using its ordinary permissions and approval
 rules. Accepting or enabling the setting does not wake Ship or replay existing
 messages; the next incoming message starts handling. Turning it off ends that
 standing assignment. Replies to tasks you assign separately can still resume
@@ -68,8 +84,8 @@ editable request in your ordinary Ship chat. Review it and send it when ready.
 It does not turn on automatic replies for that person. A first-use example can
 prefill a more specific request, such as finding a time for dinner.
 
-The **people** line above the Ship prompt keeps unread conversations and incoming
-requests within reach, including after reload or reconnect. New messages update
+The activity line above the Ship prompt keeps unread conversations and incoming
+requests beside ongoing plans, including after reload or reconnect. New messages update
 the line without opening a panel or moving your place in the Ship conversation.
 Select a person's name to read and reply in a compact panel. A **PERSON** or
 **GSV** badge identifies who wrote the latest message. **Open conversation** takes

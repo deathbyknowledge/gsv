@@ -6,6 +6,7 @@ import { RetainedView, useViewActive } from "../../../services/navigation/ViewAc
 import { useGateway } from "../../../services/gateway/GatewayProvider";
 import { loadConsoleAccounts } from "../../../services/system/consoleService";
 import { SettingsError } from "./settingsShared";
+import { StandingResponsibilities } from "./StandingResponsibilities";
 import { Preferences } from "./Preferences";
 import { Permissions } from "./Permissions";
 import { Instructions } from "./Instructions";
@@ -21,7 +22,7 @@ export type SettingsProps = {
   onInspectProcess: (pid: string) => void;
 };
 
-const SECTIONS = ["preferences", "permissions", "instructions", "messengers", "mcp", "logs", "sign-in"] as const;
+const SECTIONS = ["preferences", "standing", "permissions", "instructions", "messengers", "mcp", "logs", "sign-in"] as const;
 type Section = typeof SECTIONS[number];
 
 export function Settings({ onDirtyChange, onSignOut, onInspectProcess }: SettingsProps) {
@@ -29,7 +30,7 @@ export function Settings({ onDirtyChange, onSignOut, onInspectProcess }: Setting
   const { client, connected } = useGateway();
   const { service: session } = useSession();
   const [section, setSection] = useState<Section>("preferences");
-  const [dirty, setDirty] = useState<Record<Section, boolean>>({ preferences: false, permissions: false, instructions: false, messengers: false, mcp: false, logs: false, "sign-in": false });
+  const [dirty, setDirty] = useState<Record<Section, boolean>>({ preferences: false, standing: false, permissions: false, instructions: false, messengers: false, mcp: false, logs: false, "sign-in": false });
   const preferencesDirty = useCallback((value: boolean) => setDirty((old) => old.preferences === value ? old : { ...old, preferences: value }), []);
   const permissionsDirty = useCallback((value: boolean) => setDirty((old) => old.permissions === value ? old : { ...old, permissions: value }), []);
   const instructionsDirty = useCallback((value: boolean) => setDirty((old) => old.instructions === value ? old : { ...old, instructions: value }), []);
@@ -47,8 +48,8 @@ export function Settings({ onDirtyChange, onSignOut, onInspectProcess }: Setting
   const account = accounts.data?.find((entry) => entry.relation === "self");
   return <main class="settings" aria-label="Settings">
     <div class="settings-body">
-      <nav class="settings-sections" aria-label="Settings sections">{SECTIONS.filter((entry) => entry !== "sign-in" || account?.uid === 0).map((entry) => <button class="ibtn" aria-current={section === entry ? "page" : undefined} onClick={() => setSection(entry)} key={entry}>{entry}{dirty[entry] ? " ·" : ""}</button>)}</nav>
-      <div class="settings-content">
+      <nav class="settings-sections" aria-label="Settings sections" data-scroll-edge>{SECTIONS.filter((entry) => entry !== "sign-in" || account?.uid === 0).map((entry) => <button class="ibtn" aria-current={section === entry ? "page" : undefined} onClick={() => setSection(entry)} key={entry}>{entry}{dirty[entry] ? " ·" : ""}</button>)}</nav>
+      <div class="settings-content" data-scroll-edge>
         <div class="settings-account"><span>{account?.username ?? "Your session"}</span><button class="settings-text-action" type="button" onClick={() => {
           if (onSignOut) { onSignOut(); return; }
           if (hasDrafts && !window.confirm("Discard your unsaved settings changes and sign out?")) return;
@@ -60,6 +61,7 @@ export function Settings({ onDirtyChange, onSignOut, onInspectProcess }: Setting
         {accounts.data && !account && <p class="settings-error" role="alert">Your account could not be identified. Settings cannot be edited.</p>}
         {account && <div key={account.uid}>
           <div hidden={section !== "preferences"}><Preferences account={account} active={active && section === "preferences"} onDirty={preferencesDirty} /></div>
+          <RetainedView active={active && section === "standing"}><StandingResponsibilities account={account} /></RetainedView>
           <div hidden={section !== "permissions"}><Permissions account={account} active={active && section === "permissions"} onDirty={permissionsDirty} /></div>
           <div hidden={section !== "instructions"}><Instructions account={account} active={active && section === "instructions"} onDirty={instructionsDirty} /></div>
           <div hidden={section !== "messengers"}><MessengerConnections account={account} active={active && section === "messengers"} /></div>

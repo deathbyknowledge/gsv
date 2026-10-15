@@ -7,6 +7,21 @@ behavior lives in agent workflows and the Wiki shell surface.
 
 Memory's Markdown reader shares the conversation's code blocks: long lines scroll within the
 block, and copy preserves the code's indentation and internal line breaks.
+Memory's scrolling panes show a lavender top edge only where it cuts through
+text; blank space between lines and sections leaves the edge clear.
+
+On phones, Memory shows either the full-height page browser or the reader/editor.
+**← pages** returns to the browser with its position and any editor draft intact;
+**continue editing →** returns to that draft. Wider screens keep both panes visible.
+The page browser and reader each center a large spinner while their data loads,
+with a loading label for screen readers and no visible caption.
+Touch scrolling does not highlight pages or folders; tapping opens them. Mouse hover and
+keyboard focus retain their navigation feedback.
+
+Memory’s **ask Ship** control adds the page’s GSV repository path to the
+Chat composer as ordinary editable text, preserving the existing draft and
+attachments. It does not send or edit the page. The eventual message uses the
+normal conversation text contract, without request-specific metadata.
 
 ## Layers
 

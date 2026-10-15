@@ -9,6 +9,8 @@ function headerButtons(distance: Distance) {
     distance, onNavigate: vi.fn(),
     helper: false, onShip: vi.fn(), help: false, onHelp: vi.fn(),
     helpButtonRef: createRef<HTMLButtonElement>(),
+    navigationOpen: false, onNavigationToggle: vi.fn(),
+    navigationButtonRef: createRef<HTMLButtonElement>(), navigationRef: createRef<HTMLElement>(),
   });
   const nav = collectNodes(header).find((node) => node.type === "nav");
   expect(nav).toBeDefined();

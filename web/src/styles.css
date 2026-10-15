@@ -10,9 +10,19 @@ body,
   margin: 0;
   width: 100%;
   height: 100%;
-  height: 100dvh;
   overflow: hidden;
   overscroll-behavior: none;
+}
+
+/* A Home Screen launch can report a percentage viewport short of the screen.
+ * Fill the document as well as the star field; surfaces keep the safe-area inset
+ * inside their padding and the Instrument viewport still follows the keyboard. */
+@media (display-mode: standalone), (display-mode: fullscreen) {
+  html,
+  body,
+  #app {
+    height: 100lvh;
+  }
 }
 
 [hidden] {
@@ -20,6 +30,8 @@ body,
 }
 
 body {
+  position: fixed;
+  inset: 0;
   background: var(--void);
   -webkit-text-size-adjust: 100%;
   text-size-adjust: 100%;

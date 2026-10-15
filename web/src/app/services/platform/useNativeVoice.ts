@@ -7,7 +7,7 @@ import { sameNativePresentation } from "./nativePresentation";
 import { useNativeSoundFeedback } from "./useInputSounds";
 import { ClientControlError, useClientControl, type MicrophoneStatus } from "./ClientControl";
 
-export type VoiceComposer = Pick<PromptLineHandle, "selection" | "setValue">;
+export type VoiceComposer = Pick<PromptLineHandle, "selection" | "setValue" | "commands">;
 
 export function useNativeVoice({ prompt, scope, enabled, practice = false, send, scroll, onAction }: {
   prompt: RefObject<VoiceComposer>;
@@ -146,7 +146,7 @@ export function useNativeVoice({ prompt, scope, enabled, practice = false, send,
             write(result.value, result.caret);
             if (event.action === "send") {
               if (latest.current.enabled && latest.current.send(result.value.trim())) {
-                write(practice ? "" : promptAfterSubmit(result.value));
+                write(practice ? "" : promptAfterSubmit(result.value, prompt.current?.commands));
                 const selection = prompt.current?.selection();
                 if (selection) draft.current.sent(selection);
                 latest.current.onAction?.("send");

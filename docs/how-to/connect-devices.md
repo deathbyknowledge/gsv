@@ -4,14 +4,14 @@ This is the distributed part. Connecting a device turns it into part of one comp
 
 ## Connect a machine
 
-You can ask Ship to connect your computer. Give it a name and say whether it runs
+In Chat, choose **+ → connect a computer**, or ask Ship directly. The shortcut fills the composer with editable text; add a name and say whether it runs
 macOS, Linux or Windows. Ship can create the invitation and share the install and
 `gsv pair CODE` commands for you to run on that computer. If GSV is already installed,
 you only need the pairing command. Tell Ship when it finishes so it can check the connection.
 
 To create the invitation yourself:
 
-1. Open **Fleet** and click **connect** beside Places. While your cloud is the only place, Chat offers the same panel: hover **your cloud** below the composer and click **+ connect place**.
+1. Open **Fleet** and click **connect** beside Places. While your cloud is the only place, Chat offers the same panel: open **your cloud** below the composer and click **+ connect place**.
 2. Enter a name, such as **My macbook**. The target ID starts as **my-macbook** and follows the name until you edit it yourself.
 3. Choose the platform and click **create invitation**.
 4. Run the install command on that computer, then the `gsv pair CODE` command. It supplies the gateway, account and target identity and starts the background daemon.
@@ -20,6 +20,20 @@ The invitation lasts ten minutes. You can close the panel and return to it in th
 same browser tab. If the connection drops during pairing, run `gsv pair` without
 a code to resume. The saved credential lets the CLI recover a lost response.
 Once the daemon connects, the place appears as connected.
+While scrolling Fleet's lists or inspectors, a lavender line marks text clipped
+at the top edge. The line and its glow fade gently between lines and rows;
+Reduce Motion makes the change immediate.
+On phones, Fleet's page and file reader scroll to the bottom of the visible
+screen. Their end padding leaves the last row or line clear of the home indicator.
+Fleet shows compact place and process rows on phones. A place's status square
+indicates its connection; tap the row for details and **browse files**.
+Responsibilities and routines open from the activity line above Chat's prompt.
+In a place’s file list, **../** moves up from the
+current starting folder and stops at that target’s filesystem root.
+**Chat → + → reference a file** selects a file into your draft in one tap.
+A file preview’s **talk about it** control adds its target and path to your Chat
+draft as editable text, keeping existing text and attachments. It sends nothing
+until you choose **send**.
 
 ## Connect a browser
 

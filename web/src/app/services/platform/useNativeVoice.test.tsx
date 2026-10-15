@@ -34,7 +34,7 @@ afterEach(async () => {
   vi.unstubAllGlobals();
 });
 
-async function mounted(practice = false) {
+async function mounted(practice = false, commands = true) {
   let value = "", renders = 0;
   const receives: ((update: NativeUpdate) => void)[] = [];
   const disposals: ReturnType<typeof vi.fn>[] = [];
@@ -48,7 +48,7 @@ async function mounted(practice = false) {
     acknowledge: vi.fn(async () => {}), command: vi.fn(async () => {}),
   };
   const prompt = { current: {
-    disabled: false, chip: null,
+    disabled: false, chip: null, commands,
     selection: () => ({ value, start: value.length, end: value.length }),
     setValue: (next) => { value = next; }, append: () => {}, focus: () => {}, blur: () => {}, submit: () => {},
   } satisfies PromptLineHandle };
@@ -132,6 +132,17 @@ describe("native input subscription", () => {
     expect(app.value()).toBe("");
     expect(app.renders()).toBe(renders);
     expect(app.input.acknowledge).toHaveBeenLastCalledWith("view-1", 3, 2);
+  });
+
+  it("clears dollar-prefixed notes after dictating an action request", async () => {
+    const app = await mounted(false, false);
+    app.prompt.current.setValue("$ ");
+    await app.start();
+    await app.push(2, { ...idle(), voice: voice("", 1, 0), events: [
+      { id: 2, request_id: 10, segment_id: 0, kind: "segment", action: "send", text: "30 a day" },
+    ] });
+    expect(app.send).toHaveBeenCalledExactlyOnceWith("$ 30 a day");
+    expect(app.value()).toBe("");
   });
 
   it("finalizes Enter before submission and retains terminal mode for the next dictated command", async () => {

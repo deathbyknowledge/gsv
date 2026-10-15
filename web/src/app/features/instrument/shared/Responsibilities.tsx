@@ -1,24 +1,25 @@
-import type { JsonValue, ResponsibilityRecord, ResponsibilitySourcePolicy, ScheduleRecord } from "@humansandmachines/gsv/protocol";
+import type { JsonValue, ResponsibilityRecord, ScheduleRecord } from "@humansandmachines/gsv/protocol";
 import { useMutation, useQueryClient } from "@tanstack/preact-query";
-import { useInfiniteQuery, useQuery } from "../../../services/navigation/viewQueries";
+import { useInfiniteQuery } from "../../../services/navigation/viewQueries";
 import { useState } from "preact/hooks";
 import { LoadingState } from "../../../components/ui/Spinner";
 import { useGateway } from "../../../services/gateway/GatewayProvider";
 import type { ConsoleAccount, ConsoleProcess } from "../../../domain/system/consoleModels";
-import type { FleetRow } from "../Instrument";
+import type { ActivityRow } from "../zen/chatContextModel";
 import { canConfigure } from "../settings/settingsModel";
-import { INSTRUMENT_RESPONSIBILITIES_KEY, INSTRUMENT_ROUTINES_KEY, INSTRUMENT_SOURCES_KEY } from "../wire/queryKeys";
-import { relativeTime } from "./fleetModel";
-import { cadenceLabel, routineEditable } from "./routineModel";
-import { RoutineEditor } from "./RoutineEditor";
+import { INSTRUMENT_RESPONSIBILITIES_KEY, INSTRUMENT_ROUTINES_KEY } from "../wire/queryKeys";
+import { relativeTime } from "../fleet/fleetModel";
+import { cadenceLabel, routineEditable } from "../fleet/routineModel";
+import { responsibilityGroups } from "./responsibilityModel";
+import type { ComponentChildren } from "preact";
+import { RoutineEditor } from "../fleet/RoutineEditor";
 
 export function assignedTo(record: ResponsibilityRecord, process: Pick<ConsoleProcess, "pid" | "personal">): boolean {
   return record.assignee.kind === "ship" ? process.personal : record.assignee.processId === process.pid;
 }
 
-export function useFleetWork(account?: ConsoleAccount) {
+export function useResponsibilities(account?: ConsoleAccount, { routines: includeRoutines = true, history = false } = {}) {
   const { client, connected } = useGateway();
-  const [history, setHistory] = useState(false);
   const [filterPid, setFilterPid] = useState<string | null>(null);
   const allowed = (call: string) => connected && Boolean(account && canConfigure(account, call));
   const current = useInfiniteQuery({
@@ -32,54 +33,73 @@ export function useFleetWork(account?: ConsoleAccount) {
     getNextPageParam: (last, pages) => { const n = pages.reduce((sum, page) => sum + page.responsibilities.length, 0); return n < last.count && last.responsibilities.length ? n : undefined; },
   });
   const routines = useInfiniteQuery({
-    queryKey: INSTRUMENT_ROUTINES_KEY, enabled: allowed("sched.list"), initialPageParam: 0,
+    queryKey: INSTRUMENT_ROUTINES_KEY, enabled: includeRoutines && allowed("sched.list"), initialPageParam: 0,
     queryFn: ({ pageParam }) => client.sched.list({ includeDisabled: true, limit: 100, offset: pageParam }),
     getNextPageParam: (last, pages) => { const n = pages.reduce((sum, page) => sum + page.schedules.length, 0); return n < last.count && last.schedules.length ? n : undefined; },
   });
-  return { current, past, routines, history, setHistory, filterPid, setFilterPid,
+  return { current, past, routines, history, filterPid, setFilterPid,
     open: current.data?.pages.flatMap((page) => page.responsibilities) ?? [],
     records: (history ? past : current).data?.pages.flatMap((page) => page.responsibilities) ?? [],
     schedules: routines.data?.pages.flatMap((page) => page.schedules) ?? [],
   };
 }
 
-type Work = ReturnType<typeof useFleetWork>;
+type Work = ReturnType<typeof useResponsibilities>;
 function nextTime(value: number, now: number): string {
   if (value <= now) return relativeTime(value, now);
   const minutes = Math.ceil((value - now) / 60_000);
   return minutes < 60 ? `in ${minutes}m` : minutes < 1440 ? `in ${Math.ceil(minutes / 60)}h` : `in ${Math.ceil(minutes / 1440)}d`;
 }
-type WorkProps = { work: Work; account?: ConsoleAccount; processes: ConsoleProcess[]; onSelect: (row: FleetRow) => void; onCreate: () => void; onSources: () => void; now: number };
+type WorkProps = { work: Work; account?: ConsoleAccount; processes: ConsoleProcess[]; onSelect: (row: ActivityRow) => void; onCreate: () => void; now: number };
 
-export function WorkSections({ work, account, processes, onSelect, onCreate, onSources, now }: WorkProps) {
+export function ResponsibilitiesSection({ work, account, processes, onSelect, now }: Omit<WorkProps, "onCreate">) {
   const query = work.history ? work.past : work.current;
   const filter = processes.find((process) => process.pid === work.filterPid);
   const records = work.filterPid ? work.records.filter((record) => assignedTo(record, filter ?? { pid: work.filterPid!, personal: false })) : work.records;
   const name = (record: ResponsibilityRecord) => record.assignee.kind === "ship" ? "ship" : processes.find((process) => record.assignee.kind === "process" && process.pid === record.assignee.processId)?.label ?? record.assignee.processId.slice(0, 8);
-  return <>
-    <section class="fleet-block" id="fleet-responsibilities" aria-label="Responsibilities">
-      <h2><i />Responsibilities<button class="fleet-heading-action" onClick={onSources} disabled={!account || !canConfigure(account, "r12y.source.list")}>standing</button><span class="count">{query.data?.pages[0]?.count ?? "-"}</span></h2>
-      <div class="fleet-work-filters" role="group" aria-label="Responsibility filters">
-        <button type="button" aria-pressed={!work.history} onClick={() => work.setHistory(false)}>current</button><button type="button" aria-pressed={work.history} onClick={() => work.setHistory(true)}>history</button>
-        {work.filterPid && <button type="button" onClick={() => work.setFilterPid(null)} aria-label="Clear process filter">{filter?.personal ? "ship" : filter?.label ?? work.filterPid.slice(0, 8)} ×</button>}
-      </div>
+  const groups = responsibilityGroups(records);
+  const renderRow = (record: ResponsibilityRecord): ComponentChildren => {
+    const children = groups.children(record.id);
+    return <li key={record.id}>
+          <button type="button" class="fleet-work-row" data-row={`work:${record.id}`} onClick={() => onSelect(`work:${record.id}`)}>
+            <span class="fleet-work-title">{record.title}</span>
+            <span class="fleet-work-summary">
+              <span class="fleet-work-state" data-state={record.state}>{record.state === "active" ? "in progress" : record.state}</span>
+              {record.assignee.kind === "process" && <span>{name(record)}</span>}
+              {record.nextCheckAtMs !== undefined && <span title={new Date(record.nextCheckAtMs).toLocaleString()}>check {record.nextCheckAtMs <= now ? "due " : ""}{nextTime(record.nextCheckAtMs, now)}</span>}
+            </span>
+          </button>
+      {children.length > 0 && <details class="chat-responsibility-children"><summary>{children.length} {children.length === 1 ? "step" : "steps"}</summary>
+        <ul class="fleet-work-list">{children.map(renderRow)}</ul></details>}
+    </li>;
+  };
+  return <section class="fleet-block fleet-responsibilities" id="fleet-responsibilities" aria-label="Responsibilities" tabIndex={-1}>
+      <h2><i />{work.history ? "Past responsibilities" : "Responsibilities"}<span class="count">{query.data?.pages[0]?.count ?? "-"}</span></h2>
+      {work.filterPid && <div class="fleet-work-filters"><button type="button" onClick={() => work.setFilterPid(null)} aria-label="Clear process filter">{filter?.personal ? "ship" : filter?.label ?? work.filterPid.slice(0, 8)} ×</button></div>}
       {query.error && <p class="error" role="alert">{query.error.message}</p>}
       {account && !canConfigure(account, "r12y.list") ? <p class="fleet-empty">Your account cannot list responsibilities.</p> : query.isPending ? <LoadingState>Loading responsibilities…</LoadingState> : <>
-        {records.length ? <div class="tablewrap"><table><thead><tr><th>Responsibility</th><th>Assignee</th><th>State</th><th>Next check</th></tr></thead><tbody>{records.map((record) => <tr key={record.id} data-row={`work:${record.id}`} tabIndex={0} onClick={() => onSelect(`work:${record.id}`)}>
-          <td class="grow">{record.title}</td><td class="dim">{name(record)}</td><td><span class={`dot ${record.state === "active" ? "is-live" : record.state === "waiting" ? "is-warn" : record.state === "resolved" ? "is-on" : ""}`} />{record.state}</td><td class="dim">{record.nextCheckAtMs ? nextTime(record.nextCheckAtMs, now) : "-"}</td>
-        </tr>)}</tbody></table></div> : <p class="fleet-empty">{work.history ? "No completed responsibilities here yet." : work.filterPid ? "No current responsibilities for this process." : "Nothing outstanding. Promises and follow-ups appear here."}</p>}
+        {records.length ? <ul class="fleet-work-list">{groups.roots.map(renderRow)}</ul> : <p class="fleet-empty">{work.history ? "No completed responsibilities here yet." : work.filterPid ? "No current responsibilities for this process." : "Nothing outstanding. Promises and follow-ups appear here."}</p>}
         {query.hasNextPage && <button class="fleet-heading-action" disabled={query.isFetchingNextPage} onClick={() => void query.fetchNextPage()}>{query.isFetchingNextPage ? "loading…" : "show more responsibilities"}</button>}
       </>}
-    </section>
-    <section class="fleet-block" aria-label="Routines">
-      <h2><i />Routines<button type="button" class="fleet-heading-action" onClick={onCreate} disabled={!account || !canConfigure(account, "sched.add")}>new routine</button><span class="count">{work.routines.data?.pages[0]?.count ?? "-"}</span></h2>
+    </section>;
+}
+
+export function RoutinesSection({ work, account, onSelect, onCreate, now }: Pick<WorkProps, "work" | "account" | "onSelect" | "onCreate" | "now">) {
+  return <section class="fleet-block" aria-label="Routines">
+      <h2><i />Routines<button type="button" class="fleet-heading-action" onClick={onCreate} disabled={!account || !canConfigure(account, "conversation.send")}>new routine</button><span class="count">{work.routines.data?.pages[0]?.count ?? "-"}</span></h2>
       {work.routines.error && <p class="error" role="alert">{work.routines.error.message}</p>}
-      {account && !canConfigure(account, "sched.list") ? <p class="fleet-empty">Your account cannot list routines.</p> : work.routines.isPending ? <LoadingState>Loading routines…</LoadingState> : work.schedules.length ? <div class="tablewrap"><table><thead><tr><th>Routine</th><th>Repeat</th><th>State</th><th>Next run</th></tr></thead><tbody>{work.schedules.map((schedule) => <tr key={schedule.id} tabIndex={0} data-row={`routine:${schedule.id}`} onClick={() => onSelect(`routine:${schedule.id}`)}>
-        <td class="grow">{schedule.name}</td><td class="dim grow">{cadenceLabel(schedule.expression)}</td><td><span class={`dot ${schedule.state.runningAtMs ? "is-live" : schedule.state.lastStatus === "error" ? "is-err" : schedule.enabled ? "is-on" : ""}`} />{schedule.state.runningAtMs ? "running" : !schedule.enabled ? "paused" : schedule.state.lastStatus === "error" ? "failed" : schedule.state.nextRunAtMs ? "ready" : "finished"}</td><td class="dim">{schedule.state.nextRunAtMs ? nextTime(schedule.state.nextRunAtMs, now) : "-"}</td>
-      </tr>)}</tbody></table></div> : <p class="fleet-empty">Give Ship something to take care of regularly.</p>}
+      {account && !canConfigure(account, "sched.list") ? <p class="fleet-empty">Your account cannot list routines.</p> : work.routines.isPending ? <LoadingState>Loading routines…</LoadingState> : work.schedules.length ? <ul class="fleet-work-list">{work.schedules.map((schedule) => <li key={schedule.id}>
+        <button type="button" class="fleet-work-row" data-row={`routine:${schedule.id}`} onClick={() => onSelect(`routine:${schedule.id}`)}>
+          <span class="fleet-work-title">{schedule.name}</span>
+          <span class="fleet-work-summary"><span>{cadenceLabel(schedule.expression)}</span>
+            <span class="fleet-work-state" data-state={schedule.state.lastStatus === "error" ? "failed" : schedule.enabled ? "active" : "waiting"}>
+              {schedule.state.runningAtMs ? "running" : !schedule.enabled ? "paused" : schedule.state.lastStatus === "error" ? "failed" : schedule.state.nextRunAtMs ? `next ${nextTime(schedule.state.nextRunAtMs, now)}` : "finished"}
+            </span>
+          </span>
+        </button>
+      </li>)}</ul> : <p class="fleet-empty">Give Ship something to take care of regularly.</p>}
       {work.routines.hasNextPage && <button class="fleet-heading-action" disabled={work.routines.isFetchingNextPage} onClick={() => void work.routines.fetchNextPage()}>show more routines</button>}
-    </section>
-  </>;
+    </section>;
 }
 
 function isDetailRecord(value: JsonValue): value is { [key: string]: JsonValue } {
@@ -107,8 +127,8 @@ export function ResponsibilityInspector({ record, account, processName, onProces
   const terminal = record.state === "resolved" || record.state === "cancelled";
   return <>
     <h3>{record.title}</h3><p class="inspector-sub">{record.state} · {record.priority} priority</p>
-    <dl class="fleet-work-details"><div><dt>Assignee</dt><dd><button class="fleet-text-action" onClick={() => onProcess(record.assignee.kind === "process" ? record.assignee.processId : undefined)}>{record.assignee.kind === "ship" ? "ship" : processName(record.assignee.processId)}</button></dd></div>
-      {record.blocker && <div><dt>Waiting for</dt><dd>{record.blocker}</dd></div>}
+    {record.blocker && <section class="responsibility-blocker"><h4>Waiting for</h4><p>{record.blocker}</p></section>}
+    <dl class="fleet-work-details"><div><dt>Assignee</dt><dd>{record.assignee.kind === "ship" ? "ship" : <button class="fleet-text-action" onClick={() => { if (record.assignee.kind === "process") onProcess(record.assignee.processId); }}>{processName(record.assignee.processId)}</button>}</dd></div>
       {record.dueAtMs && <div><dt>Due</dt><dd><WorkDate value={record.dueAtMs} /></dd></div>}
       {record.nextCheckAtMs && <div><dt>Next check</dt><dd><WorkDate value={record.nextCheckAtMs} /></dd></div>}
     </dl>
@@ -138,20 +158,5 @@ export function RoutineInspector({ schedule, account, onDirty, onSelect }: { sch
     {update.error && <p class="error" role="alert">{update.error.message}</p>}
     {account && canConfigure(account, "sched.update") && <div class="fleet-work-actions">{routineEditable(schedule) && <button class="fleet-text-action" disabled={!connected || update.isPending} onClick={() => setEditing(schedule)}>edit routine</button>}<button class="fleet-text-action" disabled={!connected || update.isPending} onClick={() => update.mutate()}>{update.isPending ? "saving…" : schedule.enabled ? "pause routine" : "enable routine"}</button></div>}
     {!routineEditable(schedule) && <p class="dim">This scheduled task can be inspected and paused here. Its definition is managed through the command interface.</p>}
-  </>;
-}
-
-export function StandingResponsibilities({ account }: { account?: ConsoleAccount }) {
-  const { client, connected } = useGateway();
-  const cache = useQueryClient();
-  const query = useQuery({ queryKey: INSTRUMENT_SOURCES_KEY, queryFn: () => client.r12y.source.list({}), enabled: connected && Boolean(account && canConfigure(account, "r12y.source.list")) });
-  const update = useMutation({ mutationFn: (source: ResponsibilitySourcePolicy) => {
-    if (source.control !== "configurable") throw new Error("This responsibility is always on.");
-    return client.r12y.source.update({ id: source.id, enabled: !source.enabled });
-  }, onSuccess: () => cache.invalidateQueries({ queryKey: INSTRUMENT_SOURCES_KEY }) });
-  return <><h3>Standing responsibilities</h3><p>What Ship takes care of when something happens.</p>
-    {query.isPending && <LoadingState>Loading…</LoadingState>}
-    {(query.error ?? update.error) && <p class="error" role="alert">{(query.error ?? update.error)?.message}</p>}
-    {query.data?.sources.map((source) => <div class="fleet-work-source" key={source.id}><label><span>{source.name}</span><input type="checkbox" checked={source.enabled} disabled={source.control === "required" || !connected || update.isPending || !account || !canConfigure(account, "r12y.source.update")} onChange={() => update.mutate(source)} /></label><p>{source.description}{source.control === "required" ? " Always on." : ""}</p></div>)}
   </>;
 }
