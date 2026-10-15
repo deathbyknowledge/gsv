@@ -458,15 +458,20 @@ export class AccountStore {
         // Only a recorded canonical hostname may acquire the preferred-domain
         // alias. Conflict handling preserves retired aliases and concurrent resets.
         const canonicalHosts = this.legacyDomains.map((domain) => `${handle}.${domain}`);
-        await this.db.prepare(`INSERT INTO hostnames (normalized_hostname, installation_id, kind, state, created_at)
-          SELECT ?, i.id, 'alias', h.state, ? FROM installations i
-          JOIN hostnames h ON h.installation_id = i.id AND h.kind = 'canonical'
-          WHERE i.handle = ? AND h.state != 'retired'
-            AND h.normalized_hostname IN (${canonicalHosts.map(() => "?").join(",")})
-            AND i.canonical_origin = 'https://' || h.normalized_hostname
-            AND i.state IN ('reserved', 'provisioning', 'active', 'restricted')
-          ON CONFLICT(normalized_hostname) DO NOTHING`)
-          .bind(hostname, Date.now(), handle, ...canonicalHosts).run();
+        const canonical = await this.db.prepare(
+          "SELECT id, canonical_origin FROM installations WHERE handle = ?",
+        ).bind(handle).first<{ id: string; canonical_origin: string }>();
+        const canonicalHostname = canonical ? new URL(canonical.canonical_origin).hostname : null;
+        if (canonical && canonicalHostname && canonicalHosts.includes(canonicalHostname)) {
+          await this.db.prepare(`INSERT INTO hostnames (normalized_hostname, installation_id, kind, state, created_at)
+            SELECT ?, i.id, 'alias', h.state, ? FROM installations i
+            JOIN hostnames h ON h.installation_id = i.id AND h.kind = 'canonical'
+            WHERE i.id = ? AND i.handle = ? AND i.canonical_origin = ?
+              AND h.normalized_hostname = ? AND h.state != 'retired'
+              AND i.state IN ('reserved', 'provisioning', 'active', 'restricted')
+            ON CONFLICT(normalized_hostname) DO NOTHING`)
+            .bind(hostname, Date.now(), canonical.id, handle, canonical.canonical_origin, canonicalHostname).run();
+        }
         row = await this.hostnameRow(hostname);
       }
     }

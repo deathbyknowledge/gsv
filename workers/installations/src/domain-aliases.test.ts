@@ -42,3 +42,50 @@ it("keeps identity across a domain change, onboarding and reset, without allocat
   expect(await current.resolveHostname("pilot.fleet.example")).toEqual({ found: false });
   expect(await current.resolveHostname("pilot.old.example")).toMatchObject({ installationId: reset.installationId });
 });
+
+it.each([
+  ["http", "http://{handle}.old.example:8976"],
+  ["https", "https://{handle}.old.example:8443"],
+])("preserves a custom %s origin when creating an alias", async (protocol, template) => {
+  const handle = `${protocol}-pilot`;
+  const old = new AccountStore(env.INSTALLATIONS_DB, "old.example", template);
+  const owner = await old.createPrincipal({ email: `${handle}@example.com`, displayName: "Owner", verified: true });
+  const first = await old.reserveInstallation({ principalId: owner.id, operationId: `${handle}-create`, handle });
+  const current = new AccountStore(env.INSTALLATIONS_DB, "fleet.example", undefined, [], ["old.example"]);
+  const expectedOrigin = template.replace("{handle}", handle);
+  for (const hostname of [`${handle}.old.example`, `${handle}.fleet.example`]) {
+    expect(await current.resolveHostname(hostname)).toMatchObject({
+      installationId: first.installationId, canonicalOrigin: expectedOrigin, state: "reserved",
+    });
+  }
+  const onboarding = new InstallationOnboardingStore(env.INSTALLATIONS_DB, current);
+  const issued = await onboarding.begin(first.installationId);
+  expect(new URL(issued.onboardingUrl).origin).toBe(expectedOrigin);
+  const authorization = await onboarding.authorize({ installationId: first.installationId, token: new URL(issued.onboardingUrl).hash.slice(1) });
+  if (!authorization.ok) throw new Error("Expected onboarding authorization");
+  await onboarding.complete({ installationId: first.installationId, claimId: authorization.claimId });
+  const reset = await current.resetInstallation({ installationId: first.installationId, operationId: `${handle}-reset`, confirmHandle: handle });
+  expect(reset.installationId).not.toBe(first.installationId);
+  for (const hostname of [`${handle}.old.example`, `${handle}.fleet.example`]) {
+    expect(await current.resolveHostname(hostname)).toMatchObject({
+      installationId: reset.installationId, canonicalOrigin: expectedOrigin, state: "reserved",
+    });
+  }
+});
+
+it("requires the legacy hostname to be a live canonical registration matching the origin", async () => {
+  const old = new AccountStore(env.INSTALLATIONS_DB, "old.example");
+  const owner = await old.createPrincipal({ email: "canonical-only@example.com", displayName: "Owner", verified: true });
+  const first = await old.reserveInstallation({ principalId: owner.id, operationId: "canonical-only-create", handle: "canonical-only" });
+  const current = new AccountStore(env.INSTALLATIONS_DB, "fleet.example", undefined, [], ["old.example"]);
+  await env.INSTALLATIONS_DB.prepare("UPDATE hostnames SET kind = 'alias' WHERE installation_id = ?").bind(first.installationId).run();
+  expect(await current.resolveHostname("canonical-only.fleet.example")).toEqual({ found: false });
+  await env.INSTALLATIONS_DB.prepare("UPDATE hostnames SET kind = 'canonical' WHERE installation_id = ?").bind(first.installationId).run();
+  await env.INSTALLATIONS_DB.prepare("UPDATE installations SET canonical_origin = ? WHERE id = ?")
+    .bind("https://canonical-only.old.example.attacker.example:8443", first.installationId).run();
+  expect(await current.resolveHostname("canonical-only.fleet.example")).toEqual({ found: false });
+  await env.INSTALLATIONS_DB.prepare("UPDATE installations SET canonical_origin = ? WHERE id = ?")
+    .bind(first.canonicalOrigin, first.installationId).run();
+  await env.INSTALLATIONS_DB.prepare("UPDATE hostnames SET state = 'retired' WHERE installation_id = ?").bind(first.installationId).run();
+  expect(await current.resolveHostname("canonical-only.fleet.example")).toEqual({ found: false });
+});

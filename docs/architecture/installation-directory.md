@@ -144,7 +144,10 @@ domain, it may insert an alias only if the same handle already has a non-retired
 canonical hostname on a configured legacy domain. The inserted row points to the
 recorded installation ID and inherits its hostname state. The lookup does not
 allocate a Kernel, change a canonical origin, or claim an arbitrary wildcard.
-An existing retired row prevents recreation.
+The origin's parsed hostname must match that registration; configured schemes
+and ports remain intact. The insert rechecks the installation and origin so a
+concurrent reset cannot attach the alias to the previous identity. An existing
+retired row prevents recreation.
 
 Reset preserves the recorded canonical origin and moves all active accepted
 hostnames atomically to the replacement installation. Provisioning and activation
