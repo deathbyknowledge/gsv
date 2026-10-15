@@ -122,8 +122,7 @@ It's named for the General Systems Vehicles in Iain M. Banks' Culture novels, va
 ## Is Ship different from GSV?
 
 Ship is the product name. GSV is still the underlying runtime and appears in
-technical identifiers, the `gsv` target, `.gsv` folders and compatible commands.
-The external CLI also accepts `ship` after updating the host applications.
+technical identifiers, the `gsv` target, `.gsv` folders and the `gsv` CLI command.
 Your conversations, files, settings and connected machines do not need to move.
 
 An operator may add a new public domain while keeping an existing address as an

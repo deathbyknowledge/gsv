@@ -1,6 +1,6 @@
 # CLI Command Reference
 
-The `ship` command (also available as `gsv`) controls a Ship gateway, the local Desktop application, the
+The `gsv` command controls a Ship gateway, the local Desktop application, the
 machine daemon, the process tree, and adapters. Most commands talk to the Kernel
 syscall surface over WebSocket; `desktop` uses a same-user local endpoint.
 
@@ -9,7 +9,7 @@ syscall surface over WebSocket; `desktop` uses a same-user local endpoint.
 `--url` is a top-level option, so place it before the subcommand:
 
 ```bash
-ship --url wss://example.workers.dev/ws chat "hello"
+gsv --url wss://example.workers.dev/ws chat "hello"
 ```
 
 | Option | Env | Description |
@@ -48,8 +48,8 @@ destination. The header action appears only when `sys.connect` advertises
 `operator-feedback` for the caller.
 
 ```bash
-ship chat [MESSAGE] [--pid PID]
-ship shell
+gsv chat [MESSAGE] [--pid PID]
+gsv shell
 ```
 
 `chat` resolves the Ship or selected Work conversation and sends with
@@ -431,12 +431,12 @@ mean all users. `sched add --json` is a low-level compatibility path for direct
 ## Process Commands
 
 ```bash
-ship proc list [--uid UID]
-ship proc spawn [--as ACCOUNT] [--label LABEL] [--model MODEL_ID] [--effort LEVEL] [--prompt TEXT] [--parent PID]
-ship proc send MESSAGE --pid PID
-ship proc history --pid PID [--tail] [--limit N] [--offset N]
-ship proc reset --pid PID
-ship proc kill PID [--no-archive]
+gsv proc list [--uid UID]
+gsv proc spawn [--as ACCOUNT] [--label LABEL] [--model MODEL_ID] [--effort LEVEL] [--prompt TEXT] [--parent PID]
+gsv proc send MESSAGE --pid PID
+gsv proc history --pid PID [--tail] [--limit N] [--offset N]
+gsv proc reset --pid PID
+gsv proc kill PID [--no-archive]
 ```
 
 Processes are the agent-facing execution model. `spawn` creates a new process;
@@ -451,13 +451,13 @@ commands above; the settings apply before the optional initial prompt starts.
 ## Desktop Commands
 
 ```bash
-ship desktop
-ship desktop status [--json]
-ship desktop new
-ship desktop use PID
-ship desktop microphone list
-ship desktop microphone use NAME
-ship desktop microphone default
+gsv desktop
+gsv desktop status [--json]
+gsv desktop new
+gsv desktop use PID
+gsv desktop microphone list
+gsv desktop microphone use NAME
+gsv desktop microphone default
 ```
 
 `gsv desktop` focuses a running Desktop or launches the sibling
@@ -520,8 +520,8 @@ Open **Fleet**, click **connect** beside Places, name the computer and create an
 After installing Ship, paste the provided command:
 
 ```bash
-ship pair CODE [--workspace PATH] [--no-install]
-ship pair  # resume an interrupted exchange
+gsv pair CODE [--workspace PATH] [--no-install]
+gsv pair  # resume an interrupted exchange
 ```
 
 Use `gsv pair -` to read the invitation from stdin instead of exposing it in
@@ -536,17 +536,17 @@ pairing without changing operating-system services. Closing the web panel or
 cancelling an already-used invitation does not revoke the resulting connection.
 
 ```bash
-ship daemon install [--id ID] [--workspace PATH]
-ship daemon start
-ship daemon restart
-ship daemon stop
-ship daemon uninstall
-ship daemon status
-ship daemon doctor
-ship daemon reload
-ship daemon reconnect
-ship daemon diagnostics [--json]
-ship daemon logs [-l N] [--follow]
+gsv daemon install [--id ID] [--workspace PATH]
+gsv daemon start
+gsv daemon restart
+gsv daemon stop
+gsv daemon uninstall
+gsv daemon status
+gsv daemon doctor
+gsv daemon reload
+gsv daemon reconnect
+gsv daemon diagnostics [--json]
+gsv daemon logs [-l N] [--follow]
 ```
 
 The device daemon exposes local hardware-style capabilities to the Kernel:
@@ -616,12 +616,12 @@ the bundled daemon is missing or has changed during approval.
 ## Auth Commands
 
 ```bash
-ship auth login [--username USER] [--password PASS] [--ttl-hours N]
-ship auth logout
-ship auth link [CODE]
-ship auth link --adapter ID --account-id ACCOUNT --actor-id ACTOR [--uid UID]
-ship auth link-list [--uid UID]
-ship auth unlink --adapter ID --account-id ACCOUNT --actor-id ACTOR
+gsv auth login [--username USER] [--password PASS] [--ttl-hours N]
+gsv auth logout
+gsv auth link [CODE]
+gsv auth link --adapter ID --account-id ACCOUNT --actor-id ACTOR [--uid UID]
+gsv auth link-list [--uid UID]
+gsv auth unlink --adapter ID --account-id ACCOUNT --actor-id ACTOR
 ```
 
 Initialize a new space through its Accounts-issued browser setup invitation.
@@ -644,10 +644,10 @@ See [messenger setup](../how-to/messengers.md).
 ### Auth Tokens
 
 ```bash
-ship auth token create [--kind machine|service|human] [--uid UID] [--label LABEL] \
+gsv auth token create [--kind machine|service|human] [--uid UID] [--label LABEL] \
   [--peer PEER_ID] [--expires-at UNIX_MS]
-ship auth token list [--uid UID]
-ship auth token revoke TOKEN_ID [--reason TEXT] [--uid UID]
+gsv auth token list [--uid UID]
+gsv auth token revoke TOKEN_ID [--reason TEXT] [--uid UID]
 ```
 
 `machine` is the default token kind. `--peer` (alias `--device`) binds a machine
@@ -657,18 +657,18 @@ tokens. `--uid` is for root-managed token operations.
 ## Config Commands
 
 ```bash
-ship config get [KEY]
-ship config set KEY VALUE
-ship config --local get KEY
-ship config --local set KEY VALUE
+gsv config get [KEY]
+gsv config set KEY VALUE
+gsv config --local get KEY
+gsv config --local set KEY VALUE
 ```
 
 Without `--local`, commands use Kernel `sys.config.get` and `sys.config.set`.
 Keys use ConfigStore paths, for example:
 
 ```bash
-ship config get config/ai/models
-ship config set users/1000/ai/preferred_model primary
+gsv config get config/ai/models
+gsv config set users/1000/ai/preferred_model primary
 ```
 
 Omit `KEY` on remote `get` to list visible entries. Sensitive remote values are
@@ -689,9 +689,9 @@ locally configured provider URLs or tokens.
 ## Adapter Commands
 
 ```bash
-ship adapter connect --adapter ID [--account-id ACCOUNT] [--config-json JSON]
-ship adapter disconnect --adapter ID [--account-id ACCOUNT]
-ship adapter status --adapter ID [--account-id ACCOUNT]
+gsv adapter connect --adapter ID [--account-id ACCOUNT] [--config-json JSON]
+gsv adapter disconnect --adapter ID [--account-id ACCOUNT]
+gsv adapter status --adapter ID [--account-id ACCOUNT]
 ```
 
 These generic lifecycle commands apply only when an adapter advertises the
@@ -706,8 +706,8 @@ and WhatsApp QR setup are not supported by the current deployment.
 ## Version
 
 ```bash
-ship version
-ship --version
+gsv version
+gsv --version
 ```
 
 Prints build metadata for the installed CLI.

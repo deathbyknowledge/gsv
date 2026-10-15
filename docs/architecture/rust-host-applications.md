@@ -322,8 +322,7 @@ also need a Windows release smoke test on an actual computer.
 
 ## Product and command names
 
-Ship is the displayed product name. The `ship` external command delegates to the
-existing `gsv` executable and shares its configuration, permissions and transport.
+Ship is the displayed product name. The external CLI command remains `gsv`.
 Native executable names, the `space.gsv.desktop` bundle identifier, service names
 and stored paths remain stable. macOS bundles use `Ship.app`; the CLI can still
 locate an existing `GSV.app`.

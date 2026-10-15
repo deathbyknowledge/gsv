@@ -308,15 +308,12 @@ Windows release artifacts are unsigned unless the release runner has a signing
 certificate configured. SmartScreen may show an unknown-publisher warning.
 The installer still checks every Ship asset against the release manifest.
 
-## The Ship command and existing installations
+## Product name and existing installations
 
-Use `ship` for the external CLI after installing this release. `gsv` remains a
-compatible command and shares the same configuration and credentials. Unix
-installers create a `ship` symlink; Windows installers create `ship.cmd`; Cargo
-installs also provide a `ship` launcher. The macOS application is displayed as
-Ship and packaged as `Ship.app`. Bundle identifiers, executable names, service
+Ship is the product name; use `gsv` for the external CLI. The macOS application is
+displayed as Ship and packaged as `Ship.app`. Bundle identifiers, executable names, service
 registrations, release asset names and `.gsv` storage paths remain stable.
 
 Updating the Gateway does not update an already-installed native CLI or Desktop.
-Keep using `gsv` until the host distribution is updated. Do not rename existing
+Keep using `gsv`. Do not rename existing
 configuration directories or daemon services.

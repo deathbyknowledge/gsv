@@ -3,8 +3,8 @@ use std::path::PathBuf;
 
 #[derive(Parser)]
 #[command(
-    name = "ship",
-    bin_name = "ship",
+    name = "gsv",
+    bin_name = "gsv",
     version = gsv::build_info::BUILD_VERSION,
     about = "Ship CLI - Chat, Device, and Desktop Control Plane"
 )]
@@ -75,7 +75,7 @@ pub(crate) enum Commands {
 
     /// Authentication and onboarding
     #[command(
-        after_help = "Create a space using the Accounts-issued browser setup link, then run `ship auth login`."
+        after_help = "Create a space using the Accounts-issued browser setup link, then run `gsv auth login`."
     )]
     Auth {
         #[command(subcommand)]
@@ -601,7 +601,7 @@ mod tests {
             .expect("help is displayed")
             .to_string();
         assert!(help.contains("Accounts-issued browser setup link"));
-        assert!(help.contains("ship auth login"));
+        assert!(help.contains("gsv auth login"));
     }
 
     #[test]

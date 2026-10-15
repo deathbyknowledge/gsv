@@ -362,7 +362,6 @@ Write-Host ""
 Write-Host "Ship host installer · Windows x64" -ForegroundColor Cyan
 Write-Host ""
 Install-GsvHost
-Set-Content -LiteralPath (Join-Path $InstallDir 'ship.cmd') -Value '@"%~dp0gsv.exe" %*' -Encoding Ascii
 if ($SkipUserSetup) { return }
 if ($env:GSV_NO_MODIFY_PATH -eq "1") {
   Write-Info "Left the user PATH alone (GSV_NO_MODIFY_PATH=1); add $InstallDir yourself"

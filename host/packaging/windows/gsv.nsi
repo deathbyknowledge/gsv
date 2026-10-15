@@ -71,7 +71,6 @@ Section "Uninstall"
     Abort
   ${EndIf}
   Delete "$INSTDIR\gsv.exe"
-  Delete "$INSTDIR\ship.cmd"
   Delete "$INSTDIR\gsvd.exe"
   Delete "$INSTDIR\gsv-desktop.exe"
   Delete "$INSTDIR\gsv-transcribe.exe"

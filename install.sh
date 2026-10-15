@@ -698,7 +698,6 @@ set_release_channel_in_config() {
 }
 
 persist_release_channel() {
-    ln -sfn gsv "${INSTALL_DIR}/ship"
     if [ -z "$VERSION" ]; then
         "${INSTALL_DIR}/gsv" config --local set release.channel "$CHANNEL" >/dev/null 2>&1 || \
             warn "Could not persist release.channel"
