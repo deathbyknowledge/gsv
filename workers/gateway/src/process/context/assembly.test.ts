@@ -281,6 +281,18 @@ describe("createSystemContextProvider", () => {
     expect(text).toContain("- Linear");
   });
 
+  it("renders the managed mailbox address, or none, as a runtime fact", async () => {
+    const provider = createSystemContextProvider();
+    const config = {
+      ...CONFIG,
+      systemContextFiles: [{ name: "00-runtime.md", text: "Email address: {{mailbox.address}}" }],
+    };
+    const withMailbox = await provider.collect(makeInput({ config, mailbox: { address: "hank@gsv.space" } }));
+    expect(withMailbox.map((section) => section.text)).toEqual(["Email address: hank@gsv.space"]);
+    const without = await provider.collect(makeInput({ config }));
+    expect(without.map((section) => section.text)).toEqual(["Email address: none"]);
+  });
+
   it("bounds rendered target context and points to target discovery", async () => {
     const provider = createSystemContextProvider();
     const sections = await provider.collect(

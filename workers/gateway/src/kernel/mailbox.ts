@@ -205,16 +205,22 @@ export async function completeManagedInboundMail(
   }));
 }
 
+/**
+ * The managed address an owner reads and sends as, or null when this
+ * installation has no mailbox for that owner. Never throws: prompt context
+ * and discovery read it for every principal, including after the primary
+ * owner was removed.
+ */
 export function managedMailAddressForOwner(
   ownerUid: number,
   ctx: KernelContext,
 ): string | null {
   const mailbox = ctx.mailboxes.getMailboxForOwner(ownerUid);
   if (mailbox) return mailbox.address;
-  const owner = resolveMailboxOwner(ctx);
-  if (owner.uid !== ownerUid) return null;
+  if (ctx.mailboxes.getPrimaryMailbox()) return null;
   const identity = ctx.installationIdentity;
   if (!identity?.handle) return null;
+  if (findEligibleMailboxOwner(ctx)?.uid !== ownerUid) return null;
   const hostname = new URL(identity.canonicalOrigin).hostname.toLowerCase();
   const prefix = `${identity.handle.toLowerCase()}.`;
   if (!hostname.startsWith(prefix) || hostname.length === prefix.length) return null;
@@ -287,15 +293,22 @@ function resolveMailboxOwner(ctx: KernelContext): ProcessIdentity {
   const persisted = ctx.mailboxes.getPrimaryMailbox();
   if (persisted) return requireHumanIdentity(ctx, persisted.ownerUid);
 
-  const human = ctx.auth.getPasswdEntries().find((entry) => {
-    if (entry.uid < 1000 || ctx.auth.isPersonalAgentUid(entry.uid) || ctx.auth.isAccountDisabled(entry.uid)) return false;
-    const shadow = ctx.auth.getShadowByUsername(entry.username);
-    return Boolean(shadow && !isLocked(shadow));
-  });
+  const human = findEligibleMailboxOwner(ctx);
   if (!human) {
     throw new Error("Managed mail requires a configured human account");
   }
   return accountIdentity(ctx.auth, human);
+}
+
+/** The first active human account, which owns the mailbox until one is persisted. */
+function findEligibleMailboxOwner(
+  ctx: KernelContext,
+): ReturnType<KernelContext["auth"]["getPasswdEntries"]>[number] | undefined {
+  return ctx.auth.getPasswdEntries().find((entry) => {
+    if (entry.uid < 1000 || ctx.auth.isPersonalAgentUid(entry.uid) || ctx.auth.isAccountDisabled(entry.uid)) return false;
+    const shadow = ctx.auth.getShadowByUsername(entry.username);
+    return Boolean(shadow && !isLocked(shadow));
+  });
 }
 
 function assertMailboxOwnerEnabled(uid: number, ctx: KernelContext): void {

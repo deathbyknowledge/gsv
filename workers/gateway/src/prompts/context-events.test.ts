@@ -44,6 +44,18 @@ describe("context projection event prompt", () => {
     expect(event).toContain("`skills list`");
   });
 
+  it("reports the managed mailbox appearing, changing, and disappearing", () => {
+    const appeared = formatContextProjectionEvent(BASE, { ...BASE, mailbox: { address: "hank@gsv.space" } });
+    expect(appeared).toContain("Email:\n- Address: \"hank@gsv.space\"");
+    expect(appeared).not.toContain("Accessible targets:");
+
+    const withMailbox = { ...BASE, mailbox: { address: "hank@gsv.space" } };
+    expect(formatContextProjectionEvent(withMailbox, { ...BASE, mailbox: { address: "hank@staging.gsv.space" } }))
+      .toContain("- Address: \"hank@staging.gsv.space\"");
+    expect(formatContextProjectionEvent(withMailbox, BASE)).toContain("Email:\n- Address: none");
+    expect(formatContextProjectionEvent(withMailbox, structuredClone(withMailbox))).toBeNull();
+  });
+
   it("omits an event when the observed projection is unchanged", () => {
     expect(formatContextProjectionEvent(BASE, structuredClone(BASE))).toBeNull();
   });

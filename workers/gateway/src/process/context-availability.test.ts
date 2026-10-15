@@ -31,6 +31,7 @@ describe("Process target availability", () => {
         system: { timezone: "UTC" },
         skillIndexMode: "off",
         skillIndex: [],
+        mailbox: null,
       };
       const state: RunTickContextState = {
         run: {
@@ -86,6 +87,17 @@ describe("Process target availability", () => {
         expect(messages[1].content).toContain("- Added: `slack-target:workspace`");
         expect(process.store.epochs.getLiveContextEpoch().id).toBe(initial.id);
         expect(process.store.epochs.getLiveContextEpoch().systemPrompt).toBe(initial.systemPrompt);
+
+        // An epoch observed before the installation had a mailbox learns the address once, in place.
+        const withMailbox = { ...snapshot, mailbox: { address: "hank@gsv.space" } };
+        refresh.mockResolvedValue(withMailbox);
+        await process.run.refreshRunTickContextEpoch(state.run.runId, state);
+        expect(process.store.messages.getMessages()).toHaveLength(3);
+        expect(process.store.messages.getMessages()[2].content).toContain('- Address: "hank@gsv.space"');
+        expect(process.store.epochs.getLiveContextEpoch().observedProjection.mailbox).toEqual({ address: "hank@gsv.space" });
+        await process.run.refreshRunTickContextEpoch(state.run.runId, state);
+        expect(process.store.messages.getMessages()).toHaveLength(3);
+        expect(process.store.epochs.getLiveContextEpoch().id).toBe(initial.id);
       } finally {
         refresh.mockRestore();
         changed.mockRestore();
