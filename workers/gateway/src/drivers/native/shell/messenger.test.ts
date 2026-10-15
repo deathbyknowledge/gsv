@@ -1,7 +1,7 @@
-import { runInDurableObject } from "cloudflare:test";
+import { reset, runInDurableObject } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import { Bash } from "just-bash";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { makeShadowEntry } from "../../../auth/shadow";
 import type { Kernel } from "../../../kernel/do";
 import type { KernelContext } from "../../../kernel/context";
@@ -10,6 +10,12 @@ import { canLinkAdapter } from "../../../kernel/adapter-pairing-policy";
 import { testPeer } from "../../../test-support/peers";
 import * as utils from "../../../shared/utils";
 import { buildMessengerCommand } from "./messenger";
+
+afterEach(async () => {
+  // Pairing can schedule follow-up work; it belongs to this test's Kernel only.
+  await reset();
+  await vi.dynamicImportSettled();
+});
 
 const CODE = "ABCD-EFGH-JKLM";
 const candidate = { accountId: "managed", actorId: "external-person", surfaceId: "private-chat", expiresAt: Date.now() + 60_000, linked: false };
