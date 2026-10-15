@@ -24,8 +24,9 @@ use the id returned by discovery or provisioning.
    description fits the task: for signed-in work the one on the account's
    automatic profile (the description names the profile; `browser profile
    list` marks which one is automatic), a named profile only when the task
-   calls for that profile, and a temporary one only for work that needs no
-   login. An empty list does not rule out cloud provisioning. `targets` and `instance` are gateway commands; run `tabs` and
+   calls for that profile, and a temporary one for work that needs no login
+   or for a site the person already signed into in that instance, while it
+   runs. An empty list does not rule out cloud provisioning. `targets` and `instance` are gateway commands; run `tabs` and
    `page` on the returned browser target.
 2. For cloud work with no suitable running cloud browser, run `instance catalog`
    on `gsv`. When cloud browsers are available, persist a fresh request ID and
