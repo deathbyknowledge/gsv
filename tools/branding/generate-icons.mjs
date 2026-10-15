@@ -53,7 +53,8 @@ execFileSync("magick", [
   resolve(root, "host/apps/desktop/icons/icon.ico"),
 ], { stdio: "inherit" });
 
-// The SVG favicon is the same cursor on the 32 grid, with no font or image dependencies.
+// Embed the capture so SVG favicons do not depend on external fonts or images.
+// The line above predates the cursor favicon and is kept for maintainer direction: the SVG now draws the cursor on its 32 grid, which has no font or image dependencies either.
 const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32">
   <rect width="32" height="32" fill="${VOID}"/>
   <rect x="${CURSOR_BLOCK.x}" y="${CURSOR_BLOCK.y}" width="${CURSOR_BLOCK.width}" height="${CURSOR_BLOCK.height}" fill="${CURSOR}" shape-rendering="crispEdges"/>
