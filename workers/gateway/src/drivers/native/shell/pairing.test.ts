@@ -27,6 +27,18 @@ async function fixture(work: (ctx: KernelContext, shell: Bash) => Promise<void>)
 }
 
 describe("native target pairing", () => {
+  it.each(["linux", "windows"])("uses the operator installer when pairing %s", async (platform) => {
+    await fixture(async (ctx, shell) => {
+      ctx.env = { ...ctx.env, GSV_PUBLIC_CONFIG: JSON.stringify({ installUrl: "https://downloads.example/host/install.sh?channel=stable" }) };
+      const result = await shell.exec(`targets pair --name Laptop --platform ${platform}`);
+      expect(result.exitCode, result.stderr).toBe(0);
+      const { installCommand } = JSON.parse(result.stdout);
+      expect(installCommand).toBe(platform === "windows"
+        ? "$env:GSV_CHANNEL='dev'; irm 'https://downloads.example/host/install.ps1?channel=stable' | iex"
+        : "curl -fsSL 'https://downloads.example/host/install.sh?channel=stable' | GSV_CHANNEL=dev bash");
+    });
+  });
+
   it.each(["mac", "linux", "windows", "browser"])("enrolls a %s for the process owner with the space's address", async (platform) => {
     await fixture(async (ctx, shell) => {
       const result = await shell.exec(`targets pair --name 'My computer' --platform ${platform}`);
@@ -40,6 +52,7 @@ describe("native target pairing", () => {
         expect(output.instructions).toContain("Extensions button");
         expect(output.pairCommand).toBeUndefined();
       } else {
+        expect(output.installCommand).toContain("https://install.ship.space");
         expect(output.installCommand).toContain(platform === "windows" ? "install.ps1" : "GSV_CHANNEL=dev bash");
         expect(output.pairCommand).toMatch(platform === "windows" ? /^gsv.exe pair / : /^gsv pair /);
       }

@@ -434,7 +434,7 @@ explain_existing_install_dir() {
         info "Updating the existing installation in $INSTALL_DIR"
         return
     fi
-    warn "Updating the existing installation in $INSTALL_DIR. Automatic daemon updates need a directory this user can write; to move to the default, run: curl -fsSL https://raw.githubusercontent.com/deathbyknowledge/gsv/main/install.sh | GSV_INSTALL_DIR=\"\$HOME/.gsv/bin\" bash, then remove the old gsv, gsvd, gsv-desktop, gsv-transcribe, and gsv-vision files from $INSTALL_DIR and run gsv daemon install."
+    warn "Updating the existing installation in $INSTALL_DIR. Automatic daemon updates need a directory this user can write; to move to the default, run: curl -fsSL https://install.ship.space | GSV_INSTALL_DIR=\"\$HOME/.gsv/bin\" bash, then remove the old gsv, gsvd, gsv-desktop, gsv-transcribe, and gsv-vision files from $INSTALL_DIR and run gsv daemon install."
 }
 
 PATH_MARKER="# Added by the GSV installer"

@@ -20,7 +20,7 @@ describe("sys.connect protocol mismatch", () => {
     }, ctx);
     expect(outcome.ok).toBe(false);
     if (outcome.ok) return;
-    expect(`${outcome.details?.installer}/install.ps1`).toBe("https://raw.githubusercontent.com/deathbyknowledge/gsv/main/install.ps1");
+    expect(`${outcome.details?.installer}/install.ps1`).toBe("https://install.ship.space/install.ps1");
   });
 
   it("names the server version, release, and installer an outdated client needs", async () => {

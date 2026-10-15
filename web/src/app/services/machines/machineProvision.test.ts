@@ -31,10 +31,10 @@ describe("machineProvision", () => {
 
   it("builds canonical install commands for the gateway release", () => {
     expect(buildMachineInstallCommand("linux", "v0.4.0")).toBe(
-      "curl -fsSL 'https://raw.githubusercontent.com/deathbyknowledge/gsv/main/install.sh' | GSV_VERSION=v0.4.0 bash",
+      "curl -fsSL 'https://install.ship.space' | GSV_VERSION=v0.4.0 bash",
     );
     expect(buildMachineInstallCommand("windows", "dev")).toBe(
-      "$env:GSV_CHANNEL='dev'; irm 'https://raw.githubusercontent.com/deathbyknowledge/gsv/main/install.ps1' | iex",
+      "$env:GSV_CHANNEL='dev'; irm 'https://install.ship.space/install.ps1' | iex",
     );
     expect(buildMachineInstallCommand("browser", "dev")).toBe("");
   });

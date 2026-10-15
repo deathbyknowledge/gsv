@@ -23,14 +23,14 @@ not currently published.
 On Linux or macOS:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/deathbyknowledge/gsv/main/install.sh | bash
+curl -fsSL https://install.ship.space | bash
 ```
 
 On Windows, download `gsv-desktop-windows-x64-setup.exe` from the release and
 run it, or use Windows PowerShell 5.1 or PowerShell 7:
 
 ```powershell
-irm https://raw.githubusercontent.com/deathbyknowledge/gsv/main/install.ps1 | iex
+irm https://install.ship.space/install.ps1 | iex
 ```
 
 After a successful installation in a local graphical terminal, the script opens
@@ -50,7 +50,7 @@ needed for missing runtimes even when the Ship payload is already downloaded.
 For a Windows server without Desktop:
 
 ```powershell
-Invoke-WebRequest -UseBasicParsing https://raw.githubusercontent.com/deathbyknowledge/gsv/main/install.ps1 -OutFile install.ps1
+Invoke-WebRequest -UseBasicParsing https://install.ship.space/install.ps1 -OutFile install.ps1
 ./install.ps1 -Headless
 ```
 
@@ -129,7 +129,7 @@ whole, so the installer leaves it and its service alone and adds a separate
 command-line installation in the default directory. To migrate by hand:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/deathbyknowledge/gsv/main/install.sh | GSV_INSTALL_DIR="$HOME/.gsv/bin" bash
+curl -fsSL https://install.ship.space | GSV_INSTALL_DIR="$HOME/.gsv/bin" bash
 sudo rm /usr/local/bin/gsv /usr/local/bin/gsvd /usr/local/bin/gsv-desktop \
   /usr/local/bin/gsv-transcribe /usr/local/bin/gsv-vision
 gsv daemon install

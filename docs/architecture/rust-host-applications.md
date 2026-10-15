@@ -274,10 +274,15 @@ person; the CLI prints one hint when the gateway is newer.
 
 Update plans use the operator's `installUrl` from a successful handshake or the
 installer URL supplied with a protocol error. Older gateways without either
-setting use the existing public installer. Windows installer selection resolves
+setting use `https://install.ship.space`. Windows installer selection resolves
 a Unix script URL to the sibling `install.ps1`, or appends that filename to a
 download directory. Protocol errors give Windows peers the directory so older
 daemons, which always append `/install.ps1`, can upgrade too.
+
+CLI update hints, native `targets pair` setup commands, and the daemon's manual
+recovery commands use the same advertised installer and gateway release. Manual
+daemon updates also preserve the current installation directory. Host applications
+share installer URL resolution and shell quoting in `host-config`.
 
 Published host artifacts cover Linux x64/ARM64 and macOS Intel/Apple Silicon
 for Desktop, `gsv-transcribe`, `gsv-vision`, `gsv`, and `gsvd`, plus Windows x64

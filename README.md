@@ -64,7 +64,7 @@ explicit migration is prepared; these commands do not adopt their state.
 Install the CLI, machine daemon, and Desktop separately where supported:
 
 ```bash
-curl -fsSL https://install.gsv.space | bash
+curl -fsSL https://install.ship.space | bash
 ```
 
 The verified host installer ships matching versions of `gsv` and `gsvd` on

@@ -829,11 +829,19 @@ fn release_hint(current: &str, server: &gateway_client::protocol::ServerInfo) ->
     if available <= current {
         return None;
     }
-    let command = if cfg!(windows) {
-        "irm https://raw.githubusercontent.com/deathbyknowledge/gsv/main/install.ps1 | iex"
-    } else {
-        "curl -fsSL https://raw.githubusercontent.com/deathbyknowledge/gsv/main/install.sh | bash"
-    };
+    let installer_url = server
+        .deployment
+        .as_ref()
+        .and_then(|deployment| deployment.install_url.as_deref())
+        .filter(|url| url.starts_with("https://"))
+        .unwrap_or(host_config::installer::DEFAULT_INSTALLER_URL);
+    let command = host_config::installer::install_command(
+        installer_url,
+        &stable_tag(available),
+        None,
+        cfg!(windows),
+    )
+    .ok()?;
     Some(format!(
         "Ship {} is available; this CLI is {current}. Update with: {command}",
         stable_tag(available)
@@ -859,11 +867,35 @@ mod release_hint_tests {
     fn hints_only_for_a_newer_stable_gateway() {
         let hint = release_hint("0.4.1", &server("0.4.2", Some("v0.4.2"))).expect("newer hints");
         assert!(hint.starts_with("Ship v0.4.2 is available; this CLI is 0.4.1."));
+        assert!(hint.contains("https://install.ship.space"));
         assert_eq!(
             release_hint("0.4.1", &server("0.4.1", Some("v0.4.1"))),
             None
         );
         assert_eq!(release_hint("0.4.1", &server("0.9.0", Some("dev"))), None);
         assert_eq!(release_hint("0.4.1", &server("nope", None)), None);
+    }
+
+    #[test]
+    fn update_hints_use_the_operator_installer_and_gateway_release() {
+        let mut newer = server("0.4.2", Some("v0.4.2"));
+        newer.deployment = Some(
+            serde_json::from_value(serde_json::json!({
+                "installUrl": "https://downloads.example/host/install.sh?channel=stable",
+                "legacyDomains": [],
+            }))
+            .expect("deployment config"),
+        );
+        let hint = release_hint("0.4.1", &newer).expect("newer hints");
+        let script = if cfg!(windows) {
+            "install.ps1"
+        } else {
+            "install.sh"
+        };
+        assert!(hint.contains(&format!(
+            "https://downloads.example/host/{script}?channel=stable"
+        )));
+        assert!(hint.contains("GSV_VERSION='v0.4.2'"));
+        assert!(!hint.contains("install.ship.space"));
     }
 }

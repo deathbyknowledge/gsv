@@ -1,4 +1,4 @@
-export const DEFAULT_INSTALL_URL = "https://raw.githubusercontent.com/deathbyknowledge/gsv/main/install.sh";
+export const DEFAULT_INSTALL_URL = "https://install.ship.space";
 /** The GitHub release page listing every host download, including the beta Desktop app. */
 export const LATEST_RELEASE_PAGE_URL = "https://github.com/deathbyknowledge/gsv/releases/latest";
 
@@ -20,8 +20,11 @@ export function buildCliInstallCommand(
 ): string {
   const selector = cliReleaseSelector(release);
   if (platform === "windows") {
-    const windowsUrl = new URL("install.ps1", installUrl.endsWith("/") || installUrl.endsWith(".sh") ? installUrl : `${installUrl}/`).href;
-    return `$env:${selector.name}='${selector.value}'; irm '${windowsUrl.replace(/'/g, "''")}' | iex`;
+    const url = new URL(installUrl);
+    const path = url.pathname.replace(/\/+$/, "");
+    const directory = /\.(?:sh|ps1)$/.test(path) ? path.slice(0, path.lastIndexOf("/")) : path;
+    url.pathname = `${directory}/install.ps1`;
+    return `$env:${selector.name}='${selector.value}'; irm '${url.href.replace(/'/g, "''")}' | iex`;
   }
   return `curl -fsSL '${installUrl.replace(/'/g, "'\\''")}' | ${selector.name}=${selector.value} bash`;
 }
