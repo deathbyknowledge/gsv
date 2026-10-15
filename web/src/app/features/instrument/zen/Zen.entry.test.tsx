@@ -18,8 +18,9 @@ import { BrowserVoiceControls } from "../../../services/platform/BrowserVoiceCon
 import { NativeInputProvider, type NativeInput } from "../../../services/platform/PlatformProvider";
 import { Zen } from "./Zen";
 import { BrowserRequests } from "../browser/BrowserControl";
-import { ConnectPlace } from "../fleet/ConnectPlace";
-import { FleetDialog } from "../fleet/FleetDialog";
+import { ChatPanels } from "./ChatPanels";
+import { ActionMessage } from "./ActionMessage";
+import { conversationActionSchema, conversationActionText } from "@humansandmachines/gsv/protocol";
 import { ZenText } from "./ZenText";
 import { ThinkingMark } from "./ThinkingMark";
 import { ApprovalCard } from "../shared/ApprovalCard";
@@ -39,7 +40,7 @@ let processRecords: ProcHistoryRecord[];
 const signals = new Set<Parameters<GSVClient["onSignal"]>[0]>();
 const statuses = new Set<Parameters<GSVClient["onStatus"]>[0]>();
 const send = vi.fn<(args: ConversationSendArgs) => Promise<ConversationSendResult>>();
-const sendArgs = z.object({ conversationId: z.string(), text: z.string(), selectedTarget: z.string().optional(), idempotencyKey: z.string() });
+const sendArgs = z.object({ conversationId: z.string(), text: z.string(), action: z.optional(conversationActionSchema), selectedTarget: z.string().optional(), idempotencyKey: z.string() });
 
 function conversation(pid = shipPid): ConversationSummary {
   return { id: "canonical-ship", kind: "ship", ownerUid, title: null, handlerPid: pid,
@@ -139,6 +140,36 @@ async function mountedZen(pid?: string, initialTarget?: string, native = false, 
 }
 
 describe("Zen conversation entry", () => {
+  it("stages an action without sending, treats dollar text as a note, and preserves it through commit signals", async () => {
+    const zen = await mountedZen();
+    try {
+      const setValue = vi.fn();
+      zen.props(BrowserVoiceControls).prompt.current = {
+        focus: vi.fn(), setValue,
+        selection: () => ({ value: "", start: 0, end: 0 }),
+      };
+      const action = { kind: "routine.create" as const, note: "$30 is my daily budget" };
+      const text = conversationActionText(action);
+      const committed = { ...message("user", text), action };
+      send.mockResolvedValueOnce({ message: committed, handlerPid: shipPid, runId: "run:action" });
+      const option = zen.nodes().find((node) => node.type === "button" && node.props.role === "menuitem" && collectText(node).includes("create a routine"))!;
+      await act(() => option.props.onClick!());
+      expect(send).not.toHaveBeenCalled();
+      expect(zen.props(PromptLine).commands).toBe(false);
+      expect(zen.props(PromptLine).allowEmpty).toBe(true);
+      await act(() => { zen.props(PromptLine).onSubmit(action.note); });
+      await vi.waitFor(() => expect(send).toHaveBeenCalledWith(expect.objectContaining({ text, action })));
+      await act(() => { for (const listener of signals) listener("message.committed", { message: committed, directed: true }); });
+      expect(zen.props(ActionMessage).action).toEqual(action);
+      expect(zen.props(PromptLine).commands).toBe(true);
+      await act(() => zen.props(PromptLine).onHistory?.(-1));
+      expect(setValue).not.toHaveBeenCalled();
+      messages = [committed];
+      await zen.refreshHistory();
+      expect(zen.props(ActionMessage).action).toEqual(action);
+    } finally { await zen.unmount(); }
+  });
+
   it.each([false, true])("selects browser recording or native dictation for the active platform: native=%s", async (native) => {
     const zen = await mountedZen("helper", undefined, native);
     try {
@@ -304,20 +335,19 @@ describe("Zen conversation entry", () => {
       const connect = () => zen.nodes().find((node) => node.type === "button" && node.props.class === "zen-connect-place")!;
       expect(cloud().props.class).toBe("zen-place is-alone");
       expect(connect()).toBeDefined();
-      expect(zen.props(FleetDialog).open).toBe(false);
+      expect(zen.props(ChatPanels).context).toBeNull();
 
       await act(() => { connect().props.onClick!(); });
-      expect(zen.props(FleetDialog).open).toBe(true);
-      expect(zen.props(FleetDialog).title).toBe("Connect a place");
-      expect(zen.props(ConnectPlace).targets).toEqual([]);
+      expect(zen.props(ChatPanels).context).toEqual({ kind: "connect" });
+      expect(zen.props(ChatPanels).targets).toEqual([]);
 
-      await act(() => { zen.props(ConnectPlace).onClose(); });
-      expect(zen.props(FleetDialog).open).toBe(false);
+      await act(() => { zen.props(ChatPanels).onClose(); });
+      expect(zen.props(ChatPanels).context).toBeNull();
       expect(zen.props(PromptLine).place.id).toBe("gsv");
 
       await act(() => { connect().props.onClick!(); });
-      await act(() => { zen.props(ConnectPlace).onConnected("laptop"); });
-      expect(zen.props(FleetDialog).open).toBe(false);
+      await act(() => { zen.props(ChatPanels).onConnected("laptop"); });
+      expect(zen.props(ChatPanels).context).toBeNull();
       expect(zen.props(PromptLine).place.id).toBe("laptop");
       expect(zen.onFleet).not.toHaveBeenCalled();
     } finally { await zen.unmount(); }
@@ -332,7 +362,7 @@ describe("Zen conversation entry", () => {
         && node.props["aria-label"] === "Use your cloud for the next message or command")!;
       expect(cloud.props.class).toBe("zen-place is-selected");
       expect(zen.nodes().some((node) => node.props.class === "zen-connect-place")).toBe(false);
-      expect(zen.props(FleetDialog).open).toBe(false);
+      expect(zen.props(ChatPanels).context).toBeNull();
     } finally { await zen.unmount(); }
   });
 

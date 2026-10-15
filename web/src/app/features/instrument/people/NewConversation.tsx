@@ -17,7 +17,7 @@ export function NewConversation({ account, draft, onChange, onSent, onBusy, cont
   onBusy: (busy: boolean) => void;
   contacts: ContactSummary[];
   onOpen: (contactId: string) => void;
-  onInvitation: () => void;
+  onInvitation?: () => void;
 }) {
   const { client, connected } = useGateway();
   const active = useViewActive();
@@ -92,6 +92,6 @@ export function NewConversation({ account, draft, onChange, onSent, onBusy, cont
     {account && !canConfigure(account, "approach.create") && <p class="people-note">This account can review profiles but cannot send message requests.</p>}
     {error && <p class="people-error" role="alert">{error.message}</p>}
     {!connected && <p class="people-note" role="status">Reconnecting… Your draft is kept here.</p>}
-    <div class="people-compose-footer"><button class="people-action" disabled={busy} onClick={onInvitation}>use a private invitation</button></div>
+    {onInvitation && <div class="people-compose-footer"><button class="people-action" disabled={busy} onClick={onInvitation}>use a private invitation</button></div>}
   </section>;
 }

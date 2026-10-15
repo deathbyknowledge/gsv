@@ -1,16 +1,19 @@
 import { useLedger } from "../wire/useLedger";
 import { FileReader } from "./FileReader";
+import { FilePreview } from "../shared/FilePreview";
+import { PlaceTree, type OpenFile } from "../shared/PlaceFiles";
 import { FleetDialog } from "./FleetDialog";
-import { assignedTo, ResponsibilitiesSection, ResponsibilityInspector, RoutineInspector, RoutinesSection, StandingResponsibilities, useFleetWork } from "./Work";
-import { RoutineEditor } from "./RoutineEditor";
+import { assignedTo, useResponsibilities } from "../shared/Responsibilities";
 import { useDraftGuard } from "../shared/useDraftGuard";
+import type { ConversationAction } from "@humansandmachines/gsv/protocol";
+import type { ActivityRequest } from "../zen/chatContextModel";
 import type { GSVClient } from "@humansandmachines/gsv/client";
 import { ConnectPlace } from "./ConnectPlace";
 import { LoadingState } from "../../../components/ui/Spinner";
 import { useMutation, useQueryClient } from "@tanstack/preact-query";
 import { useQuery } from "../../../services/navigation/viewQueries";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "preact/hooks";
-import { useViewActive } from "../../../services/navigation/ViewActivity";
+import { RetainedView, useViewActive } from "../../../services/navigation/ViewActivity";
 import { useGateway } from "../../../services/gateway/GatewayProvider";
 import {
   loadConsoleAccounts,
@@ -19,7 +22,6 @@ import {
   runConsoleProcessAction,
 } from "../../../services/system/consoleService";
 import type { ConsoleProcess } from "../../../domain/system/consoleModels";
-import { readFilesPath } from "../../../services/files/backend/filesService";
 import type { FleetRow } from "../Instrument";
 import { INSTRUMENT_LEDGER_KEY, INSTRUMENT_PROCESSES_KEY, INSTRUMENT_TARGETS_KEY } from "../wire/queryKeys";
 import {
@@ -33,7 +35,6 @@ import {
   processRow,
   processStateLabel,
   processStateTone,
-  recentlyTouched,
   relativeTime,
   runsTodayByPlace,
   targetRow,
@@ -44,7 +45,6 @@ import {
   fleetReferenceRow,
   isApprovalReference,
   isConnectReference,
-  isSectionReference,
   type FleetReference,
 } from "./fleetModel";
 import { PlaceActions } from "./PlaceActions";
@@ -61,11 +61,11 @@ export type FleetProps = {
   /** The row to land on, when Zen sent us here from a reference. */
   openRequest: { reference: FleetReference } | null;
   /** Back to Zen, optionally with text placed in the prompt (a file reference, for instance) and a process to open instead of the ship. */
-  onZen: (prefill?: string, pid?: string) => void;
+  onZen: (prefill?: string, pid?: string, action?: ConversationAction) => void;
+  onActivity: (request: ActivityRequest) => void;
 };
 
 const PROCESS_PAGE = 8;
-type OpenFile = { target: string; path: string; name: string };
 
 function useNow(active: boolean): number {
   const [now, setNow] = useState(() => Date.now());
@@ -79,23 +79,21 @@ function useNow(active: boolean): number {
 }
 
 /** The Fleet distance: places, processes, the ledger, and files, with an inspector for the selected row. */
-const ROW_PREFIXES = ["target:", "proc:", "work:", "routine:", "more:", "dir:", "file:"];
+const ROW_PREFIXES = ["target:", "proc:", "more:", "dir:", "file:"];
 function isFleetRow(value: string | undefined): value is FleetRow {
   return value !== undefined && ROW_PREFIXES.some((prefix) => value.startsWith(prefix));
 }
 
-export function Fleet({ openRequest, onZen, onCommand, onDirtyChange }: FleetProps) {
+export function Fleet({ openRequest, onZen, onCommand, onDirtyChange, onActivity }: FleetProps) {
   useCloudInstances();
   const active = useViewActive();
   const [fileDirty, setFileDirty] = useState(false);
-  const [workDirty, setWorkDirty] = useState(false);
-  useDraftGuard(fileDirty || workDirty, onDirtyChange);
+  useDraftGuard(fileDirty, onDirtyChange);
   const { client, connected } = useGateway();
   const now = useNow(active);
   const initialReference = openRequest?.reference ?? null;
   const initialRow = fleetReferenceRow(initialReference);
   const initialConnect = isConnectReference(initialReference) ? initialReference.to : null;
-  const initialSection = isSectionReference(initialReference) ? initialReference.section : null;
   const approvalReference = isApprovalReference(initialReference) ? initialReference : null;
 
   const targetsQuery = useQuery({
@@ -118,8 +116,7 @@ export function Fleet({ openRequest, onZen, onCommand, onDirtyChange }: FleetPro
     enabled: connected,
   });
   const viewer = accountsQuery.data?.find((account) => account.relation === "self");
-  const work = useFleetWork(viewer);
-  const [workPanel, setWorkPanel] = useState<"new" | "sources" | null>(null);
+  const work = useResponsibilities(viewer, false);
 
   const places = useMemo(() => orderPlaces(targetsQuery.data ?? []), [targetsQuery.data]);
   const processes = useMemo(() => orderProcesses(processesQuery.data ?? []), [processesQuery.data]);
@@ -142,9 +139,9 @@ export function Fleet({ openRequest, onZen, onCommand, onDirtyChange }: FleetPro
   const [connecting, setConnecting] = useState<"place" | null>(initialConnect);
   useLayoutEffect(() => {
     setSelected(initialRow);
+    setFilesPlace(null);
     setOpenFile(null);
     setExpandedFile(null);
-    setWorkPanel(null);
     setCreatingProcess(false);
     setConnecting(initialConnect);
     setInspectorOpen(Boolean(initialRow || initialConnect));
@@ -178,30 +175,24 @@ export function Fleet({ openRequest, onZen, onCommand, onDirtyChange }: FleetPro
     if (shownProcesses.length > processLimit) setProcessLimit(shownProcesses.length);
   }, [shownProcesses.length, processLimit]);
   const [openFile, setOpenFile] = useState<OpenFile | null>(null);
+  const [filesPlace, setFilesPlace] = useState<Place | null>(null);
   const [expandedFile, setExpandedFile] = useState<OpenFile | null>(null);
   const savedScroll = useRef(0);
   const selectRow = useCallback((row: FleetRow) => {
-    if (row !== selected && workDirty && !window.confirm("Discard this unsaved routine?")) return;
-    setWorkPanel(null);
     setSelected(row);
+    setFilesPlace(null);
     setOpenFile(null);
     setCreatingProcess(false);
     setConnecting(null);
     setInspectorOpen(true);
-  }, [workDirty, selected]);
+  }, []);
   const selectFile = useCallback((file: OpenFile) => {
-    if (workDirty && !window.confirm("Discard this unsaved routine?")) return;
-    setWorkPanel(null);
     setSelected(`file:${file.target}:${file.path}`);
     setOpenFile(file);
     setCreatingProcess(false);
     setConnecting(null);
     setInspectorOpen(true);
-  }, [workDirty]);
-  const processNameFor = (pid: string): string => {
-    const found = processes.find((process) => process.pid === pid);
-    return found ? (found.personal ? "ship" : found.label) : shortPid(pid);
-  };
+  }, []);
   const cmdPlace = selectedPlace ?? places.find((place) => place.id === CLOUD_TARGET_ID) ?? null;
 
   const openCmd = useCallback(() => onCommand(cmdPlace?.id ?? CLOUD_TARGET_ID), [onCommand, cmdPlace?.id]);
@@ -211,19 +202,6 @@ export function Fleet({ openRequest, onZen, onCommand, onDirtyChange }: FleetPro
   // Full log rows now live in Settings; navigation follows the remaining manifest rows.
   const manifestRef = useRef<HTMLDivElement>(null);
   const focusedRow = useRef<FleetRow | null>(initialRow);
-  useLayoutEffect(() => {
-    if (initialSection !== "responsibilities") return;
-    work.setHistory(false);
-    work.setFilterPid(null);
-    focusedRow.current = null;
-    const frame = requestAnimationFrame(() => {
-      const manifest = manifestRef.current;
-      if (!manifest) return;
-      manifest.scrollTop = 0;
-      manifest.querySelector<HTMLElement>("#fleet-responsibilities")?.focus({ preventScroll: true });
-    });
-    return () => cancelAnimationFrame(frame);
-  }, [openRequest, initialSection, work.setHistory, work.setFilterPid]);
   useEffect(() => {
     if (!active || !inspectorOpen || !selected) return;
     const row = Array.from(manifestRef.current?.querySelectorAll<HTMLElement>("[data-row]") ?? []).find((entry) => entry.dataset.row === selected);
@@ -271,12 +249,11 @@ export function Fleet({ openRequest, onZen, onCommand, onDirtyChange }: FleetPro
   }, [active, inspectorOpen, expandedFile, places, onCommand]);
 
   const connect = (to: "place") => {
-    if (workDirty && !window.confirm("Discard this unsaved routine?")) return;
-    setWorkPanel(null);
     setSelected(null);
     setOpenFile(null);
     setCreatingProcess(false);
     setConnecting(to);
+    setFilesPlace(null);
     setInspectorOpen(true);
   };
   const selectConnected = (row: FleetRow) => {
@@ -287,17 +264,6 @@ export function Fleet({ openRequest, onZen, onCommand, onDirtyChange }: FleetPro
 
   const responsibilityCount = (pid: string) =>
     work.open.filter((record) => assignedTo(record, processes.find((process) => process.pid === pid) ?? { pid, personal: false })).length;
-  const selectedWork = work.records.find((record) => selected === `work:${record.id}`);
-  const selectedRoutine = work.schedules.find((schedule) => selected === `routine:${schedule.id}`);
-  const openWorkPanel = (panel: "new" | "sources") => {
-    if (panel !== workPanel && workDirty && !window.confirm("Discard this unsaved routine?")) return;
-    setWorkPanel(panel); setSelected(null); setOpenFile(null); setCreatingProcess(false); setConnecting(null);
-    setInspectorOpen(true);
-  };
-  const filterWork = (pid: string) => {
-    work.setHistory(false); work.setFilterPid(pid);
-    requestAnimationFrame(() => document.getElementById("fleet-responsibilities")?.scrollIntoView({ block: "start" }));
-  };
   const costFor = (pid: string) => costToday.get(pid) ?? null;
   const modelFor = (pid: string) => modelByPid.get(pid) ?? null;
   const closeInspector = () => {
@@ -310,11 +276,9 @@ export function Fleet({ openRequest, onZen, onCommand, onDirtyChange }: FleetPro
       row?.focus({ preventScroll: true });
     });
   };
-  const inspectorTitle = workPanel === "new" ? "New routine" : workPanel === "sources" ? "Standing responsibilities"
-    : connecting === "place" ? "Connect a place"
-      : creatingProcess ? "New process" : openFile ? "File" : selected?.startsWith("work:") ? "Responsibility"
-        : selected?.startsWith("routine:") ? "Routine"
-          : selected?.startsWith("proc:") ? "Process" : "Place";
+  const inspectorTitle = connecting === "place" ? "Connect a place"
+    : creatingProcess ? "New process" : openFile ? "File" : filesPlace ? `${filesPlace.label} files`
+      : selected?.startsWith("proc:") ? "Process" : "Place";
 
   return (
     <main class="fleet" aria-label="Fleet">
@@ -333,7 +297,6 @@ export function Fleet({ openRequest, onZen, onCommand, onDirtyChange }: FleetPro
           const row = event.target.closest<HTMLElement>("[data-row]");
           if (row && !event.target.closest("button, a[href]")) row.focus({ preventScroll: true });
         }}>
-          <ResponsibilitiesSection work={work} account={viewer} processes={processes} onSelect={selectRow} onSources={() => openWorkPanel("sources")} now={now} />
 
           <section class="fleet-block">
             <h2>
@@ -344,7 +307,7 @@ export function Fleet({ openRequest, onZen, onCommand, onDirtyChange }: FleetPro
             </h2>
             {targetsQuery.error ? <p class="error">Could not list places: {String(targetsQuery.error)}</p> : null}
             <div class="tablewrap">
-            <table>
+            <table class="fleet-places-table">
               <thead>
                 <tr>
                   <th>Place</th>
@@ -381,8 +344,6 @@ export function Fleet({ openRequest, onZen, onCommand, onDirtyChange }: FleetPro
             <h2>
               <i /> Processes
               {viewer && canConfigure(viewer, "proc.spawn") ? <button type="button" class="fleet-heading-action" disabled={!connected} onClick={() => {
-                if (workDirty && !window.confirm("Discard this unsaved routine?")) return;
-                setWorkPanel(null);
                 setSelected(null);
                 setOpenFile(null);
                 setConnecting(null);
@@ -393,7 +354,7 @@ export function Fleet({ openRequest, onZen, onCommand, onDirtyChange }: FleetPro
             </h2>
             {processesQuery.error ? <p class="error">Could not list processes: {String(processesQuery.error)}</p> : null}
             <div class="tablewrap">
-            <table>
+            <table class="fleet-processes-table">
               <thead>
                 <tr>
                   <th>Process</th>
@@ -414,7 +375,7 @@ export function Fleet({ openRequest, onZen, onCommand, onDirtyChange }: FleetPro
                   >
                     <td class="name">{process.personal ? "ship" : process.label}</td>
                     <td class="id" title={process.pid}>{shortPid(process.pid)}</td>
-                    <td class="dim"><button type="button" class="fleet-count-action" aria-label={`Responsibilities for ${process.personal ? "ship" : process.label}`} onClick={(event) => { event.stopPropagation(); filterWork(process.pid); }}>{work.current.isPending || work.current.isError ? "-" : `${responsibilityCount(process.pid)}${work.current.hasNextPage ? "+" : ""}`}</button></td>
+                    <td class="dim"><button type="button" class="fleet-count-action" aria-label={`Responsibilities for ${process.personal ? "ship" : process.label}`} onClick={(event) => { event.stopPropagation(); onActivity({ processId: process.pid }); }}>{work.current.isPending || work.current.isError ? "-" : `${responsibilityCount(process.pid)}${work.current.hasNextPage ? "+" : ""}`}<span class="fleet-mobile-label"> {responsibilityCount(process.pid) === 1 && !work.current.hasNextPage ? "responsibility" : "responsibilities"}</span></button></td>
                     <td>
                       <span class={`dot is-${processStateTone(process.state)}`} />
                       {processStateLabel(process.state)}
@@ -443,48 +404,24 @@ export function Fleet({ openRequest, onZen, onCommand, onDirtyChange }: FleetPro
             </div>
           </section>
 
-          <RoutinesSection work={work} account={viewer} onSelect={selectRow} onCreate={() => openWorkPanel("new")} now={now} />
-
-          <section class="fleet-block">
-            <h2>
-              <i /> Files <span class="count">across places</span>
-            </h2>
-            <div class="fleet-tree">
-              {recentlyTouched(shownLedger, 6).length > 0 ? (
-                <ul class="touched">
-                  {recentlyTouched(shownLedger, 6).map((line) => (
-                    <li key={line.id}>
-                      <span class="place">{placeLabel(line.place)}</span> {line.detail}{" "}
-                      <span class="m">· {relativeTime(line.timestamp, now)}</span>
-                    </li>
-                  ))}
-                </ul>
-              ) : null}
-              {places.map((place) => (
-                <PlaceTree key={place.id} place={place} enabled={connected && place.online} onOpenFile={selectFile} />
-              ))}
-            </div>
-          </section>
         </div>
 
         <FleetDialog open={active && inspectorOpen && !expandedFile} title={inspectorTitle} onClose={closeInspector}>
-          {workPanel === "new" ? (
-            <RoutineEditor onDirty={setWorkDirty} onCancel={() => { setWorkPanel(null); closeInspector(); }} onSaved={(id) => { setWorkPanel(null); setSelected(`routine:${id}`); }} />
-          ) : workPanel === "sources" ? (
-            <StandingResponsibilities account={viewer} />
-          ) : selectedWork && !openFile ? (
-            <ResponsibilityInspector key={selectedWork.id} record={selectedWork} account={viewer} processName={processNameFor} onProcess={(pid) => pid ? selectRow(processRow(pid)) : onZen()} />
-          ) : selectedRoutine && !openFile ? (
-            <RoutineInspector key={selectedRoutine.id} schedule={selectedRoutine} account={viewer} onDirty={setWorkDirty} onSelect={(id) => setSelected(`routine:${id}`)} />
-          ) : connecting === "place" ? (
+          {connecting === "place" ? (
             <ConnectPlace account={viewer} targets={targetsQuery.data ?? []} ready={!!targetsQuery.data && !targetsQuery.isError} onClose={closeInspector} onConnected={(id) => selectConnected(targetRow(id))} />
           ) : creatingProcess ? (
             <NewProcess onCreated={(pid) => onZen(undefined, pid)} onCancel={() => { setCreatingProcess(false); closeInspector(); }} />
-          ) : openFile ? (
-            <FileInspector file={openFile} placeLabel={placeLabel(openFile.target)} onClose={closeInspector} onZen={onZen} onExpand={() => {
+          ) : filesPlace || openFile ? (
+            <>
+              {filesPlace && <RetainedView active={active && inspectorOpen && !expandedFile && !openFile}>
+                <button type="button" class="fleet-text-action chat-context-back" onClick={() => setFilesPlace(null)}>← {filesPlace.label}</button>
+                <div class="fleet-tree"><PlaceTree key={filesPlace.id} place={filesPlace} enabled={connected && filesPlace.online} onOpenFile={selectFile} initiallyOpen /></div>
+              </RetainedView>}
+              {openFile && <FilePreview file={openFile} placeLabel={placeLabel(openFile.target)} onClose={() => { if (filesPlace) setOpenFile(null); else closeInspector(); }} onAsk={(action) => onZen(undefined, undefined, action)} onExpand={() => {
               savedScroll.current = manifestRef.current?.scrollTop ?? 0;
               setExpandedFile(openFile);
-            }} />
+            }} />}
+            </>
           ) : selectedPlace ? (
             <PlaceInspector
               key={selectedPlace.id}
@@ -494,16 +431,7 @@ export function Fleet({ openRequest, onZen, onCommand, onDirtyChange }: FleetPro
               runsToday={runsToday.get(selectedPlace.id) ?? 0}
               now={now}
               onRun={openCmd}
-              onBrowse={() => {
-                closeInspector();
-                requestAnimationFrame(() => {
-                  if (manifestRef.current?.closest("[hidden]")) return;
-                  const rowKey = `dir:${selectedPlace.id}:${selectedPlace.id === CLOUD_TARGET_ID ? "~" : "."}`;
-                  const row = Array.from(manifestRef.current?.querySelectorAll<HTMLElement>("[data-row]") ?? []).find((entry) => entry.dataset.row === rowKey);
-                  row?.focus({ preventScroll: true });
-                  row?.scrollIntoView({ block: "nearest" });
-                });
-              }}
+              onBrowse={() => setFilesPlace(selectedPlace)}
               onZen={onZen}
             />
           ) : selectedProcess ? (
@@ -541,166 +469,6 @@ export function Fleet({ openRequest, onZen, onCommand, onDirtyChange }: FleetPro
 
 
     </main>
-  );
-}
-
-type OpenFileHandler = (file: OpenFile) => void;
-
-function readArgsFor(target: string, path: string) {
-  return { target: target === CLOUD_TARGET_ID ? null : target, path };
-}
-
-/** One directory level, read when opened; directories open in place, files open in the inspector. */
-function DirNode({
-  place,
-  path,
-  name,
-  depth,
-  enabled,
-  onOpenFile,
-}: {
-  place: Place;
-  path: string;
-  name: string;
-  depth: number;
-  enabled: boolean;
-  onOpenFile: OpenFileHandler;
-}) {
-  const rowKey: FleetRow = `dir:${place.id}:${path}`;
-  const { client } = useGateway();
-  const [open, setOpen] = useState(false);
-  const listing = useQuery({
-    queryKey: ["fleet", "files", place.id, path],
-    queryFn: () => readFilesPath(client, readArgsFor(place.id, path)),
-    enabled: enabled && open,
-  });
-  const entries = listing.data && listing.data.ok && "entries" in listing.data ? listing.data.entries : [];
-  const error = listing.data && !listing.data.ok ? listing.data.error : listing.error ? String(listing.error) : null;
-  const toggle = () => setOpen(!open);
-  return (
-    <div class={depth === 0 ? "" : "dir"}>
-      <div
-        class={`place-head${open ? " is-open" : ""}`}
-        role="button"
-        tabIndex={0}
-        aria-expanded={open}
-        data-row={rowKey}
-        onClick={toggle}
-        onKeyDown={(event) => {
-          if (event.key === "Enter" || event.key === " ") {
-            event.preventDefault();
-            if (!event.repeat) toggle();
-          }
-        }}
-      >
-        <span class="tri">{open ? "▾" : "▸"}</span>
-        {depth === 0 ? place.label : `${name}/`}
-        {depth === 0 ? <span class="m">{enabled ? "~" : "offline"}</span> : null}
-      </div>
-      {open ? (
-        <ul>
-          {listing.isPending ? <li class="m">{enabled ? <LoadingState>reading…</LoadingState> : "offline"}</li> : null}
-          {error ? <li class="m">{error}</li> : null}
-          {entries.slice(0, 60).map((entry) =>
-            entry.kind === "directory" ? (
-              <li key={entry.path}>
-                <DirNode place={place} path={entry.path} name={entry.name} depth={depth + 1} enabled={enabled} onOpenFile={onOpenFile} />
-              </li>
-            ) : (
-              <li key={entry.path} class="f">
-                <button
-                  type="button"
-                  class="file"
-                  data-row={`file:${place.id}:${entry.path}`}
-                  onClick={() => {
-                    onOpenFile({ target: place.id, path: entry.path, name: entry.name });
-                  }}
-                >
-                  {entry.name}
-                </button>
-              </li>
-            ),
-          )}
-          {entries.length > 60 ? <li class="m">… {entries.length - 60} more</li> : null}
-          {!listing.isPending && !error && entries.length === 0 ? <li class="m">empty</li> : null}
-        </ul>
-      ) : null}
-    </div>
-  );
-}
-
-function PlaceTree({ place, enabled, onOpenFile }: { place: Place; enabled: boolean; onOpenFile: OpenFileHandler }) {
-  // the cloud home understands "~"; a machine reads relative to the daemon's home, so "." is the same place there
-  return <DirNode place={place} path={place.id === CLOUD_TARGET_ID ? "~" : "."} name={place.label} depth={0} enabled={enabled} onOpenFile={onOpenFile} />;
-}
-
-const PREVIEW_LINES = 40;
-
-/** A file in the inspector: a bounded preview, and the two things a person does with it here. */
-function FileInspector({
-  file,
-  onExpand,
-  placeLabel: label,
-  onClose,
-  onZen,
-}: {
-  file: OpenFile;
-  onExpand: () => void;
-  placeLabel: string;
-  onClose: () => void;
-  onZen: (prefill?: string) => void;
-}) {
-  const { client } = useGateway();
-  const read = useQuery({
-    queryKey: ["fleet", "file", file.target, file.path],
-    queryFn: () => readFilesPath(client, { ...readArgsFor(file.target, file.path), limit: PREVIEW_LINES }),
-  });
-  const payload = read.data;
-  const linkedEntries = payload && payload.ok && "entries" in payload ? payload.entries : null;
-  const content = payload && payload.ok && "content" in payload ? payload.content : null;
-  const text = content !== null && !Array.isArray(content) ? content : null;
-  const image = Array.isArray(content) ? content.find((item) => item.type === "image") : null;
-  const error = payload && !payload.ok ? payload.error : read.error ? String(read.error) : null;
-  const reference = `@${file.target === CLOUD_TARGET_ID ? "gsv" : file.target} ${file.path}`;
-  return (
-    <div>
-      <h3>{file.name}</h3>
-      <div class="sub">
-        {label} · {file.path}
-      </div>
-      <dl class="fleet-kv">
-        <dt>Size</dt>
-        <dd>{payload && payload.ok && "size" in payload && payload.size !== null ? `${payload.size.toLocaleString()} bytes` : "—"}</dd>
-        <dt>Lines</dt>
-        <dd>{payload && payload.ok && "lines" in payload && payload.lines !== null ? payload.lines : "—"}</dd>
-      </dl>
-      <div class="file-preview">
-        {read.isPending ? <p class="note"><LoadingState>reading…</LoadingState></p> : null}
-        {error ? <p class="error">{error}</p> : null}
-        {linkedEntries ? (
-          <>
-            {/* TODO: remove once fix/symlink-dirs is in a released daemon; machines then report linked folders as folders */}
-            <p class="note">This is a folder reached through a link; the place reported it as a file. What it holds:</p>
-            <pre>{linkedEntries.map((entry) => `${entry.name}${entry.kind === "directory" ? "/" : ""}`).join("\n")}</pre>
-          </>
-        ) : null}
-        {text !== null ? <pre>{text}</pre> : null}
-        {image && image.type === "image" ? <img src={`data:${image.mimeType};base64,${image.data}`} alt={file.name} /> : null}
-      </div>
-      <div class="fleet-actions">
-        <button type="button" class="fleet-text-action" onClick={onExpand}>expand</button>
-        <button type="button" class="fleet-text-action is-primary" onClick={() => onZen(`${reference} `)}>
-          talk about it
-        </button>
-        <button type="button" class="fleet-text-action" onClick={() => void navigator.clipboard?.writeText(file.path)}>
-          copy path
-        </button>
-        <button type="button" class="fleet-text-action" onClick={onClose}>
-          close
-        </button>
-      </div>
-      <p class="note">Talking about it puts a reference to this file in the prompt; the ship reads it from {label} when it needs to, without copying it.</p>
-    </div>
   );
 }
 
@@ -769,7 +537,7 @@ type ProcessInspectorProps = {
   responsibilities: number;
   canEditAi: boolean;
   now: number;
-  onZen: (prefill?: string, pid?: string) => void;
+  onZen: (prefill?: string, pid?: string, action?: ConversationAction) => void;
   lines: LedgerLine[];
   placeLabelFor: (placeId: string) => string;
 };

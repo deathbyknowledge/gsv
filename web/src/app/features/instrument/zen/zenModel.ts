@@ -102,6 +102,7 @@ export type Moment = {
   event?: ChatTranscriptRow["event"];
   text: string;
   media?: ChatTranscriptRow["media"];
+  action?: ChatTranscriptRow["action"];
   streaming: boolean;
   thinking: boolean;
   runId: string | null;
@@ -780,6 +781,7 @@ export function momentsFromConversation(
       role: row.role === "user" ? "human" : "ship",
       text: row.text,
       media: row.media,
+      action: row.action,
       streaming: row.streaming === true,
       thinking: false,
       runId: row.runId ?? null,

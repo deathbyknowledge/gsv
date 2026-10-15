@@ -15,8 +15,8 @@ Write down:
 If you cannot state the app's job clearly, stop and design first.
 
 Examples:
-- `Chat` owns conversation, messages, run activity, approvals and direct shell commands
-- `Fleet` owns places, processes, responsibilities, routines and files
+- `Chat` owns conversation, messages, run activity, approvals, direct shell commands and contextual responsibility/routine panels
+- `Fleet` owns places and processes, with files opened from a place
 - `People` owns contact conversations, message requests, the private address book and your public profile
 - `Memory` owns reading, finding, creating and correcting pages
 - `Settings` owns model preferences, instructions, permissions, connections, timezone and the full ledger
@@ -91,10 +91,12 @@ Do not casually merge responsibilities because the data is nearby. If a concern 
 
 Examples:
 - a place inspector can open its files or a command in Chat
-- Settings manages preferences and connections; Fleet inspects live work
+- Settings manages preferences and connections; Fleet inspects environments and processes
 - a process inspector can open its visibly labelled conversation in Chat
 
 A GSV app surface should have a clear center of gravity.
+
+Chat’s `+` menu attaches files and stages requests to Ship. Creation requests use the ordinary composer; selecting one never sends it. A structured request may show an object-specific message, but its readable text must remain inspectable and reach Ship unchanged. Responsibilities and routines open in contextual panels within Chat, without adding another top-level destination.
 
 ## Use The Shared Instrument Shell
 

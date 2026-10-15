@@ -130,7 +130,9 @@
     {
       "id": "instrument-fleet",
       "paths": [
-        "web/src/app/features/instrument/fleet/**"
+        "web/src/app/features/instrument/fleet/**",
+        "web/src/app/features/instrument/shared/PlaceFiles.tsx",
+        "web/src/app/features/instrument/shared/FilePreview.tsx"
       ],
       "docs": [
         "docs/how-to/contact-people.md",
@@ -181,7 +183,10 @@
     {
       "id": "instrument-zen",
       "paths": [
-        "web/src/app/features/instrument/zen/**"
+        "web/src/app/features/instrument/zen/**",
+        "web/src/app/features/instrument/shared/Responsibilities.tsx",
+        "web/src/app/features/instrument/shared/responsibilityModel.ts",
+        "packages/gsv/src/protocol/conversation-action.ts"
       ],
       "docs": [
         "docs/how-to/voice-input.md",

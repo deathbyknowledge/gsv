@@ -4,17 +4,17 @@
 .people-list-heading { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 16px; padding: 28px 24px 20px; }
 .people-list-heading h1 { margin: 0; color: var(--text-title); font: 500 25px/1.2 var(--gsv-font-prose); letter-spacing: -.02em; }
 .people-list-heading-actions { display: flex; align-items: center; gap: 18px; }
-.people .people-action { min-height: 36px; padding: 5px 0; color: var(--text-dim); font: 11px/1.5 var(--gsv-font-mono); text-align: left; }
-.people .people-action:hover { color: var(--accent); text-decoration: underline; text-underline-offset: 4px; }
-.people .people-action.is-danger { color: var(--error); }
-.people button:disabled { opacity: .45; cursor: default; }
+:is(.people, .chat-person) .people-action { min-height: 36px; padding: 5px 0; color: var(--text-dim); font: 11px/1.5 var(--gsv-font-mono); text-align: left; }
+:is(.people, .chat-person) .people-action:hover { color: var(--accent); text-decoration: underline; text-underline-offset: 4px; }
+:is(.people, .chat-person) .people-action.is-danger { color: var(--error); }
+:is(.people, .chat-person) button:disabled { opacity: .45; cursor: default; }
 .people .people-list-back { align-self: flex-start; margin: -8px 24px 12px; }
 .people .people-request-entry { display: flex; align-items: center; gap: 12px; margin: 0 24px 6px; padding: 12px 0; min-height: 44px; border-bottom: 1px solid var(--border); color: var(--text-dim); text-align: left; font-size: 12px; }
 .people-request-entry:hover { color: var(--accent); }
 .people-request-count { color: var(--accent); }
 .people-list-tools { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 24px 18px; }
-.people input:not([type="checkbox"], [type="radio"]), .people textarea, .people select { min-width: 0; width: 100%; box-sizing: border-box; border: 1px solid var(--border); background: var(--panel-2); padding: 10px 12px; color: var(--text); font: 16px/1.55 var(--gsv-font-prose); }
-.people input:focus-visible, .people textarea:focus-visible, .people select:focus-visible { outline: 1px solid var(--accent); outline-offset: 2px; }
+:is(.people, .chat-person) input:not([type="checkbox"], [type="radio"]), :is(.people, .chat-person) textarea, :is(.people, .chat-person) select { min-width: 0; width: 100%; box-sizing: border-box; border: 1px solid var(--border); background: var(--panel-2); padding: 10px 12px; color: var(--text); font: 16px/1.55 var(--gsv-font-prose); }
+:is(.people, .chat-person) input:focus-visible, :is(.people, .chat-person) textarea:focus-visible, :is(.people, .chat-person) select:focus-visible { outline: 1px solid var(--accent); outline-offset: 2px; }
 .people input.people-filter { border: 0; background: transparent; padding: 4px 0; font-size: 15px; }
 .people-rows { list-style: none; padding: 0; margin: 0; }
 .people .people-row { width: 100%; min-height: 88px; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-content: center; column-gap: 12px; row-gap: 6px; padding: 20px 24px; text-align: left; border-left: 2px solid transparent; }
@@ -88,7 +88,7 @@
 .people-handling-choice:disabled { opacity: .5; }
 .people-form textarea { resize: vertical; min-height: 140px; max-height: 50vh; }
 .people-recipient-list { list-style: none; margin: 0; padding: 0; max-height: 280px; overflow-y: auto; }
-.people .people-recipient { display: flex; flex-direction: column; gap: 6px; width: 100%; min-height: 64px; padding: 12px 0; text-align: left; color: var(--text); font: 16px/1.5 var(--gsv-font-prose); }
+:is(.people, .chat-person) .people-recipient { display: flex; flex-direction: column; gap: 6px; width: 100%; min-height: 64px; padding: 12px 0; text-align: left; color: var(--text); font: 16px/1.5 var(--gsv-font-prose); }
 .people-recipient:hover, .people-recipient:focus-visible { color: var(--accent); }
 .people-recipient small { color: var(--text-dim); font: 11px/1.5 var(--gsv-font-mono); }
 .people-profile-preview { border-block: 1px solid var(--border); padding-block: 22px; }
@@ -203,7 +203,7 @@
 .people-invite-person h2 { margin: 0 0 8px; }
 .people-invite-person > span { color: var(--text-dim); font-size: 11px; }
 .people-next-step { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px 20px; width: min(100%, 840px); align-self: center; padding: 0 var(--people-gutter) 14px; box-sizing: border-box; color: var(--text-dim); font: 14px/1.5 var(--gsv-font-prose); }
-.people .people-action.is-accent { color: var(--accent); }
+:is(.people, .chat-person) .people-action.is-accent { color: var(--accent); }
 .people > .fleet-dialog { width: min(640px, calc(100vw / var(--type-scale) - 32px)); height: min(740px, calc(var(--instrument-height) / var(--type-scale) - 32px)); }
 .people > .fleet-dialog .fleet-inspector { padding: 12px 32px 32px; }
 @container instrument (max-width: 720px) {

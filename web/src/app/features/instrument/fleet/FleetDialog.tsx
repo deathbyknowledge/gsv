@@ -2,11 +2,12 @@ import type { ComponentChildren } from "preact";
 import { useId, useLayoutEffect, useRef } from "preact/hooks";
 import { RetainedView } from "../../../services/navigation/ViewActivity";
 
-export function FleetDialog({ open, title, onClose, children }: {
+export function FleetDialog({ open, title, onClose, children, className = "" }: {
   open: boolean;
   title: string;
   onClose: () => void;
   children: ComponentChildren;
+  className?: string;
 }) {
   const element = useRef<HTMLDialogElement>(null);
   const titleId = useId();
@@ -29,7 +30,7 @@ export function FleetDialog({ open, title, onClose, children }: {
     return event.clientX < bounds.left || event.clientX > bounds.right || event.clientY < bounds.top || event.clientY > bounds.bottom;
   };
 
-  return <dialog ref={element} class="fleet-dialog" aria-labelledby={titleId}
+  return <dialog ref={element} class={`fleet-dialog ${className}`} aria-labelledby={titleId}
     onCancel={(event) => { event.preventDefault(); onClose(); }}
     onPointerDown={(event) => { backdropPress.current = outside(event); }}
     onClick={(event) => {

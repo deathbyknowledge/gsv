@@ -20,6 +20,7 @@ export type PromptLineProps = {
   disabled?: boolean;
   onSubmit: (text: string) => void | boolean | Promise<void | boolean>;
   allowEmpty?: boolean;
+  commands?: boolean;
   /** A native composer can finalize its current segment before ordinary submission. */
   interceptSubmit?: () => boolean;
   onFiles?: (files: File[]) => void;
@@ -38,6 +39,7 @@ export type PromptLineProps = {
 
 export type PromptLineHandle = {
   disabled: boolean;
+  commands?: boolean;
   /** The place chip, so the picker it opens can tell a press on it from one outside. */
   chip: HTMLButtonElement | null;
   setValue(value: string, caret?: number): void;
@@ -49,8 +51,8 @@ export type PromptLineHandle = {
   submit(): void;
 };
 
-export function promptAfterSubmit(text: string): string {
-  return text.trimStart().startsWith("$") ? "$ " : "";
+export function promptAfterSubmit(text: string, commands = true): string {
+  return commands && text.trimStart().startsWith("$") ? "$ " : "";
 }
 
 /**
@@ -61,7 +63,7 @@ export function promptAfterSubmit(text: string): string {
  * the chip and keeps taking words.
  */
 // The prompt grows from that first line as text wraps, up to a scrollable height.
-export const PromptLine = forwardRef<PromptLineHandle, PromptLineProps>(function PromptLine({ place, showPlace = true, dir, placeholder, disabled, onSubmit, allowEmpty, interceptSubmit, onFiles, onPlace, onHistory, autoFocus, onFocusChange, onInput, onKeyIntercept }, ref) {
+export const PromptLine = forwardRef<PromptLineHandle, PromptLineProps>(function PromptLine({ place, showPlace = true, dir, placeholder, disabled, onSubmit, allowEmpty, commands = true, interceptSubmit, onFiles, onPlace, onHistory, autoFocus, onFocusChange, onInput, onKeyIntercept }, ref) {
   const active = useViewActive();
   const activeRef = useRef(active);
   activeRef.current = active;
@@ -72,6 +74,7 @@ export const PromptLine = forwardRef<PromptLineHandle, PromptLineProps>(function
   const mirrorText = useRef<{ before: Text; marker: HTMLSpanElement; after: Text } | null>(null);
   const caretRef = useRef<HTMLSpanElement>(null);
   const [command, setCommand] = useState(false);
+  useLayoutEffect(() => { setCommand(commands && (inputRef.current?.value.startsWith("$") ?? false)); }, [commands]);
   const revision = useRef(0);
   const submitting = useRef(false);
   const autoFocusHandled = useRef(false);
@@ -197,11 +200,12 @@ export const PromptLine = forwardRef<PromptLineHandle, PromptLineProps>(function
   const changed = (): void => {
     revision.current++;
     const value = read();
-    setCommand(value.startsWith("$"));
+    setCommand(commands && value.startsWith("$"));
     onInput?.(value);
     scheduleMeasure(true);
   };
   useImperativeHandle(ref, () => ({
+    commands,
     disabled: Boolean(disabled),
     get chip() { return chipRef.current; },
     selection: () => ({ value: read(), start: inputRef.current?.selectionStart ?? 0, end: inputRef.current?.selectionEnd ?? 0 }),
@@ -227,13 +231,13 @@ export const PromptLine = forwardRef<PromptLineHandle, PromptLineProps>(function
     if (!input || disabled || submitting.current) return;
     if (interceptSubmit?.()) return;
     const text = input.value.trim();
-    if ((!text && !allowEmpty) || text === "$") return;
+    if ((!text && !allowEmpty) || (commands && text === "$")) return;
     const sentRevision = revision.current;
     submitting.current = true;
     try {
       const accepted = await onSubmit(text);
       if (accepted !== false && inputRef.current === input && revision.current === sentRevision) {
-        input.value = promptAfterSubmit(text);
+        input.value = promptAfterSubmit(text, commands);
         input.setSelectionRange(input.value.length, input.value.length);
         changed();
       }

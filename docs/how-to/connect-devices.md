@@ -4,14 +4,14 @@ This is the distributed part. Connecting a device turns it into part of one comp
 
 ## Connect a machine
 
-You can ask Ship to connect your computer. Give it a name and say whether it runs
+In Chat, choose **+ → connect a computer**, or ask Ship directly. The shortcut stages a request; add a name and say whether it runs
 macOS, Linux or Windows. Ship can create the invitation and share the install and
 `gsv pair CODE` commands for you to run on that computer. If GSV is already installed,
 you only need the pairing command. Tell Ship when it finishes so it can check the connection.
 
 To create the invitation yourself:
 
-1. Open **Fleet** and click **connect** beside Places. While your cloud is the only place, Chat offers the same panel: hover **your cloud** below the composer and click **+ connect place**.
+1. Open **Fleet** and click **connect** beside Places. While your cloud is the only place, Chat offers the same panel: open **your cloud** below the composer and click **+ connect place**.
 2. Enter a name, such as **My macbook**. The target ID starts as **my-macbook** and follows the name until you edit it yourself.
 3. Choose the platform and click **create invitation**.
 4. Run the install command on that computer, then the `gsv pair CODE` command. It supplies the gateway, account and target identity and starts the background daemon.
@@ -24,6 +24,8 @@ While scrolling Fleet's lists or inspectors, a lavender line marks text clipped
 at the top edge. The line disappears between lines and rows.
 On phones, Fleet's page and file reader scroll to the bottom of the visible
 screen. Their end padding leaves the last row or line clear of the home indicator.
+Fleet shows compact place and process rows on phones. Open a place for its details
+and **browse files**; responsibilities and routines are under **plans** in Chat.
 
 ## Connect a browser
 

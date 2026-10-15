@@ -1,3 +1,4 @@
+import { conversationActionSchema, validateConversationAction, type ConversationAction } from "@humansandmachines/gsv/protocol";
 /**
  * A gateway that lives in this tab, so Zen's states can be looked at on demand.
  *
@@ -26,6 +27,9 @@
 import { GSVClient, type GsvPeerInfo } from "@humansandmachines/gsv/client";
 import {
   wireFrameSchemas,
+  buildBinaryFrame,
+  BINARY_FRAME_DATA,
+  BINARY_FRAME_END,
   type AccountSummary,
   type AiTextContent,
   type AiThinkingContent,
@@ -126,7 +130,7 @@ const targets: SysTargetSummary[] = [
 ];
 
 const accounts: AccountSummary[] = [
-  { uid: OWNER.uid, username: OWNER.username, displayName: "Esteve", relation: "self", runnable: false, capabilities: ["sys.ledger.list", "sys.target.list", "proc.list", "r12y.list", "r12y.source.list", "sched.list"] },
+  { uid: OWNER.uid, username: OWNER.username, displayName: "Esteve", relation: "self", runnable: false, capabilities: ["sys.ledger.list", "sys.target.list", "proc.list", "r12y.list", "r12y.source.list", "sched.list", "r12y.get", "r12y.update", "sched.add", "sched.update", "conversation.send", "profile.resolve", "contact.list", "sys.pair.create", "fs.read"] },
   { uid: SHIP.uid, username: SHIP.username, displayName: "Ship", relation: "personal-agent", runnable: true },
 ];
 
@@ -647,7 +651,7 @@ async function resolve(run: OpenRun, trigger: string): Promise<void> {
 
 type Sent = { message: ConversationMessage; runId: string };
 
-function receive(text: string): Sent {
+function receive(text: string, action?: ConversationAction): Sent {
   const trigger = text.trim().toLowerCase();
   const open = world.run;
   if (open && !open.approval && (trigger === "/reply" || trigger === "/stream")) {
@@ -663,6 +667,7 @@ function receive(text: string): Sent {
     interrupt(open);
   }
   const question = record("you", text, Date.now(), "");
+  if (action) question.action = action;
   const runId = `run-${question.sequence}`;
   window.setTimeout(() => {
     broadcast("message.committed", { message: question, directed: true });
@@ -677,7 +682,7 @@ const pidArgs = z.object({ pid: z.string() });
 const historyArgs = z.object({ pid: z.string(), since: z.string().optional() });
 const conversationArgs = z.object({ conversationId: z.string(), beforeSequence: z.number().optional(), afterSequence: z.number().optional(), limit: z.number().optional() });
 const searchArgs = z.object({ conversationId: z.string().optional(), query: z.string(), beforeSequence: z.number().optional(), limit: z.number().optional() });
-const sendArgs = z.object({ conversationId: z.string(), text: z.string() });
+const sendArgs = z.object({ conversationId: z.string(), text: z.string(), action: z.unknown().transform((value) => conversationActionSchema.parse(value)).optional() });
 const connectArgs = z.object({ protocol: z.number() });
 const tokenArgs = z.object({ expiresAt: z.number().nullable().optional() });
 const hilArgs = z.object({ pid: z.string().optional(), requestId: z.string(), decision: z.enum(["approve", "deny"]) });
@@ -758,10 +763,19 @@ function route(socket: MockSocket, id: string, call: string, args: JsonValue): s
         nextBeforeSequence: matches.length > limit ? hits.at(-1)!.sequence : null });
     }
     case "conversation.send": {
-      const sent = receive(sendArgs.parse(args).text);
+      const input = sendArgs.parse(args);
+      if (input.action) validateConversationAction(input.action, input.text);
+      const sent = receive(input.text, input.action);
       return respond(id, { message: sent.message, handlerPid: SHIP.pid, runId: sent.runId });
     }
     case "contact.list": return respond(id, { contacts: [] });
+    case "profile.resolve": {
+      const { url } = z.object({ url: z.string().url() }).parse(args);
+      const origin = new URL(url).origin;
+      return respond(id, { profile: { version: 1, origin, url: `${origin}/profile`, actor: { shipId: "mock-person", subjectId: "owner" },
+        displayName: "Mara", about: "Design, good coffee, and making things together.", contactPolicy: "requests", representation: "human-and-ship", revision: 1,
+        publishedAtMs: Date.now() } });
+    }
     case "contact.invite.list": return respond(id, { invites: [] });
     case "contact.request.list": return respond(id, { requests: [] });
     case "sys.link.list": return respond(id, { links: [] });
@@ -771,10 +785,37 @@ function route(socket: MockSocket, id: string, call: string, args: JsonValue): s
       return respond(id, { responsibilities: records.slice(offset, offset + limit), count: records.length, revision: 1 });
     }
     case "r12y.source.list": return respond(id, { sources: [] });
+    case "r12y.get": {
+      const { id: recordId } = z.object({ id: z.string() }).parse(args);
+      const responsibility = responsibilities.find((record) => record.id === recordId);
+      return responsibility ? respond(id, { responsibility, revision: 1 }) : refuse(id, 404, "Responsibility not found");
+    }
+    case "r12y.update": {
+      const input = z.object({ id: z.string(), expectedRevision: z.number(), patch: z.object({ state: z.literal("cancelled") }) }).parse(args);
+      const responsibility = responsibilities.find((record) => record.id === input.id);
+      if (!responsibility) return refuse(id, 404, "Responsibility not found");
+      if (responsibility.revision !== input.expectedRevision) return refuse(id, 409, "Responsibility changed");
+      responsibility.state = input.patch.state; responsibility.revision++;
+      broadcast("r12y.changed", { revision: responsibility.revision });
+      return respond(id, { responsibility, revision: responsibility.revision });
+    }
     case "sched.list": {
       const { includeDisabled, offset = 0, limit = 100 } = scheduleListArgs.parse(args);
       const records = schedules.filter((record) => includeDisabled || record.enabled);
       return respond(id, { schedules: records.slice(offset, offset + limit), count: records.length });
+    }
+    case "sched.update": {
+      const input = z.object({ id: z.string(), patch: z.object({ enabled: z.boolean() }) }).parse(args);
+      const schedule = schedules.find((entry) => entry.id === input.id);
+      if (!schedule) return refuse(id, 404, "Routine not found");
+      schedule.enabled = input.patch.enabled;
+      return respond(id, { schedule });
+    }
+    case "fs.read": {
+      const { path } = z.object({ path: z.string() }).parse(args);
+      const directory = path === "~" || path === "." || path === "/home/esteve";
+      if (directory) return respond(id, { ok: true, path, files: ["notes.md"] });
+      return socket.textResponse(id, { ok: true, path, kind: "text", contentType: "text/markdown", lines: 8, size: NOTES.length }, NOTES);
     }
     case "sys.mcp.list": return respond(id, { servers: [] });
     case "repo.list": return respond(id, { repos: [] });
@@ -784,6 +825,7 @@ function route(socket: MockSocket, id: string, call: string, args: JsonValue): s
 
 /** The WebSocket the client thinks it opened; the other end is this module. */
 class MockSocket extends EventTarget implements WebSocket {
+  private nextStreamId = 2;
   readonly CONNECTING = 0;
   readonly OPEN = 1;
   readonly CLOSING = 2;
@@ -812,6 +854,19 @@ class MockSocket extends EventTarget implements WebSocket {
   /** A frame from the gateway's side of the wire. */
   deliver<T>(frame: T): void {
     this.deliverText(JSON.stringify(frame));
+  }
+
+  /** The small preview fixture fits in the protocol's initial receive window. */
+  textResponse<T>(id: string, data: T, text: string): string {
+    const streamId = this.nextStreamId;
+    this.nextStreamId += 2;
+    const bytes = new TextEncoder().encode(text);
+    window.setTimeout(() => {
+      if (this.readyState === this.OPEN) this.dispatchEvent(new MessageEvent("message", {
+        data: buildBinaryFrame(streamId, BINARY_FRAME_DATA | BINARY_FRAME_END, bytes),
+      }));
+    }, 0);
+    return JSON.stringify({ type: "res", id, ok: true, data, body: { streamId, length: bytes.length } });
   }
 
   send(data: string | ArrayBufferLike | Blob | ArrayBufferView): void {

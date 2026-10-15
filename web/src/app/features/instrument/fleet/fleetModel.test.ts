@@ -33,12 +33,6 @@ describe("Fleet references and supported place actions", () => {
     expect(fleetReferenceRow(reference)).toBeNull();
   });
 
-  it("opens the responsibility list without selecting a record or opening an inspector", () => {
-    const reference = { kind: "section" as const, section: "responsibilities" as const };
-    expect(isApprovalReference(reference)).toBe(false);
-    expect(fleetReferenceRow(reference)).toBeNull();
-  });
-
   it("preserves exact process and request identities without rewriting colon-containing pids", () => {
     const reference = { kind: "approval" as const, pid: "proc:child:123", requestId: "approval:456" };
     expect(fleetReferenceRow(reference)).toBe("proc:proc:child:123");

@@ -1,4 +1,4 @@
-import { contactDisplayName, type ApproachListArgs, type ApproachSummary, type ConversationInboxArgs } from "@humansandmachines/gsv/protocol";
+import { contactDisplayName, type ApproachListArgs, type ApproachSummary, type ConversationAction, type ConversationInboxArgs } from "@humansandmachines/gsv/protocol";
 import { useQueryClient } from "@tanstack/preact-query";
 import { useInfiniteQuery, useQuery } from "../../../services/navigation/viewQueries";
 import { RetainedView, useViewActive } from "../../../services/navigation/ViewActivity";
@@ -31,7 +31,7 @@ export type PeopleOpenRequest = { contactId: string } | { requestId: string };
 
 export function People({ onDirtyChange, onAsk, openRequest }: {
   onDirtyChange: (dirty: boolean) => void;
-  onAsk: (prompt: string) => void;
+  onAsk: (action: ConversationAction) => void;
   /** A conversation to land on, asked for from another view; a fresh object reopens the same contact. */
   openRequest?: PeopleOpenRequest | null;
 }) {
@@ -178,7 +178,7 @@ export function People({ onDirtyChange, onAsk, openRequest }: {
     <section class="people-detail" ref={detail} tabIndex={-1} aria-label={view === "profile" ? "Your profile" : "Selected conversation"}>
       {hasSelection && <button class="people-action people-back" disabled={busy} onClick={() => { if (view === "profile") { setView("inbox"); setContactId(null); } else if (view === "requests") setRequestId(null); else setContactId(null); }}>← {view === "requests" ? "requests" : "conversations"}</button>}
       <RetainedView active={active && view === "inbox"}>
-        {selectedContact ? <ContactInspector key={selectedContact.id} contact={selectedContact} account={account} idea={chosenIdea?.contactId === selectedContact.id ? chosenIdea.index : null} onAsk={(task) => onAsk(task.replaceAll("{name}", `${contactDisplayName(selectedContact)} (${new URL(selectedContact.remoteOrigin).host})`))} draft={drafts.drafts.get(selectedContact.id) ?? EMPTY_CONTACT_DRAFT} onDraft={(change) => drafts.update(selectedContact.id, change)} onSend={() => void drafts.send(selectedContact)} onRetry={(id) => void drafts.send(selectedContact, id)} onObserved={(ids) => drafts.observed(selectedContact.id, ids)} />
+        {selectedContact ? <ContactInspector key={selectedContact.id} contact={selectedContact} account={account} idea={chosenIdea?.contactId === selectedContact.id ? chosenIdea.index : null} onAsk={(task) => onAsk({ kind: "profile.discuss", name: contactDisplayName(selectedContact), url: `${selectedContact.remoteOrigin}/profile`, note: task.replaceAll("{name}", `${contactDisplayName(selectedContact)} (${new URL(selectedContact.remoteOrigin).host})`) })} draft={drafts.drafts.get(selectedContact.id) ?? EMPTY_CONTACT_DRAFT} onDraft={(change) => drafts.update(selectedContact.id, change)} onSend={() => void drafts.send(selectedContact)} onRetry={(id) => void drafts.send(selectedContact, id)} onObserved={(ids) => drafts.observed(selectedContact.id, ids)} />
           : contactId ? contactsQuery.isFetching ? <LoadingState variant="panel">Opening conversation…</LoadingState> : <p class="people-note">This conversation is no longer available to this account.</p>
           : firstVisit ? <PeopleWelcome idea={idea} onIdea={setIdea} disabled={busy || !connected || !mayStart} onConnect={() => { setChosenIdea({ index: idea, contactId: null }); setDialog("invitation"); }} />
           : <div class="people-empty"><h2>Pick up where you left off.</h2><p>Choose a conversation to talk, share, or ask Ship to help.</p><button class="people-action" disabled={busy || !connected || !mayStart} onClick={() => setDialog("invitation")}>connect with someone</button></div>}

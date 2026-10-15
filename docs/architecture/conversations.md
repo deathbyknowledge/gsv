@@ -307,3 +307,28 @@ Kernel, Conversation Durable Object names, and R2 keys.
 Internal compaction handovers remain in Process history and its archives. Chat
 does not present them as “Memory” messages or interrupt the composer when the
 working context changes.
+
+
+## Contextual requests in Instrument
+
+Chat’s `+` menu can attach a file, find a person by saved name or GSV address,
+reference a file on a place, or stage a request to create a routine, connect a
+computer or start a browser. Selecting a request keeps the current text and
+attachments. The person can add details, remove the request, or send it normally.
+No selection creates a schedule, connects a device or contacts another person.
+
+A sent request has optional typed `action` metadata alongside its readable `text`.
+Instrument renders the object’s title, type and user note, with the full request
+available under **request**. Copies and clients without this rendering use the
+same readable text. The Kernel validates that the action’s text projection exactly
+matches the submitted text before admission. Only human-authored messages carry
+actions; they grant no authority. Action metadata participates in idempotency and
+survives SQLite migrations, history reads, live commits and R2 archiving.
+
+The **plans** shortcut opens responsibilities, routines and standing policies in
+Chat. Responsibilities retain hierarchy and show blockers before ordinary
+follow-ups. Details allow inspection, cancellation and asking Ship about the exact
+record. Routines show their cadence and state, with pause/enable and edit controls;
+creating one stages a request to Ship. These panels use the existing authorized
+syscalls and signal-driven caches. Closing them preserves drafts and pauses hidden
+reads. Fleet retains places and processes, with files opened from a place.

@@ -1,3 +1,5 @@
+import type { ConversationAction } from "@humansandmachines/gsv/protocol";
+import type { ActivityRequest } from "./zen/chatContextModel";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
 import { useColorTheme } from "../../components/ui/useColorTheme";
 import { InstrumentBackdrop } from "./shared/InstrumentBackdrop";
@@ -36,7 +38,7 @@ import "./instrument.css";
 export type Distance = "zen" | "fleet" | "memory" | "settings" | "people";
 
 /** A row in Fleet, addressed the way the manifest addresses it: `target:<id>` or `proc:<pid>`. */
-export type FleetRow = `target:${string}` | `proc:${string}` | `work:${string}` | `routine:${string}` | `more:${string}` | `dir:${string}` | `file:${string}`;
+export type FleetRow = `target:${string}` | `proc:${string}` | `more:${string}` | `dir:${string}` | `file:${string}`;
 
 const DISTANCE_TO_PATH = {
   zen: "/chat",
@@ -128,6 +130,8 @@ function InstrumentReady({ initialPath }: { initialPath: string }) {
   }, []);
   /* which process Zen shows: null is the ship; Fleet can open a helper's conversation */
   const [zenPid, setZenPid] = useState<string | null>(null);
+  const [activityRequest, setActivityRequest] = useState<ActivityRequest>();
+  const [zenActionPrefill, setZenActionPrefill] = useState<ConversationAction | null>(null);
   /* Ship's contact notices live here, above the keyed Zen view, so opening a helper and coming back keeps them */
   const accounts = useConsoleAccounts();
   const viewer = accounts.data?.find((account) => account.relation === "self");
@@ -289,7 +293,7 @@ function InstrumentReady({ initialPath }: { initialPath: string }) {
       <InstrumentHeader distance={distance} onNavigate={(to) => {
         if (move(to) && navigationOpen) navigationButtonRef.current?.focus();
       }} peopleWaiting={peopleActivity.conversations.length > 0 || peopleActivity.requests.length > 0}
-        onResponsibilities={canReadResponsibilities ? () => move("fleet", { kind: "section", section: "responsibilities" }) : undefined}
+        onResponsibilities={canReadResponsibilities ? () => setActivityRequest({}) : undefined}
         responsibilityCount={responsibilities.isError ? undefined : responsibilities.data} helper={distance === "zen" && zenPid !== null}
         onShip={() => {
           if (!zenDirty || window.confirm("Discard your unsent message and attachments?")) setZenPid(null);
@@ -386,18 +390,19 @@ function InstrumentReady({ initialPath }: { initialPath: string }) {
             if (page && memoryDirty && !window.confirm("Discard your unsaved page changes and open this page?")) return;
             if (!move("memory")) return;
             if (page) setSelectedMemoryPage({ ...page });
-          }} initialTarget={zenTarget} prefill={zenPrefill} onPrefillUsed={() => setZenPrefill(null)} pid={zenPid}
+          }} initialTarget={zenTarget} prefill={zenPrefill} actionPrefill={zenActionPrefill} activityRequest={activityRequest}
+          onPrefillUsed={() => { setZenPrefill(null); setZenActionPrefill(null); }} pid={zenPid}
           contactReplies={zenPid ? undefined : contactReplies}
           peopleActivity={zenPid ? undefined : peopleActivity}
           onPeopleActivity={(request) => { if (move("people") && request) setPeopleRequest(request); }} />
         </RetainedView>
         <RetainedView active={distance === "memory"}>
-          <Memory onDirtyChange={setMemoryDirty} initialPage={selectedMemoryPage} onAsk={(_page, prompt) => {
-            if (zenDirty && !window.confirm("Replace your unsent message and attachments with this question?")) return;
+          <Memory onDirtyChange={setMemoryDirty} initialPage={selectedMemoryPage} onAsk={(action) => {
+            if (zenPid && zenDirty && !window.confirm("Discard your unsent message and return to Ship?")) return;
             if (!move("zen")) return;
             setZenPid(null);
             setZenTarget(null);
-            setZenPrefill(prompt);
+            setZenPrefill(null); setZenActionPrefill(action);
           }} />
         </RetainedView>
         <RetainedView active={distance === "settings"}>
@@ -407,25 +412,27 @@ function InstrumentReady({ initialPath }: { initialPath: string }) {
           }} />
         </RetainedView>
         <RetainedView active={distance === "people"}>
-          <People onDirtyChange={setPeopleDirty} openRequest={peopleRequest} onAsk={(prompt) => {
-            if (zenDirty && !window.confirm("Replace your unsent message and attachments with this request?")) return;
+          <People onDirtyChange={setPeopleDirty} openRequest={peopleRequest} onAsk={(action) => {
+            if (zenPid && zenDirty && !window.confirm("Discard your unsent message and return to Ship?")) return;
             if (!move("zen")) return;
-            setZenPid(null); setZenTarget(null); setZenPrefill(prompt);
+            setZenPid(null); setZenTarget(null); setZenPrefill(null); setZenActionPrefill(action);
           }} />
         </RetainedView>
         <RetainedView active={distance === "fleet"}>
           <Fleet
+            onActivity={(request) => { if (move("zen")) setActivityRequest(request); }}
             onCommand={(target) => {
               if (zenDirty && !window.confirm("Replace your unsent message and attachments with a command?")) return;
               if (move("zen")) { setZenTarget(target); setZenPrefill("$ "); setZenPid(null); }
             }}
             onDirtyChange={setFleetDirty}
             openRequest={fleetRequest}
-            onZen={(prefill, pid) => {
+            onZen={(prefill, pid, action) => {
               if ((Boolean(prefill) || (pid ?? null) !== zenPid) && zenDirty && !window.confirm("Discard your unsent message and attachments?")) return;
               if (!move("zen")) return;
               if (prefill || (pid ?? null) !== zenPid) setZenTarget(null);
               if (prefill) setZenPrefill(prefill);
+              if (action) setZenActionPrefill(action);
               setZenPid(pid ?? null);
             }}
           />
