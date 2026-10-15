@@ -10,6 +10,7 @@ pub fn installer_script_url(base_url: &str, windows: bool) -> Result<String, Str
     if url.scheme() != "https" || !url.username().is_empty() || url.password().is_some() {
         return Err("installer URL must use HTTPS without credentials".to_string());
     }
+    url.set_fragment(None);
     if windows {
         let path = url.path().trim_end_matches('/');
         let directory = if path.ends_with(".sh") || path.ends_with(".ps1") {
@@ -110,14 +111,20 @@ mod tests {
                 "https://downloads.example/host/install.sh?channel=dev",
                 "https://downloads.example/host/install.ps1?channel=dev",
             ),
+            (
+                "https://downloads.example/host/install.ps1?channel=dev#",
+                "https://downloads.example/host/install.ps1?channel=dev",
+            ),
         ] {
             assert_eq!(
                 installer_script_url(base, true).expect("Windows script"),
                 windows_url
             );
+            let mut unix_url = url::Url::parse(base).expect("valid URL");
+            unix_url.set_fragment(None);
             assert_eq!(
                 installer_script_url(base, false).expect("Unix script"),
-                url::Url::parse(base).expect("valid URL").as_str()
+                unix_url.as_str()
             );
         }
         assert!(installer_script_url("not a URL", true).is_err());

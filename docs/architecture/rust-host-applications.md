@@ -278,6 +278,10 @@ setting use `https://install.ship.space`. Windows installer selection resolves
 a Unix script URL to the sibling `install.ps1`, or appends that filename to a
 download directory. Protocol errors give Windows peers the directory so older
 daemons, which always append `/install.ps1`, can upgrade too.
+For URLs with a query or fragment, the protocol hint names the Windows script
+and ends with an empty fragment. An older daemon's appended filename then stays
+in that fragment, which HTTP does not send; the original query reaches the
+installer unchanged. Current hosts discard the fragment when resolving the script.
 
 CLI update hints, native `targets pair` setup commands, and the daemon's manual
 recovery commands use the same advertised installer and gateway release. Manual

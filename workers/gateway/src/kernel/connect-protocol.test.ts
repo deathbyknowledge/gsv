@@ -11,6 +11,20 @@ const protocolOnlyContext = (): any => ({
 });
 
 describe("sys.connect protocol mismatch", () => {
+  it("preserves the operator query when an older Windows daemon appends its filename", async () => {
+    const ctx = protocolOnlyContext();
+    ctx.env.GSV_PUBLIC_CONFIG = JSON.stringify({ installUrl: "https://downloads.example/host/install.sh?channel=stable" });
+    const outcome = await handleConnect({
+      protocol: PROTOCOL_VERSION - 1,
+      peer: { id: "machine-1", version: "0.3.0", platform: "windows" },
+    }, ctx);
+    expect(outcome.ok).toBe(false);
+    if (outcome.ok) return;
+    expect(outcome.code).toBe(102);
+    const legacyRequest = new URL(`${outcome.details?.installer}/install.ps1`);
+    expect(legacyRequest.origin + legacyRequest.pathname + legacyRequest.search).toBe("https://downloads.example/host/install.ps1?channel=stable");
+  });
+
   it("lets an older Windows daemon append its installer filename to the default URL", async () => {
     const ctx = protocolOnlyContext();
     ctx.env = {};

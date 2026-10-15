@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createServer } from "node:http";
 import { test } from "node:test";
 import { browserExtensionDownloadUrl, buildCliInstallCommand, DEFAULT_INSTALL_URL, machineUpdateInstallerUrl } from "../dist/device-setup.js";
 
@@ -17,6 +18,25 @@ test("operator installer URLs remain literal shell arguments", () => {
     "curl -fsSL 'https://downloads.example/it'\\''s/install.sh' | GSV_VERSION=v0.7.0 bash");
   assert.equal(buildCliInstallCommand("windows", "dev", "https://downloads.example/it's/install.sh"),
     "$env:GSV_CHANNEL='dev'; irm 'https://downloads.example/it''s/install.ps1' | iex");
+});
+
+test("legacy Windows filename appending preserves the requested script and query", async (t) => {
+  const server = createServer((request, response) => response.end(request.url));
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  t.after(() => { server.closeAllConnections(); server.close(); });
+  for (const path of ["/host", "/host/", "/host/install.sh", "/host/install.ps1"]) {
+    for (const suffix of ["?channel=stable&arch=x64", "#instructions", "?channel=stable&arch=x64#instructions"]) {
+      const hint = machineUpdateInstallerUrl("windows", `https://downloads.example${path}${suffix}`);
+      const legacyRequest = new URL(`${hint.replace(/\/+$/, "")}/install.ps1`);
+      assert.equal(legacyRequest.origin, "https://downloads.example");
+      assert.equal(legacyRequest.pathname, "/host/install.ps1");
+      assert.equal(legacyRequest.search, suffix.startsWith("?") ? "?channel=stable&arch=x64" : "");
+      legacyRequest.protocol = "http:";
+      legacyRequest.host = `127.0.0.1:${server.address().port}`;
+      const response = await fetch(legacyRequest, { signal: AbortSignal.timeout(5000) });
+      assert.equal(await response.text(), `/host/install.ps1${legacyRequest.search}`);
+    }
+  }
 });
 
 test("Windows setup resolves script URLs and directories without losing query parameters", () => {
