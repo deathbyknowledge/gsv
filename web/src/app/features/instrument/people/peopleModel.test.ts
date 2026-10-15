@@ -34,6 +34,14 @@ describe("person addresses", () => {
       expect(profileAddressLabel(`https://${host}`)).toBe(host);
     }
   });
+
+  it("uses the most specific configured domain when profile domains overlap", () => {
+    const nested = { primaryDomain: "example.com", legacyDomains: ["old.example.com", "fleet.old.example.com"] };
+    expect(label("https://alex.old.example.com", nested)).toBe("@alex");
+    expect(label("https://alex.fleet.old.example.com", nested)).toBe("@alex");
+    expect(label("https://old.example.com", nested)).toBe("old.example.com");
+    expect(label("https://team.alex.old.example.com", nested)).toBe("team.alex.old.example.com");
+  });
 });
 
 const profile: PublicProfile = {

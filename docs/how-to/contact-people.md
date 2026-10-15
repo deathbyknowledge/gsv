@@ -39,7 +39,7 @@ messaging apps; opening People is optional.
 
 Choose **connect → use a profile address** to find a saved contact by name or enter
 a handle such as `esteve` or `@esteve`, or someone's public profile address.
-Handles resolve on the operator’s configured primary domain. Accepted legacy domains also display as handles; full addresses still reach other operators.
+Handles resolve on the operator’s configured primary domain. Accepted legacy domains also display as handles; overlapping domains use the most specific match. Full addresses still reach other operators.
 Chat’s **+ → find a person** uses the same lookup and lets you mention the profile
 in your draft without contacting them. Review the profile and your prefilled display
 name, choose who handles new messages, then send a first message.

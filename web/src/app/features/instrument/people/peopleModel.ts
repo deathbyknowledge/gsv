@@ -31,7 +31,9 @@ export function profileAddress(value: string, deployment: PublicDeploymentConfig
 
 export function profileAddressLabel(origin: string, deployment: PublicDeploymentConfig = publicDeployment()): string {
   const { hostname, host, port } = new URL(origin);
-  const domain = deploymentDomains(deployment).find((candidate) => hostname.endsWith(`.${candidate}`));
+  const domain = deploymentDomains(deployment)
+    .sort((left, right) => right.length - left.length)
+    .find((candidate) => hostname === candidate || hostname.endsWith(`.${candidate}`));
   const handle = domain ? hostname.slice(0, -(domain.length + 1)) : "";
   return !port && /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(handle) ? `@${handle}` : host;
 }
