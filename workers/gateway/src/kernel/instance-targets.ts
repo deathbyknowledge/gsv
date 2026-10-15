@@ -20,7 +20,9 @@ export async function discoverInstanceTargets(ctx: KernelContext, options: Targe
     const targets: TargetDescriptor[] = inventory.instances.filter(value => options.includeOffline || value.state === "ready").map(value => ({
       targetId: value.targetId, ownerUid: value.ownerUid, ownerUsername: ctx.auth.getPasswdByUid(value.ownerUid)?.username ?? null,
       label: value.label,
-      description: `Cloud browser; ${value.state}; ${value.isolated ? "temporary, no saved logins" : "remembers this account's website logins"}; this instance expires ${new Date(value.expiresAt).toISOString()}`,
+      description: `Cloud browser; ${value.state}; ${value.isolated || !value.profileId
+        ? "temporary, no saved logins"
+        : `saved logins from profile ${value.profileId.slice(0, 8)} (browser profile list marks the automatic one)`}; this instance expires ${new Date(value.expiresAt).toISOString()}`,
       platform: "browser", version: value.templateRevision,
       online: value.state === "ready" && value.expiresAt > Date.now(),
       implements: value.implements,
