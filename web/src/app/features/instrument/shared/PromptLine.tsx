@@ -17,6 +17,9 @@ export type PromptLineProps = {
   /** The working directory a command runs in on that place, already shortened for display. */
   dir: string;
   placeholder: string;
+  ariaLabel?: string;
+  /** A surface may own its draft; updating it does not move an unchanged selection. */
+  value?: string;
   disabled?: boolean;
   onSubmit: (text: string) => void | boolean | Promise<void | boolean>;
   allowEmpty?: boolean;
@@ -65,7 +68,7 @@ export function promptAfterSubmit(text: string, commands = true): string {
  * the chip and keeps taking words.
  */
 // The prompt grows from that first line as text wraps, up to a scrollable height.
-export const PromptLine = forwardRef<PromptLineHandle, PromptLineProps>(function PromptLine({ place, showPlace = true, dir, placeholder, disabled, onSubmit, allowEmpty, commands = true, interceptSubmit, onFiles, onPasteText, onPlace, onHistory, autoFocus, onFocusChange, onInput, onKeyIntercept }, ref) {
+export const PromptLine = forwardRef<PromptLineHandle, PromptLineProps>(function PromptLine({ place, showPlace = true, dir, placeholder, ariaLabel = "Prompt", value, disabled, onSubmit, allowEmpty, commands = true, interceptSubmit, onFiles, onPasteText, onPlace, onHistory, autoFocus, onFocusChange, onInput, onKeyIntercept }, ref) {
   const active = useViewActive();
   const activeRef = useRef(active);
   activeRef.current = active;
@@ -166,6 +169,14 @@ export const PromptLine = forwardRef<PromptLineHandle, PromptLineProps>(function
       measure(reveal);
     });
   }, [measure]);
+  useLayoutEffect(() => {
+    const input = inputRef.current;
+    if (value === undefined || !input || input.value === value) return;
+    input.value = value;
+    revision.current++;
+    setCommand(commands && value.startsWith("$"));
+    scheduleMeasure(true);
+  }, [value, commands, scheduleMeasure]);
   useLayoutEffect(() => {
     if (!active) {
       cancelAnimationFrame(measureFrame.current);
@@ -297,7 +308,7 @@ export const PromptLine = forwardRef<PromptLineHandle, PromptLineProps>(function
           ref={inputRef}
           rows={1}
           placeholder={placeholder}
-          aria-label="Prompt"
+          aria-label={ariaLabel}
           enterkeyhint="send"
           spellcheck={false}
           disabled={disabled}

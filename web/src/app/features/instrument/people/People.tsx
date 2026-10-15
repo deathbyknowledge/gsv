@@ -20,20 +20,20 @@ import { NewConversation } from "./NewConversation";
 import { MessageRequest } from "./MessageRequest";
 import { BlockedPeople } from "./BlockedPeople";
 import { approachStatus, emptyApproachDraft, inboxPreview } from "./peopleModel";
+import { usePeopleRoute, type PeopleRoute } from "./peopleNavigation";
+import { navigateApp } from "../../../services/navigation/appNavigation";
 import "../fleet/fleet.css";
 import "./people.css";
 
-type PeopleView = "inbox" | "requests" | "contacts" | "profile";
 const NO_CURSOR: ApproachListArgs["before"] = undefined;
 const NO_INBOX_CURSOR: ConversationInboxArgs["before"] = undefined;
 
+/** A conversation to land on, asked for from another view; a fresh object reopens the same contact. */
 export type PeopleOpenRequest = { contactId: string } | { requestId: string };
 
-export function People({ onDirtyChange, onAsk, openRequest }: {
+export function People({ onDirtyChange, onAsk }: {
   onDirtyChange: (dirty: boolean) => void;
   onAsk: (text: string) => void;
-  /** A conversation to land on, asked for from another view; a fresh object reopens the same contact. */
-  openRequest?: PeopleOpenRequest | null;
 }) {
   const active = useViewActive();
   const { client, connected } = useGateway();
@@ -42,14 +42,16 @@ export function People({ onDirtyChange, onAsk, openRequest }: {
   const [invitation, setInvitation] = useState<InvitationDraft>(() => ({ code: pendingContactInvitation() ?? "", issued: null, shipHandlesMessages: null }));
   const [idea, setIdea] = useState(0);
   const [chosenIdea, setChosenIdea] = useState<{ index: number; contactId: string | null } | null>(null);
-  const [contactId, setContactId] = useState<string | null>(null);
-  const [requestId, setRequestId] = useState<string | null>(null);
+  const [{ view, contactId, requestId, direction, history, archived }, open] = usePeopleRoute();
+  const inboxContact = useRef(contactId);
+  if (view === "inbox") inboxContact.current = contactId;
   const [dialog, setDialog] = useState<"profile" | "invitation" | "blocked" | null>(() => invitation.code ? "invitation" : compose.url ? "profile" : null);
-  const [view, setView] = useState<PeopleView>("inbox");
+  const firstDestination = useRef(true);
+  useLayoutEffect(() => {
+    if (firstDestination.current) { firstDestination.current = false; return; }
+    setDialog(null);
+  }, [active, view, contactId, requestId]);
   const listView = view === "profile" ? "inbox" : view;
-  const [direction, setDirection] = useState<"incoming" | "outgoing">("incoming");
-  const [history, setHistory] = useState(false);
-  const [archived, setArchived] = useState(false);
   const [filter, setFilter] = useState("");
   const [busy, setBusy] = useState(false);
   const [contactDirty, setContactDirty] = useState(false);
@@ -59,7 +61,9 @@ export function People({ onDirtyChange, onAsk, openRequest }: {
   useDraftGuard(contactDirty || profileDirty || !!compose.text || busy, onDirtyChange);
   useEffect(() => {
     if (!compose.url) return;
-    window.history.replaceState(window.history.state, "", "/people");
+    const url = new URL(window.location.href);
+    url.searchParams.delete("compose");
+    navigateApp(url.href, { replace: true });
   }, []);
   const accounts = useQuery({ queryKey: ["fleet", "accounts"], queryFn: () => loadConsoleAccounts(client), enabled: connected });
   const account = accounts.data?.find((entry) => entry.relation === "self");
@@ -89,7 +93,7 @@ export function People({ onDirtyChange, onAsk, openRequest }: {
     queryKey: [...INSTRUMENT_APPROACHES_KEY, "detail", requestId], enabled: connected && view === "requests" && !!requestId && human && canConfigure(account!, "approach.get"),
     queryFn: async () => (await client.approach.get({ approachId: requestId! })).approach,
   });
-  const selectedContact = contacts.find((contact) => contact.id === contactId);
+  const selectedContact = contacts.find((contact) => contact.id === inboxContact.current);
   const visible = contacts.filter((contact) => (view === "contacts" ? contact.preferences?.saved !== false : inboxByContact.has(contact.id))
     && `${contactDisplayName(contact)} ${contact.remoteSubject.displayName} ${contact.remoteOrigin}`.toLocaleLowerCase().includes(filter.trim().toLocaleLowerCase()))
     .sort((a, b) => view === "contacts" ? contactDisplayName(a).localeCompare(contactDisplayName(b)) : (inboxByContact.get(b.id)?.conversation.updatedAt ?? 0) - (inboxByContact.get(a.id)?.conversation.updatedAt ?? 0));
@@ -98,34 +102,28 @@ export function People({ onDirtyChange, onAsk, openRequest }: {
   useLayoutEffect(() => { if (active && hasSelection) detail.current?.focus({ preventScroll: true }); }, [active, view, contactId, requestId]);
   const mayStart = !!account && (canConfigure(account, "contact.invite.create") || canConfigure(account, "contact.invite.accept") || canConfigure(account, "profile.resolve"));
   const firstVisit = !!contactsQuery.data && !contacts.length && !hasSelection && view === "inbox" && !archived;
-  const openList = (next: PeopleView) => {
-    setView(next); setFilter("");
-    if (next === "requests") { setDirection("incoming"); setHistory(false); setRequestId(null); }
+  const openList = (next: PeopleRoute["view"]) => {
+    setFilter("");
+    open({ view: next, contactId: null, requestId: null, direction: next === "requests" ? "incoming" : direction, history: next === "requests" ? false : history });
   };
   const openContact = (id: string) => {
     setDialog(null);
-    setView("inbox"); setFilter("");
-    setContactId(id);
+    setFilter("");
+    open({ view: "inbox", contactId: id });
   };
   const showConversation = (id: string) => {
     setChosenIdea((current) => current && !current.contactId ? { ...current, contactId: id } : current);
     void cache.invalidateQueries({ queryKey: INSTRUMENT_CONTACTS_KEY });
     void cache.invalidateQueries({ queryKey: INSTRUMENT_INBOX_KEY });
-    setView("inbox");
-    setArchived(false);
-    openContact(id);
+    setDialog(null); setFilter("");
+    open({ view: "inbox", contactId: id, archived: false });
   };
-  useLayoutEffect(() => {
-    if (!openRequest) return;
-    if ("contactId" in openRequest) showConversation(openRequest.contactId);
-    else { setDialog(null); setView("requests"); setDirection("incoming"); setHistory(false); setRequestId(openRequest.requestId); }
-  }, [openRequest]);
   const sent = (value: ApproachSummary) => {
     setDialog(null);
-    setCompose(emptyApproachDraft()); setView("requests"); setDirection("outgoing"); setHistory(false);
+    setCompose(emptyApproachDraft());
     cache.setQueryData([...INSTRUMENT_APPROACHES_KEY, "detail", value.id], value);
     void cache.invalidateQueries({ queryKey: INSTRUMENT_APPROACHES_KEY });
-    setRequestId(value.id);
+    open({ view: "requests", direction: "outgoing", history: false, requestId: value.id });
   };
 
   if (accounts.isPending && connected) return <main class="people-access"><LoadingState variant="panel">Loading your account…</LoadingState></main>;
@@ -147,17 +145,17 @@ export function People({ onDirtyChange, onAsk, openRequest }: {
       {listView !== "inbox" && <button class="people-action people-list-back" aria-label="Back to conversations" disabled={busy} onClick={() => openList("inbox")}>← conversations</button>}
       {listView === "requests" ? <>
         {account && !canConfigure(account, "approach.list") && <p class="people-note people-access-note">This account cannot read message requests.</p>}
-        <div class="people-list-tools"><button class="people-action" disabled={busy} onClick={() => { setDirection(direction === "incoming" ? "outgoing" : "incoming"); setRequestId(null); }}>{direction === "incoming" ? "sent requests" : "received requests"}</button><button class="people-action" disabled={busy} onClick={() => { setHistory(!history); setRequestId(null); }}>{history ? "current requests" : "history"}</button></div>
+        <div class="people-list-tools"><button class="people-action" disabled={busy} onClick={() => { open({ direction: direction === "incoming" ? "outgoing" : "incoming", requestId: null }); }}>{direction === "incoming" ? "sent requests" : "received requests"}</button><button class="people-action" disabled={busy} onClick={() => { open({ history: !history, requestId: null }); }}>{history ? "current requests" : "history"}</button></div>
         {requests.isFetching && !requests.data && <LoadingState variant="panel">Loading requests…</LoadingState>}
         {requests.error && <p class="people-error" role="alert">{requests.error.message}</p>}
         {requests.data && !items.length && <div class="people-empty-list"><p>{history ? "No past requests." : direction === "incoming" ? "No requests waiting for you." : "No requests waiting for a reply."}</p><span>{direction === "incoming" ? "People can reach you through your published profile." : "Start with someone’s public profile or a private invitation."}</span></div>}
-        <ul class="people-rows">{items.map((item) => <li key={item.id}><button class={`people-row${requestId === item.id ? " is-selected" : ""}`} disabled={busy} aria-current={requestId === item.id ? "true" : undefined} onClick={() => setRequestId(item.id)}><span class="people-row-name">{item.displayName}</span><time>{new Date(item.createdAtMs).toLocaleDateString(undefined, { month: "short", day: "numeric" })}</time><span class="people-row-preview">{approachStatus(item)}</span></button></li>)}</ul>
+        <ul class="people-rows">{items.map((item) => <li key={item.id}><button class={`people-row${requestId === item.id ? " is-selected" : ""}`} disabled={busy} aria-current={requestId === item.id ? "true" : undefined} onClick={() => open({ requestId: item.id })}><span class="people-row-name">{item.displayName}</span><time>{new Date(item.createdAtMs).toLocaleDateString(undefined, { month: "short", day: "numeric" })}</time><span class="people-row-preview">{approachStatus(item)}</span></button></li>)}</ul>
         {requests.hasNextPage && <button class="people-action people-more" disabled={requests.isFetchingNextPage} onClick={() => void requests.fetchNextPage()}>{requests.isFetchingNextPage ? "loading…" : "earlier requests"}</button>}
       </> : <>
         {listView === "inbox" && account && !canConfigure(account, "conversation.inbox") && <p class="people-note people-access-note">This account cannot read the inbox.</p>}
         {account && !canConfigure(account, "contact.list") && <p class="people-note people-access-note">This account cannot read contacts.</p>}
         <div class="people-list-tools"><input class="people-filter" aria-label={listView === "contacts" ? "Find a contact" : "Find a conversation"} value={filter} placeholder={listView === "contacts" ? "Find a contact…" : "Filter conversations…"} onInput={(event) => setFilter(event.currentTarget.value)} /></div>
-        {listView === "inbox" && archived && <div class="people-archive-heading"><span>Archived</span><button class="people-action" onClick={() => setArchived(false)}>back to conversations</button></div>}
+        {listView === "inbox" && archived && <div class="people-archive-heading"><span>Archived</span><button class="people-action" onClick={() => open({ archived: false })}>back to conversations</button></div>}
         {(contactsQuery.isFetching && !contactsQuery.data || listView === "inbox" && inbox.isFetching && !inbox.data) && <LoadingState variant="panel">Loading conversations…</LoadingState>}
         {listView === "inbox" && inbox.error && <p class="people-error" role="alert">{inbox.error.message}</p>}
         {contactsQuery.error && <p class="people-error" role="alert">{contactsQuery.error.message}</p>}
@@ -168,17 +166,17 @@ export function People({ onDirtyChange, onAsk, openRequest }: {
       </div>
       <footer class="people-list-footer">
         <details class="people-list-more"><summary>more</summary><div>
-          <button class="people-action" disabled={busy} onClick={(event) => { event.currentTarget.closest("details")?.removeAttribute("open"); openList("inbox"); setArchived(!archived); }}>{archived ? "conversations" : "archived conversations"}</button>
+          <button class="people-action" disabled={busy} onClick={(event) => { event.currentTarget.closest("details")?.removeAttribute("open"); setFilter(""); open({ view: "inbox", contactId: null, archived: !archived }); }}>{archived ? "conversations" : "archived conversations"}</button>
           <button class="people-action" disabled={busy || !account || !canConfigure(account, "contact.block.list")} onClick={(event) => { event.currentTarget.closest("details")?.removeAttribute("open"); setDialog("blocked"); }}>blocked people</button>
         </div></details>
-        {human && <button class="people-self" aria-current={view === "profile" ? "page" : undefined} disabled={busy || !canConfigure(account!, "profile.get")} onClick={() => setView("profile")}><span>{profile.data?.draft.displayName || account?.displayName || account?.username}</span><small>your profile{profileDirty ? " ·" : ""}</small></button>}
+        {human && <button class="people-self" aria-current={view === "profile" ? "page" : undefined} disabled={busy || !canConfigure(account!, "profile.get")} onClick={() => open({ view: "profile" })}><span>{profile.data?.draft.displayName || account?.displayName || account?.username}</span><small>your profile{profileDirty ? " ·" : ""}</small></button>}
         {!connected && <span role="status">reconnecting…</span>}
       </footer>
     </aside>
     <section class="people-detail" ref={detail} tabIndex={-1} aria-label={view === "profile" ? "Your profile" : "Selected conversation"}>
-      {hasSelection && !(view === "inbox" && selectedContact) && <button class="people-action people-back" disabled={busy} onClick={() => { if (view === "profile") { setView("inbox"); setContactId(null); } else if (view === "requests") setRequestId(null); else setContactId(null); }}>← {view === "requests" ? "requests" : "conversations"}</button>}
+      {hasSelection && view !== "profile" && !(view === "inbox" && selectedContact) && <button class="people-action people-back" disabled={busy} onClick={() => { open({ view: view === "requests" ? "requests" : "inbox", contactId: null, requestId: null }); }}>← {view === "requests" ? "requests" : "conversations"}</button>}
       <RetainedView active={active && view === "inbox"}>
-        {selectedContact ? <ContactInspector key={selectedContact.id} contact={selectedContact} account={account} onBack={() => setContactId(null)} idea={chosenIdea?.contactId === selectedContact.id ? chosenIdea.index : null} onAsk={(task) => onAsk(`Help me with ${JSON.stringify(contactDisplayName(selectedContact))}'s GSV profile: ${selectedContact.remoteOrigin}/profile\n\n${task.replaceAll("{name}", `${contactDisplayName(selectedContact)} (${new URL(selectedContact.remoteOrigin).host})`)}`)} draft={drafts.drafts.get(selectedContact.id) ?? EMPTY_CONTACT_DRAFT} onDraft={(change) => drafts.update(selectedContact.id, change)} onSend={() => void drafts.send(selectedContact)} onRetry={(id) => void drafts.send(selectedContact, id)} onObserved={(ids) => drafts.observed(selectedContact.id, ids)} />
+        {selectedContact ? <ContactInspector key={selectedContact.id} contact={selectedContact} account={account} onBack={() => open({ contactId: null })} idea={chosenIdea?.contactId === selectedContact.id ? chosenIdea.index : null} onAsk={(task) => onAsk(`Help me with ${JSON.stringify(contactDisplayName(selectedContact))}'s GSV profile: ${selectedContact.remoteOrigin}/profile\n\n${task.replaceAll("{name}", `${contactDisplayName(selectedContact)} (${new URL(selectedContact.remoteOrigin).host})`)}`)} draft={drafts.drafts.get(selectedContact.id) ?? EMPTY_CONTACT_DRAFT} onDraft={(change) => drafts.update(selectedContact.id, change)} onSend={() => void drafts.send(selectedContact)} onRetry={(id) => void drafts.send(selectedContact, id)} onObserved={(ids) => drafts.observed(selectedContact.id, ids)} />
           : contactId ? contactsQuery.isFetching ? <LoadingState variant="panel">Opening conversation…</LoadingState> : <p class="people-note">This conversation is no longer available to this account.</p>
           : firstVisit ? <PeopleWelcome idea={idea} onIdea={setIdea} disabled={busy || !connected || !mayStart} onConnect={() => { setChosenIdea({ index: idea, contactId: null }); setDialog("invitation"); }} />
           : <div class="people-empty"><h2>Pick up where you left off.</h2><p>Choose a conversation to talk, share, or ask Ship to help.</p><button class="people-action" disabled={busy || !connected || !mayStart} onClick={() => setDialog("invitation")}>connect with someone</button></div>}
@@ -188,7 +186,7 @@ export function People({ onDirtyChange, onAsk, openRequest }: {
         {requestId ? request.data ? <MessageRequest key={requestId} request={request.data} account={account} onOpen={showConversation} /> : request.error ? <p class="people-error" role="alert">{request.error.message}</p> : <LoadingState variant="panel">Opening request…</LoadingState>
           : <div class="people-empty"><p>Select a request to read their first message.</p></div>}
       </RetainedView>
-      <RetainedView active={active && view === "profile"}>{account && <Profile key={account.uid} account={account} active={active && view === "profile"} onDirty={setProfileDirty} />}</RetainedView>
+      <RetainedView active={active && view === "profile"}>{account && <Profile key={account.uid} account={account} active={active && view === "profile"} onDirty={setProfileDirty} onBack={() => open({ view: "inbox", contactId: null })} />}</RetainedView>
       {view === "contacts" && <div class="people-empty"><p>Choose a contact to open your conversation.</p></div>}
     </section>
     <FleetDialog open={active && dialog !== null} title={dialog === "blocked" ? "Blocked people" : dialog === "invitation" ? "Connect with someone" : "Start a conversation"} onClose={() => { if (!busy) { clearContactInvitation(); setDialog(null); } }}>

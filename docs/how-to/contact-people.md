@@ -4,7 +4,10 @@
 It opens your conversations and unread messages. **Requests**, above the list, opens
 first messages from new people; its count shows the loaded active requests, with
 `+` when more remain. **contacts**, beside the heading, opens your private address
-book. Both have a **← conversations** action to return to your previous conversation.
+book. Both have a **← conversations** action to return to the conversation list.
+Browser **Back** and **Forward** also restore the People list, selected conversation,
+requests and profile. These destinations have their own URLs; unsent drafts stay
+in the current session while you move between them.
 Search inside a conversation with **search** or `Ctrl/Cmd+F`. Open **details** for
 the private name, mute and connection controls. **Save contact** adds someone to Contacts without
 changing their permissions or how Ship handles the conversation.
@@ -50,6 +53,9 @@ profile links still work. Drafts remain when you return to a conversation. A pro
 invitation, or close new contact. Saving later edits does not change the public
 page until you publish again. Unpublishing removes the page; existing contacts and
 conversations remain. People who already viewed it may retain copies.
+On phones, the profile editor keeps its title and back arrow above the scrolling
+form. The same lavender edge used in conversations appears only while text crosses
+that scroll boundary.
 
 ## Decide who handles it
 
@@ -63,6 +69,9 @@ choice; creating or accepting one does not silently choose automatic handling.
 this choice. On phones, **more** opens **ask Ship**, **search** and **details**;
 the back arrow returns to the full-height conversation list. The short handling
 status beneath the person's name also opens details when space permits.
+The composer uses Chat's growing prompt and selection styling. Its **+** opens the
+file picker for attachments, and **send** appears beside the prompt when there is
+text or an attachment to send. Ship's target and request controls remain in Chat.
 When on, Ship can respond using its ordinary permissions and approval
 rules. Accepting or enabling the setting does not wake Ship or replay existing
 messages; the next incoming message starts handling. Turning it off ends that

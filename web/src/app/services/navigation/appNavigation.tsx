@@ -1,17 +1,17 @@
 import type { ComponentChildren, JSX } from "preact";
 import { useLayoutEffect, useState } from "preact/hooks";
 
-const SESSION_NAVIGATION = "gsv-session-navigation";
+const APP_NAVIGATION = "gsv-app-navigation";
 
-export function useSessionLocation() {
+export function useAppLocation() {
   const [location, setLocation] = useState(() => ({ pathname: window.location.pathname, revision: 0 }));
   useLayoutEffect(() => {
     const changed = () => setLocation((current) => ({ pathname: window.location.pathname, revision: current.revision + 1 }));
-    window.addEventListener(SESSION_NAVIGATION, changed);
+    window.addEventListener(APP_NAVIGATION, changed);
     window.addEventListener("popstate", changed);
     window.addEventListener("hashchange", changed);
     return () => {
-      window.removeEventListener(SESSION_NAVIGATION, changed);
+      window.removeEventListener(APP_NAVIGATION, changed);
       window.removeEventListener("popstate", changed);
       window.removeEventListener("hashchange", changed);
     };
@@ -19,7 +19,16 @@ export function useSessionLocation() {
   return location;
 }
 
-export function SessionLink({ href, class: className, target, children }: {
+/** User navigation adds a destination; redirects replace only the current entry. */
+export function navigateApp(href: string, { replace = false }: { replace?: boolean } = {}) {
+  const destination = new URL(href, window.location.href);
+  if (destination.origin !== window.location.origin) throw new Error("App navigation requires a local destination.");
+  if (destination.href === window.location.href) return;
+  window.history[replace ? "replaceState" : "pushState"](null, "", destination.href);
+  window.dispatchEvent(new Event(APP_NAVIGATION));
+}
+
+export function AppLink({ href, class: className, target, children }: {
   href: string;
   class?: string;
   target?: string;
@@ -31,8 +40,7 @@ export function SessionLink({ href, class: className, target, children }: {
     const destination = new URL(href, window.location.href);
     if (destination.origin !== window.location.origin) return;
     event.preventDefault();
-    window.history.pushState(null, "", destination.href);
-    window.dispatchEvent(new Event(SESSION_NAVIGATION));
+    navigateApp(destination.href);
   };
   return <a href={href} class={className} target={target} onClick={navigate}>{children}</a>;
 }

@@ -2,6 +2,14 @@
 
 Instrument is the default web UI at `/`. Its views use `/chat`, `/people`, `/fleet`, `/memory` and `/chat/settings`. Older `/zen` and `/zen/settings` links replace their address with the Chat routes while preserving query parameters, fragments and history state. The former desktop shell, console and standalone workspaces are retired; old deep links for those surfaces have no compatibility mapping. Login and `/onboarding` capabilities enter the same UI. Shared gateway and history logic lives under `app/services/`, with system types and model/approval logic under `app/domain/`. The design catalog and its retained examples load separately when opened.
 
+View navigation uses the shared app history service. User actions push distinct
+destinations; Back and Forward restore them without replacing the shared shell
+or retained views. Redirects replace the current entry, and choosing the current
+URL does not add a duplicate. People includes its list, contact, request, profile
+and archive selection in query parameters. Draft text and attachments stay out of
+URLs and history state. Entering another view preserves People's last destination;
+background sends do not navigate away from the reader's active view.
+
 The shared header reserves its own height above every view. Messages, lists and
 files cannot pass behind the header.
 Scrollable panes mark their top edge with a lavender hairline and the cursor's
@@ -304,7 +312,7 @@ The shared header marks waiting People activity. Chat combines ongoing plans, un
 
 Instrument inputs and textareas share the Chat prompt's placeholder colour, Martian Mono type and letter spacing. Typed content retains each field's prose or control typography. The shared rule follows the light and dark themes rather than allowing individual fields to fall back to browser-grey placeholders.
 
-Inviting, accepting an invitation, sending a profile request and accepting a request require an explicit, unselected choice of who handles new messages. The Kernel retains each person's independent choice through delayed acceptance and retries. Conversation details exposes an Automatically handle new messages switch to change it later; the header shows a short handling summary when space permits. Enabling it does not wake Ship or replay existing history; replies associated with assigned work remain independent of the standing preference. On phones, the compact header puts ask Ship, search and details under more. The back arrow returns to the full-height conversation list. Details opens a focused dialog for handling, the private name and mute; saved-contact and archive actions are secondary, while connection management and structured work requests open on demand. Saving controls address-book membership only. The composer places a compact attach button beside the prompt.
+Inviting, accepting an invitation, sending a profile request and accepting a request require an explicit, unselected choice of who handles new messages. The Kernel retains each person's independent choice through delayed acceptance and retries. Conversation details exposes an Automatically handle new messages switch to change it later; the header shows a short handling summary when space permits. Enabling it does not wake Ship or replay existing history; replies associated with assigned work remain independent of the standing preference. On phones, the compact header puts ask Ship, search and details under more. The back arrow returns to the full-height conversation list. Details opens a focused dialog for handling, the private name and mute; saved-contact and archive actions are secondary, while connection management and structured work requests open on demand. Saving controls address-book membership only. The composer uses the shared PromptLine and its native selection tint, with a file-picker + beneath the prompt and send beside nonempty text or attachments. Its owning draft store controls clearing, retries and attachment limits. The profile editor uses the same fixed title/back header, with text-clipping feedback on its scrolling form.
 
 Contact messages support older history, text, attachments and exact replies in the same conversation. Reply and successful-delivery controls appear on hover or keyboard focus, and stay available on touch screens. Pending and failed delivery states remain visible. Drafts, uploads and send identities stay in People across navigation; reloading warns, and uploads are cancelled on teardown. Active conversation and request caches refresh from exact owner-scoped signals, and hidden views wait until opened. Request actions retain revision checks. Revoked contacts keep readable history with sending disabled.
 

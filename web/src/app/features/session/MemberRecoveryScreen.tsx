@@ -6,7 +6,7 @@ import { TextInput } from "../../components/ui/TextInput";
 import { Button } from "../../components/ui/Button";
 import { SectionHeader } from "../../components/ui/SectionHeader";
 import { SessionError } from "./SessionChrome";
-import { SessionLink } from "./sessionNavigation";
+import { AppLink } from "../../services/navigation/appNavigation";
 import "./LoginScreen.css";
 
 export function MemberRecoveryScreen() {
@@ -41,7 +41,7 @@ export function MemberRecoveryScreen() {
   return <AuthLayout background="galaxy" visible surfaceClass="gsv-auth-surface-login"><div class="gsv-login-panel">
     <SectionHeader title="RECOVER ACCOUNT" titleSize="title" divider />
     <div class="gsv-login-body gsv-recovery-body">
-      {done ? <><p>Your password has changed. Sign in with the new password.</p><SessionLink href="/" class="gsv-auth-link">Return to sign-in</SessionLink></> : <>
+      {done ? <><p>Your password has changed. Sign in with the new password.</p><AppLink href="/" class="gsv-auth-link">Return to sign-in</AppLink></> : <>
         <p>Use a messenger you previously confirmed in this space. To recover root, use your operator’s owner sign-in page.</p>
         <form class="gsv-login-fields" onSubmit={(event) => void start(event)}>
           <Button variant="secondary" block type="submit" label={busy ? "PLEASE WAIT…" : attempt ? "REQUEST A NEW CODE" : "REQUEST A CODE"} disabled={busy} />
@@ -54,7 +54,7 @@ export function MemberRecoveryScreen() {
           <Button variant="primary" block type="submit" label="RESET PASSWORD" disabled={busy || password.length < 8 || !code.trim()} />
         </form>}
         <SessionError message={error} />
-        <SessionLink href="/" class="gsv-auth-link">Return to sign-in</SessionLink>
+        <AppLink href="/" class="gsv-auth-link">Return to sign-in</AppLink>
       </>}
     </div>
   </div></AuthLayout>;

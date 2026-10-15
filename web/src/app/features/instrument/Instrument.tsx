@@ -13,7 +13,8 @@ import { Fleet, type FleetProps } from "./fleet/Fleet";
 import { BrowserControlProvider, BrowserControlOverlay } from "./browser/BrowserControl";
 import { Memory } from "./memory/Memory";
 import { Settings } from "./settings/Settings";
-import { People, type PeopleOpenRequest } from "./people/People";
+import { People } from "./people/People";
+import { peoplePath, readPeopleRoute } from "./people/peopleNavigation";
 import { usePeopleActivity } from "./people/usePeopleActivity";
 import type { FleetReference } from "./fleet/fleetModel";
 import { WireSync } from "./wire/WireSync";
@@ -25,6 +26,7 @@ import { useTabAttention } from "./shared/useTabAttention";
 import { useInstrumentViewport } from "./shared/useInstrumentViewport";
 import { useScrollEdges } from "./shared/useScrollEdges";
 import { RetainedView } from "../../services/navigation/ViewActivity";
+import { navigateApp } from "../../services/navigation/appNavigation";
 import { ClientControlError, useClientControl } from "../../services/platform/ClientControl";
 import { useGateway } from "../../services/gateway/GatewayProvider";
 import { trackClientActivity } from "../../services/gateway/clientActivity";
@@ -87,7 +89,9 @@ function InstrumentReady({ initialPath }: { initialPath: string }) {
       try { client.sendSignal(signal); } catch { /* The next input after reconnect reports activity. */ }
     });
   }, [client, status.state]);
-  const [distance, setDistance] = useState<Distance>(() => distanceForPath(initialPath));
+  const distance = distanceForPath(initialPath);
+  const visitedPaths = useRef<Partial<Record<Distance, string>>>({});
+  visitedPaths.current[distance] = distance === "people" ? peoplePath(readPeopleRoute(window.location.search)) : DISTANCE_TO_PATH[distance];
   const scrollEdgesRef = useScrollEdges(distance);
   useEffect(() => {
     replaceLegacyChatPath();
@@ -160,14 +164,11 @@ function InstrumentReady({ initialPath }: { initialPath: string }) {
       await checkpoint();
       if (controlState.current.unsaved) throw new ClientControlError("busy");
       setZenPid(pid);
-      setDistance("zen");
-      history.replaceState(null, "", "/chat");
+      navigateApp("/chat");
       return { type: command.type === "new" ? "created" : "selected", processId: pid };
     } finally { selectingProcess.current = false; }
   });
 
-  /* a contact conversation Zen asked People to open; a fresh object each time so the same contact reopens */
-  const [peopleRequest, setPeopleRequest] = useState<PeopleOpenRequest | null>(null);
   const peopleActivity = usePeopleActivity(viewer);
   const move = useCallback(
     (to: Distance, reference: FleetReference | null = null) => {
@@ -178,8 +179,7 @@ function InstrumentReady({ initialPath }: { initialPath: string }) {
         return true;
       }
       if (reference) setFleetRequest({ reference });
-      history.replaceState(null, "", DISTANCE_TO_PATH[to]);
-      setDistance(to);
+      navigateApp(visitedPaths.current[to] ?? DISTANCE_TO_PATH[to]);
       return true;
     },
     [distance, fleetDirty],
@@ -383,7 +383,11 @@ function InstrumentReady({ initialPath }: { initialPath: string }) {
           onPrefillUsed={() => { setZenPrefill(null); setZenRequestPrefill(null); }} pid={zenPid}
           contactReplies={zenPid ? undefined : contactReplies}
           peopleActivity={zenPid ? undefined : peopleActivity}
-          onPeopleActivity={(request) => { if (move("people") && request) setPeopleRequest(request); }} />
+          onPeopleActivity={(request) => {
+            /* a contact conversation Zen asked People to open; a fresh object each time so the same contact reopens */
+            if (!request) { move("people"); return; }
+            navigateApp(peoplePath("contactId" in request ? { contactId: request.contactId } : { view: "requests", requestId: request.requestId }));
+          }} />
         </RetainedView>
         <RetainedView active={distance === "memory"}>
           <Memory onDirtyChange={setMemoryDirty} initialPage={selectedMemoryPage} onAsk={(text) => {
@@ -401,7 +405,7 @@ function InstrumentReady({ initialPath }: { initialPath: string }) {
           }} />
         </RetainedView>
         <RetainedView active={distance === "people"}>
-          <People onDirtyChange={setPeopleDirty} openRequest={peopleRequest} onAsk={(text) => {
+          <People onDirtyChange={setPeopleDirty} onAsk={(text) => {
             if (zenPid && zenDirty && !window.confirm("Discard your unsent message and return to Ship?")) return;
             if (!move("zen")) return;
             setZenPid(null); setZenTarget(null); setZenPrefill(null); setZenRequestPrefill(text);

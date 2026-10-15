@@ -31,9 +31,9 @@
 .people-list-footer { flex-shrink: 0; margin-top: auto; padding: 20px 24px; display: flex; align-items: center; flex-wrap: wrap; gap: 12px; color: var(--text-dim); font-size: 10px; }
 .people .people-more { margin: 12px 20px; }
 .people-detail { min-width: 0; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
-.people-detail:has(.people-contact) { overflow: hidden; }
+.people-detail:has(.people-contact, .people-profile) { overflow: hidden; }
 .people-detail > .instrument-view:not([hidden]) { display: flex; flex-direction: column; flex: 1; min-height: 0; overflow-y: auto; }
-.people-contact { --people-gutter: clamp(20px, 3cqi, 56px); display: flex; flex-direction: column; flex: 1; min-width: 0; min-height: 0; }
+.people-contact, .people-profile { --people-gutter: clamp(20px, 3cqi, 56px); display: flex; flex-direction: column; flex: 1; min-width: 0; min-height: 0; }
 .people-conversation-header { display: flex; justify-content: space-between; align-items: center; gap: 20px; flex-shrink: 0; padding-block: 28px; }
 .people-conversation-header, .people-composer { width: min(100%, 840px); align-self: center; padding-inline: var(--people-gutter); box-sizing: border-box; }
 .people-conversation-header h1 { margin: 0; color: var(--text-title); font: 500 26px/1.2 var(--gsv-font-prose); overflow-wrap: anywhere; }
@@ -58,12 +58,11 @@
 .people-message[data-author="your-ship"] > p { color: var(--accent); }
 .people-message time { font-size: 9px; color: var(--faint); }
 .people-message > p { margin: 12px 0 0; white-space: pre-wrap; font: 17px/1.65 var(--gsv-font-prose); }
-.people-composer { border-top: 1px solid var(--border); flex-shrink: 0; margin-top: 8px; padding-block: 12px 16px; }
-.people .people-composer textarea { padding: 12px 0; border: 0; background: transparent; font: 17px/1.6 var(--gsv-font-prose); max-height: max(40px, min(160px, calc((var(--instrument-height) / var(--type-scale) - var(--instrument-header-height) - 44px) * .35))); resize: none; }
+.people-composer { flex-shrink: 0; padding-block: 0 16px; }
+.people .people-composer textarea { padding: 0; border: 0; background: transparent; color: var(--text-hi); font: inherit; }
 .people .people-composer textarea:focus-visible { outline: none; }
-.people-composer:focus-within { border-color: var(--text-dim); }
-.people-composer-actions { display: flex; align-items: center; gap: 16px; justify-content: space-between; }
-.people-composer-actions > button[type="submit"] { margin-left: auto; min-height: 36px; color: var(--accent); }
+.people-composer-actions { justify-content: flex-start; }
+.people-composer-actions .note { margin-left: auto; }
 .people-composer .zen-draft-attachments { margin: 8px 0 12px; }
 .people-composer .note, .people-composer .error { margin: 8px 0; font-size: 12px; }
 .people .people-back { display: none; align-self: start; flex-shrink: 0; margin: 12px 20px 0; }
@@ -121,10 +120,9 @@
   .people-header-actions .people-action { min-height: 44px; }
   .people-conversation-header h1 { font-size: 21px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .people .people-handling-summary { font-size: 9px; margin-top: 2px; }
-  .people-contact { --people-gutter: 18px; }
+  .people-contact, .people-profile { --people-gutter: 18px; }
   .people-history { padding-block: 8px 4px; }
-  .people-composer { padding-block: calc(8px / var(--type-scale)); margin-top: 0; }
-  .people .people-composer textarea { padding-block: calc(6px / var(--type-scale)); }
+  .people-composer { padding-bottom: calc(8px / var(--type-scale)); }
   .people-composer-actions > button { min-height: calc(44px / var(--type-scale)); }
   .people-request { padding-block: 24px; }
   .people.has-selection .people-list { display: none; }
@@ -259,7 +257,8 @@
 .people-self > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-title); font: 500 16px/1.4 var(--gsv-font-prose); }
 .people-self > small { flex-shrink: 0; color: var(--text-dim); font: 10px/1.5 var(--gsv-font-mono); }
 .people-self:hover > span, .people-self[aria-current="page"] > span { color: var(--accent); }
-.people-own-profile { width: min(100%, 760px); box-sizing: border-box; margin-inline: auto; padding: 28px clamp(24px, 4cqi, 56px) 44px; }
+.people-profile-scroll { flex: 1; min-height: 0; overflow-y: auto; }
+.people-own-profile { width: min(100%, 840px); box-sizing: border-box; margin-inline: auto; padding: 0 var(--people-gutter) 44px; }
 .people-own-profile h1 { margin: 0 0 12px; color: var(--text-title); font: 500 26px/1.2 var(--gsv-font-prose); }
 .people-own-profile h2 { color: var(--text-title); font: 500 24px/1.3 var(--gsv-font-prose); }
 .people-form .people-profile-representation { display: flex; align-items: center; gap: 12px; font: 15px/1.5 var(--gsv-font-prose); cursor: pointer; }

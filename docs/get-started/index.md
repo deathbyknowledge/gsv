@@ -73,6 +73,9 @@ The web console is called **Instrument** and has five views:
 On phones, tap **menu** in the header to switch views. A dot on the menu button
 marks unread People activity. Choosing a view
 closes the menu and keeps your drafts. Tap **GSV** to return to Chat.
+View changes stay in the app and create browser history entries. **Back** and
+**Forward** retrace those views, including People conversations and your profile,
+without reloading the page or clearing drafts.
 
 In Chat, one compact activity line above the prompt combines ongoing plans and
 People messages. Tap **N ongoing** (or **plans** when none are active) to open

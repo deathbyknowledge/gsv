@@ -14,6 +14,7 @@ import type { ContactDraft } from "./useContactDrafts";
 import { useConversationReadPosition } from "./useConversationReadPosition";
 import { useContactHistory } from "./useContactHistory";
 import { MessageDelivery } from "./MessageDelivery";
+import { PromptLine } from "../shared/PromptLine";
 import "../shared/senderBadge.css";
 
 export type ContactComposerProps = {
@@ -37,7 +38,6 @@ export function ContactConversation({ contact, account, draft, onDraft, onSend, 
   const sendingFull = draft.sent.filter((entry) => entry.state === "sending").length >= 3;
   const tooLong = new TextEncoder().encode(draft.text).length > 32_768;
   const fileInput = useRef<HTMLInputElement>(null);
-  const input = useRef<HTMLTextAreaElement>(null);
   const scroll = useRef<HTMLDivElement>(null);
   const follow = useRef(true);
   const olderHeight = useRef<number | null>(null);
@@ -77,18 +77,6 @@ export function ContactConversation({ contact, account, draft, onDraft, onSend, 
     observer.observe(element);
     return () => observer.disconnect();
   }, [active]);
-  useLayoutEffect(() => {
-    const element = input.current;
-    if (!active || !element) return;
-    const resize = () => { element.style.height = "auto"; element.style.height = `${element.scrollHeight}px`; };
-    resize();
-    let width = element.clientWidth;
-    const observer = new ResizeObserver(() => {
-      if (element.clientWidth !== width) { width = element.clientWidth; resize(); }
-    });
-    observer.observe(element);
-    return () => observer.disconnect();
-  }, [active, draft.text]);
   const addFiles = (files: readonly File[]) => {
     if (disabled) return;
     if (files.some((file) => file.size > MAX_STAGED_RESOURCE_BYTES)) {
@@ -143,28 +131,31 @@ export function ContactConversation({ contact, account, draft, onDraft, onSend, 
         {(entry.state === "failed" && entry.retryable || entry.state === "unconfirmed") && <button class="fleet-text-action" disabled={disabled || sendingFull} onClick={() => onRetry(entry.intent.idempotencyKey)}>retry same message</button>}
       </article>)}
     </div>}
-    <form class="people-composer" onSubmit={(event) => { event.preventDefault(); send(); }} onDragOver={(event) => { if (!disabled) event.preventDefault(); }} onDrop={(event) => {
+    <div class="people-composer" onDragOver={(event) => { if (!disabled) event.preventDefault(); }} onDrop={(event) => {
       event.preventDefault();
       addFiles(Array.from(event.dataTransfer?.files ?? []));
     }}>
       {draft.reply && <div class="people-composer-reply"><span>Reply to {draft.reply.author}</span><blockquote class="people-reply-quote">{draft.reply.preview}</blockquote><button class="fleet-text-action" type="button" onClick={() => onDraft({ reply: null })}>cancel reply</button></div>}
-      <textarea ref={input} aria-label="Message to contact" placeholder="Write a message…" enterkeyhint="send" rows={1} value={draft.text} disabled={!maySend} onInput={(event) => onDraft({ text: event.currentTarget.value, error: null, status: null })} onKeyDown={(event) => {
-        if (event.key === "Enter" && !event.shiftKey && !event.isComposing) { event.preventDefault(); if (!event.repeat) send(); }
-      }} onPaste={(event) => {
-        const files = Array.from(event.clipboardData?.files ?? []);
-        if (files.length) { event.preventDefault(); addFiles(files); }
-      }} />
       <input type="file" multiple hidden ref={fileInput} onChange={(event) => { addFiles(Array.from(event.currentTarget.files ?? [])); event.currentTarget.value = ""; }} />
       {draft.media.length > 0 && <ul class="zen-draft-attachments">{draft.media.map((file) => <ZenDraftAttachment key={file.id} attachment={file} disabled={disabled} onRemove={() => onDraft({ media: draft.media.filter((item) => item.id !== file.id), error: null })} />)}</ul>}
-      <div class="people-composer-actions">
-        <button class="fleet-text-action" type="button" disabled={disabled} onClick={() => fileInput.current?.click()}>attach</button>
+      <div class="zen-compose-line">
+        <PromptLine place={{ id: contact.id, label: contact.remoteSubject.displayName, online: connected }} showPlace={false} dir="" commands={false}
+          ariaLabel="Message to contact" placeholder="Write a message…" value={draft.text} disabled={!maySend} allowEmpty={draft.media.length > 0}
+          onInput={(text) => onDraft({ text, error: null, status: null })} onFiles={addFiles}
+          onKeyIntercept={(event) => { if (event.key === "Enter" && !event.shiftKey && event.repeat) { event.preventDefault(); return true; } return false; }}
+          onSubmit={() => { send(); return false; }} />
+        {(draft.text.length > 0 || draft.media.length > 0) && <button class="zen-submit" type="button"
+          onPointerDown={(event) => { if (event.currentTarget.parentElement?.contains(document.activeElement)) event.preventDefault(); }}
+          disabled={disabled || sendingFull || tooLong || (!draft.text.trim() && !draft.media.length)} onClick={send}>send</button>}
+      </div>
+      <div class="zen-compose-actions people-composer-actions">
+        <button class="zen-attach" type="button" aria-label="Attach a file" title="Attach a file" disabled={disabled} onClick={() => fileInput.current?.click()}>+</button>
         {draft.status && <span class="note" role="status">{draft.status}</span>}
-        <button class="fleet-text-action" type="submit" disabled={disabled || sendingFull || tooLong || (!draft.text.trim() && !draft.media.length)}>send</button>
       </div>
       {tooLong && <p class="error" role="alert">This message is too long. Shorten it before sending.</p>}
       {draft.error && <p class="error" role="alert">{draft.error}</p>}
       {!connected ? <p class="note">Reconnecting… Your draft is kept here.</p> : contact.state !== "active" ? <p class="note">This connection is revoked. Previous messages remain available.</p> : !maySend && <p class="note">Your account cannot send messages to this contact.</p>}
-    </form>
+    </div>
   </section>;
 }
 
