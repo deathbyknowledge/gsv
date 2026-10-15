@@ -15,6 +15,7 @@ export function useInstrumentViewport() {
     let frame = 0;
     let trackingUntil = 0;
     let targetHeight = viewport.height;
+    let layoutScale = viewport.scale;
     let displayedHeight = targetHeight;
     let animation: { from: number; started: number } | null = null;
     let lastTop: number | undefined;
@@ -27,7 +28,7 @@ export function useInstrumentViewport() {
       const now = performance.now();
       // Pinch zoom must magnify and pan the existing layout, not reflow it.
       // Safari reported 1.004118 on an unzoomed iPhone after opening the keyboard.
-      if (Math.abs(viewport.scale - 1) < 0.01) {
+      if (Math.abs(viewport.scale / layoutScale - 1) < 0.01) {
         // The visible viewport and a fixed element can have different origins
         // while Safari scrolls the document to reveal an input.
         const top = viewport.pageTop - window.scrollY - root.getBoundingClientRect().top;
@@ -70,6 +71,9 @@ export function useInstrumentViewport() {
         || !event.target.matches("input, textarea, [contenteditable]:not([contenteditable=false])")) return;
       // Safari can change viewport geometry between, or after, its resize events.
       // Poll only through this focus transition, never for the whole typing session.
+      // Fit the keyboard at the person's current zoom. A pinch between focus
+      // transitions still magnifies the existing layout without reflowing it.
+      layoutScale = viewport.scale;
       trackingUntil = performance.now() + KEYBOARD_TRACKING_MS;
       measure();
     };

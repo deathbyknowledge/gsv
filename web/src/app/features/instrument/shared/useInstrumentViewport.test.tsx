@@ -7,8 +7,8 @@ class TestElement extends EventTarget {
   matches() { return this.editable; }
 }
 
-async function screen(hasViewport = true) {
-  const viewport = Object.assign(new EventTarget(), { height: 844, pageTop: 0, offsetTop: 0, scale: 1 });
+async function screen(hasViewport = true, scale = 1) {
+  const viewport = Object.assign(new EventTarget(), { height: 844, pageTop: 0, offsetTop: 0, scale });
   const motion = { matches: false };
   const browser = Object.assign(new EventTarget(), {
     visualViewport: hasViewport ? viewport : null, scrollY: 0, matchMedia: () => motion,
@@ -76,6 +76,40 @@ async function screen(hasViewport = true) {
 afterEach(() => { vi.unstubAllGlobals(); });
 
 describe("instrument viewport", () => {
+  it("fits Safari's keyboard when the page starts at a retained zoom level", async () => {
+    const view = await screen(true, 1.0159879922866821);
+    try {
+      view.viewport.height = 703;
+      view.viewport.dispatchEvent(new Event("resize"));
+      expect(view.height()).toBe(703);
+      view.focus();
+      view.viewport.height = 371.0625;
+      view.viewport.dispatchEvent(new Event("resize"));
+      view.flush(200);
+      expect(view.height()).toBe(371.0625);
+      view.focus("focusout");
+      view.viewport.height = 703;
+      view.viewport.dispatchEvent(new Event("resize"));
+      view.flush(400);
+      expect(view.height()).toBe(703);
+    } finally { await view.unmount(); }
+  });
+
+  it("uses the current zoom at a new input focus without resizing during a pinch", async () => {
+    const view = await screen();
+    try {
+      view.viewport.scale = 1.6;
+      view.viewport.height = 527.5;
+      view.viewport.dispatchEvent(new Event("resize"));
+      expect(view.height()).toBe(844);
+      view.focus();
+      view.viewport.height = 260;
+      view.viewport.dispatchEvent(new Event("resize"));
+      view.flush(200);
+      expect(view.height()).toBe(260);
+    } finally { await view.unmount(); }
+  });
+
   it("corrects viewport changes before the next frame, including nearly-unit Safari zoom", async () => {
     const view = await screen();
     try {
