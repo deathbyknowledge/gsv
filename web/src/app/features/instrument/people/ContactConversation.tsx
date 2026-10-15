@@ -37,6 +37,7 @@ export function ContactConversation({ contact, account, draft, onDraft, onSend, 
   const sendingFull = draft.sent.filter((entry) => entry.state === "sending").length >= 3;
   const tooLong = new TextEncoder().encode(draft.text).length > 32_768;
   const fileInput = useRef<HTMLInputElement>(null);
+  const input = useRef<HTMLTextAreaElement>(null);
   const scroll = useRef<HTMLDivElement>(null);
   const follow = useRef(true);
   const olderHeight = useRef<number | null>(null);
@@ -69,6 +70,25 @@ export function ContactConversation({ contact, account, draft, onDraft, onSend, 
       olderHeight.current = null;
     } else followLatest();
   }, [active, history.data, draft.sent]);
+  useLayoutEffect(() => {
+    const element = scroll.current;
+    if (!active || !element) return;
+    const observer = new ResizeObserver(followLatest);
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [active]);
+  useLayoutEffect(() => {
+    const element = input.current;
+    if (!active || !element) return;
+    const resize = () => { element.style.height = "auto"; element.style.height = `${element.scrollHeight}px`; };
+    resize();
+    let width = element.clientWidth;
+    const observer = new ResizeObserver(() => {
+      if (element.clientWidth !== width) { width = element.clientWidth; resize(); }
+    });
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [active, draft.text]);
   const addFiles = (files: readonly File[]) => {
     if (disabled) return;
     if (files.some((file) => file.size > MAX_STAGED_RESOURCE_BYTES)) {
@@ -128,7 +148,7 @@ export function ContactConversation({ contact, account, draft, onDraft, onSend, 
       addFiles(Array.from(event.dataTransfer?.files ?? []));
     }}>
       {draft.reply && <div class="people-composer-reply"><span>Reply to {draft.reply.author}</span><blockquote class="people-reply-quote">{draft.reply.preview}</blockquote><button class="fleet-text-action" type="button" onClick={() => onDraft({ reply: null })}>cancel reply</button></div>}
-      <textarea aria-label="Message to contact" placeholder="Write a message…" rows={2} value={draft.text} disabled={disabled} onInput={(event) => onDraft({ text: event.currentTarget.value, error: null, status: null })} onKeyDown={(event) => {
+      <textarea ref={input} aria-label="Message to contact" placeholder="Write a message…" enterkeyhint="send" rows={1} value={draft.text} disabled={!maySend} onInput={(event) => onDraft({ text: event.currentTarget.value, error: null, status: null })} onKeyDown={(event) => {
         if (event.key === "Enter" && !event.shiftKey && !event.isComposing) { event.preventDefault(); if (!event.repeat) send(); }
       }} onPaste={(event) => {
         const files = Array.from(event.clipboardData?.files ?? []);

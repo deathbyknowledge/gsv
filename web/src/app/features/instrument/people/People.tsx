@@ -132,19 +132,19 @@ export function People({ onDirtyChange, onAsk, openRequest }: {
   if (accounts.error) return <main class="people-access"><p class="people-error" role="alert">{accounts.error.message}</p></main>;
   if (account && !human) return <main class="people-access"><p>Sign in with your personal account to use People.</p></main>;
 
-  return <main class={`people${hasSelection ? " has-selection" : ""}${firstVisit ? " is-new" : ""}`} aria-label="People">
+  return <main class={`people${hasSelection ? " has-selection" : ""}${firstVisit ? " is-new" : ""}${listView === "inbox" ? " is-inbox" : ""}`} aria-label="People">
     <aside class="people-list" aria-label="People and conversations">
       <div class="people-list-scroll" data-scroll-edge>
       <header class="people-list-heading"><h1>{listView === "inbox" ? "People" : listView === "contacts" ? "Contacts" : history ? "Past requests" : direction === "outgoing" ? "Sent requests" : "Requests"}</h1>
         {listView !== "requests" && <div class="people-list-heading-actions">
+          {listView === "inbox" && <button class="people-action people-request-entry" disabled={busy || !account || !canConfigure(account, "approach.list")} onClick={() => openList("requests")}>
+            <span>requests</span>{items.length > 0 && <span class="people-request-count">{items.length}{requests.hasNextPage ? "+" : ""}</span>}
+          </button>}
           {listView === "inbox" && <button class="people-action" disabled={busy} onClick={() => openList("contacts")}>contacts</button>}
           <button class="people-action" aria-label="Connect with someone" disabled={!connected || busy || !mayStart} onClick={() => setDialog("invitation")}>connect</button>
         </div>}
       </header>
       {listView !== "inbox" && <button class="people-action people-list-back" aria-label="Back to conversations" disabled={busy} onClick={() => openList("inbox")}>← conversations</button>}
-      {listView === "inbox" && <button class="people-request-entry" disabled={busy || !account || !canConfigure(account, "approach.list")} onClick={() => openList("requests")}>
-        <span>Requests</span>{items.length > 0 && <span class="people-request-count">{items.length}{requests.hasNextPage ? "+" : ""}</span>}
-      </button>}
       {listView === "requests" ? <>
         {account && !canConfigure(account, "approach.list") && <p class="people-note people-access-note">This account cannot read message requests.</p>}
         <div class="people-list-tools"><button class="people-action" disabled={busy} onClick={() => { setDirection(direction === "incoming" ? "outgoing" : "incoming"); setRequestId(null); }}>{direction === "incoming" ? "sent requests" : "received requests"}</button><button class="people-action" disabled={busy} onClick={() => { setHistory(!history); setRequestId(null); }}>{history ? "current requests" : "history"}</button></div>
@@ -176,9 +176,9 @@ export function People({ onDirtyChange, onAsk, openRequest }: {
       </footer>
     </aside>
     <section class="people-detail" ref={detail} tabIndex={-1} aria-label={view === "profile" ? "Your profile" : "Selected conversation"}>
-      {hasSelection && <button class="people-action people-back" disabled={busy} onClick={() => { if (view === "profile") { setView("inbox"); setContactId(null); } else if (view === "requests") setRequestId(null); else setContactId(null); }}>← {view === "requests" ? "requests" : "conversations"}</button>}
+      {hasSelection && !(view === "inbox" && selectedContact) && <button class="people-action people-back" disabled={busy} onClick={() => { if (view === "profile") { setView("inbox"); setContactId(null); } else if (view === "requests") setRequestId(null); else setContactId(null); }}>← {view === "requests" ? "requests" : "conversations"}</button>}
       <RetainedView active={active && view === "inbox"}>
-        {selectedContact ? <ContactInspector key={selectedContact.id} contact={selectedContact} account={account} idea={chosenIdea?.contactId === selectedContact.id ? chosenIdea.index : null} onAsk={(task) => onAsk(`Help me with ${JSON.stringify(contactDisplayName(selectedContact))}'s GSV profile: ${selectedContact.remoteOrigin}/profile\n\n${task.replaceAll("{name}", `${contactDisplayName(selectedContact)} (${new URL(selectedContact.remoteOrigin).host})`)}`)} draft={drafts.drafts.get(selectedContact.id) ?? EMPTY_CONTACT_DRAFT} onDraft={(change) => drafts.update(selectedContact.id, change)} onSend={() => void drafts.send(selectedContact)} onRetry={(id) => void drafts.send(selectedContact, id)} onObserved={(ids) => drafts.observed(selectedContact.id, ids)} />
+        {selectedContact ? <ContactInspector key={selectedContact.id} contact={selectedContact} account={account} onBack={() => setContactId(null)} idea={chosenIdea?.contactId === selectedContact.id ? chosenIdea.index : null} onAsk={(task) => onAsk(`Help me with ${JSON.stringify(contactDisplayName(selectedContact))}'s GSV profile: ${selectedContact.remoteOrigin}/profile\n\n${task.replaceAll("{name}", `${contactDisplayName(selectedContact)} (${new URL(selectedContact.remoteOrigin).host})`)}`)} draft={drafts.drafts.get(selectedContact.id) ?? EMPTY_CONTACT_DRAFT} onDraft={(change) => drafts.update(selectedContact.id, change)} onSend={() => void drafts.send(selectedContact)} onRetry={(id) => void drafts.send(selectedContact, id)} onObserved={(ids) => drafts.observed(selectedContact.id, ids)} />
           : contactId ? contactsQuery.isFetching ? <LoadingState variant="panel">Opening conversation…</LoadingState> : <p class="people-note">This conversation is no longer available to this account.</p>
           : firstVisit ? <PeopleWelcome idea={idea} onIdea={setIdea} disabled={busy || !connected || !mayStart} onConnect={() => { setChosenIdea({ index: idea, contactId: null }); setDialog("invitation"); }} />
           : <div class="people-empty"><h2>Pick up where you left off.</h2><p>Choose a conversation to talk, share, or ask Ship to help.</p><button class="people-action" disabled={busy || !connected || !mayStart} onClick={() => setDialog("invitation")}>connect with someone</button></div>}

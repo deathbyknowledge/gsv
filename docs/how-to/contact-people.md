@@ -43,8 +43,8 @@ name, choose who handles new messages, then send a first message.
 They make their own handling choice when accepting, or can decline it. Acceptance keeps that first message in the same
 conversation, opens it directly, and enables further messages and attachments.
 
-Your profile starts private. Click your display name at the bottom of the People
-sidebar, save a draft, review it and explicitly publish it. Your public address is
+Your profile starts private. Choose **your profile** at the bottom of People,
+save a draft, review it and explicitly publish it. Your public address is
 `https://YOUR-SPACE/profile`; there is no separate alias to choose. Existing published
 profile links still work. Drafts remain when you return to a conversation. A profile can accept message requests, require a private
 invitation, or close new contact. Saving later edits does not change the public
@@ -59,8 +59,11 @@ choice stays with the invitation or request, even if acceptance happens later.
 Existing contacts keep their settings. Ship-led invitations use the same explicit
 choice; creating or accepting one does not silently choose automatic handling.
 
-**Automatically handle new messages**, beside the person's name, changes this
-choice. When on, Ship can respond using its ordinary permissions and approval
+**Automatically handle new messages**, in the conversation's **details**, changes
+this choice. On phones, **more** opens **ask Ship**, **search** and **details**;
+the back arrow returns to the full-height conversation list. The short handling
+status beneath the person's name also opens details when space permits.
+When on, Ship can respond using its ordinary permissions and approval
 rules. Accepting or enabling the setting does not wake Ship or replay existing
 messages; the next incoming message starts handling. Turning it off ends that
 standing assignment. Replies to tasks you assign separately can still resume
@@ -71,8 +74,8 @@ editable request in your ordinary Ship chat. Review it and send it when ready.
 It does not turn on automatic replies for that person. A first-use example can
 prefill a more specific request, such as finding a time for dinner.
 
-The **people** line above the Ship prompt keeps unread conversations and incoming
-requests within reach, including after reload or reconnect. New messages update
+The activity line above the Ship prompt keeps unread conversations and incoming
+requests beside ongoing plans, including after reload or reconnect. New messages update
 the line without opening a panel or moving your place in the Ship conversation.
 Select a person's name to read and reply in a compact panel. A **PERSON** or
 **GSV** badge identifies who wrote the latest message. **Open conversation** takes
