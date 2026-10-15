@@ -7,6 +7,28 @@ Apple touch shortcut and Desktop packaging:
 - `gsv-maskable-192.png` and `gsv-maskable-512.png`
 - `apple-touch-icon.png`
 
+All icons come from the approved 4096 × 4096 capture in
+[`../brand/gsv-ship.png`](../brand/gsv-ship.png). It uses the actual login
+`AuthShip` and `InstrumentBackdrop` components in the light theme: the original
+120 × 60 character grid, Departure Mono at 9px with its normal spacing, reduced
+motion's completed frame and one ArrowLeft turn (0.15 radians). Only the framing
+centers the hull; the animation's font, geometry and shading are unchanged.
+The opaque square also keeps the hull within the maskable icon's
+[central 80% circle](https://www.w3.org/TR/appmanifest/#icon-masks), so platforms
+can choose their own outline.
+
+Regenerate the favicon copies, ICO files, PWA, Apple touch and extension sizes
+from that capture with ImageMagick 7 installed:
+
+```sh
+node tools/branding/generate-icons.mjs
+```
+
+Run this from the repository root. macOS packaging reads the full-resolution
+capture directly. The SVG favicon embeds a PNG of the capture, with no external
+font or image dependencies. Icon links use `?v=ship` to replace cached artwork
+from the previous identity; change this version when approving a new capture.
+
 Instrument uses named text controls, quiet borders and typography for its
 interface. Its space theme comes from the persistent star field and ASCII art.
 The former dot-matrix SVG libraries and mask-based `Icon` component are retired;

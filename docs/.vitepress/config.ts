@@ -64,7 +64,8 @@ export default defineConfig({
   lastUpdated: true,
 
   head: [
-    ["link", { rel: "icon", type: "image/svg+xml", href: "/favicon.svg" }],
+    ["link", { rel: "icon", type: "image/x-icon", href: "/favicon.ico?v=ship" }],
+    ["link", { rel: "icon", type: "image/svg+xml", sizes: "any", href: "/favicon.svg?v=ship" }],
     ["meta", { name: "theme-color", content: "#0a0820" }],
     [
       "meta",

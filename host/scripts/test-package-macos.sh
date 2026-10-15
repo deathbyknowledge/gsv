@@ -18,7 +18,7 @@ for path in \
   host/helpers/gestures/THIRD_PARTY.md \
   host/helpers/gestures/models/LICENSE.apache-2.0 \
   host/helpers/gestures/models/PROVENANCE.md \
-  web/public/icons/gsv-512.png; do
+  web/public/brand/gsv-ship.png; do
   mkdir -p "$fixture/$(dirname "$path")"
   cp "$repository_root/$path" "$fixture/$path"
 done
