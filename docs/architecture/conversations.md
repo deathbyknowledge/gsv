@@ -16,6 +16,8 @@ Long lines scroll inside the block. Copy preserves indentation and internal line
 adding the renderer's final newline to the clipboard.
 Chat renders human messages as plain text with clickable web URLs. External web links in human
 messages and Ship's Markdown replies open in a new tab.
+Human messages align right, with the timestamp before the sender's name, and balance line
+lengths to avoid a short final line. Ship's messages align left.
 The Chat transcript scrolls vertically. Long words, URLs and compaction notes wrap within the
 reading column; wide tables and code blocks scroll horizontally within their own bounds.
 Ship replies use ordinary line wrapping rather than paragraph balancing, filling each line
