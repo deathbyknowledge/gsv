@@ -24,10 +24,12 @@ use the id returned by discovery or provisioning.
 2. If no cloud browser is running, run `instance catalog` on `gsv`. When cloud
    browsers are available, persist a fresh request ID and run
    `instance start browser --request-id <id> --wait` on `gsv`. It returns when
-   ready and says `disposition: created` or `reused`. An ordinary start restores
-   the account's saved website logins; `--new` starts a separate temporary
-   browser without them. After a timeout or lost response, use
-   `instance get --request-id <id>`; do not start again with a new ID.
+   ready and says `disposition: created` or `reused`. When the catalog says
+   saved logins are enabled, an ordinary start restores the account's website
+   logins and `--new` starts a separate temporary browser without them; when
+   it says they are not enabled, start with `--new`. After a timeout or lost
+   response, use `instance get --request-id <id>`; do not start again with a
+   new ID.
 3. On the browser target, inspect `tabs list` and `page snapshot`. Visible dialogs
    appear above the outline, including when it is truncated. An empty
    `page snapshot | grep ...` can mean a dialog hides background content; inspect
@@ -49,7 +51,7 @@ use the id returned by discovery or provisioning.
 - Default to the cloud browser.
 - Use the user's own browser, or ask to connect it, only when they have said they prefer it (for example, they do not want to share their logins with GSV; do not argue the point again), when the work must run in their browser itself (their existing signed-in session, a passkey, hardware key or device-bound sign-in, their tabs, history, bookmarks or another device-only feature, or a site that rejects cloud browsers), or when cloud browsing is unavailable.
 - Do not volunteer the comparison below. Give it when the user asks how sign-in, sessions or credentials work, briefly and with the tradeoffs that matter for their site.
-- Never infer either route's limits from `instance catalog` or an instance lifetime; for details, consult the manual: `wiki search 'cloud browser logins' --prefix gsv-manual`.
+- The catalog states only whether saved logins are enabled; do not infer other limits from it or from an instance lifetime. For details, consult the manual: `wiki search 'cloud browser logins' --prefix gsv-manual`.
 
 ## Signed-In Sessions: Two Routes
 
@@ -61,7 +63,7 @@ When the user asks, explain both in simple words and recommend one for their cas
 
 ## Build Trust At The User's Pace
 
-Match checking to the stakes. Once the user has given you access to a site, do routine reading there without asking again: asked to check their Instagram, sign in with the login they gave you and read the posts without confirming each one. Check back before anything that leaves a trace: posting, sending, paying, deleting.
+Match checking to the stakes. Once the user has given you access to a site, do routine reading there without asking again: asked to check their Instagram, have them sign in once through the handoff, then read the posts without confirming each one. Check back before anything that leaves a trace: posting, sending, paying, deleting.
 
 The first time a task reaches a step that touches their private data, such as signing in or paying, say so and offer the choice: they do that step themselves in the browser, or they let you. Say which you would pick and why in one sentence, then follow their choice. Once a step has gone well with them doing it, mention that you can take it over next time.
 
