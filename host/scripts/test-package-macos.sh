@@ -13,6 +13,7 @@ for path in \
   host/Cargo.toml \
   host/scripts/package-macos.sh \
   host/packaging/macos/Info.plist \
+  host/packaging/macos/en.lproj/InfoPlist.strings \
   host/apps/desktop/Entitlements.plist \
   host/helpers/transcriber/THIRD_PARTY.md \
   host/helpers/gestures/THIRD_PARTY.md \
@@ -56,9 +57,18 @@ bash "$fixture/host/scripts/package-macos.sh" --release --skip-build --output "$
 archives=("$output/"*.zip)
 [[ "${#archives[@]}" == 1 && -f "${archives[0]}" ]]
 ditto -x -k "${archives[0]}" "$scratch/unpacked"
-app="$scratch/unpacked/Ship.app"
+app="$scratch/unpacked/GSV.app"
 codesign --verify --deep --strict "$app"
 plutil -lint "$app/Contents/Info.plist"
+swift - "$app" <<'SWIFT'
+import Foundation
+let path = CommandLine.arguments[1]
+let bundle = Bundle(path: path)!
+assert(bundle.bundleIdentifier == "space.gsv.desktop")
+assert(bundle.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String == "Ship")
+let displayName = FileManager.default.displayName(atPath: path)
+assert(displayName == "Ship" || displayName == "Ship.app", displayName)
+SWIFT
 cmp "$repository_root/host/helpers/transcriber/THIRD_PARTY.md" \
   "$app/Contents/Resources/licenses/transcriber/THIRD_PARTY.md"
 [[ ! -e "$app/Contents/MacOS/THIRD_PARTY.md" ]]

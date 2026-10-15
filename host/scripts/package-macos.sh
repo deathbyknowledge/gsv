@@ -5,13 +5,13 @@ usage() {
   cat <<'EOF'
 Usage: host/scripts/package-macos.sh [--debug|--release] [--skip-build] [--output DIR]
 
-Build and assemble an ad-hoc signed Ship.app for the current Mac architecture.
+Build and assemble an ad-hoc signed GSV.app for the current Mac architecture.
 
 Options:
   --debug       Package optimized development-profile binaries (default).
   --release     Package release-profile binaries.
   --skip-build  Reuse existing binaries.
-  --output DIR  Write Ship.app and its ZIP to DIR.
+  --output DIR  Write GSV.app and its ZIP to DIR.
   -h, --help    Show this help.
 EOF
 }
@@ -98,13 +98,16 @@ done
 mkdir -p "$output_dir"
 stage="$(mktemp -d "$output_dir/.gsv-macos-package.XXXXXX")"
 trap 'rm -rf "$stage"' EXIT
-app="$stage/Ship.app"
+app="$stage/GSV.app"
 macos_dir="$app/Contents/MacOS"
 resources_dir="$app/Contents/Resources"
 mkdir -p "$macos_dir" "$resources_dir"
 
 sed "s/__GSV_VERSION__/$version/g" "$plist_template" > "$app/Contents/Info.plist"
 printf 'APPL????' > "$app/Contents/PkgInfo"
+mkdir -p "$resources_dir/en.lproj"
+install -m 0644 "$host_root/packaging/macos/en.lproj/InfoPlist.strings" \
+  "$resources_dir/en.lproj/InfoPlist.strings"
 for binary in "${binaries[@]}"; do
   install -m 0755 "$binary_dir/$binary" "$macos_dir/$binary"
 done
@@ -165,9 +168,9 @@ done
 codesign --force --sign - --entitlements "$host_root/apps/desktop/Entitlements.plist" "$app"
 codesign --verify --deep --strict "$app"
 
-app_path="$output_dir/Ship.app"
+app_path="$output_dir/GSV.app"
 zip_path="$output_dir/Ship-$version-$architecture-$profile.zip"
-[[ "$(basename "$app_path")" == "Ship.app" ]] || die "unsafe app output path"
+[[ "$(basename "$app_path")" == "GSV.app" ]] || die "unsafe app output path"
 rm -rf "$app_path"
 rm -f "$zip_path"
 ditto "$app" "$app_path"

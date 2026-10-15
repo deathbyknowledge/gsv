@@ -1,8 +1,9 @@
-# GSV for macOS
+# Ship for macOS
 
 Releases include `gsv-desktop-darwin-arm64.zip` for Apple Silicon and
 `gsv-desktop-darwin-x64.zip` for Intel. Unzip and move `GSV.app` to Applications.
-The app contains the shared Instrument UI, CLI, machine daemon, voice and gesture
+The app displays as Ship; its on-disk name stays `GSV.app` so updates replace
+existing installations and keep Dock shortcuts working. The app contains the shared Instrument UI, CLI, machine daemon, voice and gesture
 helpers, and third-party notices. macOS 12 or later is required.
 
 These builds are ad-hoc signed, without Developer ID or notarization. After the

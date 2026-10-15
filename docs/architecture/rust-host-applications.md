@@ -328,5 +328,7 @@ also need a Windows release smoke test on an actual computer.
 
 Ship is the displayed product name. The external CLI command remains `gsv`.
 Native executable names, the `space.gsv.desktop` bundle identifier, service names
-and stored paths remain stable. macOS bundles use `Ship.app`; the CLI can still
-locate an existing `GSV.app`.
+and stored paths remain stable. macOS keeps `GSV.app` on disk so an upgrade
+replaces the existing bundle and preserves launch paths. Its localized bundle
+name is Ship; the base plist name matches the filename so Finder uses that
+display name.

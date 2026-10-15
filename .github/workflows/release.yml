@@ -481,7 +481,7 @@ jobs:
 
           Download \`gsv-desktop-darwin-arm64.zip\` for Apple Silicon or
           \`gsv-desktop-darwin-x64.zip\` for Intel. Unzip it and move
-          \`Ship.app\` to Applications. Each app includes its local
+          \`GSV.app\` to Applications. Each app includes its local
           voice and gesture helpers, CLI, and machine daemon.
 
           These developer builds are ad-hoc signed, without an Apple Developer ID

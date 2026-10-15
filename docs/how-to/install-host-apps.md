@@ -271,7 +271,7 @@ sudo apt-get install libwebkit2gtk-4.1-0 gstreamer1.0-plugins-base gstreamer1.0-
 ```
 
 macOS releases also include `gsv-desktop-darwin-arm64.zip` and
-`gsv-desktop-darwin-x64.zip`, each containing `Ship.app` with the CLI, daemon and
+`gsv-desktop-darwin-x64.zip`, each containing `GSV.app` with the CLI, daemon and
 helpers. The developer app is ad-hoc signed and unnotarized. After the first
 blocked launch, use System Settings → Privacy & Security → Open Anyway.
 Replace the bundle to update it. Windows includes both local helpers; microphone
@@ -311,8 +311,10 @@ The installer still checks every Ship asset against the release manifest.
 ## Product name and existing installations
 
 Ship is the product name; use `gsv` for the external CLI. The macOS application is
-displayed as Ship and packaged as `Ship.app`. Bundle identifiers, executable names, service
-registrations, release asset names and `.gsv` storage paths remain stable.
+displayed as Ship while the bundle remains `GSV.app` on disk, so replacing it
+updates existing installations and preserves Dock shortcuts. Bundle identifiers,
+executable names, service registrations, release asset names and `.gsv` storage
+paths remain stable.
 
 Updating the Gateway does not update an already-installed native CLI or Desktop.
 Keep using `gsv`. Do not rename existing

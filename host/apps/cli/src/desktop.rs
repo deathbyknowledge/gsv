@@ -210,16 +210,10 @@ fn resolve_desktop_executable() -> Result<PathBuf, DynError> {
 
 #[cfg(target_os = "macos")]
 fn macos_bundle_executable(cli_parent: &Path) -> Option<PathBuf> {
-    let directory = cli_parent.parent()?;
-    ["Ship.app", "GSV.app"]
+    let app_bundle = cli_parent.parent()?.join("GSV.app");
+    ["gsv-desktop"]
         .into_iter()
-        .map(|name| {
-            directory
-                .join(name)
-                .join("Contents")
-                .join("MacOS")
-                .join("gsv-desktop")
-        })
+        .map(|name| app_bundle.join("Contents").join("MacOS").join(name))
         .find(|candidate| candidate.is_file())
 }
 
