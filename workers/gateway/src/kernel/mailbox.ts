@@ -86,7 +86,12 @@ export async function acceptManagedInboundMail(
   if (existingMailbox && existingMailbox.mailboxId !== mailboxId) {
     throw new Error("Managed mail is already assigned to another local owner");
   }
-  if (existingMailbox && (existingMailbox.ownerUid !== owner.uid || existingMailbox.address !== address)) {
+  // The adapter validates receiving domains and resolves their handle through Accounts.
+  // A domain alias shares this mailbox without changing its primary address.
+  if (existingMailbox && (
+    existingMailbox.ownerUid !== owner.uid
+    || existingMailbox.address.split("@")[0] !== address.split("@")[0]
+  )) {
     throw new Error("Mailbox identity conflicts with existing state");
   }
   const replay = ctx.mailboxes.acceptReplay({
@@ -107,7 +112,11 @@ export async function acceptManagedInboundMail(
     metadata.digest,
   ]);
   assertMailboxOwnerEnabled(owner.uid, ctx);
-  const mailbox = ctx.mailboxes.ensureMailbox(mailboxId, owner.uid, address);
+  const mailbox = ctx.mailboxes.ensureMailbox(
+    mailboxId,
+    owner.uid,
+    ctx.mailboxes.getMailbox(mailboxId)?.address ?? address,
+  );
   const messageRoot = `${owner.home}/.gsv/mail/inbox/${messageId}`;
   const rawPath = `${messageRoot}/raw.eml`;
   const textPath = `${messageRoot}/message.txt`;
