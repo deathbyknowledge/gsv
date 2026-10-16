@@ -90,7 +90,7 @@ credentials. Link your own identity from Settings → Messengers. One external
 identity has one active space for each private-message adapter route.
 
 WhatsApp works through an operator-owned WhatsApp Business number where Meta
-permits it; the previous linked-device adapter is removed. See
+permits it. See
 [Messengers](/how-to/messengers) for the supported flows.
 
 ### What can it actually do today?

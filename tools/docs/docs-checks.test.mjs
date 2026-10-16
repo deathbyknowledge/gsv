@@ -44,7 +44,7 @@ test("the desktop app and its native helpers are covered", () => {
   const result = evaluate(["web/src/desktop/DesktopMachineSetup.tsx", "docs/how-to/connect-devices.md"], "", "", entries);
   assert.equal(result.status, "missing");
   assert.deepEqual(result.entries.map((match) => match.entry.id), ["desktop"]);
-  assert.equal(evaluate(["host/helpers/gestures/src/control.rs", "docs/how-to/install-host-apps.md"], "", "", entries).status, "documented");
+  assert.equal(evaluate(["host/helpers/transcriber/src/audio.rs", "docs/how-to/install-host-apps.md"], "", "", entries).status, "documented");
 });
 
 test("web search, the machine daemon, the extension, and Accounts are covered", () => {

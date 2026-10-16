@@ -122,7 +122,7 @@ The app should feel like a serious workstation tool.
 
 Use [Instrument](../web/src/app/features/instrument/README.md) and [Settings](../web/src/app/features/instrument/settings/README.md) as the product and interaction contracts.
 
-Instrument is the default web entrypoint. The former desktop and console routes have no compatibility mapping. Login and installation onboarding enter the same UI; the first-day introduction is Chat's empty state. Shared components remain only where current surfaces depend on them; the retired design catalogue and previews are preserved in Git history.
+Instrument is the default web entrypoint. Login and installation onboarding enter the same UI; the first-day introduction is Chat's empty state. Shared components serve the current surfaces.
 
 Core rules:
 - global navigation chooses the kind of work; tables and inspectors choose the object
@@ -135,8 +135,7 @@ Core rules:
 The current visual language uses Martian Mono for controls, Host Grotesk for
 prose, thin rules and square corners. The star field and Departure Mono ASCII
 art carry the space theme. Use named text actions and contextual keyboard hints
-instead of decorative icon tiles. The former dot-matrix SVG library and mask
-renderer are retired; the PNGs under `web/public/icons` are installation and
+instead of decorative icon tiles. The PNGs under `web/public/icons` are installation and
 application identity assets, not a UI icon system. Browser windows follow the
 same contract: quiet text controls around an edge-to-edge live page, without
 rounded framing, glow or a blurred backdrop.

@@ -77,7 +77,6 @@ if ((skip_build == 0)); then
     --package gsv
     --package machine
     --package desktop
-    --package gestures
     --package transcriber
   )
   if [[ "$profile" == "release" ]]; then
@@ -86,7 +85,7 @@ if ((skip_build == 0)); then
   cargo build "${cargo_args[@]}"
 fi
 
-binaries=(gsv-desktop gsv gsvd gsv-vision gsv-transcribe)
+binaries=(gsv-desktop gsv gsvd gsv-transcribe)
 for binary in "${binaries[@]}"; do
   path="$binary_dir/$binary"
   [[ -x "$path" ]] || die "missing executable $path"
@@ -119,15 +118,6 @@ transcriber_license_dir="$resources_dir/licenses/transcriber"
 mkdir -p "$transcriber_license_dir"
 install -m 0644 "$host_root/helpers/transcriber/THIRD_PARTY.md" \
   "$transcriber_license_dir/THIRD_PARTY.md"
-gesture_license_dir="$resources_dir/licenses/gesture-models"
-mkdir -p "$gesture_license_dir"
-install -m 0644 "$host_root/helpers/gestures/models/LICENSE.apache-2.0" \
-  "$gesture_license_dir/LICENSE.apache-2.0"
-install -m 0644 "$host_root/helpers/gestures/models/PROVENANCE.md" \
-  "$gesture_license_dir/PROVENANCE.md"
-install -m 0644 "$host_root/helpers/gestures/THIRD_PARTY.md" \
-  "$gesture_license_dir/THIRD_PARTY.md"
-
 icon_artwork="$stage/GSV-app-icon-1024.png"
 sips -z 1024 1024 "$icon_source" --out "$icon_artwork" >/dev/null
 [[ -f "$icon_artwork" ]] || die "application icon renderer produced no output"
@@ -151,10 +141,6 @@ plutil -lint "$app/Contents/Info.plist" >/dev/null
 [[ -f "$resources_dir/GSV.icns" ]] || die "bundle icon generation failed"
 [[ -f "$transcriber_license_dir/THIRD_PARTY.md" ]] \
   || die "bundle transcription-runtime notices staging failed"
-[[ -f "$gesture_license_dir/LICENSE.apache-2.0" ]] \
-  || die "bundle gesture-model license staging failed"
-[[ -f "$gesture_license_dir/THIRD_PARTY.md" ]] \
-  || die "bundle gesture-runtime notices staging failed"
 
 # Sign nested tools before the outer bundle signs its main executable.
 for library in "$runtime_dir/"*.dylib "$runtime_dir/"*.so; do

@@ -2010,8 +2010,7 @@ links, and commits the receipt. Identical retries cannot overwrite later credent
 a Process acting as root cannot invoke it. It resets the sole personal account.
 The optional legacy `uid` must match that account. Reset revokes its earlier
 credentials and messenger links, retaining its UID, groups, data and admitted
-Processes. The old local-human invitation, listing and removal syscalls are
-removed; contact invitations continue to connect separate spaces.
+Processes. Contact invitations connect separate spaces.
 
 ## AI: `ai.*`
 
@@ -2111,8 +2110,6 @@ and `adapterStatus`. Adapters call the Gateway's single
 every explicit or routed delivery is a correlated `adapter.send` request sent
 only to the exact adapter destination. User-state signals remain broadcast to
 clients independently. `adapterFrame` is the only Gateway-to-adapter carrier.
-Old channel-specific interfaces and direct channel RPC names are not part of
-this contract.
 
 Adapter media metadata stays in JSON. Inline bytes are concatenated into the
 request's single top-level binary body, and each media item identifies its

@@ -625,8 +625,7 @@ gsv auth unlink --adapter ID --account-id ACCOUNT --actor-id ACTOR
 ```
 
 Initialize a new space through its Accounts-issued browser setup invitation.
-The old `gsv auth setup` wizard and automatic setup probes are removed. Login
-and commands operate on a space whose authorized setup has completed.
+Login and commands operate on a space whose authorized setup has completed.
 
 `login` asks only for a password when no credential is cached. Omit the username
 to use the personal account, or pass `--username root` for administration. Existing
@@ -700,8 +699,7 @@ connect/disconnect; `--config-json` passes an object to the adapter.
 
 The bundled messenger applications are configured by the operator at deploy
 time. People link and unlink their own identities through the adapter pairing
-flow in **Settings → Messengers**. Per-person bot tokens, Slack Socket Mode
-and WhatsApp QR setup are not supported by the current deployment.
+flow in **Settings → Messengers**.
 
 ## Version
 
@@ -711,17 +709,6 @@ gsv --version
 ```
 
 Prints build metadata for the installed CLI.
-
-## Renamed or Removed Commands
-
-| Old command | Current command |
-| --- | --- |
-| `gsv client` | `gsv chat` |
-| `gsv session` | `gsv proc` |
-| `gsv local-config` | `gsv config --local` |
-| `gsv deploy`, `gsv infra` | Removed; use the public Alchemy stack or a hosting operator. |
-| `gsv auth setup` | Removed; use the Accounts-issued browser setup invitation. |
-| `gsv tools`, `gsv skills`, `gsv init` | Removed from the current CLI. |
 
 ## See also
 

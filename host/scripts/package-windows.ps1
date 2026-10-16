@@ -11,16 +11,13 @@ $outputDir = (Resolve-Path $Output).Path
 $stage = Join-Path ([IO.Path]::GetTempPath()) ('gsv-windows-package-' + [Guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $stage | Out-Null
 try {
-  foreach ($name in @('gsv', 'gsvd', 'gsv-desktop', 'gsv-transcribe', 'gsv-vision')) {
+  foreach ($name in @('gsv', 'gsvd', 'gsv-desktop', 'gsv-transcribe')) {
     Copy-Item (Join-Path $bin "$name.exe") (Join-Path $stage "$name-windows-x64.exe")
   }
   & python (Join-Path $root 'host/scripts/package-transcriber.py') --binary-dir $bin --platform windows-x64 --output $stage
   if ($LASTEXITCODE) { throw 'Transcription runtime packaging failed' }
   Copy-Item (Join-Path $root 'install.ps1') $stage
   Copy-Item (Join-Path $root 'host/helpers/transcriber/THIRD_PARTY.md') (Join-Path $stage 'gsv-transcribe-THIRD_PARTY.md')
-  Copy-Item (Join-Path $root 'host/helpers/gestures/models/LICENSE.apache-2.0') (Join-Path $stage 'gsv-vision-LICENSE.apache-2.0')
-  Copy-Item (Join-Path $root 'host/helpers/gestures/models/PROVENANCE.md') (Join-Path $stage 'gsv-vision-PROVENANCE.md')
-  Copy-Item (Join-Path $root 'host/helpers/gestures/THIRD_PARTY.md') (Join-Path $stage 'gsv-vision-THIRD_PARTY.md')
   $manifest = (Get-ChildItem -File $stage | Sort-Object Name | ForEach-Object {
     (Get-FileHash -Algorithm SHA256 $_.FullName).Hash.ToLowerInvariant() + '  ' + $_.Name
   }) -join "`n"

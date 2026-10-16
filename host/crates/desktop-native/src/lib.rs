@@ -2,4 +2,3 @@
 //! These modules own helper processes and bounded transport, never conversations.
 
 pub mod transcription;
-pub mod vision_debug;

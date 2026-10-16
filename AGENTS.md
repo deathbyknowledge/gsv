@@ -32,7 +32,7 @@ This document is the root engineering contract for the repository. It explains h
 - An operator reset never clears a Kernel in place or reuses its installation ID. Accounts atomically moves the handle to a fresh installation, retains the old identity behind inactive routing, and records its data as pending deletion until every owning service confirms cleanup.
 - Process, R2, ripgit, and installation-owned adapter physical addresses must include installation scope. Shared application and peer objects retain adapter-owned identities and generation-fenced space links.
 - `ctx.id.name` is available only on name-preserving Durable Object paths. An `idFromString()` callback must recover a previously validated identity from owned state or a trusted routing record.
-- Every deployment uses the trusted directory and scoped resource addresses. There is no singleton projection or runtime deployment mode. Historical namespaces may remain only for explicit attribution and cleanup; never reuse them for current admission. See `docs/how-to/standalone-retirement.md` for the preserved standalone baseline.
+- Every deployment uses the trusted directory and scoped resource addresses. Historical namespaces may remain only for explicit attribution and cleanup; never reuse them for current admission. See `docs/how-to/standalone-retirement.md` for the preserved standalone baseline.
 
 ### Treat syscalls and protocol frames as the primitive boundary
 
@@ -120,8 +120,8 @@ Contact conversations have no mandatory Process handler. Pairing and first-messa
 - `host/apps/desktop/`: desktop host for the shared Instrument UI, native input, local control, machine enrollment through the CLI, and window lifecycle.
 - `host/apps/cli/`: user, deployment, administration, and OS service-control commands.
 - `host/apps/machine/`: the `gsvd` machine driver, concrete tools, transfer ownership, reconnect, logging, and shutdown.
-- `host/helpers/`: separately supervised local transcription and gesture processes.
-- `host/crates/`: shared gateway transport, host configuration, Desktop IPC, gesture protocol contracts, and Windows SCM/process ownership primitives. `host/` owns their Cargo workspace and build artifacts.
+- `host/helpers/`: separately supervised local transcription process.
+- `host/crates/`: shared gateway transport, host configuration, Desktop IPC, and Windows SCM/process ownership primitives. `host/` owns their Cargo workspace and build artifacts.
 - `workers/adapters/`: platform-specific messaging workers and identity normalization.
 - `extension/`: browser-backed target and browser integration.
 - `workers/instances/`: optional cloud browser provisioning, profiles, human control, metering, and instance-owned cleanup.
@@ -191,6 +191,7 @@ Use Durable Object storage KV for a single opaque record that is read and writte
 ## Change discipline
 
 - Do not rewrite or delete maintainer-authored comments unless the maintainer explicitly requests it. If a change makes one stale, preserve it and call it out for direction.
+- Write active docs and instructions in terms of current concepts. Keep change history in release notes or migration guides, and explain legacy behavior where supported compatibility requires it.
 
 ### Protected prompt and context content
 
@@ -222,7 +223,7 @@ gsv/
 ├── web/           # Instrument web UI and browser-side gateway integration
 ├── host/
 │   ├── apps/      # Rust CLI, Desktop, and machine applications
-│   ├── helpers/   # Isolated transcription and gesture processes
+│   ├── helpers/   # Isolated transcription process
 │   └── crates/    # Shared host transport, configuration, and IPC contracts
 ├── extension/     # Browser target
 ├── engineering/   # Detailed implementation and product guidance
@@ -253,7 +254,6 @@ Before Desktop Rust checks, build its shared frontend with `npm run gsv:build &&
 - Gateway: `cd workers/gateway && npx tsc --noEmit && npm run test:run`
 - Web: `cd web && npm run check && npm run test:run && npm run build`
 - Desktop and transcription helper: `cd host && cargo fmt --package desktop --package transcriber --check && cargo test --package desktop --package transcriber && cargo clippy --package desktop --package transcriber --all-targets -- -D warnings`
-- Gesture helper and protocol: `cd host && cargo fmt --package gestures --package gesture-protocol --check && cargo test --package gestures --package gesture-protocol && cargo clippy --package gestures --package gesture-protocol --all-targets -- -D warnings`
 - Public SDK: `npm run gsv:check && npm test --workspace packages/gsv`
 - CLI: `cd host && cargo fmt --package gsv --check && cargo test --package gsv`
 - Machine: `cd host && cargo fmt --package machine --check && cargo test --package machine`

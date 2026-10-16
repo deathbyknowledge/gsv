@@ -274,11 +274,7 @@ function Install-GsvHost {
     "gsvd-$Platform.exe" = "gsvd.exe"
     "gsv-desktop-$Platform.exe" = "gsv-desktop.exe"
     "gsv-transcribe-$Platform.exe" = "gsv-transcribe.exe"
-    "gsv-vision-$Platform.exe" = "gsv-vision.exe"
     "gsv-transcribe-THIRD_PARTY.md" = "gsv-transcribe-THIRD_PARTY.md"
-    "gsv-vision-LICENSE.apache-2.0" = "gsv-vision-LICENSE.apache-2.0"
-    "gsv-vision-PROVENANCE.md" = "gsv-vision-PROVENANCE.md"
-    "gsv-vision-THIRD_PARTY.md" = "gsv-vision-THIRD_PARTY.md"
     "gsv-transcribe-runtime-$Platform.zip" = "gsv-transcribe-runtime"
   }
   if ($Headless) {
@@ -329,6 +325,17 @@ function Install-GsvHost {
           Move-Item -Force $staged $target
         } finally {
           Remove-Item -Recurse -Force $staged -ErrorAction SilentlyContinue
+        }
+      }
+
+      if (-not $Headless) {
+        foreach ($name in @('gsv-vision.exe', 'gsv-vision-LICENSE.apache-2.0', 'gsv-vision-PROVENANCE.md', 'gsv-vision-THIRD_PARTY.md')) {
+          $target = Join-Path $InstallDir $name
+          if (Test-Path $target) {
+            $backup = "$target.backup.$PID"
+            $installed += [PSCustomObject]@{ Target = $target; Backup = $backup }
+            Move-Item -Force $target $backup
+          }
         }
       }
 
@@ -387,7 +394,7 @@ Remove-Item -LiteralPath (Join-Path ([Environment]::GetFolderPath('Programs')) '
 if ($Headless) {
   Write-Success "Installed Ship CLI and daemon to $InstallDir"
 } else {
-  Write-Success "Installed Ship Desktop, CLI, daemon and local input helpers to $InstallDir"
+  Write-Success "Installed Ship Desktop, CLI, daemon and the local voice helper to $InstallDir"
 }
 Write-Host ""
 Write-Host "  Next: finish setting up your space in your browser."

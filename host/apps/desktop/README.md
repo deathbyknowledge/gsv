@@ -9,15 +9,15 @@ session storage, window lifecycle, and CLI control. See the
 ## Build
 
 Install Rust, Node/npm, and the platform build libraries. On Linux, WebKitGTK
-4.1, GTK 3, ALSA, OpenSSL and camera development headers are required. The gesture
-helper also requires CMake 3.22+, a C++20 compiler and network access for its first
-checksum-pinned LiteRT/XNNPACK source build.
+4.1, GTK 3, ALSA and OpenSSL development headers are required. The local voice
+helper also needs CMake and a C/C++ toolchain; see its
+[build instructions](../../helpers/transcriber/README.md).
 
 ```bash
 npm ci --ignore-scripts --workspace web --workspace packages/gsv --include-workspace-root=false
 npm run gsv:build
 npm run build:desktop --workspace web
-cargo build --manifest-path host/Cargo.toml --locked --package desktop --package transcriber --package gestures
+cargo build --manifest-path host/Cargo.toml --locked --package desktop --package transcriber
 ./host/target/debug/gsv-desktop
 ```
 
@@ -70,12 +70,13 @@ Enter the HTTPS space address, then sign in. Credentials belong to the app's
 private `space.gsv.desktop` data directory, separate from CLI and driver
 credentials in `~/.gsv/config.toml`. Disconnect revokes the session and clears
 the frontend's state. Quit flushes pending credential changes and shuts down
-both helpers before exiting. A second launch activates the existing window.
+the voice helper before exiting. A second launch activates the existing window.
 
-The helpers live beside `gsv-desktop`. The speech model downloads with checksum
-verification on first use; vision models are embedded. Neither camera nor
-microphone starts at launch. Hands-free controls and their tutorial appear only
-in Desktop. The web UI shares the same screens without native input controls.
+The voice helper lives beside `gsv-desktop`. The speech model downloads with
+checksum verification on first use. The microphone starts only when the user
+chooses to listen. Desktop retains local live dictation and microphone selection;
+the web UI records audio for transcription through the space. See
+[voice input](../../../../docs/how-to/voice-input.md).
 
 After sign-in, Connect this computer enrolls the machine and starts its background
 service without a terminal. Not now defers setup; the space menu's This computer

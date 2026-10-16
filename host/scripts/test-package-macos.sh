@@ -16,9 +16,6 @@ for path in \
   host/packaging/macos/en.lproj/InfoPlist.strings \
   host/apps/desktop/Entitlements.plist \
   host/helpers/transcriber/THIRD_PARTY.md \
-  host/helpers/gestures/THIRD_PARTY.md \
-  host/helpers/gestures/models/LICENSE.apache-2.0 \
-  host/helpers/gestures/models/PROVENANCE.md \
   web/public/brand/gsv-ship.png; do
   mkdir -p "$fixture/$(dirname "$path")"
   cp "$repository_root/$path" "$fixture/$path"
@@ -37,7 +34,7 @@ codesign --force --sign - "$scratch/executable"
 codesign --remove-signature "$scratch/executable"
 binary_names="$(cargo metadata --locked --no-deps --format-version 1 --manifest-path "$repository_root/host/Cargo.toml" | python3 -c '
 import json, sys
-packages = {"desktop", "gsv", "machine", "gestures", "transcriber"}
+packages = {"desktop", "gsv", "machine", "transcriber"}
 print(" ".join(target["name"] for package in json.load(sys.stdin)["packages"] if package["name"] in packages
     for target in package["targets"] if "bin" in target["kind"]))
 ')"

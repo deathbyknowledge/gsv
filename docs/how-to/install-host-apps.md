@@ -1,19 +1,19 @@
 # Install and upgrade Ship host applications
 
 The Ship release is one versioned host distribution. The operator CLI (`gsv`),
-machine daemon (`gsvd`), Desktop, and Desktop's transcription and gesture-vision
-helpers share the version in the repository root `VERSION` file. The CLI
+machine daemon (`gsvd`), Desktop, and Desktop's transcription
+helper share the version in the repository root `VERSION` file. The CLI
 refuses to manage a mismatched daemon.
 
 ## Supported release artifacts
 
-| Platform | `gsv` | `gsvd` | Desktop | Transcription | Gestures |
-| --- | --- | --- | --- | --- | --- |
-| Linux x64 | yes | yes | yes | yes | yes |
-| Linux ARM64 | yes | yes | yes | yes | yes |
-| macOS Intel | yes | yes | yes | yes | yes |
-| macOS Apple Silicon | yes | yes | yes | yes | yes |
-| Windows 10+ x64 | yes | yes | yes | yes | yes |
+| Platform | `gsv` | `gsvd` | Desktop | Transcription |
+| --- | --- | --- | --- | --- |
+| Linux x64 | yes | yes | yes | yes |
+| Linux ARM64 | yes | yes | yes | yes |
+| macOS Intel | yes | yes | yes | yes |
+| macOS Apple Silicon | yes | yes | yes | yes |
+| Windows 10+ x64 | yes | yes | yes | yes |
 
 Windows ARM64 is not a supported release target. Other operating systems and architectures are
 not currently published.
@@ -242,10 +242,10 @@ gsv desktop
 
 `gsv desktop status`, `new`, and `use PID` use same-user local IPC. Desktop
 connects to the gateway as a user; it does not route chat through `gsvd`.
-The installer places `gsv-transcribe` and `gsv-vision` beside Desktop so it can
-supervise the exact same-version helpers. The vision executable embeds its
-checksum-pinned models; their Apache 2.0 license and provenance are installed
-as verified sidecar assets.
+The installer places `gsv-transcribe` and its runtime beside Desktop so it can
+supervise the matching voice helper. A failed upgrade restores the previous
+installation. A Windows headless update leaves an existing Desktop installation
+alone.
 
 Desktop uses the same Instrument source as the web UI. It is the only desktop
 implementation shipped by releases. Launching opens the installed version;
@@ -274,15 +274,14 @@ macOS releases also include `gsv-desktop-darwin-arm64.zip` and
 `gsv-desktop-darwin-x64.zip`, each containing `GSV.app` with the CLI, daemon and
 helpers. The developer app is ad-hoc signed and unnotarized. After the first
 blocked launch, use System Settings → Privacy & Security → Open Anyway.
-Replace the bundle to update it. Windows includes both local helpers; microphone
-and camera access require an interactive session and permission in Windows
+Replace the bundle to update it. Windows includes the local voice helper; microphone
+access requires an interactive session and permission in Windows
 Privacy settings.
-The Windows helpers use CPU inference. Local voice includes a baseline CPU backend
+The Windows voice helper uses CPU inference. Local voice includes a baseline CPU backend
 and automatically selects faster instructions when supported. AVX2 and AVX-512 are
 optional. The installer and app bundle include the required speech libraries in
 `gsv-transcribe-runtime` beside the helper; no separate installation or CPU setting
 is needed. Keep that directory with the helper when moving a manual installation.
-Gesture inference also selects supported CPU instructions at runtime.
 
 ## Manual verification
 
