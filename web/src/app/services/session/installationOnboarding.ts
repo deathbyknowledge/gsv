@@ -26,22 +26,23 @@ export function readInstallationOnboardingToken(): string | null {
   }
 }
 
-/** True when the owner was sent here straight from signup. It is a presentation hint, not authority. */
-export function readSignupArrival(): boolean {
+/** True when this onboarding token arrived straight from signup. A presentation hint bound to the
+ *  token it came with, so a later setup opened in the same tab does not inherit it. */
+export function readSignupArrival(token: string): boolean {
   if (window.location.pathname === ONBOARDING_PATH) {
     const params = new URLSearchParams(window.location.search);
     if (params.get(SIGNUP_ARRIVAL_PARAM) === "1") {
-      try {
-        window.sessionStorage.setItem(STORAGE_SIGNUP_ARRIVAL, "1");
-      } catch {}
       params.delete(SIGNUP_ARRIVAL_PARAM);
       const search = params.toString();
       window.history.replaceState(window.history.state, "", `${window.location.pathname}${search ? `?${search}` : ""}${window.location.hash}`);
+      try {
+        window.sessionStorage.setItem(STORAGE_SIGNUP_ARRIVAL, token);
+      } catch {}
       return true;
     }
   }
   try {
-    return window.sessionStorage.getItem(STORAGE_SIGNUP_ARRIVAL) === "1";
+    return window.sessionStorage.getItem(STORAGE_SIGNUP_ARRIVAL) === token;
   } catch {
     return false;
   }

@@ -115,6 +115,8 @@ export function OwnerWelcomeScreen({ ready, resume, load, onConnect, addressPane
     rejectedHandle.current = null;
     setHandleError("");
     if (!flow || step !== "claim" || !handle.trim()) { setAvailability("idle"); return; }
+    // A pending setup already holds its handle for this owner; the public check would call it taken.
+    if (owner?.setups.some((setup) => setup.operationId === flow.state.operationId && setup.handle === handle.trim())) { setAvailability("available"); return; }
     let active = true;
     setAvailability("checking");
     const timer = setTimeout(() => {
@@ -126,7 +128,7 @@ export function OwnerWelcomeScreen({ ready, resume, load, onConnect, addressPane
         });
     }, 350);
     return () => { active = false; clearTimeout(timer); };
-  }, [step, handle, flow]);
+  }, [step, handle, flow, owner]);
 
   const titles = {
     welcome: "Welcome to Ship", invitation: invitation?.name ? `${invitation.name} invited you to Ship` : "You’re invited to Ship",

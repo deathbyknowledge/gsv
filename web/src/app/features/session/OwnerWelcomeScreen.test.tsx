@@ -278,12 +278,15 @@ describe("owner welcome", () => {
       }
       await vi.waitFor(() => expect(checkboxOf(tree)?.props.disabled).toBe(false));
       expect(fieldOf(tree, "Handle")!.props.value).toBe("my-space");
-      // The reserved handle reads as taken to the public check, but it belongs to this setup.
-      await vi.waitFor(() => expect(fieldOf(tree, "Handle")!.props.status).toBe("error"));
+      // The handle is reserved for this very setup, so it is not checked against the public availability.
+      await act(async () => { await new Promise((resolve) => setTimeout(resolve, 450)); });
+      expect(fieldOf(tree, "Handle")!.props.status).toBe("success");
+      expect(fetcher.mock.calls.some(([url]) => url.includes("/handle?"))).toBe(false);
       await act(() => formOf(tree).props.onSubmit(new Event("submit")));
-      expect(fetcher.mock.calls.every(([url]) => url.endsWith("/session") || url.includes("/handle?"))).toBe(true);
+      expect(fetcher.mock.calls.every(([url]) => url.endsWith("/session"))).toBe(true);
       expect(onConnect).not.toHaveBeenCalled();
       await agree(tree);
+      expect(collectNodes(tree).find((node) => node.props["aria-label"] === "Create space")!.props.disabled).toBe(false);
       await act(() => formOf(tree).props.onSubmit(new Event("submit")));
       await vi.waitFor(() => expect(onConnect).toHaveBeenCalledWith(setup.origin, TOKEN));
       expect(fetcher).toHaveBeenCalledWith(`${ORIGIN}/owner/api/spaces`, expect.objectContaining({ body: JSON.stringify({ operationId: setup.operationId, handle: setup.handle }) }));

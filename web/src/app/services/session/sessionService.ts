@@ -291,7 +291,7 @@ export function createSessionService(client: SessionClient, options: SessionServ
   let installationOnboardingToken = options.onboarding ? options.onboarding.token
     : options.onboarding === false ? null : readInstallationOnboardingToken();
   const signupArrival = options.onboarding ? options.onboarding.signup === true
-    : installationOnboardingToken !== null && readSignupArrival();
+    : installationOnboardingToken !== null && readSignupArrival(installationOnboardingToken);
 
   let snapshot: SessionSnapshot = {
     phase: "booting",
