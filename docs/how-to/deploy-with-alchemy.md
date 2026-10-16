@@ -45,6 +45,12 @@ resources; paths, credentials and more than 16 aliases are rejected.
 Gateway embeds the public configuration in the HTML, exposes it at
 `/.well-known/gsv/deployment.json` on accepted installation hosts, and includes it
 in `sys.connect` as `server.deployment`. It contains no credentials or authority.
+For static publication, optionally set `GSV_SITES_DOMAIN` to an isolated content
+domain. `GSV_SITES_ZONE_ID` adds its wildcard DNS and Gateway route through this
+composition; omit the zone ID when an operator overlay owns those resources.
+The equivalent public composition option is `sites: { domain, zoneId? }`.
+See [Publish a Site](/how-to/publish-site) for browser isolation and release behavior.
+
 Desktop release builds accept the same JSON through `VITE_GSV_PUBLIC_CONFIG`;
 the release workflow reads the repository variable `GSV_PUBLIC_CONFIG`. After
 connecting, clients use that server's settings. Without a configured primary

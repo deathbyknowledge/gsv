@@ -38,6 +38,8 @@ const RESERVED_MCP_FUNCTION_NAMES = new Set([
   "web",
   "__web",
   "shell",
+  "site",
+  "__site",
   "__arrayBufferFromBase64",
   "__base64FromArrayBuffer",
   "__defaultCwd",

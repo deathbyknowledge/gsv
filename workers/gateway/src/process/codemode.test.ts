@@ -25,6 +25,26 @@ describe.sequential("CodeMode executor", () => {
     ]);
   });
 
+  it("routes site operations through ordinary syscalls without inheriting device defaults", async () => {
+    const calls: Array<{ call: string; args: Record<string, ProcessTestValue> }> = [];
+    const result = await executeCodeMode(env, `
+      await site.create({ slug: "demo" });
+      await site.list();
+      await site.get({ siteId: "fixture-site" });
+      await site.publish({ siteId: "fixture-site", outputPath: "/tmp/build", expectedRevision: 0 });
+      return await site.unpublish({ siteId: "fixture-site", expectedRevision: 1 });
+    `, async (call, args) => { calls.push({ call, args }); return { ok: true }; },
+    { defaultTarget: "laptop", defaultCwd: "/workspace" });
+    expect(result).toEqual({ status: "completed", result: { ok: true } });
+    expect(calls).toEqual([
+      { call: "site.create", args: { slug: "demo" } },
+      { call: "site.list", args: {} },
+      { call: "site.get", args: { siteId: "fixture-site" } },
+      { call: "site.publish", args: { siteId: "fixture-site", outputPath: "/tmp/build", expectedRevision: 0 } },
+      { call: "site.unpublish", args: { siteId: "fixture-site", expectedRevision: 1 } },
+    ]);
+  });
+
   it("keeps default web search on gsv and preserves an explicit search target", async () => {
     const calls: Array<{ call: string; args: Record<string, ProcessTestValue> }> = [];
     const result = await executeCodeMode(env, `
@@ -521,7 +541,7 @@ describe.sequential("CodeMode executor", () => {
       serverId: "server-1",
       name: "Network",
       state: "ready",
-      tools: ["fetch", "mail", "__mail", "__mailDeliveryBase", "__mailDeliveryOrdinal"]
+      tools: ["fetch", "mail", "__mail", "__mailDeliveryBase", "__mailDeliveryOrdinal", "site", "__site"]
         .map((name) => ({
           name,
           description: `MCP ${name}`,
@@ -536,6 +556,8 @@ describe.sequential("CodeMode executor", () => {
       "Network___mail",
       "Network___mailDeliveryBase",
       "Network___mailDeliveryOrdinal",
+      "Network_site",
+      "Network___site",
     ]);
   });
 

@@ -439,6 +439,24 @@
       "manual": [
         "pages/devices-workplaces/cloud-browsers.md"
       ]
+    },
+    {
+      "id": "sites",
+      "paths": [
+        "workers/gateway/src/sites/**",
+        "workers/gateway/src/kernel/sites.ts",
+        "workers/gateway/src/kernel/site-store.ts",
+        "workers/installations/src/publications.ts",
+        "packages/gsv/src/protocol/syscalls/site.ts",
+        "web/src/public/site.ts"
+      ],
+      "docs": [
+        "docs/how-to/publish-site.md",
+        "docs/reference/syscalls.md"
+      ],
+      "manual": [
+        "pages/files-knowledge/"
+      ]
     }
   ]
 }

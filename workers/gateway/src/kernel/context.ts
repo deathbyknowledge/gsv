@@ -1,3 +1,4 @@
+import type { SiteStore } from "./site-store";
 import type { ShipReplies } from "./ship-replies";
 /**
  * KernelContext — the single shape passed to all syscall handlers.
@@ -84,6 +85,7 @@ export type KernelContext = {
   federation: FederationStore;
   federationIdentity: FederationIdentity;
   profiles: ProfileStore;
+  sites: SiteStore;
   approaches: ApproachStore;
   scheduleApproachMaintenance: () => Promise<void>;
   connection: KernelConnection<KernelConnectionState> | null;

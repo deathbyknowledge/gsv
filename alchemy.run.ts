@@ -16,6 +16,9 @@ export default Alchemy.Stack("gsv", {
   providers: Layer.mergeAll(Cloudflare.providers()), state: Cloudflare.state(),
 }, Effect.gen(function* () {
   const domain = yield* Config.string("GSV_DOMAIN");
+  const sitesDomain = Option.getOrUndefined(yield* Config.string("GSV_SITES_DOMAIN").pipe(Config.option));
+  const sitesZoneId = Option.getOrUndefined(yield* Config.string("GSV_SITES_ZONE_ID").pipe(Config.option));
+  if (sitesZoneId && !sitesDomain) throw new Error("GSV_SITES_ZONE_ID requires GSV_SITES_DOMAIN");
   const domainAliases = configuredDomainAliases(yield* Config.string("GSV_DOMAIN_ALIASES").pipe(Config.withDefault("[]")));
   const ownerOriginAliases = configuredOriginAliases(yield* Config.string("GSV_OWNER_ORIGIN_ALIASES").pipe(Config.withDefault("[]")));
   const presentation = deploymentPresentation(yield* Config.string("GSV_PUBLIC_CONFIG").pipe(Config.withDefault("{}")));
@@ -68,6 +71,7 @@ export default Alchemy.Stack("gsv", {
   const deletion = catalogPath ? { operatorResources: operatorResourceCatalogSchema.parse(JSON.parse(readFileSync(catalogPath, "utf8"))) } : undefined;
   const deployment = yield* GsvDeployment({ logicalPrefix: "Gsv", domain, adminOrigin, access, routing: { zoneId },
     domainAliases, presentation, operatorUpdates,
+    sites: sitesDomain ? { domain: sitesDomain, zoneId: sitesZoneId } : undefined,
     allowResourceDeletion,
     deletion,
     names: { gateway: prefix, ripgit: `${prefix}-ripgit`, storageBucket: `${prefix}-storage` }, paths: manifest.runtime,

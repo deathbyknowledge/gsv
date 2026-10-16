@@ -86,6 +86,16 @@ interface Env {
 }
 
 export class IntegrationState extends DurableObject<Env> {
+  async registerPublication(input: { installationId: string; siteId: string; slug: string }): Promise<{ origin: string }> {
+    const hostname = `${input.siteId}.usercontent.example`;
+    await this.ctx.storage.put(`publication:${hostname}`, input);
+    return { origin: `https://${hostname}` };
+  }
+
+  async publication(hostname: string): Promise<{ installationId: string; siteId: string; slug: string } | null> {
+    return await this.ctx.storage.get(`publication:${hostname}`) ?? null;
+  }
+
   async recordInstanceCall(call: string): Promise<void> {
     const calls = await this.ctx.storage.get<string[]>("instance-calls") ?? [];
     await this.ctx.storage.put("instance-calls", [...calls, call]);
@@ -385,6 +395,12 @@ export default class TestDependencies
   }
 
   async resolveHostname(hostname: string): Promise<InstallationDirectoryResult> {
+    if (hostname.endsWith(".usercontent.example")) {
+      const publication = await this.integrationState().publication(hostname);
+      if (!publication) return { found: false };
+      const installation = await this.resolveInstallation(publication.installationId);
+      return installation.found ? { ...installation, publication: { siteId: publication.siteId, slug: publication.slug } } : installation;
+    }
     if (hostname === "localhost" || hostname === "127.0.0.1") {
       return { found: true, installationId: INTEGRATION_INSTALLATION_ID, handle: "default", canonicalOrigin: await this.integrationState().getDefaultOrigin(), state: await this.integrationState().getInstallationState("default") };
     }
@@ -417,6 +433,12 @@ export default class TestDependencies
     return handle
       ? await this.resolveHostname(`${handle}.gsv.space`)
       : { found: false };
+  }
+
+  async registerPublication(input: { installationId: string; siteId: string; slug: string }): Promise<{ origin: string }> {
+    const installation = await this.resolveInstallation(input.installationId);
+    if (!installation.found || installation.state !== "active") throw new Error("Installation is unavailable");
+    return this.integrationState().registerPublication(input);
   }
 
   async authorizeInstallationOnboarding(
@@ -569,6 +591,13 @@ export default class TestDependencies
 
     if (url.pathname.endsWith("/refs") && request.method === "GET") {
       return Response.json({ heads: { main: "integration-head" }, tags: {} });
+    }
+
+    if (url.pathname === "/hyperspace/repos/site-owner/demo/log" && request.method === "GET") {
+      const revision = "a".repeat(40);
+      return Response.json(url.searchParams.get("ref") === revision ? [{ hash: revision, tree_hash: "tree",
+        author: "site-owner", author_email: "site-owner@example.com", author_time: 1,
+        committer: "site-owner", committer_email: "site-owner@example.com", commit_time: 1, message: "source", parents: [] }] : []);
     }
 
     if (url.pathname.endsWith("/apply") && request.method === "POST") {
