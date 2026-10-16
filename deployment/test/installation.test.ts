@@ -140,6 +140,25 @@ describe("public operator composition", () => {
   });
 
   it.each([
+    { label: "trailing dot on the publication's primary domain", sites: { domain: "example.com." } },
+    { label: "leading dot on the publication's primary domain", sites: { domain: ".example.com" } },
+    { label: "trailing dot on the publication's legacy domain", sites: { domain: "legacy.example." } },
+    { label: "leading dot on the publication's legacy domain", sites: { domain: ".legacy.example" } },
+    { label: "dots on both ends of the publication domain", sites: { domain: "..example.com.." } },
+    { label: "trailing dot on the primary domain", domain: "example.com.", adminOrigin: "https://accounts.example.com.", sites: { domain: "example.com" } },
+    { label: "leading dot on the primary domain", domain: ".example.com", adminOrigin: "https://accounts..example.com", sites: { domain: "example.com" } },
+    { label: "trailing dot on the legacy domain", domainAliases: ["legacy.example."], sites: { domain: "legacy.example" } },
+    { label: "leading dot on the legacy domain", domainAliases: [".legacy.example"], sites: { domain: "legacy.example" } },
+    { label: "trailing dot on a separate publication domain", sites: { domain: "usercontent.example." } },
+  ])("rejects $label before allocating publication resources", async ({ label: _label, ...configuration }) => {
+    await expect(run(GsvDeployment({ ...input, domainAliases: ["legacy.example"], ...configuration }, dependencies)))
+      .rejects.toThrow("Expected a normalized domain name");
+    expect(recorded.workers).toEqual([]);
+    expect(recorded.databases).toEqual([]);
+    expect(recorded.routes).toEqual([]);
+  });
+
+  it.each([
     { label: "a path", aliases: ["https://owners.example/path"] },
     { label: "HTTP", aliases: ["http://owners.example"] },
     { label: "credentials", aliases: ["https://user:password@owners.example"] },

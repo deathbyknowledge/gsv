@@ -16,6 +16,9 @@ adds wildcard DNS and the Gateway route through the existing deployment plan;
 omit it when the operator already owns those resources. Without configuration,
 publication is disabled.
 
+Primary, legacy and publication domains must be lowercase and have no leading or
+trailing dots. Deployment rejects noncanonical domains before creating resources.
+
 Use a separate registrable domain for untrusted content to isolate same-site
 cookie policies too. Deployment rejects the primary and legacy installation
 domains themselves; it guarantees separate origins but does not check the public

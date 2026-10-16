@@ -1,6 +1,7 @@
 import * as z from "zod/mini";
 
 const domain = z.string().check(z.minLength(1), z.maxLength(253), z.refine((value) => {
+  if (value.startsWith(".") || value.endsWith(".")) return false;
   try {
     const url = new URL(`https://${value}`);
     return url.hostname === value && url.host === value && url.pathname === "/" && !url.search && !url.hash && !url.username && !url.password;

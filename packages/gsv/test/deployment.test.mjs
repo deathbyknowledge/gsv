@@ -20,3 +20,12 @@ test("operator update IDs are unique within a bounded publisher catalog", () => 
   const update = { id: "release-1", publishedAtMs: 1, title: "New feature", brief: "Explain this feature." };
   assert.throws(() => operatorUpdateCatalogSchema.parse({ publisher: { id: "operator", name: "Operator" }, updates: [update, update] }));
 });
+
+test("all operator domain fields reject edge dots that Accounts would normalize away", () => {
+  for (const value of ["fleet.example.", ".fleet.example", "..fleet.example..", "."]) {
+    for (const configuration of [{ primaryDomain: value }, { sitesDomain: value }, { legacyDomains: [value] }]) {
+      assert.throws(() => deploymentPresentation(JSON.stringify(configuration)), /Expected a normalized domain name/);
+    }
+    assert.throws(() => configuredDomainAliases(JSON.stringify([value])), /Expected a normalized domain name/);
+  }
+});
