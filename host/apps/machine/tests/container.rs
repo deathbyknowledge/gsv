@@ -272,6 +272,7 @@ impl Peer {
         self.channel.close("Test disconnected");
     }
 
+    #[cfg(unix)]
     async fn exec_status(&mut self, session_id: &str, event: &str) -> Value {
         tokio::time::timeout(Duration::from_secs(5), async {
             loop {
