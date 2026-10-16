@@ -238,14 +238,16 @@ enabled or disabled per owner without changing the subsystem's underlying data.
 System-owned producers use the same ledger contract:
 
 - Provisioning a new personal intelligence creates one high-priority initial
-  onboarding responsibility titled "Welcome to gsv". It stays dormant after Accounts
+  onboarding responsibility titled "Welcome to Ship". It stays dormant after Accounts
   confirms successful setup. When the signed-in owner dismisses the early-access card,
   `sys.config.set` records `users/<uid>/ui/welcome_card_seen = 1`, activates the untouched
   seed and reconciles its ordinary wake schedule before acknowledging the dismissal.
   Repeated dismissal retries reconciliation without reopening handled or edited records.
   Root, agent and other-account config writes do not represent the owner's dismissal.
   On a later human connection, a saved dismissal also resumes an untouched welcome,
-  including an exact legacy seed migrated on an already initialized installation.
+  including an untouched GSV or Ship welcome from an earlier release on an already
+  initialized installation. Exact historical briefs are retained for matching;
+  owner-edited records are left alone.
   This recovery does not require setup to run again or reopen handled work.
   Direct user messages remain available before dismissal and on surfaces without the card.
   Ship sends its own welcome in the owner's

@@ -5,7 +5,7 @@ import type { IntegrationState } from "./fixtures/dependencies";
 
 const INSTALLATION = "inst_integration_default";
 const PASSWORD = "welcome-fixture-password";
-const GREETING = "Hola, soy GSV. ¿De qué quieres que me encargue?";
+const GREETING = "Hola, soy Ship. ¿De qué quieres que me encargue?";
 
 async function until(predicate: () => Promise<boolean>, description: string): Promise<void> {
   await expect.poll(predicate, { timeout: 20_000, message: description }).toBe(true);

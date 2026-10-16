@@ -562,7 +562,7 @@ describe("Zen conversation entry", () => {
   it("renders a canonical translated welcome and retains it after reload", async () => {
     activeRunId = "welcome-run";
     const zen = await mountedZen();
-    const greeting = message("process", "Hola, soy GSV. ¿De qué quieres que me encargue?");
+    const greeting = message("process", "Hola, soy Ship. ¿De qué quieres que me encargue?");
     try {
       expect(zen.props(PromptLine).disabled).toBe(false);
       expect(send).not.toHaveBeenCalled();

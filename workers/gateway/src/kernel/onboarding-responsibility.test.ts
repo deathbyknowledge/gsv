@@ -178,7 +178,7 @@ describe("initial onboarding responsibility", () => {
       const store = new ResponsibilityStore(storage);
       const seed = seedPreviousContract(store, 1000, 1_000).record;
       activateInitialOnboardingResponsibility(1000, store, 2_000);
-      expect(store.get(1000, seed.id)).toMatchObject({ title: "Welcome to gsv", state: "open" });
+      expect(store.get(1000, seed.id)).toMatchObject({ title: "Welcome to Ship", state: "open" });
       expect(store.nextWakeAt(1000, 2_000)).toBe(2_000);
       const revision = store.revision(1000);
       activateInitialOnboardingResponsibility(1000, store, 3_000);
