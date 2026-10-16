@@ -11,9 +11,41 @@ import {
   RETIRED_PERSONAL_INTELLIGENCE_COMMITMENTS_CONTEXT,
 } from "../prompts/personal-intelligence";
 import { isRetiredGeneratedContext } from "../prompts/retired-context";
+import type { KernelContext } from "./context";
 
 const TEXT_ENCODER = new TextEncoder();
 const TEXT_DECODER = new TextDecoder();
+const memoryContextChecks = new WeakMap<KernelContext["auth"], Map<string, Promise<void>>>();
+
+/** Retire old generated memory before context assembly, once per account and Kernel lifetime. */
+export function ensureSharedMemoryContext(
+  ctx: Pick<KernelContext, "env" | "auth">,
+  identity: ProcessIdentity,
+): Promise<void> {
+  if (!ctx.env.RIPGIT) return Promise.resolve();
+  let checks = memoryContextChecks.get(ctx.auth);
+  if (!checks) {
+    checks = new Map();
+    memoryContextChecks.set(ctx.auth, checks);
+  }
+  const key = `${identity.uid}:${identity.username}`;
+  const pending = checks.get(key);
+  if (pending) return pending;
+  const task = seedAccountHome(ctx.env, identity, "gsv: retire generated memory context", retiredMemoryContextOps)
+    .catch((error) => {
+      checks.delete(key);
+      throw error;
+    });
+  checks.set(key, task);
+  return task;
+}
+
+async function retiredMemoryContextOps(client: RipgitClient, repo: RipgitRepoRef): Promise<RipgitApplyOp[]> {
+  const existing = await client.readPath(repo, "context.d/15-memory.md");
+  return existing.kind === "file" && await isRetiredGeneratedContext("memory", existing.bytes)
+    ? [{ type: "delete", path: "context.d/15-memory.md" }]
+    : [];
+}
 
 /** Seed missing defaults against a fixed revision; a concurrent owner edit wins. */
 export async function seedAccountHome(
@@ -67,7 +99,7 @@ async function homeLayoutOps(
     bootContext,
     styleContext,
     commitmentsContext,
-    memoryContext,
+    memoryOps,
     skillsDir,
     existingDefaults,
   ] = await Promise.all([
@@ -75,7 +107,7 @@ async function homeLayoutOps(
     client.readPath(repo, "context.d/00-boot.md"),
     client.readPath(repo, "context.d/00-style.md"),
     client.readPath(repo, "context.d/10-commitments.md"),
-    client.readPath(repo, "context.d/15-memory.md"),
+    retiredMemoryContextOps(client, repo),
     client.readPath(repo, "skills.d"),
     Promise.all(defaults.map(({ name }) => client.readPath(repo, `context.d/${name}`))),
   ]);
@@ -96,10 +128,7 @@ async function homeLayoutOps(
       RETIRED_AGENT_VOICE_CONTEXT,
       RETIRED_STYLE_CONTEXT,
     );
-    if (memoryContext.kind === "file"
-      && await isRetiredGeneratedContext("memory", memoryContext.bytes)) {
-      ops.push({ type: "delete", path: "context.d/15-memory.md" });
-    }
+    ops.push(...memoryOps);
   }
   if (options.seedPromptContext === true) {
     if (options.personalAgent === true) {

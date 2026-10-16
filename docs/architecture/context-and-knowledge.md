@@ -199,8 +199,10 @@ defaults, without contacting a live space.
 System defaults remain live except where explicitly overridden. Account defaults
 seed missing files. Home scaffolding also replaces recognized generated Ship
 roles and retires generated account-local memory entries when adopting the
-shared system memory entry. Customized and concurrent edits are preserved;
-existing specialist homes receive cleanup when scaffolded. An explicit override
+shared system memory entry. The Kernel also checks the run-as and owner accounts
+before a Process requests context, covering existing specialist processes. A
+successful check is reused for that Kernel lifetime. Customized and concurrent
+edits are preserved. An explicit override
 of the formerly combined `01-gsv.md` remains authoritative: migration leaves the
 new `02-interaction.md` empty unless it already has an explicit override.
 

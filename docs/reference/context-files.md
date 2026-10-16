@@ -64,7 +64,9 @@ outcomes belong in `r12y` before delegation or yielding.
 These are editable account defaults. Existing account names and customized context files
 are preserved. Revised defaults seed missing files; home scaffolding can also
 replace recognized, untouched Ship role seeds and retire generated local memory
-instructions now supplied by system context. Owner-edited files remain unchanged.
+instructions now supplied by system context. Existing run-as and owner accounts
+also receive the memory cleanup before a Process requests context. Owner-edited
+files remain unchanged.
 To replace customized instructions, edit that account's context files deliberately.
 Seeding checks the repository revision before committing, preserving owner
 edits made while defaults are being prepared.

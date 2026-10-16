@@ -66,7 +66,8 @@ space are separate actions. System defaults remain live where no explicit
 config override exists. Account defaults seed missing files. Home scaffolding
 also upgrades recognized, untouched Ship role seeds and retires generated local
 memory instructions now provided by system context. Customized and concurrent
-edits survive. Existing specialist homes receive that cleanup when scaffolded;
+edits survive. The Kernel checks existing run-as and owner accounts before a
+Process requests context, reusing successful checks for that Kernel lifetime;
 the source editor never rewrites a live account's files.
 
 When splitting `01-gsv.md`, the schema migration preserves existing explicit
