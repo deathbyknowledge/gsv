@@ -38,6 +38,10 @@ describe("setup welcome", () => {
 
   it("recovers setup, waits for popup dismissal, then wakes Ship once with its language", async () => {
     const setup = new GSVClient();
+    await expect(setup.requestOnce(endpoint, "sys.connect", { protocol: 4,
+      peer: { id: "setup-probe", version: "test", platform: "browser" } })).rejects.toMatchObject({
+      code: 503, details: { setupRecovery: true, setupFeatures: ["language"] },
+    });
     const args = { onboardingToken: "integration-onboarding-default", username: "welcome-owner", password: PASSWORD,
       agentName: "welcome-agent", timezone: "Europe/Amsterdam", language: "es-mx" };
     await recorder.setOnboardingCompletionFailure("default", "before-activation");
