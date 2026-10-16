@@ -142,6 +142,73 @@ function outboundAdmissionFixture(installationId: string, state: InstallationSta
 }
 
 describe("managed outbound mail delivery", () => {
+  it.each([
+    { from: "hank@gsv.space", aliases: ["gsv.space"], state: "accepted" },
+    { from: "hank@ship.space", aliases: ["gsv.space"], state: "accepted" },
+    { from: "attacker@gsv.space", aliases: ["gsv.space"], state: "failed" },
+    { from: "hank@untrusted.example", aliases: ["gsv.space"], state: "failed" },
+    { from: "hank@gsv.space", aliases: [], state: "failed" },
+  ])("validates $from against the owner's configured sending domains $aliases", async ({ from, aliases, state: expected }) => {
+    const installationId = `installation_outbound_alias_${crypto.randomUUID()}`;
+    const stub = env.MAIL_INSTALLATIONS.getByName(installationId);
+    const fixture = outboundAdmissionFixture(installationId, "active");
+    fixture.bindings.MAIL_DOMAIN = "ship.space";
+    fixture.bindings.MAIL_SENDING_DOMAINS = JSON.stringify(aliases);
+    fixture.bindings.MAIL_RECEIVING_DOMAINS = JSON.stringify(["ship.space", "gsv.space"]);
+    const originalClaim = fixture.claimOutboundMail.getMockImplementation()!;
+    fixture.claimOutboundMail.mockImplementation(async (...args) => {
+      const claim = await originalClaim(...args);
+      if (claim.status === "ready") claim.draft.from = from;
+      return claim;
+    });
+
+    await runInDurableObject(stub, async (_instance, state) => {
+      const instance = new MailInstallation(state, fixture.bindings);
+      const value = reference("outbound-domain-alias");
+      await instance.deliverOutbound(context(installationId), value);
+      await instance.deliverOutbound(context(installationId), value);
+      expect(deliveryRows(state)).toEqual([expect.objectContaining({
+        expected_from: "hank@ship.space",
+        state: expected,
+        error_code: expected === "accepted" ? null : "invalid_draft",
+        callback_completed_at: expect.any(Number),
+      })]);
+    });
+    expect(fixture.send).toHaveBeenCalledTimes(expected === "accepted" ? 1 : 0);
+    if (expected === "accepted") expect(fixture.send).toHaveBeenCalledWith(expect.objectContaining({ from }));
+  });
+
+  it.each([false, true])("rechecks a pinned sender after a domain change (handle changed: %s)", async (changedHandle) => {
+    const installationId = `installation_outbound_alias_retry_${changedHandle}`;
+    const stub = env.MAIL_INSTALLATIONS.getByName(installationId);
+    const fixture = outboundAdmissionFixture(installationId, "active");
+    fixture.claimOutboundMail.mockRejectedValueOnce(new Error("temporary claim failure"));
+    await runInDurableObject(stub, async (_instance, state) => {
+      const value = reference("outbound-domain-alias-retry");
+      const before = new MailInstallation(state, fixture.bindings);
+      await before.deliverOutbound(context(installationId), value);
+      expect(deliveryRows(state)).toEqual([expect.objectContaining({
+        expected_from: "hank@gsv.space", state: "claiming",
+      })]);
+
+      fixture.bindings.MAIL_DOMAIN = "ship.space";
+      fixture.bindings.MAIL_SENDING_DOMAINS = JSON.stringify(["gsv.space"]);
+      if (changedHandle) fixture.resolveInstallation.mockResolvedValue({ ...fixture.active, handle: "other" });
+      state.storage.sql.exec(
+        "UPDATE mail_outbound_deliveries SET claim_next_attempt_at = ?",
+        Date.now(),
+      );
+      const after = new MailInstallation(state, fixture.bindings);
+      await after.alarm();
+      expect(deliveryRows(state)).toEqual([expect.objectContaining({
+        expected_from: "hank@gsv.space",
+        state: changedHandle ? "failed" : "accepted",
+        error_code: changedHandle ? "sender_identity_changed" : null,
+      })]);
+    });
+    expect(fixture.send).toHaveBeenCalledTimes(changedHandle ? 0 : 1);
+  });
+
   it.each([[1, 2], [2, 1]] as const)("sends once when queue versions %i then %i reference the same immutable draft", async (first, second) => {
     const installationId = `installation_outbound_versions_${first}_${second}`;
     const stub = env.MAIL_INSTALLATIONS.getByName(installationId);
