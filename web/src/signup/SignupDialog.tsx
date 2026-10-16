@@ -14,8 +14,8 @@ export function SignupDialog({ children }: { children: ComponentChildren }) {
   useLayoutEffect(() => () => { dialog.current?.close(); }, []);
 
   return <>
-    {!open && <button class="gsv-auth-link signup-reopen" onClick={() => setOpen(true)}>Continue to GSV</button>}
-    <dialog ref={dialog} class="signup-dialog" aria-label="Welcome to GSV"
+    {!open && <button class="gsv-auth-link signup-reopen" onClick={() => setOpen(true)}>Continue to Ship</button>}
+    <dialog ref={dialog} class="signup-dialog" aria-label="Welcome to Ship"
       onCancel={(event) => { event.preventDefault(); setOpen(false); }}>
       <div class="signup-dialog-controls"><button type="button" class="gsv-auth-link" aria-label="Close" onClick={() => setOpen(false)}>close</button></div>
       {children}

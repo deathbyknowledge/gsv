@@ -1,8 +1,8 @@
 {
   "id": "/",
-  "name": "GSV",
-  "short_name": "GSV",
-  "description": "GSV desktop and agent operating shell.",
+  "name": "Ship",
+  "short_name": "Ship",
+  "description": "Ship desktop and agent operating shell.",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",

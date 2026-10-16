@@ -29,7 +29,7 @@ export function AccountRecoveryScreen() {
     finally { setBusy(false); }
   };
   return <AuthLayout background="galaxy" visible surfaceClass="gsv-auth-surface-login"><div class="gsv-login-panel">
-    <SectionHeader title="RECOVER YOUR GSV" titleSize="title" divider />
+    <SectionHeader title="RECOVER YOUR SHIP" titleSize="title" divider />
     <div class="gsv-login-body gsv-recovery-body">
       {done ? <><p>Your root password has changed. Sign in as root with the new password.</p><SessionLink href="/" class="gsv-auth-link">Return to sign-in</SessionLink></> : !attempt
         ? <p>This recovery link is unavailable. Start another recovery from your operator’s owner sign-in page.</p>
