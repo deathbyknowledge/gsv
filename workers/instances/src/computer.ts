@@ -107,9 +107,11 @@ export class ComputerInstance extends DurableObject<Environment> {
 
   cancel(requestId: string): void {
     const lease = this.ctx.storage.kv.get<Lease>("lease");
-    if (!lease || lease.state === "stopped" || lease.state === "stopping" || lease.expiresAt <= Date.now()) return;
-    // Keep the receipt for this immutable lease, including cancellation before execute arrives.
-    this.ctx.storage.kv.put(`cancelled:${requestId}`, lease.expiresAt);
+    if (lease && lease.state !== "stopped" && lease.state !== "stopping" && lease.expiresAt > Date.now()) {
+      // Keep the receipt for this immutable lease, including cancellation before execute arrives.
+      this.ctx.storage.kv.put(`cancelled:${requestId}`, lease.expiresAt);
+    }
+    // Expiry prevents new admission; active work still needs cancellation before teardown finishes.
     const request = this.requests.get(requestId);
     if (request && !request.abort.signal.aborted) request.abort.abort(new Error("Computer request cancelled"));
     else this.connection?.cancel(requestId);

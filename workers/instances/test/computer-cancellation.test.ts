@@ -117,6 +117,30 @@ describe("computer cancellation ownership", () => {
     expect(await cold.execute({ ...frame, id: "fresh" }, identity.expiresAt)).toEqual(response);
   }));
 
+  it.each(["deadline", "explicit cancellation"] as const)("propagates %s after lease expiry before a delayed alarm", mode => computerFixture(async (object, ctx, identity) => {
+    vi.useFakeTimers();
+    const connection = connectionFixture(object), child = deferred<InstanceTargetResponse>();
+    connection.execute.mockReturnValue(child.promise);
+    const alarm = vi.spyOn(object, "alarm"), stop = vi.spyOn(object, "stop");
+    const remaining = identity.expiresAt - Date.now();
+    const pending = object.execute(frame, identity.expiresAt + 60_000);
+    const cancelled = expect(pending).rejects.toThrow(mode === "deadline" ? "deadline exceeded" : "request cancelled");
+    await vi.advanceTimersByTimeAsync(0);
+    expect(connection.execute).toHaveBeenCalledWith(frame, identity.expiresAt);
+    if (mode === "deadline") await vi.advanceTimersByTimeAsync(remaining + 1);
+    else {
+      vi.setSystemTime(identity.expiresAt + 1);
+      object.cancel(frame.id);
+    }
+    await cancelled;
+    child.resolve(response);
+    await child.promise;
+    expect(connection.cancel).toHaveBeenCalledExactlyOnceWith(frame.id);
+    expect(ctx.storage.kv.get(`cancelled:${frame.id}`)).toBeUndefined();
+    expect(alarm).not.toHaveBeenCalled();
+    expect(stop).not.toHaveBeenCalled();
+  }));
+
   it("keeps child cancellation attached to an unread response body", () => computerFixture(async (object, _ctx, identity) => {
     const connection = connectionFixture(object);
     const cancelBody = vi.fn(() => new Promise<void>(() => {}));
