@@ -73,6 +73,15 @@ function makeContext(uid: number, entries: EntryMap, ownerUid?: number): KernelC
 }
 
 describe("sys.config.get", () => {
+  it("keeps a dismissed UI card on the person's account", () => {
+    const ctx = makeContext(1000, {});
+    const key = "users/1000/ui/welcome_card_seen";
+    expect(handleSysConfigGet({ key }, ctx).entries).toEqual([]);
+    expect(handleSysConfigSet({ key, value: "1" }, ctx)).toEqual({ ok: true });
+    expect(handleSysConfigGet({ key }, ctx).entries).toEqual([{ key, value: "1" }]);
+    expect(() => handleSysConfigSet({ key: "users/1001/ui/welcome_card_seen", value: "1" }, ctx)).toThrow("another user's");
+  });
+
   it("lets humans change only their own timezone without system write access", () => {
     const ctx = makeContext(1000, {});
     expect(handleSysConfigSet({ key: "users/1000/locale/timezone", value: "Europe/Amsterdam" }, ctx)).toEqual({ ok: true });

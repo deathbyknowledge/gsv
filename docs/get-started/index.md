@@ -12,6 +12,11 @@ early-access disclosure and confirm the age, Terms of Service and Privacy Policy
 agreement before creating your account. This checkbox is required inside the space
 as well as on the signup email step. **Back** lets you revise your credentials.
 Creating your account signs you in and opens **Ship**, your conversation with your personal agent.
+The first time you enter Instrument, a welcome card from Kawah appears with the
+heading “Welcome to early access GSV!” and large, readable text. Close it
+or choose **Try it out!** to dismiss it for your account across web and Desktop.
+The card links to the community Discord; the **Feedback** button in the header
+is available when your operator offers it.
 Start with what you want to do. You can connect devices from **Fleet** and
 configure models and other connections from **Settings** when you need them.
 
