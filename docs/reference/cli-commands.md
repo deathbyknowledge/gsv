@@ -112,10 +112,10 @@ options. Use the same list, get and stop commands; stopping destroys the files
 and running commands. See [cloud computers](/how-to/cloud-computers).
 
 With site hosting enabled, `sites init NAME` creates a Vite/React/TypeScript
-project in the current account's `/src/repos/ACCOUNT/NAME`. Edit that saved source,
+project in the human owner's `/src/repos/OWNER/NAME`, shared with Ship and Crew. Edit that saved source,
 then run `sites publish [OWNER/REPO] --target COMPUTER` on `gsv`. The command
 builds on an accessible Linux computer with Node.js and npm, publishes the static
-output, and returns the share URL. A bare repository name uses the current
+output, and returns the share URL. A bare repository name uses the human owner's
 account; omit it from inside the repository. `sites list` shows share URLs and
 `sites unpublish NAME` takes a site offline. See [publish a site](/how-to/publish-site)
 for metadata, other static builds and source retention.

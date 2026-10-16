@@ -12,17 +12,19 @@ const site = { id: `site-${"a".repeat(32)}`, slug: "orbits", origin: "https://or
 const published: SiteResult = { site, publication: { revision: 4, releaseId: null, publishedAtMs: null }, manifest: null, shareUrl: "https://person.example/public/orbits" };
 type Request = NonNullable<NativeShellCommandOptions["request"]>;
 
-function fixture(calls = ["*"]) {
+function fixture(calls = ["repo.*", "site.*", "fs.*", "shell.*"], username = "crew") {
   // SAFETY: The command only reads these identity fields; syscall execution is the typed request stub.
   const ctx = {
-    peer: testPeer({ account: { uid: 1000, gid: 1000, gids: [1000], username: "crew", home: "/home/crew", cwd: "/home/crew" }, calls }),
+    peer: testPeer({ account: { uid: 1001, gid: 1000, gids: [1000], username, home: `/home/${username}`, cwd: `/home/${username}` }, calls }),
+    callerOwnerUid: 1000,
+    auth: { getPasswdByUid: (uid: number) => uid === 1000 ? { uid, username: "person" } : null },
     installationIdentity: { canonicalOrigin: "https://person.example" },
     requestSignal: new AbortController().signal,
   } as KernelContext;
   const request = vi.fn<Request>(async frame => {
-    const data = frame.call === "repo.create" ? { repo: "crew/orbits", ref: "main", head, created: true }
-      : frame.call === "repo.read" ? { repo: "crew/orbits", ref: head, path: "", kind: "tree", entries: [] }
-      : frame.call === "repo.apply" ? { ok: true, repo: "crew/orbits", ref: "main", head: "b".repeat(40) }
+    const data = frame.call === "repo.create" ? { repo: "person/orbits", ref: "main", head, created: true }
+      : frame.call === "repo.read" ? { repo: "person/orbits", ref: head, path: "", kind: "tree", entries: [] }
+      : frame.call === "repo.apply" ? { ok: true, repo: "person/orbits", ref: "main", head: "b".repeat(40) }
       : frame.call === "site.list" ? { sites: [site] }
       : published;
     return { type: "res", id: frame.id, ok: true, data };
@@ -33,15 +35,16 @@ function fixture(calls = ["*"]) {
 }
 
 describe("sites shell workflow", () => {
-  it("creates a saved starter in one revision without publishing or running a machine", async () => {
-    const { shell, request, publish } = fixture();
+  it.each(["ship", "crew"])("%s creates shared owner source in one revision without publishing or running a machine", async username => {
+    const { shell, request, publish } = fixture(undefined, username);
     const result = await shell.exec("sites init orbits");
     expect(result.exitCode, result.stderr).toBe(0);
-    expect(result.stdout).toBe("/src/repos/crew/orbits\n");
+    expect(result.stdout).toBe("/src/repos/person/orbits\n");
     expect(request.mock.calls.map(([frame]) => frame.call)).toEqual(["repo.create", "repo.read", "repo.apply"]);
-    expect(request.mock.calls[1][0]).toMatchObject({ args: { repo: "crew/orbits", ref: head } });
+    expect(request.mock.calls[0][0]).toMatchObject({ args: { repo: "person/orbits" } });
+    expect(request.mock.calls[1][0]).toMatchObject({ args: { repo: "person/orbits", ref: head } });
     const frame = request.mock.calls[2][0];
-    expect(frame).toMatchObject({ args: { repo: "crew/orbits", expectedHead: head } });
+    expect(frame).toMatchObject({ args: { repo: "person/orbits", expectedHead: head } });
     if (frame.call !== "repo.apply") throw new Error("Expected repository commit");
     expect(frame.args.ops).toEqual(expect.arrayContaining([
       expect.objectContaining({ type: "put", path: "src/App.tsx" }),
@@ -52,7 +55,7 @@ describe("sites shell workflow", () => {
 
   it("never overwrites an existing project", async () => {
     const { shell, request } = fixture();
-    request.mockResolvedValueOnce({ type: "res", id: "create", ok: true, data: { repo: "crew/orbits", ref: "main", head, created: false } });
+    request.mockResolvedValueOnce({ type: "res", id: "create", ok: true, data: { repo: "person/orbits", ref: "main", head, created: false } });
     request.mockResolvedValueOnce({ type: "res", id: "read", ok: true, data: { kind: "tree", entries: [{ name: "index.html" }] } });
     const result = await shell.exec("sites init orbits");
     expect(result.exitCode).toBe(1);
@@ -68,12 +71,12 @@ describe("sites shell workflow", () => {
     }
   });
 
-  it("publishes a saved project through the shared build workflow", async () => {
-    const { shell, ctx, request, publish } = fixture();
+  it.each(["ship", "crew"])("%s publishes shared owner source through the build workflow", async username => {
+    const { shell, ctx, request, publish } = fixture(undefined, username);
     const result = await shell.exec("sites publish orbits --target cloud-build");
     expect(result.exitCode, result.stderr).toBe(0);
     expect(result.stdout).toBe(`${published.shareUrl}\n`);
-    expect(publish).toHaveBeenCalledWith({ repo: "crew/orbits", target: "cloud-build" }, ctx, { request }, expect.any(AbortSignal));
+    expect(publish).toHaveBeenCalledWith({ repo: "person/orbits", target: "cloud-build" }, ctx, { request }, expect.any(AbortSignal));
     expect(request).not.toHaveBeenCalled();
   });
 

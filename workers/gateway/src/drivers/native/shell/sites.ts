@@ -1,7 +1,7 @@
 import { defineCommand, type ExecResult } from "just-bash";
 import { cancelBinaryBody, siteSlugSchema } from "@humansandmachines/gsv/protocol";
 import type { RepoCreateResult, RepoReadResult, SiteListResult, SiteResult } from "@humansandmachines/gsv/protocol";
-import { requirePrincipal, type KernelContext } from "../../../kernel/context";
+import { resolveCallerOwnerUid, type KernelContext } from "../../../kernel/context";
 import type { RequestFrame } from "../../../protocol/frames";
 import { publishSiteProject } from "../../../sites/build";
 import { siteStarterFiles } from "../../../sites/starter";
@@ -14,10 +14,11 @@ const HELP = `Usage:
   sites list
   sites unpublish NAME
 
-Run on gsv. Init creates a React/TypeScript project in /src/repos/YOUR-ACCOUNT/NAME.
+Run on gsv. Init creates a React/TypeScript project in /src/repos/OWNER/NAME.
+The human owner holds the source so Ship and Crew can both edit it.
 Edit those files with ordinary tools. Publish builds that saved source on the
 selected Linux computer and returns its public URL. Omit OWNER/REPO from inside
-the repository, or use NAME for a repository owned by your current account.
+the repository, or use NAME for a repository owned by the human owner.
 site.json contains the slug, title, description and build output directory.
 The computer needs Node.js and npm. Set the Shell timeout to 300000 ms for builds.
 The computer can stop after publishing.
@@ -37,6 +38,11 @@ export function buildSitesCommand(ctx: KernelContext, options: NativeShellComman
         else words.push(args[i]);
       }
       if (words.length > 1) throw new Error(HELP);
+      const ownerRepo = (name: string) => {
+        const owner = ctx.auth.getPasswdByUid(resolveCallerOwnerUid(ctx));
+        if (!owner) throw new Error("Site owner account is unavailable");
+        return `${owner.username}/${name}`;
+      };
       const signal = ctx.requestSignal && shell.signal ? AbortSignal.any([ctx.requestSignal, shell.signal]) : ctx.requestSignal ?? shell.signal;
       const request = async (frame: RequestFrame) => {
         requireCommandCapability(ctx, frame.call);
@@ -50,7 +56,7 @@ export function buildSitesCommand(ctx: KernelContext, options: NativeShellComman
       };
       if (verb === "init" && words.length === 1) {
         const slug = siteSlugSchema.parse(words[0]);
-        const repo = `${requirePrincipal(ctx).account.username}/${slug}`;
+        const repo = ownerRepo(slug);
         for (const call of ["repo.create", "repo.read", "repo.apply"]) requireCommandCapability(ctx, call);
         // SAFETY: Each typed request is paired with its own Kernel response.
         const created = await request({ type: "req", id: crypto.randomUUID(), call: "repo.create", args: { repo } }) as RepoCreateResult;
@@ -67,7 +73,7 @@ export function buildSitesCommand(ctx: KernelContext, options: NativeShellComman
       if (verb === "publish") {
         if (!target || target === "gsv") throw new Error("Choose a Linux computer with --target COMPUTER");
         const repo = words[0]
-          ? words[0].includes("/") ? words[0] : `${requirePrincipal(ctx).account.username}/${words[0]}`
+          ? words[0].includes("/") ? words[0] : ownerRepo(words[0])
           : /^\/src\/repos\/([^/]+\/[^/]+)(?:\/|$)/.exec(shell.cwd)?.[1];
         if (!repo) throw new Error("Choose OWNER/REPO or run from /src/repos/OWNER/REPO");
         const published = await publish({ repo, target }, ctx, options, signal);

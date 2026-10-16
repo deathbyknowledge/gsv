@@ -30,13 +30,13 @@ select a Kernel. Resetting a space never transfers its old site origins.
 ## Build and publish
 
 Run `sites` on the `gsv` target. It creates an ordinary Vite, React and TypeScript
-project in the current account's GSV repository:
+project in the human owner's GSV repository, accessible to Ship and Crew:
 
 ```bash
 sites init my-game
 ```
 
-The command returns `/src/repos/YOUR-ACCOUNT/my-game`. Edit those files with the
+The command returns `/src/repos/OWNER/my-game`. Edit those files with the
 ordinary file tools; repository writes commit automatically. Source remains
 available for later edits after the build computer has stopped. Init refuses to
 replace files in an existing repository.
