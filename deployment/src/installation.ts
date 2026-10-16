@@ -13,7 +13,9 @@ export type GsvOperatorAccess = { kind: "operator" } | {
 export type GsvDeploymentProps = Omit<GsvRuntimeProps, "services"> & {
   domain: string;
   domainAliases?: string[];
-  presentation?: Omit<PublicDeploymentConfig, "primaryDomain" | "legacyDomains">;
+  /** Optional isolated publication domain. Omit zoneId when the operator owns its DNS and routes. */
+  sites?: { domain: string; zoneId?: string };
+  presentation?: Omit<PublicDeploymentConfig, "primaryDomain" | "legacyDomains" | "sitesDomain">;
   operatorUpdates?: OperatorUpdateCatalog;
   adminOrigin: string;
   access: GsvOperatorAccess;
@@ -157,8 +159,11 @@ export const GsvDeployment = (props: GsvDeploymentProps, dependencies = gsvRunti
   }
   const compatibility = props.compatibility ?? { date: "2026-09-01", flags: ["nodejs_compat" as const] };
   const publicConfiguration = JSON.stringify(deploymentPresentationSchema.parse({
-    ...props.presentation, primaryDomain: props.domain, legacyDomains: props.domainAliases ?? [],
+    ...props.presentation, primaryDomain: props.domain, legacyDomains: props.domainAliases ?? [], sitesDomain: props.sites?.domain,
   }));
+  if (props.sites && [props.domain, ...(props.domainAliases ?? [])].some(domain => domain === props.sites!.domain)) {
+    throw new Error("Sites require a separate publication domain");
+  }
   const ownerOriginAliases = JSON.stringify(props.installations.ownerOriginAliases ?? []);
   configuredOriginAliases(ownerOriginAliases);
   const observability = { enabled: true, logs: { enabled: true, invocationLogs: false, persist: false }, traces: { enabled: false } };
@@ -175,6 +180,7 @@ export const GsvDeployment = (props: GsvDeploymentProps, dependencies = gsvRunti
     const bindings: Cloudflare.Workers.WorkerBindingProps = {
       INSTALLATIONS_DB: database, ENVIRONMENT: "production", GSV_BASE_DOMAIN: props.domain,
       GSV_DOMAIN_ALIASES: JSON.stringify(props.domainAliases ?? []), GSV_PUBLIC_CONFIG: publicConfiguration,
+      GSV_SITES_DOMAIN: props.sites?.domain ?? "",
       GSV_ADMIN_ORIGIN: props.adminOrigin, GSV_OPERATOR_ACCESS_MODE: props.access.kind === "operator" ? "operator" : "access",
       GSV_ADMIN_ACCESS_TEAM_DOMAIN: props.access.kind === "cloudflare-access" ? props.access.teamDomain : "",
       GSV_ADMIN_ACCESS_AUD: accessAudience,
@@ -223,6 +229,9 @@ export const GsvDeployment = (props: GsvDeploymentProps, dependencies = gsvRunti
     inference = inferenceWorker;
   }
   const extraBindings: Cloudflare.Workers.WorkerBindingProps = { GSV_PUBLIC_CONFIG: publicConfiguration };
+  if (props.sites) extraBindings.PUBLICATION_DIRECTORY = Cloudflare.WorkerEntrypoint(directory, {
+    entrypoint: "InstallationPublicationsEntrypoint", props: { authority: "kernel-publication" },
+  });
   if (props.operatorUpdates) extraBindings.GSV_OPERATOR_UPDATES = JSON.stringify(operatorUpdateCatalogSchema.parse(props.operatorUpdates));
   if (props.installations.ownerEmail) {
     extraBindings.GSV_OWNER_SIGNUP_URL = new URL("/owner/signup/?resume=1", props.adminOrigin).href;
@@ -288,6 +297,14 @@ export const GsvDeployment = (props: GsvDeploymentProps, dependencies = gsvRunti
     }
     yield* Cloudflare.Workers.WorkerRoute(`${props.logicalPrefix}GatewayRoute`, {
       zoneId: props.routing.zoneId, pattern: `*.${props.domain}/*`, script: runtime.gateway.workerName,
+    }).pipe(retain(props.allowResourceDeletion !== true));
+  }
+  if (props.sites?.zoneId) {
+    yield* Cloudflare.DNS.Record(`${props.logicalPrefix}SitesWildcardDns`, {
+      zoneId: props.sites.zoneId, name: `*.${props.sites.domain}`, type: "AAAA", content: "100::", proxied: true,
+    }).pipe(retain(props.allowResourceDeletion !== true));
+    yield* Cloudflare.Workers.WorkerRoute(`${props.logicalPrefix}SitesRoute`, {
+      zoneId: props.sites.zoneId, pattern: `*.${props.sites.domain}/*`, script: runtime.gateway.workerName,
     }).pipe(retain(props.allowResourceDeletion !== true));
   }
   return { ...runtime, directory, database, inference: inferenceWorker ?? inference };

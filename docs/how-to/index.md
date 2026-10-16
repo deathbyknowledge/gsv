@@ -15,6 +15,7 @@ Step-by-step guides for common tasks. Each page focuses on one concrete goal —
 - [Bring Your Own Model](/how-to/bring-your-own-model) — use your own provider key for better speed and model choice
 - [Integrations (MCP)](/how-to/integrations) — wire in MCP servers to give Ship new tools
 - [Browse the Web](/how-to/browse-web) — pair the browser extension so Ship can act in your logged-in browser
+- [Publish a Site](/how-to/publish-site) — publish static websites, browser games and WebAssembly builds
 - [Cloud Browsers](/how-to/cloud-browsers) — start an on-demand browser and remember website logins
 - [Cloud Computers](/how-to/cloud-computers) — run Linux builds and scripts while your computer is offline
 

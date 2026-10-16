@@ -53,6 +53,7 @@ import { isFederationPublicPath } from "./kernel/federation";
 import { matchPublicProfilePath, servePublicProfileRequest } from "./public-profiles";
 import type { GatewayEnv } from "./runtime-env";
 import { DEPLOYMENT_PRESENTATION_PATH, deploymentPresentation, deploymentPresentationScript } from "@humansandmachines/gsv/services/deployment";
+import { matchSiteSharePath, servePublishedSite, serveSiteShare } from "./sites/http";
 
 export { Kernel } from "./kernel/do";
 export { Process } from "./process/do";
@@ -90,6 +91,16 @@ export default {
     });
     if (!route) {
       return new Response("Not Found", { status: 404 });
+    }
+
+    if (route.publication) {
+      return servePublishedSite(request, createInstallationStorage(env.STORAGE, route.identity.installationId), route.publication);
+    }
+
+    const siteSlug = matchSiteSharePath(url.pathname);
+    if (siteSlug) {
+      const share = await serveSiteShare(request, createInstallationStorage(env.STORAGE, route.identity.installationId), siteSlug, route.identity);
+      if (share) return share;
     }
 
     if (url.pathname === DEPLOYMENT_PRESENTATION_PATH && request.method === "GET") {

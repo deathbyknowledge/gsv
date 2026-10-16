@@ -628,8 +628,8 @@ function toR2GetOptions(options: OpenFileOptions | undefined): R2GetOptions | un
   const getOptions: R2GetOptions = {};
   if (options.conditions) {
     getOptions.onlyIf = {
-      etagMatches: options.conditions.etagMatches,
-      etagDoesNotMatch: options.conditions.etagDoesNotMatch,
+      etagMatches: r2ConditionalEtag(options.conditions.etagMatches, false),
+      etagDoesNotMatch: r2ConditionalEtag(options.conditions.etagDoesNotMatch, true),
       uploadedBefore: options.conditions.mtimeBefore,
       uploadedAfter: options.conditions.mtimeAfter,
       secondsGranularity: Boolean(options.conditions.mtimeBefore || options.conditions.mtimeAfter),
@@ -639,6 +639,13 @@ function toR2GetOptions(options: OpenFileOptions | undefined): R2GetOptions | un
     getOptions.range = options.range;
   }
   return getOptions;
+}
+
+function r2ConditionalEtag(value: string | undefined, weakMatch: boolean): string | undefined {
+  if (value === undefined) return undefined;
+  const weak = value.startsWith("W/");
+  const unquoted = (weak ? value.slice(2) : value).replace(/^"(.*)"$/, "$1");
+  return weak && !weakMatch ? `W/${unquoted}` : unquoted;
 }
 
 function conditionalMissStatus(conditions: OpenFileOptions["conditions"] | undefined): 304 | 412 {

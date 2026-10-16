@@ -511,7 +511,7 @@ const toolResult = await lookup_record({ query: "gsv" });
 ```
 
 Nested tool calls are dispatched back through the Process DO and Kernel as
-ordinary `shell.exec`, `fs.*`, `net.fetch`, `mail.send`, and `sys.mcp.*`
+ordinary `shell.exec`, `fs.*`, `net.fetch`, `mail.send`, `site.*`, and `sys.mcp.*`
 request frames. They keep the same capability, approval, target routing, async
 device response, and shell session behavior as direct model tool calls.
 
@@ -525,8 +525,8 @@ Runtime behavior:
 
 | Syscall | Handler | Behavior |
 |---|---|---|
-| `codemode.exec` | Process DO `executeCodeModeTool`; `executeCodeMode` | Runs code in an isolated Worker Loader worker with outbound network disabled. Provides `shell(input, options)`, `shell.cancel({sessionId, target?})`, `fs.read/write/edit/delete/search`, `mail.send`, `mcpTools` metadata, and connected MCP tools as generated async functions. Returns a structured `completed` or `failed` CodeMode result. |
-| `codemode.run` | Kernel `forwardToProcess`; Process DO `handleCodeModeRun`; `executeCodeMode` | Manual CodeMode execution for shell/CLI surfaces. Accepts code plus optional wrapper defaults and script arguments. Nested tools route through normal `shell.exec`, `fs.*`, `net.fetch`, `mail.send`, and `sys.mcp.*` syscalls. |
+| `codemode.exec` | Process DO `executeCodeModeTool`; `executeCodeMode` | Runs code in an isolated Worker Loader worker with outbound network disabled. Provides `shell(input, options)`, `shell.cancel({sessionId, target?})`, `fs.read/write/edit/delete/search`, `mail.send`, `site.create/list/get/publish/unpublish`, `mcpTools` metadata, and connected MCP tools as generated async functions. Returns a structured `completed` or `failed` CodeMode result. |
+| `codemode.run` | Kernel `forwardToProcess`; Process DO `handleCodeModeRun`; `executeCodeMode` | Manual CodeMode execution for shell/CLI surfaces. Accepts code plus optional wrapper defaults and script arguments. Nested tools route through normal `shell.exec`, `fs.*`, `net.fetch`, `mail.send`, `site.*`, and `sys.mcp.*` syscalls. |
 
 ```ts
 type CodeModeSyscalls = {
@@ -972,6 +972,37 @@ admit fresh agent work. New conversation messages alone do not create commitment
 Federation v2 messages preserve human/Process authorship and immutable origin/reply references.
 Private pairing also supports v1 peers; old messages have no fabricated authorship or reply
 metadata. Each queued delivery retains the wire version chosen when it was created.
+
+### Static site publication
+
+`site.*` publishes static browser output through the optional publication domain.
+See [Publish a Site](/how-to/publish-site) for manifests, base paths and retention.
+`SiteResult.manifest` returns the last successfully published manifest, including
+source provenance, and remains available to the owner after unpublish.
+
+```ts
+type SiteSyscalls = {
+  "site.create": { args: { slug: string }; result: SiteResult };
+  "site.list": { args: Record<string, never>; result: { sites: Site[] } };
+  "site.get": { args: { siteId: string }; result: SiteResult };
+  "site.publish": {
+    args: { siteId: string; expectedRevision: number; releaseId: string; outputPath: string; manifest: SiteManifest };
+    result: SiteResult;
+  };
+  "site.unpublish": { args: { siteId: string; expectedRevision: number }; result: SiteResult };
+};
+type SiteResult = {
+  site: { id: string; slug: string; origin: string; createdAtMs: number };
+  publication: { revision: number; releaseId: string | null; publishedAtMs: number | null };
+  shareUrl: string;
+};
+```
+
+The Kernel derives owner and installation identity. `site.publish` also requires
+`fs.read` and `repo.log`, validates the readable source commit and output hashes,
+then conditionally activates one publication record. Stale operations cannot
+activate staged releases. Public serving reads Accounts and R2 without waking a
+Kernel or build target. This grants no app sessions or backend runtime.
 
 ### Public profiles and first messages
 

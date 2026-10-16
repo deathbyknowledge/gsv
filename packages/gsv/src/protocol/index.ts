@@ -32,6 +32,7 @@ export type * from "./syscalls/conversation";
 export * from "./syscalls/contact";
 export * from "./contact-invitation";
 export * from "./syscalls/profile";
+export * from "./syscalls/site";
 export * from "./syscalls/approach";
 export * from "./social";
 export * from "./approaches";

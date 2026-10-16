@@ -157,3 +157,25 @@ hostnames atomically to the replacement installation. Provisioning and activatio
 advance those hostnames together. Installation lifecycle admission still applies
 to every alias. New primary-domain installations do not acquire legacy aliases.
 DNS and Cloudflare routes remain owned by the operator composition.
+
+## Published site origins
+
+Optional static publication uses a separate `publication_hostnames` registry.
+The deployment binds `InstallationPublicationsEntrypoint` to the Kernel with
+`kernel-publication` authority. Only that binding may register an exact hostname
+against an immutable installation ID, site ID and share slug; callers cannot
+select an installation through public HTTP or deployment presentation metadata.
+
+Directory resolution marks these hosts as publication routes. They admit only
+active installations and serve the recorded site's immutable R2 output; they
+cannot address Kernel login, WebSockets or the Instrument application. Serving
+reads the directory and the installation-scoped publication record without
+waking the Kernel. The record atomically selects the current release and gates
+previously published releases, so unpublish also blocks old asset URLs.
+
+Reset never transfers publication-host rows to a replacement installation.
+Changing the configured content domain affects new sites; existing registrations
+retain their original origins while the operator keeps their routes available.
+The owner can recover the last published source manifest after unpublish, while
+source stays in its existing repository. See [Publish a Site](../how-to/publish-site.md)
+for configuration, build paths, retention and browser caching limits.

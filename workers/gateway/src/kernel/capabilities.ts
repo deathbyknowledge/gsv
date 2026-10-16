@@ -27,6 +27,7 @@ const DEFAULT_CAPABILITIES: [number, string[]][] = [
     "conversation.*",
     "contact.*",
     "profile.*",
+    "site.*",
     "approach.*",
     "proc.*",
     "signal.*",

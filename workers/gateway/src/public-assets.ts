@@ -201,7 +201,7 @@ function isPublicAssetFsPath(path: string): boolean {
   return normalized.startsWith(`${PUBLIC_ASSET_FS_ROOT}/`);
 }
 
-function openFileOptionsFromRequest(request: Request): OpenFileOptions | null {
+export function openFileOptionsFromRequest(request: Request): OpenFileOptions | null {
   const conditions = openFileConditionsFromHeaders(request.headers);
   const range = openFileRangeFromHeaders(request.headers);
   if (range === null) {

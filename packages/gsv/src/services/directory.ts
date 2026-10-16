@@ -17,7 +17,8 @@ export type InstallationIdentity = {
 };
 
 export type InstallationDirectoryResult =
-  | ({ found: true; state: InstallationState; ownerSetupRecovery?: true } & InstallationIdentity)
+  | ({ found: true; state: InstallationState; ownerSetupRecovery?: true;
+      publication?: { siteId: string; slug: string } } & InstallationIdentity)
   | { found: false };
 
 /** Resolves public routing metadata to an immutable installation identity. */

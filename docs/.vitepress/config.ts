@@ -140,6 +140,7 @@ export default defineConfig({
             { text: "Browse the Web", link: "/how-to/browse-web" },
             { text: "Cloud Browsers", link: "/how-to/cloud-browsers" },
             { text: "Cloud Computers", link: "/how-to/cloud-computers" },
+            { text: "Publish a Site", link: "/how-to/publish-site" },
           ],
         },
       ],

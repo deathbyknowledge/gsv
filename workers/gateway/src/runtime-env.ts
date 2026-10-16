@@ -1,3 +1,4 @@
+import type { PublicationDirectoryService } from "@humansandmachines/gsv/services/publications";
 import type { ManagedOutboundMailCommand } from "@humansandmachines/gsv/protocol";
 import type { InstallationDirectoryService } from "@humansandmachines/gsv/services/directory";
 import type { InferenceExecutionService } from "@humansandmachines/gsv/services/inference-execution";
@@ -17,6 +18,7 @@ type GatewayDeploymentBindings = TelemetryEnvironment & {
   GSV_PUBLIC_CONFIG?: string;
   GSV_OPERATOR_UPDATES?: string;
   INSTALLATION_DIRECTORY: InstallationDirectoryService & InstallationOnboardingService;
+  PUBLICATION_DIRECTORY?: PublicationDirectoryService;
   INSTALLATION_OWNERSHIP?: InstallationOwnershipService;
   INFERENCE_EXECUTION: InferenceExecutionService;
   MANAGED_INFERENCE_INSTALLATIONS?: DurableObjectNamespace;

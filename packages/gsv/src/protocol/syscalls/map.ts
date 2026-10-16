@@ -1,3 +1,4 @@
+import type * as Site from "./site";
 import type {
   FsCopyArgs,
   FsCopyResult,
@@ -359,6 +360,12 @@ export type SyscallDomains = {
   "conversation.search": { args: ConversationSearchArgs; result: ConversationSearchResult };
   "conversation.send": { args: ConversationSendArgs; result: ConversationSendResult };
   "conversation.media.read": { args: ConversationMediaReadArgs; result: ConversationMediaReadResult };
+
+  "site.create": { args: Site.SiteCreateArgs; result: Site.SiteResult };
+  "site.get": { args: Site.SiteGetArgs; result: Site.SiteResult };
+  "site.list": { args: Site.SiteListArgs; result: Site.SiteListResult };
+  "site.publish": { args: Site.SitePublishArgs; result: Site.SiteResult };
+  "site.unpublish": { args: Site.SiteUnpublishArgs; result: Site.SiteResult };
 
   "profile.get": { args: ProfileGetArgs; result: ProfileGetResult };
   "profile.update": { args: ProfileUpdateArgs; result: ProfileUpdateResult };

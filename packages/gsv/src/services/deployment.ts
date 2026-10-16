@@ -17,6 +17,7 @@ const origin = url.check(z.refine((value) => new URL(value).origin === value, "E
 /** Public operator metadata. It carries no credentials or installation authority. */
 export type PublicDeploymentConfig = {
   primaryDomain?: string;
+  sitesDomain?: string;
   legacyDomains: string[];
   operatorName?: string;
   accountsOrigin?: string;
@@ -28,6 +29,7 @@ export type PublicDeploymentConfig = {
 
 export const deploymentPresentationSchema = z.object({
   primaryDomain: z.optional(domain),
+  sitesDomain: z.optional(domain),
   legacyDomains: z._default(z.array(domain).check(z.maxLength(16)), []),
   operatorName: z.optional(z.string().check(z.minLength(1), z.maxLength(160))),
   accountsOrigin: z.optional(origin),

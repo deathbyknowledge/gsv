@@ -11,6 +11,7 @@
  * the routing table).
  */
 
+import { handleSiteCreate, handleSiteGet, handleSiteList, handleSitePublish, handleSiteUnpublish } from "./sites";
 import type {
   RequestFrame,
   ResponseFrame,
@@ -772,6 +773,21 @@ async function dispatchKernel(
         data = handleResponsibilitySourceUpdate(frame.args, ctx);
         break;
 
+      case "site.create":
+        data = await handleSiteCreate(frame.args, ctx);
+        break;
+      case "site.get":
+        data = await handleSiteGet(frame.args, ctx);
+        break;
+      case "site.list":
+        data = handleSiteList(ctx);
+        break;
+      case "site.publish":
+        data = await handleSitePublish(frame.args, ctx);
+        break;
+      case "site.unpublish":
+        data = await handleSiteUnpublish(frame.args, ctx);
+        break;
       case "profile.get":
         data = handleProfileGet(ctx);
         break;

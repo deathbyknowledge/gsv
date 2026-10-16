@@ -132,6 +132,8 @@ pub struct ServerInfo {
 pub struct PublicDeploymentConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub primary_domain: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sites_domain: Option<String>,
     pub legacy_domains: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub operator_name: Option<String>,
