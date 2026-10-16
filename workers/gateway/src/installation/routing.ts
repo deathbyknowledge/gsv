@@ -146,7 +146,7 @@ export async function resolveInstallationRoute(
   const result = await directory.resolveHostname(hostname);
   if (!result.found || !isRoutableManagedInstallationState(
     result.state,
-    options.allowProvisioning ?? false,
+    result.publication ? false : options.allowProvisioning ?? false,
   )) {
     return null;
   }
@@ -160,6 +160,7 @@ export async function resolveInstallationRoute(
   }
 
   return {
+    publication: result.publication,
     identity: {
       installationId,
       canonicalOrigin: result.canonicalOrigin,

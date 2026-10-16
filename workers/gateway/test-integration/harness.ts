@@ -27,6 +27,7 @@ export function integrationGatewayConfig(options: {
   name?: string;
   workersAi?: boolean;
   instances?: boolean;
+  sites?: boolean;
   managed?: boolean;
   managedServices?: {
     accounts: string;
@@ -104,6 +105,7 @@ export function integrationGatewayConfig(options: {
       { binding: "CHANNEL_WHATSAPP", service: DEPENDENCY_WORKER },
       { binding: "RIPGIT", service: DEPENDENCY_WORKER },
       { binding: "INSTALLATION_DIRECTORY", service: options.managedServices?.accounts ?? DEPENDENCY_WORKER },
+      ...(options.sites ? [{ binding: "PUBLICATION_DIRECTORY", service: DEPENDENCY_WORKER }] : []),
     ].filter((binding) => options.workersAi !== false || binding.binding !== "AI"),
   };
 }
@@ -267,6 +269,7 @@ function managedInferenceProbeConfig(): Unstable_RawConfig {
 export function createGatewayTestHarness(options: {
   workersAi?: boolean;
   instances?: boolean;
+  sites?: boolean;
   managedMailQueue?: string;
 } = {}): TestHarness {
   return createTestHarness({

@@ -1,3 +1,5 @@
+import { PublicationHostStore } from "./publications";
+export { InstallationPublicationsEntrypoint } from "./publications";
 import { WorkerEntrypoint } from "cloudflare:workers";
 import { configuredDomainAliases, configuredOriginAliases } from "@humansandmachines/gsv/services/deployment";
 import type { InstallationDirectoryResult, InstallationDirectoryService } from "@humansandmachines/gsv/services/directory";
@@ -62,7 +64,8 @@ export default class InstallationService extends WorkerEntrypoint<Env & Installa
   }
 
   async resolveHostname(hostname: string): Promise<InstallationDirectoryResult> {
-    return this.accounts().resolveHostname(hostname);
+    const publication = await new PublicationHostStore(this.env.INSTALLATIONS_DB, this.env.GSV_SITES_DOMAIN).resolve(hostname);
+    return publication.found ? publication : this.accounts().resolveHostname(hostname);
   }
 
   async resolveInstallation(installationId: string): Promise<InstallationDirectoryResult> {

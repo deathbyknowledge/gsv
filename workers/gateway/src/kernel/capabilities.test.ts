@@ -140,6 +140,7 @@ describe("CapabilityStore", () => {
         "sched.*",
         "shell.*",
         "signal.*",
+        "site.*",
         "sys.bootstrap",
         "sys.browser.*",
         "sys.config.get",

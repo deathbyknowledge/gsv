@@ -1,3 +1,4 @@
+import type { SiteStore } from "./site-store";
 import type { ShipReplies } from "./ship-replies";
 /**
  * KernelContext — the single shape passed to all syscall handlers.
@@ -84,6 +85,7 @@ export type KernelContext = {
   federation: FederationStore;
   federationIdentity: FederationIdentity;
   profiles: ProfileStore;
+  sites: SiteStore;
   approaches: ApproachStore;
   scheduleApproachMaintenance: () => Promise<void>;
   connection: KernelConnection<KernelConnectionState> | null;
@@ -95,6 +97,8 @@ export type KernelContext = {
   approvedTarget?: ProcessApprovalTarget;
   requestId?: string;
   requestSignal?: AbortSignal;
+  /** Internal admission receipt for a native operation's newly claimed shell session. */
+  onShellSessionStart?: (sessionId: string, targetId: string) => void;
   callerOwnerUid?: number;
   /** The ledger of dispatched syscalls; absent only in contexts built for tests. */
   ledger?: LedgerStore;

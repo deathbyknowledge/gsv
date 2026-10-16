@@ -1,6 +1,7 @@
 import * as z from "zod/mini";
 
 const domain = z.string().check(z.minLength(1), z.maxLength(253), z.refine((value) => {
+  if (value.startsWith(".") || value.endsWith(".")) return false;
   try {
     const url = new URL(`https://${value}`);
     return url.hostname === value && url.host === value && url.pathname === "/" && !url.search && !url.hash && !url.username && !url.password;
@@ -17,6 +18,7 @@ const origin = url.check(z.refine((value) => new URL(value).origin === value, "E
 /** Public operator metadata. It carries no credentials or installation authority. */
 export type PublicDeploymentConfig = {
   primaryDomain?: string;
+  sitesDomain?: string;
   legacyDomains: string[];
   operatorName?: string;
   accountsOrigin?: string;
@@ -28,6 +30,8 @@ export type PublicDeploymentConfig = {
 
 export const deploymentPresentationSchema = z.object({
   primaryDomain: z.optional(domain),
+  // A publication hostname adds the 37-character site ID and a dot to this domain.
+  sitesDomain: z.optional(domain.check(z.maxLength(215, "Publication domain must be at most 215 characters"))),
   legacyDomains: z._default(z.array(domain).check(z.maxLength(16)), []),
   operatorName: z.optional(z.string().check(z.minLength(1), z.maxLength(160))),
   accountsOrigin: z.optional(origin),

@@ -166,6 +166,11 @@ An explicit `sys.browser.profile.save` is labeled “save browser state”; its
 arguments identify the instance, while cookies and website storage stay inside
 the instance service and never enter ledger arguments.
 
+Site operations use labels such as “published a site” and “unpublished a site”.
+Their syscall arguments identify the site and source manifest for owner inspection.
+Anonymous share-page and asset requests serve directly from published storage and
+do not create Kernel syscall ledger rows.
+
 ## Cost
 
 One insert per dispatch and one count per hundred, in the transaction the

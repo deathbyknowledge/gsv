@@ -216,6 +216,7 @@ export type GsvAiNamespace = GsvClientNamespaces["ai"];
 export type GsvCodeModeNamespace = GsvClientNamespaces["codemode"];
 export type GsvConversationNamespace = GsvClientNamespaces["conversation"];
 export type GsvContactNamespace = GsvClientNamespaces["contact"];
+export type GsvSiteNamespace = GsvClientNamespaces["site"];
 export type GsvProfileNamespace = GsvClientNamespaces["profile"];
 export type GsvApproachNamespace = GsvClientNamespaces["approach"];
 export type GsvFsNamespace = GsvClientNamespaces["fs"];
@@ -249,6 +250,7 @@ const DEFAULT_REQUEST_TIMEOUTS_MS = {
   "fs.transfer.stat": LONG_RUNNING_REQUEST_TIMEOUT_MS,
   "fs.transfer.send": LONG_RUNNING_REQUEST_TIMEOUT_MS,
   "fs.transfer.receive": LONG_RUNNING_REQUEST_TIMEOUT_MS,
+  "site.publish": LONG_RUNNING_REQUEST_TIMEOUT_MS,
   "net.fetch": LONG_RUNNING_REQUEST_TIMEOUT_MS,
   "ai.text.generate": AI_TEXT_GENERATION_REQUEST_TIMEOUT_MS,
   "ai.transcription.create": LONG_RUNNING_REQUEST_TIMEOUT_MS,
@@ -287,6 +289,11 @@ const SYSCALL_NAMES = [
   "conversation.search",
   "conversation.send",
   "contact.identity",
+  "site.create",
+  "site.get",
+  "site.list",
+  "site.publish",
+  "site.unpublish",
   "profile.get",
   "profile.update",
   "profile.publish",
@@ -475,6 +482,7 @@ export class GSVClient {
   declare readonly codemode: GsvCodeModeNamespace;
   declare readonly conversation: GsvConversationNamespace;
   declare readonly contact: GsvContactNamespace;
+  declare readonly site: GsvSiteNamespace;
   declare readonly profile: GsvProfileNamespace;
   declare readonly approach: GsvApproachNamespace;
   declare readonly fs: GsvFsNamespace;

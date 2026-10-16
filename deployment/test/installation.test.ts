@@ -111,6 +111,70 @@ describe("public operator composition", () => {
       .toBe("https://join.example.com");
   });
 
+  it("configures isolated publications with a dedicated authority and optional routes", async () => {
+    await run(GsvDeployment({ ...input, sites: { domain: "usercontent.example", zoneId: "sites-zone" } }, dependencies));
+    const accounts = recorded.workers.find((worker) => worker.id === "FixtureInstallations")!.props.env!;
+    const gateway = recorded.workers.find((worker) => worker.id === "FixtureGateway")!.props.env!;
+    expect(accounts.GSV_SITES_DOMAIN).toBe("usercontent.example");
+    expect(JSON.parse(String(gateway.GSV_PUBLIC_CONFIG))).toMatchObject({ sitesDomain: "usercontent.example" });
+    expect(gateway.PUBLICATION_DIRECTORY).toEqual({ worker: "directory",
+      options: { entrypoint: "InstallationPublicationsEntrypoint", props: { authority: "kernel-publication" } } });
+    expect(recorded.routes).toEqual([
+      { id: "FixtureSitesRoute", zoneId: "sites-zone", pattern: "*.usercontent.example/*", script: "gateway" },
+    ]);
+  });
+
+  it("leaves publication disabled by default and omits routes for operator-owned DNS", async () => {
+    await run(GsvDeployment(input, dependencies));
+    expect(recorded.workers.find((worker) => worker.id === "FixtureGateway")?.props.env).not.toHaveProperty("PUBLICATION_DIRECTORY");
+    expect(recorded.routes).toEqual([]);
+    await run(GsvDeployment({ ...input, sites: { domain: "usercontent.example" } }, dependencies));
+    expect(recorded.routes).toEqual([]);
+  });
+
+  it("accepts a publication domain with room for the full per-site hostname", async () => {
+    const domain = ["a".repeat(63), "b".repeat(63), "c".repeat(63), "d".repeat(23)].join(".");
+    expect(domain.length).toBe(215);
+    await run(GsvDeployment({ ...input, sites: { domain } }, dependencies));
+    expect(recorded.workers.find(worker => worker.id === "FixtureInstallations")?.props.env?.GSV_SITES_DOMAIN).toBe(domain);
+  });
+
+  it.each([216, 253])("rejects a %i-character publication domain before allocating resources", async (length) => {
+    const domain = ["a".repeat(63), "b".repeat(63), "c".repeat(63), "d".repeat(length - 192)].join(".");
+    expect(domain.length).toBe(length);
+    await expect(run(GsvDeployment({ ...input, sites: { domain, zoneId: "sites-zone" } }, dependencies)))
+      .rejects.toThrow("Publication domain must be at most 215 characters");
+    expect(recorded.workers).toEqual([]);
+    expect(recorded.databases).toEqual([]);
+    expect(recorded.routes).toEqual([]);
+  });
+
+  it.each(["example.com", "legacy.example"])("rejects publication on installation domain %s", async (domain) => {
+    await expect(run(GsvDeployment({ ...input, domainAliases: ["legacy.example"], sites: { domain } }, dependencies)))
+      .rejects.toThrow("separate publication domain");
+    expect(recorded.workers).toEqual([]);
+    expect(recorded.databases).toEqual([]);
+  });
+
+  it.each([
+    { label: "trailing dot on the publication's primary domain", sites: { domain: "example.com." } },
+    { label: "leading dot on the publication's primary domain", sites: { domain: ".example.com" } },
+    { label: "trailing dot on the publication's legacy domain", sites: { domain: "legacy.example." } },
+    { label: "leading dot on the publication's legacy domain", sites: { domain: ".legacy.example" } },
+    { label: "dots on both ends of the publication domain", sites: { domain: "..example.com.." } },
+    { label: "trailing dot on the primary domain", domain: "example.com.", adminOrigin: "https://accounts.example.com.", sites: { domain: "example.com" } },
+    { label: "leading dot on the primary domain", domain: ".example.com", adminOrigin: "https://accounts..example.com", sites: { domain: "example.com" } },
+    { label: "trailing dot on the legacy domain", domainAliases: ["legacy.example."], sites: { domain: "legacy.example" } },
+    { label: "leading dot on the legacy domain", domainAliases: [".legacy.example"], sites: { domain: "legacy.example" } },
+    { label: "trailing dot on a separate publication domain", sites: { domain: "usercontent.example." } },
+  ])("rejects $label before allocating publication resources", async ({ label: _label, ...configuration }) => {
+    await expect(run(GsvDeployment({ ...input, domainAliases: ["legacy.example"], ...configuration }, dependencies)))
+      .rejects.toThrow("Expected a normalized domain name");
+    expect(recorded.workers).toEqual([]);
+    expect(recorded.databases).toEqual([]);
+    expect(recorded.routes).toEqual([]);
+  });
+
   it.each([
     { label: "a path", aliases: ["https://owners.example/path"] },
     { label: "HTTP", aliases: ["http://owners.example"] },

@@ -1,3 +1,4 @@
+import { SiteStore } from "./site-store";
 import { ShipReplies } from "./ship-replies";
 import {
   cancelUnlockedBody,
@@ -437,6 +438,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
   readonly responsibilitySources: ResponsibilitySourcePolicyStore;
   readonly federation: FederationStore;
   readonly profiles: ProfileStore;
+  readonly sites: SiteStore;
   readonly approaches: ApproachStore;
   readonly federationIdentity: FederationIdentity;
   readonly oauth: OAuthStore;
@@ -535,6 +537,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
     this.responsibilitySources = new ResponsibilitySourcePolicyStore(sql, (ownerUid) => this.connectionRuntime.broadcastToUserUid(ownerUid, "r12y.source.changed"));
     this.federation = new FederationStore(ctx.storage);
     this.profiles = new ProfileStore(ctx.storage);
+    this.sites = new SiteStore(sql);
     this.approaches = new ApproachStore(ctx.storage);
     this.federationIdentity = new FederationIdentity(ctx.storage);
 
@@ -1564,6 +1567,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
       federation: this.federation,
       federationIdentity: this.federationIdentity,
       profiles: this.profiles,
+      sites: this.sites,
       approaches: this.approaches,
       scheduleApproachMaintenance: () => this.scheduleApproachMaintenance(),
       connection: options.connection ?? null,

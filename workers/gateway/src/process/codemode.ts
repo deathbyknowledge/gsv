@@ -240,6 +240,13 @@ ${mcpFunctionDeclarations}
   const web = Object.freeze({
     search: async (args) => __unwrapToolResult(await __web.search(__withObjectArgs("web.search", args))),
   });
+  const site = Object.freeze({
+    create: async (args) => __unwrapToolResult(await __site.create(__withObjectArgs("site.create", args))),
+    list: async (args) => __unwrapToolResult(await __site.list(__withObjectArgs("site.list", args))),
+    get: async (args) => __unwrapToolResult(await __site.get(__withObjectArgs("site.get", args))),
+    publish: async (args) => __unwrapToolResult(await __site.publish(__withObjectArgs("site.publish", args))),
+    unpublish: async (args) => __unwrapToolResult(await __site.unpublish(__withObjectArgs("site.unpublish", args))),
+  });
   const __userMain = ${userMain};
   return await __userMain();
 }`;
@@ -325,6 +332,16 @@ export async function executeCodeMode(
   };
 
   const providers: ResolvedProvider[] = [
+    {
+      name: "__site",
+      fns: {
+        create: async (args) => request("site.create", jsonObjectSchema.parse(args)),
+        list: async (args) => request("site.list", jsonObjectSchema.parse(args)),
+        get: async (args) => request("site.get", jsonObjectSchema.parse(args)),
+        publish: async (args) => request("site.publish", jsonObjectSchema.parse(args)),
+        unpublish: async (args) => request("site.unpublish", jsonObjectSchema.parse(args)),
+      },
+    },
     {
       name: "__web",
       fns: { search: async (args) => request("web.search", jsonObjectSchema.parse(args)) },

@@ -13,6 +13,7 @@
  *   /var   → runtime views overlaid on top of regular storage
  */
 
+import { SITE_STORAGE_ROOT } from "../sites/storage";
 import type {
   IFileSystem,
   FsStat,
@@ -453,6 +454,10 @@ export class GsvFs implements IFileSystem {
   }
 
   private backendForPath(path: string): MountBackend {
+    if (path === `/${SITE_STORAGE_ROOT}` || path.startsWith(`/${SITE_STORAGE_ROOT}/`)) {
+      throw new Error("EACCES: published releases are managed through site.*");
+    }
+
     if (isProcessMediaPath(path)) {
       return this.processMediaBackend;
     }
@@ -505,6 +510,7 @@ export class GsvFs implements IFileSystem {
       entries.add("src");
     }
 
+    entries.delete(SITE_STORAGE_ROOT);
     return [...entries].sort();
   }
 

@@ -44,6 +44,14 @@ describe("native command availability", () => {
     expect((await catalog.search("connect whatsapp")).find(entry => entry.name === "messenger")).toMatchObject({ available: true });
     expect(catalog.renderCommandManual("messenger")).toContain("messenger connect ADAPTER < code.txt");
   });
+
+  it("discovers static publishing and reports when hosting is not configured", async () => {
+    const catalog = fixture(false, ["site.publish"]);
+    expect((await catalog.search("build an interactive website")).find(entry => entry.name === "sites")).toMatchObject({
+      available: false, requirements: ["configured site hosting"],
+    });
+    expect(catalog.renderCommandManual("sites")).toContain("sites publish [OWNER/REPO] --target COMPUTER");
+  });
 });
 
 function fixture(configured: boolean, calls: string[]): ShellDiscoveryCatalog {
@@ -52,6 +60,6 @@ function fixture(configured: boolean, calls: string[]): ShellDiscoveryCatalog {
     ? { FEEDBACK: { submitFeedback: vi.fn() } } : {} } as KernelContext;
   // SAFETY: the stubbed workflow collectors never read the filesystem.
   const catalog = new ShellDiscoveryCatalog({} as GsvFs, identity, ctx);
-  catalog.registerCommands(["feedback", "web", "messenger"].map(name => defineCommand(name, async () => ({ stdout: "", stderr: "", exitCode: 0 }))));
+  catalog.registerCommands(["feedback", "web", "messenger", "sites"].map(name => defineCommand(name, async () => ({ stdout: "", stderr: "", exitCode: 0 }))));
   return catalog;
 }
