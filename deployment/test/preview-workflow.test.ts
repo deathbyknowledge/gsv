@@ -7,6 +7,83 @@ const tracking = workflow.match(/      - name: Record the preview deployment\n  
 if (!tracking) throw new Error("Preview deployment step is missing");
 const condition = tracking[1];
 const script = tracking[2].replace(/^ {12}/gm, "");
+const admission = workflow.match(/  preview:\n    if: >-\n([\s\S]*?)    runs-on:/);
+const current = workflow.match(/        id: current\n[\s\S]*?          script: \|\n((?: {12}[^\n]*\n)+)/);
+if (!admission || !current) throw new Error("Preview admission step is missing");
+const admissionCondition = admission[1];
+const currentScript = current[1].replace(/^ {12}/gm, "");
+
+async function previewCommand(options: {
+  base?: string;
+  event?: string;
+  action?: string;
+  previousBase?: string | null;
+  enabled?: boolean;
+  fork?: boolean;
+  state?: string;
+  stale?: boolean;
+  account?: string;
+} = {}) {
+  const repository = { full_name: "example/gsv" };
+  const head = { sha: "a".repeat(40), repo: options.fork ? { full_name: "fork/gsv" } : repository };
+  const pr = { head, base: { ref: options.base ?? "main" }, state: options.state ?? "open" };
+  const eventName = options.event ?? "pull_request";
+  const payload = {
+    repository, pull_request: pr, action: options.action ?? "synchronize",
+    changes: { base: { ref: { from: options.previousBase ?? null } } },
+  };
+  const outputs: Record<string, string> = {};
+  if (!runInNewContext(admissionCondition, {
+    github: { repository: repository.full_name, event_name: eventName, event: payload },
+    vars: { GSV_PREVIEWS_ENABLED: String(options.enabled ?? true) },
+  })) return outputs;
+  await runInNewContext(`(async () => {\n${currentScript}\n})()`, {
+    github: { rest: { pulls: { get: async () => ({
+      data: { ...pr, head: { ...head, sha: options.stale ? "b".repeat(40) : head.sha } },
+    }) } } },
+    context: { repo: { owner: "example", repo: "gsv" }, issue: { number: 41 }, eventName, payload },
+    process: { env: { CLOUDFLARE_ACCOUNT_ID: options.account ?? "preview-account" } },
+    core: { setOutput: (key: string, value: string) => { outputs[key] = value; }, notice: () => {} },
+  });
+  return outputs;
+}
+
+describe("GitHub preview admission", () => {
+  it("listens for same-repository PRs regardless of their base branch", () => {
+    const trigger = workflow.match(/  pull_request:\n([\s\S]*?)  pull_request_target:/)?.[1];
+    expect(trigger).toContain("synchronize");
+    expect(trigger).not.toMatch(/branches/);
+  });
+
+  it.each(["main", "friendly-popup"])("deploys the current head with base %s", async (base) => {
+    expect(await previewCommand({ base })).toEqual({ command: "deploy", ref: "a".repeat(40) });
+  });
+
+  it("redeploys instead of destroying a preview when its base changes", async () => {
+    expect(await previewCommand({ base: "friendly-popup", action: "edited", previousBase: "main" }))
+      .toEqual({ command: "deploy", ref: "a".repeat(40) });
+    expect(await previewCommand({ event: "pull_request_target", action: "edited", previousBase: "main" }))
+      .toEqual({});
+  });
+
+  it.each([
+    { fork: true }, { enabled: false }, { stale: true }, { state: "closed" }, { action: "edited" },
+  ])("skips ineligible or obsolete deploys: %j", async (options) => {
+    expect(await previewCommand(options)).toEqual({});
+  });
+
+  it("cleans closed stacked PRs using trusted main even when new previews are disabled", async () => {
+    expect(await previewCommand({
+      base: "friendly-popup", event: "pull_request_target", action: "closed", state: "closed", enabled: false,
+    })).toEqual({ command: "destroy", ref: "main" });
+  });
+
+  it.each([{ state: "open" }, { fork: true }, { account: "" }])("skips ineligible cleanup: %j", async (options) => {
+    expect(await previewCommand({
+      event: "pull_request_target", action: "closed", state: "closed", ...options,
+    })).toEqual({});
+  });
+});
 
 interface DeploymentInput {
   environment: string;
