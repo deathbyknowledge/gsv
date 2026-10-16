@@ -80,6 +80,8 @@ The Kernel owns the conversation directory and membership:
   activity shows generation, and the composer remains usable. If the user speaks first, Ship follows
   that message and its language, skipping redundant introduction. After greeting, Ship waits with
   no automatic onboarding reminder. Setup and dismissal retries do not reopen a welcome already handled.
+  Reconnecting resumes an untouched welcome when the owner has already dismissed the card,
+  including after upgrading an initialized installation.
   A user message can start the conversation before dismissal, including on surfaces without the card.
 - **Work** is a conversation handled by one explicit interactive work Process. Opening Work does not
   replace Ship or redefine the personal intelligence.

@@ -173,6 +173,19 @@ describe("initial onboarding responsibility", () => {
     });
   });
 
+  it("migrates and activates an untouched legacy welcome without repeating setup", async () => {
+    await runWithRealKernelSql((_sql, storage) => {
+      const store = new ResponsibilityStore(storage);
+      const seed = seedPreviousContract(store, 1000, 1_000).record;
+      activateInitialOnboardingResponsibility(1000, store, 2_000);
+      expect(store.get(1000, seed.id)).toMatchObject({ title: "Welcome to gsv", state: "open" });
+      expect(store.nextWakeAt(1000, 2_000)).toBe(2_000);
+      const revision = store.revision(1000);
+      activateInitialOnboardingResponsibility(1000, store, 3_000);
+      expect(store.revision(1000)).toBe(revision);
+    });
+  });
+
   it("reconciles an existing record without seeding one for a home that has none", async () => {
     await runWithRealKernelSql((_sql, storage) => {
       const responsibilities = new ResponsibilityStore(storage);

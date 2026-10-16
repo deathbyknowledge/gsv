@@ -163,4 +163,46 @@ describe("setup welcome", () => {
       await harness.close();
     }
   });
+  it("resumes an initialized installation with a saved dismissal and never repeats the handled welcome", async () => {
+    const harness = createGatewayTestHarness();
+    let owner: GSVClient | undefined;
+    let root: GSVClient | undefined;
+    try {
+      const { url } = await harness.listen();
+      const endpoint = webSocketUrl(url);
+      const { INTEGRATION_STATE } = await harness.getWorker<{ INTEGRATION_STATE: DurableObjectNamespace<IntegrationState> }>("gsv-test-dependencies").getEnv();
+      const recorder = INTEGRATION_STATE.getByName("integration-recorder");
+      await recorder.scriptManagedInference(INSTALLATION);
+      await new GSVClient().requestOnce(endpoint, "sys.setup", {
+        onboardingToken: "integration-onboarding-default", username: "returning-owner", password: PASSWORD,
+        rootPassword: PASSWORD, language: "es",
+      });
+      root = new GSVClient({ url: endpoint, username: "root", password: PASSWORD });
+      await root.connect();
+      await root.sys.config.set({ key: "users/1000/ui/welcome_card_seen", value: "1" });
+      expect(await recorder.listScriptedManagedRequests(INSTALLATION)).toEqual([]);
+      root.close();
+
+      owner = new GSVClient({ url: endpoint, username: "returning-owner", password: PASSWORD,
+        peer: { id: "returning-owner", platform: "browser", version: "test" } });
+      await owner.connect();
+      const connected = owner;
+      const { conversation } = await connected.conversation.ship({});
+      const welcome = (await connected.r12y.list({})).responsibilities.find((record) => record.details?.responsibilityType === "onboarding.initial")!;
+      await until(async () => (await recorder.listScriptedManagedRequests(INSTALLATION)).length > 0, "saved dismissal to resume onboarding on reconnect");
+      await recorder.scriptManagedInference(INSTALLATION, [waitForUser(welcome.id), `message send --message '${GREETING}' && yield`]);
+      await until(async () => (await connected.conversation.history({ conversationId: conversation.id })).messages.length === 1, "recovered welcome");
+      const count = (await recorder.listScriptedManagedRequests(INSTALLATION)).length;
+      owner.close();
+      owner = new GSVClient({ url: endpoint, username: "returning-owner", password: PASSWORD });
+      await owner.connect();
+      await new Promise((resolve) => setTimeout(resolve, 2_000));
+      expect((await recorder.listScriptedManagedRequests(INSTALLATION)).length).toBe(count);
+      expect((await owner.conversation.history({ conversationId: conversation.id })).messages).toHaveLength(1);
+    } finally {
+      root?.close();
+      owner?.close();
+      await harness.close();
+    }
+  });
 });

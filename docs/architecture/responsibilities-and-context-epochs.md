@@ -244,6 +244,9 @@ System-owned producers use the same ledger contract:
   seed and reconciles its ordinary wake schedule before acknowledging the dismissal.
   Repeated dismissal retries reconciliation without reopening handled or edited records.
   Root, agent and other-account config writes do not represent the owner's dismissal.
+  On a later human connection, a saved dismissal also resumes an untouched welcome,
+  including an exact legacy seed migrated on an already initialized installation.
+  This recovery does not require setup to run again or reopen handled work.
   Direct user messages remain available before dismissal and on surfaces without the card.
   Ship sends its own welcome in the owner's
   language and waits for a response without an automatic reminder. The responsibility

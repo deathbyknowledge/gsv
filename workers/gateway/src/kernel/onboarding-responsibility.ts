@@ -147,13 +147,13 @@ export function reconcileInitialOnboardingResponsibility(
   return record ? migrateUntouchedSeed(record, responsibilities, now) : null;
 }
 
-/** Activate only the untouched setup seed; retries must not reopen work Ship already handled. */
+/** Activate only an untouched welcome seed; retries must not reopen work Ship already handled. */
 export function activateInitialOnboardingResponsibility(
   ownerUid: number,
   responsibilities: ResponsibilityStore,
   now = Date.now(),
 ): void {
-  const record = responsibilities.getByDedupeKey(ownerUid, INITIAL_ONBOARDING_DEDUPE_KEY);
+  const record = reconcileInitialOnboardingResponsibility(ownerUid, responsibilities, now);
   if (!record || !isUntouchedSeed(record, WELCOME_CONTRACT)) return;
   responsibilities.update({
     ownerUid,

@@ -1,5 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { RequestFrame } from "../protocol/frames";
+import { runWithRealKernelSql } from "../test-support/real-kernel-sql";
+import { ResponsibilityStore } from "./responsibility-store";
+import { ensureInitialOnboardingResponsibility } from "./onboarding-responsibility";
 
 import * as utils from "../shared/utils";
 import * as connect from "./connect";
@@ -94,6 +97,7 @@ describe("Kernel personal controller connect lifecycle", () => {
           kind: "ship",
         })),
       },
+      config: { get: vi.fn(() => null) },
     };
     const connection = { id: "connection-1", setState: vi.fn() };
     kernel.buildContext = vi.fn(() => ctx);
@@ -142,6 +146,32 @@ describe("Kernel personal controller connect lifecycle", () => {
 
     expect(kernel.connectionRuntime.activateConnection).not.toHaveBeenCalled();
     expect(kernel.transport.sendOk).not.toHaveBeenCalled();
+  });
+
+  it.each([false, true])("recovers a welcome on reconnect only after recorded dismissal: %s", async (dismissed) => {
+    await runWithRealKernelSql(async (_sql, storage) => {
+      const responsibilities = new ResponsibilityStore(storage);
+      const welcome = ensureInitialOnboardingResponsibility(1000, responsibilities).record;
+      const kernel = bareKernel();
+      const ctx = {
+        auth: { isPersonalAgentUid: () => false, getPasswdByUsername: () => PROCESS_IDENTITY,
+          credentialEpoch: () => 0, isAccountDisabled: () => false },
+        conversations: { ensureShip: () => ({ id: "conv:ship", ownerUid: 1000, kind: "ship" }) },
+        config: { get: vi.fn(() => dismissed ? "1" : null) },
+        responsibilities, reconcileResponsibilityWake: vi.fn(async () => {}),
+      };
+      const connection = { id: "connection-1", setState: vi.fn() };
+      kernel.buildContext = vi.fn(() => ctx);
+      kernel.connectionRuntime.activateConnection = vi.fn();
+      kernel.connectionRuntime.reconcileOwnedIdentities = vi.fn();
+      kernel.transport.sendOk = vi.fn();
+      kernel.transport.sendError = vi.fn();
+      await kernel.connectionRuntime.handleSysConnect(connection, connectFrame());
+      expect(ctx.config.get).toHaveBeenCalledWith("users/1000/ui/welcome_card_seen");
+      expect(responsibilities.get(1000, welcome.id)?.state).toBe(dismissed ? "open" : "waiting");
+      expect(ctx.reconcileResponsibilityWake).toHaveBeenCalledTimes(dismissed ? 1 : 0);
+      expect(kernel.transport.sendOk).toHaveBeenCalledOnce();
+    });
   });
 
   it("records a first machine registration as Ship work before accepting it", async () => {
