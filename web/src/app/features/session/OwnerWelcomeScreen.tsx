@@ -68,6 +68,8 @@ export function OwnerWelcomeScreen({ ready, resume, load, onConnect, addressPane
         setHandle(chosen); setHandleError(failure.message); setAvailability("unavailable"); setStep("claim");
         return;
       }
+      // The code is spent once verified; any other creation failure is retried from the claim step under the same operation.
+      setHandle(chosen); setStep("claim");
       throw failure;
     }
   };

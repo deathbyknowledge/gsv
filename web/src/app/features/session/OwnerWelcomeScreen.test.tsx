@@ -257,6 +257,48 @@ describe("owner welcome", () => {
     } finally { await root.unmount(); }
   });
 
+  it("retries a failed creation from the claim step under the same operation", async () => {
+    const store = memory({ origin: ORIGIN, flow: "create", sessionSecret: "a".repeat(64), operationId: "op_retry", handle: "my-space",
+      challenge: { id: crypto.randomUUID(), email: "owner@example.com", browserSecret: "b".repeat(64) } });
+    let attempts = 0;
+    let verified = false;
+    const fetcher = vi.fn(async (url: string, init: { body?: string }) => {
+      if (url.endsWith("/verify")) { verified = true; return Response.json({ email: "owner@example.com", expiresAt: Date.now() + 60_000 }); }
+      if (url.endsWith("/session")) return verified ? session() : Response.json({ error: "Sign in to continue.", code: "signed_out" }, { status: 401 });
+      if (url.includes("/handle?")) return Response.json({ available: true });
+      if (url.endsWith("/spaces")) {
+        expect(JSON.parse(init.body!)).toEqual({ operationId: "op_retry", handle: "my-space" });
+        return ++attempts === 1 ? Response.json({ error: "Space setup is unavailable. Try again." }, { status: 400 }) : prepared("my-space");
+      }
+      throw new Error(`Unexpected request: ${url}`);
+    });
+    const client = new OwnerWelcome(store.snapshot(), store, ORIGIN, fetcher);
+    const onConnect = vi.fn();
+    const root = createTestRoot("Owner creation retry");
+    let tree: ComponentChildren;
+    function Harness() {
+      tree = OwnerWelcomeScreen({ ready: true, resume: true, load: async () => client, onConnect });
+      return null;
+    }
+    try {
+      await root.render(<Harness />);
+      await vi.waitFor(() => expect(fieldOf(tree, "Code")?.props.disabled).toBe(false));
+      await act(() => { fieldOf(tree, "Code")!.props.onChange?.("123456"); });
+      await act(() => formOf(tree).props.onSubmit(new Event("submit")));
+      // Restoring the session requires agreement again; the claim step comes back with the handle.
+      await vi.waitFor(() => expect(checkboxOf(tree)?.props.disabled).toBe(false));
+      await agree(tree);
+      await act(() => formOf(tree).props.onSubmit(new Event("submit")));
+      await vi.waitFor(() => expect(collectText(tree)).toContain("Space setup is unavailable. Try again."));
+      expect(fieldOf(tree, "Handle")!.props.value).toBe("my-space");
+      expect(fieldOf(tree, "Code")).toBeUndefined();
+      expect(onConnect).not.toHaveBeenCalled();
+      await act(() => formOf(tree).props.onSubmit(new Event("submit")));
+      await vi.waitFor(() => expect(onConnect).toHaveBeenCalledExactlyOnceWith("https://my-space.example.com", TOKEN));
+      expect(attempts).toBe(2);
+    } finally { await root.unmount(); }
+  });
+
   it.each([false, true])("requires agreement before resuming setup (saved locally: %s)", async (saved) => {
     const setup: PendingSetup = { operationId: "existing-setup", handle: "my-space", origin: "https://my-space.example.com" };
     const store = memory({ origin: ORIGIN, flow: "create", sessionSecret: "a".repeat(64), challenge: null, operationId: saved ? setup.operationId : null, handle: null });
