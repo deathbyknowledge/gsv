@@ -116,6 +116,9 @@ R2, ripgit, adapters, mail, inference and cloud instances report their own clean
 Instance coordinators are installation-owned resources in discovery and deletion;
 they do not require adapter peer-inventory import. Their lifecycle owner stops
 browsers and erases profiles and temporary files before confirming live erasure.
+Cloud computer objects also appear as `instance-computer` resources. Their owner
+destroys the container before confirming erasure or releasing its reservation;
+late start and health completions cannot reactivate a retired object.
 Missing inventory or owner evidence prevents a claim of completed erasure.
 Stale work cannot recreate data after its owner has retired the identity.
 

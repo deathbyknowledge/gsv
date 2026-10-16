@@ -104,6 +104,13 @@ and accepts direct input. These are native target commands, available to Ship
 through Shell as well. See [cloud browsers](/how-to/cloud-browsers) for saved
 logins, recovery after a lost response, and the complete sign-in flow.
 
+When computers are enabled, `instance start computer --request-id ID --wait`
+creates a temporary Linux target. `--name NAME` and `--seconds N` choose its label
+and lifetime. A new request ID creates a new computer; retrying the same request
+recovers that operation. Computers do not accept browser profile or `--new`
+options. Use the same list, get and stop commands; stopping destroys the files
+and running commands. See [cloud computers](/how-to/cloud-computers).
+
 Inside the gateway shell, `proc` is the process IPC userland command.
 `message` inspects and uses external chat reply routes. `sched add --ship`
 creates recurring or one-shot Ship responsibilities; `sched add --here`
