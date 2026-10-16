@@ -55,6 +55,7 @@ export function useBrowserVoice({ client, prompt, pid, scope, enabled }: {
   const pause = () => {
     const recording = current.current;
     if (!recording) return;
+    if (recording.audio && !recording.attempt) return;
     if (!recording.stop && !recording.audio) { cancel(); return; }
     recording.paused = true;
     const attempt = recording.attempt;

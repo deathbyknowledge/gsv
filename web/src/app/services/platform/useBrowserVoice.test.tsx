@@ -129,6 +129,9 @@ describe("web voice composition", () => {
     await app.stop();
     expect(app.control().error).toBe("Transcription service unavailable");
     expect(app.control().canRetry).toBe(true);
+    await app.render("ship", false);
+    expect(app.control().error).toBe("Transcription service unavailable");
+    await app.render();
     await settle(() => app.control().retry());
     await app.finish();
     expect(app.value()).toBe("typed spoken words");
