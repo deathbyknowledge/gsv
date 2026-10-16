@@ -41,14 +41,14 @@ export type ConnectOutcome =
   | { ok: false; code: number; message: string; details?: JsonValue };
 
 export const SETUP_REQUIRED_ERROR_CODE = 425;
-type SetupRequiredDetails = { setupMode: true; next: "sys.setup" };
+type SetupRequiredDetails = { setupMode: true; next: "sys.setup"; setupFeatures: string[] };
 
 export const PROTOCOL_VERSION = 4;
 const MACHINE_CONNECTION_CAPABILITIES: string[] = [];
 const SERVICE_CAPABILITY_GIDS = [102];
 
 export function setupRequiredDetails(): SetupRequiredDetails {
-  return { setupMode: true, next: "sys.setup" };
+  return { setupMode: true, next: "sys.setup", setupFeatures: ["language"] };
 }
 
 export async function ensureKernelBootstrapped(ctx: KernelContext): Promise<void> {

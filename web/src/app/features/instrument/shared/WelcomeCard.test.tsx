@@ -91,4 +91,31 @@ describe("welcome card", () => {
     expect(tree).toBeNull();
     expect(request).not.toHaveBeenCalledWith("sys.config.get", expect.anything());
   });
+
+  it("waits for dismissal to succeed and prevents repeated requests", async () => {
+    await mount();
+    let finish: () => void = () => { throw new Error("dismissal has not started"); };
+    request.mockImplementationOnce(() => new Promise((resolve) => { finish = () => resolve({ data: { ok: true } }); }));
+    const dismiss = collectNodes(tree).find((node) => node.props["aria-label"] === "Dismiss welcome")!.props.onClick!;
+    let pending: unknown;
+    await act(() => { pending = dismiss(); });
+    expect(tree).not.toBeNull();
+    expect(collectNodes(tree).filter((node) => node.type === "button").every((node) => node.props.disabled)).toBe(true);
+    await act(async () => { await dismiss(); });
+    expect(request.mock.calls.filter(([call]) => call === "sys.config.set")).toHaveLength(1);
+    await act(async () => { finish(); await pending; });
+    expect(tree).toBeNull();
+  });
+
+  it("keeps the card available to retry when dismissal fails", async () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    await mount();
+    request.mockRejectedValueOnce(new Error("connection interrupted"));
+    const dismiss = () => collectNodes(tree).find((node) => node.props["aria-label"] === "Dismiss welcome")!.props.onClick!();
+    await act(async () => { await dismiss(); });
+    expect(collectText(tree)).toContain("Please try again.");
+    expect(error).toHaveBeenCalledOnce();
+    await act(async () => { await dismiss(); });
+    expect(tree).toBeNull();
+  });
 });

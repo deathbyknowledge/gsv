@@ -21,6 +21,7 @@ import {
   GSV_TARGET_CONTEXT,
 } from "../prompts/system";
 import { normalizeTimezone } from "./timezone";
+import { normalizeLanguage } from "./language";
 import { DEFAULT_SHELL_EXEC_TIMEOUT_MS, DEFAULT_TOOL_APPROVAL_POLICY } from "@humansandmachines/gsv/protocol";
 import {
   aiModelApiKeyConfigKey,
@@ -141,6 +142,10 @@ export class ConfigStore {
   }
 
   set(key: string, value: string): void {
+    if (/^users\/\d+\/locale\/language$/.test(key)) {
+      if (!value.trim()) { this.delete(key); return; }
+      value = normalizeLanguage(value);
+    }
     if (/^users\/\d+\/locale\/timezone$/.test(key)) {
       if (!value.trim()) { this.delete(key); return; }
       value = normalizeTimezone(value);

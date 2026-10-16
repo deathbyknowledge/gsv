@@ -59,7 +59,7 @@ const aiConfigResultSchema = z.object({
     name: z.string(),
     text: z.string(),
   })).optional(),
-  system: z.object({ timezone: z.string() }).optional(),
+  system: z.object({ timezone: z.string(), language: z.string().optional() }).optional(),
   skillIndex: z.array(z.object({
     id: z.string(),
     name: z.string(),

@@ -51,6 +51,7 @@ export function contextSnapshotFromRun(
     mcpServers: run.mcpServers ?? [],
     system: {
       timezone: config.system?.timezone ?? "UTC",
+      language: config.system?.language,
     },
     skillIndex: config.skillIndex ?? [],
     skillIndexMode: config.skillIndexMode ?? "summary",

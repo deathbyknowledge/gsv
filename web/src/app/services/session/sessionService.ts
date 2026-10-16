@@ -1,6 +1,7 @@
 import type { GSVClient, GsvConnectOptions } from "@humansandmachines/gsv/client";
 import { z } from "zod";
 import type {
+  ConnectArgs,
   ConnectResult,
   ServerBuild,
   SysSetupArgs,
@@ -20,6 +21,10 @@ const SESSION_TOKEN_REFRESH_RETRY_MS = 60_000;
 const LOCK_REVOKE_WAIT_MS = 1_500;
 const SESSION_RECONNECT_DELAYS_MS = [0, 1_000, 2_000, 5_000, 10_000];
 const SESSION_RECONNECT_STABLE_MS = 10_000;
+const SETUP_PROBE_ARGS: ConnectArgs = {
+  protocol: 4,
+  peer: { id: "gsv-ui-setup-probe", version: "0.7.1", platform: "browser" },
+};
 
 type PersistedSessionToken = {
   username: string;
@@ -48,6 +53,7 @@ const sessionErrorSchema = z.object({
     setupMode: z.literal(true).optional(),
     setupRecovery: z.literal(true).optional(),
     setupUrl: z.url({ protocol: /^https$/ }).optional().catch(undefined),
+    setupFeatures: z.array(z.string()).optional(),
   }).optional(),
 });
 const sessionWireSchema = z.unknown();
@@ -246,14 +252,7 @@ async function revokeSessionToken(client: SessionClient, tokenId: string, reason
 
 async function probeSetupMode(client: SessionClient, url: string): Promise<Pick<SessionSnapshot, "phase" | "message" | "setupRecoveryUrl">> {
   try {
-    await client.requestOnce(url, "sys.connect", {
-      protocol: 4,
-      peer: {
-        id: "gsv-ui-setup-probe",
-        version: "0.7.1",
-        platform: "browser",
-      },
-    });
+    await client.requestOnce(url, "sys.connect", SETUP_PROBE_ARGS);
     return { phase: "locked", message: null };
   } catch (error) {
     const recovery = setupRecovery(error);
@@ -262,6 +261,17 @@ async function probeSetupMode(client: SessionClient, url: string): Promise<Pick<
       return { phase: "setup", message: null };
     }
     return { phase: "locked", message: isAuthenticationRejectedError(error) ? null : normalizeMessage(error) };
+  }
+}
+
+async function setupSupportsLanguage(client: SessionClient, url: string): Promise<boolean> {
+  try {
+    await client.requestOnce(url, "sys.connect", SETUP_PROBE_ARGS);
+    return false;
+  } catch (error) {
+    if (!isSetupRequiredError(error) && !setupRecovery(error) && !isAuthenticationRejectedError(error)) throw error;
+    const parsed = sessionErrorSchema.safeParse(error);
+    return parsed.success && parsed.data.details?.setupFeatures?.includes("language") === true;
   }
 }
 
@@ -742,8 +752,12 @@ export function createSessionService(client: SessionClient, options: SessionServ
 
     let result: SysSetupResult;
     try {
+      const { language, ...args } = input;
+      const includeLanguage = language !== undefined && await setupSupportsLanguage(client, url);
+      if (disposed || setupGeneration !== reconnectGeneration) throw new Error("Session ended");
       result = await client.requestOnce(url, "sys.setup", {
-        ...input,
+        ...args,
+        ...(includeLanguage ? { language } : undefined),
         ...(installationOnboardingToken
           ? { onboardingToken: installationOnboardingToken }
           : undefined),

@@ -177,7 +177,8 @@ export function useSessionScreensState({ session, snapshot }: UseSessionScreensS
     if (!setupConsent) return;
     setLoginValidationError(null);
     setPendingAction("setup");
-    void session.setup({ ...account, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC" }).catch(() => {
+    void session.setup({ ...account, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
+      language: navigator.languages?.[0] || navigator.language || undefined }).catch(() => {
       // Error is reflected through session snapshot.
     });
   };

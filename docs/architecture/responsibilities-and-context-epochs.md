@@ -125,8 +125,8 @@ When a human or Process explicitly puts a Ship assignment into `waiting`, the le
 sets `nextCheckAtMs` to 24 hours later if no future check remains. An earlier future
 deadline brings that default forward. An explicit check time is preserved, and
 `nextCheckAtMs: null` explicitly clears the check. Metadata-only edits do not postpone
-it. System producers keep their own wake conditions, including initial onboarding,
-which must wait for the first user interaction.
+it. System producers keep their own wake conditions. Initial onboarding waits for
+the owner to dismiss the early-access welcome card after account setup, then becomes actionable through the ordinary wake path.
 
 A due Ship check is actionable even while a blocker remains. The review event directs
 Ship to read the current conversation and responsibility. If the human's answer is
@@ -188,7 +188,7 @@ appear in later updates. Agents can use the snapshot and subsequent events direc
 content.
 
 The same epoch owns a normalized availability projection for accessible online
-targets, ready MCP servers, current date and timezone, and the visible skill catalog.
+targets, ready MCP servers, current date, timezone, owner language preference, and the visible skill catalog.
 Before every provider turn, Process asks the Kernel for the current prompt-relevant
 snapshot and compares it with the last observed projection. A meaningful change is
 persisted as one bounded `[GSV EVENT]` in the Process Activity, and the event message
@@ -237,19 +237,24 @@ enabled or disabled per owner without changing the subsystem's underlying data.
 System-owned producers use the same ledger contract:
 
 - Provisioning a new personal intelligence creates one high-priority initial
-  onboarding responsibility titled "Welcome to gsv". It waits for the user's first
-  message rather than waking the Ship on its own and is present in Ship's first
-  context epoch, rendered with its details like any Ship assignment. Those details
+  onboarding responsibility titled "Welcome to Ship". Dismissing the welcome card
+  records `users/<uid>/ui/welcome_card_seen = 1`, activates the untouched seed and
+  schedules its ordinary wake before acknowledging the dismissal. A saved dismissal
+  retries pending welcome activation on reconnect without delaying sign-in. Handled
+  and edited records are left alone.
+  A user can also start the conversation before dismissal or on a surface without
+  the card. Ship sends its welcome in the owner's language and waits for a reply.
+  The responsibility is present in Ship's first context epoch, rendered with its
+  details like any Ship assignment. Those details
   carry the onboarding brief, the Markdown prompt file
   `workers/gateway/src/prompts/onboarding/welcome.md` with the goal, acceptance
   criteria, outcomes and step-by-step instructions. The system responsibilities
   context puts an unresolved onboarding record ahead of everything else: other
   responsibilities are parked or delegated until the Ship resolves it, once the user
-  has completed one small task. Ensuring the personal agent also rewrites an
-  unresolved record still carrying an earlier release's wording onto the current
-  contract; resolved, cancelled, or owner-edited records are left alone, and a
-  home that finished the earlier boot-file flow and has no record is never
-  onboarded again. This replaces the generated boot context file.
+  has completed one small task. The brief is copied when the responsibility is
+  created; existing records retain their saved instructions across releases. A home
+  that finished the earlier boot-file flow and has no record is never onboarded
+  again. This replaces the generated boot context file.
 - Managed mail completion creates one `mail.received` responsibility keyed by the
   immutable message id. The title contains no sender-controlled text. Bounded summary
   metadata is marked untrusted and is available only when the Ship inspects the record;

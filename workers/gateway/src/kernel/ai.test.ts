@@ -502,14 +502,16 @@ describe("handleAiConfig", () => {
     ].join(".");
   }
 
-  it("uses the owner's timezone for both standing context and live context facts", async () => {
+  it("uses the owner's locale for both standing context and live context facts", async () => {
     const ctx = makeAiConfigContext({
       "config/server/timezone": "UTC",
       "users/1000/locale/timezone": "Europe/Amsterdam",
       "users/2000/locale/timezone": "America/New_York",
+      "users/1000/locale/language": "es-MX",
+      "users/2000/locale/language": "en",
     }, { uid: 2000, ownerUid: 1000, processId: "task-1" });
-    await expect(handleAiConfig({}, ctx)).resolves.toMatchObject({ system: { timezone: "Europe/Amsterdam" } });
-    await expect(handleAiContext({}, ctx)).resolves.toMatchObject({ system: { timezone: "Europe/Amsterdam" } });
+    await expect(handleAiConfig({}, ctx)).resolves.toMatchObject({ system: { timezone: "Europe/Amsterdam", language: "es-MX" } });
+    await expect(handleAiContext({}, ctx)).resolves.toMatchObject({ system: { timezone: "Europe/Amsterdam", language: "es-MX" } });
   });
 
   it("resolves the generation streaming switch", async () => {

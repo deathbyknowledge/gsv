@@ -1028,7 +1028,7 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
       <button type="button" disabled={!connected || conversation.historyFetching} onClick={() => void conversation.retryHistory()}>retry</button>
     </div>
   ) : null;
-  const empty = ready && moments.length === 0 && pid !== null && pendingHil === null;
+  const helperEmpty = ready && moments.length === 0 && pid !== null && Boolean(pidProp) && pendingHil === null;
 
   return (
     <main class={`zen${!promptFocused ? " is-browse" : ""}${draggingFiles ? " is-file-drop" : ""}${selectingText ? " has-text-selection" : ""}`} aria-label="Chat"
@@ -1043,13 +1043,8 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
       {draggingFiles && <div class="zen-drop-hint">drop to attach</div>}
 
       <div class="zen-body">
-        {empty ? (
-          <div class="zen-empty">
-            {pidProp ? <p>This helper has no messages yet.</p> : <>
-              <h1>Welcome to the ship.</h1>
-              <p class="zen-welcome-copy">I am the ship. Who are you?</p>
-            </>}
-          </div>
+        {helperEmpty ? (
+          <div class="zen-empty"><p>This helper has no messages yet.</p></div>
         ) : !ready ? (
           <div class="zen-moments" ref={momentsRef} data-scroll-edge data-scroll-edge-bottom>
             <div class="zen-content" ref={contentRef}>{historyFailure}</div>
@@ -1110,7 +1105,7 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
             </div>
           </div>
         )}
-        {!empty && ready && scrolling.awayFromBottom && <button type="button" class="zen-jump-bottom"
+        {!helperEmpty && ready && scrolling.awayFromBottom && <button type="button" class="zen-jump-bottom"
           aria-label="Jump to latest message" onClick={scrolling.follow}>↓<span> latest</span></button>}
       </div>
 
