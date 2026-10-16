@@ -15,8 +15,9 @@ Creating your account signs you in and opens **Ship**, your conversation with yo
 The first time you enter Instrument, a welcome card from Kawah appears with the
 heading "Welcome to your Ship!" and large, readable text. Close it
 or choose **Try it out!** to dismiss it for your account across web and Desktop.
-Ship starts preparing its first message after you dismiss the card. You can also
-start the conversation yourself at any time.
+Ship then greets you in a language detected from your browser. You can write first,
+ask Ship to switch languages, or change **Settings → Preferences → Response language**.
+The welcome stays in your conversation across devices.
 The card links to the community Discord; the **Feedback** button in the header
 is available when your operator offers it.
 Start with what you want to do. You can connect devices from **Fleet** and
@@ -117,11 +118,6 @@ then use **← pages** to return. Loading feedback appears in the visible pane.
 **new page** and **edit** open the editor; returning to the browser keeps the draft,
 with **continue editing →** to resume it. Wider screens show the browser and reader
 side by side.
-
-After you dismiss the welcome card, Ship greets you in a language detected from your browser.
-You can start typing immediately; Ship follows your message and language. Change the
-starting preference in **Settings → Preferences → Response language**, or ask Ship
-to switch. The welcome stays in your conversation across devices.
 
 The Settings sidebar highlights the section you're viewing.
 

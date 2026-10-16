@@ -238,38 +238,18 @@ enabled or disabled per owner without changing the subsystem's underlying data.
 System-owned producers use the same ledger contract:
 
 - Provisioning a new personal intelligence creates one high-priority initial
-  onboarding responsibility titled "Welcome to Ship". It stays dormant after Accounts
-  confirms successful setup. When the signed-in owner dismisses the early-access card,
-  `sys.config.set` records `users/<uid>/ui/welcome_card_seen = 1`, activates the untouched
-  seed and reconciles its ordinary wake schedule before acknowledging the dismissal.
-  Repeated dismissal retries reconciliation without reopening handled or edited records.
-  Root, agent and other-account config writes do not represent the owner's dismissal.
-  On a later human connection, a saved dismissal also resumes an untouched welcome,
-  including an untouched GSV or Ship welcome from an earlier release on an already
-  initialized installation. Exact historical briefs are retained for matching;
-  owner-edited records are left alone.
-  This recovery does not require setup to run again or reopen handled work.
-  Direct user messages remain available before dismissal and on surfaces without the card.
-  Ship sends its own welcome in the owner's
-  language and waits for a response without an automatic reminder. The responsibility
-  is present in Ship's first context epoch, rendered like any Ship assignment. Its details
+  onboarding responsibility titled "Welcome to Ship". Dismissing the welcome card
+  records `users/<uid>/ui/welcome_card_seen = 1`, activates the untouched seed and
+  schedules its ordinary wake before acknowledging the dismissal. A saved dismissal
+  retries pending welcome activation on reconnect without delaying sign-in. Handled
+  and edited records are left alone; exact historical briefs identify untouched seeds.
+  A user can also start the conversation before dismissal or on a surface without
+  the card. Ship sends its welcome in the owner's language and waits for a reply
+  without an automatic reminder. The responsibility is present in Ship's first
+  context epoch, rendered with its details like any Ship assignment. Those details
   carry the onboarding brief, the Markdown prompt file
   `workers/gateway/src/prompts/onboarding/welcome.md` with the goal, acceptance
-  criteria, outcomes and step-by-step instructions. Ship looks the user up only
-  when asked or after they accept an offer; a name given as an introduction alone
-  does not authorize a lookup. A name supplied during an accepted lookup needs no
-  second permission question. Ship asks for another identifier, such as location,
-  only when needed to distinguish the right person. For an accepted task, Ship
-  uses suitable original or public sources to find task facts,
-  such as event dates and registration deadlines, rather than having the user
-  populate a list.
-  Completion requires a useful first result or supported ongoing work actually
-  configured with its scope, cadence and delivery confirmed. A connection alone
-  does not complete onboarding. For an accepted task with later updates, Ship explains
-  delivery and may suggest an optional messenger connection when it helps the user
-  receive those updates or continue the conversation. After the first task, Ship
-  points to the relevant existing Fleet control using its verified label, without
-  requiring a tour of both Responsibilities and Routines. The system responsibilities
+  criteria, outcomes and step-by-step instructions. The system responsibilities
   context puts an unresolved onboarding record ahead of everything else: other
   responsibilities are parked or delegated until the Ship resolves it, once the user
   has completed one small task. Ensuring the personal agent also rewrites an

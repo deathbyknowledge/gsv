@@ -60,29 +60,19 @@ lavender highlight with contrasting text in both themes.
 Inside the prompt, selected text stays light on a stronger purple highlight. Selecting a range
 restores the native selection tint and handles on iOS; a collapsed selection uses the block cursor.
 
-Chat does not show the active model or routine place readiness above the composer. Model attribution
-stays with each reply; errors appear when needed, and an offline place shows a warning by its selector.
-In Zen browse mode, `j`/Down and `k`/Up move between messages and activity. Arrow keys keep their
-normal input behavior while the composer is focused.
-
 ## Conversation kinds
 
 The Kernel owns the conversation directory and membership:
 
 - **Ship** is the stable conversation with the user's personal intelligence. Web, Desktop, CLI,
   Telegram, Slack, and other private surfaces all contribute to the same Ship message stream.
-  The current personal Process is replaceable; the Ship conversation is not. After successful account
-  setup, dismissing the early-access welcome card activates the initial onboarding responsibility
-  through the existing `r12y.ready` wake path. Setup alone leaves Ship idle while the card is open.
-  Ship sends a short welcome using its owner's language preference, initially detected from the
-  browser. This is a canonical Message, visible across clients and available in the Process history;
-  the UI adds no scripted messages, typing timers, or delayed second introduction. Ordinary run
-  activity shows generation, and the composer remains usable. If the user speaks first, Ship follows
-  that message and its language, skipping redundant introduction. After greeting, Ship waits with
-  no automatic onboarding reminder. Setup and dismissal retries do not reopen a welcome already handled.
-  Reconnecting resumes an untouched welcome when the owner has already dismissed the card,
-  including after upgrading an initialized installation.
-  A user message can start the conversation before dismissal, including on surfaces without the card.
+  The current personal Process is replaceable; the Ship conversation is not. Dismissing
+  the welcome card activates the onboarding responsibility through the ordinary wake
+  path. Ship sends a welcome in the owner's preferred language, initially detected from
+  the browser. The welcome is a canonical Message shared across clients. A user can
+  write first, including on surfaces without the card, and Ship responds to that message.
+  After greeting, Ship waits for a reply without a timed reminder. Repeated dismissal
+  and reconnects recover pending work without reopening a handled welcome.
 - **Work** is a conversation handled by one explicit interactive work Process. Opening Work does not
   replace Ship or redefine the personal intelligence.
 - **Group** is tied to one normalized adapter surface and can retain multiple account and Process

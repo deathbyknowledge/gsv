@@ -56,12 +56,6 @@ can also provide [cloud browsers](/how-to/cloud-browsers). Start one from Fleet
 and sign in directly in its browser view. Ship can show a browser request in Chat
 when it needs your help; finishing that request returns control to Ship.
 
-## Find your files
-
-Open **Fleet**, select a place, and choose **browse files**. The starting folder
-opens expanded, so its files are visible without an extra click. Select another
-connected place to browse its files.
-
 ## Try it
 
 With the machine connected, ask your agent things like:

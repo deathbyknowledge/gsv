@@ -27,13 +27,3 @@
 .gsv-setup-actions { display: flex; justify-content: flex-end; gap: 16px; padding-top: 8px; }
 .gsv-setup-actions button:first-child:not(:only-child) { margin-right: auto; }
 .gsv-setup-actions button:disabled { opacity: .45; cursor: not-allowed; }
-.gsv-setup-loading-dots { display: inline-flex; width: 1.5em; text-align: left; }
-.gsv-setup-loading-dots span { opacity: 0; animation: gsv-setup-dot-one 1.2s infinite; }
-.gsv-setup-loading-dots span:nth-child(2) { animation-name: gsv-setup-dot-two; }
-.gsv-setup-loading-dots span:nth-child(3) { animation-name: gsv-setup-dot-three; }
-@keyframes gsv-setup-dot-one { 0%, 24.99% { opacity: 0; } 25%, 100% { opacity: 1; } }
-@keyframes gsv-setup-dot-two { 0%, 49.99% { opacity: 0; } 50%, 100% { opacity: 1; } }
-@keyframes gsv-setup-dot-three { 0%, 74.99% { opacity: 0; } 75%, 100% { opacity: 1; } }
-@media (prefers-reduced-motion: reduce) {
-  .gsv-setup-loading-dots span { animation: none; opacity: 1; }
-}

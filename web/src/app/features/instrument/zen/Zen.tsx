@@ -114,7 +114,7 @@ function settleDuration(length: number): number {
 const SETTLE_ON_LOAD = 12;
 const SETTLE_STAGGER_MS = 6;
 /** Keys Zen answers in browse mode. Together with the shell's, they are the keys that never start writing; y and n are claimed only while an approval is pending. */
-const BROWSE_KEYS: ReadonlySet<string> = new Set(["j", "k", "ArrowDown", "ArrowUp", "g", "G", "o"]);
+const BROWSE_KEYS: ReadonlySet<string> = new Set(["j", "k", "g", "G", "o"]);
 const CLAIMED_KEYS: ReadonlySet<string> = new Set([...BROWSE_KEYS, ...SHELL_KEYS]);
 /* what each status-line failure was attempting, for causes the client cannot name */
 const SHIP_UNREACHABLE: ChatErrorContext = { summary: "Could not reach your ship.", action: "Check your connection, then reload the page." };
@@ -535,7 +535,7 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
   const [settling, setSettling] = useState<ReadonlyMap<string, number>>(() => new Map());
 
   /* moments: the runtime's, plus the commands run by hand */
-  const moments = useMemo(() => {
+  const { moments, receipts } = useMemo(() => {
     const fromRuntime: Moment[] = momentsFromConversation(conversation.rows, runtime.rows, runtime.activeRunId, pid ?? undefined)
       .map((moment) => ({ ...moment, attribution: answerAttribution(moment, answerHistory.entries, answerHistory.through) }));
     for (const outgoing of outbox.messages) {
@@ -585,9 +585,9 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
         },
       ],
     }));
-    return [...fromRuntime, ...fromLocal].sort((a, b) => (a.timestamp ?? 0) - (b.timestamp ?? 0));
+    const moments = [...fromRuntime, ...fromLocal].sort((a, b) => (a.timestamp ?? 0) - (b.timestamp ?? 0));
+    return { moments, receipts: receiptsForMoments(moments, runtime.activeRunId, pid) };
   }, [answerHistory, conversation.rows, conversation.conversation?.id, outbox.messages, localRuns, runtime.activeRunId, runtime.rows, pid]);
-  const receipts = useMemo(() => receiptsForMoments(moments, runtime.activeRunId, pid), [moments, runtime.activeRunId, pid]);
 
   /* the glyph thinking mark moves on the same clock as settling text; the dot keeps its own time in the stylesheet */
   const marking = THINKING_MARK === "glyphs" && moments.some((moment) => !moment.text && (moment.thinking || moment.streaming));
@@ -887,9 +887,9 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
         if (focusedReceipt && focusedReceipt.anchorId !== focused.id) scrolling.select(moments.findIndex((moment) => moment.id === focusedReceipt.anchorId));
         return;
       }
-      if (browse !== null && (event.key === "j" || event.key === "k" || event.key === "ArrowDown" || event.key === "ArrowUp")) {
+      if (browse !== null && (event.key === "j" || event.key === "k")) {
         event.preventDefault();
-        scrolling.select(Math.max(0, Math.min(moments.length - 1, browse + (event.key === "j" || event.key === "ArrowDown" ? 1 : -1))));
+        scrolling.select(Math.max(0, Math.min(moments.length - 1, browse + (event.key === "j" ? 1 : -1))));
         return;
       }
       // Anything else printable starts writing: the prompt takes focus during keydown, so the keystroke itself lands in it.
@@ -1167,7 +1167,7 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
               place={currentPlace}
               showPlace={false}
               dir="~"
-              placeholder="What can I take care of?"
+              placeholder="Message your ship"
               disabled={!pid || recordingVoice}
               onSubmit={onSubmit}
               allowEmpty={extras}
