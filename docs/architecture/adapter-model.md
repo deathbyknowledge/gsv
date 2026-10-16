@@ -277,6 +277,12 @@ message and byte reservations, claim retries, and completion callback retries.
 It independently derives and persists the expected sender on the first
 successful active Accounts resolution. Later handle drift fails closed, and a
 mismatched draft is rejected rather than trusting the claimed `from` field.
+The sender may use `MAIL_DOMAIN` or an explicitly configured
+`MAIL_SENDING_DOMAINS` JSON array, always with the current Accounts handle.
+Operators must enable Email Sending for each allowed domain. Receiving aliases
+alone grant no sending authority. Existing mailbox addresses and immutable
+drafts keep their original sender; a domain promotion can retain that domain
+without invalidating pending claims. Handle changes still fail closed.
 Cloudflare Email Sending is called at most once after the DO durably records an
 attempt. Provider acceptance records `accepted`.
 Terminal lifecycle, quota, and draft validation failures before that attempt
