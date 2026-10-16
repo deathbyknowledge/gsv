@@ -33,11 +33,14 @@ import { buildWikiCommand } from "./wiki";
 import { buildWebCommand } from "./web";
 import { buildFeedbackCommand } from "./feedback";
 import { buildInstanceCommands } from "./instances";
+import { buildSitesCommand } from "./sites";
 import { ShellDiscoveryCatalog } from "./discovery";
 
 export type NativeShellCommandOptions = {
   fsTransport?: FsDeviceTransport;
   netFetchTransport?: NetFetchDeviceTransport;
+  /** Stop only a session started by this native operation, including after caller cancellation. */
+  cancelOwnedShellSession?: (sessionId: string, signal: AbortSignal) => Promise<void>;
   request?: (
     frame: RequestFrame,
     signal?: AbortSignal,
@@ -117,6 +120,7 @@ export function buildCustomCommands(
     web,
     feedback,
     ...buildInstanceCommands(ctx, options?.request),
+    buildSitesCommand(ctx, options),
     flynn,
   ];
   discovery.registerCommands(nativeCommands);

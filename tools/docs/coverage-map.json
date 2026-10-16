@@ -443,6 +443,7 @@
     {
       "id": "sites",
       "paths": [
+        "workers/gateway/src/drivers/native/shell/sites.ts",
         "workers/gateway/src/sites/**",
         "workers/gateway/src/kernel/sites.ts",
         "workers/gateway/src/kernel/site-store.ts",

@@ -13,7 +13,7 @@ describe("static publication from a clean installation", () => {
   });
   afterAll(async () => { owner?.close(); await harness.close(); });
 
-  it("publishes through ordinary syscalls, survives runtime reload, and removes anonymous access on unpublish", async () => {
+  it("publishes through ordinary syscalls, survives runtime reload, and unpublishes through the native command", async () => {
     await new GSVClient().requestOnce(url, "sys.setup", { onboardingToken: "integration-onboarding-default",
       username: "site-owner", password: "publication-password", rootPassword: "publication-root-password" });
     owner = new GSVClient({ url, password: "publication-password", peer: { id: "site-publisher" } });
@@ -60,7 +60,11 @@ describe("static publication from a clean installation", () => {
     await owner.connect();
     const restored = await owner.site.get({ siteId: site.id });
     expect(restored.manifest?.source).toEqual({ repo: "site-owner/demo", revision: "a".repeat(40) });
-    await owner.site.unpublish({ siteId: site.id, expectedRevision: 1 });
+    const listed = await owner.shell.exec({ input: "sites list" });
+    expect(listed).toMatchObject({ status: "completed", exitCode: 0 });
+    expect(listed.output).toContain("/public/canvas-game");
+    expect(await owner.shell.exec({ input: "sites unpublish canvas-game" }))
+      .toMatchObject({ status: "completed", exitCode: 0, output: "Unpublished canvas-game\n" });
     expect((await owner.site.get({ siteId: site.id })).manifest).toEqual(restored.manifest);
     const removed = await harness.getWorker("gsv").fetch(assetUrl);
     expect(removed.status).toBe(404);

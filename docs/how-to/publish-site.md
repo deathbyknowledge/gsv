@@ -29,58 +29,63 @@ select a Kernel. Resetting a space never transfers its old site origins.
 
 ## Build and publish
 
-The public TypeScript client and CodeMode expose `site.*`. Publication requires
-`site.publish`, `fs.read`, and `repo.log`, and preserves filesystem and repository
-access checks.
+Run `sites` on the `gsv` target. It creates an ordinary Vite, React and TypeScript
+project in the current account's GSV repository:
 
-1. Keep source in an existing GSV repository. Writes under `/src/repos/OWNER/REPO`
-   commit automatically; obtain the full 40-character hash with
-   `rgit log OWNER/REPO --limit 1`. Publication verifies that revision is readable; it
-   does not make the source public or create a duplicate archive.
-2. Call `client.site.create({ slug: "my-game" })`. The result contains an immutable
-   site identity and content origin. Repeating create returns your existing site.
-3. Choose `crypto.randomUUID()` as the release ID **before building**. Set the
-   framework's public base to `/_r/RELEASE_ID/`, including the SPA router basename.
-   Vite accepts that path through `--base`. Relative URLs must resolve inside the
-   release; root-relative `/assets/...` paths do not work.
-4. Copy output onto the `gsv` target using existing filesystem copy/transfer calls.
-   List each public file's relative path, byte size, and SHA-256 hex digest in the
-   manifest. The HTML entry must be at the build root. Exclude private files and
-   development configuration.
-5. Call `site.publish` using the revision from `site.get` (initially zero).
-
-```ts
-const releaseId = crypto.randomUUID(); // use this ID in the preceding build
-const { site, publication } = await client.site.create({ slug: "my-game" });
-const published = await client.site.publish({
-  siteId: site.id,
-  expectedRevision: publication.revision,
-  releaseId,
-  outputPath: "/tmp/my-game-dist",
-  manifest: {
-    version: 1,
-    entry: "index.html",
-    routing: "static", // or "spa" for HTML navigation fallback
-    title: "My game",
-    description: "A browser game made with Ship",
-    source: { repo: "me/my-game", revision: sourceCommit },
-    files: buildFiles, // [{ path, size, sha256 }, ...]
-    image: "social.png", // optional declared PNG, JPEG or WebP output
-  },
-});
-console.log(published.shareUrl);
+```bash
+sites init my-game
 ```
 
-Agents use the same methods as `site.create/list/get/publish/unpublish` inside
-CodeMode, without the `client.` prefix. They retain the caller's capabilities,
-owner relationship and approval policy. These methods always address this
-installation; a CodeMode default device target does not redirect publication.
+The command returns `/src/repos/YOUR-ACCOUNT/my-game`. Edit those files with the
+ordinary file tools; repository writes commit automatically. Source remains
+available for later edits after the build computer has stopped. Init refuses to
+replace files in an existing repository.
 
-Sizes and checksums are verified while streaming to R2. One conditional write
-activates the release. If another publish or unpublish wins first, the stale
-operation fails without changing the publication. A release ID cannot describe
-different files or metadata. Retry uploads with the same manifest; fetch the
-current revision before retrying activation.
+Start a [cloud computer](/how-to/cloud-computers), or select an accessible Linux
+computer with Node.js and npm. Then run on `gsv`:
+
+```bash
+sites publish my-game --target COMPUTER
+```
+
+The command snapshots the saved source, installs dependencies, builds on the
+selected computer, uploads the output, and returns the share URL. Release paths,
+file transfers, checksums and activation checks are handled internally. It
+cleans up its temporary build directory; stop an idle cloud computer separately.
+Set the Shell timeout to 300000 ms for installation and build. Cancellation stops
+the owned build session; it does not stop the computer. If cancellation prevents
+directory cleanup, the error identifies the temporary path; stopping a cloud
+computer discards it.
+
+Use `OWNER/REPO` to publish from another accessible repository, or omit the
+repository argument when running inside `/src/repos/OWNER/REPO`. The selected
+computer is only the builder; neither source nor public hosting depends on its
+continued availability. Save computer-side edits back to GSV before publishing.
+
+`site.json` contains the public metadata. Builds write to `dist`:
+
+```json
+{
+  "slug": "my-game",
+  "title": "My game",
+  "description": "A browser game made with Ship",
+  "routing": "spa",
+  "output": "dist"
+}
+```
+
+An optional `image` names a built PNG, JPEG or WebP for sharing previews.
+`routing: "static"` disables HTML navigation fallback. Other npm-based static
+projects can use the same configuration: provide `npm run build`, write
+`dist/index.html`, and use `GSV_SITE_BASE` as the build's public
+asset base. The starter's Vite configuration already does this. Client-side
+routers should use `import.meta.env.BASE_URL` as their basename. Hosting itself
+does not depend on React or Vite.
+
+Source and output access, target permissions and approvals use the existing
+syscalls. An atomic activation check prevents a build that started earlier from
+overwriting a newer publish or unpublish. Sizes and checksums are verified while
+streaming to R2; a failed build or upload leaves the current release unchanged.
 
 Limits are 1,024 files, 256 MiB per file, and 1 GiB total output per release. A site
 retains up to 1,024 distinct published releases. Source remains in its original
@@ -91,7 +96,7 @@ continues to exist.
 
 The responsive share page includes server-rendered Open Graph and Twitter card
 metadata, an isolated iframe, and a full-screen launch link. Title and description
-come from the manifest. A declared social image is used when supplied; otherwise
+come from `site.json`. A declared social image is used when supplied; otherwise
 the card uses the Ship image. Crawlers do not start a build computer.
 
 The content root redirects to the active `/_r/RELEASE_ID/` URL. Asset URLs remain
@@ -108,15 +113,12 @@ for installation login or `/ws` and does not share installation browser storage.
 
 ## Update and unpublish
 
-Fetch `site.get` to recover the last published manifest, including its source
-repository and revision, then build with a fresh release ID and publish using the
-current `publication.revision`. This manifest remains available to the owner
-after unpublish. Old releases are retained for open tabs. Incomplete
-uploads remain private and are retained until installation cleanup.
+Edit the saved repository and run `sites publish` again. To inspect share URLs or
+take a site offline:
 
-```ts
-const { publication } = await client.site.get({ siteId });
-await client.site.unpublish({ siteId, expectedRevision: publication.revision });
+```bash
+sites list
+sites unpublish my-game
 ```
 
 Unpublishing returns 404 for the share page and every release URL on subsequent
@@ -124,3 +126,9 @@ server requests. Restricting or retiring the installation also blocks them.
 Downloaded or browser-cached bytes cannot be recalled. Publication metadata and
 outputs remain stored; installation deletion clears their installation-scoped
 storage with other data.
+
+The public client and CodeMode also expose `site.create/list/get/publish/unpublish`
+for direct integrations. The last published manifest records the exact source
+repository and revision, including after unpublish. See the
+[site syscall reference](/reference/syscalls). Old releases remain available for
+open tabs; incomplete uploads stay private until installation cleanup.

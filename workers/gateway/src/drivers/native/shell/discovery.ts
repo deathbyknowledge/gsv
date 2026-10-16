@@ -42,6 +42,7 @@ const NATIVE_COMMAND_DESCRIPTORS = defineNativeCommandDescriptors({
   feedback: command("Send feedback to the space operator.", "Read a report from a file when the user asks you to share it. Keep report text out of the logged shell command.", ["feedback", "bug", "report", "suggestion", "support"], [], ["feedback [--id UUID] < report.txt"], ["sys.feedback"]),
   instance: command("Start and stop cloud environments.", "Start a Linux computer or start or reuse a browser, wait for readiness, and inspect its lifetime and allowance. When work is finished, export any files you need and stop it with instance stop ID --wait. Keep it open if the user asks or ongoing work still needs it.", ["browser", "computer", "linux", "cloud", "instance", "offline", "start", "stop"], [], ["instance catalog", "instance start computer --request-id ID --wait", "instance start browser --request-id ID --wait", "instance stop ID --wait"], ["sys.instance.list"]),
   browser: command("Manage saved browser logins and human handoffs.", "Use a saved profile across browser instances or ask the owner to sign in through GSV.", ["browser", "login", "profile", "sign in", "human", "handoff"], [], ["browser profile list", "browser handoff --help"], ["sys.browser.profile.list"]),
+  sites: command("Build and publish websites from saved source.", "Create a website, game, interactive explanation or browser app and share its URL. Source stays in a GSV repository; a Linux computer builds it.", ["site", "website", "publish", "game", "app", "visualization", "interactive", "static", "react"], [], ["sites init NAME", "sites publish [OWNER/REPO] --target COMPUTER", "sites list", "sites unpublish NAME"], ["site.publish"]),
   whoami: command("Print the current program account name.", "Identify which user or agent account the shell is running as.", ["identity", "account", "username"]),
   id: command("Print the current uid, gid, and supplementary groups.", "Inspect the current program identity and group membership.", ["identity", "permissions", "groups"]),
   hostname: command("Print the native GSV server name.", "Identify the GSV instance running the native shell.", ["server", "instance", "machine"]),
@@ -184,6 +185,7 @@ export class ShellDiscoveryCatalog {
         !hasCapability(principalOf(this.ctx)?.calls ?? [], capability)
       );
       if (registered.name === "feedback" && !this.ctx.env.FEEDBACK) missing.push("configured feedback inbox");
+      if (registered.name === "sites" && !this.ctx.env.PUBLICATION_DIRECTORY) missing.push("configured site hosting");
       if ((registered.name === "instance" || registered.name === "browser") && !this.ctx.env.INSTANCES) missing.push("configured instance service");
       const entry: ShellDiscoveryEntry = {
         kind: "command",
