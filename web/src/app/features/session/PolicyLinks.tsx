@@ -9,6 +9,11 @@ export function TermsOfServiceLink() {
     ]} />;
 }
 
+export function PolicyConsentLabel({ id }: { id: string }) {
+  return <span id={`${id}-label`}><label for={id}>I confirm that I’m 18 or older and agree to the </label>
+    <TermsOfServiceLink /> <label for={id}>and acknowledge the </label><PrivacyPolicyLink />.</span>;
+}
+
 export function PrivacyPolicyLink() {
   return <PolicySummaryLink title="Privacy Policy" href="https://gsv.space/privacy"
     introduction="How Humans & Machines, Inc. handles your data."

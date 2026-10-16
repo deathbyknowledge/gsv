@@ -20,7 +20,12 @@
 .desktop-welcome .gsv-ti-affix { letter-spacing: 0; }
 .desktop-welcome-submit { display: flex; justify-content: center; align-items: center; min-height: 44px; }
 .desktop-welcome-detail { margin: 0; color: var(--text-dim); overflow-wrap: anywhere; }
+.desktop-welcome-lede { margin: 0 0 24px; color: var(--text); line-height: 1.6; }
+.desktop-welcome-handle { font-family: var(--gsv-font-mono); }
+.desktop-welcome-handle-domain { color: var(--text-dim); }
 .desktop-welcome-links { display: flex; gap: 24px; justify-content: space-between; }
+.desktop-welcome-sent { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 8px 24px; }
+.desktop-welcome-sent .desktop-welcome-links { gap: 16px; }
 .desktop-welcome-invitation { display: grid; gap: 24px; margin-bottom: 14px; }
 .desktop-welcome-invitation p { margin: 0; line-height: 1.6; }
 .desktop-welcome-invitation .desktop-welcome-detail { font-size: 12px; }

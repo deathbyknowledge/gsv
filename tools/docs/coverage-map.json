@@ -399,7 +399,8 @@
     {
       "id": "accounts",
       "paths": [
-        "workers/installations/src/**"
+        "workers/installations/src/**",
+        "web/src/signup/**"
       ],
       "docs": [
         "docs/architecture/installation-directory.md",

@@ -9,5 +9,6 @@ describe("signup desktop app link", () => {
     expect(link.props.href).toBe("https://github.com/deathbyknowledge/gsv/releases/latest");
     expect(link.props).toMatchObject({ target: "_blank", rel: "noreferrer" });
     expect(collectText(link)).toBe("Try the beta desktop app");
+    expect(collectText(tree)).toContain("macOS, Windows and Linux");
   });
 });

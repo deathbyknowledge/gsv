@@ -3,7 +3,7 @@ import "../styles/gsv-tokens.css";
 import "../styles/gsv-type.css";
 import "../styles.css";
 import "../styles/gsv-scrollbar.css";
-import { render } from "preact";
+import { Fragment, render } from "preact";
 import { AuthLayout, AuthScene } from "../app/features/session/AuthLayout";
 import { OwnerWelcomeScreen } from "../app/features/session/OwnerWelcomeScreen";
 import { SpaceAddressForm } from "../app/features/session/SpaceAddressForm";
@@ -11,7 +11,7 @@ import { OwnerWelcome } from "../app/services/session/ownerWelcome";
 import { BrowserWelcomeStorage } from "./storage";
 import { DesktopAppLink } from "./DesktopAppLink";
 import { SignupDialog } from "./SignupDialog";
-import { signupDestination } from "./navigation";
+import { presumedSpaceDomain, signupDestination } from "./navigation";
 import { captureContactInvitation } from "./invitation";
 import { contactInvitationDestination } from "@humansandmachines/gsv/protocol";
 import { pendingContactInvitation, contactInvitationPreview, clearContactInvitation } from "../app/services/session/contactInvitationIntent";
@@ -40,17 +40,19 @@ async function startSignup() {
     clearContactInvitation();
     window.location.assign(destination);
   };
-  render(<AuthScene layout="welcome"><SignupDialog>{invitationError
-    ? <AuthLayout visible><section class="desktop-welcome"><h1>Connect on GSV</h1><p role="alert">{invitationError}</p>
+  // A friend's invitation opens as a centered card; ordinary signup lives on the page so the rest of it stays usable.
+  const Frame = contactInvitation ? SignupDialog : Fragment;
+  render(<AuthScene layout="welcome"><Frame>{invitationError
+    ? <AuthLayout visible><section class="desktop-welcome"><h1>Connect on Ship</h1><p role="alert">{invitationError}</p>
       <a class="gsv-auth-link" href="/owner/signup/?resume=1" onClick={async (event) => {
         event.preventDefault(); await client.save({ contactInvite: null }); clearContactInvitation(); window.location.assign("/owner/signup/?resume=1");
       }}>open my spaces</a></section></AuthLayout>
-    : <OwnerWelcomeScreen ready resume initialStep="email" compact
+    : <OwnerWelcomeScreen ready resume initialStep={contactInvitation ? "email" : "claim"} compact={!!contactInvitation} spaceDomain={presumedSpaceDomain(window.location.hostname)}
       invitation={preview && "name" in preview ? preview : undefined} chooseSpace={!!contactInvitation}
       addressPanel={contactInvitation ? ({ connect, disabled }) => <SpaceAddressForm disabled={disabled} onConnect={connect} /> : undefined}
-      load={async () => client} onConnect={connect} />}{!contactInvitation && <DesktopAppLink />}</SignupDialog></AuthScene>, app!);
+      load={async () => client} onConnect={connect} />}{!contactInvitation && <DesktopAppLink />}</Frame></AuthScene>, app!);
 }
 
-void startSignup().catch(() => render(<AuthScene layout="welcome"><SignupDialog><AuthLayout visible>
+void startSignup().catch(() => render(<AuthScene layout="welcome"><AuthLayout visible>
   <p role="alert">Could not load sign-in. Reload to try again.</p>
-</AuthLayout></SignupDialog></AuthScene>, app));
+</AuthLayout></AuthScene>, app));

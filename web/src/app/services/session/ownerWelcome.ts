@@ -75,8 +75,16 @@ export class OwnerWelcome {
     await this.save({ challenge: null });
   }
 
-  async available(handle: string): Promise<boolean> {
-    return (await this.request(`/handle?value=${encodeURIComponent(handle)}`, availableSchema)).available;
+  /** Null means Accounts would not say yet: the handle is checked again when the space is created. */
+  async available(handle: string): Promise<boolean | null> {
+    try { return (await this.request(`/handle?value=${encodeURIComponent(handle)}`, availableSchema)).available; }
+    catch (error) { if (error instanceof OwnerApiError && error.code === "signed_out") return null; throw error; }
+  }
+
+  /** Records the chosen handle under one operation id before the email step so an interrupted signup resumes it. */
+  async chooseHandle(handle: string): Promise<void> {
+    const operationId = this.state.handle === handle && this.state.operationId ? this.state.operationId : crypto.randomUUID();
+    await this.save({ flow: "create", handle, operationId });
   }
 
   async prepare(handle: string, operationId = this.state.operationId ?? crypto.randomUUID()): Promise<PreparedSpace> {
