@@ -18,6 +18,8 @@ publication is disabled.
 
 Primary, legacy and publication domains must be lowercase and have no leading or
 trailing dots. Deployment rejects noncanonical domains before creating resources.
+The publication domain must be at most 215 characters to leave room for each
+site's hostname prefix.
 
 Use a separate registrable domain for untrusted content to isolate same-site
 cookie policies too. Deployment rejects the primary and legacy installation

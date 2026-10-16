@@ -132,6 +132,23 @@ describe("public operator composition", () => {
     expect(recorded.routes).toEqual([]);
   });
 
+  it("accepts a publication domain with room for the full per-site hostname", async () => {
+    const domain = ["a".repeat(63), "b".repeat(63), "c".repeat(63), "d".repeat(23)].join(".");
+    expect(domain.length).toBe(215);
+    await run(GsvDeployment({ ...input, sites: { domain } }, dependencies));
+    expect(recorded.workers.find(worker => worker.id === "FixtureInstallations")?.props.env?.GSV_SITES_DOMAIN).toBe(domain);
+  });
+
+  it.each([216, 253])("rejects a %i-character publication domain before allocating resources", async (length) => {
+    const domain = ["a".repeat(63), "b".repeat(63), "c".repeat(63), "d".repeat(length - 192)].join(".");
+    expect(domain.length).toBe(length);
+    await expect(run(GsvDeployment({ ...input, sites: { domain, zoneId: "sites-zone" } }, dependencies)))
+      .rejects.toThrow("Publication domain must be at most 215 characters");
+    expect(recorded.workers).toEqual([]);
+    expect(recorded.databases).toEqual([]);
+    expect(recorded.routes).toEqual([]);
+  });
+
   it.each(["example.com", "legacy.example"])("rejects publication on installation domain %s", async (domain) => {
     await expect(run(GsvDeployment({ ...input, domainAliases: ["legacy.example"], sites: { domain } }, dependencies)))
       .rejects.toThrow("separate publication domain");

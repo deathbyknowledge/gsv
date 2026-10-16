@@ -30,7 +30,8 @@ export type PublicDeploymentConfig = {
 
 export const deploymentPresentationSchema = z.object({
   primaryDomain: z.optional(domain),
-  sitesDomain: z.optional(domain),
+  // A publication hostname adds the 37-character site ID and a dot to this domain.
+  sitesDomain: z.optional(domain.check(z.maxLength(215, "Publication domain must be at most 215 characters"))),
   legacyDomains: z._default(z.array(domain).check(z.maxLength(16)), []),
   operatorName: z.optional(z.string().check(z.minLength(1), z.maxLength(160))),
   accountsOrigin: z.optional(origin),

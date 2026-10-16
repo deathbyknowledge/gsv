@@ -32,3 +32,18 @@ it("admits only registered publication hosts and never moves them during install
   expect(await new PublicationHostStore(env.INSTALLATIONS_DB).resolve(new URL(origin).hostname)).toEqual({ found: false });
   await expect(new PublicationHostStore(env.INSTALLATIONS_DB).register(input)).rejects.toThrow("not configured");
 });
+
+it("registers the largest configured publication domain as a valid full hostname", async () => {
+  const domain = ["a".repeat(63), "b".repeat(63), "c".repeat(63), "d".repeat(23)].join(".");
+  const accounts = new AccountStore(env.INSTALLATIONS_DB, "spaces.example");
+  const owner = await accounts.createPrincipal({ email: "long-domain@example.com", displayName: "Owner", verified: true });
+  const installation = await accounts.reserveInstallation({ principalId: owner.id, operationId: "long-domain", handle: "long-domain" });
+  await env.INSTALLATIONS_DB.prepare("UPDATE installations SET state = 'active' WHERE id = ?").bind(installation.installationId).run();
+  const input = { installationId: installation.installationId, siteId: `site-${"b".repeat(32)}`, slug: "demo" };
+  const sites = new PublicationHostStore(env.INSTALLATIONS_DB, domain);
+  const { origin } = await sites.register(input);
+  const hostname = new URL(origin).hostname;
+  expect(hostname).toHaveLength(253);
+  expect(await sites.resolve(hostname)).toMatchObject({ installationId: installation.installationId, publication: { siteId: input.siteId } });
+  await expect(new PublicationHostStore(env.INSTALLATIONS_DB, domain + "x").register(input)).rejects.toThrow("Publication hostname is invalid");
+});

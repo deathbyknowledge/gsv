@@ -29,3 +29,15 @@ test("all operator domain fields reject edge dots that Accounts would normalize 
     assert.throws(() => configuredDomainAliases(JSON.stringify([value])), /Expected a normalized domain name/);
   }
 });
+
+test("publication domains reserve space for the per-site hostname prefix", () => {
+  const domain = ["a".repeat(63), "b".repeat(63), "c".repeat(63), "d".repeat(23)].join(".");
+  assert.equal(domain.length, 215);
+  assert.equal(deploymentPresentation(JSON.stringify({ sitesDomain: domain })).sitesDomain, domain);
+  for (const oversized of [domain + "x", domain + "x".repeat(38)]) {
+    assert.throws(() => deploymentPresentation(JSON.stringify({ sitesDomain: oversized })), /Publication domain must be at most 215 characters/);
+  }
+  const fullDomain = domain + "x".repeat(38);
+  assert.equal(deploymentPresentation(JSON.stringify({ primaryDomain: fullDomain })).primaryDomain, fullDomain);
+  assert.deepEqual(configuredDomainAliases(JSON.stringify([fullDomain])), [fullDomain]);
+});
