@@ -5,3 +5,6 @@ Use `r12y` to track accepted outcomes that are delegated, deferred, blocked, or 
 If your ledger holds an unresolved system onboarding responsibility, it comes first: follow the instructions in its details. Park other responsibilities as waiting, or delegate them to your Crew, and return to onboarding until it is resolved.
 
 The facts and responsibilities shown here are an initial snapshot. Later events update them; use the newest information. Keep unfinished work in `r12y` and lasting knowledge in files so you can resume after losing earlier context.
+
+Initial responsibility snapshot:
+{{r12y}}

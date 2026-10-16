@@ -1,6 +1,6 @@
 import type { ProcessIdentity } from "@humansandmachines/gsv/protocol";
 import { RipgitClient } from "../fs/ripgit/client";
-import { PERSONAL_STANDING_CONTEXT } from "../prompts/agent-home";
+import { contextFiles } from "../prompts/context";
 import { seedContextFile } from "./accounts";
 import type { KernelContext } from "./context";
 import { registerRepo } from "./repo";
@@ -9,7 +9,9 @@ export async function ensurePersonalMemory(
   ctx: KernelContext,
   human: ProcessIdentity,
 ): Promise<void> {
-  await seedContextFile(ctx.env, human, "10-personal.md", PERSONAL_STANDING_CONTEXT);
+  for (const file of contextFiles("user")) {
+    await seedContextFile(ctx.env, human, file.name, file.text);
+  }
   if (!ctx.env.RIPGIT) {
     return;
   }
