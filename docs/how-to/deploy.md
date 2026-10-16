@@ -1,6 +1,6 @@
 # Deploy, update, and remove
 
-## Hosted GSV
+## Hosted Ship
 
 The hosting operator provisions and operates the Cloudflare resources for you. Finish
 onboarding in the web application; you do not need Cloudflare credentials or a
@@ -14,7 +14,7 @@ service is required. Messenger adapters are disabled by default. Their
 application credentials are operator configuration, and people link their own
 identities after deployment.
 
-Follow [Deploy GSV with Alchemy](./deploy-with-alchemy.md) for the complete flow:
+Follow [Deploy Ship with Alchemy](./deploy-with-alchemy.md) for the complete flow:
 
 1. Authenticate Alchemy and configure your Cloudflare account, `GSV_DOMAIN` and
    `GSV_ZONE_ID`.
@@ -29,7 +29,7 @@ or standalone Wrangler wrapper and does not adopt unscoped data. See the
 
 ### Update
 
-Pull the desired GSV revision, install its exact dependencies, inspect the
+Pull the desired Ship revision, install its exact dependencies, inspect the
 plan, and deploy the same `operator` stage with the same deployment inputs:
 
 ```bash

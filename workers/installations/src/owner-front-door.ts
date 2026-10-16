@@ -7,9 +7,15 @@ import { InstallationOwnerStore } from "./owner-store";
 import { InstallationOwnerApi } from "./owner-api";
 import type { InstallationCreationInvites } from "./creation-invites";
 import { handleOwnerSignupRequest } from "./owner-signup";
+import { configuredOriginAliases } from "@humansandmachines/gsv/services/deployment";
 
 /** Both public and commercial compositions use the same owner authentication boundary. */
 export async function handleInstallationOwnerRequest(request: Request, env: InstallationOwnerEnvironment, registryPrincipalId: string, invitations?: InstallationCreationInvites): Promise<Response | null> {
+  if (env.GSV_OWNER_ORIGIN_ALIASES) {
+    const aliases = configuredOriginAliases(env.GSV_OWNER_ORIGIN_ALIASES);
+    const origin = new URL(request.url).origin;
+    if (aliases.includes(origin)) env = { ...env, GSV_ADMIN_ORIGIN: origin };
+  }
   const path = new URL(request.url).pathname;
   const emailEnabled = ownerEmailEnabled(env);
   const signup = await handleOwnerSignupRequest(request, env, emailEnabled && Boolean(invitations));

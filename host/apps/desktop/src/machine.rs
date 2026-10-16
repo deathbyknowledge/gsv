@@ -285,9 +285,9 @@ impl MachineRuntime {
         let already_running = matches!(&command, MachineCommand::Start) && snapshot.running;
         let (args, input, expected) = command_arguments(&scope, &snapshot, command)?;
         let executable = std::env::current_exe()
-            .map_err(|_| "Cannot locate GSV.")?
+            .map_err(|_| "Cannot locate Ship.")?
             .parent()
-            .ok_or("Cannot locate GSV.")?
+            .ok_or("Cannot locate Ship.")?
             .join(if cfg!(windows) { "gsv.exe" } else { "gsv" });
         if !already_running {
             run_cli(
@@ -450,7 +450,7 @@ async fn run_cli(
     command.creation_flags(0x08000000 | 0x00000004);
     let process = command
         .spawn()
-        .map_err(|_| "Install the complete GSV desktop release to connect this computer.")?;
+        .map_err(|_| "Install the complete Ship desktop release to connect this computer.")?;
     #[cfg(windows)]
     let tree = {
         let tree = windows_host::process::ProcessTree::new()

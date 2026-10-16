@@ -1,12 +1,9 @@
-import shipRole from "./role-and-judgment/ship.md";
-import sharedKnowledge from "./knowledge/shared.md";
-import voiceContext from "./voice/ship.md";
-import crewContext from "./role-and-judgment/crew.md";
-import delegationText from "./instance-facts/ship.md";
+import shipRole from "./ship/context.d/00-role.md";
+import voiceContext from "./ship/context.d/05-voice.md";
+import crewContext from "./crew/context.d/00-role.md";
+import { contextFiles } from "./context";
 
-export const PERSONAL_INTELLIGENCE_CONTEXT = [
-  shipRole, sharedKnowledge,
-].map((text) => text.trimEnd()).join("\n\n") + "\n";
+export const PERSONAL_INTELLIGENCE_CONTEXT = shipRole;
 
 export const PERSONAL_INTELLIGENCE_VOICE_CONTEXT = voiceContext;
 
@@ -21,6 +18,10 @@ No open commitments.
 
 export const CREW_CONTEXT = crewContext;
 
-export function crewDelegationContext(username: string): string {
-  return delegationText.replaceAll("{{crew.username}}", () => username);
+export function shipContextFiles(crewUsername?: string): Array<{ name: string; text: string }> {
+  return contextFiles("ship")
+    .filter(({ text }) => crewUsername !== undefined || !text.includes("{{crew.username}}"))
+    .map(({ name, text }) => ({
+      name, text: text.replaceAll("{{crew.username}}", () => crewUsername ?? "{{crew.username}}"),
+    }));
 }

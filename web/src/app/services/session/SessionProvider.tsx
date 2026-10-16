@@ -3,6 +3,7 @@ import { createContext } from "preact";
 import { useContext, useEffect, useState } from "preact/hooks";
 import { createSessionService, type SessionService, type SessionSnapshot } from "./sessionService";
 import { useGateway } from "../gateway/GatewayProvider";
+import { bindSessionPresentation } from "../deployment";
 
 type SessionContextValue = {
   service: SessionService;
@@ -25,9 +26,10 @@ export function SessionProvider({
   const [snapshot, setSnapshot] = useState<SessionSnapshot>(() => service.snapshot());
 
   useEffect(() => {
+    const clearPresentation = bindSessionPresentation(() => service.snapshot().server?.deployment);
     const unsubscribe = service.subscribe(setSnapshot);
     void service.start();
-    return () => { unsubscribe(); service.dispose?.(); };
+    return () => { clearPresentation(); unsubscribe(); service.dispose?.(); };
   }, [service]);
 
   return (

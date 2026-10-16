@@ -92,7 +92,7 @@ describe("feedback", () => {
     const preview = collectNodes(tree).find(node => node.type === "button" && collectText(node.props.children) === "View confirmation") as VNode<ElementProps>;
     await act(() => preview.props.onClick!());
     expect(collectText(tree)).toContain("Preview only — no feedback was sent.");
-    expect(collectText(tree)).toContain("Thank you! This really helps us make GSV better. :)");
+    expect(collectText(tree)).toContain("Thank you! This really helps us make Ship better. :)");
   });
 
   it("retains a failed draft and retries the same report identity", async () => {
@@ -111,7 +111,7 @@ describe("feedback", () => {
     await send();
     expect(fixture.request.mock.calls[1][1]).toEqual(first[1]);
     expect(await reportContent(1)).toEqual(content);
-    expect(collectText(tree)).toContain("Thank you! This really helps us make GSV better. :)");
+    expect(collectText(tree)).toContain("Thank you! This really helps us make Ship better. :)");
     await act(() => element("button").props.onClick!());
     expect(element("textarea").props.value).toBe("");
   });

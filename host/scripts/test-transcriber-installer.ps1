@@ -26,10 +26,10 @@ function signtool.exe { $signed.Add([string]$args[-1]); $global:LASTEXITCODE = 0
 function Get-AuthenticodeSignature { return @{ Status = 'Valid' } }
 try {
   New-Item -ItemType Directory -Force $AssetDirectory | Out-Null
-  foreach ($name in @('gsv', 'gsvd', 'gsv-desktop', 'gsv-transcribe', 'gsv-vision')) {
+  foreach ($name in @('gsv', 'gsvd', 'gsv-desktop', 'gsv-transcribe')) {
     [IO.File]::WriteAllText((Join-Path $AssetDirectory "$name-windows-x64.exe"), 'binary-v1')
   }
-  foreach ($name in @('gsv-transcribe-THIRD_PARTY.md', 'gsv-vision-LICENSE.apache-2.0', 'gsv-vision-PROVENANCE.md', 'gsv-vision-THIRD_PARTY.md')) {
+  foreach ($name in @('gsv-transcribe-THIRD_PARTY.md')) {
     [IO.File]::WriteAllText((Join-Path $AssetDirectory $name), 'license')
   }
   $runtime = Join-Path $root 'build/gsv-transcribe-runtime'
@@ -54,12 +54,21 @@ try {
       (Get-FileHash $_.FullName).Hash.ToLowerInvariant() + '  ' + $_.Name
     }) -join "`n"
     [IO.File]::WriteAllText((Join-Path $AssetDirectory 'checksums.txt'), $checksums)
+    New-Item -ItemType Directory -Force $InstallDir | Out-Null
+    $retired = @('gsv-vision.exe', 'gsv-vision-LICENSE.apache-2.0', 'gsv-vision-PROVENANCE.md', 'gsv-vision-THIRD_PARTY.md')
+    foreach ($name in $retired) { [IO.File]::WriteAllText((Join-Path $InstallDir $name), 'legacy') }
     if ($version -eq 'v1') {
       Install-GsvHost
+      foreach ($name in $retired) {
+        if (Test-Path (Join-Path $InstallDir $name)) { throw 'Retired helper was not removed' }
+      }
     } else {
       function Ensure-ConfigFile { throw 'fixture rollback' }
       try { Install-GsvHost; throw 'Installer failed to roll back' } catch {
         if ($_.Exception.Message -notmatch 'fixture rollback') { throw }
+      }
+      foreach ($name in $retired) {
+        if ((Get-Content -Raw (Join-Path $InstallDir $name)) -ne 'legacy') { throw 'Retired helper was not restored' }
       }
     }
     if ((Get-Content -Raw (Join-Path $InstallDir 'gsv-transcribe-runtime/transcribe.dll')) -ne 'runtime-v1') {

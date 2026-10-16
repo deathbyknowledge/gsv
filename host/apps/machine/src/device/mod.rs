@@ -800,7 +800,7 @@ pub async fn run(
                             error!(
                                 event = "connect.protocol_unsupported",
                                 error = %rpc_error,
-                                hint = "This gsvd build cannot talk to the gateway; install the matching release from https://install.gsv.space and restart the service.",
+                                hint = "This gsvd build cannot talk to the gateway. Check the update diagnostic and install a compatible release from your operator.",
                             );
                             return Err(e);
                         }
@@ -1850,6 +1850,7 @@ mod tests {
         ConnectResult {
             protocol: gateway_client::protocol::PROTOCOL_VERSION,
             server: ServerInfo {
+                deployment: None,
                 version: version.to_string(),
                 release: release.to_string(),
                 features: Vec::new(),
@@ -2050,10 +2051,17 @@ mod tests {
         }
         for error in [
             UpdateError::Disabled,
-            UpdateError::NotServiceManaged { dir: dir.clone() },
-            UpdateError::NoDetachment { dir: dir.clone() },
+            UpdateError::NotServiceManaged {
+                command: "manual update".to_string(),
+            },
+            UpdateError::NoDetachment {
+                command: "manual update".to_string(),
+            },
             UpdateError::AppBundle { dir: dir.clone() },
-            UpdateError::Unwritable { dir },
+            UpdateError::Unwritable {
+                dir,
+                command: "manual update".to_string(),
+            },
         ] {
             assert_eq!(
                 outcome_for_error(&error),
@@ -2078,13 +2086,16 @@ mod tests {
         }));
         assert!(!retry_later(&UpdateError::Disabled));
         assert!(!retry_later(&UpdateError::NotServiceManaged {
-            dir: dir.clone()
+            command: "manual update".to_string()
         }));
         assert!(!retry_later(&UpdateError::NoDetachment {
-            dir: dir.clone()
+            command: "manual update".to_string()
         }));
         assert!(!retry_later(&UpdateError::AppBundle { dir: dir.clone() }));
-        assert!(!retry_later(&UpdateError::Unwritable { dir }));
+        assert!(!retry_later(&UpdateError::Unwritable {
+            dir,
+            command: "manual update".to_string()
+        }));
     }
 
     fn test_updater(enabled: bool) -> AutoUpdater {

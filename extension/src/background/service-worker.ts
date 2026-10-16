@@ -28,7 +28,7 @@ import { createBrowserTargetDriver, type BrowserTargetActivity } from "./driver"
 const client = new GSVClient();
 const endpoint = client.endpoint({
   platform: "browser-extension",
-  version: "0.7.0",
+  version: "0.7.1",
   keepalive: {
     intervalMs: 25_000,
     acknowledgement: { timeoutMs: 10_000 },
@@ -40,14 +40,14 @@ let diagnostics: ExtensionDiagnostics = emptyDiagnostics();
 const diagnosticsReady = loadDiagnostics().then((stored) => {
   diagnostics = mergeDiagnostics(stored, diagnostics);
 }).catch((error) => {
-  console.warn("Your GSV: diagnostics unavailable", error);
+  console.warn("Your Ship: diagnostics unavailable", error);
 });
 let diagnosticsWrite: Promise<void> = Promise.resolve();
 let lastConnectionStatus = "";
 const runtimeStateReady = loadRuntimeState().then((state) => {
   connectionSupervisor.setReconnectSuppressed(state.manualReconnectSuppressed);
 }).catch((error) => {
-  console.warn("Your GSV: runtime state unavailable", error);
+  console.warn("Your Ship: runtime state unavailable", error);
 });
 
 const browserTarget = createBrowserTargetDriver(addActivity);
@@ -241,15 +241,15 @@ async function showAttentionBadge(): Promise<void> {
     await chrome.action.setBadgeBackgroundColor({ color: "#b3aeff" });
     await chrome.action.setBadgeTextColor?.({ color: "#07061a" });
     await chrome.action.setBadgeText({ text: "•" });
-    await chrome.action.setTitle({ title: "Your GSV wants to record this tab" });
+    await chrome.action.setTitle({ title: "Your Ship wants to record this tab" });
   } catch (error) {
-    console.warn("Your GSV: could not badge the toolbar icon", error);
+    console.warn("Your Ship: could not badge the toolbar icon", error);
   }
 }
 async function clearAttentionBadge(): Promise<void> {
   try {
     await chrome.action.setBadgeText({ text: "" });
-    await chrome.action.setTitle({ title: "Your GSV" });
+    await chrome.action.setTitle({ title: "Your Ship" });
   } catch {
     // no badge to clear
   }
@@ -394,7 +394,7 @@ function queueDiagnosticsSave(): void {
       await saveDiagnostics(diagnostics);
     })
     .catch((error) => {
-      console.warn("GSV browser target diagnostics save failed", error);
+      console.warn("Ship browser target diagnostics save failed", error);
     });
 }
 

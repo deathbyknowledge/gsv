@@ -85,26 +85,17 @@ describe("web voice composition", () => {
     expect(app.control().interceptSubmit()).toBe(false);
   });
 
-  it.each(["cancel", "scope", "disabled", "unmount", "clear", "pagehide", "hidden"])("discards stale transcription after %s", async (reason) => {
+  it.each(["cancel", "scope", "unmount"])("discards stale transcription after %s", async (reason) => {
     const app = await mounted();
     await app.start();
     await app.stop();
     const signal = app.request.mock.calls[0][2]?.signal;
     if (reason === "scope") await app.render("different conversation");
-    else if (reason === "disabled") await app.render("ship", false);
     else if (reason === "unmount") await app.root.unmount();
-    else await settle(() => {
-      if (reason === "cancel") app.control().cancel();
-      if (reason === "clear") app.prompt.current.setValue("");
-      if (reason === "pagehide") window.dispatchEvent(new Event("pagehide"));
-      if (reason === "hidden") {
-        Object.assign(document, { visibilityState: "hidden" });
-        document.dispatchEvent(new Event("visibilitychange"));
-      }
-    });
+    else await settle(() => app.control().cancel());
     expect(signal?.aborted).toBe(true);
     await app.finish();
-    expect(app.value()).toBe(reason === "clear" ? "" : "typed");
+    expect(app.value()).toBe("typed");
     expect(app.prompt.current.focus).not.toHaveBeenCalled();
   });
 
@@ -138,6 +129,9 @@ describe("web voice composition", () => {
     await app.stop();
     expect(app.control().error).toBe("Transcription service unavailable");
     expect(app.control().canRetry).toBe(true);
+    await app.render("ship", false);
+    expect(app.control().error).toBe("Transcription service unavailable");
+    await app.render();
     await settle(() => app.control().retry());
     await app.finish();
     expect(app.value()).toBe("typed spoken words");
@@ -145,14 +139,19 @@ describe("web voice composition", () => {
     expect(app.request).toHaveBeenCalledTimes(2);
   });
 
-  it("allows typed submission after an error and discards the pending audio", async () => {
+  it("keeps failed audio available while the user submits or clears typed text", async () => {
     const app = await mounted();
     app.request.mockRejectedValueOnce(new Error("Transcription service unavailable"));
     await app.start();
     await app.stop();
     await settle(() => expect(app.control().interceptSubmit()).toBe(false));
-    expect(app.control().canRetry).toBe(false);
+    expect(app.control().canRetry).toBe(true);
     expect(app.value()).toBe("typed");
+    await settle(() => app.prompt.current.setValue(""));
+    expect(await app.control().audio?.text()).toBe("audio");
+    await settle(() => app.control().retry());
+    await app.finish();
+    expect(app.value()).toBe("spoken words");
   });
 
   it("explains denied permission and empty speech without changing the draft", async () => {
@@ -164,9 +163,63 @@ describe("web voice composition", () => {
     await app.stop();
     await app.finish(" ");
     expect(app.control().error).toContain("No speech");
-    expect(app.control().canRetry).toBe(false);
+    expect(app.control().canRetry).toBe(true);
+    expect(await app.control().audio?.text()).toBe("audio");
     expect(app.value()).toBe("typed");
+    await settle(() => app.control().cancel());
     await app.start();
     expect(app.control().phase).toBe("recording");
+  });
+
+  it.each(["disconnect", "hidden", "pagehide"])("finishes capture and retains audio after %s without uploading in the background", async (reason) => {
+    const app = await mounted();
+    await app.start();
+    if (reason === "disconnect") await app.render("ship", false);
+    else await settle(() => {
+      if (reason === "pagehide") window.dispatchEvent(new Event("pagehide"));
+      else {
+        Object.assign(document, { visibilityState: "hidden" });
+        document.dispatchEvent(new Event("visibilitychange"));
+      }
+    });
+    await settle(() => {});
+    expect(app.input.stopTrack).toHaveBeenCalled();
+    expect(app.request).not.toHaveBeenCalled();
+    expect(app.control().canRetry).toBe(true);
+    expect(await app.control().audio?.text()).toBe("audio");
+    Object.assign(document, { visibilityState: "visible" });
+    await app.render();
+    expect(app.request).not.toHaveBeenCalled();
+    await settle(() => { app.control().retry(); app.control().retry(); });
+    expect(app.request).toHaveBeenCalledOnce();
+    await app.finish();
+    expect(app.value()).toBe("typed spoken words");
+    expect(app.input.microphone).toHaveBeenCalledOnce();
+  });
+
+  it("fences the interrupted upload from a retry and reuses its exact audio after reconnect", async () => {
+    const app = await mounted();
+    await app.start();
+    await app.stop();
+    const signal = app.request.mock.calls[0][2]?.signal;
+    await app.render("ship", false);
+    expect(signal?.aborted).toBe(true);
+    expect(app.control().canRetry).toBe(true);
+    await settle(() => app.control().retry());
+    expect(app.request).toHaveBeenCalledOnce();
+    await app.render();
+    const retry = deferred<{ data: { text: string; provider: string; model: string } }>();
+    app.request.mockReturnValueOnce(retry.promise);
+    await settle(() => app.control().retry());
+    await app.finish("stale transcript");
+    expect(app.value()).toBe("typed");
+    expect(app.control().phase).toBe("transcribing");
+    const options = app.request.mock.calls[1][2];
+    expect(options?.signal?.aborted).toBe(false);
+    expect(await new Response(options?.body?.stream).text()).toBe("audio");
+    await settle(() => retry.resolve({ data: { text: "recovered", provider: "test", model: "test" } }));
+    expect(app.value()).toBe("typed recovered");
+    expect(app.control().audio).toBeUndefined();
+    expect(app.input.microphone).toHaveBeenCalledOnce();
   });
 });

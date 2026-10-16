@@ -6,6 +6,17 @@ import {
 } from "./decode-wire-frame";
 
 describe("decodeWireFrameJson", () => {
+  it("accepts ordinary contextual text and rejects withdrawn action metadata", () => {
+    const frame = {
+      type: "req", id: "plain-request", call: "conversation.send",
+      args: { conversationId: "ship", text: "Help me create a routine, only on Mondays.", selectedTarget: "gsv", idempotencyKey: "plain-request" },
+    };
+    expect(decodeWireFrameJson(JSON.stringify(frame))).toEqual(frame);
+    expect(() => decodeWireFrameJson(JSON.stringify({
+      ...frame, args: { ...frame.args, action: { kind: "routine.create" } },
+    }))).toThrow(InvalidWireFrameError);
+  });
+
   it.each([
     "account.passkey.register.begin",
     "account.passkey.register.finish",

@@ -1,4 +1,6 @@
 import type * as Cloudflare from "alchemy/Cloudflare";
+import { configuredOriginAliases, deploymentPresentationSchema, type PublicDeploymentConfig } from "../../packages/gsv/src/services/deployment.ts";
+import { operatorUpdateCatalogSchema, type OperatorUpdateCatalog } from "../../packages/gsv/src/services/operator-updates.ts";
 import * as Output from "alchemy/Output";
 import { operatorResourceCatalogSchema, type OperatorResourceCatalog } from "../../workers/installations/src/operator-resource-contracts.ts";
 import { GsvRuntime, gsvRuntimeDependencies, type GsvRuntimeProps, type GsvRuntimeServices } from "./runtime.ts";
@@ -10,6 +12,9 @@ export type GsvOperatorAccess = { kind: "operator" } | {
 
 export type GsvDeploymentProps = Omit<GsvRuntimeProps, "services"> & {
   domain: string;
+  domainAliases?: string[];
+  presentation?: Omit<PublicDeploymentConfig, "primaryDomain" | "legacyDomains">;
+  operatorUpdates?: OperatorUpdateCatalog;
   adminOrigin: string;
   access: GsvOperatorAccess;
   services?: Partial<GsvRuntimeServices> & {
@@ -41,6 +46,7 @@ export type GsvDeploymentProps = Omit<GsvRuntimeProps, "services"> & {
     /** Accounts sends owner codes independently of installation-scoped mail. The operator owns the verified sender and stable secret. */
     ownerEmail?: { from: string; allowedRecipients?: string[]; authSecret: Cloudflare.Workers.WorkerBindingProps[string] };
     ownerSignupOrigin?: string;
+    ownerOriginAliases?: string[];
   };
   inference: {
     workerName: string;
@@ -147,6 +153,11 @@ export const GsvDeployment = (props: GsvDeploymentProps, dependencies = gsvRunti
     }
   }
   const compatibility = props.compatibility ?? { date: "2026-09-01", flags: ["nodejs_compat" as const] };
+  const publicConfiguration = JSON.stringify(deploymentPresentationSchema.parse({
+    ...props.presentation, primaryDomain: props.domain, legacyDomains: props.domainAliases ?? [],
+  }));
+  const ownerOriginAliases = JSON.stringify(props.installations.ownerOriginAliases ?? []);
+  configuredOriginAliases(ownerOriginAliases);
   const observability = { enabled: true, logs: { enabled: true, invocationLogs: false, persist: false }, traces: { enabled: false } };
   let directory = props.services?.installationDirectory;
   let database: Cloudflare.D1.Database | undefined;
@@ -160,12 +171,14 @@ export const GsvDeployment = (props: GsvDeploymentProps, dependencies = gsvRunti
     }).pipe(retain(props.allowResourceDeletion !== true));
     const bindings: Cloudflare.Workers.WorkerBindingProps = {
       INSTALLATIONS_DB: database, ENVIRONMENT: "production", GSV_BASE_DOMAIN: props.domain,
+      GSV_DOMAIN_ALIASES: JSON.stringify(props.domainAliases ?? []), GSV_PUBLIC_CONFIG: publicConfiguration,
       GSV_ADMIN_ORIGIN: props.adminOrigin, GSV_OPERATOR_ACCESS_MODE: props.access.kind === "operator" ? "operator" : "access",
       GSV_ADMIN_ACCESS_TEAM_DOMAIN: props.access.kind === "cloudflare-access" ? props.access.teamDomain : "",
       GSV_ADMIN_ACCESS_AUD: accessAudience,
       GSV_OWNER_OIDC_ISSUER: props.installations.ownerIdentity?.issuer ?? "",
       GSV_OWNER_OIDC_CLIENT_ID: props.installations.ownerIdentity?.clientId ?? "",
       GSV_OWNER_SIGNUP_ORIGIN: props.installations.ownerSignupOrigin ?? "",
+      GSV_OWNER_ORIGIN_ALIASES: ownerOriginAliases,
     };
     if (props.installations.ownerIdentity?.clientSecret) bindings.GSV_OWNER_OIDC_CLIENT_SECRET = props.installations.ownerIdentity.clientSecret;
     if (props.installations.ownerEmail) {
@@ -206,7 +219,8 @@ export const GsvDeployment = (props: GsvDeploymentProps, dependencies = gsvRunti
     }).pipe(retain(props.allowResourceDeletion !== true));
     inference = inferenceWorker;
   }
-  const extraBindings: Cloudflare.Workers.WorkerBindingProps = {};
+  const extraBindings: Cloudflare.Workers.WorkerBindingProps = { GSV_PUBLIC_CONFIG: publicConfiguration };
+  if (props.operatorUpdates) extraBindings.GSV_OPERATOR_UPDATES = JSON.stringify(operatorUpdateCatalogSchema.parse(props.operatorUpdates));
   if (props.installations.ownerEmail) {
     extraBindings.GSV_OWNER_SIGNUP_URL = new URL("/owner/signup/?resume=1", props.adminOrigin).href;
   }

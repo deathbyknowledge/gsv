@@ -418,14 +418,22 @@ async function readDirectory(
   const files: string[] = [];
   const directories: string[] = [];
 
-  for (const name of names) {
-    const childPath = path.endsWith("/") ? path + name : path + "/" + name;
-    try {
-      const s = await fs.stat(childPath);
-      if (s.isDirectory) directories.push(name);
+  // Keep remote metadata reads bounded, and preserve the listing's order even
+  // when individual entries finish out of order. stat still follows symlinks.
+  const concurrency = 6;
+  for (let offset = 0; offset < names.length; offset += concurrency) {
+    const batch = names.slice(offset, offset + concurrency);
+    const kinds = await Promise.all(batch.map(async (name) => {
+      const childPath = path.endsWith("/") ? path + name : path + "/" + name;
+      try {
+        return (await fs.stat(childPath)).isDirectory;
+      } catch {
+        return false;
+      }
+    }));
+    for (const [index, name] of batch.entries()) {
+      if (kinds[index]) directories.push(name);
       else files.push(name);
-    } catch {
-      files.push(name);
     }
   }
 

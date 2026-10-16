@@ -101,8 +101,7 @@ history in another process. Each human owner has exactly one interactive,
 top-level process marked as the personal controller. That process is the
 default personal-intelligence destination across Web, CLI, Telegram, Slack,
 and other linked private surfaces. Explicit task and shared-surface processes
-remain ordinary, separate processes; there is no second process-local
-conversation identifier.
+remain ordinary, separate processes.
 
 PIDs are installation-local. Process Durable Object lookups combine the
 trusted installation ID with the PID in one canonical Durable Object name.

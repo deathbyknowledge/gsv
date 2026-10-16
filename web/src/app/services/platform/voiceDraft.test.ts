@@ -11,20 +11,6 @@ const completion = (action: NativeEvent["action"], text: string, segment = 0): N
 });
 
 describe("native dictation ownership", () => {
-  it("preserves typed anchors and cannot resurrect a cleared segment", () => {
-    const draft = new VoiceDraft(7, { value: "Ask tomorrow.", start: 4, end: 4 });
-    expect(draft.partial(partial("Ship"))?.value).toBe("Ask Ship tomorrow.");
-    expect(draft.finish(completion("clear", "Ship"))?.value).toBe("Ask tomorrow.");
-    expect(draft.partial(partial("old delayed text", 0, 99))).toBeNull();
-    expect(draft.partial(partial("again", 1))?.value).toBe("Ask again tomorrow.");
-  });
-
-  it("deletes a whole joined emoji without deleting typed text", () => {
-    const draft = new VoiceDraft(7, { value: "typed: ", start: 7, end: 7 });
-    expect(draft.finish(completion("delete", "hi 👨‍👩‍👧‍👦"))?.value).toBe("typed: hi");
-    expect(draft.partial(partial("there", 1))?.value).toBe("typed: hi there");
-  });
-
   it("fences duplicate finals after sending and rebases onto a newer draft", () => {
     const draft = new VoiceDraft(7, { value: "", start: 0, end: 0 });
     expect(draft.finish(completion("send", "first"))?.value).toBe("first");

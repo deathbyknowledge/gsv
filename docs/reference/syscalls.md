@@ -122,6 +122,11 @@ Runtime behavior:
 
 Device routing errors are frame-level errors: `403` for access denied, `503` for offline or missing connection, `400` for unsupported syscall, and `504` for route timeout.
 
+Native directory reads classify entries with a bounded number of concurrent
+metadata lookups. They preserve listing order and follow directory symlinks; an
+entry that cannot be statted remains in the file list, as before. This avoids
+serial storage round trips for each child in cloud-backed folders.
+
 ```ts
 type FilesystemSyscalls = {
   "fs.read": {
@@ -1810,7 +1815,7 @@ type SystemSyscalls = {
 
   "sys.setup": {
     args: { username?: string; password: string; rootPassword?: string; timezone?: string; ai?: { provider?: string; model?: string; apiKey?: string }; machine?: { peerId: string; label?: string; expiresAt?: number } };
-    result: { server: { version: string; release: string; features?: string[] }; user: ProcessIdentity; rootLocked: boolean; bootstrap?: SystemSyscalls["sys.bootstrap"]["result"]; machineToken?: { tokenId: string; token: string; tokenPrefix: string; uid: number; kind: "machine"; label: string | null; peerId: string; createdAt: number; expiresAt: number | null } };
+    result: { server: { version: string; release: string; features?: string[]; deployment?: PublicDeploymentConfig }; user: ProcessIdentity; rootLocked: boolean; bootstrap?: SystemSyscalls["sys.bootstrap"]["result"]; machineToken?: { tokenId: string; token: string; tokenPrefix: string; uid: number; kind: "machine"; label: string | null; peerId: string; createdAt: number; expiresAt: number | null } };
   };
 
   "sys.bootstrap": {
@@ -2005,8 +2010,7 @@ links, and commits the receipt. Identical retries cannot overwrite later credent
 a Process acting as root cannot invoke it. It resets the sole personal account.
 The optional legacy `uid` must match that account. Reset revokes its earlier
 credentials and messenger links, retaining its UID, groups, data and admitted
-Processes. The old local-human invitation, listing and removal syscalls are
-removed; contact invitations continue to connect separate spaces.
+Processes. Contact invitations connect separate spaces.
 
 ## AI: `ai.*`
 
@@ -2106,8 +2110,6 @@ and `adapterStatus`. Adapters call the Gateway's single
 every explicit or routed delivery is a correlated `adapter.send` request sent
 only to the exact adapter destination. User-state signals remain broadcast to
 clients independently. `adapterFrame` is the only Gateway-to-adapter carrier.
-Old channel-specific interfaces and direct channel RPC names are not part of
-this contract.
 
 Adapter media metadata stays in JSON. Inline bytes are concatenated into the
 request's single top-level binary body, and each media item identifies its

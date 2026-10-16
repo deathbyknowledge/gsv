@@ -89,7 +89,7 @@ export function Feedback({ view }: { view: Distance }) {
 
   if (!available && !preview) return null;
   return <>
-    <button type="button" aria-haspopup="dialog" onClick={() => {
+    <button type="button" class="feedback-trigger" aria-haspopup="dialog" onClick={() => {
       if (state === "sent") setState("idle");
       setOpen(true);
     }}>feedback</button>
@@ -102,7 +102,7 @@ export function Feedback({ view }: { view: Distance }) {
       </header>
       {state === "sent" ? <div class="feedback-sent" role="status">
         {!available && <p class="feedback-preview">Preview only — no feedback was sent.</p>}
-        <p>Thank you! This really helps us make GSV better. :)</p>
+        <p>Thank you! This really helps us make Ship better. :)</p>
         <button type="button" class="feedback-send" onClick={() => setOpen(false)}>Done</button>
       </div> : <form onSubmit={(event) => { event.preventDefault(); void submit(); }}>
         <p class="feedback-intro">Something broken, confusing, or missing? An idea or something you love? We read every message.</p>

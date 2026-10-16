@@ -1,6 +1,6 @@
 # One person per space
 
-Each GSV space has one personal account, its Ship and any additional agent accounts.
+Each Ship space has one personal account, its Ship and any additional agent accounts.
 To connect with another person, invite them through [People](/how-to/contact-people).
 They use their own space; a contact invitation does not create an account in yours.
 An operator can host separate spaces for a [whole team](/how-to/organisations).
@@ -8,7 +8,7 @@ An operator can host separate spaces for a [whole team](/how-to/organisations).
 ## Sign in
 
 Open your space and enter your password. Setup derives the internal account name
-from the space handle, so there is no second username to choose. Existing spaces
+from the space handle. Existing spaces
 keep their account identity, home directory, credentials and connected devices.
 
 ## Recover personal access
