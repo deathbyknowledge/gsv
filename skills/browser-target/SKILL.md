@@ -25,7 +25,9 @@ use the id returned by discovery or provisioning.
    `--offset` paging when the JSON `total` exceeds the page. For cloud work,
    reuse an active cloud browser only when it fits the task: for signed-in
    work the one on the account's automatic profile (`browser profile list`
-   marks which profile is automatic), a named profile only when the task calls
+   marks which profile is automatic; it pages 32 at a time, so follow its
+   `nextOffset` until the automatic or named profile is found before
+   concluding it does not exist), a named profile only when the task calls
    for that profile, and a temporary one for work that needs no login or for a
    site the person already signed into in that instance, while it runs. Wait
    for a starting browser with `instance get` rather than starting another. An
@@ -67,11 +69,11 @@ use the id returned by discovery or provisioning.
 
 ## Signed-In Sessions: Two Routes
 
-When the user asks, check `instance catalog` first, then explain both in simple words and recommend one for their case. If the catalog says saved logins are not available to this account, describe the cloud route as an existing saved profile when `browser profile list` has one, otherwise as a temporary browser whose sign-in does not carry over, and recommend their own browser for anything that must stay signed in.
+When the user asks, check `instance catalog` first, then explain both in simple words and recommend one for their case. If the catalog says saved logins are not available to this account, describe the cloud route as an existing saved profile when `browser profile list` (followed through `nextOffset`) has one, otherwise as a temporary browser whose sign-in does not carry over, and recommend their own browser for anything that must stay signed in.
 
 **Cloud browser with saved logins.** Lead with convenience: it keeps working without their computer turned on, while they do something else. They sign in once through a link that opens the live browser view; the login is remembered from then on, and credentials stay out of chat. To test first, they can watch GSV work in their own browser through the extension before giving it any logins. Limits, when relevant: no passkeys or hardware security keys; device-bound sign-in or a site that rejects cloud browsers needs their own browser; nothing is copied from their personal browser; some sites ask to sign in again because session storage and service-worker caches are not saved; a website can still expire a session; each instance has a fixed lifetime, and saved logins return after a restart.
 
-**Their own browser through the Your GSV extension.** Uses their existing signed-in sessions, passkeys and device features, and reaches their tabs, history, bookmarks and downloads. Costs: Chrome must be open on their machine with the extension paired, actions run on their real profile, connected browsers ask for approval by default, and they can pause or stop the connection at any time.
+**Their own browser through the Your Ship extension.** Uses their existing signed-in sessions, passkeys and device features, and reaches their tabs, history, bookmarks and downloads. Costs: Chrome must be open on their machine with the extension paired, actions run on their real profile, connected browsers ask for approval by default, and they can pause or stop the connection at any time.
 
 ## Build Trust At The User's Pace
 

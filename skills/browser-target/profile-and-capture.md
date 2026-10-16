@@ -61,7 +61,7 @@ Audio recordings are WebM/Opus when supported. Use `--video` or
 supported and can grow quickly, so set `--max-bytes` explicitly for longer
 captures. Chrome only lets the extension record a tab the person has invoked
 it on, so a first `media record start` on a tab may be refused. When it is,
-ask the person to focus that tab, open Your GSV from the toolbar, and choose
+ask the person to focus that tab, open Your Ship from the toolbar, and choose
 Allow recording, then run the command again; each allowance starts one
 recording. By default, captured tab audio remains audible; use `--monitor off`
 only when the task calls for disabling playback. To move a finished recording
