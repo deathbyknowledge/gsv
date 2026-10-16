@@ -24,8 +24,6 @@ contracts, but they do not embed one another's runtime or state ownership.
   protocol.
 - `host/crates/daemon-protocol/` owns the versioned, same-user `gsvd` control
   protocol.
-- `host/crates/gesture-protocol/` owns the private, versioned contract between
-  Desktop and its gesture helper.
 
 These crates contain contracts and transport primitives. They do not own a
 machine lifecycle, a CLI interaction, or Desktop UI state.
@@ -38,12 +36,6 @@ use the same cancellation and byte-credit protocol.
 The host applications, helpers, and shared crates form one Cargo workspace
 rooted at `host/`. Its lockfile and build output belong to that boundary;
 `workers/ripgit/` remains an independent Rust project.
-
-The gesture runtime's CMake build downloads Eigen from TensorFlow's archive
-mirror and ml_dtypes from GitHub, both at LiteRT's pinned revisions with SHA-256
-verification. It does not clone Eigen from GitLab or fetch ml_dtypes' unused
-Eigen submodule. This source selection applies to local builds and every desktop
-release platform, including builds without a dependency cache.
 
 ## `gsvd`
 
@@ -119,7 +111,7 @@ restore the previous image, enrollment configuration, and running state.
 logs. CLI and Desktop login credentials are not copied there. The local pipe
 ACL admits the enrolled owner and service account, rejects remote clients,
 and clients authenticate the server against the process registered in SCM.
-Desktop and audio/camera helpers remain in the interactive user's session.
+Desktop and the audio helper remain in the interactive user's session.
 Windows updates are administrator-managed because the service cannot replace
 its protected executable. Legacy scheduled tasks are not migrated.
 
@@ -181,11 +173,9 @@ transfer cannot mark a later successful download as failed. The bridge does not 
 filesystem writes or add another gateway connection.
 
 `desktop-native` supervises `gsv-transcribe` for local capture and speech
-inference, and `gsv-vision` for local camera capture, LiteRT/XNNPACK inference
-and authored gesture recognition. Audio, camera frames and landmarks stay in
-the helpers. Both features start only when explicitly enabled. The helper
-protocol carries bounded, session-scoped semantic intents and feedback.
-The frontend acknowledges pushed updates; it does not poll conversation state.
+inference. Audio stays in the helper, which starts only when explicitly enabled.
+The frontend acknowledges pushed text updates; it does not poll conversation state.
+Desktop ships no gesture helper and requests no camera permission.
 
 Linux transcription releases bundle OpenBLAS and use GNU ld to register its
 native initializers. The artifact check rejects unconverted legacy constructor
@@ -202,12 +192,10 @@ Installers verify it and replace or roll it back with the binaries. The artifact
 check validates relocated libraries as well as the helper, and recorded-speech
 checks exercise both automatic selection and the baseline backend.
 
-Hands-free has Off, Ready and Listening states. One finger starts or pauses
-listening; two sends, three deletes, four clears dictated text, and both fists
-exits hands-free. The thumb counts independently and any finger combination
-is accepted. A control palm and action fist scroll together. The tutorial uses
-lesson-scoped observations and accepts only its current gesture. Voice events
-retain request and segment identity so stale output cannot change a later draft.
+Voice events retain request and segment identity so stale output cannot change
+a later draft. Enter finalizes the current segment before sending and keeps
+listening. Pausing, helper failures and connection interruptions retain the text
+already displayed in the prompt. Raw local audio is not retained for replay.
 The input lease expires on suspension and is released when leaving Chat.
 
 Local control supports activation, redacted status, new Process creation,
@@ -289,16 +277,15 @@ daemon updates also preserve the current installation directory. Host applicatio
 share installer URL resolution and shell quoting in `host-config`.
 
 Published host artifacts cover Linux x64/ARM64 and macOS Intel/Apple Silicon
-for Desktop, `gsv-transcribe`, `gsv-vision`, `gsv`, and `gsvd`, plus Windows x64
-for all five host executables. Checksums cover every release asset, including the vision
-model license and provenance. On macOS,
+for Desktop, `gsv-transcribe`, `gsv`, and `gsvd`, plus Windows x64
+for all four host executables. Checksums cover every release asset. On macOS,
 `host/scripts/package-macos.sh` assembles an architecture-native development
 `GSV.app` and ZIP containing Desktop, CLI, daemon, helpers, application
-metadata, and local gesture models. The result is ad-hoc signed and unnotarized. Public distribution additionally requires Developer ID signing,
+metadata, and the local voice runtime. The result is ad-hoc signed and unnotarized. Public distribution additionally requires Developer ID signing,
 hardened-runtime entitlements, Apple notarization, and stapling; those release
 credentials are not configured in the repository.
 
-On Windows, `host/scripts/package-windows.ps1` packages all five executables,
+On Windows, `host/scripts/package-windows.ps1` packages all four executables,
 licenses, checksums and the PowerShell installer in a ZIP and an NSIS setup
 executable. Setup creates a Start-menu shortcut and an Apps uninstall entry.
 Setup embeds hashes of its installer script and checksum manifest in the
@@ -320,8 +307,8 @@ matching certificate and private key are provisioned in the Windows build
 runner. It signs SHA-256 with a timestamp and verifies the result. Without that
 release credential, Windows artifacts are unsigned; checksums remain mandatory.
 The Windows workflow separately tests SCM, IPC, shell process trees and installer
-rollback, then builds Desktop and helpers and runs recorded gesture parity.
-Physical microphone/camera permissions, GUI onboarding/UAC and reboot recovery
+rollback, then builds Desktop and its voice helper.
+Physical microphone permissions, GUI onboarding/UAC and reboot recovery
 also need a Windows release smoke test on an actual computer.
 
 ## Product and command names

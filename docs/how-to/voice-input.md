@@ -38,7 +38,16 @@ the space.
 
 ## Dictate on Desktop
 
-Desktop's **Voice and hands-free** controls use its local transcription helper.
-They support continuous dictation, microphone selection, and camera gestures.
-Microphone and camera processing stay on the computer. See
+Desktop's **voice** control uses its local transcription helper. Choose **listen**
+to dictate, select a microphone when needed, and choose **pause** to stop while
+keeping the draft. Enter finishes the current segment, sends it, and keeps
+listening. Editing dictated text stops dictation so later partials cannot undo
+your correction. There are no camera or gesture controls.
+
+Audio processing stays on your computer. The first use downloads and verifies
+the speech model; subsequent dictation does not need a cloud transcription
+connection. A session stops after ten minutes. If the helper fails or the
+connection drops, text already displayed in the prompt remains available for
+editing. Desktop does not save the raw audio for retry, so speech not yet
+transcribed may need repeating. See
 [Install Host Applications](/how-to/install-host-apps) for setup.

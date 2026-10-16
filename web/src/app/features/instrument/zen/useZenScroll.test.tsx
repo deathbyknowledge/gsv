@@ -215,7 +215,7 @@ describe("transcript selection", () => {
     } finally { await chat.unmount(); }
   });
 
-  it("updates the same selection when native gestures scroll and when returning to the latest message", async () => {
+  it("updates the same selection when scrolling programmatically and when returning to the latest message", async () => {
     const chat = await transcript(true);
     try {
       await act(() => chat.state().move(-450));

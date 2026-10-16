@@ -120,8 +120,8 @@ Contact conversations have no mandatory Process handler. Pairing and first-messa
 - `host/apps/desktop/`: desktop host for the shared Instrument UI, native input, local control, machine enrollment through the CLI, and window lifecycle.
 - `host/apps/cli/`: user, deployment, administration, and OS service-control commands.
 - `host/apps/machine/`: the `gsvd` machine driver, concrete tools, transfer ownership, reconnect, logging, and shutdown.
-- `host/helpers/`: separately supervised local transcription and gesture processes.
-- `host/crates/`: shared gateway transport, host configuration, Desktop IPC, gesture protocol contracts, and Windows SCM/process ownership primitives. `host/` owns their Cargo workspace and build artifacts.
+- `host/helpers/`: separately supervised local transcription process.
+- `host/crates/`: shared gateway transport, host configuration, Desktop IPC, and Windows SCM/process ownership primitives. `host/` owns their Cargo workspace and build artifacts.
 - `workers/adapters/`: platform-specific messaging workers and identity normalization.
 - `extension/`: browser-backed target and browser integration.
 - `workers/instances/`: optional cloud browser provisioning, profiles, human control, metering, and instance-owned cleanup.
@@ -222,7 +222,7 @@ gsv/
 ├── web/           # Instrument web UI and browser-side gateway integration
 ├── host/
 │   ├── apps/      # Rust CLI, Desktop, and machine applications
-│   ├── helpers/   # Isolated transcription and gesture processes
+│   ├── helpers/   # Isolated transcription process
 │   └── crates/    # Shared host transport, configuration, and IPC contracts
 ├── extension/     # Browser target
 ├── engineering/   # Detailed implementation and product guidance
@@ -253,7 +253,6 @@ Before Desktop Rust checks, build its shared frontend with `npm run gsv:build &&
 - Gateway: `cd workers/gateway && npx tsc --noEmit && npm run test:run`
 - Web: `cd web && npm run check && npm run test:run && npm run build`
 - Desktop and transcription helper: `cd host && cargo fmt --package desktop --package transcriber --check && cargo test --package desktop --package transcriber && cargo clippy --package desktop --package transcriber --all-targets -- -D warnings`
-- Gesture helper and protocol: `cd host && cargo fmt --package gestures --package gesture-protocol --check && cargo test --package gestures --package gesture-protocol && cargo clippy --package gestures --package gesture-protocol --all-targets -- -D warnings`
 - Public SDK: `npm run gsv:check && npm test --workspace packages/gsv`
 - CLI: `cd host && cargo fmt --package gsv --check && cargo test --package gsv`
 - Machine: `cd host && cargo fmt --package machine --check && cargo test --package machine`

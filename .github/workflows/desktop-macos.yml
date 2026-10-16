@@ -72,9 +72,8 @@ jobs:
         run: |
           app="release/GSV.app"
           plutil -lint "$app/Contents/Info.plist"
-          plutil -extract NSCameraUsageDescription raw "$app/Contents/Info.plist"
           plutil -extract NSMicrophoneUsageDescription raw "$app/Contents/Info.plist"
-          for binary in gsv-desktop gsv gsvd gsv-transcribe gsv-vision; do
+          for binary in gsv-desktop gsv gsvd gsv-transcribe; do
             test -x "$app/Contents/MacOS/$binary"
           done
           codesign --verify --deep --strict "$app"

@@ -638,6 +638,20 @@ replace_binaries() {
     done
 }
 
+# Gesture-vision helper and its model metadata
+retire_gesture_helper() {
+    local name target backup
+    for name in gsv-vision gsv-vision-LICENSE.apache-2.0 gsv-vision-PROVENANCE.md gsv-vision-THIRD_PARTY.md; do
+        target="$INSTALL_DIR/$name"
+        if as_installer test -e "$target"; then
+            backup="$INSTALL_DIR/.$name.backup.$$"
+            TARGETS+=("$name")
+            BACKUPS+=("$backup")
+            as_installer mv "$target" "$backup" || return 1
+        fi
+    done
+}
+
 remove_backups() {
     local backup
     for backup in "${BACKUPS[@]}"; do
@@ -744,11 +758,7 @@ main() {
         "gsvd-${PLATFORM}"
         "gsv-desktop-${PLATFORM}"
         "gsv-transcribe-${PLATFORM}"
-        "gsv-vision-${PLATFORM}"
         "gsv-transcribe-THIRD_PARTY.md"
-        "gsv-vision-LICENSE.apache-2.0"
-        "gsv-vision-PROVENANCE.md"
-        "gsv-vision-THIRD_PARTY.md"
         "gsv-transcribe-runtime-${PLATFORM}.tar.gz"
     )
     TARGETS=(
@@ -756,14 +766,10 @@ main() {
         "gsvd"
         "gsv-desktop"
         "gsv-transcribe"
-        "gsv-vision"
         "gsv-transcribe-THIRD_PARTY.md"
-        "gsv-vision-LICENSE.apache-2.0"
-        "gsv-vision-PROVENANCE.md"
-        "gsv-vision-THIRD_PARTY.md"
         "gsv-transcribe-runtime"
     )
-    EXECUTABLES=(1 1 1 1 1 0 0 0 0 0)
+    EXECUTABLES=(1 1 1 1 0 0)
 
     echo ""
     echo -e "  ${BOLD}Ship host installer${NC} · ${PLATFORM} · ${release_ref}"
@@ -796,7 +802,7 @@ main() {
     INSTALL_IN_PROGRESS=1
     stop_existing_service
 
-    if ! replace_binaries; then
+    if ! replace_binaries || ! retire_gesture_helper; then
         error "Could not replace the host binaries"
         exit 1
     fi
@@ -827,7 +833,7 @@ main() {
         if [ "${GSV_NO_MODIFY_PATH:-0}" != 1 ]; then export PATH="$INSTALL_DIR:$PATH"; fi
     fi
     stop_animation
-    success "Installed gsv, gsvd, Desktop, and local helpers to $INSTALL_DIR"
+    success "Installed gsv, gsvd, Desktop, and the local voice helper to $INSTALL_DIR"
     echo ""
     if [ "$INSTALL_DIR_SOURCE" = "default" ] && [ "$shell_needs_path" -eq 1 ]; then
         echo "  Open a new shell, or run now: export PATH=\"\$HOME/.gsv/bin:\$PATH\""

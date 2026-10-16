@@ -3,12 +3,12 @@
 Releases include `gsv-desktop-darwin-arm64.zip` for Apple Silicon and
 `gsv-desktop-darwin-x64.zip` for Intel. Unzip and move `GSV.app` to Applications.
 The app displays as Ship; its on-disk name stays `GSV.app` so updates replace
-existing installations and keep Dock shortcuts working. The app contains the shared Instrument UI, CLI, machine daemon, voice and gesture
-helpers, and third-party notices. macOS 12 or later is required.
+existing installations and keep Dock shortcuts working. The app contains the shared Instrument UI, CLI, machine daemon, the voice
+helper, and third-party notices. macOS 12 or later is required.
 
 These builds are ad-hoc signed, without Developer ID or notarization. After the
 first blocked launch, use System Settings → Privacy & Security → Open Anyway.
-Microphone and camera access are requested only when enabled. Closing the window
+Microphone access is requested only when voice is enabled. Closing the window
 quits the app and stops its helpers; an installed `gsvd` service keeps running.
 
 From the repository root on a Mac, after installing JavaScript dependencies:
@@ -24,5 +24,4 @@ The script builds the shared frontend, includes the same-version host executable
 generates the icon, signs the bundle, verifies it, and creates a shareable ZIP.
 The release workflow uses this same packaging path.
 
-The speech model downloads on first use with checksum verification. Gesture
-models and the CPU inference runtime are embedded in `gsv-vision`.
+The speech model downloads on first use with checksum verification.

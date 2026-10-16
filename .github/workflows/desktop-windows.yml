@@ -55,6 +55,7 @@ jobs:
     env:
       CARGO_PROFILE_DEV_DEBUG: 0
       CARGO_PROFILE_TEST_DEBUG: 0
+      # Test, build and clippy share the same optimized C++ runtime on this runner.
       TRANSCRIBE_CMAKE_ARGS: '-UGGML_* -DGGML_CPU_ALL_VARIANTS=ON -DTRANSCRIBE_X86_CONSERVATIVE=ON'
     steps:
       - uses: actions/checkout@v4
@@ -78,9 +79,8 @@ jobs:
       CARGO_PROFILE_DEV_DEBUG: 0
       CARGO_PROFILE_TEST_DEBUG: 0
       CMAKE_BUILD_PARALLEL_LEVEL: 4
-      TRANSCRIBE_CMAKE_ARGS: '-UGGML_* -DGGML_CPU_ALL_VARIANTS=ON -DTRANSCRIBE_X86_CONSERVATIVE=ON'
       # Test, build and clippy share the same optimized C++ runtime on this runner.
-      GSV_VISION_CMAKE_DIR: ${{ github.workspace }}/host/target/gesture-native
+      TRANSCRIBE_CMAKE_ARGS: '-UGGML_* -DGGML_CPU_ALL_VARIANTS=ON -DTRANSCRIBE_X86_CONSERVATIVE=ON'
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -110,26 +110,22 @@ jobs:
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
       - name: Test Windows host and native helpers
         working-directory: host
-        run: cargo test --locked --package desktop-protocol --package desktop-native --package desktop --package transcriber --package gestures --package gesture-protocol
+        run: cargo test --locked --package desktop-protocol --package desktop-native --package desktop --package transcriber
       - name: Build distribution
         id: distribution
         if: ${{ !cancelled() }}
         working-directory: host
-        run: cargo build --locked --package gsv --package machine --package desktop --package transcriber --package gestures
+        run: cargo build --locked --package gsv --package machine --package desktop --package transcriber
       - name: Check voice helper
         if: ${{ !cancelled() && steps.distribution.outcome == 'success' }}
         run: python host/scripts/check-transcriber.py host/target/debug/gsv-transcribe.exe
-      - name: Check gesture fixture parity
-        if: ${{ !cancelled() && steps.distribution.outcome == 'success' }}
-        shell: bash
-        run: scripts/vision-native/parity.sh --package gestures
       - name: Package Windows installer
         if: ${{ !cancelled() && steps.distribution.outcome == 'success' }}
         run: ./host/scripts/package-windows.ps1 -BinDir host/target/debug -Output release
       - name: Lint Windows host
         if: ${{ !cancelled() && steps.distribution.outcome == 'success' }}
         working-directory: host
-        run: cargo clippy --locked --package windows-host --package host-config --package daemon-protocol --package desktop-protocol --package desktop-native --package machine --package desktop --package transcriber --package gestures --package gesture-protocol --all-targets -- -D warnings
+        run: cargo clippy --locked --package windows-host --package host-config --package daemon-protocol --package desktop-protocol --package desktop-native --package machine --package desktop --package transcriber --all-targets -- -D warnings
       - name: Collect test binaries
         if: ${{ !cancelled() && steps.distribution.outcome == 'success' }}
         uses: actions/upload-artifact@v4
@@ -140,5 +136,4 @@ jobs:
             host/target/debug/gsvd.exe
             host/target/debug/gsv-desktop.exe
             host/target/debug/gsv-transcribe.exe
-            host/target/debug/gsv-vision.exe
             release/*

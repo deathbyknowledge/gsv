@@ -71,7 +71,7 @@ def check(case, animated=True, exit_code=0):
             (root / "bin").mkdir()
             (root / "installed").mkdir()
             original = b"#!/bin/sh\nprintf 'previous-version\\n'\n"
-            installed_names = ("gsv", "gsvd", "gsv-desktop", "gsv-transcribe", "gsv-vision")
+            installed_names = ("gsv", "gsvd", "gsv-desktop", "gsv-transcribe")
             for name in installed_names:
                 target = root / "installed" / name
                 target.write_bytes(original)

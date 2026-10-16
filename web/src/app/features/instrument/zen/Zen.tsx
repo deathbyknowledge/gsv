@@ -1233,7 +1233,7 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
               {nativeInput ? <NativeVoiceControls ref={voiceInput} prompt={promptRef} panelHost={nativePanels}
                 scope={voiceScope}
                 enabled={active && connected && pid !== null && pendingHil === null && !searchOpen && !context && !addOpen}
-                send={onSubmit} scroll={scrolling.move} />
+                send={onSubmit} />
                 : <BrowserVoiceControls ref={voiceInput} prompt={promptRef} client={client} pid={pid}
                   surfaceHost={voiceSurface} onActiveChange={setRecordingVoice}
                   scope={voiceScope}

@@ -13,8 +13,8 @@ embedded desktop frontend (`web/dist-desktop`).
   retained screen state. Signals update the existing state owners.
 - Rust owns window lifecycle, external browser navigation, private session
   persistence, attachment downloads, same-user CLI control and native input supervision.
-- `desktop-native` supervises `gsv-transcribe` and `gsv-vision`. Camera and audio
-  capture stay local. Helpers start only after explicit user action.
+- `desktop-native` supervises `gsv-transcribe`. Audio capture and live transcription
+  stay local. The helper starts only after explicit user action.
 - `gsvd` independently owns the machine connection. Desktop enrolls this computer
   through the same invitation and `gsv pair` path as Fleet. Closing Desktop never
   stops an installed daemon service.
@@ -110,7 +110,7 @@ credentials. This integration is present only in the desktop frontend.
 ## Presentation and input
 
 The app retains the tested Instrument presentation: layout zoom, retained views,
-intentional Fleet inspectors, gesture guide and hands-free tutorial. Status does
+intentional Fleet inspectors and local live dictation. Status does
 not write into the prompt. Input feedback updates its own small component;
 there is no periodic conversation render or gateway refetch loop.
 

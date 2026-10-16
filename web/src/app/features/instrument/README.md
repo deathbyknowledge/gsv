@@ -143,7 +143,7 @@ The composer puts send beside the draft and keeps one action row below: attachme
 and the current place on the left, platform voice controls on the right.
 The current place opens the existing places and live-browser
 list. Choosing a destination preserves the draft; Escape, an outside press or
-returning to the prompt closes the list. Desktop keeps its voice and hands-free
+returning to the prompt closes the list. Desktop keeps its voice
 controls in the same row.
 
 Sending moves the text and attachments into the conversation immediately and clears the composer. A small spinner beside the person's name remains until the send is acknowledged. A committed message arriving before its acknowledgement shares that row using the exact message identity, independently of its text. Failed sends retain their contents and selected place with inline retry and dismiss actions; retry reuses the original send identity and leaves a newer draft alone. Unacknowledged messages remain local to the retained Chat view and participate in warnings before its teardown, including reload and sign-out.
@@ -231,7 +231,7 @@ when the content returns to the same height; that layout adjustment must not be
 treated as the reader leaving the bottom. Hidden views disconnect these observers.
 
 Pointer selection leaves the transcript in place, including long messages and
-text selection. Wheel, touch and native gesture scrolling update the same selected
+text selection. Wheel and touch scrolling update the same selected
 message used by keyboard navigation: the message nearest the visible transcript's center,
 with the first/latest selected at either end. Its highlight stays visible while the prompt
 has focus; browse shortcuts become available again after leaving the input.
@@ -252,14 +252,6 @@ All spinner sizes keep a square layout box. Their glyphs use fixed Departure
 Mono metrics and the matching projection, then scale uniformly inside that box;
 small indicators do not lay out their text at roughly one-pixel font sizes.
 
-The native gesture guide shows one hand animation at a time through the shared
-ASCII scene host. Select a command to see its hold and fist reset; alternative
-finger combinations include the thumb. Both-fist and scrolling examples show
-both hands. The guide does not start sensors or invoke commands. It runs only
-while visible, supports pause and reduced motion, and caches its small finite
-glyph loops as frames are first displayed, without blurred shadows or a bulk
-render on opening.
-
 Web Zen offers record, stop and cancel when no native input provider is present.
 Recording replaces the prompt's presentation with a live waveform: square bars,
 the Instrument accent colour, and quiet text actions. The draft remains mounted
@@ -276,23 +268,7 @@ hiding the tab, disconnecting and clearing the draft cancel capture or upload
 and fence late results. Voice input uses the composer's effective place from the
 first render, so loading the target list does not interrupt recording or transcription
 at the default cloud place. Failed uploads can retry the in-memory recording. Desktop retains its
-local continuous dictation and gesture controls.
-
-The guide uses an original 3D hand mesh with a shaped palm, independently curling
-fingers and an opposing thumb. It shares the ship's supersampled triangle raster,
-depth buffer, lighting, theme palettes and Departure Mono glyphs. Its 96×48 scene
-runs at 18 fps and turns once every 40 seconds around the vertical axis. Dragging
-horizontally holds the pose and orbits the whole scene around one vertical axis;
-the paired hands share a pivot between their palms and their connecting line
-follows that same rotation. Releasing resumes from that angle. The palm, wrist,
-thumb pad and knuckles retain volume from the side. Left/Right and Home provide
-keyboard rotation and reset. Manual turns also work while paused or with reduced
-motion. Each mounted lesson keeps at most
-128 recent frames, and a theme change replaces the cached palette. The hand scene
-owns articulation and rotation; the shared raster owns projection and shading.
-Interaction invalidates the glyph host directly, coalesced to one animation frame,
-without rerendering the guide or conversation. Gesture recognition remains
-independent of these illustrations.
+local continuous dictation and microphone selection.
 
 Before a remote command starts, its session UUID is saved in the per-tab journal. If storage fails, the command does not launch. `shell.exec` registers that identity before execution, so a reload before the initial response arrives can recover by polling the saved ID. Initial machine acknowledgements leave output for the first poll. Recovery never resubmits the command; older daemons reject this start mode before execution and show an update instruction.
 
