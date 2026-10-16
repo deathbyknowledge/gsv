@@ -178,20 +178,26 @@ describe("managed outbound mail delivery", () => {
     if (expected === "accepted") expect(fixture.send).toHaveBeenCalledWith(expect.objectContaining({ from }));
   });
 
-  it.each([false, true])("rechecks a pinned sender after a domain change (handle changed: %s)", async (changedHandle) => {
-    const installationId = `installation_outbound_alias_retry_${changedHandle}`;
+  it.each([
+    { primary: "gsv.space", promoted: "ship.space", changedHandle: false },
+    { primary: "gsv.space", promoted: "ship.space", changedHandle: true },
+    { primary: "ship.space", promoted: "fleet.example", changedHandle: false },
+  ])("rechecks the pinned owner from $primary to $promoted (handle changed: $changedHandle)", async ({ primary, promoted, changedHandle }) => {
+    const installationId = `installation_outbound_alias_retry_${crypto.randomUUID()}`;
     const stub = env.MAIL_INSTALLATIONS.getByName(installationId);
     const fixture = outboundAdmissionFixture(installationId, "active");
+    fixture.bindings.MAIL_DOMAIN = primary;
+    fixture.bindings.MAIL_SENDING_DOMAINS = JSON.stringify(["gsv.space"]);
     fixture.claimOutboundMail.mockRejectedValueOnce(new Error("temporary claim failure"));
     await runInDurableObject(stub, async (_instance, state) => {
       const value = reference("outbound-domain-alias-retry");
       const before = new MailInstallation(state, fixture.bindings);
       await before.deliverOutbound(context(installationId), value);
       expect(deliveryRows(state)).toEqual([expect.objectContaining({
-        expected_from: "hank@gsv.space", state: "claiming",
+        expected_from: `hank@${primary}`, state: "claiming",
       })]);
 
-      fixture.bindings.MAIL_DOMAIN = "ship.space";
+      fixture.bindings.MAIL_DOMAIN = promoted;
       fixture.bindings.MAIL_SENDING_DOMAINS = JSON.stringify(["gsv.space"]);
       if (changedHandle) fixture.resolveInstallation.mockResolvedValue({ ...fixture.active, handle: "other" });
       state.storage.sql.exec(
@@ -201,7 +207,7 @@ describe("managed outbound mail delivery", () => {
       const after = new MailInstallation(state, fixture.bindings);
       await after.alarm();
       expect(deliveryRows(state)).toEqual([expect.objectContaining({
-        expected_from: "hank@gsv.space",
+        expected_from: `hank@${primary}`,
         state: changedHandle ? "failed" : "accepted",
         error_code: changedHandle ? "sender_identity_changed" : null,
       })]);

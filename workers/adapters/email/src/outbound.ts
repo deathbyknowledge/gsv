@@ -286,7 +286,9 @@ export class OutboundDeliveryCoordinator {
     if (reserved.expected_from === null) {
       reserved = this.pinExpectedFrom(reference, expectedFrom, reserved.claim_attempts);
     }
-    if (reserved.expected_from === null || !allowedSenders.has(reserved.expected_from)) {
+    // The pinned address fences the owner handle. The immutable draft's own
+    // sender domain is checked against the current allowlist after claiming it.
+    if (reserved.expected_from?.split("@", 1)[0] !== expectedFrom.split("@", 1)[0]) {
       this.setTerminal(reference, "failed", "sender_identity_changed");
       await this.notify(this.requireByReference(reference));
       return;
