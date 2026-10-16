@@ -23,7 +23,7 @@ import type { RouteOrigin } from "./routing";
 import type { KernelConnection, KernelConnectionState } from "./connection";
 import type { ShellSessionStore } from "./shell-sessions";
 import type { ShellExecResult } from "@humansandmachines/gsv/protocol";
-import { jsonObjectSchema } from "@humansandmachines/gsv/protocol";
+import { cancelBinaryBody, jsonObjectSchema } from "@humansandmachines/gsv/protocol";
 import { authorizeNestedOperation, nestedToolOwner } from "./tool-approval";
 import { dispatchGsvTarget } from "../drivers/native/target";
 import type { FsDeviceTransport } from "../drivers/native/fs";
@@ -325,7 +325,12 @@ async function dispatchLocal(
   if (ctx.approvedTarget) {
     return rejectBeforeDispatch(frame, 403, "Approval target changed before dispatch; retry the operation");
   }
-  const nativeContext = { ...ctx, toolOwner: nestedToolOwner(ctx) };
+  const ownedShellSessions = new Map<string, string>();
+  const nativeContext: KernelContext = {
+    ...ctx,
+    toolOwner: nestedToolOwner(ctx),
+    onShellSessionStart: (sessionId, targetId) => ownedShellSessions.set(sessionId, targetId),
+  };
   const requestTarget: NetFetchDeviceTransport["requestTarget"] = async (targetId, call, args, options) => {
     let signal = options?.signal ?? nativeContext.requestSignal;
     if (options?.ttlMs !== undefined) {
@@ -396,6 +401,25 @@ async function dispatchLocal(
         fsTransport,
         netFetchTransport: { requestTarget },
         request: (request, signal) => deps.request(request, nativeContext, signal),
+        cancelOwnedShellSession: async (sessionId, signal) => {
+          signal.throwIfAborted();
+          const target = ownedShellSessions.get(sessionId);
+          if (!target) throw new Error("Shell session is not owned by this native operation");
+          if (deps.shellSessions.get(sessionId)?.targetId !== target) {
+            throw new Error("Owned shell session is no longer available on its original target");
+          }
+          // Cleanup can stop admitted work after its caller ends; it cannot start new work.
+          const cancellation = (async () => {
+            const response = await deps.request({ type: "req", id: crypto.randomUUID(), call: "shell.cancel", args: { sessionId, target } }, {
+              ...nativeContext, requestSignal: signal, toolOwner: undefined, processRunId: undefined, onShellSessionStart: undefined,
+            }, signal);
+            if (!response.ok) throw new Error(response.error.message);
+            await cancelBinaryBody(response.body, "Shell cancellation returns metadata only");
+          })();
+          // The outer request may already have returned on abort; its cleanup still owns this I/O.
+          nativeContext.defer(cancellation.catch(() => {}));
+          await cancellation;
+        },
       });
     }
 
@@ -985,6 +1009,7 @@ async function routeToTarget(
     }
     // Persist the target before any outbound work. This check and write cannot interleave.
     deps.shellSessions.rememberDeviceSession(sessionId, target.targetId);
+    ctx.onShellSessionStart?.(sessionId, target.targetId);
   }
 
   const ttlMs = routedFrameTtlMs(frame);

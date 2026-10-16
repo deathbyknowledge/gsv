@@ -97,6 +97,8 @@ export type KernelContext = {
   approvedTarget?: ProcessApprovalTarget;
   requestId?: string;
   requestSignal?: AbortSignal;
+  /** Internal admission receipt for a native operation's newly claimed shell session. */
+  onShellSessionStart?: (sessionId: string, targetId: string) => void;
   callerOwnerUid?: number;
   /** The ledger of dispatched syscalls; absent only in contexts built for tests. */
   ledger?: LedgerStore;
