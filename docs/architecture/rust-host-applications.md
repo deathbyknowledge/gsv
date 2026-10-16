@@ -175,7 +175,6 @@ filesystem writes or add another gateway connection.
 `desktop-native` supervises `gsv-transcribe` for local capture and speech
 inference. Audio stays in the helper, which starts only when explicitly enabled.
 The frontend acknowledges pushed text updates; it does not poll conversation state.
-Desktop ships no gesture helper and requests no camera permission.
 
 Linux transcription releases bundle OpenBLAS and use GNU ld to register its
 native initializers. The artifact check rejects unconverted legacy constructor

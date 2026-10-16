@@ -47,7 +47,7 @@ Desktop's **voice** control uses its local transcription helper. Choose **listen
 to dictate, select a microphone when needed, and choose **pause** to stop while
 keeping the draft. Enter finishes the current segment, sends it, and keeps
 listening. Editing dictated text stops dictation so later partials cannot undo
-your correction. There are no camera or gesture controls.
+your correction.
 
 Audio processing stays on your computer. The first use downloads and verifies
 the speech model; subsequent dictation does not need a cloud transcription

@@ -243,10 +243,9 @@ gsv desktop
 `gsv desktop status`, `new`, and `use PID` use same-user local IPC. Desktop
 connects to the gateway as a user; it does not route chat through `gsvd`.
 The installer places `gsv-transcribe` and its runtime beside Desktop so it can
-supervise the matching voice helper. Full Desktop upgrades remove the retired
-`gsv-vision` executable and its license sidecars; a failed upgrade restores them
-with the previous installation. A Windows headless update leaves an existing
-Desktop installation alone.
+supervise the matching voice helper. A failed upgrade restores the previous
+installation. A Windows headless update leaves an existing Desktop installation
+alone.
 
 Desktop uses the same Instrument source as the web UI. It is the only desktop
 implementation shipped by releases. Launching opens the installed version;
