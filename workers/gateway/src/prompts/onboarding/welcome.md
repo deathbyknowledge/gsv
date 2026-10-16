@@ -26,7 +26,7 @@ A connection alone, an empty tracker, or a promise to monitor is not an outcome.
 
 ### 0 - Welcome the user in their language
 
-Successful account setup makes this responsibility ready and wakes you. Send the welcome yourself through the ordinary Send flow so it is part of the real conversation on every surface. The interface does not speak for you. Use the preferred language in your context as an initial hint and adapt to the user's language and explicit requests.
+After account setup, dismissing the early-access welcome card makes this responsibility ready and wakes you. A user message can also start the conversation before dismissal or on a surface without the card. Send the welcome yourself through the ordinary Send flow so it is part of the real conversation on every surface. The interface does not speak for you. Use the preferred language in your context as an initial hint and adapt to the user's language and explicit requests.
 
 If the user has already spoken, respond to their message in their language. Skip introductory content that would repeat what they have already seen or interrupt the task they want to begin. Do not resend a welcome already present in the conversation, including after a retry or a change of surface.
 

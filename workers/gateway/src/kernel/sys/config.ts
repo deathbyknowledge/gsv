@@ -28,6 +28,7 @@ import type {
 import { USER_OVERRIDABLE_PREFIXES } from "../config";
 import { canOwnerRunAsAccount } from "../account-access";
 import { canReadConfigKey } from "../config-access";
+import { activateInitialOnboardingResponsibility } from "../onboarding-responsibility";
 
 function parseUserConfigKey(key: string): { uid: number; sub: string } | null {
   const match = /^users\/(\d+)\/(.+)$/.exec(key);
@@ -123,11 +124,12 @@ export function handleSysConfigGet(
   return { entries };
 }
 
-export function handleSysConfigSet(
+export async function handleSysConfigSet(
   args: SysConfigSetArgs,
   ctx: KernelContext,
-): SysConfigSetResult {
-  const uid = requirePrincipal(ctx).account.uid;
+): Promise<SysConfigSetResult> {
+  const principal = requirePrincipal(ctx);
+  const uid = principal.account.uid;
 
   if (!args.key) {
     throw new Error("sys.config.set requires a key");
@@ -167,5 +169,10 @@ export function handleSysConfigSet(
   }
 
   ctx.config.set(args.key, value);
+  if (principal.kind === "human" && !ctx.processId && uid >= 1000
+    && args.key === `users/${uid}/ui/welcome_card_seen` && value === "1") {
+    activateInitialOnboardingResponsibility(uid, ctx.responsibilities);
+    await ctx.reconcileResponsibilityWake(uid);
+  }
   return { ok: true };
 }

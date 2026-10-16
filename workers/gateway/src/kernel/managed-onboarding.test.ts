@@ -80,8 +80,8 @@ describe.each(["authorization", "pending-recovery", "recovery", "activation"] as
 });
 
 
-describe("welcome activation", () => {
-  it.each(["success", "before-activation", "after-activation"] as const)("starts only after Accounts activation, including %s recovery", async (failure) => {
+describe("welcome deferral", () => {
+  it.each(["success", "before-activation", "after-activation"] as const)("keeps Ship dormant after Accounts activation, including %s recovery", async (failure) => {
     await runWithRealKernelSql(async (_sql, storage) => {
       const responsibilities = new ResponsibilityStore(storage);
       const seed = ensureInitialOnboardingResponsibility(1000, responsibilities).record;
@@ -126,8 +126,9 @@ describe("welcome activation", () => {
         await onboarding.handleManagedSysSetup(connection, frame, context);
       }
       expect(sendOk).toHaveBeenCalledOnce();
-      expect(responsibilities.get(1000, seed.id)?.state).toBe("open");
-      expect(reconcile).toHaveBeenCalledExactlyOnceWith(1000);
+      expect(responsibilities.get(1000, seed.id)?.state).toBe("waiting");
+      expect(responsibilities.nextWakeAt(1000, Date.now())).toBeNull();
+      expect(reconcile).not.toHaveBeenCalled();
       expect(onboarding.pendingManagedOnboarding).toBeUndefined();
     });
   });

@@ -27,7 +27,7 @@ const WELCOME_CONTRACT: OnboardingContract = {
     responsibilityType: "onboarding.initial",
     instructions: welcomeBrief.trim(),
   },
-  blocker: "Waiting for account setup to complete.",
+  blocker: "Waiting for the user to dismiss the welcome card.",
 };
 
 /**

@@ -71,14 +71,16 @@ The Kernel owns the conversation directory and membership:
 
 - **Ship** is the stable conversation with the user's personal intelligence. Web, Desktop, CLI,
   Telegram, Slack, and other private surfaces all contribute to the same Ship message stream.
-  The current personal Process is replaceable; the Ship conversation is not. Successful account
-  setup activates the initial onboarding responsibility through the existing `r12y.ready` wake path.
+  The current personal Process is replaceable; the Ship conversation is not. After successful account
+  setup, dismissing the early-access welcome card activates the initial onboarding responsibility
+  through the existing `r12y.ready` wake path. Setup alone leaves Ship idle while the card is open.
   Ship sends a short welcome using its owner's language preference, initially detected from the
   browser. This is a canonical Message, visible across clients and available in the Process history;
   the UI adds no scripted messages, typing timers, or delayed second introduction. Ordinary run
   activity shows generation, and the composer remains usable. If the user speaks first, Ship follows
   that message and its language, skipping redundant introduction. After greeting, Ship waits with
-  no automatic onboarding reminder. Setup retries do not reopen a welcome already handled.
+  no automatic onboarding reminder. Setup and dismissal retries do not reopen a welcome already handled.
+  A user message can start the conversation before dismissal, including on surfaces without the card.
 - **Work** is a conversation handled by one explicit interactive work Process. Opening Work does not
   replace Ship or redefine the personal intelligence.
 - **Group** is tied to one normalized adapter surface and can retain multiple account and Process

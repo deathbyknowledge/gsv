@@ -8,6 +8,9 @@ const WELCOME_SEEN = "ui/welcome_card_seen";
 export function WelcomeCard() {
   const { client, connected } = useGateway();
   const [ownerUid, setOwnerUid] = useState<number | null>(null);
+  const [dismissing, setDismissing] = useState(false);
+  const [dismissError, setDismissError] = useState(false);
+  const pendingDismissal = useRef(false);
   const checked = useRef(false);
 
   useEffect(() => {
@@ -33,24 +36,34 @@ export function WelcomeCard() {
     return () => { cancelled = true; };
   }, [client, connected]);
 
-  const dismiss = () => {
-    if (ownerUid === null) return;
+  const dismiss = async () => {
+    if (ownerUid === null || pendingDismissal.current) return;
     const key = `users/${ownerUid}/${WELCOME_SEEN}`;
-    setOwnerUid(null);
-    void client.sys.config.set({ key, value: "1" }).catch((cause: unknown) => {
+    pendingDismissal.current = true;
+    setDismissing(true);
+    setDismissError(false);
+    try {
+      await client.sys.config.set({ key, value: "1" });
+      setOwnerUid(null);
+    } catch (cause) {
       console.error("Could not save the welcome card state", cause);
-    });
+      setDismissError(true);
+    } finally {
+      pendingDismissal.current = false;
+      setDismissing(false);
+    }
   };
 
   if (ownerUid === null) return null;
   return <aside class="welcome-card" role="dialog" aria-labelledby="welcome-card-title">
-    <button type="button" class="welcome-card-close" aria-label="Dismiss welcome" onClick={dismiss}>×</button>
+    <button type="button" class="welcome-card-close" aria-label="Dismiss welcome" disabled={dismissing} onClick={dismiss}>×</button>
     <h2 id="welcome-card-title">Welcome to your Ship!</h2>
     <p>I'm Kawah, one of the founders of Ship. Steve, Jessica and I have been building this for the past months, and we're really happy you're here!</p>
     <p>Ship is still early, so you might run into some rough edges. If something breaks, feels confusing, or makes you think "I wish it could…", we'd love to hear from you.</p>
     <p>You can use the Feedback button in the top anytime, or talk to us directly on <a href="https://discord.gg/hy9ExJJFvn" target="_blank" rel="noopener noreferrer">Discord</a> (and see Steve's dog).</p>
     <p>Thanks for being one of the first. It means a lot to us!</p>
     <p>Kawah :)</p>
-    <button type="button" class="welcome-card-try" onClick={dismiss}>Try it out!</button>
+    {dismissError && <p role="alert">Couldn't finish dismissing the welcome. Please try again.</p>}
+    <button type="button" class="welcome-card-try" disabled={dismissing} onClick={dismiss}>Try it out!</button>
   </aside>;
 }

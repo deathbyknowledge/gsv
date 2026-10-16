@@ -86,7 +86,7 @@ describe("initial onboarding responsibility", () => {
     for (const rule of guidance) expect(welcomeBrief).toMatch(rule);
   });
 
-  it("keeps the welcome dormant until setup succeeds", async () => {
+  it("keeps the welcome dormant until the user dismisses the card", async () => {
     await runWithRealKernelSql((_sql, storage) => {
       const responsibilities = new ResponsibilityStore(storage);
       const first = ensureInitialOnboardingResponsibility(1000, responsibilities, 1_000);
@@ -100,7 +100,7 @@ describe("initial onboarding responsibility", () => {
         assignee: { kind: "ship" },
         state: "waiting",
         priority: "high",
-        blocker: "Waiting for account setup to complete.",
+        blocker: "Waiting for the user to dismiss the welcome card.",
         details: { responsibilityType: "onboarding.initial" },
       });
       const brief = first.record.details?.instructions;

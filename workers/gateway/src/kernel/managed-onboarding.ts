@@ -31,7 +31,6 @@ import {
   type KernelConnectionState as ConnectionState,
 } from "./connection";
 import type { Kernel } from "./do";
-import { activateInitialOnboardingResponsibility } from "./onboarding-responsibility";
 import { emitTelemetry, telemetryErrorTypeSchema } from "@humansandmachines/gsv/telemetry";
 import {
   MANAGED_ONBOARDING_COMPLETION_KEY,
@@ -201,7 +200,6 @@ async handleManagedSysSetup(
         ) {
           throw new Error("Installation onboarding completion mismatch");
         }
-        await this.activateWelcome(data.user.uid);
         this.pendingManagedOnboarding = undefined;
         this.host.ctx.storage.kv.delete(MANAGED_ONBOARDING_COMPLETION_KEY);
         this.host.transport.sendOk(connection, frame.id, data);
@@ -294,15 +292,9 @@ async recoverActivatedManagedSetup(
     } catch {
       return null;
     }
-    await this.activateWelcome(data.user.uid);
     this.pendingManagedOnboarding = undefined;
     this.host.ctx.storage.kv.delete(MANAGED_ONBOARDING_COMPLETION_KEY);
     return data;
-  }
-
-private async activateWelcome(ownerUid: number): Promise<void> {
-    activateInitialOnboardingResponsibility(ownerUid, this.host.responsibilities);
-    await this.host.responsibilityRuntime.reconcileResponsibilityWake(ownerUid);
   }
 
 managedOnboardingService(): GatewayEnv["INSTALLATION_DIRECTORY"] | null {

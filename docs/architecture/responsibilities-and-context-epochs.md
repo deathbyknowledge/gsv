@@ -126,7 +126,7 @@ sets `nextCheckAtMs` to 24 hours later if no future check remains. An earlier fu
 deadline brings that default forward. An explicit check time is preserved, and
 `nextCheckAtMs: null` explicitly clears the check. Metadata-only edits do not postpone
 it. System producers keep their own wake conditions. Initial onboarding waits for
-account setup to complete, then becomes actionable through the ordinary wake path.
+the owner to dismiss the early-access welcome card after account setup, then becomes actionable through the ordinary wake path.
 After greeting, Ship explicitly clears the next check while waiting for the user.
 
 A due Ship check is actionable even while a blocker remains. The review event directs
@@ -238,10 +238,14 @@ enabled or disabled per owner without changing the subsystem's underlying data.
 System-owned producers use the same ledger contract:
 
 - Provisioning a new personal intelligence creates one high-priority initial
-  onboarding responsibility titled "Welcome to gsv". It stays dormant until Accounts
-  confirms successful setup, then the Kernel activates the untouched seed and reconciles
-  its ordinary wake schedule. Activation recovery follows the same path; retries leave
-  already handled or edited records alone. Ship sends its own welcome in the owner's
+  onboarding responsibility titled "Welcome to gsv". It stays dormant after Accounts
+  confirms successful setup. When the signed-in owner dismisses the early-access card,
+  `sys.config.set` records `users/<uid>/ui/welcome_card_seen = 1`, activates the untouched
+  seed and reconciles its ordinary wake schedule before acknowledging the dismissal.
+  Repeated dismissal retries reconciliation without reopening handled or edited records.
+  Root, agent and other-account config writes do not represent the owner's dismissal.
+  Direct user messages remain available before dismissal and on surfaces without the card.
+  Ship sends its own welcome in the owner's
   language and waits for a response without an automatic reminder. The responsibility
   is present in Ship's first context epoch, rendered like any Ship assignment. Its details
   carry the onboarding brief, the Markdown prompt file
