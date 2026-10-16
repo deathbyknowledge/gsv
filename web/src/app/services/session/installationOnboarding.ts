@@ -1,5 +1,7 @@
 const STORAGE_ONBOARDING_TOKEN = "gsv.ui.installation-onboarding.v1";
+const STORAGE_SIGNUP_ARRIVAL = "gsv.ui.installation-onboarding.signup.v1";
 const ONBOARDING_PATH = "/onboarding";
+const SIGNUP_ARRIVAL_PARAM = "signup";
 const ONBOARDING_TOKEN_PATTERN = /^onboard_[A-Za-z0-9_-]{32,128}$/;
 
 export function readInstallationOnboardingToken(): string | null {
@@ -24,9 +26,31 @@ export function readInstallationOnboardingToken(): string | null {
   }
 }
 
+/** True when the owner was sent here straight from signup. It is a presentation hint, not authority. */
+export function readSignupArrival(): boolean {
+  if (window.location.pathname === ONBOARDING_PATH) {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get(SIGNUP_ARRIVAL_PARAM) === "1") {
+      try {
+        window.sessionStorage.setItem(STORAGE_SIGNUP_ARRIVAL, "1");
+      } catch {}
+      params.delete(SIGNUP_ARRIVAL_PARAM);
+      const search = params.toString();
+      window.history.replaceState(window.history.state, "", `${window.location.pathname}${search ? `?${search}` : ""}${window.location.hash}`);
+      return true;
+    }
+  }
+  try {
+    return window.sessionStorage.getItem(STORAGE_SIGNUP_ARRIVAL) === "1";
+  } catch {
+    return false;
+  }
+}
+
 export function clearInstallationOnboardingToken(): void {
   try {
     window.sessionStorage.removeItem(STORAGE_ONBOARDING_TOKEN);
+    window.sessionStorage.removeItem(STORAGE_SIGNUP_ARRIVAL);
   } catch {}
   if (window.location.pathname === ONBOARDING_PATH) {
     removeFragment();

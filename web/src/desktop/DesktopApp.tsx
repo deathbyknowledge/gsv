@@ -47,7 +47,8 @@ function ConnectedDesktop({ session, storage, mock, onError, onQuit, onResumeSet
       if (new URL(url).origin === accountsOrigin) onResumeSetup();
       else void openInBrowser(url).catch(() => onError("Could not open your browser."));
     }, onboarding: token ? {
-      token, discard: () => clearDesktopOnboardingToken(storage), complete: () => completeDesktopOnboarding(storage),
+      // Desktop only issues a token through its own welcome flow; operator links open in the browser.
+      token, signup: true, discard: () => clearDesktopOnboardingToken(storage), complete: () => completeDesktopOnboarding(storage),
     } : false });
     // The service is created while App renders. Defer the parent's presentation update.
     queueMicrotask(() => setService(instance));
@@ -118,7 +119,7 @@ export function DesktopApp() {
       } };
       setSession(value);
       setResumeSetup(!mock && !!value.values[ONBOARDING_KEY]);
-    }).catch(() => setError("Open this frontend with GSV Desktop."));
+    }).catch(() => setError("Open this frontend with Ship Desktop."));
   }, [mock]);
 
   useEffect(() => {
@@ -145,7 +146,7 @@ export function DesktopApp() {
   return <BrowserNavigationProvider navigate={openInBrowser}><div class="desktop-root">
     <dialog ref={confirmationDialog} class="desktop-confirm" role="alertdialog" aria-label="Discard unsent work?"
       onCancel={(event) => { event.preventDefault(); cancel(); }} onKeyDown={(event) => event.stopPropagation()}>
-      <p>Quit GSV? Unsent work will be discarded.</p>
+      <p>Quit Ship? Unsent work will be discarded.</p>
       <button type="button" onClick={cancel}>keep working</button>
       <button type="button" onClick={quit}>quit</button>
     </dialog>
