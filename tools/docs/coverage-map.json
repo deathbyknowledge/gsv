@@ -431,6 +431,7 @@
       ],
       "docs": [
         "docs/how-to/cloud-browsers.md",
+        "docs/how-to/cloud-computers.md",
         "docs/reference/syscalls.md"
       ],
       "manual": [

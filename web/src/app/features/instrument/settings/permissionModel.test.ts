@@ -33,6 +33,7 @@ describe("Settings approval labels", () => {
     expect(options.targets.find((option) => option.value === targetOptionValue("machine:123"))?.label).toBe("My MacBook");
     expect(options.targets.find((option) => option.value === targetOptionValue("gsv"))?.label).toBe("Ship computer");
     expect(options.targets.find((option) => option.value === targetOptionValue({ route: "instance", platform: "browser" }))?.label).toBe("Cloud browsers");
+    expect(options.targets.find((option) => option.value === targetOptionValue({ route: "instance", platform: "linux" }))?.label).toBe("Cloud computers");
     expect(options.targets.find((option) => option.value === "")?.label).toBe("All machines");
   });
 

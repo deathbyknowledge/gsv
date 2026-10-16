@@ -21,7 +21,8 @@ const recordedCloudflare = {
     recorded.workers.push({ id, props });
     return Effect.succeed({ workerName: props.name ?? id, url: `https://${id}.invalid`,
       durableObjectNamespaces: { Kernel: "1".repeat(32), Process: "2".repeat(32), Conversation: "3".repeat(32),
-        Repository: "4".repeat(32), InferenceExecutor: "5".repeat(32), TelegramInstallation: "6".repeat(32), WebSearchInstallation: "7".repeat(32) },
+        Repository: "4".repeat(32), InferenceExecutor: "5".repeat(32), TelegramInstallation: "6".repeat(32), WebSearchInstallation: "7".repeat(32),
+        InstanceCoordinator: "8".repeat(32), ComputerInstance: "9".repeat(32) },
       bind(bindingId: string, input: Omit<RecordedBinding, "id">) { recorded.bindings.push({ id: bindingId, ...input }); return Effect.void; } });
   },
   D1: { Database(_id: string, props: typeof recorded.databases[number]) { recorded.databases.push(props); return Effect.succeed({ databaseId: "fixture-database" }); } },
@@ -308,11 +309,32 @@ describe("public operator composition", () => {
     const instances = await run(dependencies.Cloudflare.Worker("Instances", { name: "instances-provider", main: "instances.js" }));
     await expect(run(GsvDeployment({ ...input, services: { instances } }, dependencies))).rejects.toThrow("owned lifecycle");
     await run(GsvDeployment({ ...input, services: { instances, instancesLifecycle: {
-      worker: instances, entrypoint: "InstanceLifecycleEntrypoint", namespaces: [{ className: "InstanceCoordinator", kind: "instance-installation" }],
+      worker: instances, entrypoint: "InstanceLifecycleEntrypoint", namespaces: [
+        { className: "InstanceCoordinator", kind: "instance-installation" },
+        { className: "ComputerInstance", kind: "instance-computer" },
+      ],
     } } }, dependencies));
     expect(recorded.workers.find(worker => worker.id === "FixtureGateway")?.props.env?.INSTANCES).toBe(instances);
     expect(recorded.bindings).toContainEqual({ id: "FixtureDirectoryInstancesDeletionBinding", bindings: [{ type: "service",
       name: "DELETION_OWNER_INSTANCES", service: "instances-provider", entrypoint: "InstanceLifecycleEntrypoint", props: { authority: "installation-deletion" } }] });
+    const discovery = recorded.bindings.find(binding => binding.id === "FixtureDirectoryDeletionDiscoveryBinding");
+    expect(await run(Output.evaluate(discovery?.bindings[0].json, {}))).toMatchObject({
+      ["8".repeat(32)]: { ownerId: "instances", kind: "instance-installation" },
+      ["9".repeat(32)]: { ownerId: "instances", kind: "instance-computer" },
+    });
+  });
+
+  it("rejects incomplete or unrelated instance namespace ownership before creating resources", async () => {
+    const instances = await run(dependencies.Cloudflare.Worker("Instances", { name: "instances-provider", main: "instances.js" }));
+    recorded.workers.length = 0;
+    for (const namespaces of [[], [{ className: "", kind: "instance-computer" }], [{ className: "ComputerInstance", kind: "kernel" }]]) {
+      // SAFETY: These intentionally invalid namespace declarations exercise runtime configuration validation.
+      const instancesLifecycle = { worker: instances, entrypoint: "InstanceLifecycleEntrypoint", namespaces } as NonNullable<GsvDeploymentProps["services"]>["instancesLifecycle"];
+      await expect(run(GsvDeployment({ ...input, services: { instances, instancesLifecycle } }, dependencies)))
+        .rejects.toThrow("valid instance namespace ownership");
+      expect(recorded.workers).toEqual([]);
+      expect(recorded.databases).toEqual([]);
+    }
   });
 
   it("rejects incomplete search ownership before creating deployment resources", async () => {
