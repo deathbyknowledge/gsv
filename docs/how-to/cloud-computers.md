@@ -26,6 +26,10 @@ Use the returned `targetId` with ordinary tools. For example, a Shell call with
 `target` set to that ID can run `cd /workspace && node --version`.
 Read, Write, Edit and filesystem transfers use that target too.
 
+In Chat, choose the ready computer from the place selector to use it for the
+next message or command. Fleet opens its ordinary inspector for commands and
+files. The live browser viewer is only for browser instances.
+
 For a recoverable command, use `shell.exec` with `start: true` and a fresh,
 persisted `sessionId`. Poll that session through `shell.exec`, or stop it with
 `shell.cancel`. A disconnected request does not restart or erase a detached

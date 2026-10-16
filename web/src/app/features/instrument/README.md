@@ -177,6 +177,10 @@ sign-in request shows a completion action. The Fleet browser action reuses the
 account's current instance, and saved logins are automatic rather than exposed
 as profile setup. Stopped instances leave the ordinary place list.
 
+Cloud Linux computers use the ordinary place inspector and command selection.
+Only browser instances open the live viewer; a starting computer becomes
+selectable for commands once it is ready.
+
 The Fleet overview uses the full width with modest side gutters on wide screens.
 Browsing with j/k or the arrow keys only
 moves browser focus: it does not change inspection, mount detail queries or read

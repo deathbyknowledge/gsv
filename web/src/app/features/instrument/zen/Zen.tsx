@@ -509,7 +509,7 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
     const row = fleetReferenceRow(reference ?? null);
     const target = row?.startsWith("target:")
       ? targetsQuery.data?.find(target => target.deviceId === row.slice(7)) : undefined;
-    if (browserControl.available && target?.instance && ["starting", "ready"].includes(target.instance.state)) {
+    if (browserControl.available && target?.kind === "browser" && target.instance && ["starting", "ready"].includes(target.instance.state)) {
       browserControl.open({ instanceId: target.instance.instanceId });
     } else navigateFleet(reference);
   }, [browserControl.available, browserControl.open, targetsQuery.data, navigateFleet]);
@@ -1253,7 +1253,7 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
             <ul class="zen-places" aria-label="Places and live browsers">
               {selectorPlaces.map((target) => {
                 const label = target.id === CLOUD_PLACE_ID ? CLOUD_PLACE_LABEL : target.label;
-                const viewBrowser = browserControl.available && target.instance && ["starting", "ready"].includes(target.instance.state);
+                const viewBrowser = browserControl.available && target.kind === "browser" && target.instance && ["starting", "ready"].includes(target.instance.state);
                 return (
                   <li key={target.id}>
                     <button type="button" class={`zen-place${cloudAlone ? " is-alone" : target.id === currentPlace.id ? " is-selected" : ""}`}
