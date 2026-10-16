@@ -327,7 +327,14 @@ describe("public operator composition", () => {
   it("rejects incomplete or unrelated instance namespace ownership before creating resources", async () => {
     const instances = await run(dependencies.Cloudflare.Worker("Instances", { name: "instances-provider", main: "instances.js" }));
     recorded.workers.length = 0;
-    for (const namespaces of [[], [{ className: "", kind: "instance-computer" }], [{ className: "ComputerInstance", kind: "kernel" }]]) {
+    for (const namespaces of [
+      [],
+      [{ className: "InstanceCoordinator", kind: "instance-installation" }],
+      [{ className: "ComputerInstance", kind: "instance-computer" }],
+      [{ className: "SameObject", kind: "instance-installation" }, { className: "SameObject", kind: "instance-computer" }],
+      [{ className: "", kind: "instance-computer" }],
+      [{ className: "ComputerInstance", kind: "kernel" }],
+    ]) {
       // SAFETY: These intentionally invalid namespace declarations exercise runtime configuration validation.
       const instancesLifecycle = { worker: instances, entrypoint: "InstanceLifecycleEntrypoint", namespaces } as NonNullable<GsvDeploymentProps["services"]>["instancesLifecycle"];
       await expect(run(GsvDeployment({ ...input, services: { instances, instancesLifecycle } }, dependencies)))
