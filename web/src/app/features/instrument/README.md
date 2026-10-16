@@ -1,6 +1,6 @@
 # Instrument surfaces
 
-Instrument is the default web UI at `/`. Its views use `/chat`, `/people`, `/fleet`, `/memory` and `/chat/settings`. Older `/zen` and `/zen/settings` links replace their address with the Chat routes while preserving query parameters, fragments and history state. The former desktop shell, console and standalone workspaces are retired; old deep links for those surfaces have no compatibility mapping. Login and `/onboarding` capabilities enter the same UI. Shared gateway and history logic lives under `app/services/`, with system types and model/approval logic under `app/domain/`. The design catalog and its retained examples load separately when opened.
+Instrument is the default web UI at `/`. Its views use `/chat`, `/people`, `/fleet`, `/memory` and `/chat/settings`. Older `/zen` and `/zen/settings` links replace their address with the Chat routes while preserving query parameters, fragments and history state. Login and `/onboarding` capabilities enter the same UI. Shared gateway and history logic lives under `app/services/`, with system types and model/approval logic under `app/domain/`. The design catalog and its retained examples load separately when opened.
 
 View navigation uses the shared app history service. User actions push distinct
 destinations; Back and Forward restore them without replacing the shared shell
@@ -355,7 +355,7 @@ Text actions are the default. Choose the style from the control's role and place
 - Use blocks for grouped selectors such as Settings sections, with equal sizes and centered labels, and for the main confirmation within a focused form. Opening Add MCP server is a text action; submitting the resulting form uses a block.
 - Destructive actions use red and appropriate confirmation independently of shape. A contextual delete and its inline confirmation can both be text actions.
 - Preserve semantic buttons or links, keyboard focus, disabled states and usable click areas. An unboxed control still needs a usable target.
-- Use named text controls rather than the retired dot-matrix icon library. Installation icons in `web/public/icons` are branding assets; functional graphics such as a shared cursor remain local to their owning view.
+- Use named text controls. Installation icons in `web/public/icons` are branding assets; functional graphics such as a shared cursor remain local to their owning view.
 
 Your profile opens in People by selecting your display name at the bottom of its
 left sidebar. It uses the same retained view and draft protection as conversations.

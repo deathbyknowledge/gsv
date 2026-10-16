@@ -1,9 +1,8 @@
 # Desktop ownership and release
 
 `host/apps/desktop` is the only desktop application. Its installed binary is
-`gsv-desktop`, its application name is GSV, and its bundle identity is
-`space.gsv.desktop`. The previous native UI and its rendering dependencies are
-removed. The shared Preact Instrument source builds both the browser UI and the
+`gsv-desktop`, its application name is Ship, and its bundle identity is
+`space.gsv.desktop`. The shared Preact Instrument source builds both the browser UI and the
 embedded desktop frontend (`web/dist-desktop`).
 
 ## Boundaries

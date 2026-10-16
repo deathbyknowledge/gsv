@@ -63,8 +63,8 @@ inference, Process ticks, and schedules. Suspending an installation does not
 erase data or recursively cancel work already admitted; durable work
 rechecks the gate before new admission and may resume after reactivation.
 
-All deployments require directory resolution. There is no singleton fallback,
-even when the binding is absent. Historical standalone data remains outside
+All deployments require directory resolution; a missing directory binding fails
+closed. Historical standalone data remains outside
 current routing; see the [retirement guide](../how-to/standalone-retirement.md).
 
 ## Setup and ownership

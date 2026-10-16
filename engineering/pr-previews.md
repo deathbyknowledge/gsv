@@ -12,7 +12,6 @@ and runs `alchemy deploy`; pushes update that same stack. Closing, merging or
 retargeting away from `main` runs `alchemy destroy` from `main`. Cleanup uses
 `pull_request_target` so closing a PR with merge conflicts also triggers it.
 Alchemy owns state, dependencies and deletion.
-There is no separate preview registry or cleanup controller.
 
 ## Operator setup
 

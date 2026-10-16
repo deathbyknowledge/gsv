@@ -226,9 +226,8 @@ unread, active, unmuted, unblocked conversations before pagination; the caller s
 the usual archived state. Existing `conversation.changed`, `contact.changed` and
 `approach.changed` signals invalidate those bounded reads, and reconnect refreshes
 them. Attention survives reload through the private inbox projection. Zen and People
-observe the same paginated conversation cache; Zen has no separate live-message or
-replied-notice store. Only unfinished reply drafts and their submitted send identities
-remain local. A draft retains the read position where it began, so reads elsewhere do
+observe the same paginated conversation cache. Only unfinished reply drafts and
+their submitted send identities remain local. A draft retains the read position where it began, so reads elsewhere do
 not hide its context or pull older read history into the panel. Each send retains the
 exact sequence it answers, so a later arrival stays unread when that reply completes.
 A failed read update leaves the inbox authoritative

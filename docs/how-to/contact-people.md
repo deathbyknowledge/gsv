@@ -48,7 +48,7 @@ conversation, opens it directly, and enables further messages and attachments.
 
 Your profile starts private. Choose **your profile** at the bottom of People,
 save a draft, review it and explicitly publish it. Your public address is
-`https://YOUR-SPACE/profile`; there is no separate alias to choose. Existing published
+`https://YOUR-SPACE/profile`. Existing published
 profile links still work. Drafts remain when you return to a conversation. A profile can accept message requests, require a private
 invitation, or close new contact. Saving later edits does not change the public
 page until you publish again. Unpublishing removes the page; existing contacts and

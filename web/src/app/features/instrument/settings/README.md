@@ -39,7 +39,7 @@ continue to use their existing default connection.
 
 Custom MCP headers are an optional disclosure in the add-server form. Values remain masked, empty rows are ignored, and malformed or duplicate names cannot be submitted. Header drafts survive section and view changes and participate in sign-out and reload protection. Successful creation clears the values; failed creation retains them. Headers use the existing MCP transport contract and are never saved into browser storage.
 
-The existing settings surfaces remain available pending the retirement inventory. The old approval editor also only supports tool/target/action rules; it does not implement arbitrary conditional rules or an account-grant editor. Contacts, invitations, conversations, public profiles and cross-Ship request management belong to People. Future operator-owned WhatsApp Business and other adapter changes follow the [hosting plan](../../../../../../engineering/unified-hosting-and-web-release.md). Production prompt defaults are unchanged.
+The approval editor supports tool/target/action rules. Contacts, invitations, conversations, public profiles and cross-Ship request management belong to People.
 
 Settings includes a quiet sign-out action beside the current username. Unsaved work across all retained Instrument views requires confirmation before signing out; the shared session service clears the stored credential, revokes the current UI token and returns to login.
 
@@ -49,5 +49,4 @@ revocation. The password field is cleared when the section is hidden. Ordinary
 personal login asks only for a password; explicit Administrator sign-in selects root.
 
 Profile editing and publication belong to People, reached through the display-name
-link at the bottom of its sidebar. Local second-person enrollment and removal are
-retired. Cross-space contact invitations remain in People.
+link at the bottom of its sidebar. Cross-space contact invitations also belong to People.

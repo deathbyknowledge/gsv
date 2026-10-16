@@ -45,9 +45,8 @@ facts and preferences that should affect nearly every interaction. Detailed or
 occasionally relevant personal information belongs in the human-owned
 `personal` wiki, where agents retrieve it deliberately. Unresolved work belongs
 in the Kernel `r12y` responsibility ledger rather than either context or memory
-layer. Initial onboarding is likewise an `r12y` responsibility, not a generated
-context file; the system responsibilities context tells the Ship to put it first
-while it is unresolved.
+layer. Initial onboarding is likewise an `r12y` responsibility; the system
+responsibilities context tells the Ship to put it first while it is unresolved.
 
 The default personal account for new installations is `ship`. Personal-agent
 provisioning also creates an ordinary owned `crew` account for delegated work
@@ -68,8 +67,8 @@ existing account's instructions. To adopt the new defaults in an existing
 space, edit that account's context files deliberately.
 Seeding checks the repository revision before committing, preserving owner
 edits made while defaults are being prepared.
-Generic style files are no longer seeded. Home scaffolding removes only exact
-generated versions of `00-style.md`; customized styles remain in place.
+Home scaffolding removes only exact generated versions of `00-style.md`;
+customized styles remain in place.
 
 ## Skills: `skills.d/`
 

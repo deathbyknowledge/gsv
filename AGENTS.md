@@ -32,7 +32,7 @@ This document is the root engineering contract for the repository. It explains h
 - An operator reset never clears a Kernel in place or reuses its installation ID. Accounts atomically moves the handle to a fresh installation, retains the old identity behind inactive routing, and records its data as pending deletion until every owning service confirms cleanup.
 - Process, R2, ripgit, and installation-owned adapter physical addresses must include installation scope. Shared application and peer objects retain adapter-owned identities and generation-fenced space links.
 - `ctx.id.name` is available only on name-preserving Durable Object paths. An `idFromString()` callback must recover a previously validated identity from owned state or a trusted routing record.
-- Every deployment uses the trusted directory and scoped resource addresses. There is no singleton projection or runtime deployment mode. Historical namespaces may remain only for explicit attribution and cleanup; never reuse them for current admission. See `docs/how-to/standalone-retirement.md` for the preserved standalone baseline.
+- Every deployment uses the trusted directory and scoped resource addresses. Historical namespaces may remain only for explicit attribution and cleanup; never reuse them for current admission. See `docs/how-to/standalone-retirement.md` for the preserved standalone baseline.
 
 ### Treat syscalls and protocol frames as the primitive boundary
 
@@ -191,6 +191,7 @@ Use Durable Object storage KV for a single opaque record that is read and writte
 ## Change discipline
 
 - Do not rewrite or delete maintainer-authored comments unless the maintainer explicitly requests it. If a change makes one stale, preserve it and call it out for direction.
+- Write active docs and instructions in terms of current concepts. Keep change history in release notes or migration guides, and explain legacy behavior where supported compatibility requires it.
 
 ### Protected prompt and context content
 

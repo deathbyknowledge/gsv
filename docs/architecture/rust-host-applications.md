@@ -158,8 +158,8 @@ Process observation, drafts, approvals, attachments and retained screen state.
 Rust owns native input, private session persistence, external browser navigation,
 attachment downloads, window lifecycle and the same-user `desktop-protocol` control server.
 
-The installed binary is `gsv-desktop`; the app is GSV with bundle identity
-`space.gsv.desktop`. There is no second desktop renderer or gateway client.
+The installed binary is `gsv-desktop`; the app is Ship with bundle identity
+`space.gsv.desktop`.
 Desktop credentials are isolated from CLI and driver credentials. Only the
 bundled main window can invoke the narrow native bridge. Space changes reset
 native input and invalidate frontend control and credential writes.
