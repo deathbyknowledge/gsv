@@ -11,6 +11,7 @@ import type {
 } from "@humansandmachines/gsv/protocol";
 import {
   emitTelemetry,
+  exceptionDiagnostics,
 } from "@humansandmachines/gsv/telemetry";
 import {
   type RouteOrigin,
@@ -249,8 +250,13 @@ async handleSysConnect(
       this.reconcileOwnedIdentities(ownerUid);
       if (ownerUid >= 1000 && !ctx.auth.isPersonalAgentUid(ownerUid)
         && ctx.config.get(`users/${ownerUid}/ui/welcome_card_seen`) === "1") {
-        activateInitialOnboardingResponsibility(ownerUid, ctx.responsibilities);
-        await ctx.reconcileResponsibilityWake(ownerUid);
+        ctx.defer(Promise.resolve().then(async () => {
+          if (activateInitialOnboardingResponsibility(ownerUid, ctx.responsibilities)) {
+            await ctx.reconcileResponsibilityWake(ownerUid);
+          }
+        }).catch((error) => {
+          console.warn("[Kernel] Failed to resume onboarding:", exceptionDiagnostics(error));
+        }));
       }
     }
 

@@ -148,17 +148,31 @@ describe("Kernel personal controller connect lifecycle", () => {
     expect(kernel.transport.sendOk).not.toHaveBeenCalled();
   });
 
-  it.each([false, true])("recovers a welcome on reconnect only after recorded dismissal: %s", async (dismissed) => {
+  it.each([
+    { dismissed: false, handled: false, failWake: false },
+    { dismissed: true, handled: false, failWake: false },
+    { dismissed: true, handled: true, failWake: false },
+    { dismissed: true, handled: false, failWake: true },
+  ])("recovers pending onboarding without delaying sign-in: %j", async ({ dismissed, handled, failWake }) => {
     await runWithRealKernelSql(async (_sql, storage) => {
       const responsibilities = new ResponsibilityStore(storage);
       const welcome = ensureInitialOnboardingResponsibility(1000, responsibilities).record;
+      if (handled) responsibilities.update({ ownerUid: 1000, id: welcome.id,
+        patch: { state: "waiting", blocker: "Waiting for a reply", nextCheckAtMs: null },
+        actor: { kind: "process", processId: "ship" }, observedByShip: true, now: Date.now() });
+      const deferred: Promise<unknown>[] = [];
+      let finishWake = () => {};
+      const wake = new Promise<void>((resolve, reject) => {
+        finishWake = () => failWake ? reject(new Error("wake unavailable")) : resolve();
+      });
       const kernel = bareKernel();
       const ctx = {
         auth: { isPersonalAgentUid: () => false, getPasswdByUsername: () => PROCESS_IDENTITY,
           credentialEpoch: () => 0, isAccountDisabled: () => false },
         conversations: { ensureShip: () => ({ id: "conv:ship", ownerUid: 1000, kind: "ship" }) },
         config: { get: vi.fn(() => dismissed ? "1" : null) },
-        responsibilities, reconcileResponsibilityWake: vi.fn(async () => {}),
+        responsibilities, reconcileResponsibilityWake: vi.fn(() => wake),
+        defer: (promise: Promise<unknown>) => deferred.push(promise),
       };
       const connection = { id: "connection-1", setState: vi.fn() };
       kernel.buildContext = vi.fn(() => ctx);
@@ -166,11 +180,27 @@ describe("Kernel personal controller connect lifecycle", () => {
       kernel.connectionRuntime.reconcileOwnedIdentities = vi.fn();
       kernel.transport.sendOk = vi.fn();
       kernel.transport.sendError = vi.fn();
-      await kernel.connectionRuntime.handleSysConnect(connection, connectFrame());
-      expect(ctx.config.get).toHaveBeenCalledWith("users/1000/ui/welcome_card_seen");
-      expect(responsibilities.get(1000, welcome.id)?.state).toBe(dismissed ? "open" : "waiting");
-      expect(ctx.reconcileResponsibilityWake).toHaveBeenCalledTimes(dismissed ? 1 : 0);
-      expect(kernel.transport.sendOk).toHaveBeenCalledOnce();
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      try {
+        await kernel.connectionRuntime.handleSysConnect(connection, connectFrame());
+        expect(kernel.transport.sendOk).toHaveBeenCalledOnce();
+        expect(ctx.config.get).toHaveBeenCalledWith("users/1000/ui/welcome_card_seen");
+        expect(responsibilities.get(1000, welcome.id)?.state).toBe(dismissed && !handled ? "open" : "waiting");
+        expect(ctx.reconcileResponsibilityWake).toHaveBeenCalledTimes(dismissed && !handled ? 1 : 0);
+        finishWake();
+        await Promise.all(deferred);
+        expect(warn).toHaveBeenCalledTimes(failWake ? 1 : 0);
+        if (failWake) {
+          const revision = responsibilities.revision(1000);
+          ctx.reconcileResponsibilityWake.mockResolvedValueOnce();
+          await kernel.connectionRuntime.handleSysConnect(connection, connectFrame());
+          await Promise.all(deferred);
+          expect(ctx.reconcileResponsibilityWake).toHaveBeenCalledTimes(2);
+          expect(responsibilities.revision(1000)).toBe(revision);
+        }
+      } finally {
+        warn.mockRestore();
+      }
     });
   });
 

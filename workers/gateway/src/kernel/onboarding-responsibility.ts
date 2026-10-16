@@ -68,11 +68,15 @@ const PREVIOUS_ONBOARDING_CONTRACTS: readonly OnboardingContract[] = [
  * key order this module wrote them, and each previous contract keeps that order,
  * so serialized equality is exact.
  */
-function isUntouchedSeed(record: ResponsibilityRecord, contract: OnboardingContract): boolean {
+function isUntouchedSeed(
+  record: ResponsibilityRecord,
+  contract: OnboardingContract,
+  state: "waiting" | "open" = "waiting",
+): boolean {
   return record.title === contract.title
-    && record.blocker === contract.blocker
+    && record.blocker === (state === "waiting" ? contract.blocker : undefined)
     && JSON.stringify(record.details ?? {}) === JSON.stringify(contract.details)
-    && record.state === "waiting"
+    && record.state === state
     && record.priority === "high"
     && record.assignee.kind === "ship"
     && record.parentId === undefined
@@ -152,9 +156,13 @@ export function activateInitialOnboardingResponsibility(
   ownerUid: number,
   responsibilities: ResponsibilityStore,
   now = Date.now(),
-): void {
+): boolean {
   const record = reconcileInitialOnboardingResponsibility(ownerUid, responsibilities, now);
-  if (!record || !isUntouchedSeed(record, WELCOME_CONTRACT)) return;
+  if (!record) return false;
+  if (!isUntouchedSeed(record, WELCOME_CONTRACT)) {
+    return isUntouchedSeed(record, WELCOME_CONTRACT, "open")
+      && responsibilities.nextWakeAt(ownerUid, now) !== null;
+  }
   responsibilities.update({
     ownerUid,
     id: record.id,
@@ -163,4 +171,5 @@ export function activateInitialOnboardingResponsibility(
     observedByShip: false,
     now,
   });
+  return true;
 }

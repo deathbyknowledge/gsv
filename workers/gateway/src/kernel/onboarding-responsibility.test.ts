@@ -98,12 +98,12 @@ describe("initial onboarding responsibility", () => {
     await runWithRealKernelSql((_sql, storage) => {
       const store = new ResponsibilityStore(storage);
       const seed = ensureInitialOnboardingResponsibility(1000, store, 1_000).record;
-      activateInitialOnboardingResponsibility(1000, store, 2_000);
+      expect(activateInitialOnboardingResponsibility(1000, store, 2_000)).toBe(true);
       expect(store.get(1000, seed.id)).toMatchObject({ state: "open" });
       expect(store.get(1000, seed.id)?.blocker).toBeUndefined();
       expect(store.nextWakeAt(1000, 2_000)).toBe(2_000);
       const revision = store.revision(1000);
-      activateInitialOnboardingResponsibility(1000, store, 3_000);
+      expect(activateInitialOnboardingResponsibility(1000, store, 3_000)).toBe(true);
       expect(store.revision(1000)).toBe(revision);
       const batch = store.createReadyBatch(1000, 3_000)!;
       expect(batch.responsibilities.map(({ id }) => id)).toEqual([seed.id]);
@@ -111,14 +111,14 @@ describe("initial onboarding responsibility", () => {
       store.update({ ownerUid: 1000, id: seed.id,
         patch: { state: "waiting", blocker: "Waiting for the user to respond to the welcome", nextCheckAtMs: null },
         actor: { kind: "process", processId: "ship" }, observedByShip: true, now: 4_000 });
-      activateInitialOnboardingResponsibility(1000, store, 5_000);
+      expect(activateInitialOnboardingResponsibility(1000, store, 5_000)).toBe(false);
       expect(store.nextWakeAt(1000, 5_000)).toBeNull();
       const edited = ensureInitialOnboardingResponsibility(1001, store, 1_000).record;
       store.update({ ownerUid: 1001, id: edited.id, patch: { title: "My welcome" },
         actor: { kind: "account", uid: 1001 }, observedByShip: true, now: 2_000 });
-      activateInitialOnboardingResponsibility(1001, store, 3_000);
+      expect(activateInitialOnboardingResponsibility(1001, store, 3_000)).toBe(false);
       expect(store.get(1001, edited.id)).toMatchObject({ title: "My welcome", state: "waiting" });
-      activateInitialOnboardingResponsibility(1002, store, 3_000);
+      expect(activateInitialOnboardingResponsibility(1002, store, 3_000)).toBe(false);
       expect(store.getByDedupeKey(1002, INITIAL_ONBOARDING_DEDUPE_KEY)).toBeNull();
     });
   });
@@ -149,11 +149,11 @@ describe("initial onboarding responsibility", () => {
     await runWithRealKernelSql((_sql, storage) => {
       const store = new ResponsibilityStore(storage);
       const seed = seedPreviousContract(store, 1000, 1_000).record;
-      activateInitialOnboardingResponsibility(1000, store, 2_000);
+      expect(activateInitialOnboardingResponsibility(1000, store, 2_000)).toBe(true);
       expect(store.get(1000, seed.id)).toMatchObject({ title: "Welcome to Ship", state: "open" });
       expect(store.nextWakeAt(1000, 2_000)).toBe(2_000);
       const revision = store.revision(1000);
-      activateInitialOnboardingResponsibility(1000, store, 3_000);
+      expect(activateInitialOnboardingResponsibility(1000, store, 3_000)).toBe(true);
       expect(store.revision(1000)).toBe(revision);
     });
   });

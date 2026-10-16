@@ -170,8 +170,8 @@ export async function handleSysConfigSet(
 
   ctx.config.set(args.key, value);
   if (principal.kind === "human" && !ctx.processId && uid >= 1000
-    && args.key === `users/${uid}/ui/welcome_card_seen` && value === "1") {
-    activateInitialOnboardingResponsibility(uid, ctx.responsibilities);
+    && args.key === `users/${uid}/ui/welcome_card_seen` && value === "1"
+    && activateInitialOnboardingResponsibility(uid, ctx.responsibilities)) {
     await ctx.reconcileResponsibilityWake(uid);
   }
   return { ok: true };

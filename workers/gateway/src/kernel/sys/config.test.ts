@@ -111,6 +111,7 @@ describe("sys.config.get", () => {
       await handleSysConfigSet(args, ctx);
       expect(ctx.responsibilities.nextWakeAt(1000, Date.now())).toBeNull();
       expect(ctx.responsibilities.get(1000, seed.id)?.blocker).toBe("Waiting for a reply");
+      expect(reconcile).toHaveBeenCalledTimes(2);
     });
   });
 
