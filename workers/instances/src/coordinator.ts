@@ -7,8 +7,10 @@ import {
 } from "@humansandmachines/gsv/services/instances";
 import type { InstallationInstances, InstanceActor, InstanceTargetRequest, InstanceTargetResponse } from "@humansandmachines/gsv/services/instances";
 import { z } from "zod";
-import { browserTemplate, IMPLEMENTATIONS, InstancePolicy, type Environment } from "./config";
+import { browserTemplate, computerTemplate, COMPUTER_IMPLEMENTATIONS, IMPLEMENTATIONS, InstancePolicy, type Environment } from "./config";
 import { CloudBrowser } from "./browser";
+import { computerName, type ComputerControl } from "./computer";
+import { ComputerRequest } from "./computer-request";
 import { migrate } from "./schema";
 import { instance, InstanceStore, profile, type InstanceRow } from "./store";
 import { ProfileStorage } from "./profiles";
@@ -119,12 +121,15 @@ export class InstanceCoordinator extends DurableObject<Environment> implements I
   async catalog(raw: InstanceActor) {
     instanceActorSchema.parse(raw);
     const limits = await this.#policy.limits();
-    return { templates: limits.enabled ? [browserTemplate(limits)] : [], usage: this.#store.usage(limits) };
+    const computer = await this.#policy.computerLimits();
+    const usage = this.#store.usage(limits);
+    return { templates: [...(limits.enabled ? [browserTemplate(limits)] : []), ...(computer.enabled ? [computerTemplate(computer)] : [])],
+      usage, usageByKind: { browser: usage, linux: this.#store.usage(computer, Date.now(), "linux") } };
   }
   async start(rawActor: InstanceActor, rawArgs: Parameters<InstallationInstances["start"]>[1]) {
     const actor = instanceActorSchema.parse(rawActor), args = instanceStartSchema.parse(rawArgs);
     await this.#policy.requireActive();
-    const limits = await this.#policy.limits();
+    const limits = await (args.templateId === "computer" ? this.#policy.computerLimits() : this.#policy.limits());
     // Install the recovery alarm before claiming an allocation; an extra empty alarm is harmless.
     await this.ctx.storage.setAlarm(Date.now() + 1);
     this.#retirement.requireLive();
@@ -135,7 +140,10 @@ export class InstanceCoordinator extends DurableObject<Environment> implements I
     const actor = instanceActorSchema.parse(raw), args = instanceListSchema.parse(rawArgs);
     const limits = await this.#policy.limits();
     const instances = this.#store.inventory(actor.ownerUid, args.includeTerminal);
-    return { instances, handoffs: instances.flatMap(value => this.#store.liveHandoffs(value.instanceId)), usage: this.#store.usage(limits) };
+    const computer = await this.#policy.computerLimits();
+    const usage = this.#store.usage(limits);
+    return { instances, handoffs: instances.flatMap(value => this.#store.liveHandoffs(value.instanceId)), usage,
+      usageByKind: { browser: usage, linux: this.#store.usage(computer, Date.now(), "linux") } };
   }
   async get(raw: InstanceActor, rawSelector: InstanceSelector) {
     const row = this.#store.owned(instanceActorSchema.parse(raw), instanceSelectorSchema.parse(rawSelector));
@@ -152,7 +160,8 @@ export class InstanceCoordinator extends DurableObject<Environment> implements I
     }
     if (row.active && (force || instance(row).state !== "stopping")) {
       await this.ctx.storage.setAlarm(Date.now() + 1);
-      if (force || instance(row).state === "starting") this.fenceStop(instance(this.#store.byId(row.id)), "Stopped without saving", force);
+      if (instance(row).kind === "linux") this.fenceStop(instance(this.#store.byId(row.id)), "Stopped by owner");
+      else if (force || instance(row).state === "starting") this.fenceStop(instance(this.#store.byId(row.id)), "Stopped without saving", force);
       else {
         let stopping = this.#stops.get(row.id);
         if (!stopping) {
@@ -193,10 +202,10 @@ export class InstanceCoordinator extends DurableObject<Environment> implements I
     return { profile: row ? profile(row) : null };
   }
   async saveProfile(actor: InstanceActor, id: string) {
-    const row = this.requireInstance(actor, id, true);
+    const row = this.requireBrowser(actor, id, true);
     if (this.#stops.has(row.id)) throw new Error("Browser is preparing to stop");
     await this.browser(row.id);
-    this.requireInstance(actor, row.id, true);
+    this.requireBrowser(actor, row.id, true);
     if (this.#stops.has(row.id)) throw new Error("Browser is preparing to stop");
     await this.save(row.id);
     const profileId = instance(row).profileId;
@@ -217,7 +226,12 @@ export class InstanceCoordinator extends DurableObject<Environment> implements I
     this.#retirement.requireLive();
     const row = this.#store.owned(instanceActorSchema.parse(actor), { instanceId: id });
     if (!row) throw new Error("Instance not found");
-    if (ready && (instance(row).state !== "ready" || instance(row).expiresAt <= Date.now())) throw new Error("Browser is not ready");
+    if (ready && (instance(row).state !== "ready" || instance(row).expiresAt <= Date.now())) throw new Error("Instance is not ready");
+    return row;
+  }
+  private requireBrowser(actor: InstanceActor, id: string, ready = false): InstanceRow {
+    const row = this.requireInstance(actor, id, ready);
+    if (instance(row).kind !== "browser") throw new Error("This operation requires a browser instance");
     return row;
   }
   private human(actor: InstanceActor): void {
@@ -226,19 +240,19 @@ export class InstanceCoordinator extends DurableObject<Environment> implements I
   }
   private handoff(actor: InstanceActor, args: SysBrowserHandoffGetArgs, active = false): BrowserHandoff {
     browserHandoffSelectorSchema.parse(args);
-    const row = this.requireInstance(actor, args.instanceId, active);
+    const row = this.requireBrowser(actor, args.instanceId, active);
     const value = this.#store.handoff(row.id, args.requestId);
     if (!value) throw new Error("Browser handoff not found");
     if (active && (value.state !== "active" || value.expiresAt <= Date.now())) throw new Error("Browser handoff is no longer active");
     return value;
   }
   private requireHandoffAdmission(actor: InstanceActor, id: string): void {
-    const row = this.requireInstance(actor, id, true);
+    const row = this.requireBrowser(actor, id, true);
     if (this.#stops.has(row.id)) throw new Error("Browser is preparing to stop");
   }
   async requestHandoff(raw: InstanceActor, rawArgs: Parameters<InstallationInstances["requestHandoff"]>[1]) {
     const actor = instanceActorSchema.parse(raw), args = browserHandoffRequestSchema.parse(rawArgs);
-    const row = this.requireInstance(actor, args.instanceId, true);
+    const row = this.requireBrowser(actor, args.instanceId, true);
     args.instanceId = row.id;
     const existing = this.#store.handoff(row.id, args.requestId);
     if (existing) {
@@ -322,14 +336,14 @@ export class InstanceCoordinator extends DurableObject<Environment> implements I
   async watch(actor: InstanceActor, rawArgs: Parameters<InstallationInstances["watch"]>[1]) {
     this.human(actor);
     const args = browserWatchSchema.parse(rawArgs);
-    args.instanceId = this.requireInstance(actor, args.instanceId, true).id;
+    args.instanceId = this.requireBrowser(actor, args.instanceId, true).id;
     const browser = await this.browser(args.instanceId);
-    this.requireInstance(actor, args.instanceId, true);
+    this.requireBrowser(actor, args.instanceId, true);
     if ([...this.#watches.values()].filter(value => value.instanceId === args.instanceId).length >= 4) throw new Error("This browser already has four open viewers");
     const watchId = crypto.randomUUID();
     const watch = new BrowserWatch(browser, args.tabId,
       () => this.#store.liveHandoffs(args.instanceId)[0],
-      () => { this.requireInstance(actor, args.instanceId, true); },
+      () => { this.requireBrowser(actor, args.instanceId, true); },
       cause => new Error(`Browser view interrupted; reference = ${this.#store.diagnostic(args.instanceId, cause)}`),
       () => { this.#watches.delete(watchId); });
     this.#watches.set(watchId, { instanceId: args.instanceId, watch });
@@ -339,9 +353,9 @@ export class InstanceCoordinator extends DurableObject<Environment> implements I
   async input(actor: InstanceActor, rawArgs: Parameters<InstallationInstances["input"]>[1], rawInput: BrowserHumanInput) {
     this.human(actor);
     const args = browserInputSchema.parse(rawArgs), input = humanInputSchema.parse(rawInput);
-    args.instanceId = this.requireInstance(actor, args.instanceId, true).id;
+    args.instanceId = this.requireBrowser(actor, args.instanceId, true).id;
     const check = () => {
-      this.requireInstance(actor, args.instanceId, true);
+      this.requireBrowser(actor, args.instanceId, true);
       if (this.#stops.has(args.instanceId)) throw new Error("Browser is preparing to stop");
       if (this.#handoffBarriers.has(args.instanceId)) throw new Error("Browser is finishing human control; retry input after it settles");
       if (args.handoffRequestId) this.handoff(actor, { instanceId: args.instanceId, requestId: args.handoffRequestId }, true);
@@ -392,6 +406,36 @@ export class InstanceCoordinator extends DurableObject<Environment> implements I
   async execute(actor: InstanceActor, id: string, frame: InstanceTargetRequest, deadlineAt: number): Promise<InstanceTargetResponse> {
     try {
       id = this.requireInstance(actor, id, true).id;
+      const value = instance(this.#store.byId(id));
+      if (value.kind === "linux") {
+        if (!COMPUTER_IMPLEMENTATIONS.some(call => call === frame.call)) throw new Error("Unsupported computer syscall");
+        deadlineAt = Math.min(deadlineAt, value.expiresAt);
+        if (deadlineAt <= Date.now()) throw new Error("Computer request deadline exceeded");
+        let operations = this.#operations.get(id);
+        if (!operations) { operations = new Map(); this.#operations.set(id, operations); }
+        if (operations.has(frame.id)) throw new Error("Computer request is already running");
+        const request = new ComputerRequest(frame, deadlineAt, () => {
+          this.ctx.waitUntil(Promise.resolve().then(() => this.computer(id).cancel(frame.id)).catch(cause => {
+            if (!this.#retirement.get()) this.#store.diagnostic(id, cause);
+          }));
+        }, () => {
+          operations.delete(frame.id);
+          if (!operations.size && this.#operations.get(id) === operations) this.#operations.delete(id);
+        });
+        operations.set(frame.id, request);
+        try {
+          return await request.run(async signal => {
+            await this.#policy.requireActive();
+            this.requireInstance(actor, id, true);
+            signal.throwIfAborted();
+            return this.computer(id).execute(frame, deadlineAt);
+          });
+        }
+        catch (cause) {
+          const ref = this.#store.diagnostic(id, cause);
+          return { type: "res", id: frame.id, ok: false, error: { code: request.abort.signal.aborted ? 499 : 502, message: `Computer request failed; inspect diagnostic ${ref}` } };
+        }
+      }
       if (!isBrowserRequest(frame)) throw new Error("Unsupported browser syscall");
       if (this.#store.liveHandoffs(id).length && !this.#handoffBarriers.has(id)) { await cancelBinaryBody(frame.body, "Human controls browser"); return { type: "res", id: frame.id, ok: false, error: { code: 409, message: "human_control: waiting for the user to return browser control" } }; }
       await this.#policy.requireActive();
@@ -438,6 +482,11 @@ export class InstanceCoordinator extends DurableObject<Environment> implements I
   }
   async cancel(actor: InstanceActor, id: string, requestId: string): Promise<void> {
     id = this.requireInstance(actor, id).id;
+    if (instance(this.#store.byId(id)).kind === "linux") {
+      this.#operations.get(id)?.get(requestId)?.abort.abort(new Error("Computer command cancelled"));
+      await this.computer(id).cancel(requestId);
+      return;
+    }
     this.#operations.get(id)?.get(requestId)?.abort.abort(new Error("Browser command cancelled"));
   }
   private async settleOperations(id: string): Promise<boolean> {
@@ -555,7 +604,7 @@ export class InstanceCoordinator extends DurableObject<Environment> implements I
     const rows = this.#store.sql.exec<Pick<InstanceRow, "id">>("SELECT id FROM instances WHERE active = 1 ORDER BY rowid DESC").toArray();
     for (const row of rows) {
       const value = instance(this.#store.byId(row.id));
-      if (value.expiresAt <= started) this.fenceStop(value, "Browser lifetime expired");
+      if (value.expiresAt <= started) this.fenceStop(value, value.kind === "browser" ? "Browser lifetime expired" : "Computer lifetime expired");
     }
     const stopping = (row: Pick<InstanceRow, "id">) => instance(this.#store.byId(row.id)).state === "stopping";
     const prioritized = [...rows.filter(stopping), ...rows.filter(row => !stopping(row))];
@@ -605,6 +654,8 @@ export class InstanceCoordinator extends DurableObject<Environment> implements I
     const listed = await this.env.PROFILES.list({ prefix: `${this.#installationId}/` });
     if (listed.objects.length) await this.env.PROFILES.delete(listed.objects.map(object => object.key));
     if (listed.truncated) return this.installationDeletionStatus(input);
+    const computers = this.#store.sql.exec<{ id: string }>("SELECT id FROM instances WHERE json_extract(record, '$.kind') = 'linux'").toArray();
+    for (const row of computers) await this.computer(row.id).erase();
     await this.ctx.storage.delete("maintenance_cursor");
     this.ctx.storage.transactionSync(() => {
       for (const table of ["file_chunks", "files", "handoffs", "handoff_receipts", "profiles", "instance_usage", "instances", "diagnostics", "cancelled_starts", "start_requests", "obsolete_profile_objects"]) this.#store.sql.exec(`DELETE FROM ${table}`);
@@ -620,12 +671,51 @@ export class InstanceCoordinator extends DurableObject<Environment> implements I
   private expireIfDue(id: string): InstanceRow {
     const row = this.#store.byId(id), value = instance(row);
     if (row.active && value.state !== "stopping" && value.expiresAt <= Date.now()) {
-      this.fenceStop(value, "Browser lifetime expired");
+      this.fenceStop(value, value.kind === "browser" ? "Browser lifetime expired" : "Computer lifetime expired");
       return this.#store.byId(id);
     }
     return row;
   }
+  private computer(id: string): ComputerControl {
+    // SAFETY: This private RPC carrier preserves the public syscall body streams and results.
+    // oxlint-disable-next-line anti-slop/no-chained-type-assertions -- Workers RPC recursively maps the syscall union beyond TypeScript's instantiation limit.
+    return this.env.COMPUTERS.getByName(computerName(this.#installationId, id)) as unknown as ComputerControl;
+  }
+  private async maintainComputer(id: string): Promise<void> {
+    let value = instance(this.expireIfDue(id));
+    const computer = this.computer(id);
+    try {
+      if (value.state === "stopping") {
+        await computer.stop({ installationId: this.#installationId, instanceId: id });
+        this.#store.terminal(id, Boolean(value.diagnosticRef));
+        return;
+      }
+      if (value.state === "starting") {
+        await this.#policy.requireActive();
+        this.#retirement.requireLive();
+        value = instance(this.expireIfDue(id));
+        if (value.state !== "starting") return;
+        await computer.provision({ installationId: this.#installationId, instanceId: id, targetId: value.targetId, ownerUid: value.ownerUid, expiresAt: value.expiresAt });
+      }
+      const status = await computer.status();
+      value = instance(this.expireIfDue(id));
+      if (value.state === "stopping") return;
+      if (status.state === "stopped") throw new Error("Computer stopped unexpectedly");
+      if (status.state === "ready" && value.state === "starting") {
+        this.#store.update({ ...value, state: "ready", readyAt: Date.now(), diagnosticRef: undefined, revision: value.revision + 1 });
+      } else if (this.#store.byId(id).provider_failed_at !== null) {
+        this.#store.update({ ...value, diagnosticRef: undefined, revision: value.revision + 1 });
+      }
+      this.#store.sql.exec("UPDATE instances SET provider_failed_at = NULL WHERE id = ?", id);
+    } catch (cause) {
+      value = instance(this.expireIfDue(id));
+      this.#store.update({ ...value, diagnosticRef: this.#store.diagnostic(id, cause), revision: value.revision + 1 });
+      this.#store.sql.exec("UPDATE instances SET provider_failed_at = COALESCE(provider_failed_at, ?) WHERE id = ?", Date.now(), id);
+      if (Date.now() - this.#store.byId(id).provider_failed_at! >= PROVIDER_RECOVERY_MS) this.fenceStop(instance(this.#store.byId(id)), "Computer provider failed");
+    }
+  }
   private async maintain(id: string): Promise<void> {
+    if (instance(this.#store.byId(id)).kind === "linux") return this.maintainComputer(id);
     try {
       let row = this.expireIfDue(id), value = instance(row);
       if (value.state === "starting") {

@@ -21,6 +21,7 @@ import type { KernelContext } from "./context";
 import type { RouteOrigin } from "./routing";
 import type { KernelConnection, KernelConnectionState } from "./connection";
 import type { ShellSessionStore } from "./shell-sessions";
+import type { ShellExecResult } from "@humansandmachines/gsv/protocol";
 import { jsonObjectSchema } from "@humansandmachines/gsv/protocol";
 import { authorizeNestedOperation, nestedToolOwner } from "./tool-approval";
 import { dispatchGsvTarget } from "../drivers/native/target";
@@ -972,7 +973,12 @@ async function routeToTarget(
 
   const ttlMs = routedFrameTtlMs(frame);
   if (target.route.kind === "instance") {
-    return { handled: true, response: await requestInstanceTarget(frame, target, Date.now() + ttlMs, ctx) };
+    const response = await requestInstanceTarget(frame, target, Date.now() + ttlMs, ctx);
+    if (frame.call === "shell.exec" && response.ok) {
+      // SAFETY: The instance service returns the result for this shell.exec request.
+      deps.shellSessions.recordResult(target.targetId, response.data as ShellExecResult);
+    }
+    return { handled: true, response };
   }
   if (target.route.kind === "adapter") {
     return {

@@ -54,6 +54,18 @@ describe("tool approval policy", () => {
     }
   });
 
+  it("allows managed Linux computers without widening permission on personal Linux machines", () => {
+    const target = { ...browserTarget("computer"), platform: "linux" };
+    for (const call of ["shell.exec", "net.fetch", "fs.write", "fs.delete", "fs.transfer.receive"]) {
+      expect(resolveToolApproval(DEFAULT_TOOL_APPROVAL_POLICY, call, { target: target.targetId }, target).action).toBe("auto");
+      expect(resolveToolApproval(DEFAULT_TOOL_APPROVAL_POLICY, call, { target: target.targetId }, {
+        ...target, route: { kind: "machine", targetId: target.targetId },
+      }).action).toBe("ask");
+    }
+    const custom = parseToolApprovalPolicy('{"default":"deny","rules":[]}');
+    expect(resolveToolApproval(custom, "shell.exec", { target: target.targetId }, target).action).toBe("deny");
+  });
+
   it("keeps cloud-browser defaults configurable and exact target overrides most specific", () => {
     const policy = parseToolApprovalPolicy(JSON.stringify({
       default: "deny",

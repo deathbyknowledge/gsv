@@ -139,6 +139,7 @@ export default defineConfig({
             { text: "Integrations (MCP)", link: "/how-to/integrations" },
             { text: "Browse the Web", link: "/how-to/browse-web" },
             { text: "Cloud Browsers", link: "/how-to/cloud-browsers" },
+            { text: "Cloud Computers", link: "/how-to/cloud-computers" },
           ],
         },
       ],

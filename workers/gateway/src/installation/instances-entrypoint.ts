@@ -1,5 +1,5 @@
 import { WorkerEntrypoint } from "cloudflare:workers";
-import { instanceChangeSchema, type InstancesGatewayService } from "@humansandmachines/gsv/services/instances";
+import { instanceChangeSchema, instanceExecChangeSchema, type InstancesGatewayService } from "@humansandmachines/gsv/services/instances";
 import type { GatewayEnv } from "../runtime-env";
 import { getKernelByInstallationId } from "./routing";
 
@@ -13,5 +13,14 @@ export class InstancesGatewayEntrypoint extends WorkerEntrypoint<GatewayEnv, { a
     if (!route.found || route.installationId !== change.installationId || route.state !== "active") return;
     const kernel = await getKernelByInstallationId(this.env.KERNEL, change.installationId);
     await kernel.instancesChanged(change.ownerUid);
+  }
+
+  async instanceExecChanged(raw: Parameters<InstancesGatewayService["instanceExecChanged"]>[0]): Promise<void> {
+    if (this.ctx.props?.authority !== "instance-notifications") throw new Error("Instance notification binding authority is required");
+    const { installationId, ...change } = instanceExecChangeSchema.parse(raw);
+    const route = await this.env.INSTALLATION_DIRECTORY.resolveInstallation(installationId);
+    if (!route.found || route.installationId !== installationId || route.state !== "active") return;
+    const kernel = await getKernelByInstallationId(this.env.KERNEL, installationId);
+    await kernel.instanceExecChanged(change);
   }
 }
