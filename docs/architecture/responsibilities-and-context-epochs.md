@@ -127,7 +127,6 @@ deadline brings that default forward. An explicit check time is preserved, and
 `nextCheckAtMs: null` explicitly clears the check. Metadata-only edits do not postpone
 it. System producers keep their own wake conditions. Initial onboarding waits for
 the owner to dismiss the early-access welcome card after account setup, then becomes actionable through the ordinary wake path.
-After greeting, Ship explicitly clears the next check while waiting for the user.
 
 A due Ship check is actionable even while a blocker remains. The review event directs
 Ship to read the current conversation and responsibility. If the human's answer is
@@ -242,7 +241,7 @@ System-owned producers use the same ledger contract:
   records `users/<uid>/ui/welcome_card_seen = 1`, activates the untouched seed and
   schedules its ordinary wake before acknowledging the dismissal. A saved dismissal
   retries pending welcome activation on reconnect without delaying sign-in. Handled
-  and edited records are left alone; exact historical briefs identify untouched seeds.
+  and edited records are left alone.
   A user can also start the conversation before dismissal or on a surface without
   the card. Ship sends its welcome in the owner's language and waits for a reply.
   The responsibility is present in Ship's first context epoch, rendered with its
@@ -252,11 +251,10 @@ System-owned producers use the same ledger contract:
   criteria, outcomes and step-by-step instructions. The system responsibilities
   context puts an unresolved onboarding record ahead of everything else: other
   responsibilities are parked or delegated until the Ship resolves it, once the user
-  has completed one small task. Ensuring the personal agent also rewrites an
-  unresolved record still carrying an earlier release's wording onto the current
-  contract; resolved, cancelled, or owner-edited records are left alone, and a
-  home that finished the earlier boot-file flow and has no record is never
-  onboarded again. This replaces the generated boot context file.
+  has completed one small task. The brief is copied when the responsibility is
+  created; existing records retain their saved instructions across releases. A home
+  that finished the earlier boot-file flow and has no record is never onboarded
+  again. This replaces the generated boot context file.
 - Managed mail completion creates one `mail.received` responsibility keyed by the
   immutable message id. The title contains no sender-controlled text. Bounded summary
   metadata is marked untrusted and is available only when the Ship inspects the record;

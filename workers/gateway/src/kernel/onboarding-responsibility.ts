@@ -1,7 +1,5 @@
 import type { JsonObject, ResponsibilityRecord } from "@humansandmachines/gsv/protocol";
 
-import previousWelcomeBrief from "../prompts/onboarding/previous-welcome.md";
-import previousShipWelcomeBrief from "../prompts/onboarding/previous-ship-welcome.md";
 import welcomeBrief from "../prompts/onboarding/welcome.md";
 import type { ResponsibilityCreateOutcome, ResponsibilityStore } from "./responsibility-store";
 
@@ -30,52 +28,14 @@ const WELCOME_CONTRACT: OnboardingContract = {
   blocker: "Waiting for the user to dismiss the welcome card.",
 };
 
-/**
- * Contracts earlier releases seeded. An unresolved record that still matches one
- * of them in every field is rewritten to the current contract; any owner change
- * leaves the record alone.
- */
-const PREVIOUS_ONBOARDING_CONTRACTS: readonly OnboardingContract[] = [
-  {
-    title: "Welcome to gsv",
-    details: { responsibilityType: "onboarding.initial", instructions: previousWelcomeBrief.trim() },
-    blocker: "Waiting for the user's first message. Follow the instructions in this responsibility's details before replying.",
-  },
-  {
-    title: "Welcome to Ship",
-    details: { responsibilityType: "onboarding.initial", instructions: previousShipWelcomeBrief.trim() },
-    blocker: "Waiting for the user's first message. Follow the instructions in this responsibility's details before replying.",
-  },
-  {
-    title: "Get to know the user and finish initial GSV setup",
-    details: {
-      responsibilityType: "onboarding.initial",
-      summary: "Learn how to be useful to the user and help them connect and configure the parts of GSV they want.",
-      outcomes: [
-        "Learn enough about the user to be useful.",
-        "Help connect useful computers, services, or messengers.",
-        "Help configure models, permissions, and approvals where needed.",
-      ],
-      completionCondition: "The user confirms that onboarding or setup is complete.",
-    },
-    blocker: "Waiting for the user to begin or continue setup.",
-  },
-];
-
-/**
- * Every field a seeded record carries, so an owner edit to any of them, not only
- * the text, stops the migration. Stored details round-trip through JSON in the
- * key order this module wrote them, and each previous contract keeps that order,
- * so serialized equality is exact.
- */
+/** Match a dormant welcome without reopening work Ship or its owner has changed. */
 function isUntouchedSeed(
   record: ResponsibilityRecord,
-  contract: OnboardingContract,
   state: "waiting" | "open" = "waiting",
 ): boolean {
-  return record.title === contract.title
-    && record.blocker === (state === "waiting" ? contract.blocker : undefined)
-    && JSON.stringify(record.details ?? {}) === JSON.stringify(contract.details)
+  return record.title === WELCOME_CONTRACT.title
+    && record.blocker === (state === "waiting" ? WELCOME_CONTRACT.blocker : undefined)
+    && JSON.stringify(record.details ?? {}) === JSON.stringify(WELCOME_CONTRACT.details)
     && record.state === state
     && record.priority === "high"
     && record.assignee.kind === "ship"
@@ -87,39 +47,18 @@ function isUntouchedSeed(
     && record.resolution === undefined;
 }
 
-function migrateUntouchedSeed(
-  record: ResponsibilityRecord,
-  responsibilities: ResponsibilityStore,
-  now: number,
-): ResponsibilityRecord {
-  if (!PREVIOUS_ONBOARDING_CONTRACTS.some((contract) => isUntouchedSeed(record, contract))) return record;
-  return responsibilities.update({
-    ownerUid: record.ownerUid,
-    id: record.id,
-    patch: {
-      title: WELCOME_CONTRACT.title,
-      details: WELCOME_CONTRACT.details,
-      blocker: WELCOME_CONTRACT.blocker,
-    },
-    actor: ONBOARDING_SOURCE,
-    observedByShip: true,
-    now,
-  }).record;
-}
-
 /**
- * Seed the owner's onboarding responsibility, or bring an untouched one from an
- * earlier release onto the current contract. A resolved, cancelled, or edited
- * record is returned unchanged. Only a new personal agent, or the retirement of
- * the exact generated boot file that preceded the ledger, may seed: a home that
- * finished the earlier flow has no record and must not be onboarded again.
+ * Seed the owner's onboarding responsibility only when no record exists. Only a
+ * new personal agent, or the retirement of the exact generated boot file that
+ * preceded the ledger, may seed: a home that finished the earlier flow has no
+ * record and must not be onboarded again.
  */
 export function ensureInitialOnboardingResponsibility(
   ownerUid: number,
   responsibilities: ResponsibilityStore,
   now = Date.now(),
 ): ResponsibilityCreateOutcome {
-  const outcome = responsibilities.create({
+  return responsibilities.create({
     ownerUid,
     title: WELCOME_CONTRACT.title,
     details: WELCOME_CONTRACT.details,
@@ -133,22 +72,6 @@ export function ensureInitialOnboardingResponsibility(
     observedByShip: true,
     now,
   });
-  if (outcome.created) return outcome;
-  const record = migrateUntouchedSeed(outcome.record, responsibilities, now);
-  return { record, created: false, revision: responsibilities.revision(ownerUid) };
-}
-
-/**
- * Bring an existing owner's untouched onboarding record from an earlier release
- * onto the current contract, without seeding one where none exists.
- */
-export function reconcileInitialOnboardingResponsibility(
-  ownerUid: number,
-  responsibilities: ResponsibilityStore,
-  now = Date.now(),
-): ResponsibilityRecord | null {
-  const record = responsibilities.getByDedupeKey(ownerUid, INITIAL_ONBOARDING_DEDUPE_KEY);
-  return record ? migrateUntouchedSeed(record, responsibilities, now) : null;
 }
 
 /** Activate only an untouched welcome seed; retries must not reopen work Ship already handled. */
@@ -157,10 +80,10 @@ export function activateInitialOnboardingResponsibility(
   responsibilities: ResponsibilityStore,
   now = Date.now(),
 ): boolean {
-  const record = reconcileInitialOnboardingResponsibility(ownerUid, responsibilities, now);
+  const record = responsibilities.getByDedupeKey(ownerUid, INITIAL_ONBOARDING_DEDUPE_KEY);
   if (!record) return false;
-  if (!isUntouchedSeed(record, WELCOME_CONTRACT)) {
-    return isUntouchedSeed(record, WELCOME_CONTRACT, "open")
+  if (!isUntouchedSeed(record)) {
+    return isUntouchedSeed(record, "open")
       && responsibilities.nextWakeAt(ownerUid, now) !== null;
   }
   responsibilities.update({

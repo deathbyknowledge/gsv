@@ -153,13 +153,20 @@ describe("Kernel personal controller connect lifecycle", () => {
     { dismissed: true, handled: false, failWake: false },
     { dismissed: true, handled: true, failWake: false },
     { dismissed: true, handled: false, failWake: true },
-  ])("recovers pending onboarding without delaying sign-in: %j", async ({ dismissed, handled, failWake }) => {
+    { dismissed: true, handled: false, failWake: false, previousBrief: true },
+  ])("recovers pending onboarding without delaying sign-in: %j", async ({ dismissed, handled, failWake, previousBrief }) => {
     await runWithRealKernelSql(async (_sql, storage) => {
       const responsibilities = new ResponsibilityStore(storage);
       const welcome = ensureInitialOnboardingResponsibility(1000, responsibilities).record;
       if (handled) responsibilities.update({ ownerUid: 1000, id: welcome.id,
         patch: { state: "waiting", blocker: "Waiting for a reply", nextCheckAtMs: null },
         actor: { kind: "process", processId: "ship" }, observedByShip: true, now: Date.now() });
+      if (previousBrief) responsibilities.update({ ownerUid: 1000, id: welcome.id,
+        patch: { details: { responsibilityType: "onboarding.initial", instructions: "Previously saved onboarding instructions" },
+          blocker: "Waiting for the user's first message." },
+        actor: { kind: "system", component: "onboarding" }, observedByShip: true, now: Date.now() });
+      const beforeConnect = responsibilities.get(1000, welcome.id);
+      const pending = dismissed && !handled && !previousBrief;
       const deferred: Promise<unknown>[] = [];
       let finishWake = () => {};
       const wake = new Promise<void>((resolve, reject) => {
@@ -185,8 +192,9 @@ describe("Kernel personal controller connect lifecycle", () => {
         await kernel.connectionRuntime.handleSysConnect(connection, connectFrame());
         expect(kernel.transport.sendOk).toHaveBeenCalledOnce();
         expect(ctx.config.get).toHaveBeenCalledWith("users/1000/ui/welcome_card_seen");
-        expect(responsibilities.get(1000, welcome.id)?.state).toBe(dismissed && !handled ? "open" : "waiting");
-        expect(ctx.reconcileResponsibilityWake).toHaveBeenCalledTimes(dismissed && !handled ? 1 : 0);
+        expect(responsibilities.get(1000, welcome.id)?.state).toBe(pending ? "open" : "waiting");
+        expect(ctx.reconcileResponsibilityWake).toHaveBeenCalledTimes(pending ? 1 : 0);
+        if (previousBrief) expect(responsibilities.get(1000, welcome.id)).toEqual(beforeConnect);
         finishWake();
         await Promise.all(deferred);
         expect(warn).toHaveBeenCalledTimes(failWake ? 1 : 0);
