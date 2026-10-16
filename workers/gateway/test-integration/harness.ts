@@ -378,12 +378,10 @@ export function createManagedMailServiceStackTestHarness(
       },
       {
         config: integrationEmailConfig(gatewayService, queue),
-        ...(serviceConfigs.mail ? {
-          vars: {
-            MAIL_DOMAIN: serviceConfigs.mail.domain,
-            MAIL_SENDING_DOMAINS: JSON.stringify(serviceConfigs.mail.sendingDomains),
-          },
-        } : {}),
+        vars: {
+          MAIL_DOMAIN: serviceConfigs.mail?.domain ?? "gsv.space",
+          MAIL_SENDING_DOMAINS: JSON.stringify(serviceConfigs.mail?.sendingDomains ?? []),
+        },
       },
     ],
   });
