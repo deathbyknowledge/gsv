@@ -58,9 +58,9 @@ when it needs your help; finishing that request returns control to Ship.
 
 ## Find your files
 
-Open **Fleet** and use **Files** to browse files across places. The **your cloud**
-folder starts expanded, so its files are visible without an extra click. Expand
-another place to browse its files when that device is connected.
+Open **Fleet**, select a place, and choose **browse files**. The starting folder
+opens expanded, so its files are visible without an extra click. Select another
+connected place to browse its files.
 
 ## Try it
 
