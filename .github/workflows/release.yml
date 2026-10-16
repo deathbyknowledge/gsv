@@ -543,7 +543,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          gh release view "$RELEASE_TAG" --json assets --jq '.assets[].name | select(startswith("gsv-tauri-prototype-") or startswith("gsv-cloudflare-") or . == "cloudflare-checksums.txt")' > retired-assets.txt
+          gh release view "$RELEASE_TAG" --json assets --jq '.assets[].name | select(startswith("gsv-tauri-prototype-") or startswith("gsv-cloudflare-") or startswith("gsv-vision-") or . == "cloudflare-checksums.txt")' > retired-assets.txt
           while IFS= read -r asset; do
             gh release delete-asset "$RELEASE_TAG" "$asset" --yes
           done < retired-assets.txt
