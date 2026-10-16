@@ -5,6 +5,9 @@ import type { KernelConnection, KernelConnectionState } from "./connection";
 import { ManagedOnboarding } from "./managed-onboarding";
 import { MANAGED_SETUP_FAILURE_KEY } from "./do-shared";
 import * as setup from "./sys/setup";
+import { runWithRealKernelSql } from "../test-support/real-kernel-sql";
+import { ResponsibilityStore } from "./responsibility-store";
+import { ensureInitialOnboardingResponsibility } from "./onboarding-responsibility";
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -74,4 +77,58 @@ describe.each(["authorization", "pending-recovery", "recovery", "activation"] as
       }
     },
   );
+});
+
+
+describe("welcome activation", () => {
+  it.each(["success", "before-activation", "after-activation"] as const)("starts only after Accounts activation, including %s recovery", async (failure) => {
+    await runWithRealKernelSql(async (_sql, storage) => {
+      const responsibilities = new ResponsibilityStore(storage);
+      const seed = ensureInitialOnboardingResponsibility(1000, responsibilities).record;
+      const identity = { installationId: "inst_welcome", handle: "welcome", canonicalOrigin: "https://welcome.example" };
+      const authorization = vi.fn().mockResolvedValue({ ok: true, claimId: "claim", installation: identity });
+      const complete = vi.fn().mockResolvedValue({ state: "complete", installationId: identity.installationId });
+      if (failure !== "success") complete.mockRejectedValueOnce(new Error("activation interrupted"));
+      const reconcile = vi.fn(async () => {});
+      const sendOk = vi.fn();
+      const sendError = vi.fn();
+      // SAFETY: local setup is stubbed; this test exercises activation and the real ledger.
+      const context = {} as KernelContext;
+      // SAFETY: the fixture supplies every Kernel boundary used by managed setup and recovery.
+      const host = {} as Kernel;
+      Object.assign(host, {
+        installationId: identity.installationId, installationIdentity: identity,
+        env: { INSTALLATION_DIRECTORY: {
+          authorizeInstallationOnboarding: authorization,
+          completeInstallationOnboarding: complete,
+          resolveHostname: vi.fn().mockResolvedValue({ found: true, state: "active", ...identity }),
+        } },
+        auth: { isSetupMode: () => false }, responsibilities,
+        responsibilityRuntime: { reconcileResponsibilityWake: reconcile },
+        ctx: { storage: { kv: { put: vi.fn(), delete: vi.fn() } } },
+        transport: { sendOk, sendError }, buildKernelContext: () => context,
+      });
+      vi.spyOn(setup, "recoverCompletedSysSetup").mockResolvedValue({
+        server: { version: "test", release: "test" }, rootLocked: false,
+        user: { uid: 1000, gid: 1000, gids: [1000], username: "owner", home: "/home/owner", cwd: "/home/owner" },
+      });
+      const onboarding = new ManagedOnboarding(host);
+      // SAFETY: transport is stubbed and the connection is only forwarded.
+      const connection = {} as KernelConnection<KernelConnectionState>;
+      const frame = { type: "req", id: "setup", call: "sys.setup", args: { password: "fixture-password", onboardingToken: "fixture-token" } } as const;
+      await onboarding.handleManagedSysSetup(connection, frame, context);
+      if (failure !== "success") {
+        expect(sendError).toHaveBeenCalledOnce();
+        expect(responsibilities.get(1000, seed.id)?.state).toBe("waiting");
+        expect(responsibilities.nextWakeAt(1000, Date.now())).toBeNull();
+        expect(reconcile).not.toHaveBeenCalled();
+        if (failure === "after-activation") authorization.mockResolvedValue({ ok: false });
+        await onboarding.handleManagedSysSetup(connection, frame, context);
+      }
+      expect(sendOk).toHaveBeenCalledOnce();
+      expect(responsibilities.get(1000, seed.id)?.state).toBe("open");
+      expect(reconcile).toHaveBeenCalledExactlyOnceWith(1000);
+      expect(onboarding.pendingManagedOnboarding).toBeUndefined();
+    });
+  });
 });

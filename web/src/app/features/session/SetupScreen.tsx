@@ -72,7 +72,8 @@ export function SetupScreen({ visible, busy, space, step, password, passwordConf
           {step === "consent" ? <button type="button" class="ibtn" disabled={busy} onClick={onBack}>Back</button> : null}
           <button type="submit" class="ibtn is-primary" data-setup-submit disabled={busy}
             onPointerDown={(event) => { if (event.button === 0) onSubmitPointerDown(); }}>
-            {busy ? "Opening your space…" : step === "credentials" ? "Continue" : "Create account"}
+            {busy ? <>Opening your space<span class="gsv-setup-loading-dots" aria-hidden="true"><span>.</span><span>.</span><span>.</span></span></>
+              : step === "credentials" ? "Continue" : "Create account"}
           </button>
         </div>
       </form>

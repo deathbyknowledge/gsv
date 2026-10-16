@@ -114,7 +114,7 @@ function settleDuration(length: number): number {
 const SETTLE_ON_LOAD = 12;
 const SETTLE_STAGGER_MS = 6;
 /** Keys Zen answers in browse mode. Together with the shell's, they are the keys that never start writing; y and n are claimed only while an approval is pending. */
-const BROWSE_KEYS: ReadonlySet<string> = new Set(["j", "k", "g", "G", "o"]);
+const BROWSE_KEYS: ReadonlySet<string> = new Set(["j", "k", "ArrowDown", "ArrowUp", "g", "G", "o"]);
 const CLAIMED_KEYS: ReadonlySet<string> = new Set([...BROWSE_KEYS, ...SHELL_KEYS]);
 /* what each status-line failure was attempting, for causes the client cannot name */
 const SHIP_UNREACHABLE: ChatErrorContext = { summary: "Could not reach your ship.", action: "Check your connection, then reload the page." };
@@ -535,7 +535,7 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
   const [settling, setSettling] = useState<ReadonlyMap<string, number>>(() => new Map());
 
   /* moments: the runtime's, plus the commands run by hand */
-  const { moments, receipts } = useMemo(() => {
+  const moments = useMemo(() => {
     const fromRuntime: Moment[] = momentsFromConversation(conversation.rows, runtime.rows, runtime.activeRunId, pid ?? undefined)
       .map((moment) => ({ ...moment, attribution: answerAttribution(moment, answerHistory.entries, answerHistory.through) }));
     for (const outgoing of outbox.messages) {
@@ -585,9 +585,9 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
         },
       ],
     }));
-    const moments = [...fromRuntime, ...fromLocal].sort((a, b) => (a.timestamp ?? 0) - (b.timestamp ?? 0));
-    return { moments, receipts: receiptsForMoments(moments, runtime.activeRunId, pid) };
+    return [...fromRuntime, ...fromLocal].sort((a, b) => (a.timestamp ?? 0) - (b.timestamp ?? 0));
   }, [answerHistory, conversation.rows, conversation.conversation?.id, outbox.messages, localRuns, runtime.activeRunId, runtime.rows, pid]);
+  const receipts = useMemo(() => receiptsForMoments(moments, runtime.activeRunId, pid), [moments, runtime.activeRunId, pid]);
 
   /* the glyph thinking mark moves on the same clock as settling text; the dot keeps its own time in the stylesheet */
   const marking = THINKING_MARK === "glyphs" && moments.some((moment) => !moment.text && (moment.thinking || moment.streaming));
@@ -887,9 +887,9 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
         if (focusedReceipt && focusedReceipt.anchorId !== focused.id) scrolling.select(moments.findIndex((moment) => moment.id === focusedReceipt.anchorId));
         return;
       }
-      if (browse !== null && (event.key === "j" || event.key === "k")) {
+      if (browse !== null && (event.key === "j" || event.key === "k" || event.key === "ArrowDown" || event.key === "ArrowUp")) {
         event.preventDefault();
-        scrolling.select(Math.max(0, Math.min(moments.length - 1, browse + (event.key === "j" ? 1 : -1))));
+        scrolling.select(Math.max(0, Math.min(moments.length - 1, browse + (event.key === "j" || event.key === "ArrowDown" ? 1 : -1))));
         return;
       }
       // Anything else printable starts writing: the prompt takes focus during keydown, so the keystroke itself lands in it.
@@ -1028,7 +1028,7 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
       <button type="button" disabled={!connected || conversation.historyFetching} onClick={() => void conversation.retryHistory()}>retry</button>
     </div>
   ) : null;
-  const empty = ready && moments.length === 0 && pid !== null && pendingHil === null;
+  const helperEmpty = ready && moments.length === 0 && pid !== null && Boolean(pidProp) && pendingHil === null;
 
   return (
     <main class={`zen${!promptFocused ? " is-browse" : ""}${draggingFiles ? " is-file-drop" : ""}${selectingText ? " has-text-selection" : ""}`} aria-label="Chat"
@@ -1043,13 +1043,8 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
       {draggingFiles && <div class="zen-drop-hint">drop to attach</div>}
 
       <div class="zen-body">
-        {empty ? (
-          <div class="zen-empty">
-            {pidProp ? <p>This helper has no messages yet.</p> : <>
-              <h1>Welcome to the ship.</h1>
-              <p class="zen-welcome-copy">I am the ship. Who are you?</p>
-            </>}
-          </div>
+        {helperEmpty ? (
+          <div class="zen-empty"><p>This helper has no messages yet.</p></div>
         ) : !ready ? (
           <div class="zen-moments" ref={momentsRef} data-scroll-edge data-scroll-edge-bottom>
             <div class="zen-content" ref={contentRef}>{historyFailure}</div>
@@ -1110,7 +1105,7 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
             </div>
           </div>
         )}
-        {!empty && ready && scrolling.awayFromBottom && <button type="button" class="zen-jump-bottom"
+        {!helperEmpty && ready && scrolling.awayFromBottom && <button type="button" class="zen-jump-bottom"
           aria-label="Jump to latest message" onClick={scrolling.follow}>↓<span> latest</span></button>}
       </div>
 
@@ -1172,7 +1167,7 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
               place={currentPlace}
               showPlace={false}
               dir="~"
-              placeholder="Message your ship"
+              placeholder="What can I take care of?"
               disabled={!pid || recordingVoice}
               onSubmit={onSubmit}
               allowEmpty={extras}

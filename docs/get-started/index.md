@@ -116,6 +116,11 @@ then use **← pages** to return. Loading feedback appears in the visible pane.
 with **continue editing →** to resume it. Wider screens show the browser and reader
 side by side.
 
+After account setup, Ship welcomes you in a language detected from your browser.
+You can start typing immediately; Ship follows your message and language. Change the
+starting preference in **Settings → Preferences → Response language**, or ask Ship
+to switch. The welcome stays in your conversation across devices.
+
 The Settings sidebar highlights the section you're viewing.
 
 Open **People** to try making plans or working together with someone on Ship.

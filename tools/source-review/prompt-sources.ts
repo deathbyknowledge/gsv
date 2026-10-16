@@ -9,6 +9,7 @@ import ownerFacts from "../../workers/gateway/src/prompts/instance-facts/user.md
 import interaction from "../../workers/gateway/src/prompts/interaction/shared.md";
 import sharedKnowledge from "../../workers/gateway/src/prompts/knowledge/shared.md";
 import previousOnboardingWelcome from "../../workers/gateway/src/prompts/onboarding/previous-welcome.md";
+import previousShipOnboardingWelcome from "../../workers/gateway/src/prompts/onboarding/previous-ship-welcome.md";
 import onboardingWelcome from "../../workers/gateway/src/prompts/onboarding/welcome.md";
 import crewRole from "../../workers/gateway/src/prompts/role-and-judgment/crew.md";
 import shipRole from "../../workers/gateway/src/prompts/role-and-judgment/ship.md";
@@ -38,6 +39,7 @@ export const PROMPT_SOURCES: PromptSource[] = [
   { path: "interaction/shared.md", text: interaction, scope: "shared" },
   { path: "knowledge/shared.md", text: sharedKnowledge, scope: "shared" },
   { path: "onboarding/previous-welcome.md", text: previousOnboardingWelcome, scope: "task" },
+  { path: "onboarding/previous-ship-welcome.md", text: previousShipOnboardingWelcome, scope: "task" },
   { path: "onboarding/welcome.md", text: onboardingWelcome, scope: "task" },
   { path: "role-and-judgment/crew.md", text: crewRole, scope: "crew" },
   { path: "role-and-judgment/ship.md", text: shipRole, scope: "ship" },

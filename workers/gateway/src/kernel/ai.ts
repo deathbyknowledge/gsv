@@ -214,6 +214,7 @@ export async function handleAiContext(
     systemContextFiles: listConfigContextFiles(config, "config/ai/context.d"),
     system: {
       timezone: principalOf(ctx) ? ownerTimezone(config, resolveCallerOwnerUid(ctx)) : config.get("config/server/timezone") ?? "UTC",
+      language: principalOf(ctx) ? config.get(`users/${resolveCallerOwnerUid(ctx)}/locale/language`) ?? undefined : undefined,
     },
     skillIndexMode,
   };
@@ -288,6 +289,7 @@ export async function handleAiConfig(
     systemContextFiles,
     system: {
       timezone,
+      language: principalOf(ctx) ? config.get(`users/${resolveCallerOwnerUid(ctx)}/locale/language`) ?? undefined : undefined,
     },
     skillIndex,
     skillIndexMode,

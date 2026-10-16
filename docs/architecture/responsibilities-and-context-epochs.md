@@ -125,8 +125,9 @@ When a human or Process explicitly puts a Ship assignment into `waiting`, the le
 sets `nextCheckAtMs` to 24 hours later if no future check remains. An earlier future
 deadline brings that default forward. An explicit check time is preserved, and
 `nextCheckAtMs: null` explicitly clears the check. Metadata-only edits do not postpone
-it. System producers keep their own wake conditions, including initial onboarding,
-which must wait for the first user interaction.
+it. System producers keep their own wake conditions. Initial onboarding waits for
+account setup to complete, then becomes actionable through the ordinary wake path.
+After greeting, Ship explicitly clears the next check while waiting for the user.
 
 A due Ship check is actionable even while a blocker remains. The review event directs
 Ship to read the current conversation and responsibility. If the human's answer is
@@ -188,7 +189,7 @@ appear in later updates. Agents can use the snapshot and subsequent events direc
 content.
 
 The same epoch owns a normalized availability projection for accessible online
-targets, ready MCP servers, current date and timezone, and the visible skill catalog.
+targets, ready MCP servers, current date, timezone, owner language preference, and the visible skill catalog.
 Before every provider turn, Process asks the Kernel for the current prompt-relevant
 snapshot and compares it with the last observed projection. A meaningful change is
 persisted as one bounded `[GSV EVENT]` in the Process Activity, and the event message
@@ -237,12 +238,29 @@ enabled or disabled per owner without changing the subsystem's underlying data.
 System-owned producers use the same ledger contract:
 
 - Provisioning a new personal intelligence creates one high-priority initial
-  onboarding responsibility titled "Welcome to gsv". It waits for the user's first
-  message rather than waking the Ship on its own and is present in Ship's first
-  context epoch, rendered with its details like any Ship assignment. Those details
+  onboarding responsibility titled "Welcome to gsv". It stays dormant until Accounts
+  confirms successful setup, then the Kernel activates the untouched seed and reconciles
+  its ordinary wake schedule. Activation recovery follows the same path; retries leave
+  already handled or edited records alone. Ship sends its own welcome in the owner's
+  language and waits for a response without an automatic reminder. The responsibility
+  is present in Ship's first context epoch, rendered like any Ship assignment. Its details
   carry the onboarding brief, the Markdown prompt file
   `workers/gateway/src/prompts/onboarding/welcome.md` with the goal, acceptance
-  criteria, outcomes and step-by-step instructions. The system responsibilities
+  criteria, outcomes and step-by-step instructions. Ship looks the user up only
+  when asked or after they accept an offer; a name given as an introduction alone
+  does not authorize a lookup. A name supplied during an accepted lookup needs no
+  second permission question. Ship asks for another identifier, such as location,
+  only when needed to distinguish the right person. For an accepted task, Ship
+  uses suitable original or public sources to find task facts,
+  such as event dates and registration deadlines, rather than having the user
+  populate a list.
+  Completion requires a useful first result or supported ongoing work actually
+  configured with its scope, cadence and delivery confirmed. A connection alone
+  does not complete onboarding. For an accepted task with later updates, Ship explains
+  delivery and may suggest an optional messenger connection when it helps the user
+  receive those updates or continue the conversation. After the first task, Ship
+  points to the relevant existing Fleet control using its verified label, without
+  requiring a tour of both Responsibilities and Routines. The system responsibilities
   context puts an unresolved onboarding record ahead of everything else: other
   responsibilities are parked or delegated until the Ship resolves it, once the user
   has completed one small task. Ensuring the personal agent also rewrites an

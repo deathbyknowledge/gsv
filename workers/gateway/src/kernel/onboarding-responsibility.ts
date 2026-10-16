@@ -1,6 +1,7 @@
 import type { JsonObject, ResponsibilityRecord } from "@humansandmachines/gsv/protocol";
 
 import previousWelcomeBrief from "../prompts/onboarding/previous-welcome.md";
+import previousShipWelcomeBrief from "../prompts/onboarding/previous-ship-welcome.md";
 import welcomeBrief from "../prompts/onboarding/welcome.md";
 import type { ResponsibilityCreateOutcome, ResponsibilityStore } from "./responsibility-store";
 
@@ -26,7 +27,7 @@ const WELCOME_CONTRACT: OnboardingContract = {
     responsibilityType: "onboarding.initial",
     instructions: welcomeBrief.trim(),
   },
-  blocker: "Waiting for the user's first message. Follow the instructions in this responsibility's details before replying.",
+  blocker: "Waiting for account setup to complete.",
 };
 
 /**
@@ -38,7 +39,12 @@ const PREVIOUS_ONBOARDING_CONTRACTS: readonly OnboardingContract[] = [
   {
     title: "Welcome to gsv",
     details: { responsibilityType: "onboarding.initial", instructions: previousWelcomeBrief.trim() },
-    blocker: WELCOME_CONTRACT.blocker,
+    blocker: "Waiting for the user's first message. Follow the instructions in this responsibility's details before replying.",
+  },
+  {
+    title: "Welcome to Ship",
+    details: { responsibilityType: "onboarding.initial", instructions: previousShipWelcomeBrief.trim() },
+    blocker: "Waiting for the user's first message. Follow the instructions in this responsibility's details before replying.",
   },
   {
     title: "Get to know the user and finish initial GSV setup",
@@ -139,4 +145,22 @@ export function reconcileInitialOnboardingResponsibility(
 ): ResponsibilityRecord | null {
   const record = responsibilities.getByDedupeKey(ownerUid, INITIAL_ONBOARDING_DEDUPE_KEY);
   return record ? migrateUntouchedSeed(record, responsibilities, now) : null;
+}
+
+/** Activate only the untouched setup seed; retries must not reopen work Ship already handled. */
+export function activateInitialOnboardingResponsibility(
+  ownerUid: number,
+  responsibilities: ResponsibilityStore,
+  now = Date.now(),
+): void {
+  const record = responsibilities.getByDedupeKey(ownerUid, INITIAL_ONBOARDING_DEDUPE_KEY);
+  if (!record || !isUntouchedSeed(record, WELCOME_CONTRACT)) return;
+  responsibilities.update({
+    ownerUid,
+    id: record.id,
+    patch: { state: "open", blocker: null },
+    actor: ONBOARDING_SOURCE,
+    observedByShip: false,
+    now,
+  });
 }

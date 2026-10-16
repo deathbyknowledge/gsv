@@ -60,17 +60,25 @@ lavender highlight with contrasting text in both themes.
 Inside the prompt, selected text stays light on a stronger purple highlight. Selecting a range
 restores the native selection tint and handles on iOS; a collapsed selection uses the block cursor.
 
+Chat does not show the active model or routine place readiness above the composer. Model attribution
+stays with each reply; errors appear when needed, and an offline place shows a warning by its selector.
+In Zen browse mode, `j`/Down and `k`/Up move between messages and activity. Arrow keys keep their
+normal input behavior while the composer is focused.
+
 ## Conversation kinds
 
 The Kernel owns the conversation directory and membership:
 
 - **Ship** is the stable conversation with the user's personal intelligence. Web, Desktop, CLI,
   Telegram, Slack, and other private surfaces all contribute to the same Ship message stream.
-  The current personal Process is replaceable; the Ship conversation is not. In the web and
-  Desktop clients an empty Ship conversation shows the interface greeting ("Welcome to the ship."
-  / "I am the ship. Who are you?"); the CLI and messengers show none. Nothing is sent on the
-  user's behalf, and the Ship's onboarding responsibility tells it which surfaces saw the greeting
-  so it can treat the first message as the answer or introduce itself first.
+  The current personal Process is replaceable; the Ship conversation is not. Successful account
+  setup activates the initial onboarding responsibility through the existing `r12y.ready` wake path.
+  Ship sends a short welcome using its owner's language preference, initially detected from the
+  browser. This is a canonical Message, visible across clients and available in the Process history;
+  the UI adds no scripted messages, typing timers, or delayed second introduction. Ordinary run
+  activity shows generation, and the composer remains usable. If the user speaks first, Ship follows
+  that message and its language, skipping redundant introduction. After greeting, Ship waits with
+  no automatic onboarding reminder. Setup retries do not reopen a welcome already handled.
 - **Work** is a conversation handled by one explicit interactive work Process. Opening Work does not
   replace Ship or redefine the personal intelligence.
 - **Group** is tied to one normalized adapter surface and can retain multiple account and Process

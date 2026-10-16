@@ -43,6 +43,9 @@ function formatRuntimeChanges(
   if (previous.runtime.timezone !== current.runtime.timezone) {
     lines.push(`- Current timezone: ${quote(current.runtime.timezone)}`);
   }
+  if (previous.runtime.language !== current.runtime.language) {
+    lines.push(`- Preferred language: ${current.runtime.language ? quote(current.runtime.language) : "not set"}`);
+  }
   return lines.length > 0 ? ["Runtime:", ...lines].join("\n") : null;
 }
 

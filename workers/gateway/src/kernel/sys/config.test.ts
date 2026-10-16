@@ -88,6 +88,12 @@ describe("sys.config.get", () => {
     expect(() => handleSysConfigSet({ key: "users/1001/locale/timezone", value: "UTC" }, ctx)).toThrow("another user's");
     expect(() => handleSysConfigSet({ key: "config/server/timezone", value: "UTC" }, ctx)).toThrow("only root");
   });
+  it("allows only the owner or their agent to manage their language preference", () => {
+    const key = "users/1000/locale/language";
+    expect(handleSysConfigSet({ key, value: "es-MX" }, makeContext(1000, {}))).toEqual({ ok: true });
+    expect(handleSysConfigSet({ key, value: "es" }, makeContext(2000, {}, 1000))).toEqual({ ok: true });
+    expect(() => handleSysConfigSet({ key, value: "fr" }, makeContext(1001, {}))).toThrow("another user");
+  });
   const baseEntries = {
     "config/ai/models": JSON.stringify({
       version: 1,

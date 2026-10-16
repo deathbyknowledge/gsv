@@ -318,7 +318,8 @@ function InstrumentReady({ initialPath }: { initialPath: string }) {
           {distance === "zen" && <>
             <h4>Chat · browse</h4>
             <dl>
-              <dt>j / k</dt><dd>Next / previous message or activity</dd>
+              <dt>j / ↓</dt><dd>Next message or activity</dd>
+              <dt>k / ↑</dt><dd>Previous message or activity</dd>
               <dt>gg / G</dt><dd>Earlier history / latest messages and follow</dd>
               <dt>o</dt><dd>Show or hide the selected message’s activity</dd>
               <dt>/</dt><dd>Search in browse mode · Ctrl/Cmd+F also works</dd>
