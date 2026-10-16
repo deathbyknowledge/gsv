@@ -20,15 +20,20 @@ it does not send the transcript. Sending becomes available once transcription
 finishes. **cancel** or Escape discards the recording or pending transcription
 and keeps your typed draft. You can start recording while the places list is
 still loading; loading it does not interrupt voice input at your default cloud place.
-Leaving Zen, hiding the tab, switching conversations or places, disconnecting,
-or clearing the draft also cancels pending voice input. A late result cannot
-enter another conversation.
+Switching conversations or places discards pending voice input. A late result
+cannot enter another conversation. If the connection drops or the tab is hidden,
+capture stops and the audio stays in the tab. Return to Chat and choose **retry
+transcription** when ready; reconnecting does not upload it automatically.
 
 Your browser records audio locally until you stop. The finished audio goes
 through your space's authenticated Gateway to its configured transcription
 provider. It is not attached to the message. Browser recordings are limited to
-25 MiB; the space can enforce a smaller limit. If transcription fails, **retry
-transcription** reuses the recording held in this tab. **cancel** discards it.
+25 MiB; the space can enforce a smaller limit. If transcription fails or returns
+no speech, **retry transcription** reuses the recording held in this tab.
+**download audio** saves the original recording, and **discard recording** removes
+it. Sending or clearing typed text does not discard a finished recording awaiting
+retry. Audio is kept in memory, so retry or download it before closing or reloading
+the tab, signing out, or changing conversations or places.
 
 If microphone access is denied, allow it in the browser's site permissions and
 try again. Recording requires a browser with microphone recording support and

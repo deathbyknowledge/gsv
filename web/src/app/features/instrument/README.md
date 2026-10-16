@@ -263,12 +263,17 @@ not cause Zen or the conversation to rerender.
 The browser owns microphone capture and releases it before uploading a bounded
 audio body through `ai.transcription.create`, with the current Process selecting
 the transcription configuration. The result inserts at the current draft cursor
-without sending. Enter finishes capture for review; scope changes, leaving Zen,
-hiding the tab, disconnecting and clearing the draft cancel capture or upload
-and fence late results. Voice input uses the composer's effective place from the
+without sending. Enter finishes capture for review. Scope changes discard pending
+audio and fence late results. Hiding the tab or disabling input stops capture and
+cancels the upload attempt while retaining the completed audio for explicit retry;
+reconnection never uploads automatically. Each attempt has its own abort identity,
+so an interrupted response cannot overwrite a later retry. Voice input uses the composer's effective place from the
 first render, so loading the target list does not interrupt recording or transcription
-at the default cloud place. Failed uploads can retry the in-memory recording. Desktop retains its
-local continuous dictation and microphone selection.
+at the default cloud place. Failed or empty transcriptions retain the in-memory
+recording for retry, download or explicit discard, even while typed text is edited
+or sent. The download URL is released when its recording is discarded, inserted
+successfully, or unmounted. Closing or reloading the tab does not retain audio.
+Desktop retains its local continuous dictation and microphone selection.
 
 Before a remote command starts, its session UUID is saved in the per-tab journal. If storage fails, the command does not launch. `shell.exec` registers that identity before execution, so a reload before the initial response arrives can recover by polling the saved ID. Initial machine acknowledgements leave output for the first poll. Recovery never resubmits the command; older daemons reject this start mode before execution and show an update instruction.
 

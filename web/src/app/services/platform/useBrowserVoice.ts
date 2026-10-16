@@ -7,7 +7,13 @@ import { captureBrowserAudio } from "./browserAudio";
 import { composeVoice } from "./voiceDraft";
 
 type Phase = "idle" | "permission" | "recording" | "transcribing" | "error";
-type Recording = { abort: AbortController; stop?: () => void; audio?: Blob };
+type Recording = {
+  abort: AbortController;
+  attempt?: AbortController;
+  stop?: () => void;
+  audio?: Blob;
+  paused?: boolean;
+};
 
 export function useBrowserVoice({ client, prompt, pid, scope, enabled }: {
   client: Pick<GSVClient, "request">;
@@ -21,12 +27,15 @@ export function useBrowserVoice({ client, prompt, pid, scope, enabled }: {
   const [stream, setStream] = useState<MediaStream | null>(null);
   const current = useRef<Recording | null>(null);
   const restoreFocus = useRef(false);
+  const available = useRef(enabled);
+  available.current = enabled;
 
   const discard = () => {
     const recording = current.current;
     current.current = null;
     restoreFocus.current = false;
     recording?.abort.abort();
+    recording?.attempt?.abort();
   };
   const cancel = (focus = false) => {
     discard();
@@ -41,7 +50,23 @@ export function useBrowserVoice({ client, prompt, pid, scope, enabled }: {
     setError(null);
     setStream(null);
     return discard;
-  }, [client, prompt, pid, scope, enabled]);
+  }, [client, prompt, pid, scope]);
+
+  const pause = () => {
+    const recording = current.current;
+    if (!recording) return;
+    if (!recording.stop && !recording.audio) { cancel(); return; }
+    recording.paused = true;
+    const attempt = recording.attempt;
+    recording.attempt = undefined;
+    attempt?.abort();
+    recording.stop?.();
+    setStream(null);
+    setPhase(recording.audio ? "error" : "transcribing");
+    setError("Recording kept. Retry transcription when you’re ready.");
+  };
+
+  useLayoutEffect(() => { if (!enabled) pause(); }, [enabled]);
 
   useEffect(() => {
     if (phase !== "idle" || !restoreFocus.current) return;
@@ -50,8 +75,8 @@ export function useBrowserVoice({ client, prompt, pid, scope, enabled }: {
   }, [phase, enabled, prompt]);
 
   useLayoutEffect(() => {
-    const leave = () => cancel();
-    const visibility = () => { if (document.visibilityState === "hidden") cancel(); };
+    const leave = () => pause();
+    const visibility = () => { if (document.visibilityState === "hidden") pause(); };
     window.addEventListener("pagehide", leave);
     document.addEventListener("visibilitychange", visibility);
     return () => {
@@ -61,33 +86,35 @@ export function useBrowserVoice({ client, prompt, pid, scope, enabled }: {
   }, []);
 
   const transcribe = async (recording: Recording, audio: Blob) => {
-    if (!pid || current.current !== recording) return;
+    if (!pid || !available.current || document.visibilityState === "hidden"
+      || current.current !== recording || recording.attempt) return;
+    const attempt = new AbortController();
+    recording.attempt = attempt;
+    recording.paused = false;
     setPhase("transcribing");
     setError(null);
     try {
       const { data: { text } } = await client.request("ai.transcription.create", { pid, audio: { mimeType: audio.type }, mode: "transcribe" }, {
-        body: frameBodyFromBlob(audio), signal: recording.abort.signal,
+        body: frameBodyFromBlob(audio), signal: attempt.signal,
       });
-      if (current.current !== recording) return;
+      if (current.current !== recording || recording.attempt !== attempt) return;
       const composer = prompt.current;
       if (!text.trim()) {
-        current.current = null;
-        setPhase("error");
-        setError("No speech was detected. Try recording again.");
-        return;
+        throw new Error("No speech was detected. Retry transcription or download the recording.");
       }
+      if (!composer) throw new Error("The prompt is unavailable. Retry transcription when it’s ready.");
+      const selection = composer.selection();
+      const draft = composeVoice(selection.value.slice(0, selection.start), text, selection.value.slice(selection.start));
+      composer.setValue(draft.value, draft.caret);
       current.current = null;
       restoreFocus.current = true;
       setPhase("idle");
-      if (composer) {
-        const selection = composer.selection();
-        const draft = composeVoice(selection.value.slice(0, selection.start), text, selection.value.slice(selection.start));
-        composer.setValue(draft.value, draft.caret);
-      }
     } catch (error) {
-      if (current.current !== recording) return;
+      if (current.current !== recording || recording.attempt !== attempt) return;
       setPhase("error");
       setError(error instanceof Error ? error.message : String(error));
+    } finally {
+      if (recording.attempt === attempt) recording.attempt = undefined;
     }
   };
 
@@ -107,7 +134,10 @@ export function useBrowserVoice({ client, prompt, pid, scope, enabled }: {
       setStream(null);
       recording.stop = undefined;
       recording.audio = audio;
-      await transcribe(recording, audio);
+      if (recording.paused || !available.current || document.visibilityState === "hidden") {
+        setPhase("error");
+        setError("Recording kept. Retry transcription when you’re ready.");
+      } else await transcribe(recording, audio);
     } catch (error) {
       if (current.current !== recording) return;
       current.current = null;
@@ -129,12 +159,13 @@ export function useBrowserVoice({ client, prompt, pid, scope, enabled }: {
     if (recording?.audio && phase === "error") void transcribe(recording, recording.audio);
   };
   const interceptSubmit = () => {
-    if (phase === "error") { cancel(); return false; }
+    if (phase === "error") return false;
     if (!current.current) return false;
     stop();
     return true;
   };
-  const onInput = (value: string) => { if (!value && current.current) cancel(); };
+  const onInput = (value: string) => { if (!value && current.current && !current.current.audio) cancel(); };
 
-  return { phase, error, stream, canRetry: phase === "error" && !!current.current?.audio, start, stop, cancel, retry, onInput, interceptSubmit };
+  return { phase, error, stream, audio: current.current?.audio,
+    canRetry: phase === "error" && !!current.current?.audio, start, stop, cancel, retry, onInput, interceptSubmit };
 }
