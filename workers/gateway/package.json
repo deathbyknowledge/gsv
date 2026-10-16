@@ -9,7 +9,8 @@
     "start": "npm --prefix ../.. run dev",
     "cf-typegen": "wrangler types",
     "test": "vitest --config vitest.config.ts",
-    "test:unit": "npm --prefix ../.. run protocol:check && vitest run --config vitest.config.ts",
+    "test:unit": "npm --prefix ../.. run protocol:check && npm run test:site-helper && vitest run --config vitest.config.ts",
+    "test:site-helper": "node --test test-node/site-helper.test.mjs",
     "typecheck:integration": "tsc --noEmit -p tsconfig.integration.json",
     "test:integration": "npm --prefix ../../packages/gsv run build && npm run typecheck:integration && npm --prefix ../../web run build && vitest run --config vitest.integration.config.ts",
     "test:run": "npm run test:unit && npm run test:integration"

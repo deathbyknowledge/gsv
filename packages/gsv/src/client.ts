@@ -250,6 +250,7 @@ const DEFAULT_REQUEST_TIMEOUTS_MS = {
   "fs.transfer.stat": LONG_RUNNING_REQUEST_TIMEOUT_MS,
   "fs.transfer.send": LONG_RUNNING_REQUEST_TIMEOUT_MS,
   "fs.transfer.receive": LONG_RUNNING_REQUEST_TIMEOUT_MS,
+  "site.publish": LONG_RUNNING_REQUEST_TIMEOUT_MS,
   "net.fetch": LONG_RUNNING_REQUEST_TIMEOUT_MS,
   "ai.text.generate": AI_TEXT_GENERATION_REQUEST_TIMEOUT_MS,
   "ai.transcription.create": LONG_RUNNING_REQUEST_TIMEOUT_MS,

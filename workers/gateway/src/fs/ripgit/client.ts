@@ -1,3 +1,5 @@
+import { bodyToBytes } from "@humansandmachines/gsv/protocol";
+
 export type RipgitTreeEntry = {
   name: string;
   mode: string;
@@ -176,15 +178,20 @@ export class RipgitConflictError extends Error {}
 export class RipgitClient {
   constructor(private readonly binding: Fetcher) {}
 
-  async readPath(repo: RipgitRepoRef, path: string): Promise<RipgitPathResult> {
-    const response = await this.binding.fetch(this.makeReadUrl(repo, path), {
+  async readPath(repo: RipgitRepoRef, path: string, options?: { maxBytes: number; signal?: AbortSignal }): Promise<RipgitPathResult> {
+    let response = await this.binding.fetch(this.makeReadUrl(repo, path), {
       headers: this.makeInternalHeaders(),
+      signal: options?.signal,
     });
     if (response.status === 404) {
       return { kind: "missing" };
     }
     if (!response.ok) {
       throw new Error(await this.readError(response, `read '${repo.owner}/${repo.repo}:${path}'`));
+    }
+    if (options && response.body) {
+      const bytes = await bodyToBytes({ stream: response.body }, options.maxBytes, options.signal);
+      response = new Response(bytes, { headers: response.headers });
     }
 
     if (this.isTreeResponse(response)) {

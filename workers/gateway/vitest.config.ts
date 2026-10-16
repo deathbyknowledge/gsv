@@ -24,6 +24,7 @@ export default defineConfig({
       "**/alchemy/**",
       "**/node_modules/**",
       "**/test-integration/**",
+      "**/test-node/**",
       "src/process/do.*.test.ts",
     ],
     deps: {

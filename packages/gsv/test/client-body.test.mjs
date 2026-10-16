@@ -832,6 +832,36 @@ test("leaves omitted shell deadlines to the server and budgets explicit timeouts
   }
 });
 
+test("allows publication to exceed the ordinary request deadline and honors an explicit override", async (t) => {
+  const args = { siteId: `site-${"a".repeat(32)}`, expectedRevision: 0, releaseId: crypto.randomUUID(), outputPath: "/tmp/site-output",
+    manifest: { version: 1, entry: "index.html", routing: "static", title: "Demo", description: "", source: { repo: "test/demo", revision: "a".repeat(40) },
+      files: [{ path: "index.html", size: 0, sha256: "a".repeat(64) }] } };
+  const { client, socket } = await connectedClient();
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  try {
+    const publishing = client.site.publish(args);
+    const frame = JSON.parse(socket.sent.at(-1));
+    t.mock.timers.tick(30_000);
+    assert.equal(JSON.parse(socket.sent.at(-1)).type, "req");
+    socket.receive(JSON.stringify({ type: "res", id: frame.id, ok: true, data: { shareUrl: "https://test.example/public/demo" } }));
+    assert.equal((await publishing).shareUrl, "https://test.example/public/demo");
+    t.mock.timers.reset();
+    const overridden = new GSVClient({ WebSocket: FakeWebSocket, requestTimeoutsMs: { "site.publish": 10 } });
+    await overridden.connect({ url: "ws://test", username: "test", password: "test" });
+    t.mock.timers.enable({ apis: ["setTimeout"] });
+    try {
+      const pending = overridden.site.publish(args);
+      const rejected = assert.rejects(pending, /Request timed out after 10ms: site.publish/);
+      t.mock.timers.tick(10);
+      await rejected;
+      assert.equal(JSON.parse(FakeWebSocket.instance.sent.at(-1)).signal, REQUEST_CANCEL_SIGNAL);
+    } finally { overridden.close(); }
+  } finally {
+    t.mock.timers.reset();
+    client.close();
+  }
+});
+
 test("uses the polling wait budget for shell continuation transport timeouts", async () => {
   const { client, socket } = await connectedClient();
   const originalSetTimeout = globalThis.setTimeout;
