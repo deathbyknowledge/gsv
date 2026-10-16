@@ -18,6 +18,8 @@ describe("new Ship browser discovery", () => {
       expect(context).toContain("skills show browser-target");
       expect(context).toContain("onboarding.initial");
       expect(context).toContain("Available targets: - gsv");
+      expect(context.match(/# Knowledge/g)).toHaveLength(1);
+      expect(context.indexOf("# Knowledge")).toBeLessThan(context.indexOf("<program"));
       held.release();
       await runtime.waitFor(async () => {
         const history = await runtime.client.proc.history({ pid: ship.pid });

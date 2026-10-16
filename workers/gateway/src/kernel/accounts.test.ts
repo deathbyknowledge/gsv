@@ -19,7 +19,6 @@ import {
 import {
   RETIRED_BOOT_CONTEXT_TEMPLATE,
   PERSONAL_STANDING_CONTEXT,
-  DEFAULT_MEMORY_CONTEXT_TEMPLATE,
 } from "../prompts/agent-home";
 
 type PasswdRow = { username: string; uid: number; gid: number; gecos: string; home: string; shell: string };
@@ -241,10 +240,7 @@ describe("handleAccountCreate", () => {
 
     const ops = ripgitApplyBodies.flatMap((body) => body.ops);
     expect(ops).not.toContainEqual(expect.objectContaining({ path: "context.d/00-style.md" }));
-    const memoryContextOp = ops.find((op) => op.path === "context.d/15-memory.md");
-    expect(memoryContextOp).toEqual(expect.objectContaining({ type: "put" }));
-    const memoryContext = new TextDecoder().decode(new Uint8Array(memoryContextOp?.contentBytes ?? []));
-    expect(memoryContext).toBe(DEFAULT_MEMORY_CONTEXT_TEMPLATE);
+    expect(ops).not.toContainEqual(expect.objectContaining({ type: "put", path: "context.d/15-memory.md" }));
     expect(ops).not.toContainEqual(
       expect.objectContaining({ path: "context.d/20-open-loops.md" }),
     );
