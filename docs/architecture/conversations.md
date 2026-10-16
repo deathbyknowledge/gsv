@@ -71,7 +71,7 @@ The Kernel owns the conversation directory and membership:
   path. Ship sends a welcome in the owner's preferred language, initially detected from
   the browser. The welcome is a canonical Message shared across clients. A user can
   write first, including on surfaces without the card, and Ship responds to that message.
-  After greeting, Ship waits for a reply without a timed reminder. Repeated dismissal
+  After greeting, Ship waits for a reply. Repeated dismissal
   and reconnects recover pending work without reopening a handled welcome.
 - **Work** is a conversation handled by one explicit interactive work Process. Opening Work does not
   replace Ship or redefine the personal intelligence.

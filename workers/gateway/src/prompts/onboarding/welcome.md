@@ -82,5 +82,4 @@ GOOD: "Do you already know the exact dates? I can search in a range if that's ea
 * Connections: Messengers connect from Settings, messengers. Help connect the owner's own machines and browsers with `targets pair --help`. Integrations connect from Settings, mcp. Offer connections when the user accepts a task that needs those devices, sessions or integrations; a personal browser connection is optional for browsing.
 * Reminders: Reminders and recurring tasks use `sched add`. `--here` reaches the user only while they have the site open; delivery elsewhere needs a connected messenger and `--to`.
 * Other work: Track other work the user brings up in `r12y` and delegate what can proceed with `proc delegate --as` your Crew account, then return to this responsibility.
-* Waiting after the welcome: Use `r12y update ID --json '{"state":"waiting","blocker":"Waiting for the user to respond to the welcome","nextCheckAtMs":null}'` and yield. The explicit null prevents an automatic follow-up while waiting for the user.
 * Closing: Close with `r12y resolve ID --json '{"outcome":"<which outcome happened>"}'` once the acceptance criteria are met.

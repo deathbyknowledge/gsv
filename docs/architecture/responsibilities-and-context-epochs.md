@@ -244,9 +244,9 @@ System-owned producers use the same ledger contract:
   retries pending welcome activation on reconnect without delaying sign-in. Handled
   and edited records are left alone; exact historical briefs identify untouched seeds.
   A user can also start the conversation before dismissal or on a surface without
-  the card. Ship sends its welcome in the owner's language and waits for a reply
-  without an automatic reminder. The responsibility is present in Ship's first
-  context epoch, rendered with its details like any Ship assignment. Those details
+  the card. Ship sends its welcome in the owner's language and waits for a reply.
+  The responsibility is present in Ship's first context epoch, rendered with its
+  details like any Ship assignment. Those details
   carry the onboarding brief, the Markdown prompt file
   `workers/gateway/src/prompts/onboarding/welcome.md` with the goal, acceptance
   criteria, outcomes and step-by-step instructions. The system responsibilities

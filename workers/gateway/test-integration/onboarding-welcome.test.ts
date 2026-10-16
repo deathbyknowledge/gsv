@@ -12,7 +12,7 @@ async function until(predicate: () => Promise<boolean>, description: string): Pr
 }
 
 function waitForUser(id: string): string {
-  return `r12y update ${id} --json '{"state":"waiting","blocker":"Waiting for the user to respond to the welcome","nextCheckAtMs":null}'`;
+  return `r12y update ${id} --json '{"state":"waiting","blocker":"Waiting for the user to respond to the welcome"}'`;
 }
 
 describe("setup welcome", () => {
@@ -71,7 +71,7 @@ describe("setup welcome", () => {
     await recorder.scriptManagedInference(INSTALLATION, [`message send --message '${GREETING}'`, waitForUser(welcome.id), "yield"]);
     await until(async () => (await connected.conversation.history({ conversationId: conversation.id })).messages.length === 1, "canonical welcome to commit");
     await until(async () => (await connected.r12y.get({ id: welcome.id })).responsibility.state === "waiting", "welcome to wait without resolving onboarding");
-    expect((await connected.r12y.get({ id: welcome.id })).responsibility.nextCheckAtMs).toBeUndefined();
+    expect((await connected.r12y.get({ id: welcome.id })).responsibility.nextCheckAtMs).toBeGreaterThan(Date.now());
     const messages = (await connected.conversation.history({ conversationId: conversation.id })).messages;
     expect(messages[0]).toMatchObject({ text: GREETING, author: { kind: "process" } });
     expect(messages.some((message) => message.author.kind === "user")).toBe(false);
