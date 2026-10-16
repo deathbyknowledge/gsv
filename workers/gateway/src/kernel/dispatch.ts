@@ -12,6 +12,7 @@
  */
 
 import { handleSiteCreate, handleSiteGet, handleSiteList, handleSitePublish, handleSiteUnpublish } from "./sites";
+import { handleSiteAuthorize } from "./site-authorization";
 import type {
   RequestFrame,
   ResponseFrame,
@@ -775,6 +776,9 @@ async function dispatchKernel(
 
       case "site.create":
         data = await handleSiteCreate(frame.args, ctx);
+        break;
+      case "site.authorize":
+        data = await handleSiteAuthorize(frame.args, ctx);
         break;
       case "site.get":
         data = await handleSiteGet(frame.args, ctx);

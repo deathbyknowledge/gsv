@@ -94,7 +94,7 @@ export default {
     }
 
     if (route.publication) {
-      return servePublishedSite(request, createInstallationStorage(env.STORAGE, route.identity.installationId), route.publication);
+      return servePublishedSite(request, createInstallationStorage(env.STORAGE, route.identity.installationId), route.publication, route.identity);
     }
 
     const siteSlug = matchSiteSharePath(url.pathname);
@@ -180,7 +180,16 @@ export default {
     }
 
     if (request.method === "GET" || request.method === "HEAD") {
-      return withPublicDeploymentConfig(await env.ASSETS.fetch(request), env);
+      const response = withPublicDeploymentConfig(await env.ASSETS.fetch(request), env);
+      if (url.pathname === "/authorize-site") {
+        const headers = new Headers(response.headers);
+        headers.append("content-security-policy", "frame-ancestors 'none'");
+        headers.set("x-frame-options", "DENY");
+        headers.set("referrer-policy", "no-referrer");
+        headers.set("cache-control", "no-store");
+        return new Response(response.body, { status: response.status, headers });
+      }
+      return response;
     }
     return new Response("Not Found", { status: 404 });
   },

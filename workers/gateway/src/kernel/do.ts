@@ -228,6 +228,7 @@ type AuthorizeGitHttpResult =
 type StoredInstallationIdentity = Omit<InstallationIdentity, "installationId">;
 
 type KernelTask =
+  | { callback: "onCredentialExpiry"; payload: string }
   | { callback: "onMemoryReview"; payload: number }
   | { callback: "onProcessApprovalNotice"; payload: { pid: string; runId: string; requestId: string } }
   | { callback: "onAdapterRouteDelivery"; payload: AdapterRouteDeliveryRetry }
@@ -324,6 +325,7 @@ const KERNEL_TASK_SCHEMA = z.discriminatedUnion("callback", [
     }),
   }),
   z.object({ callback: z.literal("onLedgerRotate"), payload: z.string() }),
+  z.object({ callback: z.literal("onCredentialExpiry"), payload: z.string() }),
   z.object({ callback: z.literal("onBrowserHandoffs"), payload: z.null() }),
 ]);
 const processMessageStreamSignalSchema = z.object({
@@ -493,7 +495,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
       this.retirement,
     );
 
-    this.auth = new AuthStore(sql);
+    this.auth = new AuthStore(sql, tokenId => this.connectionRuntime.invalidateTokenConnections(tokenId));
 
     this.caps = new CapabilityStore(sql);
     if (!this.retirement.state) this.caps.seed();
@@ -886,6 +888,9 @@ export class Kernel extends DurableObject<GatewayEnv> {
     task: DurableTask<KernelTask>,
   ): Promise<void> {
     switch (task.callback) {
+      case "onCredentialExpiry":
+        this.connectionRuntime.invalidateTokenConnections(task.payload);
+        return;
       case "onMemoryReview":
         await runMemoryReview(this, task.payload, task.id);
         return;
@@ -1660,6 +1665,9 @@ export class Kernel extends DurableObject<GatewayEnv> {
   ): Promise<ResponseFrame | null> {
     this.retirement.assertActive();
     const peer = ctx.peer;
+    if (ctx.connection && !this.connectionRuntime.ensureConnectionCurrent(ctx.connection)) {
+      return rejectBeforeDispatch(inputFrame, 401, "Connection credentials are no longer valid");
+    }
     if (!peer) {
       return rejectBeforeDispatch(inputFrame, 403, "Request has no authenticated peer");
     }
@@ -1677,7 +1685,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
       return denied;
     }
 
-    if (inputFrame.call !== "sys.bootstrap") ctx.defer(this.manual.ensureCurrent());
+    if (inputFrame.call !== "sys.bootstrap" && !ctx.connection?.state.token?.ceiling) ctx.defer(this.manual.ensureCurrent());
 
     const callerSignal = ctx.requestSignal && options.signal && ctx.requestSignal !== options.signal
       ? AbortSignal.any([ctx.requestSignal, options.signal])

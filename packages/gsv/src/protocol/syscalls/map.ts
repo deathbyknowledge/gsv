@@ -362,6 +362,7 @@ export type SyscallDomains = {
   "conversation.media.read": { args: ConversationMediaReadArgs; result: ConversationMediaReadResult };
 
   "site.create": { args: Site.SiteCreateArgs; result: Site.SiteResult };
+  "site.authorize": { args: Site.SiteAuthorizeArgs; result: Site.SiteAuthorization };
   "site.get": { args: Site.SiteGetArgs; result: Site.SiteResult };
   "site.list": { args: Site.SiteListArgs; result: Site.SiteListResult };
   "site.publish": { args: Site.SitePublishArgs; result: Site.SiteResult };

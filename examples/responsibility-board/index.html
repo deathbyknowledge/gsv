@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#f4f3ef">
+  <title>Responsibilities · Ship</title>
+  <link rel="stylesheet" href="./style.css">
+  <script type="module" src="./app.js"></script>
+</head>
+<body>
+  <main>
+    <header>
+      <div><p class="eyebrow">SHIP / YOUR WORK</p><h1>Responsibilities</h1></div>
+      <button id="connect" type="button" disabled>Connect to Ship</button>
+    </header>
+    <p id="notice" role="status">Preparing secure sign-in…</p>
+    <section id="welcome">
+      <span class="welcome-mark" aria-hidden="true">↗</span>
+      <h2>A clear view of what’s moving.</h2>
+      <p>See current work and what needs attention. Sign in to the space that published this board.</p>
+      <p class="muted">Read-only access, lasting up to one hour.</p>
+    </section>
+    <section id="board" hidden>
+      <div class="toolbar">
+        <div id="filters" role="group" aria-label="Filter responsibilities">
+          <button type="button" data-state="all" aria-pressed="true">All</button>
+          <button type="button" data-state="active" aria-pressed="false">In progress</button>
+          <button type="button" data-state="waiting" aria-pressed="false">Waiting</button>
+          <button type="button" data-state="open" aria-pressed="false">Open</button>
+        </div>
+        <span id="count" class="muted"></span>
+      </div>
+      <div class="workspace">
+        <div><ul id="work" aria-label="Responsibilities"></ul><p id="empty" hidden>Nothing here right now.</p></div>
+        <aside id="detail" aria-label="Responsibility details"><p class="muted">Choose a responsibility to see its details.</p></aside>
+      </div>
+      <footer><span class="live-dot" aria-hidden="true"></span><span id="session"></span></footer>
+    </section>
+  </main>
+</body>
+</html>

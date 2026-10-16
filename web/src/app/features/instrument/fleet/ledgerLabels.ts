@@ -31,6 +31,7 @@ const labels = {
   "conversation.media.read": "opened a message attachment",
   "contact.identity": "checked contact identity",
   "site.create": "created a site",
+  "site.authorize": "connected a site",
   "site.get": "opened site details",
   "site.list": "listed sites",
   "site.publish": "published a site",

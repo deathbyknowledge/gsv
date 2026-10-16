@@ -136,7 +136,9 @@ async onMessage(
     connection: KernelConnection<ConnectionState>,
     message: KernelWebSocketMessage,
   ): Promise<void> {
+    if (!this.host.connectionRuntime.ensureConnectionCurrent(connection)) return;
     if (message instanceof ArrayBuffer) {
+      if (connection.state.token?.ceiling) return;
       this.handleBinaryMessage(connection, message);
       return;
     }
@@ -153,6 +155,9 @@ async onMessage(
       );
       return;
     }
+
+    if (connection.state.token?.ceiling && parsed.type !== "req"
+      && !(parsed.type === "sig" && parsed.signal === REQUEST_CANCEL_SIGNAL)) return;
 
     switch (parsed.type) {
       case "req":
@@ -207,8 +212,6 @@ async handleReq(
     }
 
     try {
-      const state = connection.state;
-
       if (
         frame.call !== "sys.setup"
         && frame.call !== "sys.setup.assist"
@@ -218,6 +221,13 @@ async handleReq(
           this.sendError(connection, frame.id, gate.code, gate.message, gate.details);
           return;
         }
+      }
+
+      if (!this.host.connectionRuntime.ensureConnectionCurrent(connection)) return;
+      const state = connection.state;
+      if (state.token?.ceiling && !hasCapability(state.peer?.grant.calls ?? [], frame.call)) {
+        this.sendError(connection, frame.id, 403, `Site credential does not allow ${frame.call}`);
+        return;
       }
 
       if (frame.call === "sys.connect") {

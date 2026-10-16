@@ -983,6 +983,7 @@ source provenance, and remains available to the owner after unpublish.
 ```ts
 type SiteSyscalls = {
   "site.create": { args: { slug: string }; result: SiteResult };
+  "site.authorize": { args: { siteId: string }; result: SiteAuthorization };
   "site.list": { args: Record<string, never>; result: { sites: Site[] } };
   "site.get": { args: { siteId: string }; result: SiteResult };
   "site.publish": {
@@ -997,6 +998,15 @@ type SiteResult = {
   shareUrl: string;
 };
 ```
+
+`site.authorize` requires the site's directly authenticated human owner on the
+trusted installation origin. It issues an origin-bound, one-hour credential for
+`r12y.list`, `r12y.get`, and `r12y.changed` only. Processes and scoped site
+credentials cannot issue it. Existing `sys.token.list/revoke` inspect and revoke
+these grants; expiry and revocation also fence live connections and signals.
+`SiteAuthorization` contains `token`, `tokenId`, `expiresAtMs`, `installationId`,
+`siteId`, `siteOrigin`, `gatewayOrigin`, `calls`, and `signals`. The trusted consent
+page hands it to the exact site origin; it is never an ordinary owner session.
 
 The Kernel derives owner and installation identity. `site.publish` also requires
 `fs.read` and `repo.log`, validates the readable source commit and output hashes,

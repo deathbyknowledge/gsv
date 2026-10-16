@@ -1,6 +1,7 @@
 import { z } from "zod";
 import type { ConnectedPeer } from "@humansandmachines/gsv/protocol";
 import { connectedPeerSchema } from "../protocol/peer-schemas";
+import { tokenAuthoritySchema, type TokenAuthority } from "./token-authority";
 
 export type KernelWebSocketMessage = string | ArrayBuffer;
 
@@ -13,6 +14,7 @@ export type KernelConnectionState = {
   clientPlatform?: string;
   credentialMethod?: "password" | "token";
   credentialEpoch?: number;
+  token?: TokenAuthority;
   observedProcessIds?: string[];
 };
 
@@ -24,6 +26,7 @@ const KERNEL_CONNECTION_STATE_SCHEMA = z.object({
   clientPlatform: z.string().optional(),
   credentialMethod: z.enum(["password", "token"]).optional(),
   credentialEpoch: z.number().int().nonnegative().optional(),
+  token: tokenAuthoritySchema.optional(),
   observedProcessIds: z.array(z.string()).optional(),
 }) satisfies z.ZodType<KernelConnectionState>;
 
@@ -31,6 +34,7 @@ type ConnectionAttachment<State> = {
   version: 1;
   id: string;
   uri: string;
+  origin: string | null;
   state: State;
 };
 
@@ -43,15 +47,19 @@ const CONNECTION_ATTACHMENT_SCHEMA = z.object({
   version: z.literal(1),
   id: z.string().min(1),
   uri: z.url(),
+  origin: z.string().nullable().optional(),
   state: KERNEL_CONNECTION_STATE_SCHEMA,
 });
 
 export class KernelConnection<State = unknown> {
+  private authorizationCheck?: () => boolean;
+
   constructor(
     readonly socket: WebSocket,
     readonly id: string,
     readonly uri: string,
     private currentState: State,
+    readonly origin: string | null = null,
   ) {}
 
   get state(): State {
@@ -64,7 +72,12 @@ export class KernelConnection<State = unknown> {
   }
 
   send(message: string | ArrayBuffer | ArrayBufferView): void {
+    if (this.authorizationCheck && !this.authorizationCheck()) throw new Error("Connection credentials are no longer valid");
     this.socket.send(message);
+  }
+
+  setAuthorizationCheck(check: () => boolean): void {
+    this.authorizationCheck = check;
   }
 
   close(code?: number, reason?: string): void {
@@ -76,6 +89,7 @@ export class KernelConnection<State = unknown> {
       version: 1,
       id: this.id,
       uri: this.uri,
+      origin: this.origin,
       state: this.currentState,
     } satisfies ConnectionAttachment<State>);
   }
@@ -94,6 +108,7 @@ export function acceptKernelWebSocket<State>(
     crypto.randomUUID(),
     request.url,
     initialState,
+    request.headers.get("Origin"),
   );
   connection.persist();
   ctx.acceptWebSocket(server);
@@ -117,5 +132,6 @@ export function restoreKernelWebSocket(
     decoded.data.id,
     decoded.data.uri,
     decoded.data.state,
+    decoded.data.origin ?? null,
   );
 }

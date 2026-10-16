@@ -43,12 +43,29 @@ import { hasCapability } from "./capabilities";
 import {
   sameRouteOrigin,
 } from "./do-shared";
+import { connectionCredentialIsCurrent } from "./connection-authority";
 
 
 export class ConnectionRuntime {
   constructor(readonly host: Kernel) {}
 
   private readonly pendingTargetEvents = new Map<string, Promise<void>>();
+
+  ensureConnectionCurrent(connection: KernelConnection<ConnectionState>): boolean {
+    if (connection.state.step === "pending") return true;
+    if (connection.state.step === "superseded") return false;
+    if (connectionCredentialIsCurrent(connection, this.host.auth, this.host.caps, this.host.installationId)) return true;
+    this.onClose(connection);
+    connection.setState({ ...connection.state, step: "superseded" });
+    connection.close(1008, "Credentials changed or expired; sign in again");
+    return false;
+  }
+
+  invalidateTokenConnections(tokenId: string): void {
+    for (const connection of this.host.connections.values()) {
+      if (connection.state.token?.tokenId === tokenId) this.ensureConnectionCurrent(connection);
+    }
+  }
 
   invalidateAccountConnections(uid: number): void {
     const epoch = this.host.auth.credentialEpoch(uid);
@@ -65,6 +82,7 @@ onConnect(connection: KernelConnection<ConnectionState>): void {
     const state: ConnectionState = { step: "pending" };
     connection.setState(state);
     this.host.connections.set(connection.id, connection);
+    connection.setAuthorizationCheck(() => this.ensureConnectionCurrent(connection));
   }
 
 onClose(connection: KernelConnection<ConnectionState>): void {
@@ -113,9 +131,9 @@ onClose(connection: KernelConnection<ConnectionState>): void {
         continue;
       }
       this.host.connections.set(connection.id, connection);
+      connection.setAuthorizationCheck(() => this.ensureConnectionCurrent(connection));
       if (!state || state.step !== "connected" || !state.peer) continue;
-      if ((state.credentialEpoch ?? 0) !== this.host.auth.credentialEpoch(state.peer.principal.account.uid)
-        || this.host.auth.isAccountDisabled(state.peer.principal.account.uid)) {
+      if (!connectionCredentialIsCurrent(connection, this.host.auth, this.host.caps, this.host.installationId)) {
         connection.setState({ ...state, step: "superseded" });
         connection.close(1008, "Credentials changed; sign in again");
         continue;
@@ -208,7 +226,7 @@ async handleSysConnect(
 
     const clientId = frame.args.peer.id.trim();
     const clientPlatform = frame.args.peer.platform.trim();
-    const newState = {
+    const newState: ConnectionState & { step: "connected"; peer: ConnectedPeer } = {
       step: "connected",
       protocol: PROTOCOL_VERSION,
       peer: outcome.peer,
@@ -216,10 +234,12 @@ async handleSysConnect(
       clientPlatform: clientPlatform || undefined,
       credentialMethod: frame.args.auth?.token ? "token" : "password",
       credentialEpoch,
-    } satisfies ConnectionState & { step: "connected" };
+    };
+    if (outcome.token) newState.token = outcome.token;
 
     if (
       outcome.peer.principal.kind === "human"
+      && !outcome.token?.ceiling
       && outcome.peer.principal.account.uid >= 1000
       && !ctx.auth.isPersonalAgentUid(outcome.peer.principal.account.uid)
     ) {
@@ -232,8 +252,11 @@ async handleSysConnect(
       });
     }
 
-    if (ctx.auth.credentialEpoch(outcome.peer.principal.account.uid) !== credentialEpoch
-      || ctx.auth.isAccountDisabled(outcome.peer.principal.account.uid)) {
+    if (outcome.token?.expiresAt !== null && outcome.token?.expiresAt !== undefined) {
+      await this.host.schedule(new Date(Math.ceil(outcome.token.expiresAt / 1000) * 1000), "onCredentialExpiry", outcome.token.tokenId, { idempotent: true });
+    }
+    if (connection.state.step !== "pending"
+      || !connectionCredentialIsCurrent({ state: newState, origin: connection.origin }, ctx.auth, ctx.caps, ctx.installationId)) {
       this.host.transport.sendError(connection, frame.id, 401, "Credentials changed; sign in again");
       return;
     }
@@ -243,7 +266,7 @@ async handleSysConnect(
       this.broadcastTargetStatus(outcome.peer.id, "connected");
     }
 
-    if (outcome.peer.principal.kind === "human") {
+    if (outcome.peer.principal.kind === "human" && !outcome.token?.ceiling) {
       this.reconcileOwnedIdentities(outcome.peer.principal.account.uid);
     }
 

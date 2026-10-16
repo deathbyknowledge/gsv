@@ -170,6 +170,9 @@ Site operations use labels such as “published a site” and “unpublished a s
 Their syscall arguments identify the site and source manifest for owner inspection.
 Anonymous share-page and asset requests serve directly from published storage and
 do not create Kernel syscall ledger rows.
+Owner consent through `site.authorize` is labeled “connected a site”. Its argument
+is the site ID; the issued credential is never included in ledger arguments.
+The site's subsequent permitted reads are ordinary owner-scoped syscall rows.
 
 ## Cost
 

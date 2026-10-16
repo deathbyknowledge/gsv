@@ -18,6 +18,7 @@ import type { ShadowEntry } from "../auth/shadow";
 import { parseShadow, serializeShadow, isLocked, makeShadowEntry, hashToken, verify } from "../auth/shadow";
 import type { GroupEntry } from "../auth/group";
 import { parseGroup, serializeGroup, resolveGids } from "../auth/group";
+import { siteTokenCeilingSchema, type SiteTokenCeiling, type TokenAudience, type TokenAuthority } from "./token-authority";
 
 export type AuthIdentity = {
   uid: number;
@@ -40,6 +41,7 @@ export type PeerTokenAuthResult =
       identity: AuthIdentity;
       kind: AuthTokenKind;
       peerId: string | null;
+      authority: TokenAuthority;
       label?: string;
     }
   | { ok: false; error: string };
@@ -51,6 +53,7 @@ export type AuthTokenIssueInput = {
   /** Required for machine tokens: the only peer id the token may connect as. */
   peerId?: string;
   expiresAt?: number;
+  ceiling?: SiteTokenCeiling;
 };
 
 export type IssuedAuthToken = {
@@ -79,7 +82,7 @@ export type AuthTokenRecord = {
   revokedReason: string | null;
 };
 
-export type PreparedAuthToken = { issued: IssuedAuthToken; hash: string; credentialEpoch: number };
+export type PreparedAuthToken = { issued: IssuedAuthToken; hash: string; credentialEpoch: number; ceiling?: SiteTokenCeiling };
 
 type TokenAuthOptions = {
   kind?: AuthTokenKind;
@@ -87,7 +90,7 @@ type TokenAuthOptions = {
 };
 
 export class AuthStore {
-  constructor(private readonly sql: SqlStorage) {}
+  constructor(private readonly sql: SqlStorage, private readonly tokenRevoked?: (tokenId: string) => void) {}
 
   credentialEpoch(uid: number): number {
     return this.sql.exec<{ credential_epoch: number }>("SELECT credential_epoch FROM account_access WHERE uid = ?", uid).toArray()[0]?.credential_epoch ?? 0;
@@ -440,6 +443,7 @@ export class AuthStore {
   async authenticatePeerToken(
     username: string,
     token: string,
+    audience?: TokenAudience,
   ): Promise<PeerTokenAuthResult> {
     const user = this.getPasswdByUsername(username);
     if (!user) return { ok: false, error: "Unknown user" };
@@ -451,10 +455,8 @@ export class AuthStore {
       kind: AuthTokenKind;
       peer_id: string | null;
       label: string | null;
-      expires_at: number | null;
-      revoked_at: number | null;
     }>(
-      `SELECT token_id, kind, peer_id, label, expires_at, revoked_at
+      `SELECT token_id, kind, peer_id, label
        FROM auth_tokens
        WHERE uid = ? AND token_hash = ?
        LIMIT 1`,
@@ -468,12 +470,8 @@ export class AuthStore {
 
     const tokenRow = rows[0];
     const now = Date.now();
-    if (tokenRow.revoked_at !== null) {
-      return { ok: false, error: "Authentication failed" };
-    }
-    if (tokenRow.expires_at !== null && tokenRow.expires_at <= now) {
-      return { ok: false, error: "Authentication failed" };
-    }
+    const authority = this.tokenAuthority(tokenRow.token_id, user.uid, audience);
+    if (!authority) return { ok: false, error: "Authentication failed" };
     this.sql.exec(
       "UPDATE auth_tokens SET last_used_at = ? WHERE token_id = ?",
       now,
@@ -492,9 +490,29 @@ export class AuthStore {
       },
       kind: tokenRow.kind,
       peerId: tokenRow.peer_id,
+      authority,
     };
     if (tokenRow.kind === "machine" && tokenRow.label) result.label = tokenRow.label;
     return result;
+  }
+
+  /** A missing browser audience deliberately excludes scoped credentials from other consumers. */
+  tokenAuthority(tokenId: string, uid: number, audience?: TokenAudience): TokenAuthority | null {
+    if (this.isAccountDisabled(uid) || !this.getPasswdByUid(uid)) return null;
+    const row = this.sql.exec<{
+      kind: AuthTokenKind; peer_id: string | null; expires_at: number | null; revoked_at: number | null; ceiling: string | null;
+    }>("SELECT kind, peer_id, expires_at, revoked_at, ceiling FROM auth_tokens WHERE token_id = ? AND uid = ?", tokenId, uid).toArray()[0];
+    if (!row || row.revoked_at !== null || (row.expires_at !== null && row.expires_at <= Date.now())) return null;
+    let ceiling: SiteTokenCeiling | null = null;
+    if (row.ceiling !== null) {
+      try { ceiling = siteTokenCeilingSchema.parse(JSON.parse(row.ceiling)); } catch { return null; }
+      if (row.kind !== "human" || row.expires_at === null || !audience
+        || audience.installationId !== ceiling.installationId || audience.origin !== ceiling.origin
+        || this.getHumanAccount()?.uid !== uid) return null;
+      const site = this.sql.exec<{ origin: string }>("SELECT origin FROM sites WHERE id = ? AND owner_uid = ?", ceiling.siteId, uid).toArray()[0];
+      if (!site || site.origin !== ceiling.origin) return null;
+    }
+    return { tokenId, kind: row.kind, peerId: row.peer_id, expiresAt: row.expires_at, ceiling };
   }
 
   async issueToken(input: AuthTokenIssueInput): Promise<IssuedAuthToken> {
@@ -521,19 +539,23 @@ export class AuthStore {
       throw new Error("peerId is only valid for machine tokens");
     }
 
-    return { hash: tokenHash, credentialEpoch, issued: {
+    const ceiling = input.ceiling ? siteTokenCeilingSchema.parse(input.ceiling) : undefined;
+    if (ceiling && (input.kind !== "human" || input.peerId || !input.expiresAt)) throw new Error("Site credentials require an expiring human token");
+    const prepared: PreparedAuthToken = { hash: tokenHash, credentialEpoch, issued: {
       tokenId, token: rawToken, tokenPrefix, uid: input.uid, kind: input.kind,
       label: input.label ?? null, peerId: input.peerId ?? null, createdAt: now,
       expiresAt: input.expiresAt ?? null,
     } };
+    if (ceiling) prepared.ceiling = ceiling;
+    return prepared;
   }
 
-  storePreparedToken({ issued, hash, credentialEpoch }: PreparedAuthToken): IssuedAuthToken {
+  storePreparedToken({ issued, hash, credentialEpoch, ceiling }: PreparedAuthToken): IssuedAuthToken {
     if (this.credentialEpoch(issued.uid) !== credentialEpoch || this.isAccountDisabled(issued.uid)) throw new Error("Credential issuance was revoked");
     this.sql.exec(
       `INSERT INTO auth_tokens
-        (token_id, uid, kind, label, token_hash, token_prefix, peer_id, created_at, expires_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        (token_id, uid, kind, label, token_hash, token_prefix, peer_id, created_at, expires_at, ceiling)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       issued.tokenId,
       issued.uid,
       issued.kind,
@@ -543,6 +565,7 @@ export class AuthStore {
       issued.peerId,
       issued.createdAt,
       issued.expiresAt,
+      ceiling ? JSON.stringify(ceiling) : null,
     );
 
     return issued;
@@ -623,6 +646,7 @@ export class AuthStore {
         tokenId,
       );
     }
+    this.tokenRevoked?.(tokenId);
     return true;
   }
 

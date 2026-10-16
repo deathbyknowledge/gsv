@@ -289,6 +289,7 @@ const SYSCALL_NAMES = [
   "conversation.send",
   "contact.identity",
   "site.create",
+  "site.authorize",
   "site.get",
   "site.list",
   "site.publish",

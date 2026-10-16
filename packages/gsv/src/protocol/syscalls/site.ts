@@ -61,3 +61,25 @@ export type SitePublishArgs = {
   manifest: SiteManifest;
 };
 export type SiteUnpublishArgs = { siteId: string; expectedRevision: number };
+
+/** Public metadata for this site's own installation; contains no credentials. */
+export type SiteBootstrap = {
+  version: 1;
+  installationId: string;
+  siteId: string;
+  siteOrigin: string;
+  gatewayOrigin: string;
+};
+export type SiteAuthorizeArgs = { siteId: string };
+/** Issued only by the publishing human in the trusted installation UI. */
+export type SiteAuthorization = {
+  token: string;
+  tokenId: string;
+  expiresAtMs: number;
+  installationId: string;
+  siteId: string;
+  siteOrigin: string;
+  gatewayOrigin: string;
+  calls: ["r12y.list", "r12y.get"];
+  signals: ["r12y.changed"];
+};

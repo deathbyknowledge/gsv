@@ -15,8 +15,18 @@ describe("retiring passkey storage", () => {
       auth.setShadow(makeShadowEntry("root", await hashPassword("root-password")));
       auth.addUser({ uid: 1000, gid: 100, username: "person", home: "/home/person", gecos: "", shell: "/bin/init" });
       auth.setShadow(makeShadowEntry("person", await hashPassword("person-password")));
-      const human = await auth.issueToken({ uid: 1000, kind: "human", label: "existing browser" });
-      const machine = await auth.issueToken({ uid: 1000, kind: "machine", peerId: "existing-machine" });
+      const preparedTokens = await Promise.all([
+        auth.prepareToken({ uid: 1000, kind: "human", label: "existing browser" }),
+        auth.prepareToken({ uid: 1000, kind: "machine", peerId: "existing-machine" }),
+      ]);
+      // Seed the historical schema before current stores acquire their new columns.
+      for (const { issued, hash } of preparedTokens) {
+        sql.exec(`INSERT INTO auth_tokens
+          (token_id, uid, kind, label, token_hash, token_prefix, peer_id, created_at, expires_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`, issued.tokenId, issued.uid, issued.kind, issued.label,
+        hash, issued.tokenPrefix, issued.peerId, issued.createdAt, issued.expiresAt);
+      }
+      const [human, machine] = preparedTokens.map(prepared => prepared.issued);
       sql.exec("INSERT INTO account_access (uid, credential_epoch) VALUES (0, 3), (1000, 2)");
       sql.exec("INSERT INTO account_owner_links (id, secret_hash, credential_epoch, expires_at) VALUES ('owner', 'owner-hash', 3, ?)", Date.now() + 60_000);
       sql.exec(`INSERT INTO account_recovery_claims (id, purpose, secret_hash, credential_epoch, expires_at)
@@ -48,7 +58,7 @@ describe("retiring passkey storage", () => {
       }
       sql.exec("INSERT INTO group_capabilities (gid, capability) VALUES (200, 'account.passkey.*')");
       const tables = ["passwd", "shadow", "auth_tokens", "account_access", "account_owner_links", "account_recovery_claims"];
-      const snapshot = () => tables.map((table) => sql.exec(`SELECT * FROM ${table}`).toArray());
+      const snapshot = () => tables.map((table) => sql.exec(`SELECT * FROM ${table}`).toArray().map(({ ceiling: _ceiling, ...row }) => row));
       const before = snapshot();
       const applied = listAppliedSqlMigrations(storage, KERNEL_SCHEMA_COMPONENT);
 
@@ -56,6 +66,7 @@ describe("retiring passkey storage", () => {
       runKernelSqlMigrations(storage);
 
       expect(snapshot()).toEqual(before);
+      expect(sql.exec("SELECT ceiling FROM auth_tokens").toArray()).toEqual([{ ceiling: null }, { ceiling: null }]);
       expect(sql.exec("SELECT gid, capability FROM group_capabilities ORDER BY gid, capability").toArray()).toEqual(preservedCapabilities);
       expect(listAppliedSqlMigrations(storage, KERNEL_SCHEMA_COMPONENT).filter((migration) => migration.id < 49)).toEqual(applied);
       expect(sql.exec("SELECT name FROM sqlite_master WHERE name LIKE 'account_passkey%'").toArray()).toEqual([]);

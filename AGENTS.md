@@ -174,6 +174,7 @@ OS service privilege must never become an agent shell privilege by accident.
 - Persist file and media references in history, retain durable content once as immutable media under the run-as agent home, and scope temporary keys to the owning process. Hydrate bytes only while building model context or resolving an explicit resource read.
 - Canonical Messages store immutable resource references rather than duplicating bytes. A Process must retain an exact source revision before committing a reference whose source lifetime is not already durable.
 - Telemetry uses an explicit allowlist and records timings and outcomes rather than user content.
+- Published sites run on their own registered origins. Owner consent can issue an expiring token for that site and installation, with a credential ceiling intersected with ordinary account authority. Every consumer preserves that ceiling; live and hibernated connections recheck expiry and revocation. Site access never grants another Space's identity or an ordinary owner session.
 - Unexpected failures must remain diagnosable at the owning boundary. Preserve the cause for authorized inspection and emit a closed failure record, including failures before admission. Never replace an exception with a generic message or empty result without retaining a diagnostic reference. Export only the bounded, redacted exception fields in the shared diagnostic schema; keep full error objects, request/response bodies and private content out of telemetry.
 
 ## Schema migrations

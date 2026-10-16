@@ -1,0 +1,7 @@
+.gsv-site-consent .gsv-auth-content { align-items: center; justify-content: center; }
+.gsv-site-consent-panel { width: min(440px, 100%); max-height: 100%; overflow: auto; padding: 24px; }
+.gsv-site-consent-panel h1 { margin: 24px 0 8px; font: 400 22px/1.4 var(--gsv-font-prose); overflow-wrap: anywhere; }
+.gsv-site-consent-panel p { line-height: 1.7; }
+.gsv-site-consent-origin { margin: 0 0 28px; font-size: 11px; color: var(--text-dim); overflow-wrap: anywhere; }
+.gsv-site-consent-duration { color: var(--text-dim); font-size: 12px; }
+.gsv-site-consent-actions { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: 12px; margin-top: 28px; }

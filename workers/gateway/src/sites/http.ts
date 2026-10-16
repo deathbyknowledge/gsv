@@ -1,4 +1,4 @@
-import { siteFilePathSchema, siteReleaseIdSchema, siteSlugSchema } from "@humansandmachines/gsv/protocol";
+import { siteFilePathSchema, siteReleaseIdSchema, siteSlugSchema, type SiteBootstrap } from "@humansandmachines/gsv/protocol";
 import type { InstallationIdentity } from "@humansandmachines/gsv/services/directory";
 import { renderPublicSite } from "../../../../web/src/public/site";
 import { R2MountBackend } from "../fs/backends/r2";
@@ -29,7 +29,7 @@ export async function serveSiteShare(request: Request, bucket: R2Bucket, slug: s
   } });
 }
 
-export async function servePublishedSite(request: Request, bucket: R2Bucket, route: { siteId: string; slug: string }): Promise<Response> {
+export async function servePublishedSite(request: Request, bucket: R2Bucket, route: { siteId: string; slug: string }, identity: InstallationIdentity): Promise<Response> {
   if (request.method !== "GET" && request.method !== "HEAD") return methodNotAllowed();
   if (request.headers.get("upgrade")) return unavailable();
   const current = await readSitePublication(bucket, route.slug);
@@ -37,6 +37,12 @@ export async function servePublishedSite(request: Request, bucket: R2Bucket, rou
   const { site, publication } = current.record;
   const url = new URL(request.url);
   if (url.origin !== site.origin) return unavailable();
+  if (url.pathname === "/_gsv/site.json") {
+    const bootstrap: SiteBootstrap = { version: 1, installationId: identity.installationId, siteId: site.id, siteOrigin: site.origin, gatewayOrigin: identity.canonicalOrigin };
+    return new Response(request.method === "HEAD" ? null : JSON.stringify(bootstrap), { headers: {
+      "content-type": "application/json", "cache-control": "no-store", "x-content-type-options": "nosniff", "referrer-policy": "no-referrer",
+    } });
+  }
   if (url.pathname === "/") {
     return new Response(null, { status: 302, headers: { location: siteReleaseBase(publication.releaseId!) + url.search, "cache-control": "no-store" } });
   }

@@ -95,7 +95,7 @@ describe("Kernel personal controller connect lifecycle", () => {
         })),
       },
     };
-    const connection = { id: "connection-1", setState: vi.fn() };
+    const connection = { id: "connection-1", state: { step: "pending" }, setState: vi.fn() };
     kernel.buildContext = vi.fn(() => ctx);
     kernel.connectionRuntime.activateConnection = vi.fn();
     kernel.connectionRuntime.broadcastTargetStatus = vi.fn();
@@ -128,7 +128,7 @@ describe("Kernel personal controller connect lifecycle", () => {
       },
       conversations: { ensureShip: vi.fn() },
     };
-    const connection = { id: "connection-1", setState: vi.fn() };
+    const connection = { id: "connection-1", state: { step: "pending" }, setState: vi.fn() };
     kernel.buildContext = vi.fn(() => ctx);
     kernel.connectionRuntime.activateConnection = vi.fn();
     kernel.connectionRuntime.broadcastTargetStatus = vi.fn();
@@ -195,7 +195,7 @@ describe("Kernel personal controller connect lifecycle", () => {
         void promise;
       }),
     };
-    const connection = { id: "connection-1", setState: vi.fn() };
+    const connection = { id: "connection-1", state: { step: "pending" }, setState: vi.fn() };
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     const kernel = bareKernel();
     kernel.buildContext = vi.fn(() => ctx);

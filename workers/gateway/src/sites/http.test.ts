@@ -14,7 +14,7 @@ const IDENTITY = { installationId: "inst_fixture", handle: "alice", canonicalOri
 describe("published site serving", () => {
   it("serves scripts/WASM, real 404s, navigation-only SPA fallback, ranges, validators and HEAD", async () => {
     const { bucket, releaseId, record } = await fixture("spa");
-    const request = (path: string, init?: RequestInit) => servePublishedSite(new Request(`${SITE.origin}/_r/${releaseId}/${path}`, init), bucket, { siteId: SITE.id, slug: SITE.slug });
+    const request = (path: string, init?: RequestInit) => servePublishedSite(new Request(`${SITE.origin}/_r/${releaseId}/${path}`, init), bucket, { siteId: SITE.id, slug: SITE.slug }, IDENTITY);
     const html = await request("");
     expect(html.status).toBe(200);
     expect(html.headers.get("content-security-policy")).not.toContain("sandbox");
@@ -56,13 +56,13 @@ describe("published site serving", () => {
     const next = { ...record, publication: { revision: 2, releaseId: nextId, publishedAtMs: 2 }, releases: [releaseId, nextId] };
     const current = (await bucket.head("__sites/publications/demo.json"))!;
     await writeSitePublication(bucket, next, current.etag);
-    const old = await servePublishedSite(new Request(`${SITE.origin}/_r/${releaseId}/app.js`), bucket, { siteId: SITE.id, slug: SITE.slug });
+    const old = await servePublishedSite(new Request(`${SITE.origin}/_r/${releaseId}/app.js`), bucket, { siteId: SITE.id, slug: SITE.slug }, IDENTITY);
     expect(await old.text()).toBe("window.demo = true;");
-    const root = await servePublishedSite(new Request(`${SITE.origin}/?level=2`), bucket, { siteId: SITE.id, slug: SITE.slug });
+    const root = await servePublishedSite(new Request(`${SITE.origin}/?level=2`), bucket, { siteId: SITE.id, slug: SITE.slug }, IDENTITY);
     expect(root.headers.get("location")).toBe(`/_r/${nextId}/?level=2`);
     const etag = (await bucket.head("__sites/publications/demo.json"))!.etag;
     await writeSitePublication(bucket, { ...next, manifest: null, publication: { revision: 3, releaseId: null, publishedAtMs: null } }, etag);
-    const hidden = await servePublishedSite(new Request(`${SITE.origin}/_r/${releaseId}/app.js`), bucket, { siteId: SITE.id, slug: SITE.slug });
+    const hidden = await servePublishedSite(new Request(`${SITE.origin}/_r/${releaseId}/app.js`), bucket, { siteId: SITE.id, slug: SITE.slug }, IDENTITY);
     expect(hidden.status).toBe(404);
     await hidden.body?.cancel();
     const unpublishedShare = await serveSiteShare(new Request(`${IDENTITY.canonicalOrigin}/public/demo`), bucket, "demo", IDENTITY);
@@ -95,6 +95,11 @@ describe("published site serving", () => {
     try {
       const ok = await gateway.fetch(new Request(`${SITE.origin}/_r/${releaseId}/app.js`), env);
       expect(await ok.text()).toBe("window.demo = true;");
+      const bootstrap = await gateway.fetch(new Request(`${SITE.origin}/_gsv/site.json`), env);
+      expect(await bootstrap.json()).toEqual({ version: 1, installationId: IDENTITY.installationId,
+        siteId: SITE.id, siteOrigin: SITE.origin, gatewayOrigin: IDENTITY.canonicalOrigin });
+      expect(bootstrap.headers.get("cache-control")).toBe("no-store");
+      expect(bootstrap.headers.get("access-control-allow-origin")).toBeNull();
       for (const path of ["/ws", "/public/demo", "/.well-known/gsv/deployment.json"]) {
         const response = await gateway.fetch(new Request(`${SITE.origin}${path}`, path === "/ws" ? { headers: { upgrade: "websocket" } } : undefined), env);
         expect(response.status).toBe(404);
@@ -105,6 +110,9 @@ describe("published site serving", () => {
         const response = await gateway.fetch(new Request(`${SITE.origin}/_r/${releaseId}/app.js`), env);
         expect(response.status).toBe(404);
         await response.body?.cancel();
+        const metadata = await gateway.fetch(new Request(`${SITE.origin}/_gsv/site.json`), env);
+        expect(metadata.status).toBe(404);
+        await metadata.body?.cancel();
       }
       const unknown = await gateway.fetch(new Request("https://random.usercontent.example/"), env);
       expect(unknown.status).toBe(404);

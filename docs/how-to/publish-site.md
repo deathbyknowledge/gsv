@@ -5,8 +5,9 @@ Ship can publish a static website, browser game, or WebAssembly build at
 isolated origin. Output lives in installation-scoped R2 storage, so the build
 computer can stop after publishing.
 
-This serves static browser files. It does not start a server, provide a database,
-or give the page a GSV session. Keep credentials and private data out of the build.
+This serves static browser files. It does not start a server or provide a database.
+An app can request limited access to its publishing Space through owner consent.
+Keep credentials and private data out of the build.
 
 ## Enable publication
 
@@ -105,6 +106,43 @@ Threaded WASM requiring cross-origin isolation is not enabled by this mode.
 Existing `/public/` files retain their sandbox policy. A site cannot claim the
 exact path of an existing public file. Published content cannot use its origin
 for installation login or `/ws` and does not share installation browser storage.
+
+## Connect an app to its Space
+
+The optional browser helper connects only to the installation that publishes the
+site. Visitors cannot sign in to another Space through it. The first permission
+profile reads the owner's responsibilities and receives their updates:
+`r12y.list`, `r12y.get`, and `r12y.changed`.
+
+```ts
+import { prepareSiteClient } from "@humansandmachines/gsv/site-client";
+
+const site = await prepareSiteClient();
+connectButton.onclick = async () => {
+  const session = await site.connect();
+  const plans = await session.client.r12y.list({});
+  // Use ordinary client methods and signal subscriptions.
+  // Call session.close() when finished.
+};
+```
+
+Prepare before the click so the browser can open consent directly from the user's
+gesture. The trusted Space UI shows the site's identity and permission, then asks
+the signed-in owner to allow it. The helper verifies the popup and its exact
+origin, installation, site, and one-time nonce. Its short-lived credential remains
+in memory and expires after one hour; there is no automatic renewal.
+
+The credential cannot change plans, read files, run commands, create another
+token, or register target implementations. Kernel authorization enforces that
+ceiling independently of the SDK. Token expiry and revocation stop further calls
+and signals, including after connection hibernation. The existing token list and
+revoke operations manage these grants. Unpublishing removes site content; revoke
+its token separately to end a previously approved connection immediately.
+
+The example in `examples/responsibility-board` renders a read-only board with this
+flow. The site bootstrap at `/_gsv/site.json` contains public routing metadata,
+never credentials. It is served through the same exact-host and active-installation
+checks as the published files.
 
 ## Update and unpublish
 

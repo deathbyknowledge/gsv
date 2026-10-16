@@ -118,6 +118,7 @@ import { KERNEL_V062_PRIVATE_CONVERSATION_VIEWS } from "./v062_private_conversat
 
 import { KERNEL_V063_CONTACT_REPLY_CONTINUATIONS } from "./v063_contact_reply_continuations";
 import { KERNEL_V065_RECORD_RUN_ROUTE_PLATFORM } from "./v065_record_run_route_platform";
+import { KERNEL_V071_TOKEN_CEILINGS } from "./v071_token_ceilings";
 
 export const KERNEL_SCHEMA_COMPONENT = "kernel";
 
@@ -192,6 +193,7 @@ export const KERNEL_MIGRATIONS: readonly SqlMigration[] = [
   KERNEL_V068_RETAIN_IPC_RUN_STATUS,
   KERNEL_V069_SINGLE_HUMAN_SPACE,
   KERNEL_V070_SITES,
+  KERNEL_V071_TOKEN_CEILINGS,
 ];
 
 export function runKernelSqlMigrations(storage: DurableObjectStorage): void {

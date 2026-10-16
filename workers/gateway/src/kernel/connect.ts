@@ -30,6 +30,7 @@ import { ensureAccountHomeLayout } from "./account-home";
 import { ensurePublicAssetStorageLayout } from "../public-assets";
 import { USER_CONNECTION_SIGNALS } from "./user-signals";
 import { gsvInferenceFeaturesFromEnv } from "../inference/features";
+import type { TokenAuthority } from "./token-authority";
 
 export type ConnectOutcome =
   | {
@@ -37,6 +38,7 @@ export type ConnectOutcome =
       peer: ConnectedPeer;
       result: ConnectResult;
       newMachine?: TargetRecord;
+      token?: TokenAuthority;
     }
   | { ok: false; code: number; message: string; details?: JsonValue };
 
@@ -144,6 +146,10 @@ export async function handleConnect(
   }
   const { identity, principalKind } = authenticated;
   const implementsList = [...new Set(args.peer.implements ?? [])];
+  const ceiling = authenticated.token?.ceiling;
+  if (ceiling && implementsList.length > 0) {
+    return { ok: false, code: 403, message: "Site credentials cannot provide implementations" };
+  }
   if (principalKind === "machine" && implementsList.length === 0) {
     return { ok: false, code: 103, message: "Machine peers require an implements list" };
   }
@@ -153,8 +159,11 @@ export async function handleConnect(
     }
   }
 
-  const capabilities = resolvePeerCalls(principalKind, identity, caps);
-  const signals = buildSignalList(principalKind);
+  const accountCalls = resolvePeerCalls(principalKind, identity, caps);
+  const capabilities = ceiling ? ceiling.calls.filter(call => hasCapability(accountCalls, call)) : accountCalls;
+  const signals = ceiling
+    ? (hasCapability(capabilities, "r12y.list") ? [...ceiling.signals] : [])
+    : buildSignalList(principalKind);
   let newMachine: TargetRecord | undefined;
 
   if (implementsList.length > 0) {
@@ -203,7 +212,10 @@ export async function handleConnect(
     result.server.features = serverFeatures;
   }
 
-  return { ok: true, peer, result, ...(newMachine ? { newMachine } : undefined) };
+  const outcome: ConnectOutcome = { ok: true, peer, result };
+  if (newMachine) outcome.newMachine = newMachine;
+  if (authenticated.token) outcome.token = authenticated.token;
+  return outcome;
 }
 
 type PeerAuthenticationOutcome =
@@ -212,6 +224,7 @@ type PeerAuthenticationOutcome =
       identity: ProcessIdentity;
       principalKind: PeerPrincipalKind;
       targetLabel?: string;
+      token?: TokenAuthority;
     }
   | { ok: false; error: string };
 
@@ -260,7 +273,10 @@ async function authenticatePeer(
   if (hasToken && hasPassword) return { ok: false, error: "Provide either password or token" };
 
   if (hasToken) {
-    const result = await auth.authenticatePeerToken(username, args.auth.token!);
+    const result = await auth.authenticatePeerToken(username, args.auth.token!, {
+      installationId: ctx.installationId,
+      origin: ctx.connection!.origin,
+    });
     if (!result.ok) return { ok: false, error: result.error };
     if (result.peerId !== null && result.peerId !== args.peer.id.trim()) {
       return { ok: false, error: "Authentication failed" };
@@ -270,6 +286,7 @@ async function authenticatePeer(
       identity: withDefaultProcessContext(result.identity),
       principalKind: result.kind,
       targetLabel: result.label,
+      token: result.authority,
     };
   }
 
