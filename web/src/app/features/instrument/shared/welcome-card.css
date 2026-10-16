@@ -43,7 +43,7 @@
 }
 .welcome-card .welcome-card-try:hover { filter: brightness(1.12); }
 @container instrument (max-width: 600px) {
-  .welcome-card { width: calc(100% - 24px); padding: 22px; font-size: 16px; }
-  .welcome-card h2 { font-size: 22px; }
-  .welcome-card .welcome-card-try { font-size: 16px; }
+  .welcome-card { width: calc(100% - 24px); padding: 22px; font-size: 14px; }
+  .welcome-card h2 { font-size: 20px; }
+  .welcome-card .welcome-card-try { min-height: 34px; padding: 6px 12px; font-size: 13px; }
 }
