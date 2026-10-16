@@ -13,7 +13,7 @@ agreement before creating your account. This checkbox is required inside the spa
 as well as on the signup email step. **Back** lets you revise your credentials.
 Creating your account signs you in and opens **Ship**, your conversation with your personal agent.
 The first time you enter Instrument, a welcome card from Kawah appears with the
-heading “Welcome to early access GSV!” and large, readable text. Close it
+heading “Welcome to early access Ship!” and large, readable text. Close it
 or choose **Try it out!** to dismiss it for your account across web and Desktop.
 The card links to the community Discord; the **Feedback** button in the header
 is available when your operator offers it.

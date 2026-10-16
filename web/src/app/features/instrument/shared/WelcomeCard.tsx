@@ -45,9 +45,9 @@ export function WelcomeCard() {
   if (ownerUid === null) return null;
   return <aside class="welcome-card" role="dialog" aria-labelledby="welcome-card-title">
     <button type="button" class="welcome-card-close" aria-label="Dismiss welcome" onClick={dismiss}>×</button>
-    <h2 id="welcome-card-title">Welcome to early access GSV!</h2>
-    <p>I’m Kawah, one of the founders of GSV. Steve, Jessica and I have been building this for the past few months, and we’re really happy you’re here!</p>
-    <p>GSV is still early, so you might run into some rough edges. If something breaks, feels confusing, or makes you think “I wish it could…”, we’d love to hear from you.</p>
+    <h2 id="welcome-card-title">Welcome to early access Ship!</h2>
+    <p>I’m Kawah, one of the founders of Ship. Steve, Jessica and I have been building this for the past few months, and we’re really happy you’re here!</p>
+    <p>Ship is still early, so you might run into some rough edges. If something breaks, feels confusing, or makes you think “I wish it could…”, we’d love to hear from you.</p>
     <p>You can use the Feedback button in the top anytime, or talk to us directly on <a href="https://discord.gg/hy9ExJJFvn" target="_blank" rel="noopener noreferrer">Discord</a> (and see Steve's dog).</p>
     <p>Thanks for being one of the first. It means a lot to us!</p>
     <p>Kawah :)</p>

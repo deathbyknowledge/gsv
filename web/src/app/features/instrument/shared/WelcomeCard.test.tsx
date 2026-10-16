@@ -18,7 +18,7 @@ function Harness() { tree = WelcomeCard(); return null; }
 async function mount() {
   root = createTestRoot("welcome card");
   await root.render(<GatewayProvider><Harness /></GatewayProvider>);
-  await vi.waitFor(() => expect(collectText(tree)).toContain("Welcome to early access GSV!"));
+  await vi.waitFor(() => expect(collectText(tree)).toContain("Welcome to early access Ship!"));
 }
 
 beforeEach(() => {
@@ -55,7 +55,7 @@ afterEach(async () => {
 describe("welcome card", () => {
   it("shows the message and Discord link, then stays dismissed across sessions for that person", async () => {
     await mount();
-    expect(collectText(tree)).toContain("I’m Kawah, one of the founders of GSV.");
+    expect(collectText(tree)).toContain("I’m Kawah, one of the founders of Ship.");
     expect(collectText(tree)).toContain("talk to us directly on");
     expect(collectNodes(tree).find((node) => node.type === "a")?.props.href).toBe("https://discord.gg/hy9ExJJFvn");
     const tryButton = collectNodes(tree).find((node) => collectText(node.props.children) === "Try it out!");
@@ -79,7 +79,7 @@ describe("welcome card", () => {
     await root.unmount();
     request.mockClear();
     await mount();
-    expect(collectText(tree)).toContain("Welcome to early access GSV!");
+    expect(collectText(tree)).toContain("Welcome to early access Ship!");
     expect(request).toHaveBeenCalledWith("sys.config.get", { key: "users/1001/ui/welcome_card_seen" });
   });
 
