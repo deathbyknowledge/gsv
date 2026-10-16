@@ -90,7 +90,9 @@ export const GsvDeployment = (props: GsvDeploymentProps, dependencies = gsvRunti
   }
   const instancesLifecycle = props.services?.instancesLifecycle;
   if (Boolean(props.services?.instances) !== Boolean(instancesLifecycle)) throw new Error("Supplied instances require their owned lifecycle and namespace inventory");
-  if (instancesLifecycle && (!instancesLifecycle.entrypoint.trim() || !instancesLifecycle.namespaces.length
+  if (instancesLifecycle && (!instancesLifecycle.entrypoint.trim()
+    || ["instance-installation", "instance-computer"].some(kind => !instancesLifecycle.namespaces.some(namespace => namespace.kind === kind))
+    || new Set(instancesLifecycle.namespaces.map(namespace => namespace.className.trim())).size !== instancesLifecycle.namespaces.length
     || instancesLifecycle.namespaces.some(namespace => !namespace.className.trim()
       || !["instance-installation", "instance-computer"].includes(namespace.kind)))) {
     throw new Error("Supplied instances lifecycle requires valid instance namespace ownership");
