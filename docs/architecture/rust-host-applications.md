@@ -3,6 +3,14 @@
 GSV ships three sibling host applications. They share transport and local data
 contracts, but they do not embed one another's runtime or state ownership.
 
+The instance service also runs `gsvd --container` inside an ephemeral Linux
+computer. It reuses machine tools, transfer streams, durable shell sessions and
+process-tree cancellation through a private HTTP/WebSocket carrier. Both enrolled
+and container carriers call the shared `machine::driver` executor. Container mode
+does not read enrollment credentials, start a local control service or run the
+machine updater; its image owns the binary version. The instance service owns
+its lease and physical destruction. See [cloud computers](/how-to/cloud-computers).
+
 ```text
                          Gateway
                     user WS   driver WS

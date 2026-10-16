@@ -15,12 +15,17 @@ tokio = { version = "1", features = [
     "time",
     "sync",
     "io-util",
+    "net",
     "process",
     "signal",
     "fs",
 ] }
 tokio-util = { version = "0.7", features = ["io", "rt"] }
 futures-util = "0.3"
+http-body-util = "0.1"
+hyper = { version = "1", features = ["http1", "server"] }
+hyper-util = { version = "0.1", features = ["tokio"] }
+tokio-tungstenite = { version = "0.24", default-features = false, features = ["handshake"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 clap = { version = "4", features = ["derive", "env"] }
@@ -49,7 +54,6 @@ rustls = [
 
 [dev-dependencies]
 tempfile = "3"
-tokio-tungstenite = { version = "0.24", default-features = false, features = ["handshake"] }
 
 [[bin]]
 name = "gsvd"
