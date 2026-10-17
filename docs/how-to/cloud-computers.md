@@ -1,21 +1,31 @@
 # Use a cloud computer
 
-A cloud computer gives Ship a Linux environment for builds, scripts and other
-work when your own computer is offline. Your operator must enable it. It uses
-the same filesystem, shell and network tools as a connected machine.
+A cloud computer gives Ship and Crew an on-demand Linux environment for documents,
+spreadsheets, charts, media processing and other software. Computer fluency is part
+of Ship's personal intelligence: the user asks for an outcome, and Ship chooses
+the tools and environment to accomplish it.
 
-The initial image includes Node.js, npm, Python, Git and build tools. Work in
-`/workspace`. Save editable source in a GSV repository and copy outputs back to
-`gsv` before stopping it. Stopping or expiry destroys files and running commands.
-There is no automatic restore.
+Connected user devices and cloud instances use the same target and tool
+interfaces. Choose a user device when the work needs resources or access there;
+choose a cloud computer when it suits the task. Its availability is controlled
+by the operator, independently of whether the user's devices are online.
+
+The initial image includes Node.js, npm, Python, Git and build tools. Install
+additional software as needed and work in `/workspace`. Save useful files in
+the owner's home on `gsv`, using a GSV repository for reusable source when
+appropriate. Copy results back before stopping the computer: stop or expiry
+destroys its files and running commands. There is no automatic restore.
 
 ## Start and use one
 
-On the `gsv` shell:
+Check existing targets and the catalog on `gsv` before reporting that a computer
+or a required tool is unavailable. Reuse a suitable ready computer, or start one
+with a fresh request ID saved with the work:
 
 ```sh
+targets list
 instance catalog
-instance start computer --request-id build-website-1 --name "Build website" --seconds 1800 --wait
+instance start computer --request-id REQUEST_ID --name "Spending analysis" --wait
 ```
 
 Keep that request ID until the outcome is known. Retrying it with the same
@@ -23,8 +33,10 @@ arguments returns the same instance, including after it stops. A fresh request
 ID starts a separate computer. Browser profile and `--new` options do not apply.
 
 Use the returned `targetId` with ordinary tools. For example, a Shell call with
-`target` set to that ID can run `cd /workspace && node --version`.
+`target` set to that ID can run `cd /workspace && python3 --version`.
 Read, Write, Edit and filesystem transfers use that target too.
+GSV management commands belong on `gsv`; Python, Node.js and installed software
+run on the computer target.
 
 In Chat, choose the ready computer from the place selector to use it for the
 next message or command. Fleet opens its ordinary inspector for commands and
@@ -65,7 +77,7 @@ GSV_DEV_COMPUTERS=1 GSV_DEV_STATE_DIR=/tmp/gsv-computer-trial npm run dev
 
 Use a new state directory for fresh onboarding. Open
 `http://localhost:8976/admin`, create a Space and follow its setup link. Ask Ship
-to start a cloud computer, run a small build, copy the output back to `gsv` and
+to start a cloud computer, analyze a small CSV, copy the result back to `gsv` and
 stop the computer. Model calls still need a configured inference provider.
 
 This selects `workers/instances/wrangler.computer.dev.jsonc`, which builds the
