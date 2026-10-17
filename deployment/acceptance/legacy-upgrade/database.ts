@@ -3,8 +3,10 @@ import { join } from "node:path";
 import type { UpgradePhase } from "./plan.ts";
 
 export function legacyDatabaseProps(name: string, artifactsDirectory: string, phase: UpgradePhase): DatabaseProps {
-  return { name, ...(phase === "legacy"
-    ? { importFiles: [join(artifactsDirectory, "legacy/migrations/database.seed.sql")] } : {}) };
+  if (phase === "legacy") {
+    return { name, importFiles: [join(artifactsDirectory, "legacy/migrations/database.seed.sql")] };
+  }
+  return { name };
 }
 
 /** Preserve the historical ledger instead of adopting it into Alchemy's current format. */
