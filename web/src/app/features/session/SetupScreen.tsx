@@ -40,7 +40,7 @@ export function SetupScreen({ visible, busy, space, arrivedFromSignup = false, s
   return <AuthLayout visible={visible} surfaceClass="gsv-auth-surface-setup">
     <section class="gsv-setup-panel" data-session-setup-view aria-labelledby="setup-heading">
       {arrivedFromSignup && credentials && !noticeDismissed && <div class="gsv-setup-notice" role="status">
-        <Alert variant="success" text="Success! You've been redirected to your new space." onDismiss={() => setNoticeDismissed(true)} />
+        <Alert variant="success" text="Your Ship has been created." onDismiss={() => setNoticeDismissed(true)} />
       </div>}
       <div class={`gsv-setup-head${credentials ? "" : " is-consent"}`}>
         {consentRequired && <div class="gsv-setup-meta">
@@ -50,7 +50,7 @@ export function SetupScreen({ visible, busy, space, arrivedFromSignup = false, s
         <h1 id="setup-heading" data-setup-heading tabIndex={-1}>{credentials
           ? <><span class="gsv-setup-greeting">Welcome to</span> <span class="gsv-setup-host">{handle}<span class="gsv-setup-domain">{domain}</span></span></>
           : "Before you begin"}</h1>
-        {credentials ? <p>Choose a password for your space.</p> : null}
+        {credentials ? <p>Choose a password.</p> : null}
       </div>
       <form class="gsv-setup-form" data-session-setup-form aria-busy={busy} noValidate onSubmit={onSubmit}>
         {credentials ? <>
@@ -86,7 +86,7 @@ export function SetupScreen({ visible, busy, space, arrivedFromSignup = false, s
           {step === "consent" ? <button type="button" class="ibtn" disabled={busy} onClick={onBack}>Back</button> : null}
           <button type="submit" class="ibtn is-primary" data-setup-submit disabled={busy}
             onPointerDown={(event) => { if (event.button === 0) onSubmitPointerDown(); }}>
-            {busy ? "Opening your space…" : credentials && consentRequired ? "Continue" : "Activate space"}
+            {busy ? "Opening Ship…" : credentials && consentRequired ? "Continue" : "Activate Ship"}
           </button>
         </div>
       </form>

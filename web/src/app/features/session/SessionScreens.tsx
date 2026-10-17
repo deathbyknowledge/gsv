@@ -22,7 +22,7 @@ export function SessionScreens({ session, snapshot }: SessionScreensProps) {
         arrivedFromSignup={snapshot.arrivedFromSignup === true} {...state.setup} />
       {visibleView === "setup-recovery" && <AuthLayout background="galaxy" visible surfaceClass="gsv-auth-surface-login">
         <div class="gsv-login-panel">
-          <SectionHeader title="Finish setting up your space" titleSize="title" divider />
+          <SectionHeader title="Finish setting up Ship" titleSize="title" divider />
           <div class="gsv-login-body">
             <p>{snapshot.setupRecoveryUrl ? "Sign in with the email you used to claim it." : "Ask the person who invited you for a new setup link."}</p>
             {snapshot.setupRecoveryUrl && (session.resumeSetup

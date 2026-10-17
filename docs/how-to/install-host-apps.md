@@ -75,10 +75,11 @@ to use text explicitly.
 Look for the ASCII ship icon to open Ship Desktop. It matches the ship on the
 sign-in page and the browser's Home Screen shortcut.
 
-**Open your space** lets you choose an owned space or enter a handle or domain.
-The address form also works for spaces owned by someone else or served by another
-operator. Contact invitation links use the same address entry before your normal
-space sign-in and explicit acceptance.
+Desktop starts with **Create your Ship** and **Open Ship**. Create takes you through
+[signup](/get-started/); Open lets you sign in with email or enter a handle or domain.
+The address form also works for Ships owned by someone else or served by another
+operator. Contact invitation links open a modal on the signup site, where you can
+verify your email or enter your Ship address before sign-in and explicit acceptance.
 
 Desktop and browser windows can stay connected to the same space at once. They
 receive new conversation messages live and refresh server state after a

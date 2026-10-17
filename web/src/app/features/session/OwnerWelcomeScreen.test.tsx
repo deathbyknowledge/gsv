@@ -43,7 +43,7 @@ describe("owner welcome", () => {
     }
     try {
       await root.render(<Harness />);
-      await vi.waitFor(() => expect(collectText(tree)).toContain(existing ? "Your spaces" : "Claim your ship"));
+      await vi.waitFor(() => expect(collectText(tree)).toContain(existing ? "Choose your Ship" : "Create your Ship"));
       if (!existing) {
         // A signed-in friend only picks a handle; the email is already verified.
         expect(fieldOf(tree, "Handle")).toBeDefined();
@@ -78,7 +78,7 @@ describe("owner welcome", () => {
       expect(fetcher).not.toHaveBeenCalled();
       await act(() => formOf(tree).props.onSubmit(new Event("submit")));
       await vi.waitFor(() => expect(collectNodes(tree).some((node) => node.props.label === "bob")).toBe(true));
-      expect(collectText(tree)).toContain("Choose your space");
+      expect(collectText(tree)).toContain("Choose your Ship");
       await act(() => { collectNodes(tree).find((node) => node.props.label === "bob")!.props.onClick?.(); });
       expect(connect).toHaveBeenCalledWith("https://bob.example.com");
       expect(fetcher).toHaveBeenCalledTimes(1);
@@ -111,11 +111,11 @@ describe("owner welcome", () => {
       expect(collectText(tree)).not.toContain("Address form");
 
       await act(() => formOf(tree).props.onSubmit(new Event("submit")));
-      await vi.waitFor(() => expect(collectText(tree)).toContain(friend ? "Choose your space" : "Claim your ship"));
+      await vi.waitFor(() => expect(collectText(tree)).toContain(friend ? "Choose your Ship" : "Create your Ship"));
       if (friend) {
         const disclosure = collectNodes(tree).find((node) => node.type === "details");
         expect(disclosure?.props).not.toHaveProperty("open", true);
-        expect(collectText(disclosure)).toContain("Use a space address");
+        expect(collectText(disclosure)).toContain("Use a Ship address");
       }
       await act(() => { collectNodes(tree).find((node) => node.type === "button" && collectText(node) === "Sign out")?.props.onClick?.(); });
       await vi.waitFor(() => expect(client.state.sessionSecret).toBeNull());
@@ -152,18 +152,20 @@ describe("owner welcome", () => {
       tree = OwnerWelcomeScreen({ ready: true, resume: resumed, initialStep: "welcome", spaceDomain: "example.com", load: async () => client, onConnect });
       return null;
     }
-    const submit = () => collectNodes(tree).find((node) => node.type === "button" && ["Create space", "Confirm"].includes(String(node.props["aria-label"])))!;
+    const submit = () => collectNodes(tree).find((node) => node.type === "button" && ["Continue", "Confirm"].includes(String(node.props["aria-label"])))!;
     try {
       await root.render(<Harness />);
       if (!resumed) {
-        await vi.waitFor(() => expect(collectNodes(tree).find((node) => node.props["aria-label"] === "Create your space")?.props.disabled).toBe(false));
+        await vi.waitFor(() => expect(collectNodes(tree).find((node) => node.props["aria-label"] === "Create your Ship")?.props.disabled).toBe(false));
         expect(collectText(tree)).not.toContain("invite");
-        await act(() => { collectNodes(tree).find((node) => node.props["aria-label"] === "Create your space")!.props.onClick?.(); });
+        await act(() => { collectNodes(tree).find((node) => node.props["aria-label"] === "Create your Ship")!.props.onClick?.(); });
       }
       await vi.waitFor(() => expect(fieldOf(tree, "Handle")?.props.disabled).toBe(false));
-      expect(collectText(tree)).toContain("Claim your ship");
-      expect(fieldOf(tree, "Handle")!.props).toMatchObject({ prefix: "@", suffix: ".example.com" });
-      expect(submit().props["aria-label"]).toBe("Create space");
+      expect(collectText(tree)).toContain("Create your Ship");
+      expect(fieldOf(tree, "Handle")!.props).toMatchObject({ prefix: "@" });
+      expect(fieldOf(tree, "Handle")!.props).not.toHaveProperty("suffix");
+      expect(collectText(tree)).toMatch(/Ship address\s+your-name\s*\.\s*example\.com/);
+      expect(submit().props["aria-label"]).toBe("Continue");
       await act(() => { fieldOf(tree, "Handle")!.props.onChange?.("SpaceCowboy"); });
       expect(fieldOf(tree, "Handle")!.props.value).toBe("spacecowboy");
       await vi.waitFor(() => expect(fieldOf(tree, "Handle")!.props).toMatchObject({ status: "success", message: "Available" }));
@@ -180,9 +182,8 @@ describe("owner welcome", () => {
       await vi.waitFor(() => expect(fieldOf(tree, "Code")).toBeDefined());
       expect(store.snapshot().value).toMatchObject({ flow: "create", handle: "spacecowboy", challenge: { email: "owner@example.com" } });
       expect(store.snapshot().value!.operationId).toMatch(/^[0-9a-f-]{36}$/);
-      expect(collectText(tree)).toMatch(/@\s*spacecowboy\s*\.\s*example\.com/);
-      expect(collectText(tree)).toContain("Almost there!");
-      expect(collectText(tree)).toMatch(/Code sent to\s+owner@example\.com/);
+      expect(collectText(tree)).toContain("Check your email");
+      expect(collectText(tree)).toMatch(/Enter the code sent to\s+owner@example\.com/);
       expect(checkboxOf(tree)).toBeUndefined();
       expect(submit().props["aria-label"]).toBe("Confirm");
       await act(() => { fieldOf(tree, "Code")!.props.onChange?.("123456"); });
@@ -245,7 +246,7 @@ describe("owner welcome", () => {
       await vi.waitFor(() => expect(fetcher).toHaveBeenCalledOnce());
       await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
       expect(fieldOf(tree, "Handle")!.props).toMatchObject({ status: "none", message: "" });
-      expect(collectNodes(tree).find((node) => node.props["aria-label"] === "Create space")!.props.disabled).toBe(false);
+      expect(collectNodes(tree).find((node) => node.props["aria-label"] === "Continue")!.props.disabled).toBe(false);
       await act(() => formOf(tree).props.onSubmit(new Event("submit")));
       await vi.waitFor(() => expect(fieldOf(tree, "Code")).toBeDefined());
       expect(fetcher).toHaveBeenCalledWith(`${ORIGIN}/owner/api/code`, expect.anything());
@@ -283,7 +284,7 @@ describe("owner welcome", () => {
       expect(fieldOf(tree, "Handle")!.props).toMatchObject({ status: "error", message: "handle is unavailable" });
       expect(store.snapshot().value!.operationId).toBe("op_taken");
       expect(onConnect).not.toHaveBeenCalled();
-      expect(collectNodes(tree).find((node) => node.props["aria-label"] === "Create space")!.props.disabled).toBe(true);
+      expect(collectNodes(tree).find((node) => node.props["aria-label"] === "Continue")!.props.disabled).toBe(true);
       await act(() => { fieldOf(tree, "Handle")!.props.onChange?.("taken-again"); });
       await vi.waitFor(() => expect(fieldOf(tree, "Handle")!.props.status).toBe("success"));
       expect(fieldOf(tree, "Handle")!.props.message).toBe("Available");
@@ -373,7 +374,7 @@ describe("owner welcome", () => {
       tree = OwnerWelcomeScreen({ ready: true, resume: false, initialStep: "claim", load: async () => client, onConnect });
       return null;
     }
-    const submit = () => collectNodes(tree).find((node) => node.props["aria-label"] === "Create space")!;
+    const submit = () => collectNodes(tree).find((node) => node.props["aria-label"] === "Continue")!;
     try {
       await root.render(<Harness />);
       await vi.waitFor(() => expect(fieldOf(tree, "Handle")?.props.disabled).toBe(false));
@@ -442,7 +443,7 @@ describe("owner welcome", () => {
       expect(fetcher.mock.calls.every(([url]) => url.endsWith("/session"))).toBe(true);
       expect(onConnect).not.toHaveBeenCalled();
       await agree(tree);
-      expect(collectNodes(tree).find((node) => node.props["aria-label"] === "Create space")!.props.disabled).toBe(false);
+      expect(collectNodes(tree).find((node) => node.props["aria-label"] === "Continue")!.props.disabled).toBe(false);
       await act(() => formOf(tree).props.onSubmit(new Event("submit")));
       await vi.waitFor(() => expect(onConnect).toHaveBeenCalledWith(setup.origin, TOKEN));
       expect(fetcher).toHaveBeenCalledWith(`${ORIGIN}/owner/api/spaces`, expect.objectContaining({ body: JSON.stringify({ operationId: setup.operationId, handle: setup.handle }) }));
@@ -487,7 +488,7 @@ describe("owner welcome", () => {
     try {
       await root.render(<Harness />);
       await vi.waitFor(() => expect(collectText(tree)).toContain("Could not load sign-in"));
-      await act(() => { button("Open your space").props.onClick?.(); });
+      await act(() => { button("Open Ship").props.onClick?.(); });
       expect(button("Retry")).toBeDefined();
       expect(collectText(tree)).toContain("Could not load sign-in");
       await act(async () => { await addressPanel.mock.lastCall![0].connect("https://custom.example.com"); });
@@ -514,7 +515,7 @@ describe("owner welcome", () => {
       await root.render(<Harness />);
       await vi.waitFor(() => expect(collectText(tree)).toContain("Could not load sign-in"));
       expect(collectText(tree)).toContain("Sponsor invited you to Ship");
-      expect(collectText(tree)).toContain("Use a space address");
+      expect(collectText(tree)).toContain("Use a Ship address");
       expect(addressPanel.mock.lastCall![0].disabled).toBe(false);
       expect(collectNodes(tree).find((node) => node.props["aria-label"] === "Continue")!.props.disabled).toBe(true);
     } finally { await root.unmount(); }
@@ -541,7 +542,9 @@ describe("owner welcome", () => {
     try {
       await root.render(<Harness />);
       const field = () => fieldOf(tree, "Handle")!;
-      await vi.waitFor(() => expect(field()?.props).toMatchObject({ suffix: ".example.com", disabled: false }));
+      await vi.waitFor(() => expect(field()?.props.disabled).toBe(false));
+      expect(collectText(tree)).toMatch(/Ship address\s+your-name\s*\.\s*example\.com/);
+      expect(collectText(tree)).not.toContain("presumed.example");
       expect(fetcher).toHaveBeenCalledWith(`${ORIGIN}/owner/api/session`, expect.objectContaining({ method: "GET" }));
       await act(() => { field().props.onChange?.("Xamenace"); });
       expect(field().props.value).toBe("xamenace");
@@ -549,7 +552,7 @@ describe("owner welcome", () => {
       expect(fetcher).toHaveBeenCalledWith(`${ORIGIN}/owner/api/handle?value=xamenace`, expect.anything());
       await act(() => { field().props.onChange?.("not_a_handle"); });
       await vi.waitFor(() => expect(field().props).toMatchObject({ status: "error", message: "Use letters, numbers or hyphens." }));
-      expect(collectNodes(tree).find((node) => node.props["aria-label"] === "Create space")!.props.disabled).toBe(true);
+      expect(collectNodes(tree).find((node) => node.props["aria-label"] === "Continue")!.props.disabled).toBe(true);
       await act(() => { field().props.onChange?.("a-valid-handle"); });
       expect(field().props.message).toBe("");
       await vi.waitFor(() => expect(field().props.status).toBe("success"));
@@ -573,7 +576,7 @@ describe("owner welcome", () => {
     }
     try {
       await root.render(<Harness />);
-      await vi.waitFor(() => expect(collectNodes(tree).find((node) => node.props["aria-label"] === "Open your space")?.props.disabled).toBe(false));
+      await vi.waitFor(() => expect(collectNodes(tree).find((node) => node.props["aria-label"] === "Open Ship")?.props.disabled).toBe(false));
       expect(fetcher).not.toHaveBeenCalled();
       expect(onConnect).not.toHaveBeenCalled();
     } finally { await root.unmount(); }
@@ -596,21 +599,21 @@ describe("owner welcome", () => {
     try {
       await root.render(<Harness />);
       const choice = (label: string) => collectNodes(tree).find((node) => node.props["aria-label"] === label)!;
-      await vi.waitFor(() => expect(choice("Create your space")?.props.disabled).toBe(false));
-      expect(choice("Open your space")).toBeDefined();
+      await vi.waitFor(() => expect(choice("Create your Ship")?.props.disabled).toBe(false));
+      expect(choice("Open Ship")).toBeDefined();
       expect(addressPanel).not.toHaveBeenCalled();
       expect(collectNodes(tree).some((node) => node.type === TextInput)).toBe(false);
 
-      await act(() => { choice("Create your space").props.onClick?.(); });
+      await act(() => { choice("Create your Ship").props.onClick?.(); });
       await vi.waitFor(() => expect(fieldOf(tree, "Handle")?.props.disabled).toBe(false));
       expect(fieldOf(tree, "Email")).toBeDefined();
       expect(addressPanel).not.toHaveBeenCalled();
       await act(() => { collectNodes(tree).find((node) => node.type === "button" && collectText(node) === "Back")?.props.onClick?.(); });
-      await act(() => { choice("Open your space").props.onClick?.(); });
+      await act(() => { choice("Open Ship").props.onClick?.(); });
       await vi.waitFor(() => expect(fieldOf(tree, "Email")?.props.disabled).toBe(false));
       expect(fieldOf(tree, "Handle")).toBeUndefined();
       expect(collectText(tree)).toContain("Sign in with email");
-      expect(collectText(tree)).toContain("Enter a space address");
+      expect(collectText(tree)).toContain("Enter a Ship address");
       expect(addressPanel).toHaveBeenLastCalledWith(expect.objectContaining({ disabled: false }));
       expect(fetcher).not.toHaveBeenCalled();
 

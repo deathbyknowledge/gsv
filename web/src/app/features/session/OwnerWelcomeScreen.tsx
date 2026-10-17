@@ -140,7 +140,7 @@ export function OwnerWelcomeScreen({ ready, resume, load, onConnect, addressPane
 
   const titles = {
     welcome: "Welcome to Ship", invitation: invitation?.name ? `${invitation.name} invited you to Ship` : "You’re invited to Ship",
-    claim: "Claim your ship", email: "Your email", code: "Check your email", spaces: "Your spaces",
+    claim: "Create your Ship", email: "Your email", code: "Check your email", spaces: "Choose your Ship",
   } satisfies Record<Step, string>;
   const creating = flow?.state.flow === "create";
   const requiresConsent = step === "claim";
@@ -178,51 +178,51 @@ export function OwnerWelcomeScreen({ ready, resume, load, onConnect, addressPane
   const actionDisabled = !flow || busy || (step === "claim" ? !handle.trim() || (!owner && !email.trim()) || availability === "unavailable" || !!handleError
     : step === "email" ? !email.trim() : step === "code" ? code.length !== 6 : false);
   const opening = step === "spaces" || step === "email";
-  const codeHeading = step === "code" && creating && !!flow?.state.handle;
   const title = invitation && step === "email" ? "Join Ship"
-    : !opening ? titles[step] : !compact ? "Open your space" : step === "spaces" ? "Choose your space" : "Sign in";
+    : !opening ? titles[step] : !compact ? "Open Ship" : step === "spaces" ? "Choose your Ship" : "Sign in";
   const split = opening && !!addressPanel && !compact;
   const address = () => addressPanel?.({ disabled: busy, connect: (origin) => run(async () => {
     try { await onConnect(origin); }
-    catch { throw new Error("Could not open this space. Try again."); }
+    catch { throw new Error("Could not open Ship. Try again."); }
   }) });
   const back = () => {
     setError("");
     if (step === "code") { setCode(""); setStep(creating && !chooseSpace ? "claim" : "email"); return; }
     setStep(invitation ? "invitation" : "welcome");
   };
-  const action = step === "claim" ? "Create space" : step === "email" ? "Send code" : step === "code" ? "Confirm" : "Continue";
+  const action = step === "email" ? "Send code" : step === "code" ? "Confirm" : "Continue";
 
   return <AuthLayout visible surfaceClass="gsv-auth-surface-login"><section class={`desktop-welcome${step === "welcome" || split ? " desktop-welcome-wide" : ""}`}>
-    {codeHeading
-      ? <h1 class="desktop-welcome-handle"><span>@{flow?.state.handle}</span>{spaceDomain && <span class="desktop-welcome-handle-domain">.{spaceDomain}</span>}</h1>
-      : <h1>{title}</h1>}
+    <h1>{title}</h1>
     {step === "welcome" ? <div class="desktop-welcome-columns desktop-welcome-choices">
-      <button class="desktop-welcome-choice" type="button" aria-label="Create your space" disabled={!flow || busy} onClick={() => start("create")}>
+      <button class="desktop-welcome-choice" type="button" aria-label="Create your Ship" disabled={!flow || busy} onClick={() => start("create")}>
         <WelcomeIllustration kind="create" />
-        <span class="desktop-welcome-choice-title">Create your space <span aria-hidden="true">→</span></span>
+        <span class="desktop-welcome-choice-title">Create your Ship <span aria-hidden="true">→</span></span>
         <span class="desktop-welcome-detail">Pick a handle, confirm your email</span>
       </button>
       <div class="desktop-welcome-choice desktop-welcome-choice-interactive">
         <WelcomeIllustration kind="open" />
-        <button class="desktop-welcome-choice-title" type="button" aria-label="Open your space" disabled={!ready || busy} onClick={() => start("open")}>
-          Open your space <span aria-hidden="true">→</span>
+        <button class="desktop-welcome-choice-title" type="button" aria-label="Open Ship" disabled={!ready || busy} onClick={() => start("open")}>
+          Open Ship <span aria-hidden="true">→</span>
         </button>
       </div>
     </div> : <div class={split ? "desktop-welcome-columns" : "desktop-welcome-form"}>
       <div class="desktop-welcome-primary">
-      {opening && !compact && <h2>{step === "spaces" ? "Your spaces" : "Sign in with email"}</h2>}
-      {codeHeading && <p class="desktop-welcome-lede">Almost there! We've sent a confirmation code to your email.</p>}
+      {opening && !compact && <h2>{step === "spaces" ? "Choose your Ship" : "Sign in with email"}</h2>}
+      {step === "code" && <p class="desktop-welcome-lede">Enter the code sent to {flow?.state.challenge?.email}.</p>}
       <form key={step} class="gsv-login-fields" onSubmit={submit} aria-busy={busy}>
         {step === "invitation" && <div class="desktop-welcome-invitation">
           {invitation?.origin && <p class="desktop-welcome-detail">{invitation.origin}</p>}
-          <p>Join Ship or open your space to connect.</p>
+          <p>Sign in or create your Ship to connect.</p>
         </div>}
-        {step === "claim" && <TextInput label="Handle" value={handle} onChange={(value) => { setHandle(value.toLowerCase()); setError(""); }} disabled={busy}
-          prefix="@" suffix={spaceDomain ? `.${spaceDomain}` : undefined} placeholder="your-space"
-          status={handleError || availability === "unavailable" ? "error" : availability === "available" ? "success" : "none"}
-          message={handleError || (availability === "available" ? "Available" : availability === "unavailable" ? "Already taken" : "")}
-          inputProps={{ autoFocus: true, autoCapitalize: "none", spellcheck: false, maxLength: 63 }} />}
+        {step === "claim" && <div class="desktop-welcome-identity">
+          <TextInput label="Handle" value={handle} onChange={(value) => { setHandle(value.toLowerCase()); setError(""); }} disabled={busy}
+            prefix="@" placeholder="your-name"
+            status={handleError || availability === "unavailable" ? "error" : availability === "available" ? "success" : "none"}
+            message={handleError || (availability === "available" ? "Available" : availability === "unavailable" ? "Already taken" : "")}
+            inputProps={{ autoFocus: true, autoCapitalize: "none", spellcheck: false, maxLength: 63 }} />
+          {spaceDomain && <p class="desktop-welcome-detail desktop-welcome-address-preview">Ship address <span>{handle.trim() || "your-name"}.{spaceDomain}</span></p>}
+        </div>}
         {(step === "email" || (step === "claim" && !owner)) && <TextInput label="Email" value={email} onChange={setEmail} disabled={busy} placeholder="you@example.com"
           inputProps={{ autoFocus: step === "email", type: "email", autoComplete: "email", maxLength: 254, required: true }} />}
         {requiresConsent && <div class={`gsv-owner-consent${consentError ? " is-error" : ""}`}>
@@ -246,27 +246,24 @@ export function OwnerWelcomeScreen({ ready, resume, load, onConnect, addressPane
             label={`Continue ${setup.handle}`} variant="secondary" block disabled={busy}
             onClick={() => void run(() => openSetup(flow!, setup))} />)}
           {!owner?.spaces.length && !owner?.setups.length && <>
-            {owner?.signupEnabled ? <Button label="Create your space" disabled={busy} block onClick={() => start("create")} />
+            {owner?.signupEnabled ? <Button label="Create your Ship" disabled={busy} block onClick={() => start("create")} />
               : <p class="desktop-welcome-detail">Registration is currently closed.</p>}
           </>}
         </>}
         {step !== "spaces" && <button class="gsv-btn gsv-btn-primary gsv-btn-block desktop-welcome-submit" type="submit" aria-label={action} disabled={actionDisabled} autoFocus={step === "invitation"}>
           {busy ? <Spinner /> : <span class="gsv-btn-label">{action}</span>}
         </button>}
-        {step === "code" && <div class="desktop-welcome-sent">
-          <p class="desktop-welcome-detail">{codeHeading ? "Code sent to " : ""}{flow?.state.challenge?.email}</p>
-          <span class="desktop-welcome-links">
-            <button type="button" class="gsv-auth-link" disabled={busy} onClick={() => void run(async () => {
-              try { await flow!.sendCode(flow!.state.challenge!.email, true); }
-              catch (failure) {
-                if (failure instanceof OwnerApiError && ["expired", "locked", "already_used"].includes(failure.code ?? "")) {
-                  const address = flow!.state.challenge!.email;
-                  await flow!.save({ challenge: null }); await flow!.sendCode(address);
-                } else throw failure;
-              }
-            })}>Send again</button>
-            <button type="button" class="gsv-auth-link" disabled={busy} onClick={back}>Change email</button>
-          </span>
+        {step === "code" && <div class="desktop-welcome-links">
+          <button type="button" class="gsv-auth-link" disabled={busy} onClick={() => void run(async () => {
+            try { await flow!.sendCode(flow!.state.challenge!.email, true); }
+            catch (failure) {
+              if (failure instanceof OwnerApiError && ["expired", "locked", "already_used"].includes(failure.code ?? "")) {
+                const address = flow!.state.challenge!.email;
+                await flow!.save({ challenge: null }); await flow!.sendCode(address);
+              } else throw failure;
+            }
+          })}>Send again</button>
+          <button type="button" class="gsv-auth-link" disabled={busy} onClick={back}>Change email</button>
         </div>}
         {owner && step !== "invitation" && <button type="button" class="gsv-auth-link" disabled={busy} onClick={() => void run(async () => {
           const contactInvite = flow!.state.contactInvite;
@@ -277,11 +274,11 @@ export function OwnerWelcomeScreen({ ready, resume, load, onConnect, addressPane
         })}>Sign out</button>}
       </form>
       {compact && (opening || loadError) && addressPanel && <details class="desktop-welcome-address-disclosure">
-        <summary>Use a space address</summary>
+        <summary>Use a Ship address</summary>
         {address()}
       </details>}
       </div>
-      {split && <div class="desktop-welcome-address"><h2>Enter a space address</h2>
+      {split && <div class="desktop-welcome-address"><h2>Enter a Ship address</h2>
         {address()}
       </div>}
     </div>}

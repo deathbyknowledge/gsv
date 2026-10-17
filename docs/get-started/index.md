@@ -1,9 +1,9 @@
 # Get Started
 
-A Ship space contains your accounts, conversations, memory and connected machines.
+Ship brings together your accounts, conversations, memory and connected machines.
 You can use a hosting operator or run the same stack in your own Cloudflare account.
 
-## Get a space
+## Get Ship
 
 If an operator has created a space for you, open its setup invitation and choose
 the password you'll use inside that space. Your space has one personal account;
@@ -15,11 +15,12 @@ Creating your account signs you in and opens **Ship**, your conversation with yo
 Start with what you want to do. You can connect devices from **Fleet** and
 configure models and other connections from **Settings** when you need them.
 
-When your operator enables open registration, use its signup page or **Create
-your space** in Desktop. Choose the handle your space will live at, enter your
-email, confirm the age, Terms and Privacy agreement, and select **Create space**.
-Verify your email with the six-digit code, and the new space opens on its setup
-screen: pick a password and select **Activate space**. No registration invite is
+When your operator enables open registration, its signup page opens directly on
+the handle and email form. Desktop starts with **Create your Ship** and **Open
+Ship**. Choose a handle, enter your email, confirm the age, Terms and Privacy
+agreement, and select **Continue**. Your handle (`@alex`) and Ship address
+(`alex.example.com`) appear separately. Verify your email with the six-digit code,
+then pick a password and select **Activate Ship**. No registration invite is
 needed, and the terms you agreed to at signup are not asked again inside the
 space. Handles use lowercase letters, numbers and hyphens; uppercase input is
 converted automatically. Validation and availability feedback appears beside the
@@ -27,9 +28,10 @@ field. One verified email can create one self-service Space.
 
 If creation is interrupted, retry with the same handle to resume that setup.
 
-A friend's invitation link can take you through the same signup. The invitation
-stays with you through setup; accept it in People after choosing who handles
-incoming messages. Existing users select their Space instead.
+A friend's invitation link opens an invitation modal on the signup page. Continue
+and verify your email; existing users choose their Ship, while new users choose a
+handle and finish setup. The invitation stays with you through setup; accept it
+in People after choosing who handles incoming messages.
 
 If setup is interrupted or its link expires, opening the unfinished space shows
 **Continue setup**. Sign in with the same email and select **Continue** beside its
@@ -37,7 +39,7 @@ handle. This resumes the same Space and renews its setup authorization. Previous
 created Spaces retain this recovery path after signup codes are retired. For a
 setup link issued directly by an operator, ask the operator to renew it.
 
-Owner sign-in on **My spaces** lists the Spaces you own and unfinished setups.
+Owner sign-in through **Open Ship** lists the Ships you own and unfinished setups.
 It is separate from your account inside each Space. Signing in alone does not
 create a Space or grant operator administration rights. The signup page also
 links to the [Desktop app](/how-to/install-host-apps) for macOS, Windows and Linux.

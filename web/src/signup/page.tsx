@@ -54,7 +54,7 @@ export async function loadSignupPage(storage: WelcomeStorage & { load(): Promise
     ? <AuthLayout visible><section class="desktop-welcome"><h1>Connect on Ship</h1><p role="alert">{invitationError}</p>
       <a class="gsv-auth-link" href="/owner/signup/?resume=1" onClick={async (event) => {
         event.preventDefault(); await leave("/owner/signup/?resume=1");
-      }}>open my spaces</a></section></AuthLayout>
+      }}>open Ship</a></section></AuthLayout>
     : <OwnerWelcomeScreen ready resume initialStep={contactInvitation ? "email" : "claim"} compact={!!contactInvitation}
       spaceDomain={publicDeployment().primaryDomain ?? presumedSpaceDomain(new URL(accountsOrigin).hostname)}
       invitation={preview && "name" in preview ? preview : undefined} chooseSpace={!!contactInvitation}
