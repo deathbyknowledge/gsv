@@ -72,7 +72,7 @@ export function InviteContact({ account, draft, onChange, onAdded, onBusy, onPro
       {entering && <p class="people-note">Paste the invitation they shared with you.</p>}
       <form class="people-form" onSubmit={(event) => { event.preventDefault(); if (!busy && allowed("contact.invite.accept") && draft.shipHandlesMessages !== null && preview && "name" in preview && !preview.expired) accept.mutate(); }}>
         {entering && <label>Invitation link or code<textarea rows={2} value={draft.code} autoComplete="off" spellcheck={false} disabled={busy} onInput={(event) => { accept.reset(); onChange({ ...draft, code: event.currentTarget.value, shipHandlesMessages: null }); }} /></label>}
-        {preview && ("error" in preview ? <p class="people-error" role="alert">{preview.error}</p> : <div class="people-invite-person"><h2>{preview.name}</h2><span>{preview.origin}</span><p class="people-note">{preview.expired ? "This invitation has expired. Ask them for a new link." : "Connect to message each other and ask your Ships to help."}</p></div>)}
+        {preview && ("error" in preview ? <p class="people-error" role="alert">{preview.error}</p> : <div class="people-invite-person"><h2>{preview.name}</h2><span>{preview.origin}</span><p class="people-note">{preview.expired ? "This invitation has expired. Ask them for a new link." : "Connect to message each other and ask your ships to help."}</p></div>)}
         {preview && "name" in preview && !preview.expired && choice}
         <button class="ibtn is-primary" type="submit" disabled={busy || !allowed("contact.invite.accept") || draft.shipHandlesMessages === null || !preview || "error" in preview || preview.expired}>{accept.isPending ? "connecting…" : "accept invitation"}</button>
       </form>
@@ -80,7 +80,7 @@ export function InviteContact({ account, draft, onChange, onAdded, onBusy, onPro
         <button class="people-action" disabled={busy} onClick={() => { clearContactInvitation(); onChange({ code: "", issued: null, shipHandlesMessages: null }); setAccepting(false); setEntering(true); }}>invite someone instead</button></div>
     </> : <>
       <h2>Bring someone along.</h2>
-      <p class="people-note">Share a link. They can join Ship or connect their existing space.</p>
+      <p class="people-note">Share a link. They can join Ship or connect their ship.</p>
       {issued && link ? <div class="people-invite-link">
         {expired || current?.state === "cancelled" ? <p role="status">This invitation {expired ? "has expired" : "was cancelled"}.</p> : <>
           <label>Invitation link<input aria-label="Invitation link" value={link} readOnly onFocus={(event) => event.currentTarget.select()} /></label>

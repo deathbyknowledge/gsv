@@ -133,7 +133,7 @@ export async function handleConnect(
     return {
       ok: false,
       code: 503,
-      message: "Space provisioning is incomplete",
+      message: "Ship setup is incomplete",
     };
   }
 

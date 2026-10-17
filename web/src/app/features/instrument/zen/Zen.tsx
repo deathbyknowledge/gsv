@@ -778,7 +778,7 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
         return true;
       }
       if (intent.kind === "run") {
-        if (extras) { setNote(zenNotice("Remove attachments and pasted text before running a command, or send them to your Ship in plain words.")); return false; }
+        if (extras) { setNote(zenNotice("Remove attachments and pasted text before running a command, or send them to your ship in plain words.")); return false; }
         return runDirectly(intent.command);
       }
       return say(intent.text);
@@ -1215,7 +1215,7 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
               <div class="zen-add-section" role="group" aria-labelledby="zen-add-ship-label">
                 <div class="zen-add-heading" id="zen-add-ship-label">ask Ship</div>
                 <button type="button" role="menuitem" disabled={!viewer || !canConfigure(viewer, "conversation.send")} onClick={() => stageRequest("Help me create a routine.")}>create a routine</button>
-                <button type="button" role="menuitem" disabled={!viewer || !canConfigure(viewer, "conversation.send")} onClick={() => stageRequest("Help me connect a computer to this space.")}>connect a computer</button>
+                <button type="button" role="menuitem" disabled={!viewer || !canConfigure(viewer, "conversation.send")} onClick={() => stageRequest("Help me connect a computer to my ship.")}>connect a computer</button>
                 <button type="button" role="menuitem" disabled={!viewer || !canConfigure(viewer, "conversation.send")} onClick={() => stageRequest("Start a browser for me.")}>start a browser</button>
               </div>
             </div>

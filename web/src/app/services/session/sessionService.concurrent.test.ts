@@ -181,7 +181,7 @@ describe("remembered sessions across windows", () => {
   it.each([
     { code: 408, message: "Request timed out" },
     { code: 429, message: "Try again later" },
-    { code: 503, message: "Space provisioning is incomplete" },
+    { code: 503, message: "Ship setup is incomplete" },
     { code: 409, message: "Temporary conflict", retryable: true },
   ])("retries a temporary handshake error: $message", async (error) => {
     changeToken(token("saved"));

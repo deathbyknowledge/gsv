@@ -8,7 +8,7 @@ local deployment tool.
 
 ## Run your own operator
 
-The public stack serves one or many isolated spaces in your Cloudflare account.
+The public stack serves one or many isolated installations in your Cloudflare account.
 It includes Accounts, Gateway, inference, storage and ripgit; no private H&M
 service is required. Messenger adapters are disabled by default. Their
 application credentials are operator configuration, and people link their own
@@ -19,8 +19,8 @@ Follow [Deploy Ship with Alchemy](./deploy-with-alchemy.md) for the complete flo
 1. Authenticate Alchemy and configure your Cloudflare account, `GSV_DOMAIN` and
    `GSV_ZONE_ID`.
 2. Build, inspect the plan and deploy the `operator` stage.
-3. Issue the one-time bootstrap link and create the first space through its
-   setup invitation. Create further spaces explicitly in administration.
+3. Issue the one-time bootstrap link and create the first ship through its
+   setup invitation. Create further ships explicitly in administration.
 
 Existing standalone deployments must remain on their preserved release or source
 until an explicit migration is prepared. This revision has no singleton route
@@ -48,22 +48,22 @@ Routine updates of an already adopted public database use its migration ledger.
 
 ### Remove
 
-Remove a space through the operator's deletion lifecycle, with its complete
+Remove an installation through the operator's deletion lifecycle, with its complete
 resource inventory and owner receipts. The
 [cleanup guide](./operate-gsv.md#connect-services-and-verify-cleanup) explains
 configuration, retries and the separate reporting of live erasure and retained
-copies. Deleting one space preserves other spaces in the deployment.
+copies. Deleting one installation preserves the others in the deployment.
 
 The Alchemy composition retains its physical resources. Full operator teardown
 also requires accounting for shared Workers, databases, buckets, routes and
-provider configuration after space cleanup; removing Alchemy state alone does
+provider configuration after installation cleanup; removing Alchemy state alone does
 not erase them.
 
 ## Runtime notes
 
 The operator stack uses Workers, D1, R2 and SQLite-backed Durable Objects. It
 does not require Cloudflare Containers. Its default inference route uses the
-operator's Workers AI account; spaces can also supply their own model
+operator's Workers AI account; ships can also supply their own model
 credentials. Provider execution runs in the inference Worker.
 
 ## See also

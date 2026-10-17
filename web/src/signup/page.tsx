@@ -1,11 +1,12 @@
-import type { VNode } from "preact";
+import { Fragment, type VNode } from "preact";
 import { AuthLayout } from "../app/features/session/AuthLayout";
 import { OwnerWelcomeScreen } from "../app/features/session/OwnerWelcomeScreen";
 import { SpaceAddressForm } from "../app/features/session/SpaceAddressForm";
 import { OwnerWelcome, type WelcomeSnapshot, type WelcomeStorage } from "../app/services/session/ownerWelcome";
 import { DesktopAppLink } from "./DesktopAppLink";
 import { SignupDialog } from "./SignupDialog";
-import { signupDestination } from "./navigation";
+import { presumedSpaceDomain, signupDestination } from "./navigation";
+import { publicDeployment } from "../app/services/deployment";
 import { captureContactInvitation } from "./invitation";
 import { contactInvitationDestination } from "@humansandmachines/gsv/protocol";
 import { pendingContactInvitation, contactInvitationPreview, clearContactInvitation } from "../app/services/session/contactInvitationIntent";
@@ -47,13 +48,16 @@ export async function loadSignupPage(storage: WelcomeStorage & { load(): Promise
       : contactInvitation ? contactInvitationDestination(origin, contactInvitation) : signupDestination(origin);
     await leave(destination);
   };
-  return <SignupDialog>{invitationError
+  // A friend's invitation opens as a centered card; ordinary signup lives on the page so the rest of it stays usable.
+  const Frame = contactInvitation ? SignupDialog : Fragment;
+  return <Frame>{invitationError
     ? <AuthLayout visible><section class="desktop-welcome"><h1>Connect on Ship</h1><p role="alert">{invitationError}</p>
       <a class="gsv-auth-link" href="/owner/signup/?resume=1" onClick={async (event) => {
         event.preventDefault(); await leave("/owner/signup/?resume=1");
-      }}>open my spaces</a></section></AuthLayout>
-    : <OwnerWelcomeScreen ready resume initialStep="email" compact
+      }}>open Ship</a></section></AuthLayout>
+    : <OwnerWelcomeScreen ready resume initialStep={contactInvitation ? "email" : "claim"} compact={!!contactInvitation}
+      spaceDomain={publicDeployment().primaryDomain ?? presumedSpaceDomain(new URL(accountsOrigin).hostname)}
       invitation={preview && "name" in preview ? preview : undefined} chooseSpace={!!contactInvitation}
       addressPanel={contactInvitation ? ({ connect, disabled }) => <SpaceAddressForm disabled={disabled} onConnect={connect} /> : undefined}
-      load={load} onConnect={connect} />}{!contactInvitation && <DesktopAppLink />}</SignupDialog>;
+      load={load} onConnect={connect} />}{!contactInvitation && <DesktopAppLink />}</Frame>;
 }

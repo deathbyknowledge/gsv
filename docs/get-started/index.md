@@ -1,41 +1,49 @@
 # Get Started
 
-A Ship space contains your accounts, conversations, memory and connected machines.
+Ship brings together your accounts, conversations, memory and connected machines.
 You can use a hosting operator or run the same stack in your own Cloudflare account.
 
-## Get a space
+## Get Ship
 
-If an operator has created a space for you, open its setup invitation and choose
-the password you'll use inside that space. Your space has one personal account;
-you do not need to choose another username. Continue to review the
-early-access disclosure and confirm the age, Terms of Service and Privacy Policy
-agreement before creating your account. This checkbox is required inside the space
-as well as on the signup email step. **Back** lets you revise your credentials.
+If an operator has created a ship for you, open its setup invitation and choose
+your password. Each ship has one personal account; you do not need to choose
+another username. Continue to review the early-access disclosure and confirm the
+age, Terms of Service and Privacy Policy
+agreement before creating your account. **Back** lets you revise your credentials.
 Creating your account signs you in and opens **Ship**, your conversation with your personal agent.
 Start with what you want to do. You can connect devices from **Fleet** and
 configure models and other connections from **Settings** when you need them.
 
-When your operator enables open registration, use its signup page or **Create
-your space** in Desktop. Confirm the age, Terms and Privacy agreement, verify
-your email with the six-digit code, then choose a handle. No registration invite
-is needed. Handles use lowercase letters, numbers and hyphens; uppercase input
-is converted automatically. Validation and availability feedback appears beside
-the field. One verified email can create one self-service Space.
+When your operator enables open registration, its signup page opens directly on
+the handle and email form. Desktop starts with **Create your ship** and **Open
+Ship**. Choose a handle, enter your email, confirm the age, Terms and Privacy
+agreement, and select **Continue**. Your handle (`@alex`) and ship address
+(`alex.example.com`) appear separately. Verify your email with the six-digit code,
+then pick a password and select **Activate Ship**. No registration invite is
+needed, and the terms you agreed to at signup are not asked again during setup.
+Handles use lowercase letters, numbers and hyphens; uppercase input is converted
+automatically. Validation and availability feedback appears beside the field.
+One verified email can create one ship.
 
-A friend's invitation link can take you through the same signup. The invitation
-stays with you through setup; accept it in People after choosing who handles
-incoming messages. Existing users select their Space instead.
+If creation is interrupted, retry with the same handle to resume that setup.
 
-If setup is interrupted or its link expires, opening the unfinished space shows
+A friend's invitation link opens an invitation modal on the signup page. Continue
+and verify your email; existing users choose their ship, while new users choose a
+handle and finish setup. The invitation stays with you through setup; accept it
+in People after choosing who handles incoming messages.
+
+If setup is interrupted or its link expires, opening the unfinished ship shows
 **Continue setup**. Sign in with the same email and select **Continue** beside its
-handle. This resumes the same Space and renews its setup authorization. Previously
-created Spaces retain this recovery path after signup codes are retired. For a
-setup link issued directly by an operator, ask the operator to renew it.
+handle. This resumes the same ship and renews its setup authorization. Ships
+created with an earlier signup code can resume setup this way too. For a setup
+link issued directly by an operator, ask the operator to renew it.
 
-Owner sign-in on **My spaces** lists the Spaces you own and unfinished setups.
-It is separate from your account inside each Space. Signing in alone does not
-create a Space or grant operator administration rights. The signup page also
-links to the [Desktop app](/how-to/install-host-apps).
+Email sign-in through **Open Ship** lists your ships and unfinished setups.
+It is separate from signing in to a ship. Signing in with email alone does not
+create a ship or grant operator administration rights. The signup page also
+links to the [Desktop app](/how-to/install-host-apps) for macOS, Windows and Linux.
+If Desktop cannot connect after setup completes, choose your ship from the list
+to retry opening it.
 
 ## Run your own operator
 
@@ -46,9 +54,9 @@ The public composition includes CodeMode's Worker Loader, which requires
 Cloudflare Containers are not required.
 
 Deploy the common stack, issue the one-time operator bootstrap link, then create
-your first space. The same deployment can host further isolated spaces. Its
+your first ship. The same deployment can host further isolated installations. Its
 reference inference service uses the operator's Workers AI account; you may add
-your own model credentials in a space. Model usage and infrastructure usage are
+your own model credentials in your ship. Model usage and infrastructure usage are
 billed separately. Private H&M services are not required.
 
 Existing standalone deployments should read the
@@ -58,11 +66,11 @@ Existing standalone deployments should read the
 
 The web console is called **Instrument** and has five views:
 
-- **Chat** is your Ship conversation, and where you inspect what a run did.
+- **Chat** is your ship conversation, and where you inspect what a run did.
 - **Fleet** lists your places and processes, with files opened from a place.
 - **Memory** shows your personal knowledge pages.
-- **People** holds conversations, message requests and private contacts across Ship spaces, plus your public profile.
-- **Settings** holds preferences (models), standing responsibilities, permissions, instructions, messengers, MCP connections and **Logs** for actions and their outcomes. The **sign-in** section appears only for root, for personal password resets and verified-owner linking.
+- **People** holds conversations, message requests and private contacts across ships, plus your public profile.
+- **Settings** holds preferences (models), standing responsibilities, permissions, instructions, messengers, MCP connections and **Logs** for actions and their outcomes. The **sign-in** section appears only for root, for personal password resets and administrator recovery setup.
 
 On phones, tap **menu** in the header to switch views. A dot on the menu button
 marks unread People activity. Choosing a view
@@ -82,7 +90,7 @@ The **+** menu attaches files, finds people and files, and prepares requests to
 create a routine, connect a computer or start a browser. These requests and
 **ask Ship** controls add ordinary editable text to your draft. Review or change
 it before sending; selecting a request does not send it. **Find a person** accepts
-a handle such as `@esteve` or a full address for another Ship. **Reference a file**
+a handle such as `@esteve` or a full address for another ship. **Reference a file**
 adds a file’s target and path as soon as you select its name. Use **../** at the
 top of a place’s file list to move toward its filesystem root.
 
@@ -106,10 +114,13 @@ with **continue editing →** to resume it. Wider screens show the browser and r
 side by side.
 
 The Settings sidebar highlights the section you're viewing.
+Under **Appearance**, choose **Match system** to follow this device's light or
+dark appearance. An explicit theme choice applies to both sign-in and the app.
+Before you choose, **Default** keeps sign-in dark and the app light.
 
 Open **People** to try making plans or working together with someone on Ship.
 **connect** creates a shareable invitation; accepting it opens your conversation.
-You can talk directly or choose **ask Ship** to prepare a request in your Ship chat.
+You can talk directly or choose **ask Ship** to prepare a request in your ship chat.
 A dot beside **people** marks waiting activity, and Zen shows unread conversations
 and message requests above the prompt, including after a reload. See
 [Contact people](/how-to/contact-people) for the full flow.

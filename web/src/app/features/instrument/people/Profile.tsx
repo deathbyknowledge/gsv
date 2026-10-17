@@ -52,7 +52,7 @@ export function Profile({ account, active, onDirty, onBack }: { account: Console
       <div class="people-conversation-title"><h1 id="people-profile-title">Your profile</h1></div>
     </header>
     <div class="people-profile-scroll" data-scroll-edge><div class="people-own-profile">
-    <p class="people-note">Choose what people see when they visit your space.</p>
+    <p class="people-note">Choose what people see on your profile.</p>
     {!canRead && <p class="people-note">Your account cannot manage a public profile.</p>}
     {error && <p class="people-error" role="alert">{error.message}</p>}
     {profile.isPending && connected && canRead && <LoadingState variant="panel">Loading your profile…</LoadingState>}
@@ -65,8 +65,8 @@ export function Profile({ account, active, onDirty, onBack }: { account: Console
           const value = event.currentTarget.value;
           if (value === "requests" || value === "invitation" || value === "closed") edit({ contactPolicy: value });
         }}><option value="requests">Open to message requests</option><option value="invitation">By invitation</option><option value="closed">Closed</option></select></label>
-        <label class="people-profile-representation"><input type="checkbox" checked={fields.representation === "human-and-ship"} disabled={!editable} onChange={(event) => edit({ representation: event.currentTarget.checked ? "human-and-ship" : "human" })} />Let visitors know my Ship may reply</label>
-        <p class="people-note">This describes your profile. Allowing your Ship to help is a separate choice.</p>
+        <label class="people-profile-representation"><input type="checkbox" checked={fields.representation === "human-and-ship"} disabled={!editable} onChange={(event) => edit({ representation: event.currentTarget.checked ? "human-and-ship" : "human" })} />Let visitors know my ship may reply</label>
+        <p class="people-note">This describes your profile. Allowing your ship to help is a separate choice.</p>
         {stale && <p class="people-error">Your saved profile changed in another session. Reload the draft before saving.</p>}
         <div class="people-actions">
           <button class="ibtn" type="submit" disabled={!editable || !valid || !dirty || stale}>{save.isPending ? "saving…" : "save draft"}</button>
@@ -78,7 +78,7 @@ export function Profile({ account, active, onDirty, onBack }: { account: Console
         <span class="people-profile-address">{state.url}</span><h2>{fields.displayName}</h2>
         {fields.about && <p class="people-profile-about">{fields.about}</p>}
         <p>{fields.contactPolicy === "requests" ? "Open to message requests" : fields.contactPolicy === "invitation" ? "Connect by invitation" : "Not receiving new message requests"}</p>
-        {fields.representation === "human-and-ship" && <p class="people-note">You may hear from this person or their Ship. Each message shows who sent it.</p>}
+        {fields.representation === "human-and-ship" && <p class="people-note">You may hear from this person or their ship. Each message shows who sent it.</p>}
       </div>
       <p class="people-note">{dirty ? "Save your edits before publishing." : "Only the saved preview is published. Later draft edits stay private until you publish again."}</p>
       <div class="people-actions">

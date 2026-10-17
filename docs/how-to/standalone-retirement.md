@@ -1,8 +1,8 @@
 # Standalone retirement
 
 Ship now deploys one operator stack with public Accounts, Gateway and inference
-Workers. Each space has an immutable installation identity, trusted directory
-routing and scoped storage. An operator may run one space or many; there is no
+Workers. Each installation has an immutable identity, trusted directory
+routing and scoped storage. An operator may run one installation or many; there is no
 separate singleton runtime or per-person messenger application setup.
 
 ## Preserved baseline
@@ -30,9 +30,9 @@ Pin the preserved release or source and keep its original deployment state and
 resource configuration. Export the data you need and prepare a new environment
 using the [operator deployment guide](./deploy-with-alchemy.md). There is no
 automatic conversion of old credentials, process identities or unprefixed R2
-objects to a new space. The current runtime does not reassign or erase that data.
+objects to a new installation. The current runtime does not reassign or erase that data.
 
-## Existing operators with scoped spaces
+## Existing operators with scoped installations {#existing-operators-with-scoped-spaces}
 
 Keep the same resource names, Durable Object namespaces, storage prefixes and
 Alchemy state. The cutover preserves those physical identities. Complete any

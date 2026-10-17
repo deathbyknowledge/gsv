@@ -12,8 +12,8 @@ export function ContactHandlingChoice({ value, onChange, disabled }: {
       <span>I’ll handle them<small>Read and reply yourself. Ask Ship whenever you want help.</small></span>
     </label>
     <label><input type="radio" name={id} value="ship" checked={value === true} required onChange={() => onChange(true)} />
-      <span>Let Ship handle them<small>Your Ship can read and respond to new messages for you.</small></span>
+      <span>Let Ship handle them<small>Your ship can read and respond to new messages for you.</small></span>
     </label>
-    <p class="people-note" id={`${id}-help`}>This only controls your Ship, and you can change it later. With either choice, replies to tasks you give Ship can reach it until the task is finished.</p>
+    <p class="people-note" id={`${id}-help`}>This only controls your ship, and you can change it later. With either choice, replies to tasks you give Ship can reach it until the task is finished.</p>
   </fieldset>;
 }

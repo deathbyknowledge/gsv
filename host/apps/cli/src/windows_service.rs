@@ -437,9 +437,7 @@ pub fn install_elevated(
                 return Err(std::io::Error::last_os_error().into());
             }
 
-            svc.set_description(
-                "Connects this machine to its owner's Ship space before Windows login.",
-            )?;
+            svc.set_description("Connects this machine to its owner's ship before Windows login.")?;
             svc.update_failure_actions(ServiceFailureActions {
                 reset_period: ServiceFailureResetPeriod::After(Duration::from_secs(86400)),
                 reboot_msg: None,

@@ -14,7 +14,7 @@ export function DesktopSpaceMenu({ origin, locked, onRecover, onDisconnect, onQu
   const panel = useRef<HTMLDivElement>(null);
   const address = origin ? new URL(origin) : null;
   const name = address ? address.hostname === "localhost" || address.hostname.includes(":")
-    ? address.host : address.hostname.split(".")[0] : "mock space";
+    ? address.host : address.hostname.split(".")[0] : "demo ship";
   const close = () => { setOpen(false); button.current?.focus({ preventScroll: true }); };
   useDismissOnOutsideClick(open, () => [button.current, panel.current], () => setOpen(false));
   useLayoutEffect(() => { if (open) panel.current?.querySelector<HTMLButtonElement>("button")?.focus(); }, [open]);
@@ -23,9 +23,9 @@ export function DesktopSpaceMenu({ origin, locked, onRecover, onDisconnect, onQu
     if (event.key === "Escape" && open) { event.preventDefault(); close(); }
   }}>
     <button ref={button} type="button" class="desktop-space-name" aria-expanded={open}
-      aria-controls="desktop-space-menu" title={address?.host ?? "Development space"}
+      aria-controls="desktop-space-menu" title={address?.host ?? "Development ship"}
       onClick={() => setOpen((current) => !current)}>{name}</button>
-    {open && <div ref={panel} id="desktop-space-menu" class="desktop-space-menu" role="group" aria-label="Space">
+    {open && <div ref={panel} id="desktop-space-menu" class="desktop-space-menu" role="group" aria-label="Ship">
       {address && <span class="desktop-space-address">{address.host}</span>}
       {locked && address && <button type="button" onClick={() => { setOpen(false); onRecover(); }}>recover account</button>}
       {onMachine && <button type="button" onClick={() => { setOpen(false); onMachine(); }}>this computer</button>}

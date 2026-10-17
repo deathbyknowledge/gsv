@@ -10,11 +10,11 @@ export function ContactInvitationScreen() {
   const [code] = useState(pendingContactInvitation);
   const preview = code ? contactInvitationPreview(code) : { error: "This link is missing its invitation." };
   return <AuthLayout visible surfaceClass="gsv-auth-surface-login"><section class="desktop-welcome">
-    <h1>{"name" in preview ? `${preview.name} invited you` : "Connect on Ship"}</h1>
+    <h1>{"name" in preview ? <><strong class="desktop-welcome-inviter">{preview.name}</strong> invited you</> : "Connect on Ship"}</h1>
     {"error" in preview ? <p role="alert">{preview.error}</p> : preview.expired ? <p>This invitation has expired. Ask {preview.name} for a new link.</p> : <>
-      <p class="desktop-welcome-detail">Talk directly, share things, and let your Ships help you make plans.</p>
+      <p class="desktop-welcome-detail">Talk directly, share things, and let your ships help you make plans.</p>
       <SpaceAddressForm onConnect={async (origin) => { window.location.assign(contactInvitationDestination(origin, code!)); }} />
-      <p class="desktop-welcome-detail">You’ll review the invitation in your own space before connecting.</p>
+      <p class="desktop-welcome-detail">Review the invitation in Ship before connecting.</p>
     </>}
   </section></AuthLayout>;
 }

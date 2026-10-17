@@ -7,7 +7,7 @@ export function TermsOfServiceLink() {
   return <PolicySummaryLink title="Terms of Service" href={deployment.termsUrl}
     introduction={`Your agreement with ${deployment.operatorName ?? "your operator"}.`}
     points={[
-      "Read your operator's terms before creating an account or space.",
+      "Read your operator's terms before signing up.",
       "Check the conditions that apply to your use of the service.",
     ]} />;
 }

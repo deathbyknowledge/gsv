@@ -57,7 +57,7 @@ export class InstallationOwnerEmailHttp {
       } else if (url.pathname !== "/owner/resend") return page("Not found", 404);
       return await this.sendCode(challenge, browserSecret, request.headers.get("cf-connecting-ip") ?? "local", url.pathname === "/owner/resend");
     } catch {
-      return page(`<h1>Verification unavailable</h1><p>This attempt may have expired or may not belong to this browser or owner. Start again from your space settings or <a href="/owner/login">sign in</a>.</p>`, 400);
+      return page(`<h1>Verification unavailable</h1><p>This attempt may have expired or may not belong to this browser or owner. Start again from your ship settings or <a href="/owner/login">sign in</a>.</p>`, 400);
     }
   }
 
@@ -65,18 +65,18 @@ export class InstallationOwnerEmailHttp {
     const purpose: Purpose = url.pathname === "/owner/link" ? "link" : url.pathname === "/owner/recover" ? "recover" : "login";
     const challengeId = crypto.randomUUID();
     const browserSecret = randomSecret();
-    const title = purpose === "link" ? "Link your space" : purpose === "recover" ? "Recover your space" : "Sign in";
-    const explanation = purpose === "link" ? "Verify the email address you will use to recover this space."
-      : purpose === "recover" ? "A new code sent to the verified owner is required to reset root."
-      : "Enter your email to receive a sign-in code and see your spaces.";
+    const title = purpose === "link" ? "Recovery email" : purpose === "recover" ? "Recover your ship" : "Sign in";
+    const explanation = purpose === "link" ? "Verify an email address to recover administrator access if you lose it."
+      : purpose === "recover" ? "Verify your email to reset the administrator password."
+      : "Enter your email to receive a sign-in code and see your ships.";
     const nonce = randomSecret();
     return page(`<h1>${title}</h1><p>${explanation}</p><form method="post" action="/owner/${purpose}">
       ${hidden("challengeId", challengeId)}${hidden("purpose", purpose)}
-      ${purpose === "recover" ? `${hidden("ownerAttemptId", challengeId)}<label>Space handle<input name="handle" value="${html(url.searchParams.get("handle") ?? "")}" required maxlength="63" autocomplete="off"></label>` : ""}
+      ${purpose === "recover" ? `${hidden("ownerAttemptId", challengeId)}<label>Handle<input name="handle" value="${html(url.searchParams.get("handle") ?? "")}" required maxlength="63" autocomplete="off"></label>` : ""}
       ${purpose === "link" ? `${hidden("ownerAttemptId", "")}${hidden("secret", "")}` : ""}
       <label>Email<input name="email" type="email" required maxlength="254" autocomplete="email" autofocus></label>
       <button>Send code</button></form>
-      <nav><a href="/owner/spaces">My spaces</a>${purpose !== "recover" ? '<a href="/owner/recover">Recover a space</a>' : ""}
+      <nav><a href="/owner/spaces">My ships</a>${purpose !== "recover" ? '<a href="/owner/recover">Recover a ship</a>' : ""}
       ${this.existingIdentityProvider && purpose !== "login" ? `<a id="existing-identity" href="/owner/identity/${purpose}">Use existing identity provider</a>` : ""}</nav>
       ${purpose === "link" ? `<script nonce="${nonce}">const p=new URLSearchParams(location.hash.slice(1));history.replaceState(null,"",location.pathname);document.querySelector('[name="ownerAttemptId"]').value=p.get("id")||"";document.querySelector('[name="secret"]').value=p.get("secret")||"";const identity=document.getElementById("existing-identity");if(identity)identity.hash=p.toString();</script>` : ""}`,
     200, [setCookie(browserCookie(challengeId), browserSecret, 600), setCookie(pendingCookie(challengeId), randomSecret(), 600)], nonce);
@@ -125,12 +125,12 @@ export class InstallationOwnerEmailHttp {
     const session = token ? await this.auth.session(token) : null;
     if (!session) return redirect("/owner/login");
     const spaces = await this.owners.spaces(session.principalId);
-    return page(`<h1>My spaces</h1><p>${html(session.email)}</p>
+    return page(`<h1>My ships</h1><p>${html(session.email)}</p>
       ${spaces.length ? `<ul class="spaces">${spaces.map(space => `<li><div>${space.state === "active"
         ? `<a href="${html(space.canonicalOrigin)}">${html(space.handle)}</a>` : html(space.handle)}<small>${html(space.state)}</small></div>
-        ${space.state === "active" ? `<a class="secondary" href="/owner/recover?handle=${encodeURIComponent(space.handle)}">Recover root</a>` : ""}</li>`).join("")}</ul>`
-        : "<p>No spaces linked yet. Open a space you own and link your email in Settings. Your operator can provide a setup invitation for a new space.</p>"}
-      <nav><a href="/owner/recover">Recover a space</a><form method="post" action="/owner/logout"><button class="text">Sign out</button></form></nav>`);
+        ${space.state === "active" ? `<a class="secondary" href="/owner/recover?handle=${encodeURIComponent(space.handle)}">Recover access</a>` : ""}</li>`).join("")}</ul>`
+        : "<p>No ships linked yet. Open your ship and verify your email in Settings → sign-in → Account recovery.</p>"}
+      <nav><a href="/owner/recover">Recover a ship</a><form method="post" action="/owner/logout"><button class="text">Sign out</button></form></nav>`);
   }
 }
 
@@ -160,7 +160,7 @@ function codePage(challenge: ChallengeForm, message: string, status = 200): Resp
     <form method="post" action="/owner/verify">${fields}<label>Code<input name="code" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" minlength="6" maxlength="6" required autofocus></label><button>Verify code</button></form>
     <nav><form method="post" action="/owner/resend">${fields}<button class="text">Send again</button></form><a href="/owner/login">Start again</a></nav>`, status);
 }
-function expired(): Response { return page('<h1>Verification expired</h1><p>Start again in this browser from <a href="/owner/login">sign-in</a> or your space settings.</p>', 400); }
+function expired(): Response { return page('<h1>Verification expired</h1><p>Start again in this browser from <a href="/owner/login">sign-in</a> or your ship settings.</p>', 400); }
 function hidden(name: string, value: string): string { return `<input type="hidden" name="${name}" value="${html(value)}">`; }
 function randomSecret(): string { return Array.from(crypto.getRandomValues(new Uint8Array(32)), b => b.toString(16).padStart(2, "0")).join(""); }
 function pendingCookie(id: string): string { return `__Host-gsv-owner-pending-${id}`; }
@@ -179,7 +179,7 @@ function page(content: string, status = 200, cookies: string[] = [], nonce = ran
   const headers = noStoreFormHeaders({ "content-type": "text/html; charset=utf-8", "content-security-policy":
     `default-src 'none'; script-src 'nonce-${nonce}'; style-src 'nonce-${nonce}'; base-uri 'none'; frame-ancestors 'none'` });
   for (const value of cookies) headers.append("set-cookie", value);
-  return new Response(`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="color-scheme" content="dark light"><title>Ship · My spaces</title>
+  return new Response(`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="color-scheme" content="dark light"><title>Ship · My ships</title>
     <style nonce="${nonce}">:root{color-scheme:dark;--bg:#111210;--fg:#dedfd6;--muted:#999d90;--line:#36382f;--accent:#d2e89b}@media(prefers-color-scheme:light){:root{color-scheme:light;--bg:#f4f2eb;--fg:#25271f;--muted:#696d5d;--line:#d6d5c9;--accent:#536d28}}*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.6 ui-monospace,SFMono-Regular,Consolas,monospace}header{padding:24px 32px;border-bottom:1px solid var(--line)}header a{font-weight:600;letter-spacing:.16em;text-decoration:none}main{max-width:580px;margin:12vh auto;padding:0 24px 48px}h1{font-size:26px;font-weight:600;letter-spacing:-.04em}p{color:var(--muted);overflow-wrap:anywhere}a{color:var(--accent);text-underline-offset:4px}label{display:block;margin:20px 0}input{display:block;width:100%;margin-top:8px;border:1px solid var(--line);background:transparent;color:inherit;font:inherit;padding:12px}input:focus-visible,button:focus-visible,a:focus-visible{outline:1px solid var(--accent);outline-offset:3px}button{border:1px solid var(--line);background:transparent;color:var(--accent);font:inherit;padding:10px 18px;cursor:pointer}.text{padding:0;border:0;text-decoration:underline;text-underline-offset:4px}nav{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:20px;margin-top:32px}.spaces{list-style:none;padding:0}.spaces li{display:flex;align-items:center;justify-content:space-between;gap:20px;padding:20px 0;border-bottom:1px solid var(--line)}small{display:block;color:var(--muted)}.spaces li>div{min-width:0;overflow-wrap:anywhere}.secondary{font-size:12px;flex-shrink:0}::selection{background:var(--accent);color:var(--bg)}</style></head>
     <body><header><a href="/owner/spaces">Ship</a></header><main>${content}</main></body></html>`, { status, headers });
 }

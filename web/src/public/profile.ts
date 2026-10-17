@@ -13,11 +13,11 @@ ${profile.contactPolicy === "requests" ? '<script type="module" src="/social/con
 <body><main class="public-profile"><header><span class="brand">Ship</span><span class="status">${policy}</span></header>
 <p class="alias">${escapeHtml(new URL(profile.origin).host)}</p><h1>${escapeHtml(profile.displayName)}</h1>
 ${profile.about ? `<p class="about">${escapeHtml(profile.about)}</p>` : ""}
-<p class="representation">${profile.representation === "human-and-ship" ? "You may hear from this person or their Ship. Each message shows who sent it." : "A personal profile."}</p>
-${profile.contactPolicy === "requests" ? `<details class="connect"><summary>Message from your Ship <span aria-hidden="true">↗</span></summary>
-<form data-profile="${escapeHtml(profile.url)}"><label for="your-space">Your Ship address</label><div class="connect-input"><input id="your-space" name="space" placeholder="Your Ship’s address" autocomplete="url" inputmode="url" required maxlength="2048"><button type="submit">open my Ship</button></div>
-<p>You’ll review this profile and write your message in your own space.</p><p class="connect-error" role="alert" hidden></p></form>
-<noscript>Copy this profile address and open People in your Ship to start a conversation.</noscript></details>` : ""}
+<p class="representation">${profile.representation === "human-and-ship" ? "You may hear from this person or their ship. Each message shows who sent it." : "A personal profile."}</p>
+${profile.contactPolicy === "requests" ? `<details class="connect"><summary>Message from your ship <span aria-hidden="true">↗</span></summary>
+<form data-profile="${escapeHtml(profile.url)}"><label for="your-space">Your ship address</label><div class="connect-input"><input id="your-space" name="space" placeholder="Your ship’s address" autocomplete="url" inputmode="url" required maxlength="2048"><button type="submit">open my ship</button></div>
+<p>You’ll write your message in your ship.</p><p class="connect-error" role="alert" hidden></p></form>
+<noscript>Copy this profile address and open People in your ship to start a conversation.</noscript></details>` : ""}
 <footer><a href="${escapeHtml(documentUrl)}">Profile identity</a><span>${escapeHtml(new URL(profile.origin).host)}</span></footer>
 </main></body></html>`;
 }

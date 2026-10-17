@@ -37,14 +37,14 @@ export class InstallationSignup {
     const principal = await this.accounts.getPrincipal(principalId);
     if (!principal || principal.state !== "active" || principal.emailVerifiedAt === null) throw new Error("Verified owner is required");
     const existing = await this.accounts.getReservationByOperation(operationId);
-    if (!existing && !this.enabled) throw new Error("Space registration is currently closed.");
+    if (!existing && !this.enabled) throw new Error("Registration is currently closed.");
     if (!existing && !this.allowsEmail(principal.email)) throw new OwnerAuthError("email_restricted");
     const space = await this.accounts.reserveInstallation({ principalId, operationId, handle, ownerSetup: true });
     const owned = await this.db.prepare("SELECT 1 FROM installations WHERE id = ? AND owner_setup = 1 AND owner_principal_id = ?")
       .bind(space.installationId, principalId).first();
-    if (!owned) throw new Error("Space setup is unavailable.");
+    if (!owned) throw new Error("Ship setup is unavailable.");
     if (space.state === "active") return { origin: space.canonicalOrigin, handle: space.handle, onboardingToken: null, expiresAt: null };
-    if (!["reserved", "provisioning"].includes(space.state)) throw new Error("Space setup is unavailable.");
+    if (!["reserved", "provisioning"].includes(space.state)) throw new Error("Ship setup is unavailable.");
     const startedAt = Date.now();
     try {
       await this.policy?.prepare({ operationId, installationId: space.installationId });
@@ -60,7 +60,7 @@ export class InstallationSignup {
         event: { stream: "operational", name: "installation.setup.failed", properties: {
           diagnosticId, outcome: "failed", stage: "activation", errorType: "unknown", durationMs: Date.now() - startedAt,
         } } });
-      throw new Error(`Space setup failed. Try again. Reference: ${diagnosticId}`, { cause });
+      throw new Error(`Ship setup failed. Try again. Reference: ${diagnosticId}`, { cause });
     }
   }
 }

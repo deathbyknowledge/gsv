@@ -92,7 +92,7 @@ export function ChatPerson({ account, request, onAsk, onPeople, onDirty }: {
           onClick={() => { if (!mayReplace()) return; revision.current++; resolve.reset(); setDraft(emptyApproachDraft()); setAddress(`${contact.remoteOrigin}/profile`); setSelectedContactId(contact.id); }}>
           <span>{contactDisplayName(contact)}</span><small>{profileAddressLabel(contact.remoteOrigin)}</small>
         </button></li>)}
-        {!found.length && <li class="people-note">Enter a handle or another Ship's full address.</li>}
+        {!found.length && <li class="people-note">Enter a handle or another ship's full address.</li>}
       </ul>}
       {!connected && <p class="people-note" role="status">Reconnecting…</p>}
     </>}

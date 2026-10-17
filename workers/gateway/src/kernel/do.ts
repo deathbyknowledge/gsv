@@ -752,14 +752,14 @@ export class Kernel extends DurableObject<GatewayEnv> {
 
   async authorizeRootRecovery(input: AuthorizeRootRecoveryInput): Promise<{ authorized: true }> {
     const gate = await this.onboarding.managedWorkGate();
-    if (!gate.allowed) throw new Error("The space is unavailable");
+    if (!gate.allowed) throw new Error("This ship is unavailable");
     this.accountRecovery.authorize(input);
     return { authorized: true };
   }
 
   async confirmOwnerLinkAuthorization(attemptId: string): Promise<{ authorized: true }> {
     const gate = await this.onboarding.managedWorkGate();
-    if (!gate.allowed) throw new Error("The space is unavailable");
+    if (!gate.allowed) throw new Error("This ship is unavailable");
     this.accountRecovery.confirmOwnerLink(attemptId);
     return { authorized: true };
   }
