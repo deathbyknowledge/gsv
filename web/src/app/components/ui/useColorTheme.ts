@@ -5,7 +5,7 @@ export type ColorTheme = "light" | "dark";
 export type ColorThemePreference = ColorTheme | "system";
 export type ColorThemeState = {
   theme: ColorTheme;
-  preference: ColorThemePreference;
+  preference: ColorThemePreference | null;
   setPreference: (next: ColorThemePreference) => void;
   toggleTheme: () => void;
 };
@@ -78,5 +78,5 @@ export function useColorTheme(fallback?: ColorTheme): ColorThemeState {
   const toggleTheme = useCallback(() => {
     writePreference(effectiveTheme(storedPreference(), fallback) === "light" ? "dark" : "light");
   }, [fallback]);
-  return { theme, preference: preference ?? fallback ?? "system", setPreference, toggleTheme };
+  return { theme, preference, setPreference, toggleTheme };
 }

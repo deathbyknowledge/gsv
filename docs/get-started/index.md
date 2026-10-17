@@ -114,8 +114,8 @@ side by side.
 
 The Settings sidebar highlights the section you're viewing.
 Under **Appearance**, choose **Match system** to follow this device's light or
-dark appearance. An explicit theme choice applies to both sign-in and the app;
-without a choice, sign-in starts dark and the app starts light.
+dark appearance. An explicit theme choice applies to both sign-in and the app.
+Before you choose, **Default** keeps sign-in dark and the app light.
 
 Open **People** to try making plans or working together with someone on Ship.
 **connect** creates a shareable invitation; accepting it opens your conversation.

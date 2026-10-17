@@ -66,7 +66,7 @@ describe("color theme preference", () => {
   it("follows the system when nothing is stored", async () => {
     const page = fakeWindow({ systemLight: true });
     await mount();
-    expect(state.preference).toBe("system");
+    expect(state.preference).toBeNull();
     expect(state.theme).toBe("light");
     expect(auth.theme).toBe("dark");
     expect(instrument.theme).toBe("light");
@@ -90,7 +90,7 @@ describe("color theme preference", () => {
   it("treats an unrecognised stored value as following the system", async () => {
     fakeWindow({ systemLight: false, stored: "purple" });
     await mount();
-    expect(state.preference).toBe("system");
+    expect(state.preference).toBeNull();
     expect(state.theme).toBe("dark");
     expect(auth.theme).toBe("dark");
     expect(instrument.theme).toBe("light");
@@ -99,7 +99,7 @@ describe("color theme preference", () => {
   it("persists Match system separately from surface defaults and restores it on reload", async () => {
     const page = fakeWindow({ systemLight: false });
     await mount("light");
-    expect(state.preference).toBe("light");
+    expect(state.preference).toBeNull();
     expect(state.theme).toBe("light");
     await act(() => state.setPreference("light"));
     expect(page.stored.get(THEME_KEY)).toBe("light");
@@ -164,7 +164,7 @@ describe("color theme preference", () => {
     expect(auth.theme).toBe("light");
     expect(instrument.theme).toBe("light");
     await act(() => page.storageEvent(null));
-    expect(state.preference).toBe("system");
+    expect(state.preference).toBeNull();
     expect(state.theme).toBe("light");
     expect(auth.theme).toBe("dark");
     expect(instrument.theme).toBe("light");
@@ -177,7 +177,7 @@ describe("color theme preference", () => {
   it("keeps the choice for this page when storage is blocked", async () => {
     const page = fakeWindow({ systemLight: true, blocked: true });
     await mount();
-    expect(state.preference).toBe("system");
+    expect(state.preference).toBeNull();
     expect(auth.theme).toBe("dark");
     expect(instrument.theme).toBe("light");
     await act(() => state.setPreference("dark"));
