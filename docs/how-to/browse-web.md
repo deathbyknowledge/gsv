@@ -22,7 +22,7 @@ available only on your device.
 
 1. In Ship, open **Fleet**, click **connect** beside Places, and choose **Browser.** Give it a name or leave the default.
 2. Download the extension, **Your Ship**, and load it at `chrome://extensions` with developer mode on.
-3. Click its ASCII ship toolbar icon, paste the invitation from Ship, and choose **Pair this browser**.
+3. Click its toolbar icon, a pale block on a dark square, paste the invitation from Ship, and choose **Pair this browser**.
 4. The panel says **Ready** once it's connected. Chrome shows a banner in a tab while your Ship works there; that's normal.
 
 You can close the sidebar after pairing. The extension keeps working while Chrome is open. The browser control stays near the bottom of the sidebar: **Pause** disconnects this browser from Ship until you choose **Resume**. When the panel shows active browser work, **Stop** ends network captures, tab recordings, and debugger sessions, then disconnects. Your pairing is saved, so you do not need a new invitation.

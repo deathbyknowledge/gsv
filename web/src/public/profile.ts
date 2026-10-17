@@ -7,7 +7,7 @@ export function renderPublicProfile(profile: PublicProfile): string {
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="color-scheme" content="dark light"><meta name="referrer" content="no-referrer">
 <title>${escapeHtml(profile.displayName)} · Ship</title>
-<link rel="icon" type="image/x-icon" href="/favicon.ico?v=ship"><link rel="icon" type="image/svg+xml" sizes="any" href="/favicon.svg?v=ship">
+<link rel="icon" type="image/x-icon" href="/favicon.ico?v=cursor"><link rel="icon" type="image/svg+xml" sizes="any" href="/favicon.svg?v=cursor">
 <link rel="stylesheet" href="/social/profile.css"><link rel="alternate" type="application/json" href="${escapeHtml(documentUrl)}">
 ${profile.contactPolicy === "requests" ? '<script type="module" src="/social/connect.js"></script>' : ""}</head>
 <body><main class="public-profile"><header><span class="brand">Ship</span><span class="status">${policy}</span></header>

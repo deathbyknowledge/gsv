@@ -6,31 +6,31 @@
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
-  "background_color": "#091322",
-  "theme_color": "#091322",
+  "background_color": "#07061a",
+  "theme_color": "#07061a",
   "orientation": "any",
   "categories": ["productivity", "utilities"],
   "icons": [
     {
-      "src": "/icons/gsv-192.png?v=ship",
+      "src": "/icons/gsv-192.png?v=cursor",
       "sizes": "192x192",
       "type": "image/png",
       "purpose": "any"
     },
     {
-      "src": "/icons/gsv-512.png?v=ship",
+      "src": "/icons/gsv-512.png?v=cursor",
       "sizes": "512x512",
       "type": "image/png",
       "purpose": "any"
     },
     {
-      "src": "/icons/gsv-maskable-192.png?v=ship",
+      "src": "/icons/gsv-maskable-192.png?v=cursor",
       "sizes": "192x192",
       "type": "image/png",
       "purpose": "maskable"
     },
     {
-      "src": "/icons/gsv-maskable-512.png?v=ship",
+      "src": "/icons/gsv-maskable-512.png?v=cursor",
       "sizes": "512x512",
       "type": "image/png",
       "purpose": "maskable"

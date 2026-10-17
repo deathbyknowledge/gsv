@@ -95,8 +95,9 @@ top of a place’s file list to move toward its filesystem root.
 In the browser and when added to your Home Screen, the header and bottom controls
 leave room for your phone's notch and home indicator. The star field still fills
 the screen, continuing behind the home indicator in the Home Screen app.
-Browser tabs, Home Screen shortcuts, the desktop app and browser extension use
-the same ASCII ship you see at sign-in.
+Browser tabs and the extension's toolbar show Ship's cursor, a pale block on a
+dark square. Home Screen shortcuts, the desktop app and the browser extension's
+own icon use the same ASCII ship you see at sign-in.
 Fleet, Memory and Settings scroll to the bottom edge, with extra space after the
 last item so it can rest above the home indicator.
 Opening the keyboard reduces the content area between the header and composer;
