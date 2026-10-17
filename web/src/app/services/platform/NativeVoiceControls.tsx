@@ -6,6 +6,7 @@ import { InputSoundSettings } from "./InputSoundSettings";
 import { installInputSounds } from "./inputSounds";
 import { voicePreparation } from "./nativePresentation";
 import { useNativeVoice } from "./useNativeVoice";
+import { NativeSpeechSettings, useNativeSpeech } from "./NativeSpeech";
 import "./native-input.css";
 
 export type NativeVoiceHandle = Pick<ReturnType<typeof useNativeVoice>, "onInput" | "interceptSubmit">;
@@ -16,6 +17,7 @@ type NativeVoiceControlsProps = Parameters<typeof useNativeVoice>[0] & {
 
 export const NativeVoiceControls = forwardRef<NativeVoiceHandle, NativeVoiceControlsProps>(function NativeVoiceControls({ panelHost, ...options }, ref) {
   const control = useNativeVoice(options);
+  const speech = useNativeSpeech();
   useImperativeHandle(ref, () => ({ onInput: control.onInput, interceptSubmit: control.interceptSubmit }));
   const [panel, setPanel] = useState(false);
   const panelRef = useRef<HTMLElement>(null);
@@ -56,6 +58,7 @@ export const NativeVoiceControls = forwardRef<NativeVoiceHandle, NativeVoiceCont
       onClick={voice.phase === "listening" ? control.stop : control.cancel}>
       {voice.phase === "listening" || voice.phase === "finishing" ? "pause" : "cancel"}
     </button>}
+    {speech?.preferences.enabled && speech.status.phase === "speaking" && <button type="button" onClick={() => void speech.command({ kind: "cancel" })}>stop speaking</button>}
     {notice && !panel && <>
       <button type="button" class="native-input-notice" onClick={() => setPanel(true)}>input needs attention</button>
       <span class="native-input-announcement" role="alert">{notice}</span>
@@ -88,6 +91,7 @@ export const NativeVoiceControls = forwardRef<NativeVoiceHandle, NativeVoiceCont
         {snapshot?.devices_loading && <small role="status">Finding microphones…</small>}
       </label>
       <p class="native-panel-footnote">Local transcription. Enter sends and keeps listening.</p>
+      {options.global && <NativeSpeechSettings />}
       <InputSoundSettings />
     </section>, panelHost.current)}
   </div>;

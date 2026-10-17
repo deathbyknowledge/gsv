@@ -1,0 +1,60 @@
+import threading
+import time
+import unittest
+from unittest.mock import Mock
+
+import numpy as np
+from speaker import RATE, Speaker
+
+
+class SpeakerCancellation(unittest.TestCase):
+    def test_cancel_drops_buffered_audio_at_the_next_callback(self):
+        speaker = Speaker(None)
+        speaker.stream = Mock()
+        try:
+            speaker.append(0, "old", np.ones(2000, dtype=np.float32))
+            output = np.empty((480, 1), dtype=np.float32)
+            speaker.output(output, 480, None, None)
+            self.assertTrue(np.all(output == 1))
+            speaker.cancel()
+            speaker.output(output, 480, None, None)
+            self.assertTrue(np.all(output == 0))
+            self.assertFalse(speaker.append(0, "old", np.ones(2000, dtype=np.float32)))
+        finally:
+            speaker.close()
+
+    def test_inference_finishing_after_cancel_cannot_play_into_a_new_request(self):
+        started = threading.Event()
+        release = threading.Event()
+        class Model:
+            def create(self, text, **_options):
+                if text == "old":
+                    started.set()
+                    release.wait(2)
+                return np.full(100, 1 if text == "old" else 2, dtype=np.float32), RATE
+        speaker = Speaker(None)
+        speaker.model = Model()
+        speaker.stream = Mock()
+        try:
+            speaker.command({"kind": "speak", "id": "old", "language": "en", "chunks": ["old"]})
+            self.assertTrue(started.wait(2))
+            speaker.cancel()
+            speaker.command({"kind": "speak", "id": "new", "language": "en", "chunks": ["new"]})
+            release.set()
+            deadline = time.monotonic() + 2
+            while time.monotonic() < deadline:
+                with speaker.condition:
+                    if len(speaker.audio) == 2:
+                        break
+                time.sleep(.005)
+            output = np.empty((480, 1), dtype=np.float32)
+            speaker.output(output, 480, None, None)
+            self.assertTrue(np.all(output[:100] == 2))
+            self.assertTrue(np.all(output[100:] == 0))
+        finally:
+            release.set()
+            speaker.close()
+
+
+if __name__ == "__main__":
+    unittest.main()

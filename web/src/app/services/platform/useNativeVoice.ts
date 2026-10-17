@@ -6,16 +6,25 @@ import { VoiceDraft } from "./voiceDraft";
 import { sameNativePresentation } from "./nativePresentation";
 import { useNativeSoundFeedback } from "./useInputSounds";
 import { ClientControlError, useClientControl, type MicrophoneStatus } from "./ClientControl";
+import { useNativeSpeech } from "./NativeSpeech";
 
 export type VoiceComposer = Pick<PromptLineHandle, "selection" | "setValue" | "commands">;
 
-export function useNativeVoice({ prompt, scope, enabled, send }: {
+export function useNativeVoice({ prompt, scope, enabled, send, global = false, sendGlobal }: {
   prompt: RefObject<VoiceComposer>;
   scope: string;
   enabled: boolean;
   send(text: string): boolean;
+  global?: boolean;
+  sendGlobal?(text: string): boolean;
 }) {
   const input = useNativeInput();
+  const speech = useNativeSpeech();
+  const speaking = useRef(speech);
+  speaking.current = speech;
+  const globalCapture = useRef(false);
+  const finishRequested = useRef(false);
+  const requestAck = useRef(() => {});
   const [snapshot, setSnapshot] = useState<NativeSnapshot | null>(null);
   useNativeSoundFeedback(snapshot);
   const [error, setError] = useState<string | null>(null);
@@ -24,8 +33,8 @@ export function useNativeVoice({ prompt, scope, enabled, send }: {
   const lease = useRef<string | null>(null);
   const draft = useRef<VoiceDraft | null>(null);
   const writing = useRef(false);
-  const latest = useRef({ send, enabled });
-  latest.current = { send, enabled };
+  const latest = useRef({ send, sendGlobal, enabled });
+  latest.current = { send, sendGlobal, enabled };
   const state = useRef<NativeSnapshot | null>(null);
   const deviceWaiters = useRef(new Set<(snapshot: NativeSnapshot) => void>());
   const command = async (value: NativeCommand): Promise<boolean> => {
@@ -39,6 +48,58 @@ export function useNativeVoice({ prompt, scope, enabled, send }: {
     writing.current = true;
     try { prompt.current?.setValue(value, caret); } finally { writing.current = false; }
   };
+
+  const finish = async () => {
+    const owned = lease.current;
+    const voice = state.current?.voice;
+    if (!finishRequested.current || !voice || voice.phase === "finishing") return;
+    finishRequested.current = false;
+    if (!await command({ kind: "finish", request_id: voice.request_id }) && lease.current === owned) globalCapture.current = false;
+  };
+  useLayoutEffect(() => {
+    if (!speech || !global || !enabled || !speech.preferences.enabled) return;
+    const unregister = speech.register((action) => {
+      if (action === "cancel") {
+        globalCapture.current = false;
+        finishRequested.current = false;
+        speaking.current?.recording(false);
+        draft.current = null;
+        void command({ kind: "cancel" });
+        speaking.current?.cue("cancelled");
+        return;
+      }
+      if (action === "release" && speaking.current?.preferences.mode !== "hold") return;
+      if (action === "press" && speaking.current?.preferences.mode === "hold" && globalCapture.current) return;
+      if (globalCapture.current || state.current?.voice) {
+        globalCapture.current = true;
+        finishRequested.current = true;
+        // The next acknowledged native frame finishes capture, after pending started/segment events.
+        requestAck.current();
+        return;
+      }
+      if (action === "release") return;
+      globalCapture.current = true;
+      speaking.current?.recording(true);
+      const owned = lease.current;
+      void (async () => {
+        await speaking.current?.command({ kind: "cancel" });
+        if (lease.current !== owned || !globalCapture.current || !latest.current.enabled) return;
+        if (!await command({ kind: "start", device_id: device || null }) && lease.current === owned) {
+          globalCapture.current = false;
+          speaking.current?.recording(false);
+        }
+      })();
+    });
+    return () => {
+      unregister();
+      if (!globalCapture.current) return;
+      globalCapture.current = false;
+      finishRequested.current = false;
+      speaking.current?.recording(false);
+      draft.current = null;
+      void command({ kind: "cancel" });
+    };
+  }, [speech?.register, speech?.preferences.enabled, global, enabled, scope, device]);
 
   useClientControl(["microphoneList", "microphoneUse", "microphoneDefault"], async ({ command: request, checkpoint, signal }) => {
     if (!state.current || state.current.voice || state.current.devices_loading) throw new ClientControlError("busy");
@@ -95,8 +156,11 @@ export function useNativeVoice({ prompt, scope, enabled, send }: {
 
       subscription?.dispose();
       lease.current = null;
+      globalCapture.current = false;
+      finishRequested.current = false;
       draft.current = null;
       state.current = null;
+      speaking.current?.recording(false);
 
       setSnapshot(null);
       setError(message);
@@ -110,7 +174,9 @@ export function useNativeVoice({ prompt, scope, enabled, send }: {
       try {
         const requestedAt = Date.now();
         await input.acknowledge(ownedLease, revision, ack);
+        if (!active || lease.current !== ownedLease) return;
         if (Date.now() - requestedAt > 1000) throw new Error("Native input paused while the view was suspended. Reconnect input to continue.");
+        if (finishRequested.current && state.current?.voice) await finish();
       } catch (error) { fail(String(error)); }
       finally {
         acknowledging = false;
@@ -132,7 +198,12 @@ export function useNativeVoice({ prompt, scope, enabled, send }: {
           if (result) {
             write(result.value, result.caret);
             if (event.action === "send") {
-              if (latest.current.enabled && latest.current.send(result.value.trim())) {
+              const submit = globalCapture.current ? latest.current.sendGlobal ?? latest.current.send : latest.current.send;
+              if (!event.text.trim()) {
+                setError("No speech detected. Your draft is still here.");
+              } else if (latest.current.enabled && submit(result.value.trim())) {
+                speaking.current?.voiceSent();
+                speaking.current?.cue("sent");
                 write(promptAfterSubmit(result.value, prompt.current?.commands));
                 const selection = prompt.current?.selection();
                 if (selection) draft.current.sent(selection);
@@ -142,7 +213,7 @@ export function useNativeVoice({ prompt, scope, enabled, send }: {
                 setError("Dictation stopped. Your unsent text is still in the prompt.");
               }
             }
-            if (event.kind === "final") draft.current = null;
+            if (event.kind === "final") { draft.current = null; globalCapture.current = false; finishRequested.current = false; }
           }
         }
         ack = event.id;
@@ -151,10 +222,16 @@ export function useNativeVoice({ prompt, scope, enabled, send }: {
         const result = draft.current.partial(next.voice);
         if (result) write(result.value, result.caret);
       } else if (!next.voice) draft.current = null;
+      if (!next.voice && (state.current?.voice || next.notice)) {
+        globalCapture.current = false;
+        finishRequested.current = false;
+      }
       state.current = next;
+      speaking.current?.recording(globalCapture.current || !!next.voice);
       for (const receive of deviceWaiters.current) receive(next);
       setSnapshot((current) => sameNativePresentation(current, next) ? current : next);
     };
+    requestAck.current = () => void acknowledge();
     const receive = (update: NativeUpdate) => {
       if (!active) return;
       if (!ownedLease) { pending = update; return; }
@@ -184,6 +261,9 @@ export function useNativeVoice({ prompt, scope, enabled, send }: {
       window.clearTimeout(timer);
 
       draft.current = null;
+      globalCapture.current = false;
+      finishRequested.current = false;
+      speaking.current?.recording(false);
       if (lease.current === ownedLease) lease.current = null;
       subscription?.dispose();
     };
@@ -196,7 +276,14 @@ export function useNativeVoice({ prompt, scope, enabled, send }: {
   return {
     available: input !== null, snapshot, error, device, setDevice, command,
     reconnect: () => setAttachment((value) => value + 1),
-    start: () => { setError(null); void command({ kind: "start", device_id: device || null }); },
+    start: () => {
+      setError(null);
+      const owned = lease.current;
+      void (async () => {
+        await speaking.current?.command({ kind: "cancel" });
+        if (lease.current === owned && latest.current.enabled) await command({ kind: "start", device_id: device || null });
+      })();
+    },
     stop: () => { const voice = state.current?.voice; if (voice) void command({ kind: "stop", request_id: voice.request_id }); },
     cancel: () => { draft.current = null; void command({ kind: "cancel" }); },
     onInput: (value: string) => {

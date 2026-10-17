@@ -197,6 +197,19 @@ listening. Pausing, helper failures and connection interruptions retain the text
 already displayed in the prompt. Raw local audio is not retained for replay.
 The input lease expires on suspension and is released when leaving Chat.
 
+The Desktop voice preview adds native global shortcuts and a supervised local
+Kokoro speaker helper. Rust registers shortcuts through the platform backend
+(the desktop portal on Wayland), while the current Chat input owner handles
+the correlated recording and send operation. Native heartbeat frames keep that
+lease acknowledged while the window is in the background; suspension still
+revokes it. The frontend retains the only authenticated Gateway connection.
+Published `message.committed` signals supply spoken replies, with duplicate
+suppression across reconnects and no history or Process-output replay. Markdown
+is rendered for speech in the client. The helper owns CPU inference and audio
+playback; cancellation invalidates queued synthesis and audio together. Starting
+capture interrupts playback, and incoming replies never play into an active
+microphone. Session changes and Quit stop both native owners.
+
 Local control supports activation, redacted status, new Process creation,
 selection of an accessible Process, and microphone discovery and selection.
 The IPC server verifies OS user identity. Credentials, conversation text, drafts

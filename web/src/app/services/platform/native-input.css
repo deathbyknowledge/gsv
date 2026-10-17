@@ -29,3 +29,10 @@
 .native-sound-settings legend { padding-right: 8px; color: var(--faint); }
 .native-sound-settings label { display: flex; align-items: center; gap: 7px; cursor: pointer; }
 .native-sound-settings input { accent-color: var(--accent); margin: 0; }
+.native-speech-settings { margin-top: 20px; padding-top: 18px; border-top: 1px solid var(--border); }
+.native-speech-enable { display: flex; gap: 8px; align-items: center; color: var(--text-hi); }
+.native-speech-enable input { accent-color: var(--accent); }
+.native-speech-settings .native-device { margin-top: 12px; }
+.native-shortcut-fields { display: grid; gap: 10px; }
+.native-shortcut-fields input { width: 100%; box-sizing: border-box; padding: 7px; border: 1px solid var(--border); background: var(--void); color: var(--text); font: inherit; }
+.native-shortcut-fields button { justify-self: start; text-decoration: underline; text-underline-offset: 3px; }

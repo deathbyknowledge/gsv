@@ -56,3 +56,40 @@ connection drops, text already displayed in the prompt remains available for
 editing. Desktop does not save the raw audio for retry, so speech not yet
 transcribed may need repeating. See
 [Install Host Applications](/how-to/install-host-apps) for setup.
+
+## Talk from another app (Desktop preview)
+
+In Chat, open **voice** and enable **Talk to Ship from other apps**. Leave Chat
+selected; the Ship window may stay behind your game or another application.
+The default shortcut is **Ctrl+Alt+Space**: press once to start recording and
+again to finish and send. Wait for the listening sound before speaking.
+**Hold to talk** uses the same shortcut and sends when you release it.
+**Ctrl+Alt+Escape** stops speech and cancels recording, retaining displayed draft
+text. Starting a recording also stops the current spoken reply.
+
+The shortcut sends ordinary messages to Ship using the current Chat draft and
+place. It does not activate a different window. Navigation away from Chat,
+sign-out, connection loss, or changing the conversation cancels recording.
+Failed sends remain in the existing outbox for inspection and retry.
+
+**Read replies** can follow the voice conversation, read all new Ship replies,
+or stay off. Typing a new message ends the voice conversation. Only newly
+committed visible replies are read; opening history or reconnecting does not
+replay earlier messages. Replies arriving while the microphone is recording
+are left in Chat without being spoken. Code blocks and tables get a short cue
+to inspect Chat; links use their labels. The original message stays unchanged.
+Kokoro runs locally, with **Heart · English** and **Dora · Spanish** presets.
+
+The talk and stop shortcuts are configurable in the voice panel. On Wayland,
+the desktop portal owns shortcut assignment. Some compositors, including
+Hyprland, require binding the registered `talk` and `stop` actions in their
+keyboard configuration.
+
+This preview uses a separate Python speech helper. From a source checkout with
+JavaScript dependencies and the normal `gsv-transcribe` helper installed, run
+`bash scripts/build-desktop-voice.sh` (requires `uv`, Python 3.12, Rust, and
+PortAudio). The script verifies the pinned model and prints the
+`GSV_DESKTOP_PATH=… gsv desktop` command for this build. Existing Desktop sign-in
+is preserved; otherwise open your production space and sign in in Desktop.
+On Linux it also creates a hidden desktop entry if Ship does not have one, so
+the shortcut portal can identify the app when launched from a terminal.

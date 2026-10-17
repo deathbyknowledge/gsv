@@ -32,6 +32,7 @@ export type NativeSnapshot = {
 export type NativeCommand =
   | { kind: "start"; device_id: string | null }
   | { kind: "stop"; request_id: number }
+  | { kind: "finish"; request_id: number }
   | { kind: "cancel" | "devices" | "detach" }
   | { kind: "segment"; request_id: number; segment_id: number; action: SegmentAction };
 

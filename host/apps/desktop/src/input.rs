@@ -27,6 +27,9 @@ pub enum InputCommand {
     Stop {
         request_id: u64,
     },
+    Finish {
+        request_id: u64,
+    },
     Cancel,
     Segment {
         request_id: u64,
@@ -327,7 +330,7 @@ impl State {
             return;
         }
         let next = self.snapshot();
-        if next == delivery.sent {
+        if next == delivery.sent && delivery.sent_at.elapsed() < Duration::from_secs(1) {
             return;
         }
         let delivery = self.delivery.as_mut().unwrap();
@@ -438,6 +441,12 @@ impl State {
         match command {
             InputCommand::Start { device_id } => self.start_voice(device_id)?,
             InputCommand::Stop { request_id } => self.stop(request_id)?,
+            InputCommand::Finish { request_id } => {
+                self.stop(request_id)?;
+                if let Some(voice) = self.snapshot.voice.as_mut() {
+                    voice.pending = Some(SegmentAction::Send);
+                }
+            }
             InputCommand::Cancel => self.cancel_voice(),
             InputCommand::Segment {
                 request_id,
@@ -614,7 +623,7 @@ impl State {
                             request_id,
                             segment_id: v.segment_id,
                             kind: "final",
-                            action: None,
+                            action: v.pending,
                             text,
                         });
                     }
@@ -759,6 +768,50 @@ mod tests {
         let mut state = State::new(commands);
         state.snapshot.lease = "view-one".into();
         (state, receiver)
+    }
+
+    #[test]
+    fn shortcut_finish_releases_capture_and_sends_only_the_correlated_final() {
+        let (mut state, commands) = attached();
+        let (channel, _) = updates();
+        let initial = state.attach(channel);
+        state.start_voice(None).unwrap();
+        let started = state.events.front().unwrap().1.clone();
+        state.publish();
+        state.acknowledge(&initial.lease, 1, started.id).unwrap();
+        assert!(state
+            .command(InputCommand::Finish {
+                request_id: started.request_id + 1
+            })
+            .is_err());
+        state
+            .command(InputCommand::Finish {
+                request_id: started.request_id,
+            })
+            .unwrap();
+        assert!(commands.try_iter().any(|command| command
+            == VoiceCommand::Stop {
+                request_id: started.request_id
+            }));
+        state.voice_event(VoiceEvent::Final {
+            request_id: started.request_id + 1,
+            text: "stale".into(),
+        });
+        assert!(state.events.is_empty());
+        state.voice_event(VoiceEvent::Final {
+            request_id: started.request_id,
+            text: "Hello Ship".into(),
+        });
+        assert!(state.snapshot.voice.is_none());
+        let event = &state.events.front().unwrap().1;
+        assert_eq!(event.kind, "final");
+        assert!(event.action == Some(SegmentAction::Send));
+        assert_eq!(event.text, "Hello Ship");
+        state.voice_event(VoiceEvent::Final {
+            request_id: started.request_id,
+            text: "duplicate".into(),
+        });
+        assert_eq!(state.events.len(), 1);
     }
 
     #[test]

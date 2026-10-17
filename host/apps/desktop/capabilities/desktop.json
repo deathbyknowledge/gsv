@@ -21,6 +21,9 @@
     "allow-control-reply",
     "allow-input-attach",
     "allow-input-acknowledge",
-    "allow-input-command"
+    "allow-input-command",
+    "allow-speech-attach",
+    "allow-speech-command",
+    "allow-shortcuts-configure"
   ]
 }

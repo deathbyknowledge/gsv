@@ -4,6 +4,7 @@ import type { SessionService, SessionStorage } from "../app/services/session/ses
 import type { ControlEvent, ControlReply } from "./control";
 import type { MachineCommand, MachineSnapshot, NativeMachine } from "./machineSetup";
 import type { WelcomeSnapshot, WelcomeState } from "../app/services/session/ownerWelcome";
+import type { NativeSpeechDriver, SpeechCommand, SpeechEvent, SpeechStatus, ShortcutSettings } from "../app/services/platform/NativeSpeech";
 
 export type DesktopSession = { generation: string; origin: string | null; values: Record<string, string> };
 type NativeChannel<T> = { onmessage: (message: T) => void };
@@ -24,6 +25,9 @@ type DesktopCommands = {
   input_attach: { args: { generation: string; updates: NativeChannel<NativeUpdate> }; result: NativeSnapshot };
   input_acknowledge: { args: { lease: string; revision: number; ack: number }; result: void };
   input_command: { args: { lease: string; command: NativeCommand }; result: void };
+  speech_attach: { args: { generation: string; updates: NativeChannel<SpeechEvent> }; result: SpeechStatus };
+  speech_command: { args: { generation: string; command: SpeechCommand }; result: void };
+  shortcuts_configure: { args: { generation: string; settings: ShortcutSettings }; result: void };
 };
 type CommandArguments<C extends keyof DesktopCommands> = DesktopCommands[C]["args"] extends undefined
   ? [] : [args: DesktopCommands[C]["args"]];
@@ -124,6 +128,22 @@ export function nativeInput(generation: string): NativeInput {
     },
     acknowledge: (lease, revision, ack) => invoke("input_acknowledge", { lease, revision, ack }),
     command: (lease: string, command: NativeCommand) => invoke("input_command", { lease, command }),
+  };
+}
+
+export function nativeSpeech(generation: string): NativeSpeechDriver {
+  let configured = Promise.resolve();
+  return {
+    subscribe(receive) {
+      if (!window.__TAURI__) throw new Error("Open this frontend in Ship.");
+      const updates = new window.__TAURI__.core.Channel<SpeechEvent>(receive);
+      return { initial: invoke("speech_attach", { generation, updates }), dispose() { updates.onmessage = () => {}; } };
+    },
+    command: (command) => invoke("speech_command", { generation, command }),
+    configure(settings) {
+      configured = configured.catch(() => {}).then(() => invoke("shortcuts_configure", { generation, settings }));
+      return configured;
+    },
   };
 }
 
