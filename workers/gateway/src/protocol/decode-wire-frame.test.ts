@@ -6,6 +6,25 @@ import {
 } from "./decode-wire-frame";
 
 describe("decodeWireFrameJson", () => {
+  it.each([
+    ["fs.write", { path: "/notes.txt", content: "hello" }],
+    ["fs.edit", { path: "/notes.txt", oldString: "hello", newString: "hi" }],
+    ["fs.delete", { path: "/notes.txt" }],
+    ["fs.search", { query: "hello", path: "/" }],
+    ["fs.transfer.stat", { path: "/notes.txt" }],
+    ["fs.transfer.receive", { path: "/notes.txt", contentType: "text/plain" }],
+  ])("accepts a string target for %s without relaxing argument validation", (call, args) => {
+    const frame = { type: "req", id: "targeted-filesystem", call, args };
+    for (const target of [undefined, "gsv", "cloud-computer"]) {
+      const targeted = { ...frame, args: { ...args, target } };
+      expect(decodeWireFrameJson(JSON.stringify(targeted))).toEqual(JSON.parse(JSON.stringify(targeted)));
+    }
+    for (const invalid of [{ ...args, target: 42 }, { ...args, target: "cloud-computer", unexpected: true }]) {
+      expect(() => decodeWireFrameJson(JSON.stringify({ ...frame, args: invalid })))
+        .toThrow(InvalidWireFrameError);
+    }
+  });
+
   it("accepts ordinary contextual text and rejects withdrawn action metadata", () => {
     const frame = {
       type: "req", id: "plain-request", call: "conversation.send",
