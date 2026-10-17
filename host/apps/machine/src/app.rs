@@ -10,6 +10,14 @@ use machine::control::{ControlAction, DaemonRuntime};
 #[derive(Clone, Parser)]
 #[command(name = "gsvd", version, about = "GSV machine driver daemon")]
 struct Args {
+    /// Serve a private cloud instance without enrollment or automatic updates
+    #[arg(long, requires_all = ["id", "workspace"], conflicts_with_all = ["url", "user", "token"])]
+    container: bool,
+
+    /// Private instance listener address (defaults to 0.0.0.0:8788)
+    #[arg(long, requires = "container")]
+    listen: Option<std::net::SocketAddr>,
+
     /// Gateway URL (overrides local GSV configuration)
     #[arg(long, env = "GSV_URL")]
     url: Option<String>,
@@ -49,6 +57,9 @@ pub(crate) async fn run_with_shutdown(
     ready: impl FnOnce(),
 ) -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
+    if args.container {
+        return run_container(args, shutdown, ready).await;
+    }
     let mut settings = resolve_settings(&args, &CliConfig::load())?;
     let _logging_guard = machine::logger::init_device_logging()?;
     let (runtime, mut actions) = DaemonRuntime::new(settings.device_id.clone());
@@ -161,6 +172,43 @@ pub(crate) async fn run_with_shutdown(
     result
 }
 
+async fn run_container(
+    args: Args,
+    shutdown: CancellationToken,
+    ready: impl FnOnce(),
+) -> Result<(), Box<dyn std::error::Error>> {
+    let secret = std::env::var("GSV_INSTANCE_SECRET")
+        .map_err(|_| "GSV_INSTANCE_SECRET is required in container mode")?;
+    tracing_subscriber::fmt()
+        .with_ansi(false)
+        .with_target(false)
+        .with_writer(std::io::stderr)
+        .try_init()
+        .map_err(|error| std::io::Error::other(error.to_string()))?;
+    let server = machine::container::ContainerServer::bind(
+        args.listen.unwrap_or_else(|| ([0, 0, 0, 0], 8788).into()),
+        machine::container::ContainerOptions {
+            target_id: args.id.ok_or("Container mode requires --id")?,
+            workspace: args
+                .workspace
+                .ok_or("Container mode requires --workspace")?,
+            secret,
+        },
+    )
+    .await?;
+    ready();
+    let run = server.run(shutdown.clone());
+    tokio::pin!(run);
+    tokio::select! {
+        result = &mut run => result?,
+        _ = wait_for_shutdown_signal() => {
+            shutdown.cancel();
+            run.await?;
+        }
+    }
+    Ok(())
+}
+
 #[derive(Clone)]
 struct Settings {
     url: String,
@@ -232,6 +280,8 @@ mod tests {
 
     fn args() -> Args {
         Args {
+            container: false,
+            listen: None,
             url: None,
             user: None,
             token: None,

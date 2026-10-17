@@ -161,6 +161,10 @@ export const BUILTIN_TARGET_OPTIONS: SelectOption[] = [
     label: "Cloud browsers",
     value: targetOptionValue({ route: "instance", platform: "browser" }),
   },
+  {
+    label: "Cloud computers",
+    value: targetOptionValue({ route: "instance", platform: "linux" }),
+  },
 ];
 const LEGACY_EXTERNAL_TARGET_OPTION: SelectOption = {
   group: "Stored machine",
@@ -275,6 +279,7 @@ export function targetLabelForRule(target: ToolApprovalTarget | undefined, targe
   }
   if (isToolApprovalTargetSelector(target)) {
     if (target.route === "instance" && target.platform === "browser") return "Cloud browsers";
+    if (target.route === "instance" && target.platform === "linux") return "Cloud computers";
     return target.platform ? `${target.route} · ${target.platform}` : target.route;
   }
   const known = targets.find((candidate) => candidate.id === target);

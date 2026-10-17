@@ -16,6 +16,7 @@ Step-by-step guides for common tasks. Each page focuses on one concrete goal —
 - [Integrations (MCP)](/how-to/integrations) — wire in MCP servers to give Ship new tools
 - [Browse the Web](/how-to/browse-web) — pair the browser extension so Ship can act in your logged-in browser
 - [Cloud Browsers](/how-to/cloud-browsers) — start an on-demand browser and remember website logins
+- [Cloud Computers](/how-to/cloud-computers) — run Linux builds and scripts while your computer is offline
 
 ## See also
 

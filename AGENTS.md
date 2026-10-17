@@ -46,6 +46,7 @@ This document is the root engineering contract for the repository. It explains h
 - Live syscall ledger rows require both the ledger signal grant and `sys.ledger.list`, scoped to the owning human or root. Clients merge pushed rows and completion updates by sequence; ordinary ledger changes must not trigger another ledger read.
 - Whoever accepts a body, request, media object, or background operation owns its completion, cancellation, and cleanup.
 - The instance service owns cloud browser save ordering, profile leases, encrypted snapshots and forgetting. Browser profile syscalls expose metadata and deletion under the same owner and browser capabilities. Ordinary stop requires a successful final save, while explicit force, expiry and deletion remain available.
+- Cloud computers use the ordinary machine protocol over a private instance-owned connection. One immutable lease owns one boot; loss never replays or recreates a machine's work. Stop, expiry and deletion destroy the computer before releasing its reservation. Browser and computer allowances remain separate.
 
 ### Treat targets as Unix-shaped capability environments
 
@@ -124,7 +125,7 @@ Contact conversations have no mandatory Process handler. Pairing and first-messa
 - `host/crates/`: shared gateway transport, host configuration, Desktop IPC, and Windows SCM/process ownership primitives. `host/` owns their Cargo workspace and build artifacts.
 - `workers/adapters/`: platform-specific messaging workers and identity normalization.
 - `extension/`: browser-backed target and browser integration.
-- `workers/instances/`: optional cloud browser provisioning, profiles, human control, metering, and instance-owned cleanup.
+- `workers/instances/`: optional cloud browser and computer provisioning, profiles, human control, metering, and instance-owned cleanup.
 - `workers/ripgit/`: git-backed repositories and filesystem storage operations.
 
 Keep platform-specific identity and delivery behavior in its adapter. Keep visual presentation in the web and Desktop clients. Keep target selection below stable syscall contracts.

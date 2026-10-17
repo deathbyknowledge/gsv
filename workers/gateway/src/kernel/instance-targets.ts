@@ -20,10 +20,12 @@ export async function discoverInstanceTargets(ctx: KernelContext, options: Targe
     const targets: TargetDescriptor[] = inventory.instances.filter(value => options.includeOffline || value.state === "ready").map(value => ({
       targetId: value.targetId, ownerUid: value.ownerUid, ownerUsername: ctx.auth.getPasswdByUid(value.ownerUid)?.username ?? null,
       label: value.label,
-      description: `Cloud browser; ${value.state}; ${value.isolated || !value.profileId
-        ? "temporary, no saved logins"
-        : `saved logins from profile ${value.profileId.slice(0, 8)} (browser profile list marks the automatic one)`}; this instance expires ${new Date(value.expiresAt).toISOString()}`,
-      platform: "browser", version: value.templateRevision,
+      description: value.kind === "linux"
+        ? `Cloud Linux computer; ${value.state}; expires ${new Date(value.expiresAt).toISOString()}`
+        : `Cloud browser; ${value.state}; ${value.isolated || !value.profileId
+          ? "temporary, no saved logins"
+          : `saved logins from profile ${value.profileId.slice(0, 8)} (browser profile list marks the automatic one)`}; this instance expires ${new Date(value.expiresAt).toISOString()}`,
+      platform: value.kind, version: value.templateRevision,
       online: value.state === "ready" && value.expiresAt > Date.now(),
       implements: value.implements,
       firstSeenAt: value.createdAt, lastSeenAt: value.stoppedAt ?? value.readyAt ?? value.createdAt,
@@ -55,7 +57,7 @@ export async function requestInstanceTarget(frame: RequestFrame, target: TargetD
   let dispatched = false;
   let service: InstallationInstances | undefined;
   const deadline = new AbortController();
-  const timer = setTimeout(() => deadline.abort(new Error("Browser target request timed out")), Math.max(0, deadlineAt - Date.now()));
+  const timer = setTimeout(() => deadline.abort(new Error("Instance target request timed out")), Math.max(0, deadlineAt - Date.now()));
   const signal = ctx.requestSignal ? AbortSignal.any([ctx.requestSignal, deadline.signal]) : deadline.signal;
   try {
     if (!ctx.env.INSTANCES || target.route.kind !== "instance") throw new Error("Instance target is unavailable");
@@ -69,10 +71,10 @@ export async function requestInstanceTarget(frame: RequestFrame, target: TargetD
       transferred = true;
       ctx.defer(Promise.allSettled([
         acquired.cancel(actor, id, frame.id),
-        invocation.then(async late => { if (late.ok) await cancelBinaryBody(late.body, "Browser response arrived after cancellation"); }),
+        invocation.then(async late => { if (late.ok) await cancelBinaryBody(late.body, "Instance response arrived after cancellation"); }),
       ]).finally(() => acquired[Symbol.dispose]?.()));
     } });
-    if (response.id !== frame.id) { if (response.ok) await cancelBinaryBody(response.body, "Invalid browser response"); throw new Error("Browser response identity mismatch"); }
+    if (response.id !== frame.id) { if (response.ok) await cancelBinaryBody(response.body, "Invalid instance response"); throw new Error("Instance response identity mismatch"); }
     if (response.ok && response.body) {
       transferred = true;
       return { ...response, body: { ...response.body, stream: withByteStreamFinalizer(response.body.stream, () => acquired[Symbol.dispose]?.()) } };
@@ -80,7 +82,7 @@ export async function requestInstanceTarget(frame: RequestFrame, target: TargetD
     return response;
   } catch (error) {
     if (dispatched) throw error;
-    await cancelBinaryBody(frame.body, "Browser request was not dispatched");
+    await cancelBinaryBody(frame.body, "Instance request was not dispatched");
     return rejectBeforeDispatch(frame, ctx.requestSignal?.aborted ? 499 : deadline.signal.aborted ? 504 : 503,
       error instanceof Error ? error.message : String(error));
   } finally { clearTimeout(timer); if (!transferred) service?.[Symbol.dispose]?.(); }

@@ -20,7 +20,18 @@ export const limitsSchema = z.strictObject({
   profileStorageBytes: z.number().int().positive().max(MAX_PROFILE_BYTES),
 });
 export type BrowserLimits = z.infer<typeof limitsSchema>;
+export const computerLimitsSchema = limitsSchema.omit({ savedProfiles: true, profileStorageBytes: true });
+export type ComputerLimits = z.infer<typeof computerLimitsSchema>;
 export const IMPLEMENTATIONS = ["shell.exec", "fs.read", "fs.write", "fs.edit", "fs.delete", "fs.search", "fs.copy", "fs.transfer.stat", "fs.transfer.send", "fs.transfer.receive"] as const;
+export const COMPUTER_IMPLEMENTATIONS = [...IMPLEMENTATIONS, "shell.cancel", "net.fetch"] as const;
+export function computerTemplate(limits: ComputerLimits): InstanceTemplate {
+  return {
+    templateId: "computer", revision: "1", kind: "linux", label: "Cloud computer",
+    description: "An ephemeral Linux computer with Node.js, Python, Git, and build tools. Save source and outputs before stopping it.",
+    implements: [...COMPUTER_IMPLEMENTATIONS], defaultLifetimeSeconds: Math.min(1800, limits.maxInstanceSeconds),
+    maxLifetimeSeconds: limits.maxInstanceSeconds, capacityUnits: 1,
+  };
+}
 /** `savedLogins` is whether the requesting account can use or create its automatic saved-login profile right now. */
 export function browserTemplate(limits: BrowserLimits, savedLogins = limits.savedProfiles > 0): InstanceTemplate {
   return {
@@ -47,6 +58,18 @@ export class InstancePolicy {
       maxInstanceSeconds: values["browser.max_instance_seconds"] ?? 1800,
       savedProfiles: values["browser.saved_profiles"] ?? 0,
       profileStorageBytes: values["browser.profile_storage_bytes"] ?? DEFAULT_PROFILE_BYTES,
+    });
+  }
+  async computerLimits(): Promise<ComputerLimits> {
+    const disabled = { enabled: false, concurrentInstances: 0, periodSeconds: 0, maxInstanceSeconds: 1800 };
+    if (!this.env.COMPUTERS) return disabled;
+    if (!this.cache) return computerLimitsSchema.parse(this.env.COMPUTER_LIMITS ?? disabled);
+    const { values } = await this.cache.get();
+    return computerLimitsSchema.parse({
+      enabled: values["computer.enabled"] === true,
+      concurrentInstances: values["computer.concurrent_instances"] ?? 0,
+      periodSeconds: values["computer.period_seconds"] ?? 0,
+      maxInstanceSeconds: values["computer.max_instance_seconds"] ?? 1800,
     });
   }
   async requireActive(): Promise<void> {

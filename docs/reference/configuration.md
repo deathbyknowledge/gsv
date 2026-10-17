@@ -154,10 +154,16 @@ Default policy (`default` is `auto`; the runtime, the Process fallback, and the 
 |---|---|---|
 | `gsv`, the cloud home | `fs.*`, `shell.exec`, `net.fetch` | — |
 | `{ "route": "instance", "platform": "browser" }`, Ship-provisioned browsers | `fs.*`, `shell.exec`, `net.fetch` | — |
+| `{ "route": "instance", "platform": "linux" }`, Ship-provisioned computers | `fs.*`, `shell.exec`, `net.fetch` | — |
 | `targets/*`, connected computers and browsers | `fs.read`, `fs.search`, `fs.transfer.stat`, `fs.transfer.send` | every other `fs.*` call, `shell.exec`, `net.fetch` |
 | any target | `web.search` | `sys.mcp.call`, `mail.send` |
 
 Native work in the cloud home and Ship-provisioned browsers proceeds without asking. Connected personal browsers and computers still ask before changing files, running commands, or making network requests. Capability grants, ownership checks, and browser sign-in handoffs still apply. A cloud browser may retain website logins; use an Ask or Block rule for **Cloud browsers**, or for one target, to restrict its use.
+
+[Cloud computers](/how-to/cloud-computers) also run filesystem, shell and network
+work automatically under the built-in policy. Settings labels their selector
+**Cloud computers**. A personal Linux computer has a `machine` route, so this
+rule does not change its approval requirements.
 
 Metadata selectors use the Kernel’s resolved target record, never a target name or metadata supplied in tool arguments. A decision that depends on metadata is bound to that target’s owner, platform and route identity, checked again before dispatch. Pending human approvals retain the checked identity across Process restarts, and approval cannot authorize a replacement target. A lookup failure cannot fall back to a more permissive decision. Explicit stored policies keep their existing rules; this changes the built-in default, without rewriting account policies.
 

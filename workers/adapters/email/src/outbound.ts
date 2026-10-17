@@ -1,4 +1,5 @@
 import { MAIL_MAX_OUTBOUND_TEXT_BYTES as ABSOLUTE_MAX_TEXT_BYTES } from "@humansandmachines/gsv/services/mail";
+import { configuredDomainAliases } from "@humansandmachines/gsv/services/deployment";
 import {
   bodyToBytes,
   type ManagedOutboundMailClaim,
@@ -239,6 +240,7 @@ export class OutboundDeliveryCoordinator {
     await this.scheduleNextAlarm();
 
     let expectedFrom: string;
+    let allowedSenders: ReadonlySet<string>;
     let limits: MailLimits;
     try {
       const [installation, allowance] = await Promise.all([
@@ -266,6 +268,11 @@ export class OutboundDeliveryCoordinator {
         installation.handle,
         this.env.MAIL_DOMAIN,
       );
+      allowedSenders = new Set([
+        expectedFrom,
+        ...configuredDomainAliases(this.env.MAIL_SENDING_DOMAINS).map((domain) =>
+          mailAddressForHandle(installation.handle, domain)),
+      ]);
     } catch (error) {
       if (this.retirement.retired) return;
       this.deferClaim(reference, reserved.claim_attempts, String(error));
@@ -279,7 +286,9 @@ export class OutboundDeliveryCoordinator {
     if (reserved.expected_from === null) {
       reserved = this.pinExpectedFrom(reference, expectedFrom, reserved.claim_attempts);
     }
-    if (expectedFrom !== reserved.expected_from) {
+    // The pinned address fences the owner handle. The immutable draft's own
+    // sender domain is checked against the current allowlist after claiming it.
+    if (reserved.expected_from?.split("@", 1)[0] !== expectedFrom.split("@", 1)[0]) {
       this.setTerminal(reference, "failed", "sender_identity_changed");
       await this.notify(this.requireByReference(reference));
       return;
@@ -324,7 +333,7 @@ export class OutboundDeliveryCoordinator {
         outbound = await this.validateClaim(
           reference,
           claim,
-          expectedFrom,
+          allowedSenders,
           limits,
         );
       } catch (error) {
@@ -383,7 +392,7 @@ export class OutboundDeliveryCoordinator {
   private async validateClaim(
     reference: ManagedOutboundMailReference,
     claim: ManagedOutboundMailClaim,
-    expectedFrom: string,
+    allowedSenders: ReadonlySet<string>,
     limits: MailLimits,
   ): Promise<ValidatedOutbound> {
     if (!claim || claim.constructor !== Object) {
@@ -405,7 +414,7 @@ export class OutboundDeliveryCoordinator {
         limits.maxOutboundTextBytes,
       )
       || !validAddress(draft.from)
-      || draft.from !== expectedFrom
+      || !allowedSenders.has(draft.from)
       || !validAddress(draft.to)
       || !validSubject(draft.subject)
       || !validOptionalHeader(draft.inReplyTo)

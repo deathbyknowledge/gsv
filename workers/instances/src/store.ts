@@ -1,6 +1,6 @@
-import type { BrowserHandoff, BrowserProfile, BrowserProfileSummary, CloudInstance, InstanceSelector, InstanceUsage, SysBrowserProfileListResult, SysInstanceStartArgs } from "@humansandmachines/gsv/protocol";
+import type { BrowserHandoff, BrowserProfile, BrowserProfileSummary, CloudInstance, CloudInstanceKind, InstanceSelector, InstanceUsage, SysBrowserProfileListResult, SysInstanceStartArgs } from "@humansandmachines/gsv/protocol";
 import type { InstanceActor } from "@humansandmachines/gsv/services/instances";
-import { browserTemplate, type BrowserLimits } from "./config";
+import { browserTemplate, computerTemplate, type BrowserLimits, type ComputerLimits } from "./config";
 import { boundBrowserStorageUsage } from "./browser-storage-summary";
 
 export type InstanceRow = {
@@ -42,16 +42,16 @@ export class InstanceStore {
     if (!row) throw new Error("Instance does not exist");
     return row;
   }
-  usage(limits: BrowserLimits, now = Date.now()): InstanceUsage {
+  usage(limits: ComputerLimits, now = Date.now(), kind: CloudInstanceKind = "browser"): InstanceUsage {
     const { start, end } = period(now);
-    const active = this.sql.exec<{ count: number; reserved: number }>("SELECT COUNT(*) AS count, COALESCE(SUM(reservation), 0) AS reserved FROM instances WHERE active = 1").one();
-    const used = this.sql.exec<{ seconds: number }>("SELECT COALESCE(SUM(charged), 0) AS seconds FROM instance_usage WHERE period_start = ?", start).one();
+    const active = this.sql.exec<{ count: number; reserved: number }>("SELECT COUNT(*) AS count, COALESCE(SUM(reservation), 0) AS reserved FROM instances WHERE active = 1 AND json_extract(record, '$.kind') = ?", kind).one();
+    const used = this.sql.exec<{ seconds: number }>("SELECT COALESCE(SUM(u.charged), 0) AS seconds FROM instance_usage u JOIN instances i ON i.id = u.instance_id WHERE u.period_start = ? AND json_extract(i.record, '$.kind') = ?", start, kind).one();
     return {
       periodStartsAt: start, periodEndsAt: end, limitSeconds: limits.periodSeconds, concurrentLimit: limits.concurrentInstances,
       activeInstances: active.count, usedSeconds: used.seconds, reservedSeconds: active.reserved,
     };
   }
-  admit(actor: InstanceActor, args: SysInstanceStartArgs, limits: BrowserLimits, now = Date.now(), stopping?: ReadonlySet<string>): CloudInstance {
+  admit(actor: InstanceActor, args: SysInstanceStartArgs, limits: BrowserLimits | ComputerLimits, now = Date.now(), stopping?: ReadonlySet<string>): CloudInstance {
     return this.storage.transactionSync(() => {
       const fingerprint = JSON.stringify([args.templateId, args.label ?? null, args.lifetimeSeconds ?? null, args.profileId ?? null, args.fresh ?? false]);
       const existing = this.sql.exec<{ instance_id: string; fingerprint: string }>("SELECT instance_id, fingerprint FROM start_requests WHERE owner_uid = ? AND request_id = ?", actor.ownerUid, args.requestId).toArray()[0];
@@ -60,12 +60,15 @@ export class InstanceStore {
         return instance(this.byId(existing.instance_id));
       }
       if (this.sql.exec("SELECT 1 FROM cancelled_starts WHERE owner_uid = ? AND request_id = ?", actor.ownerUid, args.requestId).toArray().length) throw new Error("This start request was cancelled before admission; use a fresh requestId for new work");
-      if (args.templateId !== "browser" || !limits.enabled) throw new Error("Browser instances are not enabled");
-      const lifetime = args.lifetimeSeconds ?? browserTemplate(limits).defaultLifetimeSeconds;
-      if (lifetime < 60 || lifetime > limits.maxInstanceSeconds) throw new Error("Requested browser lifetime is outside the allowed range");
-      const automatic = !args.profileId && !args.fresh ? this.defaultProfile(actor.ownerUid) : null;
-      if (!args.fresh) {
-        const current = this.activeRows().map(instance).reverse().find(value => value.ownerUid === actor.ownerUid
+      const browser = args.templateId === "browser" && "savedProfiles" in limits;
+      const template = browser ? browserTemplate(limits) : args.templateId === "computer" ? computerTemplate(limits) : null;
+      if (!template || !limits.enabled) throw new Error("Requested instance template is not enabled");
+      if (!browser && (args.profileId || args.fresh !== undefined)) throw new Error("Profiles and fresh apply only to browser instances");
+      const lifetime = args.lifetimeSeconds ?? template.defaultLifetimeSeconds;
+      if (lifetime < 60 || lifetime > limits.maxInstanceSeconds) throw new Error("Requested instance lifetime is outside the allowed range");
+      const automatic = browser && !args.profileId && !args.fresh ? this.defaultProfile(actor.ownerUid) : null;
+      if (browser && !args.fresh) {
+        const current = this.activeRows().map(instance).reverse().find(value => value.ownerUid === actor.ownerUid && value.kind === "browser"
           && (value.state === "ready" || value.state === "starting") && value.expiresAt > now
           && !value.isolated
           && value.profileId === (args.profileId ?? automatic?.profileId));
@@ -75,10 +78,10 @@ export class InstanceStore {
           return current;
         }
       }
-      const usage = this.usage(limits, now);
-      if (usage.activeInstances >= limits.concurrentInstances) throw new Error("Browser concurrency limit reached");
-      if (usage.usedSeconds + usage.reservedSeconds + lifetime > limits.periodSeconds) throw new Error("Browser time allowance exhausted");
-      const defaultProfile = !args.profileId && !args.fresh
+      const usage = this.usage(limits, now, template.kind);
+      if (usage.activeInstances >= limits.concurrentInstances) throw new Error(`${template.label} concurrency limit reached`);
+      if (usage.usedSeconds + usage.reservedSeconds + lifetime > limits.periodSeconds) throw new Error(`${template.label} time allowance exhausted`);
+      const defaultProfile = browser && !args.profileId && !args.fresh
         ? automatic ?? this.createProfile(actor, crypto.randomUUID(), "Browser", limits, true)
         : null;
       const profileId = args.profileId ?? defaultProfile?.profileId;
@@ -89,8 +92,8 @@ export class InstanceStore {
       while (this.sql.exec("SELECT 1 FROM instances WHERE json_extract(record, '$.targetId') = ?", id.slice(0, 8)).toArray().length) id = crypto.randomUUID();
       const value: CloudInstance = {
         instanceId: id, targetId: id.slice(0, 8), startRequestId: args.requestId,
-        ownerUid: actor.ownerUid, templateId: "browser", templateRevision: "1", kind: "browser", implements: browserTemplate(limits).implements,
-        label: args.label ?? `Browser ${id.slice(0, 8)}`, state: "starting", revision: 1, profileId, isolated: args.fresh === true && !profileId,
+        ownerUid: actor.ownerUid, templateId: template.templateId, templateRevision: template.revision, kind: template.kind, implements: template.implements,
+        label: args.label ?? `${browser ? "Browser" : "Computer"} ${id.slice(0, 8)}`, state: "starting", revision: 1, profileId, isolated: browser ? args.fresh === true && !profileId : undefined,
         createdAt: now, expiresAt: now + lifetime * 1000,
       };
       this.sql.exec("INSERT INTO instances (id, owner_uid, record, active, reservation) VALUES (?, ?, ?, 1, ?)", id, actor.ownerUid, JSON.stringify(value), lifetime);

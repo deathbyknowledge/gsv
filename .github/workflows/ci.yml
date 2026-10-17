@@ -4,7 +4,6 @@ on:
   push:
     branches: [main]
   pull_request:
-    branches: [main, feat/zen-fleet]
 
 permissions:
   contents: read
@@ -200,11 +199,14 @@ jobs:
               - 'host/crates/desktop-protocol/**'
             machine:
               - '.github/workflows/ci.yml'
+              - 'scripts/smoke-computer-image.sh'
+              - 'workers/instances/computer/**'
               - 'host/Cargo.toml'
               - 'host/Cargo.lock'
               - 'host/apps/machine/**'
               - 'host/crates/gateway-client/**'
               - 'host/crates/config/**'
+              - 'host/crates/daemon-protocol/**'
             desktop:
               - '.github/workflows/ci.yml'
               - '.github/workflows/release.yml'
@@ -676,6 +678,11 @@ jobs:
       - name: Lint machine
         working-directory: host
         run: cargo clippy --locked --package machine --all-targets -- -D warnings
+
+      - name: Build and smoke the cloud computer image
+        if: matrix.os == 'ubuntu-latest'
+        timeout-minutes: 20
+        run: bash scripts/smoke-computer-image.sh
 
   desktop-build:
     name: Desktop (Linux)
