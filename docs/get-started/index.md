@@ -25,6 +25,8 @@ space. Handles use lowercase letters, numbers and hyphens; uppercase input is
 converted automatically. Validation and availability feedback appears beside the
 field. One verified email can create one self-service Space.
 
+If creation is interrupted, retry with the same handle to resume that setup.
+
 A friend's invitation link can take you through the same signup. The invitation
 stays with you through setup; accept it in People after choosing who handles
 incoming messages. Existing users select their Space instead.
@@ -109,6 +111,9 @@ with **continue editing →** to resume it. Wider screens show the browser and r
 side by side.
 
 The Settings sidebar highlights the section you're viewing.
+Under **Appearance**, choose **Match system** to follow this device's light or
+dark appearance. An explicit theme choice applies to both sign-in and the app;
+without a choice, sign-in starts dark and the app starts light.
 
 Open **People** to try making plans or working together with someone on Ship.
 **connect** creates a shareable invitation; accepting it opens your conversation.

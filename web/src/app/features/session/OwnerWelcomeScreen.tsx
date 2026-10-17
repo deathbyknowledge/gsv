@@ -41,6 +41,7 @@ export function OwnerWelcomeScreen({ ready, resume, load, onConnect, addressPane
   const [handle, setHandle] = useState("");
   const [handleError, setHandleError] = useState("");
   const [availability, setAvailability] = useState<"idle" | "checking" | "available" | "unavailable">("idle");
+  const [creationAttempt, setCreationAttempt] = useState<{ operationId: string; handle: string } | null>(null);
   /** A handle Accounts refused at creation stays marked until it is edited, whatever the public check says. */
   const rejectedHandle = useRef<string | null>(null);
   const spaceDomain = owner?.spaceDomain ?? presumedDomain;
@@ -57,13 +58,16 @@ export function OwnerWelcomeScreen({ ready, resume, load, onConnect, addressPane
   };
   const create = async (client: OwnerWelcome) => {
     const chosen = client.state.handle;
-    if (!chosen || !client.state.operationId) { setStep("claim"); return; }
+    const operationId = client.state.operationId;
+    if (!chosen || !operationId) { setStep("claim"); return; }
+    setCreationAttempt({ operationId, handle: chosen });
     try {
-      const prepared = await client.prepare(chosen, client.state.operationId);
+      const prepared = await client.prepare(chosen, operationId);
       await onConnect(prepared.origin, prepared.onboardingToken);
     } catch (failure) {
       // Accounts rejects a handle taken since it was checked; the claim step shows that beside the field.
       if (failure instanceof OwnerApiError && (failure.code === "handle_unavailable" || /^handle is /i.test(failure.message))) {
+        setCreationAttempt(null);
         rejectedHandle.current = chosen;
         setHandle(chosen); setHandleError(failure.message); setAvailability("unavailable"); setStep("claim");
         return;
@@ -119,10 +123,12 @@ export function OwnerWelcomeScreen({ ready, resume, load, onConnect, addressPane
     if (!flow || step !== "claim" || !handle.trim()) { setAvailability("idle"); return; }
     // A pending setup already holds its handle for this owner; the public check would call it taken.
     if (owner?.setups.some((setup) => setup.operationId === flow.state.operationId && setup.handle === handle.trim())) { setAvailability("available"); return; }
+    // Creation may have reserved this handle before its response failed; only retrying that operation can resolve it.
+    const retrying = creationAttempt?.operationId === flow.state.operationId && creationAttempt?.handle === handle.trim();
     let active = true;
     setAvailability("checking");
     const timer = setTimeout(() => {
-      void flow.available(handle.trim()).then((available) => { if (active) setAvailability(available === null ? "idle" : available ? "available" : "unavailable"); })
+      void flow.available(handle.trim()).then((available) => { if (active) setAvailability(available === null || (!available && retrying) ? "idle" : available ? "available" : "unavailable"); })
         .catch((failure) => {
           if (!active) return;
           setAvailability("idle");
@@ -130,7 +136,7 @@ export function OwnerWelcomeScreen({ ready, resume, load, onConnect, addressPane
         });
     }, 350);
     return () => { active = false; clearTimeout(timer); };
-  }, [step, handle, flow, owner]);
+  }, [step, handle, flow, owner, creationAttempt]);
 
   const titles = {
     welcome: "Welcome to Ship", invitation: invitation?.name ? `${invitation.name} invited you to Ship` : "You’re invited to Ship",

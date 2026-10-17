@@ -219,6 +219,39 @@ describe("owner welcome", () => {
     } finally { await root.unmount(); }
   });
 
+  it.each(["network", "server", "rate limit"])("can submit after an advisory availability %s failure", async (failure) => {
+    const store = memory();
+    const fetcher = vi.fn(async (url: string) => {
+      if (url.includes("/handle?")) {
+        if (failure === "network") throw new TypeError("Network unavailable");
+        return Response.json({ error: "Try again shortly." }, { status: failure === "server" ? 503 : 429 });
+      }
+      if (url.endsWith("/code")) return Response.json({ deliveryStatus: "sent" });
+      throw new Error(`Unexpected request: ${url}`);
+    });
+    const client = new OwnerWelcome(store.snapshot(), store, ORIGIN, fetcher);
+    const root = createTestRoot("Advisory availability failure");
+    let tree: ComponentChildren;
+    function Harness() {
+      tree = OwnerWelcomeScreen({ ready: true, resume: false, initialStep: "claim", load: async () => client, onConnect: vi.fn() });
+      return null;
+    }
+    try {
+      await root.render(<Harness />);
+      await vi.waitFor(() => expect(fieldOf(tree, "Handle")?.props.disabled).toBe(false));
+      await act(() => { fieldOf(tree, "Handle")!.props.onChange?.("valid-handle"); });
+      await act(() => { fieldOf(tree, "Email")!.props.onChange?.("owner@example.com"); });
+      await agree(tree);
+      await vi.waitFor(() => expect(fetcher).toHaveBeenCalledOnce());
+      await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
+      expect(fieldOf(tree, "Handle")!.props).toMatchObject({ status: "none", message: "" });
+      expect(collectNodes(tree).find((node) => node.props["aria-label"] === "Create space")!.props.disabled).toBe(false);
+      await act(() => formOf(tree).props.onSubmit(new Event("submit")));
+      await vi.waitFor(() => expect(fieldOf(tree, "Code")).toBeDefined());
+      expect(fetcher).toHaveBeenCalledWith(`${ORIGIN}/owner/api/code`, expect.anything());
+    } finally { await root.unmount(); }
+  });
+
   it("returns to the handle when Accounts rejects it at creation", async () => {
     const store = memory({ origin: ORIGIN, flow: "create", sessionSecret: "a".repeat(64), challenge: null, operationId: "op_taken", handle: "taken" });
     const fetcher = vi.fn(async (url: string) => {
@@ -296,6 +329,87 @@ describe("owner welcome", () => {
       await act(() => formOf(tree).props.onSubmit(new Event("submit")));
       await vi.waitFor(() => expect(onConnect).toHaveBeenCalledExactlyOnceWith("https://my-space.example.com", TOKEN));
       expect(attempts).toBe(2);
+    } finally { await root.unmount(); }
+  });
+
+  it.each([
+    { failure: "policy", conflict: false },
+    { failure: "network", conflict: false },
+    { failure: "network", conflict: true },
+  ])("retries fresh signup after a $failure failure and honors an authoritative conflict ($conflict)", async ({ failure, conflict }) => {
+    const store = memory();
+    let verified = false;
+    let attempts = 0;
+    let rechecks = 0;
+    const allocations: string[] = [];
+    const fetcher = vi.fn(async (url: string, init: { body?: string }) => {
+      if (url.endsWith("/code")) return Response.json({ deliveryStatus: "sent" });
+      if (url.endsWith("/verify")) { verified = true; return Response.json({ email: "owner@example.com", expiresAt: Date.now() + 60_000 }); }
+      if (url.endsWith("/session")) {
+        // The initial session predates allocation; another lookup could fail too and must not be needed to retry.
+        if (attempts) throw new TypeError("Session lookup unavailable");
+        return session();
+      }
+      if (url.includes("/handle?")) {
+        if (!verified) return Response.json({ error: "Sign in to continue.", code: "signed_out" }, { status: 401 });
+        if (attempts) rechecks++;
+        return Response.json({ available: !attempts });
+      }
+      if (url.endsWith("/spaces")) {
+        allocations.push(init.body!);
+        if (++attempts === 1) {
+          if (failure === "network") throw new TypeError("Lost creation response");
+          return Response.json({ error: "Space setup failed. Try again. Reference: test-failure" }, { status: 400 });
+        }
+        return conflict ? Response.json({ error: "handle is unavailable" }, { status: 400 }) : prepared("my-space");
+      }
+      throw new Error(`Unexpected request: ${url}`);
+    });
+    const client = new OwnerWelcome(store.snapshot(), store, ORIGIN, fetcher);
+    const onConnect = vi.fn();
+    const root = createTestRoot("Fresh signup creation retry");
+    let tree: ComponentChildren;
+    function Harness() {
+      tree = OwnerWelcomeScreen({ ready: true, resume: false, initialStep: "claim", load: async () => client, onConnect });
+      return null;
+    }
+    const submit = () => collectNodes(tree).find((node) => node.props["aria-label"] === "Create space")!;
+    try {
+      await root.render(<Harness />);
+      await vi.waitFor(() => expect(fieldOf(tree, "Handle")?.props.disabled).toBe(false));
+      await act(() => { fieldOf(tree, "Handle")!.props.onChange?.("my-space"); });
+      await act(() => { fieldOf(tree, "Email")!.props.onChange?.("owner@example.com"); });
+      await agree(tree);
+      await act(() => formOf(tree).props.onSubmit(new Event("submit")));
+      await vi.waitFor(() => expect(fieldOf(tree, "Code")).toBeDefined());
+      const operationId = client.state.operationId;
+      await act(() => { fieldOf(tree, "Code")!.props.onChange?.("123456"); });
+      await act(() => formOf(tree).props.onSubmit(new Event("submit")));
+      await vi.waitFor(() => expect(rechecks).toBeGreaterThan(0));
+      await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
+      expect(fieldOf(tree, "Code")).toBeUndefined();
+      expect(fieldOf(tree, "Handle")!.props).toMatchObject({ value: "my-space", status: "none", message: "" });
+      expect(submit().props.disabled).toBe(false);
+
+      // The exception belongs to this operation and handle, not to another handle the owner types.
+      await act(() => { fieldOf(tree, "Handle")!.props.onChange?.("another-taken-handle"); });
+      await vi.waitFor(() => expect(fieldOf(tree, "Handle")!.props.message).toBe("Already taken"));
+      expect(submit().props.disabled).toBe(true);
+      await act(() => { fieldOf(tree, "Handle")!.props.onChange?.("my-space"); });
+      await vi.waitFor(() => expect(rechecks).toBeGreaterThan(2));
+      await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
+      expect(submit().props.disabled).toBe(false);
+      await act(() => formOf(tree).props.onSubmit(new Event("submit")));
+      await vi.waitFor(() => expect(attempts).toBe(2));
+      expect(allocations).toEqual(Array(2).fill(JSON.stringify({ operationId, handle: "my-space" })));
+      expect(fetcher.mock.calls.filter(([url]) => url.endsWith("/session"))).toHaveLength(1);
+      if (conflict) {
+        await vi.waitFor(() => expect(fieldOf(tree, "Handle")!.props.message).toBe("handle is unavailable"));
+        expect(submit().props.disabled).toBe(true);
+        expect(onConnect).not.toHaveBeenCalled();
+      } else {
+        await vi.waitFor(() => expect(onConnect).toHaveBeenCalledExactlyOnceWith("https://my-space.example.com", TOKEN));
+      }
     } finally { await root.unmount(); }
   });
 
@@ -435,6 +549,7 @@ describe("owner welcome", () => {
       expect(fetcher).toHaveBeenCalledWith(`${ORIGIN}/owner/api/handle?value=xamenace`, expect.anything());
       await act(() => { field().props.onChange?.("not_a_handle"); });
       await vi.waitFor(() => expect(field().props).toMatchObject({ status: "error", message: "Use letters, numbers or hyphens." }));
+      expect(collectNodes(tree).find((node) => node.props["aria-label"] === "Create space")!.props.disabled).toBe(true);
       await act(() => { field().props.onChange?.("a-valid-handle"); });
       expect(field().props.message).toBe("");
       await vi.waitFor(() => expect(field().props.status).toBe("success"));
