@@ -32,7 +32,7 @@ export type GsvDeploymentProps = Omit<GsvRuntimeProps, "services"> & {
     instancesLifecycle?: {
       worker: Cloudflare.Workers.Worker;
       entrypoint: string;
-      namespaces: readonly { className: string; kind: "instance-installation" }[];
+      namespaces: readonly { className: string; kind: "instance-installation" | "instance-computer" }[];
     };
   };
   /** Explicit current and historical operator inventory, including BYOK providers; known-sink checks do not discover that history. */
@@ -90,8 +90,11 @@ export const GsvDeployment = (props: GsvDeploymentProps, dependencies = gsvRunti
   }
   const instancesLifecycle = props.services?.instancesLifecycle;
   if (Boolean(props.services?.instances) !== Boolean(instancesLifecycle)) throw new Error("Supplied instances require their owned lifecycle and namespace inventory");
-  if (instancesLifecycle && (!instancesLifecycle.entrypoint.trim() || !instancesLifecycle.namespaces.length
-    || instancesLifecycle.namespaces.some(namespace => !namespace.className.trim() || namespace.kind !== "instance-installation"))) {
+  if (instancesLifecycle && (!instancesLifecycle.entrypoint.trim()
+    || ["instance-installation", "instance-computer"].some(kind => !instancesLifecycle.namespaces.some(namespace => namespace.kind === kind))
+    || new Set(instancesLifecycle.namespaces.map(namespace => namespace.className.trim())).size !== instancesLifecycle.namespaces.length
+    || instancesLifecycle.namespaces.some(namespace => !namespace.className.trim()
+      || !["instance-installation", "instance-computer"].includes(namespace.kind)))) {
     throw new Error("Supplied instances lifecycle requires valid instance namespace ownership");
   }
   const domain = new URL(`https://${props.domain}`);

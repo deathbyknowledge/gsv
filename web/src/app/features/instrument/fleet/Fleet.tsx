@@ -157,11 +157,11 @@ export function Fleet({ openRequest, onZen, onCommand, onDirtyChange, onActivity
   );
   const browserControl = useBrowserControl();
   useLayoutEffect(() => {
-    if (inspectorOpen && selectedPlace?.instance && ["starting", "ready"].includes(selectedPlace.instance.state)) {
+    if (inspectorOpen && browserControl.available && selectedPlace?.kind === "browser" && selectedPlace.instance && ["starting", "ready"].includes(selectedPlace.instance.state)) {
       setInspectorOpen(false);
       browserControl.open({ instanceId: selectedPlace.instance.instanceId });
     }
-  }, [inspectorOpen, selectedPlace?.instance?.instanceId, selectedPlace?.instance?.state]);
+  }, [inspectorOpen, selectedPlace?.kind, selectedPlace?.instance?.instanceId, selectedPlace?.instance?.state, browserControl.available, browserControl.open]);
   const missingRequestedRow = selected !== null && selected === initialRow && (
     (selected.startsWith("proc:") && !selectedProcess) || (selected.startsWith("target:") && !selectedPlace)
   );

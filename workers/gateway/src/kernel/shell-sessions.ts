@@ -1,3 +1,5 @@
+import type { ShellExecResult } from "@humansandmachines/gsv/protocol";
+
 export type ShellSessionStatus = "running" | "completed" | "failed";
 
 export type ShellSessionRecord = {
@@ -24,6 +26,8 @@ export class ShellSessionStore {
   ): void {
     const now = Date.now();
     const existing = this.get(sessionId);
+    // Responses and status events may race, but a session cannot change targets or restart.
+    if (existing && (existing.targetId !== targetId || (existing.status !== "running" && status === "running"))) return;
     const createdAt = existing?.createdAt ?? now;
     const expiresAt = now + (options?.ttlMs ?? DEFAULT_TTL_MS);
     this.sql.exec(
@@ -33,12 +37,30 @@ export class ShellSessionStore {
       sessionId,
       targetId,
       status,
-      options?.exitCode ?? existing?.exitCode ?? null,
-      options?.error ?? existing?.error ?? null,
+      options?.exitCode !== undefined ? options.exitCode : existing?.exitCode ?? null,
+      options?.error !== undefined ? options.error : existing?.error ?? null,
       createdAt,
       now,
       expiresAt,
     );
+  }
+
+  recordResult(targetId: string, result: ShellExecResult | undefined): void {
+    const sessionId = result?.sessionId?.trim();
+    if (!sessionId || !result) return;
+    this.rememberDeviceSession(sessionId, targetId, normalizeStatus(result.status), {
+      exitCode: result.status === "running" ? null : result.exitCode ?? null,
+      error: result.status === "failed" ? result.error : null,
+    });
+  }
+
+  recordEvent(targetId: string, event: { sessionId: string; event: string; exitCode?: number; signal?: string }): void {
+    const status = event.event === "finished" ? "completed"
+      : event.event === "failed" || event.event === "timed_out" ? "failed" : "running";
+    this.rememberDeviceSession(event.sessionId, targetId, status, {
+      exitCode: event.exitCode ?? null,
+      error: event.signal ?? null,
+    });
   }
 
   get(sessionId: string): ShellSessionRecord | null {

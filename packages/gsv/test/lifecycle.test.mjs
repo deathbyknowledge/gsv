@@ -4,6 +4,7 @@ import {
   installationResetPreparationSchema,
   installationResetPreparedSchema,
 } from "../dist/services/lifecycle.js";
+import { installationDeletionInspectionSchema } from "../dist/services/lifecycle-discovery.js";
 
 const preparation = {
   version: 1,
@@ -30,4 +31,15 @@ test("reset acknowledgment identifies the durable operation and both installatio
   assert.deepEqual(installationResetPreparedSchema.parse(receipt), receipt);
   assert.equal(installationResetPreparedSchema.safeParse({ state: "prepared" }).success, false);
   assert.equal(installationResetPreparedSchema.safeParse({ ...receipt, state: "pending" }).success, false);
+});
+
+test("deletion discovery preserves computer instance identities alongside their installation owner", () => {
+  const request = { installationId: "space", resources: [
+    { kind: "instance-installation", objectId: "1".repeat(64), name: "space" },
+    { kind: "instance-computer", objectId: "2".repeat(64), name: JSON.stringify(["space", "computer"]) },
+  ] };
+  assert.deepEqual(installationDeletionInspectionSchema.parse(request), request);
+  assert.equal(installationDeletionInspectionSchema.safeParse({ ...request, resources: [
+    { ...request.resources[1], kind: "computer" },
+  ] }).success, false);
 });
