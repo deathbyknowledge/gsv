@@ -115,12 +115,11 @@ export class AccountStore {
     operationId: string;
     handle: string;
     provisionVersion?: number;
-    creationInviteId?: string;
+    ownerSetup?: boolean;
   }): Promise<InstallationReservation> {
     const principalId = parseOpaqueId(input.principalId, "principalId");
     const operationId = parseOpaqueId(input.operationId, "operationId");
     const handle = this.validateHandle(input.handle);
-    const inviteId = input.creationInviteId === undefined ? null : parseOpaqueId(input.creationInviteId, "invitationId");
     const existing = await this.getReservationByOperation(operationId);
     if (existing) {
       if (existing.ownerPrincipalId !== principalId || existing.handle !== handle) {
@@ -144,13 +143,13 @@ export class AccountStore {
         this.db.prepare(
           `INSERT INTO installations (
              id, owner_principal_id, handle, canonical_origin, state,
-             provision_version, reservation_expires_at, created_at
+             provision_version, reservation_expires_at, created_at, owner_setup
            )
-           SELECT ?, id, ?, ?, 'reserved', ?, ?, ?
+           SELECT ?, id, ?, ?, 'reserved', ?, ?, ?, ?
            FROM principals
            WHERE id = ? AND state = 'active' AND email_verified_at IS NOT NULL
-             AND (? IS NULL OR EXISTS (SELECT 1 FROM installation_creation_invites c
-               WHERE c.id = ? AND c.principal_id = principals.id AND c.revoked_at IS NULL AND c.installation_id IS NULL))`,
+             AND (? = 0 OR NOT EXISTS (SELECT 1 FROM installations i
+               WHERE i.owner_principal_id = principals.id AND i.state NOT IN ('cancelled', 'deleted')))`,
         ).bind(
           identity.installationId,
           identity.handle,
@@ -158,9 +157,9 @@ export class AccountStore {
           provisionVersion,
           reservationExpiresAt,
           now,
+          input.ownerSetup ? 1 : 0,
           principalId,
-          inviteId,
-          inviteId,
+          input.ownerSetup ? 1 : 0,
         ),
         this.db.prepare(
           `INSERT INTO hostnames (
@@ -178,9 +177,6 @@ export class AccountStore {
              attempt, last_error, updated_at
            ) VALUES (?, ?, ?, 'create', 'reserved', 0, NULL, ?)`,
         ).bind(operationId, identity.installationId, principalId, now),
-        ...(inviteId ? [this.db.prepare(`UPDATE installation_creation_invites SET installation_id = ?, updated_at = ?
-          WHERE id = ? AND principal_id = ? AND revoked_at IS NULL AND installation_id IS NULL`)
-          .bind(identity.installationId, now, inviteId, principalId)] : []),
       ]);
     } catch (error) {
       const replay = await this.getReservationByOperation(operationId);
@@ -200,6 +196,8 @@ export class AccountStore {
       if (!principal || principal.state !== "active" || principal.emailVerifiedAt === null) {
         throw new Error("verified active principal is required");
       }
+      if (input.ownerSetup && await this.db.prepare("SELECT 1 FROM installations WHERE owner_principal_id = ? AND state NOT IN ('cancelled', 'deleted')")
+        .bind(principalId).first()) throw new Error("You already have a Space. Open it or continue setup.");
       throw error;
     }
 
@@ -490,9 +488,7 @@ export class AccountStore {
   private hostnameRow(hostname: string) {
     return this.db.prepare(
       `SELECT i.id, i.handle, i.canonical_origin, i.state,
-         EXISTS (SELECT 1 FROM installation_creation_invites c
-           WHERE c.installation_id = i.id AND c.principal_id = i.owner_principal_id
-             AND c.revoked_at IS NULL) AS owner_setup_recovery
+         i.owner_setup AS owner_setup_recovery
        FROM hostnames h
        JOIN installations i ON i.id = h.installation_id
        WHERE h.normalized_hostname = ? AND h.state != 'retired'
@@ -518,9 +514,7 @@ export class AccountStore {
 
     const row = await this.db.prepare(
       `SELECT i.id, i.handle, i.canonical_origin, i.state,
-         EXISTS (SELECT 1 FROM installation_creation_invites c
-           WHERE c.installation_id = i.id AND c.principal_id = i.owner_principal_id
-             AND c.revoked_at IS NULL) AS owner_setup_recovery
+         i.owner_setup AS owner_setup_recovery
        FROM installations i
        WHERE i.id = ?
        LIMIT 1`,
@@ -592,10 +586,7 @@ export class AccountStore {
         `UPDATE installations
          SET state = 'provisioning'
          WHERE id = ? AND owner_principal_id = ? AND state = 'reserved'
-           AND (reservation_expires_at > ? OR EXISTS (
-             SELECT 1 FROM installation_creation_invites c WHERE c.installation_id = installations.id
-               AND c.principal_id = installations.owner_principal_id AND c.revoked_at IS NULL
-           ) OR EXISTS (
+           AND (reservation_expires_at > ? OR owner_setup = 1 OR EXISTS (
              SELECT 1 FROM installation_reset_operations r
              WHERE r.operation_id = ? AND r.replacement_installation_id = installations.id
            ))`,
@@ -620,10 +611,13 @@ export class AccountStore {
            )`,
       ).bind(now, operationId, principalId),
     ]);
-    if (results.some((result, index) => index === 1 ? (result.meta.changes ?? 0) < 1 : (result.meta.changes ?? 0) !== 1)) {
+    const current = await this.requireOwnedReservation(operationId, principalId);
+    const resumed = results.every((result) => (result.meta.changes ?? 0) === 0)
+      && current.state === "provisioning" && current.operationState === "provisioning";
+    if (!resumed && results.some((result, index) => index === 1 ? (result.meta.changes ?? 0) < 1 : (result.meta.changes ?? 0) !== 1)) {
       throw new Error("installation could not enter provisioning");
     }
-    return await this.requireOwnedReservation(operationId, principalId);
+    return current;
   }
 
   async completeInstallationOnboarding(

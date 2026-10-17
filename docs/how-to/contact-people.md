@@ -19,23 +19,27 @@ your conversation opens, so you can turn it into a request to Ship.
 ## Start a conversation
 
 Choose **connect**, choose who should handle new messages, then **create invitation
-link** and share it wherever you already talk. It connects one person and lasts seven days; you can cancel it before it is
-accepted. In managed spaces, the link opens the existing Accounts space chooser.
-The recipient chooses a listed space or enters its address, signs in if needed,
-and chooses who should handle their new messages before accepting the invitation. Entering an address also works for people
-using another operator or a space they do not own. Other deployments open the
-space-address form directly.
-Neither person needs to publish a profile. Acceptance opens the conversation.
+link**. Share it wherever you already talk. The same link works for someone new
+to GSV or someone with an existing Space. It connects one person and lasts seven
+days; you can cancel it before acceptance.
 
-If someone gives you a link or an older contact code, choose **connect → I have an
-invitation** to paste it. These invitations are separate from
-[personal access to your own space](/how-to/invite-people).
+In managed spaces, the link opens a centered invitation showing who invited you.
+Choose **Continue**. Existing users select their Space; new users verify their
+email and create one. The contact invitation stays with them through signup and
+setup. In their Space, they choose **Me** or **Ship** and accept the connection.
+Each person's choice affects only their own incoming messages. Neither person
+needs to publish a profile.
 
-You can also ask Ship to create an invitation, or give it someone's invitation
-link to accept. Ship asks who should handle new messages unless you already told
-it, then completes the connection with that choice. It can also change the choice
-later when you ask. This works in your ordinary Ship conversation, including
-messaging apps; opening People is optional.
+The recipient can also enter a Space address, including a Space on another
+operator. This remains available if the browser cannot load or save signup state.
+Deployments without a signup service open that address form directly.
+If someone shares a link or a contact code, **I have an invitation** lets you
+paste it in People.
+
+Ship can create or accept these same invitations when asked, after you choose
+who handles new messages. In Shell, use `contact invite create --handling manual`
+or `--handling ship`. There are no signup-place reservations or registration
+codes. Ordinary contact expiry, cancellation and rate limits still apply.
 
 Choose **connect → use a profile address** to find a saved contact by name or enter
 a handle such as `esteve` or `@esteve`, or someone's public profile address.

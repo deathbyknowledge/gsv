@@ -86,7 +86,7 @@ reconnect. A remembered space sign-in lasts 30 days and renews during use.
 Browser tabs share renewal and sign-out; Desktop has its own stored session.
 A temporary network interruption reconnects without asking you to sign in again.
 
-If setup of a space claimed with an invite code was interrupted, **Continue setup** returns to owner email
+If self-service setup of a space was interrupted, **Continue setup** returns to owner email
 sign-in and the existing claimed space. For the Desktop app's configured operator,
 this stays inside the app; another operator's recovery page opens in the browser.
 The owner signs in with the email used to claim the invitation, then continues

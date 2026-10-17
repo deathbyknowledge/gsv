@@ -42,6 +42,17 @@ describe("installation onboarding capability", () => {
     expect(readInstallationOnboardingToken()).toBe(TOKEN);
   });
 
+  it("preserves contact acceptance through setup, including a repeated token read", () => {
+    window.history.replaceState(null, "", `/onboarding#onboarding=${TOKEN}&contact=friend-invitation`);
+    expect(readInstallationOnboardingToken()).toBe(TOKEN);
+    expect(window.location.hash).toBe("#contact=friend-invitation");
+    expect(readInstallationOnboardingToken()).toBe(TOKEN);
+    clearInstallationOnboardingToken();
+    expect(window.location.pathname).toBe("/");
+    expect(window.location.hash).toBe("#contact=friend-invitation");
+    expect(readInstallationOnboardingToken()).toBeNull();
+  });
+
   it("keeps the capability in memory when tab storage rejects it", () => {
     window.history.replaceState(null, "", `/onboarding#${TOKEN}`);
     vi.spyOn(window.sessionStorage, "setItem").mockImplementation(() => {

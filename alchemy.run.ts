@@ -38,6 +38,7 @@ export default Alchemy.Stack("gsv", {
   if (Boolean(ownerIssuer) !== Boolean(ownerClientId)) throw new Error("Owner identity requires both OIDC issuer and client ID");
   const ownerIdentity = ownerIssuer && ownerClientId
     ? { issuer: ownerIssuer, clientId: ownerClientId, clientSecret: ownerClientSecret } : undefined;
+  const openRegistration = yield* Config.boolean("GSV_SIGNUP_ENABLED").pipe(Config.withDefault(false));
   const ownerEmailFrom = Option.getOrUndefined(yield* Config.nonEmptyString("GSV_OWNER_EMAIL_FROM").pipe(Config.option));
   const ownerEmailRecipients = Option.getOrUndefined(yield* Config.nonEmptyString("GSV_OWNER_EMAIL_ALLOWED_RECIPIENTS").pipe(Config.option));
   if (ownerEmailRecipients && !ownerEmailFrom) throw new Error("Owner email recipients require GSV_OWNER_EMAIL_FROM");
@@ -73,7 +74,7 @@ export default Alchemy.Stack("gsv", {
     names: { gateway: prefix, ripgit: `${prefix}-ripgit`, storageBucket: `${prefix}-storage` }, paths: manifest.runtime,
     services: { adapters },
     installations: { workerName: `${prefix}-installations`, databaseName: `${prefix}-installations`,
-      workerBundle: manifest.runtime.installationsBundle, migrationsDirectory: manifest.runtime.installationsMigrations, ownerIdentity, ownerEmail, ownerOriginAliases },
+      workerBundle: manifest.runtime.installationsBundle, migrationsDirectory: manifest.runtime.installationsMigrations, ownerIdentity, ownerEmail, ownerOriginAliases, openRegistration },
     inference: { workerName: `${prefix}-inference`, workerBundle: manifest.runtime.inferenceBundle,
       defaultProvider: yield* Config.string("GSV_INFERENCE_PROVIDER").pipe(Config.withDefault("workers-ai")),
       defaultModel: yield* Config.string("GSV_INFERENCE_MODEL").pipe(Config.withDefault("@cf/zai-org/glm-5.3-flash")),

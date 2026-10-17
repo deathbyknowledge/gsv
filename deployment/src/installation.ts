@@ -46,6 +46,7 @@ export type GsvDeploymentProps = Omit<GsvRuntimeProps, "services"> & {
     /** Accounts sends owner codes independently of installation-scoped mail. The operator owns the verified sender and stable secret. */
     ownerEmail?: { from: string; allowedRecipients?: string[]; authSecret: Cloudflare.Workers.WorkerBindingProps[string] };
     ownerSignupOrigin?: string;
+    openRegistration?: boolean;
     ownerOriginAliases?: string[];
   };
   inference: {
@@ -181,6 +182,7 @@ export const GsvDeployment = (props: GsvDeploymentProps, dependencies = gsvRunti
       GSV_OWNER_OIDC_ISSUER: props.installations.ownerIdentity?.issuer ?? "",
       GSV_OWNER_OIDC_CLIENT_ID: props.installations.ownerIdentity?.clientId ?? "",
       GSV_OWNER_SIGNUP_ORIGIN: props.installations.ownerSignupOrigin ?? "",
+      GSV_SIGNUP_ENABLED: props.installations.openRegistration ? "true" : "false",
       GSV_OWNER_ORIGIN_ALIASES: ownerOriginAliases,
     };
     if (props.installations.ownerIdentity?.clientSecret) bindings.GSV_OWNER_OIDC_CLIENT_SECRET = props.installations.ownerIdentity.clientSecret;
