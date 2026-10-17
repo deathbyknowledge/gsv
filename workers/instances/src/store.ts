@@ -156,6 +156,17 @@ export class InstanceStore {
     const row = this.sql.exec<ProfileRow>("SELECT * FROM profiles WHERE owner_uid = ? AND json_extract(record, '$.automatic') = 1 AND json_extract(record, '$.state') = 'active'", ownerUid).toArray()[0];
     return row ? profile(row) : null;
   }
+  private profileCount(): number {
+    return this.sql.exec<{ count: number }>("SELECT count(*) AS count FROM profiles WHERE json_extract(record, '$.state') != 'deleted'").one().count;
+  }
+  /**
+   * Whether an ordinary start for this owner can use or create its automatic
+   * saved-login profile. Admission reuses an existing automatic profile without
+   * a quota check, so one that already exists stays usable at any allowance.
+   */
+  savedLoginsAvailable(ownerUid: number, limits: BrowserLimits): boolean {
+    return limits.enabled && (this.defaultProfile(ownerUid) !== null || this.profileCount() < limits.savedProfiles);
+  }
   ownedProfile(actor: InstanceActor, id: string): ProfileRow | null { return this.sql.exec<ProfileRow>("SELECT * FROM profiles WHERE owner_uid = ? AND id = ?", actor.ownerUid, id).toArray()[0] ?? null; }
   putProfile(value: BrowserProfile): void {
     const bounded = value.usage ? { ...value, usage: boundBrowserStorageUsage(value.usage) } : value;
@@ -168,8 +179,7 @@ export class InstanceStore {
         if (profile(existing).label !== label) throw new Error("Profile requestId has already been used with another label");
         return profile(existing);
       }
-      const count = this.sql.exec<{ count: number }>("SELECT count(*) AS count FROM profiles WHERE json_extract(record, '$.state') != 'deleted'").one().count;
-      if (!limits.enabled || count >= limits.savedProfiles) throw new Error("Saved browser profile limit reached");
+      if (!limits.enabled || this.profileCount() >= limits.savedProfiles) throw new Error("Saved browser profile limit reached");
       const value: BrowserProfile = { profileId: crypto.randomUUID(), ownerUid: actor.ownerUid, label, createdAt: Date.now(), revision: 1, state: "active", saveStatus: "empty", automatic: automatic || undefined };
       this.sql.exec("INSERT INTO profiles (id, owner_uid, request_id, record, key) VALUES (?, ?, ?, ?, ?)", value.profileId, actor.ownerUid, requestId, JSON.stringify(value), crypto.getRandomValues(new Uint8Array(32)).buffer);
       return value;

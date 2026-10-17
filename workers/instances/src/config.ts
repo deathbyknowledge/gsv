@@ -32,10 +32,13 @@ export function computerTemplate(limits: ComputerLimits): InstanceTemplate {
     maxLifetimeSeconds: limits.maxInstanceSeconds, capacityUnits: 1,
   };
 }
-export function browserTemplate(limits: BrowserLimits): InstanceTemplate {
+/** `savedLogins` is whether the requesting account can use or create its automatic saved-login profile right now. */
+export function browserTemplate(limits: BrowserLimits, savedLogins = limits.savedProfiles > 0): InstanceTemplate {
   return {
     templateId: "browser", revision: "1", kind: "browser", label: "Cloud browser",
-    description: "A browser with tabs, page interaction, screenshots, and temporary files.",
+    description: savedLogins
+      ? "A browser with tabs, page interaction, screenshots, and temporary files. Ordinary starts remember and restore this account's website logins across instances; the lifetime caps one instance, not the saved logins. --new starts a separate temporary browser that does not share them."
+      : "A browser with tabs, page interaction, screenshots, and temporary files. An ordinary start cannot use or create this account's automatic saved-login profile and would fail; start with --new for a temporary browser, or with --profile and an existing saved profile from `browser profile list`.",
     implements: [...IMPLEMENTATIONS], defaultLifetimeSeconds: Math.min(1800, limits.maxInstanceSeconds),
     maxLifetimeSeconds: limits.maxInstanceSeconds, capacityUnits: 1,
   };

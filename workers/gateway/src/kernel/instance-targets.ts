@@ -19,7 +19,12 @@ export async function discoverInstanceTargets(ctx: KernelContext, options: Targe
     const inventory = await service.list(actor, { includeTerminal: options.includeOffline });
     const targets: TargetDescriptor[] = inventory.instances.filter(value => options.includeOffline || value.state === "ready").map(value => ({
       targetId: value.targetId, ownerUid: value.ownerUid, ownerUsername: ctx.auth.getPasswdByUid(value.ownerUid)?.username ?? null,
-      label: value.label, description: `Cloud ${value.kind === "linux" ? "Linux computer" : "browser"}; ${value.state}; expires ${new Date(value.expiresAt).toISOString()}`,
+      label: value.label,
+      description: value.kind === "linux"
+        ? `Cloud Linux computer; ${value.state}; expires ${new Date(value.expiresAt).toISOString()}`
+        : `Cloud browser; ${value.state}; ${value.isolated || !value.profileId
+          ? "temporary, no saved logins"
+          : `saved logins from profile ${value.profileId.slice(0, 8)} (browser profile list marks the automatic one)`}; this instance expires ${new Date(value.expiresAt).toISOString()}`,
       platform: value.kind, version: value.templateRevision,
       online: value.state === "ready" && value.expiresAt > Date.now(),
       implements: value.implements,

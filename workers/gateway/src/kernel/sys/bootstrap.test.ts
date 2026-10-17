@@ -104,13 +104,19 @@ describe("handleSysBootstrap", () => {
     );
     expect(BUILTIN_SKILL_FILES.map((skill) => skill.path)).toEqual([
       "browser-target/SKILL.md",
+      "browser-target/pages.md",
+      "browser-target/files.md",
+      "browser-target/profile-and-capture.md",
       "gsv-manual/SKILL.md",
       "image-reading/SKILL.md",
       "memory/SKILL.md",
       "process-orchestration/SKILL.md",
       "skill-authoring/SKILL.md",
     ]);
-    expect(BUILTIN_SKILL_FILES.every((skill) => skill.content.startsWith("---\n"))).toBe(true);
+    // Skill entry points carry frontmatter; supporting reference files are plain Markdown.
+    for (const skill of BUILTIN_SKILL_FILES) {
+      expect(skill.content.startsWith(skill.path.endsWith("/SKILL.md") ? "---\n" : "# ")).toBe(true);
+    }
     const expectedSkillOps = BUILTIN_SKILL_FILES.map((skill) => ({
       type: "put",
       path: `skills.d/${skill.path}`,
@@ -159,6 +165,9 @@ describe("handleSysBootstrap", () => {
     const operations = applyMock.mock.calls[0]?.[4] as Array<{ path: string }>;
     expect(operations.map((operation) => operation.path)).toEqual([
       "skills.d/.dir",
+      "skills.d/browser-target/pages.md",
+      "skills.d/browser-target/files.md",
+      "skills.d/browser-target/profile-and-capture.md",
       "skills.d/gsv-manual/SKILL.md",
       "skills.d/image-reading/SKILL.md",
       "skills.d/memory/SKILL.md",

@@ -481,6 +481,20 @@ describe("human browser control", () => {
     }, input);
   });
 
+  it("describes saved logins from the requesting account's actual profile availability", () => fixture(async (object, store) => {
+    const other = { ownerUid: 2000, human: true };
+    expect((await object.catalog(actor)).templates[0]?.description).toContain("remember and restore");
+    expect((await object.catalog(other)).templates[0]?.description).toContain("remember and restore");
+    // The fixture's ordinary start created the actor's automatic profile; fill the remaining slots explicitly.
+    for (let index = 1; index < limits.savedProfiles; index += 1) store.createProfile(actor, `explicit-${index}`, `Explicit ${index}`, limits);
+    expect((await object.catalog(actor)).templates[0]?.description).toContain("remember and restore");
+    expect((await object.catalog(other)).templates[0]?.description).toContain("start with --new");
+    // Lowering the allowance to zero keeps an existing automatic profile usable; admission reuses it without a quota check.
+    vi.spyOn(InstancePolicy.prototype, "limits").mockResolvedValue({ ...limits, savedProfiles: 0 });
+    expect((await object.catalog(actor)).templates[0]?.description).toContain("remember and restore");
+    expect((await object.catalog(other)).templates[0]?.description).toContain("start with --new");
+  }));
+
   it("keeps admission capabilities tied to the admitted template when policy is disabled", () => fixture(async (object, _store, instanceId) => {
     vi.spyOn(InstancePolicy.prototype, "limits").mockResolvedValue({ ...limits, enabled: false });
     expect((await object.catalog(actor)).templates).toEqual([]);

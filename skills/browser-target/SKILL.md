@@ -1,6 +1,6 @@
 ---
 name: browser-target
-description: Use GSV's browser capability for public websites and signed-in web apps, even when no browser is connected. Use a suitable existing browser or provision a cloud browser, inspect pages, and verify actions.
+description: Use GSV's browser capability for public websites and signed-in web apps, even when no browser is connected. Default to the cloud browser, use the user's own browser only when the work must run in it, inspect pages, and verify actions.
 aliases: browser-extension, browser
 ---
 
@@ -9,8 +9,7 @@ aliases: browser-extension, browser
 Use this skill for tasks that need reading or interacting with websites and web
 apps, including public pages and signed-in services, even when the user does not
 mention a browser or no browser target is listed. Browser access is a built-in
-GSV capability: use a suitable existing browser or provision a cloud browser.
-The user does not need to connect their personal browser first.
+GSV capability; the user does not need to connect their personal browser first.
 
 Browser targets have kind `browser` or platform `browser` or `browser-extension`.
 Their ids may look like `browser:chrome`, `rearden:brave`, or an instance id;
@@ -18,15 +17,33 @@ use the id returned by discovery or provisioning.
 
 ## Quick Start
 
-1. On `gsv`, run `targets list --kind browser` and choose a suitable browser if
-   one is already available. This lists existing targets; an empty list does not
-   rule out cloud provisioning. `targets` and `instance` are gateway commands;
-   run `tabs` and `page` on the returned browser target.
-2. If no suitable browser is available, run `instance catalog` on `gsv`.
-   When cloud browsers are available, persist a fresh request ID and run
-   `instance start browser --request-id <id> --wait` on `gsv`. It returns when
-   ready and says `disposition: created` or `reused`. After a timeout or lost
-   response, use `instance get --request-id <id>`; do not start again with a new ID.
+1. Choose the browser as described under Choosing A Browser. On `gsv`, run
+   `instance list` for the account's active cloud browsers, including ones
+   still starting: each entry's `profileId` names its saved-login profile and
+   `isolated` marks a temporary one. For connected personal browsers, run
+   `targets list --online --search browser --limit 100 --json` and follow its
+   `--offset` paging when the JSON `total` exceeds the page. For cloud work,
+   reuse an active cloud browser only when it fits the task: for signed-in
+   work the one on the account's automatic profile (`browser profile list`
+   marks which profile is automatic; it pages 32 at a time, so follow its
+   `nextOffset` until the automatic or named profile is found before
+   concluding it does not exist), a named profile only when the task calls
+   for that profile, and a temporary one for work that needs no login or for a
+   site the person already signed into in that instance, while it runs. Wait
+   for a starting browser with `instance get` rather than starting another. An
+   empty list does not rule out cloud provisioning. `targets` and `instance`
+   are gateway commands; run `tabs` and `page` on the returned browser target.
+2. For cloud work with no suitable running cloud browser, run `instance catalog`
+   on `gsv`. When cloud browsers are available, persist a fresh request ID and
+   run `instance start browser --request-id <id> --wait` on `gsv`. It returns
+   when ready and says `disposition: created` or `reused`. When the catalog
+   says saved logins are available, an ordinary start restores the account's
+   website logins; when it says they are not available, start with `--profile`
+   and an existing saved profile from `browser profile list`, or with `--new`.
+   Whenever the task calls for a named saved profile, pass `--profile <id>`
+   regardless of what the catalog says; `--new` starts a separate temporary
+   browser without any saved logins. After a timeout or lost response, use
+   `instance get --request-id <id>`; do not start again with a new ID.
 3. On the browser target, inspect `tabs list` and `page snapshot`. Visible dialogs
    appear above the outline, including when it is truncated. An empty
    `page snapshot | grep ...` can mean a dialog hides background content; inspect
@@ -39,14 +56,37 @@ use the id returned by discovery or provisioning.
 5. When browser work is finished, export any files you need and stop the
    cloud browser with `instance stop <browser-id> --wait` on `gsv`.
    Keep it open if the user asks or ongoing work still needs it.
-   For an extension-connected browser, close only tabs you opened.
+   In the user's own browser, always close every tab you opened once the work
+   is complete, and never close tabs you did not open.
    Instance commands accept its displayed eight-character ID.
+
+## Choosing A Browser
+
+- Default to the cloud browser.
+- Use the user's own browser, or ask to connect it, only when they have said they prefer it (for example, they do not want to share their logins with GSV; do not argue the point again), when the work must run in their browser itself (their existing signed-in session, a passkey, hardware key or device-bound sign-in, their tabs, history, bookmarks or another device-only feature, or a site that rejects cloud browsers), or when cloud browsing is unavailable.
+- Do not volunteer the comparison below. Give it when the user asks how sign-in, sessions or credentials work, briefly and with the tradeoffs that matter for their site.
+- The catalog states only whether saved logins are available to this account; do not infer other limits from it or from an instance lifetime. For details, consult the manual: `wiki search 'cloud browser logins' --prefix gsv-manual`.
+
+## Signed-In Sessions: Two Routes
+
+When the user asks, check `instance catalog` first, then explain both in simple words and recommend one for their case. If the catalog says saved logins are not available to this account, describe the cloud route as an existing saved profile when `browser profile list` (followed through `nextOffset`) has one, otherwise as a temporary browser whose sign-in does not carry over, and recommend their own browser for anything that must stay signed in.
+
+**Cloud browser with saved logins.** Lead with convenience: it keeps working without their computer turned on, while they do something else. They sign in once through a link that opens the live browser view; the login is remembered from then on, and credentials stay out of chat. To test first, they can watch GSV work in their own browser through the extension before giving it any logins. Limits, when relevant: no passkeys or hardware security keys; device-bound sign-in or a site that rejects cloud browsers needs their own browser; nothing is copied from their personal browser; some sites ask to sign in again because session storage and service-worker caches are not saved; a website can still expire a session; each instance has a fixed lifetime, and saved logins return after a restart.
+
+**Their own browser through the Your Ship extension.** Uses their existing signed-in sessions, passkeys and device features, and reaches their tabs, history, bookmarks and downloads. Costs: Chrome must be open on their machine with the extension paired, actions run on their real profile, connected browsers ask for approval by default, and they can pause or stop the connection at any time.
+
+## Build Trust At The User's Pace
+
+Match checking to the stakes. Once the user has given you access to a site, do routine reading there without asking again: asked to check their Instagram, have them sign in once through the handoff, then read the posts without confirming each one. Check back before anything that leaves a trace: posting, sending, paying, deleting.
+
+The first time a task reaches a step that touches their private data, such as signing in or paying, say so and offer the choice: they do that step themselves in the live browser, or you do it when the browser already holds a usable session or a method the site has saved. A first-time sign-in always goes through the handoff; never take a password or code in chat. Say which you would pick and why in one sentence, then follow their choice. Once a step has gone well with them doing it, mention that you can take it over next time where that is possible.
+
+Example: booking a train ticket, find the connection and fill in the passenger details they gave you. At checkout, send the handoff link so they pay themselves in the live browser; never take card details in chat. Once they have paid and the booking succeeded, mention that next time you can complete the payment with a payment method the site has saved.
 
 ## Model
 
-- Browser use is a built-in GSV capability with two providers: the user's extension-connected browser and an on-demand cloud browser. They share the page and tab workflow below. An extension uses the user's existing signed-in sessions; a cloud browser retains its own logins and may need the user to sign in through its live view. Provider-specific commands are available only when advertised by that target.
-- A paired browser uses the user's existing signed-in profile. Use a cloud browser for public pages and its own saved sessions for signed-in pages. Both can access websites with `tabs open` and `page text` without a separate MCP server or OAuth integration. If a website needs login or verification, follow the human handoff workflow below.
-- Only report browser access unavailable after checking cloud availability or receiving a start failure, and explain the specific limitation. Offer personal-browser pairing when the user wants it, their existing sessions or device features are needed, or cloud browsing is unavailable. A missing connected browser alone is not a reason to refuse a website task.
+- Both providers share the page and tab workflow below and reach websites with `tabs open` and `page text` without a separate MCP server or OAuth integration. Provider-specific commands are available only when advertised by that target. If a website needs login or verification, follow the human handoff workflow below.
+- Only report browser access unavailable after checking cloud availability or receiving a start failure, and explain the specific limitation. A missing connected browser alone is not a reason to refuse a website task.
 - Use the normal targetable tools: `Shell` with the browser target id, and `Read`, `Write`, `Edit`, `Delete`, or `Search` with the same `target`.
 - Use normal file tools only for paths the target advertises.
 - Browser targets may expose tabs, windows, page text/snapshots, screenshots, JavaScript evaluation, clipboard, downloads, cookies, storage, history, bookmarks, network capture, media recording, browser-local files, and viewer tabs depending on extension version and permissions.
@@ -61,7 +101,10 @@ browser target. For a website login or verification that needs the person, use
 send its returned action URL, and yield. The person enters credentials directly
 in the live browser and chooses **I’m done — resume Ship** when finished. Keep
 credentials out of chat. The handoff saves website state before reopening the
-waiting work. Ordinary live viewing does not pause browser automation.
+waiting work. On the ordinary browser that login returns with the next ordinary
+start; a `--new` browser saves nothing, and a `--profile` browser restores only
+when that profile is selected again. Ordinary live viewing does not pause
+browser automation.
 
 ## Discover Capabilities
 
@@ -69,7 +112,7 @@ From the native `gsv` target, identify the browser target and inspect its
 descriptor:
 
 ```bash
-targets list --kind browser
+targets list --online --search browser --limit 100 --json
 targets show rearden:brave
 ```
 
@@ -89,295 +132,15 @@ Do not assume commands beyond what the active target advertises. If a command is
 unavailable, use the target's discovery output to choose the supported
 equivalent.
 
-## Browser Files
+## Reference
 
-Useful read-only runtime paths usually include:
+Read a reference file only when the task needs it, with
+`skills read browser-target <file>` on `gsv`:
 
-```bash
-cat /proc/browser.json
-cat /proc/tabs.json
-cat /proc/tabs/<tabId>/text.txt
-cat /proc/tabs/<tabId>/resources/index.json
-cat /proc/network/status.json
-cat /proc/network/events.jsonl
-```
-
-Each tab's `resources` directory exposes the HTML, JavaScript, CSS, images,
-fonts, and other resources currently known to Chrome. Listing the directory or
-reading `index.json` loads only resource metadata. Reading an individual file
-loads only that resource body:
-
-```bash
-find /proc/tabs/<tabId>/resources -type f
-cat /proc/tabs/<tabId>/resources/https/example.com/app~<hash>.js
-```
-
-Paths are collision-safe filesystem names; use `index.json` to map them to
-their exact URLs, frames, MIME types, and reported sizes. Resource files are
-ephemeral views of the live tab. Copy one to `/home/browser` when the task needs
-a stable snapshot. For recursive content lookup, use the normal `Search` tool
-with the browser target and a path under the tab's `resources` directory; it
-uses Chrome's resource search without reading every body. Shell `rg` reads the
-files it examines and is better reserved for a small resource directory or a
-copied snapshot. A resource body may be unavailable after eviction or
-navigation; start browser network capture before reproducing a request when an
-exact fetch/XHR response must be retained.
-
-Writable browser-local paths usually include `/tmp`, `/tmp/render`,
-`/home/browser`, `/home/browser/screenshots`, `/home/browser/network`, and
-`/home/browser/recordings`. Use these for artifacts created by browser
-commands, viewer inputs, network captures, screenshots, recordings, and
-temporary transfer files.
-
-Use target-qualified paths when moving files to or from a browser target:
-
-```bash
-cp macbook:/home/hank/report.pdf [rearden:brave]:/tmp/report.pdf
-cp [rearden:brave]:/tmp/report.pdf gsv:/home/hank/report.pdf
-```
-
-Target-qualified paths use `target:/absolute/path`. Plain target ids such as
-`macbook` do not need brackets. Target ids containing `:` must be bracketed,
-such as `[rearden:brave]:/tmp/page.html`.
-
-Run target-qualified `cp` from the native GSV shell or target-aware filesystem
-tools. The browser target's just-bash `cp` is local to the browser filesystem.
-Use target-aware `cp` for large files. Do not base64 large files through model output.
-
-## Pages and Tabs
-
-Start with tab discovery, then inspect page content before mutating anything:
-
-```bash
-tabs list
-tabs active
-page snapshot --tab <tabId>
-page text --tab <tabId>
-```
-
-`page snapshot` returns a readable accessibility outline. Actionable elements
-and scroll regions carry snapshot-scoped refs such as `@s4k2e7`. The leading
-`@` is part of the canonical ref; commands also accept the bare generated form
-`s4k2e7`. Refs are pinned to the tab and document that produced them:
-
-```text
-textbox @s4k2e1 "Search or start new chat"
-scroll-region @s4k2e2 "English Mamá: Hello" [scrollable=y]
-  row @s4k2e3 "English"
-textbox @s4k2e4 "Type a message" [editable focusable]
-```
-
-```bash
-page click --tab <tabId> @s4k2e3
-page type --tab <tabId> @s4k2e4 'Draft text'
-page scroll --tab <tabId> @s4k2e2 down
-page scroll --tab <tabId> @s4k2e2 top
-```
-
-Taking another snapshot does not itself expire refs from recent snapshots.
-Refs expire when their bounded snapshot is evicted, the extension restarts, the
-node disappears, its semantics change, or its document navigates. If an action
-reports an unknown or stale ref, take a new snapshot instead of guessing which
-element replaced it. Prefer the newest refs for virtualized rows because a
-framework may reuse a node for different content.
-
-Page actions return compact JSON with separate `delivered` and `observed`
-sections. `delivered.accepted` means Chrome accepted the CDP input, and
-`delivered.receiver` identifies the hit-tested or focused receiver.
-`observed.status` is `changed` or `no-change-detected`; observation covers
-navigation, focus, selection, DOM mutations, and target state. Accepted input
-with no detected change may be a no-op or an effect outside the observer;
-inspect the warning and snapshot again rather than treating it as a transport
-failure.
-
-For forms, prefer verified value-setting commands. `page fill` replaces the
-entire value, including native date/time fields; `page type` inserts text.
-`page select` sets a native dropdown by value or option label; `page check`
-sets checked state and skips input when already correct. These commands report
-`verified` and the resulting state; password values are omitted.
-
-```bash
-page fill --tab <tabId> --label 'From' 'Amsterdam Centraal'
-page fill --tab <tabId> --role input-time '10:00'
-page select --tab <tabId> --label Class --option-label First
-page check --tab <tabId> --label 'Direct only'
-page click --tab <tabId> --role button --name Plan --snapshot
-```
-
-Role/name and label locators resolve against the current page and require one
-match. Ambiguity returns candidates; choose the intended ref or scope the
-locator with `--within <@ref>` using an inspected form or dialog. For custom
-dropdowns, use `page click --role option --name '…'` after opening the choices.
-`page wait` accepts the same semantic locators.
-
-Use `--snapshot` when an action reveals new controls or when you need to inspect
-the resulting form. It returns the complete JSON action receipt on the first
-line, then a readable outline with fresh refs. `--within` scopes both lookup and
-the follow-up snapshot. Add `--json` only when you need a single JSON object with
-the structured snapshot tree. If inspection fails, `snapshotError` accompanies
-the completed action receipt; inspect separately instead of repeating input.
-For simple verified value changes, the receipt is usually enough.
-
-`page snapshot --within <@ref>` keeps inspection focused. Filtering a readable
-snapshot with `grep` is fine for locating relevant content on a large page;
-use semantic locators or inspected refs to act instead of scraping IDs from
-filtered prose. Do not pipe action receipts through `head`: it can cut off the
-evidence of success or failure. Chain dependent actions with `&&`, not `;`:
-
-```bash
-page fill --tab <tabId> --label Notes 'Draft text' && page check --tab <tabId> --label 'Save draft'
-```
-
-If you must pipe an action, enable `set -o pipefail` so a pipe reader's success
-cannot hide the action's failure. Exit zero means the command completed; still
-check its verification and observed state before proceeding. Use `page wait`
-for the expected control instead of fixed sleeps.
-
-CSS selectors remain useful as an explicit fallback when the page's semantic
-tree omits a target:
-
-```bash
-page click --tab <tabId> 'button[type=submit]'
-page type --tab <tabId> 'input[name=email]' 'hank@example.com'
-page key --tab <tabId> Enter
-page wait --tab <tabId> '.result' --timeout 10000
-page screenshot --tab <tabId>
-```
-
-Selector clicks and typing still use Chrome's input pipeline. Use
-`page snapshot --dom [selector]` for a bounded raw-DOM debugging view when
-semantic names are insufficient. Use a snapshot ref with `page scroll` to
-target nested virtualized lists; an untargeted scroll acts at the viewport
-center and may be received by whichever scrollable element is under that point.
-Targeted `top` and `bottom` repeat native wheel input and report
-`observed.scroll.boundaryReached`; check that field instead of assuming an
-accepted wheel event reached the boundary. If the target is already there, the
-action reports `delivered.skipped=already-at-boundary` with zero events and
-does not dispatch input.
-
-Virtualized lists expose only their currently materialized rows. To read one
-completely, record the visible semantic rows, scroll the list by its ref,
-snapshot again, and deduplicate rows until the reported scroll position stops
-changing. Use refs from the newest snapshot for row actions because frameworks
-may reuse one DOM node for different rows after scrolling.
-
-`page type` inserts text but does not submit a form or send a message. Treat
-Enter, submit buttons, and send controls as separate mutations and invoke them
-only when the task authorizes submission.
-
-Use JavaScript evaluation only when page snapshot/text/click/fill/select/check/type/wait cannot
-express the task:
-
-```bash
-page js --tab <tabId> 'document.title'
-page js --tab <tabId> 'Array.from(document.querySelectorAll("button")).map((button) => button.textContent)'
-```
-
-Prefer semantic refs, then selectors, over coordinates. Always pass `--tab` for
-work on an agent-opened tab so a user changing their active tab cannot redirect
-selector, key, screenshot, text, wait, or JavaScript commands. Ref actions also
-validate that an explicitly supplied tab matches the ref's original tab.
-
-`tabs open` creates a background tab and returns its id. Capture that id and
-pass it to every command that operates on the new tab:
-
-```bash
-opened="$(tabs open https://example.com)"
-tab_id="$(printf '%s\n' "$opened" | tail -n 1 | jq -r '.tab.id')"
-page snapshot --tab "$tab_id"
-page click --tab "$tab_id" 'a.more-information'
-```
-
-Use `tabs open --active` only when the user explicitly asks to see or switch to
-new content. For example:
-
-```bash
-tabs open --active /home/browser/screenshots/tab-123.png
-printf '<h1>Report</h1>' | tabs open --active --mime text/html -
-```
-
-For a remote file, first copy it into `/tmp` or `/tmp/render` on the browser
-target from the native GSV shell, then run `tabs open` on the browser-local
-path. Use `--mime` when stdin or an extensionless file needs an explicit
-content type.
-
-## Profile Data
-
-Browser profile commands can inspect or mutate real profile state:
-
-```bash
-cookies list example.com
-storage local get
-history search --limit 20 query
-bookmarks search query
-```
-
-Mutation examples:
-
-```bash
-cookies set https://example.com name value
-history delete https://example.com/
-bookmarks create <parentId> https://example.com "Example"
-```
-
-For browser downloads, use the browser target's `downloads` command. Browser
-downloads are real browser-profile downloads, while `/tmp` and `/home/browser`
-are the target filesystem exposed through GSV.
-
-```bash
-downloads list --limit 20
-downloads start https://example.com/file.pdf --filename file.pdf
-downloads get <downloadId>
-```
-
-## Network Capture
-
-```bash
-network start --tab <tabId> --bodies --persist
-network status --tab <tabId>
-network events --tab <tabId> --limit 50
-network get <requestId> --body
-network export har --tab <tabId> --path /home/browser/network/capture.har
-network stop --tab <tabId>
-```
-
-Use `--persist` when the capture should create files under
-`/home/browser/network/sessions/...`. Without persistence, inspect through the
-network command output or the `/proc/network/*` runtime files.
-
-## Media Recording
-
-Use `media record` to capture tab audio or video into the browser target filesystem:
-
-```bash
-media record start --tab <tabId> --path /home/browser/recordings/demo.webm
-media record start --tab <tabId> --video --path /home/browser/recordings/demo-video.webm
-media record status
-media record stop
-tabs open /home/browser/recordings/demo.webm
-```
-
-Audio recordings are WebM/Opus when supported. Use `--video` or
-`--mode video` for tab video with audio; video recordings are WebM when
-supported and can grow quickly, so set `--max-bytes` explicitly for longer
-captures. Chrome only lets the extension record a tab the person has invoked
-it on, so a first `media record start` on a tab may be refused. When it is,
-ask the person to focus that tab, open Your GSV from the toolbar, and choose
-Allow recording, then run the command again; each allowance starts one
-recording. By default, captured tab audio remains audible; use `--monitor off`
-only when the task calls for disabling playback. To move a finished recording
-to another target, copy it from the native GSV shell after recording stops.
-
-## Clipboard
-
-Use clipboard commands for small text handoffs:
-
-```bash
-clipboard read
-clipboard write "copied text"
-printf '%s\n' "copied text" | clipboard write
-```
-
-Clipboard access may be unavailable in MV3 service-worker contexts until an
-offscreen document bridge is enabled. Treat command errors as capability
-signals, not as proof that the browser target is disconnected.
+- `pages.md`: tabs, snapshots and refs, action receipts, forms and locators,
+  scrolling and virtualized lists, selectors, keys, waits, JavaScript, and
+  opening or rendering files in a tab.
+- `files.md`: the browser target's runtime and writable paths, tab resources,
+  and target-qualified `cp` between targets.
+- `profile-and-capture.md`: cookies, storage, history, bookmarks and
+  downloads; network capture; media recording; clipboard.
