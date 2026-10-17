@@ -143,7 +143,7 @@ async function mountedZen(pid?: string, initialTarget?: string, native = false, 
 describe("Zen conversation entry", () => {
   it.each([
     ["create a routine", "Help me create a routine."],
-    ["connect a computer", "Help me connect a computer to this space."],
+    ["connect a computer", "Help me connect a computer to my ship."],
     ["start a browser", "Start a browser for me."],
   ])("stages %s as editable text and sends only the edited message", async (label, request) => {
     const zen = await mountedZen();
@@ -522,7 +522,7 @@ describe("Zen conversation entry", () => {
       expect(zen.props(PromptLine).allowEmpty).toBe(true);
       expect(zen.dirty()).toBe(true);
       await act(() => { expect(zen.props(PromptLine).onSubmit("$ pwd")).toBe(false); });
-      expect(zen.props(FeedbackNote).note).toEqual({ kind: "notice", text: "Remove attachments and pasted text before running a command, or send them to your Ship in plain words." });
+      expect(zen.props(FeedbackNote).note).toEqual({ kind: "notice", text: "Remove attachments and pasted text before running a command, or send them to your ship in plain words." });
       await act(() => { zen.props(ZenDraftPaste).onRemove?.(); });
       expect(pastes()).toHaveLength(1);
       expect(zen.props(ZenDraftPaste).paste.text).toBe(log);

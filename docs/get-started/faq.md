@@ -20,7 +20,7 @@ Today, Ship is for people who run more than one machine and want an AI that span
 
 ### What does it cost?
 
-Hosted spaces use their operator's pricing. Self-hosting uses your own
+Hosted ships use their operator's pricing. Self-hosting uses your own
 Cloudflare account and model-provider billing. The public operator composition
 includes CodeMode's Worker Loader and requires
 [Workers Paid](https://developers.cloudflare.com/dynamic-workers/pricing/).
@@ -35,8 +35,8 @@ omit the Worker Loader on Free accounts. Containers are not required.
 
 A Cloudflare account, a domain in one of its DNS zones, and Node.js and Rust
 for the source build. Follow the [deployment guide](/how-to/deploy-with-alchemy).
-If an operator hosts your space, you only need its setup invitation. Connect
-machines when you want Ship to work on them.
+If an operator hosts your ship, sign up with them or use their setup invitation.
+Connect machines when you want Ship to work on them.
 
 ## Open, private, yours
 
@@ -53,13 +53,13 @@ Not yet, to be exact: Ship is open source today (MIT, all the code is there) and
 
 ### Where does my data go?
 
-Your space's state lives in its operator's Cloudflare account. With self-hosting,
+Your ship's state lives in its operator's Cloudflare account. With self-hosting,
 that is your account. Model providers and connected messengers receive the data
 routed to them. The public stack works without routing through H&M services.
 
 ### Is anything exposed to the internet?
 
-No open ports, no VPN, no box sitting exposed. Your devices connect outbound through the gateway using tokens, so nothing comes inbound to your machines. Only your Ship URL is public, everything else is private.
+No open ports, no VPN, no box sitting exposed. Your devices connect outbound through the gateway using tokens, so nothing comes inbound to your machines. Only your ship URL is public, everything else is private.
 
 See [Security Model](/architecture/security-model) for the full picture.
 
@@ -87,7 +87,7 @@ See [Bring Your Own Model](/how-to/bring-your-own-model) for setup instructions.
 
 Yes, when your operator enables the adapter and supplies its application
 credentials. Link your own identity from Settings → Messengers. One external
-identity has one active space for each private-message adapter route.
+identity has one active ship for each private-message adapter route.
 
 WhatsApp works through an operator-owned WhatsApp Business number where Meta
 permits it. See

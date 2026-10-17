@@ -1,26 +1,26 @@
-# One person per space
+# One person per ship {#one-person-per-space}
 
-Each Ship space has one personal account, its Ship and any additional agent accounts.
+Each ship has one personal account, its personal agent and any additional agent accounts.
 To connect with another person, invite them through [People](/how-to/contact-people).
-They use their own space; a contact invitation does not create an account in yours.
-An operator can host separate spaces for a [whole team](/how-to/organisations).
+They use their own ship; a contact invitation does not create an account in yours.
+An operator can host separate ships for a [whole team](/how-to/organisations).
 
-## Create a space
+## Create a ship {#create-a-space}
 
-Open your operator's signup page or choose **Create your space** in Desktop.
-Verify your email, agree to the terms and choose a handle. Registration needs no
-invite code when the operator enables it. One verified email can create one
-self-service Space; existing Spaces remain accessible through **My spaces**.
+Open your operator's signup page or choose **Create your ship** in Desktop.
+Choose a handle, enter your email and agree to the terms. Verify your email, then
+set your password. Registration needs no invite code when the operator enables
+it. One verified email can create one ship. Sign in with the same email to reopen it.
 
 A friend's contact link opens their invitation first. After signup, continue in
-your Space to choose who handles incoming messages and accept the connection.
+your ship to choose who handles incoming messages and accept the connection.
 If setup is interrupted, sign in with the same email and continue your saved setup.
 
 ## Sign in
 
-Open your space and enter your password. Setup derives the internal account name
-from the space handle. Existing spaces
-keep their account identity, home directory, credentials and connected devices.
+Open your ship and enter your password. Setup derives the internal account name
+from your handle. Existing ships keep their account identity, home directory,
+credentials and connected devices.
 
 ## Recover personal access
 

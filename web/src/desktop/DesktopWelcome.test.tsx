@@ -28,7 +28,7 @@ it("shows the configured Ship address in fresh Desktop signup before verificatio
   const root = createTestRoot("Desktop signup address");
   try {
     await root.render(<Harness />);
-    const create = () => collectNodes(tree).find((node) => node.props["aria-label"] === "Create your Ship")!;
+    const create = () => collectNodes(tree).find((node) => node.props["aria-label"] === "Create your ship")!;
     await vi.waitFor(() => expect(create().props.disabled).toBe(false));
     await act(() => { create().props.onClick?.(); });
     await vi.waitFor(() => expect(collectText(tree)).toMatch(/Ship address\s+your-name\s*\.\s*fleet\.example/));

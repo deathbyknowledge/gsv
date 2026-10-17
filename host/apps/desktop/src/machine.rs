@@ -38,7 +38,7 @@ pub fn scope(session: &Session, generation: &str, username: &str) -> Result<Scop
         return Err("Sign in before connecting this computer.".into());
     }
     Ok(Scope {
-        origin: session.origin.clone().ok_or("Choose a space first.")?,
+        origin: session.origin.clone().ok_or("Choose a ship first.")?,
         username: username.to_owned(),
     })
 }
@@ -320,7 +320,7 @@ fn command_arguments(
         .chain(snapshot.pending.iter())
         .any(|identity| !identity.matches(scope))
     {
-        return Err("This computer is connected to another space or account. Its connection was not changed.".into());
+        return Err("This computer is connected to another ship or account. Its connection was not changed.".into());
     }
     match command {
         MachineCommand::Start => {
@@ -352,7 +352,7 @@ fn command_arguments(
             }
             let expected = invitation_identity(&code)?;
             if !expected.matches(scope) {
-                return Err("The invitation belongs to another space or account.".into());
+                return Err("The invitation belongs to another ship or account.".into());
             }
             Ok((
                 vec!["pair", "-", "--preserve-cli-login", "--no-replace"],

@@ -58,7 +58,7 @@ Choose **I’m done — resume Ship** after you finish signing in or completing 
 requested steps. Once saving succeeds, the view confirms completion and stays
 open, following Ship again.
 Requests expire after fifteen minutes or when the browser stops, whichever comes
-first. The link identifies one request; it never grants access without your Ship
+first. The link identifies one request; it never grants access without your ship
 login. An old link shows that its request has ended and cannot control or complete
 a later request. Open the latest request from Ship when needed.
 Your next chat message still goes to Ship. Website passwords and
@@ -77,7 +77,7 @@ titles and addresses are shortened for display; the actual page URL is unchanged
 ## Remembered logins and lifetime
 
 Ship automatically keeps website cookies, local storage and IndexedDB for your
-local account in this space. The next ordinary browser restores that saved
+local account in this ship. The next ordinary browser restores that saved
 state. Saved state is encrypted and separate from
 the running browser. Only one instance can use the same saved state at a time.
 The account's automatic login store has a durable identity. Explicitly created
@@ -105,7 +105,7 @@ commands and input wait while the save completes, with their usual cancellation
 and time limits. The live view stays open during saving.
 Live-view input requests time out after ten seconds. A timed-out request is not
 replayed; Ship retains the underlying operation until it settles, so saving and
-space deletion cannot mistake a timeout for completed input.
+installation deletion cannot mistake a timeout for completed input.
 
 **Stop browser** commits saved data before closing. If a website uses unsupported
 storage or its storage cannot be read, Ship saves the other sites and reports
@@ -129,7 +129,7 @@ Collection also bounds structural work to 65,536 visited values/property names a
 128 levels of nesting per site. This limits temporary codec objects even when the
 eventual JSON is small. A site exceeding that limit reports a partial save and
 retains its earlier snapshot when available; healthy sites continue saving.
-Within a space, cold profile restores and saves share one memory slot. Browser
+Within an installation, cold profile restores and saves share one memory slot. Browser
 maintenance runs sequentially, initially prioritizes stopping browsers, and resumes from a
 durable cursor when a pass reaches its time budget. A stuck shutdown cannot take
 priority over that cursor and starve other browsers. Queued work rechecks lifecycle
@@ -216,7 +216,7 @@ ordinary browser. Advanced `browser profile` commands remain available for
 inspecting saved-state status and deleting saved logins. Deleting a profile
 removes that state and stops any browser using it.
 
-Starting reserves the requested lifetime against the space's monthly browser
+Starting reserves the requested lifetime against your ship's monthly browser
 allowance and concurrent instance limit. Usage counts from readiness until the
 earlier of the fixed expiry deadline or confirmed termination, including time
 spent signing in, capped at the reserved lifetime. Slow startup reduces the
@@ -360,7 +360,7 @@ authentication include installation and human owner scope.
 The first browser release creates its instance database with one initial SQL
 migration. Earlier development checkpoints are not a supported upgrade path.
 The Gateway separately applies its new browser-handoff-links migration to
-existing spaces; previously shipped Gateway migrations remain unchanged.
+existing installations; previously shipped Gateway migrations remain unchanged.
 
 Production configuration is disabled by default. Supply explicit `BROWSER_LIMITS`
 or an `ENTITLEMENTS` service implementing these policy keys:
@@ -368,10 +368,10 @@ or an `ENTITLEMENTS` service implementing these policy keys:
 | Key | Meaning |
 | --- | --- |
 | `browser.enabled` | Admit browser starts |
-| `browser.concurrent_instances` | Space-wide concurrent browser limit |
+| `browser.concurrent_instances` | Concurrent browser limit per ship |
 | `browser.period_seconds` | Monthly allowance, calendar month in UTC |
 | `browser.max_instance_seconds` | Maximum lifetime for one instance |
-| `browser.saved_profiles` | Space-wide saved profile count |
+| `browser.saved_profiles` | Saved profile limit per ship |
 | `browser.profile_storage_bytes` | Maximum saved state bytes per profile |
 
 The local default is 16 MiB of uncompressed serialized state per saved browser;
@@ -399,7 +399,7 @@ the normal Durable Object backup retention receipt. Reset uses a new installatio
 identity and does not inherit these profiles.
 
 Run `npm run dev`, then open `http://localhost:8976/admin` to create a local
-space. Wrangler runs Chrome for Testing 145.0.7632.6 locally, matching the browser
+installation. Wrangler runs Chrome for Testing 145.0.7632.6 locally, matching the browser
 version supported by the installed Cloudflare Playwright package. The first
 start downloads and caches that browser. No paid remote browser is required for
 the development flow.
@@ -414,7 +414,7 @@ remain in the local state directory. This setting does not change remote Browser
 Run or the extension's browser.
 
 After the server is ready, `npm run smoke:browser` creates
-a clean local space and exercises concurrent start reuse, automatic saved logins,
+a clean local installation and exercises concurrent start reuse, automatic saved logins,
 cookie/local-storage/IndexedDB restoration, passive viewing, cursor reporting,
 human input alongside agent work, input revocation, stop and saved-state deletion.
 Login and live-view checks both use `sys.browser.watch`, the same streamed view

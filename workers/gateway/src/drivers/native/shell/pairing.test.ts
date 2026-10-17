@@ -117,7 +117,7 @@ describe("native target pairing", () => {
         expect((await shell.exec(`targets pair --name Laptop ${options}`)).exitCode).toBe(1);
       }
       ctx.installationIdentity = null;
-      expect((await shell.exec("targets pair --name New --platform mac")).stderr).toContain("Space address is unavailable");
+      expect((await shell.exec("targets pair --name New --platform mac")).stderr).toContain("Ship address is unavailable");
       expect(ctx.pairings.list(1000)).toHaveLength(1);
     });
   });

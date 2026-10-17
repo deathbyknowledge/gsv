@@ -69,7 +69,7 @@ function ConnectedDesktop({ session, storage, mock, onError, onQuit, onResumeSet
       window.localStorage.clear();
       window.location.replace("/");
     } catch {
-      onError("Could not disconnect the space. Try again.");
+      onError("Could not disconnect. Try again.");
       setConfirmation(false);
     } finally {
       disconnectPending.current = false;
@@ -80,7 +80,7 @@ function ConnectedDesktop({ session, storage, mock, onError, onQuit, onResumeSet
     <dialog ref={confirmationDialog} class="desktop-confirm" role="alertdialog" aria-label="Discard unsent work?"
       onCancel={(event) => { event.preventDefault(); if (!disconnecting) setConfirmation(false); }}
       onKeyDown={(event) => event.stopPropagation()}>
-      <p>Disconnect this space? Unsent work will be discarded.</p>
+      <p>Disconnect from this ship? Unsent work will be discarded.</p>
       <button type="button" disabled={disconnecting} onClick={() => setConfirmation(false)}>keep working</button>
       <button type="button" disabled={disconnecting || !service} onClick={() => void disconnect()}>{disconnecting ? "disconnecting…" : "disconnect"}</button>
     </dialog>

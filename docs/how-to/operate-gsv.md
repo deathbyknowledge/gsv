@@ -18,7 +18,7 @@ Alchemy's Cloudflare account/authentication and set these deployment inputs:
 | `GSV_ALLOW_RESOURCE_DELETION` | Explicit physical resource deletion opt-in; defaults to `false`, including in CI. |
 | `GSV_ACCESS_MODE` | `operator` or `access`; defaults to `operator`. |
 | `GSV_ACCESS_TEAM_DOMAIN`, `GSV_ACCESS_AUDIENCE` | Required for Cloudflare Access mode. |
-| `GSV_OWNER_EMAIL_FROM` | Verified sending address for native email-code owner sign-in, My spaces and recovery. |
+| `GSV_OWNER_EMAIL_FROM` | Verified sending address for native email-code owner sign-in, My ships and recovery. |
 | `GSV_OWNER_EMAIL_ALLOWED_RECIPIENTS` | Optional comma-separated recipient restriction for owner verification mail, useful on staging. |
 | `GSV_OWNER_OIDC_ISSUER`, `GSV_OWNER_OIDC_CLIENT_ID`, `GSV_OWNER_OIDC_CLIENT_SECRET` | Optional owner identity provider for account linking and root recovery; issuer and client ID must be supplied together. |
 | `GSV_ADAPTERS` | Comma-separated operator-enabled adapter IDs; empty by default. |
@@ -58,38 +58,35 @@ creates the first installation and its setup invitation. Further installations
 are created explicitly in administration. Ordinary redeployments do not create
 installations or rotate credentials.
 
-## Give someone a space
+## Give someone a ship {#give-someone-a-space}
 
 Operator administration and owner sign-in have separate jobs. In `operator`
 access mode, open `<admin-origin>/operator` and sign in with the operator
 credential saved during bootstrap. In `access` mode, open
 `<admin-origin>/admin` through the configured Cloudflare Access policy.
-Choose **New space**, reserve its handle, and give the person the resulting
-one-time setup link. They use that link to create their local account and
-root password. Further spaces use this same administration flow.
+Create a ship, reserve its handle, and give the person the resulting one-time
+setup link. They use that link to create their personal account and root
+password. Further ships use this same administration flow.
 
-To let a person choose their own handle, open **Invites** in administration
-instead and choose **Create invite** with a note, a plan, and an optional
-expiry. Copy the code it shows; it is stored hashed and is not shown again.
-The person redeems it once at `<admin-origin>/owner/signup/` (or the configured
-public signup alias, or from the Desktop app), verifies their email, and picks
-an available handle; a claimed invite links to its space in the list, and an
-unclaimed one can be revoked.
+To let people sign up themselves, enable `GSV_SIGNUP_ENABLED` and configure
+owner email delivery. They choose a handle and verify their email at
+`<admin-origin>/owner/signup/`, the configured public signup alias, or in
+Desktop. Registration needs no invite code. One verified email can create one
+ship, and an interrupted setup resumes with the same email.
 
 With native owner email enabled, `<admin-origin>/owner/login` verifies the
-person's email and opens **My spaces**. Signing in there does not create a
-space or grant operator administration. To add an existing space to that
-list, sign in to the space as **root**, open **Settings → sign-in → Space
-ownership → link owner identity**, and verify the email again. This binds
-current root authorization to the verified owner; onboarding does not yet
-perform that link automatically. The owner can then see the space in My
-spaces and start root recovery there if needed.
+person's email and opens **My ships**. Signing in there does not create a
+ship or grant operator administration. To add an operator-created ship to that
+list, sign in as **root**, open **Settings → sign-in → Account recovery**, and
+choose **set up recovery**. This binds current root authorization to the verified
+email. The owner can then see the ship in **My ships** and start administrator
+recovery there if needed.
 
 The sending address must be enabled with the provider and its DNS records
 verified before codes can be delivered. The public deployment creates and
 preserves the owner-authentication secret. Keep the deployment state on
 redeploy so existing verification and session records remain usable. Owner
-verification mail is independent of a space's messaging adapters.
+verification mail is independent of a ship's messaging adapters.
 
 ## Connect services and verify cleanup
 
@@ -102,7 +99,7 @@ including retained legacy namespaces. Their public callback routes and provider 
 belong to the operator; enabling a Worker alone does not complete that external
 provider setup. People pair their own identities through their installation.
 
-Before deleting a space, account for every service that still holds its data,
+Before deleting an installation, account for every service that still holds its data,
 including services previously enabled. `GSV_DELETION_CATALOG_FILE` supplies the
 external-resource catalog to the public composition. Each entry declares an
 `id`, physical `namespace`, `kind`, `source`, `scope` (`installation` or
@@ -114,7 +111,7 @@ complete history of destinations, including people's own provider accounts.
 Leave the catalog unset while that inventory is unresolved; deletion admission
 fails closed. A configured catalog declares scope, not successful cleanup.
 
-Deleting a space is a resumable operation. Accounts verifies the resource
+Deleting an installation is a resumable operation. Accounts verifies the resource
 inventory before cleanup starts, every owning service reports its own erasure
 receipt, and verified live-data erasure is reported separately from retained
 copies such as backups, queues and provider logs. Known, enforced retention can
@@ -134,4 +131,4 @@ another disposable directory. Model calls still require an available provider.
 
 This composition and the migration tooling have local D1 and configuration tests.
 Local success is not evidence that a cloud deployment has completed; verify a
-fresh deployment end to end before giving anyone a space on it.
+fresh deployment end to end before giving anyone a ship on it.

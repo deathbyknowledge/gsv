@@ -43,7 +43,7 @@ export function Mcp({ account, active, onDirty }: SettingsSectionProps) {
   });
   return <section aria-labelledby="settings-mcp-title">
     <h1 id="settings-mcp-title">MCP servers</h1>
-    <p class="settings-intro">Connect tools and resources to your Ship.</p>
+    <p class="settings-intro">Connect tools and resources to your ship.</p>
     {!canList && <p class="settings-muted">Your account cannot list MCP servers.</p>}
     <SettingsError error={servers.error ?? change.error} />
     {servers.isPending && connected && canList && <LoadingState variant="panel">Loading MCP servers…</LoadingState>}

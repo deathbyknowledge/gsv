@@ -220,7 +220,7 @@ focuses the existing window. The independent `gsvd` service keeps running.
 
 ## Machine enrollment
 
-Desktop offers Connect this computer after sign-in and through its space menu.
+Desktop offers Connect this computer after sign-in and through its ship menu.
 The frontend creates the same ordinary device invitation as Fleet; the native
 host passes it on private stdin to `gsv pair - --preserve-cli-login --no-replace`.
 The CLI stores the driver credential in private `config.toml` and owns OS

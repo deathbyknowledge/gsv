@@ -63,7 +63,7 @@ export class DesktopMachineSession {
       if (this.disposed) return false;
       this.publish({ ...this.state, machine });
       if ([machine.configured, machine.pending].some((identity) => identity && !this.matches(identity))) {
-        throw new Error("This computer is connected to another space or account.");
+        throw new Error("This computer is connected to another ship or account.");
       }
       if (existingOnly && !machine.configured && !machine.pending) {
         this.publish({ machine, loading: false, busy: false, error: "" });

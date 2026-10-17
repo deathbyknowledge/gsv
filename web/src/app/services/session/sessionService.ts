@@ -203,7 +203,7 @@ function setupRecovery(value: SessionWireValue): Pick<SessionSnapshot, "phase" |
   const parsed = sessionErrorSchema.safeParse(value);
   const details = parsed.success ? parsed.data.details : undefined;
   return details?.setupRecovery
-    ? { phase: "setup-recovery", message: "Finish setting up your space", setupRecoveryUrl: details.setupUrl }
+    ? { phase: "setup-recovery", message: "Finish setting up your ship", setupRecoveryUrl: details.setupUrl }
     : null;
 }
 

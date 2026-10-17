@@ -40,7 +40,7 @@ export function SetupScreen({ visible, busy, space, arrivedFromSignup = false, s
   return <AuthLayout visible={visible} surfaceClass="gsv-auth-surface-setup">
     <section class="gsv-setup-panel" data-session-setup-view aria-labelledby="setup-heading">
       {arrivedFromSignup && credentials && !noticeDismissed && <div class="gsv-setup-notice" role="status">
-        <Alert variant="success" text="Your Ship has been created." onDismiss={() => setNoticeDismissed(true)} />
+        <Alert variant="success" text="Your ship has been created." onDismiss={() => setNoticeDismissed(true)} />
       </div>}
       <div class={`gsv-setup-head${credentials ? "" : " is-consent"}`}>
         {consentRequired && <div class="gsv-setup-meta">

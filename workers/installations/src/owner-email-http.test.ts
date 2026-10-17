@@ -126,7 +126,7 @@ describe("native owner email HTTP", () => {
     const page = await f.request("/owner/spaces", cookies);
     expect(page.status).toBe(200);
     expect(page.headers.get("referrer-policy")).toBe("same-origin");
-    expect(await page.text()).toContain("No spaces linked yet");
+    expect(await page.text()).toContain("No ships linked yet");
     const copiedSession = new Map(cookies);
     expect((await f.request("/owner/logout", cookies, {})).status).toBe(303);
     expect(cookies.has(SESSION)).toBe(false);

@@ -118,7 +118,7 @@ async function pairTarget(args: string[], ctx: KernelContext): Promise<ExecResul
     throw new Error("expected targets pair --name NAME --platform mac|linux|windows|browser");
   }
   if (replace && !targetId) throw new Error("--replace requires --id of an existing target");
-  if (!ctx.installationIdentity) throw new Error("Space address is unavailable");
+  if (!ctx.installationIdentity) throw new Error("Ship address is unavailable");
   const gatewayUrl = pairingGatewayUrl(ctx.installationIdentity.canonicalOrigin);
   const secret = createPairingSecret();
   const { pairing } = await handleSysPairCreate({

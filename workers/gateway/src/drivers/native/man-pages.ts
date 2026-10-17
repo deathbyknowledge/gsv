@@ -7,7 +7,7 @@ export function renderManualPage(topic: string): string | null {
     case "contact":
       return [
         "CONTACT(1)", "", "NAME",
-        "  contact - connect with people on other GSV spaces", "", "SYNOPSIS",
+        "  contact - connect with people on other ships", "", "SYNOPSIS",
         ...nativeCommandSynopsis("contact")!.map((line) => `  ${line}`),
         "", "CONNECTING THROUGH SHIP",
         "  Ask who should handle new messages unless the owner has already chosen:",

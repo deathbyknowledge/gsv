@@ -75,23 +75,23 @@ to use text explicitly.
 Look for the ASCII ship icon to open Ship Desktop. It matches the ship on the
 sign-in page and the browser's Home Screen shortcut.
 
-Desktop starts with **Create your Ship** and **Open Ship**. Create takes you through
+Desktop starts with **Create your ship** and **Open Ship**. Create takes you through
 [signup](/get-started/); Open lets you sign in with email or enter a handle or domain.
-The address form also works for Ships owned by someone else or served by another
+The address form also works for ships owned by someone else or served by another
 operator. Contact invitation links open a modal on the signup site, where you can
-verify your email or enter your Ship address before sign-in and explicit acceptance.
+verify your email or enter your ship address before sign-in and explicit acceptance.
 
-Desktop and browser windows can stay connected to the same space at once. They
+Desktop and browser windows can stay connected to the same ship at once. They
 receive new conversation messages live and refresh server state after a
-reconnect. A remembered space sign-in lasts 30 days and renews during use.
+reconnect. A remembered sign-in lasts 30 days and renews during use.
 Browser tabs share renewal and sign-out; Desktop has its own stored session.
 A temporary network interruption reconnects without asking you to sign in again.
 
-If self-service setup of a space was interrupted, **Continue setup** returns to owner email
-sign-in and the existing claimed space. For the Desktop app's configured operator,
+If self-service setup of a ship was interrupted, **Continue setup** returns to owner email
+sign-in and your existing ship. For the Desktop app's configured operator,
 this stays inside the app; another operator's recovery page opens in the browser.
-The owner signs in with the email used to claim the invitation, then continues
-setup with fresh authorization instead of claiming another space.
+The owner signs in with the email used at signup, then continues
+setup with fresh authorization instead of creating another ship.
 For a setup link issued directly by an operator, ask that operator for a new link.
 An incompatible client or rejected connection shows the gateway's error instead
 of retrying indefinitely.
@@ -254,8 +254,8 @@ rerun the installer to update it.
 
 After signing in, choose Connect this computer to make it a target. Desktop
 handles pairing and background service installation. Not now skips this step;
-reopen it from the space menu under This computer. An existing connection for
-the same space and account resumes automatically. Connections to another space
+reopen it from the ship menu under This computer. An existing connection for
+the same ship and account resumes automatically. Connections to another ship
 or account and your separate CLI login are preserved. The background service
 continues after Desktop closes.
 
