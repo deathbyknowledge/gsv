@@ -62,7 +62,7 @@ import { stringifyStoredProcessMedia } from "../media";
 import { assistantHistoryRecords } from "../storage/history-records";
 import type { DurableTask, DurableTaskOptions } from "../../shared/durable-tasks";
 import { MANAGED_LIFECYCLE_RECHECK_MS, managedInstallationWorkGate } from "../../installation/lifecycle";
-import { GSV_DELEGATED_TASK_CONTEXT } from "../../prompts/system";
+import GSV_DELEGATED_TASK_CONTEXT from "../../prompts/tasks/delegated.md";
 import { createContextProjection, parseContextProjection } from "../context";
 import { deriveGenerationContextId } from "../context-message-metadata";
 import { SEND_TOOL, piToolParametersSchema } from "../internal/schemas";

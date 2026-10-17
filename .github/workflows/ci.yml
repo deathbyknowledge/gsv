@@ -4,7 +4,6 @@ on:
   push:
     branches: [main]
   pull_request:
-    branches: [main, feat/zen-fleet]
 
 permissions:
   contents: read
@@ -200,11 +199,14 @@ jobs:
               - 'host/crates/desktop-protocol/**'
             machine:
               - '.github/workflows/ci.yml'
+              - 'scripts/smoke-computer-image.sh'
+              - 'workers/instances/computer/**'
               - 'host/Cargo.toml'
               - 'host/Cargo.lock'
               - 'host/apps/machine/**'
               - 'host/crates/gateway-client/**'
               - 'host/crates/config/**'
+              - 'host/crates/daemon-protocol/**'
             desktop:
               - '.github/workflows/ci.yml'
               - '.github/workflows/release.yml'
@@ -219,12 +221,10 @@ jobs:
               - 'host/helpers/**'
               - 'host/packaging/**'
               - 'host/scripts/**'
-              - 'scripts/vision-native/**'
               - 'host/crates/gateway-client/**'
               - 'host/crates/config/**'
               - 'host/crates/desktop-protocol/**'
               - 'host/crates/daemon-protocol/**'
-              - 'host/crates/gesture-protocol/**'
               - 'web/**'
               - 'packages/gsv/**'
               - 'package*.json'
@@ -631,21 +631,21 @@ jobs:
         run: >-
           cargo fmt --package gateway-client --package host-config
           --package daemon-protocol --package desktop-protocol
-          --package gesture-protocol --check
+          --check
 
       - name: Test shared crates
         working-directory: host
         run: >-
           cargo test --locked --package gateway-client --package host-config
           --package daemon-protocol --package desktop-protocol
-          --package gesture-protocol
+
 
       - name: Lint shared crates
         working-directory: host
         run: >-
           cargo clippy --locked --package gateway-client --package host-config
           --package daemon-protocol --package desktop-protocol
-          --package gesture-protocol --all-targets -- -D warnings
+          --all-targets -- -D warnings
 
   machine-build:
     name: Machine (${{ matrix.os }})
@@ -678,6 +678,11 @@ jobs:
       - name: Lint machine
         working-directory: host
         run: cargo clippy --locked --package machine --all-targets -- -D warnings
+
+      - name: Build and smoke the cloud computer image
+        if: matrix.os == 'ubuntu-latest'
+        timeout-minutes: 20
+        run: bash scripts/smoke-computer-image.sh
 
   desktop-build:
     name: Desktop (Linux)
@@ -718,7 +723,6 @@ jobs:
             libopenblas-pthread-dev \
             libwebkit2gtk-4.1-dev \
             libgtk-3-dev \
-            libv4l-dev \
             gstreamer1.0-plugins-base \
             gstreamer1.0-plugins-good \
             gstreamer1.0-libav \
@@ -750,13 +754,9 @@ jobs:
             'CMAKE_CXX_COMPILER_LAUNCHER=ccache' >> "$GITHUB_ENV"
           CCACHE_DIR="$RUNNER_TEMP/gsv-desktop-ccache" ccache --zero-stats
 
-      - name: Check vision artifact scripts
+      - name: Check host packaging script
         run: |
           bash -n host/scripts/package-macos.sh
-          bash -n scripts/vision-native/benchmark.sh
-          bash -n scripts/vision-native/fixtures.sh
-          bash -n scripts/vision-native/parity.sh
-          bash -n scripts/vision-native/update-models.sh
 
       - uses: actions/setup-node@v4
         with:
@@ -773,13 +773,12 @@ jobs:
         working-directory: host
         run: >-
           cargo fmt --package desktop --package desktop-native --package transcriber
-          --package gestures --package gesture-protocol --check
+          --check
 
       - name: Test Desktop and helpers
         working-directory: host
         run: |
-          cargo test --locked --package desktop --package desktop-native --package transcriber \
-            --package gestures --package gesture-protocol
+          cargo test --locked --package desktop --package desktop-native --package transcriber
           ccache --show-stats --verbose
 
       - name: Check voice helper startup and bundled math
@@ -790,18 +789,12 @@ jobs:
       - name: Transcribe recorded speech
         run: python3 host/scripts/check-transcription.py
 
-      - name: Check public gesture fixtures and tracking recovery
-        working-directory: host
-        run: >-
-          ../scripts/vision-native/parity.sh --profile test
-          --package desktop --package desktop-native --package transcriber --package gestures --package gesture-protocol
-
       - name: Lint Desktop and helpers
         working-directory: host
         run: |
           ccache --zero-stats
           cargo clippy --locked --package desktop --package desktop-native --package transcriber \
-            --package gestures --package gesture-protocol --all-targets -- -D warnings
+            --all-targets -- -D warnings
           ccache --show-stats --verbose
 
   transcriber-arm64:

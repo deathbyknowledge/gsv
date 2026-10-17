@@ -1,5 +1,6 @@
 import type { JsonObject, ResponsibilityRecord } from "@humansandmachines/gsv/protocol";
 
+import previousWelcomeBrief from "../prompts/onboarding/previous-welcome.md";
 import welcomeBrief from "../prompts/onboarding/welcome.md";
 import type { ResponsibilityCreateOutcome, ResponsibilityStore } from "./responsibility-store";
 
@@ -20,7 +21,7 @@ type OnboardingContract = {
  * prompt file `prompts/onboarding/welcome.md`.
  */
 const WELCOME_CONTRACT: OnboardingContract = {
-  title: "Welcome to gsv",
+  title: "Welcome to Ship",
   details: {
     responsibilityType: "onboarding.initial",
     instructions: welcomeBrief.trim(),
@@ -34,6 +35,11 @@ const WELCOME_CONTRACT: OnboardingContract = {
  * leaves the record alone.
  */
 const PREVIOUS_ONBOARDING_CONTRACTS: readonly OnboardingContract[] = [
+  {
+    title: "Welcome to gsv",
+    details: { responsibilityType: "onboarding.initial", instructions: previousWelcomeBrief.trim() },
+    blocker: WELCOME_CONTRACT.blocker,
+  },
   {
     title: "Get to know the user and finish initial GSV setup",
     details: {

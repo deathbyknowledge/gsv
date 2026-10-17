@@ -8,7 +8,7 @@ import { INSTRUMENT_PROFILE_KEY } from "../wire/queryKeys";
 import { canConfigure } from "../settings/settingsModel";
 import type { ConsoleAccount } from "../../../domain/system/consoleModels";
 
-export function Profile({ account, active, onDirty }: { account: ConsoleAccount; active: boolean; onDirty: (dirty: boolean) => void }) {
+export function Profile({ account, active, onDirty, onBack }: { account: ConsoleAccount; active: boolean; onDirty: (dirty: boolean) => void; onBack: () => void }) {
   const { client, connected } = useGateway();
   const cache = useQueryClient();
   const key = [...INSTRUMENT_PROFILE_KEY, account.uid];
@@ -46,8 +46,12 @@ export function Profile({ account, active, onDirty }: { account: ConsoleAccount;
   useLayoutEffect(() => { onDirty(dirty || pending); }, [dirty, pending, onDirty]);
   const error = profile.error ?? save.error ?? publish.error ?? unpublish.error;
 
-  return <section class="people-own-profile" aria-labelledby="people-profile-title">
-    <h1 id="people-profile-title">Your profile</h1>
+  return <section class="people-profile" aria-labelledby="people-profile-title">
+    <header class="people-conversation-header">
+      <button type="button" class="people-action people-conversation-back" aria-label="Back to conversations" onClick={onBack}>←</button>
+      <div class="people-conversation-title"><h1 id="people-profile-title">Your profile</h1></div>
+    </header>
+    <div class="people-profile-scroll" data-scroll-edge><div class="people-own-profile">
     <p class="people-note">Choose what people see when they visit your space.</p>
     {!canRead && <p class="people-note">Your account cannot manage a public profile.</p>}
     {error && <p class="people-error" role="alert">{error.message}</p>}
@@ -83,5 +87,6 @@ export function Profile({ account, active, onDirty }: { account: ConsoleAccount;
       </div>
       <p class="people-note">Unpublishing removes your public page. People may retain copies they already viewed. Existing conversations continue.</p>
     </>}
+    </div></div>
   </section>;
 }

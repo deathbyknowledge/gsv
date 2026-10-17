@@ -22,7 +22,7 @@ computers retain their separate approval requirements.
 
 ## Watch and use the browser
 
-Ask Ship to use a browser. GSV reuses your account's current cloud browser,
+Ask Ship to use a browser. Ship reuses your account's current cloud browser,
 including one that is still starting. More work can use another tab. Fleet's
 **browser** action follows the same rule and opens the view immediately.
 
@@ -50,7 +50,7 @@ still affect how quickly an action appears.
 
 Sign in directly on the website in this view, including any verification code.
 Ship can also request your help with a particular website. Open the request in
-Ship, or follow its link from your messenger and sign in to GSV. For these
+Ship, or follow its link from your messenger and sign in to Ship. For these
 explicit requests, automation pauses until you choose **I’m done — resume Ship**,
 Ship cancels the request, or it expires. Closing the viewer leaves the request
 available.
@@ -58,13 +58,13 @@ Choose **I’m done — resume Ship** after you finish signing in or completing 
 requested steps. Once saving succeeds, the view confirms completion and stays
 open, following Ship again.
 Requests expire after fifteen minutes or when the browser stops, whichever comes
-first. The link identifies one request; it never grants access without your GSV
+first. The link identifies one request; it never grants access without your Ship
 login. An old link shows that its request has ended and cannot control or complete
 a later request. Open the latest request from Ship when needed.
 Your next chat message still goes to Ship. Website passwords and
 verification codes belong in the browser view.
 
-Passkeys and hardware security keys are unavailable in cloud browsers. GSV
+Passkeys and hardware security keys are unavailable in cloud browsers. Ship
 reports this to websites before they can open an invisible native passkey
 prompt that blocks page input. Choose the website's password or another
 supported sign-in method. A site that requires a passkey needs your connected
@@ -76,9 +76,9 @@ titles and addresses are shortened for display; the actual page URL is unchanged
 
 ## Remembered logins and lifetime
 
-GSV automatically keeps website cookies, local storage and IndexedDB for your
+Ship automatically keeps website cookies, local storage and IndexedDB for your
 local account in this space. The next ordinary browser restores that saved
-state; there is no profile picker. Saved state is encrypted and separate from
+state. Saved state is encrypted and separate from
 the running browser. Only one instance can use the same saved state at a time.
 The account's automatic login store has a durable identity. Explicitly created
 profiles remain separate, even if they are older or have a running browser.
@@ -90,7 +90,7 @@ embedded frames. Already tracked origins keep their places; additional origins
 do not expand the save workload or displace earlier sign-ins. Local storage and
 IndexedDB from additional origins are not saved. Cookies are saved separately.
 
-GSV saves periodically, after human input settles, when you finish a login
+Ship saves periodically, after human input settles, when you finish a login
 handoff, and before an ordinary stop. Closing a website tab does not forget its
 saved data. Restore completes before the next browser becomes ready. If restore
 fails, that start fails visibly rather than opening an empty replacement.
@@ -104,11 +104,11 @@ A save waits for active browser commands and live-view input to settle. New
 commands and input wait while the save completes, with their usual cancellation
 and time limits. The live view stays open during saving.
 Live-view input requests time out after ten seconds. A timed-out request is not
-replayed; GSV retains the underlying operation until it settles, so saving and
+replayed; Ship retains the underlying operation until it settles, so saving and
 space deletion cannot mistake a timeout for completed input.
 
 **Stop browser** commits saved data before closing. If a website uses unsupported
-storage or its storage cannot be read, GSV saves the other sites and reports
+storage or its storage cannot be read, Ship saves the other sites and reports
 **saved with exceptions**. It retains that site's previous saved storage and
 associated cookies, when available; cookies shared with its other subdomains
 are retained too. Changes on the affected site may be lost on restart. A partial
@@ -284,7 +284,7 @@ The cloud browser shares the extension's `tabs`, `page`, screenshots and
 temporary filesystem commands. For example, run `tabs list` and `page snapshot`
 on that target. It does not implement an operating-system shell.
 
-If `tabs open` fails, including a navigation timeout, GSV closes the newly
+If `tabs open` fails, including a navigation timeout, Ship closes the newly
 created tab and reports the error. Existing tabs remain open, so retrying does
 not accumulate tabs from failed attempts.
 

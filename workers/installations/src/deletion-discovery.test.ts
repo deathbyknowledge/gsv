@@ -18,6 +18,7 @@ describe("Accounts deletion discovery routing", () => {
       { kind: "mail", objectId: "3".repeat(64) }, { kind: "adapter-peer", namespaceId, objectId: "4".repeat(64) },
       { kind: "ripgit", objectId: "5".repeat(64) }, { kind: "inference-installation", objectId: "6".repeat(64) },
       { kind: "instance-installation", objectId: "7".repeat(64) },
+      { kind: "instance-computer", objectId: "8".repeat(64), name: JSON.stringify(["retired-space", "computer"]) },
     ] };
     const result = await inspectDeletionResources(request, { gateway, owners: { inference, mail, telegram, instances },
       namespaces: { [namespaceId]: { ownerId: "telegram", kind: "adapter-peer" } } });
@@ -26,7 +27,7 @@ describe("Accounts deletion discovery routing", () => {
     expect(inference.inspectInstallationDeletion.mock.calls[0][0]).toEqual({ ...request, resources: [request.resources[1], request.resources[5]] });
     expect(mail.inspectInstallationDeletion).toHaveBeenCalledTimes(1);
     expect(telegram.inspectInstallationDeletion).toHaveBeenCalledTimes(1);
-    expect(instances.inspectInstallationDeletion).toHaveBeenCalledWith({ ...request, resources: [request.resources[6]] });
+    expect(instances.inspectInstallationDeletion).toHaveBeenCalledWith({ ...request, resources: [request.resources[6], request.resources[7]] });
   });
 
   it("rejects absent or wrong namespace mappings before any owner is contacted", async () => {
@@ -44,6 +45,9 @@ describe("Accounts deletion discovery routing", () => {
     request.resources[1].kind = "instance-installation";
     await expect(inspectDeletionResources(request, { gateway, owners: { telegram },
       namespaces: { [namespaceId]: { ownerId: "telegram", kind: "instance-installation" } } })).rejects.toThrow("owner");
+    request.resources[1].kind = "instance-computer";
+    await expect(inspectDeletionResources(request, { gateway, owners: { telegram },
+      namespaces: { [namespaceId]: { ownerId: "telegram", kind: "instance-computer" } } })).rejects.toThrow("owner");
     expect(gateway.inspectInstallationDeletion).not.toHaveBeenCalled();
     expect(telegram.inspectInstallationDeletion).not.toHaveBeenCalled();
   });

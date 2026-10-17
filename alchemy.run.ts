@@ -7,6 +7,8 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import { GsvAdapterWorker, GsvDeployment, gsvDeploymentManifestSchema, type GsvAdapterBinding } from "./deployment/src/index.ts";
 import { operatorResourceCatalogSchema } from "./workers/installations/src/operator-resource-contracts.ts";
+import { configuredDomainAliases, configuredOriginAliases, deploymentPresentation } from "./packages/gsv/src/services/deployment.ts";
+import { operatorUpdateCatalogSchema } from "./packages/gsv/src/services/operator-updates.ts";
 
 const manifest = gsvDeploymentManifestSchema.parse(JSON.parse(readFileSync("./dist/cloudflare/deployment-manifest.json", "utf8")));
 
@@ -14,6 +16,11 @@ export default Alchemy.Stack("gsv", {
   providers: Layer.mergeAll(Cloudflare.providers()), state: Cloudflare.state(),
 }, Effect.gen(function* () {
   const domain = yield* Config.string("GSV_DOMAIN");
+  const domainAliases = configuredDomainAliases(yield* Config.string("GSV_DOMAIN_ALIASES").pipe(Config.withDefault("[]")));
+  const ownerOriginAliases = configuredOriginAliases(yield* Config.string("GSV_OWNER_ORIGIN_ALIASES").pipe(Config.withDefault("[]")));
+  const presentation = deploymentPresentation(yield* Config.string("GSV_PUBLIC_CONFIG").pipe(Config.withDefault("{}")));
+  const updatesPath = Option.getOrUndefined(yield* Config.string("GSV_OPERATOR_UPDATES_FILE").pipe(Config.option));
+  const operatorUpdates = updatesPath ? operatorUpdateCatalogSchema.parse(JSON.parse(readFileSync(updatesPath, "utf8"))) : undefined;
   const zoneId = yield* Config.string("GSV_ZONE_ID");
   const adminOrigin = yield* Config.string("GSV_ADMIN_ORIGIN").pipe(Config.withDefault(`https://accounts.${domain}`));
   const prefix = yield* Config.string("GSV_WORKER_PREFIX").pipe(Config.withDefault("gsv"));
@@ -61,12 +68,13 @@ export default Alchemy.Stack("gsv", {
   const catalogPath = Option.getOrUndefined(yield* Config.string("GSV_DELETION_CATALOG_FILE").pipe(Config.option));
   const deletion = catalogPath ? { operatorResources: operatorResourceCatalogSchema.parse(JSON.parse(readFileSync(catalogPath, "utf8"))) } : undefined;
   const deployment = yield* GsvDeployment({ logicalPrefix: "Gsv", domain, adminOrigin, access, routing: { zoneId },
+    domainAliases, presentation, operatorUpdates,
     allowResourceDeletion,
     deletion,
     names: { gateway: prefix, ripgit: `${prefix}-ripgit`, storageBucket: `${prefix}-storage` }, paths: manifest.runtime,
     services: { adapters },
     installations: { workerName: `${prefix}-installations`, databaseName: `${prefix}-installations`,
-      workerBundle: manifest.runtime.installationsBundle, migrationsDirectory: manifest.runtime.installationsMigrations, ownerIdentity, ownerEmail, openRegistration },
+      workerBundle: manifest.runtime.installationsBundle, migrationsDirectory: manifest.runtime.installationsMigrations, ownerIdentity, ownerEmail, ownerOriginAliases, openRegistration },
     inference: { workerName: `${prefix}-inference`, workerBundle: manifest.runtime.inferenceBundle,
       defaultProvider: yield* Config.string("GSV_INFERENCE_PROVIDER").pipe(Config.withDefault("workers-ai")),
       defaultModel: yield* Config.string("GSV_INFERENCE_MODEL").pipe(Config.withDefault("@cf/zai-org/glm-5.3-flash")),

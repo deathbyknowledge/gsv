@@ -34,7 +34,7 @@ export function StartCloudBrowser({ allowed }: { allowed: boolean }) {
 export function CloudBrowserActions({ targetId, allowed }: { targetId: string; allowed: boolean }) {
   const { open } = useBrowserControl();
   const inventory = useCloudInstances();
-  const instance = inventory.data?.instances.find(item => item.targetId === targetId);
+  const instance = inventory.data?.instances.find(item => item.targetId === targetId && item.kind === "browser");
   return <section class="browser-actions">
     {instance && <button type="button" class="fleet-text-action" disabled={!allowed || !["ready", "starting"].includes(instance.state)} onClick={() => open({ instanceId: instance.instanceId })}>open browser</button>}
   </section>;

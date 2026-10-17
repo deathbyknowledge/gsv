@@ -70,7 +70,7 @@ async function uploadResource(
     received.data,
   );
   if (receiveResult.bytesWritten !== upload.body.size) {
-    throw new Error("GSV stored an unexpected attachment length");
+    throw new Error("Ship stored an unexpected attachment length");
   }
   const stat = await client.request("fs.transfer.stat", { path: receiveResult.path }, { signal });
   await stat.body?.stream.cancel("fs.transfer.stat does not return a body").catch(() => {});
@@ -81,7 +81,7 @@ async function uploadResource(
     || statResult.contentType !== upload.mimeType
     || !statResult.revision
   ) {
-    throw new Error("GSV could not identify the uploaded attachment revision");
+    throw new Error("Ship could not identify the uploaded attachment revision");
   }
   return {
     type: "resource",
@@ -115,6 +115,6 @@ async function deleteUploads(client: ResourceUploadClient, paths: string[]): Pro
 }
 
 function requireSuccess<T extends { ok: true }>(result: T | FailureResult): T {
-  if (!result.ok) throw new Error(result.error || "GSV resource request failed");
+  if (!result.ok) throw new Error(result.error || "Ship resource request failed");
   return result;
 }

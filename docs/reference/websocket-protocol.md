@@ -680,3 +680,12 @@ denotes a new logical message.
 - [Syscalls Reference](./syscalls.md)
 - [Routing Reference](./routing.md)
 - [CLI Commands](./cli-commands.md)
+
+### Public deployment metadata
+
+`sys.connect` may include `server.deployment`: the operator's public
+`primaryDomain`, `legacyDomains`, `operatorName`, `accountsOrigin`, `docsUrl`,
+`installUrl`, `termsUrl` and `privacyUrl`. These optional presentation values let
+clients resolve handles and show the connected operator's links. They never
+choose an installation identity or grant authority. Older servers may omit the
+field. Gateway also embeds the same configuration in served app HTML.

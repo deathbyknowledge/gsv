@@ -12,7 +12,7 @@ describe("terminal service", () => {
     await executeTerminalCommand(client, command);
     expect(request).toHaveBeenCalledWith("shell.exec", { input: "run once", target: "macbook", sessionId, start: true, cwd: "/tmp", timeout: 20_000, background: true, yieldMs: 1_000 }, { signal: undefined });
     request.mockRejectedValue(new GsvClientError({ code: 500, message: `Unknown shell session: ${sessionId}` }));
-    await expect(executeTerminalCommand(client, command)).resolves.toMatchObject({ status: "failed", stderr: "Update GSV on this computer before running commands here." });
+    await expect(executeTerminalCommand(client, command)).resolves.toMatchObject({ status: "failed", stderr: "Update Ship on this computer before running commands here." });
     expect(request).toHaveBeenCalledTimes(2);
   });
 
@@ -41,7 +41,7 @@ describe("terminal service", () => {
       }));
       await vi.advanceTimersByTimeAsync(0);
       expect(owner.snapshot()[0]).toMatchObject({ status: "failed", endedAt: expect.any(Number),
-        error: message ?? "Update GSV on this computer before running commands here." });
+        error: message ?? "Update Ship on this computer before running commands here." });
       await owner.stop(id);
       owner.retry(id);
       owner.setConnected(false);
@@ -147,6 +147,6 @@ describe("terminal service", () => {
     await expect(cancelTerminalCommand(client, "session")).resolves.toEqual({ sessionId: "session", cancelled: true });
     expect(request).toHaveBeenCalledWith("shell.cancel", { sessionId: "session" }, { signal: undefined });
     request.mockRejectedValue(new GsvClientError({ code: 400, message: "Target macbook does not implement shell.cancel" }));
-    await expect(cancelTerminalCommand(client, "session")).rejects.toThrow("Update GSV on this computer to use Stop.");
+    await expect(cancelTerminalCommand(client, "session")).rejects.toThrow("Update Ship on this computer to use Stop.");
   });
 });

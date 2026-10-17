@@ -41,7 +41,7 @@ async function startSignup() {
     window.location.assign(destination);
   };
   render(<AuthScene layout="welcome"><SignupDialog>{invitationError
-    ? <AuthLayout visible><section class="desktop-welcome"><h1>Connect on GSV</h1><p role="alert">{invitationError}</p>
+    ? <AuthLayout visible><section class="desktop-welcome"><h1>Connect on Ship</h1><p role="alert">{invitationError}</p>
       <a class="gsv-auth-link" href="/owner/signup/?resume=1" onClick={async (event) => {
         event.preventDefault(); await client.save({ contactInvite: null }); clearContactInvitation(); window.location.assign("/owner/signup/?resume=1");
       }}>open my spaces</a></section></AuthLayout>

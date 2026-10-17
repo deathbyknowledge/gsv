@@ -6,11 +6,10 @@ runtime event, a schedule, another Process, or the Ship itself. Promises, mainte
 delegated work, follow-ups, and recovery are variations of the
 same record rather than separate task systems.
 
-The user's personal Process remains the Ship: the one intelligence that receives
-direct conversation and owner-level events. There is no maintenance supervisor or
-second hidden intelligence. Kernel SQLite owns durable responsibility state and
-deadlines; the Ship decides what to do; ordinary child Processes execute delegated
-work.
+The user's personal Process is the Ship: the one intelligence that receives
+direct conversation and owner-level events. Kernel SQLite owns durable
+responsibility state and deadlines; the Ship decides what to do; ordinary child
+Processes execute delegated work.
 
 ## Facts, interactions, responsibilities, and Messages
 
@@ -42,8 +41,7 @@ lifecycle signals, or conversation input.
 Kernel SQLite stores the authoritative responsibility ledger, its monotonic revision,
 transition journal, assignments, deadlines, and wake records. Records are scoped to
 the owning human uid inside the installation Kernel. This is the same coordination
-boundary that owns identities, Processes, schedules, and routing; no additional
-Durable Object is introduced.
+boundary that owns identities, Processes, schedules, and routing.
 
 The personal Process owns only its current execution and the model context through
 which it observes responsibility state. Replacing or resetting that Process cannot
@@ -55,9 +53,8 @@ let a child bypass the Ship's ordinary result path.
 ## Responsibility records
 
 A responsibility has one identity and state machine. Optional fields describe its
-source, audience, hierarchy, assignment, deadline, and blocker without
-creating separate commitment or duty concepts. Its id is `r12y:` followed by a
-UUID; syscalls and the `r12y` command also accept the bare UUID and restore the
+source, audience, hierarchy, assignment, deadline, and blocker. Its id is `r12y:`
+followed by a UUID; syscalls and the `r12y` command also accept the bare UUID and restore the
 prefix, so a caller that copies the id without it still reaches the same record.
 
 ```text
@@ -262,7 +259,6 @@ System-owned producers use the same ledger contract:
   work. A relevant reply reopens that responsibility regardless of human or Process
   authorship. Duplicates and acknowledgements create no work. Revocation cancels the
   standing handoff and returns unfinished tasks to Ship with the disconnection recorded.
-  The former global `contact.added` and `federation.received` source switches are retired.
 - Structured work requests retain their own participant-authorized lifecycle. A remote
   offer alone creates no local commitment; accepting work locally records that commitment.
 - The first registration of a physical machine creates one `machine.added`
@@ -343,3 +339,18 @@ Callers cannot select another owner's ledger or assign work to a foreign Process
   or archived Process Activity.
 - Epoch closure either installs a complete new baseline and archive reference or
   leaves the old epoch live.
+
+## Operator release responsibilities
+
+An operator may deploy a bounded catalog of release briefs. During reconciliation
+of an existing personal agent, Kernel creates ordinary `operator.update` records,
+deduplicated by owner, publisher ID and update ID. Terminal records retain that
+deduplication. The initial onboarding responsibility's creation time excludes
+historical updates for new owners; older accounts without that record remain
+eligible. Future-dated briefs are skipped until an eligible later reconciliation.
+
+The records wait for a suitable user conversation and do not schedule a wake just
+for an announcement. Their revisions enter Process context through normal ledger
+observation. Publisher identity and brief remain inspectable, and user edits or
+resolutions are preserved. This adds no fleet scan, DO fanout, alternate prompt
+channel, or new scheduler.

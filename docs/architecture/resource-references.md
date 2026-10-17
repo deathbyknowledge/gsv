@@ -1,8 +1,7 @@
 # Resource References and Lazy Binary Resolution
 
-Status: implemented. Messages, Process output, adapters, Web, and Desktop use
-the common reference contract. Public process-media orchestration has been
-removed; legacy stored descriptors remain readable.
+Messages, Process output, adapters, Web, and Desktop use the common reference
+contract. Legacy stored descriptors remain readable.
 
 GSV should represent files and media once, as authorized resource references,
 and move their bytes only when a consumer resolves those references. Structured
@@ -15,8 +14,7 @@ lets Web, Desktop, models, and other clients resolve the same resource lazily.
 
 ## Contract
 
-A message or tool result contains a typed resource block rather than inline
-bytes or separate process-media metadata:
+A message or tool result contains a typed resource block:
 
 ```ts
 type FileRef = {
@@ -88,10 +86,9 @@ in the structured frame; bytes are never serialized into the RPC argument.
 
 ## Retention and compatibility
 
-Public `proc.media.write/read/delete` calls no longer exist. Producers use
-filesystem transfer primitives and submit a `ResourceBlock`; adapter ingress
-uses a private streamed Process write because the adapter body is not itself a
-filesystem target. The Process validates ownership and exact revision, then
+Producers use filesystem transfer primitives and submit a `ResourceBlock`;
+adapter ingress uses a private streamed Process write because the adapter body
+is not itself a filesystem target. The Process validates ownership and exact revision, then
 retains the bytes once under `~/.gsv/media` before committing durable history.
 Already-owned archive references are reused without another RPC or R2 copy.
 

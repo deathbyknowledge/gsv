@@ -5,7 +5,7 @@ import { Button } from "../../components/ui/Button";
 import { TextInput } from "../../components/ui/TextInput";
 import { Spinner } from "../../components/ui/Spinner";
 import { WelcomeIllustration } from "./backgrounds/WelcomeIllustration";
-import { PrivacyPolicyLink, TermsOfServiceLink } from "./PolicyLinks";
+import { PolicyConsentLabel } from "./PolicyLinks";
 import { OwnerWelcome, OwnerApiError, type OwnerSession, type PendingSetup, type WelcomeState } from "../../services/session/ownerWelcome";
 import "./LoginScreen.css";
 import "./OwnerWelcomeScreen.css";
@@ -106,7 +106,7 @@ export function OwnerWelcomeScreen({ ready, resume, load, onConnect, addressPane
   }, [step, handle, flow]);
 
   const titles = {
-    welcome: "Welcome to GSV", invitation: invitation?.name ? `${invitation.name} invited you to GSV` : "You’re invited to GSV", email: "Your email", code: "Check your email", spaces: "Your spaces", consent: "Before you begin", handle: "Choose your handle",
+    welcome: "Welcome to Ship", invitation: invitation?.name ? `${invitation.name} invited you to Ship` : "You’re invited to Ship", email: "Your email", code: "Check your email", spaces: "Your spaces", consent: "Before you begin", handle: "Choose your handle",
   } satisfies Record<Step, string>;
   const requiresConsent = step === "consent" || (step === "email" && flow?.state.flow === "create");
   const consentError = requiresConsent && consentTouched && !consent;
@@ -143,7 +143,7 @@ export function OwnerWelcomeScreen({ ready, resume, load, onConnect, addressPane
   const actionDisabled = !flow || busy || (step === "email" ? !email.trim()
     : step === "code" ? code.length !== 6 : step === "handle" ? !handle.trim() || availability === "unavailable" : false);
   const opening = step === "spaces" || (step === "email" && (chooseSpace || flow?.state.flow !== "create"));
-  const title = invitation && step === "email" ? "Join GSV"
+  const title = invitation && step === "email" ? "Join Ship"
     : !opening ? titles[step] : !compact ? "Open your space" : step === "spaces" ? "Choose your space" : "Sign in";
   const split = opening && !!addressPanel && !compact;
   const address = () => addressPanel?.({ disabled: busy, connect: (origin) => run(async () => {
@@ -175,7 +175,7 @@ export function OwnerWelcomeScreen({ ready, resume, load, onConnect, addressPane
       <form key={step} class="gsv-login-fields" onSubmit={submit} aria-busy={busy}>
         {step === "invitation" && <div class="desktop-welcome-invitation">
           {invitation?.origin && <p class="desktop-welcome-detail">{invitation.origin}</p>}
-          <p>Join GSV or open your space to connect.</p>
+          <p>Join Ship or open your space to connect.</p>
         </div>}
         {step === "email" && <TextInput label="Email" value={email} onChange={setEmail} disabled={busy} placeholder="you@example.com"
           inputProps={{ autoFocus: true, type: "email", autoComplete: "email", maxLength: 254, required: true }} />}
@@ -186,8 +186,7 @@ export function OwnerWelcomeScreen({ ready, resume, load, onConnect, addressPane
               aria-describedby={consentError ? `${consentId}-error` : undefined}
               onInvalid={() => setConsentTouched(true)}
               onChange={(event) => { setConsent(event.currentTarget.checked); setConsentTouched(true); }} />
-            <span id={`${consentId}-label`}><label for={consentId}>I confirm that I’m 18 or older and agree to the </label>
-              <TermsOfServiceLink /> <label for={consentId}>and acknowledge the </label><PrivacyPolicyLink />.</span>
+            <PolicyConsentLabel id={consentId} />
           </div>
           {consentError && <p class="gsv-owner-consent-error" id={`${consentId}-error`} role="alert">Confirm your age and agreement to continue.</p>}
         </div>}

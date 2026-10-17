@@ -18,6 +18,7 @@ export default defineConfig({
     __PRINT_FULL_PROMPT__: JSON.stringify(env.PRINT_FULL_PROMPT === "1"),
   },
   test: {
+    setupFiles: ["./src/test-fixtures/setup.ts"],
     // Integration tests own a standalone Wrangler harness process.
     exclude: [
       "**/alchemy/**",

@@ -61,7 +61,7 @@ export function MessengerConnections({ account, active }: Pick<SettingsSectionPr
           </button>
         </div>
         <p class="settings-muted">{blurb}</p>
-        {!available && <p class="settings-muted">{name} linking is not available on this GSV.</p>}
+        {!available && <p class="settings-muted">{name} linking is not available on this Ship.</p>}
         {available && !canPair && <p class="settings-muted">Your account cannot link a {name} identity.</p>}
         {links.length === 0 && available && <p class="settings-muted">No {name} identity is linked to you.</p>}
         <ul class="settings-list settings-messenger-links">{links.map((link) => {

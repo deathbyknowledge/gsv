@@ -19,9 +19,20 @@ export const instanceChangeSchema = z.strictObject({
   ownerUid: z.number().int().nonnegative(),
 });
 
+export const instanceExecChangeSchema = instanceChangeSchema.extend({
+  instanceId: id,
+  targetId: id,
+  sessionId: id,
+  event: z.enum(["started", "finished", "failed", "timed_out"]),
+  exitCode: z.number().int().optional(),
+  signal: z.string().max(80).optional(),
+});
+export type InstanceExecChange = z.infer<typeof instanceExecChangeSchema>;
+
 /** Deployment-authorized notifications contain identity only, never browser or login state. */
 export interface InstancesGatewayService {
   instancesChanged(change: z.infer<typeof instanceChangeSchema>): Promise<void>;
+  instanceExecChanged(change: InstanceExecChange): Promise<void>;
 }
 
 export const instanceActorSchema = z.strictObject({

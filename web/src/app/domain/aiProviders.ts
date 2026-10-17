@@ -12,7 +12,7 @@ export type AiProviderOption = {
 
 const GSV_AI_PROVIDER_OPTION: AiProviderOption = {
   value: GSV_INFERENCE_PROVIDER,
-  label: "GSV included",
+  label: "Ship included",
   fixedModel: GSV_INFERENCE_MODEL,
 };
 

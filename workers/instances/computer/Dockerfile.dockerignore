@@ -1,0 +1,8 @@
+**
+!host/
+!host/**
+host/target
+host/**/target
+host/**/.env
+host/**/.env.*
+host/**/.dev.vars*

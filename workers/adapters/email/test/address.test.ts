@@ -17,6 +17,17 @@ function accounts(
 }
 
 describe("managed mail address routing", () => {
+  it("routes configured receiving domains through the same trusted directory", async () => {
+    const directory = accounts({ found: true, state: "active", installationId: "inst_pilot", handle: "pilot", canonicalOrigin: "https://pilot.old.example" });
+    for (const domain of ["fleet.example", "old.example"]) {
+      await expect(resolveMailRecipient(directory, `pilot@${domain}`, "fleet.example", "fleet.example", ["fleet.example", "old.example"]))
+        .resolves.toEqual({ installation: { installationId: "inst_pilot" }, handle: "pilot" });
+    }
+    expect(directory.resolveHostname.mock.calls).toEqual([["pilot.fleet.example"], ["pilot.fleet.example"]]);
+    expect(await resolveMailRecipient(directory, "pilot@fleet.example.attacker.example", "fleet.example", "fleet.example", ["fleet.example", "old.example"])).toBeNull();
+    expect(directory.resolveHostname).toHaveBeenCalledTimes(2);
+    expect(mailAddressForHandle("pilot", "fleet.example")).toBe("pilot@fleet.example");
+  });
   it("derives a canonical sender from the Accounts handle and mail domain", () => {
     expect(mailAddressForHandle("hank", "GSV.Space")).toBe("hank@gsv.space");
     expect(() => mailAddressForHandle("Hank", "gsv.space")).toThrow(

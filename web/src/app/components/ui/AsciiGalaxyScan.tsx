@@ -283,7 +283,7 @@ export class AsciiGalaxyScanRenderer {
   }
 
   private sampleTextTargets(): Point[] {
-    const text = this.config.text.trim() || "GSV";
+    const text = this.config.text.trim() || "Ship";
     const fontSize = 48;
     const letterGap = 30;
     const pad = 16;
@@ -543,7 +543,7 @@ export class AsciiGalaxyScanRenderer {
 }
 
 export function AsciiGalaxyScan({
-  text = "GSV", showNebula = true, showStars = true, cols = 200, rows = 72,
+  text = "Ship", showNebula = true, showStars = true, cols = 200, rows = 72,
   particleCount = 3500, frameRate = 30, label, ...presentation
 }: AsciiGalaxyScanProps) {
   const renderer = useMemo(() => new AsciiGalaxyScanRenderer({ text, cols, rows, particleCount, frameRate }),

@@ -1,9 +1,10 @@
 import { noStoreHeaders } from "./http";
+import { deploymentPresentation, deploymentPresentationScript } from "@humansandmachines/gsv/services/deployment";
 import type { InstallationOwnerEnvironment } from "./owner-service";
 
 const PATH = "/owner/signup/";
 
-export async function handleOwnerSignupRequest(request: Request, env: Pick<InstallationOwnerEnvironment, "GSV_ADMIN_ORIGIN" | "GSV_OWNER_SIGNUP_ORIGIN" | "ASSETS">, enabled: boolean): Promise<Response | null> {
+export async function handleOwnerSignupRequest(request: Request, env: Pick<InstallationOwnerEnvironment, "GSV_ADMIN_ORIGIN" | "GSV_OWNER_SIGNUP_ORIGIN" | "GSV_PUBLIC_CONFIG" | "ASSETS">, enabled: boolean): Promise<Response | null> {
   const url = new URL(request.url);
   const alias = env.GSV_OWNER_SIGNUP_ORIGIN;
   if (alias && alias !== env.GSV_ADMIN_ORIGIN && url.origin === alias) {
@@ -27,5 +28,8 @@ export async function handleOwnerSignupRequest(request: Request, env: Pick<Insta
   headers.set("x-content-type-options", "nosniff");
   headers.set("content-security-policy", "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self'; font-src 'self'; img-src 'self' data:; worker-src 'self' blob:; base-uri 'none'; frame-ancestors 'none'; form-action 'self'");
   if (index) headers.set("cache-control", "no-store");
-  return new Response(asset.body, { status: asset.status, headers });
+  const response = new Response(asset.body, { status: asset.status, headers });
+  if (!index || !headers.get("content-type")?.includes("text/html")) return response;
+  const script = deploymentPresentationScript(deploymentPresentation(env.GSV_PUBLIC_CONFIG));
+  return new HTMLRewriter().on("head", { element(element) { element.prepend(script, { html: true }); } }).transform(response);
 }

@@ -1,10 +1,62 @@
 # Instrument surfaces
 
-Instrument is the default web UI at `/`. Its views use `/chat`, `/people`, `/fleet`, `/memory` and `/chat/settings`. Older `/zen` and `/zen/settings` links replace their address with the Chat routes while preserving query parameters, fragments and history state. The former desktop shell, console and standalone workspaces are retired; old deep links for those surfaces have no compatibility mapping. Login and `/onboarding` capabilities enter the same UI. Shared gateway and history logic lives under `app/services/`, with system types and model/approval logic under `app/domain/`. The design catalog and its retained examples load separately when opened.
+Instrument is the default web UI at `/`. Its views use `/chat`, `/people`, `/fleet`, `/memory` and `/chat/settings`. Older `/zen` and `/zen/settings` links replace their address with the Chat routes while preserving query parameters, fragments and history state. Login and `/onboarding` capabilities enter the same UI. Shared gateway and history logic lives under `app/services/`, with system types and model/approval logic under `app/domain/`. The design catalog and its retained examples load separately when opened.
+
+View navigation uses the shared app history service. User actions push distinct
+destinations; Back and Forward restore them without replacing the shared shell
+or retained views. Redirects replace the current entry, and choosing the current
+URL does not add a duplicate. People includes its list, contact, request, profile
+and archive selection in query parameters. Draft text and attachments stay out of
+URLs and history state. Entering another view preserves People's last destination;
+background sends do not navigate away from the reader's active view.
 
 The shared header reserves its own height above every view. Messages, lists and
 files cannot pass behind the header.
+Scrollable panes mark their top edge with a lavender hairline and the cursor's
+soft glow only while that edge intersects rendered text. The glow occupies only
+the top eight pixels of the pane. The line and glow fade together over 120ms as
+text crosses the edge, clearing in line spacing, padding and gaps between messages
+or rows. Reduced motion changes the edge immediately. The shared shell observes
+only the active view;
+scrolling, message selection and text selection remain owned by each surface.
+Chat's scrolling pane spans the view, with its existing gutters inside the content,
+so the glow reaches both page edges without widening the messages.
+When Chat's activity line is present, the transcript's bottom edge uses the same
+line and inward glow while it clips text. It clears in gaps and at the end of the
+transcript. Without that activity line, the composer's existing rule is the boundary.
 The star field continues behind both regions without an opaque header backdrop.
+The unscaled content viewport reserves the device's top and side safe-area insets,
+including in landscape, before applying text zoom. Scroll panes in Fleet, Memory,
+Settings, login and setup extend to the visible bottom edge, with the bottom safe
+inset added inside their content padding. Chat and People reserve that same
+clearance for their bottom controls. The physical inset stays constant at every
+text size. The viewport follows visual viewport and window resize/scroll events,
+with brief frame tracking around input focus changes. Position corrections are
+immediate; a single reported keyboard-height jump eases over 180ms, reducing only
+the content between the header and composer. Reduced motion applies the height
+immediately. Browser-supplied intermediate heights are followed directly. Pinch
+zoom retains the existing layout between focus changes. Keyboard resizing uses
+the zoom present at input focus or blur, including Safari’s retained fractional zoom. Touch WebKit’s first tap focuses text inputs with `preventScroll`,
+letting the shell reveal the keyboard without a native page pan. Already-focused
+inputs, long presses, dragging and pinch gestures retain native behavior.
+Content takes its height directly from the visible viewport, independently
+of the taller star field, so Safari toolbar changes keep both composer rows visible.
+Keyboard occlusion consumes the bottom safe inset instead of leaving a
+second gap above the keyboard. The document stays fixed to its containing
+viewport. In an installed PWA, both the document and the star-field shell use the
+large viewport height (`100lvh`) so iOS Home Screen launches cover the whole screen,
+including behind the home indicator. Sizing only the star field leaves the
+document's percentage-height viewport short on some Home Screen launches.
+The star field keeps that height while the content follows the visible viewport
+and the keyboard.
+The composer omits routine model and target-readiness feedback, retaining errors,
+offline warnings and reconnecting. Its keyboard return hint is Send; iOS's native
+field-navigation accessory bar remains controlled by the browser.
+
+On narrow screens, the header uses one row with a menu button. The same view
+actions open in a vertical menu with touch-sized rows; the Help button is hidden.
+Choosing a view, tapping outside or pressing Escape closes the menu.
+The menu button retains the unread People indicator while navigation is closed.
 
 Chat, Fleet, Memory and Settings mount on their first visit and retain their local
 state until the signed-in session ends. Moving between them keeps drafts,
@@ -87,15 +139,29 @@ changes another process's policy or remembers a denial.
 
 Chat owns the conversation. A fresh conversation shows the welcome ("Welcome to the ship." / "I am the ship. Who are you?") and the ordinary composer; the CLI and messengers have no such greeting. The person's first message answers that question and goes through normal conversation sending; entering the space never sends an introduction on their behalf. Existing messages and drafts keep their ordinary behavior. Ship's durable onboarding responsibility owns the introduction and any guidance after that first message. Helpers have a simple empty conversation state.
 
+The composer puts send beside the draft and keeps one action row below: attachments
+and the current place on the left, platform voice controls on the right.
+The current place opens the existing places and live-browser
+list. Choosing a destination preserves the draft; Escape, an outside press or
+returning to the prompt closes the list. Desktop keeps its voice
+controls in the same row.
+
 Sending moves the text and attachments into the conversation immediately and clears the composer. A small spinner beside the person's name remains until the send is acknowledged. A committed message arriving before its acknowledgement shares that row using the exact message identity, independently of its text. Failed sends retain their contents and selected place with inline retry and dismiss actions; retry reuses the original send identity and leaves a newer draft alone. Unacknowledged messages remain local to the retained Chat view and participate in warnings before its teardown, including reload and sign-out.
 
 Markdown code blocks share readable monospace sizing, contained horizontal scrolling and a quiet copy action across Chat, search excerpts and Memory. Copy preserves code whitespace without adding the renderer's final newline. Copy feedback stays outside the glyph animation; inline code wraps long tokens without widening the conversation.
 
+Human messages align right, including the sender label; the timestamp precedes the name.
+Their text uses balanced wrapping while preserving explicit line breaks. Ship's messages
+align left with ordinary line wrapping.
+
 Each Ship message separates receipts. The work leading to a message stays in the receipt before it; further work starts a new receipt below that message, even within the same run. Replies keep their own content, order and model attribution. A receipt's identity follows its process, run and previous sent message, so open actions stay open when the next reply streams, commits or finishes. Calls without a run identity stay separate, and direct commands retain their terminal controls.
+On phones, closed completed receipts with a reply are hidden. Live work, failures, fallbacks,
+approvals and receipts the reader has already opened remain visible. Action records are also
+inspectable in Settings → Logs. The latest-message button becomes a right-aligned down arrow.
 
 The receipt has three levels: work between messages, action purpose, evidence. Closed, active work names its current purpose; otherwise the receipt shows its action count and places. There is no thinking label, elapsed counter or timing annotation inside the receipt. Failures and retries remain visible, including retries continued after a message. Shell retry links require the same full command, working directory and session context on the same target; sharing an executable name is not enough. Opening the receipt shows an ordered list of purposes with small state indicators. Opening a purpose reveals its readable request, result, place, retry relationship and preceding working notes. Shell commands use the same `who@target $ command` presentation as approvals, with terminal output beneath. Files show paths and content, writes show their content, edits show before/after text, and searches show matching lines. Long content scrolls without a second UI truncation. Unattached notes have their own fold inside that receipt. Calls without a purpose use the same generated wording as approvals. Memory references and the reply's model attribution sit inside its receipt; approval decisions remain visible outside these folds, and only the receipt owning a pending action shows its waiting state. The earlier layout, grouped by place, stays behind `RECEIPT_LAYOUT` in `ReceiptTimeline.tsx`.
 
-Fleet owns places, processes, responsibilities, routines, files and their inspectors. Places offers Connect, subject to the signed-in account's permissions. A new place can be a computer or browser. People owns contact conversations and private invitations. Opening either connection form never creates a credential or invitation.
+Fleet owns places and processes, with files opened from a place. Chat owns contextual responsibilities and routines. Places offers Connect, subject to the signed-in account's permissions. A new place can be a computer or browser. People owns contact conversations and private invitations. Opening either connection form never creates a credential or invitation.
 
 Cloud browser rows, Chat's browser place chips and browser links in work receipts
 open their live view directly without navigating to Fleet or changing the next
@@ -110,6 +176,10 @@ actually displayed. Closing the view leaves work running. Only an explicit Ship
 sign-in request shows a completion action. The Fleet browser action reuses the
 account's current instance, and saved logins are automatic rather than exposed
 as profile setup. Stopped instances leave the ordinary place list.
+
+Cloud Linux computers use the ordinary place inspector and command selection.
+Only browser instances open the live viewer; a starting computer becomes
+selectable for commands once it is ready.
 
 The Fleet overview uses the full width with modest side gutters on wide screens.
 Browsing with j/k or the arrow keys only
@@ -138,7 +208,9 @@ Only interactive processes offer a conversation action. Logs process links and d
 
 Chat accepts attachments through the + button beside the prompt, paste, or drag-and-drop. Files stay local until Send, use the shared 25 MiB limit, and travel through the existing staged body upload service. Send moves the draft into the optimistic outbox; retries reuse its identity and upload paths, cancellation stops uploads and cleans staging, and a completed send preserves text/files added in the meantime. View changes retain the draft and uploads; teardown warns before discarding unsent work. Attachments cannot be silently consumed by a direct shell command. Canonical resource references and older media descriptors use the same reader in both chat surfaces; Chat renders images, documents, audio and video, including messages containing only media.
 
-The shell keeps one star field and one header mounted across Chat, People, Fleet, Memory and Settings. The field uses the same density and opacity throughout. The shell also owns the browser tab: while the tab is hidden or the window lacks focus, each Ship message committed in that time raises a count, the title reads "(N) GSV" and the favicon carries an accent dot, with nothing animated; viewing the tab again clears both. Contact messages count only when the Kernel's private attention policy permits. The person's own messages, helpers' work conversations, and history loaded on first paint or reconnect never count. Navigation has five fixed view shortcuts: c for Chat, f for Fleet, m for Memory, p for People and s for Settings. Each key and header button always opens its named view. Help offers Search Chat from every view; Ctrl+K opens Chat search from any view, including while writing a draft. Content transitions do not fade or remount the header. Helper conversations keep their label and return-to-Ship action beside the wordmark. The prompt has no permanent status strip. During an active run, the quiet feedback line shows the selected model and target readiness, plus a waiting state when approval is needed. It has no thinking label or elapsed counter. It clears when the run ends or is aborted; an idle or queued process has no run strip. Connection and send errors appear when needed, and model attribution remains with the message. Fleet presents Places, Processes, Responsibilities, Routines and Files. Logs is in Settings.
+Reconnecting leaves the Chat prompt editable and retains its text, focus and attachments. Send is disabled, and the shared submission handler rejects messages and direct commands until the gateway reconnects. Reconnecting never sends the draft automatically.
+
+The shell keeps one star field and one header mounted across Chat, People, Fleet, Memory and Settings. The field uses the same density and opacity throughout. The shell also owns the browser tab: while the tab is hidden or the window lacks focus, each Ship message committed in that time raises a count, the title reads "(N) GSV" and the favicon carries an accent dot, with nothing animated; viewing the tab again clears both. Contact messages count only when the Kernel's private attention policy permits. The person's own messages, helpers' work conversations, and history loaded on first paint or reconnect never count. Navigation has five fixed view shortcuts: c for Chat, f for Fleet, m for Memory, p for People and s for Settings. Each key and header button always opens its named view. Help offers Search Chat from every view; Ctrl+K opens Chat search from any view, including while writing a draft. Content transitions do not fade or remount the header. Helper conversations keep their label and return-to-Ship action beside the wordmark. The prompt has no permanent status strip. Connection and send errors appear when needed; ordinary model and target readiness stay out of the composer. Approvals and run activity remain in the transcript, and model attribution remains with the message. Fleet presents Places and Processes. Files open from a place; responsibilities and routines open in Chat. Logs is in Settings.
 
 Header controls have transparent backgrounds so they follow the pane underneath. Keyboard focus uses an underline on controls and table labels. Fleet has no permanent footer: Help lists its shortcuts. Fleet’s command action opens Chat on the selected target, with a direct-shell prompt ready to type.
 
@@ -155,7 +227,20 @@ twinkle phase. The sphere is not recomputed during animation.
 
 Chat opens in browse mode at the latest message. Typing any printable key that no shortcut claims focuses the prompt and lands in it, as does pasting text or files; clicking the prompt works too. Escape leaves input and stays in browse when already there. Keys held with a modifier, the shell's and Chat's shortcut letters, and the keys of a pending approval do not start typing. An explicit command or message prefill, target picker, or attachment action focuses the prompt. Mode changes install their keyboard handlers before paint, and reconnecting preserves an existing browse position. Help lists navigation and appearance controls plus shortcuts for the current view, separating Chat browse and input behavior. Chat browse uses j/k for messages and activity, gg for the start of loaded history and G for the latest messages. App shortcuts must work on a compact keyboard without a number pad or extended navigation keys. Ctrl+u/d still scroll half a page and Shift+Enter still inserts a new line, but neither is listed in Help. A sent message keeps the line breaks a person typed; runs of blank lines fold to one.
 
-Chat follows the bottom until the reader scrolls away. A small latest button appears above the composer while the transcript is away from the bottom and returns to the newest message. Focusing the prompt does not resume following; sending a message, running a command, pressing G or scrolling back to the bottom does. Reading retains the visible message and its offset through new replies, growing content, composer and viewport resizing, detail expansion, older-page insertion and reconnects. Selecting a long message aligns its beginning below the header. Reaching the top loads earlier conversation and process history; loaded pages remain available across reconnects. Scroll ownership belongs to Chat, while the shared conversation hook owns page retention.
+Chat follows the bottom until the reader scrolls away. A small latest button appears above the composer while the transcript is away from the bottom and returns to the newest message. Focusing the prompt does not resume following; sending a message, running a command, pressing G or scrolling back to the bottom does. Reading retains the visible message and its offset through new replies, growing content, composer and viewport resizing, detail expansion, older-page insertion and reconnects. Keyboard navigation to a long message aligns its beginning below the header. Reaching the top loads earlier conversation and process history; loaded pages remain available across reconnects. Scroll ownership belongs to Chat, while the shared conversation hook owns page retention.
+
+The scroll owner reconciles rendered-content changes and font loading as well as
+size changes, including padding. A temporary shrink can clamp the browser's scroll position even
+when the content returns to the same height; that layout adjustment must not be
+treated as the reader leaving the bottom. Hidden views disconnect these observers.
+
+Pointer selection leaves the transcript in place, including long messages and
+text selection. Wheel and touch scrolling update the same selected
+message used by keyboard navigation: the message nearest the visible transcript's center,
+with the first/latest selected at either end. Its highlight stays visible while the prompt
+has focus; browse shortcuts become available again after leaving the input.
+On touchscreens, one tap selects a message and reveals its timestamp and copy
+action. Hover reveals these controls only on devices with a hover-capable pointer.
 
 Process history synchronization keeps its historical page boundary separate from revision deltas. Late companions and media replacements remain available without moving that boundary past unloaded messages; a delayed page cannot advance a different window established by reconnect.
 
@@ -171,14 +256,6 @@ All spinner sizes keep a square layout box. Their glyphs use fixed Departure
 Mono metrics and the matching projection, then scale uniformly inside that box;
 small indicators do not lay out their text at roughly one-pixel font sizes.
 
-The native gesture guide shows one hand animation at a time through the shared
-ASCII scene host. Select a command to see its hold and fist reset; alternative
-finger combinations include the thumb. Both-fist and scrolling examples show
-both hands. The guide does not start sensors or invoke commands. It runs only
-while visible, supports pause and reduced motion, and caches its small finite
-glyph loops as frames are first displayed, without blurred shadows or a bulk
-render on opening.
-
 Web Zen offers record, stop and cancel when no native input provider is present.
 Recording replaces the prompt's presentation with a live waveform: square bars,
 the Instrument accent colour, and quiet text actions. The draft remains mounted
@@ -190,28 +267,17 @@ not cause Zen or the conversation to rerender.
 The browser owns microphone capture and releases it before uploading a bounded
 audio body through `ai.transcription.create`, with the current Process selecting
 the transcription configuration. The result inserts at the current draft cursor
-without sending. Enter finishes capture for review; scope changes, leaving Zen,
-hiding the tab, disconnecting and clearing the draft cancel capture or upload
-and fence late results. Voice input uses the composer's effective place from the
+without sending. Enter finishes capture for review. Scope changes discard pending
+audio and fence late results. Hiding the tab or disabling input stops capture and
+cancels the upload attempt while retaining the completed audio for explicit retry;
+reconnection never uploads automatically. Each attempt has its own abort identity,
+so an interrupted response cannot overwrite a later retry. Voice input uses the composer's effective place from the
 first render, so loading the target list does not interrupt recording or transcription
-at the default cloud place. Failed uploads can retry the in-memory recording. Desktop retains its
-local continuous dictation and gesture controls.
-
-The guide uses an original 3D hand mesh with a shaped palm, independently curling
-fingers and an opposing thumb. It shares the ship's supersampled triangle raster,
-depth buffer, lighting, theme palettes and Departure Mono glyphs. Its 96×48 scene
-runs at 18 fps and turns once every 40 seconds around the vertical axis. Dragging
-horizontally holds the pose and orbits the whole scene around one vertical axis;
-the paired hands share a pivot between their palms and their connecting line
-follows that same rotation. Releasing resumes from that angle. The palm, wrist,
-thumb pad and knuckles retain volume from the side. Left/Right and Home provide
-keyboard rotation and reset. Manual turns also work while paused or with reduced
-motion. Each mounted lesson keeps at most
-128 recent frames, and a theme change replaces the cached palette. The hand scene
-owns articulation and rotation; the shared raster owns projection and shading.
-Interaction invalidates the glyph host directly, coalesced to one animation frame,
-without rerendering the guide or conversation. Gesture recognition remains
-independent of these illustrations.
+at the default cloud place. Failed or empty transcriptions retain the in-memory
+recording for retry, download or explicit discard, even while typed text is edited
+or sent. The download URL is released when its recording is discarded, inserted
+successfully, or unmounted. Closing or reloading the tab does not retain audio.
+Desktop retains its local continuous dictation and microphone selection.
 
 Before a remote command starts, its session UUID is saved in the per-tab journal. If storage fails, the command does not launch. `shell.exec` registers that identity before execution, so a reload before the initial response arrives can recover by polling the saved ID. Initial machine acknowledgements leave output for the first poll. Recovery never resubmits the command; older daemons reject this start mode before execution and show an update instruction.
 
@@ -220,16 +286,22 @@ Normal Chat messages carry the prompt's selected place as structured message con
 Explicit start rejections finish the command as failed and remove its live controls. The Kernel marks rejections before dispatch in structured error details; a timeout or disconnect after dispatch remains unavailable and recoverable. A legacy daemon's unknown-session rejection finishes with the update instruction, without retrying the command.
 
 Scrollbar and selection colors use the current light or dark theme, including prompt text and native controls. Chat retains its existing hidden transcript scrollbar.
+Text selection uses a solid accent highlight with contrasting foreground. Selecting
+transcript text temporarily restores older messages to full opacity so their
+selection stays legible.
+The prompt keeps selected letters light on a stronger purple highlight. Its native
+caret tint returns while a range is selected so iOS can draw the selection and
+drag handles; the block cursor returns when the selection collapses.
 
 People opens the conversation list. A counted Requests entry opens incoming first-message decisions, with sent and past requests secondary; Contacts in the heading opens the private address book. Both offer a direct return to conversations. New conversation filters saved people locally or opens a public profile address. These are separate jobs rather than equal tabs. Conversation selection, scroll and drafts stay mounted while visiting Requests or Contacts, with hidden queries paused.
 
 The first visit explains direct conversation and asking Ship to coordinate through selectable examples. Connect is one entry point. When signup invitations are available, its first step asks **New to GSV** or **Already on GSV**, with neither preselected. The new-user choice shows the remaining allowance and leads to a signup invitation; the existing-user choice leads to sharing a connection link, accepting a link/code or entering a public profile address. Opening the chooser or either form creates nothing. A received invitation goes directly to its acceptance step. Managed links reuse Accounts' space chooser or signup before the recipient's normal login and explicit acceptance. A pending invitation survives login and reload within that tab. Acceptance opens the conversation, and the selected example can become an editable draft in the ordinary Ship chat. Ask Ship in the conversation header also opens a draft; neither action sends a message or changes standing contact handling.
 
-The shared header marks waiting People activity. Chat combines unread conversations, incoming requests and unfinished replies in one compact People line above the prompt. Messages never open the panel or force the Ship transcript to scroll. Selecting a person opens one bounded read/reply panel; Escape, close or clicking outside folds it away while retaining the draft. Full history remains in People. Both surfaces observe the same paginated conversation cache. The existing inbox and incoming request APIs recover earlier activity after reload or reconnect, and owner-scoped signals refresh them without polling or a separate live-notice store. Replies retain their exact send identity and answered sequence; a late completion cannot erase newer text, mark a later arrival read or close a subsequently opened panel. Muted, blocked, ended and archived conversations stay quiet, while a held draft remains reachable. These shared attention reads remain active across views; histories load only when opened. Cached activity and drafts stay visible during reconnect, with sending disabled.
+The shared header marks waiting People activity. Chat combines ongoing plans, unread conversations, incoming requests and unfinished replies in one compact activity line above the prompt. Messages never open the panel or force the Ship transcript to scroll. Selecting a person opens one bounded read/reply panel; Escape, close or clicking outside folds it away while retaining the draft. Full history remains in People. Both surfaces observe the same paginated conversation cache. The existing inbox and incoming request APIs recover earlier activity after reload or reconnect, and owner-scoped signals refresh them without polling or a separate live-notice store. Replies retain their exact send identity and answered sequence; a late completion cannot erase newer text, mark a later arrival read or close a subsequently opened panel. Muted, blocked, ended and archived conversations stay quiet, while a held draft remains reachable. These shared attention reads remain active across views; histories load only when opened. Cached activity and drafts stay visible during reconnect, with sending disabled.
 
 Instrument inputs and textareas share the Chat prompt's placeholder colour, Martian Mono type and letter spacing. Typed content retains each field's prose or control typography. The shared rule follows the light and dark themes rather than allowing individual fields to fall back to browser-grey placeholders.
 
-Inviting, accepting an invitation, sending a profile request and accepting a request require an explicit, unselected choice of who handles new messages. The Kernel retains each person's independent choice through delayed acceptance and retries. The conversation header exposes an Automatically handle new messages switch to change it later. Enabling it does not wake Ship or replay existing history; replies associated with assigned work remain independent of the standing preference. Search and Details remain beside it. Details opens a focused dialog for the private name and mute; saved-contact and archive actions are secondary, while connection management and structured work requests open on demand. Saving controls address-book membership only. The composer places a compact attach button beside the prompt.
+Inviting, accepting an invitation, sending a profile request and accepting a request require an explicit, unselected choice of who handles new messages. The Kernel retains each person's independent choice through delayed acceptance and retries. Conversation details exposes an Automatically handle new messages switch to change it later; the header shows a short handling summary when space permits. Enabling it does not wake Ship or replay existing history; replies associated with assigned work remain independent of the standing preference. On phones, the compact header puts ask Ship, search and details under more. The back arrow returns to the full-height conversation list. Details opens a focused dialog for handling, the private name and mute; saved-contact and archive actions are secondary, while connection management and structured work requests open on demand. Saving controls address-book membership only. The composer uses the shared PromptLine and its native selection tint, with a file-picker + beneath the prompt and send beside nonempty text or attachments. Its owning draft store controls clearing, retries and attachment limits. The profile editor uses the same fixed title/back header, with text-clipping feedback on its scrolling form.
 
 Contact messages support older history, text, attachments and exact replies in the same conversation. Reply and successful-delivery controls appear on hover or keyboard focus, and stay available on touch screens. Pending and failed delivery states remain visible. Drafts, uploads and send identities stay in People across navigation; reloading warns, and uploads are cancelled on teardown. Active conversation and request caches refresh from exact owner-scoped signals, and hidden views wait until opened. Request actions retain revision checks. Revoked contacts keep readable history with sending disabled.
 
@@ -239,9 +311,17 @@ Memory and People share a full-height sidebar divider owned by the Instrument sh
 Settings extends its divider through the header at the edge of its naturally sized
 section rail. It switches to a horizontal separator with the narrow section strip.
 
-Responsibilities use the existing table/inspector layout. Current work and history show assignees, state, blockers, details and next checks; process counts filter the list. Cancellation retains the responsibility's revision check. Standing-source switches open only when requested. Routine controls create and edit recurring Ship responsibilities and pause/enable schedules, while preserving existing metadata and detecting observed definition conflicts. New routines use the timezone from Settings without another input; existing routines retain their timezone and show a note when it differs. One-shot and non-Ship scheduled tasks remain visible for inspection and pausing. Owner-only work signals invalidate just the affected cache; hidden history and standing-source views do not fetch in the background.
+Ship’s activity line has an ongoing count beside People activity, labelled “plans” when none are active. It opens a contextual panel without changing the conversation, target or composer draft. Ongoing, routines and history tabs share that panel. Responsibilities show their title, short state, delegated assignee and next check; the full waiting explanation opens in details. Parent responsibilities contain collapsible steps; blockers and active work sort first. Cancellation retains the responsibility’s revision check. Standing-source switches live in Settings. Hidden panels do not fetch in the background.
 
-Memory has one quiet new-page action. It reuses the correction editor, refuses a name already in use, and fences page/index writes with the repository head. Existing-page corrections compare the editor baseline before saving. Moving to another Instrument view retains the editor; replacing its page or reloading protects unsaved drafts.
+Routine rows show cadence and next run, pause or failure state. Details retain pause/enable and advanced editing, including observed definition conflicts and timezone preservation. “New routine” and “ask Ship” stage editable text requests in the ordinary composer. One-shot and non-Ship scheduled tasks remain available for inspection and pausing. Fleet process counts open this same panel filtered to the assignee. The activity count uses a bounded read, follows responsibility signals and reloads on reconnect; helper conversations hide the plans shortcut.
+
+The composer’s `+` opens attach a file, find a person, reference a file, create a routine, connect a computer and start a browser. Creation choices prefill ordinary editable text; they never send or authorize actions immediately. File and profile pickers insert readable references, preserving the existing text and attachments. The entire request can be edited or deleted in the composer. Sending and history use ordinary text, with no action metadata or object-specific rendering. Reconnects allow editing and block sending; failed sends retain the text, attachments, selected place and retry identity.
+
+Profile lookup uses saved contacts, a gsv.space handle or an explicit GSV address; contacting someone reuses People’s existing request UI and permissions. It does not send through Ship automatically. Memory and People “ask Ship” controls use the same editable text prefills. Exact routine and responsibility IDs, profile URLs and file paths appear in the text, not in hidden controls.
+
+Fleet’s narrow layout presents places and processes as two-line rows. Platform details, activity times and costs remain in their inspectors; the desktop keeps table columns. File browsing starts from a place’s inspector, with the existing preview and reader/editor.
+
+Memory’s mobile layout shows a full-height page browser or reader/editor. The browser shows loading feedback while collections and pages load. “← pages” returns to the mounted browser without losing its scroll or the editor draft; “continue editing →” resumes the draft. Desktop keeps the split panes. Memory has one quiet new-page action. It reuses the correction editor, refuses a name already in use, and fences page/index writes with the repository head. Existing-page corrections compare the editor baseline before saving. Moving to another Instrument view retains the editor; replacing its page or reloading protects unsaved drafts.
 
 Memory's j/k and arrow keys move keyboard focus through visible sidebar rows,
 including folders, without opening a page or changing the reader. Space or Enter
@@ -275,11 +355,11 @@ Approvals accept the ordinary controls and shortcuts. A new message or interrupt
 
 Text actions are the default. Choose the style from the control's role and placement:
 
-- Use text for toolbars, actions beside content, opening add/edit flows, and secondary actions such as back, cancel, refresh and discard. Header shortcuts and file toolbars stay text.
+- Use text for toolbars, actions beside content, opening add/edit flows, and secondary actions such as back, cancel, refresh and discard. Give these unboxed actions a subtle underline so they read as controls. Header shortcuts and file toolbars stay text.
 - Use blocks for grouped selectors such as Settings sections, with equal sizes and centered labels, and for the main confirmation within a focused form. Opening Add MCP server is a text action; submitting the resulting form uses a block.
 - Destructive actions use red and appropriate confirmation independently of shape. A contextual delete and its inline confirmation can both be text actions.
 - Preserve semantic buttons or links, keyboard focus, disabled states and usable click areas. An unboxed control still needs a usable target.
-- Use named text controls rather than the retired dot-matrix icon library. Installation icons in `web/public/icons` are branding assets; functional graphics such as a shared cursor remain local to their owning view.
+- Use named text controls. Installation icons in `web/public/icons` are branding assets; functional graphics such as a shared cursor remain local to their owning view.
 
 Your profile opens in People by selecting your display name at the bottom of its
 left sidebar. It uses the same retained view and draft protection as conversations.

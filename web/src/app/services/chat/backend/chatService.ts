@@ -104,7 +104,7 @@ export type ChatResource = {
 
 function throwIfFailed<T extends { ok: true }>(result: T | FailureResult): T {
   if (!result.ok) {
-    throw new Error(result.error || "GSV process request failed");
+    throw new Error(result.error || "Ship process request failed");
   }
   return result;
 }
@@ -247,7 +247,7 @@ export async function readChatProcessMedia(
   const data = mediaReadDataSchema.parse(response.data);
   if (!data.ok) {
     await response.body?.stream.cancel(data.error).catch(() => {});
-    throw new Error(data.error || "GSV process media request failed");
+    throw new Error(data.error || "Ship process media request failed");
   }
   if (data.size > MAX_CHAT_PROCESS_MEDIA_BYTES) {
     const error = new Error("Process media exceeds the 25 MiB display limit");
@@ -291,7 +291,7 @@ export async function readChatResource(
   const data = resourceTransferDataSchema.parse(response.data) satisfies FsTransferSendResult;
   if (!data.ok) {
     await response.body?.stream.cancel(data.error).catch(() => {});
-    throw new Error(data.error || "GSV resource request failed");
+    throw new Error(data.error || "Ship resource request failed");
   }
   if (
     data.path !== ref.path

@@ -64,6 +64,8 @@ import {
   type RouteOrigin,
 } from "./routing";
 import { ShellSessionStore } from "./shell-sessions";
+import type { InstanceExecChange } from "@humansandmachines/gsv/services/instances";
+import { acquireInstances } from "./instance-service";
 import {
   ProcessRegistry,
 } from "./processes";
@@ -703,6 +705,28 @@ export class Kernel extends DurableObject<GatewayEnv> {
     if (!gate.allowed || !this.auth.getPasswdByUid(ownerUid) || this.auth.isAccountDisabled(ownerUid)) return;
     this.retirement.assertActive();
     this.connectionRuntime.broadcastToUserUid(ownerUid, "instance.changed");
+  }
+
+  async instanceExecChanged(change: Omit<InstanceExecChange, "installationId">): Promise<void> {
+    this.retirement.assertActive();
+    const gate = await this.onboarding.managedWorkGate();
+    if (!gate.allowed || !this.auth.getPasswdByUid(change.ownerUid) || this.auth.isAccountDisabled(change.ownerUid)) return;
+    const signal = AbortSignal.timeout(5000);
+    const service = await acquireInstances(this.buildKernelContext({}), signal);
+    try {
+      const { instance } = await raceWithAbort(service.get({ ownerUid: change.ownerUid, human: false }, { instanceId: change.instanceId }), signal);
+      this.retirement.assertActive();
+      if (!instance || instance.instanceId !== change.instanceId || instance.targetId !== change.targetId
+        || instance.ownerUid !== change.ownerUid || instance.kind !== "linux" || instance.state !== "ready") return;
+      const currentGate = await this.onboarding.managedWorkGate();
+      if (!currentGate.allowed || !this.auth.getPasswdByUid(change.ownerUid) || this.auth.isAccountDisabled(change.ownerUid)) return;
+      this.retirement.assertActive();
+      if (instance.expiresAt <= Date.now() || this.targets.get(change.targetId)) return;
+      const session = this.shellSessions.get(change.sessionId);
+      if (session && session.targetId !== change.targetId) return;
+      this.shellSessions.recordEvent(change.targetId, change);
+      this.connectionRuntime.broadcastToUserUid(change.ownerUid, "instance.changed");
+    } finally { service[Symbol.dispose]?.(); }
   }
 
   async getPublicProfileProjection(locator: PublicProfileLocator): Promise<PublicProfileProjection | null> {

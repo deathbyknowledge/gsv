@@ -9,12 +9,14 @@ import { requireCommandCapability, requireShellOptionValue } from "./common";
 const INSTANCE_HELP = `Usage:
   instance catalog
   instance start browser --request-id ID [--wait] [--timeout MS] [--new] [--profile ID] [--name NAME] [--seconds N]
+  instance start computer --request-id ID [--wait] [--timeout MS] [--name NAME] [--seconds N]
   instance list [--all]
   instance get ID | instance get --request-id ID
   instance stop ID [--wait] [--timeout MS] [--force] | instance stop --request-id ID [--wait] [--force]
 
 Keep the request ID before starting. If the response is lost, get by that ID; do not start again with a new ID.
 Start reuses your current browser, including one still starting, without extending its lifetime. Use another tab for additional work.
+Computer starts allocate a separate Linux target with shell, files and network access. Its /workspace is temporary; copy source and build outputs to gsv before stopping. Browser profiles and --new do not apply to computers.
 --wait returns when ready (default timeout 60000 ms, maximum 120000). Cancelling or timing out only stops waiting; get by the saved request ID to recover.
 The result says disposition: created or reused. IDs accept the displayed target ID or full instance ID.
 --new explicitly starts a separate, temporary browser. Ordinary starts remember logins for your account automatically.
@@ -117,7 +119,7 @@ export function buildInstanceCommands(ctx: KernelContext, request?: NativeShellC
       requireCommandCapability(ctx, frame.call);
       if (!request) throw new Error("Direct syscall transport is unavailable");
       const deadline = new AbortController();
-      const timer = waitMs === undefined ? undefined : setTimeout(() => deadline.abort(new Error("Browser lifecycle wait timed out")), waitMs);
+      const timer = waitMs === undefined ? undefined : setTimeout(() => deadline.abort(new Error("Instance lifecycle wait timed out")), waitMs);
       const signal = shell.signal ? AbortSignal.any([shell.signal, deadline.signal]) : deadline.signal;
       try {
         const response = await request(frame, signal);

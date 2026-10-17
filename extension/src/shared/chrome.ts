@@ -136,7 +136,7 @@ export async function captureTabPng(tabId: number): Promise<Uint8Array> {
     return base64ToBytes(result.data);
   } finally {
     await releaseDebugger(tabId).catch((error: ExtensionBoundaryValue | Error) => {
-      console.warn("GSV browser target failed to detach debugger", error);
+      console.warn("Ship browser target failed to detach debugger", error);
     });
   }
 }

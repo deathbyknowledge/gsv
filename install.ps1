@@ -255,7 +255,7 @@ function Ensure-HostRuntimes {
 }
 
 function Install-GsvHost {
-  if (-not [Environment]::Is64BitOperatingSystem) { throw "GSV requires 64-bit Windows" }
+  if (-not [Environment]::Is64BitOperatingSystem) { throw "Ship requires 64-bit Windows" }
   if (-not [System.IO.Path]::IsPathRooted($InstallDir)) { throw "GSV_INSTALL_DIR must be an absolute path" }
   $resolvedInstallDir = ([System.IO.Path]::GetFullPath($InstallDir)).TrimEnd("\")
   $volumeRoot = ([System.IO.Path]::GetPathRoot($resolvedInstallDir)).TrimEnd("\")
@@ -263,7 +263,7 @@ function Install-GsvHost {
   if ($resolvedInstallDir -eq $volumeRoot -or $resolvedInstallDir -eq $userProfile) {
     throw "GSV_INSTALL_DIR must name a dedicated binary directory"
   }
-  if ([Environment]::OSVersion.Version.Major -lt 10) { throw 'GSV requires Windows 10 or newer' }
+  if ([Environment]::OSVersion.Version.Major -lt 10) { throw 'Ship requires Windows 10 or newer' }
   if ($env:PROCESSOR_ARCHITECTURE -match 'ARM64' -or $env:PROCESSOR_ARCHITEW6432 -match 'ARM64') {
     throw 'This release supports Windows x64 only'
   }
@@ -274,11 +274,7 @@ function Install-GsvHost {
     "gsvd-$Platform.exe" = "gsvd.exe"
     "gsv-desktop-$Platform.exe" = "gsv-desktop.exe"
     "gsv-transcribe-$Platform.exe" = "gsv-transcribe.exe"
-    "gsv-vision-$Platform.exe" = "gsv-vision.exe"
     "gsv-transcribe-THIRD_PARTY.md" = "gsv-transcribe-THIRD_PARTY.md"
-    "gsv-vision-LICENSE.apache-2.0" = "gsv-vision-LICENSE.apache-2.0"
-    "gsv-vision-PROVENANCE.md" = "gsv-vision-PROVENANCE.md"
-    "gsv-vision-THIRD_PARTY.md" = "gsv-vision-THIRD_PARTY.md"
     "gsv-transcribe-runtime-$Platform.zip" = "gsv-transcribe-runtime"
   }
   if ($Headless) {
@@ -306,7 +302,7 @@ function Install-GsvHost {
     $service = Get-CimInstance Win32_Service -Filter "Name='gsvd'" -ErrorAction Stop
     $serviceExisted = $null -ne $service
     $busy = Get-Process -Name gsv-desktop,gsv-transcribe,gsv-vision -ErrorAction SilentlyContinue
-    if ($busy) { throw 'Close GSV Desktop and its input helpers, then run the installer again.' }
+    if ($busy) { throw 'Close Ship Desktop and its input helpers, then run the installer again.' }
     Ensure-HostRuntimes
 
     New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
@@ -329,6 +325,17 @@ function Install-GsvHost {
           Move-Item -Force $staged $target
         } finally {
           Remove-Item -Recurse -Force $staged -ErrorAction SilentlyContinue
+        }
+      }
+
+      if (-not $Headless) {
+        foreach ($name in @('gsv-vision.exe', 'gsv-vision-LICENSE.apache-2.0', 'gsv-vision-PROVENANCE.md', 'gsv-vision-THIRD_PARTY.md')) {
+          $target = Join-Path $InstallDir $name
+          if (Test-Path $target) {
+            $backup = "$target.backup.$PID"
+            $installed += [PSCustomObject]@{ Target = $target; Backup = $backup }
+            Move-Item -Force $target $backup
+          }
         }
       }
 
@@ -359,7 +366,7 @@ function Install-GsvHost {
 }
 
 Write-Host ""
-Write-Host "GSV host installer · Windows x64" -ForegroundColor Cyan
+Write-Host "Ship host installer · Windows x64" -ForegroundColor Cyan
 Write-Host ""
 Install-GsvHost
 if ($SkipUserSetup) { return }
@@ -378,15 +385,16 @@ if (-not $Version) {
 }
 if (-not $Headless) {
 $shell = New-Object -ComObject WScript.Shell
-$shortcut = $shell.CreateShortcut((Join-Path ([Environment]::GetFolderPath('Programs')) 'GSV.lnk'))
+$shortcut = $shell.CreateShortcut((Join-Path ([Environment]::GetFolderPath('Programs')) 'Ship.lnk'))
 $shortcut.TargetPath = Join-Path $InstallDir 'gsv-desktop.exe'
 $shortcut.WorkingDirectory = $InstallDir
 $shortcut.Save()
+Remove-Item -LiteralPath (Join-Path ([Environment]::GetFolderPath('Programs')) 'GSV.lnk') -ErrorAction SilentlyContinue
 }
 if ($Headless) {
-  Write-Success "Installed GSV CLI and daemon to $InstallDir"
+  Write-Success "Installed Ship CLI and daemon to $InstallDir"
 } else {
-  Write-Success "Installed GSV Desktop, CLI, daemon and local input helpers to $InstallDir"
+  Write-Success "Installed Ship Desktop, CLI, daemon and the local voice helper to $InstallDir"
 }
 Write-Host ""
 Write-Host "  Next: finish setting up your space in your browser."
@@ -396,7 +404,7 @@ Write-Host ""
 if (-not $Headless -and $env:GSV_NO_LAUNCH -ne "1" -and -not $env:CI -and
     -not $env:SSH_CONNECTION -and -not $env:SSH_TTY -and [Environment]::UserInteractive -and
     -not [Console]::IsOutputRedirected -and -not [Console]::IsErrorRedirected) {
-  Write-Info "Opening GSV Desktop"
+  Write-Info "Opening Ship Desktop"
   try {
     & (Join-Path $InstallDir "gsv.exe") desktop
     if ($LASTEXITCODE -ne 0) { throw "gsv desktop exited with status $LASTEXITCODE" }

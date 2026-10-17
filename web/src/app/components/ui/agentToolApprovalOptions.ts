@@ -154,12 +154,16 @@ export const BUILTIN_TARGET_OPTIONS: SelectOption[] = [
     value: "",
   },
   {
-    label: "GSV computer",
+    label: "Ship computer",
     value: targetOptionValue("gsv"),
   },
   {
     label: "Cloud browsers",
     value: targetOptionValue({ route: "instance", platform: "browser" }),
+  },
+  {
+    label: "Cloud computers",
+    value: targetOptionValue({ route: "instance", platform: "linux" }),
   },
 ];
 const LEGACY_EXTERNAL_TARGET_OPTION: SelectOption = {
@@ -271,10 +275,11 @@ export function targetLabelForRule(target: ToolApprovalTarget | undefined, targe
     return "All machines";
   }
   if (target === "gsv") {
-    return "GSV computer";
+    return "Ship computer";
   }
   if (isToolApprovalTargetSelector(target)) {
     if (target.route === "instance" && target.platform === "browser") return "Cloud browsers";
+    if (target.route === "instance" && target.platform === "linux") return "Cloud computers";
     return target.platform ? `${target.route} · ${target.platform}` : target.route;
   }
   const known = targets.find((candidate) => candidate.id === target);

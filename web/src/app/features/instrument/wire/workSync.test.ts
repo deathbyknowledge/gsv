@@ -6,6 +6,7 @@ import { INSTRUMENT_RESPONSIBILITIES_KEY, INSTRUMENT_ROUTINES_KEY, INSTRUMENT_SO
 describe("work notifications", () => {
   it.each([
     ["r12y.changed", [...INSTRUMENT_RESPONSIBILITIES_KEY, "current"]],
+    ["r12y.changed", [...INSTRUMENT_RESPONSIBILITIES_KEY, "count"]],
     ["sched.changed", INSTRUMENT_ROUTINES_KEY],
     ["r12y.source.changed", INSTRUMENT_SOURCES_KEY],
   ] as const)("retires an older in-flight snapshot on %s and defers closed readers", async (signal, key) => {

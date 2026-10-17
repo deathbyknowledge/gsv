@@ -52,7 +52,7 @@ describe("owner welcome", () => {
     try {
       await root.render(<Harness />);
       await vi.waitFor(() => expect(collectNodes(tree).find((node) => node.props["aria-label"] === "Continue")?.props.disabled).toBe(false));
-      expect(collectText(tree)).toContain("Alice invited you to GSV");
+      expect(collectText(tree)).toContain("Alice invited you to Ship");
       expect(collectText(tree)).toContain("alice.example.com");
       expect(fetcher).not.toHaveBeenCalled();
       // SAFETY: The screen's native form owns an Event-based submit handler.
@@ -93,7 +93,7 @@ describe("owner welcome", () => {
     try {
       await root.render(<Harness />);
       await vi.waitFor(() => expect(collectNodes(tree).find((node) => node.props["aria-label"] === "Continue")?.props.disabled).toBe(false));
-      expect(collectText(tree)).toContain(friend ? "Alice invited you to GSV" : "You’re invited to GSV");
+      expect(collectText(tree)).toContain(friend ? "Alice invited you to Ship" : "You’re invited to Ship");
       expect(fetcher).not.toHaveBeenCalled();
       expect(collectNodes(tree).some((node) => node.type === TextInput)).toBe(false);
       expect(collectText(tree)).not.toContain("Address form");

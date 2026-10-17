@@ -18,7 +18,7 @@ export function AuthBackground({ variant, palette }: { variant: AuthBgVariant; p
         <div class="auth-bg-galaxy">
           <AsciiGalaxyScan
             className="auth-bg-galaxy-scan"
-            label="GSV login galaxy scan"
+            label="Ship login galaxy scan"
             palette={palette}
             showNebula={false}
             showStars={false}

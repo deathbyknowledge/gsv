@@ -1,5 +1,6 @@
 import type { TelemetryEnvironment } from "@humansandmachines/gsv/telemetry";
 import { WorkerEntrypoint } from "cloudflare:workers";
+import { configuredDomainAliases, configuredOriginAliases } from "@humansandmachines/gsv/services/deployment";
 import type { InstallationDirectoryResult, InstallationDirectoryService } from "@humansandmachines/gsv/services/directory";
 import type {
   AuthorizeInstallationOnboardingInput,
@@ -77,8 +78,9 @@ export default class InstallationService extends WorkerEntrypoint<Env & Installa
   private accounts(): AccountStore {
     return new AccountStore(this.env.INSTALLATIONS_DB, this.env.GSV_BASE_DOMAIN,
       this.env.GSV_INSTALLATION_ORIGIN_TEMPLATE || undefined,
-      [this.env.GSV_ADMIN_ORIGIN, this.env.GSV_OWNER_SIGNUP_ORIGIN]
-        .filter((origin): origin is string => Boolean(origin)).map((origin) => new URL(origin).hostname));
+      [this.env.GSV_ADMIN_ORIGIN, this.env.GSV_OWNER_SIGNUP_ORIGIN, ...configuredOriginAliases(this.env.GSV_OWNER_ORIGIN_ALIASES)]
+        .filter((origin): origin is string => Boolean(origin)).map((origin) => new URL(origin).hostname),
+      configuredDomainAliases(this.env.GSV_DOMAIN_ALIASES));
   }
 
   private onboarding(): InstallationOnboardingStore {

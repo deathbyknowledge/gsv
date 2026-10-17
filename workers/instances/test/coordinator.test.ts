@@ -1,4 +1,4 @@
-import { runInDurableObject } from "cloudflare:test";
+import { reset, runInDurableObject } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { InstanceCoordinator } from "../src/coordinator";
@@ -16,7 +16,13 @@ import type { TestInstanceEvents } from "./worker";
 const actor = { ownerUid: 1000, human: true };
 const limits = { enabled: true, concurrentInstances: 2, periodSeconds: 36000, maxInstanceSeconds: 1800, savedProfiles: 5, profileStorageBytes: 5242880 };
 const namespace = env.INSTANCES;
-afterEach(() => { vi.restoreAllMocks(); vi.useRealTimers(); });
+afterEach(async () => {
+  vi.useRealTimers();
+  // A later fixture's fake clock must never drive an earlier object's callbacks.
+  await reset();
+  await vi.dynamicImportSettled();
+  vi.restoreAllMocks();
+});
 async function fixture(work: (object: InstanceCoordinator, store: InstanceStore, id: string, installationId: string, browser: Partial<CloudBrowser>) => Promise<void>, humanInput = vi.fn(async () => {})) {
   vi.spyOn(InstancePolicy.prototype, "requireActive").mockResolvedValue();
   const shell: Partial<CloudBrowser["shell"]> = { idle: async () => {}, exec: async () => ({ status: "completed", output: "ok", exitCode: 0 }) };

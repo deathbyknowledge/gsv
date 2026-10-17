@@ -27,8 +27,11 @@ import { useTerminalSessions } from "../../../services/terminal/TerminalProvider
 import { terminalFinished } from "../../../services/terminal/terminalSessions";
 import { TerminalControls } from "./TerminalControls";
 import { fleetReferenceRow, orderPlaces, type FleetReference } from "../fleet/fleetModel";
-import { ConnectPlace } from "../fleet/ConnectPlace";
-import { FleetDialog } from "../fleet/FleetDialog";
+import { ChatPlans } from "./ChatPlans";
+import { ChatPanels } from "./ChatPanels";
+import { canConfigure } from "../settings/settingsModel";
+import { flushSync } from "preact/compat";
+import type { ActivityRequest, ChatContext } from "./chatContextModel";
 import { INSTRUMENT_MEMORY_KEY, INSTRUMENT_TARGETS_KEY } from "../wire/queryKeys";
 import type { MemoryPageRef } from "../shared/navigation";
 import { PromptLine, type PromptLineHandle, type PromptPlace } from "../shared/PromptLine";
@@ -47,8 +50,10 @@ import { ZenText } from "./ZenText";
 import { ThinkingMark, THINKING_MARK } from "./ThinkingMark";
 import { ReceiptTimeline, RECEIPT_LAYOUT } from "./ReceiptTimeline";
 import { receiptsForMoments, type RunReceipt } from "./runReceipts";
-import { ZenDraftAttachment, ZenMedia } from "./ZenMedia";
-import { zenAttachment, type ZenAttachment } from "./zenAttachments";
+import { ZenDraftAttachment, ZenDraftPaste, ZenMedia } from "./ZenMedia";
+import { longPaste, zenAttachment, zenDraftMessage, type ZenAttachment, type ZenPaste } from "./zenAttachments";
+import { FeedbackNote, NoteMoment, zenFailure, zenNotice, type ZenNote } from "./ZenNotes";
+import type { ChatErrorContext } from "../../../services/chat/domain/errorPresentation";
 import {
   activityDuration,
   answerAttribution,
@@ -64,7 +69,6 @@ import {
   PLACE_REFERENCE_PREFIX,
   placeLabel,
   resolvePlace,
-  noteSummary,
   receiptSummary,
   startsWriting,
   CLOUD_PLACE_ID,
@@ -74,6 +78,7 @@ import {
   type Place,
 } from "./zenModel";
 import "./zen.css";
+import "./chat-context.css";
 
 export type ZenProps = {
   onMemory?: (page?: MemoryPageRef) => void;
@@ -93,6 +98,8 @@ export type ZenProps = {
   onPeopleActivity?: (request?: PeopleOpenRequest) => void;
   searchRequested?: boolean;
   onSearchRequestHandled?: () => void;
+  activityRequest?: ActivityRequest;
+  requestPrefill?: string | null;
 };
 
 const HISTORY_LIMIT = 400;
@@ -109,6 +116,10 @@ const SETTLE_STAGGER_MS = 6;
 /** Keys Zen answers in browse mode. Together with the shell's, they are the keys that never start writing; y and n are claimed only while an approval is pending. */
 const BROWSE_KEYS: ReadonlySet<string> = new Set(["j", "k", "g", "G", "o"]);
 const CLAIMED_KEYS: ReadonlySet<string> = new Set([...BROWSE_KEYS, ...SHELL_KEYS]);
+/* what each status-line failure was attempting, for causes the client cannot name */
+const SHIP_UNREACHABLE: ChatErrorContext = { summary: "Could not reach your ship.", action: "Check your connection, then reload the page." };
+const ACTIVITY_UNAVAILABLE: ChatErrorContext = { summary: "Could not load the work behind this conversation.", action: "Reload the page to try again." };
+const DECISION_FAILED: ChatErrorContext = { summary: "The decision did not go through.", action: "Try again in a moment." };
 
 /** The element a key or paste would already edit, or null when it would reach nothing. */
 function editableElement(target: EventTarget | null): HTMLElement | null {
@@ -190,6 +201,10 @@ const ActivityLine = memo(function ActivityLine({
       </span>
     </>
   );
+  const state = unavailable ? "status unavailable"
+    : activity.terminal?.status === "stopped" ? "stopped"
+    : activity.terminal?.status === "failed" || activity.calls.some((call) => call.failed) ? "failed"
+    : activity.live ? "running…" : "";
   return (
     <div class={`activity${open ? " is-open" : ""}${activity.you ? " is-you" : ""}`}>
       <div
@@ -197,6 +212,7 @@ const ActivityLine = memo(function ActivityLine({
         role="button"
         tabIndex={0}
         aria-expanded={open}
+        aria-label={activity.you ? `Command on ${label}${state ? ` · ${state}` : ""}` : undefined}
         onClick={() => onToggle(activity.key)}
         onKeyDown={(event) => {
           if (event.key === "Enter" || event.key === " ") {
@@ -206,7 +222,11 @@ const ActivityLine = memo(function ActivityLine({
         }}
       >
         <span class="tri">{open ? "▾" : "▸"}</span>
-        {head}
+        <span class="activity-summary">{head}</span>
+        {activity.you && <span class="activity-compact" aria-hidden="true">
+          <span>$</span><span class="place" title={label}>{label}</span>
+          {state && <span class={`activity-state${state === "failed" || unavailable ? " is-failed" : ""}`}>{state}</span>}
+        </span>}
       </div>
       {open ? (
         <div class="detail">
@@ -240,14 +260,16 @@ const Receipt = memo(function Receipt({ receipt, who, places, collections, open,
   const worked = moment.activities.filter((activity) => !activity.you);
   const pages = onMemory ? memoryPagesForMoment(moment, collections) : [];
   const replies = receipt.replies.filter((reply) => reply.attribution);
+  const fallback = replies.some((reply) => reply.attribution?.fallbacks.length);
+  const quiet = receipt.replies.length > 0 && !live && !waitingCallId && !fallback && !summary.some((part) => part.tone === "failed");
   return (
-    <div class={`receipt${open ? " is-open" : ""}${live ? " is-live" : ""}`}>
+    <div class={`receipt${open ? " is-open" : ""}${live ? " is-live" : ""}${quiet ? " is-quiet" : ""}`}>
       <div class="line">
         <button type="button" class="receipt-toggle" aria-expanded={open} onClick={() => onToggleDetail(receipt.key)}>
           <span class="receipt-chevron" aria-hidden="true">›</span>
           {running ? <span class="pulse blink" /> : null}
           {summary.map((part, index) => part.tone ? <span key={index} class={part.tone === "place" ? "place" : "is-failed"}>{part.text}</span> : part.text)}
-          {replies.some((reply) => reply.attribution?.fallbacks.length) ? <span class="is-failed"> · fallback used</span> : null}
+          {fallback ? <span class="is-failed"> · fallback used</span> : null}
         </button>
       </div>
       {open ? (
@@ -304,39 +326,7 @@ const Receipt = memo(function Receipt({ receipt, who, places, collections, open,
   );
 });
 
-function NoteMoment({
-  moment,
-  open,
-  focus,
-  index,
-  phase,
-  onToggle,
-}: {
-  moment: Moment;
-  open: boolean;
-  focus: boolean;
-  index: number;
-  /** Where the note is in the load cascade: waiting its turn, taking it, or settled. */
-  phase: "pending" | "materialising" | "settled";
-  onToggle: () => void;
-}) {
-  return (
-    <div
-      data-index={index}
-      data-moment-id={moment.id}
-      class={`zen-moment is-note${open ? " is-open" : ""}${focus ? " is-focus" : ""}${phase === "pending" ? " is-pending" : phase === "materialising" ? " is-materialising" : ""}`}
-    >
-      <div class="who">{moment.event && moment.event.kind !== "history.compacted" ? moment.event.severity === "error" ? "error" : "event" : "memory"}</div>
-      <button type="button" class="note-line" aria-expanded={open} onClick={onToggle}>
-        <span class="tri">{open ? "▾" : "▸"}</span>
-        <span class="note-summary">{noteSummary(moment.text)}</span>
-      </button>
-      {open ? <div class="note-text">{moment.text}</div> : null}
-    </div>
-  );
-}
-
-export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, onPrefillUsed, pid: pidProp, onDraftChange, contactReplies, peopleActivity, onPeopleActivity, searchRequested, onSearchRequestHandled }: ZenProps) {
+export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, onPrefillUsed, pid: pidProp, onDraftChange, contactReplies, peopleActivity, onPeopleActivity, searchRequested, onSearchRequestHandled, activityRequest, requestPrefill }: ZenProps) {
   const active = useViewActive();
   const browserControl = useBrowserControl();
   const { client, connected } = useGateway();
@@ -357,7 +347,7 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
     return () => window.clearTimeout(timer);
   }, [active, today, timeZone]);
 
-  const [note, setNote] = useState<string | null>(null);
+  const [note, setNote] = useState<ZenNote | null>(null);
   const [searchOpen, setSearchOpen] = useState(false);
   const closeSearch = useCallback(() => setSearchOpen(false), []);
   useEffect(() => { if (!active) setSearchOpen(false); }, [active]);
@@ -366,7 +356,8 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
     setSearchOpen(true);
     onSearchRequestHandled?.();
   }, [active, searchRequested, onSearchRequestHandled]);
-  const pid = useZenProcess(pidProp, setNote);
+  const reportShipError = useCallback((message: string) => setNote(zenFailure(message, SHIP_UNREACHABLE)), []);
+  const pid = useZenProcess(pidProp, reportShipError);
   /* the conversation is what was actually said, both ways; the process transcript is what the ship did */
   const conversation = useChatConversation({ processId: pid ?? "", enabled: pid !== null });
   const outbox = useChatOutbox(conversation.acceptMessage);
@@ -375,11 +366,22 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
   const [places, setPlaces] = useState<Place[]>([]);
   const [where, setWhere] = useState<string | null>(initialTarget ?? null);
   const [attachments, setAttachments] = useState<ZenAttachment[]>([]);
+  const [context, setContext] = useState<ChatContext | null>(null);
+  const [contextDirty, setContextDirty] = useState(false);
+  const [addOpen, setAddOpen] = useState(false);
+  const addMenu = useRef<HTMLDivElement>(null);
+  const addButton = useRef<HTMLButtonElement>(null);
+  useDismissOnOutsideClick(addOpen, () => [addMenu.current, addButton.current], () => setAddOpen(false));
+  useLayoutEffect(() => {
+    if (activityRequest) setContext({ kind: "activity", request: activityRequest });
+  }, [activityRequest]);
+  const [pastes, setPastes] = useState<ZenPaste[]>([]);
   const [hasDraft, setHasDraft] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
   const dragDepth = useRef(0);
   const [draggingFiles, setDraggingFiles] = useState(false);
-  const dirty = hasDraft || attachments.length > 0 || outbox.messages.length > 0 || (contactReplies?.dirty ?? false);
+  const extras = attachments.length > 0 || pastes.length > 0;
+  const dirty = hasDraft || contextDirty || extras || outbox.messages.length > 0 || (contactReplies?.dirty ?? false);
   useLayoutEffect(() => { onDraftChange?.(dirty); }, [dirty, onDraftChange]);
   useLayoutEffect(() => () => onDraftChange?.(false), [onDraftChange]);
   useEffect(() => {
@@ -398,7 +400,18 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
   /* the place picker: shown while the prompt holds only "@" and a prefix; filtered as you type */
   const [pickerQuery, setPickerQuery] = useState<string | null>(null);
   /* connecting a place from the selector, when the cloud is the only place; the dialog outlives a trip to Fleet and back */
-  const [connectingPlace, setConnectingPlace] = useState(false);
+  const [placesOpen, setPlacesOpen] = useState(false);
+  const placesRef = useRef<HTMLDivElement>(null);
+  const placeButtonRef = useRef<HTMLButtonElement>(null);
+  useDismissOnOutsideClick(placesOpen, () => [placesRef.current, placeButtonRef.current], () => setPlacesOpen(false));
+  useLayoutEffect(() => {
+    if (!active) setPlacesOpen(false);
+    else if (placesOpen) {
+      const menu = placesRef.current;
+      (menu?.querySelector<HTMLButtonElement>('button[aria-pressed="true"]:enabled')
+        ?? menu?.querySelector<HTMLButtonElement>("button:enabled"))?.focus({ preventScroll: true });
+    }
+  }, [active, placesOpen]);
   const [pickerIndex, setPickerIndex] = useState(0);
   const pickerPlaces = useMemo(() => {
     if (pickerQuery === null) return [];
@@ -467,6 +480,24 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
   const [historyIndex, setHistoryIndex] = useState<number | null>(null);
   const [tick, setTick] = useState(0);
   const promptRef = useRef<PromptLineHandle>(null);
+  const stageRequest = useCallback((text: string) => {
+    // Release the modal's focus trap within the tap, before focusing the mobile composer.
+    flushSync(() => setContext(null));
+    const current = promptRef.current?.selection().value ?? "";
+    promptRef.current?.setValue(current ? `${text}\n\n${current}` : text);
+    setAddOpen(false);
+    setPlacesOpen(false);
+    promptRef.current?.focus();
+  }, []);
+  useLayoutEffect(() => {
+    if (!active || !requestPrefill) return;
+    stageRequest(requestPrefill);
+    if (!prefill) onPrefillUsed?.();
+  }, [active, requestPrefill, prefill, onPrefillUsed, stageRequest]);
+  useLayoutEffect(() => {
+    if (active && addOpen) addMenu.current?.querySelector<HTMLButtonElement>("button:not(:disabled)")?.focus();
+    if (!active) setAddOpen(false);
+  }, [active, addOpen]);
 
   /* places, from the instrument's targets cache; WireSync keeps it current from the wire */
   const targetsQuery = useQuery({
@@ -478,7 +509,7 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
     const row = fleetReferenceRow(reference ?? null);
     const target = row?.startsWith("target:")
       ? targetsQuery.data?.find(target => target.deviceId === row.slice(7)) : undefined;
-    if (browserControl.available && target?.instance && ["starting", "ready"].includes(target.instance.state)) {
+    if (browserControl.available && target?.kind === "browser" && target.instance && ["starting", "ready"].includes(target.instance.state)) {
       browserControl.open({ instanceId: target.instance.instanceId });
     } else navigateFleet(reference);
   }, [browserControl.available, browserControl.open, targetsQuery.data, navigateFleet]);
@@ -495,7 +526,7 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
   /* both halves of the transcript, what was said and what was done, are shown together or not yet */
   const ready = historyLoaded && conversation.loaded;
   useEffect(() => {
-    if (processRuntime.history.error) setNote(processRuntime.history.error.message);
+    if (processRuntime.history.error) setNote(zenFailure(processRuntime.history.error.message, ACTIVITY_UNAVAILABLE));
   }, [processRuntime.history.error]);
 
   /* the run clock and the resolve animation */
@@ -573,7 +604,20 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
   const scrolling = useZenScroll({ moments, ready, promptFocused,
     hasOlder: conversation.hasMore || processRuntime.hasOlderHistory,
     loadingOlder: conversation.loadingOlder || processRuntime.loadingOlderHistory, loadOlder });
-  const { browse, viewport: momentsRef, content: contentRef } = scrolling;
+  const { browse, selection, viewport: momentsRef, content: contentRef, pin } = scrolling;
+  const [selectingText, setSelectingText] = useState(false);
+  useEffect(() => {
+    const transcript = momentsRef.current;
+    if (!active || !transcript) return;
+    const update = () => {
+      const selected = document.getSelection();
+      setSelectingText(Boolean(selected && !selected.isCollapsed
+        && (transcript.contains(selected.anchorNode) || transcript.contains(selected.focusNode))));
+    };
+    update();
+    document.addEventListener("selectionchange", update);
+    return () => document.removeEventListener("selectionchange", update);
+  }, [active, ready, moments.length === 0, momentsRef]);
   const hasMemoryRead = useMemo(() => [...receipts.values()].some((receipt) => receipt.work.activities.some((activity) =>
     !activity.you && activity.target === "gsv" && activity.calls.some((call) =>
       call.syscall === "fs.read" && call.finished && !call.failed && call.filePath?.startsWith("/src/repos/"),
@@ -589,6 +633,9 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
   const streamedMomentsRef = useRef<Set<string>>(new Set());
   /* the committed message lands under a new id, so a reply that streamed is also known by its run */
   const streamedRunsRef = useRef<Set<string>>(new Set());
+  /** Whether the reader watched this message arrive live, under its own id or its run's. */
+  const streamed = useCallback((moment: Moment): boolean => moment.streaming
+    || streamedMomentsRef.current.has(moment.id) || (moment.runId !== null && streamedRunsRef.current.has(moment.runId)), []);
   useLayoutEffect(() => {
     if (!active || !ready) return;
     for (const moment of moments) {
@@ -614,12 +661,7 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
     const fresh = whole.filter((id) => !seen.has(id));
     if (fresh.length === 0) return;
     for (const id of fresh) seen.add(id);
-    const streamed = (id: string): boolean => {
-      if (streamedMomentsRef.current.has(id)) return true;
-      const runId = moments.find((moment) => moment.id === id)?.runId ?? null;
-      return runId !== null && streamedRunsRef.current.has(runId);
-    };
-    const arrived = fresh.filter((id) => !streamed(id));
+    const arrived = moments.filter((moment) => fresh.includes(moment.id) && !streamed(moment)).map((moment) => moment.id);
     if (arrived.length === 0 || reducedMotion()) return;
     const startedAt = Date.now();
     setSettling((current) => {
@@ -627,7 +669,7 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
       for (const id of arrived) next.set(id, startedAt);
       return next;
     });
-  }, [active, moments, ready]);
+  }, [active, moments, ready, streamed]);
   useEffect(() => {
     if (!active || settling.size === 0) return;
     const done = [...settling].filter(([id, startedAt]) => {
@@ -663,25 +705,39 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
   const addFiles = useCallback((files: File[]) => {
     const accepted = files.filter((file) => file.size <= MAX_CHAT_PROCESS_MEDIA_BYTES);
     setAttachments((current) => [...current, ...accepted.map(zenAttachment)]);
-    setNote(accepted.length < files.length ? "Each attachment must be 25 MiB or smaller." : null);
+    setNote(accepted.length < files.length ? zenNotice("Each attachment must be 25 MiB or smaller.") : null);
     promptRef.current?.focus();
+  }, []);
+  /* a long paste waits beside the prompt as a chip; a command keeps its paste inline, since it runs as typed,
+     whether the prompt already starts with one or the paste itself would */
+  const foldPaste = useCallback((text: string) => {
+    const selection = promptRef.current?.selection();
+    const prospective = selection ? selection.value.slice(0, selection.start) + text : text;
+    if (/^\s*[$!]/.test(prospective)) return false;
+    const paste = longPaste(text);
+    if (!paste) return false;
+    setPastes((current) => [...current, paste]);
+    promptRef.current?.focus();
+    return true;
   }, []);
   const say = useCallback(
     (text: string) => {
       if (!pid) {
-        setNote("Your ship is still starting.");
+        setNote(zenNotice("Your ship is still starting."));
         return false;
       }
       const accepted = outbox.send({
-        pid, conversationId: conversation.conversation?.id, message: text,
+        pid, conversationId: conversation.conversation?.id,
+        message: zenDraftMessage(text, pastes),
         media: [...attachments], selectedTarget: where ?? defaultPlace(),
       });
       if (!accepted) return false;
       scrolling.follow();
       setAttachments([]);
+      setPastes([]);
       return true;
     },
-    [attachments, conversation.conversation?.id, outbox.send, pid, scrolling.follow, where],
+    [attachments, conversation.conversation?.id, outbox.send, pastes, pid, scrolling.follow, where],
   );
 
   const voiceScope = `${snapshot.url}:${snapshot.username}:${pid ?? ""}:${currentPlace.id}`;
@@ -700,7 +756,7 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
         setOpenActivities((current) => new Set([...current, id]));
         return true;
       } catch (error) {
-        setNote(error instanceof Error ? error.message : "The command did not run.");
+        setNote(zenNotice(error instanceof Error ? error.message : "The command did not run."));
         return false;
       }
     },
@@ -709,25 +765,25 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
 
   const onSubmit = useCallback(
     (raw: string) => {
-      if (outbox.sending) return false;
+      if (!connected || !pid || outbox.sending) return false;
       setNote(null);
       if (raw) setInputHistory((current) => [...current.filter((entry) => entry !== raw), raw].slice(-50));
       setHistoryIndex(null);
       const intent = parsePromptInput(raw);
-      if (!intent) return !raw.trim() && attachments.length > 0 ? say("") : false;
+      if (!intent) return !raw.trim() && extras ? say("") : false;
       if (intent.kind === "switch") {
         const id = resolvePlace(intent.name, places);
         if (id) setWhere(id);
-        else setNote(`No place called ${intent.name}.`);
+        else setNote(zenNotice(`No place called ${intent.name}.`));
         return true;
       }
       if (intent.kind === "run") {
-        if (attachments.length > 0) { setNote("Remove attachments before running a command, or send them to your Ship in plain words."); return false; }
+        if (extras) { setNote(zenNotice("Remove attachments and pasted text before running a command, or send them to your Ship in plain words.")); return false; }
         return runDirectly(intent.command);
       }
       return say(intent.text);
     },
-    [attachments.length, outbox.sending, places, runDirectly, say],
+    [extras, connected, outbox.sending, pid, places, runDirectly, say],
   );
 
   const onHistory = useCallback(
@@ -750,7 +806,7 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
         if (remember) args.remember = true;
         await decideChatHil(client, args);
       } catch (error) {
-        setNote(error instanceof Error ? error.message : "The decision did not go through.");
+        setNote(zenFailure(error instanceof Error ? error.message : "", DECISION_FAILED));
       }
     },
     [client, pendingHil, pid],
@@ -762,6 +818,7 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
     if (!input || input.disabled) return;
     setWhere(initialTarget ?? null);
     setAttachments([]);
+    setPastes([]);
     input.setValue(prefill);
     input.focus();
     onPrefillUsed?.();
@@ -770,6 +827,7 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
   const onPromptFocus = useCallback(
     (focused: boolean) => {
       setPromptFocused(focused);
+      if (focused) setPlacesOpen(false);
     },
     [],
   );
@@ -856,11 +914,11 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
       if (files.length === 0 && !text) return;
       event.preventDefault();
       if (files.length > 0) addFiles(files);
-      else input.append(text);
+      else if (!foldPaste(text)) input.append(text);
     };
     window.addEventListener("paste", onPaste);
     return () => window.removeEventListener("paste", onPaste);
-  }, [active, addFiles, pendingHil]);
+  }, [active, addFiles, foldPaste, pendingHil]);
 
   /* references to places inside ship text */
   const onTextClick = useCallback(
@@ -891,7 +949,7 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
       const receipt = receipts.get(moment.id);
       return <>
         {moment.role === "human" || moment.text || moment.media?.length || moment.streaming ? <div class="who">
-          {moment.role === "human" ? who : "GSV"}
+          {moment.role === "human" ? who : "Ship"}
           {moment.outgoing && moment.outgoing.status !== "failed" ? (
             <span class="zen-send-status" role="status" aria-label={moment.outgoing.status === "uploading" ? "Uploading attachments" : "Sending message"}>
               <Spinner size={14} />
@@ -928,9 +986,10 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
           />
         ) : null}
         {moment.role === "human" ? (
-          <ZenText text={moment.text} markdown={false} progress={settleProgress(moment)} tick={settling.has(moment.id) ? tick : 0} />
+          <ZenText text={moment.text} markdown={false} progress={settleProgress(moment)} tick={settling.has(moment.id) ? tick : 0} onFold={pin} />
         ) : moment.text ? (
-          <ZenText text={moment.text} places={places} markdown progress={moment.streaming ? -1 : settleProgress(moment)} tick={moment.streaming || settling.has(moment.id) ? tick : 0} onClick={onTextClick} />
+          <ZenText text={moment.text} places={places} markdown progress={moment.streaming ? -1 : settleProgress(moment)} tick={moment.streaming || settling.has(moment.id) ? tick : 0}
+            opened={streamed(moment)} onClick={onTextClick} onFold={pin} />
         ) : moment.thinking || moment.streaming ? (
           <div class="text"><ThinkingMark tick={tick} /></div>
         ) : null}
@@ -953,16 +1012,13 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
       </>;
     });
   }, [ready, moments, who, today, timeZone, places, openActivities, toggleActivity, onFleet,
-    receipts, memoryCollections.data, onMemory, pendingHil, settling, tick, onTextClick,
+    receipts, memoryCollections.data, onMemory, pendingHil, settling, tick, onTextClick, pin, streamed,
     pid, connected, outbox.sending, outbox.cancelUpload, outbox.retry, outbox.discard]);
 
   /* the status line */
   const selectorPlaces = useMemo(() => orderPlaces(targetsQuery.data ?? []), [targetsQuery.data]);
   /* the cloud is always listed; once places are known and it is alone, it is not a choice, so it reads as plain text and offers to connect a place */
   const cloudAlone = !!targetsQuery.data && !targetsQuery.isError && selectorPlaces.length === 1;
-  const activeRun = connected ? runtime.activeRunId : null;
-  const currentModel = runtime.context?.runId === activeRun ? runtime.context.model : null;
-  const showFeedback = note !== null || (pendingHil === null && activeRun !== null);
 
   const latestMessageIndex = useMemo(() => moments.reduce((latest, moment, index) =>
     moment.role === "human" || (moment.role === "ship" && (moment.text !== "" || moment.media?.length || moment.streaming)) ? index : latest, -1), [moments]);
@@ -975,7 +1031,7 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
   const empty = ready && moments.length === 0 && pid !== null && pendingHil === null;
 
   return (
-    <main class={`zen${!promptFocused ? " is-browse" : ""}${draggingFiles ? " is-file-drop" : ""}`} aria-label="Chat"
+    <main class={`zen${!promptFocused ? " is-browse" : ""}${draggingFiles ? " is-file-drop" : ""}${selectingText ? " has-text-selection" : ""}`} aria-label="Chat"
       onDragEnter={(event) => { if (event.dataTransfer?.types.includes("Files")) { event.preventDefault(); dragDepth.current++; setDraggingFiles(true); } }}
       onDragOver={(event) => { if (event.dataTransfer?.types.includes("Files")) { event.preventDefault(); event.dataTransfer.dropEffect = "copy"; } }}
       onDragLeave={(event) => { if (event.dataTransfer?.types.includes("Files") && --dragDepth.current <= 0) { dragDepth.current = 0; setDraggingFiles(false); } }}
@@ -987,11 +1043,6 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
       {draggingFiles && <div class="zen-drop-hint">drop to attach</div>}
 
       <div class="zen-body">
-        <div class="zen-timeline" aria-hidden="true">
-          {moments.map((moment, index) => (
-            <i key={moment.id} class={`${moment.role === "human" ? "is-human" : moment.role === "note" ? "is-note" : ""}${index === moments.length - 1 ? " is-here" : ""}${browse === index ? " is-focus" : ""}`} />
-          ))}
-        </div>
         {empty ? (
           <div class="zen-empty">
             {pidProp ? <p>This helper has no messages yet.</p> : <>
@@ -1000,11 +1051,11 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
             </>}
           </div>
         ) : !ready ? (
-          <div class="zen-moments" ref={momentsRef}>
+          <div class="zen-moments" ref={momentsRef} data-scroll-edge data-scroll-edge-bottom>
             <div class="zen-content" ref={contentRef}>{historyFailure}</div>
           </div>
         ) : (
-          <div class="zen-moments" ref={momentsRef}>
+          <div class="zen-moments" ref={momentsRef} data-scroll-edge data-scroll-edge-bottom>
             <div class={`zen-content${pendingHil ? " has-approval" : ""}`} ref={contentRef}>
               {historyFailure}
               {(conversation.loadingOlder || processRuntime.loadingOlderHistory) && <div class="zen-history-status"><LoadingState>loading earlier messages</LoadingState></div>}
@@ -1023,7 +1074,7 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
                       moment={moment}
                       index={index}
                       phase={pending ? "pending" : materialising ? "materialising" : "settled"}
-                      focus={browse === index}
+                      focus={selection === index}
                       open={openNotes.has(moment.id)}
                       onToggle={() =>
                         setOpenNotes((current) => {
@@ -1037,7 +1088,7 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
                   );
                 }
                 return (
-                  <div key={moment.id} data-index={index} data-moment-id={moment.id} class={`zen-moment ${moment.role === "human" ? "is-human" : "is-ship"}${!moment.text && !moment.media?.length && !moment.streaming ? " is-work" : ""}${pending ? " is-pending" : ""}${materialising ? " is-materialising" : ""}${index < latestMessageIndex ? " is-older" : ""}${browse === index ? " is-focus" : ""}`}>
+                  <div key={moment.id} data-index={index} data-moment-id={moment.id} class={`zen-moment ${moment.role === "human" ? "is-human" : "is-ship"}${!moment.text && !moment.media?.length && !moment.streaming ? " is-work" : ""}${pending ? " is-pending" : ""}${materialising ? " is-materialising" : ""}${index < latestMessageIndex ? " is-older" : ""}${selection === index ? " is-focus" : ""}`}>
                     {messageBodies[index]}
                   </div>
                 );
@@ -1059,16 +1110,18 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
             </div>
           </div>
         )}
-        <div />
         {!empty && ready && scrolling.awayFromBottom && <button type="button" class="zen-jump-bottom"
-          aria-label="Jump to latest message" onClick={scrolling.follow}>↓ latest</button>}
+          aria-label="Jump to latest message" onClick={scrolling.follow}>↓<span> latest</span></button>}
       </div>
 
       <div class="zen-bottom">
         {/* contact messages that landed while the person was here, owned by Instrument so a helper switch keeps them */}
         {/* a helper's view has no contact notices */}
         {/* a new contact notice sits under the transcript; keep it in view the way an approval is */}
-        {peopleActivity && contactReplies && onPeopleActivity && <PeopleActivity activity={peopleActivity} replies={contactReplies} account={viewer} onOpen={onPeopleActivity} />}
+        <div class="zen-context-bar" role="group" aria-label="Chat activity">
+          {!pidProp && <ChatPlans account={viewer} onOpen={() => setContext({ kind: "activity", request: { tab: "ongoing" } })} />}
+          {peopleActivity && contactReplies && onPeopleActivity && <PeopleActivity activity={peopleActivity} replies={contactReplies} account={viewer} onOpen={onPeopleActivity} />}
+        </div>
         {!pidProp && <BrowserRequests />}
         {pid ? <DelegatedApprovals pid={pid} onFleet={onFleet} placeLabelFor={(target) => placeLabel(target, places)} /> : null}
 
@@ -1096,23 +1149,19 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
             </div>
           ) : null}
 
-          {attachments.length > 0 && <ul class="zen-draft-attachments" aria-label="Attachments to send">
+          {extras && <ul class="zen-draft-attachments" aria-label="Attachments to send">
             {attachments.map((attachment) => <ZenDraftAttachment key={attachment.id} attachment={attachment}
               onRemove={() => setAttachments((current) => current.filter((file) => file.id !== attachment.id))} />)}
+            {pastes.map((paste) => <ZenDraftPaste key={paste.id} paste={paste}
+              onRemove={() => setPastes((current) => current.filter((entry) => entry.id !== paste.id))} />)}
           </ul>}
-          {showFeedback && <div class="zen-feedback">
-            {activeRun !== null && pendingHil === null && <span role="status">
-              {currentModel && <>{currentModel} · </>}
-              {currentPlace.label} is {currentPlace.online ? "ready" : "offline"}
-            </span>}
-            {note ? <span class="is-err" role="alert">{note}</span> : null}
+          {note && <div class="zen-feedback">
+            <FeedbackNote note={note} />
           </div>}
           <div class="zen-compose-line" hidden={recordingVoice}>
             <input ref={fileInput} type="file" multiple hidden aria-label="Choose attachments" onChange={(event) => {
               addFiles(Array.from(event.currentTarget.files ?? [])); event.currentTarget.value = "";
             }} />
-            <button type="button" class="zen-attach" aria-label="Attach files" title="Attach files"
-              onClick={() => fileInput.current?.click()}>+</button>
             <PromptLine
               ref={promptRef}
               onFocusChange={onPromptFocus}
@@ -1123,57 +1172,100 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
               place={currentPlace}
               showPlace={false}
               dir="~"
-              placeholder={
-                pendingHil
-                  ? "answer the approval first"
-                  : !promptFocused
-                    ? "Start chatting, or click here to chat"
-                    : currentPlace.online
-                      ? "Ask in plain words, or start with $ to run a terminal command yourself"
-                      : `Ask in plain words; ${currentPlace.label} will run it when it's back`
-              }
-              disabled={!connected || !pid || recordingVoice}
+              placeholder="Message your ship"
+              disabled={!pid || recordingVoice}
               onSubmit={onSubmit}
-              allowEmpty={attachments.length > 0}
+              allowEmpty={extras}
               onFiles={addFiles}
+              onPasteText={foldPaste}
               onHistory={onHistory}
             />
+            {(hasDraft || extras) && <button type="button" class="zen-submit"
+              onPointerDown={(event) => { if (promptFocused) event.preventDefault(); }}
+              disabled={!connected || !pid || outbox.sending || recordingVoice} onClick={() => promptRef.current?.submit()}>send</button>}
           </div>
           <div ref={voiceSurface} />
+          {!currentPlace.online && <div class="zen-feedback" role="status">
+            <button type="button" class="is-warn" onClick={() => onFleet(`target:${currentPlace.id}`)}>
+              {currentPlace.label} is offline · view place
+            </button>
+          </div>}
           <div class="zen-compose-actions">
-            {attachments.length > 0 && <button type="button" disabled={!connected || !pid || outbox.sending} onClick={() => promptRef.current?.submit()}>send</button>}
-            <span class="zen-connection-status" role="status">{connected ? "" : "Reconnecting..."}</span>
-            {nativeInput ? <NativeVoiceControls ref={voiceInput} prompt={promptRef} panelHost={nativePanels}
-              scope={voiceScope}
-              enabled={active && connected && pid !== null && pendingHil === null && !searchOpen && !connectingPlace}
-              send={onSubmit} scroll={scrolling.move} />
-              : <BrowserVoiceControls ref={voiceInput} prompt={promptRef} client={client} pid={pid}
-                surfaceHost={voiceSurface} onActiveChange={setRecordingVoice}
+            <button ref={addButton} type="button" class="zen-attach" aria-label="Add to chat" title="Add to chat"
+              aria-haspopup="menu" aria-expanded={addOpen} aria-controls="zen-add-menu"
+              disabled={recordingVoice} onClick={() => { setPlacesOpen(false); setAddOpen((value) => !value); }}>+</button>
+            <div ref={addMenu} id="zen-add-menu" class="zen-add-menu" role="menu" hidden={!addOpen} aria-label="Add to chat"
+              onKeyDown={(event) => {
+                event.stopPropagation();
+                if (event.key === "Escape") { event.preventDefault(); setAddOpen(false); addButton.current?.focus(); }
+                if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+                  event.preventDefault();
+                  const buttons = Array.from(event.currentTarget.querySelectorAll<HTMLButtonElement>("button:not(:disabled)"));
+                  const at = buttons.findIndex((button) => button === document.activeElement);
+                  buttons[(at + (event.key === "ArrowDown" ? 1 : -1) + buttons.length) % buttons.length]?.focus();
+                }
+                if (event.key === "Tab") setAddOpen(false);
+              }}>
+              <div class="zen-add-section" role="group" aria-labelledby="zen-add-context-label">
+                <div class="zen-add-heading" id="zen-add-context-label">add context</div>
+                <button type="button" role="menuitem" class="is-file" onClick={() => { setAddOpen(false); fileInput.current?.click(); }}>attach a file <small>this device</small></button>
+                <button type="button" role="menuitem" disabled={!viewer || (!canConfigure(viewer, "profile.resolve") && !canConfigure(viewer, "contact.list"))} onClick={() => { setAddOpen(false); setContext({ kind: "person" }); }}>find a person <small>@handle</small></button>
+                <button type="button" role="menuitem" class="is-file" disabled={!viewer || !canConfigure(viewer, "fs.read")} onClick={() => { setAddOpen(false); setContext({ kind: "files" }); }}>reference a file <small>your places</small></button>
+              </div>
+              <div class="zen-add-section" role="group" aria-labelledby="zen-add-ship-label">
+                <div class="zen-add-heading" id="zen-add-ship-label">ask Ship</div>
+                <button type="button" role="menuitem" disabled={!viewer || !canConfigure(viewer, "conversation.send")} onClick={() => stageRequest("Help me create a routine.")}>create a routine</button>
+                <button type="button" role="menuitem" disabled={!viewer || !canConfigure(viewer, "conversation.send")} onClick={() => stageRequest("Help me connect a computer to this space.")}>connect a computer</button>
+                <button type="button" role="menuitem" disabled={!viewer || !canConfigure(viewer, "conversation.send")} onClick={() => stageRequest("Start a browser for me.")}>start a browser</button>
+              </div>
+            </div>
+            <button ref={placeButtonRef} type="button" class="zen-place-trigger"
+              aria-label={`Choose a place, currently ${currentPlace.label}`} aria-expanded={placesOpen} aria-controls="zen-places"
+              onKeyDown={(event) => {
+                if (event.key === "Escape" && placesOpen) { event.preventDefault(); event.stopPropagation(); setPlacesOpen(false); }
+              }}
+              onClick={() => { setPickerQuery(null); setPlacesOpen((open) => !open); }}>
+              <span class={`zen-place-status${currentPlace.online ? " is-online" : ""}`} aria-hidden="true" />
+              <span class="zen-place-label">{currentPlace.label}</span>
+              <span class="zen-place-chevron" aria-hidden="true" />
+            </button>
+            <div class="zen-input-actions">
+              {nativeInput ? <NativeVoiceControls ref={voiceInput} prompt={promptRef} panelHost={nativePanels}
                 scope={voiceScope}
-                enabled={active && connected && pid !== null && pendingHil === null && !searchOpen && !connectingPlace && !outbox.sending} />}
+                enabled={active && connected && pid !== null && pendingHil === null && !searchOpen && !context && !addOpen}
+                send={onSubmit} />
+                : <BrowserVoiceControls ref={voiceInput} prompt={promptRef} client={client} pid={pid}
+                  surfaceHost={voiceSurface} onActiveChange={setRecordingVoice}
+                  scope={voiceScope}
+                  enabled={active && connected && pid !== null && pendingHil === null && !searchOpen && !context && !addOpen && !outbox.sending} />}
+            </div>
           </div>
-          <div class="zen-place-section">
-            {!currentPlace.online && <div class="zen-feedback" role="status">
-              <button type="button" class="is-warn" onClick={() => onFleet(`target:${currentPlace.id}`)}>
-                {currentPlace.label} is offline · view place
-              </button>
-            </div>}
+          <span class="zen-connection-status" role="status">{connected ? "" : "Reconnecting..."}</span>
+          <div ref={placesRef} id="zen-places" class="zen-place-section" hidden={!placesOpen}
+            onKeyDown={(event) => {
+              event.stopPropagation();
+              if (event.key === "Escape") { event.preventDefault(); setPlacesOpen(false); placeButtonRef.current?.focus(); }
+            }}
+            onBlur={(event) => {
+              const next = event.relatedTarget;
+              if (next !== placeButtonRef.current && (!(next instanceof Node) || !event.currentTarget.contains(next))) setPlacesOpen(false);
+            }}>
             <ul class="zen-places" aria-label="Places and live browsers">
               {selectorPlaces.map((target) => {
                 const label = target.id === CLOUD_PLACE_ID ? CLOUD_PLACE_LABEL : target.label;
-                const viewBrowser = browserControl.available && target.instance && ["starting", "ready"].includes(target.instance.state);
+                const viewBrowser = browserControl.available && target.kind === "browser" && target.instance && ["starting", "ready"].includes(target.instance.state);
                 return (
                   <li key={target.id}>
                     <button type="button" class={`zen-place${cloudAlone ? " is-alone" : target.id === currentPlace.id ? " is-selected" : ""}`}
                       aria-label={viewBrowser ? `View ${label}` : target.online ? `Use ${label} for the next message or command` : `${label} is offline`}
                       aria-pressed={viewBrowser ? undefined : target.id === currentPlace.id}
                       disabled={!viewBrowser && !target.online}
-                      onClick={() => { if (viewBrowser) onFleet(`target:${target.id}`); else { setWhere(target.id); setPickerQuery(null); promptRef.current?.focus(); } }}>
+                      onClick={() => { setPlacesOpen(false); if (viewBrowser) onFleet(`target:${target.id}`); else { setWhere(target.id); setPickerQuery(null); promptRef.current?.focus(); } }}>
                       <span class={`zen-place-status${target.online ? " is-online" : ""}`} aria-hidden="true" />
                       <span>{label}</span>
                       {viewBrowser && <span class="zen-browser-open" aria-hidden="true">↗</span>}
                     </button>
-                    {cloudAlone && <button type="button" class="zen-connect-place" onClick={() => setConnectingPlace(true)}>+ connect place</button>}
+                    {cloudAlone && <button type="button" class="zen-connect-place" onClick={() => { setPlacesOpen(false); setContext({ kind: "connect" }); }}>+ connect place</button>}
                   </li>
                 );
               })}
@@ -1182,11 +1274,11 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
         </div>
       </div>
       <div class="zen-input-panels" ref={nativePanels} />
-      <FleetDialog open={active && connectingPlace} title="Connect a place" onClose={() => setConnectingPlace(false)}>
-        <ConnectPlace account={viewer} targets={targetsQuery.data ?? []} ready={!!targetsQuery.data && !targetsQuery.isError}
-          onClose={() => setConnectingPlace(false)}
-          onConnected={(id) => { setConnectingPlace(false); setWhere(id); setPickerQuery(null); }} />
-      </FleetDialog>
+      <ChatPanels context={context} active={active} account={viewer} targets={targetsQuery.data ?? []}
+        ready={connected && !!targetsQuery.data && !targetsQuery.isError} onClose={() => setContext(null)} onDirty={setContextDirty}
+        onConnected={(target) => { setWhere(target); setContext(null); promptRef.current?.focus(); }}
+        onAsk={stageRequest} onFleet={(reference) => { setContext(null); onFleet(reference); }}
+        onPeople={(request) => { setContext(null); onPeopleActivity?.(request); }} />
       {active && searchOpen && conversation.conversation && <ConversationSearch key={conversation.conversation.id}
         conversationId={conversation.conversation.id} timeZone={timeZone} onClose={closeSearch} />}
     </main>

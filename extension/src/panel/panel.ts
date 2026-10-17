@@ -210,7 +210,7 @@ async function saveConnection(form: HTMLFormElement): Promise<void> {
 
 function render(): void {
   if (!state) {
-    appEl.innerHTML = `<p class="loading">Reaching your GSV…</p>`;
+    appEl.innerHTML = `<p class="loading">Reaching your Ship…</p>`;
     return;
   }
   const restore = keepFormState();
@@ -270,7 +270,7 @@ function header(current: ExtensionUiState, paired: boolean): string {
     : "offline";
   return `
     <header class="top">
-      <span class="wordmark">GSV</span>
+      <span class="wordmark">Ship</span>
       <span class="state"><span class="dot ${escapeHtml(mood)}"></span>${escapeHtml(label)}</span>
     </header>`;
 }
@@ -289,19 +289,19 @@ function main(current: ExtensionUiState): string {
 
   if (live > 0) {
     const site = workingSite(current);
-    title = "Your GSV is working here.";
+    title = "Your Ship is working here.";
     detail = site ? `It's using <span class="site">${escapeHtml(site)}</span> right now. ${liveSentence(current)}` : liveSentence(current);
   } else if (connected) {
     title = "Ready.";
-    detail = "Your GSV can use this browser, signed in as you. Ask it from anywhere.";
+    detail = "Your Ship can use this browser, signed in as you. Ask it from anywhere.";
   } else if (connecting) {
-    title = "Connecting to your GSV…";
+    title = "Connecting to your Ship…";
     detail = "This usually takes a moment.";
   } else if (paused) {
     title = "Paused.";
-    detail = "Your GSV can't use this browser until you resume.";
+    detail = "Your Ship can't use this browser until you resume.";
   } else {
-    title = "Can't reach your GSV.";
+    title = "Can't reach your Ship.";
     detail = current.connection.message || "The connection dropped. It will retry on its own; you can also try now.";
     detailClass = "is-err";
     actions.push(button("retry", "try again", "ibtn is-primary"));
@@ -312,10 +312,10 @@ function main(current: ExtensionUiState): string {
   // Chrome only lets an extension record a tab after a person has invoked it there, so the ask
   // appears in the moment: right after your GSV tried to record and was refused.
   const recordingAsk = !grant && wantsRecording(current)
-    ? `<div class="note"><p>Your GSV wants to record this tab. Chrome needs you to allow that here, once per recording.</p><div class="actions">${button("allow-recording", "allow recording", "ibtn is-primary")}</div></div>`
+    ? `<div class="note"><p>Your Ship wants to record this tab. Chrome needs you to allow that here, once per recording.</p><div class="actions">${button("allow-recording", "allow recording", "ibtn is-primary")}</div></div>`
     : "";
   const bannerNote = showBannerNote
-    ? `<div class="note"><p>Chrome shows a banner at the top of a tab while your GSV works in it. That's normal, and it goes away when it's done!</p><div class="actions">${textButton("dismiss-note", "got it")}</div></div>`
+    ? `<div class="note"><p>Chrome shows a banner at the top of a tab while your Ship works in it. That's normal, and it goes away when it's done!</p><div class="actions">${textButton("dismiss-note", "got it")}</div></div>`
     : "";
 
   return `
@@ -334,12 +334,12 @@ function pairing(current: ExtensionUiState): string {
   const pending = busy === "pair";
   return `
     <section class="say">
-      <h1>Connect this browser to your GSV.</h1>
-      <p>Pair it to let your GSV help with tasks you give it on sites you're signed into. You can see recent activity here and pause the connection anytime.</p>
+      <h1>Connect this browser to your Ship.</h1>
+      <p>Pair it to let your Ship help with tasks you give it on sites you're signed into. You can see recent activity here and pause the connection anytime.</p>
     </section>
     <form class="pair" data-form="pair">
       <ol>
-        <li>In your GSV, open Fleet and choose Connect.</li>
+        <li>In your Ship, open Fleet and choose Connect.</li>
         <li>Pick Browser and copy the invitation.</li>
         <li>Paste it here.</li>
       </ol>
@@ -367,7 +367,7 @@ function recent(current: ExtensionUiState): string {
       <span class="eyebrow">recent <span class="count">${rows.length ? String(rows.length) : ""}</span></span>
       ${rows.length
         ? `<div class="rows">${rows.map(row).join("")}</div>`
-        : `<p class="empty">Nothing yet. Ask your GSV to do something in this browser and it shows up here.</p>`}
+        : `<p class="empty">Nothing yet. Ask your Ship to do something in this browser and it shows up here.</p>`}
     </section>`;
 }
 
@@ -446,7 +446,7 @@ function footer(current: ExtensionUiState, paired: boolean): string {
     <footer class="foot">
       ${textButton("toggle-theme", effectiveTheme() === "light" ? "dark" : "light")}
       ${website
-        ? `<a class="host" href="${escapeHtml(website.toString())}" target="_blank" rel="noopener noreferrer" title="Open your GSV" data-focus-key="space-link">${escapeHtml(current.gatewayHost)}</a>`
+        ? `<a class="host" href="${escapeHtml(website.toString())}" target="_blank" rel="noopener noreferrer" title="Open your Ship" data-focus-key="space-link">${escapeHtml(current.gatewayHost)}</a>`
         : `<span class="host">not paired yet</span>`}
     </footer>`;
 }
@@ -569,7 +569,7 @@ function readConnectionForm(form: HTMLFormElement): ExtensionConfig {
 
 function validate(config: ExtensionConfig) {
   const errors: FieldErrors = {};
-  if (!normalizeGatewayUrl(config.gatewayUrl)) errors.gatewayUrl = "Enter your GSV's address, like yours.gsv.space.";
+  if (!normalizeGatewayUrl(config.gatewayUrl)) errors.gatewayUrl = "Enter your Ship's address, like yours.gsv.space.";
   if (!config.username) errors.username = "Username is required.";
   if (!config.token) errors.token = "A credential is required. Pairing fills this in.";
   if (!config.deviceId) errors.deviceId = "Give this browser a name.";

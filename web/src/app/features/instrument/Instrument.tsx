@@ -1,3 +1,4 @@
+import type { ActivityRequest } from "./zen/chatContextModel";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
 import { useColorTheme } from "../../components/ui/useColorTheme";
 import { InstrumentBackdrop } from "./shared/InstrumentBackdrop";
@@ -12,7 +13,8 @@ import { Fleet, type FleetProps } from "./fleet/Fleet";
 import { BrowserControlProvider, BrowserControlOverlay } from "./browser/BrowserControl";
 import { Memory } from "./memory/Memory";
 import { Settings } from "./settings/Settings";
-import { People, type PeopleOpenRequest } from "./people/People";
+import { People } from "./people/People";
+import { peoplePath, readPeopleRoute } from "./people/peopleNavigation";
 import { usePeopleActivity } from "./people/usePeopleActivity";
 import type { FleetReference } from "./fleet/fleetModel";
 import { WireSync } from "./wire/WireSync";
@@ -21,7 +23,10 @@ import { InstrumentHeader } from "./shared/InstrumentHeader";
 import { SHELL_KEYS } from "./shared/shellKeys";
 import { useDismissOnOutsideClick } from "./shared/useDismissOnOutsideClick";
 import { useTabAttention } from "./shared/useTabAttention";
+import { useInstrumentViewport } from "./shared/useInstrumentViewport";
+import { useScrollEdges } from "./shared/useScrollEdges";
 import { RetainedView } from "../../services/navigation/ViewActivity";
+import { navigateApp } from "../../services/navigation/appNavigation";
 import { ClientControlError, useClientControl } from "../../services/platform/ClientControl";
 import { useGateway } from "../../services/gateway/GatewayProvider";
 import { trackClientActivity } from "../../services/gateway/clientActivity";
@@ -31,7 +36,7 @@ import "./instrument.css";
 export type Distance = "zen" | "fleet" | "memory" | "settings" | "people";
 
 /** A row in Fleet, addressed the way the manifest addresses it: `target:<id>` or `proc:<pid>`. */
-export type FleetRow = `target:${string}` | `proc:${string}` | `work:${string}` | `routine:${string}` | `more:${string}` | `dir:${string}` | `file:${string}`;
+export type FleetRow = `target:${string}` | `proc:${string}` | `more:${string}` | `dir:${string}` | `file:${string}`;
 
 const DISTANCE_TO_PATH = {
   zen: "/chat",
@@ -74,6 +79,7 @@ export function Instrument({ initialPath }: { initialPath: string }) {
 }
 
 function InstrumentReady({ initialPath }: { initialPath: string }) {
+  const viewportRef = useInstrumentViewport();
   const { service: session } = useSession();
   const { client, status } = useGateway();
   useEffect(() => {
@@ -83,7 +89,10 @@ function InstrumentReady({ initialPath }: { initialPath: string }) {
       try { client.sendSignal(signal); } catch { /* The next input after reconnect reports activity. */ }
     });
   }, [client, status.state]);
-  const [distance, setDistance] = useState<Distance>(() => distanceForPath(initialPath));
+  const distance = distanceForPath(initialPath);
+  const visitedPaths = useRef<Partial<Record<Distance, string>>>({});
+  visitedPaths.current[distance] = distance === "people" ? peoplePath(readPeopleRoute(window.location.search)) : DISTANCE_TO_PATH[distance];
+  const scrollEdgesRef = useScrollEdges(distance);
   useEffect(() => {
     replaceLegacyChatPath();
   }, [initialPath]);
@@ -102,9 +111,12 @@ function InstrumentReady({ initialPath }: { initialPath: string }) {
   useTabAttention();
   const [scale, setScale] = useState<Scale>(() => storedScale());
   const [help, setHelp] = useState(false);
+  const [navigationOpen, setNavigationOpen] = useState(false);
   const [searchRequested, setSearchRequested] = useState(false);
   const helpRef = useRef<HTMLElement>(null);
   const helpButtonRef = useRef<HTMLButtonElement>(null);
+  const navigationRef = useRef<HTMLElement>(null);
+  const navigationButtonRef = useRef<HTMLButtonElement>(null);
   const cycleScale = useCallback(() => {
     setScale((current) => {
       const next = SCALES[(SCALES.indexOf(current) + 1) % SCALES.length];
@@ -118,6 +130,8 @@ function InstrumentReady({ initialPath }: { initialPath: string }) {
   }, []);
   /* which process Zen shows: null is the ship; Fleet can open a helper's conversation */
   const [zenPid, setZenPid] = useState<string | null>(null);
+  const [activityRequest, setActivityRequest] = useState<ActivityRequest>();
+  const [zenRequestPrefill, setZenRequestPrefill] = useState<string | null>(null);
   /* Ship's contact notices live here, above the keyed Zen view, so opening a helper and coming back keeps them */
   const accounts = useConsoleAccounts();
   const viewer = accounts.data?.find((account) => account.relation === "self");
@@ -150,25 +164,22 @@ function InstrumentReady({ initialPath }: { initialPath: string }) {
       await checkpoint();
       if (controlState.current.unsaved) throw new ClientControlError("busy");
       setZenPid(pid);
-      setDistance("zen");
-      history.replaceState(null, "", "/chat");
+      navigateApp("/chat");
       return { type: command.type === "new" ? "created" : "selected", processId: pid };
     } finally { selectingProcess.current = false; }
   });
 
-  /* a contact conversation Zen asked People to open; a fresh object each time so the same contact reopens */
-  const [peopleRequest, setPeopleRequest] = useState<PeopleOpenRequest | null>(null);
   const peopleActivity = usePeopleActivity(viewer);
   const move = useCallback(
     (to: Distance, reference: FleetReference | null = null) => {
       if (reference && fleetDirty && !window.confirm("Discard unsaved Fleet edits and open this item?")) return false;
+      setNavigationOpen(false);
       if (to === distance) {
         if (reference) setFleetRequest({ reference });
         return true;
       }
       if (reference) setFleetRequest({ reference });
-      history.replaceState(null, "", DISTANCE_TO_PATH[to]);
-      setDistance(to);
+      navigateApp(visitedPaths.current[to] ?? DISTANCE_TO_PATH[to]);
       return true;
     },
     [distance, fleetDirty],
@@ -194,6 +205,20 @@ function InstrumentReady({ initialPath }: { initialPath: string }) {
   }, [help]);
   /* a press anywhere else closes the keys; the panel and its button do not */
   useDismissOnOutsideClick(help, () => [helpRef.current, helpButtonRef.current], () => setHelp(false));
+
+  useDismissOnOutsideClick(navigationOpen, () => [navigationRef.current, navigationButtonRef.current], () => setNavigationOpen(false));
+  useLayoutEffect(() => {
+    if (!navigationOpen) return;
+    const dismissNavigation = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      event.stopPropagation();
+      setNavigationOpen(false);
+      navigationButtonRef.current?.focus();
+    };
+    window.addEventListener("keydown", dismissNavigation, true);
+    return () => window.removeEventListener("keydown", dismissNavigation, true);
+  }, [navigationOpen]);
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -241,6 +266,7 @@ function InstrumentReady({ initialPath }: { initialPath: string }) {
       }
       if (event.key === "?") {
         event.preventDefault();
+        setNavigationOpen(false);
         setHelp((open) => !open);
       }
     };
@@ -249,14 +275,26 @@ function InstrumentReady({ initialPath }: { initialPath: string }) {
   }, [cycleScale, move, openSearch, status.state, toggleTheme]);
 
   return (
-    <div class={`instrument${theme === "light" ? " is-light" : ""}${scale === 1.5 ? " is-scale-15" : scale === 2 ? " is-scale-2" : ""}`}>
+    <div ref={viewportRef} class={`instrument${theme === "light" ? " is-light" : ""}${scale === 1.5 ? " is-scale-15" : scale === 2 ? " is-scale-2" : ""}`}>
       <InstrumentBackdrop />
       <WireSync />
+      <div class="instrument-viewport">
       <div class="instrument-scaled">
-      <InstrumentHeader distance={distance} onNavigate={move} peopleWaiting={peopleActivity.conversations.length > 0 || peopleActivity.requests.length > 0} helper={distance === "zen" && zenPid !== null}
+      <InstrumentHeader distance={distance} onNavigate={(to) => {
+        if (move(to) && navigationOpen) navigationButtonRef.current?.focus();
+      }} peopleWaiting={peopleActivity.conversations.length > 0 || peopleActivity.requests.length > 0}
+        helper={distance === "zen" && zenPid !== null}
         onShip={() => {
           if (!zenDirty || window.confirm("Discard your unsent message and attachments?")) setZenPid(null);
-        }} help={help} onHelp={() => setHelp((open) => !open)} helpButtonRef={helpButtonRef} />
+        }} help={help} onHelp={() => {
+          setNavigationOpen(false);
+          setHelp((open) => !open);
+          if (navigationOpen) navigationButtonRef.current?.focus();
+        }} helpButtonRef={helpButtonRef} navigationOpen={navigationOpen} navigationRef={navigationRef}
+        navigationButtonRef={navigationButtonRef} onNavigationToggle={() => {
+          setHelp(false);
+          setNavigationOpen((open) => !open);
+        }} />
       {help ? (
         <aside id="instrument-help" class="instrument-help" aria-label="Help" ref={helpRef}>
           <button type="button" class="instrument-help-search" disabled={status.state !== "connected"} aria-keyshortcuts="Control+K" onClick={openSearch}>
@@ -334,25 +372,30 @@ function InstrumentReady({ initialPath }: { initialPath: string }) {
           </>}
         </aside>
       ) : null}
-      <div class="distance" data-view={distance}>
+      <div class="distance" data-view={distance} ref={scrollEdgesRef}>
         <BrowserControlOverlay />
         <RetainedView active={distance === "zen"}>
           <Zen key={zenPid ?? "ship"} searchRequested={searchRequested} onSearchRequestHandled={() => setSearchRequested(false)} onDraftChange={setZenDirty} onFleet={(reference) => move("fleet", reference ?? null)} onMemory={(page) => {
             if (page && memoryDirty && !window.confirm("Discard your unsaved page changes and open this page?")) return;
             if (!move("memory")) return;
             if (page) setSelectedMemoryPage({ ...page });
-          }} initialTarget={zenTarget} prefill={zenPrefill} onPrefillUsed={() => setZenPrefill(null)} pid={zenPid}
+          }} initialTarget={zenTarget} prefill={zenPrefill} requestPrefill={zenRequestPrefill} activityRequest={activityRequest}
+          onPrefillUsed={() => { setZenPrefill(null); setZenRequestPrefill(null); }} pid={zenPid}
           contactReplies={zenPid ? undefined : contactReplies}
           peopleActivity={zenPid ? undefined : peopleActivity}
-          onPeopleActivity={(request) => { if (move("people") && request) setPeopleRequest(request); }} />
+          onPeopleActivity={(request) => {
+            /* a contact conversation Zen asked People to open; a fresh object each time so the same contact reopens */
+            if (!request) { move("people"); return; }
+            navigateApp(peoplePath("contactId" in request ? { contactId: request.contactId } : { view: "requests", requestId: request.requestId }));
+          }} />
         </RetainedView>
         <RetainedView active={distance === "memory"}>
-          <Memory onDirtyChange={setMemoryDirty} initialPage={selectedMemoryPage} onAsk={(_page, prompt) => {
-            if (zenDirty && !window.confirm("Replace your unsent message and attachments with this question?")) return;
+          <Memory onDirtyChange={setMemoryDirty} initialPage={selectedMemoryPage} onAsk={(text) => {
+            if (zenPid && zenDirty && !window.confirm("Discard your unsent message and return to Ship?")) return;
             if (!move("zen")) return;
             setZenPid(null);
             setZenTarget(null);
-            setZenPrefill(prompt);
+            setZenPrefill(null); setZenRequestPrefill(text);
           }} />
         </RetainedView>
         <RetainedView active={distance === "settings"}>
@@ -362,29 +405,32 @@ function InstrumentReady({ initialPath }: { initialPath: string }) {
           }} />
         </RetainedView>
         <RetainedView active={distance === "people"}>
-          <People onDirtyChange={setPeopleDirty} openRequest={peopleRequest} onAsk={(prompt) => {
-            if (zenDirty && !window.confirm("Replace your unsent message and attachments with this request?")) return;
+          <People onDirtyChange={setPeopleDirty} onAsk={(text) => {
+            if (zenPid && zenDirty && !window.confirm("Discard your unsent message and return to Ship?")) return;
             if (!move("zen")) return;
-            setZenPid(null); setZenTarget(null); setZenPrefill(prompt);
+            setZenPid(null); setZenTarget(null); setZenPrefill(null); setZenRequestPrefill(text);
           }} />
         </RetainedView>
         <RetainedView active={distance === "fleet"}>
           <Fleet
+            onActivity={(request) => { if (move("zen")) setActivityRequest(request); }}
             onCommand={(target) => {
               if (zenDirty && !window.confirm("Replace your unsent message and attachments with a command?")) return;
               if (move("zen")) { setZenTarget(target); setZenPrefill("$ "); setZenPid(null); }
             }}
             onDirtyChange={setFleetDirty}
             openRequest={fleetRequest}
-            onZen={(prefill, pid) => {
+            onZen={(prefill, pid, request) => {
               if ((Boolean(prefill) || (pid ?? null) !== zenPid) && zenDirty && !window.confirm("Discard your unsent message and attachments?")) return;
               if (!move("zen")) return;
               if (prefill || (pid ?? null) !== zenPid) setZenTarget(null);
               if (prefill) setZenPrefill(prefill);
+              if (request) setZenRequestPrefill(request);
               setZenPid(pid ?? null);
             }}
           />
         </RetainedView>
+      </div>
       </div>
       </div>
     </div>
