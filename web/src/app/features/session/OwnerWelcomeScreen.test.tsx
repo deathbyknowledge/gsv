@@ -73,7 +73,7 @@ describe("owner welcome", () => {
     try {
       await root.render(<Harness />);
       await vi.waitFor(() => expect(collectNodes(tree).find((node) => node.props["aria-label"] === "Continue")?.props.disabled).toBe(false));
-      expect(collectText(tree)).toContain("Alice invited you to Ship");
+      expect(collectText(tree)).toMatch(/Alice\s+invited you to Ship/);
       expect(collectText(tree)).toContain("alice.example.com");
       expect(fetcher).not.toHaveBeenCalled();
       await act(() => formOf(tree).props.onSubmit(new Event("submit")));
@@ -105,7 +105,7 @@ describe("owner welcome", () => {
     try {
       await root.render(<Harness />);
       await vi.waitFor(() => expect(collectNodes(tree).find((node) => node.props["aria-label"] === "Continue")?.props.disabled).toBe(false));
-      expect(collectText(tree)).toContain(friend ? "Alice invited you to Ship" : "You’re invited to Ship");
+      expect(collectText(tree)).toMatch(friend ? /Alice\s+invited you to Ship/ : /You’re invited to Ship/);
       expect(fetcher).not.toHaveBeenCalled();
       expect(collectNodes(tree).some((node) => node.type === TextInput)).toBe(false);
       expect(collectText(tree)).not.toContain("Address form");
@@ -514,7 +514,7 @@ describe("owner welcome", () => {
     try {
       await root.render(<Harness />);
       await vi.waitFor(() => expect(collectText(tree)).toContain("Could not load sign-in"));
-      expect(collectText(tree)).toContain("Sponsor invited you to Ship");
+      expect(collectText(tree)).toMatch(/Sponsor\s+invited you to Ship/);
       expect(collectText(tree)).toContain("Use a Ship address");
       expect(addressPanel.mock.lastCall![0].disabled).toBe(false);
       expect(collectNodes(tree).find((node) => node.props["aria-label"] === "Continue")!.props.disabled).toBe(true);

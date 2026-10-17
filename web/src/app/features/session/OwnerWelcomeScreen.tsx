@@ -139,9 +139,9 @@ export function OwnerWelcomeScreen({ ready, resume, load, onConnect, addressPane
   }, [step, handle, flow, owner, creationAttempt]);
 
   const titles = {
-    welcome: "Welcome to Ship", invitation: invitation?.name ? `${invitation.name} invited you to Ship` : "You’re invited to Ship",
+    welcome: "Welcome to Ship", invitation: invitation?.name ? <><strong class="desktop-welcome-inviter">{invitation.name}</strong> invited you to Ship</> : "You’re invited to Ship",
     claim: "Create your Ship", email: "Your email", code: "Check your email", spaces: "Choose your Ship",
-  } satisfies Record<Step, string>;
+  } satisfies Record<Step, ComponentChildren>;
   const creating = flow?.state.flow === "create";
   const requiresConsent = step === "claim";
   const consentError = requiresConsent && consentTouched && !consent;

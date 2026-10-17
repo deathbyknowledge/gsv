@@ -27,6 +27,7 @@
 .desktop-welcome-invitation { display: grid; gap: 24px; margin-bottom: 14px; }
 .desktop-welcome-invitation p { margin: 0; line-height: 1.6; }
 .desktop-welcome-invitation .desktop-welcome-detail { font-size: 12px; }
+.desktop-welcome-inviter { color: var(--accent-bright); font-weight: 500; }
 .desktop-welcome-address-disclosure { margin-top: 28px; }
 .desktop-welcome-address-disclosure summary { color: var(--text-dim); cursor: pointer; font-size: 12px; }
 .desktop-welcome-address-disclosure[open] summary { margin-bottom: 20px; }
