@@ -43,6 +43,8 @@ Owner sign-in through **Open Ship** lists the Ships you own and unfinished setup
 It is separate from your account inside each Space. Signing in alone does not
 create a Space or grant operator administration rights. The signup page also
 links to the [Desktop app](/how-to/install-host-apps) for macOS, Windows and Linux.
+If Desktop cannot connect after setup completes, choose your Ship from the owned
+list to retry opening it.
 
 ## Run your own operator
 

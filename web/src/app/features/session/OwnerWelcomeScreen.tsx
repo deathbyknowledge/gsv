@@ -65,6 +65,12 @@ export function OwnerWelcomeScreen({ ready, resume, load, onConnect, addressPane
       const prepared = await client.prepare(chosen, operationId);
       await onConnect(prepared.origin, prepared.onboardingToken);
     } catch (failure) {
+      if (client.state.flow === "open") {
+        // Setup completed; retry opening the owned Ship, not claiming its handle again.
+        setStep("welcome");
+        await advance(client);
+        throw failure;
+      }
       // Accounts rejects a handle taken since it was checked; the claim step shows that beside the field.
       if (failure instanceof OwnerApiError && (failure.code === "handle_unavailable" || /^handle is /i.test(failure.message))) {
         setCreationAttempt(null);

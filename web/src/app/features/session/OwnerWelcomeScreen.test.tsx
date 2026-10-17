@@ -333,6 +333,53 @@ describe("owner welcome", () => {
     } finally { await root.unmount(); }
   });
 
+  it.each([false, true])("retries opening a completed signup after Desktop connection fails (session lookup fails: %s)", async (lookupFails) => {
+    const setup = { operationId: "completed-setup", handle: "my-ship", origin: "https://my-ship.example.com" };
+    const store = memory({ origin: ORIGIN, flow: "create", sessionSecret: "a".repeat(64), challenge: null, operationId: setup.operationId, handle: setup.handle });
+    let completed = false;
+    let failedLookup = false;
+    const fetcher = vi.fn(async (url: string) => {
+      if (url.endsWith("/session")) {
+        if (!completed) return session([setup]);
+        if (lookupFails && !failedLookup) { failedLookup = true; throw new Error("Session unavailable"); }
+        return session([], [{ handle: setup.handle, canonicalOrigin: setup.origin, state: "active" }]);
+      }
+      if (url.endsWith("/spaces")) {
+        completed = true;
+        return Response.json({ handle: setup.handle, origin: setup.origin, onboardingToken: null, expiresAt: null });
+      }
+      throw new Error(`Unexpected request: ${url}`);
+    });
+    const client = new OwnerWelcome(store.snapshot(), store, ORIGIN, fetcher);
+    const onConnect = vi.fn().mockRejectedValueOnce(new Error("Could not open Ship.")).mockResolvedValue(undefined);
+    const root = createTestRoot("Completed signup connection retry");
+    let tree: ComponentChildren;
+    function Harness() {
+      tree = OwnerWelcomeScreen({ ready: true, resume: true, load: async () => client, onConnect });
+      return null;
+    }
+    try {
+      await root.render(<Harness />);
+      await vi.waitFor(() => expect(checkboxOf(tree)?.props.disabled).toBe(false));
+      await agree(tree);
+      await act(() => formOf(tree).props.onSubmit(new Event("submit")));
+      await vi.waitFor(() => expect(client.state.flow).toBe("open"));
+      if (lookupFails) {
+        await vi.waitFor(() => expect(collectNodes(tree).find((node) => collectText(node) === "Retry")?.props.disabled).toBe(false));
+        await act(() => { collectNodes(tree).find((node) => collectText(node) === "Retry")!.props.onClick?.(); });
+      }
+      const open = () => collectNodes(tree).find((node) => node.props.label === setup.handle);
+      await vi.waitFor(() => expect(open()?.props.disabled).toBe(false));
+      expect(fieldOf(tree, "Handle")).toBeUndefined();
+      expect(client.state.operationId).toBeNull();
+      await act(() => { open()!.props.onClick?.(); });
+      await vi.waitFor(() => expect(onConnect).toHaveBeenCalledTimes(2));
+      expect(onConnect.mock.calls).toEqual([[setup.origin, null], [setup.origin]]);
+      expect(fetcher.mock.calls.filter(([url]) => url.endsWith("/spaces"))).toHaveLength(1);
+      expect(fetcher.mock.calls.some(([url]) => url.includes("/handle?"))).toBe(false);
+    } finally { await root.unmount(); }
+  });
+
   it.each([
     { failure: "policy", conflict: false },
     { failure: "network", conflict: false },
