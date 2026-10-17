@@ -11,10 +11,12 @@ afterEach(async () => { vi.useRealTimers(); await reset(); vi.restoreAllMocks();
 async function inComputer(work: (fixture: {
   computer: ComputerInstance; ctx: DurableObjectState; identity: ComputerIdentity;
   provider: { running: boolean; bootId: string; start: ReturnType<typeof vi.fn>; destroy: ReturnType<typeof vi.fn> };
-  peers: WebSocket[];
-}) => Promise<void>) {
+  peers: WebSocket[]; handshakeSignals: AbortSignal[];
+}) => Promise<void>, options: { responseDelayMs?: number; stallHandshake?: boolean } = {}) {
   const identity = { installationId: crypto.randomUUID(), instanceId: crypto.randomUUID(), targetId: "1234abcd", ownerUid: 1000, expiresAt: Date.now() + 300_000 };
   const peers: WebSocket[] = [];
+  const handshakeSignals: AbortSignal[] = [];
+  const responseTimers: ReturnType<typeof setTimeout>[] = [];
   const provider = {
     running: false, bootId: crypto.randomUUID(), images: { base: "registry.example.test/computer@sha256:test" },
     start: vi.fn(() => { provider.running = true; }),
@@ -23,12 +25,27 @@ async function inComputer(work: (fixture: {
     getTcpPort: () => ({ fetch: vi.fn(async (url: string, init: RequestInit) => {
       if (url.endsWith("/health")) return Response.json({ protocol: 4, version: "test", targetId: identity.targetId, bootId: provider.bootId, implements: ["fs.*", "shell.exec", "shell.cancel", "net.fetch"] });
       if (new Headers(init.headers).get("X-GSV-Boot-Id") !== provider.bootId) return new Response("Boot changed", { status: 409 });
+      const signal = init.signal;
+      if (!signal) throw new Error("Computer handshake must have a deadline");
+      handshakeSignals.push(signal);
+      signal.throwIfAborted();
+      if (options.stallHandshake) return new Promise<Response>((_resolve, reject) => {
+        signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+      });
       const pair = new WebSocketPair(); pair[1].accept(); peers.push(pair[1]);
+      // Workerd retains the fetch signal on the WebSocket after the 101 upgrade.
+      const onAbort = () => { if (pair[1].readyState === WebSocket.OPEN) pair[1].close(1000, "Fetch aborted"); };
+      signal.addEventListener("abort", onAbort, { once: true });
+      pair[1].addEventListener("close", () => signal.removeEventListener("abort", onAbort), { once: true });
       pair[1].addEventListener("message", message => {
         // oxlint-disable-next-line anti-slop/no-runtime-typeof -- The fixture only answers WebSocket text frames.
         if (typeof message.data !== "string") return;
         const frame = JSON.parse(message.data);
-        if (frame.type === "req") pair[1].send(JSON.stringify({ type: "res", id: frame.id, ok: true, data: { status: "completed", output: "ok", exitCode: 0 } }));
+        if (frame.type === "req") {
+          const reply = () => { if (pair[1].readyState === WebSocket.OPEN) pair[1].send(JSON.stringify({ type: "res", id: frame.id, ok: true, data: { status: "completed", output: "ok", exitCode: 0 } })); };
+          if (options.responseDelayMs) responseTimers.push(setTimeout(reply, options.responseDelayMs));
+          else reply();
+        }
       });
       return new Response(null, { status: 101, webSocket: pair[0], headers: { "X-GSV-Boot-Id": provider.bootId } });
     }) }),
@@ -38,12 +55,37 @@ async function inComputer(work: (fixture: {
     Object.defineProperty(ctx, "container", { value: provider, configurable: true });
     // SAFETY: Test Wrangler binds the same namespaces and the typed TestInstanceEvents service.
     const computer = new ComputerInstance(ctx, env as Environment);
-    try { await work({ computer, ctx, identity, provider, peers }); }
-    finally { await computer.stop(); }
+    try { await work({ computer, ctx, identity, provider, peers, handshakeSignals }); }
+    finally { for (const timer of responseTimers) clearTimeout(timer); await computer.stop(); }
   });
 }
 
 describe("cloud computer lifecycle", () => {
+  it("keeps an established socket alive for shell responses beyond the handshake deadline", () => inComputer(async ({ computer, identity, peers, handshakeSignals }) => {
+    await computer.provision(identity);
+    await computer.status();
+    const response = await computer.execute({ type: "req", id: "long-shell", call: "shell.exec", args: { input: "sleep 6", yieldMs: 10_000 } }, Date.now() + 15_000);
+    expect(response).toMatchObject({ ok: true, data: { status: "completed", output: "ok", exitCode: 0 } });
+    expect(peers).toHaveLength(1);
+    expect(handshakeSignals[0]!.aborted).toBe(false);
+  }, { responseDelayMs: 6000 }), 10_000);
+
+  it("still aborts a stalled handshake and permits a fresh connection attempt", async () => {
+    const options = { stallHandshake: true };
+    await inComputer(async ({ computer, identity, handshakeSignals }) => {
+      await computer.provision(identity);
+      const startedAt = Date.now();
+      expect(await computer.status()).toEqual({ state: "starting" });
+      expect(Date.now() - startedAt).toBeGreaterThanOrEqual(4900);
+      expect(handshakeSignals).toHaveLength(1);
+      expect(handshakeSignals[0]!.aborted).toBe(true);
+      options.stallHandshake = false;
+      expect(await computer.status()).toEqual({ state: "ready" });
+      expect(handshakeSignals).toHaveLength(2);
+      expect(handshakeSignals[1]!.aborted).toBe(false);
+    }, options);
+  }, 10_000);
+
   it("keeps erasure final when it overlaps a pending stop", () => inComputer(async ({ computer, identity, provider, ctx }) => {
     await computer.provision(identity); await computer.status();
     let release!: () => void;

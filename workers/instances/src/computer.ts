@@ -182,9 +182,17 @@ export class ComputerInstance extends DurableObject<Environment> {
     if (this.connecting) return this.connecting;
     this.connecting = (async () => {
       const lease = this.liveLease();
-      const response = await this.ctx.container!.getTcpPort(8788).fetch("http://computer/gsv", {
-        headers: { Upgrade: "websocket", Authorization: `Bearer ${lease.secret}`, "X-GSV-Boot-Id": lease.bootId! }, signal: AbortSignal.timeout(5000),
-      });
+      const handshake = new AbortController();
+      const timer = setTimeout(() => handshake.abort(new Error("Computer connection handshake timed out")), 5000);
+      let response: Response;
+      try {
+        response = await this.ctx.container!.getTcpPort(8788).fetch("http://computer/gsv", {
+          headers: { Upgrade: "websocket", Authorization: `Bearer ${lease.secret}`, "X-GSV-Boot-Id": lease.bootId! }, signal: handshake.signal,
+        });
+      } finally {
+        // Fetch retains this signal on the upgraded socket; only the handshake has this deadline.
+        clearTimeout(timer);
+      }
       const socket = response.webSocket;
       if (response.status !== 101 || !socket) { await response.body?.cancel(); throw new Error("Computer protocol connection failed"); }
       try {
