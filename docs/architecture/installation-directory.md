@@ -63,8 +63,8 @@ inference, Process ticks, and schedules. Suspending an installation does not
 erase data or recursively cancel work already admitted; durable work
 rechecks the gate before new admission and may resume after reactivation.
 
-All deployments require directory resolution. There is no singleton fallback,
-even when the binding is absent. Historical standalone data remains outside
+All deployments require directory resolution; a missing directory binding fails
+closed. Historical standalone data remains outside
 current routing; see the [retirement guide](../how-to/standalone-retirement.md).
 
 ## Setup and ownership
@@ -158,6 +158,9 @@ R2, ripgit, adapters, mail, inference and cloud instances report their own clean
 Instance coordinators are installation-owned resources in discovery and deletion;
 they do not require adapter peer-inventory import. Their lifecycle owner stops
 browsers and erases profiles and temporary files before confirming live erasure.
+Cloud computer objects also appear as `instance-computer` resources. Their owner
+destroys the container before confirming erasure or releasing its reservation;
+late start and health completions cannot reactivate a retired object.
 Missing inventory or owner evidence prevents a claim of completed erasure.
 Stale work cannot recreate data after its owner has retired the identity.
 
@@ -177,3 +180,22 @@ Shipped migration files are immutable. Cloudflare D1 enforces foreign keys
 during migrations; a table rebuild must preserve the relationships rather
 than disabling them. See [D1 foreign-key behavior](https://developers.cloudflare.com/d1/sql-api/foreign-keys/)
 and [D1 migrations](https://developers.cloudflare.com/d1/reference/migrations/).
+
+## Preferred domains and accepted aliases
+
+The operator supplies a primary domain for new installations and an explicit list
+of legacy domains. When Accounts receives an unknown hostname on the primary
+domain, it may insert an alias only if the same handle already has a non-retired
+canonical hostname on a configured legacy domain. The inserted row points to the
+recorded installation ID and inherits its hostname state. The lookup does not
+allocate a Kernel, change a canonical origin, or claim an arbitrary wildcard.
+The origin's parsed hostname must match that registration; configured schemes
+and ports remain intact. The insert rechecks the installation and origin so a
+concurrent reset cannot attach the alias to the previous identity. An existing
+retired row prevents recreation.
+
+Reset preserves the recorded canonical origin and moves all active accepted
+hostnames atomically to the replacement installation. Provisioning and activation
+advance those hostnames together. Installation lifecycle admission still applies
+to every alias. New primary-domain installations do not acquire legacy aliases.
+DNS and Cloudflare routes remain owned by the operator composition.

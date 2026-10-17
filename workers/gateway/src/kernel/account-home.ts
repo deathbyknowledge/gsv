@@ -2,20 +2,50 @@ import { RipgitClient, RipgitConflictError, type RipgitApplyOp, type RipgitRepoR
 import { accountHomeRepoRef } from "../fs/ripgit/repos";
 import type { ProcessIdentity } from "@humansandmachines/gsv/protocol";
 import {
-  DEFAULT_MEMORY_CONTEXT_TEMPLATE,
   RETIRED_AGENT_VOICE_CONTEXT,
   RETIRED_BOOT_CONTEXT_TEMPLATE,
   RETIRED_STYLE_CONTEXT,
-  RETIRED_MEMORY_CONTEXT_TEMPLATE,
 } from "../prompts/agent-home";
 import {
-  PERSONAL_INTELLIGENCE_CONTEXT,
-  PERSONAL_INTELLIGENCE_VOICE_CONTEXT,
+  shipContextFiles,
   RETIRED_PERSONAL_INTELLIGENCE_COMMITMENTS_CONTEXT,
 } from "../prompts/personal-intelligence";
+import { isRetiredGeneratedContext } from "../prompts/retired-context";
+import type { KernelContext } from "./context";
 
 const TEXT_ENCODER = new TextEncoder();
 const TEXT_DECODER = new TextDecoder();
+const memoryContextChecks = new WeakMap<KernelContext["auth"], Map<string, Promise<void>>>();
+
+/** Retire old generated memory before context assembly, once per account and Kernel lifetime. */
+export function ensureSharedMemoryContext(
+  ctx: Pick<KernelContext, "env" | "auth">,
+  identity: ProcessIdentity,
+): Promise<void> {
+  if (!ctx.env.RIPGIT) return Promise.resolve();
+  let checks = memoryContextChecks.get(ctx.auth);
+  if (!checks) {
+    checks = new Map();
+    memoryContextChecks.set(ctx.auth, checks);
+  }
+  const key = `${identity.uid}:${identity.username}`;
+  const pending = checks.get(key);
+  if (pending) return pending;
+  const task = seedAccountHome(ctx.env, identity, "gsv: retire generated memory context", retiredMemoryContextOps)
+    .catch((error) => {
+      checks.delete(key);
+      throw error;
+    });
+  checks.set(key, task);
+  return task;
+}
+
+async function retiredMemoryContextOps(client: RipgitClient, repo: RipgitRepoRef): Promise<RipgitApplyOp[]> {
+  const existing = await client.readPath(repo, "context.d/15-memory.md");
+  return existing.kind === "file" && await isRetiredGeneratedContext("memory", existing.bytes)
+    ? [{ type: "delete", path: "context.d/15-memory.md" }]
+    : [];
+}
 
 /** Seed missing defaults against a fixed revision; a concurrent owner edit wins. */
 export async function seedAccountHome(
@@ -63,24 +93,23 @@ async function homeLayoutOps(
   repo: RipgitRepoRef,
   options: NonNullable<Parameters<typeof ensureAccountHomeLayout>[2]>,
 ): Promise<RipgitApplyOp[]> {
+  const defaults = options.seedPromptContext && options.personalAgent ? shipContextFiles() : [];
   const [
     contextDir,
     bootContext,
-    roleContext,
     styleContext,
-    voiceContext,
     commitmentsContext,
-    memoryContext,
+    memoryOps,
     skillsDir,
+    existingDefaults,
   ] = await Promise.all([
     client.readPath(repo, "context.d"),
     client.readPath(repo, "context.d/00-boot.md"),
-    client.readPath(repo, "context.d/00-role.md"),
     client.readPath(repo, "context.d/00-style.md"),
-    client.readPath(repo, "context.d/05-voice.md"),
     client.readPath(repo, "context.d/10-commitments.md"),
-    client.readPath(repo, "context.d/15-memory.md"),
+    retiredMemoryContextOps(client, repo),
     client.readPath(repo, "skills.d"),
+    Promise.all(defaults.map(({ name }) => client.readPath(repo, `context.d/${name}`))),
   ]);
 
   const ops: RipgitApplyOp[] = [];
@@ -99,6 +128,7 @@ async function homeLayoutOps(
       RETIRED_AGENT_VOICE_CONTEXT,
       RETIRED_STYLE_CONTEXT,
     );
+    ops.push(...memoryOps);
   }
   if (options.seedPromptContext === true) {
     if (options.personalAgent === true) {
@@ -111,37 +141,17 @@ async function homeLayoutOps(
       if (retiringGeneratedBootContext) {
         options.beforeRetiringGeneratedBootContext?.();
       }
-      maybePutTextFile(
-        ops,
-        "context.d/00-role.md",
-        roleContext,
-        PERSONAL_INTELLIGENCE_CONTEXT,
-      );
-      maybePutTextFile(
-        ops,
-        "context.d/05-voice.md",
-        voiceContext,
-        PERSONAL_INTELLIGENCE_VOICE_CONTEXT,
-      );
+      for (const [index, { name, text }] of defaults.entries()) {
+        const existing = existingDefaults[index]!;
+        maybePutTextFile(ops, `context.d/${name}`, existing, text,
+          name === "00-role.md" && existing.kind === "file"
+            && await isRetiredGeneratedContext("ship", existing.bytes));
+      }
       maybeDeleteGeneratedTextFile(
         ops,
         "context.d/10-commitments.md",
         commitmentsContext,
         RETIRED_PERSONAL_INTELLIGENCE_COMMITMENTS_CONTEXT,
-      );
-      maybeDeleteGeneratedTextFile(
-        ops,
-        "context.d/15-memory.md",
-        memoryContext,
-        DEFAULT_MEMORY_CONTEXT_TEMPLATE,
-        RETIRED_MEMORY_CONTEXT_TEMPLATE,
-      );
-    } else {
-      maybePutTextFile(
-        ops,
-        "context.d/15-memory.md",
-        memoryContext,
-        DEFAULT_MEMORY_CONTEXT_TEMPLATE,
       );
     }
   } else if (options.cleanupGeneratedPromptContext === true) {
@@ -150,13 +160,6 @@ async function homeLayoutOps(
       "context.d/00-boot.md",
       bootContext,
       RETIRED_BOOT_CONTEXT_TEMPLATE,
-    );
-    maybeDeleteGeneratedTextFile(
-      ops,
-      "context.d/15-memory.md",
-      memoryContext,
-      DEFAULT_MEMORY_CONTEXT_TEMPLATE,
-      RETIRED_MEMORY_CONTEXT_TEMPLATE,
     );
     maybeDeleteGeneratedTextFile(
       ops,
@@ -180,8 +183,9 @@ function maybePutTextFile(
   path: string,
   existing: Awaited<ReturnType<RipgitClient["readPath"]>>,
   content: string,
+  replaceGenerated = false,
 ): void {
-  if (existing.kind !== "missing") {
+  if (existing.kind !== "missing" && !replaceGenerated) {
     return;
   }
   ops.push({

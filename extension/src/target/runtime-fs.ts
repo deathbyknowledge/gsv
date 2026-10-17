@@ -40,9 +40,9 @@ const MAX_TEXT_CHARS = 120_000;
 const MAX_SEARCH_MATCHES = 200;
 
 const README = [
-  "GSV browser target",
+  "Ship browser target",
   "",
-  "This target exposes the current browser profile to GSV through shell.exec",
+  "This target exposes the current browser profile to Ship through shell.exec",
   "and fs.*. Run `help` or `commands` in shell.exec for browser-specific commands, and run",
   "`commands --json` for structured discovery. Run",
   "`<command> --help` for command-specific usage.",
@@ -162,7 +162,7 @@ const README = [
   "  a target already at top/bottom returns skipped=already-at-boundary without dispatching input.",
   "  page snapshot/js/screenshot and page input briefly attach chrome.debugger to the target tab.",
   "  network start uses chrome.debugger and stays attached until network stop.",
-  "  media record uses tabCapture; when Chrome refuses, ask the person to focus the tab, open Your GSV from the toolbar and choose Allow recording, then retry.",
+  "  media record uses tabCapture; when Chrome refuses, ask the person to focus the tab, open Your Ship from the toolbar and choose Allow recording, then retry.",
   "  each allowance starts one media record start.",
   "  media record captures audio by default; use --video or --mode video for tab video with audio.",
   "  captured tab audio remains audible by default; use --monitor off to disable playback.",
@@ -211,7 +211,7 @@ const README = [
   "  /dev",
   "  /proc",
   "",
-  "GSV capabilities:",
+  "Ship capabilities:",
   "  shell.exec",
   "  fs.read",
   "  fs.write",

@@ -1,4 +1,6 @@
 import type * as Cloudflare from "alchemy/Cloudflare";
+import { configuredOriginAliases, deploymentPresentationSchema, type PublicDeploymentConfig } from "../../packages/gsv/src/services/deployment.ts";
+import { operatorUpdateCatalogSchema, type OperatorUpdateCatalog } from "../../packages/gsv/src/services/operator-updates.ts";
 import * as Output from "alchemy/Output";
 import { operatorResourceCatalogSchema, type OperatorResourceCatalog } from "../../workers/installations/src/operator-resource-contracts.ts";
 import { GsvRuntime, gsvRuntimeDependencies, type GsvRuntimeProps, type GsvRuntimeServices } from "./runtime.ts";
@@ -10,6 +12,9 @@ export type GsvOperatorAccess = { kind: "operator" } | {
 
 export type GsvDeploymentProps = Omit<GsvRuntimeProps, "services"> & {
   domain: string;
+  domainAliases?: string[];
+  presentation?: Omit<PublicDeploymentConfig, "primaryDomain" | "legacyDomains">;
+  operatorUpdates?: OperatorUpdateCatalog;
   adminOrigin: string;
   access: GsvOperatorAccess;
   services?: Partial<GsvRuntimeServices> & {
@@ -27,7 +32,7 @@ export type GsvDeploymentProps = Omit<GsvRuntimeProps, "services"> & {
     instancesLifecycle?: {
       worker: Cloudflare.Workers.Worker;
       entrypoint: string;
-      namespaces: readonly { className: string; kind: "instance-installation" }[];
+      namespaces: readonly { className: string; kind: "instance-installation" | "instance-computer" }[];
     };
   };
   /** Explicit current and historical operator inventory, including BYOK providers; known-sink checks do not discover that history. */
@@ -42,6 +47,7 @@ export type GsvDeploymentProps = Omit<GsvRuntimeProps, "services"> & {
     ownerEmail?: { from: string; allowedRecipients?: string[]; authSecret: Cloudflare.Workers.WorkerBindingProps[string] };
     ownerSignupOrigin?: string;
     openRegistration?: boolean;
+    ownerOriginAliases?: string[];
   };
   inference: {
     workerName: string;
@@ -85,8 +91,11 @@ export const GsvDeployment = (props: GsvDeploymentProps, dependencies = gsvRunti
   }
   const instancesLifecycle = props.services?.instancesLifecycle;
   if (Boolean(props.services?.instances) !== Boolean(instancesLifecycle)) throw new Error("Supplied instances require their owned lifecycle and namespace inventory");
-  if (instancesLifecycle && (!instancesLifecycle.entrypoint.trim() || !instancesLifecycle.namespaces.length
-    || instancesLifecycle.namespaces.some(namespace => !namespace.className.trim() || namespace.kind !== "instance-installation"))) {
+  if (instancesLifecycle && (!instancesLifecycle.entrypoint.trim()
+    || ["instance-installation", "instance-computer"].some(kind => !instancesLifecycle.namespaces.some(namespace => namespace.kind === kind))
+    || new Set(instancesLifecycle.namespaces.map(namespace => namespace.className.trim())).size !== instancesLifecycle.namespaces.length
+    || instancesLifecycle.namespaces.some(namespace => !namespace.className.trim()
+      || !["instance-installation", "instance-computer"].includes(namespace.kind)))) {
     throw new Error("Supplied instances lifecycle requires valid instance namespace ownership");
   }
   const domain = new URL(`https://${props.domain}`);
@@ -148,6 +157,11 @@ export const GsvDeployment = (props: GsvDeploymentProps, dependencies = gsvRunti
     }
   }
   const compatibility = props.compatibility ?? { date: "2026-09-01", flags: ["nodejs_compat" as const] };
+  const publicConfiguration = JSON.stringify(deploymentPresentationSchema.parse({
+    ...props.presentation, primaryDomain: props.domain, legacyDomains: props.domainAliases ?? [],
+  }));
+  const ownerOriginAliases = JSON.stringify(props.installations.ownerOriginAliases ?? []);
+  configuredOriginAliases(ownerOriginAliases);
   const observability = { enabled: true, logs: { enabled: true, invocationLogs: false, persist: false }, traces: { enabled: false } };
   let directory = props.services?.installationDirectory;
   let database: Cloudflare.D1.Database | undefined;
@@ -161,6 +175,7 @@ export const GsvDeployment = (props: GsvDeploymentProps, dependencies = gsvRunti
     }).pipe(retain(props.allowResourceDeletion !== true));
     const bindings: Cloudflare.Workers.WorkerBindingProps = {
       INSTALLATIONS_DB: database, ENVIRONMENT: "production", GSV_BASE_DOMAIN: props.domain,
+      GSV_DOMAIN_ALIASES: JSON.stringify(props.domainAliases ?? []), GSV_PUBLIC_CONFIG: publicConfiguration,
       GSV_ADMIN_ORIGIN: props.adminOrigin, GSV_OPERATOR_ACCESS_MODE: props.access.kind === "operator" ? "operator" : "access",
       GSV_ADMIN_ACCESS_TEAM_DOMAIN: props.access.kind === "cloudflare-access" ? props.access.teamDomain : "",
       GSV_ADMIN_ACCESS_AUD: accessAudience,
@@ -168,6 +183,7 @@ export const GsvDeployment = (props: GsvDeploymentProps, dependencies = gsvRunti
       GSV_OWNER_OIDC_CLIENT_ID: props.installations.ownerIdentity?.clientId ?? "",
       GSV_OWNER_SIGNUP_ORIGIN: props.installations.ownerSignupOrigin ?? "",
       GSV_SIGNUP_ENABLED: props.installations.openRegistration ? "true" : "false",
+      GSV_OWNER_ORIGIN_ALIASES: ownerOriginAliases,
     };
     if (props.installations.ownerIdentity?.clientSecret) bindings.GSV_OWNER_OIDC_CLIENT_SECRET = props.installations.ownerIdentity.clientSecret;
     if (props.installations.ownerEmail) {
@@ -208,7 +224,8 @@ export const GsvDeployment = (props: GsvDeploymentProps, dependencies = gsvRunti
     }).pipe(retain(props.allowResourceDeletion !== true));
     inference = inferenceWorker;
   }
-  const extraBindings: Cloudflare.Workers.WorkerBindingProps = {};
+  const extraBindings: Cloudflare.Workers.WorkerBindingProps = { GSV_PUBLIC_CONFIG: publicConfiguration };
+  if (props.operatorUpdates) extraBindings.GSV_OPERATOR_UPDATES = JSON.stringify(operatorUpdateCatalogSchema.parse(props.operatorUpdates));
   if (props.installations.ownerEmail) {
     extraBindings.GSV_OWNER_SIGNUP_URL = new URL("/owner/signup/?resume=1", props.adminOrigin).href;
   }

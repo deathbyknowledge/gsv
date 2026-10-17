@@ -76,6 +76,55 @@ const SENSITIVE_METADATA = {
 };
 
 describe("managed Kernel mailbox", () => {
+  it.each([
+    ["old.example", "fleet.example"],
+    ["fleet.example", "old.example"],
+  ])("delivers %s and %s to one mailbox and wakes Ship once per message", async (firstDomain, aliasDomain) => {
+    await runWithRealKernelSql(async (sql, kernelStorage) => {
+      const storage = new MemoryR2Bucket();
+      const ctx = mailboxContext(sql, kernelStorage, storage);
+      const first = {
+        ...METADATA,
+        envelope: { ...METADATA.envelope, to: `hank@${firstDomain}` },
+      };
+      await acceptManagedInboundMail(first, bodyFromBytes(RAW), ctx);
+      const mailbox = ctx.mailboxes.getPrimaryMailbox();
+      const aliasRaw = new TextEncoder().encode(`To: hank@${aliasDomain}\r\n\r\nAlias delivery`);
+      const alias = {
+        ...METADATA,
+        intakeId: "intake-alias",
+        digest: `sha256:${"b".repeat(64)}`,
+        rawSize: aliasRaw.byteLength,
+        envelope: { ...METADATA.envelope, to: `hank@${aliasDomain}` },
+      };
+      const accepted = await acceptManagedInboundMail(alias, bodyFromBytes(aliasRaw), ctx);
+      await expect(acceptManagedInboundMail(
+        { ...alias, intakeId: "intake-alias-retry" }, bodyFromBytes(aliasRaw), ctx,
+      )).resolves.toEqual(accepted);
+
+      const stored = ctx.mailboxes.getMessage(1000, accepted.messageId)!;
+      expect(stored.envelopeTo).toBe(alias.envelope.to);
+      expect(storage.bytes(stored.rawPath.slice(1))).toEqual(aliasRaw);
+      expect(ctx.mailboxes.getPrimaryMailbox()).toEqual(mailbox);
+      expect(managedMailAddressForOwner(1000, ctx)).toBe(first.envelope.to);
+      expect(ctx.mailboxes.list(1000).count).toBe(2);
+      expect(ctx.mailboxes.list(1001).count).toBe(0);
+
+      const completion = {
+        version: 1,
+        intakeId: alias.intakeId,
+        messageId: accepted.messageId,
+        summary: { summary: "Alias delivery", category: "personal", requiresAttention: true, confidence: 0.9 },
+      } satisfies Parameters<typeof completeManagedInboundMail>[0];
+      const wake = vi.fn(async () => {});
+      ctx.reconcileResponsibilityWake = wake;
+      await completeManagedInboundMail(completion, ctx);
+      await completeManagedInboundMail(completion, ctx);
+      expect(ctx.responsibilities.list({ ownerUid: 1000 }).records).toHaveLength(1);
+      expect(wake).toHaveBeenCalledOnce();
+    });
+  });
+
   it("stores exact mail under the primary human and aliases exact-byte retries", async () => {
     await runWithRealKernelSql(async (sql, kernelStorage) => {
       const storage = new MemoryR2Bucket();

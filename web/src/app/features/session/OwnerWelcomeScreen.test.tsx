@@ -386,6 +386,26 @@ describe("owner welcome", () => {
     } finally { await root.unmount(); }
   });
 
+  it("shows direct-address recovery inside a compact invitation when signup storage fails", async () => {
+    const root = createTestRoot("Invitation storage recovery");
+    const onConnect = vi.fn(async () => {});
+    const addressPanel = vi.fn(({ disabled }: { disabled: boolean }) => <button disabled={disabled}>Direct address</button>);
+    let tree: ComponentChildren;
+    function Harness() {
+      tree = OwnerWelcomeScreen({ ready: true, resume: true, compact: true, invitation: { name: "Sponsor" },
+        load: async () => { throw new Error("Storage unavailable"); }, addressPanel, onConnect });
+      return null;
+    }
+    try {
+      await root.render(<Harness />);
+      await vi.waitFor(() => expect(collectText(tree)).toContain("Could not load sign-in"));
+      expect(collectText(tree)).toContain("Sponsor invited you to Ship");
+      expect(collectText(tree)).toContain("Use a space address");
+      expect(addressPanel.mock.lastCall![0].disabled).toBe(false);
+      expect(collectNodes(tree).find((node) => node.props["aria-label"] === "Continue")!.props.disabled).toBe(true);
+    } finally { await root.unmount(); }
+  });
+
   it("prefers the signed-in space domain and reports handle rules beside the field", async () => {
     const store = memory({ origin: ORIGIN, flow: "create", sessionSecret: "a".repeat(64), challenge: null, operationId: null, handle: null });
     const fetcher = vi.fn(async (url: string) => {

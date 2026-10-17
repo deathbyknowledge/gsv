@@ -6,7 +6,7 @@ import { useViewActive } from "../../../services/navigation/ViewActivity";
 import type { ConsoleAccount } from "../../../domain/system/consoleModels";
 import { canConfigure } from "../settings/settingsModel";
 import { LoadingState } from "../../../components/ui/Spinner";
-import { approachSendIntent, profileAddress as resolveProfileAddress, type ApproachDraft } from "./peopleModel";
+import { approachSendIntent, profileAddress as resolveProfileAddress, profileAddressLabel, type ApproachDraft } from "./peopleModel";
 import { ContactHandlingChoice } from "./ContactHandlingChoice";
 
 export function NewConversation({ account, draft, onChange, onSent, onBusy, contacts, onOpen, onInvitation }: {
@@ -17,7 +17,7 @@ export function NewConversation({ account, draft, onChange, onSent, onBusy, cont
   onBusy: (busy: boolean) => void;
   contacts: ContactSummary[];
   onOpen: (contactId: string) => void;
-  onInvitation: () => void;
+  onInvitation?: () => void;
 }) {
   const { client, connected } = useGateway();
   const active = useViewActive();
@@ -26,7 +26,7 @@ export function NewConversation({ account, draft, onChange, onSent, onBusy, cont
   latest.current = draft;
   const displayName = draft.displayName ?? (account?.displayName || account?.gecos || account?.username || "");
   const saved = contacts.filter((contact) => contact.state === "active" && contact.preferences?.saved !== false
-    && `${contactDisplayName(contact)} ${contact.remoteOrigin}`.toLocaleLowerCase().includes(draft.url.trim().toLocaleLowerCase()))
+    && `${contactDisplayName(contact)} ${contact.remoteOrigin}`.toLocaleLowerCase().includes(draft.url.trim().replace(/^@/, "").toLocaleLowerCase()))
     .sort((a, b) => contactDisplayName(a).localeCompare(contactDisplayName(b)));
   const resolve = useMutation({
     mutationFn: (url: string) => client.profile.resolve({ url }),
@@ -57,19 +57,19 @@ export function NewConversation({ account, draft, onChange, onSent, onBusy, cont
       event.preventDefault();
       if (canResolve && profileAddress && !busy) resolve.mutate(profileAddress);
     }}>
-      <label>To<input value={draft.url} placeholder="Name or profile address" spellcheck={false} autoComplete="off" disabled={busy} onInput={(event) => {
+      <label>To<input value={draft.url} placeholder="@handle, name or address" spellcheck={false} autoCapitalize="none" autoComplete="off" disabled={busy} onInput={(event) => {
         resolve.reset(); send.reset(); onChange({ ...draft, url: event.currentTarget.value, profile: null, shipHandlesMessages: null });
       }} /></label>
       {profileAddress && <button class="people-action" type="submit" disabled={!canResolve || busy}>{resolve.isPending ? <LoadingState>opening profile…</LoadingState> : "open profile"}</button>}
     </form>
-    {!profile && !profileAddress && <>
+    {!profile && <>
       {saved.length > 0 ? <ul class="people-recipient-list" aria-label="Saved contacts">{saved.map((contact) => <li key={contact.id}>
-        <button class="people-recipient" disabled={busy} onClick={() => onOpen(contact.id)}><span>{contactDisplayName(contact)}</span><small>{new URL(contact.remoteOrigin).host}</small></button>
-      </li>)}</ul> : draft.url.trim() && <p class="people-note">No saved contact matches. Paste their profile address to reach someone new.</p>}
+        <button class="people-recipient" disabled={busy} onClick={() => onOpen(contact.id)}><span>{contactDisplayName(contact)}</span><small>{profileAddressLabel(contact.remoteOrigin)}</small></button>
+      </li>)}</ul> : draft.url.trim() && !profileAddress && <p class="people-note">No saved contact matches. Enter a handle or a full Ship address to reach someone new.</p>}
     </>}
     {profile && <>
       <div class="people-profile-preview">
-        <span class="people-kicker">{new URL(profile.origin).host}</span>
+        <span class="people-kicker">{profileAddressLabel(profile.origin)}</span>
         <h2>{profile.displayName}</h2>{profile.about && <p>{profile.about}</p>}
         {profile.representation === "human-and-ship" && <p class="people-note">May reply through their Ship.</p>}
       </div>
@@ -92,6 +92,6 @@ export function NewConversation({ account, draft, onChange, onSent, onBusy, cont
     {account && !canConfigure(account, "approach.create") && <p class="people-note">This account can review profiles but cannot send message requests.</p>}
     {error && <p class="people-error" role="alert">{error.message}</p>}
     {!connected && <p class="people-note" role="status">Reconnecting… Your draft is kept here.</p>}
-    <div class="people-compose-footer"><button class="people-action" disabled={busy} onClick={onInvitation}>use a private invitation</button></div>
+    {onInvitation && <div class="people-compose-footer"><button class="people-action" disabled={busy} onClick={onInvitation}>use a private invitation</button></div>}
   </section>;
 }

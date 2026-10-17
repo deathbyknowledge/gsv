@@ -1,6 +1,7 @@
 import type { RefObject } from "preact";
 import { createPortal, forwardRef } from "preact/compat";
 import { useImperativeHandle, useLayoutEffect, useRef } from "preact/hooks";
+import { useMediaObjectUrl } from "../chat/hooks/useChatMediaSource";
 import { browserRecordingUnavailable } from "./browserAudio";
 import { useBrowserVoice } from "./useBrowserVoice";
 import { VoiceWaveform } from "./VoiceWaveform";
@@ -15,6 +16,9 @@ type BrowserVoiceControlsProps = Parameters<typeof useBrowserVoice>[0] & {
 
 export const BrowserVoiceControls = forwardRef<BrowserVoiceHandle, BrowserVoiceControlsProps>(function BrowserVoiceControls({ surfaceHost, onActiveChange, ...options }, ref) {
   const control = useBrowserVoice(options);
+  const recordingUrl = useMediaObjectUrl(control.audio);
+  const recordingExtension = control.audio?.type.startsWith("audio/mp4") ? "m4a"
+    : control.audio?.type.startsWith("audio/ogg") ? "ogg" : "webm";
   useImperativeHandle(ref, () => ({ onInput: control.onInput, interceptSubmit: control.interceptSubmit }));
   const unavailable = browserRecordingUnavailable();
   const busy = ["permission", "recording", "transcribing"].includes(control.phase);
@@ -49,7 +53,9 @@ export const BrowserVoiceControls = forwardRef<BrowserVoiceHandle, BrowserVoiceC
       </div>
     </div>, surfaceHost.current)}
     {control.canRetry && <button type="button" disabled={!options.enabled} onClick={control.retry}>retry transcription</button>}
-    {control.canRetry && <button type="button" onClick={() => control.cancel(true)}>cancel</button>}
+    {control.canRetry && recordingUrl && <a href={recordingUrl} download={`ship-recording.${recordingExtension}`}>download audio</a>}
+    {control.canRetry && <button type="button" onClick={() => control.cancel(true)}>discard recording</button>}
     {control.error && <span class="browser-voice-error" role="alert">{control.error}</span>}
+    {control.canRetry && <span class="browser-voice-notice">Audio is kept in this tab. Retry or download it before leaving.</span>}
   </div>;
 });

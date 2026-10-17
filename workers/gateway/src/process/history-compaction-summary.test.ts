@@ -1,4 +1,5 @@
-import { describe, expect, it, vi } from "vitest";
+import { reset } from "cloudflare:test";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AiAssistantMessage, AiTextGenerateArgs } from "@humansandmachines/gsv/protocol";
 import type { InferenceExecutor } from "@humansandmachines/gsv/services/inference-execution";
 import type { GatewayEnv } from "../runtime-env";
@@ -8,6 +9,12 @@ import { extractGeneratedText } from "../inference/generated-text";
 import { adaptGeneratedAssistantMessage } from "./internal/messages";
 import { initProcess, processTestConfig, ROOT_IDENTITY, runInProcess, testUsage } from "./do-test-harness";
 import { estimateContextInputTokens } from "./context-pressure";
+
+afterEach(async () => {
+  // Compaction schedules memory-review alarms that must not outlive these fixtures.
+  await reset();
+  await vi.dynamicImportSettled();
+});
 
 /** The shape Cerebras returned for a compaction request whose reasoning stayed on. */
 const PLANNING = "We need answer user's request: summarize a compacted GSV process conversation segment. Let's extract important facts: the user asked about deployment and the assistant answered.";

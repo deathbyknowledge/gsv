@@ -36,6 +36,7 @@ const ROOTS = [
   { type: "ConnectedPeer", rust: "ConnectedPeer" },
   { type: "ConnectArgs", rust: "ConnectArgs", inline: { peer: "PeerInfo", auth: "AuthInfo" } },
   { type: "ConnectResult", rust: "ConnectResult", inline: { server: "ServerInfo" } },
+  { type: "PublicDeploymentConfig", rust: "PublicDeploymentConfig" },
   { type: "ToolDefinition", rust: "ToolDefinition" },
 ];
 

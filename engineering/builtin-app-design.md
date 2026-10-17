@@ -15,8 +15,8 @@ Write down:
 If you cannot state the app's job clearly, stop and design first.
 
 Examples:
-- `Chat` owns conversation, messages, run activity, approvals and direct shell commands
-- `Fleet` owns places, processes, responsibilities, routines and files
+- `Chat` owns conversation, messages, run activity, approvals, direct shell commands and contextual responsibility/routine panels
+- `Fleet` owns places and processes, with files opened from a place
 - `People` owns contact conversations, message requests, the private address book and your public profile
 - `Memory` owns reading, finding, creating and correcting pages
 - `Settings` owns model preferences, instructions, permissions, connections, timezone and the full ledger
@@ -91,10 +91,12 @@ Do not casually merge responsibilities because the data is nearby. If a concern 
 
 Examples:
 - a place inspector can open its files or a command in Chat
-- Settings manages preferences and connections; Fleet inspects live work
+- Settings manages preferences and connections; Fleet inspects environments and processes
 - a process inspector can open its visibly labelled conversation in Chat
 
 A GSV app surface should have a clear center of gravity.
+
+Chat’s `+` menu attaches files and stages requests to Ship. Creation requests use the ordinary composer; selecting one never sends it. The complete request is editable text and uses the ordinary message send and history paths, without special wire metadata or sent-message rendering. One compact activity line above the prompt combines ongoing plans and People messages. Responsibilities and routines open from its count, with a plans label when none are active. Their contextual panel has one level of tabs: ongoing, routines and history. Standing responsibility policies belong in Settings. These controls do not add a top-level destination.
 
 ## Use The Shared Instrument Shell
 
@@ -120,7 +122,7 @@ The app should feel like a serious workstation tool.
 
 Use [Instrument](../web/src/app/features/instrument/README.md) and [Settings](../web/src/app/features/instrument/settings/README.md) as the product and interaction contracts.
 
-Instrument is the default web entrypoint. The former desktop and console routes have no compatibility mapping. Login and installation onboarding enter the same UI; the first-day introduction is Chat's empty state. Shared components remain only where current surfaces depend on them; the retired design catalogue and previews are preserved in Git history.
+Instrument is the default web entrypoint. Login and installation onboarding enter the same UI; the first-day introduction is Chat's empty state. Shared components serve the current surfaces.
 
 Core rules:
 - global navigation chooses the kind of work; tables and inspectors choose the object
@@ -133,8 +135,7 @@ Core rules:
 The current visual language uses Martian Mono for controls, Host Grotesk for
 prose, thin rules and square corners. The star field and Departure Mono ASCII
 art carry the space theme. Use named text actions and contextual keyboard hints
-instead of decorative icon tiles. The former dot-matrix SVG library and mask
-renderer are retired; the PNGs under `web/public/icons` are installation and
+instead of decorative icon tiles. The PNGs under `web/public/icons` are installation and
 application identity assets, not a UI icon system. Browser windows follow the
 same contract: quiet text controls around an edge-to-edge live page, without
 rounded framing, glow or a blurred backdrop.

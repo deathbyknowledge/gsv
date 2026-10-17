@@ -6,13 +6,21 @@
   /* type scale: 1, 1.5 or 2; the x key cycles it. zoom scales layout with the type, and the container
    * queries below see the zoomed width, so 2x on a wide screen reflows like a narrow one. */
   --type-scale: 1;
-  --instrument-height: 100dvh;
+  --instrument-safe-top: env(safe-area-inset-top, 0px);
+  --instrument-safe-right: env(safe-area-inset-right, 0px);
+  --instrument-safe-bottom: max(0px, calc(env(safe-area-inset-bottom, 0px) - max(0px, 100lvh - var(--instrument-viewport-height, 100dvh))));
+  --instrument-safe-left: env(safe-area-inset-left, 0px);
+  --instrument-height: calc(var(--instrument-viewport-height, 100dvh) - var(--instrument-safe-top) - var(--instrument-safe-bottom));
   --instrument-header-height: 44px;
   /* the instrument's own faces: Martian Mono for the machine, Host Grotesk for the person and the ship */
   --gsv-font-mono: "Martian Mono", "IBM Plex Mono", "JetBrains Mono", monospace;
   --gsv-font-prose: "Host Grotesk", "Avenir Next", "Segoe UI", sans-serif;
   position: fixed;
-  inset: 0;
+  inset: 0 0 auto;
+  /* iOS standalone can size the dynamic viewport short of the screen. Keep the
+   * background at the large viewport height; only the content follows the keyboard. */
+  height: 100%;
+  height: 100lvh;
   background: var(--void);
   color: var(--text);
   font-family: var(--gsv-font-mono);
@@ -20,6 +28,7 @@
   --inspector-bg: rgba(10, 8, 32, 0.55);
   line-height: 1.5;
   overflow: hidden;
+  touch-action: pan-x pan-y;
   -webkit-font-smoothing: antialiased;
 }
 /* :where keeps the reset at element specificity, so .ibtn and friends win the way the prototype's did */
@@ -37,6 +46,12 @@
 .instrument :is(button, a, summary):focus-visible {
   text-decoration: underline;
   text-underline-offset: 0.25em;
+}
+.instrument :is(.fleet-heading-action, .fleet-text-action, .settings-text-action, .people-action, .page-action, .file-reader-action, .memory-new-page, .memory-resume, .memory-browse, .zen-plans, .zen-submit, .zen-copy-message, .people-list-more > summary, .people-self > small, .instrument-menu-toggle, .feedback-trigger, .browser-voice-controls > button, .native-input-trigger) {
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, currentColor 45%, transparent);
+  text-underline-offset: .25em;
+  text-decoration-thickness: 1px;
 }
 :where(.instrument) a {
   color: var(--accent);
@@ -71,12 +86,36 @@
   background: radial-gradient(ellipse 86% 84% at 50% 50%, transparent 66%, rgba(0, 0, 0, 0.38) 100%);
 }
 
+/* Apply device insets before text zoom; background layers still fill the entire screen.
+ * The keyboard covers the home indicator, so its occlusion consumes the bottom safe area. */
+/* Surfaces own the bottom inset as padding, letting their scroll panes reach the screen edge. */
+/* Size content directly from the visible viewport. Safari can resize the larger
+ * background after a viewport event; a measured bottom inset then goes stale. */
+.instrument-viewport {
+  position: absolute;
+  inset: calc(var(--instrument-viewport-top, 0px) + var(--instrument-safe-top))
+    var(--instrument-safe-right)
+    auto
+    var(--instrument-safe-left);
+  height: calc(var(--instrument-viewport-height, 100dvh) - var(--instrument-safe-top));
+}
+/* Modal dialogs enter the browser's top layer, outside the content box's positioning. */
+/* Their bottom edge is relative to the browser viewport, not the taller star field. */
+.instrument-viewport dialog:modal {
+  inset: calc((var(--instrument-viewport-top, 0px) + var(--instrument-safe-top)) / var(--type-scale))
+    calc(var(--instrument-safe-right) / var(--type-scale))
+    calc(100% - (var(--instrument-viewport-top, 0px) + var(--instrument-viewport-height, 100dvh) - var(--instrument-safe-bottom)) / var(--type-scale))
+    calc(var(--instrument-safe-left) / var(--type-scale));
+  max-width: calc((100vw - var(--instrument-safe-left) - var(--instrument-safe-right)) / var(--type-scale) - 12px);
+}
+
 /* the scaled layer: laid out at 1/scale of the box and scaled back up by a transform, which every engine
  * agrees on; the field behind it stays unscaled, and the container queries see the laid-out width */
 /* Layout zoom now replaces that transform so WebKit rasterizes text at its displayed size.
  * Auto sizing between all four edges fills the parent; manually dividing viewport dimensions
  * again leaves WebKit's zoomed layer smaller than the window. */
 .instrument-scaled {
+  --instrument-bottom-padding: calc(var(--instrument-safe-bottom) / var(--type-scale));
   position: absolute;
   inset: 0;
   zoom: var(--type-scale);
@@ -109,6 +148,47 @@
 }
 .instrument-view { min-width: 0; min-height: 0; height: 100%; }
 .instrument-view[hidden] { display: none; }
+@property --instrument-scroll-edge-color {
+  syntax: "<color>";
+  inherits: false;
+  initial-value: transparent;
+}
+@property --instrument-scroll-bottom-color {
+  syntax: "<color>";
+  inherits: false;
+  initial-value: transparent;
+}
+.instrument [data-scroll-edge] {
+  --instrument-scroll-edge-color: transparent;
+  --instrument-scroll-bottom-color: transparent;
+  /* Reserve the hairline even while clear so revealing it never moves the text. */
+  border-top: 1px solid var(--instrument-scroll-edge-color);
+  background-image: linear-gradient(to bottom,
+    color-mix(in srgb, var(--instrument-scroll-edge-color) 35%, transparent),
+    color-mix(in srgb, var(--instrument-scroll-edge-color) 12%, transparent) 35%,
+    transparent),
+    linear-gradient(to top,
+    color-mix(in srgb, var(--instrument-scroll-bottom-color) 35%, transparent),
+    color-mix(in srgb, var(--instrument-scroll-bottom-color) 12%, transparent) 35%,
+    transparent);
+  background-size: 100% 8px;
+  background-repeat: no-repeat;
+  background-position: top, bottom;
+  background-attachment: scroll;
+  transition: --instrument-scroll-edge-color 120ms ease-out, --instrument-scroll-bottom-color 120ms ease-out;
+}
+.instrument [data-scroll-clipped] {
+  --instrument-scroll-edge-color: var(--accent);
+}
+.instrument [data-scroll-edge-bottom] {
+  border-bottom: 1px solid var(--instrument-scroll-bottom-color);
+}
+.instrument [data-scroll-bottom-clipped] {
+  --instrument-scroll-bottom-color: var(--accent);
+}
+@media (prefers-reduced-motion: reduce) {
+  .instrument [data-scroll-edge] { transition: none; }
+}
 .instrument-people-waiting { color: var(--accent); margin-left: 4px; font-size: 15px; line-height: 1; }
 
 /* ---------- shared chrome ---------- */
@@ -147,16 +227,38 @@
 .instrument-header .keys { display: flex; align-items: center; gap: 14px; justify-self: end; margin-right: -8px; }
 .instrument-header .keys [aria-current="page"] { color: var(--text-hi); }
 .instrument-header .keys [aria-current="page"] .view-label { text-decoration: underline; text-underline-offset: 4px; }
+.instrument-menu-toggle, .instrument-current-view { display: none; }
 @container instrument (max-width: 900px) {
   .instrument-header { padding-inline: 18px; gap: 8px; }
   .instrument-header .keys { gap: 8px; }
   .instrument-header .keys kbd { display: none; }
 }
 @container instrument (max-width: 600px) {
-  .distance, .instrument-header, .instrument-help { --instrument-header-height: 68px; }
-  .instrument-header { grid-template-columns: auto minmax(0, 1fr); }
-  .instrument-header .instrument-identity { grid-column: 1 / -1; max-width: 100%; gap: 16px; }
-  .instrument-header .keys { grid-row: 2; grid-column: 1 / -1; justify-self: start; max-width: 100%; overflow-x: auto; white-space: nowrap; }
+  .distance, .instrument-header, .instrument-help { --instrument-header-height: 52px; }
+  .instrument-header { grid-template-columns: minmax(0, 1fr) auto; }
+  .instrument-header .instrument-identity { max-width: 100%; gap: 16px; }
+  .instrument-header .instrument-identity > button { min-height: 44px; }
+  .instrument-current-view { display: inline; color: var(--text-hi); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .instrument-menu-toggle { display: flex; align-items: center; justify-content: center; min-width: 44px; min-height: 44px; margin-right: -8px; font-size: 12px; }
+  .instrument-header .keys {
+    display: none;
+    position: absolute;
+    inset: var(--instrument-header-height) 18px auto;
+    margin: 0;
+    padding: 8px 16px;
+    justify-self: stretch;
+    align-items: stretch;
+    flex-direction: column;
+    gap: 0;
+    background: var(--panel);
+    border: 1px solid var(--border-raised);
+    max-height: calc(var(--instrument-height) / var(--type-scale) - var(--instrument-header-height) - 18px);
+    overflow-y: auto;
+    font-size: 14px;
+  }
+  .instrument-header .keys[data-open="true"] { display: flex; }
+  .instrument-header .keys button { min-height: 44px; text-align: left; }
+  .instrument-header .keys button[aria-controls="instrument-help"] { display: none; }
 }
 .instrument kbd {
   font: inherit;
@@ -168,7 +270,8 @@
 .wordmark {
   color: var(--glyph);
   text-shadow: var(--glow);
-  letter-spacing: 0.34em;
+  letter-spacing: 0;
+  text-transform: none;
   font-size: 12px;
 }
 .wordmark.is-glitch {
@@ -231,7 +334,7 @@
   display: block;
   min-width: 0;
   min-height: 1.4em;
-  max-height: min(168px, calc(30vh / var(--type-scale)));
+  max-height: min(168px, calc((var(--instrument-height) / var(--type-scale) - var(--instrument-header-height)) * .3));
   margin: 0;
   resize: none;
   overflow-y: auto;
@@ -242,6 +345,12 @@
   color: var(--text-hi);
   caret-color: transparent;
 }
+.prompt-line textarea[data-text-selected] { caret-color: var(--accent); }
+.prompt-line textarea::selection {
+  color: var(--text-hi);
+  background: var(--primary-hi);
+}
+.instrument.is-light .prompt-line textarea::selection { color: var(--void); }
 /* the mirror measures the text before the caret; the block is the same cursor the transcript shows */
 .prompt-line .mirror {
   position: absolute;

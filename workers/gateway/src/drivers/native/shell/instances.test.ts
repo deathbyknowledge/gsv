@@ -18,6 +18,18 @@ function fixture(request: NonNullable<NativeShellCommandOptions["request"]>, cal
 }
 
 describe("native instance readiness", () => {
+  it("starts computers through the same lifecycle syscall and readiness wait", async () => {
+    const request = vi.fn<NonNullable<NativeShellCommandOptions["request"]>>(async frame => ({
+      type: "res", id: frame.id, ok: true,
+      data: { instance: { ...instance, kind: "linux", templateId: "computer", state: "ready" }, disposition: "created" },
+    }));
+    const result = await fixture(request).exec('instance start computer --request-id build-1 --name "Build website" --seconds 1800 --wait');
+    expect(result.exitCode, result.stderr).toBe(0);
+    expect(request).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+      call: "sys.instance.start", args: expect.objectContaining({ templateId: "computer", requestId: "build-1", label: "Build website", lifetimeSeconds: 1800 }),
+    }), expect.any(AbortSignal));
+  });
+
   it("passes profile pagination through the ordinary syscall and rejects invalid offsets", async () => {
     const request = vi.fn<NonNullable<NativeShellCommandOptions["request"]>>(async frame => ({ type: "res", id: frame.id, ok: true, data: { profiles: [], total: 64 } }));
     const shell = fixture(request);

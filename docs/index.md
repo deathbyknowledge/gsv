@@ -2,12 +2,12 @@
 layout: home
 
 hero:
-  name: GSV in beta
+  name: Ship in beta
   text: by Humans & Machines, Inc.
   tagline: Personal AI computer / distributed OS across all your devices. Open-source, runs on your own Cloudflare account. Not one box.
   actions:
     - theme: brand
-      text: Why GSV?
+      text: Why Ship?
       link: /why/
     - theme: alt
       text: Get Started
@@ -17,14 +17,14 @@ hero:
       link: /get-started/faq
 
 features:
-  - title: Why GSV?
-    details: "Learn why GSV treats agents as long-lived processes inside a Linux-shaped cloud computer instead of short-lived chat threads."
+  - title: Why Ship?
+    details: "Learn why Ship treats agents as long-lived processes inside a Linux-shaped cloud computer instead of short-lived chat threads."
     link: /why/
   - title: Get Started
-    details: "Deploy GSV, finish first-run setup, connect your first device, and reach a working system quickly."
+    details: "Deploy Ship, finish first-run setup, connect your first device, and reach a working system quickly."
     link: /get-started/
   - title: Examples
-    details: "Real-world setups showing how GSV handles multi-machine work, personal ops, adapters, and repository-backed knowledge."
+    details: "Real-world setups showing how Ship handles multi-machine work, personal ops, adapters, and repository-backed knowledge."
     link: /examples/
   - title: How-to Guides
     details: "Solve concrete tasks such as deployment, device setup, process management, automation, adapters, and integrations."

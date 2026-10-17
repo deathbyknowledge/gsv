@@ -3,6 +3,7 @@ import { useContext } from "preact/hooks";
 import { useColorTheme } from "../../components/ui/useColorTheme";
 import { AuthBackground, type AuthBgVariant } from "./backgrounds/AuthBackground";
 import { InstrumentBackdrop } from "../instrument/shared/InstrumentBackdrop";
+import { useInstrumentViewport } from "../instrument/shared/useInstrumentViewport";
 import { Wordmark } from "../instrument/shared/Wordmark";
 import { PlatformIdentity } from "../../services/platform/PlatformIdentity";
 import { AuthShip } from "./backgrounds/AuthShip";
@@ -20,19 +21,22 @@ export function AuthScene({ children, setup = false, layout = "ship" }: {
   layout?: "ship" | "welcome";
 }) {
   const { theme, toggleTheme } = useColorTheme("dark");
+  const viewportRef = useInstrumentViewport();
   return (
-    <div class={`instrument gsv-auth-surface gsv-auth-scene${layout === "welcome" ? " gsv-auth-scene-welcome" : ""}${theme === "light" ? " is-light" : ""}${setup ? " gsv-auth-surface-setup" : " gsv-auth-surface-login"}`}>
+    <div ref={viewportRef} class={`instrument gsv-auth-surface gsv-auth-scene${layout === "welcome" ? " gsv-auth-scene-welcome" : ""}${theme === "light" ? " is-light" : ""}${setup ? " gsv-auth-surface-setup" : " gsv-auth-surface-login"}`}>
       <InstrumentBackdrop />
-      <header class="instrument-top gsv-auth-header">
-        <div class="gsv-auth-identity"><Wordmark /><PlatformIdentity /></div>
-        <button type="button" onClick={toggleTheme} aria-label={`Switch to ${theme === "light" ? "dark" : "light"} theme`}>
-          {theme === "light" ? "Dark" : "Light"}
-        </button>
-      </header>
-      <div class="gsv-auth-composition">
-        {layout === "ship" && <AuthShip theme={theme} />}
-        <div class="gsv-auth-panels">
-          <SharedAuthScene.Provider value>{children}</SharedAuthScene.Provider>
+      <div class="instrument-viewport">
+        <header class="instrument-top gsv-auth-header">
+          <div class="gsv-auth-identity"><Wordmark /><PlatformIdentity /></div>
+          <button type="button" onClick={toggleTheme} aria-label={`Switch to ${theme === "light" ? "dark" : "light"} theme`}>
+            {theme === "light" ? "Dark" : "Light"}
+          </button>
+        </header>
+        <div class="gsv-auth-composition">
+          {layout === "ship" && <AuthShip theme={theme} />}
+          <div class="gsv-auth-panels">
+            <SharedAuthScene.Provider value>{children}</SharedAuthScene.Provider>
+          </div>
         </div>
       </div>
     </div>

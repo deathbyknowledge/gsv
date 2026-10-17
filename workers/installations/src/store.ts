@@ -57,8 +57,10 @@ export class AccountStore {
     private readonly baseDomain: string,
     private readonly installationOriginTemplate?: string,
     private readonly reservedHostnames: readonly string[] = [],
+    private readonly legacyDomains: readonly string[] = [],
   ) {
     parseBaseDomain(baseDomain);
+    for (const domain of legacyDomains) parseBaseDomain(domain);
   }
 
   validateHandle(value: string): string {
@@ -253,15 +255,10 @@ export class AccountStore {
       this.baseDomain,
       this.installationOriginTemplate,
     );
-    if (replacement.canonicalOrigin !== previous.canonical_origin) {
-      throw new Error("installation canonical origin is inconsistent");
-    }
+    replacement.canonicalOrigin = previous.canonical_origin;
     const retiredHandle = `reset-${crypto.randomUUID()}`;
     const retiredOrigin = `https://${retiredHandle}.invalid`;
-    const canonicalHostname = hostnameForHandle(
-      previous.handle,
-      this.baseDomain,
-    );
+    const canonicalHostname = new URL(previous.canonical_origin).hostname;
     const now = Date.now();
 
     const results = await this.db.batch([
@@ -335,8 +332,7 @@ export class AccountStore {
         `UPDATE hostnames
          SET installation_id = ?, state = 'reserved', created_at = ?,
              retired_at = NULL
-         WHERE normalized_hostname = ? AND installation_id = ?
-           AND kind = 'canonical' AND state = 'active'
+         WHERE installation_id = ? AND state = 'active'
            AND EXISTS (
              SELECT 1 FROM installation_reset_operations
              WHERE operation_id = ? AND replacement_installation_id = ?
@@ -344,7 +340,6 @@ export class AccountStore {
       ).bind(
         replacement.installationId,
         now,
-        canonicalHostname,
         previousInstallationId,
         operationId,
         replacement.installationId,
@@ -406,7 +401,9 @@ export class AccountStore {
       if (
         (results[1]?.meta.changes ?? 0) === 1
         && requiredChanges.some(
-          (index) => (results[index]?.meta.changes ?? 0) !== 1,
+          (index) => index === 3
+            ? (results[index]?.meta.changes ?? 0) < 1
+            : (results[index]?.meta.changes ?? 0) !== 1,
         )
       ) {
         throw new Error("installation reset was not committed completely");
@@ -452,7 +449,44 @@ export class AccountStore {
     const hostname = normalizeHostname(hostnameValue);
     if (!hostname) return { found: false };
 
-    const row = await this.db.prepare(
+    let row = await this.hostnameRow(hostname);
+    if (!row && this.legacyDomains.length && hostname.endsWith(`.${this.baseDomain}`)) {
+      const handle = hostname.slice(0, -(this.baseDomain.length + 1));
+      if (/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(handle) && !this.reservedHostnames.includes(hostname)) {
+        // Only a recorded canonical hostname may acquire the preferred-domain
+        // alias. Conflict handling preserves retired aliases and concurrent resets.
+        const canonicalHosts = this.legacyDomains.map((domain) => `${handle}.${domain}`);
+        const canonical = await this.db.prepare(
+          "SELECT id, canonical_origin FROM installations WHERE handle = ?",
+        ).bind(handle).first<{ id: string; canonical_origin: string }>();
+        const canonicalHostname = canonical ? new URL(canonical.canonical_origin).hostname : null;
+        if (canonical && canonicalHostname && canonicalHosts.includes(canonicalHostname)) {
+          await this.db.prepare(`INSERT INTO hostnames (normalized_hostname, installation_id, kind, state, created_at)
+            SELECT ?, i.id, 'alias', h.state, ? FROM installations i
+            JOIN hostnames h ON h.installation_id = i.id AND h.kind = 'canonical'
+            WHERE i.id = ? AND i.handle = ? AND i.canonical_origin = ?
+              AND h.normalized_hostname = ? AND h.state != 'retired'
+              AND i.state IN ('reserved', 'provisioning', 'active', 'restricted')
+            ON CONFLICT(normalized_hostname) DO NOTHING`)
+            .bind(hostname, Date.now(), canonical.id, handle, canonical.canonical_origin, canonicalHostname).run();
+        }
+        row = await this.hostnameRow(hostname);
+      }
+    }
+    if (!row) return { found: false };
+    const result: InstallationDirectoryResult = {
+      found: true,
+      installationId: row.id,
+      handle: row.handle,
+      canonicalOrigin: row.canonical_origin,
+      state: row.state,
+    };
+    if (row.owner_setup_recovery) result.ownerSetupRecovery = true;
+    return result;
+  }
+
+  private hostnameRow(hostname: string) {
+    return this.db.prepare(
       `SELECT i.id, i.handle, i.canonical_origin, i.state,
          i.owner_setup AS owner_setup_recovery
        FROM hostnames h
@@ -466,16 +500,6 @@ export class AccountStore {
       state: InstallationState;
       owner_setup_recovery: number;
     }>();
-    if (!row) return { found: false };
-    const result: InstallationDirectoryResult = {
-      found: true,
-      installationId: row.id,
-      handle: row.handle,
-      canonicalOrigin: row.canonical_origin,
-      state: row.state,
-    };
-    if (row.owner_setup_recovery) result.ownerSetupRecovery = true;
-    return result;
   }
 
   async resolveInstallation(
@@ -570,7 +594,7 @@ export class AccountStore {
       this.db.prepare(
         `UPDATE hostnames
          SET state = 'provisioning'
-         WHERE installation_id = ? AND kind = 'canonical' AND state = 'reserved'
+         WHERE installation_id = ? AND state = 'reserved'
            AND EXISTS (
              SELECT 1 FROM installations i WHERE i.id = hostnames.installation_id
                AND i.state = 'provisioning'
@@ -590,7 +614,7 @@ export class AccountStore {
     const current = await this.requireOwnedReservation(operationId, principalId);
     const resumed = results.every((result) => (result.meta.changes ?? 0) === 0)
       && current.state === "provisioning" && current.operationState === "provisioning";
-    if (!resumed && results.some((result) => (result.meta.changes ?? 0) !== 1)) {
+    if (!resumed && results.some((result, index) => index === 1 ? (result.meta.changes ?? 0) < 1 : (result.meta.changes ?? 0) !== 1)) {
       throw new Error("installation could not enter provisioning");
     }
     return current;
@@ -624,8 +648,7 @@ export class AccountStore {
       this.db.prepare(
         `UPDATE hostnames
          SET state = 'active'
-         WHERE installation_id = ? AND kind = 'canonical'
-           AND state = 'provisioning'`,
+         WHERE installation_id = ? AND state = 'provisioning'`,
       ).bind(reservation.installationId),
       this.db.prepare(
         `UPDATE provisioning_operations
@@ -639,7 +662,7 @@ export class AccountStore {
            AND completed_at IS NULL AND revoked_at IS NULL`,
       ).bind(now, claimId, reservation.installationId),
     ]);
-    if (results.some((result) => (result.meta.changes ?? 0) !== 1)) {
+    if (results.some((result, index) => index === 1 ? (result.meta.changes ?? 0) < 1 : (result.meta.changes ?? 0) !== 1)) {
       throw new Error("installation onboarding could not be activated");
     }
     return await this.requireOwnedReservation(operationId, principalId);

@@ -1,15 +1,12 @@
 import DOMPurify from "/sanitize.js";
 
 const promptCategories = new Map([
-  ["world-model", "World model"],
-  ["interaction", "Interaction and authority"],
-  ["computer-and-discovery", "Computer and discovery"],
-  ["durable-work", "Durable work and continuity"],
-  ["knowledge", "Knowledge"],
-  ["role-and-judgment", "Role and judgment"],
-  ["voice", "Voice"],
-  ["instance-facts", "Instance facts"],
+  ["system", "System"],
+  ["ship", "Ship"],
+  ["crew", "Crew"],
+  ["user", "Owner"],
   ["tasks", "Task prompts"],
+  ["onboarding", "Onboarding"],
 ]);
 
 const elements = {
@@ -127,7 +124,7 @@ async function refresh() {
   const currentExists = state.files.some((file) => file.path === state.selectedPath);
   const preferred = state.workspace === "manual"
     ? state.files.find((file) => file.path === "index.md")?.path
-    : state.files.find((file) => file.path === "world-model/gsv.md")?.path;
+    : state.files.find((file) => file.path === "system/context.d/01-gsv.md")?.path;
   if (!currentExists) {
     await selectFile(preferred ?? state.files[0]?.path ?? null, true);
   } else if (state.selectedPath) {
@@ -155,7 +152,7 @@ function renderFileList() {
       const button = document.createElement("button");
       button.type = "button";
       button.className = `file-row${file.path === state.selectedPath ? " is-active" : ""}`;
-      button.textContent = category ? file.path.slice(category.length + 1) : file.path;
+      button.textContent = category ? file.path.slice(category.length + 1).replace(/^context\.d\//, "") : file.path;
       button.setAttribute("aria-label", file.path);
       button.title = `${file.path} · ${file.bytes.toLocaleString()} bytes`;
       button.addEventListener("click", () => void selectFile(file.path).catch(showError));
@@ -263,13 +260,12 @@ async function renderPromptPreview() {
   });
   if (version !== state.previewVersion) return;
   state.promptSources = new Map(data.catalog.map((source) => [source.path, source]));
-  const category = state.selectedPath?.split("/")[0];
   const sourceView = view === "catalog" || view === "category";
-  const blocks = view === "category" ? data.catalog.filter((source) => source.path.startsWith(`${category}/`))
+  const blocks = view === "category" ? data.catalog.filter((source) => source.path === state.selectedPath)
     : view === "catalog" ? data.catalog : data.sections;
   elements.account.disabled = sourceView;
   elements.kind.textContent = "REPOSITORY DEFAULTS";
-  elements.title.textContent = view === "category" ? promptCategories.get(category) ?? category
+  elements.title.textContent = view === "category" ? state.selectedPath
     : view === "catalog" ? "All prompt sources" : `${account === "ship" ? "Ship" : "Crew"} · assembled prompt`;
   elements.note.textContent = "Sample account and runtime. Saved edits change this worktree; space overrides stay intact.";
   const bytes = new TextEncoder().encode(sourceView ? blocks.map((source) => source.text).join("") : data.prompt).length;

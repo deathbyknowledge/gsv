@@ -64,11 +64,7 @@ make_fixture gsvd-linux-x64 gsvd-v1
 make_fixture gsv-desktop-linux-x64 desktop-v1
 make_fixture gsv-transcribe-linux-x64 transcribe-v1
 make_runtime linux-x64 runtime-v1
-make_fixture gsv-vision-linux-x64 vision-v1
 printf 'license-v1\n' > "$FIXTURES/gsv-transcribe-THIRD_PARTY.md"
-printf 'vision-license-v1\n' > "$FIXTURES/gsv-vision-LICENSE.apache-2.0"
-printf 'vision-provenance-v1\n' > "$FIXTURES/gsv-vision-PROVENANCE.md"
-printf 'vision-runtime-v1\n' > "$FIXTURES/gsv-vision-THIRD_PARTY.md"
 cp "$REPOSITORY_ROOT/install.sh" "$FIXTURES/install.sh"
 cp "$REPOSITORY_ROOT/tools/installer-animation/gsv-installer-animation.gz" "$FIXTURES/"
 write_checksums
@@ -179,11 +175,30 @@ test "$("$INSTALL_DIR/gsvd")" = "gsvd-v1"
 test "$("$INSTALL_DIR/gsv-desktop")" = "desktop-v1"
 test "$("$INSTALL_DIR/gsv-transcribe")" = "transcribe-v1"
 test "$(cat "$INSTALL_DIR/gsv-transcribe-runtime/libtranscribe.so")" = "runtime-v1"
-test "$("$INSTALL_DIR/gsv-vision")" = "vision-v1"
 test "$(cat "$INSTALL_DIR/gsv-transcribe-THIRD_PARTY.md")" = "license-v1"
-test "$(cat "$INSTALL_DIR/gsv-vision-LICENSE.apache-2.0")" = "vision-license-v1"
-test "$(cat "$INSTALL_DIR/gsv-vision-PROVENANCE.md")" = "vision-provenance-v1"
-test "$(cat "$INSTALL_DIR/gsv-vision-THIRD_PARTY.md")" = "vision-runtime-v1"
+
+# Remove only the retired helper's owned files, and restore them if retirement fails midway.
+retired=(gsv-vision gsv-vision-LICENSE.apache-2.0 gsv-vision-PROVENANCE.md gsv-vision-THIRD_PARTY.md)
+for name in "${retired[@]}"; do printf 'legacy\n' > "$INSTALL_DIR/$name"; done
+printf 'keep\n' > "$INSTALL_DIR/unrelated-file"
+cat > "$FAKE_BIN/mv" <<'SH'
+#!/usr/bin/env sh
+case "$*" in
+    *gsv-vision-PROVENANCE.md.backup.*) exit 1 ;;
+esac
+exec /usr/bin/mv "$@"
+SH
+/usr/bin/chmod 0755 "$FAKE_BIN/mv"
+if run_installer 2>/dev/null; then
+    echo "installer ignored a retired helper backup failure" >&2
+    exit 1
+fi
+rm "$FAKE_BIN/mv"
+for name in "${retired[@]}"; do test "$(cat "$INSTALL_DIR/$name")" = legacy; done
+test "$("$INSTALL_DIR/gsv-desktop")" = desktop-v1
+run_installer
+for name in "${retired[@]}"; do test ! -e "$INSTALL_DIR/$name"; done
+test "$(cat "$INSTALL_DIR/unrelated-file")" = keep
 
 make_fixture gsv-linux-x64 gsv-corrupt
 if run_installer 2>/dev/null; then
@@ -197,22 +212,17 @@ make_fixture gsvd-linux-x64 gsvd-v2
 make_fixture gsv-desktop-linux-x64 desktop-v2
 make_fixture gsv-transcribe-linux-x64 transcribe-v2
 make_runtime linux-x64 runtime-v2
-make_fixture gsv-vision-linux-x64 vision-v2
 make_fixture gsv-darwin-x64 gsv-mac
 make_fixture gsvd-darwin-x64 gsvd-mac
 make_fixture gsv-desktop-darwin-x64 desktop-mac
 make_fixture gsv-transcribe-darwin-x64 transcribe-mac
 make_runtime darwin-x64 runtime-mac
-make_fixture gsv-vision-darwin-x64 vision-mac
 printf 'license-v2\n' > "$FIXTURES/gsv-transcribe-THIRD_PARTY.md"
-printf 'vision-license-v2\n' > "$FIXTURES/gsv-vision-LICENSE.apache-2.0"
-printf 'vision-provenance-v2\n' > "$FIXTURES/gsv-vision-PROVENANCE.md"
-printf 'vision-runtime-v2\n' > "$FIXTURES/gsv-vision-THIRD_PARTY.md"
 write_checksums
 cat > "$FAKE_BIN/chmod" <<'SH'
 #!/usr/bin/env sh
 case "$*" in
-    *gsv-vision.new.*) exit 1 ;;
+    *gsv-transcribe.new.*) exit 1 ;;
 esac
 exec /usr/bin/chmod "$@"
 SH
@@ -227,11 +237,7 @@ test "$("$INSTALL_DIR/gsvd")" = "gsvd-v1"
 test "$("$INSTALL_DIR/gsv-desktop")" = "desktop-v1"
 test "$("$INSTALL_DIR/gsv-transcribe")" = "transcribe-v1"
 test "$(cat "$INSTALL_DIR/gsv-transcribe-runtime/libtranscribe.so")" = "runtime-v1"
-test "$("$INSTALL_DIR/gsv-vision")" = "vision-v1"
 test "$(cat "$INSTALL_DIR/gsv-transcribe-THIRD_PARTY.md")" = "license-v1"
-test "$(cat "$INSTALL_DIR/gsv-vision-LICENSE.apache-2.0")" = "vision-license-v1"
-test "$(cat "$INSTALL_DIR/gsv-vision-PROVENANCE.md")" = "vision-provenance-v1"
-test "$(cat "$INSTALL_DIR/gsv-vision-THIRD_PARTY.md")" = "vision-runtime-v1"
 
 # A fresh install with no GSV_INSTALL_DIR goes to ~/.gsv/bin and puts it on
 # PATH once, however often the installer runs.

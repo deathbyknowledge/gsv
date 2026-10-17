@@ -270,7 +270,7 @@ export function OwnerWelcomeScreen({ ready, resume, load, onConnect, addressPane
           setStep(invitation ? "invitation" : chooseSpace ? "email" : "welcome");
         })}>Sign out</button>}
       </form>
-      {compact && opening && addressPanel && <details class="desktop-welcome-address-disclosure">
+      {compact && (opening || loadError) && addressPanel && <details class="desktop-welcome-address-disclosure">
         <summary>Use a space address</summary>
         {address()}
       </details>}

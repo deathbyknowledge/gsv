@@ -3,6 +3,14 @@
 GSV ships three sibling host applications. They share transport and local data
 contracts, but they do not embed one another's runtime or state ownership.
 
+The instance service also runs `gsvd --container` inside an ephemeral Linux
+computer. It reuses machine tools, transfer streams, durable shell sessions and
+process-tree cancellation through a private HTTP/WebSocket carrier. Both enrolled
+and container carriers call the shared `machine::driver` executor. Container mode
+does not read enrollment credentials, start a local control service or run the
+machine updater; its image owns the binary version. The instance service owns
+its lease and physical destruction. See [cloud computers](/how-to/cloud-computers).
+
 ```text
                          Gateway
                     user WS   driver WS
@@ -24,8 +32,6 @@ contracts, but they do not embed one another's runtime or state ownership.
   protocol.
 - `host/crates/daemon-protocol/` owns the versioned, same-user `gsvd` control
   protocol.
-- `host/crates/gesture-protocol/` owns the private, versioned contract between
-  Desktop and its gesture helper.
 
 These crates contain contracts and transport primitives. They do not own a
 machine lifecycle, a CLI interaction, or Desktop UI state.
@@ -38,12 +44,6 @@ use the same cancellation and byte-credit protocol.
 The host applications, helpers, and shared crates form one Cargo workspace
 rooted at `host/`. Its lockfile and build output belong to that boundary;
 `workers/ripgit/` remains an independent Rust project.
-
-The gesture runtime's CMake build downloads Eigen from TensorFlow's archive
-mirror and ml_dtypes from GitHub, both at LiteRT's pinned revisions with SHA-256
-verification. It does not clone Eigen from GitLab or fetch ml_dtypes' unused
-Eigen submodule. This source selection applies to local builds and every desktop
-release platform, including builds without a dependency cache.
 
 ## `gsvd`
 
@@ -119,7 +119,7 @@ restore the previous image, enrollment configuration, and running state.
 logs. CLI and Desktop login credentials are not copied there. The local pipe
 ACL admits the enrolled owner and service account, rejects remote clients,
 and clients authenticate the server against the process registered in SCM.
-Desktop and audio/camera helpers remain in the interactive user's session.
+Desktop and the audio helper remain in the interactive user's session.
 Windows updates are administrator-managed because the service cannot replace
 its protected executable. Legacy scheduled tasks are not migrated.
 
@@ -166,8 +166,8 @@ Process observation, drafts, approvals, attachments and retained screen state.
 Rust owns native input, private session persistence, external browser navigation,
 attachment downloads, window lifecycle and the same-user `desktop-protocol` control server.
 
-The installed binary is `gsv-desktop`; the app is GSV with bundle identity
-`space.gsv.desktop`. There is no second desktop renderer or gateway client.
+The installed binary is `gsv-desktop`; the app is Ship with bundle identity
+`space.gsv.desktop`.
 Desktop credentials are isolated from CLI and driver credentials. Only the
 bundled main window can invoke the narrow native bridge. Space changes reset
 native input and invalidate frontend control and credential writes.
@@ -181,11 +181,8 @@ transfer cannot mark a later successful download as failed. The bridge does not 
 filesystem writes or add another gateway connection.
 
 `desktop-native` supervises `gsv-transcribe` for local capture and speech
-inference, and `gsv-vision` for local camera capture, LiteRT/XNNPACK inference
-and authored gesture recognition. Audio, camera frames and landmarks stay in
-the helpers. Both features start only when explicitly enabled. The helper
-protocol carries bounded, session-scoped semantic intents and feedback.
-The frontend acknowledges pushed updates; it does not poll conversation state.
+inference. Audio stays in the helper, which starts only when explicitly enabled.
+The frontend acknowledges pushed text updates; it does not poll conversation state.
 
 Linux transcription releases bundle OpenBLAS and use GNU ld to register its
 native initializers. The artifact check rejects unconverted legacy constructor
@@ -202,12 +199,10 @@ Installers verify it and replace or roll it back with the binaries. The artifact
 check validates relocated libraries as well as the helper, and recorded-speech
 checks exercise both automatic selection and the baseline backend.
 
-Hands-free has Off, Ready and Listening states. One finger starts or pauses
-listening; two sends, three deletes, four clears dictated text, and both fists
-exits hands-free. The thumb counts independently and any finger combination
-is accepted. A control palm and action fist scroll together. The tutorial uses
-lesson-scoped observations and accepts only its current gesture. Voice events
-retain request and segment identity so stale output cannot change a later draft.
+Voice events retain request and segment identity so stale output cannot change
+a later draft. Enter finalizes the current segment before sending and keeps
+listening. Pausing, helper failures and connection interruptions retain the text
+already displayed in the prompt. Raw local audio is not retained for replay.
 The input lease expires on suspension and is released when leaving Chat.
 
 Local control supports activation, redacted status, new Process creation,
@@ -272,17 +267,32 @@ one attempt per hour, a stable daemon never follows a `dev` gateway, and
 `~/.gsv/logs/auto-update.log`. The CLI and Desktop are never replaced under a
 person; the CLI prints one hint when the gateway is newer.
 
+Update plans use the operator's `installUrl` from a successful handshake or the
+installer URL supplied with a protocol error. Older gateways without either
+setting use `https://install.ship.space`. Windows installer selection resolves
+a Unix script URL to the sibling `install.ps1`, or appends that filename to a
+download directory. Protocol errors give Windows peers the directory so older
+daemons, which always append `/install.ps1`, can upgrade too.
+For URLs with a query or fragment, the protocol hint names the Windows script
+and ends with an empty fragment. An older daemon's appended filename then stays
+in that fragment, which HTTP does not send; the original query reaches the
+installer unchanged. Current hosts discard the fragment when resolving the script.
+
+CLI update hints, native `targets pair` setup commands, and the daemon's manual
+recovery commands use the same advertised installer and gateway release. Manual
+daemon updates also preserve the current installation directory. Host applications
+share installer URL resolution and shell quoting in `host-config`.
+
 Published host artifacts cover Linux x64/ARM64 and macOS Intel/Apple Silicon
-for Desktop, `gsv-transcribe`, `gsv-vision`, `gsv`, and `gsvd`, plus Windows x64
-for all five host executables. Checksums cover every release asset, including the vision
-model license and provenance. On macOS,
+for Desktop, `gsv-transcribe`, `gsv`, and `gsvd`, plus Windows x64
+for all four host executables. Checksums cover every release asset. On macOS,
 `host/scripts/package-macos.sh` assembles an architecture-native development
 `GSV.app` and ZIP containing Desktop, CLI, daemon, helpers, application
-metadata, and local gesture models. The result is ad-hoc signed and unnotarized. Public distribution additionally requires Developer ID signing,
+metadata, and the local voice runtime. The result is ad-hoc signed and unnotarized. Public distribution additionally requires Developer ID signing,
 hardened-runtime entitlements, Apple notarization, and stapling; those release
 credentials are not configured in the repository.
 
-On Windows, `host/scripts/package-windows.ps1` packages all five executables,
+On Windows, `host/scripts/package-windows.ps1` packages all four executables,
 licenses, checksums and the PowerShell installer in a ZIP and an NSIS setup
 executable. Setup creates a Start-menu shortcut and an Apps uninstall entry.
 Setup embeds hashes of its installer script and checksum manifest in the
@@ -304,6 +314,15 @@ matching certificate and private key are provisioned in the Windows build
 runner. It signs SHA-256 with a timestamp and verifies the result. Without that
 release credential, Windows artifacts are unsigned; checksums remain mandatory.
 The Windows workflow separately tests SCM, IPC, shell process trees and installer
-rollback, then builds Desktop and helpers and runs recorded gesture parity.
-Physical microphone/camera permissions, GUI onboarding/UAC and reboot recovery
+rollback, then builds Desktop and its voice helper.
+Physical microphone permissions, GUI onboarding/UAC and reboot recovery
 also need a Windows release smoke test on an actual computer.
+
+## Product and command names
+
+Ship is the displayed product name. The external CLI command remains `gsv`.
+Native executable names, the `space.gsv.desktop` bundle identifier, service names
+and stored paths remain stable. macOS keeps `GSV.app` on disk so an upgrade
+replaces the existing bundle and preserves launch paths. Its localized bundle
+name is Ship; the base plist name matches the filename so Finder uses that
+display name.

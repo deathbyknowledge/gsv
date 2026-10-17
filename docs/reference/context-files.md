@@ -45,14 +45,13 @@ facts and preferences that should affect nearly every interaction. Detailed or
 occasionally relevant personal information belongs in the human-owned
 `personal` wiki, where agents retrieve it deliberately. Unresolved work belongs
 in the Kernel `r12y` responsibility ledger rather than either context or memory
-layer. Initial onboarding is likewise an `r12y` responsibility, not a generated
-context file; the system responsibilities context tells the Ship to put it first
-while it is unresolved.
+layer. Initial onboarding is likewise an `r12y` responsibility; the system
+responsibilities context tells the Ship to put it first while it is unresolved.
 
 The default personal account for new installations is `ship`. Personal-agent
 provisioning also creates an ordinary owned `crew` account for delegated work
 (`crew2`, `crew3`, etc. when names are occupied). Its own `context.d` contains
-execution and memory guidance; Ship's conversation instructions and voice stay
+execution guidance; memory instructions are shared system context; Ship's conversation instructions and voice stay
 in Ship's home. Both receive the human owner's context and access to personal
 memory through the existing account permissions.
 
@@ -63,13 +62,16 @@ Crew account to select with `proc delegate --as ACCOUNT`. Durable unfinished
 outcomes belong in `r12y` before delegation or yielding.
 
 These are editable account defaults. Existing account names and customized context files
-are preserved; revised prompt text seeds missing files, without rewriting an
-existing account's instructions. To adopt the new defaults in an existing
-space, edit that account's context files deliberately.
+are preserved. Revised defaults seed missing files; home scaffolding can also
+replace recognized, untouched Ship role seeds and retire generated local memory
+instructions now supplied by system context. Existing run-as and owner accounts
+also receive the memory cleanup before a Process requests context. Owner-edited
+files remain unchanged.
+To replace customized instructions, edit that account's context files deliberately.
 Seeding checks the repository revision before committing, preserving owner
 edits made while defaults are being prepared.
-Generic style files are no longer seeded. Home scaffolding removes only exact
-generated versions of `00-style.md`; customized styles remain in place.
+Home scaffolding removes only exact generated versions of `00-style.md`;
+customized styles remain in place.
 
 ## Skills: `skills.d/`
 
@@ -123,12 +125,10 @@ seeded `skill-authoring` skill contains the full authoring workflow.
 
 Agents should treat these paths like normal files. Read before editing, preserve user-authored structure, and keep changes narrow.
 
-Repository authors use `npm run review:prompts` to edit the shipped Markdown by
-category: world model, interaction, computer/discovery, durable work, knowledge,
-role/judgment, voice, and instance facts. These authoring categories compose into
-the existing `context.d` paths above. The editor shows both the category sources
-and exact assembled Ship/Crew prompts; its sample accounts do not read a live
-space. See [Authoring defaults](../architecture/context-and-knowledge.md#authoring-defaults).
+Repository authors use `npm run review:prompts` to edit complete entries under
+`prompts/{system,ship,crew,user}/context.d/`. Filenames define entry names and
+lexical order. The editor shows each entry and exact assembled Ship/Crew prompts;
+its sample accounts do not read a live space. See [Authoring defaults](../architecture/context-and-knowledge.md#authoring-defaults).
 
 Examples:
 
@@ -151,3 +151,11 @@ searchable personal memory.
 - [Configuration](./configuration.md)
 - [Context and Knowledge](../architecture/context-and-knowledge.md)
 - [Guides](../how-to/)
+
+## Ship naming
+
+Standing runtime context names the product Ship while retaining GSV technical
+identifiers and `.gsv` paths. The welcome responsibility uses the same product
+name. Only an untouched, unresolved welcome seed is upgraded automatically;
+user-edited and terminal records remain unchanged. Operator release information
+arrives as an ordinary responsibility, not as a rewrite of personal context.

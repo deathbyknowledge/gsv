@@ -56,7 +56,7 @@ export class InstallationOwnerApi {
         return json({ ok: true });
       }
       // Older Desktop releases can still sign in; signup requires the new code-free client.
-      if (url.pathname.startsWith("/owner/api/invites/")) return json({ error: "Update GSV to create your Space." }, 410);
+      if (url.pathname.startsWith("/owner/api/invites/")) return json({ error: "Update Ship to create your Space." }, 410);
       if (request.method === "GET" && url.pathname === "/owner/api/handle") {
         return json({ available: await this.signup.available(handle.parse(url.searchParams.get("value") ?? "")) });
       }

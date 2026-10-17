@@ -125,7 +125,7 @@ describe("ManagedSlackOnboardingFlow", () => {
     const install = nodes().find((node) => (
       node.props.href === "https://slack.gsv.example/slack/install"
     ));
-    expect(collectText(install)).toBe("INSTALL GSV IN SLACK");
+    expect(collectText(install)).toBe("INSTALL Ship IN SLACK");
     expect(install?.props.href)
       .toBe("https://slack.gsv.example/slack/install");
   });

@@ -4,8 +4,9 @@ use std::path::PathBuf;
 #[derive(Parser)]
 #[command(
     name = "gsv",
+    bin_name = "gsv",
     version = gsv::build_info::BUILD_VERSION,
-    about = "GSV CLI - Chat, Device, and Desktop Control Plane"
+    about = "Ship CLI - Chat, Device, and Desktop Control Plane"
 )]
 pub(crate) struct Cli {
     /// Gateway URL (overrides config file)

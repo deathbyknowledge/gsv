@@ -1,38 +1,21 @@
 use std::collections::VecDeque;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
 
 use desktop_native::transcription::{
     self, VoiceCommand, VoiceCommandSender, VoiceErrorCode, VoiceEvent, VoicePhase,
 };
-use desktop_native::vision_debug::{self, VisionEvent, VisionHandle};
-use gesture_protocol::{
-    ControlStatus, GestureCandidate, GestureContext, GestureIntent, GestureProgress,
-    LifecycleState, PracticeGesture, ScrollState, VoiceRequestGestureIntent,
-};
 use serde::{Deserialize, Serialize};
 use tauri::ipc::Channel;
 use tokio::sync::{mpsc, oneshot};
-use tokio::task::{JoinError, JoinHandle, JoinSet};
 use uuid::Uuid;
 
-mod practice;
-use practice::{GesturePractice, PracticeTarget, RejectionReason};
-
 const LEASE_TIMEOUT: Duration = Duration::from_secs(3);
-const INTENT_MAX_AGE: Duration = Duration::from_millis(500);
-const SCROLL_MAX_AGE: Duration = Duration::from_millis(250);
-const STATUS_MAX_AGE: Duration = Duration::from_secs(1);
-const ACTION_FEEDBACK_AGE: Duration = Duration::from_secs(3);
 const MAX_EVENTS: usize = 16;
 
 #[derive(Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum SegmentAction {
     Send,
-    Delete,
-    Clear,
 }
 
 #[derive(Deserialize)]
@@ -51,12 +34,6 @@ pub enum InputCommand {
         action: SegmentAction,
     },
     Devices,
-    Gestures {
-        enabled: bool,
-    },
-    Practice {
-        expected: PracticeTarget,
-    },
     Detach,
 }
 
@@ -95,17 +72,6 @@ pub struct InputEvent {
 pub struct Snapshot {
     pub lease: String,
     pub voice: Option<VoiceState>,
-    pub gestures_enabled: bool,
-    pub gesture_status: String,
-    pub gesture_context: GestureContext,
-    pub gesture_progress: Option<GestureProgress>,
-    pub gesture_action: Option<GestureCandidate>,
-    pub gesture_action_sequence: u64,
-    pub gesture_needs_reset: bool,
-    pub gesture_reset_after_action: u64,
-    pub gesture_practice: Option<GesturePractice>,
-    pub scroll_velocity: i16,
-    pub scroll_sequence: u64,
     pub devices: Vec<Device>,
     pub devices_loading: bool,
     pub devices_revision: u64,
@@ -117,7 +83,6 @@ pub struct Snapshot {
 pub struct InputUpdate {
     revision: u64,
     sent_at_ms: u64,
-    scroll_age_ms: u64,
     snapshot: Snapshot,
 }
 
@@ -133,7 +98,6 @@ struct Delivery {
 enum Request {
     Attach {
         updates: Channel<InputUpdate>,
-        practice: bool,
         reply: oneshot::Sender<Result<Snapshot, String>>,
     },
     Acknowledge {
@@ -162,18 +126,10 @@ impl InputRuntime {
         Self { sender }
     }
 
-    pub async fn attach(
-        &self,
-        updates: Channel<InputUpdate>,
-        practice: bool,
-    ) -> Result<Snapshot, String> {
+    pub async fn attach(&self, updates: Channel<InputUpdate>) -> Result<Snapshot, String> {
         let (reply, received) = oneshot::channel();
         self.sender
-            .send(Request::Attach {
-                updates,
-                practice,
-                reply,
-            })
+            .send(Request::Attach { updates, reply })
             .await
             .map_err(|_| "Native input is closed.")?;
         received.await.map_err(|_| "Native input is closed.")?
@@ -221,32 +177,14 @@ impl InputRuntime {
     }
 }
 
-type VisionLaunch = Result<Option<VisionHandle>, String>;
-
-struct VisionStartup {
-    cancelled: Arc<AtomicBool>,
-    task: JoinHandle<VisionLaunch>,
-}
-
 struct State {
     snapshot: Snapshot,
     voice_commands: VoiceCommandSender,
     last_seen: Instant,
     last_seen_wall: SystemTime,
-    scroll_at: Instant,
     next_id: u64,
     events: VecDeque<(Instant, InputEvent)>,
-    vision: Option<VisionHandle>,
-    vision_start: Option<VisionStartup>,
-    vision_stops: JoinSet<()>,
-    intent_sequence: u64,
-    scroll_sequence: u64,
-    status_sequence: u64,
-    reset_sequence: u64,
-    gesture_progress: Option<(Instant, GestureContext, GestureProgress)>,
-    gesture_action: Option<(Instant, GestureCandidate)>,
     device_request: Option<u64>,
-    selected_device: Option<String>,
     delivery: Option<Delivery>,
 }
 
@@ -256,17 +194,7 @@ impl State {
             snapshot: Snapshot {
                 lease: String::new(),
                 voice: None,
-                gestures_enabled: false,
-                gesture_status: "off".into(),
-                gesture_context: GestureContext::Disarmed,
-                gesture_progress: None,
-                gesture_action: None,
-                gesture_action_sequence: 0,
-                gesture_needs_reset: false,
-                gesture_reset_after_action: 0,
-                gesture_practice: None,
-                scroll_velocity: 0,
-                scroll_sequence: 0,
+
                 devices: Vec::new(),
                 devices_loading: false,
                 devices_revision: 0,
@@ -276,20 +204,12 @@ impl State {
             voice_commands,
             last_seen: Instant::now(),
             last_seen_wall: SystemTime::now(),
-            scroll_at: Instant::now(),
+
             next_id: 0,
             events: VecDeque::new(),
-            vision: None,
-            vision_start: None,
-            vision_stops: JoinSet::new(),
-            intent_sequence: 0,
-            scroll_sequence: 0,
-            status_sequence: 0,
-            reset_sequence: 0,
-            gesture_progress: None,
-            gesture_action: None,
+
             device_request: None,
-            selected_device: None,
+
             delivery: None,
         }
     }
@@ -316,165 +236,19 @@ impl State {
             });
         }
         self.events.clear();
-        self.snapshot.scroll_velocity = 0;
-        self.sync_context();
     }
 
     fn reset(&mut self) {
         self.delivery = None;
         self.snapshot.lease.clear();
-        self.disable_hands_free();
-        self.snapshot.gesture_practice = None;
-        self.gesture_action = None;
-        self.device_request = None;
-    }
-
-    fn disable_hands_free(&mut self) {
         // Revoke capture and queued actions together. Already displayed draft text stays in the view.
-        self.snapshot.gestures_enabled = false;
-        self.snapshot.gesture_status = "off".into();
-        self.snapshot.gesture_needs_reset = false;
-        self.snapshot.gesture_reset_after_action = 0;
         self.cancel_voice();
-        self.stop_vision();
-        self.gesture_progress = None;
-    }
-
-    fn stop_vision(&mut self) {
-        if let Some(vision) = self.vision.take() {
-            let _ = vision.context.set_context(GestureContext::Disarmed);
-            self.vision_stops.spawn_blocking(move || drop(vision));
-        }
-        if let Some(startup) = self.vision_start.take() {
-            startup.cancelled.store(true, Ordering::Release);
-            self.vision_stops.spawn(async move {
-                if let Ok(result) = startup.task.await {
-                    let _ = tokio::task::spawn_blocking(move || drop(result)).await;
-                }
-            });
-        }
-    }
-
-    fn start_vision(&mut self, launch: impl FnOnce() -> VisionLaunch + Send + 'static) {
-        self.stop_vision();
-        self.snapshot.scroll_velocity = 0;
-        self.snapshot.gestures_enabled = true;
-        self.snapshot.gesture_status = "starting".into();
-        self.snapshot.notice = None;
-        self.gesture_progress = None;
-        self.gesture_action = None;
-        self.intent_sequence = 0;
-        self.scroll_sequence = 0;
-        self.status_sequence = 0;
-        self.reset_sequence = 0;
-        let cancelled = Arc::new(AtomicBool::new(false));
-        let worker_cancelled = Arc::clone(&cancelled);
-        let mut stopping = std::mem::take(&mut self.vision_stops);
-        let task = tokio::spawn(async move {
-            // Serialize capture ownership while acknowledgements and cancellation stay available.
-            while stopping.join_next().await.is_some() {}
-            tokio::task::spawn_blocking(move || {
-                if worker_cancelled.load(Ordering::Acquire) {
-                    return Ok(None);
-                }
-                let result = launch();
-                if worker_cancelled.load(Ordering::Acquire) {
-                    drop(result);
-                    return Ok(None);
-                }
-                result
-            })
-            .await
-            .map_err(|_| "Gesture helper could not start.")?
-        });
-        self.vision_start = Some(VisionStartup { cancelled, task });
-    }
-
-    fn vision_started(&mut self, result: Result<VisionLaunch, JoinError>) {
-        self.vision_start = None;
-        self.watchdog();
-        let result = result.unwrap_or_else(|_| Err("Gesture helper could not start.".into()));
-        if !self.snapshot.gestures_enabled || !self.fresh(&self.snapshot.lease) {
-            self.vision_stops.spawn_blocking(move || drop(result));
-            return;
-        }
-        match result {
-            Ok(Some(vision)) => self.vision = Some(vision),
-            Ok(None) => {
-                self.snapshot.gestures_enabled = false;
-                self.snapshot.gesture_status = "disabled".into();
-            }
-            Err(error) => {
-                self.snapshot.gestures_enabled = false;
-                self.snapshot.gesture_status = "worker_unavailable".into();
-                self.snapshot.notice = Some(error);
-            }
-        }
-        self.sync_context();
-    }
-
-    fn context(&self) -> GestureContext {
-        if !self.snapshot.gestures_enabled || self.snapshot.gesture_status != "ready" {
-            return GestureContext::Disarmed;
-        }
-        if !self.events.is_empty() {
-            return GestureContext::Disabled;
-        }
-        match &self.snapshot.voice {
-            None => GestureContext::Standby,
-            Some(voice) if voice.phase == "listening" && voice.pending.is_none() => {
-                match voice.muted {
-                    Some(muted) => GestureContext::Active {
-                        voice_request_id: voice.request_id,
-                        muted,
-                    },
-                    None => GestureContext::Disabled,
-                }
-            }
-            Some(_) => GestureContext::Disabled,
-        }
-    }
-
-    fn helper_context(&self) -> GestureContext {
-        if self.snapshot.gestures_enabled && self.snapshot.gesture_status == "ready" {
-            if let Some(practice) = &self.snapshot.gesture_practice {
-                return GestureContext::Practice {
-                    lesson_id: practice.lesson_id,
-                };
-            }
-        }
-        self.context()
-    }
-
-    fn sync_context(&mut self) {
-        let voice_request_id = self.snapshot.voice.as_ref().map(|voice| voice.request_id);
-        if self
-            .snapshot
-            .gesture_practice
-            .as_ref()
-            .is_some_and(|practice| practice.voice_request_id != voice_request_id)
-        {
-            let lesson_id = self.id();
-            if let Some(practice) = &mut self.snapshot.gesture_practice {
-                practice.lesson_id = lesson_id;
-                practice.voice_request_id = voice_request_id;
-            }
-        }
-        let context = self.helper_context();
-        if self
-            .gesture_progress
-            .is_some_and(|(_, owner, _)| owner != context)
-        {
-            self.gesture_progress = None;
-        }
-        if let Some(vision) = &self.vision {
-            let _ = vision.context.set_context(context);
-        }
+        self.device_request = None;
     }
 
     fn event(&mut self, mut event: InputEvent) {
         if self.events.len() >= MAX_EVENTS || event.text.len() > 128 * 1024 {
-            self.disable_hands_free();
+            self.cancel_voice();
             self.snapshot.notice =
                 Some("Native input stopped because the view could not keep up.".into());
             return;
@@ -484,39 +258,15 @@ impl State {
     }
 
     fn snapshot(&self) -> Snapshot {
-        let context = self.context();
-        let helper_context = self.helper_context();
-        let gesture_progress = self.gesture_progress.and_then(|(at, owner, progress)| {
-            (self.snapshot.gesture_status == "ready"
-                && self.fresh(&self.snapshot.lease)
-                && owner == helper_context
-                && at.elapsed() <= STATUS_MAX_AGE
-                && progress.is_compatible_with(helper_context))
-            .then_some(progress)
-        });
         Snapshot {
-            gesture_context: context,
-            gesture_progress,
-            gesture_action: self
-                .gesture_action
-                .and_then(|(at, action)| (at.elapsed() <= ACTION_FEEDBACK_AGE).then_some(action)),
             events: self.events.iter().map(|(_, event)| event.clone()).collect(),
             devices_loading: self.device_request.is_some(),
-            scroll_sequence: if self.snapshot.scroll_velocity != 0 {
-                self.scroll_sequence
-            } else {
-                0
-            },
             ..self.snapshot.clone()
         }
     }
 
-    fn attach(&mut self, channel: Channel<InputUpdate>, practice: bool) -> Snapshot {
+    fn attach(&mut self, channel: Channel<InputUpdate>) -> Snapshot {
         self.reset();
-        if practice {
-            let lesson_id = self.id();
-            self.snapshot.gesture_practice = Some(GesturePractice::new(lesson_id));
-        }
         self.snapshot.lease = Uuid::new_v4().to_string();
         self.last_seen = Instant::now();
         self.last_seen_wall = SystemTime::now();
@@ -565,7 +315,6 @@ impl State {
         {
             self.events.pop_front();
         }
-        self.sync_context();
         Ok(())
     }
 
@@ -591,7 +340,7 @@ impl State {
                 .duration_since(SystemTime::UNIX_EPOCH)
                 .unwrap_or_default()
                 .as_millis() as u64,
-            scroll_age_ms: self.scroll_at.elapsed().as_millis().min(u64::MAX as u128) as u64,
+
             snapshot: next,
         };
         if delivery.channel.send(update).is_err() {
@@ -610,7 +359,6 @@ impl State {
         {
             return Err("Select an available microphone.".into());
         }
-        self.selected_device = device_id.clone();
         let request_id = self.id();
         self.voice_commands
             .send(VoiceCommand::Start {
@@ -707,34 +455,8 @@ impl State {
                 self.device_request = Some(request_id);
                 self.snapshot.notice = None;
             }
-            InputCommand::Gestures { enabled } => {
-                if !enabled {
-                    self.disable_hands_free();
-                    self.gesture_action = None;
-                    return Ok(());
-                }
-                if self.snapshot.gestures_enabled
-                    && matches!(self.snapshot.gesture_status.as_str(), "ready" | "starting")
-                {
-                    return Ok(());
-                }
-                self.start_vision(|| {
-                    vision_debug::start_for_desktop().map_err(|error| error.to_string())
-                });
-            }
-            InputCommand::Practice { expected } => {
-                let lesson_id = self.id();
-                self.snapshot
-                    .gesture_practice
-                    .as_mut()
-                    .ok_or("Gesture practice is not open.")?
-                    .select(lesson_id, expected);
-                self.snapshot.scroll_velocity = 0;
-                self.gesture_progress = None;
-            }
             InputCommand::Detach => self.reset(),
         }
-        self.sync_context();
         Ok(())
     }
 
@@ -909,250 +631,9 @@ impl State {
             }
             _ => {}
         }
-        self.sync_context();
-    }
-
-    fn vision_event(&mut self, event: VisionEvent) {
-        match event {
-            VisionEvent::Lifecycle(state) => {
-                self.snapshot.gesture_status = match state {
-                    LifecycleState::Ready => "ready",
-                    LifecycleState::Stopped => "stopped",
-                    LifecycleState::AssetsUnavailable => "assets_unavailable",
-                    LifecycleState::CameraUnavailable => "camera_unavailable",
-                    LifecycleState::CameraStopped => "camera_stopped",
-                    LifecycleState::InferenceUnavailable => "inference_unavailable",
-                    LifecycleState::WindowUnavailable => "window_unavailable",
-                    LifecycleState::WorkerUnavailable => "worker_unavailable",
-                    LifecycleState::ProtocolError => "protocol_error",
-                    LifecycleState::Interrupted => "interrupted",
-                }
-                .into();
-                self.gesture_progress = None;
-                if state != LifecycleState::Ready {
-                    self.snapshot.gesture_needs_reset = false;
-                    self.cancel_voice();
-                    self.snapshot.scroll_velocity = 0;
-                    self.gesture_action = None;
-                }
-            }
-            VisionEvent::Intent {
-                sequence,
-                received_at,
-                intent,
-            } => {
-                if sequence <= self.intent_sequence {
-                    return;
-                }
-                self.intent_sequence = sequence;
-                if let GestureIntent::Practice { lesson_id, gesture } = intent {
-                    if received_at.elapsed() <= INTENT_MAX_AGE
-                        && self.fresh(&self.snapshot.lease)
-                        && self.helper_context() == (GestureContext::Practice { lesson_id })
-                    {
-                        self.practice_gesture(gesture);
-                    }
-                    self.sync_context();
-                    if let Some(vision) = &self.vision {
-                        let _ = vision.context.reassert_context(self.helper_context());
-                    }
-                    return;
-                }
-                if self.snapshot.gesture_practice.is_some()
-                    && intent != (GestureIntent::SetArmed { armed: false })
-                {
-                    return;
-                }
-                let action = match intent {
-                    GestureIntent::SetArmed { armed: true } => GestureCandidate::Arm,
-                    GestureIntent::SetArmed { armed: false } => GestureCandidate::Disarm,
-                    GestureIntent::StartTranscription => GestureCandidate::StartTranscription,
-                    GestureIntent::VoiceRequest { action, .. } => match action {
-                        VoiceRequestGestureIntent::StopTranscription => {
-                            GestureCandidate::StopTranscription
-                        }
-                        VoiceRequestGestureIntent::Send => GestureCandidate::Send,
-                        VoiceRequestGestureIntent::DeleteBackward => {
-                            GestureCandidate::DeleteBackward
-                        }
-                        VoiceRequestGestureIntent::ClearDictation => {
-                            GestureCandidate::ClearDictation
-                        }
-                        VoiceRequestGestureIntent::Mute => GestureCandidate::Mute,
-                        VoiceRequestGestureIntent::Unmute => GestureCandidate::Unmute,
-                    },
-                    GestureIntent::Practice { .. } => return,
-                };
-                let result = if received_at.elapsed() > INTENT_MAX_AGE
-                    || !self.fresh(&self.snapshot.lease)
-                    || self.snapshot.gesture_status != "ready"
-                {
-                    None
-                } else {
-                    match intent {
-                        GestureIntent::SetArmed { armed: false } => {
-                            self.disable_hands_free();
-                            Some(Ok(()))
-                        }
-                        GestureIntent::StartTranscription
-                            if self.context() == GestureContext::Standby =>
-                        {
-                            Some(self.start_voice(self.selected_device.clone()))
-                        }
-                        GestureIntent::VoiceRequest {
-                            voice_request_id,
-                            action,
-                        } if matches!(self.context(), GestureContext::Active { voice_request_id: id, .. } if id == voice_request_id) => {
-                            Some(match action {
-                                VoiceRequestGestureIntent::StopTranscription => {
-                                    self.stop(voice_request_id)
-                                }
-                                VoiceRequestGestureIntent::Mute
-                                | VoiceRequestGestureIntent::Unmute => return,
-                                action => {
-                                    let segment_id =
-                                        self.snapshot.voice.as_ref().map_or(0, |v| v.segment_id);
-                                    let action = match action {
-                                        VoiceRequestGestureIntent::Send => SegmentAction::Send,
-                                        VoiceRequestGestureIntent::DeleteBackward => {
-                                            SegmentAction::Delete
-                                        }
-                                        _ => SegmentAction::Clear,
-                                    };
-                                    self.segment(voice_request_id, segment_id, action)
-                                }
-                            })
-                        }
-                        _ => None,
-                    }
-                };
-                if let Some(result) = result {
-                    self.gesture_progress = None;
-                    if let Err(error) = result {
-                        self.snapshot.notice = Some(error);
-                    } else {
-                        self.gesture_action = Some((Instant::now(), action));
-                        self.snapshot.gesture_action_sequence += 1;
-                        self.snapshot.gesture_needs_reset =
-                            !matches!(action, GestureCandidate::Disarm);
-                    }
-                }
-                if let Some(vision) = &self.vision {
-                    let _ = vision.context.reassert_context(self.helper_context());
-                }
-            }
-            VisionEvent::Scroll {
-                sequence,
-                received_at,
-                state,
-            } => {
-                if sequence <= self.scroll_sequence {
-                    return;
-                }
-                self.scroll_sequence = sequence;
-                self.scroll_at = received_at;
-                let fresh = received_at.elapsed() <= SCROLL_MAX_AGE
-                    && self.fresh(&self.snapshot.lease)
-                    && self.snapshot.gesture_status == "ready";
-                let practice_allows_scroll = if let Some(practice) =
-                    &mut self.snapshot.gesture_practice
-                {
-                    let allowed = practice.expected == PracticeTarget::Scroll;
-                    if fresh && !allowed {
-                        if let ScrollState::Active {
-                            instance_id,
-                            velocity_milliunits,
-                        } = state
-                        {
-                            if velocity_milliunits != 0 && instance_id != practice.scroll_instance {
-                                practice.scroll_instance = instance_id;
-                                practice
-                                    .reject(PracticeGesture::Scroll, RejectionReason::WrongGesture);
-                            }
-                        }
-                    }
-                    allowed && fresh
-                } else {
-                    true
-                };
-                self.snapshot.scroll_velocity = if matches!(
-                    self.context(),
-                    GestureContext::Standby | GestureContext::Active { .. }
-                ) && received_at.elapsed() <= SCROLL_MAX_AGE
-                    && practice_allows_scroll
-                {
-                    match state {
-                        ScrollState::Active {
-                            velocity_milliunits,
-                            ..
-                        } => velocity_milliunits,
-                        ScrollState::Idle => 0,
-                    }
-                } else {
-                    0
-                };
-            }
-            VisionEvent::Status {
-                sequence,
-                received_at,
-                status,
-                reset_sequence,
-            } => {
-                if sequence <= self.status_sequence {
-                    return;
-                }
-                self.status_sequence = sequence;
-                let (context, progress) = match status {
-                    ControlStatus::Disarmed { progress } => (GestureContext::Disarmed, progress),
-                    ControlStatus::Disabled { progress } => (GestureContext::Disabled, progress),
-                    ControlStatus::Standby { progress } => (GestureContext::Standby, progress),
-                    ControlStatus::Practice {
-                        lesson_id,
-                        progress,
-                    } => (GestureContext::Practice { lesson_id }, progress),
-                    ControlStatus::Active {
-                        voice_request_id,
-                        muted,
-                        progress,
-                    } => (
-                        GestureContext::Active {
-                            voice_request_id,
-                            muted,
-                        },
-                        progress,
-                    ),
-                };
-                if context == self.helper_context() {
-                    let fresh = self.snapshot.gesture_status == "ready"
-                        && self.fresh(&self.snapshot.lease)
-                        && received_at.elapsed() <= STATUS_MAX_AGE;
-                    if fresh && reset_sequence > self.reset_sequence {
-                        self.reset_sequence = reset_sequence;
-                        if sequence > self.intent_sequence && self.snapshot.gesture_needs_reset {
-                            self.snapshot.gesture_needs_reset = false;
-                            self.snapshot.gesture_reset_after_action =
-                                self.snapshot.gesture_action_sequence;
-                        }
-                    }
-                    self.gesture_progress = progress
-                        .filter(|progress| progress.is_compatible_with(context))
-                        .filter(|_| fresh)
-                        .map(|progress| (received_at, context, progress));
-                }
-            }
-        }
-        self.sync_context();
     }
 
     fn watchdog(&mut self) {
-        if self.scroll_at.elapsed() > SCROLL_MAX_AGE
-            || matches!(
-                self.context(),
-                GestureContext::Disabled | GestureContext::Disarmed
-            )
-        {
-            self.snapshot.scroll_velocity = 0;
-        }
         if (!self.snapshot.lease.is_empty() && !self.fresh(&self.snapshot.lease))
             || self.delivery.as_ref().is_some_and(|delivery| {
                 delivery.revision != delivery.acknowledged
@@ -1187,8 +668,8 @@ async fn run_requests(
     loop {
         tokio::select! {
             request = requests.recv() => match request {
-                Some(Request::Attach { updates, practice, reply }) => {
-                    let initial = state.attach(updates, practice);
+                Some(Request::Attach { updates, reply }) => {
+                    let initial = state.attach(updates);
                     if reply.send(Ok(initial)).is_err() { state.reset(); }
                 }
                 Some(Request::Acknowledge { lease, revision, ack, reply }) => {
@@ -1205,7 +686,7 @@ async fn run_requests(
                 Some(Request::Shutdown(reply)) => {
                     state.reset();
                     let _ = state.voice_commands.send(VoiceCommand::Shutdown);
-                    while state.vision_stops.join_next().await.is_some() {}
+
                     // Wait for the supervisor's terminal channel close before exiting the host.
                     while voice_events.recv().await.is_some() {}
                     let _ = reply.send(());
@@ -1214,36 +695,12 @@ async fn run_requests(
                 None => break,
             },
             event = voice_events.recv() => if let Some(event) = event { state.watchdog(); state.voice_event(event); } else { break; },
-            result = async {
-                match &mut state.vision_start {
-                    Some(startup) => (&mut startup.task).await,
-                    None => std::future::pending().await,
-                }
-            } => state.vision_started(result),
-            _ = state.vision_stops.join_next(), if !state.vision_stops.is_empty() => {},
-            event = async {
-                match &mut state.vision {
-                    Some(vision) => vision.events.recv().await,
-                    None => std::future::pending().await,
-                }
-            } => if let Some(event) = event { state.vision_event(event); } else {
-                state.stop_vision();
-                state.snapshot.gestures_enabled = false;
-                state.cancel_voice();
-                state.snapshot.scroll_velocity = 0;
-                state.gesture_progress = None;
-                state.gesture_action = None;
-                if matches!(state.snapshot.gesture_status.as_str(), "ready" | "starting") {
-                    state.snapshot.gesture_status = "interrupted".into();
-                }
-            },
             _ = tick.tick() => state.watchdog(),
         }
         state.publish();
     }
     state.reset();
     let _ = state.voice_commands.send(VoiceCommand::Shutdown);
-    while state.vision_stops.join_next().await.is_some() {}
 }
 
 fn voice_error_message(code: VoiceErrorCode, phase: Option<&str>) -> &'static str {
@@ -1304,141 +761,11 @@ mod tests {
         (state, receiver)
     }
 
-    #[tokio::test]
-    async fn slow_gesture_start_keeps_requests_live_and_cannot_cross_a_replaced_lease() {
-        let (mut state, commands) = attached();
-        let (channel, _) = updates();
-        let initial = state.attach(channel, false);
-        let vision = VisionHandle::for_test();
-        let context = vision.context.clone();
-        let (started, starting) = oneshot::channel();
-        let (release, waiting) = std::sync::mpsc::channel();
-        state.start_vision(move || {
-            let _ = started.send(());
-            let _ = waiting.recv();
-            Ok(Some(vision))
-        });
-        let (sender, requests) = mpsc::channel(16);
-        let (_voice_sender, voice_events) = mpsc::channel(1);
-        let runtime = InputRuntime { sender };
-        let task = tokio::spawn(run_requests(requests, state, voice_events));
-        let deadline = Duration::from_secs(1);
-        tokio::time::timeout(deadline, starting)
-            .await
-            .unwrap()
-            .unwrap();
-        tokio::time::timeout(deadline, async {
-            runtime
-                .acknowledge(initial.lease.clone(), 0, 0)
-                .await
-                .unwrap();
-            runtime
-                .command(
-                    initial.lease.clone(),
-                    InputCommand::Start { device_id: None },
-                )
-                .await
-                .unwrap();
-            runtime
-                .command(initial.lease.clone(), InputCommand::Cancel)
-                .await
-                .unwrap();
-            runtime
-                .command(
-                    initial.lease.clone(),
-                    InputCommand::Gestures { enabled: false },
-                )
-                .await
-                .unwrap();
-            runtime
-                .command(initial.lease.clone(), InputCommand::Detach)
-                .await
-                .unwrap();
-        })
-        .await
-        .unwrap();
-        assert!(matches!(
-            commands.try_recv(),
-            Ok(VoiceCommand::Start { .. })
-        ));
-        assert!(matches!(
-            commands.try_recv(),
-            Ok(VoiceCommand::Cancel { .. })
-        ));
-        let (channel, delivered) = updates();
-        let replacement = tokio::time::timeout(deadline, runtime.attach(channel, false))
-            .await
-            .unwrap()
-            .unwrap();
-        assert_ne!(initial.lease, replacement.lease);
-        release.send(()).unwrap();
-        tokio::time::timeout(deadline, async {
-            while context.set_context(GestureContext::Disarmed).is_ok() {
-                tokio::task::yield_now().await;
-            }
-        })
-        .await
-        .unwrap();
-        runtime.acknowledge(replacement.lease, 0, 0).await.unwrap();
-        assert!(delivered
-            .lock()
-            .unwrap()
-            .iter()
-            .all(|update| { update["snapshot"]["gestures_enabled"] == false }));
-        drop(runtime);
-        tokio::time::timeout(deadline, task).await.unwrap().unwrap();
-    }
-
-    #[tokio::test]
-    async fn cancelling_a_queued_restart_does_not_launch_another_helper() {
-        let (mut state, _commands) = attached();
-        let (started, starting) = oneshot::channel();
-        let (release, waiting) = std::sync::mpsc::channel();
-        state.start_vision(move || {
-            let _ = started.send(());
-            let _ = waiting.recv();
-            Ok(None)
-        });
-        starting.await.unwrap();
-        state.disable_hands_free();
-        let relaunched = Arc::new(AtomicBool::new(false));
-        let observed = Arc::clone(&relaunched);
-        state.start_vision(move || {
-            observed.store(true, Ordering::Release);
-            Ok(None)
-        });
-        state.disable_hands_free();
-        release.send(()).unwrap();
-        tokio::time::timeout(Duration::from_secs(1), async {
-            while state.vision_stops.join_next().await.is_some() {}
-        })
-        .await
-        .unwrap();
-        assert!(!relaunched.load(Ordering::Acquire));
-        assert!(!state.snapshot.gestures_enabled);
-        assert_eq!(state.snapshot.gesture_status, "off");
-    }
-
-    #[tokio::test]
-    async fn asynchronous_gesture_start_failure_is_reported_to_the_current_view() {
-        let (mut state, _commands) = attached();
-        state.start_vision(|| Err("Gesture helper could not start.".into()));
-        assert_eq!(state.snapshot.gesture_status, "starting");
-        let result = (&mut state.vision_start.as_mut().unwrap().task).await;
-        state.vision_started(result);
-        assert!(!state.snapshot.gestures_enabled);
-        assert_eq!(state.snapshot.gesture_status, "worker_unavailable");
-        assert_eq!(
-            state.snapshot.notice.as_deref(),
-            Some("Gesture helper could not start.")
-        );
-    }
-
     #[test]
     fn push_delivery_coalesces_partials_until_acknowledged() {
         let (mut state, _commands) = attached();
         let (channel, messages) = updates();
-        let initial = state.attach(channel, false);
+        let initial = state.attach(channel);
         state.publish();
         assert!(messages.lock().unwrap().is_empty());
         state.start_voice(None).unwrap();
@@ -1471,7 +798,7 @@ mod tests {
     fn heartbeat_cannot_keep_an_unconsumed_update_alive() {
         let (mut state, commands) = attached();
         let (channel, _) = updates();
-        state.attach(channel, false);
+        state.attach(channel);
         state.start_voice(None).unwrap();
         let request_id = state.snapshot.voice.as_ref().unwrap().request_id;
         state.publish();
@@ -1492,7 +819,7 @@ mod tests {
     fn acknowledgements_cannot_discard_events_not_delivered_to_the_view() {
         let (mut state, _commands) = attached();
         let (channel, _) = updates();
-        let initial = state.attach(channel, false);
+        let initial = state.attach(channel);
         state.start_voice(None).unwrap();
         state.publish();
         assert!(state.acknowledge(&initial.lease, 2, 0).is_err());
@@ -1502,38 +829,13 @@ mod tests {
     }
 
     #[test]
-    fn steady_scroll_refreshes_freshness_without_idle_heartbeat_updates() {
-        let (mut state, _commands) = attached();
-        let (channel, messages) = updates();
-        let initial = state.attach(channel, false);
-        state.snapshot.gestures_enabled = true;
-        state.snapshot.gesture_status = "ready".into();
-        state.snapshot.scroll_velocity = 600;
-        state.scroll_sequence = 1;
-        state.publish();
-        state.acknowledge(&initial.lease, 1, 0).unwrap();
-        state.scroll_sequence = 2;
-        state.publish();
-        assert_eq!(messages.lock().unwrap().len(), 2);
-        state.acknowledge(&initial.lease, 2, 0).unwrap();
-        state.snapshot.scroll_velocity = 0;
-        state.publish();
-        state.acknowledge(&initial.lease, 3, 0).unwrap();
-        state.scroll_sequence = 3;
-        state.publish();
-        assert_eq!(messages.lock().unwrap().len(), 3);
-    }
-
-    #[test]
     fn watchdog_cancels_voice_and_discards_pending_intents() {
         let (mut state, commands) = attached();
         state.start_voice(None).unwrap();
         let request_id = state.snapshot.voice.as_ref().unwrap().request_id;
-        state.snapshot.gestures_enabled = true;
         state.last_seen_wall = SystemTime::now() - Duration::from_secs(10);
         state.watchdog();
         assert!(state.snapshot.voice.is_none());
-        assert!(!state.snapshot.gestures_enabled);
         assert!(state.events.is_empty());
         assert!(!state.fresh("view-one"));
         assert!(commands
@@ -1589,187 +891,5 @@ mod tests {
         state.snapshot.lease = "view-two".into();
         assert!(!state.fresh("view-one"));
         assert!(state.fresh("view-two"));
-        assert_eq!(state.context(), GestureContext::Disarmed);
-    }
-
-    #[test]
-    fn gesture_progress_is_presentation_only_and_expires() {
-        let (mut state, commands) = attached();
-        state.snapshot.gestures_enabled = true;
-        state.vision_event(VisionEvent::Lifecycle(LifecycleState::Ready));
-        let progress = GestureProgress::new(GestureCandidate::StartTranscription, 600).unwrap();
-        state.vision_event(VisionEvent::Status {
-            reset_sequence: 0,
-            sequence: 1,
-            received_at: Instant::now(),
-            status: ControlStatus::Standby {
-                progress: Some(progress),
-            },
-        });
-        assert_eq!(state.snapshot().gesture_progress, Some(progress));
-        assert!(state.snapshot.gestures_enabled);
-        assert!(commands.try_recv().is_err());
-        assert!(state.events.is_empty());
-        state.vision_event(VisionEvent::Status {
-            reset_sequence: 0,
-            sequence: 1,
-            received_at: Instant::now(),
-            status: ControlStatus::Standby { progress: None },
-        });
-        assert_eq!(state.snapshot().gesture_progress, Some(progress));
-        state.gesture_progress.as_mut().unwrap().0 =
-            Instant::now() - STATUS_MAX_AGE - Duration::from_millis(1);
-        assert!(state.snapshot().gesture_progress.is_none());
-        state.vision_event(VisionEvent::Status {
-            reset_sequence: 0,
-            sequence: 2,
-            received_at: Instant::now(),
-            status: ControlStatus::Standby {
-                progress: Some(progress),
-            },
-        });
-        state.vision_event(VisionEvent::Lifecycle(LifecycleState::CameraStopped));
-        assert!(state.snapshot().gesture_progress.is_none());
-    }
-
-    #[test]
-    fn gesture_progress_cannot_cross_voice_requests_or_authority_changes() {
-        let (mut state, _commands) = attached();
-        state.vision_event(VisionEvent::Lifecycle(LifecycleState::Ready));
-        state.start_voice(None).unwrap();
-        state.events.clear();
-        state.snapshot.gestures_enabled = true;
-        let voice = state.snapshot.voice.as_mut().unwrap();
-        voice.phase = "listening".into();
-        voice.muted = Some(false);
-        let request_id = voice.request_id;
-        let progress = GestureProgress::new(GestureCandidate::Send, 400).unwrap();
-        for (sequence, voice_request_id) in [(1, request_id + 1), (2, request_id)] {
-            state.vision_event(VisionEvent::Status {
-                reset_sequence: 0,
-                sequence,
-                received_at: Instant::now(),
-                status: ControlStatus::Active {
-                    voice_request_id,
-                    muted: false,
-                    progress: Some(progress),
-                },
-            });
-            assert_eq!(
-                state.snapshot().gesture_progress.is_some(),
-                voice_request_id == request_id
-            );
-        }
-        state.snapshot.voice.as_mut().unwrap().pending = Some(SegmentAction::Send);
-        state.sync_context();
-        state.snapshot.voice.as_mut().unwrap().pending = None;
-        assert!(state.snapshot().gesture_progress.is_none());
-    }
-
-    #[test]
-    fn only_accepted_gesture_intents_produce_action_feedback() {
-        let (mut state, _) = attached();
-        state.snapshot.gestures_enabled = true;
-        state.vision_event(VisionEvent::Lifecycle(LifecycleState::Ready));
-        state.vision_event(VisionEvent::Intent {
-            sequence: 1,
-            received_at: Instant::now() - INTENT_MAX_AGE - Duration::from_millis(1),
-            intent: GestureIntent::SetArmed { armed: false },
-        });
-        assert!(state.snapshot.gestures_enabled);
-        assert!(state.snapshot().gesture_action.is_none());
-        state.vision_event(VisionEvent::Intent {
-            sequence: 2,
-            received_at: Instant::now(),
-            intent: GestureIntent::SetArmed { armed: false },
-        });
-        assert!(!state.snapshot.gestures_enabled);
-        assert_eq!(
-            state.snapshot().gesture_action,
-            Some(GestureCandidate::Disarm)
-        );
-        assert_eq!(state.snapshot().gesture_action_sequence, 1);
-        state.reset();
-        assert!(state.snapshot().gesture_action.is_none());
-    }
-
-    #[test]
-    fn camera_ready_grants_standby_without_an_arming_step() {
-        let (mut state, _commands) = attached();
-        state.snapshot.gestures_enabled = true;
-        state.snapshot.gesture_status = "starting".into();
-        assert_eq!(state.context(), GestureContext::Disarmed);
-        state.vision_event(VisionEvent::Lifecycle(LifecycleState::Ready));
-        assert_eq!(state.context(), GestureContext::Standby);
-        state.disable_hands_free();
-        state.vision_event(VisionEvent::Intent {
-            sequence: 1,
-            received_at: Instant::now(),
-            intent: GestureIntent::SetArmed { armed: true },
-        });
-        assert_eq!(state.context(), GestureContext::Disarmed);
-        assert!(!state.snapshot.gestures_enabled);
-    }
-
-    #[test]
-    fn leaving_hands_free_cancels_capture_and_rejects_a_late_send() {
-        let (mut state, commands) = attached();
-        state.snapshot.gestures_enabled = true;
-        state.snapshot.gesture_status = "ready".into();
-        state.start_voice(None).unwrap();
-        state.events.clear();
-        let voice = state.snapshot.voice.as_mut().unwrap();
-        voice.phase = "listening".into();
-        voice.muted = Some(false);
-        let request_id = voice.request_id;
-        state.segment(request_id, 0, SegmentAction::Send).unwrap();
-        state.disable_hands_free();
-        state.voice_event(VoiceEvent::SegmentFinal {
-            request_id,
-            segment_id: 0,
-            text: "late".into(),
-        });
-        assert!(state.events.is_empty());
-        assert!(state.snapshot.voice.is_none());
-        assert_eq!(state.context(), GestureContext::Disarmed);
-        assert!(commands
-            .try_iter()
-            .any(|command| command == VoiceCommand::Cancel { request_id }));
-    }
-
-    #[test]
-    fn only_a_fresh_reset_after_the_action_acknowledges_the_fist() {
-        let (mut state, _commands) = attached();
-        state.snapshot.gestures_enabled = true;
-        state.snapshot.gesture_status = "ready".into();
-        state.snapshot.gesture_action_sequence = 7;
-        state.snapshot.gesture_needs_reset = true;
-        state.intent_sequence = 3;
-        state.vision_event(VisionEvent::Status {
-            sequence: 4,
-            received_at: Instant::now() - STATUS_MAX_AGE - Duration::from_millis(1),
-            status: ControlStatus::Standby { progress: None },
-            reset_sequence: 1,
-        });
-        assert!(state.snapshot.gesture_needs_reset);
-        assert_eq!(state.snapshot.gesture_reset_after_action, 0);
-        state.vision_event(VisionEvent::Status {
-            sequence: 5,
-            received_at: Instant::now(),
-            status: ControlStatus::Standby { progress: None },
-            reset_sequence: 1,
-        });
-        assert!(!state.snapshot.gesture_needs_reset);
-        assert_eq!(state.snapshot.gesture_reset_after_action, 7);
-        state.snapshot.gesture_action_sequence = 8;
-        state.snapshot.gesture_needs_reset = true;
-        state.vision_event(VisionEvent::Status {
-            sequence: 6,
-            received_at: Instant::now(),
-            status: ControlStatus::Standby { progress: None },
-            reset_sequence: 1,
-        });
-        assert!(state.snapshot.gesture_needs_reset);
-        assert_eq!(state.snapshot.gesture_reset_after_action, 7);
     }
 }

@@ -50,7 +50,7 @@
 }
 :where(.instrument, .gsv-auth-theme)::selection,
 :where(.instrument, .gsv-auth-theme) ::selection {
-  color: var(--text-hi);
-  background: var(--selected);
+  color: var(--void);
+  background: var(--accent);
   text-shadow: none;
 }

@@ -1,24 +1,33 @@
 import { PolicySummaryLink } from "./PolicySummaryLink";
+import { publicDeployment } from "../../services/deployment";
 
 export function TermsOfServiceLink() {
-  return <PolicySummaryLink title="Terms of Service" href="https://gsv.space/terms"
-    introduction="Your agreement with Humans & Machines, Inc."
+  const deployment = publicDeployment();
+  if (!deployment.termsUrl) return null;
+  return <PolicySummaryLink title="Terms of Service" href={deployment.termsUrl}
+    introduction={`Your agreement with ${deployment.operatorName ?? "your operator"}.`}
     points={[
-      "Covers your account and the spaces you create, own, or manage, including acceptable use and your responsibilities as an account owner.",
-      "Explains third-party services, ownership, account termination, disclaimers, and limits on liability.",
+      "Read your operator's terms before creating an account or space.",
+      "Check the conditions that apply to your use of the service.",
     ]} />;
 }
 
 export function PolicyConsentLabel({ id }: { id: string }) {
-  return <span id={`${id}-label`}><label for={id}>I confirm that I’m 18 or older and agree to the </label>
-    <TermsOfServiceLink /> <label for={id}>and acknowledge the </label><PrivacyPolicyLink />.</span>;
+  const deployment = publicDeployment();
+  return <span id={`${id}-label`}>
+    <label for={id}>I confirm that I’m 18 or older</label>
+    {deployment.termsUrl && <><label for={id}> and agree to the </label><TermsOfServiceLink /></>}
+    {deployment.privacyUrl && <><label for={id}> and acknowledge the </label><PrivacyPolicyLink /></>}.
+  </span>;
 }
 
 export function PrivacyPolicyLink() {
-  return <PolicySummaryLink title="Privacy Policy" href="https://gsv.space/privacy"
-    introduction="How Humans & Machines, Inc. handles your data."
+  const deployment = publicDeployment();
+  if (!deployment.privacyUrl) return null;
+  return <PolicySummaryLink title="Privacy Policy" href={deployment.privacyUrl}
+    introduction={`How ${deployment.operatorName ?? "your operator"} handles your data.`}
     points={[
-      "We do not sell or rent your personal information. We do not use your private conversations, files, or connected-account content to train general-purpose AI models.",
-      "Explains when data is shared with service providers, how long it is kept, and how to request access, corrections, or deletion at hello@humansandmachin.es.",
+      "Review how your account information, conversations, files, and connected services are handled.",
+      "Check your operator's policies on sharing, retention, access, corrections, and deletion.",
     ]} />;
 }

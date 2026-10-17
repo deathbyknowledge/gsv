@@ -45,7 +45,7 @@ export class BrowserPairing {
       const initial = await this.operations.config();
       const previous = await this.operations.load();
       const selectedCode = code.trim() || previous?.code;
-      if (!selectedCode) throw new Error("Copy a device invitation from GSV's Connect flow first.");
+      if (!selectedCode) throw new Error("Copy a device invitation from Ship's Connect flow first.");
       const invite = decodeDevicePairingCode(selectedCode);
       if (previous && previous.code.trim() !== selectedCode) {
         throw new Error("Clear the field and retry to finish the previous pairing first.");
@@ -62,7 +62,7 @@ export class BrowserPairing {
         throw error;
       }
       if (result.pairing.id !== invite.id || result.pairing.username !== invite.username || result.pairing.targetId !== invite.targetId || result.pairing.state !== "paired") {
-        throw new Error("GSV returned a different pairing identity");
+        throw new Error("Ship returned a different pairing identity");
       }
       const old = await this.operations.config();
       checkCurrent();

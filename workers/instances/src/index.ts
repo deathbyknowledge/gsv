@@ -2,6 +2,7 @@ import { WorkerEntrypoint } from "cloudflare:workers";
 import type { InstallationInstances, InstancesService } from "@humansandmachines/gsv/services/instances";
 import type { Environment } from "./config";
 export { InstanceCoordinator } from "./coordinator";
+export { ComputerInstance } from "./computer";
 export { InstanceLifecycleEntrypoint } from "./lifecycle";
 
 export default class InstanceService extends WorkerEntrypoint<Environment> implements InstancesService {

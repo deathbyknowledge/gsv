@@ -132,7 +132,7 @@ fn wait(child: &OwnedHandle) -> Result<(), DynError> {
         return Err(std::io::Error::last_os_error().into());
     }
     if code != 0 {
-        return Err(format!("Elevated GSV installation failed with exit code {code}").into());
+        return Err(format!("Elevated Ship installation failed with exit code {code}").into());
     }
     Ok(())
 }

@@ -209,6 +209,7 @@ function buildCodeModeSource(
     }
     return __unwrapToolResult(await codemode.shell({ ...__withShellDefaults(options), input }));
   };
+  shell.cancel = async (args) => __unwrapToolResult(await codemode.cancelShell(__withObjectArgs("shell.cancel", args)));
   const fs = Object.freeze({
     read: async (args) => __unwrapToolResult(await codemode.read(__withFsDefaults("fs.read", args))),
     write: async (args) => __unwrapToolResult(await codemode.write(__withFsDefaults("fs.write", args))),
@@ -332,6 +333,7 @@ export async function executeCodeMode(
       name: "codemode",
       fns: {
         shell: async (args) => request(SHELL_EXEC, jsonObjectSchema.parse(args)),
+        cancelShell: async (args) => request("shell.cancel", jsonObjectSchema.parse(args)),
         read: async (args) => request(FS_READ, jsonObjectSchema.parse(args)),
         write: async (args) => request(FS_WRITE, jsonObjectSchema.parse(args)),
         edit: async (args) => request(FS_EDIT, jsonObjectSchema.parse(args)),

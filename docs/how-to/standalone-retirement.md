@@ -1,6 +1,6 @@
 # Standalone retirement
 
-GSV now deploys one operator stack with public Accounts, Gateway and inference
+Ship now deploys one operator stack with public Accounts, Gateway and inference
 Workers. Each space has an immutable installation identity, trusted directory
 routing and scoped storage. An operator may run one space or many; there is no
 separate singleton runtime or per-person messenger application setup.
@@ -23,7 +23,8 @@ cutover. Those checks do not claim a new live deployment of the old release.
 Do not deploy this revision over a singleton environment. It removes the
 standalone Alchemy composition, Wrangler wrapper, unscoped physical routing and
 per-person Telegram, Slack and Discord application setup. The previous unofficial
-WhatsApp adapter is also removed; WhatsApp Business is separate future work.
+WhatsApp adapter is also removed. The current stack supports an operator-owned
+WhatsApp Business number; see [Messengers](./messengers.md).
 
 Pin the preserved release or source and keep its original deployment state and
 resource configuration. Export the data you need and prepare a new environment

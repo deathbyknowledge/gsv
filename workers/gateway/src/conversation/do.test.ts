@@ -176,6 +176,35 @@ describe("Conversation Durable Object", () => {
     }))).rejects.toThrow("idempotency key payload changed");
   }, 30_000);
 
+  it("reads experimental archive text without exposing retired metadata or rewriting bytes", async () => {
+    const stub = conversation("legacy-request-archive");
+    await stub.initialize({ ownerUid: 1000, kind: "ship" });
+    const input = { ...message(1), text: "Help me create a routine.\n\nOnly on Mondays.", selectedTarget: "gsv" };
+    const appended = await stub.append(input);
+    const legacy = { ...appended.message, action: { kind: "routine.create", note: "Only on Mondays." } };
+    const bytes = new TextEncoder().encode(JSON.stringify([legacy]));
+    const checksum = [...new Uint8Array(await crypto.subtle.digest("SHA-256", bytes))]
+      .map((value) => value.toString(16).padStart(2, "0")).join("");
+    const compressed = await new Response(new Blob([bytes]).stream().pipeThrough(new CompressionStream("gzip"))).arrayBuffer();
+    const storage = createInstallationStorage(env.STORAGE, "inst_test");
+    const key = `conversations/${encodeURIComponent(appended.message.conversationId)}/segments/legacy.json.gz`;
+    await storage.put(key, compressed, { customMetadata: { checksum } });
+    await runInDurableObject(stub, (_instance: Conversation, state) => {
+      state.storage.transactionSync(() => new ConversationStore(state.storage.sql).commitArchive({
+        segmentId: "legacy", fromSequence: 1, toSequence: 1, messageCount: 1,
+        objectKey: key, checksum, createdAt: input.createdAt,
+      }, [appended.message]));
+    });
+
+    const history = await stub.history();
+    expect(history.messages).toEqual([appended.message]);
+    expect(history.messages[0]).not.toHaveProperty("action");
+    expect((await stub.history({ afterSequence: 0 })).messages).toEqual(history.messages);
+    expect(await stub.append(input)).toEqual({ created: false, message: appended.message });
+    expect(await (await storage.get(key))!.arrayBuffer()).toEqual(compressed);
+    expect((await storage.head(key))?.customMetadata?.checksum).toBe(checksum);
+  });
+
   it("keeps legacy conversation-owned media readable", async () => {
     const stub = conversation("legacy-media");
     await stub.initialize({ ownerUid: 1000, kind: "ship" });

@@ -675,7 +675,7 @@ async function withDebugger<T>(
     return await use(target);
   } finally {
     await releaseDebugger(tabId).catch((error: unknown) => {
-      console.warn("GSV browser target failed to detach debugger", error);
+      console.warn("Ship browser target failed to detach debugger", error);
     });
   }
 }

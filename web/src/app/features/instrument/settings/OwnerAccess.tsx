@@ -43,7 +43,7 @@ export function OwnerAccess() {
     finally { setBusy(false); }
   };
   return <section class="settings-form"><h2>Space ownership</h2>
-    <p>Link your verified owner identity so you can recover root for your GSV if you lose access. This leaves local accounts and credentials unchanged.</p>
+    <p>Link your verified owner identity so you can recover root for your Ship if you lose access. This leaves local accounts and credentials unchanged.</p>
     {error && <p class="settings-error" role="alert">{error}</p>}
     <button class="ibtn" type="button" disabled={!connected || busy} onClick={() => void link()}>{busy ? "opening owner verification…" : "link owner identity"}</button>
   </section>;

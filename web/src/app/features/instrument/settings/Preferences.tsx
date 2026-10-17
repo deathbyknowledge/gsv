@@ -1,6 +1,7 @@
 import { useMutation, useQueryClient } from "@tanstack/preact-query";
 import { useQuery } from "../../../services/navigation/viewQueries";
 import { ModelEditor } from "./ModelEditor";
+import { ThemePreference } from "./ThemePreference";
 import { Timezone } from "./Timezone";
 import { useRef, useState } from "preact/hooks";
 import { reasoningOptions } from "../../../domain/reasoning";
@@ -173,5 +174,6 @@ export function Preferences({ account, active, onDirty }: SettingsSectionProps) 
       </div>
     </form>}
     {!modelEditor && config.data && <Timezone uid={account.uid} original={config.data.find((entry) => entry.key === `users/${account.uid}/locale/timezone`)?.value ?? ""} fallback={config.data.find((entry) => entry.key === "config/server/timezone")?.value ?? "UTC"} editable={editable} onDirty={setTimezoneDirty} />}
+    {!modelEditor && <ThemePreference />}
   </section>;
 }

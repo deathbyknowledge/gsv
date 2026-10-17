@@ -1,6 +1,6 @@
 # Get Started
 
-A GSV space contains your accounts, conversations, memory and connected machines.
+A Ship space contains your accounts, conversations, memory and connected machines.
 You can use a hosting operator or run the same stack in your own Cloudflare account.
 
 ## Get a space
@@ -62,14 +62,55 @@ Existing standalone deployments should read the
 The web console is called **Instrument** and has five views:
 
 - **Chat** is your Ship conversation, and where you inspect what a run did.
-- **Fleet** lists your places, processes and responsibilities, and recently touched files.
+- **Fleet** lists your places and processes, with files opened from a place.
 - **Memory** shows your personal knowledge pages.
-- **People** holds conversations, message requests and private contacts across GSV spaces, plus your public profile.
-- **Settings** holds preferences (models), permissions, instructions, messengers, MCP connections and **Logs** for actions and their outcomes. The **sign-in** section appears only for root, for personal password resets and verified-owner linking.
+- **People** holds conversations, message requests and private contacts across Ship spaces, plus your public profile.
+- **Settings** holds preferences (models), standing responsibilities, permissions, instructions, messengers, MCP connections and **Logs** for actions and their outcomes. The **sign-in** section appears only for root, for personal password resets and verified-owner linking.
+
+On phones, tap **menu** in the header to switch views. A dot on the menu button
+marks unread People activity. Choosing a view
+closes the menu and keeps your drafts. Tap **Ship** to return to Chat.
+View changes stay in the app and create browser history entries. **Back** and
+**Forward** retrace those views, including People conversations and your profile,
+without reloading the page or clearing drafts.
+
+In Chat, one compact activity line above the prompt combines ongoing plans and
+People messages. Tap **N ongoing** (or **plans** when none are active) to open
+**ongoing**, **routines** or **history**.
+Each responsibility shows a short status and its next check; tap it to read the
+full waiting explanation, inspect details or ask Ship about it. Your draft stays
+intact while you look. Event-driven policies live in **Settings → standing**.
+
+The **+** menu attaches files, finds people and files, and prepares requests to
+create a routine, connect a computer or start a browser. These requests and
+**ask Ship** controls add ordinary editable text to your draft. Review or change
+it before sending; selecting a request does not send it. **Find a person** accepts
+a handle such as `@esteve` or a full address for another Ship. **Reference a file**
+adds a file’s target and path as soon as you select its name. Use **../** at the
+top of a place’s file list to move toward its filesystem root.
+
+In the browser and when added to your Home Screen, the header and bottom controls
+leave room for your phone's notch and home indicator. The star field still fills
+the screen, continuing behind the home indicator in the Home Screen app.
+Browser tabs, Home Screen shortcuts, the desktop app and browser extension use
+the same ASCII ship you see at sign-in.
+Fleet, Memory and Settings scroll to the bottom edge, with extra space after the
+last item so it can rest above the home indicator.
+Opening the keyboard reduces the content area between the header and composer;
+the page itself stays fixed. Lists and message history scroll within that area.
+Closing the keyboard restores the conversation's available space. The content
+height eases between sizes; reduced motion makes the change immediate. Sign-in and
+setup use the same layout.
+
+On phones, **Memory** opens a full-height page browser. Select a page to read it,
+then use **← pages** to return. Loading feedback appears in the visible pane.
+**new page** and **edit** open the editor; returning to the browser keeps the draft,
+with **continue editing →** to resume it. Wider screens show the browser and reader
+side by side.
 
 The Settings sidebar highlights the section you're viewing.
 
-Open **People** to try making plans or working together with someone on GSV.
+Open **People** to try making plans or working together with someone on Ship.
 **connect** creates a shareable invitation; accepting it opens your conversation.
 You can talk directly or choose **ask Ship** to prepare a request in your Ship chat.
 A dot beside **people** marks waiting activity, and Zen shows unread conversations
@@ -83,14 +124,26 @@ Ship can use cloud browsers without per-action approval by default. To change
 that, select **Cloud browsers** under **Settings → permissions** and choose
 **Ask** or **Block**; personal computers and browsers keep their existing rules.
 
-Open **Help** in the header and choose **Search Chat** to find earlier messages.
+On wider screens, open **Help** in the header and choose **Search Chat** to find earlier messages.
 Press `Ctrl+K` from any view to open the same search. In Chat, `/` opens search in browse
 mode, and `Ctrl/Cmd+F` also works while typing. Open a match to read the
 surrounding conversation. Closing search returns to your place and draft.
 
-The composer starts on **your cloud** (`gsv`). Choose another place explicitly
-when you want a message or command to target it; that choice stays while you
-move between views. The header stays above the scrolling content.
+The composer always shows **Message your ship** when empty. **send** appears beside
+the prompt when you have a draft or attachments. The action row below groups **+**
+for attachments, the current place, and **record**. The place starts on **your cloud** (`gsv`).
+Open its chooser to select another destination for your next message or command;
+your draft and selected place stay while you move between views.
+While reconnecting, you can keep editing your draft and adding attachments.
+Sending becomes available when the connection returns; your draft is not sent automatically.
+The header stays above the scrolling content. Tap a message once to select it
+and show its timestamp and copy action.
+Scrolling selects the message nearest the center, switching to the first or latest message
+at either end. On phones, the down arrow on the right returns to the latest message.
+Text actions have a subtle underline. The **+** menu groups file and person references under
+**add context**, and routine, computer and browser requests under **ask Ship**.
+A thin, softly glowing lavender line marks the top of a scrolling pane while
+text is cut off there, disappearing in the gaps between lines and rows.
 
 ## Next steps
 

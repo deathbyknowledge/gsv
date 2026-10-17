@@ -1,4 +1,4 @@
-use std::collections::{HashMap, VecDeque};
+use std::collections::VecDeque;
 use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -9,28 +9,42 @@ use gateway_client::protocol::{
     ConnectResult, DeviceExecEventParams, ErrorShape, Frame, RequestFrame, ResponseFrame,
     SignalFrame, REQUEST_CANCEL_SIGNAL,
 };
-use gateway_client::{BinaryBody, BinaryBodyLimits, IncomingBody, OutgoingBody};
-use serde::Deserialize;
+#[cfg(test)]
+use gateway_client::BinaryBodyLimits;
+use gateway_client::IncomingBody;
+#[cfg(test)]
 use serde_json::json;
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info, info_span, warn, Instrument};
 
 use crate::control::DaemonRuntime;
+#[cfg(test)]
+use crate::driver::events::MAX_DEVICE_EXEC_EVENT_OUTBOX;
+use crate::driver::events::{
+    exec_event_outbox_len, flush_exec_event_outbox_with_sender, queue_exec_event_for_retry,
+    ExecEventSendOutcome,
+};
+use crate::driver::requests::ActiveRequests;
+#[cfg(test)]
+use crate::driver::requests::RequestCancel;
+use crate::driver::{
+    daemon_body_limits, driver_error_frame, execute_request, prepare_response_body,
+    DRIVER_IMPLEMENTS,
+};
+#[cfg(test)]
+use crate::driver::{execute_tool_by_name, syscall_to_tool_name};
 use crate::logger;
-use crate::tools::{all_tools_with_workspace_for_device, subscribe_exec_events, Tool, ToolOutput};
+use crate::tools::{all_tools_with_workspace_for_device, subscribe_exec_events, Tool};
 use crate::update::{
     installing_window_elapsed, transient_unit_state, AttemptState, AutoUpdater, InstallerHandle,
     UnitState, UpdateError, UpdateTarget, INSTALLING_WINDOW, MIN_ATTEMPT_INTERVAL,
 };
 
 mod enrollment;
-mod transfer;
 
-const MAX_DEVICE_EXEC_EVENT_OUTBOX: usize = 2048;
 /// How often a connected daemon re-checks whether machine work has finished
 /// so a waiting update can start.
 const UPDATE_RECHECK_INTERVAL: tokio::time::Duration = tokio::time::Duration::from_secs(300);
-const DEVICE_DRIVER_IMPLEMENTS: &[&str] = &["fs.*", "shell.exec", "shell.cancel", "net.fetch"];
 
 /// The gateway can route work as soon as it accepts sys.connect, before the
 /// daemon has received that response and installed its connection-bound handler.
@@ -64,185 +78,6 @@ impl DriverFrameHandler {
     }
 }
 
-#[derive(Default)]
-struct ActiveRequestState {
-    accepting: bool,
-    requests: HashMap<String, ActiveRequest>,
-}
-
-#[derive(Clone)]
-struct ActiveRequests(Arc<Mutex<ActiveRequestState>>);
-
-impl Default for ActiveRequests {
-    fn default() -> Self {
-        Self(Arc::new(Mutex::new(ActiveRequestState {
-            accepting: true,
-            requests: HashMap::new(),
-        })))
-    }
-}
-
-struct ActiveRequest {
-    cancellation: Arc<CancellationToken>,
-}
-
-#[derive(Deserialize)]
-struct RequestCancel {
-    id: String,
-    reason: Option<String>,
-}
-
-struct PreparedResponseBody {
-    outgoing: OutgoingBody,
-    deadline: Option<tokio::time::Instant>,
-    source: String,
-}
-
-impl PreparedResponseBody {
-    async fn send(self) -> Result<(), String> {
-        let source = self.source;
-        match self.deadline {
-            Some(deadline) => tokio::time::timeout_at(deadline, self.outgoing.send())
-                .await
-                .map_err(|_| format!("Timed out sending '{source}'"))?
-                .map_err(|error| error.to_string()),
-            None => self
-                .outgoing
-                .send()
-                .await
-                .map_err(|error| error.to_string()),
-        }
-    }
-}
-
-impl ActiveRequests {
-    fn register(&self, request: &RequestFrame) -> Arc<CancellationToken> {
-        let cancellation = Arc::new(CancellationToken::new());
-        let previous = {
-            let mut state = self.0.lock().expect("active request mutex poisoned");
-            if !state.accepting {
-                cancellation.cancel();
-                return cancellation;
-            }
-            state.requests.insert(
-                request.id.clone(),
-                ActiveRequest {
-                    cancellation: cancellation.clone(),
-                },
-            )
-        };
-        if let Some(previous) = previous {
-            Self::stop(previous);
-        }
-        cancellation
-    }
-
-    fn cancel(&self, cancellation: RequestCancel) -> bool {
-        let Some(request) = self
-            .0
-            .lock()
-            .expect("active request mutex poisoned")
-            .requests
-            .remove(&cancellation.id)
-        else {
-            return false;
-        };
-        let _reason = cancellation
-            .reason
-            .as_deref()
-            .unwrap_or("Request cancelled");
-        Self::stop(request);
-        true
-    }
-
-    fn cancel_all(&self, _reason: &str) {
-        let requests = {
-            let mut state = self.0.lock().expect("active request mutex poisoned");
-            state.accepting = false;
-            state
-                .requests
-                .drain()
-                .map(|(_, request)| request)
-                .collect::<Vec<_>>()
-        };
-        for request in requests {
-            Self::stop(request);
-        }
-    }
-
-    fn stop(request: ActiveRequest) {
-        request.cancellation.cancel();
-    }
-
-    /// Requests still being served, bodies included: work a service stop
-    /// would cut off.
-    fn in_flight(&self) -> usize {
-        self.0
-            .lock()
-            .expect("active request mutex poisoned")
-            .requests
-            .len()
-    }
-
-    fn finish(&self, id: &str, cancellation: &Arc<CancellationToken>) {
-        let mut state = self.0.lock().expect("active request mutex poisoned");
-        if state
-            .requests
-            .get(id)
-            .is_some_and(|request| Arc::ptr_eq(&request.cancellation, cancellation))
-        {
-            state.requests.remove(id);
-        }
-    }
-}
-
-fn prepare_response_body(
-    conn: &Connection,
-    body: crate::tools::ToolBody,
-) -> Result<PreparedResponseBody, String> {
-    let mut binary = BinaryBody::from_reader(body.reader, body.length);
-    if let Some(max_length) = body.max_length {
-        binary = binary.with_max_bytes(max_length);
-    }
-    let outgoing = conn
-        .body_channel()
-        .prepare(binary)
-        .map_err(|error| format!("Could not prepare '{}': {error}", body.source))?;
-    Ok(PreparedResponseBody {
-        outgoing,
-        deadline: body.deadline,
-        source: body.source,
-    })
-}
-
-fn driver_error_frame(request: &RequestFrame, message: String) -> Frame {
-    if request.call.starts_with("fs.") {
-        Frame::Res(ResponseFrame {
-            id: request.id.clone(),
-            ok: true,
-            data: Some(json!({
-                "ok": false,
-                "error": message,
-            })),
-            error: None,
-            body: None,
-        })
-    } else {
-        Frame::Res(ResponseFrame {
-            id: request.id.clone(),
-            ok: false,
-            data: None,
-            error: Some(ErrorShape {
-                code: -1,
-                message,
-                details: None,
-                retryable: None,
-            }),
-            body: None,
-        })
-    }
-}
-
 async fn send_driver_error(conn: &Connection, request: &RequestFrame, message: String) {
     let response = driver_error_frame(request, message);
     match serde_json::to_string(&response) {
@@ -263,101 +98,6 @@ async fn send_driver_error(conn: &Connection, request: &RequestFrame, message: S
                 call = %request.call,
                 error = %error,
             );
-        }
-    }
-}
-
-fn exec_event_outbox_len(outbox: &Arc<Mutex<VecDeque<DeviceExecEventParams>>>) -> usize {
-    outbox.lock().map(|queue| queue.len()).unwrap_or(0)
-}
-
-enum ExecEventSendOutcome {
-    Sent,
-    Retry(String),
-    Drop(String),
-}
-
-fn queue_exec_event_for_retry(
-    outbox: &Arc<Mutex<VecDeque<DeviceExecEventParams>>>,
-    event: DeviceExecEventParams,
-) {
-    let mut queue = match outbox.lock() {
-        Ok(queue) => queue,
-        Err(error) => {
-            error!(event = "device.exec.event.outbox_lock_failed", error = %error);
-            return;
-        }
-    };
-
-    if queue.len() >= MAX_DEVICE_EXEC_EVENT_OUTBOX {
-        if let Some(dropped) = queue.pop_front() {
-            warn!(
-                event = "device.exec.event.outbox_drop_oldest",
-                event_id = %dropped.event_id,
-                session_id = %dropped.session_id,
-                exec_event = %dropped.event,
-                max_outbox = MAX_DEVICE_EXEC_EVENT_OUTBOX,
-            );
-        }
-    }
-
-    queue.push_back(event);
-}
-
-async fn flush_exec_event_outbox_with_sender<F, Fut>(
-    outbox: &Arc<Mutex<VecDeque<DeviceExecEventParams>>>,
-    mut send_event: F,
-) -> usize
-where
-    F: FnMut(DeviceExecEventParams) -> Fut,
-    Fut: Future<Output = ExecEventSendOutcome>,
-{
-    let mut sent = 0usize;
-
-    loop {
-        let next_event = match outbox.lock() {
-            Ok(queue) => queue.front().cloned(),
-            Err(error) => {
-                error!(event = "device.exec.event.outbox_lock_failed", error = %error);
-                return sent;
-            }
-        };
-
-        let Some(event) = next_event else {
-            return sent;
-        };
-
-        match send_event(event.clone()).await {
-            ExecEventSendOutcome::Sent => {
-                if let Ok(mut queue) = outbox.lock() {
-                    let _ = queue.pop_front();
-                }
-                sent += 1;
-            }
-            ExecEventSendOutcome::Drop(error) => {
-                error!(
-                    event = "device.exec.event.serialize_failed",
-                    event_id = %event.event_id,
-                    session_id = %event.session_id,
-                    exec_event = %event.event,
-                    error = %error,
-                );
-                if let Ok(mut queue) = outbox.lock() {
-                    let _ = queue.pop_front();
-                }
-                continue;
-            }
-            ExecEventSendOutcome::Retry(error) => {
-                warn!(
-                    event = "device.exec.event.send_failed",
-                    event_id = %event.event_id,
-                    session_id = %event.session_id,
-                    exec_event = %event.event,
-                    error = %error,
-                    outbox_depth = exec_event_outbox_len(outbox),
-                );
-                return sent;
-            }
         }
     }
 }
@@ -392,21 +132,6 @@ async fn flush_exec_event_outbox(
     .await
 }
 
-fn syscall_to_tool_name(call: &str) -> Option<&'static str> {
-    match call {
-        "fs.read" => Some("Read"),
-        "fs.write" => Some("Write"),
-        "fs.edit" => Some("Edit"),
-        "fs.copy" => Some("Copy"),
-        "fs.search" => Some("Search"),
-        "fs.delete" => Some("Delete"),
-        "shell.exec" => Some("Shell"),
-        "shell.cancel" => Some("CancelShell"),
-        "net.fetch" => Some("Fetch"),
-        _ => None,
-    }
-}
-
 async fn handle_driver_request(
     conn: &Arc<Connection>,
     tools: &[Box<dyn Tool>],
@@ -436,39 +161,14 @@ async fn handle_driver_request(
         );
     }
 
-    let request_body = match request_body {
-        Ok(body) => body,
-        Err(error) => {
-            send_driver_error(conn, req, error).await;
-            return;
-        }
-    };
-    let result = match transfer::handle_transfer_syscall(
-        call,
-        args.clone(),
-        request_body,
-        workspace,
-    )
-    .await
-    {
-        transfer::TransferDispatch::Handled(result) => result,
-        transfer::TransferDispatch::NotHandled(remaining_body) => {
-            if let Some(tool_name) = syscall_to_tool_name(call) {
-                execute_tool_by_name(tools, call, tool_name, args, remaining_body, cancellation)
-                    .await
-            } else {
-                drop(remaining_body);
-                Err(format!("unknown syscall: {call}"))
-            }
-        }
-    };
+    let result = execute_request(tools, workspace, req, request_body, cancellation).await;
 
     let mut outgoing_body = None;
     let response = match result {
         Ok(output) => {
             let data = output.data;
             let body = match output.body {
-                Some(body) => match prepare_response_body(conn, body) {
+                Some(body) => match prepare_response_body(conn.body_channel(), body) {
                     Ok(body) => Some(body),
                     Err(error) => {
                         send_driver_error(conn, req, error).await;
@@ -541,15 +241,6 @@ async fn handle_driver_request(
     }
 }
 
-fn daemon_body_limits() -> BinaryBodyLimits {
-    BinaryBodyLimits {
-        // Filesystem transfers are streams and historically had no whole-file
-        // cap. Individual tools still enforce their own request/response limits.
-        max_body_bytes: u64::MAX,
-        ..BinaryBodyLimits::default()
-    }
-}
-
 fn redact_url_for_log(raw_url: &str) -> String {
     match reqwest::Url::parse(raw_url) {
         Ok(mut url) => {
@@ -559,54 +250,6 @@ fn redact_url_for_log(raw_url: &str) -> String {
         }
         Err(_) => "<invalid>".to_string(),
     }
-}
-
-async fn execute_tool_by_name(
-    tools: &[Box<dyn Tool>],
-    call: &str,
-    name: &str,
-    args: serde_json::Value,
-    body: Option<IncomingBody>,
-    cancellation: &CancellationToken,
-) -> Result<ToolOutput, String> {
-    let Some(tool) = tools.iter().find(|tool| tool.definition().name == name) else {
-        drop(body);
-        return Err(format!("tool not found: {}", name));
-    };
-
-    let timeout = tool.timeout(&args);
-    let deadline = timeout.map(|duration| tokio::time::Instant::now() + duration);
-    let execution = async {
-        let body = match body {
-            Some(mut body) => {
-                let limit = match tool.request_body_limit(&args) {
-                    Ok(limit) => limit,
-                    Err(error) => {
-                        body.cancel(&error);
-                        return Err(error);
-                    }
-                };
-                Some(
-                    body.read_all(limit)
-                        .await
-                        .map_err(|error| error.to_string())?,
-                )
-            }
-            None => None,
-        };
-        tool.execute_with_body_cancellable(args, body, cancellation)
-            .await
-    };
-    let mut output = match (timeout, deadline) {
-        (Some(timeout), Some(deadline)) => tokio::time::timeout_at(deadline, execution)
-            .await
-            .map_err(|_elapsed| format!("{} timed out after {}ms", call, timeout.as_millis()))?,
-        _ => execution.await,
-    }?;
-    if let Some(body) = output.body.as_mut() {
-        body.deadline = deadline;
-    }
-    Ok(output)
 }
 
 pub async fn run(
@@ -690,7 +333,7 @@ pub async fn run(
                     ConnectionOptions {
                         url: url.to_string(),
                         peer: PeerIdentity::new(device_id.clone(), env!("CARGO_PKG_VERSION")),
-                        implements: DEVICE_DRIVER_IMPLEMENTS
+                        implements: DRIVER_IMPLEMENTS
                             .iter()
                             .map(|item| item.to_string())
                             .collect(),
@@ -800,7 +443,7 @@ pub async fn run(
                             error!(
                                 event = "connect.protocol_unsupported",
                                 error = %rpc_error,
-                                hint = "This gsvd build cannot talk to the gateway; install the matching release from https://install.gsv.space and restart the service.",
+                                hint = "This gsvd build cannot talk to the gateway. Check the update diagnostic and install a compatible release from your operator.",
                             );
                             return Err(e);
                         }
@@ -843,7 +486,7 @@ pub async fn run(
             };
 
             runtime.set_phase(daemon_protocol::DaemonPhase::Connected);
-            info!(event = "connect.ok", implements = ?DEVICE_DRIVER_IMPLEMENTS);
+            info!(event = "connect.ok", implements = ?DRIVER_IMPLEMENTS);
 
             let conn = Arc::new(conn);
             // The Connection owns its frame handler. Keep only a weak reference
@@ -1850,6 +1493,7 @@ mod tests {
         ConnectResult {
             protocol: gateway_client::protocol::PROTOCOL_VERSION,
             server: ServerInfo {
+                deployment: None,
                 version: version.to_string(),
                 release: release.to_string(),
                 features: Vec::new(),
@@ -2050,10 +1694,17 @@ mod tests {
         }
         for error in [
             UpdateError::Disabled,
-            UpdateError::NotServiceManaged { dir: dir.clone() },
-            UpdateError::NoDetachment { dir: dir.clone() },
+            UpdateError::NotServiceManaged {
+                command: "manual update".to_string(),
+            },
+            UpdateError::NoDetachment {
+                command: "manual update".to_string(),
+            },
             UpdateError::AppBundle { dir: dir.clone() },
-            UpdateError::Unwritable { dir },
+            UpdateError::Unwritable {
+                dir,
+                command: "manual update".to_string(),
+            },
         ] {
             assert_eq!(
                 outcome_for_error(&error),
@@ -2078,13 +1729,16 @@ mod tests {
         }));
         assert!(!retry_later(&UpdateError::Disabled));
         assert!(!retry_later(&UpdateError::NotServiceManaged {
-            dir: dir.clone()
+            command: "manual update".to_string()
         }));
         assert!(!retry_later(&UpdateError::NoDetachment {
-            dir: dir.clone()
+            command: "manual update".to_string()
         }));
         assert!(!retry_later(&UpdateError::AppBundle { dir: dir.clone() }));
-        assert!(!retry_later(&UpdateError::Unwritable { dir }));
+        assert!(!retry_later(&UpdateError::Unwritable {
+            dir,
+            command: "manual update".to_string()
+        }));
     }
 
     fn test_updater(enabled: bool) -> AutoUpdater {
@@ -2545,7 +2199,7 @@ mod tests {
         assert!(first.is_cancelled());
         assert!(!second.is_cancelled());
         requests.finish(&request.id, &first);
-        assert_eq!(requests.0.lock().unwrap().requests.len(), 1);
+        assert_eq!(requests.in_flight(), 1);
         assert!(requests.cancel(RequestCancel {
             id: request.id,
             reason: None,
@@ -2563,7 +2217,7 @@ mod tests {
 
         assert!(first.is_cancelled());
         assert!(second.is_cancelled());
-        assert!(requests.0.lock().unwrap().requests.is_empty());
+        assert!(requests.in_flight() == 0);
         let late = requests.register(&RequestFrame::new("fs.read", None));
         assert!(late.is_cancelled());
     }
