@@ -23,7 +23,7 @@ async function mount() {
   const initial: NativeSnapshot = { lease: "one", voice: null, events: [], devices: [], devices_loading: false, devices_revision: 0, notice: null };
   const speech: NativeSpeechDriver = {
     subscribe(receive) { receiveSpeech = receive; return { initial: Promise.resolve({ phase: "idle", id: null, error: null }), dispose() {} }; },
-    command: vi.fn(async () => {}), configure: vi.fn(async () => {}),
+    command: vi.fn(async () => {}), configure: vi.fn(async () => {}), editShortcuts: vi.fn(async () => {}),
   };
   const input: NativeInput = {
     subscribe(receive) { receiveInput = receive; return { initial: Promise.resolve(initial), dispose() {} }; },
@@ -112,5 +112,20 @@ describe("desktop voice loop", () => {
     await app.shortcut("press");
     await vi.waitFor(() => expect(app.input.command).toHaveBeenCalledWith("one", { kind: "start", device_id: null }));
     expect(app.send).not.toHaveBeenCalled();
+  });
+
+  it("pauses global actions while choosing keys and keeps preferences after a rejected binding", async () => {
+    const app = await mount();
+    await act(async () => { await app.preferences().captureShortcuts(true); });
+    expect(app.speech.configure).toHaveBeenLastCalledWith({ enabled: false, talk: "Ctrl+Alt+Space", stop: "Ctrl+Alt+Escape" });
+    await app.shortcut("press");
+    expect(app.input.command).not.toHaveBeenCalled();
+    await act(async () => { await app.preferences().captureShortcuts(false); });
+    vi.mocked(app.speech.configure).mockRejectedValueOnce(new Error("Already in use"));
+    await act(async () => { await app.preferences().applyShortcuts("Alt+KeyV", "Alt+Escape"); });
+    expect(app.preferences().preferences.talk).toBe("Ctrl+Alt+Space");
+    expect(app.preferences().error).toContain("Already in use");
+    await act(async () => { await app.preferences().applyShortcuts("Alt+KeyV", "Alt+Escape"); });
+    expect(app.preferences().preferences.talk).toBe("Alt+KeyV");
   });
 });

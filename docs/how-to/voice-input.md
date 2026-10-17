@@ -61,10 +61,12 @@ transcribed may need repeating. See
 
 In Chat, open **voice** and enable **Talk to Ship from other apps**. Leave Chat
 selected; the Ship window may stay behind your game or another application.
-The default shortcut is **Ctrl+Alt+Space**: press once to start recording and
+The default talk shortcut is **Option+Space** on macOS and
+**Ctrl+Shift+Space** on Windows and Linux: press once to start recording and
 again to finish and send. Wait for the listening sound before speaking.
 **Hold to talk** uses the same shortcut and sends when you release it.
-**Ctrl+Alt+Escape** stops speech and cancels recording, retaining displayed draft
+**Option+Escape** on macOS, or **Ctrl+Alt+Escape** on Windows and Linux,
+stops speech and cancels recording, retaining displayed draft
 text. Starting a recording also stops the current spoken reply.
 
 The shortcut sends ordinary messages to Ship using the current Chat draft and
@@ -80,10 +82,17 @@ are left in Chat without being spoken. Code blocks and tables get a short cue
 to inspect Chat; links use their labels. The original message stays unchanged.
 Kokoro runs locally, with **Heart · English** and **Dora · Spanish** presets.
 
-The talk and stop shortcuts are configurable in the voice panel. On Wayland,
-the desktop portal owns shortcut assignment. Some compositors, including
-Hyprland, require binding the registered `talk` and `stop` actions in their
-keyboard configuration.
+To change a shortcut, choose **change**, press the keys together, then choose
+**save shortcuts**. Escape, Tab, or leaving the control cancels capture. Ship’s
+shortcuts pause while choosing keys, so trying the existing shortcut cannot
+start a recording. An unavailable combination leaves the previous bindings and
+saved settings intact. Saved shortcuts are preserved when defaults change.
+
+On Wayland, the desktop owns shortcut assignment. **Change shortcuts in desktop
+settings** opens its editor when supported, and the voice panel reflects changes
+reported by the desktop. Compositors without that editor, including Hyprland,
+require binding the registered `talk` and `stop` actions in their keyboard
+configuration. Suggested keys do not override the desktop’s assignments.
 
 This preview uses a separate Python speech helper. From a source checkout with
 JavaScript dependencies and the normal `gsv-transcribe` helper installed, run

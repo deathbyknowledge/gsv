@@ -33,6 +33,12 @@
 .native-speech-enable { display: flex; gap: 8px; align-items: center; color: var(--text-hi); }
 .native-speech-enable input { accent-color: var(--accent); }
 .native-speech-settings .native-device { margin-top: 12px; }
-.native-shortcut-fields { display: grid; gap: 10px; }
-.native-shortcut-fields input { width: 100%; box-sizing: border-box; padding: 7px; border: 1px solid var(--border); background: var(--void); color: var(--text); font: inherit; }
-.native-shortcut-fields button { justify-self: start; text-decoration: underline; text-underline-offset: 3px; }
+.native-shortcut-fields { display: grid; gap: 12px; margin-top: 18px; }
+.native-shortcut-field { display: grid; gap: 6px; color: var(--text-dim); }
+.native-shortcut-fields > button { justify-self: start; text-decoration: underline; text-underline-offset: 3px; }
+.native-shortcut-fields > button:disabled { opacity: .5; text-decoration: none; }
+.native-shortcut-recorder { display: flex; justify-content: space-between; gap: 12px; padding: 9px; border: 1px solid var(--border); background: var(--void); text-align: left; }
+.native-shortcut-recorder kbd { margin: 0; color: var(--text-hi); }
+.native-shortcut-recorder span { text-decoration: underline; text-underline-offset: 3px; }
+.native-shortcut-recorder.is-listening { border-color: var(--accent); color: var(--accent); }
+.native-shortcut-field small { font-size: 11px; }

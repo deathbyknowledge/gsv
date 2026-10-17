@@ -86,6 +86,8 @@ pub enum SpeechEvent {
     },
     Shortcuts {
         description: String,
+        managed: bool,
+        can_configure: bool,
         error: Option<String>,
     },
 }
@@ -98,6 +100,7 @@ struct Request {
 #[derive(Default)]
 struct Delivery {
     status: SpeechStatus,
+    shortcuts: Option<SpeechEvent>,
     updates: Option<Channel<SpeechEvent>>,
 }
 
@@ -117,12 +120,19 @@ impl SpeechRuntime {
 
     pub fn attach(&self, updates: Channel<SpeechEvent>) -> SpeechStatus {
         let mut delivery = self.delivery.lock().unwrap();
+        if let Some(event) = &delivery.shortcuts {
+            let _ = updates.send(event.clone());
+        }
         delivery.updates = Some(updates);
         delivery.status.clone()
     }
 
     pub fn event(&self, event: SpeechEvent) {
-        if let Some(updates) = &self.delivery.lock().unwrap().updates {
+        let mut delivery = self.delivery.lock().unwrap();
+        if matches!(event, SpeechEvent::Shortcuts { .. }) {
+            delivery.shortcuts = Some(event.clone());
+        }
+        if let Some(updates) = &delivery.updates {
             let _ = updates.send(event);
         }
     }

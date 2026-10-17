@@ -20,6 +20,7 @@ fn main() {
             "speech_attach",
             "speech_command",
             "shortcuts_configure",
+            "shortcuts_edit",
         ]),
     ))
     .expect("build the desktop application command manifest");

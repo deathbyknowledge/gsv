@@ -24,6 +24,7 @@
     "allow-input-command",
     "allow-speech-attach",
     "allow-speech-command",
-    "allow-shortcuts-configure"
+    "allow-shortcuts-configure",
+    "allow-shortcuts-edit"
   ]
 }

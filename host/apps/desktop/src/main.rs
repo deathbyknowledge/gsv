@@ -298,6 +298,20 @@ async fn shortcuts_configure(
         .await
 }
 
+#[tauri::command]
+async fn shortcuts_edit(
+    window: WebviewWindow,
+    host: State<'_, Host>,
+    generation: String,
+) -> Result<(), String> {
+    main_window(&window)?;
+    let session = host.session.lock().await;
+    if session.current.generation != generation {
+        return Err("The configured space has changed.".into());
+    }
+    host.shortcuts.lock().await.edit().await
+}
+
 fn open_external(value: &str) -> Result<(), String> {
     let url = Url::parse(value).map_err(|_| "Invalid browser address.")?;
     if value.len() > 8192
@@ -403,6 +417,7 @@ fn main() {
             speech_attach,
             speech_command,
             shortcuts_configure,
+            shortcuts_edit,
             control_attach,
             control_detach,
             control_active,

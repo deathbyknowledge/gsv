@@ -28,6 +28,7 @@ type DesktopCommands = {
   speech_attach: { args: { generation: string; updates: NativeChannel<SpeechEvent> }; result: SpeechStatus };
   speech_command: { args: { generation: string; command: SpeechCommand }; result: void };
   shortcuts_configure: { args: { generation: string; settings: ShortcutSettings }; result: void };
+  shortcuts_edit: { args: { generation: string }; result: void };
 };
 type CommandArguments<C extends keyof DesktopCommands> = DesktopCommands[C]["args"] extends undefined
   ? [] : [args: DesktopCommands[C]["args"]];
@@ -140,6 +141,7 @@ export function nativeSpeech(generation: string): NativeSpeechDriver {
       return { initial: invoke("speech_attach", { generation, updates }), dispose() { updates.onmessage = () => {}; } };
     },
     command: (command) => invoke("speech_command", { generation, command }),
+    editShortcuts: () => invoke("shortcuts_edit", { generation }),
     configure(settings) {
       configured = configured.catch(() => {}).then(() => invoke("shortcuts_configure", { generation, settings }));
       return configured;
