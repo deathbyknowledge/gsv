@@ -29,7 +29,7 @@ export function PeopleWelcome({ idea, onIdea, onConnect, disabled }: {
           }} onClick={() => onIdea(index)}>{example.title}</button>)}</div>
       <div id="people-example" class="people-example" role="tabpanel" aria-labelledby={`people-example-${idea}`}>
         <div class="people-example-line"><span>You</span><p>“{selected.request}”</p></div>
-        <div class="people-example-line is-ship"><span>Your ship → them</span><p>{selected.exchange}</p></div>
+        <div class="people-example-line is-ship"><span>Your Ship → them</span><p>{selected.exchange}</p></div>
         <div class="people-example-result"><span aria-hidden="true">↳</span><p>{selected.outcome}</p></div>
       </div>
     </div>

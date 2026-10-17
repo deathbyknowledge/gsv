@@ -19,8 +19,8 @@ Follow [Deploy Ship with Alchemy](./deploy-with-alchemy.md) for the complete flo
 1. Authenticate Alchemy and configure your Cloudflare account, `GSV_DOMAIN` and
    `GSV_ZONE_ID`.
 2. Build, inspect the plan and deploy the `operator` stage.
-3. Issue the one-time bootstrap link and create the first ship through its
-   setup invitation. Create further ships explicitly in administration.
+3. Issue the one-time bootstrap link and create the first Ship through its
+   setup invitation. Create further Ships explicitly in administration.
 
 Existing standalone deployments must remain on their preserved release or source
 until an explicit migration is prepared. This revision has no singleton route
@@ -63,7 +63,7 @@ not erase them.
 
 The operator stack uses Workers, D1, R2 and SQLite-backed Durable Objects. It
 does not require Cloudflare Containers. Its default inference route uses the
-operator's Workers AI account; ships can also supply their own model
+operator's Workers AI account; Ships can also supply their own model
 credentials. Provider execution runs in the inference Worker.
 
 ## See also

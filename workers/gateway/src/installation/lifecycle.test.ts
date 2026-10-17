@@ -21,7 +21,7 @@ describe("managed installation lifecycle", () => {
       GSV_OWNER_SIGNUP_URL: setupUrl,
       INSTALLATION_DIRECTORY: directory({ found: true, installationId: "inst_setup", handle: "setup",
         canonicalOrigin: "https://setup.example", state: "provisioning", ownerSetupRecovery: true }),
-    }, "inst_setup")).resolves.toEqual({ allowed: false, code: 503, message: "Finish setting up your ship",
+    }, "inst_setup")).resolves.toEqual({ allowed: false, code: 503, message: "Finish setting up your Ship",
       details: { setupRecovery: true, setupUrl } });
   });
 
@@ -30,7 +30,7 @@ describe("managed installation lifecycle", () => {
       GSV_OWNER_SIGNUP_URL: "https://accounts.example/owner/signup/?resume=1",
       INSTALLATION_DIRECTORY: directory({ found: true, installationId: "inst_operator", handle: "operator",
         canonicalOrigin: "https://operator.example", state: "provisioning" }),
-    }, "inst_operator")).resolves.toEqual({ allowed: false, code: 503, message: "Finish setting up your ship",
+    }, "inst_operator")).resolves.toEqual({ allowed: false, code: 503, message: "Finish setting up your Ship",
       details: { setupRecovery: true } });
   });
 

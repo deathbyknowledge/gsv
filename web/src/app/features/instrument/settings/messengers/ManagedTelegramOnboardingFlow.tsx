@@ -144,7 +144,7 @@ function ManagedMessengerOnboardingFlow({
   const firstStepText = installsApp
     ? `Install the Ship app in your ${isDiscord ? "server" : "workspace"}, then mention @Ship in a channel or message it directly. Ship sends you a short-lived pairing code by DM.`
     : isWhatsApp
-      ? `Send any message to the Ship WhatsApp number${chatNumber ? ` ${chatNumber}` : ""}. It replies with a short-lived pairing code. If this number is already connected to another ship, send /link to get a new code.`
+      ? `Send any message to the Ship WhatsApp number${chatNumber ? ` ${chatNumber}` : ""}. It replies with a short-lived pairing code. If this number is already connected to another Ship, send /link to get a new code.`
       : "Send the official Ship bot any private message. It will reply with a short-lived pairing code.";
 
   const inspectCode = async () => {
@@ -210,7 +210,7 @@ function ManagedMessengerOnboardingFlow({
             {info.isError ? (
               <Alert variant="error" text={info.error?.message ?? `Unable to load ${platform} pairing details.`} />
             ) : !info.data?.configured ? (
-              <Alert variant="warning" text={`${platform} linking is not configured for this ship yet.`} />
+              <Alert variant="warning" text={`${platform} linking is not configured for this Ship yet.`} />
             ) : null}
             <div class="gsv-cf-footer">
               <Button variant="secondary" label="BACK" onClick={onBack} />
@@ -295,7 +295,7 @@ function ManagedMessengerOnboardingFlow({
               variant={candidate?.linked ? "warning" : "attention"}
               title={candidate?.linked ? "REPLACE THE EXISTING CONNECTION?" : "IS THIS YOU?"}
               text={candidate?.linked
-                ? `${displayIdentity} is already linked to a ship. Confirming replaces that link and sends future messages to your account here.`
+                ? `${displayIdentity} is already linked to a Ship. Confirming replaces that link and sends future messages to your account here.`
                 : `${platform} reported ${displayIdentity}. Confirm only if this is the account that contacted Ship.`}
             />
             <div class="gsv-cf-framed">

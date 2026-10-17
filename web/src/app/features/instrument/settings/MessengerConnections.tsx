@@ -14,10 +14,10 @@ import { canConfigure } from "./settingsModel";
 import { SettingsError, type SettingsSectionProps } from "./settingsShared";
 
 const MESSENGERS: ReadonlyArray<{ id: ManagedMessengerId; name: string; blurb: string }> = [
-  { id: "telegram", name: "Telegram", blurb: "Talk to your ship from Telegram." },
-  { id: "slack", name: "Slack", blurb: "Talk to your ship from your Slack workspace." },
-  { id: "discord", name: "Discord", blurb: "Talk to your ship from Discord DMs and servers." },
-  { id: "whatsapp", name: "WhatsApp", blurb: "Talk to your ship from WhatsApp." },
+  { id: "telegram", name: "Telegram", blurb: "Talk to your Ship from Telegram." },
+  { id: "slack", name: "Slack", blurb: "Talk to your Ship from your Slack workspace." },
+  { id: "discord", name: "Discord", blurb: "Talk to your Ship from Discord DMs and servers." },
+  { id: "whatsapp", name: "WhatsApp", blurb: "Talk to your Ship from WhatsApp." },
 ];
 
 export function MessengerConnections({ account, active }: Pick<SettingsSectionProps, "account" | "active">) {
@@ -42,7 +42,7 @@ export function MessengerConnections({ account, active }: Pick<SettingsSectionPr
 
   return <section class="settings-messengers" aria-labelledby="settings-messengers-title">
     <h1 id="settings-messengers-title">Messengers</h1>
-    <p class="settings-intro">Choose where you talk to your ship.</p>
+    <p class="settings-intro">Choose where you talk to your Ship.</p>
     {!canList && <p class="settings-muted">Your account cannot view messaging connections.</p>}
     <SettingsError error={connections.error ?? unlink.error} />
     {connections.isPending && connected && canList && <LoadingState variant="panel">Loading messaging connections…</LoadingState>}
@@ -61,7 +61,7 @@ export function MessengerConnections({ account, active }: Pick<SettingsSectionPr
           </button>
         </div>
         <p class="settings-muted">{blurb}</p>
-        {!available && <p class="settings-muted">{name} linking is not available on this ship.</p>}
+        {!available && <p class="settings-muted">{name} linking is not available on this Ship.</p>}
         {available && !canPair && <p class="settings-muted">Your account cannot link a {name} identity.</p>}
         {links.length === 0 && available && <p class="settings-muted">No {name} identity is linked to you.</p>}
         <ul class="settings-list settings-messenger-links">{links.map((link) => {
@@ -74,7 +74,7 @@ export function MessengerConnections({ account, active }: Pick<SettingsSectionPr
             {error && <p class="settings-error" role="alert">{error}</p>}
             <div class="settings-actions">
               {isRemoving ? <>
-                <span>Unlink this identity from your ship?</span>
+                <span>Unlink this identity from your Ship?</span>
                 <button class="settings-text-action settings-danger" disabled={!connected || !canUnlink || unlink.isPending} onClick={() => unlink.mutate(link)}>{unlink.isPending ? <LoadingState>unlinking…</LoadingState> : "confirm unlink"}</button>
                 <button class="settings-text-action" disabled={unlink.isPending} onClick={() => setRemoving(null)}>keep linked</button>
               </> : <>

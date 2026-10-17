@@ -392,7 +392,7 @@ function advanced(current: ExtensionUiState): string {
         <section>
           <h3>connection</h3>
           <form class="form" data-form="connection" novalidate>
-            ${field("gatewayUrl", "your ship", config.gatewayUrl, "text", "yours.gsv.space")}
+            ${field("gatewayUrl", "your Ship", config.gatewayUrl, "text", "yours.ship.space")}
             ${field("username", "username", config.username, "text")}
             <label class="field" data-field="token"><span>credential</span>
               <span class="with-action">
@@ -446,7 +446,7 @@ function footer(current: ExtensionUiState, paired: boolean): string {
     <footer class="foot">
       ${textButton("toggle-theme", effectiveTheme() === "light" ? "dark" : "light")}
       ${website
-        ? `<a class="host" href="${escapeHtml(website.toString())}" target="_blank" rel="noopener noreferrer" title="Open your ship" data-focus-key="space-link">${escapeHtml(current.gatewayHost)}</a>`
+        ? `<a class="host" href="${escapeHtml(website.toString())}" target="_blank" rel="noopener noreferrer" title="Open your Ship" data-focus-key="space-link">${escapeHtml(current.gatewayHost)}</a>`
         : `<span class="host">not paired yet</span>`}
     </footer>`;
 }
@@ -569,7 +569,7 @@ function readConnectionForm(form: HTMLFormElement): ExtensionConfig {
 
 function validate(config: ExtensionConfig) {
   const errors: FieldErrors = {};
-  if (!normalizeGatewayUrl(config.gatewayUrl)) errors.gatewayUrl = "Enter your ship's address, like yours.gsv.space.";
+  if (!normalizeGatewayUrl(config.gatewayUrl)) errors.gatewayUrl = "Enter your Ship's address, like yours.ship.space.";
   if (!config.username) errors.username = "Username is required.";
   if (!config.token) errors.token = "A credential is required. Pairing fills this in.";
   if (!config.deviceId) errors.deviceId = "Give this browser a name.";

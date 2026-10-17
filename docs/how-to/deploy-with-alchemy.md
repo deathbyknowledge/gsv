@@ -51,7 +51,7 @@ connecting, clients use that server's settings. Without a configured primary
 domain, users enter a full address. Documentation builds accept `GSV_DOCS_ORIGIN`
 for the sitemap and `GSV_PRODUCT_URL` for the product link.
 
-### Release briefs for existing ships
+### Release briefs for existing Ships
 
 Set `GSV_OPERATOR_UPDATES_FILE` to an operator-owned JSON file, or pass an
 `operatorUpdates` catalog to `GsvDeployment`:
@@ -105,14 +105,14 @@ Both deployment commands build the deployment manifest and Worker/web bundles
 in `dist/cloudflare/` before invoking Alchemy. You can run `npm run deployment:build`
 to produce these files without deploying. Keep the same Alchemy state, account,
 resource names and `operator` stage for later updates. The default administration origin is
-`https://accounts.<domain>`; ship handles route under `<handle>.<domain>`.
+`https://accounts.<domain>`; Ship handles route under `<handle>.<domain>`.
 
 The [operator configuration reference](./operate-gsv.md) lists optional inputs,
 including `GSV_ADMIN_ORIGIN`, the Worker name prefix, Cloudflare Access and
 inference limits. The default inference service uses the operator's Workers AI
-account. People can also configure their own model credentials inside their ship.
+account. People can also configure their own model credentials inside their Ship.
 
-## Create the first ship {#create-the-first-space}
+## Create the first Ship {#create-the-first-space}
 
 Deployment prints `installationDatabase` and `administration`; it does not
 create an installation or rotate credentials. Put the returned database ID in
@@ -128,16 +128,16 @@ npm run deployment:bootstrap -- issue \
 ```
 
 Use the configured administration origin if you changed its default. Open the
-one-time link printed to the terminal, create the first ship and follow its
+one-time link printed to the terminal, create the first Ship and follow its
 setup invitation. In the default `operator` access mode, save the operator
 credential shown once by the page. It opens `/operator` for explicit creation
-of further ships. Cloudflare Access deployments use `--mode access` and their
+of further Ships. Cloudflare Access deployments use `--mode access` and their
 configured policy instead. See [bootstrap and recovery](https://github.com/deathbyknowledge/gsv/blob/main/deployment/operator-bootstrap.md)
 for link reissue and credential recovery. Keep credentials out of source files
 and command arguments.
 
-Owner email-code sign-in and **My ships** are optional deployment configuration;
-sign-in does not create ships or grant operator access. Configure a verified sender
+Owner email-code sign-in and **My Ships** are optional deployment configuration;
+sign-in does not create Ships or grant operator access. Configure a verified sender
 with `GSV_OWNER_EMAIL_FROM`, or the supported OIDC provider inputs, as described
 in the [owner sign-in guide](https://github.com/deathbyknowledge/gsv/blob/main/deployment/operator-bootstrap.md#owner-email-sign-in).
 
@@ -153,7 +153,7 @@ requires the bot token, webhook secret, bot username and public webhook origin.
 The operator supplies application credentials through the deployment environment
 and configures the public callback route and provider registration. Enabling a
 Worker does not complete that provider setup. People then link their own
-messenger identities from their ship. See [operator adapter setup](./operate-gsv.md#connect-services-and-verify-cleanup).
+messenger identities from their Ship. See [operator adapter setup](./operate-gsv.md#connect-services-and-verify-cleanup).
 
 ## Update an existing deployment
 

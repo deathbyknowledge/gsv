@@ -80,6 +80,6 @@ export function inboxPreview(contact: ContactSummary, entry?: ConversationInboxE
 }
 
 export function messagePreviewPrefix(preview: NonNullable<ConversationInboxEntry["preview"]>): string {
-  return preview.author.kind === "user" ? "You: " : preview.author.kind === "process" ? "Your ship: "
-    : preview.provenance?.kind === "process" ? "Their ship: " : "";
+  return preview.author.kind === "user" ? "You: " : preview.author.kind === "process" ? "Your Ship: "
+    : preview.provenance?.kind === "process" ? "Their Ship: " : "";
 }

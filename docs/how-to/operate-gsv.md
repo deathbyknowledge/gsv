@@ -18,7 +18,7 @@ Alchemy's Cloudflare account/authentication and set these deployment inputs:
 | `GSV_ALLOW_RESOURCE_DELETION` | Explicit physical resource deletion opt-in; defaults to `false`, including in CI. |
 | `GSV_ACCESS_MODE` | `operator` or `access`; defaults to `operator`. |
 | `GSV_ACCESS_TEAM_DOMAIN`, `GSV_ACCESS_AUDIENCE` | Required for Cloudflare Access mode. |
-| `GSV_OWNER_EMAIL_FROM` | Verified sending address for native email-code owner sign-in, My ships and recovery. |
+| `GSV_OWNER_EMAIL_FROM` | Verified sending address for native email-code owner sign-in, My Ships and recovery. |
 | `GSV_OWNER_EMAIL_ALLOWED_RECIPIENTS` | Optional comma-separated recipient restriction for owner verification mail, useful on staging. |
 | `GSV_OWNER_OIDC_ISSUER`, `GSV_OWNER_OIDC_CLIENT_ID`, `GSV_OWNER_OIDC_CLIENT_SECRET` | Optional owner identity provider for account linking and root recovery; issuer and client ID must be supplied together. |
 | `GSV_ADAPTERS` | Comma-separated operator-enabled adapter IDs; empty by default. |
@@ -58,35 +58,35 @@ creates the first installation and its setup invitation. Further installations
 are created explicitly in administration. Ordinary redeployments do not create
 installations or rotate credentials.
 
-## Give someone a ship {#give-someone-a-space}
+## Give someone a Ship {#give-someone-a-space}
 
 Operator administration and owner sign-in have separate jobs. In `operator`
 access mode, open `<admin-origin>/operator` and sign in with the operator
 credential saved during bootstrap. In `access` mode, open
 `<admin-origin>/admin` through the configured Cloudflare Access policy.
-Create a ship, reserve its handle, and give the person the resulting one-time
+Create a Ship, reserve its handle, and give the person the resulting one-time
 setup link. They use that link to create their personal account and root
-password. Further ships use this same administration flow.
+password. Further Ships use this same administration flow.
 
 To let people sign up themselves, enable `GSV_SIGNUP_ENABLED` and configure
 owner email delivery. They choose a handle and verify their email at
 `<admin-origin>/owner/signup/`, the configured public signup alias, or in
 Desktop. Registration needs no invite code. One verified email can create one
-ship, and an interrupted setup resumes with the same email.
+Ship, and an interrupted setup resumes with the same email.
 
 With native owner email enabled, `<admin-origin>/owner/login` verifies the
-person's email and opens **My ships**. Signing in there does not create a
-ship or grant operator administration. To add an operator-created ship to that
+person's email and opens **My Ships**. Signing in there does not create a
+Ship or grant operator administration. To add an operator-created Ship to that
 list, sign in as **root**, open **Settings → sign-in → Account recovery**, and
 choose **set up recovery**. This binds current root authorization to the verified
-email. The owner can then see the ship in **My ships** and start administrator
+email. The owner can then see the Ship in **My Ships** and start administrator
 recovery there if needed.
 
 The sending address must be enabled with the provider and its DNS records
 verified before codes can be delivered. The public deployment creates and
 preserves the owner-authentication secret. Keep the deployment state on
 redeploy so existing verification and session records remain usable. Owner
-verification mail is independent of a ship's messaging adapters.
+verification mail is independent of a Ship's messaging adapters.
 
 ## Connect services and verify cleanup
 
@@ -131,4 +131,4 @@ another disposable directory. Model calls still require an available provider.
 
 This composition and the migration tooling have local D1 and configuration tests.
 Local success is not evidence that a cloud deployment has completed; verify a
-fresh deployment end to end before giving anyone a ship on it.
+fresh deployment end to end before giving anyone a Ship on it.

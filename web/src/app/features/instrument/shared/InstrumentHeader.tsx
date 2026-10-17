@@ -32,7 +32,7 @@ export function InstrumentHeader({ distance, onNavigate, peopleWaiting, helper, 
         {distance !== "zen" && <span class="instrument-current-view">{distance}</span>}
         <Feedback view={distance} />
         <PlatformIdentity />
-        {helper && <span class="instrument-helper">helper · <button type="button" onClick={onShip}>back to your ship</button></span>}
+        {helper && <span class="instrument-helper">helper · <button type="button" onClick={onShip}>back to your Ship</button></span>}
       </div>
       <button type="button" class="instrument-menu-toggle" ref={navigationButtonRef}
         aria-expanded={navigationOpen} aria-controls="instrument-navigation" onClick={onNavigationToggle}>

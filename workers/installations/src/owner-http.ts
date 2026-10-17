@@ -18,7 +18,7 @@ export class InstallationOwnerHttp {
     const path = url.pathname.startsWith(`${this.prefix}/`) ? `/owner/${url.pathname.slice(this.prefix.length + 1)}` : url.pathname;
     try {
       if (request.method === "GET" && path === "/owner/recover") {
-        return page(`<h1>Recover your ship</h1><p>Sign in as the verified owner to reset your ship’s administrator password.</p>
+        return page(`<h1>Recover your Ship</h1><p>Sign in as the verified owner to reset your Ship’s administrator password.</p>
           <form method="post" action="${this.prefix}/recover"><label>Handle <input name="handle" required maxlength="63" autocomplete="off"></label><button>Verify owner</button></form>`, 200, noStoreFormHeaders());
       }
       if (request.method === "GET" && path === "/owner/link") {
@@ -59,7 +59,7 @@ export class InstallationOwnerHttp {
       return page("Not found", 404);
     } catch {
       // Provider exceptions may carry authorization codes or token bodies. Never render or log them.
-      return page(`<h1>Owner verification could not complete</h1><p>The attempt may have expired or the identity may not own this ship. Start again from your ship settings or <a href="/owner/recover">owner recovery</a>.</p>`, 400);
+      return page(`<h1>Owner verification could not complete</h1><p>The attempt may have expired or the identity may not own this Ship. Start again from your Ship settings or <a href="/owner/recover">owner recovery</a>.</p>`, 400);
     }
   }
 

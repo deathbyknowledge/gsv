@@ -26,7 +26,7 @@ describe("public profile projection serving", () => {
     const html = await response.text();
     expect(html).toContain('data-profile="https://profile.example/@person"');
     expect(html).toContain('src="/social/connect.js"');
-    expect(html).toContain("Your ship’s address");
+    expect(html).toContain("Your Ship’s address");
     expect(html).not.toContain("approach.create");
     expect(html).not.toContain("ownerUid");
     expect(response.headers.get("content-security-policy")).toContain("script-src 'self'");

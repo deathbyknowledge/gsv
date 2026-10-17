@@ -1,6 +1,6 @@
 # Connect your devices
 
-This is the distributed part. Connecting a device turns it into part of one computer your ship can act across — read a file on your home server and push from your laptop in the same breath, even when those machines are asleep.
+This is the distributed part. Connecting a device turns it into part of one computer your Ship can act across — read a file on your home server and push from your laptop in the same breath, even when those machines are asleep.
 
 ## Connect a machine
 
@@ -38,7 +38,7 @@ until you choose **send**.
 ## Connect a browser
 
 Ship can also create a browser invitation and give you a download link matched to
-your ship’s release. To get the current public release yourself,
+your Ship’s release. To get the current public release yourself,
 [click here to download the extension](https://gsv.space/browser).
 
 Choose **Browser** in the same flow. Download and unzip the extension, called
@@ -47,7 +47,7 @@ Click the **Your Ship** icon in the browser toolbar to open its panel. If it is
 not visible, click the **Extensions** (puzzle-piece) button and select
 **Your Ship**. Paste the invitation and choose **Pair this browser**.
 
-While your ship works in a tab, Chrome shows a banner at the top of that tab.
+While your Ship works in a tab, Chrome shows a banner at the top of that tab.
 That is Chrome's notice that an extension is driving the page; it goes when the
 work is done.
 
@@ -95,7 +95,7 @@ targets pair cancel INVITATION_ID
 ```
 
 Creation returns JSON with the invitation, expiry and setup instructions for this
-ship and release. Invitations belong to the process's human owner. An existing
+Ship and release. Invitations belong to the process's human owner. An existing
 target requires explicit `--id TARGET_ID --replace`; a pending invitation can be
 cancelled before creating another if its code was lost.
 

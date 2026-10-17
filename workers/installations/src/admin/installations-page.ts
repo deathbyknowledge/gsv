@@ -43,7 +43,7 @@ export function adminInstallationsPage<Summary extends AdminInstallationSummary>
     content: `<section class="stack">
       <div class="page-heading">
         <div><p class="eyebrow">OPERATOR</p><h1>Ships</h1></div>
-        <div class="actions"><span>${formatInteger(list.total)} ${list.total === 1 ? "result" : "results"}</span><a class="button" href="/admin/installations/new">New ship</a></div>
+        <div class="actions"><span>${formatInteger(list.total)} ${list.total === 1 ? "result" : "results"}</span><a class="button" href="/admin/installations/new">New Ship</a></div>
       </div>
       ${error ? errorNotice(error) : ""}
       ${installationFilters(list)}
@@ -62,22 +62,22 @@ export function adminNewInstallationPage(
 ): Response {
   const operationId = values?.operationId ?? `operation_${crypto.randomUUID()}`;
   return adminPageResponse({
-    title: "New ship",
+    title: "New Ship",
     section: "installations",
     navigation,
     head,
     status,
     content: `<section class="narrow stack">
       <div class="page-heading">
-        <div><p class="eyebrow">NEW INSTALLATION</p><h1>Create a ship</h1></div>
+        <div><p class="eyebrow">NEW INSTALLATION</p><h1>Create a Ship</h1></div>
         <a class="button secondary" href="/admin/installations">Cancel</a>
       </div>
       ${error ? errorNotice(error) : ""}
       <form class="panel stack" method="post" action="/admin/installations">
-        <div><h2>Ship identity</h2><p>The handle becomes the ship’s address. The owner sets a password using the one-time setup link.</p></div>
+        <div><h2>Ship identity</h2><p>The handle becomes the Ship’s address. The owner sets a password using the one-time setup link.</p></div>
         <input type="hidden" name="operationId" value="${escapeHtml(operationId)}">
         <label><span>Handle</span><input name="handle" required minlength="1" maxlength="63" pattern="[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?" autocomplete="off" placeholder="hank" value="${escapeHtml(values?.handle ?? "")}"></label>
-        <div class="form-actions"><button type="submit">Create ship</button></div>
+        <div class="form-actions"><button type="submit">Create Ship</button></div>
       </form>
     </section>`,
   });
@@ -142,7 +142,7 @@ function installationTable<Summary extends AdminInstallationSummary>(
   column?: InstallationAdminPresentation<AdminInstallation, Summary>["summaryColumn"],
 ): string {
   if (installations.length === 0) {
-    return `<div class="empty">No ships match this view.</div>`;
+    return `<div class="empty">No Ships match this view.</div>`;
   }
   return `<div class="table-wrap"><table><thead><tr><th>Ship</th><th>State</th>${column ? `<th>${escapeHtml(column.label)}</th>` : ""}<th>Created</th></tr></thead>
     <tbody>${installations.map((installation) => installationRow(installation, column)).join("")}</tbody></table></div>`;
@@ -201,12 +201,12 @@ function lifecyclePanel(
   installationPath: string,
 ): string {
   if (installation.state === "active") {
-    return `<section class="panel danger-zone"><p class="eyebrow">LIFECYCLE</p><h2>Suspend ship</h2><p>Suspension retains the installation identity and data while blocking work until reactivation.</p><form class="form-actions" method="post" action="${installationPath}/lifecycle"><button class="danger" type="submit" name="state" value="restricted">Suspend ${escapeHtml(installation.handle)}</button></form></section>`;
+    return `<section class="panel danger-zone"><p class="eyebrow">LIFECYCLE</p><h2>Suspend Ship</h2><p>Suspension retains the installation identity and data while blocking work until reactivation.</p><form class="form-actions" method="post" action="${installationPath}/lifecycle"><button class="danger" type="submit" name="state" value="restricted">Suspend ${escapeHtml(installation.handle)}</button></form></section>`;
   }
   if (installation.state === "restricted") {
-    return `<section class="panel"><p class="eyebrow">LIFECYCLE</p><h2>Reactivate ship</h2><p>Reactivation restores routing and resumes paused durable work.</p><form class="form-actions" method="post" action="${installationPath}/lifecycle"><button type="submit" name="state" value="active">Reactivate ${escapeHtml(installation.handle)}</button></form></section>`;
+    return `<section class="panel"><p class="eyebrow">LIFECYCLE</p><h2>Reactivate Ship</h2><p>Reactivation restores routing and resumes paused durable work.</p><form class="form-actions" method="post" action="${installationPath}/lifecycle"><button type="submit" name="state" value="active">Reactivate ${escapeHtml(installation.handle)}</button></form></section>`;
   }
-  return `<section class="panel"><p class="eyebrow">LIFECYCLE</p><h2>No operator transition</h2><p>Lifecycle controls are unavailable while this ship is ${escapeHtml(installation.state.replaceAll("_", " "))}.</p></section>`;
+  return `<section class="panel"><p class="eyebrow">LIFECYCLE</p><h2>No operator transition</h2><p>Lifecycle controls are unavailable while this Ship is ${escapeHtml(installation.state.replaceAll("_", " "))}.</p></section>`;
 }
 
 function resetPanel(

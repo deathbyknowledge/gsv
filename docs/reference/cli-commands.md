@@ -25,7 +25,7 @@ the cached session token from `gsv auth login`, or prompt/login when needed.
 ## Chat and Shell
 
 When the operator enables feedback, the Instrument header has a **feedback** action.
-Reports include the text you submit, your ship, account, and app/server versions.
+Reports include the text you submit, your Ship, account, and app/server versions.
 The optional **Include last 20 Ship messages** checkbox starts unchecked. It
 captures recent messages, thinking, tool inputs/results and runtime events through
 your existing history permissions. Review the snapshot before sending: tool results
@@ -253,7 +253,7 @@ are removed as the conversation database approaches its storage budget; their or
 messages remain readable through history. Pre-feature messages are not indexed retroactively.
 Search returns newest matches first, with literal word prefixes combined with AND.
 `--before` accepts the returned `nextBeforeSequence` to page older matches.
-A signed-in user or their ship may search;
+A signed-in user or their Ship may search;
 delegated work does not inherit conversation access. Use `message history` with
 the match's sequence plus one as `--before` and `--limit 1` to read it in full.
 
@@ -354,14 +354,14 @@ also report that id, including a failure while reopening the file for the
 automatic retry. An outcome that may have reached the provider is reported as
 `sent=false`, `delivery_confirmed=false`, and `delivery_state=ambiguous`.
 
-`contact` manages relationships with people on other ships.
+`contact` manages relationships with people on other Ships.
 `contact invite create --handling manual|ship` returns a short-lived one-use code and a shareable `url`;
-the other person accepts either while signed in to their own ship. The default
+the other person accepts either while signed in to their own Ship. The default
 lifetime is one hour; `--expires` accepts up to seven days. Pairing and revocation may
 be performed by the signed-in human or their canonical Ship. `contact list` prints the opaque contact id accepted
 by `message send --to`; `message destinations` exposes the same active contacts
 alongside messaging endpoints. `contact alias` changes only the local display
-name; the remote ship's authenticated identity remains visible and unchanged.
+name; the remote Ship's authenticated identity remains visible and unchanged.
 
 Creating and accepting through Shell require `--handling manual|ship`. Ship asks
 for the owner's choice unless it was already given: `manual` leaves new messages
@@ -390,7 +390,7 @@ recorded update stays pending until the peer confirms it. Failed confirmation
 leaves the exchange unsettled, even if the recorded work state is completed.
 Resources attached with
 `message send --to contact:...` remain immutable references and are streamed by
-the receiving ship only when opened.
+the receiving Ship only when opened.
 
 Use `sched add --ship` when every firing should become one durable Ship
 responsibility. It works from top-level and process-backed shells. Use
@@ -514,7 +514,7 @@ preference, and process-switch fencing.
 Ship can create an invitation from Shell on `gsv` with
 `targets pair --name "My laptop" --platform mac`. Supported platforms are `mac`,
 `linux`, `windows` and `browser`. The result contains setup instructions for the
-ship's release. `targets pair list` and `targets pair cancel INVITATION_ID`
+Ship's release. `targets pair list` and `targets pair cancel INVITATION_ID`
 manage the human owner's invitations. See [Connect devices](../how-to/connect-devices.md).
 
 For `--platform browser`, the JSON result includes `extensionUrl` and `code`.
@@ -532,7 +532,7 @@ gsv pair  # resume an interrupted exchange
 ```
 
 Use `gsv pair -` to read the invitation from stdin instead of exposing it in
-process arguments. `--preserve-cli-login` leaves the CLI's selected ship and
+process arguments. `--preserve-cli-login` leaves the CLI's selected Ship and
 credentials unchanged; `--no-replace` refuses to overwrite an existing machine
 credential. Desktop uses these together for integrated machine setup.
 
@@ -601,7 +601,7 @@ the device invitation flow, or
 `gsv auth token create --kind machine --peer ...` followed by
 `gsv config --local set device.token ...`.
 Because the compatibility launcher replaces itself with `gsvd`, gateway setup
-must be completed through the ship's browser setup invitation before starting
+must be completed through the Ship's browser setup invitation before starting
 `gsvd`. See the [device guide](../how-to/connect-devices.md) for enrollment.
 
 `gsv`, `gsvd`, and the Desktop application share protocol and configuration
@@ -631,8 +631,8 @@ gsv auth link-list [--uid UID]
 gsv auth unlink --adapter ID --account-id ACCOUNT --actor-id ACTOR
 ```
 
-Initialize a new ship through its Accounts-issued browser setup invitation.
-Login and commands operate on a ship whose authorized setup has completed.
+Initialize a new Ship through its Accounts-issued browser setup invitation.
+Login and commands operate on a Ship whose authorized setup has completed.
 
 `login` asks only for a password when no credential is cached. Omit the username
 to use the personal account, or pass `--username root` for administration. Existing

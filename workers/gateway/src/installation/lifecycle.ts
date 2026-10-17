@@ -61,7 +61,7 @@ export async function managedInstallationWorkGate(
       return { allowed: true };
     }
     if (result.state === "provisioning") {
-      return { allowed: false, code: 503, message: "Finish setting up your ship", details: setupRecoveryDetails(bindings, result) };
+      return { allowed: false, code: 503, message: "Finish setting up your Ship", details: setupRecoveryDetails(bindings, result) };
     }
     return result.state === "restricted"
       ? {

@@ -89,7 +89,7 @@ export class InstallationOwnerStore {
         .bind(principalId, id, browserSecretHash, now, principalId, principalId),
     ]);
     const verified = await this.get(id);
-    if (verified?.state !== "verified" || verified.principal_id !== principalId) throw new Error("This identity does not own this ship");
+    if (verified?.state !== "verified" || verified.principal_id !== principalId) throw new Error("This identity does not own this Ship");
     return verified;
   }
 
@@ -159,7 +159,7 @@ export class InstallationOwnerStore {
   async destination(attempt: OwnerAttempt): Promise<{ canonicalOrigin: string; installationId: string }> {
     const row = await this.db.prepare(`SELECT i.id, i.canonical_origin FROM installations i JOIN principals p ON p.id = i.owner_principal_id
       WHERE i.id = ? AND i.state = 'active' AND i.owner_principal_id = ? AND p.state = 'active' AND p.email_verified_at IS NOT NULL`).bind(attempt.installation_id, attempt.principal_id).first<{ id: string; canonical_origin: string }>();
-    if (!row) throw new Error("This ship is unavailable");
+    if (!row) throw new Error("This Ship is unavailable");
     return { canonicalOrigin: row.canonical_origin, installationId: row.id };
   }
 

@@ -26,18 +26,18 @@ export interface MessengerCapability {
 export const MESSENGER_CAPABILITIES: MessengerCapability[] = [
   {
     title: "Check remote files",
-    detail: "Browse and pull files from your ship from anywhere.",
+    detail: "Browse and pull files from your Ship from anywhere.",
   },
   {
     title: "Approve tasks remotely",
     detail: "Review and approve pending tasks without opening the console.",
   },
   {
-    title: "Message your ship",
-    detail: "Chat with your ship and get replies straight in the messenger.",
+    title: "Message your Ship",
+    detail: "Chat with your Ship and get replies straight in the messenger.",
   },
   {
     title: "Stay in control",
-    detail: "Run commands and steer your ship remotely, wherever you are.",
+    detail: "Run commands and steer your Ship remotely, wherever you are.",
   },
 ];

@@ -1,6 +1,6 @@
-# Contact people on other ships
+# Contact people on other Ships
 
-**People** holds conversations with people on other ships. Open it with `p`.
+**People** holds conversations with people on other Ships. Open it with `p`.
 It opens your conversations and unread messages. **Requests**, above the list, opens
 first messages from new people; its count shows the loaded active requests, with
 `+` when more remain. **contacts**, beside the heading, opens your private address
@@ -20,17 +20,17 @@ your conversation opens, so you can turn it into a request to Ship.
 
 Choose **connect**, choose who should handle new messages, then **create invitation
 link**. Share it wherever you already talk. The same link works for someone new
-to Ship or someone who already has a ship. It connects one person and lasts seven
+to Ship or someone who already has a Ship. It connects one person and lasts seven
 days; you can cancel it before acceptance.
 
 On a managed deployment, the link opens a centered invitation showing who invited you.
-Choose **Continue**. Existing users select their ship; new users verify their
+Choose **Continue**. Existing users select their Ship; new users verify their
 email and create one. The contact invitation stays with them through signup and
-setup. In their ship, they choose who handles new messages and accept the connection.
+setup. In their Ship, they choose who handles new messages and accept the connection.
 Each person's choice affects only their own incoming messages. Neither person
 needs to publish a profile.
 
-The recipient can also enter a ship address, including one hosted by another
+The recipient can also enter a Ship address, including one hosted by another
 operator. This remains available if the browser cannot load or save signup state.
 Deployments without a signup service open that address form directly.
 If someone shares a link or a contact code, **I have an invitation** lets you
@@ -81,20 +81,20 @@ When on, Ship can respond using its ordinary permissions and approval
 rules. Accepting or enabling the setting does not wake Ship or replay existing
 messages; the next incoming message starts handling. Turning it off ends that
 standing assignment. Replies to tasks you assign separately can still resume
-those tasks until they finish. Messages distinguish the person from their ship.
+those tasks until they finish. Messages distinguish the person from their Ship.
 
 For a particular task, choose **ask Ship** in the conversation. This opens an
 editable request in your ordinary Ship chat. Review it and send it when ready.
 It does not turn on automatic replies for that person. A first-use example can
 prefill a more specific request, such as finding a time for dinner.
 
-The activity line above your ship’s prompt keeps unread conversations and incoming
+The activity line above your Ship’s prompt keeps unread conversations and incoming
 requests beside ongoing plans, including after reload or reconnect. New messages update
-the line without opening a panel or moving your place in your ship conversation.
+the line without opening a panel or moving your place in your Ship conversation.
 Select a person's name to read and reply in a compact panel. A **PERSON** or
 **Ship** badge identifies who wrote the latest message. **Open conversation** takes
 you to the full history in People; selecting a connection request opens it there.
-Conversation previews label outgoing messages **You** or **Your ship**, so they
+Conversation previews label outgoing messages **You** or **Your Ship**, so they
 cannot be mistaken for a new reply from the other person.
 
 Closing the panel keeps an unfinished reply for this session, marked **draft** on
@@ -119,9 +119,9 @@ visible until resolved.
 
 ## Private controls
 
-Read position, archive, saved contacts, aliases and mute are private to your ship.
+Read position, archive, saved contacts, aliases and mute are private to your Ship.
 New messages bring an archived conversation back unless muted. Muting also suppresses
-tab attention and your ship chat's new-message line; it does not revoke Ship's existing
+tab attention and your Ship chat's new-message line; it does not revoke Ship's existing
 assignment.
 
 Blocking ends the connection, withdraws its attachment grants and refuses new
@@ -136,10 +136,10 @@ Open **details → Work requests** in the conversation to inspect shared work.
 
 The person offering work can cancel an unaccepted offer. The person receiving it can accept or reject it, then start, complete or cancel accepted work. Ship shows only the actions available to your side.
 
-An update takes effect locally before the other ship confirms it. **Awaiting confirmation** keeps the request open, including a completion or cancellation. **Update not confirmed** means delivery failed; it does not claim the other person accepted that outcome. Older records can show **Confirmation unavailable**.
+An update takes effect locally before the other Ship confirms it. **Awaiting confirmation** keeps the request open, including a completion or cancellation. **Update not confirmed** means delivery failed; it does not claim the other person accepted that outcome. Older records can show **Confirmation unavailable**.
 
 ## Delivery
 
-Queued messages retry automatically with the same identity. A recoverable failure can be resumed through `contact.delivery.retry` by the signed-in person or their ship. Retrying resends the stored message; it does not add another message to the conversation. Permanent refusals, revoked contacts and messages older than seven days cannot be retried.
+Queued messages retry automatically with the same identity. A recoverable failure can be resumed through `contact.delivery.retry` by the signed-in person or their Ship. Retrying resends the stored message; it does not add another message to the conversation. Permanent refusals, revoked contacts and messages older than seven days cannot be retried.
 
 See the [contact commands](/reference/cli-commands) and [contact syscalls](/reference/syscalls) for delivery inspection and automation.

@@ -41,7 +41,7 @@ pub struct SessionStore {
 }
 
 pub fn gateway_origin(value: &str) -> Result<String, String> {
-    let url = Url::parse(value.trim()).map_err(|_| "Enter the full HTTPS address of your ship.")?;
+    let url = Url::parse(value.trim()).map_err(|_| "Enter the full HTTPS address of your Ship.")?;
     let loopback = matches!(url.host_str(), Some("localhost" | "127.0.0.1" | "[::1]"));
     if !(url.scheme() == "https" || (url.scheme() == "http" && loopback))
         || url.host_str().is_none()
@@ -184,7 +184,7 @@ impl SessionStore {
         values: BTreeMap<String, String>,
     ) -> Result<(), String> {
         if generation != self.current.generation || self.current.origin.is_none() {
-            return Err("The selected ship has changed.".into());
+            return Err("The selected Ship has changed.".into());
         }
         if values.len() > KEYS.len()
             || values

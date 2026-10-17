@@ -5,7 +5,7 @@ text before sending it.
 
 ## Record in the web UI
 
-1. Open your ship over HTTPS and go to Zen.
+1. Open your Ship over HTTPS and go to Zen.
 2. Choose **record** in the action row below the prompt, beside the attachment
    and place controls, and allow microphone access when your browser asks.
 3. The prompt becomes a live waveform that responds to your voice. Speak, then
@@ -26,7 +26,7 @@ capture stops and the audio stays in the tab. Return to Chat and choose **retry
 transcription** when ready; reconnecting does not upload it automatically.
 
 Your browser records audio locally until you stop. The finished audio goes
-through your ship's authenticated Gateway to its configured transcription
+through your Ship's authenticated Gateway to its configured transcription
 provider. It is not attached to the message. Browser recordings are limited to
 25 MiB; the operator can enforce a smaller limit. If transcription fails or returns
 no speech, **retry transcription** reuses the recording held in this tab.
@@ -39,7 +39,7 @@ If microphone access is denied, allow it in the browser's site permissions and
 try again. Recording requires a browser with microphone recording support and
 a secure connection; localhost also works for development. A transcription
 error may indicate a provider, credential, permission, or size-limit issue in
-your ship.
+your Ship.
 
 ## Dictate on Desktop
 

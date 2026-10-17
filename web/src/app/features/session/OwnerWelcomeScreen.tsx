@@ -146,7 +146,7 @@ export function OwnerWelcomeScreen({ ready, resume, load, onConnect, addressPane
 
   const titles = {
     welcome: "Welcome to Ship", invitation: invitation?.name ? <><strong class="desktop-welcome-inviter">{invitation.name}</strong> invited you to Ship</> : "You’re invited to Ship",
-    claim: "Create your ship", email: "Your email", code: "Check your email", spaces: "Choose your ship",
+    claim: "Create your Ship", email: "Your email", code: "Check your email", spaces: "Choose your Ship",
   } satisfies Record<Step, ComponentChildren>;
   const creating = flow?.state.flow === "create";
   const requiresConsent = step === "claim";
@@ -185,7 +185,7 @@ export function OwnerWelcomeScreen({ ready, resume, load, onConnect, addressPane
     : step === "email" ? !email.trim() : step === "code" ? code.length !== 6 : false);
   const opening = step === "spaces" || step === "email";
   const title = invitation && step === "email" ? "Join Ship"
-    : !opening ? titles[step] : !compact ? "Open Ship" : step === "spaces" ? "Choose your ship" : "Sign in";
+    : !opening ? titles[step] : !compact ? "Open Ship" : step === "spaces" ? "Choose your Ship" : "Sign in";
   const split = opening && !!addressPanel && !compact;
   const address = () => addressPanel?.({ disabled: busy, connect: (origin) => run(async () => {
     try { await onConnect(origin); }
@@ -201,9 +201,9 @@ export function OwnerWelcomeScreen({ ready, resume, load, onConnect, addressPane
   return <AuthLayout visible surfaceClass="gsv-auth-surface-login"><section class={`desktop-welcome${step === "welcome" || split ? " desktop-welcome-wide" : ""}`}>
     <h1>{title}</h1>
     {step === "welcome" ? <div class="desktop-welcome-columns desktop-welcome-choices">
-      <button class="desktop-welcome-choice" type="button" aria-label="Create your ship" disabled={!flow || busy} onClick={() => start("create")}>
+      <button class="desktop-welcome-choice" type="button" aria-label="Create your Ship" disabled={!flow || busy} onClick={() => start("create")}>
         <WelcomeIllustration kind="create" />
-        <span class="desktop-welcome-choice-title">Create your ship <span aria-hidden="true">→</span></span>
+        <span class="desktop-welcome-choice-title">Create your Ship <span aria-hidden="true">→</span></span>
         <span class="desktop-welcome-detail">Pick a handle, confirm your email</span>
       </button>
       <div class="desktop-welcome-choice desktop-welcome-choice-interactive">
@@ -214,12 +214,12 @@ export function OwnerWelcomeScreen({ ready, resume, load, onConnect, addressPane
       </div>
     </div> : <div class={split ? "desktop-welcome-columns" : "desktop-welcome-form"}>
       <div class="desktop-welcome-primary">
-      {opening && !compact && <h2>{step === "spaces" ? "Choose your ship" : "Sign in with email"}</h2>}
+      {opening && !compact && <h2>{step === "spaces" ? "Choose your Ship" : "Sign in with email"}</h2>}
       {step === "code" && <p class="desktop-welcome-lede">Enter the code sent to {flow?.state.challenge?.email}.</p>}
       <form key={step} class="gsv-login-fields" onSubmit={submit} aria-busy={busy}>
         {step === "invitation" && <div class="desktop-welcome-invitation">
           {invitation?.origin && <p class="desktop-welcome-detail">{invitation.origin}</p>}
-          <p>Sign in or create your ship to connect.</p>
+          <p>Sign in or create your Ship to connect.</p>
         </div>}
         {step === "claim" && <div class="desktop-welcome-identity">
           <TextInput label="Handle" value={handle} onChange={(value) => { setHandle(value.toLowerCase()); setError(""); }} disabled={busy}
@@ -252,7 +252,7 @@ export function OwnerWelcomeScreen({ ready, resume, load, onConnect, addressPane
             label={`Continue ${setup.handle}`} variant="secondary" block disabled={busy}
             onClick={() => void run(() => openSetup(flow!, setup))} />)}
           {!owner?.spaces.length && !owner?.setups.length && <>
-            {owner?.signupEnabled ? <Button label="Create your ship" disabled={busy} block onClick={() => start("create")} />
+            {owner?.signupEnabled ? <Button label="Create your Ship" disabled={busy} block onClick={() => start("create")} />
               : <p class="desktop-welcome-detail">Registration is currently closed.</p>}
           </>}
         </>}

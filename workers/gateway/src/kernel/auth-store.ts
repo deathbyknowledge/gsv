@@ -200,7 +200,7 @@ export class AuthStore {
       const shadow = this.getShadowByUsername(entry.username);
       return entry.uid >= 1000 && shadow && !isLocked(shadow) && !this.isAccountDisabled(entry.uid);
     });
-    if (humans.length > 1) throw new Error("A ship supports one personal account");
+    if (humans.length > 1) throw new Error("A Ship supports one personal account");
     return humans[0] ?? null;
   }
 
@@ -210,7 +210,7 @@ export class AuthStore {
       const credential = credentials.get(entry.username);
       return entry.uid >= 1000 && credential && !isLocked(credential) && !this.isAccountDisabled(entry.uid);
     });
-    if (humans.length > 1) throw new Error("A ship supports one personal account");
+    if (humans.length > 1) throw new Error("A Ship supports one personal account");
   }
 
   addUser(entry: PasswdEntry): void {

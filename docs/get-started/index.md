@@ -5,8 +5,8 @@ You can use a hosting operator or run the same stack in your own Cloudflare acco
 
 ## Get Ship
 
-If an operator has created a ship for you, open its setup invitation and choose
-your password. Each ship has one personal account; you do not need to choose
+If an operator has created a Ship for you, open its setup invitation and choose
+your password. Each Ship has one personal account; you do not need to choose
 another username. Continue to review the early-access disclosure and confirm the
 age, Terms of Service and Privacy Policy
 agreement before creating your account. **Back** lets you revise your credentials.
@@ -15,34 +15,34 @@ Start with what you want to do. You can connect devices from **Fleet** and
 configure models and other connections from **Settings** when you need them.
 
 When your operator enables open registration, its signup page opens directly on
-the handle and email form. Desktop starts with **Create your ship** and **Open
+the handle and email form. Desktop starts with **Create your Ship** and **Open
 Ship**. Choose a handle, enter your email, confirm the age, Terms and Privacy
-agreement, and select **Continue**. Your handle (`@alex`) and ship address
+agreement, and select **Continue**. Your handle (`@alex`) and Ship address
 (`alex.example.com`) appear separately. Verify your email with the six-digit code,
 then pick a password and select **Activate Ship**. No registration invite is
 needed, and the terms you agreed to at signup are not asked again during setup.
 Handles use lowercase letters, numbers and hyphens; uppercase input is converted
 automatically. Validation and availability feedback appears beside the field.
-One verified email can create one ship.
+One verified email can create one Ship.
 
 If creation is interrupted, retry with the same handle to resume that setup.
 
 A friend's invitation link opens an invitation modal on the signup page. Continue
-and verify your email; existing users choose their ship, while new users choose a
+and verify your email; existing users choose their Ship, while new users choose a
 handle and finish setup. The invitation stays with you through setup; accept it
 in People after choosing who handles incoming messages.
 
-If setup is interrupted or its link expires, opening the unfinished ship shows
+If setup is interrupted or its link expires, opening the unfinished Ship shows
 **Continue setup**. Sign in with the same email and select **Continue** beside its
-handle. This resumes the same ship and renews its setup authorization. Ships
+handle. This resumes the same Ship and renews its setup authorization. Ships
 created with an earlier signup code can resume setup this way too. For a setup
 link issued directly by an operator, ask the operator to renew it.
 
-Email sign-in through **Open Ship** lists your ships and unfinished setups.
-It is separate from signing in to a ship. Signing in with email alone does not
-create a ship or grant operator administration rights. The signup page also
+Email sign-in through **Open Ship** lists your Ships and unfinished setups.
+It is separate from signing in to a Ship. Signing in with email alone does not
+create a Ship or grant operator administration rights. The signup page also
 links to the [Desktop app](/how-to/install-host-apps) for macOS, Windows and Linux.
-If Desktop cannot connect after setup completes, choose your ship from the list
+If Desktop cannot connect after setup completes, choose your Ship from the list
 to retry opening it.
 
 ## Run your own operator
@@ -54,9 +54,9 @@ The public composition includes CodeMode's Worker Loader, which requires
 Cloudflare Containers are not required.
 
 Deploy the common stack, issue the one-time operator bootstrap link, then create
-your first ship. The same deployment can host further isolated installations. Its
+your first Ship. The same deployment can host further isolated installations. Its
 reference inference service uses the operator's Workers AI account; you may add
-your own model credentials in your ship. Model usage and infrastructure usage are
+your own model credentials in your Ship. Model usage and infrastructure usage are
 billed separately. Private H&M services are not required.
 
 Existing standalone deployments should read the
@@ -66,10 +66,10 @@ Existing standalone deployments should read the
 
 The web console is called **Instrument** and has five views:
 
-- **Chat** is your ship conversation, and where you inspect what a run did.
+- **Chat** is your Ship conversation, and where you inspect what a run did.
 - **Fleet** lists your places and processes, with files opened from a place.
 - **Memory** shows your personal knowledge pages.
-- **People** holds conversations, message requests and private contacts across ships, plus your public profile.
+- **People** holds conversations, message requests and private contacts across Ships, plus your public profile.
 - **Settings** holds preferences (models), standing responsibilities, permissions, instructions, messengers, MCP connections and **Logs** for actions and their outcomes. The **sign-in** section appears only for root, for personal password resets and administrator recovery setup.
 
 On phones, tap **menu** in the header to switch views. A dot on the menu button
@@ -90,7 +90,7 @@ The **+** menu attaches files, finds people and files, and prepares requests to
 create a routine, connect a computer or start a browser. These requests and
 **ask Ship** controls add ordinary editable text to your draft. Review or change
 it before sending; selecting a request does not send it. **Find a person** accepts
-a handle such as `@esteve` or a full address for another ship. **Reference a file**
+a handle such as `@esteve` or a full address for another Ship. **Reference a file**
 adds a file’s target and path as soon as you select its name. Use **../** at the
 top of a place’s file list to move toward its filesystem root.
 
@@ -120,7 +120,7 @@ Before you choose, **Default** keeps sign-in dark and the app light.
 
 Open **People** to try making plans or working together with someone on Ship.
 **connect** creates a shareable invitation; accepting it opens your conversation.
-You can talk directly or choose **ask Ship** to prepare a request in your ship chat.
+You can talk directly or choose **ask Ship** to prepare a request in your Ship chat.
 A dot beside **people** marks waiting activity, and Zen shows unread conversations
 and message requests above the prompt, including after a reload. See
 [Contact people](/how-to/contact-people) for the full flow.
@@ -137,7 +137,7 @@ Press `Ctrl+K` from any view to open the same search. In Chat, `/` opens search 
 mode, and `Ctrl/Cmd+F` also works while typing. Open a match to read the
 surrounding conversation. Closing search returns to your place and draft.
 
-The composer always shows **Message your ship** when empty. **send** appears beside
+The composer always shows **Message your Ship** when empty. **send** appears beside
 the prompt when you have a draft or attachments. The action row below groups **+**
 for attachments, the current place, and **record**. The place starts on **your cloud** (`gsv`).
 Open its chooser to select another destination for your next message or command;

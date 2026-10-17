@@ -11,7 +11,7 @@ export function ConnectPlace({ account, targets, ready, onClose, onConnected }: 
 }) {
   return <section class="fleet-connection" aria-label="Connect a place">
     <h3>Connect a place</h3>
-    <p class="note">Give your ship access to another computer or browser.</p>
+    <p class="note">Give your Ship access to another computer or browser.</p>
     <DevicePairingPanel targets={targets} allowed={!!account && canConfigure(account, "sys.pair.create")} ready={ready} onClose={onClose} onConnected={onConnected} />
   </section>;
 }

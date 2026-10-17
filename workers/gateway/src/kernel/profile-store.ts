@@ -31,7 +31,7 @@ export class ProfileStore {
     this.storage.transactionSync(() => {
       const existing = this.row(ownerUid);
       if ((existing?.revision ?? 0) !== expectedRevision) throw new Error("Profile changed; reload before saving");
-      if (!existing && this.sql.exec<{ count: number }>("SELECT COUNT(*) AS count FROM social_profiles").one().count > 0) throw new Error("A ship has one public profile");
+      if (!existing && this.sql.exec<{ count: number }>("SELECT COUNT(*) AS count FROM social_profiles").one().count > 0) throw new Error("A Ship has one public profile");
       if (existing && existing.subject_id !== subjectId) throw new Error("Profile identity changed");
       this.sql.exec(`INSERT INTO social_profiles (owner_uid, subject_id, revision, draft_json) VALUES (?, ?, 1, ?)
         ON CONFLICT(owner_uid) DO UPDATE SET revision = revision + 1, draft_json = excluded.draft_json`, ownerUid, subjectId, JSON.stringify(draft));

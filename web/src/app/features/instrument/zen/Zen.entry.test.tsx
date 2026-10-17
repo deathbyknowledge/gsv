@@ -143,7 +143,7 @@ async function mountedZen(pid?: string, initialTarget?: string, native = false, 
 describe("Zen conversation entry", () => {
   it.each([
     ["create a routine", "Help me create a routine."],
-    ["connect a computer", "Help me connect a computer to my ship."],
+    ["connect a computer", "Help me connect a computer to my Ship."],
     ["start a browser", "Start a browser for me."],
   ])("stages %s as editable text and sends only the edited message", async (label, request) => {
     const zen = await mountedZen();
@@ -522,7 +522,7 @@ describe("Zen conversation entry", () => {
       expect(zen.props(PromptLine).allowEmpty).toBe(true);
       expect(zen.dirty()).toBe(true);
       await act(() => { expect(zen.props(PromptLine).onSubmit("$ pwd")).toBe(false); });
-      expect(zen.props(FeedbackNote).note).toEqual({ kind: "notice", text: "Remove attachments and pasted text before running a command, or send them to your ship in plain words." });
+      expect(zen.props(FeedbackNote).note).toEqual({ kind: "notice", text: "Remove attachments and pasted text before running a command, or send them to your Ship in plain words." });
       await act(() => { zen.props(ZenDraftPaste).onRemove?.(); });
       expect(pastes()).toHaveLength(1);
       expect(zen.props(ZenDraftPaste).paste.text).toBe(log);
@@ -548,7 +548,7 @@ describe("Zen conversation entry", () => {
   it("opens a fresh Ship at the ordinary composer without sending a message", async () => {
     const zen = await mountedZen();
     try {
-      await vi.waitFor(() => expect(zen.text()).toContain("I am the ship. Who are you?"));
+      await vi.waitFor(() => expect(zen.text()).toContain("I am the Ship. Who are you?"));
       expect(zen.props<ComponentProps<typeof PromptLine>>(PromptLine).disabled).toBe(false);
       expect(send).not.toHaveBeenCalled();
       expect([...storage.values()]).toEqual([]);
@@ -562,7 +562,7 @@ describe("Zen conversation entry", () => {
       await vi.waitFor(() => expect(zen.props(ZenText).text).toBe("Your machine is online."));
       // History was not watched arriving, so a long message from it folds.
       expect(zen.props(ZenText).opened).toBe(false);
-      expect(zen.text()).not.toContain("I am the ship. Who are you?");
+      expect(zen.text()).not.toContain("I am the Ship. Who are you?");
       expect(send).not.toHaveBeenCalled();
     } finally { await zen.unmount(); }
   });
@@ -584,7 +584,7 @@ describe("Zen conversation entry", () => {
     send.mockReturnValue(accepted.promise);
     const zen = await mountedZen();
     try {
-      await vi.waitFor(() => expect(zen.text()).toContain("I am the ship. Who are you?"));
+      await vi.waitFor(() => expect(zen.text()).toContain("I am the Ship. Who are you?"));
       const prompt = () => zen.props<ComponentProps<typeof PromptLine>>(PromptLine);
       await act(() => { expect(prompt().onSubmit("Help me plan my week")).toBe(true); });
       expect(zen.props(ZenText).text).toBe("Help me plan my week");
@@ -653,7 +653,7 @@ describe("Zen conversation entry", () => {
     const zen = await mountedZen("helper");
     try {
       await vi.waitFor(() => expect(zen.text()).toContain("This helper has no messages yet."));
-      expect(zen.text()).not.toContain("I am the ship. Who are you?");
+      expect(zen.text()).not.toContain("I am the Ship. Who are you?");
       expect(send).not.toHaveBeenCalled();
     } finally { await zen.unmount(); }
   });

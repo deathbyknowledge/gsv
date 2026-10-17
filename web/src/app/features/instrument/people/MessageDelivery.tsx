@@ -16,7 +16,7 @@ export function MessageDelivery({ delivery, mayRetry }: { delivery: ContactDeliv
   if (!delivery) return null;
   const label = delivery.state === "delivered" ? "delivered" : delivery.state === "queued" ? "sending…" : "delivery unconfirmed";
   return <div class={`people-delivery is-${delivery.state}`}>
-    <span title={delivery.state === "delivered" ? "Received by their ship; read state remains private." : delivery.lastError}>{label}</span>
+    <span title={delivery.state === "delivered" ? "Received by their Ship; read state remains private." : delivery.lastError}>{label}</span>
     {delivery.state === "failed" && delivery.retryable && <button class="fleet-text-action" disabled={!connected || !mayRetry || retry.isPending} onClick={() => retry.mutate()}>{retry.isPending ? "retrying…" : "retry same message"}</button>}
     {delivery.state === "failed" && delivery.lastError && <details><summary>details</summary><p>{delivery.lastError}</p>{!delivery.retryable && <p>This delivery cannot be retried automatically.</p>}</details>}
     {retry.error && <span class="error" role="alert">{retry.error.message}</span>}

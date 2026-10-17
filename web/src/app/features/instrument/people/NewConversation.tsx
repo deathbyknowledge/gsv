@@ -71,7 +71,7 @@ export function NewConversation({ account, draft, onChange, onSent, onBusy, cont
       <div class="people-profile-preview">
         <span class="people-kicker">{profileAddressLabel(profile.origin)}</span>
         <h2>{profile.displayName}</h2>{profile.about && <p>{profile.about}</p>}
-        {profile.representation === "human-and-ship" && <p class="people-note">May reply through their ship.</p>}
+        {profile.representation === "human-and-ship" && <p class="people-note">May reply through their Ship.</p>}
       </div>
       {existing ? <button class="ibtn is-primary" onClick={() => onOpen(existing.id)}>open your conversation</button>
         : profile.contactPolicy !== "requests" ? <p class="people-note">{profile.contactPolicy === "invitation" ? "This person connects by private invitation." : "This person is not receiving new message requests."}</p>

@@ -11,7 +11,7 @@ export function instanceActor(ctx: KernelContext): InstanceActor {
 }
 
 export async function acquireInstances(ctx: KernelContext, signal?: AbortSignal): Promise<InstallationInstances> {
-  if (!ctx.env.INSTANCES) throw new Error("Cloud instances are not configured for this ship");
+  if (!ctx.env.INSTANCES) throw new Error("Cloud instances are not configured for this Ship");
   return raceWithAbort(ctx.env.INSTANCES.getInstallation(ctx.installationId), signal, {
     onLateResolve: service => service[Symbol.dispose]?.(),
   });

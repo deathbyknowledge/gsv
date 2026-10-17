@@ -4,10 +4,10 @@ Step-by-step guides for common tasks. Each page focuses on one concrete goal —
 
 - [Deploy / Update / Remove](/how-to/deploy) — get Ship running on your Cloudflare account, keep it updated, or take it down
 - [Deploy with Alchemy](/how-to/deploy-with-alchemy) — the operator composition, its inputs, and the first bootstrap link
-- [Operate a Ship Deployment](/how-to/operate-gsv) — give people their own ships, connect services, and verify cleanup
+- [Operate a Ship Deployment](/how-to/operate-gsv) — give people their own Ships, connect services, and verify cleanup
 - [Retire a Standalone Deployment](/how-to/standalone-retirement) — what to pin and migrate if you ran the old single-space stack
-- [Run Ship for Your Organisation](/how-to/organisations) — host ships for your people and talk to us about your deployment
-- [One person per ship](/how-to/invite-people) — personal sign-in, root access, and password recovery
+- [Run Ship for Your Organisation](/how-to/organisations) — host Ships for your people and talk to us about your deployment
+- [One person per Ship](/how-to/invite-people) — personal sign-in, root access, and password recovery
 - [Install Host Applications](/how-to/install-host-apps) — install or upgrade the CLI, machine daemon, and native Desktop
 - [Use Voice Input](/how-to/voice-input) — record a message draft in the browser or dictate on Desktop
 - [Connect Devices](/how-to/connect-devices) — turn your laptop, phone, and server into one computer your agent can act across

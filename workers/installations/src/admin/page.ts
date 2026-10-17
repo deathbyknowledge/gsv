@@ -52,7 +52,7 @@ export function adminErrorPage(
     content: `<section class="narrow stack">
       <div class="page-heading"><div><p class="eyebrow">OPERATOR REQUEST</p><h1>${status === 404 ? "Not found" : "Request not completed"}</h1></div></div>
       ${errorNotice(message)}
-      <p><a class="button secondary" href="/admin/installations">Back to ships</a></p>
+      <p><a class="button secondary" href="/admin/installations">Back to Ships</a></p>
     </section>`,
   });
 }

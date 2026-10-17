@@ -58,7 +58,7 @@ Choose **I’m done — resume Ship** after you finish signing in or completing 
 requested steps. Once saving succeeds, the view confirms completion and stays
 open, following Ship again.
 Requests expire after fifteen minutes or when the browser stops, whichever comes
-first. The link identifies one request; it never grants access without your ship
+first. The link identifies one request; it never grants access without your Ship
 login. An old link shows that its request has ended and cannot control or complete
 a later request. Open the latest request from Ship when needed.
 Your next chat message still goes to Ship. Website passwords and
@@ -77,7 +77,7 @@ titles and addresses are shortened for display; the actual page URL is unchanged
 ## Remembered logins and lifetime
 
 Ship automatically keeps website cookies, local storage and IndexedDB for your
-local account in this ship. The next ordinary browser restores that saved
+local account in this Ship. The next ordinary browser restores that saved
 state. Saved state is encrypted and separate from
 the running browser. Only one instance can use the same saved state at a time.
 The account's automatic login store has a durable identity. Explicitly created
@@ -216,7 +216,7 @@ ordinary browser. Advanced `browser profile` commands remain available for
 inspecting saved-state status and deleting saved logins. Deleting a profile
 removes that state and stops any browser using it.
 
-Starting reserves the requested lifetime against your ship's monthly browser
+Starting reserves the requested lifetime against your Ship's monthly browser
 allowance and concurrent instance limit. Usage counts from readiness until the
 earlier of the fixed expiry deadline or confirmed termination, including time
 spent signing in, capped at the reserved lifetime. Slow startup reduces the
@@ -368,10 +368,10 @@ or an `ENTITLEMENTS` service implementing these policy keys:
 | Key | Meaning |
 | --- | --- |
 | `browser.enabled` | Admit browser starts |
-| `browser.concurrent_instances` | Concurrent browser limit per ship |
+| `browser.concurrent_instances` | Concurrent browser limit per Ship |
 | `browser.period_seconds` | Monthly allowance, calendar month in UTC |
 | `browser.max_instance_seconds` | Maximum lifetime for one instance |
-| `browser.saved_profiles` | Saved profile limit per ship |
+| `browser.saved_profiles` | Saved profile limit per Ship |
 | `browser.profile_storage_bytes` | Maximum saved state bytes per profile |
 
 The local default is 16 MiB of uncompressed serialized state per saved browser;

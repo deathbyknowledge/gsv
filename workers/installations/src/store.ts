@@ -197,7 +197,7 @@ export class AccountStore {
         throw new Error("verified active principal is required");
       }
       if (input.ownerSetup && await this.db.prepare("SELECT 1 FROM installations WHERE owner_principal_id = ? AND state NOT IN ('cancelled', 'deleted')")
-        .bind(principalId).first()) throw new Error("You already have a ship. Open it or continue setup.");
+        .bind(principalId).first()) throw new Error("You already have a Ship. Open it or continue setup.");
       throw error;
     }
 

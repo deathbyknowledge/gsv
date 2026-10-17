@@ -32,7 +32,7 @@ export const BrowserVoiceControls = forwardRef<BrowserVoiceHandle, BrowserVoiceC
     if (event.key === "Enter" || event.key === " ") event.stopPropagation();
   }}>
     {!busy && !control.canRetry && <button type="button" disabled={!options.enabled || !!unavailable}
-      title={unavailable ?? "Record up to 5 minutes. Your ship transcribes the audio for you to review before sending."}
+      title={unavailable ?? "Record up to 5 minutes. Your Ship transcribes the audio for you to review before sending."}
       onClick={() => void control.start()}>record</button>}
     {busy && surfaceHost.current && createPortal(<div ref={surface} class={`browser-voice-surface is-${control.phase}`}
       role="group" aria-label="Voice recording" tabIndex={-1} onKeyDown={(event) => {

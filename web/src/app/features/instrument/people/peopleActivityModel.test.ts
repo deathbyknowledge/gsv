@@ -45,11 +45,11 @@ describe("People activity above the Ship prompt", () => {
     const current = activity(3);
     current.conversations[0].latestIncomingSequence = 2;
     current.conversations[0].preview!.author = { kind: "process", pid: "proc:ship", uid: 1001 };
-    expect(peopleConversations(current, new Map())[0]).toMatchObject({ name: "Ada", text: "Your ship: Message 3" });
+    expect(peopleConversations(current, new Map())[0]).toMatchObject({ name: "Ada", text: "Your Ship: Message 3" });
     current.conversations[0].preview!.author = { kind: "user", uid: 1000 };
     expect(peopleConversations(current, new Map())[0].text).toBe("You: Message 3");
     current.conversations[0].preview = { ...message(4), attachmentCount: 0, provenance: { kind: "process", processId: "proc:ada" } };
-    expect(peopleConversations(current, new Map())[0].text).toBe("Their ship: Message 4");
+    expect(peopleConversations(current, new Map())[0].text).toBe("Their Ship: Message 4");
   });
 
   it("keeps an unfinished draft reachable after a read elsewhere or an ended connection", () => {

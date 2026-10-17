@@ -56,7 +56,7 @@ export class InstallationOwnerApi {
         return json({ ok: true });
       }
       // Older Desktop releases can still sign in; signup requires the new code-free client.
-      if (url.pathname.startsWith("/owner/api/invites/")) return json({ error: "Update Ship to create your ship." }, 410);
+      if (url.pathname.startsWith("/owner/api/invites/")) return json({ error: "Update Ship to create your Ship." }, 410);
       if (request.method === "GET" && url.pathname === "/owner/api/handle") {
         return json({ available: await this.signup.available(handle.parse(url.searchParams.get("value") ?? "")) });
       }
@@ -76,7 +76,7 @@ export class InstallationOwnerApi {
       if (error instanceof Error && error.message === "handle is invalid") {
         return json({ error: "Use letters, numbers or hyphens. Start and end with a letter or number." }, 400);
       }
-      if (error instanceof Error && error.message.startsWith("You already have a ship")) {
+      if (error instanceof Error && error.message.startsWith("You already have a Ship")) {
         return json({ error: error.message, code: "space_exists" }, 409);
       }
       const message = error instanceof Error && /^(handle is |Ship setup is unavailable|Ship setup failed|Registration is currently closed)/.test(error.message)

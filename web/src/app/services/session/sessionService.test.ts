@@ -70,7 +70,7 @@ describe("account setup", () => {
     installWindow();
     const client = createSetupClient();
     const setupUrl = "https://accounts.example/owner/signup/?resume=1";
-    client.requestOnce.mockRejectedValueOnce({ code: 503, message: "Finish setting up your ship",
+    client.requestOnce.mockRejectedValueOnce({ code: 503, message: "Finish setting up your Ship",
       details: { setupRecovery: true, setupUrl } });
     const service = createSessionService(client);
     await service.start();
