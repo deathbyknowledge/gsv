@@ -31,7 +31,8 @@ Each person's choice affects only their own incoming messages. Neither person
 needs to publish a profile.
 
 The recipient can also enter a Space address, including a Space on another
-operator. Deployments without a signup service open that address form directly.
+operator. This remains available if the browser cannot load or save signup state.
+Deployments without a signup service open that address form directly.
 If someone shares a link or a contact code, **I have an invitation** lets you
 paste it in People.
 
