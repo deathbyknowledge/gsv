@@ -68,6 +68,12 @@ The resource inventory is four Workers (`accounts`, `inference`, `gateway`, `rip
 
 The `legacy` phase installs twelve legacy D1 migrations. `handoff` removes that legacy migration runner while retaining the same modules, bindings and resource IDs. `current` updates those same Workers to current modules and introduces the inference executor namespace and current service bindings. Every existing namespace, database, bucket and route identity must survive. `assertUpgradeResourceContinuity` also rejects loss or replacement of unrelated resources when passed complete before/after inventories. Inspect the actual Alchemy plan as well; the helper is not an account inventory collector.
 
+The build captures the legacy SQL and its original three-column `d1_migrations`
+ledger in `migrations/database.seed.sql`. Only the `legacy` phase imports that artifact;
+later phases leave migrations to the explicit ownership handoff. Alchemy's current
+migration runner would convert the ledger into a different format, invalidating
+the historical fixture.
+
 ## Run sequence
 
 1. Capture the account's existing resource inventory and obtain authorization for the exact new fixture plan. Deploy `legacy`; verify Worker versions, module hashes, bindings, all twelve migrations, exact routes and new resource IDs. Save private deployment evidence. Existing application resources and spaces must be unchanged.

@@ -163,6 +163,11 @@ physical resource identities. Operators adopting a legacy combined Accounts
 database must first complete the one-time
 [migration ownership handoff](https://github.com/deathbyknowledge/gsv/blob/main/deployment/installation-migration-adoption.md);
 ordinary updates of an adopted public database use its migration ledger.
+For directories created by the public composition, Alchemy owns
+`installation_migrations`. Upgrading Alchemy can convert that ledger to its hashed
+format in place; applied migration names remain recorded. An adopted operator
+database keeps its explicit migration runner instead: supply its existing
+directory Worker and do not give Alchemy migration ownership of those ledgers.
 Deployments with an existing Mail queue also follow the
 [reader-before-writer upgrade](https://github.com/deathbyknowledge/gsv/blob/main/deployment/mail-queue-upgrade.md).
 
