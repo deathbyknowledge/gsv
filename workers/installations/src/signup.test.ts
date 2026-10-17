@@ -89,6 +89,25 @@ describe("open registration", () => {
     expect(await db.prepare("SELECT COUNT(*) AS count FROM installations WHERE owner_principal_id = ?").bind(principalId).first()).toEqual({ count: 1 });
   });
 
+  it("resumes setup concurrently after its preferred-domain alias has been opened", async () => {
+    const principalId = await owner(), operationId = crypto.randomUUID(), name = handle();
+    const legacy = new AccountStore(db, "old.example");
+    const space = await legacy.reserveInstallation({ principalId, operationId, handle: name, ownerSetup: true });
+    const current = new AccountStore(db, "new.example", undefined, [], ["old.example"]);
+    expect(await current.resolveHostname(`${name}.new.example`)).toMatchObject({ installationId: space.installationId, state: "reserved" });
+    const claims = new InstallationOnboardingStore(db, current, "signup-test-secret-".repeat(4));
+    const resumed = new InstallationSignup(db, current, claims, false);
+    const results = await Promise.all([resumed.prepare(operationId, principalId, name), resumed.prepare(operationId, principalId, name)]);
+    expect(results[0]).toEqual(results[1]);
+    expect(results[0].origin).toBe(`https://${name}.old.example`);
+    const authorization = await claims.authorize({ installationId: space.installationId, token: results[0].onboardingToken! });
+    if (!authorization.ok) throw new Error("Expected onboarding authorization");
+    await claims.complete({ installationId: space.installationId, claimId: authorization.claimId });
+    for (const domain of ["old.example", "new.example"]) {
+      expect(await current.resolveHostname(`${name}.${domain}`)).toMatchObject({ installationId: space.installationId, state: "active" });
+    }
+  });
+
   it("keeps an unavailable handle retryable and does not adopt an operator setup", async () => {
     const name = handle();
     await accounts.reserveInstallation({ principalId: await owner(), operationId: crypto.randomUUID(), handle: name });
