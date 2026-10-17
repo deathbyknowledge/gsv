@@ -24,7 +24,9 @@ docker build --file "$repository_root/workers/instances/computer/Dockerfile" \
 export GSV_INSTANCE_SECRET
 GSV_INSTANCE_SECRET="$(openssl rand -hex 32)"
 # Keep the image's entrypoint and workspace defaults; the provider supplies its target.
-container_id="$(docker run --detach --network none --env GSV_INSTANCE_SECRET "$image" --id "$target")"
+# The entrypoint is empty; use the provider's complete command to replace CMD.
+container_id="$(docker run --detach --network none --env GSV_INSTANCE_SECRET "$image" \
+  /usr/local/bin/gsvd --container --listen 0.0.0.0:8788 --id "$target" --workspace /workspace)"
 
 docker exec --interactive "$container_id" node --input-type=module - "$target" <<'JS'
 import assert from "node:assert/strict";

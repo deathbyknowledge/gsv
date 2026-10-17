@@ -11,4 +11,6 @@ COPY --from=builder /build/host/target/release/gsvd /usr/local/bin/gsvd
 RUN mkdir /workspace
 WORKDIR /workspace
 EXPOSE 8788
-ENTRYPOINT ["/usr/local/bin/gsvd", "--container", "--workspace", "/workspace"]
+# The provider supplies a complete startup command, mapped to Docker Cmd locally.
+ENTRYPOINT []
+CMD ["/usr/local/bin/gsvd", "--container", "--listen", "0.0.0.0:8788", "--workspace", "/workspace"]

@@ -54,6 +54,26 @@ A start reserves its lifetime. Time is charged from readiness until stop or
 expiry; unused reservation is released after physical termination is confirmed.
 Computers belong to their initiating human account and installation.
 
+## Try computers locally
+
+With a running, accessible Docker-compatible engine, opt into real local
+containers with:
+
+```sh
+GSV_DEV_COMPUTERS=1 GSV_DEV_STATE_DIR=/tmp/gsv-computer-trial npm run dev
+```
+
+Use a new state directory for fresh onboarding. Open
+`http://localhost:8976/admin`, create a Space and follow its setup link. Ask Ship
+to start a cloud computer, run a small build, copy the output back to `gsv` and
+stop the computer. Model calls still need a configured inference provider.
+
+This selects `workers/instances/wrangler.computer.dev.jsonc`, which builds the
+normal computer image and runs it locally through Wrangler. Each Space allows
+one computer at a time, up to 30 minutes per computer and two hours per month.
+Stop computers before ending the dev session; their files are temporary.
+The default `npm run dev` keeps computers disabled and does not require Docker.
+
 ## Operator configuration
 
 The instance Worker exports `ComputerInstance` alongside `InstanceCoordinator`.
@@ -61,6 +81,8 @@ The reference `workers/instances/wrangler.jsonc` declares the `COMPUTERS` namesp
 and a Cloudflare Container using `computer/Dockerfile`. Its `durable_object`
 scheduling policy selects a digest-pinned image at startup; image updates do not
 replace running computers. The initial size is `standard-1`.
+The service supplies a complete `gsvd` startup command that overrides the image's
+`CMD`, with `ENTRYPOINT` kept empty.
 
 Include both namespaces in the operator composition's lifecycle inventory:
 `InstanceCoordinator` as `instance-installation`, and `ComputerInstance` as
