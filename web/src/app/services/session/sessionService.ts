@@ -24,7 +24,11 @@ const SESSION_RECONNECT_DELAYS_MS = [0, 1_000, 2_000, 5_000, 10_000];
 const SESSION_RECONNECT_STABLE_MS = 10_000;
 const SETUP_PROBE_ARGS: ConnectArgs = {
   protocol: 4,
-  peer: { id: "gsv-ui-setup-probe", version: "0.7.1", platform: "browser" },
+  peer: {
+    id: "gsv-ui-setup-probe",
+    version: "0.7.1",
+    platform: "browser",
+  },
 };
 
 type PersistedSessionToken = {
