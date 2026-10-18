@@ -21,24 +21,24 @@ export default Alchemy.Stack(`gsv-previews-${repositoryId}`, {
 }, Effect.gen(function* () {
   const stage = yield* Alchemy.Stage;
   if (stage !== `pr-${pullRequest}`) throw new Error("Preview stage must match the pull request");
-  const baseDomain = hostname.parse(yield* Config.string("GSV_PREVIEW_BASE_DOMAIN"));
-  const zoneName = hostname.parse(yield* Config.string("GSV_PREVIEW_ZONE_NAME"));
-  const zoneId = z.string().regex(/^[a-f0-9]{32}$/).parse(yield* Config.string("GSV_PREVIEW_ZONE_ID"));
+  const baseDomain = hostname.parse(yield* Config.String("GSV_PREVIEW_BASE_DOMAIN"));
+  const zoneName = hostname.parse(yield* Config.String("GSV_PREVIEW_ZONE_NAME"));
+  const zoneId = z.string().regex(/^[a-f0-9]{32}$/).parse(yield* Config.String("GSV_PREVIEW_ZONE_ID"));
   if (baseDomain !== zoneName && !baseDomain.endsWith(`.${zoneName}`)) {
     throw new Error("Preview base domain must belong to its configured zone");
   }
   const domain = `pr-${pullRequest}.${baseDomain}`;
   const adminOrigin = `https://accounts.${domain}`;
-  const teamDomain = yield* Config.string("GSV_PREVIEW_ACCESS_TEAM_DOMAIN");
-  const domains = (yield* Config.string("GSV_PREVIEW_ACCESS_EMAIL_DOMAINS").pipe(Config.withDefault("")))
+  const teamDomain = yield* Config.String("GSV_PREVIEW_ACCESS_TEAM_DOMAIN");
+  const domains = (yield* Config.String("GSV_PREVIEW_ACCESS_EMAIL_DOMAINS").pipe(Config.withDefault("")))
     .split(",").map((value) => value.trim()).filter(Boolean).map((value) => hostname.parse(value));
-  const emails = (yield* Config.string("GSV_PREVIEW_ACCESS_EMAILS").pipe(Config.withDefault("")))
+  const emails = (yield* Config.String("GSV_PREVIEW_ACCESS_EMAILS").pipe(Config.withDefault("")))
     .split(",").map((value) => value.trim()).filter(Boolean).map((value) => z.email().parse(value));
   if (domains.length + emails.length === 0) throw new Error("Preview Access requires permitted email domains or addresses");
   const allowResourceDeletion = z.enum(["false", "true"]).parse(
-    yield* Config.string("GSV_ALLOW_RESOURCE_DELETION").pipe(Config.withDefault("false")),
+    yield* Config.String("GSV_ALLOW_RESOURCE_DELETION").pipe(Config.withDefault("false")),
   ) === "true";
-  const model = (yield* Config.string("GSV_PREVIEW_INFERENCE_MODEL").pipe(Config.withDefault(""))) || "@cf/zai-org/glm-5.3-flash";
+  const model = (yield* Config.String("GSV_PREVIEW_INFERENCE_MODEL").pipe(Config.withDefault(""))) || "@cf/zai-org/glm-5.3-flash";
   z.string().regex(/^@cf\/[a-z0-9._/-]+$/).parse(model);
 
   const policy = yield* Cloudflare.Access.Policy("PreviewAccessPolicy", {

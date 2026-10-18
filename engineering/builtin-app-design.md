@@ -72,6 +72,7 @@ Examples:
 
 Text should supply what the user needs now and cannot already infer from the interface.
 
+- Capitalize Ship in product copy, including “your Ship” and “My Ships”. Keep command names, paths and domains literal.
 - Write for the user's next action or decision. Every label, sentence and control must serve an identifiable purpose.
 - Use the current screen, heading and visual demonstration as context. Avoid restating that context in subordinate labels.
 - Prefer action names for controls. Put gesture mechanics in demonstrations and focused instructions.
@@ -122,7 +123,7 @@ The app should feel like a serious workstation tool.
 
 Use [Instrument](../web/src/app/features/instrument/README.md) and [Settings](../web/src/app/features/instrument/settings/README.md) as the product and interaction contracts.
 
-Instrument is the default web entrypoint. Login and installation onboarding enter the same UI; the first-day introduction is Chat's empty state. Shared components serve the current surfaces.
+Instrument is the default web entrypoint. Login and installation onboarding enter the same UI; the first-day introduction is an ordinary Ship message generated after the early-access welcome card is dismissed, or in response to the user’s first message. Shared components serve the current surfaces.
 
 Core rules:
 - global navigation chooses the kind of work; tables and inspectors choose the object

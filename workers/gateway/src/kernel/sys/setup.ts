@@ -18,6 +18,7 @@ import { RipgitClient } from "../../fs";
 import { seedBuiltinSkillsToHome } from "./skills-seed";
 import { gsvInferenceFeaturesFromEnv } from "../../inference/features";
 import { ensurePersonalController } from "../personal-controller";
+import { normalizeLanguage } from "../language";
 import { getConversationById } from "../../shared/utils";
 import {
   aiModelApiKeyConfigKey,
@@ -273,6 +274,7 @@ export async function handleSysSetup(
   );
   const aiModels = setupAiModelStack(ai);
   const timezone = parseTimezone(args);
+  const language = args.language === undefined ? undefined : normalizeLanguage(args.language);
   const machine = parseMachineConfig(args);
   const rootPassword = readOptionalString(args.rootPassword);
   if (rootPassword && rootPassword.length < 8) {
@@ -363,6 +365,7 @@ export async function handleSysSetup(
       if (timezone !== undefined) {
         config.set("config/server/timezone", timezone);
       }
+      if (language !== undefined) config.set(`users/${uid}/locale/language`, language);
     });
 
     await timeSetupStep(timings, "write-ai-config", () => {

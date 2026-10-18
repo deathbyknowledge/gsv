@@ -58,6 +58,13 @@ actions open in a vertical menu with touch-sized rows; the Help button is hidden
 Choosing a view, tapping outside or pressing Escape closes the menu.
 The menu button retains the unread People indicator while navigation is closed.
 
+On first sign-in, a spacious, nonmodal welcome card with large text appears above the Instrument
+views for a personal human account. Closing it or choosing Try it out saves a
+per-user UI config flag, so the card stays dismissed across web and Desktop
+sessions. It never appears during setup or for root. The Discord link opens
+separately, and the existing Feedback control remains in the header when available.
+If its saved state cannot be loaded, the card offers Retry without requiring a new session.
+
 Chat, Fleet, Memory and Settings mount on their first visit and retain their local
 state until the signed-in session ends. Moving between them keeps drafts,
 attachments, open forms, selection and reading position without a discard
@@ -143,7 +150,7 @@ Shell approvals also expose the existing `proc.hil` remember option for a concre
 target. A hover/focus tooltip explains its process and target scope; it never
 changes another process's policy or remembers a denial.
 
-Chat owns the conversation. A fresh conversation shows the welcome ("Welcome to the ship." / "I am the ship. Who are you?") and the ordinary composer; the CLI and messengers have no such greeting. The person's first message answers that question and goes through normal conversation sending; entering the space never sends an introduction on their behalf. Existing messages and drafts keep their ordinary behavior. Ship's durable onboarding responsibility owns the introduction and any guidance after that first message. Helpers have a simple empty conversation state.
+Chat owns the conversation. Dismissing the welcome card records the owner's choice and wakes Ship through its initial onboarding responsibility; a failed request leaves the card available to retry. Ship sends a welcome in the owner's language, initially detected from the browser. Chat renders it as an ordinary canonical Message, shared across clients. The composer remains available, and Ship responds to a user who writes first. Helpers keep a simple empty conversation state.
 
 The composer puts send beside the draft and keeps one action row below: attachments
 and the current place on the left, platform voice controls on the right.
@@ -182,6 +189,10 @@ actually displayed. Closing the view leaves work running. Only an explicit Ship
 sign-in request shows a completion action. The Fleet browser action reuses the
 account's current instance, and saved logins are automatic rather than exposed
 as profile setup. Stopped instances leave the ordinary place list.
+
+Cloud Linux computers use the ordinary place inspector and command selection.
+Only browser instances open the live viewer; a starting computer becomes
+selectable for commands once it is ready.
 
 The Fleet overview uses the full width with modest side gutters on wide screens.
 Browsing with j/k or the arrow keys only
@@ -297,7 +308,7 @@ drag handles; the block cursor returns when the selection collapses.
 
 People opens the conversation list. A counted Requests entry opens incoming first-message decisions, with sent and past requests secondary; Contacts in the heading opens the private address book. Both offer a direct return to conversations. New conversation filters saved people locally or opens a public profile address. These are separate jobs rather than equal tabs. Conversation selection, scroll and drafts stay mounted while visiting Requests or Contacts, with hidden queries paused.
 
-The first visit explains direct conversation and asking Ship to coordinate through selectable examples. The Connect action leads with a shareable invitation; accepting a link/code and entering a public profile address are alternatives. Opening the form creates nothing. Managed links reuse Accounts' existing space chooser before the recipient's normal login and explicit acceptance. A pending invitation survives login and reload within that tab. Acceptance opens the conversation, and the selected example can become an editable draft in the ordinary Ship chat. Ask Ship in the conversation header also opens a draft; neither action sends a message or changes standing contact handling.
+The first visit explains direct conversation and asking Ship to coordinate through selectable examples. Connect is one entry point. When signup invitations are available, its first step asks **New to GSV** or **Already on GSV**, with neither preselected. The new-user choice shows the remaining allowance and leads to a signup invitation; the existing-user choice leads to sharing a connection link, accepting a link/code or entering a public profile address. Opening the chooser or either form creates nothing. A received invitation goes directly to its acceptance step. Managed links reuse Accounts' space chooser or signup before the recipient's normal login and explicit acceptance. A pending invitation survives login and reload within that tab. Acceptance opens the conversation, and the selected example can become an editable draft in the ordinary Ship chat. Ask Ship in the conversation header also opens a draft; neither action sends a message or changes standing contact handling.
 
 The shared header marks waiting People activity. Chat combines ongoing plans, unread conversations, incoming requests and unfinished replies in one compact activity line above the prompt. Messages never open the panel or force the Ship transcript to scroll. Selecting a person opens one bounded read/reply panel; Escape, close or clicking outside folds it away while retaining the draft. Full history remains in People. Both surfaces observe the same paginated conversation cache. The existing inbox and incoming request APIs recover earlier activity after reload or reconnect, and owner-scoped signals refresh them without polling or a separate live-notice store. Replies retain their exact send identity and answered sequence; a late completion cannot erase newer text, mark a later arrival read or close a subsequently opened panel. Muted, blocked, ended and archived conversations stay quiet, while a held draft remains reachable. These shared attention reads remain active across views; histories load only when opened. Cached activity and drafts stay visible during reconnect, with sending disabled.
 

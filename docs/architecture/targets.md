@@ -76,6 +76,13 @@ GSV currently projects these environments:
   that provider.
 - `gsvd` registers physical computers and implements filesystem, shell, network,
   and host operations using that computer's local environment.
+- [Cloud computers](../how-to/cloud-computers.md) run the same `gsvd` filesystem,
+  shell and network driver inside a disposable Linux container. The instance
+  service owns its private authenticated protocol connection, boot identity,
+  lifetime and cancellation. It appears as an owner-scoped instance target,
+  without device enrollment or a persistent machine registry entry. Detached
+  shell sessions survive transport reconnects but not container destruction;
+  losing a container never silently restarts or replays work.
 - The browser extension registers a browser profile as a pseudo-computer. It
   implements `fs.*` and `shell.exec` over a virtual filesystem and
   browser-specific commands even though the browser is not an operating-system

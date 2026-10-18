@@ -11,6 +11,7 @@ import type {
 } from "@humansandmachines/gsv/protocol";
 import {
   emitTelemetry,
+  exceptionDiagnostics,
 } from "@humansandmachines/gsv/telemetry";
 import {
   type RouteOrigin,
@@ -40,6 +41,7 @@ import {
 import type { Kernel } from "./do";
 import { deliverTargetConnectionEvent } from "./target-events";
 import { hasCapability } from "./capabilities";
+import { activateInitialOnboardingResponsibility } from "./onboarding-responsibility";
 import {
   sameRouteOrigin,
 } from "./do-shared";
@@ -244,7 +246,18 @@ async handleSysConnect(
     }
 
     if (outcome.peer.principal.kind === "human") {
-      this.reconcileOwnedIdentities(outcome.peer.principal.account.uid);
+      const ownerUid = outcome.peer.principal.account.uid;
+      this.reconcileOwnedIdentities(ownerUid);
+      if (ownerUid >= 1000 && !ctx.auth.isPersonalAgentUid(ownerUid)
+        && ctx.config.get(`users/${ownerUid}/ui/welcome_card_seen`) === "1") {
+        ctx.defer(Promise.resolve().then(async () => {
+          if (activateInitialOnboardingResponsibility(ownerUid, ctx.responsibilities)) {
+            await ctx.reconcileResponsibilityWake(ownerUid);
+          }
+        }).catch((error) => {
+          console.warn("[Kernel] Failed to resume onboarding:", exceptionDiagnostics(error));
+        }));
+      }
     }
 
     this.host.transport.sendOk(connection, frame.id, outcome.result);

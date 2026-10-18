@@ -20,6 +20,7 @@ import type { FleetReference } from "./fleet/fleetModel";
 import { WireSync } from "./wire/WireSync";
 import { replaceLegacyChatPath, type MemoryPageRef } from "./shared/navigation";
 import { InstrumentHeader } from "./shared/InstrumentHeader";
+import { WelcomeCard } from "./shared/WelcomeCard";
 import { SHELL_KEYS } from "./shared/shellKeys";
 import { useDismissOnOutsideClick } from "./shared/useDismissOnOutsideClick";
 import { useTabAttention } from "./shared/useTabAttention";
@@ -112,7 +113,7 @@ function InstrumentReady({ initialPath, handsfreeDirty }: { initialPath: string;
   const [peopleDirty, setPeopleDirty] = useState(false);
   const [zenTarget, setZenTarget] = useState<string | null>(null);
   /* the theme follows the system until the person picks one with the l key; the choice is remembered on this device */
-  const { theme, toggleTheme } = useColorTheme();
+  const { theme, toggleTheme } = useColorTheme("light");
   /* the tab title and favicon carry Ship's messages while the person is looking elsewhere */
   useTabAttention();
   const [scale, setScale] = useState<Scale>(() => storedScale());
@@ -302,6 +303,7 @@ function InstrumentReady({ initialPath, handsfreeDirty }: { initialPath: string;
           setHelp(false);
           setNavigationOpen((open) => !open);
         }} />
+      <WelcomeCard />
       {help ? (
         <aside id="instrument-help" class="instrument-help" aria-label="Help" ref={helpRef}>
           <button type="button" class="instrument-help-search" disabled={status.state !== "connected"} aria-keyshortcuts="Control+K" onClick={openSearch}>

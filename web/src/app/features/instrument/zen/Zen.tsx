@@ -118,7 +118,7 @@ const SETTLE_STAGGER_MS = 6;
 const BROWSE_KEYS: ReadonlySet<string> = new Set(["j", "k", "g", "G", "o"]);
 const CLAIMED_KEYS: ReadonlySet<string> = new Set([...BROWSE_KEYS, ...SHELL_KEYS]);
 /* what each status-line failure was attempting, for causes the client cannot name */
-const SHIP_UNREACHABLE: ChatErrorContext = { summary: "Could not reach your ship.", action: "Check your connection, then reload the page." };
+const SHIP_UNREACHABLE: ChatErrorContext = { summary: "Could not reach your Ship.", action: "Check your connection, then reload the page." };
 const ACTIVITY_UNAVAILABLE: ChatErrorContext = { summary: "Could not load the work behind this conversation.", action: "Reload the page to try again." };
 const DECISION_FAILED: ChatErrorContext = { summary: "The decision did not go through.", action: "Try again in a moment." };
 
@@ -511,7 +511,7 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
     const row = fleetReferenceRow(reference ?? null);
     const target = row?.startsWith("target:")
       ? targetsQuery.data?.find(target => target.deviceId === row.slice(7)) : undefined;
-    if (browserControl.available && target?.instance && ["starting", "ready"].includes(target.instance.state)) {
+    if (browserControl.available && target?.kind === "browser" && target.instance && ["starting", "ready"].includes(target.instance.state)) {
       browserControl.open({ instanceId: target.instance.instanceId });
     } else navigateFleet(reference);
   }, [browserControl.available, browserControl.open, targetsQuery.data, navigateFleet]);
@@ -725,7 +725,7 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
   const say = useCallback(
     (text: string) => {
       if (!pid) {
-        setNote(zenNotice("Your ship is still starting."));
+        setNote(zenNotice("Your Ship is still starting."));
         return false;
       }
       const accepted = outbox.send({
@@ -1031,7 +1031,7 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
       <button type="button" disabled={!connected || conversation.historyFetching} onClick={() => void conversation.retryHistory()}>retry</button>
     </div>
   ) : null;
-  const empty = ready && moments.length === 0 && pid !== null && pendingHil === null;
+  const helperEmpty = ready && moments.length === 0 && pid !== null && Boolean(pidProp) && pendingHil === null;
 
   return (
     <main class={`zen${!promptFocused ? " is-browse" : ""}${draggingFiles ? " is-file-drop" : ""}${selectingText ? " has-text-selection" : ""}`} aria-label="Chat"
@@ -1046,13 +1046,8 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
       {draggingFiles && <div class="zen-drop-hint">drop to attach</div>}
 
       <div class="zen-body">
-        {empty ? (
-          <div class="zen-empty">
-            {pidProp ? <p>This helper has no messages yet.</p> : <>
-              <h1>Welcome to the ship.</h1>
-              <p class="zen-welcome-copy">I am the ship. Who are you?</p>
-            </>}
-          </div>
+        {helperEmpty ? (
+          <div class="zen-empty"><p>This helper has no messages yet.</p></div>
         ) : !ready ? (
           <div class="zen-moments" ref={momentsRef} data-scroll-edge data-scroll-edge-bottom>
             <div class="zen-content" ref={contentRef}>{historyFailure}</div>
@@ -1113,7 +1108,7 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
             </div>
           </div>
         )}
-        {!empty && ready && scrolling.awayFromBottom && <button type="button" class="zen-jump-bottom"
+        {!helperEmpty && ready && scrolling.awayFromBottom && <button type="button" class="zen-jump-bottom"
           aria-label="Jump to latest message" onClick={scrolling.follow}>↓<span> latest</span></button>}
       </div>
 
@@ -1175,7 +1170,7 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
               place={currentPlace}
               showPlace={false}
               dir="~"
-              placeholder="Message your ship"
+              placeholder="Message your Ship"
               disabled={!pid || recordingVoice}
               onSubmit={onSubmit}
               allowEmpty={extras}
@@ -1218,7 +1213,7 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
               <div class="zen-add-section" role="group" aria-labelledby="zen-add-ship-label">
                 <div class="zen-add-heading" id="zen-add-ship-label">ask Ship</div>
                 <button type="button" role="menuitem" disabled={!viewer || !canConfigure(viewer, "conversation.send")} onClick={() => stageRequest("Help me create a routine.")}>create a routine</button>
-                <button type="button" role="menuitem" disabled={!viewer || !canConfigure(viewer, "conversation.send")} onClick={() => stageRequest("Help me connect a computer to this space.")}>connect a computer</button>
+                <button type="button" role="menuitem" disabled={!viewer || !canConfigure(viewer, "conversation.send")} onClick={() => stageRequest("Help me connect a computer to my Ship.")}>connect a computer</button>
                 <button type="button" role="menuitem" disabled={!viewer || !canConfigure(viewer, "conversation.send")} onClick={() => stageRequest("Start a browser for me.")}>start a browser</button>
               </div>
             </div>
@@ -1256,7 +1251,7 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
             <ul class="zen-places" aria-label="Places and live browsers">
               {selectorPlaces.map((target) => {
                 const label = target.id === CLOUD_PLACE_ID ? CLOUD_PLACE_LABEL : target.label;
-                const viewBrowser = browserControl.available && target.instance && ["starting", "ready"].includes(target.instance.state);
+                const viewBrowser = browserControl.available && target.kind === "browser" && target.instance && ["starting", "ready"].includes(target.instance.state);
                 return (
                   <li key={target.id}>
                     <button type="button" class={`zen-place${cloudAlone ? " is-alone" : target.id === currentPlace.id ? " is-selected" : ""}`}

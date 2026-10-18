@@ -295,7 +295,7 @@ function ManagedMessengerOnboardingFlow({
               variant={candidate?.linked ? "warning" : "attention"}
               title={candidate?.linked ? "REPLACE THE EXISTING CONNECTION?" : "IS THIS YOU?"}
               text={candidate?.linked
-                ? `${displayIdentity} has an existing Ship link, which may be an old link to this space. Confirming replaces it and sends future messages to your account here.`
+                ? `${displayIdentity} is already linked to a Ship. Confirming replaces that link and sends future messages to your account here.`
                 : `${platform} reported ${displayIdentity}. Confirm only if this is the account that contacted Ship.`}
             />
             <div class="gsv-cf-framed">

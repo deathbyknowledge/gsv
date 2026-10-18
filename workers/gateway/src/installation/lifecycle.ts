@@ -6,7 +6,7 @@ import { parseInstallationId } from "./identity";
 
 export const MANAGED_LIFECYCLE_RECHECK_MS = 60_000;
 
-type SetupRecoveryDetails = { setupRecovery: true; setupUrl?: string };
+type SetupRecoveryDetails = { setupRecovery: true; setupUrl?: string; setupFeatures: string[] };
 
 export type ManagedInstallationWorkGate =
   | { allowed: true }
@@ -26,7 +26,7 @@ export function setupRecoveryDetails(
   bindings: Pick<ManagedInstallationLifecycleBindings, "GSV_OWNER_SIGNUP_URL">,
   installation: ResolvedManagedInstallation,
 ): SetupRecoveryDetails {
-  const details: SetupRecoveryDetails = { setupRecovery: true };
+  const details: SetupRecoveryDetails = { setupRecovery: true, setupFeatures: ["language"] };
   if (installation.ownerSetupRecovery && bindings.GSV_OWNER_SIGNUP_URL) {
     details.setupUrl = bindings.GSV_OWNER_SIGNUP_URL;
   }
@@ -61,7 +61,7 @@ export async function managedInstallationWorkGate(
       return { allowed: true };
     }
     if (result.state === "provisioning") {
-      return { allowed: false, code: 503, message: "Finish setting up your space", details: setupRecoveryDetails(bindings, result) };
+      return { allowed: false, code: 503, message: "Finish setting up your Ship", details: setupRecoveryDetails(bindings, result) };
     }
     return result.state === "restricted"
       ? {

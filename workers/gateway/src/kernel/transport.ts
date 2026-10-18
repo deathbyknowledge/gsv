@@ -42,9 +42,6 @@ import {
   type RouteOrigin,
 } from "./routing";
 import {
-  type ShellSessionStatus,
-} from "./shell-sessions";
-import {
   setupRequiredDetails,
   SETUP_REQUIRED_ERROR_CODE,
 } from "./connect";
@@ -111,26 +108,6 @@ function normalizeRequestCancelReason(reason: string | undefined): string {
   const normalized = reason?.trim();
   return (normalized || "Request cancelled").slice(0, MAX_REQUEST_CANCEL_REASON_LENGTH);
 }
-
-
-function shellStatusFromResult(status: string): ShellSessionStatus {
-  if (status === "completed" || status === "failed") {
-    return status;
-  }
-  return "running";
-}
-
-
-function shellStatusFromEvent(event: string): ShellSessionStatus {
-  if (event === "finished") {
-    return "completed";
-  }
-  if (event === "failed" || event === "timed_out") {
-    return "failed";
-  }
-  return "running";
-}
-
 
 
 export class Transport {
@@ -403,11 +380,11 @@ handleRes(
       this.host.cancelSchedule(route.scheduleId).catch(() => {});
     }
 
-    if (route.call === "shell.exec") {
+    if (route.call === "shell.exec" && frame.ok) {
       // SAFETY: decodeWireResponse validated frame against route.call above.
-      this.recordShellSessionFromResponse(
+      this.host.shellSessions.recordResult(
         route.targetId,
-        frame as ResponseFrame<"shell.exec">,
+        frame.data as ShellExecResult,
       );
     }
 
@@ -463,35 +440,7 @@ handleSig(
     if (!parsed.success) {
       return;
     }
-    const payload = parsed.data;
-
-    const status = shellStatusFromEvent(payload.event);
-    this.host.shellSessions.rememberDeviceSession(payload.sessionId, targetId, status, {
-      exitCode: payload.exitCode ?? null,
-      error: payload.signal ?? null,
-    });
-  }
-
-recordShellSessionFromResponse(
-    targetId: string,
-    frame: ResponseFrame<"shell.exec">,
-  ): void {
-    if (!frame.ok) {
-      return;
-    }
-
-    const data: ShellExecResult | undefined = frame.data;
-    if (!data) return;
-    const sessionId = data.sessionId?.trim() ?? "";
-    if (!sessionId) {
-      return;
-    }
-
-    const status = shellStatusFromResult(data.status);
-    this.host.shellSessions.rememberDeviceSession(sessionId, targetId, status, {
-      exitCode: data.status === "running" ? null : data.exitCode ?? null,
-      error: data.status === "failed" ? data.error : null,
-    });
+    this.host.shellSessions.recordEvent(targetId, parsed.data);
   }
 
 decodeWebSocketRequestFrame(

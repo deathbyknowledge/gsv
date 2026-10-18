@@ -52,6 +52,11 @@ For syscall arguments, result shapes, and domain behavior, see [Syscalls Referen
 | `args` | `object` | Yes | Arguments for the exact syscall named by `call` |
 | `body` | `BodyDescriptor` | No | Attached request byte stream |
 
+Filesystem operations accept an optional string `args.target`, including writes,
+edits, deletes, searches and file transfers. The Kernel authorizes that target
+before routing the request; omitting it uses the native `gsv` target. `fs.copy`
+selects its source and destination targets separately in those endpoints.
+
 ### Response Frame
 
 Success:
@@ -158,7 +163,8 @@ The gateway rejects setup-mode connections with error code `425` and details:
 ```json
 {
   "setupMode": true,
-  "next": "sys.setup"
+  "next": "sys.setup",
+  "setupFeatures": ["language"]
 }
 ```
 
@@ -175,6 +181,12 @@ to the operator's configured owner verification page. Operator-issued links omit
 that URL and require reissue by the operator. Clients discard rejected setup
 tokens and re-probe `sys.connect` before resuming; an active space then opens ordinary sign-in, while an
 unfinished space receives fresh setup authorization after owner verification.
+
+Setup-mode and provisioning responses advertise optional setup fields through
+`details.setupFeatures`. Web and Desktop probe `sys.connect` before sending an
+initial `language` in `sys.setup`, and include it only when `"language"` is
+advertised. An older Gateway without this feature still accepts account creation
+with the existing setup fields.
 
 ---
 

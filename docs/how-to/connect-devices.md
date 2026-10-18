@@ -38,7 +38,7 @@ until you choose **send**.
 ## Connect a browser
 
 Ship can also create a browser invitation and give you a download link matched to
-your Ship release. To get the current public release yourself,
+your Ship’s release. To get the current public release yourself,
 [click here to download the extension](https://gsv.space/browser).
 
 Choose **Browser** in the same flow. Download and unzip the extension, called
@@ -95,7 +95,7 @@ targets pair cancel INVITATION_ID
 ```
 
 Creation returns JSON with the invitation, expiry and setup instructions for this
-space and release. Invitations belong to the process's human owner. An existing
+Ship and release. Invitations belong to the process's human owner. An existing
 target requires explicit `--id TARGET_ID --replace`; a pending invitation can be
 cancelled before creating another if its code was lost.
 

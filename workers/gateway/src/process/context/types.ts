@@ -15,6 +15,7 @@ export type PromptAssemblyInput = {
   runtime: {
     date: string;
     timezone: string;
+    language?: string;
   };
   /** Frozen responsibility-ledger projection for this context epoch. */
   r12y: string;

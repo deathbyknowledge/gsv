@@ -707,7 +707,18 @@ function route(socket: MockSocket, id: string, call: string, args: JsonValue): s
     }
     case "sys.token.revoke": return respond(id, { revoked: true });
     case "sys.token.list": return respond(id, { tokens: [] });
-    case "sys.config.get": return respond(id, { entries: [] });
+    case "sys.config.get": {
+      const key = z.object({ key: z.string().optional() }).parse(args).key;
+      const welcomeKey = `users/${OWNER.uid}/ui/welcome_card_seen`;
+      return respond(id, { entries: key === welcomeKey && window.localStorage.getItem("gsv.mock.welcome_seen") === "1"
+        ? [{ key: welcomeKey, value: "1" }] : [] });
+    }
+    case "sys.config.set": {
+      const { key, value } = z.object({ key: z.string(), value: z.string() }).parse(args);
+      if (key !== `users/${OWNER.uid}/ui/welcome_card_seen` || value !== "1") return refuse(id, 501, `The mock gateway does not implement ${call} for ${key}.`);
+      window.localStorage.setItem("gsv.mock.welcome_seen", "1");
+      return respond(id, { ok: true });
+    }
     case "account.list": return respond(id, { accounts });
     case "sys.target.list": return respond(id, { targets });
     case "sys.ledger.list": return respond(id, { lines: [...world.ledger].reverse(), nextCursor: null });

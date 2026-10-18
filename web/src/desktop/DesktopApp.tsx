@@ -49,7 +49,8 @@ function ConnectedDesktop({ session, storage, mock, onError, onQuit, onResumeSet
       if (new URL(url).origin === accountsOrigin) onResumeSetup();
       else void openInBrowser(url).catch(() => onError("Could not open your browser."));
     }, onboarding: token ? {
-      token, discard: () => clearDesktopOnboardingToken(storage), complete: () => completeDesktopOnboarding(storage),
+      // Desktop only issues a token through its own welcome flow; operator links open in the browser.
+      token, signup: true, discard: () => clearDesktopOnboardingToken(storage), complete: () => completeDesktopOnboarding(storage),
     } : false });
     // The service is created while App renders. Defer the parent's presentation update.
     queueMicrotask(() => setService(instance));
@@ -70,7 +71,7 @@ function ConnectedDesktop({ session, storage, mock, onError, onQuit, onResumeSet
       window.localStorage.clear();
       window.location.replace("/");
     } catch {
-      onError("Could not disconnect the space. Try again.");
+      onError("Could not disconnect. Try again.");
       setConfirmation(false);
     } finally {
       disconnectPending.current = false;
@@ -81,7 +82,7 @@ function ConnectedDesktop({ session, storage, mock, onError, onQuit, onResumeSet
     <dialog ref={confirmationDialog} class="desktop-confirm" role="alertdialog" aria-label="Discard unsent work?"
       onCancel={(event) => { event.preventDefault(); if (!disconnecting) setConfirmation(false); }}
       onKeyDown={(event) => event.stopPropagation()}>
-      <p>Disconnect this space? Unsent work will be discarded.</p>
+      <p>Disconnect from this Ship? Unsent work will be discarded.</p>
       <button type="button" disabled={disconnecting} onClick={() => setConfirmation(false)}>keep working</button>
       <button type="button" disabled={disconnecting || !service} onClick={() => void disconnect()}>{disconnecting ? "disconnecting…" : "disconnect"}</button>
     </dialog>

@@ -1,47 +1,58 @@
 # Get Started
 
-A Ship space contains your accounts, conversations, memory and connected machines.
+Ship brings together your accounts, conversations, memory and connected machines.
 You can use a hosting operator or run the same stack in your own Cloudflare account.
 
-## Get a space
+## Get Ship
 
-If an operator has created a space for you, open its setup invitation and choose
-the password you'll use inside that space. Your space has one personal account;
-you do not need to choose another username. Continue to review the
-early-access disclosure and confirm the age, Terms of Service and Privacy Policy
-agreement before creating your account. This checkbox is required inside the space
-as well as on the signup email step. **Back** lets you revise your credentials.
+If an operator has created a Ship for you, open its setup invitation and choose
+your password. Each Ship has one personal account; you do not need to choose
+another username. Continue to review the early-access disclosure and confirm the
+age, Terms of Service and Privacy Policy
+agreement before creating your account. **Back** lets you revise your credentials.
 Creating your account signs you in and opens **Ship**, your conversation with your personal agent.
+The first time you enter Instrument, a welcome card from Kawah appears with the
+heading "Welcome to your Ship!" and large, readable text. Close it
+or choose **Try it out!** to dismiss it for your account across web and Desktop.
+If the welcome cannot be loaded, choose **Retry** to check again.
+Ship then greets you in a language detected from your browser. You can write first,
+ask Ship to switch languages, or change **Settings → Preferences → Response language**.
+The welcome stays in your conversation across devices.
+The card links to the community Discord; the **Feedback** button in the header
+is available when your operator offers it.
 Start with what you want to do. You can connect devices from **Fleet** and
 configure models and other connections from **Settings** when you need them.
 
-If you were given an **invite code** instead, open the operator's signup page
-(or **Create a space** in the Desktop app) and enter the code. On the email step,
-confirm that you are 18 or older, agree to the Terms of Service, and acknowledge
-the Privacy Policy before requesting a verification code. Verify your email with
-the six-digit code it sends, then choose the handle your space will live at.
+When your operator enables open registration, its signup page opens directly on
+the handle and email form. Desktop starts with **Create your Ship** and **Open
+Ship**. Choose a handle, enter your email, confirm the age, Terms and Privacy
+agreement, and select **Continue**. Your handle (`@alex`) and Ship address
+(`alex.example.com`) appear separately. Verify your email with the six-digit code,
+then pick a password and select **Activate Ship**. No registration invite is
+needed, and the terms you agreed to at signup are not asked again during setup.
 Handles use lowercase letters, numbers and hyphens; uppercase input is converted
 automatically. Validation and availability feedback appears beside the field.
-The same code resumes the same space if the browser or app is interrupted, and
-it works once. The signup page also links to the beta Desktop app for macOS and
-Linux; see [Install host apps](/how-to/install-host-apps) for the download and
-first-launch steps.
+One verified email can create one Ship.
 
-If setup is interrupted or its link expires, opening the unfinished space shows
-**Continue setup** instead of the ordinary sign-in form. Sign in with the email
-you used to claim the space, then select **Continue** beside its handle. This
-renews setup authorization for the same space; you do not need another invite.
-For a setup invitation issued directly by an operator, ask the operator to renew it.
+If creation is interrupted, retry with the same handle to resume that setup.
 
-If you are already signed in and choose **Use an invite**, confirm the same age,
-Terms and Privacy agreement on **Before you begin** before the invite is claimed.
-Resuming signup after reopening the browser or app also requires confirmation
-before claiming an invite or continuing space creation.
+A friend's invitation link opens an invitation modal on the signup page. Continue
+and verify your email; existing users choose their Ship, while new users choose a
+handle and finish setup. The invitation stays with you through setup; accept it
+in People after choosing who handles incoming messages.
 
-Owner sign-in on **My spaces** lists spaces you own. It is separate from your
-account inside each space. Signing in alone does not create a space or grant
-operator administration rights. Spaces come from an operator's setup invitation
-or an invite code.
+If setup is interrupted or its link expires, opening the unfinished Ship shows
+**Continue setup**. Sign in with the same email and select **Continue** beside its
+handle. This resumes the same Ship and renews its setup authorization. Ships
+created with an earlier signup code can resume setup this way too. For a setup
+link issued directly by an operator, ask the operator to renew it.
+
+Email sign-in through **Open Ship** lists your Ships and unfinished setups.
+It is separate from signing in to a Ship. Signing in with email alone does not
+create a Ship or grant operator administration rights. The signup page also
+links to the [Desktop app](/how-to/install-host-apps) for macOS, Windows and Linux.
+If Desktop cannot connect after setup completes, choose your Ship from the list
+to retry opening it.
 
 ## Run your own operator
 
@@ -52,9 +63,9 @@ The public composition includes CodeMode's Worker Loader, which requires
 Cloudflare Containers are not required.
 
 Deploy the common stack, issue the one-time operator bootstrap link, then create
-your first space. The same deployment can host further isolated spaces. Its
+your first Ship. The same deployment can host further isolated installations. Its
 reference inference service uses the operator's Workers AI account; you may add
-your own model credentials in a space. Model usage and infrastructure usage are
+your own model credentials in your Ship. Model usage and infrastructure usage are
 billed separately. Private H&M services are not required.
 
 Existing standalone deployments should read the
@@ -67,8 +78,8 @@ The web console is called **Instrument** and has five views:
 - **Chat** is your Ship conversation, and where you inspect what a run did.
 - **Fleet** lists your places and processes, with files opened from a place.
 - **Memory** shows your personal knowledge pages.
-- **People** holds conversations, message requests and private contacts across Ship spaces, plus your public profile.
-- **Settings** holds preferences (models), standing responsibilities, permissions, instructions, messengers, MCP connections and **Logs** for actions and their outcomes. The **sign-in** section appears only for root, for personal password resets and verified-owner linking.
+- **People** holds conversations, message requests and private contacts across Ships, plus your public profile.
+- **Settings** holds preferences (models), standing responsibilities, permissions, instructions, messengers, MCP connections and **Logs** for actions and their outcomes. The **sign-in** section appears only for root, for personal password resets and administrator recovery setup.
 
 On phones, tap **menu** in the header to switch views. A dot on the menu button
 marks unread People activity. Choosing a view
@@ -112,6 +123,10 @@ with **continue editing →** to resume it. Wider screens show the browser and r
 side by side.
 
 The Settings sidebar highlights the section you're viewing.
+Under **Appearance**, choose **Match system** to follow this device's light or
+dark appearance. An explicit theme choice applies to both sign-in and the app.
+Before you choose, **Default** keeps sign-in dark and the app light.
+
 The Desktop app also includes **Settings → voice** for its microphone, shortcuts,
 and spoken replies. Enable **Handsfree mode** to talk to your Ship from any page
 or another app while Desktop stays running and signed in. Its voice draft stays
@@ -137,7 +152,7 @@ Press `Ctrl+K` from any view to open the same search. In Chat, `/` opens search 
 mode, and `Ctrl/Cmd+F` also works while typing. Open a match to read the
 surrounding conversation. Closing search returns to your place and draft.
 
-The composer always shows **Message your ship** when empty. **send** appears beside
+The composer always shows **Message your Ship** when empty. **send** appears beside
 the prompt when you have a draft or attachments. The action row below groups **+**
 for attachments, the current place, and **record**. The place starts on **your cloud** (`gsv`).
 Open its chooser to select another destination for your next message or command;

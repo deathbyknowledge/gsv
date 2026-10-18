@@ -140,6 +140,7 @@
       "docs": [
         "docs/how-to/contact-people.md",
         "docs/how-to/connect-devices.md",
+        "docs/how-to/cloud-computers.md",
         "docs/how-to/browse-web.md",
         "docs/how-to/invite-people.md",
         "docs/architecture/ledger.md"
@@ -195,7 +196,8 @@
         "docs/how-to/voice-input.md",
         "docs/architecture/conversations.md",
         "docs/architecture/agent-loop.md",
-        "docs/how-to/connect-devices.md"
+        "docs/how-to/connect-devices.md",
+        "docs/how-to/cloud-computers.md"
       ],
       "manual": [
         "pages/agents-assistants/"
@@ -407,7 +409,8 @@
     {
       "id": "accounts",
       "paths": [
-        "workers/installations/src/**"
+        "workers/installations/src/**",
+        "web/src/signup/**"
       ],
       "docs": [
         "docs/architecture/installation-directory.md",
@@ -433,6 +436,7 @@
       ],
       "docs": [
         "docs/how-to/cloud-browsers.md",
+        "docs/how-to/cloud-computers.md",
         "docs/reference/syscalls.md"
       ],
       "manual": [

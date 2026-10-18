@@ -39,12 +39,12 @@ export function OwnerAccess() {
     setBusy(true); setError(null);
     try {
       await navigate(await startOwnerLink(client));
-    } catch (cause) { setError(cause instanceof Error ? cause.message : "Owner linking failed"); }
+    } catch (cause) { setError(cause instanceof Error ? cause.message : "Could not set up account recovery."); }
     finally { setBusy(false); }
   };
-  return <section class="settings-form"><h2>Space ownership</h2>
-    <p>Link your verified owner identity so you can recover root for your Ship if you lose access. This leaves local accounts and credentials unchanged.</p>
+  return <section class="settings-form"><h2>Account recovery</h2>
+    <p>Verify your identity to recover administrator access if you lose it.</p>
     {error && <p class="settings-error" role="alert">{error}</p>}
-    <button class="ibtn" type="button" disabled={!connected || busy} onClick={() => void link()}>{busy ? "opening owner verification…" : "link owner identity"}</button>
+    <button class="ibtn" type="button" disabled={!connected || busy} onClick={() => void link()}>{busy ? "opening verification…" : "set up recovery"}</button>
   </section>;
 }

@@ -6,30 +6,35 @@ function fixture(authority: string | undefined = "instance-notifications", state
   const ctx = createExecutionContext();
   Object.defineProperty(ctx, "props", { value: authority ? { authority } : {} });
   const instancesChanged = vi.fn(async () => {});
-  const getByName = vi.fn(() => ({ instancesChanged }));
+  const instanceExecChanged = vi.fn(async () => {});
+  const getByName = vi.fn(() => ({ instancesChanged, instanceExecChanged }));
   const resolveInstallation = vi.fn(async (installationId: string) => ({ found, installationId, state }));
   // SAFETY: The entrypoint reads only these binding props, trusted directory records and Kernel methods.
   const entrypoint = new InstancesGatewayEntrypoint(ctx as never, { KERNEL: { getByName }, INSTALLATION_DIRECTORY: { resolveInstallation } } as never);
-  return { entrypoint, getByName, instancesChanged, resolveInstallation };
+  return { entrypoint, getByName, instancesChanged, instanceExecChanged, resolveInstallation };
 }
 
 describe("instance change notifications", () => {
   const change = { installationId: "inst_browser", ownerUid: 1000 };
+  const execChange = { ...change, instanceId: "instance", targetId: "cloud:linux", sessionId: "shell", event: "finished" as const, exitCode: 0 };
   it.each(["", "adapter", "installation-owner-recovery"])("rejects %s authority before directory or Kernel access", async authority => {
     const f = fixture(authority);
     await expect(f.entrypoint.instancesChanged(change)).rejects.toThrow("binding authority");
+    await expect(f.entrypoint.instanceExecChanged(execChange)).rejects.toThrow("binding authority");
     expect(f.resolveInstallation).not.toHaveBeenCalled();
     expect(f.getByName).not.toHaveBeenCalled();
   });
   it("does not allocate a Kernel for unknown, restricted or retired installations", async () => {
     for (const f of [fixture("instance-notifications", "active", false), fixture("instance-notifications", "restricted"), fixture("instance-notifications", "retained")]) {
       await f.entrypoint.instancesChanged(change);
+      await f.entrypoint.instanceExecChanged(execChange);
       expect(f.getByName).not.toHaveBeenCalled();
     }
   });
   it("rejects invalid owner identities before addressing the directory", async () => {
     const f = fixture();
     await expect(f.entrypoint.instancesChanged({ ...change, ownerUid: -1 })).rejects.toThrow();
+    await expect(f.entrypoint.instanceExecChanged({ ...execChange, ownerUid: -1 })).rejects.toThrow();
     expect(f.resolveInstallation).not.toHaveBeenCalled();
   });
   it("routes the stored installation identity and exact owner without browser content", async () => {
@@ -37,5 +42,16 @@ describe("instance change notifications", () => {
     await f.entrypoint.instancesChanged(change);
     expect(f.getByName).toHaveBeenCalledWith(change.installationId);
     expect(f.instancesChanged).toHaveBeenCalledWith(change.ownerUid);
+  });
+
+  it("routes bounded instance session events without accepting shell output", async () => {
+    const f = fixture();
+    const withOutput = { ...execChange, output: "private" };
+    await expect(f.entrypoint.instanceExecChanged(withOutput)).rejects.toThrow();
+    expect(f.resolveInstallation).not.toHaveBeenCalled();
+    await f.entrypoint.instanceExecChanged(execChange);
+    expect(f.getByName).toHaveBeenCalledWith(change.installationId);
+    const { installationId: _installationId, ...event } = execChange;
+    expect(f.instanceExecChanged).toHaveBeenCalledExactlyOnceWith(event);
   });
 });
