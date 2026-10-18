@@ -17,6 +17,7 @@ describe("spoken Markdown", () => {
     expect(chunks[0]).toBe("Dr. Smith arrives at 8.30.");
     expect(chunks).toContain("Then we leave.");
     expect(chunks.every((chunk) => chunk.length <= 600)).toBe(true);
+    expect(speechChunks("Dr. ".repeat(200)).every((chunk) => chunk.length <= 600)).toBe(true);
     expect(speechChunks("![image](https://example.com/image.png)\n---")).toEqual([]);
   });
 
@@ -26,5 +27,22 @@ describe("spoken Markdown", () => {
     expect(text).toContain("Hay un ejemplo de código en el chat.");
     expect(text).toContain("Hay una tabla en el chat.");
     expect(text).not.toMatch(/https|private-command|There is/);
+  });
+
+  it("reads the start of a reply with too many sentences and points to the rest in Chat", () => {
+    expect(speechChunks("Ready. ".repeat(256))).toHaveLength(256);
+    const chunks = speechChunks("Ready. ".repeat(300));
+    expect(chunks).toHaveLength(256);
+    expect(chunks[0]).toBe("Ready.");
+    expect(chunks.at(-1)).toBe("You can read the rest in the chat.");
+  });
+
+  it("bounds UTF-8 bytes without splitting Unicode characters", () => {
+    const chunks = speechChunks(("á".repeat(599) + "🚀 ").repeat(150), "es");
+    expect(chunks.at(-1)).toBe("Puedes leer el resto en el chat.");
+    expect(chunks.length).toBeLessThanOrEqual(256);
+    const encoder = new TextEncoder(), decoder = new TextDecoder();
+    expect(chunks.every((chunk) => [...chunk].length <= 600 && decoder.decode(encoder.encode(chunk)) === chunk)).toBe(true);
+    expect(chunks.reduce((total, chunk) => total + encoder.encode(chunk).length, 0)).toBeLessThanOrEqual(128 * 1024);
   });
 });

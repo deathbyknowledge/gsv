@@ -2,8 +2,8 @@ import { marked, type Token, type Tokens } from "marked";
 import type { SpeechLanguage } from "./NativeSpeech";
 
 const labels = {
-  en: { code: "There is a code example in the chat.", table: "There is a table in the chat.", link: "the linked page", longCode: "the code in the chat" },
-  es: { code: "Hay un ejemplo de código en el chat.", table: "Hay una tabla en el chat.", link: "la página enlazada", longCode: "el código del chat" },
+  en: { code: "There is a code example in the chat.", table: "There is a table in the chat.", link: "the linked page", longCode: "the code in the chat", remainder: "You can read the rest in the chat." },
+  es: { code: "Hay un ejemplo de código en el chat.", table: "Hay una tabla en el chat.", link: "la página enlazada", longCode: "el código del chat", remainder: "Puedes leer el resto en el chat." },
 };
 
 function readable(tokens: readonly Token[] = [], text: typeof labels.en): string {
@@ -31,22 +31,41 @@ export function speechChunks(markdown: string, language: SpeechLanguage = "en"):
     .replace(/[ \t]+/g, " ").replace(/\n+/g, "\n").trim();
   if (!text) return [];
   const chunks: string[] = [];
+  const encoder = new TextEncoder();
+  const remainder = labels[language].remainder;
+  const remainderBytes = encoder.encode(remainder).length;
+  let bytes = 0;
+  const append = (chunk: string): boolean => {
+    const size = encoder.encode(chunk).length;
+    // Match SpeechCommand::validate in host/apps/desktop/src/speech.rs.
+    if (chunks.length === 256 || bytes + size > 128 * 1024) {
+      while (chunks.length === 256 || bytes + remainderBytes > 128 * 1024) {
+        bytes -= encoder.encode(chunks.pop()!).length;
+      }
+      chunks.push(remainder);
+      return false;
+    }
+    chunks.push(chunk);
+    bytes += size;
+    return true;
+  };
   const segmenter = new Intl.Segmenter(language, { granularity: "sentence" });
   for (const paragraph of text.split("\n")) {
     let prefix = "";
     for (const { segment } of segmenter.segment(paragraph)) {
       let remaining = prefix + segment.trim();
       prefix = "";
-      if (/\b(?:Dr|Mr|Mrs|Ms|Prof|Sr|Sra|Srta|Jr|St)\.$/i.test(remaining)) { prefix = remaining + " "; continue; }
       while (remaining.length > 600) {
         const space = remaining.lastIndexOf(" ", 600);
-        const end = space > 100 ? space : 600;
-        chunks.push(remaining.slice(0, end));
+        let end = space > 100 ? space : 600;
+        if (remaining.charCodeAt(end - 1) >= 0xd800 && remaining.charCodeAt(end - 1) <= 0xdbff) end--;
+        if (!append(remaining.slice(0, end))) return chunks;
         remaining = remaining.slice(end).trim();
       }
-      if (remaining) chunks.push(remaining);
+      if (/\b(?:Dr|Mr|Mrs|Ms|Prof|Sr|Sra|Srta|Jr|St)\.$/i.test(remaining)) { prefix = remaining + " "; continue; }
+      if (remaining && !append(remaining)) return chunks;
     }
-    if (prefix.trim()) chunks.push(prefix.trim());
+    if (prefix.trim() && !append(prefix.trim())) return chunks;
   }
   return chunks;
 }

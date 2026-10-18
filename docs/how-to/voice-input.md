@@ -98,6 +98,7 @@ committed visible replies are read; opening history or reconnecting does not
 replay earlier messages. Replies arriving while the microphone is recording
 are left in Chat without being spoken. Code blocks and tables get a short cue
 to inspect Chat; links use their labels. The original message stays unchanged.
+Very long replies stop with a spoken cue to read the rest in Chat.
 Kokoro runs locally. Desktop includes the speech runtime; its first use downloads
 and verifies the model, then reuses the local cache. Spoken replies and the voice preview follow **Settings →
 Preferences → Response language**, using Heart for English and Dora for Spanish;

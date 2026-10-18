@@ -316,5 +316,12 @@ mod tests {
             .is_err());
         assert!(command("en", vec!["a".repeat(701)]).validate().is_err());
         assert!(command("en", vec![]).validate().is_err());
+        assert!(command("en", vec!["Ready.".into(); 256]).validate().is_ok());
+        assert!(command("en", vec!["Ready.".into(); 257])
+            .validate()
+            .is_err());
+        assert!(command("es", vec!["á".repeat(600); 110])
+            .validate()
+            .is_err());
     }
 }
