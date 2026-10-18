@@ -129,9 +129,14 @@ class Speaker:
                 return True
             if self.stream is None:
                 import sounddevice as sd
-                self.stream = sd.OutputStream(samplerate=RATE, channels=1, dtype="float32",
-                                              blocksize=480, latency="low", callback=self.output)
-                self.stream.start()
+                stream = sd.OutputStream(samplerate=RATE, channels=1, dtype="float32",
+                                         blocksize=480, latency="low", callback=self.output)
+                try:
+                    stream.start()
+                except Exception:
+                    stream.close()
+                    raise
+                self.stream = stream
             self.audio.append((generation, request_id, samples))
             return True
 

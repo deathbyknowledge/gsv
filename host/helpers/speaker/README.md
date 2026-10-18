@@ -28,8 +28,9 @@ shutdown and kills and reaps the helper if it does not exit.
 Generation and playback use separate workers. Cancellation clears queued text
 and audio and fences the current inference result; the audio callback observes
 that boundary on its next 20 ms block. At most three generated chunks wait for
-playback. `--silent` exercises synthesis and lifecycle without opening an audio
-device. This does not measure speaker latency.
+playback. A failed output-device start closes that stream so a later command
+can retry with a fresh one. `--silent` exercises synthesis and lifecycle without
+opening an audio device. This does not measure speaker latency.
 
 Model: <https://huggingface.co/hexgrad/Kokoro-82M> (Apache 2.0).
 Runtime: <https://github.com/thewh1teagle/kokoro-onnx> (MIT).

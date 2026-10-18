@@ -39,7 +39,32 @@ class SpeakerProtocol(unittest.TestCase):
             emit.assert_any_call("error", error="command_too_large")
 
 
-class SpeakerCancellation(unittest.TestCase):
+class SpeakerPlayback(unittest.TestCase):
+    def test_failed_output_start_closes_the_stream_and_retry_plays(self):
+        failed = Mock()
+        failed.start.side_effect = RuntimeError("output unavailable")
+        recovered = Mock()
+        speaker = Speaker(None)
+        samples = np.ones(100, dtype=np.float32)
+        try:
+            with patch("sounddevice.OutputStream", side_effect=[failed, recovered]):
+                with self.assertRaisesRegex(RuntimeError, "output unavailable"):
+                    speaker.append(0, "failed", samples)
+                failed.close.assert_called_once()
+                self.assertIsNone(speaker.stream)
+                self.assertFalse(speaker.audio)
+                self.assertTrue(speaker.append(0, "retry", samples))
+                self.assertTrue(speaker.append(0, "retry", None))
+                recovered.start.assert_called_once()
+                output = np.empty((480, 1), dtype=np.float32)
+                speaker.output(output, 480, None, None)
+                self.assertTrue(np.all(output[:100] == 1))
+                self.assertTrue(np.all(output[100:] == 0))
+                self.assertFalse(speaker.audio)
+        finally:
+            speaker.close()
+        recovered.close.assert_called_once()
+
     def test_cancel_drops_buffered_audio_at_the_next_callback(self):
         speaker = Speaker(None)
         speaker.stream = Mock()
