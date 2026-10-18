@@ -11,30 +11,33 @@ export function WelcomeCard() {
   const [dismissing, setDismissing] = useState(false);
   const [dismissError, setDismissError] = useState(false);
   const pendingDismissal = useRef(false);
-  const checked = useRef(false);
+  const [loadState, setLoadState] = useState<"pending" | "ready" | "failed">("pending");
 
   useEffect(() => {
-    if (!connected || checked.current) return;
+    if (!connected || loadState !== "pending") return;
     let cancelled = false;
     void (async () => {
       try {
         const { accounts } = await client.account.list({});
         const uid = accounts.find((account) => account.relation === "self")?.uid;
         if (uid === undefined || uid < 1000) {
-          if (!cancelled) checked.current = true;
+          if (!cancelled) setLoadState("ready");
           return;
         }
         const key = `users/${uid}/${WELCOME_SEEN}`;
         const { entries } = await client.sys.config.get({ key });
         if (cancelled) return;
-        checked.current = true;
+        setLoadState("ready");
         if (!entries.some((entry) => entry.key === key && entry.value === "1")) setOwnerUid(uid);
       } catch (error) {
-        if (!cancelled) console.error("Could not load the welcome card state", error);
+        if (!cancelled) {
+          console.error("Could not load the welcome card state", error);
+          setLoadState("failed");
+        }
       }
     })();
     return () => { cancelled = true; };
-  }, [client, connected]);
+  }, [client, connected, loadState]);
 
   const dismiss = async () => {
     if (ownerUid === null || pendingDismissal.current) return;
@@ -54,6 +57,10 @@ export function WelcomeCard() {
     }
   };
 
+  if (loadState === "failed") return <aside class="welcome-card">
+    <p role="alert">Couldn't load the welcome.</p>
+    <button type="button" class="welcome-card-try" disabled={!connected} onClick={() => setLoadState("pending")}>Retry</button>
+  </aside>;
   if (ownerUid === null) return null;
   return <aside class="welcome-card" role="dialog" aria-labelledby="welcome-card-title">
     <button type="button" class="welcome-card-close" aria-label="Dismiss welcome" disabled={dismissing} onClick={dismiss}>×</button>

@@ -63,6 +63,7 @@ views for a personal human account. Closing it or choosing Try it out saves a
 per-user UI config flag, so the card stays dismissed across web and Desktop
 sessions. It never appears during setup or for root. The Discord link opens
 separately, and the existing Feedback control remains in the header when available.
+If its saved state cannot be loaded, the card offers Retry without requiring a new session.
 
 Chat, Fleet, Memory and Settings mount on their first visit and retain their local
 state until the signed-in session ends. Moving between them keeps drafts,

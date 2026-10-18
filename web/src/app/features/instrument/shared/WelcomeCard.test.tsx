@@ -53,6 +53,28 @@ afterEach(async () => {
 });
 
 describe("welcome card", () => {
+  it.each(["account.list", "sys.config.get"])("offers a retry after %s fails without disconnecting", async (failedCall) => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    const originalRequest = request.getMockImplementation()!;
+    let fail = true;
+    request.mockImplementation(async (...args) => {
+      if (args[0] === failedCall && fail) throw new Error("temporarily unavailable");
+      return originalRequest(...args);
+    });
+    root = createTestRoot("welcome recovery");
+    await root.render(<GatewayProvider><Harness /></GatewayProvider>);
+    await vi.waitFor(() => expect(collectText(tree)).toContain("Couldn't load the welcome."));
+    const retry = () => collectNodes(tree).find((node) => node.type === "button" && collectText(node.props.children) === "Retry")!.props.onClick!();
+    await act(async () => { retry(); });
+    await vi.waitFor(() => expect(error).toHaveBeenCalledTimes(2));
+    expect(collectText(tree)).toContain("Couldn't load the welcome.");
+    fail = false;
+    await act(async () => { retry(); });
+    await vi.waitFor(() => expect(collectText(tree)).toContain("Welcome to your Ship!"));
+    expect(request.mock.calls.filter(([call]) => call === failedCall)).toHaveLength(3);
+    expect(request).not.toHaveBeenCalledWith("sys.config.set", expect.anything());
+  });
+
   it("shows the message and Discord link, then stays dismissed across sessions for that person", async () => {
     await mount();
     expect(collectText(tree)).toContain("I'm Kawah, one of the founders of Ship.");
