@@ -47,7 +47,7 @@ export function DesktopVoiceSettings({ active, onDirty }: { active: boolean; onD
     <label class="settings-check"><input type="checkbox" checked={preferences.enabled}
       onChange={(event) => setPreferences({ enabled: event.currentTarget.checked })} />Enable handsfree mode</label>
     {preferences.enabled && <>
-      <p class="settings-muted">Talk to your Ship from any page or while using another app. Keep Desktop running and signed in.</p>
+      <p class="settings-muted">Talk to your Ship and hear its replies aloud.</p>
       <label>Shortcut mode
         <select value={preferences.mode} onChange={(event) => setPreferences({ mode: event.currentTarget.value === "hold" ? "hold" : "toggle" })}>
           <option value="toggle">Press to start · press again to send</option><option value="hold">Hold to talk · release to send</option>
