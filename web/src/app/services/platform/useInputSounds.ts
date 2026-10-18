@@ -1,13 +1,7 @@
-import { useEffect, useRef, useState } from "preact/hooks";
+import { useEffect, useRef } from "preact/hooks";
 import type { NativeSnapshot } from "./PlatformProvider";
-import { playInputCue, soundPreferences, subscribeSoundPreferences } from "./inputSounds";
+import { playInputCue } from "./inputSounds";
 import { useNativeSpeech } from "./NativeSpeech";
-
-export function useSoundPreferences() {
-  const [preferences, setPreferences] = useState(soundPreferences);
-  useEffect(() => subscribeSoundPreferences(() => setPreferences(soundPreferences())), []);
-  return preferences;
-}
 
 /** Only acknowledged actions and state transitions make sounds; pose updates stay silent. */
 export function useNativeSoundFeedback(snapshot: NativeSnapshot | null) {

@@ -50,7 +50,7 @@ listening. Editing dictated text stops dictation so later partials cannot undo
 your correction.
 
 Open **Settings → voice**, or **voice settings** from the recording panel, to
-choose your microphone, voice shortcuts, spoken replies and sounds. This section
+choose your microphone, voice shortcuts and spoken replies. This section
 appears only in the Desktop app and its preferences are stored on this computer.
 The selected microphone applies to dictation and voice shortcuts. Opening these
 settings stops an active recording and keeps the text already in your draft.
@@ -63,9 +63,9 @@ editing. Desktop does not save the raw audio for retry, so speech not yet
 transcribed may need repeating. See
 [Install Host Applications](/how-to/install-host-apps) for setup.
 
-## Talk from another app (Desktop preview)
+## Handsfree mode (Desktop preview)
 
-In **Settings → voice**, enable **voice shortcuts and spoken replies**. Leave Chat
+In **Settings → voice**, enable **Handsfree mode**. Leave Chat
 selected; the Ship window may stay behind your game or another application.
 The default talk shortcut is **Option+Space** on macOS and
 **Ctrl+Shift+Space** on Windows and Linux: press once to start recording and

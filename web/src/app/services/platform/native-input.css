@@ -24,10 +24,6 @@
   .native-input-panel { padding: 16px; }
 }
 
-.native-sound-settings { display: flex; flex-wrap: wrap; gap: 8px 18px; padding: 10px 0 0; margin: 18px 0 0; border: 0; border-top: 1px solid var(--border); font-size: 11px; color: var(--text-dim); }
-.native-sound-settings legend { padding-right: 8px; color: var(--faint); }
-.native-sound-settings label { display: flex; align-items: center; gap: 7px; cursor: pointer; }
-.native-sound-settings input { accent-color: var(--accent); margin: 0; }
 .native-shortcut-fields { display: grid; gap: 12px; margin-top: 18px; }
 .native-shortcut-field { display: grid; gap: 6px; color: var(--text-dim); }
 .native-shortcut-fields > button { justify-self: start; text-decoration: underline; text-underline-offset: 3px; }

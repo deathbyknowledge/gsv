@@ -11,17 +11,7 @@ try {
     .parse(JSON.parse(localStorage.getItem(storageKey) ?? "null"));
   preferences = { keys: stored.keys, voice: stored.voice ?? stored.gestures ?? true };
 } catch { /* Sound preferences are optional when local storage is unavailable. */ }
-const listeners = new Set<() => void>();
 export const soundPreferences = () => preferences;
-export const subscribeSoundPreferences = (listener: () => void) => {
-  listeners.add(listener);
-  return () => { listeners.delete(listener); };
-};
-export function setSoundPreferences(next: SoundPreferences) {
-  preferences = next;
-  try { localStorage.setItem(storageKey, JSON.stringify(next)); } catch { /* Keep the session preference. */ }
-  for (const listener of listeners) listener();
-}
 let context: AudioContext | null = null;
 const buffers = new Map<InputCue, AudioBuffer>();
 let lastKey = -Infinity, lastNavigation = -Infinity;

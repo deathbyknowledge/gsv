@@ -5,9 +5,6 @@
 .settings-voice .native-shortcut-fields > button { grid-column: 1 / -1; text-decoration: none; }
 .settings-voice .native-shortcut-recorder { min-height: 42px; }
 .settings-voice .native-shortcut-recorder kbd { border: 0; padding: 0; font: inherit; }
-.settings-voice .native-sound-settings { display: grid; gap: 0; margin-top: 2.5rem; }
-.settings-voice .native-sound-settings legend { color: var(--text); margin-bottom: 1.5rem; font: 1rem var(--gsv-font-mono); }
-.settings-voice .native-sound-settings label { flex-direction: row; align-items: center; }
 @container instrument (max-width: 650px) {
   .settings-voice .native-shortcut-fields { grid-template-columns: minmax(0, 1fr); }
 }

@@ -113,7 +113,8 @@ side by side.
 
 The Settings sidebar highlights the section you're viewing.
 The Desktop app also includes **Settings → voice** for its microphone, shortcuts,
-spoken replies and sounds. These preferences stay on that computer. Chat's
+and spoken replies. Enable **Handsfree mode** to use the voice shortcut. These
+preferences stay on that computer. Chat's
 **voice** panel keeps the recording controls and a link to those settings.
 
 Open **People** to try making plans or working together with someone on Ship.

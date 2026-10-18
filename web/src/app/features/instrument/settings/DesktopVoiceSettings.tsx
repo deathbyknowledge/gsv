@@ -1,5 +1,4 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
-import { InputSoundSettings } from "../../../services/platform/InputSoundSettings";
 import { useNativeSpeech } from "../../../services/platform/NativeSpeech";
 import { ShortcutRecorder } from "../../../services/platform/ShortcutRecorder";
 import { shortcutDefaults } from "../../../services/platform/shortcutKeys";
@@ -42,9 +41,9 @@ export function DesktopVoiceSettings({ active, onDirty }: { active: boolean; onD
     {(microphone.error || snapshot?.notice) && <p class="settings-error" role="alert">{microphone.error || snapshot?.notice}</p>}
     {!snapshot && <button type="button" class="settings-text-action" onClick={microphone.reconnect}>reconnect microphone controls</button>}
 
-    <h2>Talk from other apps</h2>
+    <h2>Handsfree mode</h2>
     <label class="settings-check"><input type="checkbox" checked={preferences.enabled}
-      onChange={(event) => setPreferences({ enabled: event.currentTarget.checked })} />Enable voice shortcuts and spoken replies</label>
+      onChange={(event) => setPreferences({ enabled: event.currentTarget.checked })} />Enable handsfree mode</label>
     {preferences.enabled && <>
       <p class="settings-muted">Keep Chat open in the background to talk without switching windows.</p>
       <label>Shortcut mode
@@ -88,6 +87,5 @@ export function DesktopVoiceSettings({ active, onDirty }: { active: boolean; onD
       </div>
       {speech.error && <p class="settings-error" role="alert">{speech.error}</p>}
     </>}
-    <InputSoundSettings />
   </section>;
 }
