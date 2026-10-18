@@ -206,6 +206,8 @@ already displayed in the prompt. Raw local audio is not retained for replay.
 The authenticated Desktop session owns one input lease. Leaving Chat stops
 local dictation without releasing that lease; Settings uses it for microphone
 discovery. Suspension expires the lease, and session teardown releases it.
+Starting with a saved microphone discovers it when needed and passes its exact
+ID and name to the helper. Cancellation revokes pending discovery and capture together.
 
 Desktop provides native global shortcuts and a supervised local
 Kokoro speaker helper. Rust registers shortcuts through the platform backend

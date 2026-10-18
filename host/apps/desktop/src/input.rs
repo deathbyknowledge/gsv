@@ -188,6 +188,7 @@ struct State {
     next_id: u64,
     events: VecDeque<(Instant, InputEvent)>,
     device_request: Option<u64>,
+    pending_voice_device: Option<String>,
     delivery: Option<Delivery>,
 }
 
@@ -212,6 +213,7 @@ impl State {
             events: VecDeque::new(),
 
             device_request: None,
+            pending_voice_device: None,
 
             delivery: None,
         }
@@ -233,6 +235,9 @@ impl State {
     }
 
     fn cancel_voice(&mut self) {
+        if self.pending_voice_device.take().is_some() {
+            self.device_request = None;
+        }
         if let Some(voice) = self.snapshot.voice.take() {
             let _ = self.voice_commands.send(VoiceCommand::Cancel {
                 request_id: voice.request_id,
@@ -358,20 +363,26 @@ impl State {
         }
         if device_id
             .as_ref()
-            .is_some_and(|id| !self.snapshot.devices.iter().any(|d| &d.id == id))
+            .is_some_and(|id| transcription::normalized_device_id(id).is_none())
         {
             return Err("Select an available microphone.".into());
         }
         let request_id = self.id();
-        self.voice_commands
-            .send(VoiceCommand::Start {
-                request_id,
-                locale: "auto".into(),
-                device: None,
-                exact_device: device_id.is_some(),
-                device_id,
-            })
-            .map_err(|_| "Voice helper is unavailable.")?;
+        let device = self
+            .snapshot
+            .devices
+            .iter()
+            .find(|device| Some(&device.id) == device_id.as_ref());
+        if device_id.is_some() && device.is_none() {
+            self.voice_commands
+                .send(VoiceCommand::ListDevices { request_id })
+                .map_err(|_| "Voice helper is unavailable.")?;
+            self.device_request = Some(request_id);
+            self.pending_voice_device = device_id;
+        } else {
+            self.start_capture(request_id, device)
+                .map_err(|code| voice_error_message(code, None))?;
+        }
         self.snapshot.voice = Some(VoiceState {
             request_id,
             segment_id: 0,
@@ -393,6 +404,22 @@ impl State {
             text: String::new(),
         });
         Ok(())
+    }
+
+    fn start_capture(
+        &self,
+        request_id: u64,
+        device: Option<&Device>,
+    ) -> Result<(), VoiceErrorCode> {
+        self.voice_commands
+            .send(VoiceCommand::Start {
+                request_id,
+                locale: "auto".into(),
+                device: device.map(|device| device.name.clone()),
+                device_id: device.map(|device| device.id.clone()),
+                exact_device: device.is_some(),
+            })
+            .map_err(|_| VoiceErrorCode::HelperUnavailable)
     }
 
     fn segment(
@@ -429,6 +456,10 @@ impl State {
             .ok_or("This dictation has ended.")?;
         if voice.pending.is_some() || !self.events.is_empty() {
             return Err("Wait for the voice segment.".into());
+        }
+        if self.pending_voice_device.is_some() {
+            self.cancel_voice();
+            return Ok(());
         }
         self.voice_commands
             .send(VoiceCommand::Stop { request_id })
@@ -485,6 +516,21 @@ impl State {
                         is_default: d.is_default,
                     })
                     .collect();
+                if let Some(device_id) = self.pending_voice_device.take() {
+                    let result = self
+                        .snapshot
+                        .devices
+                        .iter()
+                        .find(|device| device.id == device_id)
+                        .ok_or(VoiceErrorCode::MicrophoneUnavailable)
+                        .and_then(|device| self.start_capture(request_id, Some(device)));
+                    if let Err(code) = result {
+                        self.voice_event(VoiceEvent::Error {
+                            request_id: Some(request_id),
+                            code,
+                        });
+                    }
+                }
             }
             VoiceEvent::Error { request_id, code } => {
                 if request_id.is_none() || request_id == self.device_request {
@@ -768,6 +814,124 @@ mod tests {
         let mut state = State::new(commands);
         state.snapshot.lease = "view-one".into();
         (state, receiver)
+    }
+
+    #[test]
+    fn saved_microphone_starts_after_cold_discovery_and_reuses_its_exact_selector() {
+        let (mut state, commands) = attached();
+        state.start_voice(Some("usb:mic".into())).unwrap();
+        let request_id = state.snapshot.voice.as_ref().unwrap().request_id;
+        assert_eq!(
+            commands.try_recv().unwrap(),
+            VoiceCommand::ListDevices { request_id }
+        );
+        assert!(state.snapshot().devices_loading);
+        state.voice_event(VoiceEvent::Devices {
+            request_id,
+            devices: vec![transcription::VoiceDevice {
+                id: "usb:mic".into(),
+                name: "USB microphone".into(),
+                is_default: false,
+            }],
+        });
+        assert!(!state.snapshot().devices_loading);
+        assert_eq!(
+            commands.try_recv().unwrap(),
+            VoiceCommand::Start {
+                request_id,
+                locale: "auto".into(),
+                device: Some("USB microphone".into()),
+                device_id: Some("usb:mic".into()),
+                exact_device: true,
+            }
+        );
+        state.cancel_voice();
+        assert_eq!(
+            commands.try_recv().unwrap(),
+            VoiceCommand::Cancel { request_id }
+        );
+        state.start_voice(Some("usb:mic".into())).unwrap();
+        assert!(matches!(commands.try_recv().unwrap(), VoiceCommand::Start {
+            device: Some(name), device_id: Some(id), exact_device: true, ..
+        } if name == "USB microphone" && id == "usb:mic"));
+    }
+
+    #[test]
+    fn missing_saved_microphone_or_failed_discovery_never_falls_back_to_default() {
+        for discovery_fails in [false, true] {
+            let (mut state, commands) = attached();
+            state.start_voice(Some("usb:missing".into())).unwrap();
+            let request_id = state.snapshot.voice.as_ref().unwrap().request_id;
+            assert_eq!(
+                commands.try_recv().unwrap(),
+                VoiceCommand::ListDevices { request_id }
+            );
+            state.voice_event(if discovery_fails {
+                VoiceEvent::Error {
+                    request_id: Some(request_id),
+                    code: VoiceErrorCode::HelperUnavailable,
+                }
+            } else {
+                VoiceEvent::Devices {
+                    request_id,
+                    devices: vec![transcription::VoiceDevice {
+                        id: "usb:other".into(),
+                        name: "Other microphone".into(),
+                        is_default: true,
+                    }],
+                }
+            });
+            assert!(state.snapshot.voice.is_none());
+            assert!(state.snapshot.notice.is_some());
+            assert!(!state.snapshot().devices_loading);
+            assert!(state.pending_voice_device.is_none());
+            assert!(commands
+                .try_iter()
+                .all(|command| matches!(command, VoiceCommand::Cancel { .. })));
+        }
+    }
+
+    #[test]
+    fn ending_capture_during_discovery_cannot_start_a_microphone_later() {
+        for action in ["cancel", "stop", "finish", "reset"] {
+            let (mut state, commands) = attached();
+            state.start_voice(Some("usb:mic".into())).unwrap();
+            let request_id = state.snapshot.voice.as_ref().unwrap().request_id;
+            assert_eq!(
+                commands.try_recv().unwrap(),
+                VoiceCommand::ListDevices { request_id }
+            );
+            state.events.clear();
+            match action {
+                "cancel" => state.command(InputCommand::Cancel).unwrap(),
+                "stop" => state.command(InputCommand::Stop { request_id }).unwrap(),
+                "finish" => state.command(InputCommand::Finish { request_id }).unwrap(),
+                "reset" => state.reset(),
+                _ => unreachable!(),
+            }
+            assert_eq!(
+                commands.try_recv().unwrap(),
+                VoiceCommand::Cancel { request_id }
+            );
+            assert!(state.snapshot.voice.is_none());
+            assert!(!state.snapshot().devices_loading);
+            state.start_voice(None).unwrap();
+            let next = state.snapshot.voice.as_ref().unwrap().request_id;
+            assert!(
+                matches!(commands.try_recv().unwrap(), VoiceCommand::Start { request_id, .. } if request_id == next)
+            );
+            state.voice_event(VoiceEvent::Devices {
+                request_id,
+                devices: vec![transcription::VoiceDevice {
+                    id: "usb:mic".into(),
+                    name: "USB microphone".into(),
+                    is_default: false,
+                }],
+            });
+            assert!(commands.try_recv().is_err());
+            assert_eq!(state.snapshot.voice.as_ref().unwrap().request_id, next);
+            assert!(state.snapshot.devices.is_empty());
+        }
     }
 
     #[test]
