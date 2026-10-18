@@ -1,7 +1,7 @@
 # Deploy Ship with Alchemy
 
 The public Alchemy stack deploys one operator environment into your Cloudflare
-account. It serves isolated spaces with public Accounts, Gateway and inference
+account. It serves isolated installations with public Accounts, Gateway and inference
 Workers, R2 storage and ripgit. H&M services are optional. The root deployment
 commands use the `operator` stage; they do not upgrade an existing singleton
 deployment in place.
@@ -105,17 +105,17 @@ Both deployment commands build the deployment manifest and Worker/web bundles
 in `dist/cloudflare/` before invoking Alchemy. You can run `npm run deployment:build`
 to produce these files without deploying. Keep the same Alchemy state, account,
 resource names and `operator` stage for later updates. The default administration origin is
-`https://accounts.<domain>`; space handles route under `<handle>.<domain>`.
+`https://accounts.<domain>`; Ship handles route under `<handle>.<domain>`.
 
 The [operator configuration reference](./operate-gsv.md) lists optional inputs,
 including `GSV_ADMIN_ORIGIN`, the Worker name prefix, Cloudflare Access and
 inference limits. The default inference service uses the operator's Workers AI
-account. People can also configure their own model credentials inside a space.
+account. People can also configure their own model credentials inside their Ship.
 
-## Create the first space
+## Create the first Ship {#create-the-first-space}
 
 Deployment prints `installationDatabase` and `administration`; it does not
-create a space or rotate credentials. Put the returned database ID in
+create an installation or rotate credentials. Put the returned database ID in
 `GSV_INSTALLATIONS_DATABASE_ID`. From a local controlling terminal, supply
 `CLOUDFLARE_API_TOKEN` through your environment with access to that D1 database,
 then issue the first-use link:
@@ -128,16 +128,16 @@ npm run deployment:bootstrap -- issue \
 ```
 
 Use the configured administration origin if you changed its default. Open the
-one-time link printed to the terminal, create the first space and follow its
+one-time link printed to the terminal, create the first Ship and follow its
 setup invitation. In the default `operator` access mode, save the operator
 credential shown once by the page. It opens `/operator` for explicit creation
-of further spaces. Cloudflare Access deployments use `--mode access` and their
+of further Ships. Cloudflare Access deployments use `--mode access` and their
 configured policy instead. See [bootstrap and recovery](https://github.com/deathbyknowledge/gsv/blob/main/deployment/operator-bootstrap.md)
 for link reissue and credential recovery. Keep credentials out of source files
 and command arguments.
 
-Owner email-code sign-in and **My spaces** are optional deployment configuration;
-they do not create spaces or grant operator access. Configure a verified sender
+Owner email-code sign-in and **My Ships** are optional deployment configuration;
+sign-in does not create Ships or grant operator access. Configure a verified sender
 with `GSV_OWNER_EMAIL_FROM`, or the supported OIDC provider inputs, as described
 in the [owner sign-in guide](https://github.com/deathbyknowledge/gsv/blob/main/deployment/operator-bootstrap.md#owner-email-sign-in).
 
@@ -153,7 +153,7 @@ requires the bot token, webhook secret, bot username and public webhook origin.
 The operator supplies application credentials through the deployment environment
 and configures the public callback route and provider registration. Enabling a
 Worker does not complete that provider setup. People then link their own
-messenger identities from their space. See [operator adapter setup](./operate-gsv.md#connect-services-and-verify-cleanup).
+messenger identities from their Ship. See [operator adapter setup](./operate-gsv.md#connect-services-and-verify-cleanup).
 
 ## Update an existing deployment
 
@@ -163,6 +163,11 @@ physical resource identities. Operators adopting a legacy combined Accounts
 database must first complete the one-time
 [migration ownership handoff](https://github.com/deathbyknowledge/gsv/blob/main/deployment/installation-migration-adoption.md);
 ordinary updates of an adopted public database use its migration ledger.
+For directories created by the public composition, Alchemy owns
+`installation_migrations`. Upgrading Alchemy can convert that ledger to its hashed
+format in place; applied migration names remain recorded. An adopted operator
+database keeps its explicit migration runner instead: supply its existing
+directory Worker and do not give Alchemy migration ownership of those ledgers.
 Deployments with an existing Mail queue also follow the
 [reader-before-writer upgrade](https://github.com/deathbyknowledge/gsv/blob/main/deployment/mail-queue-upgrade.md).
 

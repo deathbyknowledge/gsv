@@ -52,6 +52,11 @@ For syscall arguments, result shapes, and domain behavior, see [Syscalls Referen
 | `args` | `object` | Yes | Arguments for the exact syscall named by `call` |
 | `body` | `BodyDescriptor` | No | Attached request byte stream |
 
+Filesystem operations accept an optional string `args.target`, including writes,
+edits, deletes, searches and file transfers. The Kernel authorizes that target
+before routing the request; omitting it uses the native `gsv` target. `fs.copy`
+selects its source and destination targets separately in those endpoints.
+
 ### Response Frame
 
 Success:

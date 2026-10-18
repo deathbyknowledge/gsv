@@ -2,6 +2,7 @@ import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   clearInstallationOnboardingToken,
   readInstallationOnboardingToken,
+  readSignupArrival,
 } from "./installationOnboarding";
 import { createSessionService, type SessionClient } from "./sessionService";
 
@@ -33,6 +34,22 @@ describe("installation onboarding capability", () => {
     vi.unstubAllGlobals();
   });
 
+  it("binds the signup arrival hint to the token it came with", () => {
+    const other = `onboard_${"b".repeat(43)}`;
+    window.history.replaceState(null, "", `/onboarding?signup=1#${TOKEN}`);
+    expect(readInstallationOnboardingToken()).toBe(TOKEN);
+    expect(readSignupArrival(TOKEN)).toBe(true);
+    expect(window.location.search).toBe("");
+    expect(readSignupArrival(TOKEN)).toBe(true);
+    // A different setup opened in the same tab, with or without the query, must not inherit the hint.
+    expect(readSignupArrival(other)).toBe(false);
+    window.history.replaceState(null, "", `/onboarding#${other}`);
+    expect(readInstallationOnboardingToken()).toBe(other);
+    expect(readSignupArrival(other)).toBe(false);
+    clearInstallationOnboardingToken();
+    expect(readSignupArrival(TOKEN)).toBe(false);
+  });
+
   it("moves the capability out of the URL fragment into tab storage", () => {
     window.history.replaceState(null, "", `/onboarding#${TOKEN}`);
 
@@ -40,6 +57,17 @@ describe("installation onboarding capability", () => {
     expect(window.location.pathname).toBe("/onboarding");
     expect(window.location.hash).toBe("");
     expect(readInstallationOnboardingToken()).toBe(TOKEN);
+  });
+
+  it("preserves contact acceptance through setup, including a repeated token read", () => {
+    window.history.replaceState(null, "", `/onboarding#onboarding=${TOKEN}&contact=friend-invitation`);
+    expect(readInstallationOnboardingToken()).toBe(TOKEN);
+    expect(window.location.hash).toBe("#contact=friend-invitation");
+    expect(readInstallationOnboardingToken()).toBe(TOKEN);
+    clearInstallationOnboardingToken();
+    expect(window.location.pathname).toBe("/");
+    expect(window.location.hash).toBe("#contact=friend-invitation");
+    expect(readInstallationOnboardingToken()).toBeNull();
   });
 
   it("keeps the capability in memory when tab storage rejects it", () => {

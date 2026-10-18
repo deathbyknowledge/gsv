@@ -112,7 +112,7 @@ async fn control_attach(
     main_window(&window)?;
     let session = host.session.lock().await;
     if generation != session.current.generation {
-        return Err("The configured space has changed.".into());
+        return Err("The selected Ship has changed.".into());
     }
     Ok(host.control.attach(updates))
 }
@@ -207,16 +207,15 @@ async fn input_attach(
     host: State<'_, Host>,
     generation: String,
     updates: tauri::ipc::Channel<InputUpdate>,
-    practice: bool,
 ) -> Result<Snapshot, String> {
     main_window(&window)?;
     let session = host.session.lock().await;
     if generation != session.current.generation
         || (session.current.origin.is_none() && cfg!(feature = "custom-protocol"))
     {
-        return Err("The configured space has changed.".into());
+        return Err("The selected Ship has changed.".into());
     }
-    host.input.attach(updates, practice).await
+    host.input.attach(updates).await
 }
 
 #[tauri::command]

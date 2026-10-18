@@ -2,6 +2,7 @@ import { WorkerEntrypoint } from "cloudflare:workers";
 import { installationDeletionRequestSchema, type InstallationDeletionRequest, type InstallationDeletionService } from "@humansandmachines/gsv/services/lifecycle";
 import { installationDeletionInspectionSchema, type InstallationDeletionInspection, type InstallationResourceObservation } from "@humansandmachines/gsv/services/lifecycle-discovery";
 import type { Environment } from "./config";
+import { computerName } from "./computer";
 
 /** Bound only to Accounts. Ordinary instance capabilities never expose erasure. */
 export class InstanceLifecycleEntrypoint extends WorkerEntrypoint<Environment, { authority?: string }> implements InstallationDeletionService {
@@ -27,6 +28,16 @@ export class InstanceLifecycleEntrypoint extends WorkerEntrypoint<Environment, {
     const candidates = new Set([input.installationId, ...(input.candidateInstallationIds ?? [])]);
     const observations: InstallationResourceObservation[] = [];
     for (const resource of input.resources) {
+      if (resource.kind === "instance-computer") {
+        const identity = await this.env.COMPUTERS.get(this.env.COMPUTERS.idFromString(resource.objectId)).inspect();
+        const name = identity ? computerName(identity.installationId, identity.instanceId) : null;
+        const known = identity ? await this.env.INSTALLATION_DIRECTORY.resolveInstallation(identity.installationId) : null;
+        observations.push(name && identity && known?.found && known.installationId === identity.installationId
+          && this.env.COMPUTERS.idFromName(name).toString() === resource.objectId && (!resource.name || resource.name === name)
+          ? { ...resource, name, installationId: identity.installationId, localId: identity.instanceId, outcome: "identified" }
+          : { ...resource, outcome: identity ? "unidentified" : "empty" });
+        continue;
+      }
       if (resource.kind !== "instance-installation") throw new Error("Resource kind is not owned by instances");
       const name = [...candidates].find(candidate => this.env.INSTANCES.idFromName(candidate).toString() === resource.objectId);
       const identity = name ? await this.env.INSTALLATION_DIRECTORY.resolveInstallation(name) : null;

@@ -81,7 +81,7 @@ afterEach(() => { vi.clearAllTimers(); vi.useRealTimers(); vi.unstubAllGlobals()
 describe("desktop session persistence", () => {
   const pendingWelcome: WelcomeState = {
     origin: "https://accounts.example.com", flow: "create", sessionSecret: "a".repeat(64),
-    challenge: null, inviteCode: null, inviteId: "invite_fixture", handle: "first",
+    challenge: null, operationId: "invite_fixture", handle: "first",
   };
   const setupResult = {
     server: { version: "test", release: "test" },
@@ -94,7 +94,7 @@ describe("desktop session persistence", () => {
     const h = sessionHarness(false, { [ONBOARDING_KEY]: onboardingToken }, pendingWelcome);
     h.client.requestOnce.mockResolvedValue(setupResult);
     h.client.connect.mockImplementation(async () => {
-      expect((await loadDesktopWelcome()).state).toMatchObject({ flow: "open", inviteId: null, handle: null });
+      expect((await loadDesktopWelcome()).state).toMatchObject({ flow: "open", operationId: null, handle: null });
       expect(h.stored()[ONBOARDING_KEY]).toBeUndefined();
       return {
         protocol: 4, server: { ...setupResult.server, connectionId: "connection:alice" },
@@ -113,7 +113,7 @@ describe("desktop session persistence", () => {
     });
     await disconnectSpace(h.service, h.storage);
     expect(h.forgotten()).not.toBeNull();
-    expect((await loadDesktopWelcome()).state).toEqual({ ...pendingWelcome, flow: "open", inviteId: null, handle: null });
+    expect((await loadDesktopWelcome()).state).toEqual({ ...pendingWelcome, flow: "open", operationId: null, handle: null });
   });
 
   it("discards rejected setup credentials without clearing the unfinished invitation", async () => {
@@ -153,7 +153,7 @@ describe("desktop session persistence", () => {
     h.failWelcomeWrites(false);
     await completeDesktopOnboarding(h.storage);
     expect(h.stored()[ONBOARDING_KEY]).toBeUndefined();
-    expect((await loadDesktopWelcome()).state).toMatchObject({ flow: "open", inviteId: null });
+    expect((await loadDesktopWelcome()).state).toMatchObject({ flow: "open", operationId: null });
     h.service.dispose?.();
   });
 

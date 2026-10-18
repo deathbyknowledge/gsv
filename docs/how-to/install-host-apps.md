@@ -1,19 +1,19 @@
 # Install and upgrade Ship host applications
 
 The Ship release is one versioned host distribution. The operator CLI (`gsv`),
-machine daemon (`gsvd`), Desktop, and Desktop's transcription and gesture-vision
-helpers share the version in the repository root `VERSION` file. The CLI
+machine daemon (`gsvd`), Desktop, and Desktop's transcription
+helper share the version in the repository root `VERSION` file. The CLI
 refuses to manage a mismatched daemon.
 
 ## Supported release artifacts
 
-| Platform | `gsv` | `gsvd` | Desktop | Transcription | Gestures |
-| --- | --- | --- | --- | --- | --- |
-| Linux x64 | yes | yes | yes | yes | yes |
-| Linux ARM64 | yes | yes | yes | yes | yes |
-| macOS Intel | yes | yes | yes | yes | yes |
-| macOS Apple Silicon | yes | yes | yes | yes | yes |
-| Windows 10+ x64 | yes | yes | yes | yes | yes |
+| Platform | `gsv` | `gsvd` | Desktop | Transcription |
+| --- | --- | --- | --- | --- |
+| Linux x64 | yes | yes | yes | yes |
+| Linux ARM64 | yes | yes | yes | yes |
+| macOS Intel | yes | yes | yes | yes |
+| macOS Apple Silicon | yes | yes | yes | yes |
+| Windows 10+ x64 | yes | yes | yes | yes |
 
 Windows ARM64 is not a supported release target. Other operating systems and architectures are
 not currently published.
@@ -75,22 +75,23 @@ to use text explicitly.
 Look for the ASCII ship icon to open Ship Desktop. It matches the ship on the
 sign-in page and the browser's Home Screen shortcut.
 
-**Open your space** lets you choose an owned space or enter a handle or domain.
-The address form also works for spaces owned by someone else or served by another
-operator. Contact invitation links use the same address entry before your normal
-space sign-in and explicit acceptance.
+Desktop starts with **Create your Ship** and **Open Ship**. Create takes you through
+[signup](/get-started/); Open lets you sign in with email or enter a handle or domain.
+The address form also works for Ships owned by someone else or served by another
+operator. Contact invitation links open a modal on the signup site, where you can
+verify your email or enter your Ship address before sign-in and explicit acceptance.
 
-Desktop and browser windows can stay connected to the same space at once. They
+Desktop and browser windows can stay connected to the same Ship at once. They
 receive new conversation messages live and refresh server state after a
-reconnect. A remembered space sign-in lasts 30 days and renews during use.
+reconnect. A remembered sign-in lasts 30 days and renews during use.
 Browser tabs share renewal and sign-out; Desktop has its own stored session.
 A temporary network interruption reconnects without asking you to sign in again.
 
-If setup of a space claimed with an invite code was interrupted, **Continue setup** returns to owner email
-sign-in and the existing claimed space. For the Desktop app's configured operator,
+If self-service setup of a Ship was interrupted, **Continue setup** returns to owner email
+sign-in and your existing Ship. For the Desktop app's configured operator,
 this stays inside the app; another operator's recovery page opens in the browser.
-The owner signs in with the email used to claim the invitation, then continues
-setup with fresh authorization instead of claiming another space.
+The owner signs in with the email used at signup, then continues
+setup with fresh authorization instead of creating another Ship.
 For a setup link issued directly by an operator, ask that operator for a new link.
 An incompatible client or rejected connection shows the gateway's error instead
 of retrying indefinitely.
@@ -242,10 +243,10 @@ gsv desktop
 
 `gsv desktop status`, `new`, and `use PID` use same-user local IPC. Desktop
 connects to the gateway as a user; it does not route chat through `gsvd`.
-The installer places `gsv-transcribe` and `gsv-vision` beside Desktop so it can
-supervise the exact same-version helpers. The vision executable embeds its
-checksum-pinned models; their Apache 2.0 license and provenance are installed
-as verified sidecar assets.
+The installer places `gsv-transcribe` and its runtime beside Desktop so it can
+supervise the matching voice helper. A failed upgrade restores the previous
+installation. A Windows headless update leaves an existing Desktop installation
+alone.
 
 Desktop uses the same Instrument source as the web UI. It is the only desktop
 implementation shipped by releases. Launching opens the installed version;
@@ -253,8 +254,8 @@ rerun the installer to update it.
 
 After signing in, choose Connect this computer to make it a target. Desktop
 handles pairing and background service installation. Not now skips this step;
-reopen it from the space menu under This computer. An existing connection for
-the same space and account resumes automatically. Connections to another space
+reopen it from the Ship menu under This computer. An existing connection for
+the same Ship and account resumes automatically. Connections to another Ship
 or account and your separate CLI login are preserved. The background service
 continues after Desktop closes.
 
@@ -274,15 +275,14 @@ macOS releases also include `gsv-desktop-darwin-arm64.zip` and
 `gsv-desktop-darwin-x64.zip`, each containing `GSV.app` with the CLI, daemon and
 helpers. The developer app is ad-hoc signed and unnotarized. After the first
 blocked launch, use System Settings → Privacy & Security → Open Anyway.
-Replace the bundle to update it. Windows includes both local helpers; microphone
-and camera access require an interactive session and permission in Windows
+Replace the bundle to update it. Windows includes the local voice helper; microphone
+access requires an interactive session and permission in Windows
 Privacy settings.
-The Windows helpers use CPU inference. Local voice includes a baseline CPU backend
+The Windows voice helper uses CPU inference. Local voice includes a baseline CPU backend
 and automatically selects faster instructions when supported. AVX2 and AVX-512 are
 optional. The installer and app bundle include the required speech libraries in
 `gsv-transcribe-runtime` beside the helper; no separate installation or CPU setting
 is needed. Keep that directory with the helper when moving a manual installation.
-Gesture inference also selects supported CPU instructions at runtime.
 
 ## Manual verification
 

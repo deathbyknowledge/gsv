@@ -525,7 +525,7 @@ Runtime behavior:
 
 | Syscall | Handler | Behavior |
 |---|---|---|
-| `codemode.exec` | Process DO `executeCodeModeTool`; `executeCodeMode` | Runs code in an isolated Worker Loader worker with outbound network disabled. Provides `shell(input, options)`, `fs.read/write/edit/delete/search`, `mail.send`, `mcpTools` metadata, and connected MCP tools as generated async functions. Returns a structured `completed` or `failed` CodeMode result. |
+| `codemode.exec` | Process DO `executeCodeModeTool`; `executeCodeMode` | Runs code in an isolated Worker Loader worker with outbound network disabled. Provides `shell(input, options)`, `shell.cancel({sessionId, target?})`, `fs.read/write/edit/delete/search`, `mail.send`, `mcpTools` metadata, and connected MCP tools as generated async functions. Returns a structured `completed` or `failed` CodeMode result. |
 | `codemode.run` | Kernel `forwardToProcess`; Process DO `handleCodeModeRun`; `executeCodeMode` | Manual CodeMode execution for shell/CLI surfaces. Accepts code plus optional wrapper defaults and script arguments. Nested tools route through normal `shell.exec`, `fs.*`, `net.fetch`, `mail.send`, and `sys.mcp.*` syscalls. |
 
 ```ts
@@ -1600,6 +1600,16 @@ usage. Kernel derives installation and human owner scope. Management calls are
 available through native `instance` and `browser` shell commands; ordinary browser
 commands run on the returned target. See [cloud browsers](/how-to/cloud-browsers).
 
+The `computer` template adds temporary Linux targets using the same machine
+syscalls, streamed bodies, shell sessions and cancellation. A new request ID
+creates a new computer; profile and fresh-browser options are rejected.
+Computers have independent concurrency and time allowances. Catalog and list
+responses include `usageByKind.browser` and `usageByKind.linux`; `usage` retains
+the browser allowance for existing clients. See [cloud computers](/how-to/cloud-computers).
+The service verifies each machine boot before admitting requests and never
+starts a replacement for a lost instance. Detached shell sessions survive
+connection loss within that instance's lifetime; physical stop terminates them.
+
 A start requires a persisted request ID. Repeating the same ID and arguments
 returns the same instance, including after it becomes terminal. With a new request
 ID, ordinary starts reuse the owner's ready or starting automatic browser without
@@ -2010,8 +2020,7 @@ links, and commits the receipt. Identical retries cannot overwrite later credent
 a Process acting as root cannot invoke it. It resets the sole personal account.
 The optional legacy `uid` must match that account. Reset revokes its earlier
 credentials and messenger links, retaining its UID, groups, data and admitted
-Processes. The old local-human invitation, listing and removal syscalls are
-removed; contact invitations continue to connect separate spaces.
+Processes. Contact invitations connect separate spaces.
 
 ## AI: `ai.*`
 
@@ -2111,8 +2120,6 @@ and `adapterStatus`. Adapters call the Gateway's single
 every explicit or routed delivery is a correlated `adapter.send` request sent
 only to the exact adapter destination. User-state signals remain broadcast to
 clients independently. `adapterFrame` is the only Gateway-to-adapter carrier.
-Old channel-specific interfaces and direct channel RPC names are not part of
-this contract.
 
 Adapter media metadata stays in JSON. Inline bytes are concatenated into the
 request's single top-level binary body, and each media item identifies its

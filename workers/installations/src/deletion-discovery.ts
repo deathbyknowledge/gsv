@@ -51,7 +51,7 @@ export async function inspectDeletionResources(
         requireOwner(["mail"]);
         owner = configuration.owners?.mail;
         break;
-      case "instance-installation":
+      case "instance-installation": case "instance-computer":
         requireOwner(["instances"]);
         owner = configuration.owners?.instances;
         break;

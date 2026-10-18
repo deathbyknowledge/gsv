@@ -6,35 +6,34 @@ export type WelcomeState = {
   flow: "open" | "create";
   sessionSecret: string | null;
   challenge: { id: string; email: string; browserSecret: string } | null;
-  inviteCode: string | null;
-  inviteId: string | null;
+  operationId: string | null;
   handle: string | null;
+  contactInvite?: string | null;
 };
 export type WelcomeSnapshot = { revision: string; value: WelcomeState | null };
 export type WelcomeStorage = { save(revision: string, value: WelcomeState | null): Promise<WelcomeSnapshot> };
 type OwnerFetch = (url: string, init: {
   method: "GET" | "POST"; headers: Record<string, string>; credentials: "omit"; cache: "no-store"; body?: string; signal: AbortSignal;
-}) => Promise<Pick<Response, "ok" | "text">>;
+}) => Promise<Pick<Response, "ok" | "status" | "text">>;
 type OwnerRequest = { challengeId: string; email: string; browserSecret: string; resend: boolean }
   | { challengeId: string; browserSecret: string; sessionSecret: string; code: string }
-  | { code: string } | { handle: string } | Record<string, never>;
+  | { operationId: string; handle: string } | Record<string, never>;
 type OwnerHeaders = { "content-type": string; authorization?: string };
 const deliverySchema = z.object({ deliveryStatus: z.enum(["sent", "sending", "failed"]) });
 const verifiedSchema = z.object({ email: z.string(), expiresAt: z.number() });
 const availableSchema = z.object({ available: z.boolean() });
 const loggedOutSchema = z.object({ ok: z.literal(true) });
-const invitationSchema = z.object({ id: z.string(), state: z.enum(["issued", "claimed", "provisioning", "active", "revoked", "expired"]),
-  handle: z.string().nullable(), origin: z.string().nullable(), lastError: z.string().nullable() });
-export type OwnedInvite = z.infer<typeof invitationSchema>;
-const sessionSchema = z.object({ email: z.string(), expiresAt: z.number(), spaceDomain: z.string().min(1),
-  spaces: z.array(z.object({ handle: z.string(), canonicalOrigin: z.string(), state: z.enum(["active", "restricted"]) })), invites: z.array(invitationSchema) });
+export const pendingSetupSchema = z.object({ operationId: z.string(), handle: z.string(), origin: z.string() });
+export type PendingSetup = z.infer<typeof pendingSetupSchema>;
+const sessionSchema = z.object({ email: z.string(), expiresAt: z.number(), spaceDomain: z.string().min(1), signupEnabled: z.boolean(),
+  spaces: z.array(z.object({ handle: z.string(), canonicalOrigin: z.string(), state: z.enum(["active", "restricted"]) })), setups: z.array(pendingSetupSchema) });
 export type OwnerSession = z.infer<typeof sessionSchema>;
-const preparationSchema = z.object({ invite: invitationSchema, origin: z.string(), handle: z.string(),
+const preparationSchema = z.object({ origin: z.string(), handle: z.string(),
   onboardingToken: z.string().regex(/^onboard_[A-Za-z0-9_-]{43}$/).nullable(), expiresAt: z.number().nullable() });
 export type PreparedSpace = z.infer<typeof preparationSchema>;
 const failureSchema = z.object({ error: z.string().optional(), code: z.string().optional(), deliveryStatus: z.string().optional() });
 export class OwnerApiError extends Error {
-  constructor(message: string, readonly code?: string) { super(message); }
+  constructor(message: string, readonly code?: string, readonly status?: number) { super(message); }
 }
 const randomSecret = () => [...crypto.getRandomValues(new Uint8Array(32))].map((b) => b.toString(16).padStart(2, "0")).join("");
 
@@ -44,7 +43,7 @@ export class OwnerWelcome {
     private readonly accountsOrigin: string, private readonly fetcher: OwnerFetch = (input, init) => fetch(input, init)) {}
 
   get state(): WelcomeState {
-    return this.snapshot.value ?? { origin: this.accountsOrigin, flow: "open", sessionSecret: null, challenge: null, inviteCode: null, inviteId: null, handle: null };
+    return this.snapshot.value ?? { origin: this.accountsOrigin, flow: "open", sessionSecret: null, challenge: null, operationId: null, handle: null };
   }
 
   async save(change: Partial<WelcomeState>): Promise<void> {
@@ -76,27 +75,33 @@ export class OwnerWelcome {
     await this.save({ challenge: null });
   }
 
-  async claim(): Promise<OwnedInvite> {
-    if (!this.state.inviteCode) throw new Error("Enter your invite code.");
-    const invite = await this.request("/invites/claim", invitationSchema, { code: this.state.inviteCode });
-    await this.save({ inviteCode: null, inviteId: invite.id, handle: invite.handle });
-    return invite;
+  /** Null means Accounts would not say yet: the handle is checked again when the space is created. */
+  async available(handle: string): Promise<boolean | null> {
+    try { return (await this.request(`/handle?value=${encodeURIComponent(handle)}`, availableSchema)).available; }
+    catch (error) {
+      if (error instanceof OwnerApiError && (error.code === "signed_out" || error.status === undefined || error.status === 429 || error.status >= 500)) return null;
+      throw error;
+    }
   }
 
-  async available(handle: string): Promise<boolean> {
-    return (await this.request(`/handle?value=${encodeURIComponent(handle)}`, availableSchema)).available;
+  /** Records the chosen handle under one operation id before the email step so an interrupted signup resumes it. */
+  async chooseHandle(handle: string): Promise<void> {
+    const operationId = this.state.handle === handle && this.state.operationId ? this.state.operationId : crypto.randomUUID();
+    await this.save({ flow: "create", handle, operationId });
   }
 
-  async prepare(inviteId: string, handle: string): Promise<PreparedSpace> {
-    await this.save({ inviteId, handle });
-    const prepared = await this.request(`/invites/${encodeURIComponent(inviteId)}/space`, preparationSchema, { handle });
+  async prepare(handle: string, operationId = this.state.operationId ?? crypto.randomUUID()): Promise<PreparedSpace> {
+    await this.save({ flow: "create", operationId, handle });
+    const prepared = await this.request("/spaces", preparationSchema, { operationId, handle });
     if (!prepared.onboardingToken) await this.completeCreation();
     return prepared;
   }
 
   async completeCreation(): Promise<void> {
     if (this.state.flow !== "create") return;
-    await this.save({ flow: "open", challenge: null, inviteCode: null, inviteId: null, handle: null });
+    const change: Partial<WelcomeState> = { flow: "open", challenge: null, operationId: null, handle: null };
+    if (this.state.contactInvite !== undefined) change.contactInvite = null;
+    await this.save(change);
   }
 
   async signOut(): Promise<void> {
@@ -120,7 +125,7 @@ export class OwnerWelcome {
       const data: unknown = JSON.parse(await response.text());
       if (!response.ok) {
         const error = failureSchema.safeParse(data);
-        throw new OwnerApiError(error.success ? error.data.error ?? (error.data.deliveryStatus === "failed" ? "Could not send the email. Try again shortly." : "Could not continue. Try again.") : "Could not continue. Try again.", error.success ? error.data.code : undefined);
+        throw new OwnerApiError(error.success ? error.data.error ?? (error.data.deliveryStatus === "failed" ? "Could not send the email. Try again shortly." : "Could not continue. Try again.") : "Could not continue. Try again.", error.success ? error.data.code : undefined, response.status);
       }
       return schema.parse(data);
     } catch (error) {

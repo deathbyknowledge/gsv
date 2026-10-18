@@ -174,35 +174,38 @@ intelligence decides when information is worth retrieving or preserving.
 
 ## Authoring defaults
 
-Repository authors edit shipped standing defaults and standalone task prompts as
-Markdown under `workers/gateway/src/prompts/`. The sources are grouped by world
-model, interaction, computer/discovery, durable work, knowledge, role/judgment,
-voice, and instance facts. Scope stays explicit within each category: shared,
-Ship, Crew, or owner. Separate task prompts cover compaction,
-onboarding, delegated-run delivery, and corrections.
+Repository authors edit shipped standing defaults under
+`workers/gateway/src/prompts/{system,ship,crew,user}/context.d/*.md`. Each file is
+one complete entry; its scope and lexical ordering are visible in its path.
+TypeScript bundles those complete files through the shared `context.ts`
+catalogue. Standalone tasks and onboarding responsibility briefs remain separate.
 
-The shared defaults orient the agent within a persistent, Linux-like computer,
-building on familiar Unix concepts. They explain GSV-specific decisions: choosing
-targets, interpreting message origins and runtime events, sending human-facing
-output through Send, and returning delegated results. Later events supersede
-initial facts; files and responsibilities preserve continuity.
+Shared system entries explain GSV-specific decisions: choosing targets,
+interpreting message origins and runtime events, sending human-facing output
+through Send, returning delegated results, and preserving knowledge. Memory
+instructions appear once in system context; personal facts remain in the
+owner's standing context and detailed knowledge in the personal wiki.
 
-Each category owns its rules. Ship prioritizes acknowledgment and continued
-responsiveness, then appropriate responsibility bookkeeping, then execution or
-delegation. Crew's role defines the assigned outcome and evidence to report; no
-generic voice is seeded. Both use the same knowledge source. Ship's voice stays
-separate from delivery mechanics, and instance templates contain values rather
-than policy. Command recipes remain in the discoverable skills and manuals.
+Ship prioritizes acknowledgment and continued responsiveness, then appropriate
+responsibility bookkeeping, then execution or delegation. Crew's role defines
+the assigned outcome and evidence to report. Ship's voice stays separate from
+delivery mechanics. Command recipes remain in discoverable skills and manuals.
 
-TypeScript composes these sources into the existing system and account context
-files, preserving their stored paths and layer order. `npm run review:prompts`
-opens a local editor with category previews, links from assembled sections to
-their contributing sources, and exact Ship/Crew standing prompts. The previews use the
-production assembler and sample runtime facts. Saving edits changes repository
-defaults; existing account context files and explicit system overrides remain
-under their owners' control.
-Home scaffolding removes retired generic style files only when their contents
-exactly match a generated default; customized and concurrent edits are preserved.
+`npm run review:prompts` opens a local editor with individual entry previews,
+source links, and exact Ship/Crew standing prompts. It uses the production
+assembler, the same catalogue and sample runtime facts. Saving changes repository
+defaults, without contacting a live space.
+
+System defaults remain live except where explicitly overridden. Account defaults
+seed missing files. Home scaffolding also replaces recognized generated Ship
+roles and retires generated account-local memory entries when adopting the
+shared system memory entry. The Kernel also checks the run-as and owner accounts
+before a Process requests context, covering existing specialist processes. A
+successful check is reused for that Kernel lifetime. Customized and concurrent
+edits are preserved. An explicit override
+of the formerly combined `01-gsv.md` remains authoritative: migration leaves the
+new `02-interaction.md` empty unless it already has an explicit override.
+
 See `tools/source-review/README.md` for the authoring workflow.
 
 ## See also

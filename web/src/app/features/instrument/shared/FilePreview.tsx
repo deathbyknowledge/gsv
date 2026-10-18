@@ -76,7 +76,7 @@ export function FilePreview({
           close
         </button>
       </div>
-      <p class="note">Talking about it puts a reference to this file in the prompt; the ship reads it from {label} when it needs to, without copying it.</p>
+      <p class="note">Talking about it puts a reference to this file in the prompt; the Ship reads it from {label} when it needs to, without copying it.</p>
     </div>
   );
 }

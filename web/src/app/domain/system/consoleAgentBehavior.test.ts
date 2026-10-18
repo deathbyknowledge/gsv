@@ -147,6 +147,9 @@ describe("console agent behavior", () => {
       "fs.*",
       "shell.exec",
       "net.fetch",
+      "fs.*",
+      "shell.exec",
+      "net.fetch",
       "shell.exec",
       "net.fetch",
       "fs.*",
@@ -158,6 +161,9 @@ describe("console agent behavior", () => {
       "sys.mcp.call",
       "mail.send",
     ]);
+    for (const match of ["fs.*", "shell.exec", "net.fetch"]) {
+      expect(policy.rules).toContainEqual({ match, target: { route: "instance", platform: "linux" }, action: "auto" });
+    }
   });
 
   it("makes outbound mail ask-only when loading an older allow-by-default policy", () => {

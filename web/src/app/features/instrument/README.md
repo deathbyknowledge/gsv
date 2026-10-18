@@ -1,6 +1,6 @@
 # Instrument surfaces
 
-Instrument is the default web UI at `/`. Its views use `/chat`, `/people`, `/fleet`, `/memory` and `/chat/settings`. Older `/zen` and `/zen/settings` links replace their address with the Chat routes while preserving query parameters, fragments and history state. The former desktop shell, console and standalone workspaces are retired; old deep links for those surfaces have no compatibility mapping. Login and `/onboarding` capabilities enter the same UI. Shared gateway and history logic lives under `app/services/`, with system types and model/approval logic under `app/domain/`. The design catalog and its retained examples load separately when opened.
+Instrument is the default web UI at `/`. Its views use `/chat`, `/people`, `/fleet`, `/memory` and `/chat/settings`. Older `/zen` and `/zen/settings` links replace their address with the Chat routes while preserving query parameters, fragments and history state. Login and `/onboarding` capabilities enter the same UI. Shared gateway and history logic lives under `app/services/`, with system types and model/approval logic under `app/domain/`. The design catalog and its retained examples load separately when opened.
 
 View navigation uses the shared app history service. User actions push distinct
 destinations; Back and Forward restore them without replacing the shared shell
@@ -149,7 +149,7 @@ The composer puts send beside the draft and keeps one action row below: attachme
 and the current place on the left, platform voice controls on the right.
 The current place opens the existing places and live-browser
 list. Choosing a destination preserves the draft; Escape, an outside press or
-returning to the prompt closes the list. Desktop keeps its voice and hands-free
+returning to the prompt closes the list. Desktop keeps its voice
 controls in the same row.
 
 Sending moves the text and attachments into the conversation immediately and clears the composer. A small spinner beside the person's name remains until the send is acknowledged. A committed message arriving before its acknowledgement shares that row using the exact message identity, independently of its text. Failed sends retain their contents and selected place with inline retry and dismiss actions; retry reuses the original send identity and leaves a newer draft alone. Unacknowledged messages remain local to the retained Chat view and participate in warnings before its teardown, including reload and sign-out.
@@ -182,6 +182,10 @@ actually displayed. Closing the view leaves work running. Only an explicit Ship
 sign-in request shows a completion action. The Fleet browser action reuses the
 account's current instance, and saved logins are automatic rather than exposed
 as profile setup. Stopped instances leave the ordinary place list.
+
+Cloud Linux computers use the ordinary place inspector and command selection.
+Only browser instances open the live viewer; a starting computer becomes
+selectable for commands once it is ready.
 
 The Fleet overview uses the full width with modest side gutters on wide screens.
 Browsing with j/k or the arrow keys only
@@ -237,7 +241,7 @@ when the content returns to the same height; that layout adjustment must not be
 treated as the reader leaving the bottom. Hidden views disconnect these observers.
 
 Pointer selection leaves the transcript in place, including long messages and
-text selection. Wheel, touch and native gesture scrolling update the same selected
+text selection. Wheel and touch scrolling update the same selected
 message used by keyboard navigation: the message nearest the visible transcript's center,
 with the first/latest selected at either end. Its highlight stays visible while the prompt
 has focus; browse shortcuts become available again after leaving the input.
@@ -258,14 +262,6 @@ All spinner sizes keep a square layout box. Their glyphs use fixed Departure
 Mono metrics and the matching projection, then scale uniformly inside that box;
 small indicators do not lay out their text at roughly one-pixel font sizes.
 
-The native gesture guide shows one hand animation at a time through the shared
-ASCII scene host. Select a command to see its hold and fist reset; alternative
-finger combinations include the thumb. Both-fist and scrolling examples show
-both hands. The guide does not start sensors or invoke commands. It runs only
-while visible, supports pause and reduced motion, and caches its small finite
-glyph loops as frames are first displayed, without blurred shadows or a bulk
-render on opening.
-
 Web Zen offers record, stop and cancel when no native input provider is present.
 Recording replaces the prompt's presentation with a live waveform: square bars,
 the Instrument accent colour, and quiet text actions. The draft remains mounted
@@ -277,28 +273,17 @@ not cause Zen or the conversation to rerender.
 The browser owns microphone capture and releases it before uploading a bounded
 audio body through `ai.transcription.create`, with the current Process selecting
 the transcription configuration. The result inserts at the current draft cursor
-without sending. Enter finishes capture for review; scope changes, leaving Zen,
-hiding the tab, disconnecting and clearing the draft cancel capture or upload
-and fence late results. Voice input uses the composer's effective place from the
+without sending. Enter finishes capture for review. Scope changes discard pending
+audio and fence late results. Hiding the tab or disabling input stops capture and
+cancels the upload attempt while retaining the completed audio for explicit retry;
+reconnection never uploads automatically. Each attempt has its own abort identity,
+so an interrupted response cannot overwrite a later retry. Voice input uses the composer's effective place from the
 first render, so loading the target list does not interrupt recording or transcription
-at the default cloud place. Failed uploads can retry the in-memory recording. Desktop retains its
-local continuous dictation and gesture controls.
-
-The guide uses an original 3D hand mesh with a shaped palm, independently curling
-fingers and an opposing thumb. It shares the ship's supersampled triangle raster,
-depth buffer, lighting, theme palettes and Departure Mono glyphs. Its 96×48 scene
-runs at 18 fps and turns once every 40 seconds around the vertical axis. Dragging
-horizontally holds the pose and orbits the whole scene around one vertical axis;
-the paired hands share a pivot between their palms and their connecting line
-follows that same rotation. Releasing resumes from that angle. The palm, wrist,
-thumb pad and knuckles retain volume from the side. Left/Right and Home provide
-keyboard rotation and reset. Manual turns also work while paused or with reduced
-motion. Each mounted lesson keeps at most
-128 recent frames, and a theme change replaces the cached palette. The hand scene
-owns articulation and rotation; the shared raster owns projection and shading.
-Interaction invalidates the glyph host directly, coalesced to one animation frame,
-without rerendering the guide or conversation. Gesture recognition remains
-independent of these illustrations.
+at the default cloud place. Failed or empty transcriptions retain the in-memory
+recording for retry, download or explicit discard, even while typed text is edited
+or sent. The download URL is released when its recording is discarded, inserted
+successfully, or unmounted. Closing or reloading the tab does not retain audio.
+Desktop retains its local continuous dictation and microphone selection.
 
 Before a remote command starts, its session UUID is saved in the per-tab journal. If storage fails, the command does not launch. `shell.exec` registers that identity before execution, so a reload before the initial response arrives can recover by polling the saved ID. Initial machine acknowledgements leave output for the first poll. Recovery never resubmits the command; older daemons reject this start mode before execution and show an update instruction.
 
@@ -316,7 +301,7 @@ drag handles; the block cursor returns when the selection collapses.
 
 People opens the conversation list. A counted Requests entry opens incoming first-message decisions, with sent and past requests secondary; Contacts in the heading opens the private address book. Both offer a direct return to conversations. New conversation filters saved people locally or opens a public profile address. These are separate jobs rather than equal tabs. Conversation selection, scroll and drafts stay mounted while visiting Requests or Contacts, with hidden queries paused.
 
-The first visit explains direct conversation and asking Ship to coordinate through selectable examples. The Connect action leads with a shareable invitation; accepting a link/code and entering a public profile address are alternatives. Opening the form creates nothing. Managed links reuse Accounts' existing space chooser before the recipient's normal login and explicit acceptance. A pending invitation survives login and reload within that tab. Acceptance opens the conversation, and the selected example can become an editable draft in the ordinary Ship chat. Ask Ship in the conversation header also opens a draft; neither action sends a message or changes standing contact handling.
+The first visit explains direct conversation and asking Ship to coordinate through selectable examples. Connect is one entry point. When signup invitations are available, its first step asks **New to GSV** or **Already on GSV**, with neither preselected. The new-user choice shows the remaining allowance and leads to a signup invitation; the existing-user choice leads to sharing a connection link, accepting a link/code or entering a public profile address. Opening the chooser or either form creates nothing. A received invitation goes directly to its acceptance step. Managed links reuse Accounts' space chooser or signup before the recipient's normal login and explicit acceptance. A pending invitation survives login and reload within that tab. Acceptance opens the conversation, and the selected example can become an editable draft in the ordinary Ship chat. Ask Ship in the conversation header also opens a draft; neither action sends a message or changes standing contact handling.
 
 The shared header marks waiting People activity. Chat combines ongoing plans, unread conversations, incoming requests and unfinished replies in one compact activity line above the prompt. Messages never open the panel or force the Ship transcript to scroll. Selecting a person opens one bounded read/reply panel; Escape, close or clicking outside folds it away while retaining the draft. Full history remains in People. Both surfaces observe the same paginated conversation cache. The existing inbox and incoming request APIs recover earlier activity after reload or reconnect, and owner-scoped signals refresh them without polling or a separate live-notice store. Replies retain their exact send identity and answered sequence; a late completion cannot erase newer text, mark a later arrival read or close a subsequently opened panel. Muted, blocked, ended and archived conversations stay quiet, while a held draft remains reachable. These shared attention reads remain active across views; histories load only when opened. Cached activity and drafts stay visible during reconnect, with sending disabled.
 
@@ -380,7 +365,7 @@ Text actions are the default. Choose the style from the control's role and place
 - Use blocks for grouped selectors such as Settings sections, with equal sizes and centered labels, and for the main confirmation within a focused form. Opening Add MCP server is a text action; submitting the resulting form uses a block.
 - Destructive actions use red and appropriate confirmation independently of shape. A contextual delete and its inline confirmation can both be text actions.
 - Preserve semantic buttons or links, keyboard focus, disabled states and usable click areas. An unboxed control still needs a usable target.
-- Use named text controls rather than the retired dot-matrix icon library. Installation icons in `web/public/icons` are branding assets; functional graphics such as a shared cursor remain local to their owning view.
+- Use named text controls. Installation icons in `web/public/icons` are branding assets; functional graphics such as a shared cursor remain local to their owning view.
 
 Your profile opens in People by selecting your display name at the bottom of its
 left sidebar. It uses the same retained view and draft protection as conversations.

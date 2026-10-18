@@ -4,6 +4,7 @@ import { cpSync, existsSync, mkdirSync, openSync, readFileSync, readdirSync, ren
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { LEGACY_PRIVATE_REVISION, LEGACY_PUBLIC_REVISION, upgradeFixtureSchema } from "./plan.ts";
+import { legacyDatabaseSeed } from "./database.ts";
 
 process.umask(0o077);
 const [file, phase] = process.argv.slice(2);
@@ -76,6 +77,11 @@ const config = join(output, "accounts-build.json");
 writeFileSync(config, JSON.stringify({ name: "build-only-upgrade-accounts", main: wrapper, compatibility_date: "2026-07-29",
   compatibility_flags: ["nodejs_compat"], workers_dev: false }, null, 2), { mode: 0o600 });
 run(services, "npm", ["exec", "--workspaces=false", "--", "wrangler", "deploy", "--dry-run", "--minify", "--config", config, "--outdir", join(output, "accounts")]);
+if (phase === "legacy") {
+  const migrations = readdirSync(join(output, "migrations")).filter((name) => name.endsWith(".sql"))
+    .map((name) => ({ name, sql: readFileSync(join(output, "migrations", name), "utf8") }));
+  writeFileSync(join(output, "migrations/database.seed.sql"), legacyDatabaseSeed(migrations), { mode: 0o600 });
+}
 run(join(services, "inference"), "npm", ["exec", "--workspaces=false", "--", "wrangler", "deploy", "--dry-run", "--minify", "--outdir", join(output, "inference")]);
 run(join(publicRoot, "workers/gateway"), "npm", ["exec", "--workspaces=false", "--", "wrangler", "deploy", "--dry-run", "--minify", "--config", "wrangler.managed.jsonc", "--outdir", join(output, "gateway"), "--define", `__GSV_RELEASE__:${JSON.stringify(publicRevision)}`]);
 const gatewayMain = join(output, "gateway/index.js");

@@ -52,7 +52,7 @@ export function Profile({ account, active, onDirty, onBack }: { account: Console
       <div class="people-conversation-title"><h1 id="people-profile-title">Your profile</h1></div>
     </header>
     <div class="people-profile-scroll" data-scroll-edge><div class="people-own-profile">
-    <p class="people-note">Choose what people see when they visit your space.</p>
+    <p class="people-note">Choose what people see on your profile.</p>
     {!canRead && <p class="people-note">Your account cannot manage a public profile.</p>}
     {error && <p class="people-error" role="alert">{error.message}</p>}
     {profile.isPending && connected && canRead && <LoadingState variant="panel">Loading your profile…</LoadingState>}

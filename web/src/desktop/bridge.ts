@@ -21,7 +21,7 @@ type DesktopCommands = {
   control_detach: { args: { lease: string }; result: void };
   control_active: { args: { lease: string; id: string }; result: boolean };
   control_reply: { args: { lease: string; id: string; reply: ControlReply }; result: void };
-  input_attach: { args: { generation: string; updates: NativeChannel<NativeUpdate>; practice: boolean }; result: NativeSnapshot };
+  input_attach: { args: { generation: string; updates: NativeChannel<NativeUpdate> }; result: NativeSnapshot };
   input_acknowledge: { args: { lease: string; revision: number; ack: number }; result: void };
   input_command: { args: { lease: string; command: NativeCommand }; result: void };
 };
@@ -110,10 +110,10 @@ export async function disconnectSpace(service: SessionService, storage: NativeSe
 
 export function nativeInput(generation: string): NativeInput {
   return {
-    subscribe: (receive, practice = false) => {
+    subscribe: (receive) => {
       if (!window.__TAURI__) throw new Error("Open this frontend in Ship.");
       const updates = new window.__TAURI__.core.Channel<NativeUpdate>(receive);
-      const initial = invoke("input_attach", { generation, updates, practice });
+      const initial = invoke("input_attach", { generation, updates });
       let disposed = false;
       return { initial, dispose() {
         if (disposed) return;

@@ -117,7 +117,7 @@ const SETTLE_STAGGER_MS = 6;
 const BROWSE_KEYS: ReadonlySet<string> = new Set(["j", "k", "g", "G", "o"]);
 const CLAIMED_KEYS: ReadonlySet<string> = new Set([...BROWSE_KEYS, ...SHELL_KEYS]);
 /* what each status-line failure was attempting, for causes the client cannot name */
-const SHIP_UNREACHABLE: ChatErrorContext = { summary: "Could not reach your ship.", action: "Check your connection, then reload the page." };
+const SHIP_UNREACHABLE: ChatErrorContext = { summary: "Could not reach your Ship.", action: "Check your connection, then reload the page." };
 const ACTIVITY_UNAVAILABLE: ChatErrorContext = { summary: "Could not load the work behind this conversation.", action: "Reload the page to try again." };
 const DECISION_FAILED: ChatErrorContext = { summary: "The decision did not go through.", action: "Try again in a moment." };
 
@@ -509,7 +509,7 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
     const row = fleetReferenceRow(reference ?? null);
     const target = row?.startsWith("target:")
       ? targetsQuery.data?.find(target => target.deviceId === row.slice(7)) : undefined;
-    if (browserControl.available && target?.instance && ["starting", "ready"].includes(target.instance.state)) {
+    if (browserControl.available && target?.kind === "browser" && target.instance && ["starting", "ready"].includes(target.instance.state)) {
       browserControl.open({ instanceId: target.instance.instanceId });
     } else navigateFleet(reference);
   }, [browserControl.available, browserControl.open, targetsQuery.data, navigateFleet]);
@@ -723,7 +723,7 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
   const say = useCallback(
     (text: string) => {
       if (!pid) {
-        setNote(zenNotice("Your ship is still starting."));
+        setNote(zenNotice("Your Ship is still starting."));
         return false;
       }
       const accepted = outbox.send({
@@ -1167,7 +1167,7 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
               place={currentPlace}
               showPlace={false}
               dir="~"
-              placeholder="Message your ship"
+              placeholder="Message your Ship"
               disabled={!pid || recordingVoice}
               onSubmit={onSubmit}
               allowEmpty={extras}
@@ -1210,7 +1210,7 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
               <div class="zen-add-section" role="group" aria-labelledby="zen-add-ship-label">
                 <div class="zen-add-heading" id="zen-add-ship-label">ask Ship</div>
                 <button type="button" role="menuitem" disabled={!viewer || !canConfigure(viewer, "conversation.send")} onClick={() => stageRequest("Help me create a routine.")}>create a routine</button>
-                <button type="button" role="menuitem" disabled={!viewer || !canConfigure(viewer, "conversation.send")} onClick={() => stageRequest("Help me connect a computer to this space.")}>connect a computer</button>
+                <button type="button" role="menuitem" disabled={!viewer || !canConfigure(viewer, "conversation.send")} onClick={() => stageRequest("Help me connect a computer to my Ship.")}>connect a computer</button>
                 <button type="button" role="menuitem" disabled={!viewer || !canConfigure(viewer, "conversation.send")} onClick={() => stageRequest("Start a browser for me.")}>start a browser</button>
               </div>
             </div>
@@ -1228,7 +1228,7 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
               {nativeInput ? <NativeVoiceControls ref={voiceInput} prompt={promptRef} panelHost={nativePanels}
                 scope={voiceScope}
                 enabled={active && connected && pid !== null && pendingHil === null && !searchOpen && !context && !addOpen}
-                send={onSubmit} scroll={scrolling.move} />
+                send={onSubmit} />
                 : <BrowserVoiceControls ref={voiceInput} prompt={promptRef} client={client} pid={pid}
                   surfaceHost={voiceSurface} onActiveChange={setRecordingVoice}
                   scope={voiceScope}
@@ -1248,7 +1248,7 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
             <ul class="zen-places" aria-label="Places and live browsers">
               {selectorPlaces.map((target) => {
                 const label = target.id === CLOUD_PLACE_ID ? CLOUD_PLACE_LABEL : target.label;
-                const viewBrowser = browserControl.available && target.instance && ["starting", "ready"].includes(target.instance.state);
+                const viewBrowser = browserControl.available && target.kind === "browser" && target.instance && ["starting", "ready"].includes(target.instance.state);
                 return (
                   <li key={target.id}>
                     <button type="button" class={`zen-place${cloudAlone ? " is-alone" : target.id === currentPlace.id ? " is-selected" : ""}`}

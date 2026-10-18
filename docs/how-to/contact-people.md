@@ -1,6 +1,6 @@
 # Contact people on other Ships
 
-**People** holds conversations with people on other Ship spaces. Open it with `p`.
+**People** holds conversations with people on other Ships. Open it with `p`.
 It opens your conversations and unread messages. **Requests**, above the list, opens
 first messages from new people; its count shows the loaded active requests, with
 `+` when more remain. **contacts**, beside the heading, opens your private address
@@ -19,23 +19,27 @@ your conversation opens, so you can turn it into a request to Ship.
 ## Start a conversation
 
 Choose **connect**, choose who should handle new messages, then **create invitation
-link** and share it wherever you already talk. It connects one person and lasts seven days; you can cancel it before it is
-accepted. In managed spaces, the link opens the existing Accounts space chooser.
-The recipient chooses a listed space or enters its address, signs in if needed,
-and chooses who should handle their new messages before accepting the invitation. Entering an address also works for people
-using another operator or a space they do not own. Other deployments open the
-space-address form directly.
-Neither person needs to publish a profile. Acceptance opens the conversation.
+link**. Share it wherever you already talk. The same link works for someone new
+to Ship or someone who already has a Ship. It connects one person and lasts seven
+days; you can cancel it before acceptance.
 
-If someone gives you a link or an older contact code, choose **connect → I have an
-invitation** to paste it. These invitations are separate from
-[personal access to your own space](/how-to/invite-people).
+On a managed deployment, the link opens a centered invitation showing who invited you.
+Choose **Continue**. Existing users select their Ship; new users verify their
+email and create one. The contact invitation stays with them through signup and
+setup. In their Ship, they choose who handles new messages and accept the connection.
+Each person's choice affects only their own incoming messages. Neither person
+needs to publish a profile.
 
-You can also ask Ship to create an invitation, or give it someone's invitation
-link to accept. Ship asks who should handle new messages unless you already told
-it, then completes the connection with that choice. It can also change the choice
-later when you ask. This works in your ordinary Ship conversation, including
-messaging apps; opening People is optional.
+The recipient can also enter a Ship address, including one hosted by another
+operator. This remains available if the browser cannot load or save signup state.
+Deployments without a signup service open that address form directly.
+If someone shares a link or a contact code, **I have an invitation** lets you
+paste it in People.
+
+Ship can create or accept these same invitations when asked, after you choose
+who handles new messages. In Shell, use `contact invite create --handling manual`
+or `--handling ship`. There are no signup-place reservations or registration
+codes. Ordinary contact expiry, cancellation and rate limits still apply.
 
 Choose **connect → use a profile address** to find a saved contact by name or enter
 a handle such as `esteve` or `@esteve`, or someone's public profile address.
@@ -48,7 +52,7 @@ conversation, opens it directly, and enables further messages and attachments.
 
 Your profile starts private. Choose **your profile** at the bottom of People,
 save a draft, review it and explicitly publish it. Your public address is
-`https://YOUR-SPACE/profile`; there is no separate alias to choose. Existing published
+`https://YOUR-SPACE/profile`. Existing published
 profile links still work. Drafts remain when you return to a conversation. A profile can accept message requests, require a private
 invitation, or close new contact. Saving later edits does not change the public
 page until you publish again. Unpublishing removes the page; existing contacts and
@@ -84,9 +88,9 @@ editable request in your ordinary Ship chat. Review it and send it when ready.
 It does not turn on automatic replies for that person. A first-use example can
 prefill a more specific request, such as finding a time for dinner.
 
-The activity line above the Ship prompt keeps unread conversations and incoming
+The activity line above your Ship’s prompt keeps unread conversations and incoming
 requests beside ongoing plans, including after reload or reconnect. New messages update
-the line without opening a panel or moving your place in the Ship conversation.
+the line without opening a panel or moving your place in your Ship conversation.
 Select a person's name to read and reply in a compact panel. A **PERSON** or
 **Ship** badge identifies who wrote the latest message. **Open conversation** takes
 you to the full history in People; selecting a connection request opens it there.
@@ -115,9 +119,9 @@ visible until resolved.
 
 ## Private controls
 
-Read position, archive, saved contacts, aliases and mute are private to your space.
+Read position, archive, saved contacts, aliases and mute are private to your Ship.
 New messages bring an archived conversation back unless muted. Muting also suppresses
-tab attention and the Ship chat's new-message line; it does not revoke Ship's existing
+tab attention and your Ship chat's new-message line; it does not revoke Ship's existing
 assignment.
 
 Blocking ends the connection, withdraws its attachment grants and refuses new

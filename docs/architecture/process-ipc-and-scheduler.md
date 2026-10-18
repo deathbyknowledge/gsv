@@ -7,8 +7,7 @@ and scheduled work enter through Kernel-owned syscalls.
 ## Process model
 
 A process owns exactly one active history. The pid names both the durable
-execution boundary and that history; there is no second process-local
-conversation identifier.
+execution boundary and that history.
 
 This keeps lifecycle state aligned:
 

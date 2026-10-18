@@ -72,6 +72,7 @@ Examples:
 
 Text should supply what the user needs now and cannot already infer from the interface.
 
+- Capitalize Ship in product copy, including “your Ship” and “My Ships”. Keep command names, paths and domains literal.
 - Write for the user's next action or decision. Every label, sentence and control must serve an identifiable purpose.
 - Use the current screen, heading and visual demonstration as context. Avoid restating that context in subordinate labels.
 - Prefer action names for controls. Put gesture mechanics in demonstrations and focused instructions.
@@ -122,7 +123,7 @@ The app should feel like a serious workstation tool.
 
 Use [Instrument](../web/src/app/features/instrument/README.md) and [Settings](../web/src/app/features/instrument/settings/README.md) as the product and interaction contracts.
 
-Instrument is the default web entrypoint. The former desktop and console routes have no compatibility mapping. Login and installation onboarding enter the same UI; the first-day introduction is an ordinary Ship message generated after the early-access welcome card is dismissed, or in response to the user’s first message. Shared components remain only where current surfaces depend on them; the retired design catalogue and previews are preserved in Git history.
+Instrument is the default web entrypoint. Login and installation onboarding enter the same UI; the first-day introduction is an ordinary Ship message generated after the early-access welcome card is dismissed, or in response to the user’s first message. Shared components serve the current surfaces.
 
 Core rules:
 - global navigation chooses the kind of work; tables and inspectors choose the object
@@ -135,8 +136,7 @@ Core rules:
 The current visual language uses Martian Mono for controls, Host Grotesk for
 prose, thin rules and square corners. The star field and Departure Mono ASCII
 art carry the space theme. Use named text actions and contextual keyboard hints
-instead of decorative icon tiles. The former dot-matrix SVG library and mask
-renderer are retired; the PNGs under `web/public/icons` are installation and
+instead of decorative icon tiles. The PNGs under `web/public/icons` are installation and
 application identity assets, not a UI icon system. Browser windows follow the
 same contract: quiet text controls around an edge-to-edge live page, without
 rounded framing, glow or a blurred backdrop.

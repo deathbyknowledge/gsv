@@ -202,7 +202,6 @@ jobs:
             libopenblas-pthread-dev \
             libwebkit2gtk-4.1-dev \
             libgtk-3-dev \
-            libv4l-dev \
             gstreamer1.0-plugins-base \
             gstreamer1.0-plugins-good \
             gstreamer1.0-libav \
@@ -235,7 +234,7 @@ jobs:
         working-directory: host
         run: >-
           cargo build --locked --release --target ${{ matrix.target }}
-          --package desktop --package transcriber --package gestures
+          --package desktop --package transcriber
 
       - name: Check shipped voice helper
         shell: bash
@@ -249,18 +248,6 @@ jobs:
           CARGO_BUILD_TARGET: ${{ matrix.target }}
         run: python3 host/scripts/check-transcription.py --release
 
-      - name: Test gesture helper for this release target
-        working-directory: host
-        run: >-
-          cargo test --locked --release --target ${{ matrix.target }}
-          --package gestures --package gesture-protocol
-
-      - name: Check gesture fixture parity
-        shell: bash
-        env:
-          CARGO_BUILD_TARGET: ${{ matrix.target }}
-        run: scripts/vision-native/parity.sh
-
       - name: Stage Desktop
         shell: bash
         run: |
@@ -270,12 +257,8 @@ jobs:
           if [ "${{ runner.os }}" = "Windows" ]; then suffix=".exe"; fi
           cp "host/target/${{ matrix.target }}/release/gsv-desktop${suffix}" "release/gsv-desktop-${{ matrix.platform }}${suffix}"
           cp "host/target/${{ matrix.target }}/release/gsv-transcribe${suffix}" "release/gsv-transcribe-${{ matrix.platform }}${suffix}"
-          cp "host/target/${{ matrix.target }}/release/gsv-vision${suffix}" "release/gsv-vision-${{ matrix.platform }}${suffix}"
           if [ "${{ matrix.platform }}" = "linux-x64" ]; then
             cp host/helpers/transcriber/THIRD_PARTY.md release/gsv-transcribe-THIRD_PARTY.md
-            cp host/helpers/gestures/models/LICENSE.apache-2.0 release/gsv-vision-LICENSE.apache-2.0
-            cp host/helpers/gestures/models/PROVENANCE.md release/gsv-vision-PROVENANCE.md
-            cp host/helpers/gestures/THIRD_PARTY.md release/gsv-vision-THIRD_PARTY.md
           fi
 
       - name: Package macOS app
@@ -297,7 +280,7 @@ jobs:
           cargo build --manifest-path host/Cargo.toml --locked --release --target ${{ matrix.target }} --package gsv --package machine
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           ./host/scripts/sign-windows.ps1 -Directory host/target/${{ matrix.target }}/release
-          foreach ($name in @('gsv', 'gsvd', 'gsv-desktop', 'gsv-transcribe', 'gsv-vision')) {
+          foreach ($name in @('gsv', 'gsvd', 'gsv-desktop', 'gsv-transcribe')) {
             Copy-Item "host/target/${{ matrix.target }}/release/$name.exe" "release/$name-windows-x64.exe" -Force
           }
           ./host/scripts/package-windows.ps1 -BinDir host/target/${{ matrix.target }}/release -Output release
@@ -369,7 +352,6 @@ jobs:
           cp artifacts/gsv-host-tools-darwin-arm64/* release/
 
           # Desktop and isolated local transcription helper
-          # Gesture-vision helper and its model metadata
           cp artifacts/gsv-desktop-linux-x64/* release/
           cp artifacts/gsv-desktop-linux-arm64/* release/
           cp artifacts/gsv-desktop-darwin-x64/* release/
@@ -383,12 +365,8 @@ jobs:
           chmod +x release/gsv-linux-* release/gsvd-linux-* \
             release/gsv-darwin-* release/gsvd-darwin-* \
             release/gsv-desktop-* release/gsv-transcribe-linux-* \
-            release/gsv-transcribe-darwin-* release/gsv-vision-linux-* \
-            release/gsv-vision-darwin-*
-          chmod -x release/gsv-transcribe-THIRD_PARTY.md \
-            release/gsv-vision-LICENSE.apache-2.0 \
-            release/gsv-vision-PROVENANCE.md \
-            release/gsv-vision-THIRD_PARTY.md
+            release/gsv-transcribe-darwin-*
+          chmod -x release/gsv-transcribe-THIRD_PARTY.md
 
           # Include install script
           cp install.sh release/
@@ -463,31 +441,30 @@ jobs:
           ### Host applications
 
           The installer verifies every downloaded artifact, replaces \`gsv\`, \`gsvd\`,
-          Desktop, and both local helpers as one versioned set, and migrates an existing
+          Desktop, and the local voice helper as one versioned set, and migrates an existing
           device service to execute \`gsvd --foreground\` directly. Linux and macOS
-          receive Desktop, \`gsv-transcribe\`, and \`gsv-vision\`; the vision model
-          license and provenance are included as verified assets. Windows 10 x64 receives all five applications, with a boot-capable SCM daemon.
+          receive Desktop and \`gsv-transcribe\`. Windows 10 x64 receives all four applications, with a boot-capable SCM daemon.
 
           ### Manual Installation
 
           Download the binary for your platform:
-          - **macOS (Apple Silicon)**: \`gsv-darwin-arm64\`, \`gsvd-darwin-arm64\`, \`gsv-desktop-darwin-arm64\`, \`gsv-transcribe-darwin-arm64\`, \`gsv-vision-darwin-arm64\`
-          - **macOS (Intel)**: \`gsv-darwin-x64\`, \`gsvd-darwin-x64\`, \`gsv-desktop-darwin-x64\`, \`gsv-transcribe-darwin-x64\`, \`gsv-vision-darwin-x64\`
-          - **Linux (x64)**: \`gsv-linux-x64\`, \`gsvd-linux-x64\`, \`gsv-desktop-linux-x64\`, \`gsv-transcribe-linux-x64\`, \`gsv-vision-linux-x64\`
-          - **Linux (ARM64)**: \`gsv-linux-arm64\`, \`gsvd-linux-arm64\`, \`gsv-desktop-linux-arm64\`, \`gsv-transcribe-linux-arm64\`, \`gsv-vision-linux-arm64\`
-          - **Windows (x64)**: \`gsv-desktop-windows-x64-setup.exe\` or \`gsv-desktop-windows-x64.zip\` (all five applications)
+          - **macOS (Apple Silicon)**: \`gsv-darwin-arm64\`, \`gsvd-darwin-arm64\`, \`gsv-desktop-darwin-arm64\`, \`gsv-transcribe-darwin-arm64\`
+          - **macOS (Intel)**: \`gsv-darwin-x64\`, \`gsvd-darwin-x64\`, \`gsv-desktop-darwin-x64\`, \`gsv-transcribe-darwin-x64\`
+          - **Linux (x64)**: \`gsv-linux-x64\`, \`gsvd-linux-x64\`, \`gsv-desktop-linux-x64\`, \`gsv-transcribe-linux-x64\`
+          - **Linux (ARM64)**: \`gsv-linux-arm64\`, \`gsvd-linux-arm64\`, \`gsv-desktop-linux-arm64\`, \`gsv-transcribe-linux-arm64\`
+          - **Windows (x64)**: \`gsv-desktop-windows-x64-setup.exe\` or \`gsv-desktop-windows-x64.zip\` (all four applications)
 
           ### macOS app
 
           Download \`gsv-desktop-darwin-arm64.zip\` for Apple Silicon or
           \`gsv-desktop-darwin-x64.zip\` for Intel. Unzip it and move
           \`GSV.app\` to Applications. Each app includes its local
-          voice and gesture helpers, CLI, and machine daemon.
+          voice helper, CLI, and machine daemon.
 
           These developer builds are ad-hoc signed, without an Apple Developer ID
           or notarization. After the first blocked launch, use **System Settings →
           Privacy & Security → Open Anyway** for this app. macOS still asks for
-          camera and microphone access when you enable those features.
+          microphone access when you enable voice.
           BODY
 
       - name: Move mutable dev tag
@@ -544,7 +521,6 @@ jobs:
             release/gsv-desktop-darwin-arm64
             release/gsv-desktop-windows-x64.exe
             release/gsv-transcribe-windows-x64.exe
-            release/gsv-vision-windows-x64.exe
             release/gsv-desktop-windows-x64.zip
             release/gsv-desktop-windows-x64-setup.exe
             release/gsv-transcribe-linux-x64
@@ -553,13 +529,6 @@ jobs:
             release/gsv-transcribe-darwin-arm64
             release/gsv-transcribe-THIRD_PARTY.md
             release/gsv-transcribe-runtime-*
-            release/gsv-vision-linux-x64
-            release/gsv-vision-linux-arm64
-            release/gsv-vision-darwin-x64
-            release/gsv-vision-darwin-arm64
-            release/gsv-vision-LICENSE.apache-2.0
-            release/gsv-vision-PROVENANCE.md
-            release/gsv-vision-THIRD_PARTY.md
             release/gsv-desktop-darwin-x64.zip
             release/gsv-desktop-darwin-arm64.zip
             release/gsv-browser-extension.zip
@@ -574,7 +543,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          gh release view "$RELEASE_TAG" --json assets --jq '.assets[].name | select(startswith("gsv-tauri-prototype-") or startswith("gsv-cloudflare-") or . == "cloudflare-checksums.txt")' > retired-assets.txt
+          gh release view "$RELEASE_TAG" --json assets --jq '.assets[].name | select(startswith("gsv-tauri-prototype-") or startswith("gsv-cloudflare-") or startswith("gsv-vision-") or . == "cloudflare-checksums.txt")' > retired-assets.txt
           while IFS= read -r asset; do
             gh release delete-asset "$RELEASE_TAG" "$asset" --yes
           done < retired-assets.txt

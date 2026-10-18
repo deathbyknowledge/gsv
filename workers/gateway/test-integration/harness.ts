@@ -340,7 +340,11 @@ export function createManagedInferenceServiceStackTestHarness(
 }
 
 export function createManagedMailServiceStackTestHarness(
-  serviceConfigs: { accounts: string; inference: string },
+  serviceConfigs: {
+    accounts: string;
+    inference: string;
+    mail?: { domain: string; sendingDomains: string[] };
+  },
 ): TestHarness {
   const gatewayService = "gsv-managed-mail-stack";
   const queue = "gsv-managed-mail-outbound-stack";
@@ -374,6 +378,10 @@ export function createManagedMailServiceStackTestHarness(
       },
       {
         config: integrationEmailConfig(gatewayService, queue),
+        vars: {
+          MAIL_DOMAIN: serviceConfigs.mail?.domain ?? "gsv.space",
+          MAIL_SENDING_DOMAINS: JSON.stringify(serviceConfigs.mail?.sendingDomains ?? []),
+        },
       },
     ],
   });

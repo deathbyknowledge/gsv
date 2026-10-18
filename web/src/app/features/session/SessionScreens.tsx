@@ -18,10 +18,11 @@ export function SessionScreens({ session, snapshot }: SessionScreensProps) {
     <div class={`session-stage${visibleView === "booting" ? " session-stage-booting" : ""}`}>
       <LoginScreen visible={visibleView === "login" || visibleView === "booting"} loading={visibleView === "booting"}
         busy={state.busy} space={new URL(snapshot.url).host} {...state.login} />
-      <SetupScreen visible={visibleView === "setup"} busy={state.busy} space={new URL(snapshot.url).host} {...state.setup} />
+      <SetupScreen visible={visibleView === "setup"} busy={state.busy} space={new URL(snapshot.url).host}
+        arrivedFromSignup={snapshot.arrivedFromSignup === true} {...state.setup} />
       {visibleView === "setup-recovery" && <AuthLayout background="galaxy" visible surfaceClass="gsv-auth-surface-login">
         <div class="gsv-login-panel">
-          <SectionHeader title="Finish setting up your space" titleSize="title" divider />
+          <SectionHeader title="Finish setting up Ship" titleSize="title" divider />
           <div class="gsv-login-body">
             <p>{snapshot.setupRecoveryUrl ? "Sign in with the email you used to claim it." : "Ask the person who invited you for a new setup link."}</p>
             {snapshot.setupRecoveryUrl && (session.resumeSetup

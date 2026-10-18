@@ -42,7 +42,7 @@ export function MemberRecoveryScreen() {
     <SectionHeader title="RECOVER ACCOUNT" titleSize="title" divider />
     <div class="gsv-login-body gsv-recovery-body">
       {done ? <><p>Your password has changed. Sign in with the new password.</p><AppLink href="/" class="gsv-auth-link">Return to sign-in</AppLink></> : <>
-        <p>Use a messenger you previously confirmed in this space. To recover root, use your operator’s owner sign-in page.</p>
+        <p>Use a messenger you’ve confirmed with your Ship. To recover administrator access, use your operator’s owner sign-in page.</p>
         <form class="gsv-login-fields" onSubmit={(event) => void start(event)}>
           <Button variant="secondary" block type="submit" label={busy ? "PLEASE WAIT…" : attempt ? "REQUEST A NEW CODE" : "REQUEST A CODE"} disabled={busy} />
         </form>

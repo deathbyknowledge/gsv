@@ -63,8 +63,8 @@ inference, Process ticks, and schedules. Suspending an installation does not
 erase data or recursively cancel work already admitted; durable work
 rechecks the gate before new admission and may resume after reactivation.
 
-All deployments require directory resolution. There is no singleton fallback,
-even when the binding is absent. Historical standalone data remains outside
+All deployments require directory resolution; a missing directory binding fails
+closed. Historical standalone data remains outside
 current routing; see the [retirement guide](../how-to/standalone-retirement.md).
 
 ## Setup and ownership
@@ -83,10 +83,14 @@ instead of presenting it as a ready account. Expired setup authorization returns
 the same recovery signal. The operator may bind `GSV_OWNER_SIGNUP_URL` to its
 owner signup page with `?resume=1`; the public composition supplies it when owner
 email sign-in is configured. Accounts sets `ownerSetupRecovery` in the directory
-only when the installation belongs to a claimed creation invitation. The Kernel
+only for an installation created through verified-owner signup. The Kernel
 includes the recovery URL only for those spaces; this link carries no authority.
-A verified owner resumes the same invitation and receives fresh setup
-authorization if it is still needed. Clients clear rejected capabilities so an
+A verified owner resumes the same provisioning operation and receives the same
+setup authorization while it remains valid. Accounts derives that bearer using
+its stable owner-authentication secret and the claim's issuance times; D1 stores
+only the hash. Concurrent resumes cannot invalidate each other. Expiry rotates
+the bearer while preserving the claim identity retained by the Kernel.
+Clients clear rejected capabilities so an
 already activated space returns to ordinary sign-in. Operator-issued setup links
 instead direct the person to request a replacement from the operator.
 
@@ -100,6 +104,44 @@ match. Successful setup does not assign that principal a Kernel uid.
 The legacy `role` and `local_uid` columns do not govern local admission. The
 inference usage ledger's `local_uid` records the actor of a request and is
 unrelated.
+
+## Open registration
+
+`InstallationSignup` owns verified-owner creation. `POST /owner/api/spaces` accepts
+an operation ID and handle under the owner's bearer session. The client persists
+the operation before transmission; concurrent retries return the same installation.
+Accounts atomically limits self-service creation to one non-deleted, non-cancelled
+Space per owner, without limiting operator-created or already-owned Spaces.
+The owner session lists unfinished setups independently of browser storage.
+
+The existing provisioning ledger owns progress and diagnostic references.
+`installations.owner_setup` identifies setups an owner may resume. The forward
+migration preserves this marker for Spaces created through legacy signup codes;
+an upgrade trigger also covers old workers completing signup during rollout.
+Claim issuance is versioned at the database boundary: an old worker must retry
+instead of overwriting a new setup token. The migration retains the hash and
+original expiry of a capability issued before this fence, so an in-flight old
+response remains usable after owner setup resumes. This does not extend its
+lifetime. An explicit operator reissue invalidates both bearers.
+The retired invitation table remains historical data, never admission authority.
+Old Desktop clients retain owner sign-in; their retired registration endpoints
+return an instruction to update the app.
+
+Public operators enable registration with `installations.openRegistration` in
+the deployment composition (`GSV_SIGNUP_ENABLED=true` in Accounts). Commercial
+compositions assign their configured default plan through the signup policy
+before setup authorization is issued. Plan assignment is idempotent and preserves
+later operator edits. Closing registration prevents new allocations while
+allowing already-admitted setups to finish.
+An optional signup email policy rejects new native owner credentials before mail
+delivery and again during verification, and rejects new Space allocations before
+reservation. Existing credentials can still sign in and admitted setups can resume.
+The managed composition uses this to prevent GSV mailboxes from registering more Spaces.
+
+Contact invitations remain entirely Kernel-owned. The browser carries a pending
+contact link through signup and local setup, then presents the normal acceptance
+and message-handling choice. Creating, cancelling or accepting a contact invitation
+does not reserve, consume or refund a signup place.
 
 ## Reset and deletion
 
@@ -116,6 +158,9 @@ R2, ripgit, adapters, mail, inference and cloud instances report their own clean
 Instance coordinators are installation-owned resources in discovery and deletion;
 they do not require adapter peer-inventory import. Their lifecycle owner stops
 browsers and erases profiles and temporary files before confirming live erasure.
+Cloud computer objects also appear as `instance-computer` resources. Their owner
+destroys the container before confirming erasure or releasing its reservation;
+late start and health completions cannot reactivate a retired object.
 Missing inventory or owner evidence prevents a claim of completed erasure.
 Stale work cannot recreate data after its owner has retired the identity.
 

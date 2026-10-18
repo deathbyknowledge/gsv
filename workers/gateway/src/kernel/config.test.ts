@@ -95,7 +95,7 @@ describe("ConfigStore", () => {
       const values = new Map(ai.map((entry) => [entry.key, entry.value]));
       expect(values.get("config/ai/reasoning")).toBe("medium");
       expect(values.get("config/ai/generation/streaming")).toBe("off");
-      expect(values.get("config/ai/context.d/01-gsv.md")).toContain(
+      expect(values.get("config/ai/context.d/02-interaction.md")).toContain(
         "[GSV EVENT]",
       );
     },
@@ -188,7 +188,7 @@ describe("ConfigStore", () => {
   );
 
   it("includes shared runtime contracts and substitutions without pinning their prose", () => {
-    const context = SYSTEM_CONFIG_DEFAULTS["config/ai/context.d/01-gsv.md"];
+    const context = SYSTEM_CONFIG_DEFAULTS["config/ai/context.d/02-interaction.md"];
     for (const marker of ["[GSV EVENT]", "Send", "yield: true", "attach"]) {
       expect(context).toContain(marker);
     }

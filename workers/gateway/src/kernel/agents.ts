@@ -43,7 +43,8 @@ import { ensureAccountHomeLayout } from "./account-home";
 import { ensureInitialOnboardingResponsibility } from "./onboarding-responsibility";
 import { ensurePersonalMemory } from "./personal-memory";
 import { reconcileOperatorUpdates } from "./operator-updates";
-import { CREW_CONTEXT, crewDelegationContext } from "../prompts/personal-intelligence";
+import { shipContextFiles } from "../prompts/personal-intelligence";
+import { contextFiles } from "../prompts/context";
 
 /**
  * Curated, tasteful default names for the personal agent. The first available
@@ -225,7 +226,7 @@ async function ensureCrewAccount(
     username: "crew",
     gecos: "Crew",
     ownerUid: human.uid,
-    contextFiles: [{ name: "00-role.md", text: CREW_CONTEXT }],
+    contextFiles: contextFiles("crew"),
   };
   const key = `config/accounts/crew/${human.uid}`;
   const savedUid = ctx.config.get(key);
@@ -247,7 +248,10 @@ async function ensureCrewAccount(
     ctx.config.set(key, String(crew.uid));
   }
   await prepareAccountHome(ctx.env, { ...input, username: crew.username }, crew);
-  await seedContextFile(ctx.env, ship, "10-delegation.md", crewDelegationContext(crew.username));
+  const seeded = new Set(shipContextFiles().map(({ name }) => name));
+  for (const file of shipContextFiles(crew.username)) {
+    if (!seeded.has(file.name)) await seedContextFile(ctx.env, ship, file.name, file.text);
+  }
 }
 
 /**

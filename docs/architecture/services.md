@@ -32,9 +32,9 @@ user-controlled field.
 
 Every deployment supplies directory, onboarding and inference execution bindings.
 The public deployment package composes these services for one or many isolated
-spaces. A missing or unavailable directory fails closed; it never selects a
-singleton Kernel. The model stack starts with `gsv/default`, which the operator's
-inference service resolves. User-configured providers use that same execution
+spaces. A missing or unavailable directory fails closed. The model stack starts
+with `gsv/default`, which the operator's inference service resolves.
+User-configured providers use that same execution
 boundary, including transport through a connected machine.
 
 Operators may add entitlements, funded inference, mail and other services. H&M's
@@ -44,9 +44,9 @@ those services, using the operator's Workers AI account or a person's model
 credentials.
 
 Local development uses the same public composition. Separate integration
-fixtures exercise private service contracts; they do not define another runtime
-mode. Preserve existing operator resource identities when adopting the public
-components, as described in the [deployment guide](../how-to/deploy-with-alchemy.md).
+fixtures exercise private service contracts. Preserve existing operator resource
+identities when adopting the public components, as described in the
+[deployment guide](../how-to/deploy-with-alchemy.md).
 
 ## Entitlements
 

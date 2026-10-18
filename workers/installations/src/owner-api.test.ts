@@ -4,7 +4,7 @@ import { AccountStore } from "./store";
 import { InstallationOwnerStore } from "./owner-store";
 import { InstallationOwnerAuthStore } from "./owner-auth-store";
 import { InstallationOnboardingStore } from "./onboarding";
-import { InstallationCreationInvites } from "./creation-invites";
+import { InstallationSignup } from "./signup";
 import { InstallationOwnerApi } from "./owner-api";
 import type { JsonObject } from "@humansandmachines/gsv/protocol";
 
@@ -17,15 +17,15 @@ async function fixture() {
   await accounts.createPrincipal({ principalId: registry, email: `${registry}@example.com`, displayName: "Registry", verified: true });
   const owners = new InstallationOwnerStore(env.INSTALLATIONS_DB, registry);
   const auth = new InstallationOwnerAuthStore(env.INSTALLATIONS_DB, "api-test-secret-".repeat(4));
-  const onboarding = new InstallationOnboardingStore(env.INSTALLATIONS_DB, accounts);
-  const invites = new InstallationCreationInvites(env.INSTALLATIONS_DB, accounts, onboarding);
+  const onboarding = new InstallationOnboardingStore(env.INSTALLATIONS_DB, accounts, "api-test-secret-".repeat(4));
+  const signup = new InstallationSignup(env.INSTALLATIONS_DB, accounts, onboarding, true);
   let code = "";
   const send = vi.fn(async (message: EmailMessage | EmailMessageBuilder): Promise<EmailSendResult> => {
     if (!("subject" in message)) throw new Error("Expected composed mail");
     code = message.text?.match(/code is ([0-9]{6})\./)?.[1] ?? "";
     return { messageId: crypto.randomUUID() };
   });
-  const makeApi = () => new InstallationOwnerApi(auth, owners, invites, { send }, "accounts@example.com", ORIGIN, "example.com");
+  const makeApi = () => new InstallationOwnerApi(auth, owners, signup, { send }, "accounts@example.com", ORIGIN, "example.com");
   let api = makeApi();
   const request = async (path: string, token?: string, body?: JsonObject, headers: Record<string, string> = {}) => {
     const requestHeaders = new Headers({ "content-type": "application/json", "cf-connecting-ip": registry, ...headers });
@@ -48,7 +48,7 @@ async function fixture() {
     expect((await request("/verify", undefined, verify)).status).toBe(200);
     return verify;
   };
-  return { accounts, invites, onboarding, auth, request, challenge, sessionSecret, send, signIn,
+  return { accounts, signup, onboarding, auth, request, challenge, sessionSecret, send, signIn,
     restart: () => { api = makeApi(); }, code: () => code };
 }
 
@@ -62,28 +62,26 @@ describe("desktop owner API", () => {
     const initialSession = await (await f.request("/session", f.sessionSecret)).json<{ spaceDomain: string; spaces: unknown[] }>();
     expect(initialSession.spaceDomain).toBe("example.com");
     expect(initialSession.spaces).toEqual([]);
-    const issued = await f.invites.create({ note: "operator-only" });
-    const claim = await f.request("/invites/claim", f.sessionSecret, { code: issued.code });
-    expect(claim.status).toBe(200);
-    expect(await claim.text()).not.toContain("operator-only");
+    const operationId = crypto.randomUUID();
     const handle = `test-${crypto.randomUUID()}`;
     expect(await (await f.request(`/handle?value=${handle.toUpperCase()}`, f.sessionSecret)).json()).toEqual({ available: true });
-    const first = await (await f.request(`/invites/${issued.invite.id}/space`, f.sessionSecret, { handle: handle.toUpperCase() })).json<{ origin: string; onboardingToken: string }>();
+    const first = await (await f.request("/spaces", f.sessionSecret, { operationId, handle: handle.toUpperCase() })).json<{ origin: string; onboardingToken: string }>();
     expect(first.origin).toBe(`https://${handle}.${initialSession.spaceDomain}`);
     expect(await (await f.request(`/handle?value=${handle.toUpperCase()}`, f.sessionSecret)).json()).toEqual({ available: false });
     f.restart();
-    const resumed = await (await f.request(`/invites/${issued.invite.id}/space`, f.sessionSecret, { handle })).json<typeof first>();
+    const resumed = await (await f.request("/spaces", f.sessionSecret, { operationId, handle })).json<typeof first>();
     expect(resumed.origin).toBe(first.origin);
     const owner = await f.auth.session(f.sessionSecret);
-    const [invite] = await f.invites.owned(owner!.principalId);
-    const authorization = await f.onboarding.authorize({ installationId: invite.installationId!, token: resumed.onboardingToken });
+    const reservation = await f.accounts.getReservationByOperation(operationId);
+    expect((await f.signup.pending(owner!.principalId))).toHaveLength(1);
+    const authorization = await f.onboarding.authorize({ installationId: reservation!.installationId, token: resumed.onboardingToken });
     if (!authorization.ok) throw new Error("Expected setup authorization");
-    await f.onboarding.complete({ installationId: invite.installationId!, claimId: authorization.claimId });
-    const activated = await (await f.request(`/invites/${issued.invite.id}/space`, f.sessionSecret, { handle })).json<{ onboardingToken: string | null }>();
+    await f.onboarding.complete({ installationId: reservation!.installationId, claimId: authorization.claimId });
+    const activated = await (await f.request("/spaces", f.sessionSecret, { operationId, handle })).json<{ onboardingToken: string | null }>();
     expect(activated.onboardingToken).toBeNull();
-    const session = await (await f.request("/session", f.sessionSecret)).json<{ spaces: unknown[]; invites: unknown[] }>();
+    const session = await (await f.request("/session", f.sessionSecret)).json<{ spaces: unknown[]; setups: unknown[] }>();
     expect(session.spaces).toHaveLength(1);
-    expect(session.invites).toHaveLength(1);
+    expect(session.setups).toHaveLength(0);
     expect((await f.request("/logout", f.sessionSecret, {})).status).toBe(200);
     expect((await f.request("/session", f.sessionSecret)).status).toBe(401);
     expect((await f.request("/verify", undefined, verify)).status).toBe(400);
@@ -95,12 +93,13 @@ describe("desktop owner API", () => {
     expect((await f.request("/session", undefined, undefined, { cookie: `__Host-gsv-owner-session=${f.sessionSecret}` })).status).toBe(401);
     expect((await f.request("/verify", undefined, { ...verify, purpose: "recover" })).status).toBe(400);
     expect((await f.request("/verify", undefined, { ...verify, sessionSecret: secret() })).status).toBe(400);
-    const issued = await f.invites.create({});
     const other = await fixture();
     await other.signIn();
-    await other.request("/invites/claim", other.sessionSecret, { code: issued.code });
-    expect((await f.request("/invites/claim", f.sessionSecret, { code: issued.code })).status).toBe(400);
-    expect((await f.request(`/invites/${issued.invite.id}/space`, f.sessionSecret, { handle: "stolen" })).status).toBe(400);
+    const operationId = crypto.randomUUID();
+    await other.request("/spaces", other.sessionSecret, { operationId, handle: `owned-${crypto.randomUUID()}` });
+    expect((await f.request("/spaces", f.sessionSecret, { operationId, handle: "stolen" })).status).toBe(400);
+    expect((await f.request("/spaces", undefined, { operationId: crypto.randomUUID(), handle: "anonymous" })).status).toBe(401);
+    expect((await f.request("/invites/claim", f.sessionSecret, { code: "retired-code" })).status).toBe(410);
   });
 
   it("reports failed delivery without leaking mail errors", async () => {

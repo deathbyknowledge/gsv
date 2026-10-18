@@ -25,7 +25,7 @@ the cached session token from `gsv auth login`, or prompt/login when needed.
 ## Chat and Shell
 
 When the operator enables feedback, the Instrument header has a **feedback** action.
-Reports include the text you submit, your space, account, and app/server versions.
+Reports include the text you submit, your Ship, account, and app/server versions.
 The optional **Include last 20 Ship messages** checkbox starts unchecked. It
 captures recent messages, thinking, tool inputs/results and runtime events through
 your existing history permissions. Review the snapshot before sending: tool results
@@ -103,6 +103,13 @@ complete a sign-in; opening Fleet's browser view otherwise leaves Ship running
 and accepts direct input. These are native target commands, available to Ship
 through Shell as well. See [cloud browsers](/how-to/cloud-browsers) for saved
 logins, recovery after a lost response, and the complete sign-in flow.
+
+When computers are enabled, `instance start computer --request-id ID --wait`
+creates a temporary Linux target. `--name NAME` and `--seconds N` choose its label
+and lifetime. A new request ID creates a new computer; retrying the same request
+recovers that operation. Computers do not accept browser profile or `--new`
+options. Use the same list, get and stop commands; stopping destroys the files
+and running commands. See [cloud computers](/how-to/cloud-computers).
 
 Inside the gateway shell, `proc` is the process IPC userland command.
 `message` inspects and uses external chat reply routes. `sched add --ship`
@@ -347,7 +354,7 @@ also report that id, including a failure while reopening the file for the
 automatic retry. An outcome that may have reached the provider is reported as
 `sent=false`, `delivery_confirmed=false`, and `delivery_state=ambiguous`.
 
-`contact` manages relationships with people on other Ship installations.
+`contact` manages relationships with people on other Ships.
 `contact invite create --handling manual|ship` returns a short-lived one-use code and a shareable `url`;
 the other person accepts either while signed in to their own Ship. The default
 lifetime is one hour; `--expires` accepts up to seven days. Pairing and revocation may
@@ -507,7 +514,7 @@ preference, and process-switch fencing.
 Ship can create an invitation from Shell on `gsv` with
 `targets pair --name "My laptop" --platform mac`. Supported platforms are `mac`,
 `linux`, `windows` and `browser`. The result contains setup instructions for the
-space's release. `targets pair list` and `targets pair cancel INVITATION_ID`
+Ship's release. `targets pair list` and `targets pair cancel INVITATION_ID`
 manage the human owner's invitations. See [Connect devices](../how-to/connect-devices.md).
 
 For `--platform browser`, the JSON result includes `extensionUrl` and `code`.
@@ -525,7 +532,7 @@ gsv pair  # resume an interrupted exchange
 ```
 
 Use `gsv pair -` to read the invitation from stdin instead of exposing it in
-process arguments. `--preserve-cli-login` leaves the CLI's selected space and
+process arguments. `--preserve-cli-login` leaves the CLI's selected Ship and
 credentials unchanged; `--no-replace` refuses to overwrite an existing machine
 credential. Desktop uses these together for integrated machine setup.
 
@@ -594,7 +601,7 @@ the device invitation flow, or
 `gsv auth token create --kind machine --peer ...` followed by
 `gsv config --local set device.token ...`.
 Because the compatibility launcher replaces itself with `gsvd`, gateway setup
-must be completed through the space's browser setup invitation before starting
+must be completed through the Ship's browser setup invitation before starting
 `gsvd`. See the [device guide](../how-to/connect-devices.md) for enrollment.
 
 `gsv`, `gsvd`, and the Desktop application share protocol and configuration
@@ -624,9 +631,8 @@ gsv auth link-list [--uid UID]
 gsv auth unlink --adapter ID --account-id ACCOUNT --actor-id ACTOR
 ```
 
-Initialize a new space through its Accounts-issued browser setup invitation.
-The old `gsv auth setup` wizard and automatic setup probes are removed. Login
-and commands operate on a space whose authorized setup has completed.
+Initialize a new Ship through its Accounts-issued browser setup invitation.
+Login and commands operate on a Ship whose authorized setup has completed.
 
 `login` asks only for a password when no credential is cached. Omit the username
 to use the personal account, or pass `--username root` for administration. Existing
@@ -700,8 +706,7 @@ connect/disconnect; `--config-json` passes an object to the adapter.
 
 The bundled messenger applications are configured by the operator at deploy
 time. People link and unlink their own identities through the adapter pairing
-flow in **Settings → Messengers**. Per-person bot tokens, Slack Socket Mode
-and WhatsApp QR setup are not supported by the current deployment.
+flow in **Settings → Messengers**.
 
 ## Version
 
@@ -711,17 +716,6 @@ gsv --version
 ```
 
 Prints build metadata for the installed CLI.
-
-## Renamed or Removed Commands
-
-| Old command | Current command |
-| --- | --- |
-| `gsv client` | `gsv chat` |
-| `gsv session` | `gsv proc` |
-| `gsv local-config` | `gsv config --local` |
-| `gsv deploy`, `gsv infra` | Removed; use the public Alchemy stack or a hosting operator. |
-| `gsv auth setup` | Removed; use the Accounts-issued browser setup invitation. |
-| `gsv tools`, `gsv skills`, `gsv init` | Removed from the current CLI. |
 
 ## See also
 

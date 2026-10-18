@@ -1,7 +1,7 @@
 import { useLayoutEffect, useRef, useState } from "preact/hooks";
 import type { RefObject } from "preact";
 import { promptAfterSubmit, type PromptLineHandle } from "../../features/instrument/shared/PromptLine";
-import { useNativeInput, type NativeCommand, type NativeSnapshot, type NativeSubscription, type NativeUpdate, type SegmentAction } from "./PlatformProvider";
+import { useNativeInput, type NativeCommand, type NativeSnapshot, type NativeSubscription, type NativeUpdate } from "./PlatformProvider";
 import { VoiceDraft } from "./voiceDraft";
 import { sameNativePresentation } from "./nativePresentation";
 import { useNativeSoundFeedback } from "./useInputSounds";
@@ -9,14 +9,11 @@ import { ClientControlError, useClientControl, type MicrophoneStatus } from "./C
 
 export type VoiceComposer = Pick<PromptLineHandle, "selection" | "setValue" | "commands">;
 
-export function useNativeVoice({ prompt, scope, enabled, practice = false, send, scroll, onAction }: {
+export function useNativeVoice({ prompt, scope, enabled, send }: {
   prompt: RefObject<VoiceComposer>;
   scope: string;
   enabled: boolean;
-  practice?: boolean;
   send(text: string): boolean;
-  scroll(delta: number): void;
-  onAction?(action: SegmentAction): void;
 }) {
   const input = useNativeInput();
   const [snapshot, setSnapshot] = useState<NativeSnapshot | null>(null);
@@ -27,8 +24,8 @@ export function useNativeVoice({ prompt, scope, enabled, practice = false, send,
   const lease = useRef<string | null>(null);
   const draft = useRef<VoiceDraft | null>(null);
   const writing = useRef(false);
-  const latest = useRef({ send, scroll, enabled, onAction });
-  latest.current = { send, scroll, enabled, onAction };
+  const latest = useRef({ send, enabled });
+  latest.current = { send, enabled };
   const state = useRef<NativeSnapshot | null>(null);
   const deviceWaiters = useRef(new Set<(snapshot: NativeSnapshot) => void>());
   const command = async (value: NativeCommand): Promise<boolean> => {
@@ -82,26 +79,25 @@ export function useNativeVoice({ prompt, scope, enabled, practice = false, send,
       environmentOverride: null,
     };
     return { type: request.type === "microphoneList" ? "microphonesListed" : request.type === "microphoneUse" ? "microphoneSelected" : "defaultMicrophoneSelected", status };
-  }, enabled && !practice);
+  }, enabled);
 
   useLayoutEffect(() => {
     state.current = null;
     setSnapshot(null);
     if (!input || !enabled) return;
-    let active = true, ownedLease: string | null = null, timer = 0, frame = 0, ack = 0, revision = 0;
+    let active = true, ownedLease: string | null = null, timer = 0, ack = 0, revision = 0;
     let subscription: NativeSubscription | null = null, pending: NativeUpdate | null = null;
     let acknowledging = false, acknowledgeAgain = false;
-    let scrollVelocity = 0, scrollAt = 0, previousFrame = performance.now();
     const fail = (message: string) => {
       if (!active) return;
       active = false;
       window.clearTimeout(timer);
-      cancelAnimationFrame(frame);
+
       subscription?.dispose();
       lease.current = null;
       draft.current = null;
       state.current = null;
-      scrollVelocity = 0;
+
       setSnapshot(null);
       setError(message);
     };
@@ -124,16 +120,7 @@ export function useNativeVoice({ prompt, scope, enabled, practice = false, send,
         }
       }
     };
-    const animate = (now: number) => {
-      const elapsed = Math.min(50, now - previousFrame);
-      previousFrame = now;
-      frame = 0;
-      if (active && scrollVelocity && now - scrollAt < 250) {
-        latest.current.scroll(scrollVelocity / 1000 * .8 * elapsed);
-        frame = requestAnimationFrame(animate);
-      }
-    };
-    const apply = (next: NativeSnapshot, scrollAge = 0) => {
+    const apply = (next: NativeSnapshot) => {
       for (const event of next.events) {
         if (event.id <= ack) continue;
         // Acknowledge only after applying; the host retains this bounded lane until delivery completes.
@@ -146,17 +133,15 @@ export function useNativeVoice({ prompt, scope, enabled, practice = false, send,
             write(result.value, result.caret);
             if (event.action === "send") {
               if (latest.current.enabled && latest.current.send(result.value.trim())) {
-                write(practice ? "" : promptAfterSubmit(result.value, prompt.current?.commands));
+                write(promptAfterSubmit(result.value, prompt.current?.commands));
                 const selection = prompt.current?.selection();
                 if (selection) draft.current.sent(selection);
-                latest.current.onAction?.("send");
               } else {
                 draft.current = null;
                 void command({ kind: "cancel" });
                 setError("Dictation stopped. Your unsent text is still in the prompt.");
               }
             }
-            if (event.action === "delete" || event.action === "clear") latest.current.onAction?.(event.action);
             if (event.kind === "final") draft.current = null;
           }
         }
@@ -166,15 +151,6 @@ export function useNativeVoice({ prompt, scope, enabled, practice = false, send,
         const result = draft.current.partial(next.voice);
         if (result) write(result.value, result.caret);
       } else if (!next.voice) draft.current = null;
-      scrollVelocity = next.scroll_velocity;
-      scrollAt = performance.now() - scrollAge;
-      if (scrollVelocity && !frame) {
-        previousFrame = performance.now();
-        frame = requestAnimationFrame(animate);
-      } else if (!scrollVelocity && frame) {
-        cancelAnimationFrame(frame);
-        frame = 0;
-      }
       state.current = next;
       for (const receive of deviceWaiters.current) receive(next);
       setSnapshot((current) => sameNativePresentation(current, next) ? current : next);
@@ -187,12 +163,12 @@ export function useNativeVoice({ prompt, scope, enabled, practice = false, send,
         const age = Date.now() - update.sent_at_ms;
         if (age > 1000 || age < -1000) throw new Error("Native input paused while the view was suspended. Reconnect input to continue.");
         revision = update.revision;
-        apply(update.snapshot, Math.max(0, age) + update.scroll_age_ms);
+        apply(update.snapshot);
         void acknowledge();
       } catch (error) { fail(String(error)); }
     };
     try {
-      subscription = input.subscribe(receive, practice);
+      subscription = input.subscribe(receive);
       void subscription.initial.then((next) => {
         if (!active) return;
         ownedLease = next.lease;
@@ -206,16 +182,16 @@ export function useNativeVoice({ prompt, scope, enabled, practice = false, send,
     return () => {
       active = false;
       window.clearTimeout(timer);
-      cancelAnimationFrame(frame);
+
       draft.current = null;
       if (lease.current === ownedLease) lease.current = null;
       subscription?.dispose();
     };
-  }, [input, scope, enabled, practice, attachment]);
+  }, [input, scope, enabled, attachment]);
 
-  const segment = (action: "send" | "delete" | "clear") => {
+  const segment = () => {
     const voice = state.current?.voice;
-    if (voice) void command({ kind: "segment", request_id: voice.request_id, segment_id: voice.segment_id, action });
+    if (voice) void command({ kind: "segment", request_id: voice.request_id, segment_id: voice.segment_id, action: "send" });
   };
   return {
     available: input !== null, snapshot, error, device, setDevice, command,
@@ -223,7 +199,6 @@ export function useNativeVoice({ prompt, scope, enabled, practice = false, send,
     start: () => { setError(null); void command({ kind: "start", device_id: device || null }); },
     stop: () => { const voice = state.current?.voice; if (voice) void command({ kind: "stop", request_id: voice.request_id }); },
     cancel: () => { draft.current = null; void command({ kind: "cancel" }); },
-    segment,
     onInput: (value: string) => {
       if (writing.current || !draft.current) return;
       if (!draft.current.edit(value)) {
@@ -234,7 +209,7 @@ export function useNativeVoice({ prompt, scope, enabled, practice = false, send,
     },
     interceptSubmit: () => {
       if (!state.current?.voice) return false;
-      segment("send");
+      segment();
       return true;
     },
   };

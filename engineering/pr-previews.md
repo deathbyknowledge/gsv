@@ -14,7 +14,6 @@ the base keeps the preview and redeploys that revision. Closing or merging
 runs `alchemy destroy` from `main`. Cleanup uses
 `pull_request_target` so closing a PR with merge conflicts also triggers it.
 Alchemy owns state, dependencies and deletion.
-There is no separate preview registry or cleanup controller.
 
 ## Operator setup
 

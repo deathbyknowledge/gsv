@@ -86,12 +86,15 @@ Trust is established at deploy time. If the binding exists, that adapter worker
 is part of the trusted deployment.
 
 Managed email follows the same transport ownership rule but is not a chat
-identity surface. Email Routing delivers `<installation-handle>@gsv.space` to
-the email Worker. The Worker resolves the handle through Accounts before
+identity surface. Email Routing delivers `<installation-handle>@<mail-domain>` to
+the email Worker. The Worker validates the configured receiving domain and
+resolves the handle through Accounts before
 addressing its installation-scoped transport Durable Object, persists an exact
 retryable copy, and hands the message to the Gateway over a service binding.
 The Kernel owns the canonical mailbox, filesystem paths, local user assignment,
-and delivery to the owner's Personal intelligence. The adapter deletes its raw
+and delivery to the owner's Personal intelligence. Receiving-domain aliases for
+the same handle share the existing mailbox and its primary address; each message
+retains the actual envelope recipient. The adapter deletes its raw
 outbox chunks after the Kernel acknowledges durable storage; it retains only
 bounded delivery and usage state.
 
@@ -274,6 +277,12 @@ message and byte reservations, claim retries, and completion callback retries.
 It independently derives and persists the expected sender on the first
 successful active Accounts resolution. Later handle drift fails closed, and a
 mismatched draft is rejected rather than trusting the claimed `from` field.
+The sender may use `MAIL_DOMAIN` or an explicitly configured
+`MAIL_SENDING_DOMAINS` JSON array, always with the current Accounts handle.
+Operators must enable Email Sending for each allowed domain. Receiving aliases
+alone grant no sending authority. Existing mailbox addresses and immutable
+drafts keep their original sender; a domain promotion can retain that domain
+without invalidating pending claims. Handle changes still fail closed.
 Cloudflare Email Sending is called at most once after the DO durably records an
 attempt. Provider acceptance records `accepted`.
 Terminal lifecycle, quota, and draft validation failures before that attempt

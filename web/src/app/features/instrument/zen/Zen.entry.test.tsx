@@ -143,7 +143,7 @@ async function mountedZen(pid?: string, initialTarget?: string, native = false, 
 describe("Zen conversation entry", () => {
   it.each([
     ["create a routine", "Help me create a routine."],
-    ["connect a computer", "Help me connect a computer to this space."],
+    ["connect a computer", "Help me connect a computer to my Ship."],
     ["start a browser", "Start a browser for me."],
   ])("stages %s as editable text and sends only the edited message", async (label, request) => {
     const zen = await mountedZen();
@@ -549,7 +549,7 @@ describe("Zen conversation entry", () => {
     const zen = await mountedZen();
     try {
       expect(zen.nodes().some((node) => node.type === ThinkingMark)).toBe(false);
-      expect(zen.text()).not.toContain("I am the ship. Who are you?");
+      expect(zen.text()).not.toContain("I am the Ship. Who are you?");
       expect(zen.nodes().filter((node) => node.type === ZenText)).toHaveLength(0);
       expect(zen.props<ComponentProps<typeof PromptLine>>(PromptLine).disabled).toBe(false);
       expect(send).not.toHaveBeenCalled();
@@ -587,7 +587,7 @@ describe("Zen conversation entry", () => {
       await vi.waitFor(() => expect(zen.props(ZenText).text).toBe("Your machine is online."));
       // History was not watched arriving, so a long message from it folds.
       expect(zen.props(ZenText).opened).toBe(false);
-      expect(zen.text()).not.toContain("I am the ship. Who are you?");
+      expect(zen.text()).not.toContain("I am the Ship. Who are you?");
       expect(send).not.toHaveBeenCalled();
     } finally { await zen.unmount(); }
   });
@@ -678,7 +678,7 @@ describe("Zen conversation entry", () => {
     const zen = await mountedZen("helper");
     try {
       await vi.waitFor(() => expect(zen.text()).toContain("This helper has no messages yet."));
-      expect(zen.text()).not.toContain("I am the ship. Who are you?");
+      expect(zen.text()).not.toContain("I am the Ship. Who are you?");
       expect(send).not.toHaveBeenCalled();
     } finally { await zen.unmount(); }
   });

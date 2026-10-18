@@ -32,7 +32,7 @@ export type GsvDeploymentProps = Omit<GsvRuntimeProps, "services"> & {
     instancesLifecycle?: {
       worker: Cloudflare.Workers.Worker;
       entrypoint: string;
-      namespaces: readonly { className: string; kind: "instance-installation" }[];
+      namespaces: readonly { className: string; kind: "instance-installation" | "instance-computer" }[];
     };
   };
   /** Explicit current and historical operator inventory, including BYOK providers; known-sink checks do not discover that history. */
@@ -46,6 +46,7 @@ export type GsvDeploymentProps = Omit<GsvRuntimeProps, "services"> & {
     /** Accounts sends owner codes independently of installation-scoped mail. The operator owns the verified sender and stable secret. */
     ownerEmail?: { from: string; allowedRecipients?: string[]; authSecret: Cloudflare.Workers.WorkerBindingProps[string] };
     ownerSignupOrigin?: string;
+    openRegistration?: boolean;
     ownerOriginAliases?: string[];
   };
   inference: {
@@ -90,8 +91,11 @@ export const GsvDeployment = (props: GsvDeploymentProps, dependencies = gsvRunti
   }
   const instancesLifecycle = props.services?.instancesLifecycle;
   if (Boolean(props.services?.instances) !== Boolean(instancesLifecycle)) throw new Error("Supplied instances require their owned lifecycle and namespace inventory");
-  if (instancesLifecycle && (!instancesLifecycle.entrypoint.trim() || !instancesLifecycle.namespaces.length
-    || instancesLifecycle.namespaces.some(namespace => !namespace.className.trim() || namespace.kind !== "instance-installation"))) {
+  if (instancesLifecycle && (!instancesLifecycle.entrypoint.trim()
+    || ["instance-installation", "instance-computer"].some(kind => !instancesLifecycle.namespaces.some(namespace => namespace.kind === kind))
+    || new Set(instancesLifecycle.namespaces.map(namespace => namespace.className.trim())).size !== instancesLifecycle.namespaces.length
+    || instancesLifecycle.namespaces.some(namespace => !namespace.className.trim()
+      || !["instance-installation", "instance-computer"].includes(namespace.kind)))) {
     throw new Error("Supplied instances lifecycle requires valid instance namespace ownership");
   }
   const domain = new URL(`https://${props.domain}`);
@@ -166,8 +170,7 @@ export const GsvDeployment = (props: GsvDeploymentProps, dependencies = gsvRunti
     // supplied through its already-adopted directory Worker, never replayed here.
     database = yield* Cloudflare.D1.Database(`${props.logicalPrefix}InstallationsDatabase`, {
       name: props.installations.databaseName,
-      migrationsDir: props.installations.migrationsDirectory,
-      migrationsTable: "installation_migrations",
+      migrations: { dir: props.installations.migrationsDirectory, table: "installation_migrations" },
     }).pipe(retain(props.allowResourceDeletion !== true));
     const bindings: Cloudflare.Workers.WorkerBindingProps = {
       INSTALLATIONS_DB: database, ENVIRONMENT: "production", GSV_BASE_DOMAIN: props.domain,
@@ -178,6 +181,7 @@ export const GsvDeployment = (props: GsvDeploymentProps, dependencies = gsvRunti
       GSV_OWNER_OIDC_ISSUER: props.installations.ownerIdentity?.issuer ?? "",
       GSV_OWNER_OIDC_CLIENT_ID: props.installations.ownerIdentity?.clientId ?? "",
       GSV_OWNER_SIGNUP_ORIGIN: props.installations.ownerSignupOrigin ?? "",
+      GSV_SIGNUP_ENABLED: props.installations.openRegistration ? "true" : "false",
       GSV_OWNER_ORIGIN_ALIASES: ownerOriginAliases,
     };
     if (props.installations.ownerIdentity?.clientSecret) bindings.GSV_OWNER_OIDC_CLIENT_SECRET = props.installations.ownerIdentity.clientSecret;
