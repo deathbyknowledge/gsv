@@ -37,7 +37,7 @@ requests take precedence. It does not change interface translations or date form
 
 The Desktop voice preview also reads this preference for local spoken replies.
 Regional tags use the matching voice language; without a saved value, it uses the
-device's language. See [Use voice input](/how-to/voice-input) for supported voices.
+device's language when supported, otherwise English. See [Use voice input](/how-to/voice-input) for supported voices.
 
 ## Reading and Writing
 

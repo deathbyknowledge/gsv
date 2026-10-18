@@ -102,7 +102,7 @@ Kokoro runs locally. Spoken replies and the voice preview follow **Settings →
 Preferences → Response language**, using Heart for English and Dora for Spanish;
 regional tags such as `es-MX` use the matching language. Changes saved there apply
 without restarting Desktop. With no saved response language, Desktop uses the
-device's language. This preview supports English and Spanish; other languages
+device's language when supported, otherwise English. This preview supports English and Spanish; other saved languages
 show an availability message in voice settings, while recording remains available.
 
 To change a shortcut, choose **change**, press the keys together, then choose

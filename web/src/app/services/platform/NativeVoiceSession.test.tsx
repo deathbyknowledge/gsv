@@ -143,6 +143,9 @@ describe("desktop handsfree session", () => {
     await act(() => app.cache.invalidateQueries({ queryKey: consoleConfigQueryKey }));
     await vi.waitFor(() => expect(app.session().language).toBe("es"));
     expect(app.session().languageError).toBeNull();
+    vi.stubGlobal("navigator", { language: "C" });
+    await app.render("memory");
+    expect(app.session().language).toBe("en");
   });
 
   it("starts before visiting Chat, survives navigation, sends only to Ship, and reads replies while another page is open", async () => {

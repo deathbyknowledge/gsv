@@ -71,7 +71,8 @@ function VoiceSessionOwner({ children, onDirtyChange }: {
     },
   });
   const requestedLanguage = (languagePreference.data || navigator.language || "en").split("-")[0].toLowerCase();
-  const language = languagePreference.data === undefined ? null : requestedLanguage === "en" || requestedLanguage === "es" ? requestedLanguage : null;
+  const language = languagePreference.data === undefined ? null : requestedLanguage === "es" ? "es"
+    : requestedLanguage === "en" || !languagePreference.data ? "en" : null;
   const languageError = languagePreference.error?.message ?? (languagePreference.data !== undefined && !language
     ? "Spoken replies currently support English and Spanish. Your response language is not supported yet." : null);
   // Conversation signals own the transcript; this outbox retains only delivery and retry state.

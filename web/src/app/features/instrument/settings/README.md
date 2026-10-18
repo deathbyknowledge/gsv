@@ -23,7 +23,7 @@ of the window. Only the content panes scroll; neither can pass behind the header
 Spoken replies and voice preview read the personal Ship owner's Response language
 through the shared configuration cache. Saving Preferences updates the active
 voice across pages. Regional tags select their base language; an unset preference
-uses the device language. The preview supports English and Spanish and shows an
+uses the device language when supported, otherwise English. The preview supports English and Spanish and shows an
 availability message for other languages. Shortcuts and playback mode stay local;
 the response language has one account-owned value.
 
