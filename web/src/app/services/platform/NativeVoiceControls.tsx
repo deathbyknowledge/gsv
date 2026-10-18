@@ -5,18 +5,18 @@ import { useDismissOnOutsideClick } from "../../features/instrument/shared/useDi
 import { AppLink } from "../navigation/appNavigation";
 import { installInputSounds } from "./inputSounds";
 import { voicePreparation } from "./nativePresentation";
-import { useNativeVoice } from "./useNativeVoice";
+import { useComposerVoice, type ComposerVoiceOptions } from "./NativeVoiceSession";
 import { useNativeSpeech } from "./NativeSpeech";
 import "./native-input.css";
 
-export type NativeVoiceHandle = Pick<ReturnType<typeof useNativeVoice>, "onInput" | "interceptSubmit">;
-type NativeVoiceControlsProps = Parameters<typeof useNativeVoice>[0] & {
+export type NativeVoiceHandle = Pick<ReturnType<typeof useComposerVoice>, "onInput" | "interceptSubmit">;
+type NativeVoiceControlsProps = ComposerVoiceOptions & {
   /** Zen owns the full reading area; the composer footer must not constrain panels. */
   panelHost: RefObject<HTMLDivElement>;
 };
 
 export const NativeVoiceControls = forwardRef<NativeVoiceHandle, NativeVoiceControlsProps>(function NativeVoiceControls({ panelHost, ...options }, ref) {
-  const control = useNativeVoice(options);
+  const control = useComposerVoice(options);
   const speech = useNativeSpeech();
   useImperativeHandle(ref, () => ({ onInput: control.onInput, interceptSubmit: control.interceptSubmit }));
   const [panel, setPanel] = useState(false);
@@ -26,8 +26,8 @@ export const NativeVoiceControls = forwardRef<NativeVoiceHandle, NativeVoiceCont
   const voice = snapshot?.voice;
   const preparation = voicePreparation(voice);
   const notice = error || snapshot?.notice;
-  const busy = !options.enabled || !snapshot;
-  const voiceLabel = !voice ? "voice" : voice.phase === "listening" ? "listening"
+  const busy = !options.enabled || !snapshot || control.blocked || control.capturing;
+  const voiceLabel = !voice ? control.capturing ? "preparing…" : "voice" : voice.phase === "listening" ? "listening"
     : voice.phase === "finishing" ? "pausing…" : preparation?.message ?? "preparing…";
   const close = (restoreFocus: boolean) => {
     if (restoreFocus) voiceButton.current?.focus({ preventScroll: true });
@@ -51,9 +51,9 @@ export const NativeVoiceControls = forwardRef<NativeVoiceHandle, NativeVoiceCont
       onClick={() => setPanel((current) => !current)}>
       {voice && <span class="native-sensor-dot" aria-hidden="true" />}<span aria-live="polite">{voiceLabel}</span>
     </button>
-    {voice && <button type="button" disabled={voice.phase === "finishing"}
-      onClick={voice.phase === "listening" ? control.stop : control.cancel}>
-      {voice.phase === "listening" || voice.phase === "finishing" ? "pause" : "cancel"}
+    {control.capturing && <button type="button" disabled={voice?.phase === "finishing"}
+      onClick={voice?.phase === "listening" ? control.stop : control.cancel}>
+      {voice?.phase === "listening" || voice?.phase === "finishing" ? "pause" : "cancel"}
     </button>}
     {speech?.preferences.enabled && speech.status.phase === "speaking" && <button type="button" onClick={() => void speech.command({ kind: "cancel" })}>stop speaking</button>}
     {notice && !panel && <>
@@ -73,10 +73,10 @@ export const NativeVoiceControls = forwardRef<NativeVoiceHandle, NativeVoiceCont
       {notice && <p class="native-input-error" role="alert">{notice}</p>}
       {!snapshot && <button type="button" disabled={!options.enabled} onClick={control.reconnect}>reconnect input</button>}
       <div class="native-panel-actions">
-        {!voice ? <button type="button" class="native-primary" disabled={busy} onClick={control.start}>listen</button>
-          : <button type="button" class="native-primary" disabled={voice.phase === "finishing"}
-            onClick={voice.phase === "listening" ? control.stop : control.cancel}>{voice.phase === "listening" ? "pause" : voice.phase === "finishing" ? "pausing…" : "cancel"}</button>}
-        <span class="native-panel-state" role="status">{voice ? voiceLabel : "Microphone off"}</span>
+        {!control.capturing ? <button type="button" class="native-primary" disabled={busy} onClick={control.start}>listen</button>
+          : <button type="button" class="native-primary" disabled={voice?.phase === "finishing"}
+            onClick={voice?.phase === "listening" ? control.stop : control.cancel}>{voice?.phase === "listening" ? "pause" : voice?.phase === "finishing" ? "pausing…" : "cancel"}</button>}
+        <span class="native-panel-state" role="status">{control.capturing ? voiceLabel : control.blocked ? "Handsfree is recording" : "Microphone off"}</span>
       </div>
       {preparation && <progress max={1} value={preparation.progress} aria-label={preparation.message} />}
       <p class="native-panel-footnote">Pause keeps your draft. Enter sends and keeps listening.</p>

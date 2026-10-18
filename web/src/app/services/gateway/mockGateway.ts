@@ -740,6 +740,7 @@ function route(socket: MockSocket, id: string, call: string, args: JsonValue): s
       if (run) result.runId = run.runId;
       return respond(id, result);
     }
+    case "conversation.ship": return respond(id, { conversation: conversation(SHIP.pid) });
     case "conversation.forProcess": return respond(id, { conversation: conversation(pidArgs.parse(args).pid) });
     case "conversation.history": {
       const { conversationId, beforeSequence = Infinity, afterSequence, limit = 100 } = conversationArgs.parse(args);

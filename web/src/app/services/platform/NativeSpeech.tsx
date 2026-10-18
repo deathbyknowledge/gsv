@@ -133,7 +133,7 @@ export function NativeSpeechProvider({ driver, active, children }: {
         if (controller.current) controller.current(event.action);
         else if (event.action === "press") {
           actions.cue("attention");
-          setError("Open Chat with Ship to use the voice shortcut. You can then leave the window in the background.");
+          setError("Handsfree mode is not ready. Reconnect microphone controls in Settings → voice.");
         }
       }
     });

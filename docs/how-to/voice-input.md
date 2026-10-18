@@ -52,8 +52,9 @@ your correction.
 Open **Settings → voice**, or **voice settings** from the recording panel, to
 choose your microphone, voice shortcuts and spoken replies. This section
 appears only in the Desktop app and its preferences are stored on this computer.
-The selected microphone applies to dictation and voice shortcuts. Opening these
-settings stops an active recording and keeps the text already in your draft.
+The selected microphone applies to dictation and voice shortcuts. Leaving Chat
+stops local dictation and keeps the text already in your draft. Handsfree
+recordings continue across pages.
 
 Audio processing stays on your computer. The first use downloads and verifies
 the speech model; subsequent dictation does not need a cloud transcription
@@ -65,8 +66,9 @@ transcribed may need repeating. See
 
 ## Handsfree mode (Desktop preview)
 
-In **Settings → voice**, enable **Handsfree mode**. Leave Chat
-selected; the Ship window may stay behind your game or another application.
+In **Settings → voice**, enable **Handsfree mode**. Keep Desktop running and
+signed in; you can leave any page selected and minimize the window or keep it
+behind your game or another application.
 The default talk shortcut is **Option+Space** on macOS and
 **Ctrl+Shift+Space** on Windows and Linux: press once to start recording and
 again to finish and send. Wait for the listening sound before speaking.
@@ -75,13 +77,23 @@ again to finish and send. Wait for the listening sound before speaking.
 stops speech and cancels recording, retaining displayed draft
 text. Starting a recording also stops the current spoken reply.
 
-The shortcut sends ordinary messages to Ship using the current Chat draft and
-place. It does not activate a different window. Navigation away from Chat,
-sign-out, connection loss, or changing the conversation cancels recording.
-Failed sends remain in the existing outbox for inspection and retry.
+The shortcut records into a separate voice draft and sends an ordinary message
+to your personal Ship. Chat's typed text, attachments and selected place stay
+untouched, including when you are viewing another process or a People conversation.
+Starting or sending does not change pages or activate a different window.
+
+A small handsfree status panel follows you between pages while recording,
+sending or speaking. Cancelling keeps transcribed text in **review voice draft**,
+where you can edit, send or discard it. Starting again continues that draft.
+Connection loss stops recording and keeps the draft; reconnecting never sends it
+automatically. Failed sends stay in the panel with **retry** and **discard**.
+Retry keeps the original send identity to avoid duplicate messages. Disabling
+Handsfree mode also keeps unsent text available. Sign-out and Quit warn before
+discarding it.
 
 **Read replies** can follow the voice conversation, read all new Ship replies,
-or stay off. Typing a new message ends the voice conversation. Only newly
+or stay off. Replies are read across pages. Sending a typed message to your
+personal Ship ends the voice conversation. Only newly
 committed visible replies are read; opening history or reconnecting does not
 replay earlier messages. Replies arriving while the microphone is recording
 are left in Chat without being spoken. Code blocks and tables get a short cue

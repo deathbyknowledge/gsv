@@ -195,12 +195,21 @@ Voice events retain request and segment identity so stale output cannot change
 a later draft. Enter finalizes the current segment before sending and keeps
 listening. Pausing, helper failures and connection interruptions retain the text
 already displayed in the prompt. Raw local audio is not retained for replay.
-The input lease expires on suspension and is released when leaving Chat.
+The authenticated Desktop session owns one input lease. Leaving Chat stops
+local dictation without releasing that lease; Settings uses it for microphone
+discovery. Suspension expires the lease, and session teardown releases it.
 
 The Desktop voice preview adds native global shortcuts and a supervised local
 Kokoro speaker helper. Rust registers shortcuts through the platform backend
-(the desktop portal on Wayland), while the current Chat input owner handles
-the correlated recording and send operation. Native heartbeat frames keep that
+(the desktop portal on Wayland), while the authenticated frontend session owns
+the correlated recording and send operation. Its separate voice draft and
+existing chat outbox survive page changes. `conversation.ship` resolves the
+personal Ship, independently of the selected process, contact or Chat draft.
+Local dictation borrows only its visible composer; releasing that composer
+cannot cancel a handsfree recording. Cancellation and session teardown fence
+pending starts and late transcription events. Failed sends retain their original
+identity for explicit retry, and unsent voice work participates in teardown
+guards. Native heartbeat frames keep the
 lease acknowledged while the window is in the background; suspension still
 revokes it. The frontend retains the only authenticated Gateway connection.
 Published `message.committed` signals supply spoken replies, with duplicate
@@ -217,7 +226,7 @@ and attachment paths never cross this channel. Requests are correlated through
 a frontend channel. Cancellation, timeout, disconnect and reload invalidate
 pending work before UI mutations. If a Process spawn has already committed when
 cancelled, the Process remains durable and inspectable, without being selected.
-Microphone commands use the active Chat input owner and never start capture.
+Microphone commands use the authenticated session's input owner and never start capture.
 
 Closing the window follows the same unsent-work guard and credential flush as
 Quit, stops local control, waits for helper shutdown and exits. A second launch

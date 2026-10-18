@@ -1,17 +1,16 @@
-import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
+import { useEffect, useLayoutEffect, useState } from "preact/hooks";
 import { useNativeSpeech } from "../../../services/platform/NativeSpeech";
 import { ShortcutRecorder } from "../../../services/platform/ShortcutRecorder";
 import { shortcutDefaults } from "../../../services/platform/shortcutKeys";
-import { useNativeVoice, type VoiceComposer } from "../../../services/platform/useNativeVoice";
+import { useNativeVoiceSession } from "../../../services/platform/NativeVoiceSession";
 import "../../../services/platform/native-input.css";
 import "./desktop-voice.css";
 
 export function DesktopVoiceSettings({ active, onDirty }: { active: boolean; onDirty(dirty: boolean): void }) {
   const speech = useNativeSpeech();
   // Device discovery uses the same input lease as Chat, without a recording or draft.
-  const prompt = useRef<VoiceComposer>(null);
-  const microphone = useNativeVoice({ prompt, scope: "voice-settings", enabled: active, send: () => false });
-  const { snapshot } = microphone;
+  const microphone = useNativeVoiceSession()?.input;
+  const snapshot = microphone?.snapshot;
   const [talk, setTalk] = useState(speech?.preferences.talk ?? shortcutDefaults().talk);
   const [stop, setStop] = useState(speech?.preferences.stop ?? shortcutDefaults().stop);
   const [saving, setSaving] = useState(false);
@@ -19,9 +18,9 @@ export function DesktopVoiceSettings({ active, onDirty }: { active: boolean; onD
   useLayoutEffect(() => { onDirty(dirty); }, [dirty, onDirty]);
   useLayoutEffect(() => () => onDirty(false), [onDirty]);
   useEffect(() => {
-    if (active && snapshot && !snapshot.voice) void microphone.command({ kind: "devices" });
-  }, [active, snapshot?.lease]);
-  if (!speech) return null;
+    if (active && snapshot && !microphone?.capturing) void microphone?.command({ kind: "devices" });
+  }, [active, snapshot?.lease, microphone?.capturing]);
+  if (!speech || !microphone) return null;
   const { preferences, setPreferences } = speech;
   const speaking = speech.status.phase === "speaking";
   return <section class="settings-voice" aria-label="Voice settings">
@@ -29,7 +28,7 @@ export function DesktopVoiceSettings({ active, onDirty }: { active: boolean; onD
     <p class="settings-intro">Voice preferences for this computer.</p>
 
     <label>Microphone
-      <select value={microphone.device} disabled={!snapshot || snapshot.devices_loading || !!snapshot.voice}
+      <select value={microphone.device} disabled={!snapshot || snapshot.devices_loading || microphone.capturing}
         onChange={(event) => microphone.setDevice(event.currentTarget.value)}>
         <option value="">System default</option>
         {microphone.device && !snapshot?.devices.some((device) => device.id === microphone.device)
@@ -45,7 +44,7 @@ export function DesktopVoiceSettings({ active, onDirty }: { active: boolean; onD
     <label class="settings-check"><input type="checkbox" checked={preferences.enabled}
       onChange={(event) => setPreferences({ enabled: event.currentTarget.checked })} />Enable handsfree mode</label>
     {preferences.enabled && <>
-      <p class="settings-muted">Keep Chat open in the background to talk without switching windows.</p>
+      <p class="settings-muted">Talk to your Ship from any page or while using another app. Keep Desktop running and signed in.</p>
       <label>Shortcut mode
         <select value={preferences.mode} onChange={(event) => setPreferences({ mode: event.currentTarget.value === "hold" ? "hold" : "toggle" })}>
           <option value="toggle">Press to start · press again to send</option><option value="hold">Hold to talk · release to send</option>

@@ -113,8 +113,9 @@ side by side.
 
 The Settings sidebar highlights the section you're viewing.
 The Desktop app also includes **Settings → voice** for its microphone, shortcuts,
-and spoken replies. Enable **Handsfree mode** to use the voice shortcut. These
-preferences stay on that computer. Chat's
+and spoken replies. Enable **Handsfree mode** to talk to your Ship from any page
+or another app while Desktop stays running and signed in. Its voice draft stays
+separate from Chat's typed text and attachments. These preferences stay on that computer. Chat's
 **voice** panel keeps the recording controls and a link to those settings.
 
 Open **People** to try making plans or working together with someone on Ship.

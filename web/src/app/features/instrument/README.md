@@ -68,7 +68,13 @@ merge into their existing state owners, and active terminal commands continue.
 Returning publishes the latest state. This trades memory for avoiding repeated
 screen construction; it does not make hidden views owners of another connection.
 Explicit actions that replace unsaved work, sign-out and reload retain their
-existing protection. Leaving Chat also releases its native input lease.
+existing protection. Leaving Chat stops local dictation and retains its draft.
+Desktop's authenticated session owns the native input lease and handsfree voice
+independently of the visible page. Handsfree records into a separate draft, sends
+only to the personal Ship, and reads live replies across views. Its temporary
+status panel retains cancelled drafts and failed sends for review or retry;
+session teardown protects unsent voice work alongside other drafts. Browser
+recording remains owned by Chat.
 
 Login, recovery and installation setup share Instrument's star field, wordmark,
 typefaces and light/dark preference. Setup identifies the current space and asks

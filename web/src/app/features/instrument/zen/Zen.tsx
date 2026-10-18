@@ -2,7 +2,6 @@ import { NativeVoiceControls, type NativeVoiceHandle } from "../../../services/p
 import { BrowserVoiceControls } from "../../../services/platform/BrowserVoiceControls";
 import { useNativeInput } from "../../../services/platform/PlatformProvider";
 import { useNativeSpeech } from "../../../services/platform/NativeSpeech";
-import { useSpokenReplies } from "../../../services/platform/useSpokenReplies";
 import { ConversationSearch } from "../shared/ConversationSearch";
 import { useViewActive } from "../../../services/navigation/ViewActivity";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "preact/hooks";
@@ -363,7 +362,6 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
   const pid = useZenProcess(pidProp, reportShipError);
   /* the conversation is what was actually said, both ways; the process transcript is what the ship did */
   const conversation = useChatConversation({ processId: pid ?? "", enabled: pid !== null });
-  useSpokenReplies(client, pidProp ? undefined : conversation.conversation?.id, connected);
   const outbox = useChatOutbox(conversation.acceptMessage);
   const processRuntime = useChatRuntime({ processId: pid ?? "", enabled: pid !== null, observe: true, historyLimit: HISTORY_LIMIT });
   const runtime = processRuntime.runtime;
@@ -770,7 +768,7 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
   const onSubmit = useCallback(
     (raw: string) => {
       if (!connected || !pid || outbox.sending) return false;
-      speech?.typed();
+      if (!pidProp) speech?.typed();
       setNote(null);
       if (raw) setInputHistory((current) => [...current.filter((entry) => entry !== raw), raw].slice(-50));
       setHistoryIndex(null);
@@ -788,7 +786,7 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
       }
       return say(intent.text);
     },
-    [extras, connected, outbox.sending, pid, places, runDirectly, say],
+    [extras, connected, outbox.sending, pid, pidProp, places, runDirectly, say],
   );
 
   const onHistory = useCallback(
@@ -1237,8 +1235,6 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
             <div class="zen-input-actions">
               {nativeInput ? <NativeVoiceControls ref={voiceInput} prompt={promptRef} panelHost={nativePanels}
                 scope={voiceScope}
-                global={!pidProp}
-                sendGlobal={(text) => connected && !outbox.sending && !!pid && say(text)}
                 enabled={active && connected && pid !== null && pendingHil === null && !searchOpen && !context && !addOpen}
                 send={onSubmit} />
                 : <BrowserVoiceControls ref={voiceInput} prompt={promptRef} client={client} pid={pid}
