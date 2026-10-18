@@ -1,10 +1,42 @@
+import io
+import json
 import threading
 import time
 import unittest
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 import numpy as np
+import speaker as helper
 from speaker import RATE, Speaker
+
+
+class SpeakerProtocol(unittest.TestCase):
+    def test_escaped_maximum_payload_reaches_the_speaker_and_keeps_reading(self):
+        for character in ('"', '\\', '\x00'):
+            with self.subTest(character=repr(character)):
+                command = {"kind": "speak", "id": character * 256, "language": "en",
+                           "chunks": [character * 512] * 256}
+                line = json.dumps(command, separators=(',', ':')).encode() + b'\n'
+                self.assertGreater(len(line), 256 * 1024)
+                source = io.TextIOWrapper(io.BytesIO(line + b'{"kind":"cancel"}\n'))
+                with source, patch.object(helper.sys, "stdin", source), \
+                        patch.object(helper.sys, "argv", ["gsv-speak"]), \
+                        patch.object(helper, "Speaker") as factory, patch.object(helper, "emit") as emit:
+                    helper.main()
+                    self.assertEqual([call.args[0] for call in factory.return_value.command.call_args_list],
+                                     [command, {"kind": "cancel"}])
+                    factory.return_value.close.assert_called_once()
+                    emit.assert_called_once_with("idle")
+
+    def test_oversized_line_is_rejected_before_dispatch(self):
+        source = io.TextIOWrapper(io.BytesIO(b'x' * (helper.MAX_LINE + 1)))
+        with source, patch.object(helper.sys, "stdin", source), \
+                patch.object(helper.sys, "argv", ["gsv-speak"]), \
+                patch.object(helper, "Speaker") as factory, patch.object(helper, "emit") as emit:
+            helper.main()
+            factory.return_value.command.assert_not_called()
+            factory.return_value.close.assert_called_once()
+            emit.assert_any_call("error", error="command_too_large")
 
 
 class SpeakerCancellation(unittest.TestCase):

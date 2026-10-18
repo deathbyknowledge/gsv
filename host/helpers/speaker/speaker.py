@@ -19,7 +19,9 @@ os.environ.setdefault("ORT_LOGGING_LEVEL", "4")
 import numpy as np
 
 RATE = 24000
-MAX_LINE = 256 * 1024
+# Rust admits 128 KiB of UTF-8 text; JSON can expand each byte to six bytes,
+# plus the bounded request ID, chunk delimiters, fields and terminating newline.
+MAX_LINE = 1024 * 1024
 VOICES = {"en": ("af_heart", "en-us"), "es": ("ef_dora", "es")}
 output_lock = threading.Lock()
 

@@ -18,6 +18,8 @@ release smoke test relocates the binary and exercises synthesis with an empty
 
 Private stdin accepts JSON lines: `prepare`, `speak` (id, language, chunks),
 `cue` (listening, sent, cancelled, attention), `cancel`, and `shutdown`.
+Desktop admits at most 128 KiB of UTF-8 speech text. The helper's 1 MiB line
+budget includes worst-case JSON escaping and framing for that accepted input.
 Only status, correlation IDs and bounded exception types go to stdout. Text
 and generated audio remain in memory. No inference service or gateway changes
 are involved. EOF exits and lets the frozen runtime clean up; Desktop bounds

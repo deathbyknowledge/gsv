@@ -303,6 +303,21 @@ mod tests {
     use super::*;
 
     #[test]
+    fn maximum_speech_fits_the_helper_line_budget_after_json_escaping() {
+        for character in ['"', '\\', '\0'] {
+            let command = SpeechCommand::Speak {
+                id: character.to_string().repeat(256),
+                chunks: vec![character.to_string().repeat(512); 256],
+                language: "en".into(),
+            };
+            command.validate().unwrap();
+            let line_size = serde_json::to_vec(&command).unwrap().len() + 1;
+            assert!(line_size > 256 * 1024);
+            assert!(line_size <= 1024 * 1024);
+        }
+    }
+
+    #[test]
     fn speech_admission_bounds_private_input_and_selects_supported_voices() {
         let command = |language: &str, chunks: Vec<String>| SpeechCommand::Speak {
             id: "message:one".into(),
