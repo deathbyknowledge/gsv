@@ -468,6 +468,15 @@ jobs:
           device service to execute \`gsvd --foreground\` directly. Linux and macOS
           receive Desktop, \`gsv-transcribe\` and \`gsv-speak\`. Windows 10 x64 receives the same applications, with a boot-capable SCM daemon.
 
+          ### Local speech source and licenses
+
+          \`gsv-speak\` includes eSpeak NG and phonemizer under GPLv3-or-later.
+          [Dependency source archives and build instructions](${{ github.server_url }}/${{ github.repository }}/blob/${{ github.sha }}/host/helpers/speaker/THIRD_PARTY.md#corresponding-source)
+          are available upstream. The [matching Ship source](${{ github.server_url }}/${{ github.repository }}/archive/${{ github.sha }}.tar.gz)
+          includes the helper, dependency lockfile and packaging scripts.
+          License notices are included with the installed helper and in the
+          \`gsv-speak-THIRD_PARTY-<platform>.md\` release assets.
+
           ### Manual Installation
 
           Download the binary for your platform:

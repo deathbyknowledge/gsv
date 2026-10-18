@@ -240,6 +240,12 @@ cancellation and EOF shutdown with an empty `PATH`. The ONNX runtime requires
 macOS 13 for spoken replies; Desktop and transcription retain their existing
 platform baseline.
 
+Release notes link the exact Ship source commit and pinned upstream source
+archives for the GPL speech dependencies, including the native build recipes.
+Keep these links in `host/helpers/speaker/THIRD_PARTY.md` aligned with dependency
+upgrades. Distributors retain the matching sources and provide a mirror if an
+upstream archive becomes unavailable; source archives are separate from the app.
+
 Local control supports activation, redacted status, new Process creation,
 selection of an accessible Process, and microphone discovery and selection.
 The IPC server verifies OS user identity. Credentials, conversation text, drafts
