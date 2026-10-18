@@ -1,7 +1,7 @@
 # Local speech dependencies
 
-`gsv-speak` includes CPython, Kokoro ONNX, ONNX Runtime, NumPy, sounddevice,
-PortAudio, eSpeak NG and phonemizer, together with their dependencies. Users do
+`gsv-speak` includes CPython, Kokoro ONNX, ONNX Runtime, NumPy, miniaudio,
+eSpeak NG and phonemizer, together with their dependencies. Users do
 not need a Python installation. PyInstaller is used to build the executable;
 its bootloader carries an exception permitting distribution of bundled programs.
 The build appends the installed packages' license and notice files below.
@@ -9,8 +9,8 @@ The build appends the installed packages' license and notice files below.
 - Kokoro ONNX (MIT): https://github.com/thewh1teagle/kokoro-onnx
 - ONNX Runtime (MIT): https://github.com/microsoft/onnxruntime
 - NumPy (BSD): https://github.com/numpy/numpy
-- sounddevice and PortAudio (MIT): https://github.com/spatialaudio/python-sounddevice
-  and https://github.com/PortAudio/portaudio
+- pyminiaudio and miniaudio (MIT): https://github.com/irmen/pyminiaudio
+  and https://github.com/mackron/miniaudio
 - eSpeak NG (GPL-3.0-or-later): https://github.com/espeak-ng/espeak-ng
 - espeakng-loader (MIT): https://github.com/thewh1teagle/espeakng-loader
 - phonemizer (GPL-3.0-or-later): https://github.com/bootphon/phonemizer

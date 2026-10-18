@@ -265,16 +265,18 @@ the same Ship and account resumes automatically. Connections to another Ship
 or account and your separate CLI login are preserved. The background service
 continues after Desktop closes.
 
-Linux requires WebKitGTK 4.1 and GStreamer base/good/libav plugins. On Arch:
+Linux requires WebKitGTK 4.1 and GStreamer base/good/libav plugins. Local voice
+also requires libpulse and a running PipeWire PulseAudio server or PulseAudio.
+Ship shares audio devices with other applications. On Arch:
 
 ```bash
-sudo pacman -S --needed webkit2gtk-4.1 gst-plugins-base gst-plugins-good gst-libav
+sudo pacman -S --needed webkit2gtk-4.1 gst-plugins-base gst-plugins-good gst-libav libpulse
 ```
 
 On Ubuntu/Debian:
 
 ```bash
-sudo apt-get install libwebkit2gtk-4.1-0 gstreamer1.0-plugins-base gstreamer1.0-plugins-good gstreamer1.0-libav
+sudo apt-get install libwebkit2gtk-4.1-0 gstreamer1.0-plugins-base gstreamer1.0-plugins-good gstreamer1.0-libav libpulse0
 ```
 
 macOS releases also include `gsv-desktop-darwin-arm64.zip` and

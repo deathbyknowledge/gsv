@@ -1,9 +1,14 @@
 import io
 import json
+import os
+from pathlib import Path
+import subprocess
+import sys
+import tempfile
 import threading
 import time
 import unittest
-from unittest.mock import Mock, patch
+from unittest.mock import Mock, patch, sentinel
 
 import numpy as np
 import speaker as helper
@@ -40,6 +45,120 @@ class SpeakerProtocol(unittest.TestCase):
 
 
 class SpeakerPlayback(unittest.TestCase):
+    def test_failed_output_construction_releases_context_immediately(self):
+        def fail(stream, **_options):
+            stream._context = sentinel.context
+            raise RuntimeError("device unavailable")
+        with patch.object(helper.miniaudio.PlaybackDevice, "__init__", fail), \
+                patch.object(helper.miniaudio.PlaybackDevice, "close") as close_device, \
+                patch.object(helper.miniaudio, "lib") as lib:
+            with self.assertRaisesRegex(RuntimeError, "device unavailable"):
+                helper.SharedOutput()
+            self.assertTrue(close_device.called)
+            lib.ma_context_uninit.assert_called_once_with(sentinel.context)
+
+    def test_output_releases_context_once_after_device_including_partial_init(self):
+        with patch.object(helper.miniaudio.PlaybackDevice, "__init__", return_value=None), \
+                patch.object(helper.miniaudio.PlaybackDevice, "close") as close_device, \
+                patch.object(helper.miniaudio, "lib") as lib:
+            stream = helper.SharedOutput()
+            stream.close()
+            lib.ma_context_uninit.assert_not_called()
+            stream._context = sentinel.context
+            lib.ma_context_uninit.side_effect = lambda _: self.assertTrue(close_device.called)
+            stream.close()
+            stream.close()
+            lib.ma_context_uninit.assert_called_once_with(sentinel.context)
+            self.assertIsNone(stream._context)
+            del stream
+
+    def test_playback_uses_only_the_shared_backend(self):
+        speaker = Speaker(None)
+        try:
+            with patch.object(helper, "SharedOutput") as factory:
+                speaker.append(0, "test", np.ones(100, dtype=np.float32))
+                self.assertEqual(factory.call_args.kwargs["backends"], [helper.OUTPUT_BACKEND])
+                self.assertNotIn(helper.OUTPUT_BACKEND,
+                                 (helper.miniaudio.Backend.ALSA, helper.miniaudio.Backend.NULL))
+                # Starting the device may synchronously ask for samples on another thread.
+                callback = factory.return_value.start.call_args.args[0]
+                output = callback.send(480)
+                self.assertTrue(np.all(output[:100] == 1))
+                self.assertTrue(np.all(output[100:] == 0))
+        finally:
+            speaker.close()
+
+    @unittest.skipUnless(sys.platform == "linux", "Linux audio server selection")
+    def test_unavailable_audio_server_fails_without_hardware_fallback(self):
+        with tempfile.TemporaryDirectory() as directory:
+            env = dict(os.environ, PULSE_SERVER="unix:" + str(Path(directory) / "missing.sock"))
+            result = subprocess.run([sys.executable, "-c", """
+import speaker
+assert speaker.OUTPUT_BACKEND == speaker.miniaudio.Backend.PULSEAUDIO
+try:
+    device = speaker.SharedOutput(backends=[speaker.OUTPUT_BACKEND])
+except speaker.miniaudio.MiniaudioError:
+    pass
+else:
+    device.close()
+    raise AssertionError('unexpected audio fallback')
+"""], cwd=Path(__file__).parent, env=env, capture_output=True, timeout=10)
+            self.assertEqual(result.returncode, 0, result.stderr.decode())
+
+    def test_idle_playback_releases_output_and_next_reply_opens_a_new_stream(self):
+        speaker = Speaker(None)
+        first, second = Mock(), Mock()
+        try:
+            with patch.object(helper, "SharedOutput", side_effect=[first, second]):
+                speaker.append(0, "first", np.ones(100, dtype=np.float32))
+                speaker.append(0, "first", None)
+                output = np.empty((480, 1), dtype=np.float32)
+                speaker.output(output, 480)
+                speaker.release_idle_output()
+                first.close.assert_not_called()
+                with speaker.condition:
+                    speaker.last_output -= 1
+                speaker.release_idle_output()
+                first.stop.assert_called_once()
+                first.close.assert_called_once()
+                self.assertIsNone(speaker.stream)
+                speaker.append(0, "second", np.ones(100, dtype=np.float32))
+                second.start.assert_called_once()
+        finally:
+            speaker.close()
+
+    def test_output_stays_open_between_chunks_of_a_reply(self):
+        speaker = Speaker(None)
+        stream = Mock()
+        speaker.stream = stream
+        try:
+            speaker.append(0, "reply", np.ones(100, dtype=np.float32))
+            output = np.empty((480, 1), dtype=np.float32)
+            speaker.output(output, 480)
+            with speaker.condition:
+                speaker.last_output -= 1
+            speaker.release_idle_output()
+            stream.close.assert_not_called()
+        finally:
+            speaker.close()
+
+    def test_full_playback_queue_does_not_block_cancellation(self):
+        speaker = Speaker(None)
+        speaker.stream = Mock()
+        try:
+            for _ in range(3):
+                speaker.append(0, "old", np.ones(100, dtype=np.float32))
+            result = []
+            producer = threading.Thread(target=lambda: result.append(
+                speaker.append(0, "old", np.ones(100, dtype=np.float32))), daemon=True)
+            producer.start()
+            speaker.cancel()
+            producer.join(timeout=2)
+            self.assertFalse(producer.is_alive())
+            self.assertEqual(result, [False])
+        finally:
+            speaker.close()
+
     def test_cancel_acknowledges_only_after_stopping_and_closing_output(self):
         speaker = Speaker(None)
         stream = Mock()
@@ -48,10 +167,10 @@ class SpeakerPlayback(unittest.TestCase):
             with patch.object(helper, "emit") as emit:
                 def stopped(*_args, **_kwargs):
                     emit.assert_not_called()
-                stream.abort.side_effect = stopped
+                stream.stop.side_effect = stopped
                 stream.close.side_effect = stopped
                 speaker.command({"kind": "cancel", "id": "stop-one"})
-                stream.abort.assert_called_once_with(ignore_errors=False)
+                stream.stop.assert_called_once_with()
                 stream.close.assert_called_once()
                 self.assertIsNone(speaker.stream)
                 emit.assert_called_once_with("idle", "stop-one")
@@ -61,7 +180,7 @@ class SpeakerPlayback(unittest.TestCase):
     def test_cancel_failure_is_correlated_and_still_closes_output(self):
         speaker = Speaker(None)
         stream = Mock()
-        stream.abort.side_effect = RuntimeError("private device details")
+        stream.stop.side_effect = RuntimeError("private device details")
         speaker.stream = stream
         try:
             with patch.object(helper, "emit") as emit:
@@ -78,7 +197,7 @@ class SpeakerPlayback(unittest.TestCase):
         speaker = Speaker(None)
         samples = np.ones(100, dtype=np.float32)
         try:
-            with patch("sounddevice.OutputStream", side_effect=[failed, recovered]):
+            with patch.object(helper, "SharedOutput", side_effect=[failed, recovered]):
                 with self.assertRaisesRegex(RuntimeError, "output unavailable"):
                     speaker.append(0, "failed", samples)
                 failed.close.assert_called_once()
@@ -88,7 +207,7 @@ class SpeakerPlayback(unittest.TestCase):
                 self.assertTrue(speaker.append(0, "retry", None))
                 recovered.start.assert_called_once()
                 output = np.empty((480, 1), dtype=np.float32)
-                speaker.output(output, 480, None, None)
+                speaker.output(output, 480)
                 self.assertTrue(np.all(output[:100] == 1))
                 self.assertTrue(np.all(output[100:] == 0))
                 self.assertFalse(speaker.audio)
@@ -102,10 +221,10 @@ class SpeakerPlayback(unittest.TestCase):
         try:
             speaker.append(0, "old", np.ones(2000, dtype=np.float32))
             output = np.empty((480, 1), dtype=np.float32)
-            speaker.output(output, 480, None, None)
+            speaker.output(output, 480)
             self.assertTrue(np.all(output == 1))
             speaker.cancel()
-            speaker.output(output, 480, None, None)
+            speaker.output(output, 480)
             self.assertTrue(np.all(output == 0))
             self.assertFalse(speaker.append(0, "old", np.ones(2000, dtype=np.float32)))
         finally:
@@ -137,7 +256,7 @@ class SpeakerPlayback(unittest.TestCase):
                         break
                 time.sleep(.005)
             output = np.empty((480, 1), dtype=np.float32)
-            speaker.output(output, 480, None, None)
+            speaker.output(output, 480)
             self.assertTrue(np.all(output[:100] == 2))
             self.assertTrue(np.all(output[100:] == 0))
         finally:

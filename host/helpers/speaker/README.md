@@ -6,7 +6,9 @@ executable with Python, pronunciation data and audio libraries frozen using
 PyInstaller. Build it with `uv run --frozen --group build --project
 host/helpers/speaker python host/scripts/build-speaker.py --output DIR`, or use
 `scripts/build-desktop-voice.sh` for a complete local preview. Build on each
-target OS/architecture; Linux builds need PortAudio installed at build time.
+target OS/architecture. Linux playback requires a PulseAudio-compatible service
+(PipeWire or PulseAudio) and libpulse; it never opens ALSA hardware directly.
+Windows uses shared WASAPI and macOS uses CoreAudio.
 Spoken replies use ONNX Runtime on macOS 13+, with the other desktop features
 retaining their existing platform baseline.
 
@@ -30,7 +32,8 @@ shutdown and kills and reaps the helper if it does not exit.
 
 Generation and playback use separate workers. Cancellation clears queued text
 and audio and fences the current inference result. At most three generated chunks
-wait for playback. A failed output-device start closes that stream so a later command
+wait for playback. Output closes after a short idle period; the next reply opens
+the current system default again. The model remains loaded. A failed output-device start closes that stream so a later command
 can retry with a fresh one. `--silent` exercises synthesis and lifecycle without
 opening an audio device. This does not measure speaker latency.
 

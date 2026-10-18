@@ -231,6 +231,15 @@ the output stream. Missing acknowledgements and cancellation failures prevent
 microphone startup. The model stays loaded for the next reply. Incoming replies
 never play into an active microphone. Session changes and Quit stop both native owners.
 
+Linux capture and playback require the shared PulseAudio-compatible service,
+including PipeWire's PulseAudio server. Neither helper falls back to raw ALSA
+devices when that service is unavailable. Playback uses miniaudio with an
+explicit PulseAudio backend on Linux, shared WASAPI on Windows and CoreAudio on
+macOS. It closes the stream after a short idle period and opens the current
+system default for the next reply. Linux releases do not bundle ALSA libraries
+that could override the host's audio routing. Previously saved raw ALSA microphone
+selections must be reselected from the shared service's device list.
+
 The release builds `gsv-speak` with a pinned Python environment and PyInstaller
 on each target platform. Its executable includes the interpreter, ONNX Runtime,
 pronunciation data and audio libraries. The model is downloaded to a per-user

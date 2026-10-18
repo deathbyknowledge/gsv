@@ -534,8 +534,19 @@ pub struct AudioCapture {
     gate: Arc<CaptureGate>,
 }
 
+#[cfg(target_os = "linux")]
+fn input_host() -> Result<cpal::Host, String> {
+    cpal::host_from_id(cpal::HostId::PulseAudio)
+        .map_err(|error| format!("PulseAudio or PipeWire audio service is unavailable: {error}"))
+}
+
+#[cfg(not(target_os = "linux"))]
+fn input_host() -> Result<cpal::Host, String> {
+    Ok(cpal::default_host())
+}
+
 pub fn list_input_devices() -> Result<Vec<InputDeviceInfo>, String> {
-    let host = cpal::default_host();
+    let host = input_host()?;
     let default_id = host
         .default_input_device()
         .and_then(|device| device.id().ok())
@@ -570,13 +581,7 @@ fn product_input_candidate(supports_input: bool, id: &cpal::DeviceId) -> bool {
 
 #[cfg(target_os = "linux")]
 fn product_input_selector(id: &cpal::DeviceId) -> bool {
-    if id.host() == cpal::HostId::PulseAudio {
-        return pulse_source_selector(id.id());
-    }
-    if id.host() == cpal::HostId::Alsa {
-        return alsa_physical_capture_selector(id.id());
-    }
-    true
+    id.host() == cpal::HostId::PulseAudio && pulse_source_selector(id.id())
 }
 
 #[cfg(target_os = "linux")]
@@ -602,20 +607,6 @@ fn system_default_input_selector(_id: &cpal::DeviceId) -> bool {
 #[cfg(not(target_os = "linux"))]
 fn product_input_selector(_id: &cpal::DeviceId) -> bool {
     true
-}
-
-#[cfg(target_os = "linux")]
-fn alsa_physical_capture_selector(id: &str) -> bool {
-    let Some(selector) = id.strip_prefix("plughw:CARD=") else {
-        return false;
-    };
-    let Some((card, device)) = selector.split_once(",DEV=") else {
-        return false;
-    };
-    !card.is_empty()
-        && !device.is_empty()
-        && card.bytes().all(|byte| byte.is_ascii_digit())
-        && device.bytes().all(|byte| byte.is_ascii_digit())
 }
 
 fn normalize_input_devices<I>(devices: I, default_id: Option<&str>) -> Vec<InputDeviceInfo>
@@ -696,7 +687,7 @@ impl AudioCapture {
         match_policy: InputDeviceMatchPolicy,
         gate: Arc<CaptureGate>,
     ) -> Result<Self, String> {
-        let host = cpal::default_host();
+        let host = input_host()?;
         let devices = select_input_devices(&host, preferred_name, preferred_id, match_policy)?;
         let mut last_error = None;
         for device in devices {
@@ -1480,6 +1471,41 @@ mod tests {
 
     #[cfg(target_os = "linux")]
     #[test]
+    fn unavailable_shared_audio_service_never_falls_back_to_alsa() {
+        const CHILD_ENV: &str = "GSV_TRANSCRIBE_TEST_NO_AUDIO_SERVER";
+        if std::env::var_os(CHILD_ENV).is_some() {
+            let error = input_host()
+                .err()
+                .expect("microphone access requires the shared audio service");
+            assert!(error.contains("PulseAudio or PipeWire audio service is unavailable"));
+            return;
+        }
+
+        for server in ["unix:/dev/null/pulse.sock", "unix:/dev/null"] {
+            let result =
+                std::process::Command::new(std::env::current_exe().expect("test executable"))
+                    .args([
+                        "--exact",
+                        "audio::tests::unavailable_shared_audio_service_never_falls_back_to_alsa",
+                        "--nocapture",
+                    ])
+                    .env(CHILD_ENV, "1")
+                    .env("PULSE_SERVER", server)
+                    .env_remove("PULSE_RUNTIME_PATH")
+                    .env_remove("XDG_RUNTIME_DIR")
+                    .output()
+                    .expect("run isolated audio host test");
+            assert!(
+                result.status.success(),
+                "shared audio host failure must not select ALSA: {}{}",
+                String::from_utf8_lossy(&result.stdout),
+                String::from_utf8_lossy(&result.stderr),
+            );
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
     fn linux_product_filter_excludes_outputs_monitors_and_backend_defaults() {
         let source = cpal::DeviceId::from_str("pulseaudio:source-a").expect("valid source ID");
         let monitor =
@@ -1518,8 +1544,11 @@ mod tests {
 
     #[cfg(target_os = "linux")]
     #[test]
-    fn alsa_product_filter_collapses_four_pcm_aliases_to_one_conversion_selector() {
+    fn linux_product_filter_rejects_all_alsa_capture_routes() {
         let candidates = [
+            "alsa:default",
+            "alsa:pulse",
+            "alsa:pipewire",
             "alsa:sysdefault:CARD=CardA",
             "alsa:front:CARD=CardA,DEV=0",
             "alsa:hw:CARD=0,DEV=0",
@@ -1534,8 +1563,7 @@ mod tests {
             None,
         );
 
-        assert_eq!(listed.len(), 1);
-        assert_eq!(listed[0].id, "alsa:plughw:CARD=0,DEV=0");
+        assert!(listed.is_empty());
     }
 
     #[test]

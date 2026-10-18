@@ -13,6 +13,36 @@ import tempfile
 import threading
 
 
+def check_shared_output_failure(executable, directory, environment):
+    process = subprocess.Popen([executable], cwd=directory, env=environment,
+                               stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    events = queue.Queue()
+    def read():
+        for line in process.stdout:
+            events.put(json.loads(line))
+        events.put(None)
+    threading.Thread(target=read, daemon=True).start()
+    try:
+        process.stdin.write('{"kind":"cue","cue":"sent","id":"shared-output"}\n')
+        process.stdin.flush()
+        while True:
+            event = events.get(timeout=15)
+            assert event is not None, "speaker exited before checking output"
+            assert event["phase"] not in ("speaking", "finished"), "speaker bypassed the shared audio service"
+            if event["phase"] == "error":
+                assert event["id"] == "shared-output" and event["error"] == "MiniaudioError", event
+                break
+    finally:
+        process.stdin.close()
+        try:
+            process.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait()
+            raise
+    assert process.returncode == 0, process.stderr.read()
+
+
 def check(binary, model_source=None):
     with tempfile.TemporaryDirectory(prefix="gsv-speaker-smoke-") as temporary:
         directory = Path(temporary)
@@ -23,9 +53,7 @@ def check(binary, model_source=None):
         environment["PATH"] = str(directory)
         environment["GSV_SPEAK_MODEL_DIR"] = str(directory / "models")
         if sys.platform == "linux":
-            audio_config = directory / "asound.conf"
-            audio_config.write_text("pcm.!default { type null }\n")
-            environment["ALSA_CONFIG_PATH"] = str(audio_config)
+            environment["PULSE_SERVER"] = "unix:" + str(directory / "missing-pulse.sock")
         if model_source:
             # Local checks can reuse verified assets; CI exercises the first-use download.
             source = directory / "source"
@@ -37,6 +65,8 @@ def check(binary, model_source=None):
                                  capture_output=True, text=True, timeout=60, check=True)
         status = json.loads(runtime.stdout)
         assert status["runtime"] == "ready" and status["bundled_audio"], status
+        if sys.platform == "linux":
+            check_shared_output_failure(executable, directory, environment)
         process = subprocess.Popen([executable, "--silent"], cwd=directory, env=environment,
                                    stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         events = queue.Queue()

@@ -38,7 +38,7 @@ def build(output):
             "--workpath", str(stage / "work"), "--specpath", str(stage),
             "--collect-data", "espeakng_loader", "--collect-binaries", "espeakng_loader",
             "--collect-data", "phonemizer", "--collect-data", "kokoro_onnx", "--copy-metadata", "kokoro-onnx",
-            "--runtime-hook", str(package / "frozen_audio.py"),
+            "--hidden-import", "_cffi_backend",
             "--add-data", f"{notices}:.", str(package / "speaker.py"),
         ], check=True)
         executable = "gsv-speak.exe" if sys.platform == "win32" else "gsv-speak"

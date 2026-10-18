@@ -126,7 +126,7 @@ on Desktop's other supported macOS versions.
 
 For development, `bash scripts/build-desktop-voice.sh` builds the same bundled
 speaker and prints the `GSV_DESKTOP_PATH=… gsv desktop` command. Building requires
-`uv`, Rust, frontend dependencies and PortAudio development libraries on Linux;
+`uv`, Rust, frontend dependencies and a PulseAudio-compatible service on Linux;
 the script manages Python 3.12. Keep the normal `gsv-transcribe` helper installed.
 On Linux it creates a hidden desktop entry when needed so the shortcut portal
 can identify an app launched from a terminal.
