@@ -249,6 +249,8 @@ upstream archive becomes unavailable; source archives are separate from the app.
 The native speech supervisor drains stderr with bounded buffers. Failures retain
 the exit status and known exception/component labels in the desktop error status;
 raw exception messages, traceback source and paths are discarded before reporting.
+A successful command retry clears its local failure without hiding current
+helper or shortcut errors.
 
 Local control supports activation, redacted status, new Process creation,
 selection of an accessible Process, and microphone discovery and selection.

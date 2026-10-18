@@ -44,6 +44,7 @@ async function mount() {
   const render = (connected = true) => root.render(<NativeSpeechProvider driver={speech} active={connected}><NativeInputProvider input={input}><Probe connected={connected} /></NativeInputProvider></NativeSpeechProvider>);
   await render();
   const shortcut = (action: "press" | "release" | "cancel") => act(() => receiveSpeech({ kind: "shortcut", action, sent_at_ms: Date.now() }));
+  const speechStatus = (phase: string, error: string | null = null) => act(() => receiveSpeech({ kind: "status", status: { phase, id: null, error } }));
   const native = (snapshot: Partial<NativeSnapshot>, revision: number) => act(() => receiveInput({ revision, sent_at_ms: Date.now(), snapshot: { ...initial, ...snapshot } }));
   const started = () => native({ voice: { request_id: 4, segment_id: 0, revision: 1, text: "Hello Ship", phase: "listening", progress: null, muted: false, pending: null },
     events: [{ id: 1, request_id: 4, segment_id: 0, kind: "started", action: null, text: "" }] }, 1);
@@ -51,10 +52,22 @@ async function mount() {
     id, conversationId, sequence: 1, author: kind === "process" ? { kind, pid: "ship", uid: 2 } : { kind: "user", uid: 1 },
     text: "**Ready.** You can keep playing.", origin: { kind: "process", pid: "ship", runId: "run" }, createdAt: Date.now(),
   }, directed: true }));
-  return { speech, input, send, shortcut, native, started, reply, render, prompt, value: () => value, preferences: () => preferences };
+  return { speech, input, send, shortcut, speechStatus, native, started, reply, render, prompt, value: () => value, preferences: () => preferences };
 }
 
 describe("desktop voice loop", () => {
+  it("clears a failed command after retry without hiding a current helper error", async () => {
+    const app = await mount();
+    vi.mocked(app.speech.command).mockRejectedValueOnce(new Error("Helper unavailable"));
+    await act(async () => { expect(await app.preferences().command({ kind: "prepare" })).toBe(false); });
+    expect(app.preferences().error).toContain("Helper unavailable");
+    await app.speechStatus("error", "Current helper failure");
+    await act(async () => { expect(await app.preferences().command({ kind: "prepare" })).toBe(true); });
+    expect(app.preferences().error).toBe("Current helper failure");
+    await app.speechStatus("ready");
+    expect(app.preferences().error).toBeNull();
+  });
+
   it("stops playback before recording, finalizes before sending, and speaks each committed reply once", async () => {
     const app = await mount();
     await app.shortcut("press");
@@ -124,6 +137,8 @@ describe("desktop voice loop", () => {
     vi.mocked(app.speech.configure).mockRejectedValueOnce(new Error("Already in use"));
     await act(async () => { await app.preferences().applyShortcuts("Alt+KeyV", "Alt+Escape"); });
     expect(app.preferences().preferences.talk).toBe("Ctrl+Alt+Space");
+    expect(app.preferences().error).toContain("Already in use");
+    await act(async () => { await app.preferences().command({ kind: "cue", cue: "attention" }); });
     expect(app.preferences().error).toContain("Already in use");
     await act(async () => { await app.preferences().applyShortcuts("Alt+KeyV", "Alt+Escape"); });
     expect(app.preferences().preferences.talk).toBe("Alt+KeyV");

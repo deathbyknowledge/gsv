@@ -63,6 +63,7 @@ export function NativeSpeechProvider({ driver, active, children }: {
   const [status, setStatus] = useState<SpeechStatus>({ phase: "idle", id: null, error: null });
   const [shortcuts, setShortcuts] = useState<ShortcutStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [commandError, setCommandError] = useState<string | null>(null);
   const controller = useRef<((action: "press" | "release" | "cancel") => void) | null>(null);
   const spokenConversation = useRef(false);
   const recording = useRef(false);
@@ -78,8 +79,8 @@ export function NativeSpeechProvider({ driver, active, children }: {
   }, []);
   const actions = useMemo(() => {
     const command = async (command: SpeechCommand) => {
-      try { await driver.command(command); return true; }
-      catch (error) { setError(String(error)); return false; }
+      try { await driver.command(command); setCommandError(null); return true; }
+      catch (error) { setCommandError(String(error)); return false; }
     };
     return {
       command,
@@ -158,7 +159,7 @@ export function NativeSpeechProvider({ driver, active, children }: {
     return () => { release(); cancelled.abort(); };
   }, [active, preferences.enabled]);
   const value: NativeSpeech = {
-    ...actions, preferences, status, shortcuts, error: error || status.error,
+    ...actions, preferences, status, shortcuts, error: error || commandError || status.error,
     setPreferences: updatePreferences,
   };
   return <Context.Provider value={value}>{children}</Context.Provider>;
