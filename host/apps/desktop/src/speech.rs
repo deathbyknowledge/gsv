@@ -9,6 +9,9 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, Lines};
 use tokio::process::{Child, ChildStdin, ChildStdout, Command};
 use tokio::sync::{mpsc, oneshot};
 
+mod diagnostics;
+use diagnostics::StderrCapture;
+
 #[derive(Clone, Deserialize, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum SpeechCommand {
@@ -170,6 +173,7 @@ struct Helper {
     child: Child,
     stdin: ChildStdin,
     stdout: Lines<BufReader<ChildStdout>>,
+    stderr: StderrCapture,
 }
 
 impl Helper {
@@ -188,19 +192,23 @@ impl Helper {
         if !executable.is_absolute() {
             return Err("The speech helper path must be absolute.".into());
         }
-        let mut command = Command::new(executable);
+        Self::spawn(Command::new(executable))
+    }
+
+    fn spawn(mut command: Command) -> Result<Self, String> {
         #[cfg(windows)]
         command.creation_flags(0x08000000);
         let mut child = command
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::null())
+            .stderr(Stdio::piped())
             .kill_on_drop(true)
             .spawn()
             .map_err(|error| format!("Could not start local speech: {error}"))?;
         Ok(Self {
             stdin: child.stdin.take().unwrap(),
             stdout: BufReader::new(child.stdout.take().unwrap()).lines(),
+            stderr: StderrCapture::start(child.stderr.take().unwrap()),
             child,
         })
     }
@@ -226,6 +234,24 @@ impl Helper {
         {
             let _ = self.child.kill().await;
         }
+        let _ = self.stderr.finish().await;
+    }
+
+    async fn failure(mut self, error: &str) -> String {
+        if self.child.try_wait().ok().flatten().is_none() {
+            let _ = self.child.kill().await;
+        }
+        let exit = self
+            .child
+            .try_wait()
+            .ok()
+            .flatten()
+            .map(|status| status.to_string())
+            .unwrap_or_else(|| "exit status unavailable".into());
+        let diagnostic = self.stderr.finish().await;
+        let message = format!("{error} ({diagnostic}; {exit})");
+        eprintln!("local speech failure: {message}");
+        message
     }
 }
 
@@ -274,7 +300,7 @@ async fn run(mut requests: mpsc::Receiver<Request>, delivery: Arc<Mutex<Delivery
                     let _ = request.reply.send(Ok(()));
                     break;
                 };
-                let result = async {
+                let mut result = async {
                     if helper.is_none() {
                         if matches!(command, SpeechCommand::Cancel) { return Ok(()); }
                         helper = Some(Helper::start()?);
@@ -282,15 +308,16 @@ async fn run(mut requests: mpsc::Receiver<Request>, delivery: Arc<Mutex<Delivery
                     helper.as_mut().unwrap().write(&command).await
                 }.await;
                 if let Err(error) = &result {
-                    if let Some(mut helper) = helper.take() { let _ = helper.child.kill().await; }
+                    let error = if let Some(helper) = helper.take() { helper.failure(error).await } else { error.clone() };
                     publish(&delivery, SpeechStatus { phase: "error".into(), id: None, error: Some(error.clone()) });
+                    result = Err(error);
                 }
                 let _ = request.reply.send(result);
             },
             status = read_status(&mut helper) => match status {
                 Ok(status) => publish(&delivery, status),
                 Err(error) => {
-                    if let Some(mut helper) = helper.take() { let _ = helper.child.kill().await; }
+                    let error = if let Some(helper) = helper.take() { helper.failure(&error).await } else { error };
                     publish(&delivery, SpeechStatus { phase: "error".into(), id: None, error: Some(error) });
                 }
             }
@@ -301,6 +328,18 @@ async fn run(mut requests: mpsc::Receiver<Request>, delivery: Arc<Mutex<Delivery
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn startup_exit_retains_redacted_stderr_in_the_reported_failure() {
+        let mut command = Command::new("sh");
+        command.args(["-c", "printf '%s\\n' \"ModuleNotFoundError: No module named 'onnxruntime'\" 'private spoken content' >&2; exit 7"]);
+        let mut helper = Some(Helper::spawn(command).unwrap());
+        let error = read_status(&mut helper).await.err().unwrap();
+        let message = helper.take().unwrap().failure(&error).await;
+        assert!(message.contains("ModuleNotFoundError; onnxruntime"));
+        assert!(!message.contains("private spoken content"));
+    }
 
     #[test]
     fn maximum_speech_fits_the_helper_line_budget_after_json_escaping() {
