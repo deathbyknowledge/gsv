@@ -1,7 +1,6 @@
 import { createContext, type ComponentChildren } from "preact";
 import { useCallback, useContext, useEffect, useMemo, useRef, useState } from "preact/hooks";
 import { z } from "zod";
-import { soundPreferences } from "./inputSounds";
 import { shortcutDefaults } from "./shortcutKeys";
 
 export type SpeechStatus = { phase: string; id: string | null; error: string | null };
@@ -107,7 +106,7 @@ export function NativeSpeechProvider({ driver, active, children }: {
         try { await driver.editShortcuts(); } catch (error) { setError(String(error)); }
       },
       cue(cue: "listening" | "sent" | "cancelled" | "attention") {
-        if (current.current.active && current.current.preferences.enabled && soundPreferences().voice) void command({ kind: "cue", cue });
+        if (current.current.active && current.current.preferences.enabled) void command({ kind: "cue", cue });
       },
       register(handler: (action: "press" | "release" | "cancel") => void) {
         controller.current = handler;

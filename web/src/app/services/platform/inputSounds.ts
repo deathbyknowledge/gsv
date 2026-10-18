@@ -1,17 +1,6 @@
-import { z } from "zod";
-
 /** Quiet, cached synthesis based on the original native desktop's audio.rs. */
-export type SoundPreferences = { keys: boolean; voice: boolean };
 export type InputCue = "character" | "space" | "delete" | "commit" | "navigate"
   | "listening" | "paused" | "attention";
-const storageKey = "gsv.input-sounds";
-let preferences: SoundPreferences = { keys: true, voice: true };
-try {
-  const stored = z.object({ keys: z.boolean().catch(true), voice: z.boolean().optional(), gestures: z.boolean().optional() })
-    .parse(JSON.parse(localStorage.getItem(storageKey) ?? "null"));
-  preferences = { keys: stored.keys, voice: stored.voice ?? stored.gestures ?? true };
-} catch { /* Sound preferences are optional when local storage is unavailable. */ }
-export const soundPreferences = () => preferences;
 let context: AudioContext | null = null;
 const buffers = new Map<InputCue, AudioBuffer>();
 let lastKey = -Infinity, lastNavigation = -Infinity;
@@ -19,7 +8,6 @@ let activeSources = 0;
 
 // Called only inside a trusted user interaction. Native events never create or resume audio.
 export function unlockInputAudio() {
-  if (!preferences.keys && !preferences.voice) return;
   try {
     context ??= new AudioContext();
     if (context.state === "suspended") void context.resume().catch(() => {});
@@ -86,9 +74,9 @@ function bufferFor(cue: InputCue, audio: AudioContext): AudioBuffer {
   buffers.set(cue, buffer);
   return buffer;
 }
-export function playInputCue(cue: InputCue, channel: keyof SoundPreferences = "voice") {
+export function playInputCue(cue: InputCue, channel: "keys" | "voice" = "voice") {
   const audio = context;
-  if (!preferences[channel] || !audio || audio.state !== "running" || activeSources >= 8) return;
+  if (!audio || audio.state !== "running" || activeSources >= 8) return;
   const now = performance.now();
   if (channel === "keys") {
     if (cue !== "commit" && now - lastKey < 18) return;
