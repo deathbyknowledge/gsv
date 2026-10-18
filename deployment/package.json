@@ -1,6 +1,6 @@
 {
   "name": "@humansandmachines/gsv-deployment",
-  "version": "0.7.2",
+  "version": "0.7.3",
   "private": false,
   "type": "module",
   "exports": {
