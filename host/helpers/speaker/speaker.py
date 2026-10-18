@@ -184,20 +184,29 @@ class Speaker:
                         # Exception messages from phonemizers may contain private input.
                         emit("error", request_id, str(error) if isinstance(error, VoiceUnavailable) else type(error).__name__)
 
-    def cancel(self):
+    def cancel(self, request_id=None):
         with self.condition:
             self.generation += 1
             self.requests.clear()
             self.audio.clear()
             self.offset = 0
             self.playing = None
+            stream, self.stream = self.stream, None
             self.condition.notify_all()
-            emit("idle")
+        if stream is not None:
+            try:
+                stream.abort(ignore_errors=False)
+            finally:
+                stream.close()
+        emit("idle", request_id)
 
     def command(self, command):
         kind = command.get("kind")
         if kind == "cancel":
-            self.cancel()
+            try:
+                self.cancel(command.get("id"))
+            except Exception as error:
+                emit("error", command.get("id"), type(error).__name__)
             return
         if kind not in ("prepare", "speak", "cue"):
             raise ValueError("invalid_command")
@@ -216,14 +225,13 @@ class Speaker:
             self.condition.notify_all()
 
     def close(self):
-        self.cancel()
-        with self.condition:
-            self.closed = True
-            self.condition.notify_all()
-        if self.stream:
-            self.stream.abort()
-            self.stream.close()
-        self.events.put(None)
+        try:
+            self.cancel()
+        finally:
+            with self.condition:
+                self.closed = True
+                self.condition.notify_all()
+            self.events.put(None)
 
 
 def main():

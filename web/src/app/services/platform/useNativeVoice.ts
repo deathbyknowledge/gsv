@@ -109,12 +109,14 @@ export function useNativeVoice({ prompt, scope, enabled, send, global = false, s
       const owned = lease.current;
       const attempt = ++operation.current;
       void (async () => {
-        await speaking.current?.command({ kind: "cancel" });
+        const stopped = await speaking.current?.command({ kind: "cancel" });
         if (lease.current !== owned || operation.current !== attempt || !globalCapture.current || !latest.current.enabled) return;
-        if (!await command({ kind: "start", device_id: device || null }) && lease.current === owned && operation.current === attempt) {
+        if ((stopped === false || !await command({ kind: "start", device_id: device || null })) && lease.current === owned && operation.current === attempt) {
           preparing(false);
           globalCapture.current = false;
+          finishRequested.current = false;
           speaking.current?.recording(false);
+          if (stopped === false) setError("Could not stop playback. Try recording again.");
         }
       })();
     });
@@ -318,11 +320,12 @@ export function useNativeVoice({ prompt, scope, enabled, send, global = false, s
       const owned = lease.current;
       const attempt = ++operation.current;
       void (async () => {
-        await speaking.current?.command({ kind: "cancel" });
+        const stopped = await speaking.current?.command({ kind: "cancel" });
         if (lease.current !== owned || operation.current !== attempt || !latest.current.enabled) return;
-        if (!await command({ kind: "start", device_id: device || null }) && operation.current === attempt) {
+        if ((stopped === false || !await command({ kind: "start", device_id: device || null })) && operation.current === attempt) {
           preparing(false);
           speaking.current?.recording(false);
+          if (stopped === false) setError("Could not stop playback. Try recording again.");
         }
       })();
     },

@@ -60,8 +60,8 @@ def check(binary, model_source=None):
             for language, text in [("en", "Your Ship is ready."), ("es", "Tu Ship está lista.")]:
                 send({"kind": "speak", "id": language, "language": language, "chunks": [text]})
                 wait_for("finished", language)
-            send({"kind": "cancel"})
-            wait_for("idle")
+            send({"kind": "cancel", "id": "cancel-smoke"})
+            wait_for("idle", "cancel-smoke")
             assert (directory / "models/model.onnx").is_file()
             assert (directory / "models/voices.bin").is_file()
             assert not list((directory / "models").glob("*.partial"))

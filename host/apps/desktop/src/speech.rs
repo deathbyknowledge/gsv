@@ -213,7 +213,7 @@ impl Helper {
         })
     }
 
-    async fn write(&mut self, command: &SpeechCommand) -> Result<(), String> {
+    async fn write(&mut self, command: &impl Serialize) -> Result<(), String> {
         let mut bytes = serde_json::to_vec(command)
             .map_err(|error| format!("Encode speech command: {error}"))?;
         bytes.push(b'\n');
@@ -289,6 +289,51 @@ async fn read_status(helper: &mut Option<Helper>) -> Result<SpeechStatus, String
     Ok(status)
 }
 
+async fn dispatch(
+    helper: &mut Option<Helper>,
+    command: &SpeechCommand,
+    delivery: &Mutex<Delivery>,
+) -> Result<(), String> {
+    if helper.is_none() {
+        if matches!(command, SpeechCommand::Cancel) {
+            return Ok(());
+        }
+        *helper = Some(Helper::start()?);
+    }
+    if !matches!(command, SpeechCommand::Cancel) {
+        return helper.as_mut().unwrap().write(command).await;
+    }
+    let id = uuid::Uuid::new_v4().to_string();
+    helper
+        .as_mut()
+        .unwrap()
+        .write(&serde_json::json!({ "kind": "cancel", "id": id }))
+        .await?;
+    tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        loop {
+            let status = read_status(helper).await?;
+            let result = if status.id.as_deref() == Some(id.as_str()) {
+                match status.phase.as_str() {
+                    "idle" => Some(Ok(())),
+                    "error" => Some(Err(status
+                        .error
+                        .clone()
+                        .unwrap_or_else(|| "Could not stop local speech playback.".into()))),
+                    _ => None,
+                }
+            } else {
+                None
+            };
+            publish(delivery, status);
+            if let Some(result) = result {
+                return result;
+            }
+        }
+    })
+    .await
+    .map_err(|_| "Local speech did not confirm that playback stopped.".to_string())?
+}
+
 async fn run(mut requests: mpsc::Receiver<Request>, delivery: Arc<Mutex<Delivery>>) {
     let mut helper = None;
     loop {
@@ -300,13 +345,7 @@ async fn run(mut requests: mpsc::Receiver<Request>, delivery: Arc<Mutex<Delivery
                     let _ = request.reply.send(Ok(()));
                     break;
                 };
-                let mut result = async {
-                    if helper.is_none() {
-                        if matches!(command, SpeechCommand::Cancel) { return Ok(()); }
-                        helper = Some(Helper::start()?);
-                    }
-                    helper.as_mut().unwrap().write(&command).await
-                }.await;
+                let mut result = dispatch(&mut helper, &command, &delivery).await;
                 if let Err(error) = &result {
                     let error = if let Some(helper) = helper.take() { helper.failure(error).await } else { error.clone() };
                     publish(&delivery, SpeechStatus { phase: "error".into(), id: None, error: Some(error.clone()) });
@@ -328,6 +367,58 @@ async fn run(mut requests: mpsc::Receiver<Request>, delivery: Arc<Mutex<Delivery
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn cancellation_waits_for_its_own_acknowledgement_and_reports_failure() {
+        for phase in ["idle", "error"] {
+            let error = if phase == "idle" {
+                "null"
+            } else {
+                "\"audio_error\""
+            };
+            let mut command = Command::new("sh");
+            command.args(["-c", &format!(r#"
+                IFS= read -r command
+                printf '%s\n' '{{"phase":"idle","id":null,"error":null}}'
+                sleep 0.1
+                printf '%s\n' "$command" | sed 's/"kind":"cancel"/"phase":"{phase}","error":{error}/'
+            "#)]);
+            let mut helper = Some(Helper::spawn(command).unwrap());
+            let delivery = Mutex::new(Delivery::default());
+            {
+                let pending = dispatch(&mut helper, &SpeechCommand::Cancel, &delivery);
+                tokio::pin!(pending);
+                assert!(
+                    tokio::time::timeout(std::time::Duration::from_millis(20), &mut pending)
+                        .await
+                        .is_err()
+                );
+                let result = pending.await;
+                if phase == "idle" {
+                    result.unwrap();
+                } else {
+                    assert_eq!(result.unwrap_err(), "audio_error");
+                }
+            }
+            assert!(delivery.lock().unwrap().status.id.is_some());
+            helper.take().unwrap().stop().await;
+        }
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn cancellation_times_out_when_the_helper_never_acknowledges_it() {
+        let mut command = Command::new("sh");
+        command.args(["-c", r#"IFS= read -r command; printf '%s\n' '{"phase":"idle","id":"earlier-cancel","error":null}'; IFS= read -r unused"#]);
+        let mut helper = Some(Helper::spawn(command).unwrap());
+        let delivery = Mutex::new(Delivery::default());
+        let error = dispatch(&mut helper, &SpeechCommand::Cancel, &delivery)
+            .await
+            .unwrap_err();
+        assert!(error.contains("did not confirm"));
+        helper.take().unwrap().failure(&error).await;
+    }
 
     #[cfg(unix)]
     #[tokio::test]

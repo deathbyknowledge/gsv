@@ -40,6 +40,37 @@ class SpeakerProtocol(unittest.TestCase):
 
 
 class SpeakerPlayback(unittest.TestCase):
+    def test_cancel_acknowledges_only_after_stopping_and_closing_output(self):
+        speaker = Speaker(None)
+        stream = Mock()
+        speaker.stream = stream
+        try:
+            with patch.object(helper, "emit") as emit:
+                def stopped(*_args, **_kwargs):
+                    emit.assert_not_called()
+                stream.abort.side_effect = stopped
+                stream.close.side_effect = stopped
+                speaker.command({"kind": "cancel", "id": "stop-one"})
+                stream.abort.assert_called_once_with(ignore_errors=False)
+                stream.close.assert_called_once()
+                self.assertIsNone(speaker.stream)
+                emit.assert_called_once_with("idle", "stop-one")
+        finally:
+            speaker.close()
+
+    def test_cancel_failure_is_correlated_and_still_closes_output(self):
+        speaker = Speaker(None)
+        stream = Mock()
+        stream.abort.side_effect = RuntimeError("private device details")
+        speaker.stream = stream
+        try:
+            with patch.object(helper, "emit") as emit:
+                speaker.command({"kind": "cancel", "id": "stop-one"})
+                stream.close.assert_called_once()
+                emit.assert_called_once_with("error", "stop-one", "RuntimeError")
+        finally:
+            speaker.close()
+
     def test_failed_output_start_closes_the_stream_and_retry_plays(self):
         failed = Mock()
         failed.start.side_effect = RuntimeError("output unavailable")
@@ -96,6 +127,7 @@ class SpeakerPlayback(unittest.TestCase):
             speaker.command({"kind": "speak", "id": "old", "language": "en", "chunks": ["old"]})
             self.assertTrue(started.wait(2))
             speaker.cancel()
+            speaker.stream = Mock()
             speaker.command({"kind": "speak", "id": "new", "language": "en", "chunks": ["new"]})
             release.set()
             deadline = time.monotonic() + 2

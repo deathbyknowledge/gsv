@@ -18,6 +18,9 @@ release smoke test relocates the binary and exercises synthesis with an empty
 
 Private stdin accepts JSON lines: `prepare`, `speak` (id, language, chunks),
 `cue` (listening, sent, cancelled, attention), `cancel`, and `shutdown`.
+Desktop gives each `cancel` an ID and waits for the matching `idle` status before
+opening the microphone. Cancellation clears queued audio and aborts and closes
+the output stream before acknowledging; failure returns a correlated error.
 Desktop admits at most 128 KiB of UTF-8 speech text. The helper's 1 MiB line
 budget includes worst-case JSON escaping and framing for that accepted input.
 Only status, correlation IDs and bounded exception types go to stdout. Text
@@ -26,9 +29,8 @@ are involved. EOF exits and lets the frozen runtime clean up; Desktop bounds
 shutdown and kills and reaps the helper if it does not exit.
 
 Generation and playback use separate workers. Cancellation clears queued text
-and audio and fences the current inference result; the audio callback observes
-that boundary on its next 20 ms block. At most three generated chunks wait for
-playback. A failed output-device start closes that stream so a later command
+and audio and fences the current inference result. At most three generated chunks
+wait for playback. A failed output-device start closes that stream so a later command
 can retry with a fresh one. `--silent` exercises synthesis and lifecycle without
 opening an audio device. This does not measure speaker latency.
 

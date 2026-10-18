@@ -114,6 +114,28 @@ async function mount(desktop = true) {
 }
 
 describe("desktop handsfree session", () => {
+  it.each(["shortcut", "composer"])("waits for playback cancellation and refuses capture on failure through %s", async (entry) => {
+    const app = await mount();
+    await app.render("chat");
+    const trigger = () => entry === "shortcut" ? app.shortcut() : act(() => app.voice().start());
+    const failed = deferred<void>();
+    vi.mocked(app.speech.command).mockImplementationOnce(() => failed.promise.then(() => { throw new Error("Playback cancellation failed"); }));
+    await trigger();
+    expect(app.session().input.capturing).toBe(true);
+    expect(app.input.command).not.toHaveBeenCalledWith("session", { kind: "start", device_id: null });
+    await act(() => failed.resolve());
+    await vi.waitFor(() => expect(app.session().input.capturing).toBe(false));
+    expect(app.session().input.error).toContain("Could not stop playback");
+    expect(app.input.command).not.toHaveBeenCalledWith("session", { kind: "start", device_id: null });
+    const stopped = deferred<void>();
+    vi.mocked(app.speech.command).mockImplementationOnce(() => stopped.promise);
+    await trigger();
+    expect(app.input.command).not.toHaveBeenCalledWith("session", { kind: "start", device_id: null });
+    await act(() => stopped.resolve());
+    await vi.waitFor(() => expect(app.input.command).toHaveBeenCalledWith("session", { kind: "start", device_id: null }));
+    expect(app.typed()).toBe("Unsent text with an attachment");
+  });
+
   it("uses the owner's response language, follows preference saves across pages, and preserves local shortcuts", async () => {
     responseLanguage = "es-MX";
     const app = await mount();

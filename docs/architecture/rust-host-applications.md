@@ -226,8 +226,10 @@ Published `message.committed` signals supply spoken replies, with duplicate
 suppression across reconnects and no history or Process-output replay. Markdown
 is rendered for speech in the client. The helper owns CPU inference and audio
 playback; cancellation invalidates queued synthesis and audio together. Starting
-capture interrupts playback, and incoming replies never play into an active
-microphone. Session changes and Quit stop both native owners.
+capture waits for a correlated helper acknowledgement after aborting and closing
+the output stream. Missing acknowledgements and cancellation failures prevent
+microphone startup. The model stays loaded for the next reply. Incoming replies
+never play into an active microphone. Session changes and Quit stop both native owners.
 
 The release builds `gsv-speak` with a pinned Python environment and PyInstaller
 on each target platform. Its executable includes the interpreter, ONNX Runtime,
