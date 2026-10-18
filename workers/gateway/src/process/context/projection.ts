@@ -13,6 +13,7 @@ const contextProjectionSchema = z.object({
   runtime: z.object({
     date: z.string(),
     timezone: z.string(),
+    language: z.string().optional(),
   }),
   targets: z.array(aiToolsDeviceSchema),
   mcpServers: z.array(z.string()),
@@ -32,7 +33,7 @@ export function createContextProjection(
   fallback?: Pick<ContextProjection, "targets" | "skills">,
 ): ContextProjection {
   const timezone = normalizeContextTimezone(snapshot.system.timezone);
-  return {
+  const projection: ContextProjection = {
     version: 1,
     runtime: {
       date: formatContextDate(now, timezone),
@@ -42,6 +43,8 @@ export function createContextProjection(
     mcpServers: normalizeStringSet(snapshot.mcpServers),
     skills: normalizeSkillProjection(snapshot, fallback?.skills),
   };
+  if (snapshot.system.language !== undefined) projection.runtime.language = snapshot.system.language;
+  return projection;
 }
 
 export function parseContextProjection(

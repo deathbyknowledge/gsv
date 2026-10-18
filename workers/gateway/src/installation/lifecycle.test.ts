@@ -22,7 +22,7 @@ describe("managed installation lifecycle", () => {
       INSTALLATION_DIRECTORY: directory({ found: true, installationId: "inst_setup", handle: "setup",
         canonicalOrigin: "https://setup.example", state: "provisioning", ownerSetupRecovery: true }),
     }, "inst_setup")).resolves.toEqual({ allowed: false, code: 503, message: "Finish setting up your Ship",
-      details: { setupRecovery: true, setupUrl } });
+      details: { setupRecovery: true, setupUrl, setupFeatures: ["language"] } });
   });
 
   it("does not offer owner-email recovery for an operator-issued installation", async () => {
@@ -31,7 +31,7 @@ describe("managed installation lifecycle", () => {
       INSTALLATION_DIRECTORY: directory({ found: true, installationId: "inst_operator", handle: "operator",
         canonicalOrigin: "https://operator.example", state: "provisioning" }),
     }, "inst_operator")).resolves.toEqual({ allowed: false, code: 503, message: "Finish setting up your Ship",
-      details: { setupRecovery: true } });
+      details: { setupRecovery: true, setupFeatures: ["language"] } });
   });
 
   it("fails closed without an installation directory", async () => {

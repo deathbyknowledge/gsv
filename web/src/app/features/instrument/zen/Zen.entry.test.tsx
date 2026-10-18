@@ -545,14 +545,39 @@ describe("Zen conversation entry", () => {
     } finally { await zen.unmount(); }
   });
 
-  it("opens a fresh Ship at the ordinary composer without sending a message", async () => {
+  it("keeps the composer available without inventing a welcome or activity", async () => {
     const zen = await mountedZen();
     try {
-      await vi.waitFor(() => expect(zen.text()).toContain("I am the Ship. Who are you?"));
+      expect(zen.nodes().some((node) => node.type === ThinkingMark)).toBe(false);
+      expect(zen.text()).not.toContain("I am the Ship. Who are you?");
+      expect(zen.nodes().filter((node) => node.type === ZenText)).toHaveLength(0);
       expect(zen.props<ComponentProps<typeof PromptLine>>(PromptLine).disabled).toBe(false);
       expect(send).not.toHaveBeenCalled();
       expect([...storage.values()]).toEqual([]);
     } finally { await zen.unmount(); }
+  });
+
+  it("renders a canonical translated welcome and retains it after reload", async () => {
+    activeRunId = "welcome-run";
+    const zen = await mountedZen();
+    const greeting = message("process", "Hola, soy Ship. ¿De qué quieres que me encargue?");
+    try {
+      expect(zen.props(PromptLine).disabled).toBe(false);
+      expect(send).not.toHaveBeenCalled();
+      await act(() => {
+        messages = [greeting];
+        for (const listener of signals) listener("message.committed", { message: greeting, directed: false });
+      });
+      await vi.waitFor(() => expect(zen.props(ZenText).text).toBe(greeting.text));
+    } finally { await zen.unmount(); }
+    activeRunId = null;
+    const reopened = await mountedZen();
+    try {
+      await vi.waitFor(() => expect(reopened.props(ZenText).text).toBe(greeting.text));
+      expect(reopened.nodes().filter((node) => node.type === ZenText)).toHaveLength(1);
+      expect([...storage.values()]).toEqual([]);
+      expect(send).not.toHaveBeenCalled();
+    } finally { await reopened.unmount(); }
   });
 
   it("shows existing messages immediately, including messages from Ship", async () => {
@@ -584,7 +609,7 @@ describe("Zen conversation entry", () => {
     send.mockReturnValue(accepted.promise);
     const zen = await mountedZen();
     try {
-      await vi.waitFor(() => expect(zen.text()).toContain("I am the Ship. Who are you?"));
+      expect(zen.nodes().some((node) => node.type === ThinkingMark)).toBe(false);
       const prompt = () => zen.props<ComponentProps<typeof PromptLine>>(PromptLine);
       await act(() => { expect(prompt().onSubmit("Help me plan my week")).toBe(true); });
       expect(zen.props(ZenText).text).toBe("Help me plan my week");

@@ -11,6 +11,12 @@ const BASE: ContextProjection = {
 };
 
 describe("context projection event prompt", () => {
+  it("reports a changed or cleared language preference", () => {
+    const spanish: ContextProjection = { ...BASE, runtime: { ...BASE.runtime, language: "es-MX" } };
+    expect(formatContextProjectionEvent(BASE, spanish)).toContain('Preferred language: "es-MX"');
+    expect(formatContextProjectionEvent(spanish, BASE)).toContain("Preferred language: not set");
+  });
+
   it("renders bounded environment deltas without rewriting the epoch prompt", () => {
     const event = formatContextProjectionEvent(BASE, {
       ...BASE,

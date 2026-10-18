@@ -629,7 +629,7 @@ async function dispatchKernel(
         data = handleSysConfigGet(frame.args, ctx);
         break;
       case "sys.config.set":
-        data = handleSysConfigSet(frame.args, ctx);
+        data = await handleSysConfigSet(frame.args, ctx);
         break;
       case "sys.target.list":
         data = await handleSysTargetList(frame.args, ctx);

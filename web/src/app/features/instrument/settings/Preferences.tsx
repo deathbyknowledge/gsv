@@ -3,6 +3,7 @@ import { useQuery } from "../../../services/navigation/viewQueries";
 import { ModelEditor } from "./ModelEditor";
 import { ThemePreference } from "./ThemePreference";
 import { Timezone } from "./Timezone";
+import { Language } from "./Language";
 import { useRef, useState } from "preact/hooks";
 import { reasoningOptions } from "../../../domain/reasoning";
 import { LoadingState } from "../../../components/ui/Spinner";
@@ -28,6 +29,7 @@ export function Preferences({ account, active, onDirty }: SettingsSectionProps) 
   const [removingModel, setRemovingModel] = useState<string | null>(null);
   const [modelDraftDirty, setModelDraftDirty] = useState(false);
   const [timezoneDirty, setTimezoneDirty] = useState(false);
+  const [languageDirty, setLanguageDirty] = useState(false);
   const [dragging, setDragging] = useState<string | null>(null);
   const drag = useRef<{ id: string; x: number; y: number; moved: boolean; to: number | null } | null>(null);
   const [dropTarget, setDropTarget] = useState<string | null>(null);
@@ -68,7 +70,7 @@ export function Preferences({ account, active, onDirty }: SettingsSectionProps) 
     onError: async () => { await refresh(); },
   });
   const saving = saveOrder.isPending || saveReasoning.isPending || removeModel.isPending;
-  useSettingsDirty(orderDirty || reasoning !== originalReasoning || modelDraftDirty || timezoneDirty || saving, onDirty);
+  useSettingsDirty(orderDirty || reasoning !== originalReasoning || modelDraftDirty || timezoneDirty || languageDirty || saving, onDirty);
   const updateOrder = (next: ModelStackDraft) => { setOrderDraft(next); setSaved(null); saveOrder.reset(); };
 
   return <section aria-labelledby="settings-preferences-title">
@@ -173,6 +175,7 @@ export function Preferences({ account, active, onDirty }: SettingsSectionProps) 
         {saved === "reasoning" && <span role="status">saved</span>}
       </div>
     </form>}
+    {!modelEditor && config.data && <Language uid={account.uid} original={config.data.find((entry) => entry.key === `users/${account.uid}/locale/language`)?.value ?? ""} editable={editable} onDirty={setLanguageDirty} />}
     {!modelEditor && config.data && <Timezone uid={account.uid} original={config.data.find((entry) => entry.key === `users/${account.uid}/locale/timezone`)?.value ?? ""} fallback={config.data.find((entry) => entry.key === "config/server/timezone")?.value ?? "UTC"} editable={editable} onDirty={setTimezoneDirty} />}
     {!modelEditor && <ThemePreference />}
   </section>;

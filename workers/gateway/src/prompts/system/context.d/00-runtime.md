@@ -6,6 +6,7 @@ Agent home: {{program.home}}
 Owner home: {{user.home}}
 Current working directory: {{program.cwd}}
 Date and timezone: {{current.date}} · {{current.timezone}}
+Preferred language: {{user.language}}
 
 Available targets:
 {{targets}}

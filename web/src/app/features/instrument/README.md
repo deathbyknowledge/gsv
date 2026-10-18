@@ -58,6 +58,13 @@ actions open in a vertical menu with touch-sized rows; the Help button is hidden
 Choosing a view, tapping outside or pressing Escape closes the menu.
 The menu button retains the unread People indicator while navigation is closed.
 
+On first sign-in, a spacious, nonmodal welcome card with large text appears above the Instrument
+views for a personal human account. Closing it or choosing Try it out saves a
+per-user UI config flag, so the card stays dismissed across web and Desktop
+sessions. It never appears during setup or for root. The Discord link opens
+separately, and the existing Feedback control remains in the header when available.
+If its saved state cannot be loaded, the card offers Retry without requiring a new session.
+
 Chat, Fleet, Memory and Settings mount on their first visit and retain their local
 state until the signed-in session ends. Moving between them keeps drafts,
 attachments, open forms, selection and reading position without a discard
@@ -137,7 +144,7 @@ Shell approvals also expose the existing `proc.hil` remember option for a concre
 target. A hover/focus tooltip explains its process and target scope; it never
 changes another process's policy or remembers a denial.
 
-Chat owns the conversation. A fresh conversation shows the welcome ("Welcome to the ship." / "I am the ship. Who are you?") and the ordinary composer; the CLI and messengers have no such greeting. The person's first message answers that question and goes through normal conversation sending; entering the space never sends an introduction on their behalf. Existing messages and drafts keep their ordinary behavior. Ship's durable onboarding responsibility owns the introduction and any guidance after that first message. Helpers have a simple empty conversation state.
+Chat owns the conversation. Dismissing the welcome card records the owner's choice and wakes Ship through its initial onboarding responsibility; a failed request leaves the card available to retry. Ship sends a welcome in the owner's language, initially detected from the browser. Chat renders it as an ordinary canonical Message, shared across clients. The composer remains available, and Ship responds to a user who writes first. Helpers keep a simple empty conversation state.
 
 The composer puts send beside the draft and keeps one action row below: attachments
 and the current place on the left, platform voice controls on the right.

@@ -65,6 +65,7 @@ function renderContextTemplate(
     runtime: {
       date: string;
       timezone: string;
+      language?: string;
     };
   },
 ): string {
@@ -72,6 +73,7 @@ function renderContextTemplate(
   const values = new Map<string, string>([
     ["current.date", input.runtime.date],
     ["current.timezone", input.runtime.timezone],
+    ["user.language", input.runtime.language ?? "not set"],
     ["identity.uid", String(input.identity.uid)],
     ["identity.gid", String(input.identity.gid)],
     ["identity.username", input.identity.username],

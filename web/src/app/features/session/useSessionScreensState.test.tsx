@@ -11,6 +11,7 @@ type HistoryEntry = { url: string; state: SetupHistoryState };
 
 async function setupScreen(path = "/", preceding: HistoryEntry[] = [{ url: "https://space.example/previous", state: null }]) {
   vi.stubGlobal("document", {});
+  vi.stubGlobal("navigator", { languages: ["es-MX", "en"], language: "en" });
   const events = new EventTarget();
   const entries: HistoryEntry[] = [
     ...preceding,
@@ -85,7 +86,7 @@ describe("minimal account setup", () => {
       expect(screen.state().setup.step).toBe("consent");
       await act(() => screen.state().setup.onConsent(true));
       await act(() => { void screen.state().setup.onSubmit(new Event("submit")); });
-      expect(screen.setup).toHaveBeenCalledWith({ password: "password123", timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC" });
+      expect(screen.setup).toHaveBeenCalledWith({ password: "password123", timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC", language: "es-MX" });
     } finally { await screen.unmount(); }
   });
 
@@ -102,7 +103,7 @@ describe("minimal account setup", () => {
       await act(() => { void screen.state().setup.onSubmit(new Event("submit")); });
       expect(screen.state().setup.step).toBe("credentials");
       expect(screen.history().entries.length).toBe(before);
-      expect(screen.setup).toHaveBeenCalledWith({ password: "password123", timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC" });
+      expect(screen.setup).toHaveBeenCalledWith({ password: "password123", timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC", language: "es-MX" });
     } finally { await screen.unmount(); }
   });
 
@@ -327,7 +328,7 @@ describe("minimal account setup", () => {
       await act(() => { screen.state().setup.onConsent(true); });
       await act(() => { screen.state().setup.onSubmit(new Event("submit")); });
       expect(screen.setup).toHaveBeenCalledWith({
-        password: "password123", timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
+        password: "password123", timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC", language: "es-MX",
       });
 
       await screen.change({ phase: "authenticating" });
@@ -392,7 +393,7 @@ describe("minimal account setup", () => {
       expect(screen.state().setup.step).toBe("consent");
       await act(() => { screen.state().setup.onSubmit(new Event("submit")); });
       expect(screen.setup).toHaveBeenCalledWith({
-        password: "password123", timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
+        password: "password123", timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC", language: "es-MX",
       });
     } finally { await screen.unmount(); }
   });

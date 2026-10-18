@@ -20,6 +20,7 @@ import type { FleetReference } from "./fleet/fleetModel";
 import { WireSync } from "./wire/WireSync";
 import { replaceLegacyChatPath, type MemoryPageRef } from "./shared/navigation";
 import { InstrumentHeader } from "./shared/InstrumentHeader";
+import { WelcomeCard } from "./shared/WelcomeCard";
 import { SHELL_KEYS } from "./shared/shellKeys";
 import { useDismissOnOutsideClick } from "./shared/useDismissOnOutsideClick";
 import { useTabAttention } from "./shared/useTabAttention";
@@ -295,6 +296,7 @@ function InstrumentReady({ initialPath }: { initialPath: string }) {
           setHelp(false);
           setNavigationOpen((open) => !open);
         }} />
+      <WelcomeCard />
       {help ? (
         <aside id="instrument-help" class="instrument-help" aria-label="Help" ref={helpRef}>
           <button type="button" class="instrument-help-search" disabled={status.state !== "connected"} aria-keyshortcuts="Control+K" onClick={openSearch}>

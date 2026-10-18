@@ -157,6 +157,8 @@ export type SysSetupArgs = {
     apiKey?: string;
   };
   timezone?: string;
+  /** Initial response-language preference, normally derived from the client (BCP 47). */
+  language?: string;
   machine?: {
     peerId: string;
     label?: string;

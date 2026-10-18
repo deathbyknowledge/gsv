@@ -22,6 +22,19 @@ Sensitive final path segments include `api_key`, `secret`, `token`, `password`, 
 
 The Instrument theme is not stored here. **Settings → preferences → Appearance** chooses Match system, Light or Dark for the current browser only; other devices and agents are unaffected. The `l` key switches directly between Light and Dark.
 
+## Language
+
+`users/{uid}/locale/language` stores the owner's initial response-language preference as a
+BCP 47 tag, such as `es` or `es-MX`. Web and Desktop setup detect it from the client's
+preferred browser language. Change it under **Settings → Preferences → Response language**,
+or ask Ship to change it. Clearing it leaves the conversation to establish the language.
+Invalid tags are rejected and valid tags are canonicalized.
+
+Ship receives the preference through `{{user.language}}` in runtime context. Later
+changes enter an existing context epoch as ordered context events. The preference is a
+starting hint: Ship follows the language the user is speaking, and explicit language
+requests take precedence. It does not change interface translations or date formatting.
+
 ## Reading and Writing
 
 Inside a Ship shell, use the filesystem view:

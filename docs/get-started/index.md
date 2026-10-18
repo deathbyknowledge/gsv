@@ -11,6 +11,15 @@ another username. Continue to review the early-access disclosure and confirm the
 age, Terms of Service and Privacy Policy
 agreement before creating your account. **Back** lets you revise your credentials.
 Creating your account signs you in and opens **Ship**, your conversation with your personal agent.
+The first time you enter Instrument, a welcome card from Kawah appears with the
+heading "Welcome to your Ship!" and large, readable text. Close it
+or choose **Try it out!** to dismiss it for your account across web and Desktop.
+If the welcome cannot be loaded, choose **Retry** to check again.
+Ship then greets you in a language detected from your browser. You can write first,
+ask Ship to switch languages, or change **Settings → Preferences → Response language**.
+The welcome stays in your conversation across devices.
+The card links to the community Discord; the **Feedback** button in the header
+is available when your operator offers it.
 Start with what you want to do. You can connect devices from **Fleet** and
 configure models and other connections from **Settings** when you need them.
 
