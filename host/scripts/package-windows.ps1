@@ -11,13 +11,14 @@ $outputDir = (Resolve-Path $Output).Path
 $stage = Join-Path ([IO.Path]::GetTempPath()) ('gsv-windows-package-' + [Guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $stage | Out-Null
 try {
-  foreach ($name in @('gsv', 'gsvd', 'gsv-desktop', 'gsv-transcribe')) {
+  foreach ($name in @('gsv', 'gsvd', 'gsv-desktop', 'gsv-transcribe', 'gsv-speak')) {
     Copy-Item (Join-Path $bin "$name.exe") (Join-Path $stage "$name-windows-x64.exe")
   }
   & python (Join-Path $root 'host/scripts/package-transcriber.py') --binary-dir $bin --platform windows-x64 --output $stage
   if ($LASTEXITCODE) { throw 'Transcription runtime packaging failed' }
   Copy-Item (Join-Path $root 'install.ps1') $stage
   Copy-Item (Join-Path $root 'host/helpers/transcriber/THIRD_PARTY.md') (Join-Path $stage 'gsv-transcribe-THIRD_PARTY.md')
+  Copy-Item (Join-Path $bin 'gsv-speak-THIRD_PARTY.md') (Join-Path $stage 'gsv-speak-THIRD_PARTY-windows-x64.md')
   $manifest = (Get-ChildItem -File $stage | Sort-Object Name | ForEach-Object {
     (Get-FileHash -Algorithm SHA256 $_.FullName).Hash.ToLowerInvariant() + '  ' + $_.Name
   }) -join "`n"

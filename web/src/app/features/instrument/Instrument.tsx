@@ -31,6 +31,8 @@ import { navigateApp } from "../../services/navigation/appNavigation";
 import { ClientControlError, useClientControl } from "../../services/platform/ClientControl";
 import { useGateway } from "../../services/gateway/GatewayProvider";
 import { trackClientActivity } from "../../services/gateway/clientActivity";
+import { NativeVoiceSession } from "../../services/platform/NativeVoiceSession";
+import { HandsfreeStatus } from "../../services/platform/HandsfreeStatus";
 import "./instrument.css";
 
 /** The three distances of the instrument. Zen is near, Fleet is far, the first day is Zen's empty state. */
@@ -68,6 +70,7 @@ function storedScale(): Scale {
 }
 /** The instrument behind the session gate: the sign-in screens own the galaxy until the session is ready. */
 export function Instrument({ initialPath }: { initialPath: string }) {
+  const [handsfreeDirty, setHandsfreeDirty] = useState(false);
   const { service, snapshot } = useSession();
   const { status } = useGateway();
   useClientControl(["status"], async () => ({ type: "status", status: {
@@ -76,10 +79,12 @@ export function Instrument({ initialPath }: { initialPath: string }) {
   if (snapshot.phase !== "ready") {
     return <SessionScreens session={service} snapshot={snapshot} />;
   }
-  return <TerminalProvider key={JSON.stringify([snapshot.url, snapshot.username])}><DevicePairingProvider><BrowserControlProvider><InstrumentReady initialPath={initialPath} /></BrowserControlProvider></DevicePairingProvider></TerminalProvider>;
+  return <TerminalProvider key={JSON.stringify([snapshot.url, snapshot.username])}><DevicePairingProvider><BrowserControlProvider>
+    <NativeVoiceSession onDirtyChange={setHandsfreeDirty}><InstrumentReady initialPath={initialPath} handsfreeDirty={handsfreeDirty} /></NativeVoiceSession>
+  </BrowserControlProvider></DevicePairingProvider></TerminalProvider>;
 }
 
-function InstrumentReady({ initialPath }: { initialPath: string }) {
+function InstrumentReady({ initialPath, handsfreeDirty }: { initialPath: string; handsfreeDirty: boolean }) {
   const viewportRef = useInstrumentViewport();
   const { service: session } = useSession();
   const { client, status } = useGateway();
@@ -92,7 +97,8 @@ function InstrumentReady({ initialPath }: { initialPath: string }) {
   }, [client, status.state]);
   const distance = distanceForPath(initialPath);
   const visitedPaths = useRef<Partial<Record<Distance, string>>>({});
-  visitedPaths.current[distance] = distance === "people" ? peoplePath(readPeopleRoute(window.location.search)) : DISTANCE_TO_PATH[distance];
+  visitedPaths.current[distance] = distance === "people" ? peoplePath(readPeopleRoute(window.location.search))
+    : distance === "settings" ? `/chat/settings${window.location.search}` : DISTANCE_TO_PATH[distance];
   const scrollEdgesRef = useScrollEdges(distance);
   useEffect(() => {
     replaceLegacyChatPath();
@@ -281,6 +287,7 @@ function InstrumentReady({ initialPath }: { initialPath: string }) {
       <WireSync />
       <div class="instrument-viewport">
       <div class="instrument-scaled">
+      <HandsfreeStatus />
       <InstrumentHeader distance={distance} onNavigate={(to) => {
         if (move(to) && navigationOpen) navigationButtonRef.current?.focus();
       }} peopleWaiting={peopleActivity.conversations.length > 0 || peopleActivity.requests.length > 0}
@@ -402,7 +409,7 @@ function InstrumentReady({ initialPath }: { initialPath: string }) {
         </RetainedView>
         <RetainedView active={distance === "settings"}>
           <Settings onDirtyChange={setSettingsDirty} onInspectProcess={(pid) => { move("fleet", `proc:${pid}`); }} onSignOut={() => {
-            if ((settingsDirty || unsaved || fleetDirty || memoryDirty || peopleDirty) && !window.confirm("Discard your unsaved work and sign out?")) return;
+            if ((handsfreeDirty || settingsDirty || unsaved || fleetDirty || memoryDirty || peopleDirty) && !window.confirm("Discard your unsaved work and sign out?")) return;
             void session.lock("Signed out");
           }} />
         </RetainedView>

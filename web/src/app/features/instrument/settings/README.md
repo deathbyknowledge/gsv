@@ -17,9 +17,20 @@ of the window. Only the content panes scroll; neither can pass behind the header
 - Instructions lists `~/context.d/*.md` files and loads one selected file at a time. New instruction opens a name and the same Markdown editor; `.md` is added automatically, and creation rechecks for file or directory name collisions. A missing folder is an empty state. Reads retain exact text; non-text, incomplete, and failed reads cannot be saved. Blank files are valid. Only the selected file is written or deleted. Deletion requires its own capability and an inline confirmation that also explains any unsaved changes being discarded. New and existing drafts survive section switches; failed operations keep the draft and selection. Successful changes cancel stale reads and update the affected list/file caches.
 - Messengers lists the signed-in person's saved Telegram and Slack identities, with transport status, reconnect and explicit unlink controls. Availability and pairing support come from adapter discovery. Linking retains the existing inspect-then-confirm flow; unlinking uses the personal pairing operation. Reloads recover saved links, owner-scoped adapter status signals refresh the active connection snapshot, and closed sections wait until reopened. Failed reads or mutations remain visible without claiming a connection was removed. The current identity records expose provider IDs; the UI does not invent remembered names. No credential or connection operation is performed until the person invokes its control.
 - MCP lists connected servers first. A quiet add action opens the form; cancellation preserves a dirty draft unless explicitly discarded, and successful creation returns to the list. Existing servers offer sign-in, refresh, and removal controls according to ownership and capabilities.
+- Voice appears only when the Desktop native input provider is present. It owns the computer's microphone choice and Handsfree mode preferences, with global voice shortcuts and spoken replies. The microphone preference is shared with Chat and survives reopening the app. Device discovery uses the authenticated session's input lease only while this section is visible and idle; it never starts or interrupts recording. Handsfree recording and replies continue across pages under that session owner. Local preferences remain available while the Gateway reconnects. Shortcut drafts survive section/view switches and participate in the existing unsaved-change guard. Leaving the section cancels shortcut capture and restores the registered keys.
 - Logs shows action history, live outcomes, older pages and an inspector for request details and failures. Its process links open Fleet. The section mounts when opened and pauses reads, notifications and shortcuts while hidden. Fleet's activity summaries share the same ledger cache; ordinary live updates do not refetch it.
 
+Spoken replies and voice preview read the personal Ship owner's Response language
+through the shared configuration cache. Saving Preferences updates the active
+voice across pages. Regional tags select their base language; an unset preference
+uses the device language when supported, otherwise English. The preview supports English and Spanish and shows an
+availability message for other languages. Shortcuts and playback mode stay local;
+the response language has one account-owned value.
+
 Section and Instrument view switches preserve drafts without a discard dialog.
+Sections use the `section` query parameter, including `/chat/settings?section=voice`
+from Chat's compact recording panel. Back/Forward restores the section without
+reloading the app, and browser sessions do not expose the native voice section.
 On phones, Logs stacks the action/outcome above its place/time. The inspector holds
 arguments, purpose and process details; raw changes the action label without introducing
 horizontal table scrolling.

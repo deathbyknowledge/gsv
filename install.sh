@@ -738,6 +738,21 @@ cleanup() {
     exit "$status"
 }
 
+install_desktop_identity() {
+    [ "$OS" = linux ] || return 0
+    local directory="${XDG_DATA_HOME:-$HOME/.local/share}/applications"
+    local entry="$directory/space.gsv.desktop.desktop"
+    [ ! -e "$entry" ] || return 0
+    local executable="$INSTALL_DIR/gsv-desktop"
+    executable="${executable//\\/\\\\\\\\}"
+    executable="${executable//\"/\\\"}"
+    executable="${executable//\$/\\\$}"
+    executable="${executable//\`/\\\`}"
+    executable="${executable//%/%%}"
+    mkdir -p "$directory" || return 1
+    (set -o noclobber; printf '[Desktop Entry]\nType=Application\nName=Ship\nExec="%s"\nTerminal=false\nNoDisplay=true\n' "$executable" > "$entry")
+}
+
 main() {
     detect_platform
     validate_channel
@@ -760,6 +775,8 @@ main() {
         "gsv-transcribe-${PLATFORM}"
         "gsv-transcribe-THIRD_PARTY.md"
         "gsv-transcribe-runtime-${PLATFORM}.tar.gz"
+        "gsv-speak-${PLATFORM}"
+        "gsv-speak-THIRD_PARTY-${PLATFORM}.md"
     )
     TARGETS=(
         "gsv"
@@ -768,8 +785,10 @@ main() {
         "gsv-transcribe"
         "gsv-transcribe-THIRD_PARTY.md"
         "gsv-transcribe-runtime"
+        "gsv-speak"
+        "gsv-speak-THIRD_PARTY.md"
     )
-    EXECUTABLES=(1 1 1 1 0 0)
+    EXECUTABLES=(1 1 1 1 0 0 1 0)
 
     echo ""
     echo -e "  ${BOLD}Ship host installer${NC} · ${PLATFORM} · ${release_ref}"
@@ -827,13 +846,14 @@ main() {
     INSTALL_IN_PROGRESS=0
     remove_backups
     configure_path
+    install_desktop_identity || warn "Could not register Ship with the desktop shortcut portal."
     local shell_needs_path=0
     if ! path_already_configured; then
         shell_needs_path=1
         if [ "${GSV_NO_MODIFY_PATH:-0}" != 1 ]; then export PATH="$INSTALL_DIR:$PATH"; fi
     fi
     stop_animation
-    success "Installed gsv, gsvd, Desktop, and the local voice helper to $INSTALL_DIR"
+    success "Installed gsv, gsvd, Desktop, and the local voice helpers to $INSTALL_DIR"
     echo ""
     if [ "$INSTALL_DIR_SOURCE" = "default" ] && [ "$shell_needs_path" -eq 1 ]; then
         echo "  Open a new shell, or run now: export PATH=\"\$HOME/.gsv/bin:\$PATH\""

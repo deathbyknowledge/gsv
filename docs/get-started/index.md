@@ -127,6 +127,12 @@ Under **Appearance**, choose **Match system** to follow this device's light or
 dark appearance. An explicit theme choice applies to both sign-in and the app.
 Before you choose, **Default** keeps sign-in dark and the app light.
 
+The Desktop app also includes **Settings → voice** for its microphone, shortcuts,
+and spoken replies. Enable **Handsfree mode** to talk to your Ship from any page
+or another app while Desktop stays running and signed in. Its voice draft stays
+separate from Chat's typed text and attachments. These preferences stay on that computer. Chat's
+**voice** panel keeps the recording controls and a link to those settings.
+
 Open **People** to try making plans or working together with someone on Ship.
 **connect** creates a shareable invitation; accepting it opens your conversation.
 You can talk directly or choose **ask Ship** to prepare a request in your Ship chat.

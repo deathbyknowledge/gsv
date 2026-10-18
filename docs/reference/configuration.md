@@ -35,6 +35,10 @@ changes enter an existing context epoch as ordered context events. The preferenc
 starting hint: Ship follows the language the user is speaking, and explicit language
 requests take precedence. It does not change interface translations or date formatting.
 
+Desktop also reads this preference for local spoken replies.
+Regional tags use the matching voice language; without a saved value, it uses the
+device's language when supported, otherwise English. See [Use voice input](/how-to/voice-input) for supported voices.
+
 ## Reading and Writing
 
 Inside a Ship shell, use the filesystem view:

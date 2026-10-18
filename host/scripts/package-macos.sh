@@ -83,9 +83,12 @@ if ((skip_build == 0)); then
     cargo_args+=(--release)
   fi
   cargo build "${cargo_args[@]}"
+  MACOSX_DEPLOYMENT_TARGET=13.0 uv run --frozen --group build --project "$host_root/helpers/speaker" \
+    --python-platform "${architecture/arm64/aarch64}-apple-darwin" \
+    python "$script_dir/build-speaker.py" --output "$binary_dir"
 fi
 
-binaries=(gsv-desktop gsv gsvd gsv-transcribe)
+binaries=(gsv-desktop gsv gsvd gsv-transcribe gsv-speak)
 for binary in "${binaries[@]}"; do
   path="$binary_dir/$binary"
   [[ -x "$path" ]] || die "missing executable $path"
@@ -118,6 +121,8 @@ transcriber_license_dir="$resources_dir/licenses/transcriber"
 mkdir -p "$transcriber_license_dir"
 install -m 0644 "$host_root/helpers/transcriber/THIRD_PARTY.md" \
   "$transcriber_license_dir/THIRD_PARTY.md"
+mkdir -p "$resources_dir/licenses/speaker"
+install -m 0644 "$binary_dir/gsv-speak-THIRD_PARTY.md" "$resources_dir/licenses/speaker/THIRD_PARTY.md"
 icon_artwork="$stage/GSV-app-icon-1024.png"
 sips -z 1024 1024 "$icon_source" --out "$icon_artwork" >/dev/null
 [[ -f "$icon_artwork" ]] || die "application icon renderer produced no output"

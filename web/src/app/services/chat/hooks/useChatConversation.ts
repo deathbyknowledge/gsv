@@ -68,7 +68,7 @@ const messageSchema = z.object({
   createdAt: z.number(),
 });
 const changedSignalSchema = z.object({ conversationId: z.string() });
-const committedSignalSchema = z.object({ message: messageSchema, directed: z.boolean() });
+export const committedSignalSchema = z.object({ message: messageSchema, directed: z.boolean() });
 const startedSignalSchema = z.object({
   conversationId: z.string(), messageId: z.string(), processId: z.string(), runId: z.string(), timestamp: z.number(),
 });

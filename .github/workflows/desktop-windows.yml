@@ -119,6 +119,17 @@ jobs:
       - name: Check voice helper
         if: ${{ !cancelled() && steps.distribution.outcome == 'success' }}
         run: python host/scripts/check-transcriber.py host/target/debug/gsv-transcribe.exe
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: '3.12'
+          enable-cache: true
+          cache-dependency-glob: host/helpers/speaker/uv.lock
+      - name: Build and check bundled speech runtime
+        run: |
+          uv run --frozen --group build --project host/helpers/speaker python host/scripts/build-speaker.py --output host/target/debug
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          python host/scripts/check-speaker.py host/target/debug/gsv-speak.exe
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
       - name: Package Windows installer
         if: ${{ !cancelled() && steps.distribution.outcome == 'success' }}
         run: ./host/scripts/package-windows.ps1 -BinDir host/target/debug -Output release
@@ -136,4 +147,6 @@ jobs:
             host/target/debug/gsvd.exe
             host/target/debug/gsv-desktop.exe
             host/target/debug/gsv-transcribe.exe
+            host/target/debug/gsv-speak.exe
+            host/target/debug/gsv-speak-THIRD_PARTY.md
             release/*

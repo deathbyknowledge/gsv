@@ -1,6 +1,7 @@
 import { NativeVoiceControls, type NativeVoiceHandle } from "../../../services/platform/NativeVoiceControls";
 import { BrowserVoiceControls } from "../../../services/platform/BrowserVoiceControls";
 import { useNativeInput } from "../../../services/platform/PlatformProvider";
+import { useNativeSpeech } from "../../../services/platform/NativeSpeech";
 import { ConversationSearch } from "../shared/ConversationSearch";
 import { useViewActive } from "../../../services/navigation/ViewActivity";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "preact/hooks";
@@ -331,6 +332,7 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
   const browserControl = useBrowserControl();
   const { client, connected } = useGateway();
   const nativeInput = useNativeInput();
+  const speech = useNativeSpeech();
   const { snapshot } = useSession();
   const who = snapshot.username || "you";
 
@@ -732,12 +734,13 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
         media: [...attachments], selectedTarget: where ?? defaultPlace(),
       });
       if (!accepted) return false;
+      if (!pidProp) speech?.typed();
       scrolling.follow();
       setAttachments([]);
       setPastes([]);
       return true;
     },
-    [attachments, conversation.conversation?.id, outbox.send, pastes, pid, scrolling.follow, where],
+    [attachments, conversation.conversation?.id, outbox.send, pastes, pid, pidProp, speech, scrolling.follow, where],
   );
 
   const voiceScope = `${snapshot.url}:${snapshot.username}:${pid ?? ""}:${currentPlace.id}`;
@@ -783,7 +786,7 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
       }
       return say(intent.text);
     },
-    [extras, connected, outbox.sending, pid, places, runDirectly, say],
+    [extras, connected, outbox.sending, pid, pidProp, places, runDirectly, say],
   );
 
   const onHistory = useCallback(

@@ -203,7 +203,56 @@ Voice events retain request and segment identity so stale output cannot change
 a later draft. Enter finalizes the current segment before sending and keeps
 listening. Pausing, helper failures and connection interruptions retain the text
 already displayed in the prompt. Raw local audio is not retained for replay.
-The input lease expires on suspension and is released when leaving Chat.
+The authenticated Desktop session owns one input lease. Leaving Chat stops
+local dictation without releasing that lease; Settings uses it for microphone
+discovery. Suspension expires the lease, and session teardown releases it.
+Starting with a saved microphone discovers it when needed and passes its exact
+ID and name to the helper. Cancellation revokes pending discovery and capture together.
+
+Desktop provides native global shortcuts and a supervised local
+Kokoro speaker helper. Rust registers shortcuts through the platform backend
+(the desktop portal on Wayland), while the authenticated frontend session owns
+the correlated recording and send operation. Its separate voice draft and
+existing chat outbox survive page changes. `conversation.ship` resolves the
+personal Ship, independently of the selected process, contact or Chat draft.
+Local dictation borrows only its visible composer; releasing that composer
+cannot cancel a handsfree recording. Cancellation and session teardown fence
+pending starts and late transcription events. Failed sends retain their original
+identity for explicit retry, and unsent voice work participates in teardown
+guards. Native heartbeat frames keep the
+lease acknowledged while the window is in the background; suspension still
+revokes it. The frontend retains the only authenticated Gateway connection.
+Published `message.committed` signals supply spoken replies, with duplicate
+suppression across reconnects and no history or Process-output replay. Markdown
+is rendered for speech in the client. The helper owns CPU inference and audio
+playback; cancellation invalidates queued synthesis and audio together. Starting
+capture waits for a correlated helper acknowledgement after aborting and closing
+the output stream. Missing acknowledgements and cancellation failures prevent
+microphone startup. The model stays loaded for the next reply. Incoming replies
+never play into an active microphone. Session changes and Quit stop both native owners.
+
+The release builds `gsv-speak` with a pinned Python environment and PyInstaller
+on each target platform. Its executable includes the interpreter, ONNX Runtime,
+pronunciation data and audio libraries. The model is downloaded to a per-user
+cache on first use, with SHA-256 verification and atomic publication. Cancellation
+discards partial downloads. Installer transactions and app bundles include the
+helper and its dependency notices. Release checks relocate the executable away
+from its build environment and exercise first-use English/Spanish synthesis,
+cancellation and EOF shutdown with an empty `PATH`. The ONNX runtime requires
+macOS 13 for spoken replies; Desktop and transcription retain their existing
+platform baseline.
+
+Release notes link the exact Ship source commit and pinned upstream source
+archives for the GPL speech dependencies, including the native build recipes.
+Keep these links in `host/helpers/speaker/THIRD_PARTY.md` aligned with dependency
+upgrades. Distributors retain the matching sources and provide a mirror if an
+upstream archive becomes unavailable; source archives are separate from the app.
+
+The native speech supervisor drains stderr with bounded buffers. Failures retain
+the exit status and known exception/component labels in the desktop error status;
+raw exception messages, traceback source and paths are discarded before reporting.
+A successful command retry clears its local failure without hiding current
+helper or shortcut errors.
 
 Local control supports activation, redacted status, new Process creation,
 selection of an accessible Process, and microphone discovery and selection.
@@ -212,7 +261,7 @@ and attachment paths never cross this channel. Requests are correlated through
 a frontend channel. Cancellation, timeout, disconnect and reload invalidate
 pending work before UI mutations. If a Process spawn has already committed when
 cancelled, the Process remains durable and inspectable, without being selected.
-Microphone commands use the active Chat input owner and never start capture.
+Microphone commands use the authenticated session's input owner and never start capture.
 
 Closing the window follows the same unsent-work guard and credential flush as
 Quit, stops local control, waits for helper shutdown and exits. A second launch
@@ -284,15 +333,15 @@ daemon updates also preserve the current installation directory. Host applicatio
 share installer URL resolution and shell quoting in `host-config`.
 
 Published host artifacts cover Linux x64/ARM64 and macOS Intel/Apple Silicon
-for Desktop, `gsv-transcribe`, `gsv`, and `gsvd`, plus Windows x64
-for all four host executables. Checksums cover every release asset. On macOS,
+for Desktop, `gsv-transcribe`, `gsv-speak`, `gsv`, and `gsvd`, plus Windows x64
+for the same host executables. Checksums cover every release asset. On macOS,
 `host/scripts/package-macos.sh` assembles an architecture-native development
 `GSV.app` and ZIP containing Desktop, CLI, daemon, helpers, application
 metadata, and the local voice runtime. The result is ad-hoc signed and unnotarized. Public distribution additionally requires Developer ID signing,
 hardened-runtime entitlements, Apple notarization, and stapling; those release
 credentials are not configured in the repository.
 
-On Windows, `host/scripts/package-windows.ps1` packages all four executables,
+On Windows, `host/scripts/package-windows.ps1` packages all five executables,
 licenses, checksums and the PowerShell installer in a ZIP and an NSIS setup
 executable. Setup creates a Start-menu shortcut and an Apps uninstall entry.
 Setup embeds hashes of its installer script and checksum manifest in the

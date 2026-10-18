@@ -234,6 +234,9 @@ jobs:
               - 'host/Cargo.toml'
               - 'host/Cargo.lock'
               - 'host/helpers/transcriber/**'
+              - 'host/helpers/speaker/**'
+              - 'host/scripts/build-speaker.py'
+              - 'host/scripts/check-speaker.py'
               - 'host/scripts/check-transcriber.py'
               - 'host/scripts/check-transcription.py'
               - 'host/scripts/package-transcriber.py'
@@ -721,6 +724,7 @@ jobs:
             libasound2-dev \
             libclang-dev \
             libopenblas-pthread-dev \
+            portaudio19-dev \
             libwebkit2gtk-4.1-dev \
             libgtk-3-dev \
             gstreamer1.0-plugins-base \
@@ -757,6 +761,17 @@ jobs:
       - name: Check host packaging script
         run: |
           bash -n host/scripts/package-macos.sh
+
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: '3.12'
+          enable-cache: true
+          cache-dependency-glob: host/helpers/speaker/uv.lock
+      - name: Build and check bundled speech runtime
+        run: |
+          uv run --frozen --project host/helpers/speaker python -m unittest discover -s host/helpers/speaker -p 'test_*.py'
+          uv run --frozen --group build --project host/helpers/speaker python host/scripts/build-speaker.py --output host/target/debug
+          python3 host/scripts/check-speaker.py host/target/debug/gsv-speak
 
       - uses: actions/setup-node@v4
         with:
@@ -821,7 +836,17 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y \
             build-essential clang cmake libasound2-dev libclang-dev \
-            libopenblas-pthread-dev pkg-config
+            libopenblas-pthread-dev portaudio19-dev pkg-config
+
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: '3.12'
+          enable-cache: true
+          cache-dependency-glob: host/helpers/speaker/uv.lock
+      - name: Build and check bundled speech runtime
+        run: |
+          uv run --frozen --group build --project host/helpers/speaker python host/scripts/build-speaker.py --output host/target/aarch64-unknown-linux-gnu/release
+          python3 host/scripts/check-speaker.py host/target/aarch64-unknown-linux-gnu/release/gsv-speak
 
       - name: Build release voice helper
         working-directory: host

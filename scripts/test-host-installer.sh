@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+unset XDG_DATA_HOME
 
 REPOSITORY_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TEST_ROOT="$(mktemp -d)"
@@ -63,6 +64,8 @@ make_fixture gsv-linux-x64 gsv-v1
 make_fixture gsvd-linux-x64 gsvd-v1
 make_fixture gsv-desktop-linux-x64 desktop-v1
 make_fixture gsv-transcribe-linux-x64 transcribe-v1
+make_fixture gsv-speak-linux-x64 speaker-v1
+printf 'speaker-license-v1\n' > "$FIXTURES/gsv-speak-THIRD_PARTY-linux-x64.md"
 make_runtime linux-x64 runtime-v1
 printf 'license-v1\n' > "$FIXTURES/gsv-transcribe-THIRD_PARTY.md"
 cp "$REPOSITORY_ROOT/install.sh" "$FIXTURES/install.sh"
@@ -174,6 +177,8 @@ test "$("$INSTALL_DIR/gsv")" = "gsv-v1"
 test "$("$INSTALL_DIR/gsvd")" = "gsvd-v1"
 test "$("$INSTALL_DIR/gsv-desktop")" = "desktop-v1"
 test "$("$INSTALL_DIR/gsv-transcribe")" = "transcribe-v1"
+test "$("$INSTALL_DIR/gsv-speak")" = "speaker-v1"
+test "$(cat "$INSTALL_DIR/gsv-speak-THIRD_PARTY.md")" = "speaker-license-v1"
 test "$(cat "$INSTALL_DIR/gsv-transcribe-runtime/libtranscribe.so")" = "runtime-v1"
 test "$(cat "$INSTALL_DIR/gsv-transcribe-THIRD_PARTY.md")" = "license-v1"
 
@@ -211,18 +216,22 @@ make_fixture gsv-linux-x64 gsv-v2
 make_fixture gsvd-linux-x64 gsvd-v2
 make_fixture gsv-desktop-linux-x64 desktop-v2
 make_fixture gsv-transcribe-linux-x64 transcribe-v2
+make_fixture gsv-speak-linux-x64 speaker-v2
+printf 'speaker-license-v2\n' > "$FIXTURES/gsv-speak-THIRD_PARTY-linux-x64.md"
 make_runtime linux-x64 runtime-v2
 make_fixture gsv-darwin-x64 gsv-mac
 make_fixture gsvd-darwin-x64 gsvd-mac
 make_fixture gsv-desktop-darwin-x64 desktop-mac
 make_fixture gsv-transcribe-darwin-x64 transcribe-mac
+make_fixture gsv-speak-darwin-x64 speaker-mac
+printf 'speaker-license-mac\n' > "$FIXTURES/gsv-speak-THIRD_PARTY-darwin-x64.md"
 make_runtime darwin-x64 runtime-mac
 printf 'license-v2\n' > "$FIXTURES/gsv-transcribe-THIRD_PARTY.md"
 write_checksums
 cat > "$FAKE_BIN/chmod" <<'SH'
 #!/usr/bin/env sh
 case "$*" in
-    *gsv-transcribe.new.*) exit 1 ;;
+    *gsv-speak-THIRD_PARTY.md.new.*) exit 1 ;;
 esac
 exec /usr/bin/chmod "$@"
 SH
@@ -238,6 +247,8 @@ test "$("$INSTALL_DIR/gsv-desktop")" = "desktop-v1"
 test "$("$INSTALL_DIR/gsv-transcribe")" = "transcribe-v1"
 test "$(cat "$INSTALL_DIR/gsv-transcribe-runtime/libtranscribe.so")" = "runtime-v1"
 test "$(cat "$INSTALL_DIR/gsv-transcribe-THIRD_PARTY.md")" = "license-v1"
+test "$("$INSTALL_DIR/gsv-speak")" = "speaker-v1"
+test "$(cat "$INSTALL_DIR/gsv-speak-THIRD_PARTY.md")" = "speaker-license-v1"
 
 # A fresh install with no GSV_INSTALL_DIR goes to ~/.gsv/bin and puts it on
 # PATH once, however often the installer runs.
@@ -257,6 +268,10 @@ run_default_installer() {
         "$@" bash "$REPOSITORY_ROOT/install.sh"
 }
 DEFAULT_OUTPUT="$(run_default_installer env)"
+DESKTOP_ENTRY="$DEFAULT_HOME/.local/share/applications/space.gsv.desktop.desktop"
+test -f "$DESKTOP_ENTRY"
+grep -Fq "Exec=\"$DEFAULT_HOME/.gsv/bin/gsv-desktop\"" "$DESKTOP_ENTRY"
+printf '# preserve local metadata\n' >> "$DESKTOP_ENTRY"
 test "$("$DEFAULT_HOME/.gsv/bin/gsv")" = "gsv-v2"
 test "$(cat "$DEFAULT_HOME/.gsv/bin/gsv-transcribe-runtime/libtranscribe.so")" = "runtime-v2"
 test "$("$DEFAULT_HOME/.gsv/bin/gsvd")" = "gsvd-v2"
@@ -269,6 +284,7 @@ grep -q '^case ":$PATH:" in \*":$HOME/.gsv/bin:"\*) ;; \*) export PATH="$HOME/.g
 # The guarded line is valid sh and prepends the directory exactly once.
 test "$(HOME="$DEFAULT_HOME" PATH="/usr/bin:/bin" sh -c ". \"$DEFAULT_HOME/.profile\"; . \"$DEFAULT_HOME/.profile\"; printf '%s' \"\$PATH\"")" = "$DEFAULT_HOME/.gsv/bin:/usr/bin:/bin"
 run_default_installer env >/dev/null
+grep -q '# preserve local metadata' "$DESKTOP_ENTRY"
 test "$(grep -c 'Added by the GSV installer' "$DEFAULT_HOME/.profile")" = "1"
 test "$(grep -c 'Added by the GSV installer' "$DEFAULT_HOME/.bashrc")" = "1"
 

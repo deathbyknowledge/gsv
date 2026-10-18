@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-speech-attach"
+description = "Enables the speech_attach command without any pre-configured scope."
+commands.allow = ["speech_attach"]
+
+[[permission]]
+identifier = "deny-speech-attach"
+description = "Denies the speech_attach command without any pre-configured scope."
+commands.deny = ["speech_attach"]

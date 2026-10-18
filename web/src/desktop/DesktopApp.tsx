@@ -3,10 +3,11 @@ import { App } from "../app/App";
 import { AuthScene } from "../app/features/session/AuthLayout";
 import { BrowserNavigationProvider } from "../app/services/platform/BrowserNavigation";
 import { NativeInputProvider } from "../app/services/platform/PlatformProvider";
+import { NativeSpeechProvider } from "../app/services/platform/NativeSpeech";
 import { PlatformIdentityProvider } from "../app/services/platform/PlatformIdentity";
 import { configureGatewayOrigin } from "../app/services/platform/gatewayOrigin";
 import { createSessionService, type SessionService } from "../app/services/session/sessionService";
-import { disconnectSpace, invoke, nativeInput, nativeSessionStorage, openInBrowser, type DesktopSession, type NativeSessionStorage } from "./bridge";
+import { disconnectSpace, invoke, nativeInput, nativeSpeech, nativeSessionStorage, openInBrowser, type DesktopSession, type NativeSessionStorage } from "./bridge";
 import { DesktopSpaceMenu } from "./DesktopSpaceMenu";
 import { DesktopMachineSetup } from "./DesktopMachineSetup";
 import { DesktopWelcome } from "./DesktopWelcome";
@@ -35,6 +36,7 @@ function ConnectedDesktop({ session, storage, mock, onError, onQuit, onResumeSet
     if (!confirmation && dialog.open) dialog.close();
   }, [confirmation]);
   const input = useMemo(() => nativeInput(session.generation), [session.generation]);
+  const speech = useMemo(() => nativeSpeech(session.generation), [session.generation]);
   const control = useMemo(() => desktopControl(session.generation), [session.generation]);
   useEffect(() => control.attach(), [control]);
   const factory = useMemo(() => (client: Parameters<typeof createSessionService>[0]) => {
@@ -91,7 +93,9 @@ function ConnectedDesktop({ session, storage, mock, onError, onQuit, onResumeSet
       {!locked && !mock && session.origin && <DesktopMachineSetup origin={session.origin} generation={session.generation}
         request={machineRequest} storage={storage} />}</>}>
       <DesktopAttachments active={!locked}>
-        <ClientControlProvider control={control}><NativeInputProvider input={input}><App createSessionService={factory} /></NativeInputProvider></ClientControlProvider>
+        <ClientControlProvider control={control}><NativeInputProvider input={input}><NativeSpeechProvider driver={speech} active={!locked}>
+          <App createSessionService={factory} />
+        </NativeSpeechProvider></NativeInputProvider></ClientControlProvider>
       </DesktopAttachments>
     </PlatformIdentityProvider>
   </>;

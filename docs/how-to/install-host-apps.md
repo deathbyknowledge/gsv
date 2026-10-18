@@ -1,19 +1,19 @@
 # Install and upgrade Ship host applications
 
 The Ship release is one versioned host distribution. The operator CLI (`gsv`),
-machine daemon (`gsvd`), Desktop, and Desktop's transcription
-helper share the version in the repository root `VERSION` file. The CLI
+machine daemon (`gsvd`), Desktop, and Desktop's transcription and speech
+helpers ship together under the version in the repository root `VERSION` file. The CLI
 refuses to manage a mismatched daemon.
 
 ## Supported release artifacts
 
-| Platform | `gsv` | `gsvd` | Desktop | Transcription |
-| --- | --- | --- | --- | --- |
-| Linux x64 | yes | yes | yes | yes |
-| Linux ARM64 | yes | yes | yes | yes |
-| macOS Intel | yes | yes | yes | yes |
-| macOS Apple Silicon | yes | yes | yes | yes |
-| Windows 10+ x64 | yes | yes | yes | yes |
+| Platform | `gsv` | `gsvd` | Desktop | Transcription | Spoken replies |
+| --- | --- | --- | --- | --- | --- |
+| Linux x64 | yes | yes | yes | yes | yes |
+| Linux ARM64 | yes | yes | yes | yes | yes |
+| macOS Intel | yes | yes | yes | yes | macOS 13+ |
+| macOS Apple Silicon | yes | yes | yes | yes | macOS 13+ |
+| Windows 10+ x64 | yes | yes | yes | yes | yes |
 
 Windows ARM64 is not a supported release target. Other operating systems and architectures are
 not currently published.
@@ -243,8 +243,14 @@ gsv desktop
 
 `gsv desktop status`, `new`, and `use PID` use same-user local IPC. Desktop
 connects to the gateway as a user; it does not route chat through `gsvd`.
-The installer places `gsv-transcribe` and its runtime beside Desktop so it can
-supervise the matching voice helper. A failed upgrade restores the previous
+The installer places `gsv-transcribe` and its runtime, plus `gsv-speak`, beside
+Desktop so it can supervise the matching voice helpers. `gsv-speak` bundles its
+Python runtime, pronunciation data and audio libraries. The Kokoro model downloads
+once on first use, is checksum-verified, and then runs from the local cache.
+See [Use voice input](/how-to/voice-input) for Handsfree mode and spoken replies.
+On Linux, installation creates a hidden desktop entry when one is missing, so
+the Wayland shortcut portal can identify Ship when launched from a terminal.
+A failed upgrade restores the previous
 installation. A Windows headless update leaves an existing Desktop installation
 alone.
 

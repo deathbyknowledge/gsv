@@ -39,9 +39,11 @@ print(" ".join(target["name"] for package in json.load(sys.stdin)["packages"] if
     for target in package["targets"] if "bin" in target["kind"]))
 ')"
 read -r -a binaries <<< "$binary_names"
+binaries+=(gsv-speak)
 for binary in "${binaries[@]}"; do
   cp "$scratch/executable" "$binary_dir/$binary"
 done
+printf 'bundled speech notices\n' > "$binary_dir/gsv-speak-THIRD_PARTY.md"
 
 mkdir -p "$binary_dir/gsv-transcribe-runtime"
 printf 'int transcribe_fixture(void) { return 0; }\n' | clang -dynamiclib -x c - -o "$binary_dir/gsv-transcribe-runtime/libtranscribe.dylib"
@@ -68,6 +70,7 @@ assert(displayName == "Ship" || displayName == "Ship.app", displayName)
 SWIFT
 cmp "$repository_root/host/helpers/transcriber/THIRD_PARTY.md" \
   "$app/Contents/Resources/licenses/transcriber/THIRD_PARTY.md"
+cmp "$binary_dir/gsv-speak-THIRD_PARTY.md" "$app/Contents/Resources/licenses/speaker/THIRD_PARTY.md"
 [[ ! -e "$app/Contents/MacOS/THIRD_PARTY.md" ]]
 for binary in "${binaries[@]}"; do
   codesign --verify --strict "$app/Contents/MacOS/$binary"

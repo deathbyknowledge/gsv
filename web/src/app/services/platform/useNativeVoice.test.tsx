@@ -75,6 +75,33 @@ async function mounted(commands = true) {
 }
 
 describe("native input subscription", () => {
+  it("keeps the selected microphone when the input owner changes and restores it after reopening", async () => {
+    const values = new Map<string, string>();
+    vi.stubGlobal("localStorage", { getItem: (key: string) => values.get(key) ?? null, setItem: (key: string, value: string) => values.set(key, value) });
+    let lease = 0;
+    const dispose = vi.fn();
+    const input: NativeInput = {
+      subscribe: () => ({ initial: Promise.resolve(idle(`view-${++lease}`)), dispose }),
+      acknowledge: vi.fn(async () => {}), command: vi.fn(async () => {}),
+    };
+    let control!: ReturnType<typeof useNativeVoice>;
+    function Probe() {
+      control = useNativeVoice({ prompt: { current: null }, scope: "microphone", enabled: true, send: () => false });
+      return null;
+    }
+    const root = createTestRoot("shared microphone preference"); roots.push(root);
+    const render = (owner: string) => root.render(<NativeInputProvider input={input}><Probe key={owner} /></NativeInputProvider>);
+    await render("settings");
+    await act(() => control.setDevice("usb-microphone"));
+    await render("chat");
+    expect(dispose).toHaveBeenCalledOnce();
+    await act(() => control.start());
+    expect(input.command).toHaveBeenLastCalledWith("view-2", { kind: "start", device_id: "usb-microphone" });
+    await root.unmount();
+    await render("reopened");
+    expect(control.device).toBe("usb-microphone");
+  });
+
   it("selects the CLI microphone after discovery even when loading updates were coalesced", async () => {
     const app = await mounted();
     const result = app.handlers.get("microphoneUse")!({
