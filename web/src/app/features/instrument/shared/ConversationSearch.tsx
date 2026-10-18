@@ -80,7 +80,7 @@ export const ConversationSearch = memo(function ConversationSearch({ conversatio
     {opened ? <ConversationExcerpt conversationId={conversationId} hit={opened} date={date} /> : <>
       <div class="zen-search-results">
         {search.isError && fresh ? <p role="alert">{String(search.error).match(/unknown syscall|not implemented|unsupported/i)
-          ? "Search isn’t available on this space yet." : "Search could not be completed."} <button type="button" onClick={() => void search.refetch()}>retry</button></p> : null}
+          ? "Search isn’t available here yet." : "Search could not be completed."} <button type="button" onClick={() => void search.refetch()}>retry</button></p> : null}
         <div id="zen-search-results" role="listbox" aria-label="Matching messages">
           {fresh && hits.map((hit, index) => <button type="button" key={hit.id} id={`zen-search-hit-${index}`} data-search-index={index}
             class={`zen-search-hit${index === selected ? " is-selected" : ""}`} role="option" aria-selected={index === selected}

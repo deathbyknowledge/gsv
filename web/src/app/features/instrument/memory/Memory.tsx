@@ -233,7 +233,7 @@ export function Memory({ initialPage, onAsk, onDirtyChange }: MemoryProps) {
       ) : empty ? (
         <div class="memory-empty">
           <p>
-            Nothing here yet. Your ship writes what it learns about you into its <span class="place">personal</span> wiki as you
+            Nothing here yet. Your Ship writes what it learns about you into its <span class="place">personal</span> wiki as you
             work together, and this is where you read it and put it right.
           </p>
         </div>

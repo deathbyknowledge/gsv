@@ -13,7 +13,7 @@ import { GsvDeletionResourceBindings, type OperatorResourceCatalog } from "../sr
 type RecordedWorker = { id: string; props: Cloudflare.Workers.WorkerProps<Cloudflare.Workers.WorkerBindingProps> };
 type RecordedBinding = { id: string; bindings: readonly { name: string; entrypoint?: string; props?: { authority?: string; canonicalOrigin?: unknown }; json?: unknown }[] };
 type RecordedRoute = { id: string; zoneId: string; pattern: string; script: unknown };
-type DeploymentRecorder = { workers: RecordedWorker[]; databases: { name: string; migrationsDir?: string; migrationsTable?: string }[]; bindings: RecordedBinding[]; routes: RecordedRoute[] };
+type DeploymentRecorder = { workers: RecordedWorker[]; databases: { name: string; migrations?: { dir: string; table: string } }[]; bindings: RecordedBinding[]; routes: RecordedRoute[] };
 const recorded: DeploymentRecorder = { workers: [], databases: [], bindings: [], routes: [] };
 const recordedCloudflare = {
   ...Cloudflare,
@@ -215,7 +215,7 @@ describe("public operator composition", () => {
 
   it("provisions a fresh directory and executor with the exact recovery authority bindings", async () => {
     await run(GsvDeployment(input, dependencies));
-    expect(recorded.databases).toEqual([{ name: "directory-db", migrationsDir: "public/migrations", migrationsTable: "installation_migrations" }]);
+    expect(recorded.databases).toEqual([{ name: "directory-db", migrations: { dir: "public/migrations", table: "installation_migrations" } }]);
     const gatewayWorker = recorded.workers.find((worker) => worker.id === "FixtureGateway");
     expect(gatewayWorker?.props.compatibility).toMatchObject({ flags: expect.arrayContaining(["global_fetch_strictly_public"]) });
     const gateway = gatewayWorker?.props.env;

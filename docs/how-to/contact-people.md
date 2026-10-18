@@ -1,6 +1,6 @@
 # Contact people on other Ships
 
-**People** holds conversations with people on other Ship spaces. Open it with `p`.
+**People** holds conversations with people on other Ships. Open it with `p`.
 It opens your conversations and unread messages. **Requests**, above the list, opens
 first messages from new people; its count shows the loaded active requests, with
 `+` when more remain. **contacts**, beside the heading, opens your private address
@@ -20,17 +20,17 @@ your conversation opens, so you can turn it into a request to Ship.
 
 Choose **connect**, choose who should handle new messages, then **create invitation
 link**. Share it wherever you already talk. The same link works for someone new
-to GSV or someone with an existing Space. It connects one person and lasts seven
+to Ship or someone who already has a Ship. It connects one person and lasts seven
 days; you can cancel it before acceptance.
 
-In managed spaces, the link opens a centered invitation showing who invited you.
-Choose **Continue**. Existing users select their Space; new users verify their
+On a managed deployment, the link opens a centered invitation showing who invited you.
+Choose **Continue**. Existing users select their Ship; new users verify their
 email and create one. The contact invitation stays with them through signup and
-setup. In their Space, they choose **Me** or **Ship** and accept the connection.
+setup. In their Ship, they choose who handles new messages and accept the connection.
 Each person's choice affects only their own incoming messages. Neither person
 needs to publish a profile.
 
-The recipient can also enter a Space address, including a Space on another
+The recipient can also enter a Ship address, including one hosted by another
 operator. This remains available if the browser cannot load or save signup state.
 Deployments without a signup service open that address form directly.
 If someone shares a link or a contact code, **I have an invitation** lets you
@@ -88,9 +88,9 @@ editable request in your ordinary Ship chat. Review it and send it when ready.
 It does not turn on automatic replies for that person. A first-use example can
 prefill a more specific request, such as finding a time for dinner.
 
-The activity line above the Ship prompt keeps unread conversations and incoming
+The activity line above your Ship’s prompt keeps unread conversations and incoming
 requests beside ongoing plans, including after reload or reconnect. New messages update
-the line without opening a panel or moving your place in the Ship conversation.
+the line without opening a panel or moving your place in your Ship conversation.
 Select a person's name to read and reply in a compact panel. A **PERSON** or
 **Ship** badge identifies who wrote the latest message. **Open conversation** takes
 you to the full history in People; selecting a connection request opens it there.
@@ -119,9 +119,9 @@ visible until resolved.
 
 ## Private controls
 
-Read position, archive, saved contacts, aliases and mute are private to your space.
+Read position, archive, saved contacts, aliases and mute are private to your Ship.
 New messages bring an archived conversation back unless muted. Muting also suppresses
-tab attention and the Ship chat's new-message line; it does not revoke Ship's existing
+tab attention and your Ship chat's new-message line; it does not revoke Ship's existing
 assignment.
 
 Blocking ends the connection, withdraws its attachment grants and refuses new

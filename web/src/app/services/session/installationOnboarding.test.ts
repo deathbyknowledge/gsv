@@ -2,6 +2,7 @@ import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   clearInstallationOnboardingToken,
   readInstallationOnboardingToken,
+  readSignupArrival,
 } from "./installationOnboarding";
 import { createSessionService, type SessionClient } from "./sessionService";
 
@@ -31,6 +32,22 @@ describe("installation onboarding capability", () => {
 
   afterAll(() => {
     vi.unstubAllGlobals();
+  });
+
+  it("binds the signup arrival hint to the token it came with", () => {
+    const other = `onboard_${"b".repeat(43)}`;
+    window.history.replaceState(null, "", `/onboarding?signup=1#${TOKEN}`);
+    expect(readInstallationOnboardingToken()).toBe(TOKEN);
+    expect(readSignupArrival(TOKEN)).toBe(true);
+    expect(window.location.search).toBe("");
+    expect(readSignupArrival(TOKEN)).toBe(true);
+    // A different setup opened in the same tab, with or without the query, must not inherit the hint.
+    expect(readSignupArrival(other)).toBe(false);
+    window.history.replaceState(null, "", `/onboarding#${other}`);
+    expect(readInstallationOnboardingToken()).toBe(other);
+    expect(readSignupArrival(other)).toBe(false);
+    clearInstallationOnboardingToken();
+    expect(readSignupArrival(TOKEN)).toBe(false);
   });
 
   it("moves the capability out of the URL fragment into tab storage", () => {

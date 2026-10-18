@@ -1,4 +1,4 @@
-import { cancelBinaryBody, type BinaryBody } from "@humansandmachines/gsv/protocol";
+import { byteStreamChunk, cancelBinaryBody, type BinaryBody } from "@humansandmachines/gsv/protocol";
 import type { InstanceTargetRequest, InstanceTargetResponse } from "@humansandmachines/gsv/services/instances";
 
 /** Owns admission, dispatch and the returned body as one cancellable request. */
@@ -66,7 +66,8 @@ export class ComputerRequest {
       this.finish();
       return true;
     };
-    const stream = new ReadableStream<Uint8Array>({
+    const source: UnderlyingByteSource = {
+      type: "bytes",
       start: controller => {
         this.abortBody = cause => {
           if (ended) return;
@@ -79,15 +80,15 @@ export class ComputerRequest {
           const part = await reader.read();
           if (ended) return;
           if (part.done) { finish(); controller.close(); }
-          else controller.enqueue(part.value);
+          else controller.enqueue(byteStreamChunk(part.value));
         } catch (cause) {
           if (ended) return;
           this.abort.abort(cause);
         }
       },
       cancel: cause => { this.abort.abort(cause ?? new Error("Computer response body cancelled")); },
-    }, { highWaterMark: 0 });
-    return { ...body, stream };
+    };
+    return { ...body, stream: new ReadableStream(source, { highWaterMark: 0 }) };
   }
 
   private finish(): void {

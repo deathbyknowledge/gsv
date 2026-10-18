@@ -76,12 +76,12 @@ GSV_DEV_COMPUTERS=1 GSV_DEV_STATE_DIR=/tmp/gsv-computer-trial npm run dev
 ```
 
 Use a new state directory for fresh onboarding. Open
-`http://localhost:8976/admin`, create a Space and follow its setup link. Ask Ship
+`http://localhost:8976/admin`, create a Ship and follow its setup link. Ask Ship
 to start a cloud computer, analyze a small CSV, copy the result back to `gsv` and
 stop the computer. Model calls still need a configured inference provider.
 
 This selects `workers/instances/wrangler.computer.dev.jsonc`, which builds the
-normal computer image and runs it locally through Wrangler. Each Space allows
+normal computer image and runs it locally through Wrangler. Each Ship allows
 one computer at a time, up to 30 minutes per computer and two hours per month.
 Stop computers before ending the dev session; their files are temporary.
 The default `npm run dev` keeps computers disabled and does not require Docker.

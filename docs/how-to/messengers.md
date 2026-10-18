@@ -8,7 +8,7 @@ adapter can implement.
 
 Your deployment operator enables the Telegram, Slack, Discord, and WhatsApp
 apps offered in **Messengers**. You link your identity with a short-lived code.
-You do not need to create a bot or paste its token into the space.
+You do not need to create a bot or paste its token into your Ship.
 
 ## Ask Ship to connect
 
@@ -20,7 +20,7 @@ No visit to Settings is needed. If the code expires, request a new one.
 To also use that messenger for password recovery, connect it directly in Settings.
 
 Only share a code from your own messenger account. If it is already connected
-to another space, redeeming the code moves that connection to this space.
+to another Ship, redeeming the code moves that connection to this Ship.
 Send another message in the messenger after pairing to start talking to Ship.
 
 You can also connect through **Settings → Messengers**, using the steps below.
@@ -82,8 +82,8 @@ separately and each author's mentions keep routing to their own Ship. Making
 Alice and Bob Contacts does not change that default Slack route. A linked Ship
 can still contact the other explicitly through Ship's normal federation model.
 
-Public channel and thread responses identify whose Ship produced them, for
-example **From @Alice's Ship:**. Direct-message responses omit that prefix.
+Public channel and thread responses identify whose Ship produced them.
+Direct-message responses omit that prefix.
 Relinking a Slack identity moves future messages only after confirmation
 succeeds; delayed messages and replies from the old link are rejected.
 
@@ -95,7 +95,7 @@ README in the source tree for configuration and target details.
 
 ## Discord
 
-1. Open **Messengers → Discord** in the space you want to link.
+1. Open **Messengers → Discord** in the Ship you want to link.
 2. Use the operator application's install link if the bot is not already in the
    intended server, or open a direct message with it.
 3. Mention the bot with `pair`, or message it privately. It sends a private code.
@@ -104,7 +104,7 @@ README in the source tree for configuration and target details.
 
 Installing the bot does not link everyone in a server. Each person pairs their
 own identity, and a server route is separate from a direct-message route. Two
-people in the same server can use different spaces. Replies remain bound to the
+people in the same server can use different Ships. Replies remain bound to the
 confirmed author and observed destination.
 
 ## WhatsApp
@@ -119,8 +119,8 @@ Platform. You message that number from your own WhatsApp account.
    number is already connected to another Ship, send `/link` to get a new code.
 3. Enter the code back in Ship. Ship shows the WhatsApp profile name and the
    masked number that requested it.
-4. Confirm only if that is your WhatsApp number. The code alone cannot choose a
-   space or user; the signed-in Ship session supplies both.
+4. Confirm only if that is your WhatsApp number. The code alone cannot choose an
+   installation or user; the signed-in Ship session supplies both.
 5. Send another message. It reaches the same Ship conversation you use in Ship.
 
 You can send text, photos, documents, voice notes, videos, and locations. Ship
@@ -159,10 +159,10 @@ service is offered for your number.
 The earlier linked-device adapter, which paired by scanning a QR code, is no
 longer bundled, and its pairings do not carry over.
 
-## Disconnect or change a space
+## Disconnect or switch Ships {#disconnect-or-change-a-space}
 
 Use **Disconnect** on the linked identity to revoke its route. To move an
-identity, request a new code and confirm it from the destination space. Issuing
+identity, request a new code and confirm it from the destination Ship. Issuing
 or inspecting a code leaves the old route active; confirmation changes its
 generation. Delayed messages from the old route cannot cross into the new one.
 

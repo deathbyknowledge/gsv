@@ -8,7 +8,7 @@ export async function handleSysFeedback(args: SysFeedbackArgs, ctx: KernelContex
   try {
     const input = feedbackArgsSchema.safeParse(args);
     if (!input.success) throw new Error("Invalid feedback report");
-    if (!ctx.env.FEEDBACK) throw new Error("Feedback is not available for this space");
+    if (!ctx.env.FEEDBACK) throw new Error("Feedback is not available here");
     if (!body) throw new Error("Feedback requires a report body");
     await authorizeNestedOperation(ctx, "sys.feedback", input.data);
     ctx.requestSignal?.throwIfAborted();

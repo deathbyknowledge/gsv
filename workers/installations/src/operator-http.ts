@@ -63,19 +63,19 @@ export class InstallationOperatorHttp {
   }
 
   private page(bootstrap: boolean): Response {
-    const response = adminPageResponse({ title: bootstrap ? "Create your first space" : "Operator access", section: "operator", content: `
+    const response = adminPageResponse({ title: bootstrap ? "Create your first Ship" : "Operator access", section: "operator", content: `
       <section class="narrow stack" data-bootstrap="${bootstrap}" data-mode="${this.mode}">
-        <div class="page-heading"><h1>${bootstrap ? "Create your first space" : "Operator access"}</h1></div>
+        <div class="page-heading"><h1>${bootstrap ? "Create your first Ship" : "Operator access"}</h1></div>
         <form id="operator-form" class="stack">
-          ${bootstrap ? '<label>Space handle <input name="handle" required autocomplete="off" pattern="[a-z0-9][a-z0-9-]{0,62}"></label>'
+          ${bootstrap ? '<label>Handle <input name="handle" required autocomplete="off" pattern="[a-z0-9][a-z0-9-]{0,62}"></label>'
             : '<label>Operator credential <input name="token" type="password" required autocomplete="current-password"></label>'}
-          <button type="submit">${bootstrap ? "Create space" : "Sign in"}</button>
+          <button type="submit">${bootstrap ? "Create Ship" : "Sign in"}</button>
         </form>
         <p id="operator-status" role="status"></p>
         <div id="operator-result" hidden>
-          <p><a id="setup-link" class="button" hidden>Set up your space</a></p>
+          <p><a id="setup-link" class="button" hidden>Set up your Ship</a></p>
           <div id="credential-result" hidden><p>Save this operator credential now. It is shown once.</p><textarea id="operator-credential" readonly rows="3"></textarea></div>
-          <p><a href="/admin/installations">Manage spaces</a></p>
+          <p><a href="/admin/installations">Manage Ships</a></p>
         </div>
       </section><script src="/operator/client.js" defer></script>` });
     response.headers.set("content-security-policy", "default-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'; style-src 'self'; script-src 'self'; connect-src 'self'");
@@ -135,6 +135,6 @@ form.addEventListener('submit', async (event) => {
       document.getElementById('credential-result').hidden = false;
       document.getElementById('operator-credential').value = attempt.operatorToken;
     }
-    status.textContent = result.onboardingUrl ? 'Your first space is ready to set up.' : 'This space already has a setup claim. Use administration if you need to reissue it.';
+    status.textContent = result.onboardingUrl ? 'Your first Ship is ready to set up.' : 'This Ship already has a setup claim. Use administration if you need to reissue it.';
   } catch (error) { status.textContent = error.message; } finally { button.disabled = false; }
 });`;

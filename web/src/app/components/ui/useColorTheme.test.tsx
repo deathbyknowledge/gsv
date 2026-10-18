@@ -1,7 +1,7 @@
 import { act } from "preact/test-utils";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createTestRoot } from "../../testing/testHarness";
-import type { ColorThemeState } from "./useColorTheme";
+import type { ColorTheme, ColorThemeState } from "./useColorTheme";
 
 const THEME_KEY = "gsv.instrument.theme";
 
@@ -32,22 +32,29 @@ function fakeWindow(options: { systemLight: boolean; stored?: string; blocked?: 
       for (const listener of systemListeners) listener();
     },
     /* another tab wrote the key */
-    storageEvent(value: string | null) {
+    storageEvent(value: string | null, key: string | null = THEME_KEY) {
       if (value === null) stored.delete(THEME_KEY);
       else stored.set(THEME_KEY, value);
       // SAFETY: the hook reads only `key` from the storage event.
-      page.dispatchEvent(Object.assign(new Event("storage"), { key: THEME_KEY }) as StorageEvent);
+      page.dispatchEvent(Object.assign(new Event("storage"), { key }) as StorageEvent);
     },
   };
 }
 
 let state: ColorThemeState;
+let auth: ColorThemeState;
+let instrument: ColorThemeState;
 let root: ReturnType<typeof createTestRoot>;
 
 /* a fresh module per test, so a page-only choice from blocked storage does not leak between tests */
-async function mount() {
+async function mount(fallback?: ColorTheme) {
   const { useColorTheme } = await import("./useColorTheme");
-  function Harness() { state = useColorTheme(); return null; }
+  function Harness() {
+    state = useColorTheme(fallback);
+    auth = useColorTheme("dark");
+    instrument = useColorTheme("light");
+    return null;
+  }
   root = createTestRoot("Color theme");
   await root.render(<Harness />);
 }
@@ -59,10 +66,15 @@ describe("color theme preference", () => {
   it("follows the system when nothing is stored", async () => {
     const page = fakeWindow({ systemLight: true });
     await mount();
-    expect(state.preference).toBe("system");
+    expect(state.preference).toBeNull();
     expect(state.theme).toBe("light");
+    expect(auth.theme).toBe("dark");
+    expect(instrument.theme).toBe("light");
     await act(() => page.setSystemLight(false));
     expect(state.theme).toBe("dark");
+    expect(auth.theme).toBe("dark");
+    expect(instrument.theme).toBe("light");
+    expect(page.stored.has(THEME_KEY)).toBe(false);
   });
 
   it("keeps a stored light or dark choice regardless of the system", async () => {
@@ -78,21 +90,39 @@ describe("color theme preference", () => {
   it("treats an unrecognised stored value as following the system", async () => {
     fakeWindow({ systemLight: false, stored: "purple" });
     await mount();
-    expect(state.preference).toBe("system");
+    expect(state.preference).toBeNull();
     expect(state.theme).toBe("dark");
+    expect(auth.theme).toBe("dark");
+    expect(instrument.theme).toBe("light");
   });
 
-  it("stores an explicit choice and clears it to follow the system again", async () => {
+  it("persists Match system separately from surface defaults and restores it on reload", async () => {
     const page = fakeWindow({ systemLight: false });
-    await mount();
+    await mount("light");
+    expect(state.preference).toBeNull();
+    expect(state.theme).toBe("light");
     await act(() => state.setPreference("light"));
     expect(page.stored.get(THEME_KEY)).toBe("light");
     expect(state.preference).toBe("light");
     expect(state.theme).toBe("light");
     await act(() => state.setPreference("system"));
-    expect(page.stored.has(THEME_KEY)).toBe(false);
+    expect(page.stored.get(THEME_KEY)).toBe("system");
     expect(state.preference).toBe("system");
     expect(state.theme).toBe("dark");
+    expect(auth.theme).toBe("dark");
+    expect(instrument.theme).toBe("dark");
+    await act(() => page.setSystemLight(true));
+    expect(auth.theme).toBe("light");
+    expect(instrument.theme).toBe("light");
+    await root.unmount();
+    vi.resetModules();
+    await mount("light");
+    expect(state.preference).toBe("system");
+    expect(state.theme).toBe("light");
+    expect(auth.theme).toBe("light");
+    await act(() => page.setSystemLight(false));
+    expect(state.theme).toBe("dark");
+    expect(instrument.theme).toBe("dark");
   });
 
   it("toggles from the system theme to a pinned opposite", async () => {
@@ -107,26 +137,63 @@ describe("color theme preference", () => {
     expect(state.theme).toBe("dark");
   });
 
+  it("toggles from the surface default before a preference has been selected", async () => {
+    const page = fakeWindow({ systemLight: false });
+    await mount("light");
+    await act(() => state.toggleTheme());
+    expect(page.stored.get(THEME_KEY)).toBe("dark");
+    expect(state.preference).toBe("dark");
+    expect(auth.theme).toBe("dark");
+    expect(instrument.theme).toBe("dark");
+  });
+
   it("follows a choice made in another tab", async () => {
     const page = fakeWindow({ systemLight: false });
     await mount();
     await act(() => page.storageEvent("light"));
     expect(state.preference).toBe("light");
     expect(state.theme).toBe("light");
+    expect(auth.theme).toBe("light");
+    expect(instrument.theme).toBe("light");
+    await act(() => page.storageEvent("system"));
+    expect(auth.preference).toBe("system");
+    expect(instrument.preference).toBe("system");
+    expect(auth.theme).toBe("dark");
+    expect(instrument.theme).toBe("dark");
+    await act(() => page.setSystemLight(true));
+    expect(auth.theme).toBe("light");
+    expect(instrument.theme).toBe("light");
     await act(() => page.storageEvent(null));
-    expect(state.preference).toBe("system");
-    expect(state.theme).toBe("dark");
+    expect(state.preference).toBeNull();
+    expect(state.theme).toBe("light");
+    expect(auth.theme).toBe("dark");
+    expect(instrument.theme).toBe("light");
+    await act(() => page.storageEvent("system"));
+    await act(() => page.storageEvent(null, null));
+    expect(auth.theme).toBe("dark");
+    expect(instrument.theme).toBe("light");
   });
 
   it("keeps the choice for this page when storage is blocked", async () => {
-    fakeWindow({ systemLight: true, blocked: true });
+    const page = fakeWindow({ systemLight: true, blocked: true });
     await mount();
-    expect(state.preference).toBe("system");
+    expect(state.preference).toBeNull();
+    expect(auth.theme).toBe("dark");
+    expect(instrument.theme).toBe("light");
     await act(() => state.setPreference("dark"));
     expect(state.preference).toBe("dark");
     expect(state.theme).toBe("dark");
     await act(() => state.setPreference("system"));
     expect(state.preference).toBe("system");
     expect(state.theme).toBe("light");
+    expect(auth.theme).toBe("light");
+    expect(instrument.theme).toBe("light");
+    await act(() => page.setSystemLight(false));
+    expect(auth.theme).toBe("dark");
+    expect(instrument.theme).toBe("dark");
+    expect(page.stored.has(THEME_KEY)).toBe(false);
+    await root.unmount();
+    await mount();
+    expect(instrument.theme).toBe("dark");
   });
 });

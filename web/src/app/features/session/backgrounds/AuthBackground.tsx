@@ -1,4 +1,6 @@
-import { AsciiGalaxyScan } from "../../../components/ui/AsciiGalaxyScan";
+import { useMemo } from "preact/hooks";
+import { AsciiAnimation } from "../../../components/ui/AsciiAnimation";
+import { createSpiralScene } from "./spiralScene";
 import type { ColorTheme } from "../../../components/ui/useColorTheme";
 import { GlyphStars } from "./GlyphStars";
 import "./AuthBackground.css";
@@ -11,17 +13,17 @@ export type AuthBgVariant = "galaxy" | "stars";
  * star field (login / register).
  */
 export function AuthBackground({ variant, palette }: { variant: AuthBgVariant; palette?: ColorTheme }) {
+  const spiral = useMemo(createSpiralScene, []);
   return (
     <div class="auth-bg" data-ascii-palette={palette} aria-hidden="true">
       <GlyphStars />
       {variant === "galaxy" ? (
         <div class="auth-bg-galaxy">
-          <AsciiGalaxyScan
+          <AsciiAnimation
+            scene={spiral}
             className="auth-bg-galaxy-scan"
-            label="Ship login galaxy scan"
+            label="A spiral galaxy"
             palette={palette}
-            showNebula={false}
-            showStars={false}
             showTexture
           />
         </div>

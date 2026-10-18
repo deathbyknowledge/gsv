@@ -14,7 +14,7 @@ export type WelcomeSnapshot = { revision: string; value: WelcomeState | null };
 export type WelcomeStorage = { save(revision: string, value: WelcomeState | null): Promise<WelcomeSnapshot> };
 type OwnerFetch = (url: string, init: {
   method: "GET" | "POST"; headers: Record<string, string>; credentials: "omit"; cache: "no-store"; body?: string; signal: AbortSignal;
-}) => Promise<Pick<Response, "ok" | "text">>;
+}) => Promise<Pick<Response, "ok" | "status" | "text">>;
 type OwnerRequest = { challengeId: string; email: string; browserSecret: string; resend: boolean }
   | { challengeId: string; browserSecret: string; sessionSecret: string; code: string }
   | { operationId: string; handle: string } | Record<string, never>;
@@ -33,7 +33,7 @@ const preparationSchema = z.object({ origin: z.string(), handle: z.string(),
 export type PreparedSpace = z.infer<typeof preparationSchema>;
 const failureSchema = z.object({ error: z.string().optional(), code: z.string().optional(), deliveryStatus: z.string().optional() });
 export class OwnerApiError extends Error {
-  constructor(message: string, readonly code?: string) { super(message); }
+  constructor(message: string, readonly code?: string, readonly status?: number) { super(message); }
 }
 const randomSecret = () => [...crypto.getRandomValues(new Uint8Array(32))].map((b) => b.toString(16).padStart(2, "0")).join("");
 
@@ -75,8 +75,19 @@ export class OwnerWelcome {
     await this.save({ challenge: null });
   }
 
-  async available(handle: string): Promise<boolean> {
-    return (await this.request(`/handle?value=${encodeURIComponent(handle)}`, availableSchema)).available;
+  /** Null means Accounts would not say yet: the handle is checked again when the space is created. */
+  async available(handle: string): Promise<boolean | null> {
+    try { return (await this.request(`/handle?value=${encodeURIComponent(handle)}`, availableSchema)).available; }
+    catch (error) {
+      if (error instanceof OwnerApiError && (error.code === "signed_out" || error.status === undefined || error.status === 429 || error.status >= 500)) return null;
+      throw error;
+    }
+  }
+
+  /** Records the chosen handle under one operation id before the email step so an interrupted signup resumes it. */
+  async chooseHandle(handle: string): Promise<void> {
+    const operationId = this.state.handle === handle && this.state.operationId ? this.state.operationId : crypto.randomUUID();
+    await this.save({ flow: "create", handle, operationId });
   }
 
   async prepare(handle: string, operationId = this.state.operationId ?? crypto.randomUUID()): Promise<PreparedSpace> {
@@ -114,7 +125,7 @@ export class OwnerWelcome {
       const data: unknown = JSON.parse(await response.text());
       if (!response.ok) {
         const error = failureSchema.safeParse(data);
-        throw new OwnerApiError(error.success ? error.data.error ?? (error.data.deliveryStatus === "failed" ? "Could not send the email. Try again shortly." : "Could not continue. Try again.") : "Could not continue. Try again.", error.success ? error.data.code : undefined);
+        throw new OwnerApiError(error.success ? error.data.error ?? (error.data.deliveryStatus === "failed" ? "Could not send the email. Try again shortly." : "Could not continue. Try again.") : "Could not continue. Try again.", error.success ? error.data.code : undefined, response.status);
       }
       return schema.parse(data);
     } catch (error) {

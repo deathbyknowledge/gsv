@@ -72,6 +72,7 @@ Examples:
 
 Text should supply what the user needs now and cannot already infer from the interface.
 
+- Capitalize Ship in product copy, including “your Ship” and “My Ships”. Keep command names, paths and domains literal.
 - Write for the user's next action or decision. Every label, sentence and control must serve an identifiable purpose.
 - Use the current screen, heading and visual demonstration as context. Avoid restating that context in subordinate labels.
 - Prefer action names for controls. Put gesture mechanics in demonstrations and focused instructions.

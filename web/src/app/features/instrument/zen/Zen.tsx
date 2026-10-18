@@ -117,7 +117,7 @@ const SETTLE_STAGGER_MS = 6;
 const BROWSE_KEYS: ReadonlySet<string> = new Set(["j", "k", "g", "G", "o"]);
 const CLAIMED_KEYS: ReadonlySet<string> = new Set([...BROWSE_KEYS, ...SHELL_KEYS]);
 /* what each status-line failure was attempting, for causes the client cannot name */
-const SHIP_UNREACHABLE: ChatErrorContext = { summary: "Could not reach your ship.", action: "Check your connection, then reload the page." };
+const SHIP_UNREACHABLE: ChatErrorContext = { summary: "Could not reach your Ship.", action: "Check your connection, then reload the page." };
 const ACTIVITY_UNAVAILABLE: ChatErrorContext = { summary: "Could not load the work behind this conversation.", action: "Reload the page to try again." };
 const DECISION_FAILED: ChatErrorContext = { summary: "The decision did not go through.", action: "Try again in a moment." };
 
@@ -723,7 +723,7 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
   const say = useCallback(
     (text: string) => {
       if (!pid) {
-        setNote(zenNotice("Your ship is still starting."));
+        setNote(zenNotice("Your Ship is still starting."));
         return false;
       }
       const accepted = outbox.send({
@@ -1046,8 +1046,8 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
         {empty ? (
           <div class="zen-empty">
             {pidProp ? <p>This helper has no messages yet.</p> : <>
-              <h1>Welcome to the ship.</h1>
-              <p class="zen-welcome-copy">I am the ship. Who are you?</p>
+              <h1>Welcome to the Ship.</h1>
+              <p class="zen-welcome-copy">I am the Ship. Who are you?</p>
             </>}
           </div>
         ) : !ready ? (
@@ -1172,7 +1172,7 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
               place={currentPlace}
               showPlace={false}
               dir="~"
-              placeholder="Message your ship"
+              placeholder="Message your Ship"
               disabled={!pid || recordingVoice}
               onSubmit={onSubmit}
               allowEmpty={extras}
@@ -1215,7 +1215,7 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
               <div class="zen-add-section" role="group" aria-labelledby="zen-add-ship-label">
                 <div class="zen-add-heading" id="zen-add-ship-label">ask Ship</div>
                 <button type="button" role="menuitem" disabled={!viewer || !canConfigure(viewer, "conversation.send")} onClick={() => stageRequest("Help me create a routine.")}>create a routine</button>
-                <button type="button" role="menuitem" disabled={!viewer || !canConfigure(viewer, "conversation.send")} onClick={() => stageRequest("Help me connect a computer to this space.")}>connect a computer</button>
+                <button type="button" role="menuitem" disabled={!viewer || !canConfigure(viewer, "conversation.send")} onClick={() => stageRequest("Help me connect a computer to my Ship.")}>connect a computer</button>
                 <button type="button" role="menuitem" disabled={!viewer || !canConfigure(viewer, "conversation.send")} onClick={() => stageRequest("Start a browser for me.")}>start a browser</button>
               </div>
             </div>

@@ -20,10 +20,14 @@
 .desktop-welcome .gsv-ti-affix { letter-spacing: 0; }
 .desktop-welcome-submit { display: flex; justify-content: center; align-items: center; min-height: 44px; }
 .desktop-welcome-detail { margin: 0; color: var(--text-dim); overflow-wrap: anywhere; }
+.desktop-welcome-lede { margin: 0 0 24px; color: var(--text); line-height: 1.6; overflow-wrap: anywhere; }
+.desktop-welcome-address-preview { display: flex; flex-wrap: wrap; gap: 4px 8px; margin-top: 8px; font-size: 12px; }
+.desktop-welcome-address-preview span { color: var(--text); overflow-wrap: anywhere; min-width: 0; }
 .desktop-welcome-links { display: flex; gap: 24px; justify-content: space-between; }
 .desktop-welcome-invitation { display: grid; gap: 24px; margin-bottom: 14px; }
 .desktop-welcome-invitation p { margin: 0; line-height: 1.6; }
 .desktop-welcome-invitation .desktop-welcome-detail { font-size: 12px; }
+.desktop-welcome-inviter { color: var(--accent-bright); font-weight: 500; }
 .desktop-welcome-address-disclosure { margin-top: 28px; }
 .desktop-welcome-address-disclosure summary { color: var(--text-dim); cursor: pointer; font-size: 12px; }
 .desktop-welcome-address-disclosure[open] summary { margin-bottom: 20px; }
@@ -42,5 +46,15 @@
   .desktop-welcome-columns > :first-child { padding-right: 0; }
   .desktop-welcome-columns > :last-child { border-left: 0; border-top: 1px solid var(--border); padding-left: 0; padding-top: 32px; }
   .desktop-welcome-choices { min-height: 0; gap: 0; }
-  .desktop-welcome-choice { padding-block: 32px; }
+  .desktop-welcome:has(> .desktop-welcome-choices) { gap: 12px; }
+  .desktop-welcome-choices > .desktop-welcome-choice { gap: 8px; padding-block: 8px 12px; }
+  .desktop-welcome-choices > .desktop-welcome-choice + .desktop-welcome-choice { padding-top: 12px; }
+  .desktop-welcome-choices :is(.welcome-illustration, .gsv-auth-illustration.is-compact) {
+    /* Artwork yields to the heading and actions; short or enlarged layouts can still scroll. */
+    width: min(100%, clamp(180px, 32dvh, 280px));
+  }
+  .desktop-welcome-choice-interactive .desktop-welcome-choice-title { min-height: 44px; }
+  .gsv-auth-scene-welcome .gsv-auth-composition:has(.desktop-welcome-choices) {
+    padding-block: 16px calc(16px + var(--instrument-safe-bottom));
+  }
 }

@@ -21,7 +21,7 @@ describe("error details", () => {
 
   it("keeps a failed operation's original diagnostic available in collapsed details", () => {
     const detail = "rpc proc.spawn failed T=18488";
-    const context = { summary: "Could not reach your ship.", action: "Check your connection, then reload the page." };
+    const context = { summary: "Could not reach your Ship.", action: "Check your connection, then reload the page." };
     const tree = FeedbackNote({ note: zenFailure(detail, context) });
     const details = collectNodes(tree).find((node) => node.type === "details");
     expect(collectText(tree)).toContain(context.summary);

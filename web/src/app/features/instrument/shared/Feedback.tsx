@@ -131,7 +131,7 @@ export function Feedback({ view }: { view: Distance }) {
           {activityState === "error" && <p role="alert">Could not load Ship activity. <button type="button" onClick={() => { void selectActivity(true); }}>Retry</button></p>}
         </div>
         <footer>
-          {available && <span id={detailsId}>Includes your space and app version.</span>}
+          {available && <span id={detailsId}>Includes your Ship and app version.</span>}
           <button type="submit" class="feedback-send" aria-label={state === "sending" ? "Sending feedback" : undefined}
             aria-busy={state === "sending"} disabled={!available || !connected || !message.trim() || state === "sending" || activityState === "loading" || activityState === "error"}>
             {state === "sending" ? <Spinner /> : "Send"}

@@ -41,7 +41,7 @@ pub(crate) enum Commands {
         /// Save pairing without installing or starting the background service
         #[arg(long)]
         no_install: bool,
-        /// Leave the CLI's selected space and login unchanged
+        /// Leave the CLI's selected Ship and login unchanged
         #[arg(long)]
         preserve_cli_login: bool,
         /// Refuse to replace an existing machine credential
@@ -75,7 +75,7 @@ pub(crate) enum Commands {
 
     /// Authentication and onboarding
     #[command(
-        after_help = "Create a space using the Accounts-issued browser setup link, then run `gsv auth login`."
+        after_help = "Create your Ship using the browser setup link from your operator, then run `gsv auth login`."
     )]
     Auth {
         #[command(subcommand)]
@@ -600,7 +600,7 @@ mod tests {
             .err()
             .expect("help is displayed")
             .to_string();
-        assert!(help.contains("Accounts-issued browser setup link"));
+        assert!(help.contains("browser setup link from your operator"));
         assert!(help.contains("gsv auth login"));
     }
 

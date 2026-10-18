@@ -1,6 +1,7 @@
 import { reset, runInDurableObject } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { bodyFromBytes, bodyToBytes, type BinaryBody } from "@humansandmachines/gsv/protocol";
 import type { InstanceTargetRequest, InstanceTargetResponse } from "@humansandmachines/gsv/services/instances";
 import { ComputerInstance, computerName, type ComputerControl, type ComputerIdentity } from "../src/computer";
 import type { ComputerConnection } from "../src/computer-connection";
@@ -66,7 +67,69 @@ function fakeControl() {
   } satisfies ComputerControl;
 }
 
+async function rpcFixture(body: () => BinaryBody) {
+  vi.spyOn(InstancePolicy.prototype, "requireActive").mockResolvedValue();
+  const installationId = crypto.randomUUID();
+  const coordinator = env.INSTANCES.getByName(installationId);
+  const value = await runInDurableObject(coordinator, (_object, ctx) => {
+    const store = new InstanceStore(ctx.storage);
+    const value = store.admit(actor, { templateId: "computer", requestId: "start", lifetimeSeconds: 300 }, limits);
+    store.update({ ...value, state: "ready", readyAt: Date.now() });
+    return value;
+  });
+  const computer = env.COMPUTERS.getByName(computerName(installationId, value.instanceId));
+  await runInDurableObject(computer, (object, ctx) => {
+    ctx.storage.kv.put("lease", { installationId, instanceId: value.instanceId, ownerUid: actor.ownerUid,
+      targetId: value.targetId, expiresAt: value.expiresAt, state: "ready", attempted: true,
+      secret: "test", bootId: crypto.randomUUID(), createdAt: Date.now() });
+    connectionFixture(object).execute.mockImplementation(async () => ({ ...response, body: body() }));
+  });
+  return { coordinator, instanceId: value.instanceId };
+}
+
 describe("computer cancellation ownership", () => {
+  it("keeps an owned response body byte-oriented for Worker RPC", async () => {
+    const bytes = new Uint8Array([0, 127, 128, 255]);
+    const complete = vi.fn(), cancelled = vi.fn();
+    const request = new ComputerRequest(frame, Date.now() + 10_000, cancelled, complete);
+    try {
+      const result = await request.run(async () => ({ ...response, body: bodyFromBytes(bytes) }));
+      if (!result.ok || !result.body) throw new Error("Expected a streamed result");
+      const reader = result.body.stream.getReader({ mode: "byob" });
+      reader.releaseLock();
+      expect(await bodyToBytes(result.body, bytes.byteLength)).toEqual(bytes);
+      await request.done;
+      expect(complete).toHaveBeenCalledOnce();
+      expect(cancelled).not.toHaveBeenCalled();
+    } finally { request.abort.abort(); }
+  });
+
+  it.each(["empty", "text", "binary"] as const)("transfers %s response bytes across both computer RPC boundaries", async kind => {
+    const bytes = kind === "empty" ? new Uint8Array() : kind === "text"
+      ? new TextEncoder().encode("Synthetic computer file: café 🚀\n")
+      : Uint8Array.from({ length: 65_553 }, (_, index) => (index * 73 + 19) & 255);
+    const { coordinator, instanceId } = await rpcFixture(() => bodyFromBytes(bytes));
+    const result = await coordinator.execute(actor, instanceId, frame, Date.now() + 10_000);
+    expect(result.ok).toBe(true);
+    if (!result.ok || !result.body) throw new Error("Expected an RPC response body");
+    expect(result.body.length).toBe(bytes.byteLength);
+    expect(await bodyToBytes(result.body, bytes.byteLength)).toEqual(bytes);
+  });
+
+  it("cancels an unread response body through both computer RPC boundaries", async () => {
+    const cancelled = vi.fn();
+    const { coordinator, instanceId } = await rpcFixture(() => ({
+      stream: new ReadableStream<Uint8Array>({
+        pull(controller) { controller.enqueue(new Uint8Array(65_536)); }, cancel: cancelled,
+      }, { highWaterMark: 0 }),
+    }));
+    const result = await coordinator.execute(actor, instanceId, frame, Date.now() + 10_000);
+    expect(result.ok).toBe(true);
+    if (!result.ok || !result.body) throw new Error("Expected an RPC response body");
+    await result.body.stream.cancel("Consumer stopped reading");
+    await vi.waitFor(() => expect(cancelled).toHaveBeenCalledOnce());
+  });
+
   it("clears a recovered provider failure before an ordinary owner stop", () => coordinatorFixture(async (object, id, control) => {
     control.status.mockRejectedValueOnce(new Error("Temporary connection failure"));
     await object.alarm();
@@ -197,7 +260,7 @@ describe("computer cancellation ownership", () => {
     }, { highWaterMark: 0 }) } }));
     if (!result.ok || !result.body) throw new Error("Expected a streamed result");
     expect(complete).not.toHaveBeenCalled();
-    if (outcome === "consumed") expect(await result.body.stream.getReader().read()).toEqual({ done: true, value: undefined });
+    if (outcome === "consumed") expect(await result.body.stream.getReader().read()).toMatchObject({ done: true });
     await vi.advanceTimersByTimeAsync(100);
     await request.done;
     expect(complete).toHaveBeenCalledOnce();

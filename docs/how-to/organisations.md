@@ -1,6 +1,6 @@
 # Run Ship for your organisation
 
-Give your people their own Ship spaces on a deployment you operate. Each space
+Give your people their own Ships on a deployment you operate. Each Ship
 has its own agents, credentials, connected machines and data. Your organisation
 chooses the model providers and messaging applications it makes available.
 

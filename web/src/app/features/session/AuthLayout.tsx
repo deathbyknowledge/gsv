@@ -20,7 +20,7 @@ export function AuthScene({ children, setup = false, layout = "ship" }: {
   setup?: boolean;
   layout?: "ship" | "welcome";
 }) {
-  const { theme, toggleTheme } = useColorTheme();
+  const { theme, toggleTheme } = useColorTheme("dark");
   const viewportRef = useInstrumentViewport();
   return (
     <div ref={viewportRef} class={`instrument gsv-auth-surface gsv-auth-scene${layout === "welcome" ? " gsv-auth-scene-welcome" : ""}${theme === "light" ? " is-light" : ""}${setup ? " gsv-auth-surface-setup" : " gsv-auth-surface-login"}`}>
@@ -61,7 +61,7 @@ export interface AuthLayoutProps {
  *  (.gsv-auth-theme), the chosen background behind, and a right-aligned content
  *  slot for the panel. Used by Login and the Setup/Register wizard. */
 export function AuthLayout({ background = "galaxy", visible = true, surfaceClass, children }: AuthLayoutProps) {
-  const { theme } = useColorTheme();
+  const { theme } = useColorTheme("dark");
   const sharedScene = useContext(SharedAuthScene);
   return (
     <div class={`${sharedScene ? "gsv-auth-surface gsv-auth-surface-shared" : "gsv-auth-theme gsv-auth-surface"}${theme === "light" ? " is-light" : ""}${surfaceClass ? ` ${surfaceClass}` : ""}`} hidden={!visible}>
