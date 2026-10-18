@@ -12,7 +12,7 @@ beforeEach(() => {
   vi.stubGlobal("document", {});
   vi.stubGlobal("navigator", {});
   vi.stubGlobal("window", { setTimeout: () => 1, clearTimeout: () => {} });
-  vi.stubGlobal("localStorage", { getItem: () => JSON.stringify({ enabled: true, mode: "toggle", replies: "voice", language: "en", talk: "Ctrl+Alt+Space", stop: "Ctrl+Alt+Escape" }), setItem: vi.fn() });
+  vi.stubGlobal("localStorage", { getItem: (key: string) => key === "gsv.desktop.voice.v1" ? JSON.stringify({ enabled: true, mode: "toggle", replies: "voice", language: "en", talk: "Ctrl+Alt+Space", stop: "Ctrl+Alt+Escape" }) : null, setItem: vi.fn() });
 });
 afterEach(async () => { for (const root of roots.splice(0)) await root.unmount(); vi.unstubAllGlobals(); });
 

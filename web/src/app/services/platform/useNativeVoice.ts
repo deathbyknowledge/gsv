@@ -1,7 +1,7 @@
 import { useLayoutEffect, useRef, useState } from "preact/hooks";
 import type { RefObject } from "preact";
 import { promptAfterSubmit, type PromptLineHandle } from "../../features/instrument/shared/PromptLine";
-import { useNativeInput, type NativeCommand, type NativeSnapshot, type NativeSubscription, type NativeUpdate } from "./PlatformProvider";
+import { useNativeInput, useNativeMicrophone, type NativeCommand, type NativeSnapshot, type NativeSubscription, type NativeUpdate } from "./PlatformProvider";
 import { VoiceDraft } from "./voiceDraft";
 import { sameNativePresentation } from "./nativePresentation";
 import { useNativeSoundFeedback } from "./useInputSounds";
@@ -29,7 +29,9 @@ export function useNativeVoice({ prompt, scope, enabled, send, global = false, s
   useNativeSoundFeedback(snapshot);
   const [error, setError] = useState<string | null>(null);
   const [attachment, setAttachment] = useState(0);
-  const [device, setDevice] = useState("");
+  const microphone = useNativeMicrophone();
+  const device = microphone?.device ?? "";
+  const setDevice = (value: string) => microphone?.setDevice(value);
   const lease = useRef<string | null>(null);
   const draft = useRef<VoiceDraft | null>(null);
   const writing = useRef(false);

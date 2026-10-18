@@ -1,5 +1,5 @@
 import { createContext, type ComponentChildren } from "preact";
-import { useContext } from "preact/hooks";
+import { useCallback, useContext, useState } from "preact/hooks";
 
 export type SegmentAction = "send";
 export type NativeVoice = {
@@ -45,7 +45,17 @@ export type NativeInput = {
 };
 
 const PlatformContext = createContext<NativeInput | null>(null);
+const MicrophoneContext = createContext<{ device: string; setDevice(device: string): void } | null>(null);
+const microphoneKey = "gsv.desktop.microphone";
 export function NativeInputProvider({ input, children }: { input: NativeInput; children: ComponentChildren }) {
-  return <PlatformContext.Provider value={input}>{children}</PlatformContext.Provider>;
+  const [device, selectDevice] = useState(() => {
+    try { return localStorage.getItem(microphoneKey) ?? ""; } catch { return ""; }
+  });
+  const setDevice = useCallback((device: string) => {
+    selectDevice(device);
+    try { localStorage.setItem(microphoneKey, device); } catch { /* Keep this session's microphone. */ }
+  }, []);
+  return <PlatformContext.Provider value={input}><MicrophoneContext.Provider value={{ device, setDevice }}>{children}</MicrophoneContext.Provider></PlatformContext.Provider>;
 }
 export const useNativeInput = () => useContext(PlatformContext);
+export const useNativeMicrophone = () => useContext(MicrophoneContext);

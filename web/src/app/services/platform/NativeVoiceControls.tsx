@@ -2,11 +2,11 @@ import type { RefObject } from "preact";
 import { createPortal, forwardRef } from "preact/compat";
 import { useEffect, useImperativeHandle, useLayoutEffect, useRef, useState } from "preact/hooks";
 import { useDismissOnOutsideClick } from "../../features/instrument/shared/useDismissOnOutsideClick";
-import { InputSoundSettings } from "./InputSoundSettings";
+import { AppLink } from "../navigation/appNavigation";
 import { installInputSounds } from "./inputSounds";
 import { voicePreparation } from "./nativePresentation";
 import { useNativeVoice } from "./useNativeVoice";
-import { NativeSpeechSettings, useNativeSpeech } from "./NativeSpeech";
+import { useNativeSpeech } from "./NativeSpeech";
 import "./native-input.css";
 
 export type NativeVoiceHandle = Pick<ReturnType<typeof useNativeVoice>, "onInput" | "interceptSubmit">;
@@ -22,7 +22,7 @@ export const NativeVoiceControls = forwardRef<NativeVoiceHandle, NativeVoiceCont
   const [panel, setPanel] = useState(false);
   const panelRef = useRef<HTMLElement>(null);
   const voiceButton = useRef<HTMLButtonElement>(null);
-  const { snapshot, error, command } = control;
+  const { snapshot, error } = control;
   const voice = snapshot?.voice;
   const preparation = voicePreparation(voice);
   const notice = error || snapshot?.notice;
@@ -35,9 +35,6 @@ export const NativeVoiceControls = forwardRef<NativeVoiceHandle, NativeVoiceCont
   };
   useDismissOnOutsideClick(panel, () => [panelRef.current, voiceButton.current], () => close(false));
   useLayoutEffect(() => { if (panel) panelRef.current?.focus({ preventScroll: true }); }, [panel]);
-  useEffect(() => {
-    if (panel && snapshot && !snapshot.voice && !snapshot.devices_loading) void command({ kind: "devices" });
-  }, [panel, snapshot?.lease]);
   useEffect(() => { setPanel(false); }, [options.scope]);
   useEffect(() => { if (!options.enabled) { setPanel(false); } }, [options.enabled]);
   useEffect(() => {
@@ -75,24 +72,15 @@ export const NativeVoiceControls = forwardRef<NativeVoiceHandle, NativeVoiceCont
       </header>
       {notice && <p class="native-input-error" role="alert">{notice}</p>}
       {!snapshot && <button type="button" disabled={!options.enabled} onClick={control.reconnect}>reconnect input</button>}
-      <p>Listen to dictate. Pause keeps your draft.</p>
       <div class="native-panel-actions">
-        {!voice ? <button type="button" class="native-primary" disabled={busy || snapshot?.devices_loading} onClick={control.start}>listen</button>
+        {!voice ? <button type="button" class="native-primary" disabled={busy} onClick={control.start}>listen</button>
           : <button type="button" class="native-primary" disabled={voice.phase === "finishing"}
             onClick={voice.phase === "listening" ? control.stop : control.cancel}>{voice.phase === "listening" ? "pause" : voice.phase === "finishing" ? "pausing…" : "cancel"}</button>}
         <span class="native-panel-state" role="status">{voice ? voiceLabel : "Microphone off"}</span>
       </div>
       {preparation && <progress max={1} value={preparation.progress} aria-label={preparation.message} />}
-      <label class="native-device">Microphone
-        <select value={control.device} disabled={busy || !!voice || snapshot?.devices_loading} onChange={(event) => control.setDevice(event.currentTarget.value)}>
-          <option value="">System default</option>
-          {snapshot?.devices.map((device) => <option key={device.id} value={device.id}>{device.name}{device.is_default ? " (default)" : ""}</option>)}
-        </select>
-        {snapshot?.devices_loading && <small role="status">Finding microphones…</small>}
-      </label>
-      <p class="native-panel-footnote">Local transcription. Enter sends and keeps listening.</p>
-      {options.global && <NativeSpeechSettings />}
-      <InputSoundSettings />
+      <p class="native-panel-footnote">Pause keeps your draft. Enter sends and keeps listening.</p>
+      <AppLink href="/chat/settings?section=voice" class="native-voice-settings-link">voice settings</AppLink>
     </section>, panelHost.current)}
   </div>;
 });

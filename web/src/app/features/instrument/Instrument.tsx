@@ -91,7 +91,8 @@ function InstrumentReady({ initialPath }: { initialPath: string }) {
   }, [client, status.state]);
   const distance = distanceForPath(initialPath);
   const visitedPaths = useRef<Partial<Record<Distance, string>>>({});
-  visitedPaths.current[distance] = distance === "people" ? peoplePath(readPeopleRoute(window.location.search)) : DISTANCE_TO_PATH[distance];
+  visitedPaths.current[distance] = distance === "people" ? peoplePath(readPeopleRoute(window.location.search))
+    : distance === "settings" ? `/chat/settings${window.location.search}` : DISTANCE_TO_PATH[distance];
   const scrollEdgesRef = useScrollEdges(distance);
   useEffect(() => {
     replaceLegacyChatPath();

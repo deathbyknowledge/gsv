@@ -112,6 +112,9 @@ with **continue editing →** to resume it. Wider screens show the browser and r
 side by side.
 
 The Settings sidebar highlights the section you're viewing.
+The Desktop app also includes **Settings → voice** for its microphone, shortcuts,
+spoken replies and sounds. These preferences stay on that computer. Chat's
+**voice** panel keeps the recording controls and a link to those settings.
 
 Open **People** to try making plans or working together with someone on Ship.
 **connect** creates a shareable invitation; accepting it opens your conversation.

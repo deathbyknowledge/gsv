@@ -44,10 +44,16 @@ the space.
 ## Dictate on Desktop
 
 Desktop's **voice** control uses its local transcription helper. Choose **listen**
-to dictate, select a microphone when needed, and choose **pause** to stop while
+to dictate, and choose **pause** to stop while
 keeping the draft. Enter finishes the current segment, sends it, and keeps
 listening. Editing dictated text stops dictation so later partials cannot undo
 your correction.
+
+Open **Settings → voice**, or **voice settings** from the recording panel, to
+choose your microphone, voice shortcuts, spoken replies and sounds. This section
+appears only in the Desktop app and its preferences are stored on this computer.
+The selected microphone applies to dictation and voice shortcuts. Opening these
+settings stops an active recording and keeps the text already in your draft.
 
 Audio processing stays on your computer. The first use downloads and verifies
 the speech model; subsequent dictation does not need a cloud transcription
@@ -59,7 +65,7 @@ transcribed may need repeating. See
 
 ## Talk from another app (Desktop preview)
 
-In Chat, open **voice** and enable **Talk to Ship from other apps**. Leave Chat
+In **Settings → voice**, enable **voice shortcuts and spoken replies**. Leave Chat
 selected; the Ship window may stay behind your game or another application.
 The default talk shortcut is **Option+Space** on macOS and
 **Ctrl+Shift+Space** on Windows and Linux: press once to start recording and
@@ -89,7 +95,7 @@ start a recording. An unavailable combination leaves the previous bindings and
 saved settings intact. Saved shortcuts are preserved when defaults change.
 
 On Wayland, the desktop owns shortcut assignment. **Change shortcuts in desktop
-settings** opens its editor when supported, and the voice panel reflects changes
+settings** opens its editor when supported, and the voice settings reflect changes
 reported by the desktop. Compositors without that editor, including Hyprland,
 require binding the registered `talk` and `stop` actions in their keyboard
 configuration. Suggested keys do not override the desktop’s assignments.

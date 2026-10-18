@@ -16,9 +16,8 @@
 .native-panel-state progress { max-width: 90px; height: 4px; }
 .native-panel-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 16px; margin: 16px 0; }
 .native-input-panel .native-primary { padding: 7px 12px; border: 1px solid var(--accent); color: var(--accent); }
-.native-device { display: grid; gap: 6px; margin-top: 20px; color: var(--text-dim); }
-.native-device select { width: 100%; border: 1px solid var(--border); padding: 7px; background: var(--void); color: var(--text); font: inherit; }
-.native-device select:disabled { opacity: .5; }
+.native-voice-settings-link { display: inline-block; margin-top: 8px; color: var(--text-dim); text-decoration: underline; text-underline-offset: 3px; }
+.native-voice-settings-link:hover { color: var(--accent); }
 .native-panel-footnote { color: var(--text-dim); font-size: 11px; }
 @container instrument (max-width: 900px) {
   .zen-input-panels { padding-inline: 18px; padding-bottom: 60px; }
@@ -29,10 +28,6 @@
 .native-sound-settings legend { padding-right: 8px; color: var(--faint); }
 .native-sound-settings label { display: flex; align-items: center; gap: 7px; cursor: pointer; }
 .native-sound-settings input { accent-color: var(--accent); margin: 0; }
-.native-speech-settings { margin-top: 20px; padding-top: 18px; border-top: 1px solid var(--border); }
-.native-speech-enable { display: flex; gap: 8px; align-items: center; color: var(--text-hi); }
-.native-speech-enable input { accent-color: var(--accent); }
-.native-speech-settings .native-device { margin-top: 12px; }
 .native-shortcut-fields { display: grid; gap: 12px; margin-top: 18px; }
 .native-shortcut-field { display: grid; gap: 6px; color: var(--text-dim); }
 .native-shortcut-fields > button { justify-self: start; text-decoration: underline; text-underline-offset: 3px; }
