@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+unset XDG_DATA_HOME
 
 REPOSITORY_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TEST_ROOT="$(mktemp -d)"
@@ -267,6 +268,10 @@ run_default_installer() {
         "$@" bash "$REPOSITORY_ROOT/install.sh"
 }
 DEFAULT_OUTPUT="$(run_default_installer env)"
+DESKTOP_ENTRY="$DEFAULT_HOME/.local/share/applications/space.gsv.desktop.desktop"
+test -f "$DESKTOP_ENTRY"
+grep -Fq "Exec=\"$DEFAULT_HOME/.gsv/bin/gsv-desktop\"" "$DESKTOP_ENTRY"
+printf '# preserve local metadata\n' >> "$DESKTOP_ENTRY"
 test "$("$DEFAULT_HOME/.gsv/bin/gsv")" = "gsv-v2"
 test "$(cat "$DEFAULT_HOME/.gsv/bin/gsv-transcribe-runtime/libtranscribe.so")" = "runtime-v2"
 test "$("$DEFAULT_HOME/.gsv/bin/gsvd")" = "gsvd-v2"
@@ -279,6 +284,7 @@ grep -q '^case ":$PATH:" in \*":$HOME/.gsv/bin:"\*) ;; \*) export PATH="$HOME/.g
 # The guarded line is valid sh and prepends the directory exactly once.
 test "$(HOME="$DEFAULT_HOME" PATH="/usr/bin:/bin" sh -c ". \"$DEFAULT_HOME/.profile\"; . \"$DEFAULT_HOME/.profile\"; printf '%s' \"\$PATH\"")" = "$DEFAULT_HOME/.gsv/bin:/usr/bin:/bin"
 run_default_installer env >/dev/null
+grep -q '# preserve local metadata' "$DESKTOP_ENTRY"
 test "$(grep -c 'Added by the GSV installer' "$DEFAULT_HOME/.profile")" = "1"
 test "$(grep -c 'Added by the GSV installer' "$DEFAULT_HOME/.bashrc")" = "1"
 

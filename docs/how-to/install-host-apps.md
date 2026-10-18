@@ -248,6 +248,8 @@ Desktop so it can supervise the matching voice helpers. `gsv-speak` bundles its
 Python runtime, pronunciation data and audio libraries. The Kokoro model downloads
 once on first use, is checksum-verified, and then runs from the local cache.
 See [Use voice input](/how-to/voice-input) for Handsfree mode and spoken replies.
+On Linux, installation creates a hidden desktop entry when one is missing, so
+the Wayland shortcut portal can identify Ship when launched from a terminal.
 A failed upgrade restores the previous
 installation. A Windows headless update leaves an existing Desktop installation
 alone.
