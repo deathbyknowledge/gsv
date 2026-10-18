@@ -15,46 +15,46 @@ const manifest = gsvDeploymentManifestSchema.parse(JSON.parse(readFileSync("./di
 export default Alchemy.Stack("gsv", {
   providers: Layer.mergeAll(Cloudflare.providers()), state: Cloudflare.state(),
 }, Effect.gen(function* () {
-  const domain = yield* Config.string("GSV_DOMAIN");
-  const domainAliases = configuredDomainAliases(yield* Config.string("GSV_DOMAIN_ALIASES").pipe(Config.withDefault("[]")));
-  const ownerOriginAliases = configuredOriginAliases(yield* Config.string("GSV_OWNER_ORIGIN_ALIASES").pipe(Config.withDefault("[]")));
-  const presentation = deploymentPresentation(yield* Config.string("GSV_PUBLIC_CONFIG").pipe(Config.withDefault("{}")));
-  const updatesPath = Option.getOrUndefined(yield* Config.string("GSV_OPERATOR_UPDATES_FILE").pipe(Config.option));
+  const domain = yield* Config.String("GSV_DOMAIN");
+  const domainAliases = configuredDomainAliases(yield* Config.String("GSV_DOMAIN_ALIASES").pipe(Config.withDefault("[]")));
+  const ownerOriginAliases = configuredOriginAliases(yield* Config.String("GSV_OWNER_ORIGIN_ALIASES").pipe(Config.withDefault("[]")));
+  const presentation = deploymentPresentation(yield* Config.String("GSV_PUBLIC_CONFIG").pipe(Config.withDefault("{}")));
+  const updatesPath = Option.getOrUndefined(yield* Config.String("GSV_OPERATOR_UPDATES_FILE").pipe(Config.option));
   const operatorUpdates = updatesPath ? operatorUpdateCatalogSchema.parse(JSON.parse(readFileSync(updatesPath, "utf8"))) : undefined;
-  const zoneId = yield* Config.string("GSV_ZONE_ID");
-  const adminOrigin = yield* Config.string("GSV_ADMIN_ORIGIN").pipe(Config.withDefault(`https://accounts.${domain}`));
-  const prefix = yield* Config.string("GSV_WORKER_PREFIX").pipe(Config.withDefault("gsv"));
-  const deletionSetting = yield* Config.string("GSV_ALLOW_RESOURCE_DELETION").pipe(Config.withDefault("false"));
+  const zoneId = yield* Config.String("GSV_ZONE_ID");
+  const adminOrigin = yield* Config.String("GSV_ADMIN_ORIGIN").pipe(Config.withDefault(`https://accounts.${domain}`));
+  const prefix = yield* Config.String("GSV_WORKER_PREFIX").pipe(Config.withDefault("gsv"));
+  const deletionSetting = yield* Config.String("GSV_ALLOW_RESOURCE_DELETION").pipe(Config.withDefault("false"));
   if (deletionSetting !== "true" && deletionSetting !== "false") throw new Error("GSV_ALLOW_RESOURCE_DELETION must be true or false");
   const allowResourceDeletion = deletionSetting === "true";
-  const accessMode = yield* Config.string("GSV_ACCESS_MODE").pipe(Config.withDefault("operator"));
+  const accessMode = yield* Config.String("GSV_ACCESS_MODE").pipe(Config.withDefault("operator"));
   if (accessMode !== "operator" && accessMode !== "access") throw new Error("GSV_ACCESS_MODE must be operator or access");
   const access = accessMode === "access" ? { kind: "cloudflare-access" as const,
-    teamDomain: yield* Config.string("GSV_ACCESS_TEAM_DOMAIN"), audience: yield* Config.string("GSV_ACCESS_AUDIENCE") }
+    teamDomain: yield* Config.String("GSV_ACCESS_TEAM_DOMAIN"), audience: yield* Config.String("GSV_ACCESS_AUDIENCE") }
     : { kind: "operator" as const };
-  const ownerIssuer = Option.getOrUndefined(yield* Config.string("GSV_OWNER_OIDC_ISSUER").pipe(Config.option));
-  const ownerClientId = Option.getOrUndefined(yield* Config.string("GSV_OWNER_OIDC_CLIENT_ID").pipe(Config.option));
-  const ownerClientSecret = Option.getOrUndefined(yield* Config.redacted("GSV_OWNER_OIDC_CLIENT_SECRET").pipe(Config.option));
+  const ownerIssuer = Option.getOrUndefined(yield* Config.String("GSV_OWNER_OIDC_ISSUER").pipe(Config.option));
+  const ownerClientId = Option.getOrUndefined(yield* Config.String("GSV_OWNER_OIDC_CLIENT_ID").pipe(Config.option));
+  const ownerClientSecret = Option.getOrUndefined(yield* Config.Redacted("GSV_OWNER_OIDC_CLIENT_SECRET").pipe(Config.option));
   if (Boolean(ownerIssuer) !== Boolean(ownerClientId)) throw new Error("Owner identity requires both OIDC issuer and client ID");
   const ownerIdentity = ownerIssuer && ownerClientId
     ? { issuer: ownerIssuer, clientId: ownerClientId, clientSecret: ownerClientSecret } : undefined;
-  const openRegistration = yield* Config.boolean("GSV_SIGNUP_ENABLED").pipe(Config.withDefault(false));
-  const ownerEmailFrom = Option.getOrUndefined(yield* Config.nonEmptyString("GSV_OWNER_EMAIL_FROM").pipe(Config.option));
-  const ownerEmailRecipients = Option.getOrUndefined(yield* Config.nonEmptyString("GSV_OWNER_EMAIL_ALLOWED_RECIPIENTS").pipe(Config.option));
+  const openRegistration = yield* Config.Boolean("GSV_SIGNUP_ENABLED").pipe(Config.withDefault(false));
+  const ownerEmailFrom = Option.getOrUndefined(yield* Config.NonEmptyString("GSV_OWNER_EMAIL_FROM").pipe(Config.option));
+  const ownerEmailRecipients = Option.getOrUndefined(yield* Config.NonEmptyString("GSV_OWNER_EMAIL_ALLOWED_RECIPIENTS").pipe(Config.option));
   if (ownerEmailRecipients && !ownerEmailFrom) throw new Error("Owner email recipients require GSV_OWNER_EMAIL_FROM");
   const allowedRecipients = ownerEmailRecipients?.split(",").map((email) => email.trim()).filter(Boolean);
   if (allowedRecipients?.length === 0) throw new Error("Owner email recipient restriction must not be empty");
   const ownerEmail = ownerEmailFrom ? { from: ownerEmailFrom, allowedRecipients,
     authSecret: yield* Alchemy.makeRandom("GsvOwnerAuthSecret", { bytes: 32 }),
   } : undefined;
-  const configured = yield* Config.string("GSV_ADAPTERS").pipe(Config.withDefault(""));
+  const configured = yield* Config.String("GSV_ADAPTERS").pipe(Config.withDefault(""));
   const requested = [...new Set(configured.split(",").map((id) => id.trim()).filter(Boolean))];
   const adapters: GsvAdapterBinding[] = [];
   for (const id of requested) {
     const adapter = manifest.adapters.find((candidate) => candidate.id === id);
     if (!adapter) throw new Error(`No operator adapter deployment is available for ${id}`);
     const adapterEnvironment: Cloudflare.Workers.WorkerBindingProps = { GSV_ACCOUNT_ORIGIN: adminOrigin };
-    for (const variable of adapter.deployment.requiredVariables ?? []) adapterEnvironment[variable] = yield* Config.string(variable);
+    for (const variable of adapter.deployment.requiredVariables ?? []) adapterEnvironment[variable] = yield* Config.String(variable);
     const worker = yield* GsvAdapterWorker({ logicalId: `GsvAdapter-${id}`, workerName: `${prefix}-channel-${id}`,
       allowResourceDeletion,
       adapter, deployment: adapter.deployment,
@@ -64,8 +64,8 @@ export default Alchemy.Stack("gsv", {
     adapters.push({ id, gatewayBinding: adapter.gatewayBinding, gatewayEntrypoint: adapter.deployment.gatewayEntrypoint,
       lifecycle: adapter.deployment.lifecycle, worker });
   }
-  const apiKey = Option.getOrUndefined(yield* Config.redacted("GSV_INFERENCE_API_KEY").pipe(Config.option));
-  const catalogPath = Option.getOrUndefined(yield* Config.string("GSV_DELETION_CATALOG_FILE").pipe(Config.option));
+  const apiKey = Option.getOrUndefined(yield* Config.Redacted("GSV_INFERENCE_API_KEY").pipe(Config.option));
+  const catalogPath = Option.getOrUndefined(yield* Config.String("GSV_DELETION_CATALOG_FILE").pipe(Config.option));
   const deletion = catalogPath ? { operatorResources: operatorResourceCatalogSchema.parse(JSON.parse(readFileSync(catalogPath, "utf8"))) } : undefined;
   const deployment = yield* GsvDeployment({ logicalPrefix: "Gsv", domain, adminOrigin, access, routing: { zoneId },
     domainAliases, presentation, operatorUpdates,
@@ -76,13 +76,13 @@ export default Alchemy.Stack("gsv", {
     installations: { workerName: `${prefix}-installations`, databaseName: `${prefix}-installations`,
       workerBundle: manifest.runtime.installationsBundle, migrationsDirectory: manifest.runtime.installationsMigrations, ownerIdentity, ownerEmail, ownerOriginAliases, openRegistration },
     inference: { workerName: `${prefix}-inference`, workerBundle: manifest.runtime.inferenceBundle,
-      defaultProvider: yield* Config.string("GSV_INFERENCE_PROVIDER").pipe(Config.withDefault("workers-ai")),
-      defaultModel: yield* Config.string("GSV_INFERENCE_MODEL").pipe(Config.withDefault("@cf/zai-org/glm-5.3-flash")),
-      monthlyRequests: yield* Config.int("GSV_INFERENCE_MONTHLY_REQUESTS").pipe(Config.withDefault(10_000)),
-      monthlyOutputTokens: yield* Config.int("GSV_INFERENCE_MONTHLY_OUTPUT_TOKENS").pipe(Config.withDefault(1_000_000)),
-      maxOutputTokens: yield* Config.int("GSV_INFERENCE_MAX_OUTPUT_TOKENS").pipe(Config.withDefault(32_768)),
-      maxDurationMs: yield* Config.int("GSV_INFERENCE_MAX_DURATION_MS").pipe(Config.withDefault(180_000)),
-      apiKey, baseUrl: Option.getOrUndefined(yield* Config.string("GSV_INFERENCE_BASE_URL").pipe(Config.option)),
+      defaultProvider: yield* Config.String("GSV_INFERENCE_PROVIDER").pipe(Config.withDefault("workers-ai")),
+      defaultModel: yield* Config.String("GSV_INFERENCE_MODEL").pipe(Config.withDefault("@cf/zai-org/glm-5.3-flash")),
+      monthlyRequests: yield* Config.Int("GSV_INFERENCE_MONTHLY_REQUESTS").pipe(Config.withDefault(10_000)),
+      monthlyOutputTokens: yield* Config.Int("GSV_INFERENCE_MONTHLY_OUTPUT_TOKENS").pipe(Config.withDefault(1_000_000)),
+      maxOutputTokens: yield* Config.Int("GSV_INFERENCE_MAX_OUTPUT_TOKENS").pipe(Config.withDefault(32_768)),
+      maxDurationMs: yield* Config.Int("GSV_INFERENCE_MAX_DURATION_MS").pipe(Config.withDefault(180_000)),
+      apiKey, baseUrl: Option.getOrUndefined(yield* Config.String("GSV_INFERENCE_BASE_URL").pipe(Config.option)),
     },
   });
   return { gateway: deployment.gateway.workerName, administration: adminOrigin, accessMode,

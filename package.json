@@ -49,11 +49,11 @@
     "browser:build": "npm run build --workspace packages/browser"
   },
   "devDependencies": {
-    "@effect/platform-node": "4.0.0-beta.107",
+    "@effect/platform-node": "4.0.5",
     "@oxlint/plugins": "1.79.0",
     "ajv": "8.20.0",
-    "alchemy": "2.0.0-beta.72",
-    "effect": "4.0.0-beta.107",
+    "alchemy": "2.0.0-beta.83",
+    "effect": "4.0.5",
     "es-module-lexer": "2.3.0",
     "esbuild": "0.28.1",
     "magic-string": "0.30.21",
