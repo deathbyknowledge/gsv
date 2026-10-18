@@ -724,7 +724,7 @@ jobs:
             libasound2-dev \
             libclang-dev \
             libopenblas-pthread-dev \
-            portaudio19-dev \
+            libpulse0 \
             libwebkit2gtk-4.1-dev \
             libgtk-3-dev \
             gstreamer1.0-plugins-base \
@@ -836,7 +836,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y \
             build-essential clang cmake libasound2-dev libclang-dev \
-            libopenblas-pthread-dev portaudio19-dev pkg-config
+            libopenblas-pthread-dev libpulse0 pkg-config
 
       - uses: astral-sh/setup-uv@v6
         with:
