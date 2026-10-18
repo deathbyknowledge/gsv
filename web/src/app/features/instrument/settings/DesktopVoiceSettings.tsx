@@ -3,13 +3,15 @@ import { useNativeSpeech } from "../../../services/platform/NativeSpeech";
 import { ShortcutRecorder } from "../../../services/platform/ShortcutRecorder";
 import { shortcutDefaults } from "../../../services/platform/shortcutKeys";
 import { useNativeVoiceSession } from "../../../services/platform/NativeVoiceSession";
+import { AppLink } from "../../../services/navigation/appNavigation";
 import "../../../services/platform/native-input.css";
 import "./desktop-voice.css";
 
 export function DesktopVoiceSettings({ active, onDirty }: { active: boolean; onDirty(dirty: boolean): void }) {
   const speech = useNativeSpeech();
   // Device discovery uses the same input lease as Chat, without a recording or draft.
-  const microphone = useNativeVoiceSession()?.input;
+  const session = useNativeVoiceSession();
+  const microphone = session?.input;
   const snapshot = microphone?.snapshot;
   const [talk, setTalk] = useState(speech?.preferences.talk ?? shortcutDefaults().talk);
   const [stop, setStop] = useState(speech?.preferences.stop ?? shortcutDefaults().stop);
@@ -20,7 +22,8 @@ export function DesktopVoiceSettings({ active, onDirty }: { active: boolean; onD
   useEffect(() => {
     if (active && snapshot && !microphone?.capturing) void microphone?.command({ kind: "devices" });
   }, [active, snapshot?.lease, microphone?.capturing]);
-  if (!speech || !microphone) return null;
+  if (!speech || !microphone || !session) return null;
+  const { language, languageError } = session;
   const { preferences, setPreferences } = speech;
   const speaking = speech.status.phase === "speaking";
   return <section class="settings-voice" aria-label="Voice settings">
@@ -72,16 +75,16 @@ export function DesktopVoiceSettings({ active, onDirty }: { active: boolean; onD
           <option value="voice">While talking by voice</option><option value="all">All new Ship replies</option><option value="off">Off</option>
         </select>
       </label>
-      <label>Voice
-        <select value={preferences.language} onChange={(event) => setPreferences({ language: event.currentTarget.value === "es" ? "es" : "en" })}>
-          <option value="en">Heart · English</option><option value="es">Dora · Spanish</option>
-        </select>
-      </label>
+      <p class="settings-muted">Uses your <AppLink href="/chat/settings?section=preferences">response language</AppLink>.</p>
+      {languageError && <p class="settings-error" role="alert">{languageError}</p>}
+      {!language && !languageError && <p class="settings-muted" role="status">Loading voice language…</p>}
       <div class="settings-actions">
-        <button type="button" class="settings-text-action" onClick={() => void speech.command(speaking ? { kind: "cancel" } : {
-          kind: "speak", id: "voice-preview", language: preferences.language,
-          chunks: [preferences.language === "es" ? "Aquí estoy. Puedes seguir jugando mientras hablamos." : "I'm here. You can keep playing while we talk."],
-        })}>{speaking ? "stop preview" : "preview voice"}</button>
+        <button type="button" class="settings-text-action" disabled={!speaking && !language} onClick={() => {
+          if (speaking) void speech.command({ kind: "cancel" });
+          else if (language) void speech.command({ kind: "speak", id: "voice-preview", language,
+            chunks: [language === "es" ? "Aquí estoy. Puedes seguir jugando mientras hablamos." : "I'm here. You can keep playing while we talk."],
+          });
+        }}>{speaking ? "stop preview" : "preview voice"}</button>
         {speech.status.phase === "loading" && <span role="status">Loading voice…</span>}
       </div>
       {speech.error && <p class="settings-error" role="alert">{speech.error}</p>}

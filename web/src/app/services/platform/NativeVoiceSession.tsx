@@ -3,8 +3,9 @@ import { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, u
 import { useQuery } from "@tanstack/preact-query";
 import { useGateway } from "../gateway/GatewayProvider";
 import { useChatOutbox } from "../chat/hooks/useChatOutbox";
+import { consoleConfigQueryKey } from "../system/useConsoleData";
 import { useNativeInput } from "./PlatformProvider";
-import { useNativeSpeech } from "./NativeSpeech";
+import { useNativeSpeech, type SpeechLanguage } from "./NativeSpeech";
 import { useNativeVoice, type VoiceComposer } from "./useNativeVoice";
 import { useSpokenReplies } from "./useSpokenReplies";
 
@@ -18,6 +19,8 @@ type VoiceSession = {
   capture: Capture | null;
   text: string;
   connected: boolean;
+  language: SpeechLanguage | null;
+  languageError: string | null;
   outbox: ReturnType<typeof useChatOutbox>;
   startComposer(composer: Composer): void;
   releaseComposer(owner: symbol): void;
@@ -52,12 +55,25 @@ function VoiceSessionOwner({ children, onDirtyChange }: {
   const destination = useQuery({
     queryKey: ["conversation", "ship"],
     enabled: connected && !!speech?.preferences.enabled,
-    queryFn: async (): Promise<Recipient> => {
+    queryFn: async () => {
       const { conversation } = await client.conversation.ship({});
       if (conversation.kind !== "ship") throw new Error("Your personal Ship conversation is unavailable.");
-      return { pid: conversation.handlerPid, conversationId: conversation.id };
+      return conversation;
     },
   });
+  const languagePreference = useQuery({
+    queryKey: [...consoleConfigQueryKey, "language", destination.data?.ownerUid],
+    enabled: connected && !!speech?.preferences.enabled && !!destination.data,
+    queryFn: async () => {
+      const key = `users/${destination.data!.ownerUid}/locale/language`;
+      const { entries } = await client.sys.config.get({ key });
+      return entries.find((entry) => entry.key === key)?.value ?? "";
+    },
+  });
+  const requestedLanguage = (languagePreference.data || navigator.language || "en").split("-")[0].toLowerCase();
+  const language = languagePreference.data === undefined ? null : requestedLanguage === "en" || requestedLanguage === "es" ? requestedLanguage : null;
+  const languageError = languagePreference.error?.message ?? (languagePreference.data !== undefined && !language
+    ? "Spoken replies currently support English and Spanish. Your response language is not supported yet." : null);
   // Conversation signals own the transcript; this outbox retains only delivery and retry state.
   const outbox = useChatOutbox(useCallback(() => {}, []));
   const current = useRef({ connected, outbox, destination, speech });
@@ -86,7 +102,10 @@ function VoiceSessionOwner({ children, onDirtyChange }: {
         return current.current.destination.error?.message ?? "Your Ship is getting ready. Try the shortcut again in a moment.";
       }
       if (current.current.outbox.sending) return "Your last message is still sending. Try again in a moment.";
-      if (!textRef.current.trim()) recipient.current = current.current.destination.data;
+      if (!textRef.current.trim()) {
+        const ship = current.current.destination.data;
+        recipient.current = { pid: ship.handlerPid, conversationId: ship.id };
+      }
       setCapture({ kind: "handsfree" });
       return null;
     },
@@ -97,7 +116,7 @@ function VoiceSessionOwner({ children, onDirtyChange }: {
     sendGlobal: sendHandsfree,
   });
   controller.current = input;
-  useSpokenReplies(client, destination.data?.conversationId, connected && !!speech?.preferences.enabled);
+  useSpokenReplies(client, destination.data?.id, connected && !!speech?.preferences.enabled, language);
 
   const actions = useMemo(() => ({
     startComposer(composer: Composer) {
@@ -155,7 +174,7 @@ function VoiceSessionOwner({ children, onDirtyChange }: {
     }
     failed.current = new Set(outbox.messages.filter((message) => message.status === "failed").map((message) => message.id));
   }, [outbox.messages]);
-  return <Context.Provider value={{ input, capture, text, connected, outbox, ...actions }}>{children}</Context.Provider>;
+  return <Context.Provider value={{ input, capture, text, connected, language, languageError, outbox, ...actions }}>{children}</Context.Provider>;
 }
 
 /** Chat lends its composer only for local dictation; handsfree never borrows that draft. */

@@ -5,6 +5,7 @@ import { soundPreferences } from "./inputSounds";
 import { shortcutDefaults } from "./shortcutKeys";
 
 export type SpeechStatus = { phase: string; id: string | null; error: string | null };
+export type SpeechLanguage = "en" | "es";
 export type ShortcutStatus = { description: string; managed: boolean; can_configure: boolean; error: string | null };
 export type SpeechEvent =
   | { kind: "status"; status: SpeechStatus }
@@ -12,7 +13,7 @@ export type SpeechEvent =
   | ({ kind: "shortcuts" } & ShortcutStatus);
 export type SpeechCommand =
   | { kind: "prepare" | "cancel" }
-  | { kind: "speak"; id: string; chunks: string[]; language: "en" | "es" }
+  | { kind: "speak"; id: string; chunks: string[]; language: SpeechLanguage }
   | { kind: "cue"; cue: "listening" | "sent" | "cancelled" | "attention" };
 export type ShortcutSettings = { enabled: boolean; talk: string; stop: string };
 export type NativeSpeechDriver = {
@@ -26,7 +27,6 @@ const preferencesSchema = z.object({
   enabled: z.boolean(),
   mode: z.enum(["toggle", "hold"]),
   replies: z.enum(["voice", "all", "off"]),
-  language: z.enum(["en", "es"]),
   talk: z.string().min(1).max(80),
   stop: z.string().min(1).max(80),
 });
@@ -34,7 +34,7 @@ export type SpeechPreferences = z.infer<typeof preferencesSchema>;
 const key = "gsv.desktop.voice.v1";
 function readPreferences(): SpeechPreferences {
   try { return preferencesSchema.parse(JSON.parse(localStorage.getItem(key) ?? "null")); }
-  catch { return { enabled: false, mode: "toggle", replies: "voice", language: "en", ...shortcutDefaults() }; }
+  catch { return { enabled: false, mode: "toggle", replies: "voice", ...shortcutDefaults() }; }
 }
 
 type NativeSpeech = {

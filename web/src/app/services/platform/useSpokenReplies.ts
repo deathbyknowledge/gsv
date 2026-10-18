@@ -1,10 +1,10 @@
 import { useEffect, useRef } from "preact/hooks";
 import type { GSVClient } from "@humansandmachines/gsv/client";
 import { committedSignalSchema } from "../chat/hooks/useChatConversation";
-import { useNativeSpeech } from "./NativeSpeech";
+import { useNativeSpeech, type SpeechLanguage } from "./NativeSpeech";
 import { speechChunks } from "./speechText";
 
-export function useSpokenReplies(client: Pick<GSVClient, "onSignal">, conversationId: string | undefined, connected: boolean) {
+export function useSpokenReplies(client: Pick<GSVClient, "onSignal">, conversationId: string | undefined, connected: boolean, language: SpeechLanguage | null) {
   const speech = useNativeSpeech();
   const current = useRef(speech);
   current.current = speech;
@@ -27,9 +27,9 @@ export function useSpokenReplies(client: Pick<GSVClient, "onSignal">, conversati
       seen.current.add(message.id);
       if (seen.current.size > 2048) seen.current.delete(seen.current.values().next().value!);
       const voice = current.current;
-      if (!voice?.shouldSpeak()) return;
-      const chunks = speechChunks(message.text, voice.preferences.language);
-      if (chunks.length) void voice.command({ kind: "speak", id: message.id, chunks, language: voice.preferences.language });
+      if (!voice?.shouldSpeak() || !language) return;
+      const chunks = speechChunks(message.text, language);
+      if (chunks.length) void voice.command({ kind: "speak", id: message.id, chunks, language });
     });
-  }, [client, conversationId, connected, !!speech]);
+  }, [client, conversationId, connected, !!speech, language]);
 }

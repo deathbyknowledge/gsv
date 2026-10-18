@@ -37,7 +37,7 @@ async function mount() {
   function Probe({ connected }: { connected: boolean }) {
     preferences = useNativeSpeech()!;
     useNativeVoice({ prompt, scope: "ship", enabled: connected, global: true, send });
-    useSpokenReplies(client, "ship-conversation", connected);
+    useSpokenReplies(client, "ship-conversation", connected, "en");
     return null;
   }
   const root = createTestRoot("desktop voice loop"); roots.push(root);

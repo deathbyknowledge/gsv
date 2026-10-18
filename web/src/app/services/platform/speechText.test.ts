@@ -19,4 +19,12 @@ describe("spoken Markdown", () => {
     expect(chunks.every((chunk) => chunk.length <= 600)).toBe(true);
     expect(speechChunks("![image](https://example.com/image.png)\n---")).toEqual([]);
   });
+
+  it("uses Spanish presentation cues with the Spanish voice", () => {
+    const text = speechChunks("Mira [https://example.com](https://example.com).\n\n```sh\nprivate-command\n```\n\n| A | B |\n| --- | --- |\n| 1 | 2 |", "es").join(" ");
+    expect(text).toContain("la página enlazada");
+    expect(text).toContain("Hay un ejemplo de código en el chat.");
+    expect(text).toContain("Hay una tabla en el chat.");
+    expect(text).not.toMatch(/https|private-command|There is/);
+  });
 });

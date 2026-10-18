@@ -4,6 +4,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/preact-query";
 import { act } from "preact/test-utils";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { GatewayProvider } from "../gateway/GatewayProvider";
+import { consoleConfigQueryKey } from "../system/useConsoleData";
 import { createTestRoot, deferred } from "../../testing/testHarness";
 import { NativeInputProvider, type NativeInput, type NativeSnapshot, type NativeUpdate } from "./PlatformProvider";
 import { NativeSpeechProvider, useNativeSpeech, type NativeSpeechDriver, type SpeechEvent } from "./NativeSpeech";
@@ -15,9 +16,10 @@ const signals = new Set<Parameters<GSVClient["onSignal"]>[0]>();
 const unload = new Set<EventListener>();
 const send = vi.fn<(args: ConversationSendArgs) => Promise<ConversationSendResult>>();
 let connected = true;
+let responseLanguage = "en";
 const status = (): GsvClientStatus => ({ state: connected ? "connected" : "disconnected", url: "wss://example.test/ws", username: "owner", connectionId: "one", message: null });
 beforeEach(() => {
-  connected = true; statuses.clear(); signals.clear(); unload.clear(); send.mockReset();
+  connected = true; responseLanguage = "en"; statuses.clear(); signals.clear(); unload.clear(); send.mockReset();
   vi.stubGlobal("document", {}); vi.stubGlobal("navigator", {});
   vi.stubGlobal("window", {
     location: { search: "", protocol: "https:", host: "example.test" },
@@ -32,6 +34,10 @@ beforeEach(() => {
   vi.spyOn(GSVClient.prototype, "onSignal").mockImplementation((listener) => { signals.add(listener); return () => { signals.delete(listener); }; });
   vi.spyOn(GSVClient.prototype, "request").mockImplementation(async (call, args) => {
     if (call === "conversation.ship") return { data: { conversation: { id: "personal-conversation", kind: "ship", handlerPid: "personal-ship", ownerUid: 1000, title: null, latestSequence: 0, createdAt: 1, updatedAt: 1 } } };
+    if (call === "sys.config.get") {
+      expect(args).toEqual({ key: "users/1000/locale/language" });
+      return { data: { entries: responseLanguage ? [{ key: "users/1000/locale/language", value: responseLanguage }] : [] } };
+    }
     if (call === "conversation.send") {
       // SAFETY: the typed conversation namespace supplies these arguments; this branch selects that exact syscall.
       return { data: await send(args as ConversationSendArgs) };
@@ -78,7 +84,7 @@ async function mount(desktop = true) {
     </NativeSpeechProvider></NativeInputProvider> : <NativeVoiceSession onDirtyChange={dirty}><ReadSession /></NativeVoiceSession>}
   </QueryClientProvider></GatewayProvider>);
   await render();
-  if (desktop) await vi.waitFor(() => expect(cache.getQueryData(["conversation", "ship"])).toMatchObject({ pid: "personal-ship" }));
+  if (desktop) await vi.waitFor(() => expect(cache.getQueryData([...consoleConfigQueryKey, "language", 1000])).toBe(responseLanguage));
   const native = (patch: Partial<NativeSnapshot>) => act(() => {
     snapshot = { ...snapshot, ...patch };
     inputUpdate({ revision: ++revision, sent_at_ms: Date.now(), snapshot });
@@ -95,19 +101,50 @@ async function mount(desktop = true) {
     await vi.waitFor(() => expect(input.command).toHaveBeenCalledWith("session", { kind: "finish", request_id: requestId }));
     await native({ voice: null, events: [{ id: ++eventId, request_id: requestId, segment_id: 0, kind: "final", text, action: "send" }] });
   };
-  const reply = (conversationId = "personal-conversation") => act(() => {
-    for (const listener of signals) listener("message.committed", { message: { id: "reply", conversationId, sequence: 2,
+  const reply = (conversationId = "personal-conversation", id = "reply") => act(() => {
+    for (const listener of signals) listener("message.committed", { message: { id, conversationId, sequence: 2,
       author: { kind: "process", pid: "personal-ship", uid: 1001 }, text: "**Ready.** Keep playing.", origin: { kind: "process", pid: "personal-ship", runId: "run" }, createdAt: 2 }, directed: true });
   });
   const connection = (value: boolean) => act(() => { connected = value; for (const listener of statuses) listener(status()); });
   const ack = (args: ConversationSendArgs): ConversationSendResult => ({ handlerPid: "personal-ship", runId: "run", message: { id: "sent", conversationId: args.conversationId, sequence: 1,
     author: { kind: "user", uid: 1000 }, text: args.text, createdAt: 1, origin: { kind: "client" } } });
   send.mockImplementation(async (args) => ack(args));
-  return { input, speech, dispose, render, native, shortcut, start, finish, reply, connection, ack, localSend, dirty, typed: () => typed,
+  return { input, speech, dispose, render, native, shortcut, start, finish, reply, connection, ack, localSend, dirty, cache, typed: () => typed,
     session: () => session!, voice: () => voice, preferences: () => preferences!, unmount: () => root.unmount() };
 }
 
 describe("desktop handsfree session", () => {
+  it("uses the owner's response language, follows preference saves across pages, and preserves local shortcuts", async () => {
+    responseLanguage = "es-MX";
+    const app = await mount();
+    expect(app.session().language).toBe("es");
+    expect(app.preferences().preferences).toMatchObject({ enabled: true, talk: "Ctrl+Alt+Space", stop: "Ctrl+Alt+Escape" });
+    expect(app.preferences().preferences).not.toHaveProperty("language");
+    await act(() => app.preferences().setPreferences({ replies: "all" }));
+    await app.reply();
+    expect(app.speech.command).toHaveBeenLastCalledWith(expect.objectContaining({ kind: "speak", language: "es" }));
+
+    await app.render("fleet");
+    responseLanguage = "en-GB";
+    await act(() => app.cache.invalidateQueries({ queryKey: consoleConfigQueryKey }));
+    await vi.waitFor(() => expect(app.session().language).toBe("en"));
+    await app.reply("personal-conversation", "english-reply");
+    expect(app.speech.command).toHaveBeenLastCalledWith(expect.objectContaining({ kind: "speak", language: "en" }));
+
+    responseLanguage = "fr";
+    await act(() => app.cache.invalidateQueries({ queryKey: consoleConfigQueryKey }));
+    await vi.waitFor(() => expect(app.session().language).toBeNull());
+    expect(app.session().languageError).toContain("not supported yet");
+    await app.reply("personal-conversation", "french-reply");
+    expect(vi.mocked(app.speech.command).mock.calls.filter(([command]) => command.kind === "speak")).toHaveLength(2);
+
+    responseLanguage = "";
+    vi.stubGlobal("navigator", { language: "es-ES" });
+    await act(() => app.cache.invalidateQueries({ queryKey: consoleConfigQueryKey }));
+    await vi.waitFor(() => expect(app.session().language).toBe("es"));
+    expect(app.session().languageError).toBeNull();
+  });
+
   it("starts before visiting Chat, survives navigation, sends only to Ship, and reads replies while another page is open", async () => {
     const app = await mount();
     await app.start("$ describe this command");

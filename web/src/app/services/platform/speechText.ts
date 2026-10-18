@@ -1,26 +1,32 @@
 import { marked, type Token, type Tokens } from "marked";
+import type { SpeechLanguage } from "./NativeSpeech";
 
-function readable(tokens: readonly Token[] = []): string {
+const labels = {
+  en: { code: "There is a code example in the chat.", table: "There is a table in the chat.", link: "the linked page", longCode: "the code in the chat" },
+  es: { code: "Hay un ejemplo de código en el chat.", table: "Hay una tabla en el chat.", link: "la página enlazada", longCode: "el código del chat" },
+};
+
+function readable(tokens: readonly Token[] = [], text: typeof labels.en): string {
   return tokens.map((token): string => {
     switch (token.type) {
-      case "code": return "\nThere is a code example in the chat.\n";
-      case "table": return "\nThere is a table in the chat.\n";
+      case "code": return `\n${text.code}\n`;
+      case "table": return `\n${text.table}\n`;
       case "html": case "def": case "hr": case "image": return " ";
       case "br": case "space": return "\n";
-      case "list": return token.items.map((item: Tokens.ListItem) => readable(item.tokens)).join("\n");
-      case "link": return /^(?:https?:\/\/|www\.)/i.test(token.text) ? "the linked page" : readable(token.tokens);
-      case "paragraph": case "heading": case "blockquote": return `\n${readable(token.tokens)}\n`;
-      case "strong": case "em": case "del": return readable(token.tokens);
-      case "text": return token.tokens ? readable(token.tokens) : token.text;
-      case "codespan": return token.text.length <= 60 ? token.text : "the code in the chat";
+      case "list": return token.items.map((item: Tokens.ListItem) => readable(item.tokens, text)).join("\n");
+      case "link": return /^(?:https?:\/\/|www\.)/i.test(token.text) ? text.link : readable(token.tokens, text);
+      case "paragraph": case "heading": case "blockquote": return `\n${readable(token.tokens, text)}\n`;
+      case "strong": case "em": case "del": return readable(token.tokens, text);
+      case "text": return token.tokens ? readable(token.tokens, text) : token.text;
+      case "codespan": return token.text.length <= 60 ? token.text : text.longCode;
       default: return "";
     }
   }).join("");
 }
 
 /** A presentation of the committed message; never a rewrite of the agent's prompt or answer. */
-export function speechChunks(markdown: string, language = "en"): string[] {
-  const text = readable(marked.lexer(markdown)).replace(/https?:\/\/\S+/gi, "the linked page")
+export function speechChunks(markdown: string, language: SpeechLanguage = "en"): string[] {
+  const text = readable(marked.lexer(markdown), labels[language]).replace(/https?:\/\/\S+/gi, labels[language].link)
     .replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&#39;/g, "'")
     .replace(/[ \t]+/g, " ").replace(/\n+/g, "\n").trim();
   if (!text) return [];

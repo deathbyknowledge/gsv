@@ -98,7 +98,12 @@ committed visible replies are read; opening history or reconnecting does not
 replay earlier messages. Replies arriving while the microphone is recording
 are left in Chat without being spoken. Code blocks and tables get a short cue
 to inspect Chat; links use their labels. The original message stays unchanged.
-Kokoro runs locally, with **Heart · English** and **Dora · Spanish** presets.
+Kokoro runs locally. Spoken replies and the voice preview follow **Settings →
+Preferences → Response language**, using Heart for English and Dora for Spanish;
+regional tags such as `es-MX` use the matching language. Changes saved there apply
+without restarting Desktop. With no saved response language, Desktop uses the
+device's language. This preview supports English and Spanish; other languages
+show an availability message in voice settings, while recording remains available.
 
 To change a shortcut, choose **change**, press the keys together, then choose
 **save shortcuts**. Escape, Tab, or leaving the control cancels capture. Ship’s

@@ -20,6 +20,13 @@ of the window. Only the content panes scroll; neither can pass behind the header
 - Voice appears only when the Desktop native input provider is present. It owns the computer's microphone choice and Handsfree mode preferences, with global voice shortcuts and spoken replies. The microphone preference is shared with Chat and survives reopening the app. Device discovery uses the authenticated session's input lease only while this section is visible and idle; it never starts or interrupts recording. Handsfree recording and replies continue across pages under that session owner. Local preferences remain available while the Gateway reconnects. Shortcut drafts survive section/view switches and participate in the existing unsaved-change guard. Leaving the section cancels shortcut capture and restores the registered keys.
 - Logs shows action history, live outcomes, older pages and an inspector for request details and failures. Its process links open Fleet. The section mounts when opened and pauses reads, notifications and shortcuts while hidden. Fleet's activity summaries share the same ledger cache; ordinary live updates do not refetch it.
 
+Spoken replies and voice preview read the personal Ship owner's Response language
+through the shared configuration cache. Saving Preferences updates the active
+voice across pages. Regional tags select their base language; an unset preference
+uses the device language. The preview supports English and Spanish and shows an
+availability message for other languages. Shortcuts and playback mode stay local;
+the response language has one account-owned value.
+
 Section and Instrument view switches preserve drafts without a discard dialog.
 Sections use the `section` query parameter, including `/chat/settings?section=voice`
 from Chat's compact recording panel. Back/Forward restores the section without
