@@ -56,6 +56,11 @@ jobs:
           targets: ${{ matrix.target }}
       - name: Test macOS packaging
         run: bash host/scripts/test-package-macos.sh
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: '3.12'
+          enable-cache: true
+          cache-dependency-glob: host/helpers/speaker/uv.lock
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
         with:
           workspaces: host -> target
@@ -73,11 +78,12 @@ jobs:
           app="release/GSV.app"
           plutil -lint "$app/Contents/Info.plist"
           plutil -extract NSMicrophoneUsageDescription raw "$app/Contents/Info.plist"
-          for binary in gsv-desktop gsv gsvd gsv-transcribe; do
+          for binary in gsv-desktop gsv gsvd gsv-transcribe gsv-speak; do
             test -x "$app/Contents/MacOS/$binary"
           done
           codesign --verify --deep --strict "$app"
           python3 host/scripts/check-transcriber.py "$app/Contents/MacOS/gsv-transcribe"
+          python3 host/scripts/check-speaker.py "$app/Contents/MacOS/gsv-speak"
       - uses: actions/upload-artifact@v4
         with:
           name: gsv-desktop-${{ matrix.platform }}

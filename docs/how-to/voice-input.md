@@ -64,7 +64,7 @@ editing. Desktop does not save the raw audio for retry, so speech not yet
 transcribed may need repeating. See
 [Install Host Applications](/how-to/install-host-apps) for setup.
 
-## Handsfree mode (Desktop preview)
+## Handsfree mode
 
 In **Settings → voice**, enable **Handsfree mode**. Keep Desktop running and
 signed in; you can leave any page selected and minimize the window or keep it
@@ -98,11 +98,12 @@ committed visible replies are read; opening history or reconnecting does not
 replay earlier messages. Replies arriving while the microphone is recording
 are left in Chat without being spoken. Code blocks and tables get a short cue
 to inspect Chat; links use their labels. The original message stays unchanged.
-Kokoro runs locally. Spoken replies and the voice preview follow **Settings →
+Kokoro runs locally. Desktop includes the speech runtime; its first use downloads
+and verifies the model, then reuses the local cache. Spoken replies and the voice preview follow **Settings →
 Preferences → Response language**, using Heart for English and Dora for Spanish;
 regional tags such as `es-MX` use the matching language. Changes saved there apply
 without restarting Desktop. With no saved response language, Desktop uses the
-device's language when supported, otherwise English. This preview supports English and Spanish; other saved languages
+device's language when supported, otherwise English. Spoken replies support English and Spanish; other saved languages
 show an availability message in voice settings, while recording remains available.
 
 To change a shortcut, choose **change**, press the keys together, then choose
@@ -117,11 +118,14 @@ reported by the desktop. Compositors without that editor, including Hyprland,
 require binding the registered `talk` and `stop` actions in their keyboard
 configuration. Suggested keys do not override the desktop’s assignments.
 
-This preview uses a separate Python speech helper. From a source checkout with
-JavaScript dependencies and the normal `gsv-transcribe` helper installed, run
-`bash scripts/build-desktop-voice.sh` (requires `uv`, Python 3.12, Rust, and
-PortAudio). The script verifies the pinned model and prints the
-`GSV_DESKTOP_PATH=… gsv desktop` command for this build. Existing Desktop sign-in
-is preserved; otherwise open your production space and sign in in Desktop.
-On Linux it also creates a hidden desktop entry if Ship does not have one, so
-the shortcut portal can identify the app when launched from a terminal.
+The normal Desktop distribution includes `gsv-speak` with Python, pronunciation
+data and audio libraries bundled. Install or update Desktop normally to use it.
+Spoken replies require macOS 13 or newer on a Mac. Recording remains available
+on Desktop's other supported macOS versions.
+
+For development, `bash scripts/build-desktop-voice.sh` builds the same bundled
+speaker and prints the `GSV_DESKTOP_PATH=… gsv desktop` command. Building requires
+`uv`, Rust, frontend dependencies and PortAudio development libraries on Linux;
+the script manages Python 3.12. Keep the normal `gsv-transcribe` helper installed.
+On Linux it creates a hidden desktop entry when needed so the shortcut portal
+can identify an app launched from a terminal.

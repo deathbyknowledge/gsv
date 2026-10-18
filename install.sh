@@ -760,6 +760,8 @@ main() {
         "gsv-transcribe-${PLATFORM}"
         "gsv-transcribe-THIRD_PARTY.md"
         "gsv-transcribe-runtime-${PLATFORM}.tar.gz"
+        "gsv-speak-${PLATFORM}"
+        "gsv-speak-THIRD_PARTY-${PLATFORM}.md"
     )
     TARGETS=(
         "gsv"
@@ -768,8 +770,10 @@ main() {
         "gsv-transcribe"
         "gsv-transcribe-THIRD_PARTY.md"
         "gsv-transcribe-runtime"
+        "gsv-speak"
+        "gsv-speak-THIRD_PARTY.md"
     )
-    EXECUTABLES=(1 1 1 1 0 0)
+    EXECUTABLES=(1 1 1 1 0 0 1 0)
 
     echo ""
     echo -e "  ${BOLD}Ship host installer${NC} · ${PLATFORM} · ${release_ref}"

@@ -200,6 +200,7 @@ jobs:
             libasound2-dev \
             libclang-dev \
             libopenblas-pthread-dev \
+            portaudio19-dev \
             libwebkit2gtk-4.1-dev \
             libgtk-3-dev \
             gstreamer1.0-plugins-base \
@@ -236,6 +237,26 @@ jobs:
           cargo build --locked --release --target ${{ matrix.target }}
           --package desktop --package transcriber
 
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: '3.12'
+          enable-cache: true
+          cache-dependency-glob: host/helpers/speaker/uv.lock
+      - name: Build bundled speech runtime
+        env:
+          MACOSX_DEPLOYMENT_TARGET: '13.0'
+        run: >-
+          uv run --frozen --group build --project host/helpers/speaker
+          --python-platform ${{ matrix.target }}
+          python host/scripts/build-speaker.py --output host/target/${{ matrix.target }}/release
+
+      - name: Check shipped speaker
+        shell: bash
+        run: |
+          suffix=""
+          if [ "${{ runner.os }}" = "Windows" ]; then suffix=".exe"; fi
+          python3 host/scripts/check-speaker.py "host/target/${{ matrix.target }}/release/gsv-speak${suffix}"
+
       - name: Check shipped voice helper
         shell: bash
         run: |
@@ -257,6 +278,8 @@ jobs:
           if [ "${{ runner.os }}" = "Windows" ]; then suffix=".exe"; fi
           cp "host/target/${{ matrix.target }}/release/gsv-desktop${suffix}" "release/gsv-desktop-${{ matrix.platform }}${suffix}"
           cp "host/target/${{ matrix.target }}/release/gsv-transcribe${suffix}" "release/gsv-transcribe-${{ matrix.platform }}${suffix}"
+          cp "host/target/${{ matrix.target }}/release/gsv-speak${suffix}" "release/gsv-speak-${{ matrix.platform }}${suffix}"
+          cp "host/target/${{ matrix.target }}/release/gsv-speak-THIRD_PARTY.md" "release/gsv-speak-THIRD_PARTY-${{ matrix.platform }}.md"
           if [ "${{ matrix.platform }}" = "linux-x64" ]; then
             cp host/helpers/transcriber/THIRD_PARTY.md release/gsv-transcribe-THIRD_PARTY.md
           fi
@@ -280,7 +303,7 @@ jobs:
           cargo build --manifest-path host/Cargo.toml --locked --release --target ${{ matrix.target }} --package gsv --package machine
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           ./host/scripts/sign-windows.ps1 -Directory host/target/${{ matrix.target }}/release
-          foreach ($name in @('gsv', 'gsvd', 'gsv-desktop', 'gsv-transcribe')) {
+          foreach ($name in @('gsv', 'gsvd', 'gsv-desktop', 'gsv-transcribe', 'gsv-speak')) {
             Copy-Item "host/target/${{ matrix.target }}/release/$name.exe" "release/$name-windows-x64.exe" -Force
           }
           ./host/scripts/package-windows.ps1 -BinDir host/target/${{ matrix.target }}/release -Output release
@@ -365,7 +388,7 @@ jobs:
           chmod +x release/gsv-linux-* release/gsvd-linux-* \
             release/gsv-darwin-* release/gsvd-darwin-* \
             release/gsv-desktop-* release/gsv-transcribe-linux-* \
-            release/gsv-transcribe-darwin-*
+            release/gsv-transcribe-darwin-* release/gsv-speak-linux-* release/gsv-speak-darwin-*
           chmod -x release/gsv-transcribe-THIRD_PARTY.md
 
           # Include install script
@@ -441,25 +464,25 @@ jobs:
           ### Host applications
 
           The installer verifies every downloaded artifact, replaces \`gsv\`, \`gsvd\`,
-          Desktop, and the local voice helper as one versioned set, and migrates an existing
+          Desktop, and the local voice helpers as one versioned set, and migrates an existing
           device service to execute \`gsvd --foreground\` directly. Linux and macOS
-          receive Desktop and \`gsv-transcribe\`. Windows 10 x64 receives all four applications, with a boot-capable SCM daemon.
+          receive Desktop, \`gsv-transcribe\` and \`gsv-speak\`. Windows 10 x64 receives the same applications, with a boot-capable SCM daemon.
 
           ### Manual Installation
 
           Download the binary for your platform:
-          - **macOS (Apple Silicon)**: \`gsv-darwin-arm64\`, \`gsvd-darwin-arm64\`, \`gsv-desktop-darwin-arm64\`, \`gsv-transcribe-darwin-arm64\`
-          - **macOS (Intel)**: \`gsv-darwin-x64\`, \`gsvd-darwin-x64\`, \`gsv-desktop-darwin-x64\`, \`gsv-transcribe-darwin-x64\`
-          - **Linux (x64)**: \`gsv-linux-x64\`, \`gsvd-linux-x64\`, \`gsv-desktop-linux-x64\`, \`gsv-transcribe-linux-x64\`
-          - **Linux (ARM64)**: \`gsv-linux-arm64\`, \`gsvd-linux-arm64\`, \`gsv-desktop-linux-arm64\`, \`gsv-transcribe-linux-arm64\`
-          - **Windows (x64)**: \`gsv-desktop-windows-x64-setup.exe\` or \`gsv-desktop-windows-x64.zip\` (all four applications)
+          - **macOS (Apple Silicon)**: \`gsv-darwin-arm64\`, \`gsvd-darwin-arm64\`, \`gsv-desktop-darwin-arm64\`, \`gsv-transcribe-darwin-arm64\`, \`gsv-speak-darwin-arm64\`
+          - **macOS (Intel)**: \`gsv-darwin-x64\`, \`gsvd-darwin-x64\`, \`gsv-desktop-darwin-x64\`, \`gsv-transcribe-darwin-x64\`, \`gsv-speak-darwin-x64\`
+          - **Linux (x64)**: \`gsv-linux-x64\`, \`gsvd-linux-x64\`, \`gsv-desktop-linux-x64\`, \`gsv-transcribe-linux-x64\`, \`gsv-speak-linux-x64\`
+          - **Linux (ARM64)**: \`gsv-linux-arm64\`, \`gsvd-linux-arm64\`, \`gsv-desktop-linux-arm64\`, \`gsv-transcribe-linux-arm64\`, \`gsv-speak-linux-arm64\`
+          - **Windows (x64)**: \`gsv-desktop-windows-x64-setup.exe\` or \`gsv-desktop-windows-x64.zip\` (complete distribution)
 
           ### macOS app
 
           Download \`gsv-desktop-darwin-arm64.zip\` for Apple Silicon or
           \`gsv-desktop-darwin-x64.zip\` for Intel. Unzip it and move
           \`GSV.app\` to Applications. Each app includes its local
-          voice helper, CLI, and machine daemon.
+          voice helpers, CLI, and machine daemon.
 
           These developer builds are ad-hoc signed, without an Apple Developer ID
           or notarization. After the first blocked launch, use **System Settings →
@@ -529,6 +552,7 @@ jobs:
             release/gsv-transcribe-darwin-arm64
             release/gsv-transcribe-THIRD_PARTY.md
             release/gsv-transcribe-runtime-*
+            release/gsv-speak-*
             release/gsv-desktop-darwin-x64.zip
             release/gsv-desktop-darwin-arm64.zip
             release/gsv-browser-extension.zip

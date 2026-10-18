@@ -188,7 +188,10 @@ impl Helper {
         if !executable.is_absolute() {
             return Err("The speech helper path must be absolute.".into());
         }
-        let mut child = Command::new(executable)
+        let mut command = Command::new(executable);
+        #[cfg(windows)]
+        command.creation_flags(0x08000000);
+        let mut child = command
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
@@ -213,6 +216,16 @@ impl Helper {
         .await
         .map_err(|_| "The local speech helper stopped responding.".to_string())?
         .map_err(|error| format!("Write to local speech helper: {error}"))
+    }
+
+    async fn stop(mut self) {
+        drop(self.stdin);
+        if tokio::time::timeout(std::time::Duration::from_secs(2), self.child.wait())
+            .await
+            .is_err()
+        {
+            let _ = self.child.kill().await;
+        }
     }
 }
 
@@ -257,7 +270,7 @@ async fn run(mut requests: mpsc::Receiver<Request>, delivery: Arc<Mutex<Delivery
             request = requests.recv() => {
                 let Some(request) = request else { break; };
                 let Some(command) = request.command else {
-                    if let Some(mut helper) = helper.take() { let _ = helper.child.kill().await; }
+                    if let Some(helper) = helper.take() { helper.stop().await; }
                     let _ = request.reply.send(Ok(()));
                     break;
                 };

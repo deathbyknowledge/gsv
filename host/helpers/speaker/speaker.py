@@ -4,10 +4,13 @@ import collections
 import json
 import math
 import os
+import platform
 from pathlib import Path
 import queue
 import sys
 import threading
+
+from prepare import model_directory, prepare_model, PreparationCancelled
 
 os.environ.setdefault("OMP_NUM_THREADS", "2")
 os.environ.setdefault("OPENBLAS_NUM_THREADS", "2")
@@ -19,6 +22,10 @@ RATE = 24000
 MAX_LINE = 256 * 1024
 VOICES = {"en": ("af_heart", "en-us"), "es": ("ef_dora", "es")}
 output_lock = threading.Lock()
+
+
+class VoiceUnavailable(Exception):
+    pass
 
 
 def emit(phase, request_id=None, error=None):
@@ -82,10 +89,16 @@ class Speaker:
                 if generation == self.generation:
                     emit(phase, request_id)
 
-    def prepare(self):
+    def prepare(self, generation):
         if self.model is not None:
             return
-        emit("loading")
+        if sys.platform == "darwin" and int(platform.mac_ver()[0].split(".")[0]) < 13:
+            raise VoiceUnavailable("Spoken replies require macOS 13 or newer.")
+        with self.condition:
+            if self.closed or generation != self.generation:
+                raise PreparationCancelled()
+            emit("loading")
+        prepare_model(self.model_dir, lambda: self.closed or generation != self.generation)
         import onnxruntime as ort
         from kokoro_onnx import Kokoro
         options = ort.SessionOptions()
@@ -97,7 +110,9 @@ class Speaker:
         session = ort.InferenceSession(str(self.model_dir / "model.onnx"), sess_options=options,
                                       providers=["CPUExecutionProvider"])
         self.model = Kokoro.from_session(session, str(self.model_dir / "voices.bin"))
-        emit("ready")
+        with self.condition:
+            if not self.closed and generation == self.generation:
+                emit("ready")
 
     def append(self, generation, request_id, samples):
         with self.condition:
@@ -136,7 +151,7 @@ class Speaker:
                     self.append(generation, request_id, samples.astype(np.float32))
                     self.append(generation, request_id, None)
                     continue
-                self.prepare()
+                self.prepare(generation)
                 if command["kind"] == "prepare":
                     continue
                 voice, language = VOICES[command["language"]]
@@ -150,6 +165,8 @@ class Speaker:
                     if not self.append(generation, request_id, np.asarray(audio, dtype=np.float32)):
                         break
                 self.append(generation, request_id, None)
+            except PreparationCancelled:
+                pass
             except Exception as error:
                 with self.condition:
                     if generation == self.generation:
@@ -158,7 +175,7 @@ class Speaker:
                         self.offset = 0
                         self.playing = None
                         # Exception messages from phonemizers may contain private input.
-                        emit("error", request_id, type(error).__name__)
+                        emit("error", request_id, str(error) if isinstance(error, VoiceUnavailable) else type(error).__name__)
 
     def cancel(self):
         with self.condition:
@@ -203,7 +220,20 @@ class Speaker:
 
 
 def main():
-    speaker = Speaker(Path(os.environ["GSV_SPEAK_MODEL_DIR"]), "--silent" in sys.argv)
+    if "--check-runtime" in sys.argv:
+        import ctypes
+        import espeakng_loader
+        import onnxruntime
+        import sounddevice
+        from kokoro_onnx import Kokoro
+        ctypes.CDLL(espeakng_loader.get_library_path())
+        if not Path(espeakng_loader.get_data_path()).is_dir():
+            raise RuntimeError("missing_pronunciation_data")
+        print(json.dumps({"runtime": "ready", "audio": sounddevice.get_portaudio_version()[0],
+                          "bundled_audio": hasattr(sys, "_MEIPASS") and Path(sounddevice._libname).is_relative_to(sys._MEIPASS),
+                          "inference": onnxruntime.__version__}))
+        return
+    speaker = Speaker(model_directory(), "--silent" in sys.argv)
     emit("idle")
     try:
         while True:

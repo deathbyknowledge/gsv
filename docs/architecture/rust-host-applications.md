@@ -207,7 +207,7 @@ The authenticated Desktop session owns one input lease. Leaving Chat stops
 local dictation without releasing that lease; Settings uses it for microphone
 discovery. Suspension expires the lease, and session teardown releases it.
 
-The Desktop voice preview adds native global shortcuts and a supervised local
+Desktop provides native global shortcuts and a supervised local
 Kokoro speaker helper. Rust registers shortcuts through the platform backend
 (the desktop portal on Wayland), while the authenticated frontend session owns
 the correlated recording and send operation. Its separate voice draft and
@@ -226,6 +226,17 @@ is rendered for speech in the client. The helper owns CPU inference and audio
 playback; cancellation invalidates queued synthesis and audio together. Starting
 capture interrupts playback, and incoming replies never play into an active
 microphone. Session changes and Quit stop both native owners.
+
+The release builds `gsv-speak` with a pinned Python environment and PyInstaller
+on each target platform. Its executable includes the interpreter, ONNX Runtime,
+pronunciation data and audio libraries. The model is downloaded to a per-user
+cache on first use, with SHA-256 verification and atomic publication. Cancellation
+discards partial downloads. Installer transactions and app bundles include the
+helper and its dependency notices. Release checks relocate the executable away
+from its build environment and exercise first-use English/Spanish synthesis,
+cancellation and EOF shutdown with an empty `PATH`. The ONNX runtime requires
+macOS 13 for spoken replies; Desktop and transcription retain their existing
+platform baseline.
 
 Local control supports activation, redacted status, new Process creation,
 selection of an accessible Process, and microphone discovery and selection.
@@ -306,15 +317,15 @@ daemon updates also preserve the current installation directory. Host applicatio
 share installer URL resolution and shell quoting in `host-config`.
 
 Published host artifacts cover Linux x64/ARM64 and macOS Intel/Apple Silicon
-for Desktop, `gsv-transcribe`, `gsv`, and `gsvd`, plus Windows x64
-for all four host executables. Checksums cover every release asset. On macOS,
+for Desktop, `gsv-transcribe`, `gsv-speak`, `gsv`, and `gsvd`, plus Windows x64
+for the same host executables. Checksums cover every release asset. On macOS,
 `host/scripts/package-macos.sh` assembles an architecture-native development
 `GSV.app` and ZIP containing Desktop, CLI, daemon, helpers, application
 metadata, and the local voice runtime. The result is ad-hoc signed and unnotarized. Public distribution additionally requires Developer ID signing,
 hardened-runtime entitlements, Apple notarization, and stapling; those release
 credentials are not configured in the repository.
 
-On Windows, `host/scripts/package-windows.ps1` packages all four executables,
+On Windows, `host/scripts/package-windows.ps1` packages all five executables,
 licenses, checksums and the PowerShell installer in a ZIP and an NSIS setup
 executable. Setup creates a Start-menu shortcut and an Apps uninstall entry.
 Setup embeds hashes of its installer script and checksum manifest in the

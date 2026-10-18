@@ -276,6 +276,8 @@ function Install-GsvHost {
     "gsv-transcribe-$Platform.exe" = "gsv-transcribe.exe"
     "gsv-transcribe-THIRD_PARTY.md" = "gsv-transcribe-THIRD_PARTY.md"
     "gsv-transcribe-runtime-$Platform.zip" = "gsv-transcribe-runtime"
+    "gsv-speak-$Platform.exe" = "gsv-speak.exe"
+    "gsv-speak-THIRD_PARTY-$Platform.md" = "gsv-speak-THIRD_PARTY.md"
   }
   if ($Headless) {
     $assets = [ordered]@{ "gsv-$Platform.exe" = "gsv.exe"; "gsvd-$Platform.exe" = "gsvd.exe" }
@@ -301,7 +303,7 @@ function Install-GsvHost {
 
     $service = Get-CimInstance Win32_Service -Filter "Name='gsvd'" -ErrorAction Stop
     $serviceExisted = $null -ne $service
-    $busy = Get-Process -Name gsv-desktop,gsv-transcribe,gsv-vision -ErrorAction SilentlyContinue
+    $busy = Get-Process -Name gsv-desktop,gsv-transcribe,gsv-speak,gsv-vision -ErrorAction SilentlyContinue
     if ($busy) { throw 'Close Ship Desktop and its input helpers, then run the installer again.' }
     Ensure-HostRuntimes
 

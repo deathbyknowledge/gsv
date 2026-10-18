@@ -121,7 +121,7 @@ Contact conversations have no mandatory Process handler. Pairing and first-messa
 - `host/apps/desktop/`: desktop host for the shared Instrument UI, native input, local control, machine enrollment through the CLI, and window lifecycle.
 - `host/apps/cli/`: user, deployment, administration, and OS service-control commands.
 - `host/apps/machine/`: the `gsvd` machine driver, concrete tools, transfer ownership, reconnect, logging, and shutdown.
-- `host/helpers/`: separately supervised local transcription process.
+- `host/helpers/`: separately supervised local transcription and speech playback processes.
 - `host/crates/`: shared gateway transport, host configuration, Desktop IPC, and Windows SCM/process ownership primitives. `host/` owns their Cargo workspace and build artifacts.
 - `workers/adapters/`: platform-specific messaging workers and identity normalization.
 - `extension/`: browser-backed target and browser integration.
