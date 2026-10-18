@@ -734,12 +734,13 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
         media: [...attachments], selectedTarget: where ?? defaultPlace(),
       });
       if (!accepted) return false;
+      if (!pidProp) speech?.typed();
       scrolling.follow();
       setAttachments([]);
       setPastes([]);
       return true;
     },
-    [attachments, conversation.conversation?.id, outbox.send, pastes, pid, scrolling.follow, where],
+    [attachments, conversation.conversation?.id, outbox.send, pastes, pid, pidProp, speech, scrolling.follow, where],
   );
 
   const voiceScope = `${snapshot.url}:${snapshot.username}:${pid ?? ""}:${currentPlace.id}`;
@@ -768,7 +769,6 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
   const onSubmit = useCallback(
     (raw: string) => {
       if (!connected || !pid || outbox.sending) return false;
-      if (!pidProp) speech?.typed();
       setNote(null);
       if (raw) setInputHistory((current) => [...current.filter((entry) => entry !== raw), raw].slice(-50));
       setHistoryIndex(null);
