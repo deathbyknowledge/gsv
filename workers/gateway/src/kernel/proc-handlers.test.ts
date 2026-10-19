@@ -504,6 +504,29 @@ describe("proc handlers", () => {
     });
   });
 
+  it.each(["owner", "root", "process", "work"])("activates onboarding only for the owner's direct Ship input: %s", async (caller) => {
+    const ctx = makeForwardContext();
+    ctx.peer = testPeer({ kind: "human", account: { ...IDENTITY, uid: caller === "root" ? 0 : IDENTITY.uid }, calls: ["proc.send"] });
+    // SAFETY: this fixture supplies the process ownership and controller fields inspected by proc.send.
+    vi.mocked(ctx.procs.get).mockReturnValue({
+      ...SPAWN_PARENT, isPersonalController: caller !== "work",
+    } as ReturnType<KernelContext["procs"]["get"]>);
+    vi.mocked(ctx.welcome.activate).mockReturnValue(true);
+    if (caller === "process") {
+      ctx.processId = "proc:source";
+      ctx.callerOwnerUid = IDENTITY.uid;
+    }
+    await forwardToProcess({ type: "req", id: "first", call: "proc.send", args: { pid: "proc:ship", message: "Hello" } }, ctx);
+    if (caller === "owner") {
+      expect(ctx.welcome.activate).toHaveBeenCalledWith(IDENTITY.uid);
+      expect(ctx.reconcileResponsibilityWake).toHaveBeenCalledWith(IDENTITY.uid);
+      expect(vi.mocked(ctx.welcome.activate).mock.invocationCallOrder[0]).toBeLessThan(sendFrameToProcessMock.mock.invocationCallOrder[0]);
+    } else {
+      expect(ctx.welcome.activate).not.toHaveBeenCalled();
+      expect(ctx.reconcileResponsibilityWake).not.toHaveBeenCalled();
+    }
+  });
+
   it("routes untargeted proc calls to the caller process", async () => {
     sendFrameToProcessMock.mockResolvedValue({
       type: "res",
@@ -959,6 +982,7 @@ describe("proc handlers", () => {
       peer: testPeer({ kind: "human", account: IDENTITY, calls: ["*"] }),
       auth: makePersonalAgentAuth(),
       config: { get: vi.fn(() => "1002") },
+      welcome: { createdAt: vi.fn() },
       responsibilities: {
         getByDedupeKey: vi.fn(() => null),
       },
@@ -1029,6 +1053,7 @@ describe("proc handlers", () => {
       peer: testPeer({ kind: "human", account: IDENTITY, calls: ["*"] }),
       auth: makePersonalAgentAuth(),
       config: { get: vi.fn(() => "1002") },
+      welcome: { createdAt: vi.fn() },
       responsibilities: {
         getByDedupeKey: vi.fn(() => null),
       },
@@ -1500,6 +1525,7 @@ function makeForwardContext(overrides?: {
   // SAFETY: test fixture is constructed with the asserted kernel domain shape.
   return {
     installationId: TEST_INSTALLATION_ID,
+    welcome: { activate: vi.fn(() => false) },
     peer: testPeer({ kind: "human", account: IDENTITY, calls: ["proc.reset", "proc.kill"] }),
     procs: {
       get: vi.fn(() => ({

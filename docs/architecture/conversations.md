@@ -67,10 +67,12 @@ The Kernel owns the conversation directory and membership:
 - **Ship** is the stable conversation with the user's personal intelligence. Web, Desktop, CLI,
   Telegram, Slack, and other private surfaces all contribute to the same Ship message stream.
   The current personal Process is replaceable; the Ship conversation is not. Dismissing
-  the welcome card activates the onboarding responsibility through the ordinary wake
+  the welcome card creates an open onboarding responsibility through the ordinary wake
   path. Ship sends a welcome in the owner's preferred language, initially detected from
   the browser. The welcome is a canonical Message shared across clients. A user can
-  write first, including on surfaces without the card, and Ship responds to that message.
+  write first, including on surfaces without the card: onboarding becomes visible
+  before that message reaches Ship. Until either action, onboarding stays internal
+  to the Kernel rather than appearing as a blocked responsibility.
   After greeting, Ship waits for a reply. Repeated dismissal
   and reconnects recover pending work without reopening a handled welcome.
 - **Work** is a conversation handled by one explicit interactive work Process. Opening Work does not

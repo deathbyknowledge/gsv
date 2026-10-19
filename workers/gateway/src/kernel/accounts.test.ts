@@ -37,11 +37,7 @@ function createCtx() {
   const personalAgents = new Map<number, number>();
   const configValues = new Map<string, string>();
   const ripgitFiles = new Map<string, string>();
-  const createResponsibility = vi.fn(() => ({
-    record: { id: "r12y:onboarding" },
-    created: true,
-    revision: 1,
-  }));
+  const prepareWelcome = vi.fn();
   const ripgitApplyBodies: Array<{
     owner: string;
     repo: string;
@@ -164,9 +160,10 @@ function createCtx() {
       // SAFETY: test fixture is constructed with the asserted kernel domain shape.
       } as KernelContext["config"],
       responsibilities: {
-        create: createResponsibility,
+        create: vi.fn(),
         getByDedupeKey: vi.fn(() => null),
       } as KernelContext["responsibilities"],
+      welcome: { prepare: prepareWelcome, createdAt: vi.fn() },
       peer,
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     } as KernelContext;
@@ -181,7 +178,7 @@ function createCtx() {
     personalAgents,
     ripgitApplyBodies,
     ripgitFiles,
-    createResponsibility,
+    prepareWelcome,
   };
 }
 
@@ -262,7 +259,7 @@ describe("handleAccountCreate", () => {
   });
 
   it("provisions human-owned shared memory while seeding the personal agent context", async () => {
-    const { ctxFor, passwd, ripgitApplyBodies, createResponsibility } = createCtx();
+    const { ctxFor, passwd, ripgitApplyBodies, prepareWelcome } = createCtx();
     const ctx = ctxFor(userIdentity(1000, "alice", ["*"]), { ripgit: true });
     await ensureAccountHomeLayout(ctx.env, principalOf(ctx)!.account);
     const result = await ensurePersonalAgent(ctx, principalOf(ctx)!.account);
@@ -292,11 +289,8 @@ describe("handleAccountCreate", () => {
     expect(agentOps).not.toContainEqual(
       expect.objectContaining({ type: "put", path: "context.d/00-boot.md" }),
     );
-    expect(createResponsibility).toHaveBeenCalledWith(expect.objectContaining({
-      ownerUid: 1000,
-      title: "Welcome to Ship",
-      dedupeKey: "onboarding.initial",
-    }));
+    expect(prepareWelcome).toHaveBeenCalledWith(1000);
+    expect(ctx.responsibilities.create).not.toHaveBeenCalled();
     const roleContextOp = agentOps.find((op) => op.path === "context.d/00-role.md");
     const voiceContextOp = agentOps.find((op) => op.path === "context.d/05-voice.md");
     expect(new TextDecoder().decode(new Uint8Array(roleContextOp?.contentBytes ?? [])))
@@ -483,10 +477,7 @@ describe("handleAccountCreate", () => {
       type: "delete",
       path: "context.d/00-boot.md",
     });
-    expect(state.createResponsibility).toHaveBeenCalledWith(expect.objectContaining({
-      ownerUid: 1000,
-      dedupeKey: "onboarding.initial",
-    }));
+    expect(state.prepareWelcome).toHaveBeenCalledWith(1000);
   });
 
   it("does not onboard again a home that finished the earlier flow", async () => {
@@ -497,7 +488,7 @@ describe("handleAccountCreate", () => {
     const result = await ensurePersonalAgent(ctx, principalOf(ctx)!.account);
 
     expect(result.created).toBe(false);
-    expect(state.createResponsibility).not.toHaveBeenCalled();
+    expect(state.prepareWelcome).not.toHaveBeenCalled();
   });
 
   it("keeps the generated boot context when its replacement cannot be recorded", async () => {
@@ -507,7 +498,7 @@ describe("handleAccountCreate", () => {
       "friday:context.d/00-boot.md",
       RETIRED_BOOT_CONTEXT_TEMPLATE,
     );
-    state.createResponsibility.mockImplementationOnce(() => {
+    state.prepareWelcome.mockImplementationOnce(() => {
       throw new Error("responsibility write failed");
     });
     const ctx = state.ctxFor(userIdentity(1000, "alice", ["account.create"]), { ripgit: true });

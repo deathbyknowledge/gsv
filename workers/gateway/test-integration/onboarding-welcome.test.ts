@@ -58,9 +58,7 @@ describe("setup welcome", () => {
     const connected = client;
     const { conversation } = await connected.conversation.ship({});
     const { responsibilities } = await connected.r12y.list({});
-    const welcome = responsibilities.find((record) => record.details?.responsibilityType === "onboarding.initial")!;
-    expect(welcome.state).toBe("waiting");
-    expect(welcome.nextCheckAtMs).toBeUndefined();
+    expect(responsibilities.some((record) => record.details?.responsibilityType === "onboarding.initial")).toBe(false);
     await new Promise((resolve) => setTimeout(resolve, 2_000));
     expect(await recorder.listScriptedManagedRequests(INSTALLATION)).toEqual([]);
     await connected.sys.config.set({ key: "users/1000/ui/welcome_card_seen", value: "1" });
@@ -69,6 +67,10 @@ describe("setup welcome", () => {
     const prompt = initial.systemPrompt ?? "";
     expect(prompt.includes("Preferred language: es-MX")).toBe(true);
     expect(prompt.includes("onboarding.initial")).toBe(true);
+    expect(prompt).not.toContain("Waiting for the user to dismiss the welcome card");
+    const welcome = (await connected.r12y.list({})).responsibilities.find((record) => record.details?.responsibilityType === "onboarding.initial")!;
+    expect(welcome.blocker).toBeUndefined();
+    expect(welcome.createdAtMs).toBe(welcome.updatedAtMs);
 
     expect((await connected.r12y.get({ id: welcome.id })).responsibility.state).toBe("open");
     expect((await connected.conversation.history({ conversationId: conversation.id })).messages).toEqual([]);
@@ -137,11 +139,17 @@ describe("setup welcome", () => {
     await client.connect();
     const connected = client;
     const { conversation } = await connected.conversation.ship({});
-    const { responsibilities } = await connected.r12y.list({});
-    const welcome = responsibilities.find((record) => record.details?.responsibilityType === "onboarding.initial")!;
     expect(await recorder.listScriptedManagedRequests(INSTALLATION)).toEqual([]);
-    await recorder.scriptManagedInference(INSTALLATION, [waitForUser(welcome.id), "message send --message 'Hola, Rosa. Empecemos con tus correos.' && yield"]);
     await connected.conversation.send({ conversationId: conversation.id, text: "Hola, soy Rosa. Ayúdame con mis correos.", idempotencyKey: "before-dismissal" });
+    await until(async () => (await recorder.listScriptedManagedRequests(INSTALLATION)).length > 0, "first message to activate onboarding");
+    const welcome = (await connected.r12y.list({})).responsibilities.find((record) => record.details?.responsibilityType === "onboarding.initial")!;
+    expect(welcome.state).toBe("open");
+    expect(welcome.blocker).toBeUndefined();
+    const first = (await recorder.listScriptedManagedRequests(INSTALLATION))[0]!;
+    expect(first.systemPrompt).toContain("onboarding.initial");
+    expect(first.systemPrompt).not.toContain("Waiting for the user to dismiss the welcome card");
+    expect(first.messages).toContain("Hola, soy Rosa");
+    await recorder.scriptManagedInference(INSTALLATION, [waitForUser(welcome.id), "message send --message 'Hola, Rosa. Empecemos con tus correos.' && yield"]);
     await until(async () => (await connected.conversation.history({ conversationId: conversation.id })).messages.length === 2, "direct reply before dismissal");
     const count = (await recorder.listScriptedManagedRequests(INSTALLATION)).length;
     await connected.sys.config.set({ key: "users/1000/ui/welcome_card_seen", value: "1" });
@@ -168,8 +176,8 @@ describe("setup welcome", () => {
     await owner.connect();
     const connected = owner;
     const { conversation } = await connected.conversation.ship({});
-    const welcome = (await connected.r12y.list({})).responsibilities.find((record) => record.details?.responsibilityType === "onboarding.initial")!;
     await until(async () => (await recorder.listScriptedManagedRequests(INSTALLATION)).length > 0, "saved dismissal to resume onboarding on reconnect");
+    const welcome = (await connected.r12y.list({})).responsibilities.find((record) => record.details?.responsibilityType === "onboarding.initial")!;
     await recorder.scriptManagedInference(INSTALLATION, [waitForUser(welcome.id), `message send --message '${GREETING}' && yield`]);
     await until(async () => (await connected.conversation.history({ conversationId: conversation.id })).messages.length === 1, "recovered welcome");
     const count = (await recorder.listScriptedManagedRequests(INSTALLATION)).length;

@@ -4,13 +4,14 @@ import { INITIAL_ONBOARDING_DEDUPE_KEY } from "./onboarding-responsibility";
 import type { ResponsibilityStore } from "./responsibility-store";
 
 /** Operator releases reconcile locally when an existing personal agent is used. */
-export function reconcileOperatorUpdates(ownerUid: number, responsibilities: ResponsibilityStore, configuration?: string, now = Date.now()): void {
+export function reconcileOperatorUpdates(ownerUid: number, responsibilities: ResponsibilityStore, configuration?: string, now = Date.now(), onboardingCreatedAt?: number): void {
   if (!configuration) return;
   const catalog = operatorUpdateCatalogSchema.parse(JSON.parse(configuration));
   const onboarding = responsibilities.getByDedupeKey(ownerUid, INITIAL_ONBOARDING_DEDUPE_KEY);
+  const createdAt = onboardingCreatedAt ?? onboarding?.createdAtMs;
   const source = { kind: "system", component: "operator-updates" } as const;
   for (const update of catalog.updates) {
-    if (update.publishedAtMs > now || onboarding && onboarding.createdAtMs >= update.publishedAtMs) continue;
+    if (update.publishedAtMs > now || createdAt !== undefined && createdAt >= update.publishedAtMs) continue;
     responsibilities.create({
       ownerUid,
       title: update.title,

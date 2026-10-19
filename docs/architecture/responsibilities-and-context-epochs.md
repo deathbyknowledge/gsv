@@ -122,8 +122,10 @@ When a human or Process explicitly puts a Ship assignment into `waiting`, the le
 sets `nextCheckAtMs` to 24 hours later if no future check remains. An earlier future
 deadline brings that default forward. An explicit check time is preserved, and
 `nextCheckAtMs: null` explicitly clears the check. Metadata-only edits do not postpone
-it. System producers keep their own wake conditions. Initial onboarding waits for
-the owner to dismiss the early-access welcome card after account setup, then becomes actionable through the ordinary wake path.
+it. System producers keep their own wake conditions. Initial onboarding stays in
+Kernel-owned pending state until the owner dismisses the welcome card or sends
+their first Ship message. Only then does it enter the ledger as open work, without
+a blocker, through the ordinary wake path.
 
 A due Ship check is actionable even while a blocker remains. The review event directs
 Ship to read the current conversation and responsibility. If the human's answer is
@@ -233,14 +235,19 @@ enabled or disabled per owner without changing the subsystem's underlying data.
 
 System-owned producers use the same ledger contract:
 
-- Provisioning a new personal intelligence creates one high-priority initial
-  onboarding responsibility titled "Welcome to Ship". Dismissing the welcome card
-  records `users/<uid>/ui/welcome_card_seen = 1`, activates the untouched seed and
-  schedules its ordinary wake before acknowledging the dismissal. A saved dismissal
+- Provisioning a new personal intelligence durably prepares its onboarding brief
+  in Kernel storage, outside the responsibility ledger and model context. Dismissing
+  the welcome card records `users/<uid>/ui/welcome_card_seen = 1`, creates one open,
+  high-priority responsibility titled "Welcome to Ship" with no blocker, and
+  schedules its ordinary wake before acknowledging the dismissal. Its creation and
+  update timestamps both reflect activation, not prior onboarding progress. A saved dismissal
   retries pending welcome activation on reconnect without delaying sign-in. Handled
   and edited records are left alone.
   A user can also start the conversation before dismissal or on a surface without
-  the card. Ship sends its welcome in the owner's language and waits for a reply.
+  the card: their first message activates onboarding before Process admission;
+  wake recovery is scheduled afterwards, including if admission fails. Root actions
+  and messages to other work do not activate onboarding. Ship sends its welcome in
+  the owner's language and waits for a reply.
   The responsibility is present in Ship's first context epoch, rendered with its
   details like any Ship assignment. Those details
   carry the onboarding brief, the Markdown prompt file
@@ -249,7 +256,7 @@ System-owned producers use the same ledger contract:
   context puts an unresolved onboarding record ahead of everything else: other
   responsibilities are parked or delegated until the Ship resolves it, once the user
   has completed one small task. The brief is copied when the responsibility is
-  created; existing records retain their saved instructions across releases. A home
+  prepared; existing records retain their saved instructions across releases. A home
   that finished the earlier boot-file flow and has no record is never onboarded
   again. This replaces the generated boot context file.
 - Managed mail completion creates one `mail.received` responsibility keyed by the
@@ -350,8 +357,9 @@ Callers cannot select another owner's ledger or assign work to a foreign Process
 An operator may deploy a bounded catalog of release briefs. During reconciliation
 of an existing personal agent, Kernel creates ordinary `operator.update` records,
 deduplicated by owner, publisher ID and update ID. Terminal records retain that
-deduplication. The initial onboarding responsibility's creation time excludes
-historical updates for new owners; older accounts without that record remain
+deduplication. Kernel retains onboarding preparation time separately from activation
+to exclude historical updates for new owners; existing onboarding records supply
+that cutoff for older installations. Accounts without either remain
 eligible. Future-dated briefs are skipped until an eligible later reconciliation.
 
 The records wait for a suitable user conversation and do not schedule a wake just

@@ -1,4 +1,5 @@
 import type { ShipReplies } from "./ship-replies";
+import type { InitialOnboarding } from "./onboarding-responsibility";
 /**
  * KernelContext — the single shape passed to all syscall handlers.
  *
@@ -80,6 +81,7 @@ export type KernelContext = {
   schedules: ScheduleStore;
   mailboxes: MailboxStore;
   responsibilities: ResponsibilityStore;
+  welcome: InitialOnboarding;
   responsibilitySources: ResponsibilitySourcePolicyStore;
   federation: FederationStore;
   federationIdentity: FederationIdentity;
