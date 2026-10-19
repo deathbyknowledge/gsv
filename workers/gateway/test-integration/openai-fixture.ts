@@ -48,7 +48,8 @@ export type ScriptedOpenAiResponse =
 
 export type HeldOpenAiResponse = {
   started: Promise<void>;
-  release(): void;
+  /** Answer the held request, optionally with a response that depends on what happened while it waited. */
+  release(response?: ScriptedOpenAiResponse): void;
 };
 
 export type OpenAiFixture = {
@@ -159,10 +160,14 @@ export async function startOpenAiFixture(): Promise<OpenAiFixture> {
       const started = deferred();
       const released = deferred();
       heldResponses.add(released);
-      queue.push({ response: copyResponse(response), started, released });
+      const entry: QueuedResponse = { response: copyResponse(response), started, released };
+      queue.push(entry);
       return {
         started: started.promise,
-        release: released.resolve,
+        release: (replacement) => {
+          if (replacement) entry.response = copyResponse(replacement);
+          released.resolve();
+        },
       };
     },
     waitForRequests: async (count, timeoutMs = 10_000) => {
