@@ -606,13 +606,21 @@ describe("handleAiConfig", () => {
     expect(fetch).toHaveBeenCalledTimes(3);
   });
 
-  it("reports the owner's managed mailbox as a context fact, and null without one", async () => {
+  it("reports the Ship's address and the owner's managed mailbox as context facts, and null without them", async () => {
     await expect(handleAiContext({}, makeAiConfigContext({}, { handle: "sam" })))
-      .resolves.toMatchObject({ mailbox: { address: "sam@gsv.space" } });
+      .resolves.toMatchObject({
+        ship: { handle: "sam", origin: "https://sam.gsv.space", domain: "gsv.space" },
+        mailbox: { address: "sam@gsv.space" },
+      });
     await expect(handleAiContext({}, makeAiConfigContext({}, { handle: "sam", uid: 2000, ownerUid: 1000, processId: "task-1" })))
       .resolves.toMatchObject({ mailbox: { address: "sam@gsv.space" } });
     await expect(handleAiContext({}, makeAiConfigContext()))
-      .resolves.toMatchObject({ mailbox: null });
+      .resolves.toMatchObject({ ship: null, mailbox: null });
+    const legacy = makeAiConfigContext({}, { handle: "sam" });
+    legacy.env.GSV_PUBLIC_CONFIG = JSON.stringify({ primaryDomain: "ship.space" });
+    await expect(handleAiContext({}, legacy)).resolves.toMatchObject({
+      ship: { handle: "sam", origin: "https://sam.ship.space", domain: "ship.space" },
+    });
   });
 
   it("resolves the generation streaming switch", async () => {

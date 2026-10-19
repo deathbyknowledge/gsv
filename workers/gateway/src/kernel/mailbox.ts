@@ -1,4 +1,5 @@
 import { MAIL_MAX_MESSAGE_BYTES as MAX_RAW_MAIL_BYTES } from "@humansandmachines/gsv/services/mail";
+import { shipAddress } from "../installation/identity";
 import type {
   BinaryBody,
   ManagedInboundMailAccepted,
@@ -227,13 +228,10 @@ export function managedMailAddressForOwner(
   const mailbox = ctx.mailboxes.getMailboxForOwner(ownerUid);
   if (mailbox) return mailbox.address;
   if (ctx.mailboxes.getPrimaryMailbox()) return null;
-  const identity = ctx.installationIdentity;
-  if (!identity?.handle) return null;
+  const ship = shipAddress(ctx.installationIdentity);
+  if (!ship) return null;
   if (findEligibleMailboxOwner(ctx)?.uid !== ownerUid) return null;
-  const hostname = new URL(identity.canonicalOrigin).hostname.toLowerCase();
-  const prefix = `${identity.handle.toLowerCase()}.`;
-  if (!hostname.startsWith(prefix) || hostname.length === prefix.length) return null;
-  return `${identity.handle.toLowerCase()}@${hostname.slice(prefix.length)}`;
+  return `${ship.handle}@${ship.domain}`;
 }
 
 type WriteMailboxFilesInput = {

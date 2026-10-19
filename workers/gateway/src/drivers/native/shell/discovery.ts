@@ -63,8 +63,9 @@ const NATIVE_COMMAND_DESCRIPTORS = defineNativeCommandDescriptors({
   ]),
   crontab: command("Manage recurring native shell jobs.", "Run a shell command repeatedly on a cron schedule such as every morning or each weekday.", ["schedule", "recurring", "automation", "cron", "daily", "weekly"], ["sched"]),
   codemode: command("Run a reusable JavaScript GSV tool workflow.", "Combine several shell, filesystem, or connected integration operations in one scripted workflow.", ["script", "workflow", "automation", "tools", "javascript"]),
-  contact: command("Manage trusted contacts with other GSV Ships.", "Connect people using an invitation link. Ask who should handle new messages, then create or accept with --handling manual|ship. Inspect contacts, exchange structured requests, or change handling and trust.", ["contact", "people", "friend", "social", "connect", "ship", "federation", "pair", "invite", "request", "revoke"], [], [
+  contact: command("Find other Ships and manage trusted contacts.", "Find a person's Ship by handle or address and read its public profile. Connect people using an invitation link. Ask who should handle new messages, then create or accept with --handling manual|ship. Inspect contacts, exchange structured requests, or change handling and trust.", ["contact", "people", "person", "friend", "social", "connect", "ship", "handle", "find", "lookup", "profile", "address", "federation", "pair", "invite", "request", "revoke"], [], [
     "contact identity",
+    "contact find @HANDLE|ADDRESS",
     "contact list [--all] [--json]",
     "contact invite create --handling manual|ship [--expires DURATION]",
     "contact invite accept LINK_OR_CODE --handling manual|ship",

@@ -18,6 +18,7 @@ export function formatContextProjectionEvent(
     formatTargetChanges(previous.targets, current.targets),
     formatSetChanges("MCP servers", previous.mcpServers, current.mcpServers),
     formatSkillChanges(previous, current),
+    formatShipChanges(previous, current),
     formatMailboxChanges(previous, current),
   ].filter((section): section is string => Boolean(section));
   if (sections.length === 0) {
@@ -91,6 +92,15 @@ function formatSkillChanges(
     ...renderChangeGroup("Updated", updated, (entry) => formatSkill(entry.id, entry.description)),
   ];
   return lines.length > 0 ? ["Available skills:", ...lines].join("\n") : null;
+}
+
+function formatShipChanges(
+  previous: ContextProjection,
+  current: ContextProjection,
+): string | null {
+  if (JSON.stringify(previous.ship) === JSON.stringify(current.ship)) return null;
+  if (!current.ship) return ["Ship:", "- Address: none"].join("\n");
+  return ["Ship:", `- Handle: ${quote(current.ship.handle)}`, `- Address: ${quote(current.ship.origin)}`].join("\n");
 }
 
 function formatMailboxChanges(

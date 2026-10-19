@@ -102,6 +102,20 @@ describe("context epoch projection", () => {
     expect(createContextProjection({ ...base, mailbox: { address: "   " } })).not.toHaveProperty("mailbox");
   });
 
+  it("keeps the Ship's address as an optional fact before the mailbox", () => {
+    const base = { mcpServers: [], system: { timezone: "UTC" }, skillIndexMode: "off" as const, skillIndex: [], targets: [] };
+    const ship = { handle: "hank", origin: "https://hank.ship.space", domain: "ship.space" };
+    const without = createContextProjection({ ...base, ship: null, mailbox: null });
+    expect(without).not.toHaveProperty("ship");
+    const withBoth = createContextProjection({ ...base, ship, mailbox: { address: "hank@ship.space" } });
+    expect(withBoth.ship).toEqual(ship);
+    expect(Object.keys(withBoth).slice(-2)).toEqual(["ship", "mailbox"]);
+    expect(contextProjectionsEqual(withBoth, without)).toBe(false);
+    const reparsed = contextProjectionFromManifest({ version: 2, contextProjection: withBoth });
+    expect(reparsed && contextProjectionsEqual(reparsed, withBoth)).toBe(true);
+    expect(createContextProjection({ ...base, ship: { ...ship, domain: " " }, mailbox: null })).not.toHaveProperty("ship");
+  });
+
   it("falls back to UTC and compares normalized snapshots exactly", () => {
     const input = {
       targets: [],

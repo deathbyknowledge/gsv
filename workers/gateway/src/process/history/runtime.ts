@@ -2149,6 +2149,7 @@ export class ProcessHistory {
       storage: this.host.storage,
       ripgit: this.host.ripgit,
     };
+    if (projection.ship) promptInput.ship = projection.ship;
     if (projection.mailbox) promptInput.mailbox = projection.mailbox;
     const snapshot = promptOverride
       ? { prompt: promptOverride, sources: [] }

@@ -21,6 +21,8 @@ const contextProjectionSchema = z.object({
     mode: z.enum(["summary", "names", "off"]),
     entries: z.array(skillSchema),
   }),
+  /** Omitted without a hosted identity. Optional facts stay trailing: equality is serialized. */
+  ship: z.object({ handle: z.string(), origin: z.string(), domain: z.string() }).optional(),
   /** Omitted when the installation has no managed mailbox for the owner. Keep last: equality is serialized. */
   mailbox: z.object({ address: z.string() }).optional(),
 });
@@ -46,6 +48,10 @@ export function createContextProjection(
     skills: normalizeSkillProjection(snapshot, fallback?.skills),
   };
   if (snapshot.system.language !== undefined) projection.runtime.language = snapshot.system.language;
+  const handle = normalizeOptionalLine(snapshot.ship?.handle);
+  const origin = normalizeOptionalLine(snapshot.ship?.origin);
+  const domain = normalizeOptionalLine(snapshot.ship?.domain);
+  if (handle && origin && domain) projection.ship = { handle, origin, domain };
   const address = normalizeOptionalLine(snapshot.mailbox?.address);
   if (address) projection.mailbox = { address };
   return projection;

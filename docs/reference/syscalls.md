@@ -2089,7 +2089,7 @@ type AiSyscalls = {
 
   "ai.context": {
     args: Empty;
-    result: { targets?: Array<{ id: string; implements: string[]; label?: string; description?: string; platform?: string }>; mcpServers: string[]; systemContextFiles?: Array<{ name: string; text: string }>; system: { timezone: string; language?: string }; skillIndex?: Array<{ id: string; name: string; description: string; source: { kind: "home"; label: string; writable: boolean } }>; skillIndexMode: "summary" | "names" | "off" }; mailbox: { address: string } | null };
+    result: { targets?: Array<{ id: string; implements: string[]; label?: string; description?: string; platform?: string }>; mcpServers: string[]; systemContextFiles?: Array<{ name: string; text: string }>; system: { timezone: string; language?: string }; skillIndex?: Array<{ id: string; name: string; description: string; source: { kind: "home"; label: string; writable: boolean } }>; skillIndexMode: "summary" | "names" | "off" }; ship: { handle: string; origin: string; domain: string } | null; mailbox: { address: string } | null };
   };
 
   "ai.text.generate": {
@@ -2101,9 +2101,12 @@ type AiSyscalls = {
 
 `ai.context` is the process-facing projection of everything a run needs
 besides the model: reachable targets, ready MCP servers, system context files,
-the skill index, and the managed mailbox. An omitted `targets` or `skillIndex` means that catalog
+the skill index, the Ship's address, and the managed mailbox. An omitted `targets` or `skillIndex` means that catalog
 could not be refreshed; Process retains its last observed projection. An empty
-array is an authoritative catalog with no entries. `mailbox` is the address the
+array is an authoritative catalog with no entries. `ship` is the Ship's handle,
+its address on the operator's primary domain (or its canonical origin when none is
+configured), and the domain every Ship's handle address shares; it is `null` for an
+installation without a handle. `mailbox` is the address the
 caller's owner reads and sends as through `mail`, or `null` when the
 installation has no managed mailbox for that owner; Process renders it as a
 runtime fact and reports a change as a context event. `ai.text.generate` runs one model turn through the

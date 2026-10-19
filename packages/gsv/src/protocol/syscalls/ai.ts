@@ -40,8 +40,18 @@ export type AiContextResult = {
   /** Omitted when the catalog could not be read; retain the last observed projection. */
   skillIndex?: AiSkillIndexEntry[];
   skillIndexMode: AiSkillIndexMode;
+  /** This installation's handle and canonical address, or null when it has no hosted identity. */
+  ship: AiContextShip | null;
   /** The managed mailbox the caller's owner reads and sends as, or null when this installation has none. */
   mailbox: AiContextMailbox | null;
+};
+
+export type AiContextShip = {
+  handle: string;
+  /** The canonical web origin, such as https://esteve.ship.space. */
+  origin: string;
+  /** The domain every Ship of this installation's deployment shares, such as ship.space. */
+  domain: string;
 };
 
 export type AiContextMailbox = {

@@ -50,6 +50,13 @@ describe("context projection event prompt", () => {
     expect(event).toContain("`skills list`");
   });
 
+  it("reports the Ship's address once when an epoch first observes it", () => {
+    const ship = { handle: "hank", origin: "https://hank.ship.space", domain: "ship.space" };
+    expect(formatContextProjectionEvent(BASE, { ...BASE, ship }))
+      .toContain('Ship:\n- Handle: "hank"\n- Address: "https://hank.ship.space"');
+    expect(formatContextProjectionEvent({ ...BASE, ship }, { ...BASE, ship: { ...ship } })).toBeNull();
+  });
+
   it("reports the managed mailbox appearing, changing, and disappearing", () => {
     const appeared = formatContextProjectionEvent(BASE, { ...BASE, mailbox: { address: "hank@gsv.space" } });
     expect(appeared).toContain("Email:\n- Address: \"hank@gsv.space\"");

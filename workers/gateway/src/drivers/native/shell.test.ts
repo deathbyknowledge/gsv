@@ -984,7 +984,7 @@ describe("native shell capability discovery", () => {
 
     expect(result.ok).toBe(true);
     expect(result.stdout).toContain("GSV live capability manual");
-    expect(result.stdout).toContain("contact      Manage trusted contacts with other GSV Ships");
+    expect(result.stdout).toContain("contact      Find other Ships and manage trusted contacts");
     expect(result.stdout).toContain("message      Send messages, attach files, and route conversations");
     expect(result.stdout).toContain("yield        Finish the active agent run");
     expect(result.stdout).toContain("skills       Inspect and maintain reusable agent workflows");

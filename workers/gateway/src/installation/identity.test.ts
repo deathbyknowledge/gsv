@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   parseInstallationId,
+  shipAddress,
 } from "./identity";
 
 describe("installation identity", () => {
@@ -25,4 +26,13 @@ describe("installation identity", () => {
     expect(() => parseInstallationId(null)).toThrow("installationId must be a string");
   });
 
+
+  it("addresses a Ship by handle on the operator's primary domain", () => {
+    const identity = { installationId: "inst_1", handle: "Hank", canonicalOrigin: "https://hank.gsv.space" };
+    expect(shipAddress(identity, "ship.space")).toEqual({ handle: "hank", origin: "https://hank.ship.space", domain: "ship.space" });
+    expect(shipAddress(identity)).toEqual({ handle: "hank", origin: "https://hank.gsv.space", domain: "gsv.space" });
+    expect(shipAddress({ ...identity, canonicalOrigin: "https://other.example" })).toBeNull();
+    expect(shipAddress({ ...identity, handle: undefined }, "ship.space")).toBeNull();
+    expect(shipAddress(null, "ship.space")).toBeNull();
+  });
 });
