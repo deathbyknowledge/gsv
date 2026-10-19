@@ -1,27 +1,35 @@
-# Invite people
+# One person per Ship {#one-person-per-space}
 
-A space can hold more than one person. The root account invites people, sets or resets their passwords, and removes their access. Everyone else sees only their own account.
+Each Ship has one personal account, its personal agent and any additional agent accounts.
+To connect with another person, invite them through [People](/how-to/contact-people).
+They use their own Ship; a contact invitation does not create an account in yours.
+An operator can host separate Ships for a [whole team](/how-to/organisations).
 
-## Invite a person
+## Create a Ship {#create-a-space}
 
-1. Sign in as **root** and open **Settings → people.**
-2. Under **Invite a person**, enter the username they will use: lowercase, starting with a letter or `_`, up to 32 characters.
-3. Click **create invitation.** GSV shows a private link; **copy link** and send it over a channel you trust.
+Open your operator's signup page or choose **Create your Ship** in Desktop.
+Choose a handle, enter your email and agree to the terms. Verify your email, then
+set your password. Registration needs no invite code when the operator enables
+it. One verified email can create one Ship. Sign in with the same email to reopen it.
 
-The link expires after ten minutes. The person opens it, chooses their password, and is signed in to their own account in your space. Pending invitations are listed under **Invitations**, each with **cancel invitation**.
+A friend's contact link opens their invitation first. After signup, continue in
+your Ship to choose who handles incoming messages and accept the connection.
+If setup is interrupted, sign in with the same email and continue your saved setup.
 
-## Manage accounts
+## Sign in
 
-**Accounts** lists everyone in the space, marking root and removed accounts. For each other person:
+Open your Ship and enter your password. Setup derives the internal account name
+from your handle. Existing Ships keep their account identity, home directory,
+credentials and connected devices.
 
-- **set password** sets a new password (at least 8 characters). Their existing credentials and messenger links are revoked, so they sign in again and re-link any messengers.
-- **remove access** stops their credentials and messenger links from working. Their data and any work already running remain in the space.
+## Recover personal access
 
-## What a person can do
+**Forgot password?** sends a code through an eligible messenger you previously
+linked. If you have no eligible link, choose the small **admin** link in the sign-in footer and sign in
+as root, then open **Settings → sign-in → Personal sign-in** to reset your personal
+password. Reset revokes personal sessions and messenger links; sign in again and
+reconnect those messengers. Your data, account identity and running work remain.
 
-Each account has its own conversations, processes and files, and its own approval policy under **Settings → permissions**. Capability grants set the outer limit of what an account may do; see the [security model](/architecture/security-model). An account cannot see another account's people or sign-in settings.
-
-## See also
-
-- [Run GSV for your organisation](/how-to/organisations) — when you need spaces for a whole team
-- [Configuration reference](/reference/configuration) — the keys behind per-account settings
+Root remains an administrative credential with broader permissions. Ordinary
+personal sign-in does not grant root access. Verified-owner recovery for root is
+separate from personal recovery; see the [security model](/architecture/security-model).

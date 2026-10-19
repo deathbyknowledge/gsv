@@ -130,7 +130,7 @@ describe("handleSysBootstrap", () => {
         ...expectedSkillOps,
       ],
     );
-    expect(ctx.config.set).toHaveBeenCalledWith("repos/root/gsv-manual/description", "GSV Manual");
+    expect(ctx.config.set).toHaveBeenCalledWith("repos/root/gsv-manual/description", "Ship Manual");
     expect(ctx.config.set).toHaveBeenCalledWith("repos/root/gsv-manual/ref", "main");
     expect(ctx.config.set).toHaveBeenCalledWith("repos/root/gsv-manual/visibility", "public");
     expect(ctx.config.set).not.toHaveBeenCalledWith(

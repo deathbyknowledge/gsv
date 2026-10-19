@@ -110,16 +110,22 @@ export type ContactIdentityResult = {
 
 export type ContactInviteCreateArgs = {
   expiresInSeconds?: number;
+  /** Owner's choice for the new contact. Ship must supply it; older human clients may omit it. */
+  shipHandlesMessages?: boolean;
 };
 
 export type ContactInviteCreateResult = {
   inviteId: string;
   code: string;
+  /** Shareable link; older gateways return only the equivalent code. */
+  url?: string;
   expiresAtMs: number;
 };
 
 export type ContactInviteAcceptArgs = {
   code: string;
+  /** Owner's choice, retained for retries of this acceptance. Ship must supply it. */
+  shipHandlesMessages?: boolean;
 };
 
 export type ContactInviteAcceptResult = {

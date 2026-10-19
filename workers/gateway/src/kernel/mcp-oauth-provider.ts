@@ -72,6 +72,7 @@ function isExpired(createdAt: number): boolean {
 
 export class McpOAuthProvider implements OAuthClientProvider {
   clientMetadataUrl?: string;
+  onAuthorizationRequired?: () => void;
   private storedClientId?: string;
   private storedServerId?: string;
   private authorizationUrl?: string;
@@ -141,6 +142,11 @@ export class McpOAuthProvider implements OAuthClientProvider {
 
   async saveTokens(tokens: OAuthTokens): Promise<void> {
     await this.storage.put(this.tokenKey(this.clientId), tokens);
+    this.clearAuthorization();
+  }
+
+  clearAuthorization(): void {
+    this.authorizationUrl = undefined;
   }
 
   async state(): Promise<string> {
@@ -216,6 +222,7 @@ export class McpOAuthProvider implements OAuthClientProvider {
     }
     await this.storage.put(this.stateCodeVerifierKey(this.clientId, parsed.nonce), pending);
     await this.storage.delete(challengeKey);
+    this.onAuthorizationRequired?.();
   }
 
   async saveCodeVerifier(verifier: string): Promise<void> {

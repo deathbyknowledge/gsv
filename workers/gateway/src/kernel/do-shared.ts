@@ -33,6 +33,7 @@ export type PendingManagedOnboardingCompletion = {
 
 
 export const MANAGED_ONBOARDING_COMPLETION_KEY = "managed_onboarding_completion";
+export const MANAGED_SETUP_FAILURE_KEY = "managed_setup_failure";
 
 export type IpcCallTimeout = {
   callId: string;

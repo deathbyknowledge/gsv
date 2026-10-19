@@ -442,8 +442,8 @@ impl Connection {
         &mut self,
         opts: &ConnectionOptions,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        let auth = opts.auth_username.as_ref().map(|username| AuthInfo {
-            username: username.clone(),
+        let auth = (opts.auth_password.is_some() || opts.auth_token.is_some()).then(|| AuthInfo {
+            username: opts.auth_username.clone(),
             password: opts.auth_password.clone(),
             token: opts.auth_token.clone(),
         });

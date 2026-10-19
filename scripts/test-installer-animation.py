@@ -19,7 +19,7 @@ repository, fixtures, fake_bin = map(Path, sys.argv[1:])
 enter = b"\x1b[?1049h"
 restore = b"\x1b[0m\x1b[?25h\x1b[?1049l"
 sgr = re.compile(rb"\x1b\[[0-9;]*m")
-rendered_frame = re.compile(rb"\x1b\[(\d+);1H( *)GSV\x1b\[K\r?\n\r?\n(.*?)Downloading GSV\x1b\[K\x1b\[J", re.DOTALL)
+rendered_frame = re.compile(rb"\x1b\[(\d+);1H( *)Ship\x1b\[K\r?\n\r?\n(.*?)Downloading Ship\x1b\[K\x1b\[J", re.DOTALL)
 
 
 def check(case, animated=True, exit_code=0):
@@ -39,7 +39,10 @@ def check(case, animated=True, exit_code=0):
                    TERM="xterm-256color", GSV_VERSION="v-test", GSV_INSTALLER_RELEASE_BOUND="1",
                    GSV_INSTALL_DIR=str(root / "installed with spaces"), GSV_TEST_RELEASE_DIR=str(release),
                    GSV_TEST_DESKTOP_LOG=str(root / "desktop.log"),
-                   GSV_TEST_DOWNLOAD_DELAY="7" if case in ("resize", "grow") else "1")
+                   GSV_TEST_DOWNLOAD_DELAY="1")
+        download_gate = root / "release-download"
+        if case in ("success", "resize", "grow", "small", "narrow", "short"):
+            env["GSV_TEST_DOWNLOAD_GATE"] = str(download_gate)
         if case == "default-path":
             env.pop("GSV_INSTALL_DIR")
             env["GSV_LEGACY_INSTALL_DIR"] = str(root / "legacy")
@@ -68,7 +71,7 @@ def check(case, animated=True, exit_code=0):
             (root / "bin").mkdir()
             (root / "installed").mkdir()
             original = b"#!/bin/sh\nprintf 'previous-version\\n'\n"
-            installed_names = ("gsv", "gsvd", "gsv-desktop", "gsv-transcribe", "gsv-vision")
+            installed_names = ("gsv", "gsvd", "gsv-desktop", "gsv-transcribe")
             for name in installed_names:
                 target = root / "installed" / name
                 target.write_bytes(original)
@@ -134,6 +137,8 @@ exec /usr/bin/cp "$@"
                         if resize_sizes:
                             size = resize_sizes.pop(0)
                             fcntl.ioctl(terminal, termios.TIOCSWINSZ, struct.pack("HHHH", *size, 0, 0))
+                        elif "GSV_TEST_DOWNLOAD_GATE" in env:
+                            download_gate.touch()
             else:
                 raise AssertionError(f"{case}: installer did not finish")
             while time.monotonic() < deadline:
@@ -161,7 +166,7 @@ exec /usr/bin/cp "$@"
         if case in ("small", "narrow", "short"):
             assert rendered_sizes == [(0, 0)], rendered_sizes
         if case == "success":
-            assert b"Downloading GSV\x1b[K" in output, output[-2500:]
+            assert b"Downloading Ship\x1b[K" in output, output[-2500:]
         if case == "hangup":
             assert {path.name for path in (root / "installed").iterdir()} == set(installed_names)
             assert all(path.read_bytes() == original for path in (root / "installed").iterdir())

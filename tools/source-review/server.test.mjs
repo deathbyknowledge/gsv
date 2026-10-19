@@ -24,7 +24,7 @@ async function listen(server) {
 
 test("source paths stay inside their declared workspace and only expose Markdown", async () => {
   const workspace = createWorkspaceRegistry().get("prompts");
-  assert.equal((await resolveWorkspacePath(workspace, "role-and-judgment/ship.md")).relativePath, "role-and-judgment/ship.md");
+  assert.equal((await resolveWorkspacePath(workspace, "ship/context.d/00-role.md")).relativePath, "ship/context.d/00-role.md");
   await assert.rejects(resolveWorkspacePath(workspace, "../process/do.ts"), /outside/);
   await assert.rejects(resolveWorkspacePath(workspace, "system.ts"), /file type/);
 });
@@ -64,6 +64,12 @@ test("previews assemble account-specific defaults with the runtime providers", a
     assert.equal(preview.sources.length, preview.sections.length);
     assert.ok(preview.sources.some((source) => source.responsibilityBaseline));
     assert.ok(preview.sources.every((source) => source.sha256.length === 64));
+    assert.equal(preview.prompt.split("# Knowledge").length - 1, 1);
+    assert.equal(preview.sections.find((section) => section.name === "15-memory.md")?.provider, "system.context");
+    for (const section of preview.sections.filter((section) => section.contextRoot)) {
+      assert.equal(section.paths.length, 1);
+      assert.ok(section.paths[0].endsWith(`/context.d/${section.name}`));
+    }
   }
   const files = await listWorkspaceFiles(createWorkspaceRegistry().get("prompts"));
   assert.deepEqual(ship.catalog.map((source) => source.path).sort(), files.map((file) => file.path).sort());
@@ -77,7 +83,7 @@ test("previews assemble account-specific defaults with the runtime providers", a
 });
 
 test("unsaved Markdown changes the real assembled prompt without touching disk or leaking into the next preview", async () => {
-  const absolutePath = join(REPO_ROOT, "workers/gateway/src/prompts/instance-facts/runtime.md");
+  const absolutePath = join(REPO_ROOT, "workers/gateway/src/prompts/system/context.d/00-runtime.md");
   const original = await readFile(absolutePath, "utf8");
   const preview = await loadPromptPreview("ship", {
     absolutePath, content: "# Edited\n\nHello {{program.username}} from {{user.username}}.\nLiteral `code` and ${notJavaScript}.\n",
@@ -145,7 +151,7 @@ test("the preview API validates drafts and renders their Markdown", async (conte
   const post = (body) => fetch(`${origin}/api/prompt-preview`, {
     method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body),
   });
-  const response = await post({ account: "crew", draft: { path: "role-and-judgment/crew.md", content: "# Draft\n\nDo **this**." } });
+  const response = await post({ account: "crew", draft: { path: "crew/context.d/00-role.md", content: "# Draft\n\nDo **this**." } });
   assert.equal(response.status, 200);
   const data = await response.json();
   assert.match(data.prompt, /Do \*\*this\*\*/);

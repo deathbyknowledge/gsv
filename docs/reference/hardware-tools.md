@@ -31,6 +31,14 @@ support background jobs or resumable shell sessions.
 
 ## Agent-Visible Tools
 
+Optional [cloud browsers](/how-to/cloud-browsers) expose the same browser command
+core as the extension. `instance start browser` on `gsv` reuses the account's
+starting or ready browser by default; `--new` requests a separate temporary
+browser. A new target becomes online only when ready. Target summaries include its instance state,
+deadline and optional saved profile ID. Stopped targets are never restarted by
+routing a command. `instance stop` retains the terminal receipt while releasing
+the running resource and its temporary files after confirmed cleanup.
+
 | Tool | Syscall | Description |
 |---|---|---|
 | `Read` | `fs.read` | Read a file or list a directory. |
@@ -92,6 +100,82 @@ targets, and ready MCP integrations. Each row includes an exact `NEXT` action.
 Use `man <command>` after discovery for command-specific guidance.
 
 ## Registered Target Descriptors
+
+The extension's page and tab commands, semantic element references, shell, and
+filesystem driver use the shared browser package. Browser backends supply their
+own CDP transport, tab operations, and file persistence. Each browser keeps its
+own references and command state; a reference from another browser is invalid.
+
+`page snapshot` exposes references for individual controls, including buttons
+inside calendar rows, list items, and web components. Use the desired control's
+reference with `page click @ref` or `page type @ref 'text'`; a reference addresses
+one element and takes no selector index. Take another snapshot after navigation
+or when a reference is reported stale.
+
+Use `page fill` to replace a field value, including native date/time controls;
+`page type` inserts text into the current selection. `fill`, `select`, and `check`
+verify the resulting state and fail if the control rejects it. `check` does not
+click a checkbox that already has the requested state. Password values are
+omitted from snapshots and action results.
+
+Actions can locate a control by exact accessible label, or role and name:
+
+```bash
+page fill --label 'From' 'Amsterdam Centraal'
+page fill --role input-time '10:00'
+page select --label 'Class' --option-label 'First'
+page check --label 'Direct only'
+page click --role button --name 'Plan' --within @form-ref --snapshot
+```
+
+Use a real form or dialog reference from a snapshot in place of `@form-ref`.
+Role/label locators read the current accessibility tree and require one match;
+ambiguity returns candidate references. `--within @ref` restricts that lookup
+to a region. `page snapshot --within @ref` inspects the same region before the
+snapshot's size limit is applied. `--snapshot` on an action returns its complete
+JSON receipt on the first line, followed by a readable outline with fresh state
+and references. Add `--json` to return one JSON object containing both the
+receipt and structured snapshot tree. An inspection failure is reported as
+`snapshotError` on the completed action's receipt; it does not repeat the action.
+`page wait` also accepts role/label locators.
+
+Filtering snapshot text with `grep` is useful for reading a large page. It is
+not necessary to extract references from prose to locate a known button or
+field. Start with a snapshot for orientation, then use precise locators or refs.
+Visible dialogs are summarized above the outline with usable references, even
+when the outline is truncated. A missing semantic locator also reports visible
+dialogs. If a search is empty, inspect that context before retrying: modal dialogs
+can hide the background from accessibility. This does not make hidden controls
+actionable or assume that every dialog blocks the page.
+Custom dropdowns use `page click --role option --name '…'`; `page select` is for
+native select controls. See `page --help` for syntax.
+
+Keep action receipts intact so delivery, observation and verification remain
+visible. Avoid `head` on action output. Chain dependent actions with `&&` so a
+failed command stops the sequence; if an action must be piped, enable
+`set -o pipefail`. A successful later command or pipe reader does not prove the
+preceding action succeeded. Check the receipt's observed state before proceeding.
+
+Click and type check which element would receive input, including nested shadow
+DOM, slotted content, and CSS pseudo-elements. They wait up to two seconds for a
+temporary obstruction to clear before failing. This wait only retries the
+readiness check; it never repeats dispatched input. A persistent dialog or
+overlay still blocks the action. Click coordinates use the visible portion of
+large or partially visible controls. Hit testing accounts for document scrolling
+while mouse input stays relative to the visible viewport. If a control remains
+outside the viewport after scrolling, the command reports that no input was sent. Inspect a screenshot
+for a misplaced popup or other layout problem instead of repeating the click.
+
+`page key` sends keys to the focused control, including controls inside open
+shadow roots. Supported examples include `Enter`, `Tab`, `Space`, `ArrowDown`,
+`Escape`, `Ctrl+a`, and `Shift+Tab`; a quoted literal space also works. `Return`
+is an alias for `Enter`. Enter uses native browser behavior: it submits an
+eligible focused form control, respecting validation and page event handlers,
+or inserts a newline in a multiline editor. Modified shortcuts such as
+`Ctrl+Enter` remain available to the page without inserting text. Action
+results report focus and observed changes inside open shadow roots as well as
+the main document. Delivery alone does not prove the intended website outcome;
+inspect the resulting page when that outcome matters.
 
 External targets currently register with the Gateway through the device driver
 compatibility path. Its descriptor records identity, online state, and

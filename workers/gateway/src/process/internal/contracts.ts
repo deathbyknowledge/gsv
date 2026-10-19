@@ -102,6 +102,7 @@ export type RunControlResult =
     text: string;
     delivery: RunDelivery;
     responsibilityAdmissionKey?: string;
+    yieldError?: string;
   }
   | {
     ok: false;

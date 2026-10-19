@@ -179,7 +179,7 @@ describe("gateway authentication integration", () => {
     if (created.status === "running") throw new Error("Native pairing did not finish");
     expect(created.exitCode, created.stderr).toBe(0);
     const { code, extensionUrl } = JSON.parse(created.stdout ?? "");
-    expect(extensionUrl).toContain("gsv-browser-extension.zip");
+    expect(extensionUrl).toBe("https://github.com/deathbyknowledge/gsv/releases/download/dev/gsv-browser-extension.zip");
     const invite = decodeDevicePairingCode(code);
     expect(invite).toMatchObject({ username: USERNAME, targetId: "my-browser", label: "My browser" });
     const credential = createPairingCredential();

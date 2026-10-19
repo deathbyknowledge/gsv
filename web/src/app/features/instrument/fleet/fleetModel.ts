@@ -43,6 +43,7 @@ export type Place = {
   version: string;
   description: string;
   ownerUid: number | null;
+  instance?: ConsoleTarget["instance"];
 };
 
 type PlaceActions = { pair: boolean; forget: boolean };
@@ -84,6 +85,7 @@ export function placeFromTarget(target: ConsoleTarget): Place {
     version: target.version,
     description: target.description,
     ownerUid: target.ownerUid,
+    instance: target.instance,
   };
 }
 
@@ -104,7 +106,7 @@ export function cloudPlace(): Place {
 /** Machines first, then the cloud home, then browsers and the rest, each group alphabetical. */
 // The current UI pins the cloud first, before the remaining groups described above.
 export function orderPlaces(targets: readonly ConsoleTarget[]): Place[] {
-  const places = targets.map(placeFromTarget);
+  const places = targets.filter(target => !target.instance || !["stopped", "failed"].includes(target.instance.state)).map(placeFromTarget);
   if (!places.some((place) => place.id === CLOUD_TARGET_ID)) {
     places.push(cloudPlace());
   }
@@ -128,6 +130,7 @@ export function planetVariantForKind(kind: PlaceKind): AsciiPlanetVariant {
 }
 
 export function placeStateLabel(place: Place): string {
+  if (place.instance) return place.instance.state;
   return place.online ? "connected" : "offline";
 }
 

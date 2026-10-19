@@ -1,7 +1,7 @@
 import { createContext, type ComponentChildren } from "preact";
-import { useContext } from "preact/hooks";
+import { useCallback, useContext, useState } from "preact/hooks";
 
-export type SegmentAction = "send" | "delete" | "clear";
+export type SegmentAction = "send";
 export type NativeVoice = {
   request_id: number;
   segment_id: number;
@@ -20,34 +20,9 @@ export type NativeEvent = {
   action: SegmentAction | null;
   text: string;
 };
-export type GestureCandidate = "arm" | "disarm" | "start_transcription" | "stop_transcription"
-  | "send" | "delete_backward" | "clear_dictation" | "open_palm" | "mute" | "unmute";
-export type PracticeTarget = "none" | "listen" | "dictate" | "send" | "delete" | "clear" | "pause" | "scroll" | "off";
-export type PracticeGesture = "one" | "two" | "three" | "four" | "five" | "both_fists" | "scroll";
-export type GesturePractice = {
-  lesson_id: number;
-  expected: PracticeTarget;
-  feedback_sequence: number;
-  feedback: { gesture: PracticeGesture; reason: "wrong_gesture" | "not_ready" } | null;
-};
-export type GestureContext =
-  | { mode: "disarmed" | "disabled" | "standby" }
-  | { mode: "active"; voice_request_id: number; muted: boolean }
-  | { mode: "practice"; lesson_id: number };
 export type NativeSnapshot = {
   lease: string;
   voice: NativeVoice | null;
-  gestures_enabled: boolean;
-  gesture_status: string;
-  gesture_context: GestureContext;
-  gesture_progress: { candidate: GestureCandidate; progress_permille: number } | null;
-  gesture_action: GestureCandidate | null;
-  gesture_action_sequence: number;
-  gesture_needs_reset: boolean;
-  gesture_reset_after_action: number;
-  gesture_practice: GesturePractice | null;
-  scroll_velocity: number;
-  scroll_sequence: number;
   devices: { id: string; name: string; is_default: boolean }[];
   devices_loading: boolean;
   devices_revision: number;
@@ -57,21 +32,30 @@ export type NativeSnapshot = {
 export type NativeCommand =
   | { kind: "start"; device_id: string | null }
   | { kind: "stop"; request_id: number }
+  | { kind: "finish"; request_id: number }
   | { kind: "cancel" | "devices" | "detach" }
-  | { kind: "segment"; request_id: number; segment_id: number; action: SegmentAction }
-  | { kind: "gestures"; enabled: boolean }
-  | { kind: "practice"; expected: PracticeTarget };
+  | { kind: "segment"; request_id: number; segment_id: number; action: SegmentAction };
 
-export type NativeUpdate = { revision: number; sent_at_ms: number; scroll_age_ms: number; snapshot: NativeSnapshot };
+export type NativeUpdate = { revision: number; sent_at_ms: number; snapshot: NativeSnapshot };
 export type NativeSubscription = { initial: Promise<NativeSnapshot>; dispose(): void };
 export type NativeInput = {
-  subscribe(receive: (update: NativeUpdate) => void, practice?: boolean): NativeSubscription;
+  subscribe(receive: (update: NativeUpdate) => void): NativeSubscription;
   acknowledge(lease: string, revision: number, ack: number): Promise<void>;
   command(lease: string, command: NativeCommand): Promise<void>;
 };
 
 const PlatformContext = createContext<NativeInput | null>(null);
+const MicrophoneContext = createContext<{ device: string; setDevice(device: string): void } | null>(null);
+const microphoneKey = "gsv.desktop.microphone";
 export function NativeInputProvider({ input, children }: { input: NativeInput; children: ComponentChildren }) {
-  return <PlatformContext.Provider value={input}>{children}</PlatformContext.Provider>;
+  const [device, selectDevice] = useState(() => {
+    try { return localStorage.getItem(microphoneKey) ?? ""; } catch { return ""; }
+  });
+  const setDevice = useCallback((device: string) => {
+    selectDevice(device);
+    try { localStorage.setItem(microphoneKey, device); } catch { /* Keep this session's microphone. */ }
+  }, []);
+  return <PlatformContext.Provider value={input}><MicrophoneContext.Provider value={{ device, setDevice }}>{children}</MicrophoneContext.Provider></PlatformContext.Provider>;
 }
 export const useNativeInput = () => useContext(PlatformContext);
+export const useNativeMicrophone = () => useContext(MicrophoneContext);

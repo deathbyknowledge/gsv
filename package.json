@@ -1,6 +1,6 @@
 {
   "name": "gsv",
-  "version": "0.6.6",
+  "version": "0.7.3",
   "private": true,
   "type": "module",
   "workspaces": [
@@ -9,13 +9,15 @@
     "workers/gateway",
     "workers/installations",
     "workers/inference",
+    "workers/instances",
     "web",
     "packages/*"
   ],
   "scripts": {
-    "postinstall": "npm run gsv:build",
+    "postinstall": "node tools/instances/storage-script.mjs && npm run gsv:build && npm run browser:build",
     "setup": "bash ./scripts/setup-deps.sh",
     "dev": "bash ./scripts/dev-stack.sh",
+    "smoke:browser": "node ./tools/instances/smoke.mjs",
     "dev:managed": "bash ./scripts/dev-managed-stack.sh",
     "review:prompts": "node ./tools/source-review/server.mjs prompts",
     "review:manual": "node ./tools/source-review/server.mjs manual",
@@ -31,7 +33,7 @@
     "extension:package": "bash ./scripts/build-extension-package.sh",
     "adapters:check": "node ./scripts/adapter-catalog.mjs >/dev/null",
     "deployment:check": "npm run check --workspace deployment && npm run adapters:check",
-    "deployment:build": "bash ./scripts/build-cloudflare-bundles.sh ./release/local",
+    "deployment:build": "bash ./scripts/build-cloudflare-bundles.sh",
     "deployment:plan": "npm run deployment:build && alchemy plan --stage operator",
     "deployment:deploy": "npm run deployment:build && alchemy deploy --stage operator --yes",
     "deployment:bootstrap": "node deployment/src/operator-bootstrap-command.ts",
@@ -42,21 +44,22 @@
     "version:sync": "node ./scripts/version.mjs sync",
     "version:set": "node ./scripts/version.mjs set",
     "version:bump": "node ./scripts/version.mjs bump",
-    "release:build:cloudflare": "bash ./scripts/build-cloudflare-bundles.sh",
     "release:show:stable-tag": "node ./scripts/release.mjs stable-tag",
-    "release:cut:stable": "node ./scripts/release.mjs cut-stable"
+    "release:cut:stable": "node ./scripts/release.mjs cut-stable",
+    "browser:build": "npm run build --workspace packages/browser"
   },
   "devDependencies": {
-    "@effect/platform-node": "4.0.0-beta.107",
+    "@effect/platform-node": "4.0.5",
     "@oxlint/plugins": "1.79.0",
     "ajv": "8.20.0",
-    "alchemy": "2.0.0-beta.72",
-    "effect": "4.0.0-beta.107",
+    "alchemy": "2.0.0-beta.83",
+    "effect": "4.0.5",
     "es-module-lexer": "2.3.0",
     "esbuild": "0.28.1",
     "magic-string": "0.30.21",
     "oxlint": "1.79.0",
     "source-map-js": "1.2.1",
-    "ts-json-schema-generator": "2.9.0"
+    "ts-json-schema-generator": "2.9.0",
+    "wrangler": "4.147.0"
   }
 }

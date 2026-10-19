@@ -164,7 +164,11 @@ set to the PID.
 Empty responses, reasoning without a final answer, and malformed tool-call text
 use the existing three-attempt retry budget before trying the next configured
 model. A normal provider stop does not make an unusable response successful.
-Cancelled or superseded runs do not start fallback requests.
+Cancelled or superseded runs do not start fallback requests. Cloudflare RPC
+stream disconnections, lost network connections, and inactive-object connection
+closures use the same three-attempt budget. Each retry has a fresh inference
+identity; incomplete responses never execute tools. This recovers interrupted
+delivery by generating again, not by replaying previously committed actions.
 
 After classifying a generation failure and selecting a fallback, the Process
 limits the new fallback diagnostic to 4,096 characters (UTF-16 code units),

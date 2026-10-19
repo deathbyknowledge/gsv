@@ -1,0 +1,24 @@
+.signup-dialog {
+  position: fixed;
+  inset: 0;
+  width: min(540px, calc(100% - 32px));
+  max-width: none;
+  max-height: calc(100dvh - 32px);
+  box-sizing: border-box;
+  margin: auto;
+  padding: 24px 40px 40px;
+  overflow: auto;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--text);
+  font: inherit;
+}
+.signup-dialog::backdrop { background: rgb(0 0 0 / 25%); }
+.signup-dialog-controls { display: flex; justify-content: flex-end; margin-bottom: 16px; }
+.signup-dialog-controls button { min-height: 32px; }
+.signup-dialog .desktop-welcome { width: 100%; }
+.signup-dialog .signup-desktop-app { width: auto; padding: 0; }
+.signup-reopen { display: block; margin-inline: auto; }
+@media (max-width: 480px) {
+  .signup-dialog { padding: 12px 24px 28px; }
+}

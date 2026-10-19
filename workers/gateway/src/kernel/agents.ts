@@ -17,7 +17,6 @@
 import type {
   AccountCreateArgs,
   AccountCreateResult,
-  AccountKind,
   AccountListArgs,
   AccountListResult,
   AccountRelation,
@@ -35,15 +34,16 @@ import {
   createAccount,
   isUsernameAvailable,
   normalizeAccountName,
-  prepareAccount,
+  type CreateAccountInput,
   prepareAccountHome,
   seedContextFile,
 } from "./accounts";
 import { canOwnerRunAsAccount } from "./account-access";
 import { ensureAccountHomeLayout } from "./account-home";
-import { ensureInitialOnboardingResponsibility, reconcileInitialOnboardingResponsibility } from "./onboarding-responsibility";
 import { ensurePersonalMemory } from "./personal-memory";
-import { CREW_CONTEXT, crewDelegationContext } from "../prompts/personal-intelligence";
+import { reconcileOperatorUpdates } from "./operator-updates";
+import { shipContextFiles } from "../prompts/personal-intelligence";
+import { contextFiles } from "../prompts/context";
 
 /**
  * Curated, tasteful default names for the personal agent. The first available
@@ -186,12 +186,12 @@ export async function ensurePersonalAgent(
     if (entry) {
       const reconciled = reconcilePersonalAgentDisplayName(auth, entry, human) ?? entry;
       const identity = accountIdentity(auth, reconciled);
-      reconcileInitialOnboardingResponsibility(human.uid, ctx.responsibilities);
+      reconcileOperatorUpdates(human.uid, ctx.responsibilities, ctx.env.GSV_OPERATOR_UPDATES, Date.now(), ctx.welcome.createdAt(human.uid));
       await ensureAccountHomeLayout(ctx.env, identity, {
         seedPromptContext: true,
         personalAgent: true,
         beforeRetiringGeneratedBootContext: () => {
-          ensureInitialOnboardingResponsibility(human.uid, ctx.responsibilities);
+          ctx.welcome.prepare(human.uid);
         },
       });
       await ensureCrewAccount(ctx, human, identity);
@@ -201,7 +201,7 @@ export async function ensurePersonalAgent(
   }
 
   const agentName = pickAgentName(auth, preferredName);
-  ensureInitialOnboardingResponsibility(human.uid, ctx.responsibilities);
+  ctx.welcome.prepare(human.uid);
   const provision = await createAccount(ctx, {
     kind: "agent",
     username: agentName,
@@ -220,13 +220,13 @@ async function ensureCrewAccount(
   human: ProcessIdentity,
   ship: ProcessIdentity,
 ): Promise<void> {
-  const prepared = await prepareAccount({
+  const input: CreateAccountInput = {
     kind: "agent",
     username: "crew",
     gecos: "Crew",
     ownerUid: human.uid,
-    contextFiles: [{ name: "00-role.md", text: CREW_CONTEXT }],
-  });
+    contextFiles: contextFiles("crew"),
+  };
   const key = `config/accounts/crew/${human.uid}`;
   const savedUid = ctx.config.get(key);
   const existing = savedUid === null ? null : ctx.auth.getPasswdByUid(Number(savedUid));
@@ -239,21 +239,25 @@ async function ensureCrewAccount(
     }
     crew = accountIdentity(ctx.auth, existing);
   } else {
-    for (let suffix = 2; !isUsernameAvailable(ctx.auth, prepared.input.username); suffix++) {
-      prepared.input.username = `crew${suffix}`;
+    for (let suffix = 2; !isUsernameAvailable(ctx.auth, input.username); suffix++) {
+      input.username = `crew${suffix}`;
     }
     // Claim the account and remember its uid before remote home writes can yield.
-    crew = commitAccount(ctx, prepared).identity;
+    crew = commitAccount(ctx, input).identity;
     ctx.config.set(key, String(crew.uid));
   }
-  await prepareAccountHome(ctx.env, { ...prepared.input, username: crew.username }, crew);
-  await seedContextFile(ctx.env, ship, "10-delegation.md", crewDelegationContext(crew.username));
+  await prepareAccountHome(ctx.env, { ...input, username: crew.username }, crew);
+  const seeded = new Set(shipContextFiles().map(({ name }) => name));
+  for (const file of shipContextFiles(crew.username)) {
+    if (!seeded.has(file.name)) await seedContextFile(ctx.env, ship, file.name, file.text);
+  }
 }
 
 /**
  * Create an account on behalf of an authenticated caller. Humans are an
  * administrative action (root only); agents are owned by the caller's human.
  */
+// The historical human-creation path above is now setup-only; this syscall creates agents.
 export async function handleAccountCreate(
   args: AccountCreateArgs,
   ctx: KernelContext,
@@ -264,27 +268,11 @@ export async function handleAccountCreate(
     throw new Error("account.create requires an authenticated identity");
   }
 
-  const kind: AccountKind = args.kind === "human" ? "human" : "agent";
+  if (args.kind !== "agent") throw new Error("Only agent accounts can be created after setup");
   const name = normalizeAccountName(auth, args.username);
   if (!name) {
     throw new Error(`Invalid or unavailable username: ${String(args.username)}`);
   }
-  if (kind === "human") {
-    // Creating human accounts is an administrative action.
-    if (!caller.calls.includes("*")) {
-      throw new Error("Creating human accounts requires root");
-    }
-    const { identity } = await createAccount(ctx, {
-      kind: "human",
-      username: name,
-      password: args.password,
-      gecos: args.gecos?.trim() || undefined,
-      shared: true,
-    });
-    const agent = await ensurePersonalAgent(ctx, identity);
-    return { account: identity, kind, personalAgent: agent.identity };
-  }
-
   const ownerUid = resolveCallerOwnerUid(ctx);
   const ownerName = auth.getPasswdByUid(ownerUid)?.username ?? "user";
   const contextFiles = normalizeAccountContextFiles(args.contextFiles);
@@ -305,7 +293,7 @@ export async function handleAccountCreate(
   };
   if (persona) accountInput.persona = persona;
   const { identity } = await createAccount(ctx, accountInput);
-  return { account: identity, kind };
+  return { account: identity, kind: "agent" };
 }
 
 /**

@@ -15,10 +15,8 @@ export function useSessionScreensState({ session, snapshot }: UseSessionScreensS
   const [loginValidationError, setLoginValidationError] = useState<string | null>(null);
   const [setupTouched, setSetupTouched] = useState<Partial<Record<keyof SetupAccount, boolean>>>({});
   const [setupValidationAttempt, setSetupValidationAttempt] = useState(0);
-  const [loginUsername, setLoginUsername] = useState(snapshot.username);
-  const [loginUsernameTouched, setLoginUsernameTouched] = useState(false);
+  const [administrator, setAdministrator] = useState(false);
   const [loginPassword, setLoginPassword] = useState("");
-  const [setupUsername, setSetupUsername] = useState(snapshot.username);
   const [setupPassword, setSetupPassword] = useState("");
   const [setupPasswordConfirm, setSetupPasswordConfirm] = useState("");
   const [setupConsent, setSetupConsent] = useState(false);
@@ -27,10 +25,13 @@ export function useSessionScreensState({ session, snapshot }: UseSessionScreensS
   const setupSubmitPressed = useRef(false);
   const setupHasConsentEntry = useRef(false);
   const setupHistoryLength = useRef(0);
-  const setupErrors = validateSetupAccount({ username: setupUsername, password: setupPassword, passwordConfirm: setupPasswordConfirm });
+  const setupErrors = validateSetupAccount({ password: setupPassword, passwordConfirm: setupPasswordConfirm });
+  // Self-signup agreed to the terms before arriving; operator-created spaces still confirm them here.
+  const setupConsentRequired = snapshot.setupConsentRequired !== false;
   const screenRef = useRef<HTMLElement>(null);
   const busy = snapshot.phase === "authenticating";
   const visibleView = snapshot.phase === "ready" ? "ready"
+    : snapshot.phase === "setup-recovery" ? "setup-recovery"
     : snapshot.phase === "setup" || (busy && pendingAction === "setup") ? "setup"
     : snapshot.phase === "booting" ? "booting" : "login";
 
@@ -47,7 +48,7 @@ export function useSessionScreensState({ session, snapshot }: UseSessionScreensS
   }, []);
 
   useEffect(() => {
-    if (visibleView !== "setup") return;
+    if (visibleView !== "setup" || !setupConsentRequired) return;
     setupHasConsentEntry.current = false;
     const setupUrl = new URL(window.location.href);
     const completedUrl = setupUrl.pathname === "/onboarding" ? new URL("/", setupUrl).href : setupUrl.href;
@@ -110,13 +111,7 @@ export function useSessionScreensState({ session, snapshot }: UseSessionScreensS
         window.history.forward();
       }
     };
-  }, [visibleView]);
-
-  // Sync login username from snapshot (e.g. after first-boot setup creates the
-  // account) but only if the user hasn't manually edited or cleared the field.
-  useEffect(() => {
-    if (!loginUsernameTouched && snapshot.username) setLoginUsername(snapshot.username);
-  }, [snapshot.username, loginUsernameTouched]);
+  }, [visibleView, setupConsentRequired]);
 
   useLayoutEffect(() => {
     if (busy) return;
@@ -152,12 +147,10 @@ export function useSessionScreensState({ session, snapshot }: UseSessionScreensS
   const submitLogin = (event: Event): void => {
     event.preventDefault();
     if (busy) return;
-    const username = loginUsername.trim();
-    if (!username) { setLoginValidationError("Username is required."); return; }
     if (!loginPassword) { setLoginValidationError("Password is required."); return; }
     setLoginValidationError(null);
     setPendingAction("login");
-    void session.login({ username, password: loginPassword }).catch(() => {
+    void session.login({ username: administrator ? "root" : undefined, password: loginPassword }).catch(() => {
       // Error is reflected through session snapshot.
     });
   };
@@ -166,28 +159,29 @@ export function useSessionScreensState({ session, snapshot }: UseSessionScreensS
     event.preventDefault();
     setupSubmitPressed.current = false;
     if (busy) return;
-    const account = { username: setupUsername, password: setupPassword };
-    setSetupTouched({ username: true, password: true, passwordConfirm: true });
+    const account = { password: setupPassword };
+    setSetupTouched({ password: true, passwordConfirm: true });
     if (Object.keys(setupErrors).length > 0) {
       if (setupStep === "consent") window.history.back();
       setSetupStep("credentials");
       setSetupValidationAttempt((attempt) => attempt + 1);
       return;
     }
-    if (setupStep === "credentials") {
-      window.history.pushState({ gsvSetupConsent: true }, "");
-      setupHasConsentEntry.current = true;
-      setupHistoryLength.current = window.history.length;
-      setSetupStep("consent");
-      return;
+    if (setupConsentRequired) {
+      if (setupStep === "credentials") {
+        window.history.pushState({ gsvSetupConsent: true }, "");
+        setupHasConsentEntry.current = true;
+        setupHistoryLength.current = window.history.length;
+        setSetupStep("consent");
+        return;
+      }
+      setSetupConsentTouched(true);
+      if (!setupConsent) return;
     }
-    setSetupConsentTouched(true);
-    if (!setupConsent) return;
     setLoginValidationError(null);
-    setLoginUsername(account.username);
-    setLoginUsernameTouched(false);
     setPendingAction("setup");
-    void session.setup({ ...account, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC" }).catch(() => {
+    void session.setup({ ...account, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
+      language: navigator.languages?.[0] || navigator.language || undefined }).catch(() => {
       // Error is reflected through session snapshot.
     });
   };
@@ -198,26 +192,25 @@ export function useSessionScreensState({ session, snapshot }: UseSessionScreensS
     busy,
     login: {
       error: loginValidationError ?? (snapshot.phase === "locked" ? snapshot.message : null),
-      username: loginUsername,
+      administrator,
       password: loginPassword,
-      onUsername: (value: string) => { setLoginValidationError(null); setLoginUsername(value); setLoginUsernameTouched(true); },
+      onAdministrator: (value: boolean) => { setAdministrator(value); setLoginPassword(""); setLoginValidationError(null); },
       onPassword: (value: string) => { setLoginValidationError(null); setLoginPassword(value); },
       onSubmit: submitLogin,
     },
     setup: {
       step: setupStep,
+      consentRequired: setupConsentRequired,
       error: snapshot.phase === "setup" ? snapshot.message : null,
+      // An untouched field stays quiet until something is typed in it or a submit is attempted.
       fieldErrors: {
-        username: setupTouched.username ? setupErrors.username : undefined,
-        password: setupTouched.password ? setupErrors.password : undefined,
-        passwordConfirm: setupTouched.passwordConfirm ? setupErrors.passwordConfirm : undefined,
+        password: setupTouched.password && (setupPassword || setupValidationAttempt > 0) ? setupErrors.password : undefined,
+        passwordConfirm: setupTouched.passwordConfirm && (setupPasswordConfirm || setupValidationAttempt > 0) ? setupErrors.passwordConfirm : undefined,
       },
-      username: setupUsername,
       password: setupPassword,
       passwordConfirm: setupPasswordConfirm,
       consent: setupConsent,
       consentError: setupConsentTouched && !setupConsent ? "Confirm your age and agreement to continue." : null,
-      onUsername: (value: string) => { setSetupUsername(value.toLowerCase()); },
       onPassword: setSetupPassword,
       onPasswordConfirm: setSetupPasswordConfirm,
       onConsent: (checked: boolean) => { setSetupConsent(checked); setSetupConsentTouched(true); },

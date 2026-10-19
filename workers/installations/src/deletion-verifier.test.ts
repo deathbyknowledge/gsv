@@ -44,12 +44,14 @@ describe("configured deletion verification", () => {
       namespaces: [{ namespaceId, ownerId: "gateway", before: { capturedAt: before, pages: ["page", "end"] },
         after: { capturedAt: after, pages: ["page", "end"] }, observations: ["observations"] }] });
     const manifest: InstallationDeletionManifest = { version: 1, installationId, capturedAt: after,
-      owners: ["accounts", "gateway", "inference"].map((id) => ({ id, resources: [], evidence: evidence.map((item) => ({
+      owners: ["accounts", "gateway", "inference", "instances"].map((id) => ({ id, resources: [], evidence: evidence.map((item) => ({
         id: item.reference, reference: item.reference, sha256: item.sha256, capturedAt: after,
       })) })) };
     manifest.owners[1].resources.push({ kind: "durable-object", namespace: namespaceId, resourceId: objectId, name: "owned-process" });
+    manifest.owners[3].resources.push({ kind: "r2", namespace: "browser-profiles", resourceId: `${installationId}/` });
     const additional = { verifyAdditionalEvidence: vi.fn(async () => true) };
-    const config = { DELETION_DISCOVERY_NAMESPACES: namespaces, DELETION_RESOURCE_SCOPES: { accounts: [], gateway: [], inference: [] },
+    const config = { DELETION_DISCOVERY_NAMESPACES: namespaces, DELETION_RESOURCE_SCOPES: { accounts: [], gateway: [], inference: [],
+      instances: [{ kind: "r2" as const, namespace: "browser-profiles", r2Prefix: "installation-root" as const }] },
       DELETION_ADDITIONAL_EVIDENCE: additional };
     const resolver = configuredDeletionEnvironment(db, config).DELETION_INVENTORY;
     const registered = await new InstallationDeletionInventories(db, resolver).register(manifest, evidence);

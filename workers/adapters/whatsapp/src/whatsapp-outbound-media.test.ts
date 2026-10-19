@@ -44,6 +44,20 @@ describe("WhatsApp outbound media", () => {
     expect(graph.send).toHaveBeenLastCalledWith({ to: "34611111189", type: "video", video: { link: "https://example.com/a.mp4" } });
   });
 
+  it.each(["text/markdown", "text/x-markdown", "Text/Markdown; charset=utf-8"])("uploads %s documents as plain text without changing their content or filename", async (mimeType) => {
+    const graph = api();
+    const bytes = new TextEncoder().encode("# Report\n\n- Ready ✓\n");
+    const media = { type: "document" as const, mimeType, filename: "report.md" };
+    await sendWhatsAppMediaMessage(graph, "34611111189", media, bytes, "the report");
+    expect(graph.upload).toHaveBeenCalledExactlyOnceWith(bytes, "text/plain", "report.md");
+    expect(graph.send).toHaveBeenCalledExactlyOnceWith({
+      to: "34611111189", type: "document",
+      document: { id: "media-1", caption: "the report", filename: "report.md" },
+    });
+    expect(media.mimeType).toBe(mimeType);
+    expect(whatsAppMediaFilename({ type: "document", mimeType })).toBe("attachment.md");
+  });
+
   it("rejects oversized uploads and attachments without a source before contacting Meta", async () => {
     const graph = api();
     await expect(sendWhatsAppMediaMessage(

@@ -1,0 +1,10 @@
+.settings .settings-voice { max-width: 42rem; }
+.settings-voice .settings-muted { font-size: .8rem; }
+.settings-voice-shortcuts { margin-block: 1.5rem; }
+.settings-voice .native-shortcut-fields { grid-template-columns: repeat(2, minmax(0, 1fr)); font-size: .8rem; }
+.settings-voice .native-shortcut-fields > button { grid-column: 1 / -1; text-decoration: none; }
+.settings-voice .native-shortcut-recorder { min-height: 42px; }
+.settings-voice .native-shortcut-recorder kbd { border: 0; padding: 0; font: inherit; }
+@container instrument (max-width: 650px) {
+  .settings-voice .native-shortcut-fields { grid-template-columns: minmax(0, 1fr); }
+}

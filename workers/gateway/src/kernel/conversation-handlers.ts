@@ -28,6 +28,7 @@ import type { KernelContext } from "./context";
 import { principalOf } from "./context";
 import { resolveCallerOwnerUid } from "./context";
 import { ensurePersonalController } from "./personal-controller";
+import { withInitialOnboarding } from "./onboarding-responsibility";
 import { resolveSelectedMessageTarget } from "./targets";
 import * as z from "zod/mini";
 
@@ -199,15 +200,17 @@ export async function handleConversationSend(
       uid: conversation.ownerUid,
       connectionId: ctx.connection.id,
       followsShip: conversation.kind === "ship" && principalOf(ctx)?.account.uid === conversation.ownerUid,
+      clientPlatform: interactionOrigin?.kind === "client" ? interactionOrigin.platform : undefined,
     });
   }
   let result: Extract<ProcSendResult, { ok: true }>;
   try {
     // SAFETY: The process RPC boundary returns a response frame for this request.
-    const response = await sendFrameToProcess(
-      ctx.installationId,
-      conversation.handlerPid,
-      request,
+    const response = await withInitialOnboarding(
+      conversation.kind === "ship" && principalOf(ctx)?.account.uid === conversation.ownerUid
+        ? conversation.ownerUid : undefined,
+      ctx,
+      () => sendFrameToProcess(ctx.installationId, conversation.handlerPid, request),
     ) as ResponseFrame<"proc.send"> | null;
     if (!response || response.type !== "res" || response.id !== request.id) {
       throw new Error("Conversation handler returned no valid response");

@@ -1,3 +1,4 @@
+import type { ActivityRequest } from "./zen/chatContextModel";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
 import { useColorTheme } from "../../components/ui/useColorTheme";
 import { InstrumentBackdrop } from "./shared/InstrumentBackdrop";
@@ -6,40 +7,52 @@ import { useSession } from "../../services/session/SessionProvider";
 import { TerminalProvider } from "../../services/terminal/TerminalProvider";
 import { DevicePairingProvider } from "../../services/machines/DevicePairingProvider";
 import { Zen } from "./zen/Zen";
+import { useContactReplies } from "./people/useContactReplies";
+import { useConsoleAccounts } from "../../services/system/useConsoleData";
 import { Fleet, type FleetProps } from "./fleet/Fleet";
+import { BrowserControlProvider, BrowserControlOverlay } from "./browser/BrowserControl";
 import { Memory } from "./memory/Memory";
 import { Settings } from "./settings/Settings";
 import { People } from "./people/People";
+import { peoplePath, readPeopleRoute } from "./people/peopleNavigation";
+import { usePeopleActivity } from "./people/usePeopleActivity";
 import type { FleetReference } from "./fleet/fleetModel";
 import { WireSync } from "./wire/WireSync";
-import type { MemoryPageRef } from "./shared/navigation";
+import { replaceLegacyChatPath, type MemoryPageRef } from "./shared/navigation";
 import { InstrumentHeader } from "./shared/InstrumentHeader";
+import { WelcomeCard } from "./shared/WelcomeCard";
 import { SHELL_KEYS } from "./shared/shellKeys";
 import { useDismissOnOutsideClick } from "./shared/useDismissOnOutsideClick";
 import { useTabAttention } from "./shared/useTabAttention";
+import { useInstrumentViewport } from "./shared/useInstrumentViewport";
+import { useScrollEdges } from "./shared/useScrollEdges";
 import { RetainedView } from "../../services/navigation/ViewActivity";
+import { navigateApp } from "../../services/navigation/appNavigation";
 import { ClientControlError, useClientControl } from "../../services/platform/ClientControl";
 import { useGateway } from "../../services/gateway/GatewayProvider";
 import { trackClientActivity } from "../../services/gateway/clientActivity";
+import { NativeVoiceSession } from "../../services/platform/NativeVoiceSession";
+import { HandsfreeStatus } from "../../services/platform/HandsfreeStatus";
 import "./instrument.css";
 
 /** The three distances of the instrument. Zen is near, Fleet is far, the first day is Zen's empty state. */
 export type Distance = "zen" | "fleet" | "memory" | "settings" | "people";
 
 /** A row in Fleet, addressed the way the manifest addresses it: `target:<id>` or `proc:<pid>`. */
-export type FleetRow = `target:${string}` | `proc:${string}` | `work:${string}` | `routine:${string}` | `more:${string}` | `dir:${string}` | `file:${string}`;
+export type FleetRow = `target:${string}` | `proc:${string}` | `more:${string}` | `dir:${string}` | `file:${string}`;
 
 const DISTANCE_TO_PATH = {
-  zen: "/zen",
+  zen: "/chat",
   fleet: "/fleet",
   memory: "/memory",
-  settings: "/zen/settings",
+  settings: "/chat/settings",
   people: "/people",
 } satisfies Record<Distance, string>;
 
 const DISTANCES: readonly Distance[] = ["zen", "fleet", "memory", "settings", "people"];
 
 function distanceForPath(path: string): Distance {
+  if (path === "/zen/settings") return "settings";
   return DISTANCES.find((distance) => DISTANCE_TO_PATH[distance] === path) ?? "zen";
 }
 
@@ -57,6 +70,7 @@ function storedScale(): Scale {
 }
 /** The instrument behind the session gate: the sign-in screens own the galaxy until the session is ready. */
 export function Instrument({ initialPath }: { initialPath: string }) {
+  const [handsfreeDirty, setHandsfreeDirty] = useState(false);
   const { service, snapshot } = useSession();
   const { status } = useGateway();
   useClientControl(["status"], async () => ({ type: "status", status: {
@@ -65,10 +79,13 @@ export function Instrument({ initialPath }: { initialPath: string }) {
   if (snapshot.phase !== "ready") {
     return <SessionScreens session={service} snapshot={snapshot} />;
   }
-  return <TerminalProvider key={JSON.stringify([snapshot.url, snapshot.username])}><DevicePairingProvider><InstrumentReady initialPath={initialPath} /></DevicePairingProvider></TerminalProvider>;
+  return <TerminalProvider key={JSON.stringify([snapshot.url, snapshot.username])}><DevicePairingProvider><BrowserControlProvider>
+    <NativeVoiceSession onDirtyChange={setHandsfreeDirty}><InstrumentReady initialPath={initialPath} handsfreeDirty={handsfreeDirty} /></NativeVoiceSession>
+  </BrowserControlProvider></DevicePairingProvider></TerminalProvider>;
 }
 
-function InstrumentReady({ initialPath }: { initialPath: string }) {
+function InstrumentReady({ initialPath, handsfreeDirty }: { initialPath: string; handsfreeDirty: boolean }) {
+  const viewportRef = useInstrumentViewport();
   const { service: session } = useSession();
   const { client, status } = useGateway();
   useEffect(() => {
@@ -78,7 +95,14 @@ function InstrumentReady({ initialPath }: { initialPath: string }) {
       try { client.sendSignal(signal); } catch { /* The next input after reconnect reports activity. */ }
     });
   }, [client, status.state]);
-  const [distance, setDistance] = useState<Distance>(() => distanceForPath(initialPath));
+  const distance = distanceForPath(initialPath);
+  const visitedPaths = useRef<Partial<Record<Distance, string>>>({});
+  visitedPaths.current[distance] = distance === "people" ? peoplePath(readPeopleRoute(window.location.search))
+    : distance === "settings" ? `/chat/settings${window.location.search}` : DISTANCE_TO_PATH[distance];
+  const scrollEdgesRef = useScrollEdges(distance);
+  useEffect(() => {
+    replaceLegacyChatPath();
+  }, [initialPath]);
   const [fleetRequest, setFleetRequest] = useState<FleetProps["openRequest"]>(null);
   const [zenPrefill, setZenPrefill] = useState<string | null>(null);
   const [selectedMemoryPage, setSelectedMemoryPage] = useState<MemoryPageRef | null>(null);
@@ -87,16 +111,19 @@ function InstrumentReady({ initialPath }: { initialPath: string }) {
   const [fleetDirty, setFleetDirty] = useState(false);
   const [memoryDirty, setMemoryDirty] = useState(false);
   const [peopleDirty, setPeopleDirty] = useState(false);
-  const [settingsEntry, setSettingsEntry] = useState<{ section: "profile" } | null>(null);
   const [zenTarget, setZenTarget] = useState<string | null>(null);
   /* the theme follows the system until the person picks one with the l key; the choice is remembered on this device */
-  const { theme, toggleTheme } = useColorTheme();
+  const { theme, toggleTheme } = useColorTheme("light");
   /* the tab title and favicon carry Ship's messages while the person is looking elsewhere */
   useTabAttention();
   const [scale, setScale] = useState<Scale>(() => storedScale());
   const [help, setHelp] = useState(false);
+  const [navigationOpen, setNavigationOpen] = useState(false);
+  const [searchRequested, setSearchRequested] = useState(false);
   const helpRef = useRef<HTMLElement>(null);
   const helpButtonRef = useRef<HTMLButtonElement>(null);
+  const navigationRef = useRef<HTMLElement>(null);
+  const navigationButtonRef = useRef<HTMLButtonElement>(null);
   const cycleScale = useCallback(() => {
     setScale((current) => {
       const next = SCALES[(SCALES.indexOf(current) + 1) % SCALES.length];
@@ -110,15 +137,23 @@ function InstrumentReady({ initialPath }: { initialPath: string }) {
   }, []);
   /* which process Zen shows: null is the ship; Fleet can open a helper's conversation */
   const [zenPid, setZenPid] = useState<string | null>(null);
+  const [activityRequest, setActivityRequest] = useState<ActivityRequest>();
+  const [zenRequestPrefill, setZenRequestPrefill] = useState<string | null>(null);
+  /* Ship's contact notices live here, above the keyed Zen view, so opening a helper and coming back keeps them */
+  const accounts = useConsoleAccounts();
+  const viewer = accounts.data?.find((account) => account.relation === "self");
+  const contactReplies = useContactReplies(viewer);
+  /* unsaved work the instrument guards as a whole: the chat's prompt, and replies typed under Ship's notices even while a helper is shown */
+  const unsaved = zenDirty || contactReplies.dirty;
   const selectingProcess = useRef(false);
-  const controlState = useRef({ zenDirty });
-  controlState.current = { zenDirty };
+  const controlState = useRef({ unsaved });
+  controlState.current = { unsaved };
   useClientControl(["status", "new", "use"], async ({ command, checkpoint, signal }) => {
     if (command.type === "status") return { type: "status", status: {
       gateway: status.state === "connected" ? "connected" : status.state === "connecting" ? "connecting" : "disconnected",
       window: "visible", selectedProcess: zenPid,
     } };
-    if (zenDirty || selectingProcess.current) throw new ClientControlError("busy");
+    if (unsaved || selectingProcess.current) throw new ClientControlError("busy");
     if (status.state !== "connected") throw new ClientControlError("unavailable");
     selectingProcess.current = true;
     try {
@@ -134,28 +169,35 @@ function InstrumentReady({ initialPath }: { initialPath: string }) {
         pid = command.processId;
       } else throw new ClientControlError("unavailable");
       await checkpoint();
-      if (controlState.current.zenDirty) throw new ClientControlError("busy");
+      if (controlState.current.unsaved) throw new ClientControlError("busy");
       setZenPid(pid);
-      setDistance("zen");
-      history.replaceState(null, "", "/zen");
+      navigateApp("/chat");
       return { type: command.type === "new" ? "created" : "selected", processId: pid };
     } finally { selectingProcess.current = false; }
   });
 
+  const peopleActivity = usePeopleActivity(viewer);
   const move = useCallback(
     (to: Distance, reference: FleetReference | null = null) => {
       if (reference && fleetDirty && !window.confirm("Discard unsaved Fleet edits and open this item?")) return false;
+      setNavigationOpen(false);
       if (to === distance) {
         if (reference) setFleetRequest({ reference });
         return true;
       }
       if (reference) setFleetRequest({ reference });
-      history.replaceState(null, "", DISTANCE_TO_PATH[to]);
-      setDistance(to);
+      navigateApp(visitedPaths.current[to] ?? DISTANCE_TO_PATH[to]);
       return true;
     },
     [distance, fleetDirty],
   );
+
+  const openSearch = useCallback(() => {
+    if (status.state !== "connected") return;
+    move("zen");
+    setHelp(false);
+    setSearchRequested(true);
+  }, [move, status.state]);
 
   useLayoutEffect(() => {
     if (!help) return;
@@ -171,30 +213,55 @@ function InstrumentReady({ initialPath }: { initialPath: string }) {
   /* a press anywhere else closes the keys; the panel and its button do not */
   useDismissOnOutsideClick(help, () => [helpRef.current, helpButtonRef.current], () => setHelp(false));
 
+  useDismissOnOutsideClick(navigationOpen, () => [navigationRef.current, navigationButtonRef.current], () => setNavigationOpen(false));
+  useLayoutEffect(() => {
+    if (!navigationOpen) return;
+    const dismissNavigation = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      event.stopPropagation();
+      setNavigationOpen(false);
+      navigationButtonRef.current?.focus();
+    };
+    window.addEventListener("keydown", dismissNavigation, true);
+    return () => window.removeEventListener("keydown", dismissNavigation, true);
+  }, [navigationOpen]);
+
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       const target = event.target;
       const typing =
         target instanceof HTMLElement &&
         (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.tagName === "SELECT" || target.isContentEditable);
-      if (target instanceof HTMLElement && target.closest(".fleet-connection, .settings-model-editor")) return;
-      if (event.defaultPrevented || typing || event.metaKey || event.ctrlKey || event.altKey) return;
-      if (!SHELL_KEYS.has(event.key)) return;
-      if (event.key === "z") {
+      if (event.defaultPrevented || event.isComposing) return;
+      if (target instanceof HTMLElement && target.closest(".zen-search-dialog")) return;
+      if (event.key === "k" && event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey && status.state === "connected") {
         event.preventDefault();
-        move(distance === "fleet" ? "zen" : "fleet");
+        openSearch();
+        return;
+      }
+      if (target instanceof HTMLElement && target.closest(".fleet-connection, .settings-model-editor")) return;
+      if (typing || event.metaKey || event.ctrlKey || event.altKey) return;
+      if (!SHELL_KEYS.has(event.key)) return;
+      if (event.key === "c") {
+        event.preventDefault();
+        move("zen");
+      }
+      if (event.key === "f") {
+        event.preventDefault();
+        move("fleet");
       }
       if (event.key === "m") {
         event.preventDefault();
-        move(distance === "memory" ? "zen" : "memory");
+        move("memory");
       }
       if (event.key === "p") {
         event.preventDefault();
-        move(distance === "people" ? "zen" : "people");
+        move("people");
       }
-      if (event.key === ",") {
+      if (event.key === "s") {
         event.preventDefault();
-        move(distance === "settings" ? "zen" : "settings");
+        move("settings");
       }
       if (event.key === "l") {
         event.preventDefault();
@@ -206,47 +273,66 @@ function InstrumentReady({ initialPath }: { initialPath: string }) {
       }
       if (event.key === "?") {
         event.preventDefault();
+        setNavigationOpen(false);
         setHelp((open) => !open);
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [cycleScale, distance, move, toggleTheme]);
+  }, [cycleScale, move, openSearch, status.state, toggleTheme]);
 
   return (
-    <div class={`instrument${theme === "light" ? " is-light" : ""}${scale === 1.5 ? " is-scale-15" : scale === 2 ? " is-scale-2" : ""}`}>
+    <div ref={viewportRef} class={`instrument${theme === "light" ? " is-light" : ""}${scale === 1.5 ? " is-scale-15" : scale === 2 ? " is-scale-2" : ""}`}>
       <InstrumentBackdrop />
       <WireSync />
+      <div class="instrument-viewport">
       <div class="instrument-scaled">
-      <InstrumentHeader distance={distance} onNavigate={move} helper={distance === "zen" && zenPid !== null}
+      <HandsfreeStatus />
+      <InstrumentHeader distance={distance} onNavigate={(to) => {
+        if (move(to) && navigationOpen) navigationButtonRef.current?.focus();
+      }} peopleWaiting={peopleActivity.conversations.length > 0 || peopleActivity.requests.length > 0}
+        helper={distance === "zen" && zenPid !== null}
         onShip={() => {
           if (!zenDirty || window.confirm("Discard your unsent message and attachments?")) setZenPid(null);
-        }} help={help} onHelp={() => setHelp((open) => !open)} helpButtonRef={helpButtonRef} />
+        }} help={help} onHelp={() => {
+          setNavigationOpen(false);
+          setHelp((open) => !open);
+          if (navigationOpen) navigationButtonRef.current?.focus();
+        }} helpButtonRef={helpButtonRef} navigationOpen={navigationOpen} navigationRef={navigationRef}
+        navigationButtonRef={navigationButtonRef} onNavigationToggle={() => {
+          setHelp(false);
+          setNavigationOpen((open) => !open);
+        }} />
+      <WelcomeCard />
       {help ? (
-        <aside id="instrument-help" class="instrument-help" aria-label="Keys" ref={helpRef}>
+        <aside id="instrument-help" class="instrument-help" aria-label="Help" ref={helpRef}>
+          <button type="button" class="instrument-help-search" disabled={status.state !== "connected"} aria-keyshortcuts="Control+K" onClick={openSearch}>
+            <span>Search Chat</span><kbd>Ctrl+K</kbd>
+          </button>
           <h4>Views & appearance</h4>
           <p>Navigation shortcuts work outside text fields and setup forms.</p>
           <dl>
-            <dt>z</dt><dd>Fleet · press again to return to Zen</dd>
-            <dt>m</dt><dd>Memory · press again to return to Zen</dd>
-            <dt>p</dt><dd>People · press again to return to Zen</dd>
-            <dt>,</dt><dd>Settings · press again to return to Zen</dd>
+            <dt>c</dt><dd>Chat</dd>
+            <dt>f</dt><dd>Fleet</dd>
+            <dt>m</dt><dd>Memory</dd>
+            <dt>p</dt><dd>People</dd>
+            <dt>s</dt><dd>Settings</dd>
             <dt>l</dt><dd>Switch between light and dark</dd>
             <dt>x</dt><dd>Cycle text size</dd>
             <dt>?</dt><dd>Show or hide these shortcuts</dd>
             <dt>Esc</dt><dd>Close this panel</dd>
           </dl>
           {distance === "zen" && <>
-            <h4>Zen · browse</h4>
+            <h4>Chat · browse</h4>
             <dl>
               <dt>j / k</dt><dd>Next / previous message or activity</dd>
               <dt>gg / G</dt><dd>Earlier history / latest messages and follow</dd>
               <dt>o</dt><dd>Show or hide the selected message’s activity</dd>
-              <dt>/</dt><dd>Search conversation · Ctrl/Cmd+F also works while typing</dd>
+              <dt>/</dt><dd>Search in browse mode · Ctrl/Cmd+F also works</dd>
               <dt>y / n</dt><dd>Approve or deny a pending request</dd>
               <dt>other keys</dt><dd>Start writing; the keystroke lands in the prompt</dd>
             </dl>
-            <h4>Zen · input</h4>
+            <h4>Chat · input</h4>
             <dl>
               <dt>Enter</dt><dd>Send the message or run the command</dd>
               <dt>Esc</dt><dd>Return to browse; closes the place picker first</dd>
@@ -295,49 +381,65 @@ function InstrumentReady({ initialPath }: { initialPath: string }) {
           </>}
         </aside>
       ) : null}
-      <div class="distance" data-view={distance}>
+      <div class="distance" data-view={distance} ref={scrollEdgesRef}>
+        <BrowserControlOverlay />
         <RetainedView active={distance === "zen"}>
-          <Zen key={zenPid ?? "ship"} onDraftChange={setZenDirty} onFleet={(reference) => move("fleet", reference ?? null)} onMemory={(page) => {
+          <Zen key={zenPid ?? "ship"} searchRequested={searchRequested} onSearchRequestHandled={() => setSearchRequested(false)} onDraftChange={setZenDirty} onFleet={(reference) => move("fleet", reference ?? null)} onMemory={(page) => {
             if (page && memoryDirty && !window.confirm("Discard your unsaved page changes and open this page?")) return;
             if (!move("memory")) return;
             if (page) setSelectedMemoryPage({ ...page });
-          }} initialTarget={zenTarget} prefill={zenPrefill} onPrefillUsed={() => setZenPrefill(null)} pid={zenPid} />
+          }} initialTarget={zenTarget} prefill={zenPrefill} requestPrefill={zenRequestPrefill} activityRequest={activityRequest}
+          onPrefillUsed={() => { setZenPrefill(null); setZenRequestPrefill(null); }} pid={zenPid}
+          contactReplies={zenPid ? undefined : contactReplies}
+          peopleActivity={zenPid ? undefined : peopleActivity}
+          onPeopleActivity={(request) => {
+            /* a contact conversation Zen asked People to open; a fresh object each time so the same contact reopens */
+            if (!request) { move("people"); return; }
+            navigateApp(peoplePath("contactId" in request ? { contactId: request.contactId } : { view: "requests", requestId: request.requestId }));
+          }} />
         </RetainedView>
         <RetainedView active={distance === "memory"}>
-          <Memory onDirtyChange={setMemoryDirty} initialPage={selectedMemoryPage} onAsk={(_page, prompt) => {
-            if (zenDirty && !window.confirm("Replace your unsent message and attachments with this question?")) return;
+          <Memory onDirtyChange={setMemoryDirty} initialPage={selectedMemoryPage} onAsk={(text) => {
+            if (zenPid && zenDirty && !window.confirm("Discard your unsent message and return to Ship?")) return;
             if (!move("zen")) return;
             setZenPid(null);
             setZenTarget(null);
-            setZenPrefill(prompt);
+            setZenPrefill(null); setZenRequestPrefill(text);
           }} />
         </RetainedView>
         <RetainedView active={distance === "settings"}>
-          <Settings openRequest={settingsEntry} onDirtyChange={setSettingsDirty} onInspectProcess={(pid) => { move("fleet", `proc:${pid}`); }} onSignOut={() => {
-            if ((settingsDirty || zenDirty || fleetDirty || memoryDirty || peopleDirty) && !window.confirm("Discard your unsaved work and sign out?")) return;
+          <Settings onDirtyChange={setSettingsDirty} onInspectProcess={(pid) => { move("fleet", `proc:${pid}`); }} onSignOut={() => {
+            if ((handsfreeDirty || settingsDirty || unsaved || fleetDirty || memoryDirty || peopleDirty) && !window.confirm("Discard your unsaved work and sign out?")) return;
             void session.lock("Signed out");
           }} />
         </RetainedView>
         <RetainedView active={distance === "people"}>
-          <People onDirtyChange={setPeopleDirty} onProfile={() => { if (move("settings")) setSettingsEntry({ section: "profile" }); }} />
+          <People onDirtyChange={setPeopleDirty} onAsk={(text) => {
+            if (zenPid && zenDirty && !window.confirm("Discard your unsent message and return to Ship?")) return;
+            if (!move("zen")) return;
+            setZenPid(null); setZenTarget(null); setZenPrefill(null); setZenRequestPrefill(text);
+          }} />
         </RetainedView>
         <RetainedView active={distance === "fleet"}>
           <Fleet
+            onActivity={(request) => { if (move("zen")) setActivityRequest(request); }}
             onCommand={(target) => {
               if (zenDirty && !window.confirm("Replace your unsent message and attachments with a command?")) return;
               if (move("zen")) { setZenTarget(target); setZenPrefill("$ "); setZenPid(null); }
             }}
             onDirtyChange={setFleetDirty}
             openRequest={fleetRequest}
-            onZen={(prefill, pid) => {
+            onZen={(prefill, pid, request) => {
               if ((Boolean(prefill) || (pid ?? null) !== zenPid) && zenDirty && !window.confirm("Discard your unsent message and attachments?")) return;
               if (!move("zen")) return;
               if (prefill || (pid ?? null) !== zenPid) setZenTarget(null);
               if (prefill) setZenPrefill(prefill);
+              if (request) setZenRequestPrefill(request);
               setZenPid(pid ?? null);
             }}
           />
         </RetainedView>
+      </div>
       </div>
       </div>
     </div>

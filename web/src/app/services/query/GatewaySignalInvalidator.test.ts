@@ -27,6 +27,8 @@ describe("gateway query recovery", () => {
       expect(queries.getQueryState(conversation)?.isInvalidated).toBe(true);
       onSignal("target.status", { targetId: "gsv", event: "connected", timestamp: Date.now() });
       expect(invalidate).toHaveBeenLastCalledWith({ queryKey: ["devices"] });
+      onSignal("instance.changed", undefined);
+      expect(invalidate).toHaveBeenLastCalledWith({ queryKey: ["devices"] });
     } finally {
       stop();
       expect(stopStatus).toHaveBeenCalledOnce();

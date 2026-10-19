@@ -1,4 +1,5 @@
 import { DurableObject, RpcTarget, WorkerEntrypoint } from "cloudflare:workers";
+export { IntegrationInstances } from "./instances";
 import { z } from "zod";
 import {
   adapterSendArgsSchema,
@@ -85,6 +86,44 @@ interface Env {
 }
 
 export class IntegrationState extends DurableObject<Env> {
+  async scriptManagedInference(installationId: string, commands: string[] = [], logicalRequestId?: string): Promise<void> {
+    await this.ctx.storage.put(`inference-script:${installationId}${logicalRequestId ? `:${logicalRequestId}` : ""}`, commands);
+  }
+
+  async takeManagedInferenceCommand(installationId: string, logicalRequestId: string): Promise<string | null> {
+    const requestKey = `inference-script:${installationId}:${logicalRequestId}`;
+    const specific = await this.ctx.storage.get<string[]>(requestKey);
+    const key = specific === undefined ? `inference-script:${installationId}` : requestKey;
+    const commands = specific ?? await this.ctx.storage.get<string[]>(key) ?? [];
+    const command = commands.shift() ?? null;
+    await this.ctx.storage.put(key, commands);
+    return command;
+  }
+
+  async recordScriptedManagedRequest(input: ManagedInferenceRequest): Promise<boolean> {
+    if (await this.ctx.storage.get(`inference-script:${input.installationId}`) === undefined) return false;
+    const key = `inference-count:${input.installationId}`;
+    const count = await this.ctx.storage.get<number>(key) ?? 0;
+    await this.ctx.storage.put({
+      [key]: count + 1,
+      [`inference-request:${input.installationId}:${String(count).padStart(6, "0")}`]: { logicalRequestId: input.logicalRequestId, systemPrompt: input.systemPrompt ?? "", messages: JSON.stringify(input.messages) },
+    });
+    return true;
+  }
+
+  async listScriptedManagedRequests(installationId: string): Promise<Array<{ logicalRequestId: string; systemPrompt: string; messages: string }>> {
+    return [...(await this.ctx.storage.list<{ logicalRequestId: string; systemPrompt: string; messages: string }>({ prefix: `inference-request:${installationId}:` })).values()];
+  }
+
+  async recordInstanceCall(call: string): Promise<void> {
+    const calls = await this.ctx.storage.get<string[]>("instance-calls") ?? [];
+    await this.ctx.storage.put("instance-calls", [...calls, call]);
+  }
+
+  async listInstanceCalls(): Promise<string[]> {
+    return await this.ctx.storage.get<string[]>("instance-calls") ?? [];
+  }
+
   async recordOutbound(entry: RecordedOutboundMessage): Promise<void> {
     const messages = await this.ctx.storage.get<RecordedOutboundMessage[]>("outbound") ?? [];
     messages.push(entry);
@@ -219,6 +258,15 @@ class ManagedInferenceTarget
       }
     }
 
+    const recorder = this.#env.INTEGRATION_STATE.getByName(RECORDER_NAME);
+    let scriptedCommand: string | null = null;
+    if (await recorder.recordScriptedManagedRequest(input)) {
+      while (scriptedCommand === null) {
+        scriptedCommand = await recorder.takeManagedInferenceCommand(input.installationId, input.logicalRequestId);
+        if (scriptedCommand === null) await scheduler.wait(10);
+      }
+    }
+
     const text = [
       `managed:${input.installationId}`,
       `uid:${input.actor.localUid}`,
@@ -232,7 +280,7 @@ class ManagedInferenceTarget
           id: `managed-message-${input.logicalRequestId}`,
           name: "Shell",
           arguments: {
-            input: `message send --message ${shellQuote(text)} && yield`,
+            input: scriptedCommand ?? `message send --message ${shellQuote(text)} && yield`,
           },
         }]
       : [{ type: "text", text }];
@@ -384,7 +432,7 @@ export default class TestDependencies
     if (handle !== "first" && handle !== "second" && handle !== "suspended") {
       return { found: false };
     }
-    return {
+    const result: InstallationDirectoryResult = {
       found: true,
       installationId: `inst_integration_${handle}`,
       handle,
@@ -393,6 +441,8 @@ export default class TestDependencies
         ? "deleted"
         : await this.integrationState().getInstallationState(handle),
     };
+    if (handle === "first") result.ownerSetupRecovery = true;
+    return result;
   }
 
   async resolveInstallation(

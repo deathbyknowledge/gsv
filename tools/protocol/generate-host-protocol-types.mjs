@@ -27,6 +27,7 @@ const outputPath = join(
 /** SDK type, its Rust name, and Rust names for the anonymous objects nested in it. */
 const ROOTS = [
   { type: "FrameError", rust: "ErrorShape" },
+  { type: "BinaryBodyDelivery", rust: "BinaryBodyDelivery", copy: true },
   { type: "BinaryFrameDescriptor", rust: "FrameBodyDescriptor", copy: true },
   { type: "ProcessIdentity", rust: "ProcessIdentity" },
   { type: "PeerPrincipalKind", rust: "PeerPrincipalKind", copy: true },
@@ -35,6 +36,7 @@ const ROOTS = [
   { type: "ConnectedPeer", rust: "ConnectedPeer" },
   { type: "ConnectArgs", rust: "ConnectArgs", inline: { peer: "PeerInfo", auth: "AuthInfo" } },
   { type: "ConnectResult", rust: "ConnectResult", inline: { server: "ServerInfo" } },
+  { type: "PublicDeploymentConfig", rust: "PublicDeploymentConfig" },
   { type: "ToolDefinition", rust: "ToolDefinition" },
 ];
 
@@ -91,6 +93,10 @@ if (process.argv.includes("--check")) {
 }
 
 function emitType(rustName, definition, typePath, inline, copy) {
+  if (definition.type === "string" && Object.hasOwn(definition, "const")) {
+    emitEnum(rustName, { ...definition, enum: [definition.const] }, copy);
+    return;
+  }
   if (definition.type === "string" && Array.isArray(definition.enum)) {
     emitEnum(rustName, definition, copy);
     return;

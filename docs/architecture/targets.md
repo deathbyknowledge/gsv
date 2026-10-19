@@ -30,6 +30,12 @@ reached through a WebSocket endpoint, a Worker service binding, or a native
 Kernel implementation. Transport does not determine the environment's meaning
 or authority.
 
+Approval rules can select the resolved target's route (`machine`, `adapter`, or
+`instance`) and platform. The Kernel supplies this metadata; tool arguments
+cannot claim it. A metadata-dependent decision stays bound to the target's
+owner, platform and route identity through dispatch. See
+[tool approval policy](../reference/configuration.md#tool-approval-policy).
+
 An adapter is not automatically a target. A transport-only Telegram account,
 for example, may expose only inbound and outbound messaging. An adapter account
 that also provides a coherent environment may independently offer a target.
@@ -70,10 +76,26 @@ GSV currently projects these environments:
   that provider.
 - `gsvd` registers physical computers and implements filesystem, shell, network,
   and host operations using that computer's local environment.
+- [Cloud computers](../how-to/cloud-computers.md) run the same `gsvd` filesystem,
+  shell and network driver inside a disposable Linux container. The instance
+  service owns its private authenticated protocol connection, boot identity,
+  lifetime and cancellation. It appears as an owner-scoped instance target,
+  without device enrollment or a persistent machine registry entry. Detached
+  shell sessions survive transport reconnects but not container destruction;
+  losing a container never silently restarts or replays work.
 - The browser extension registers a browser profile as a pseudo-computer. It
   implements `fs.*` and `shell.exec` over a virtual filesystem and
   browser-specific commands even though the browser is not an operating-system
   machine.
+- Cloud browsers expose the shared browser filesystem and shell through the
+  instance service binding. Native file commands use ordinary target dispatch
+  to reach them, including copying screenshots into `gsv` and reading images for
+  `img2txt`. Their owner-scoped inventory supplies visibility; they do not need
+  a machine registry entry or a driver WebSocket. Ordinary starts reuse the
+  owner's current instance atomically, including during provisioning. Explicit
+  separate starts create another target. Each instance keeps its own lifetime
+  and terminal identity; saved login state belongs to the account across
+  successive ordinary instances.
 - Slack projects a personally authorized workspace as a service-backed
   target implementing `fs.read`, `fs.search`, and `shell.exec`. Its read-only
   filesystem exposes conversations, exact messages, bounded history and thread
@@ -84,6 +106,16 @@ GSV currently projects these environments:
   paired user's OAuth token supplies read visibility; mutations use the
   installed GSV app identity, and the adapter retains both credentials and
   provider policy.
+
+The extension and cloud browser share `packages/browser` for filesystem and
+shell behavior. That driver parses incoming syscall arguments before accessing
+files or executing commands, then uses the public SDK's operation types.
+Backend script execution retains the injected function's argument and result
+types, and file-copy receipts use the ordinary `fs.copy` result contract.
+Both browser providers accept a named `shell.exec` start with `start: true`
+and a fresh UUID `sessionId`. Execution stays in the foreground and ends with
+the request; cancellation or disconnection cancels its work. Browser shells
+do not support polling or writing stdin through that ID.
 
 The persisted registry and compatibility syscalls still use `device` names for
 non-native targets. That is an implementation and upgrade constraint, not the

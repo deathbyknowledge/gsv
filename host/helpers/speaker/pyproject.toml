@@ -1,0 +1,14 @@
+[project]
+name = "gsv-speaker"
+version = "0.1.0"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+  "certifi==2026.7.22",
+  "kokoro-onnx==0.6.1",
+  "onnxruntime==1.23.1",
+  "numpy==2.5.4",
+  "miniaudio==1.71",
+]
+
+[dependency-groups]
+build = ["pyinstaller==6.22.3"]

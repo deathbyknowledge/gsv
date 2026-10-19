@@ -1,6 +1,6 @@
 # CLI Command Reference
 
-The `gsv` binary controls a GSV gateway, the local Desktop application, the
+The `gsv` command controls a Ship gateway, the local Desktop application, the
 machine daemon, the process tree, and adapters. Most commands talk to the Kernel
 syscall surface over WebSocket; `desktop` uses a same-user local endpoint.
 
@@ -17,7 +17,7 @@ gsv --url wss://example.workers.dev/ws chat "hello"
 | `--url <URL>` | `GSV_URL` | Gateway WebSocket URL. Defaults to `gateway.url` in local config, then `ws://localhost:8787/ws`. |
 | `-u, --user <USER>` | | Gateway username override. |
 | `-p, --password <PASS>` | | Password for non-interactive login/setup. |
-| `-t, --token <TOKEN>` | `GSV_TOKEN` | Non-interactive credential. User commands require a username with token auth. |
+| `-t, --token <TOKEN>` | `GSV_TOKEN` | Non-interactive credential. User commands default to the personal account; device credentials retain their enrolled username. |
 
 Local CLI config is stored at `~/.config/gsv/config.toml`. Remote user commands use
 the cached session token from `gsv auth login`, or prompt/login when needed.
@@ -25,7 +25,7 @@ the cached session token from `gsv auth login`, or prompt/login when needed.
 ## Chat and Shell
 
 When the operator enables feedback, the Instrument header has a **feedback** action.
-Reports include the text you submit, your space, account, and app/server versions.
+Reports include the text you submit, your Ship, account, and app/server versions.
 The optional **Include last 20 Ship messages** checkbox starts unchecked. It
 captures recent messages, thinking, tool inputs/results and runtime events through
 your existing history permissions. Review the snapshot before sending: tool results
@@ -65,6 +65,52 @@ intelligence process. Set `GSV_CLIENT_DEBUG=1` to trace run-signal matching.
 Commands run inside the gateway OS context, not directly on your local machine.
 Use `:quit`, `:exit`, or `:q` to leave.
 
+The gateway shell exposes messenger pairing to Ship and signed-in users:
+
+```bash
+messenger list
+messenger setup whatsapp
+messenger inspect whatsapp < code.txt
+messenger connect whatsapp < code.txt
+```
+
+`setup` returns adapter-owned instructions for getting a code. The user can
+paste it into their conversation and let Ship connect it for them. Save the
+code to a file with Write, read it through stdin, then remove the file; avoid
+putting it in logged shell command text. `connect` returns `paired: true` only
+after redemption completes. Processes link their human owner's account, subject
+to their capabilities and tool policy. See [Connect a messenger](/how-to/messengers).
+
+With the optional cloud instance service enabled, the gateway shell also exposes
+`instance catalog`, `instance start browser --request-id ID --wait`, `instance list`,
+`instance get ID`, and `instance stop ID --wait`. Starting reuses the account's current
+browser and reports `created` or `reused`; `--new` explicitly creates a separate
+temporary one. `--wait` waits for readiness for up to 60 seconds by default
+(`--timeout MS`, maximum 120000). Cancelling the wait leaves the instance running.
+Get and stop accept the displayed target ID or full instance ID. Ordinary browsers
+save before stopping. Partial saves report `persistence.issues` for affected
+sites and permit normal stop; other sites are saved. A whole-save failure leaves
+the browser running and reports its cause and diagnostic. Stop `--wait`
+waits for termination and release of saved state. Retry a save with
+`browser profile save ID`, or explicitly discard unsaved changes with
+`instance stop ID --force --wait`. Force is not a persistence test and cannot fix
+unsupported website storage. Inspect save status and per-site usage with
+`browser profile get PROFILE_ID`; `browser profile delete PROFILE_ID` forgets
+saved logins and stops the browser using them.
+Ordinary browsers
+remember logins automatically. Use `browser handoff` when Ship needs a human to
+complete a sign-in; opening Fleet's browser view otherwise leaves Ship running
+and accepts direct input. These are native target commands, available to Ship
+through Shell as well. See [cloud browsers](/how-to/cloud-browsers) for saved
+logins, recovery after a lost response, and the complete sign-in flow.
+
+When computers are enabled, `instance start computer --request-id ID --wait`
+creates a temporary Linux target. `--name NAME` and `--seconds N` choose its label
+and lifetime. A new request ID creates a new computer; retrying the same request
+recovers that operation. Computers do not accept browser profile or `--new`
+options. Use the same list, get and stop commands; stopping destroys the files
+and running commands. See [cloud computers](/how-to/cloud-computers).
+
 Inside the gateway shell, `proc` is the process IPC userland command.
 `message` inspects and uses external chat reply routes. `sched add --ship`
 creates recurring or one-shot Ship responsibilities; `sched add --here`
@@ -98,10 +144,11 @@ message send --to DESTINATION [--message TEXT] [--attach PATH]... [--mime TYPE] 
 contact identity
 contact list [--all] [--json]
 contact alias CONTACT_ID NAME|--clear
-contact invite create [--expires DURATION]
-contact invite accept CODE
+contact invite create --handling manual|ship [--expires DURATION]
+contact invite accept LINK_OR_CODE --handling manual|ship
 contact invite list [--all] [--json]
 contact invite cancel INVITE_ID
+contact handling CONTACT_ID manual|ship --revision N
 contact revoke CONTACT_ID
 contact request list [--contact CONTACT_ID] [--all] [--json]
 contact request create --contact CONTACT_ID --kind KIND --title TITLE [--details JSON] [--delivery-id ID]
@@ -170,6 +217,24 @@ with an error there. `proc list` labels the one canonical process as
 `kind=personal`; all other entries are `kind=work`, even when they run as the
 same personal-agent account.
 
+Inside an active process, `proc compact --summary '...'` saves a handover for
+installation after the current tool batch finishes. The original request and
+unseen tool results stay intact, alongside enough recent original exchanges to
+fill the configured low-water budget (40% by default, including instructions,
+tools and handover). History that already fits stays unchanged.
+No history ids or new process are needed.
+For an idle process, use `proc compact --pid PID` with one of `--keep-last N`,
+`--through-message-id ID` or `--target-pressure N`, and either `--summary TEXT`
+or `--generate-summary`. See [Context Compaction](../architecture/context-compaction.md).
+
+`proc history --archive PATH --generation N --after-message-id N
+--through-message-id N --offset N --limit 10 --full` pages an immutable gzip
+archive through normal filesystem permissions, including after the source
+process is killed. Message filters use the original IDs. Continue with the
+reported `next_offset` until `has_more=false`; `--json` returns the raw archived
+message page. The reader streams decompression instead of buffering the entire
+archive in a shell pipeline.
+
 `r12y` manages the Kernel's durable unresolved-work ledger. `list` omits
 terminal records unless `--all` is supplied. Waiting work must name a future
 check time or a blocker. Prefer `proc delegate --responsibility ID ...` for a
@@ -195,7 +260,7 @@ the match's sequence plus one as `--before` and `--limit 1` to read it in full.
 `message current` reports the current run's directed endpoint and exact reply
 commands. For an adapter run, text and JSON also include an opaque destination
 id suitable for a later or additional `message send --to`; raw provider ids
-stay hidden. `message attach` adds one or more GSV filesystem files to the run's
+stay hidden. `message attach` adds one or more Ship filesystem files to the run's
 next current-conversation message; it does not create an extra message. The
 Process retains each exact source revision in its immutable media archive before
 committing the message. `--mime` can classify a single attachment for
@@ -218,7 +283,7 @@ additional outbound message or sends to another authorized destination.
 `message destinations` lists observed destinations that are online; `--all`
 also includes known authorized destinations whose adapter account is offline.
 Group, channel, and thread entries appear only after the linked actor addresses
-GSV on that exact surface. Entries use opaque GSV ids and generic labels;
+Ship on that exact surface. Entries use opaque Ship ids and generic labels;
 provider account, actor, surface, and message ids are not printed.
 
 `message route show` and `message route list` inspect adapter routing. `route
@@ -253,7 +318,8 @@ default.
 `IMAGE` accepts the same target-qualified source forms as `cp`: a local path,
 `gsv:/path`, `target:/path`, or `[target-with-colons]:/path`. A target image is
 streamed directly through the filesystem transfer boundary into image reading;
-the command does not stage a temporary GSV copy.
+the command does not stage a temporary Ship copy. Cloud browser screenshots use
+the same source forms and ownership checks as files on connected devices.
 
 Query and OCR structured output accepts `text`, `json`, `xml`, `markdown`, or
 `csv`. A JSON `--schema` is added to the caller's instruction, then the result
@@ -269,9 +335,9 @@ and `message send` as separate direct Shell tool calls without `--to` or
 `--also`. It works whether the run came from a WebSocket client, Desktop, or an
 adapter. An explicit destination send during an active run requires `--also`,
 acknowledging that it is an additional delivery. Repeat its `--attach` option
-to stream multiple GSV filesystem files in one delivery. `--mime` supplies the
+to stream multiple Ship filesystem files in one delivery. `--mime` supplies the
 delivery type only when exactly one attachment is present. Copy a file from a
-connected target to GSV before attaching it:
+connected target to Ship before attaching it:
 
 ```bash
 cp laptop:/home/alice/report.pdf /tmp/report.pdf
@@ -288,13 +354,22 @@ also report that id, including a failure while reopening the file for the
 automatic retry. An outcome that may have reached the provider is reported as
 `sent=false`, `delivery_confirmed=false`, and `delivery_state=ambiguous`.
 
-`contact` manages relationships with people on other GSV installations.
-`contact invite create` produces a short-lived one-use code; the other person
-accepts that code while signed in to their own GSV. Pairing and revocation may
+`contact` manages relationships with people on other Ships.
+`contact invite create --handling manual|ship` returns a short-lived one-use code and a shareable `url`;
+the other person accepts either while signed in to their own Ship. The default
+lifetime is one hour; `--expires` accepts up to seven days. Pairing and revocation may
 be performed by the signed-in human or their canonical Ship. `contact list` prints the opaque contact id accepted
 by `message send --to`; `message destinations` exposes the same active contacts
 alongside messaging endpoints. `contact alias` changes only the local display
 name; the remote Ship's authenticated identity remains visible and unchanged.
+
+Creating and accepting through Shell require `--handling manual|ship`. Ship asks
+for the owner's choice unless it was already given: `manual` leaves new messages
+for the person, while `ship` enables automatic handling. Each side chooses
+independently. To change an existing contact, read `preferences.revision` from
+`contact list --json` and use `contact handling CONTACT_ID manual|ship --revision N`.
+The Kernel accepts changes from the owner or their canonical Ship, keeps capability
+and revision checks, and starts no work merely because the setting changed.
 
 `contact invite list --all` exposes retained invitation lifecycle metadata but
 never a recoverable code. `message history --with contact:...` reads the Contact
@@ -304,7 +379,7 @@ remote confirmation; use `message delivery show` with its delivery id.
 When Ship contacts someone for an existing task, pass `--responsibility ID` to
 associate replies with that open Ship responsibility. A reply continues the same
 work without enabling permanent handling of that contact. Acceptance and new
-messages stay in People unless the person chooses **Let Ship handle this**.
+messages stay in People unless the person chooses **Let Ship handle them**.
 
 Use `contact request create` and `contact request update` when the exchange has
 a durable lifecycle rather than being only a message. Request revisions prevent
@@ -315,7 +390,7 @@ recorded update stays pending until the peer confirms it. Failed confirmation
 leaves the exchange unsettled, even if the recorded work state is completed.
 Resources attached with
 `message send --to contact:...` remain immutable references and are streamed by
-the receiving GSV only when opened.
+the receiving Ship only when opened.
 
 Use `sched add --ship` when every firing should become one durable Ship
 responsibility. It works from top-level and process-backed shells. Use
@@ -329,7 +404,7 @@ Use `sched add --to DESTINATION` for direct scheduled text delivery. It creates
 an `adapter.send` scheduled action and does not run the agent. Destination
 resolution includes known authorized offline destinations because the account
 may be online when the schedule fires. Run `message destinations --all` and
-copy its opaque GSV destination id; provider account, actor, and surface ids are
+copy its opaque Ship destination id; provider account, actor, and surface ids are
 not part of the agent-facing command contract.
 A successful `responsibility` firing records durable responsibility creation, not
 completion of its work. A successful `process.event` firing records event admission,
@@ -439,11 +514,17 @@ preference, and process-switch fencing.
 Ship can create an invitation from Shell on `gsv` with
 `targets pair --name "My laptop" --platform mac`. Supported platforms are `mac`,
 `linux`, `windows` and `browser`. The result contains setup instructions for the
-space's release. `targets pair list` and `targets pair cancel INVITATION_ID`
+Ship's release. `targets pair list` and `targets pair cancel INVITATION_ID`
 manage the human owner's invitations. See [Connect devices](../how-to/connect-devices.md).
 
+For `--platform browser`, the JSON result includes `extensionUrl` and `code`.
+The URL opens `https://gsv.space/browser?release=RELEASE` for the gateway's
+release. Download and unzip the extension, load its folder from
+`chrome://extensions` with developer mode enabled, then open **Your Ship** from
+the toolbar or Extensions button and paste `code` into its panel.
+
 Open **Fleet**, click **connect** beside Places, name the computer and create an invitation.
-After installing GSV, paste the provided command:
+After installing Ship, paste the provided command:
 
 ```bash
 gsv pair CODE [--workspace PATH] [--no-install]
@@ -451,7 +532,7 @@ gsv pair  # resume an interrupted exchange
 ```
 
 Use `gsv pair -` to read the invitation from stdin instead of exposing it in
-process arguments. `--preserve-cli-login` leaves the CLI's selected space and
+process arguments. `--preserve-cli-login` leaves the CLI's selected Ship and
 credentials unchanged; `--no-replace` refuses to overwrite an existing machine
 credential. Desktop uses these together for integrated machine setup.
 
@@ -520,7 +601,7 @@ the device invitation flow, or
 `gsv auth token create --kind machine --peer ...` followed by
 `gsv config --local set device.token ...`.
 Because the compatibility launcher replaces itself with `gsvd`, gateway setup
-must be completed through the space's browser setup invitation before starting
+must be completed through the Ship's browser setup invitation before starting
 `gsvd`. See the [device guide](../how-to/connect-devices.md) for enrollment.
 
 `gsv`, `gsvd`, and the Desktop application share protocol and configuration
@@ -550,11 +631,13 @@ gsv auth link-list [--uid UID]
 gsv auth unlink --adapter ID --account-id ACCOUNT --actor-id ACTOR
 ```
 
-Initialize a new space through its Accounts-issued browser setup invitation.
-The old `gsv auth setup` wizard and automatic setup probes are removed. Login
-and commands operate on a space whose authorized setup has completed.
+Initialize a new Ship through its Accounts-issued browser setup invitation.
+Login and commands operate on a Ship whose authorized setup has completed.
 
-`login` creates a short-lived user token with `sys.token.create` and caches it
+`login` asks only for a password when no credential is cached. Omit the username
+to use the personal account, or pass `--username root` for administration. Existing
+configured usernames remain supported. The authenticated identity returned by the
+Kernel is saved with the session. `login` creates a short-lived user token with `sys.token.create` and caches it
 locally. The default TTL is 8 hours. `logout` clears only the cached local session
 token.
 
@@ -623,8 +706,7 @@ connect/disconnect; `--config-json` passes an object to the adapter.
 
 The bundled messenger applications are configured by the operator at deploy
 time. People link and unlink their own identities through the adapter pairing
-flow in **Settings → Messengers**. Per-person bot tokens, Slack Socket Mode
-and WhatsApp QR setup are not supported by the current deployment.
+flow in **Settings → Messengers**.
 
 ## Version
 
@@ -634,17 +716,6 @@ gsv --version
 ```
 
 Prints build metadata for the installed CLI.
-
-## Renamed or Removed Commands
-
-| Old command | Current command |
-| --- | --- |
-| `gsv client` | `gsv chat` |
-| `gsv session` | `gsv proc` |
-| `gsv local-config` | `gsv config --local` |
-| `gsv deploy`, `gsv infra` | Removed; use the public Alchemy stack or a hosting operator. |
-| `gsv auth setup` | Removed; use the Accounts-issued browser setup invitation. |
-| `gsv tools`, `gsv skills`, `gsv init` | Removed from the current CLI. |
 
 ## See also
 

@@ -121,7 +121,7 @@ export const AGENT_MODEL_FIELDS: readonly ConsoleSettingField[] = [
   {
     key: "config/ai/transport_target",
     label: "Origin machine",
-    description: "Where model provider HTTP requests start: the GSV Worker or one of your machines. Use a machine when the provider blocks Cloudflare Worker IPs.",
+    description: "Where model provider HTTP requests start: the Ship Worker or one of your machines. Use a machine when the provider blocks Cloudflare Worker IPs.",
     kind: "text",
     requirement: "optional",
     placeholder: "gsv",
@@ -155,7 +155,7 @@ export const AGENT_MODEL_FIELDS: readonly ConsoleSettingField[] = [
   {
     key: "config/ai/context_window_tokens",
     label: "Context window",
-    description: "Provider context-window size when GSV cannot discover it from the model registry.",
+    description: "Provider context-window size when Ship cannot discover it from the model registry.",
     kind: "number",
     requirement: "optional",
     size: "small",

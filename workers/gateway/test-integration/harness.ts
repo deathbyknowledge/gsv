@@ -26,6 +26,7 @@ type ServiceBinding = NonNullable<Unstable_RawConfig["services"]>[number];
 export function integrationGatewayConfig(options: {
   name?: string;
   workersAi?: boolean;
+  instances?: boolean;
   managed?: boolean;
   managedServices?: {
     accounts: string;
@@ -53,7 +54,7 @@ export function integrationGatewayConfig(options: {
     main: config.main,
     compatibility_date: config.compatibility_date,
     compatibility_flags: config.compatibility_flags,
-    vars: { GSV_FEDERATION_LOCAL_DEVELOPMENT: "1" },
+    vars: { GSV_FEDERATION_LOCAL_DEVELOPMENT: "1", GSV_OWNER_SIGNUP_URL: "https://accounts.example/owner/signup/?resume=1" },
     define: config.define,
     rules: config.rules,
     migrations: lifecycleConfig.migrations,
@@ -89,6 +90,7 @@ export function integrationGatewayConfig(options: {
     ai: undefined,
     services: [
       executionBinding,
+      ...(options.instances ? [{ binding: "INSTANCES", service: DEPENDENCY_WORKER, entrypoint: "IntegrationInstances" }] : []),
       {
         binding: "CHANNEL_DISCORD",
         service: DEPENDENCY_WORKER,
@@ -264,6 +266,7 @@ function managedInferenceProbeConfig(): Unstable_RawConfig {
 
 export function createGatewayTestHarness(options: {
   workersAi?: boolean;
+  instances?: boolean;
   managedMailQueue?: string;
 } = {}): TestHarness {
   return createTestHarness({
@@ -337,7 +340,11 @@ export function createManagedInferenceServiceStackTestHarness(
 }
 
 export function createManagedMailServiceStackTestHarness(
-  serviceConfigs: { accounts: string; inference: string },
+  serviceConfigs: {
+    accounts: string;
+    inference: string;
+    mail?: { domain: string; sendingDomains: string[] };
+  },
 ): TestHarness {
   const gatewayService = "gsv-managed-mail-stack";
   const queue = "gsv-managed-mail-outbound-stack";
@@ -371,6 +378,10 @@ export function createManagedMailServiceStackTestHarness(
       },
       {
         config: integrationEmailConfig(gatewayService, queue),
+        vars: {
+          MAIL_DOMAIN: serviceConfigs.mail?.domain ?? "gsv.space",
+          MAIL_SENDING_DOMAINS: JSON.stringify(serviceConfigs.mail?.sendingDomains ?? []),
+        },
       },
     ],
   });

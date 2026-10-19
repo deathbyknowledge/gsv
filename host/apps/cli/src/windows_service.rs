@@ -256,7 +256,7 @@ fn service_workspace(path: &Path) -> Result<PathBuf, DynError> {
         })
     {
         return Err(
-            "Choose a dedicated workspace outside Windows and GSV service directories".into(),
+            "Choose a dedicated workspace outside Windows and Ship service directories".into(),
         );
     }
     Ok(workspace)
@@ -267,7 +267,9 @@ pub(super) fn packaged_daemon_path() -> Result<PathBuf, DynError> {
         .canonicalize()?
         .with_file_name("gsvd.exe");
     let metadata = fs::symlink_metadata(&path).map_err(|error| {
-        format!("Could not open bundled gsvd.exe; reinstall the complete GSV distribution: {error}")
+        format!(
+            "Could not open bundled gsvd.exe; reinstall the complete Ship distribution: {error}"
+        )
     })?;
     if !metadata.is_file() || metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
         return Err("The bundled gsvd.exe must be an ordinary file beside gsv.exe".into());
@@ -398,7 +400,7 @@ pub fn install_elevated(
     let result = (|| {
         let info = ServiceInfo {
             name: service::NAME.into(),
-            display_name: "GSV machine daemon".into(),
+            display_name: "Ship machine daemon".into(),
             service_type: ServiceType::OWN_PROCESS,
             start_type: ServiceStartType::AutoStart,
             error_control: ServiceErrorControl::Normal,
@@ -435,9 +437,7 @@ pub fn install_elevated(
                 return Err(std::io::Error::last_os_error().into());
             }
 
-            svc.set_description(
-                "Connects this machine to its owner's GSV space before Windows login.",
-            )?;
+            svc.set_description("Connects this machine to its owner's Ship before Windows login.")?;
             svc.update_failure_actions(ServiceFailureActions {
                 reset_period: ServiceFailureResetPeriod::After(Duration::from_secs(86400)),
                 reboot_msg: None,
@@ -610,7 +610,7 @@ fn validate_registration(config: &ServiceConfig) -> Result<(), DynError> {
             .to_string_lossy()
             .eq_ignore_ascii_case(&expected)
     {
-        return Err("The existing gsvd registration is not the expected GSV service. An administrator must restore or remove that registration before installing GSV; it has not been changed.".into());
+        return Err("The existing gsvd registration is not the expected Ship service. An administrator must restore or remove that registration before installing Ship; it has not been changed.".into());
     }
     Ok(())
 }
@@ -637,7 +637,7 @@ mod tests {
         let protected = service::binary_dir()
             .parent()
             .and_then(Path::parent)
-            .expect("Program Files contains the GSV service directory")
+            .expect("Program Files contains the Ship service directory")
             .to_path_buf();
         let mut process_token = ptr::null_mut();
         // SAFETY: GetCurrentProcess returns a non-owned pseudo-handle.

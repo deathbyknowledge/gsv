@@ -111,7 +111,7 @@ type InboundPayload =
     };
 
 type ResponseContext =
-  | { kind: "platform"; claimId?: string }
+  | { kind: "platform"; claimId?: string; splitParagraphs?: boolean }
   | { kind: "installation"; installationId: string; generation: string };
 
 type PairingIssue = { code: string; claimId: string; expiresAt: number };
@@ -596,17 +596,13 @@ export class ManagedTelegramPeer extends DurableObject<ManagedTelegramPeerEnv> {
           surface: { kind: "dm", id: inbound.surfaceId },
           actorId: inbound.actorId,
           text: [
-            "Connect this Telegram identity to your GSV.",
-            "",
-            `Pairing code: ${formatPairingCode(issue.code)}`,
-            "",
-            "Open GSV → Messengers → Telegram, enter the code, and confirm the identity shown there.",
-            "This code expires in 10 minutes.",
-          ].join("\n"),
+            "In GSV, open Settings → Messengers → Telegram and paste the code below.\nExpires in 10 minutes.",
+            formatPairingCode(issue.code),
+          ].join("\n\n"),
           replyToId: inbound.messageId,
         },
         expiresAt: issue.expiresAt,
-        context: { kind: "platform", claimId: issue.claimId },
+        context: { kind: "platform", claimId: issue.claimId, splitParagraphs: true },
       }],
     };
   }
@@ -756,7 +752,8 @@ export class ManagedTelegramPeer extends DurableObject<ManagedTelegramPeerEnv> {
       // the approval buttons when there are any, otherwise the first message.
       let anchor = 0;
       if (media.length === 0) {
-        const chunks = telegramTextChunks(text, legacyGrouping || (context.kind !== "platform" && !options.replyMarkup), legacyGrouping);
+        const splitParagraphs = context.kind !== "platform" || context.splitParagraphs === true;
+        const chunks = telegramTextChunks(text, legacyGrouping || (splitParagraphs && !options.replyMarkup), legacyGrouping);
         for (const [index, chunk] of chunks.entries()) {
           parts.push(async () => {
             const sent = await sendManagedTelegramText(

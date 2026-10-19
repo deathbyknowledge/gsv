@@ -2,71 +2,48 @@ import { describe, expect, it } from "vitest";
 
 import {
   buildWhatsAppTemplatePayload,
-  flattenWhatsAppTemplateParameter,
   WHATSAPP_NO_TEMPLATE_ERROR,
-  WHATSAPP_TEMPLATE_PARAMETER_LIMIT,
-  WHATSAPP_TEMPLATE_RELEASE_PAYLOAD,
+  WHATSAPP_TEMPLATE_BODY,
+  WHATSAPP_TEMPLATE_REPLY_PAYLOAD,
 } from "./whatsapp-template";
 
-describe("flattenWhatsAppTemplateParameter", () => {
-  it("flattens Markdown into one line without markers, newlines, tabs or runs of spaces", () => {
-    const flattened = flattenWhatsAppTemplateParameter([
-      "# Summary",
-      "",
-      "Use **bold**, _italic_ and `code`.\tTabbed      spaced",
-      "",
-      "- first",
-      "- second",
-      "",
-      "```ts",
-      "const a = 1;",
-      "```",
-      "",
-      "See [the docs](https://docs.gsv.space/).",
-    ].join("\n"));
-    expect(flattened).toEqual({
-      text: "Summary · Use bold, italic and code. Tabbed spaced · first; second · const a = 1; · See the docs (https://docs.gsv.space/).",
-      complete: true,
-    });
-    expect(flattened.text).not.toMatch(/[\n\t]| {5}/);
-  });
-
-  it("cuts an oversized message at a word boundary with an ellipsis and reports it incomplete", () => {
-    const long = "word ".repeat(400).trimEnd();
-    const flattened = flattenWhatsAppTemplateParameter(long, 100);
-    expect(flattened.complete).toBe(false);
-    expect([...flattened.text].length).toBeLessThanOrEqual(100);
-    expect(flattened.text).toMatch(/^word( word)*…$/);
-    expect([...flattenWhatsAppTemplateParameter(long).text].length)
-      .toBeLessThanOrEqual(WHATSAPP_TEMPLATE_PARAMETER_LIMIT);
-  });
-
-  it("never produces an empty parameter", () => {
-    expect(flattenWhatsAppTemplateParameter("---")).toEqual({ text: "You have a new message.", complete: false });
-    expect(flattenWhatsAppTemplateParameter("   ")).toEqual({ text: "You have a new message.", complete: false });
-  });
-});
-
 describe("buildWhatsAppTemplatePayload", () => {
-  it("names the template, fills the body parameter and binds the release payload to the button", () => {
-    expect(buildWhatsAppTemplatePayload("34611111189", { name: "gsv_message", language: "en" }, "late follow-up")).toEqual({
+  it("carries the actual message and a reply button", () => {
+    expect(buildWhatsAppTemplatePayload("34611111189", { name: "gsv_message", language: "en" }, "Your report is ready.")).toEqual({
       to: "34611111189",
       type: "template",
       template: {
         name: "gsv_message",
         language: { code: "en" },
         components: [
-          { type: "body", parameters: [{ type: "text", text: "late follow-up" }] },
+          { type: "body", parameters: [{ type: "text", text: "Your report is ready." }] },
           {
             type: "button",
             sub_type: "quick_reply",
             index: "0",
-            parameters: [{ type: "payload", payload: WHATSAPP_TEMPLATE_RELEASE_PAYLOAD }],
+            parameters: [{ type: "payload", payload: WHATSAPP_TEMPLATE_REPLY_PAYLOAD }],
           },
         ],
       },
     });
     expect(WHATSAPP_NO_TEMPLATE_ERROR).toContain("no template is configured");
     expect(WHATSAPP_NO_TEMPLATE_ERROR).toContain("workers/adapters/whatsapp/README.md");
+  });
+
+  it("flattens paragraphs and retains links in a template parameter", () => {
+    const payload = buildWhatsAppTemplatePayload("1", { name: "gsv_message", language: "en" }, "First paragraph.\n\nRead [the report](https://example.com/report).\tDone.");
+    expect(payload.template?.components?.[0]?.parameters).toEqual([
+      { type: "text", text: "First paragraph. · Read the report (https://example.com/report). Done." },
+    ]);
+  });
+
+  it.each(["x", "🌍"])("bounds a long preview including the template frame (%s)", (character) => {
+    const payload = buildWhatsAppTemplatePayload("1", { name: "gsv_message", language: "en" }, character.repeat(2000));
+    const parameter = payload.template?.components?.[0]?.parameters?.[0];
+    if (parameter?.type !== "text") throw new Error("Missing text parameter");
+    const text = parameter.text!;
+    expect(text).toContain("Open GSV for the full message.");
+    expect([...WHATSAPP_TEMPLATE_BODY.replace("{{1}}", text)]).toHaveLength(1024);
+    expect(text).not.toMatch(/[\r\n\t]|�/);
   });
 });

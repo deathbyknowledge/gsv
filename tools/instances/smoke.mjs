@@ -1,0 +1,277 @@
+import assert from "node:assert/strict";
+import http from "node:http";
+import { once } from "node:events";
+import { readFileSync } from "node:fs";
+import WebSocket from "ws";
+import { GSVClient } from "../../packages/gsv/dist/client.js";
+import { bodyFromText, bodyToBytes } from "../../packages/gsv/dist/protocol.js";
+import { checkBrowserCommands } from "./browser-commands-smoke.mjs";
+import { checkFormCommands } from "./form-commands-smoke.mjs";
+import { checkBrowserCredentials } from "./browser-credentials-smoke.mjs";
+import { checkBrowserFollowing } from "./browser-follow-smoke.mjs";
+import { readBrowserView } from "./browser-view-smoke.mjs";
+import { seedBrowserStorage, seedPartialBrowserStorage, checkBrowserStorageSummaryBounds, checkPartialBrowserStorage, checkRestoredBrowserStorage, checkForgettingBrowserStorage } from "./browser-storage-smoke.mjs";
+
+// Intentionally local: this fixture never creates a paid remote browser.
+const origin = new URL(process.env.GSV_BROWSER_SMOKE_ORIGIN ?? "http://localhost:8976");
+assert.equal(origin.hostname, "localhost", "Smoke requires the local development stack");
+class LocalSocket extends WebSocket {
+  constructor(url, protocols) {
+    super(url, protocols, { lookup: (_name, options, callback) => options.all
+      ? callback(null, [{ address: "127.0.0.1", family: 4 }]) : callback(null, "127.0.0.1", 4) });
+  }
+}
+const client = new GSVClient({ WebSocket: LocalSocket, defaultRequestTimeoutMs: 60000 });
+const components = readFileSync(new URL("./fixtures/components.html", import.meta.url), "utf8");
+const forms = readFileSync(new URL("./fixtures/forms.html", import.meta.url), "utf8");
+const passkeys = readFileSync(new URL("./fixtures/passkeys.html", import.meta.url), "utf8");
+const login = `<!doctype html><title>GSV sign-in fixture</title><style>body{font:20px system-ui;padding:40px}input,button{display:block;margin:20px 0;padding:12px;width:300px}</style><h1>Test sign-in</h1><form action="/session" method="post"><input name="email" placeholder="Email"><input type="password" name="password" placeholder="Password"><button>Sign in</button></form>`;
+let stored;
+const storageReady = new Promise(resolve => { stored = resolve; });
+const server = http.createServer((request, response) => {
+  response.setHeader("Content-Type", "text/html");
+  if (request.url === "/session" && request.method === "POST") {
+    request.resume(); request.on("end", () => { response.writeHead(303, { "Set-Cookie": "gsv_test_session=valid; HttpOnly; SameSite=Lax; Path=/", Location: "/account" }); response.end(); });
+  } else if (request.url === "/stored") { stored(); response.end("ok"); }
+  else if (request.url === "/account") {
+    response.end(`<h1>Signed in</h1><script>localStorage.setItem("profile-test","kept");const open=indexedDB.open("profile-test",1);open.onupgradeneeded=()=>open.result.createObjectStore("state");open.onsuccess=()=>{const tx=open.result.transaction("state","readwrite");tx.objectStore("state").put("kept","session");tx.oncomplete=()=>fetch("/stored")}</script>`);
+  } else if (request.url === "/probe") {
+    const cookie = request.headers.cookie?.includes("gsv_test_session=valid") ? "kept" : "missing";
+    response.end(`<body><input id="coedit" oninput="this.dataset.done='yes'"><script>const open=indexedDB.open("profile-test",1);open.onupgradeneeded=()=>open.result.createObjectStore("state");open.onsuccess=()=>{const request=open.result.transaction("state").objectStore("state").get("session");request.onsuccess=()=>{document.body.insertAdjacentHTML('beforeend','<pre id="restored">cookie=${cookie};local='+localStorage.getItem("profile-test")+';indexed='+request.result+'</pre>')}}</script></body>`);
+  } else if (request.url === "/navigation-failure") request.destroy();
+  else if (request.url === "/navigation-timeout") response.write("<!doctype html><title>Pending navigation</title>");
+  else if (request.url === "/components") response.end(components);
+  else if (request.url === "/forms") response.end(forms);
+  else if (request.url === "/passkeys" || request.url.startsWith("/passkeys?")) response.end(passkeys);
+  else if (request.url === "/empty") response.end("<!doctype html><title>Storage fixture</title>");
+  else response.end(login);
+});
+server.listen(0, "127.0.0.1"); await once(server, "listening");
+const website = `http://127.0.0.1:${server.address().port}`;
+const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+const startedIds = [];
+let profileId;
+async function state(id, desired) {
+  for (let attempt = 0; attempt < 90; attempt++) {
+    const { instance } = await client.sys.instance.get({ instanceId: id });
+    if (instance.state === desired || (desired === "terminal" && ["stopped", "failed"].includes(instance.state))) return instance;
+    assert.notEqual(instance.state, "failed", `Instance failed: ${instance.diagnosticRef}`);
+    await sleep(1000);
+  }
+  throw new Error(`Instance did not become ${desired}`);
+}
+async function start() {
+  const requestId = crypto.randomUUID();
+  const result = await client.sys.instance.start({ requestId, templateId: "browser", lifetimeSeconds: 300 });
+  startedIds.push(result.instance.instanceId);
+  assert.equal(result.disposition, "created");
+  const ready = JSON.parse(await shell({ targetId: "gsv" }, `instance start browser --request-id ${requestId} --seconds 300 --wait`));
+  assert.equal(ready.instance.instanceId, result.instance.instanceId);
+  assert.equal(ready.instance.state, "ready");
+  assert.equal(ready.disposition, "created");
+  assert.equal(JSON.parse(await shell({ targetId: "gsv" }, `instance get ${ready.instance.targetId}`)).instance.instanceId, ready.instance.instanceId);
+  return ready.instance;
+}
+async function shell(instance, input) {
+  const result = await client.shell.exec({ target: instance.targetId, input });
+  assert.equal(result.status, "completed", result.error ?? result.output); assert.equal(result.exitCode, 0, result.error);
+  return result.stdout ?? result.output;
+}
+async function fileBytes(target, path) {
+  const response = await client.request("fs.transfer.send", { target, path });
+  assert.equal(response.data.ok, true, response.data.error);
+  return bodyToBytes(response.body);
+}
+let flowError;
+try {
+  const created = await fetch(new URL("/admin/api/installations", origin), { method: "POST", headers: { Origin: origin.origin, "Content-Type": "application/json" }, body: JSON.stringify({ operationId: crypto.randomUUID(), handle: `browser-smoke-${crypto.randomUUID().slice(0, 8)}` }) });
+  assert.equal(created.status, 201, "Local Accounts did not create a test installation");
+  const setup = await created.json();
+  const url = `${setup.installation.canonicalOrigin.replace("http:", "ws:")}/ws`;
+  const credentials = { username: "browser-tester", password: `${crypto.randomUUID()}aA1!` };
+  await client.requestOnce(url, "sys.setup", { ...credentials, timezone: "UTC", onboardingToken: new URL(setup.onboarding.onboardingUrl).hash.slice(1) });
+  await client.connect({ url, ...credentials });
+  console.log("Clean local space is ready");
+  const first = await start();
+  profileId = first.profileId;
+  assert.ok(profileId, "Ordinary browser start did not create saved logins");
+  assert.match(first.targetId, /^[0-9a-f]{8}$/);
+  const before = (await client.sys.instance.list({})).usage;
+  const repeats = await Promise.all(Array.from({ length: 3 }, () => client.sys.instance.start({ requestId: crypto.randomUUID(), templateId: "browser" })));
+  assert.ok(repeats.every(value => value.instance.instanceId === first.instanceId && value.disposition === "reused"));
+  assert.equal((await client.sys.instance.list({})).usage.reservedSeconds, before.reservedSeconds);
+  console.log("PASS: independent start requests reuse one browser and reservation; saved logins are automatic");
+  const namedStart = { target: first.targetId, sessionId: crypto.randomUUID(), start: true, input: "printf named-browser-start" };
+  assert.deepEqual(await client.shell.exec(namedStart), { status: "completed", output: "named-browser-start", exitCode: 0 });
+  await assert.rejects(client.shell.exec(namedStart), /already exists/);
+  for (const input of ["", "printf must-not-run"]) {
+    const result = await client.shell.exec({ target: first.targetId, sessionId: namedStart.sessionId, input });
+    assert.equal(result.status, "failed");
+    assert.match(result.error, /foreground-only/);
+  }
+  console.log("PASS: named browser commands complete in the foreground; replay, polling and stdin cannot repeat their effects");
+  const missing = await client.shell.exec({ target: "gsv", input: "instance stop unknown-browser" });
+  assert.equal(missing.exitCode, 1, "An unknown browser was reported as successfully stopped");
+  const originalTabs = JSON.parse(await shell(first, "tabs list"));
+  for (const [path, active, error] of [["navigation-failure", "", /ERR_EMPTY_RESPONSE/], ["navigation-timeout", "--active ", /Timeout 30000ms exceeded/]]) {
+    const failed = await client.shell.exec({ target: first.targetId, input: `tabs open ${active}${website}/${path}` });
+    assert.equal(failed.exitCode, 1, "Failed navigation reported a successful tab open");
+    assert.match(failed.error ?? failed.output, error);
+    const afterFailure = JSON.parse(await shell(first, "tabs list"));
+    assert.deepEqual(afterFailure.tabs.map(tab => [tab.id, tab.active]), originalTabs.tabs.map(tab => [tab.id, tab.active]), "Failed tab opening leaked a tab or changed the active tab");
+  }
+  console.log("PASS: failed and timed-out tab opens preserve the error, close their new tab, and leave existing tabs selected");
+  await checkBrowserFollowing(client, first, website);
+  const opened = await shell(first, `tabs open --active ${website}/login`);
+  const { tab } = JSON.parse(opened.slice(opened.indexOf("\n") + 1));
+  const { responsibility: signInWork } = await client.r12y.create({ title: "Test persistent sign-in" });
+  const handoffArgs = { instanceId: first.instanceId, requestId: crypto.randomUUID(), tabId: tab.id, purpose: "Test persistent sign-in", responsibilityId: signInWork.id };
+  const { handoff } = await client.sys.browser.handoff.request(handoffArgs);
+  assert.equal((await client.r12y.get({ id: signInWork.id })).responsibility.state, "waiting");
+  const selector = { instanceId: first.instanceId, requestId: handoff.requestId };
+  await client.sys.browser.handoff.open(selector);
+  await assert.rejects(client.shell.exec({ target: first.targetId, input: "page snapshot" }), /human_control/);
+  const frame = await readBrowserView(client, { instanceId: first.instanceId });
+  assert.ok(frame.image.byteLength > 1000);
+  const input = async value => {
+    const current = await readBrowserView(client, { instanceId: first.instanceId });
+    return client.request("sys.browser.input", { instanceId: first.instanceId, handoffRequestId: handoff.requestId,
+      tabId: current.tabId, documentId: current.documentId }, { body: bodyFromText(JSON.stringify(value)) });
+  };
+  for (const id of [frame.tabs[0].id, tab.id]) await input({ kind: "tab", tabId: id });
+  await input({ kind: "click", x: 180, y: 175 });
+  await input({ kind: "text", text: "tester@example.invalid" });
+  await input({ kind: "key", key: "Tab" });
+  await input({ kind: "text", text: "public-test-fixture" });
+  await input({ kind: "key", key: "Enter" });
+  await Promise.race([storageReady, sleep(15000).then(() => { throw new Error("Sign-in fixture did not save state"); })]);
+  await client.sys.browser.handoff.finish(selector);
+  assert.equal((await client.r12y.get({ id: signInWork.id })).responsibility.state, "open");
+  assert.equal((await client.sys.browser.handoff.request(handoffArgs)).handoff.state, "completed");
+  assert.equal((await client.r12y.get({ id: signInWork.id })).responsibility.state, "open", "A completed retry re-blocked the work");
+  await client.r12y.update({ id: signInWork.id, patch: { state: "resolved" } });
+  await assert.rejects(input({ kind: "text", text: "late" }), /no longer active/);
+  assert.equal((await client.sys.browser.profile.get({ profileId })).profile.saveStatus, "saved");
+  console.log("Human login completed and profile saved; late input rejected");
+  const { responsibility: cancelledWork } = await client.r12y.create({ title: "Test cancelled sign-in" });
+  const cancelledSelector = { instanceId: first.instanceId, requestId: crypto.randomUUID() };
+  await client.sys.browser.handoff.request({ ...cancelledSelector, tabId: tab.id, purpose: "Test cancellation", responsibilityId: cancelledWork.id });
+  await client.sys.browser.handoff.open(cancelledSelector);
+  await client.r12y.update({ id: cancelledWork.id, patch: { state: "cancelled" } });
+  for (let attempt = 0; attempt < 30; attempt++) {
+    if ((await client.sys.browser.handoff.get(cancelledSelector)).handoff.state === "cancelled") break;
+    await sleep(500);
+  }
+  assert.equal((await client.sys.browser.handoff.get(cancelledSelector)).handoff.state, "cancelled");
+  await shell(first, "page snapshot");
+  console.log("PASS: linked work resumes once, terminal handoff retries stay terminal, and cancelling work releases human control");
+  await seedBrowserStorage(shell, client, first);
+  await checkBrowserStorageSummaryBounds(shell, client, first, website);
+  await seedPartialBrowserStorage(shell, client, first, website);
+  // Close the site's tabs: persistence must remember origins independently.
+  const closing = JSON.parse(await shell(first, "tabs list"));
+  for (const tab of closing.tabs) if (tab.url !== "about:blank") await shell(first, `tabs close ${tab.id}`);
+  const remainingTabs = JSON.parse(await shell(first, "tabs list"));
+  const { responsibility: stoppedWork } = await client.r12y.create({ title: "Test browser stop during human handoff" });
+  await client.sys.browser.handoff.request({ instanceId: first.instanceId, requestId: crypto.randomUUID(), tabId: remainingTabs.tabs[0].id,
+    purpose: "Test stop recovery", responsibilityId: stoppedWork.id });
+  const stopped = JSON.parse(await shell({ targetId: "gsv" }, `instance stop ${first.targetId} --wait`));
+  assert.equal(stopped.instance.persistence.saveStatus, "partial");
+  assert.equal((await client.sys.instance.get({ instanceId: first.instanceId })).instance.state, "stopped");
+  let reopened = [];
+  for (let attempt = 0; attempt < 30; attempt++) {
+    const { transitions } = await client.r12y.changes({ afterRevision: stoppedWork.revision, limit: 100 });
+    reopened = transitions.filter(change => change.responsibilityId === stoppedWork.id
+      && change.beforeState === "waiting" && change.afterState === "open");
+    if (reopened.length) break;
+    await sleep(500);
+  }
+  // Ship can act on the resumed work before the stop's final save finishes.
+  assert.equal(reopened.length, 1, "Stopping the browser must release its waiting work exactly once");
+  assert.deepEqual(reopened[0].actor, { kind: "system", component: "browser-handoff" });
+  const { responsibility: currentWork } = await client.r12y.get({ id: stoppedWork.id });
+  if (!["resolved", "cancelled"].includes(currentWork.state)) {
+    try {
+      await client.r12y.update({ id: currentWork.id, expectedRevision: currentWork.revision, patch: { state: "resolved" } });
+    } catch (error) {
+      const { responsibility: settledWork } = await client.r12y.get({ id: stoppedWork.id });
+      if (!["resolved", "cancelled"].includes(settledWork.state)) throw error;
+    }
+  }
+  console.log("PASS: stopping a browser releases linked work without waiting for the handoff deadline");
+  console.log("PASS: native readiness wait, replay disposition, short-ID get/stop, and unknown-ID rejection");
+  console.log("First browser stopped; restoring profile into a new instance");
+  const second = await start(); assert.notEqual(first.targetId, second.targetId);
+  console.log("Restored browser is ready; checking saved website state");
+  const restored = await shell(second, `tabs open --active ${website}/probe && page wait '#restored' && page text`);
+  assert.match(restored, /cookie=kept;local=kept;indexed=kept/);
+  await checkRestoredBrowserStorage(shell, client, second);
+  await checkPartialBrowserStorage(shell, second, website);
+  console.log("PASS: clean setup, idempotent start, human control, tab selection, input revocation, and cookie/localStorage/IndexedDB restoration");
+
+  await shell(second, "page click '#coedit'");
+  const watching = await readBrowserView(client, { instanceId: second.instanceId });
+  assert.ok(watching.image.byteLength > 1000);
+  assert.equal(watching.handoff, undefined);
+  assert.equal(watching.pointer.actor, "ship");
+  assert.ok(watching.pointer.clickedAt);
+  let finished = false;
+  const waiting = shell(second, "page wait '#coedit[data-done=yes]' --timeout 10000").then(() => { finished = true; });
+  await sleep(150); assert.equal(finished, false);
+  await client.request("sys.browser.input", { instanceId: second.instanceId, tabId: watching.tabId, documentId: watching.documentId }, {
+    body: bodyFromText(JSON.stringify({ kind: "text", text: "Human and Ship together" })),
+  });
+  await waiting;
+  assert.equal((await client.sys.instance.list({})).handoffs.length, 0);
+  console.log("PASS: passive viewing, Ship cursor/clicks, and human input alongside agent work without a handoff");
+
+  const shot = JSON.parse(await shell(second, "page screenshot"));
+  const png = await fileBytes(second.targetId, shot.path);
+  assert.equal(png.byteLength, shot.byteLength);
+  assert.deepEqual(png.slice(0, 8), new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10]));
+  await shell(second, `cp ${shot.path} /tmp/copy.png && cp ${shot.path} /tmp/copy.png`);
+  await shell(second, `cat ${shot.path} > /tmp/redirect.png 2>/dev/null`);
+  await shell(second, `cat ${shot.path} | cat >> /tmp/append.png`);
+  for (const path of ["/tmp/copy.png", "/tmp/redirect.png", "/tmp/append.png"]) {
+    assert.deepEqual(await fileBytes(second.targetId, path), png, `${path} changed screenshot bytes`);
+  }
+  const savedPath = "/home/browser-tester/browser-smoke.png";
+  await shell({ targetId: "gsv" }, `cp ${second.targetId}:${shot.path} ${savedPath}`);
+  assert.deepEqual(await fileBytes("gsv", savedPath), png, "Export changed screenshot bytes");
+  await shell({ targetId: "gsv" }, `cp ${savedPath} ${second.targetId}:/tmp/import.png`);
+  assert.deepEqual(await fileBytes(second.targetId, "/tmp/import.png"), png, "Import changed screenshot bytes");
+  await shell({ targetId: "gsv" }, `cp ${second.targetId}:/tmp/import.png ${second.targetId}:/tmp/remote-copy.png`);
+  assert.deepEqual(await fileBytes(second.targetId, "/tmp/remote-copy.png"), png, "Routed copy changed screenshot bytes");
+  console.log("PASS: screenshot, browser copy/overwrite, binary redirection/piping, export to gsv, import, and routed copy preserve every byte");
+  await shell(second, `tabs open --active ${website}/components`);
+  await checkBrowserCommands(input => client.shell.exec({ target: second.targetId, input }));
+  await shell(second, `tabs open --active ${website}/forms`);
+  await checkFormCommands(input => client.shell.exec({ target: second.targetId, input }));
+  await checkBrowserCredentials(shell, client, second, website);
+  await shell(second, `page js 'setTimeout(() => { const until = Date.now() + 25000; while (Date.now() < until) {} }, 500); "scheduled"'`);
+  await sleep(750);
+  const listedAt = Date.now();
+  await shell(second, "tabs list");
+  assert.ok(Date.now() - listedAt < 5000, "Tab metadata waited for busy page JavaScript");
+  await sleep(26000);
+  assert.equal((await client.sys.instance.get({ instanceId: second.instanceId })).instance.state, "ready", "A busy renderer stopped a live browser");
+  const recovered = await readBrowserView(client, { instanceId: second.instanceId });
+  assert.ok(recovered.image.byteLength > 1000);
+  console.log("PASS: tab metadata and browser lifetime remain available while page JavaScript is blocked; live frames recover");
+  await checkForgettingBrowserStorage(shell, client, second, start, state, website);
+} catch (error) { flowError = error; }
+let cleanupError;
+try {
+    const stopped = await Promise.allSettled(startedIds.map(async instanceId => {
+      await client.sys.instance.stop({ instanceId, force: true }); await state(instanceId, "terminal");
+    }));
+    const failures = stopped.filter(outcome => outcome.status === "rejected").map(outcome => outcome.reason);
+    if (profileId) {
+      const result = await client.sys.browser.profile.delete({ profileId });
+      assert.equal(result.profile.state, "deleted", "Saved profile deletion is still pending");
+    }
+    if (failures.length) throw new AggregateError(failures, "Browser cleanup did not complete");
+} catch (error) { cleanupError = error; } finally { client.disconnect(); server.closeAllConnections(); server.close(); }
+if (flowError || cleanupError) throw new AggregateError([flowError, cleanupError].filter(Boolean), "Browser smoke failed");
+console.log("PASS: confirmed stop and saved profile deletion");
+process.exit(0);

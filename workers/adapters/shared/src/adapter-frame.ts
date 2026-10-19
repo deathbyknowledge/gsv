@@ -1,3 +1,4 @@
+import { exceptionDiagnostics } from "../../../../packages/gsv/src/diagnostics.js";
 import {
   adapterDeliveryContextSchema,
   type AdapterGatewayRequestFrame,
@@ -65,8 +66,8 @@ export async function handleAdapterFrame(
   let result: AdapterProviderSendResult;
   try {
     result = await handlers.send(delivery, inputFrame.body);
-  } catch {
-    return errorFrame(inputFrame.id, 503, "Adapter delivery is unavailable", true);
+  } catch (error) {
+    result = { ok: false, error: "Adapter delivery is unavailable", retryable: true, diagnostics: exceptionDiagnostics(error) };
   } finally {
     await cancelBinaryBody(inputFrame.body, "Adapter request completed");
   }
@@ -122,6 +123,7 @@ function publicSendResult(
         surfaceId: context.surface.id,
         deliveryId: context.deliveryId,
         deliveryState: "ambiguous",
+        diagnostics: result.diagnostics,
       };
     }
     return {
@@ -129,6 +131,7 @@ function publicSendResult(
       error: result.error,
       deliveryId: context.deliveryId,
       retryable: result.retryable === true,
+      diagnostics: result.diagnostics,
     };
   }
   return {

@@ -11,15 +11,29 @@ with the same selection exposed through `aria-current`.
 On wide layouts, the rail divider follows its natural width and reaches the top
 of the window. Only the content panes scroll; neither can pass behind the header.
 
-- Preferences shows the effective first choice and fallback order. Every entry can be dragged or moved with arrow controls across personal, shared and included models. Saving writes the owner's `ai/model_order` ID list and clears an older `preferred_model` choice, preserving model definitions and credentials. Use configured order clears both ordering preferences. Missing IDs are skipped and newly available models follow the saved order. The gateway and UI share ordering semantics, including process first-choice overrides. Reasoning is saved independently. Add model uses Instrument controls in both themes, with provider/connection fields and optional settings behind a disclosure. It shares gateway validation and profile serialization with the console; Codex sign-in is explicit and polling stops when the form is hidden or closed. Model drafts survive section and view changes and participate in sign-out and reload protection.
+- Preferences shows the effective first choice and fallback order. Every entry can be dragged or moved with arrow controls across personal, shared and included models. Saving writes the owner's `ai/model_order` ID list and clears an older `preferred_model` choice, preserving model definitions and credentials. Use configured order clears both ordering preferences. Missing IDs are skipped and newly available models follow the saved order. The gateway and UI share ordering semantics, including process first-choice overrides. Reasoning is saved independently. Add model uses Instrument controls in both themes, with provider/connection fields and optional settings behind a disclosure. It shares gateway validation and profile serialization with the console; Codex sign-in is explicit and polling stops when the form is hidden or closed. Model drafts survive section and view changes and participate in sign-out and reload protection. Appearance chooses Match system, Light or Dark; it applies immediately and is stored in this browser's storage rather than server settings, shared with the `l` key and the sign-in screens.
+- Preferences also edits the owner's Response language and Timezone. Setup derives the initial language from the browser; the owner can choose another BCP 47 language tag or clear it. Ship uses it as a starting hint and follows the user's current language or explicit request. The preference does not translate the interface. Language drafts participate in the existing unsaved-change protection, and saves use the owner-scoped locale configuration boundary.
 - Permissions edits simple approval policies without changing rule order. Target specificity, then capability specificity, then source order determine matching. Unknown or malformed policies remain unchanged and can be inspected verbatim. Preparing a replacement starts from the inherited policy and requires a separate save; failed saves retain the draft. Saving rereads the account key and refuses an observed concurrent change. Account grants remain authoritative and are inspectable with human-readable labels. The section says that always allow on an approval card adds an Allow rule here. That card, in Zen, delegated work and Fleet, records the rule for exactly the capability and target it is asking about, in the policy the requesting process resolves; its "why am I being asked?" explanation saves the chosen preset or per-kind choices to the same policy. Both are ordinary rules that this section shows and can remove.
 - Instructions lists `~/context.d/*.md` files and loads one selected file at a time. New instruction opens a name and the same Markdown editor; `.md` is added automatically, and creation rechecks for file or directory name collisions. A missing folder is an empty state. Reads retain exact text; non-text, incomplete, and failed reads cannot be saved. Blank files are valid. Only the selected file is written or deleted. Deletion requires its own capability and an inline confirmation that also explains any unsaved changes being discarded. New and existing drafts survive section switches; failed operations keep the draft and selection. Successful changes cancel stale reads and update the affected list/file caches.
 - Messengers lists the signed-in person's saved Telegram and Slack identities, with transport status, reconnect and explicit unlink controls. Availability and pairing support come from adapter discovery. Linking retains the existing inspect-then-confirm flow; unlinking uses the personal pairing operation. Reloads recover saved links, owner-scoped adapter status signals refresh the active connection snapshot, and closed sections wait until reopened. Failed reads or mutations remain visible without claiming a connection was removed. The current identity records expose provider IDs; the UI does not invent remembered names. No credential or connection operation is performed until the person invokes its control.
 - MCP lists connected servers first. A quiet add action opens the form; cancellation preserves a dirty draft unless explicitly discarded, and successful creation returns to the list. Existing servers offer sign-in, refresh, and removal controls according to ownership and capabilities.
+- Voice appears only when the Desktop native input provider is present. It owns the computer's microphone choice and Handsfree mode preferences, with global voice shortcuts and spoken replies. The microphone preference is shared with Chat and survives reopening the app. Device discovery uses the authenticated session's input lease only while this section is visible and idle; it never starts or interrupts recording. Handsfree recording and replies continue across pages under that session owner. Local preferences remain available while the Gateway reconnects. Shortcut drafts survive section/view switches and participate in the existing unsaved-change guard. Leaving the section cancels shortcut capture and restores the registered keys.
 - Logs shows action history, live outcomes, older pages and an inspector for request details and failures. Its process links open Fleet. The section mounts when opened and pauses reads, notifications and shortcuts while hidden. Fleet's activity summaries share the same ledger cache; ordinary live updates do not refetch it.
-- Public profile shows the signed-in human's private draft, its preview and its publication state. Save and publish are separate actions; public aliases are independent of login names. Drafts survive section changes and failed saves, concurrent revisions require reloading, and unpublish remains available during publication. Only published snapshots appear at `/@alias`; root and Process accounts cannot publish through this flow.
+
+Spoken replies and voice preview read the personal Ship owner's Response language
+through the shared configuration cache. Saving Preferences updates the active
+voice across pages. Regional tags select their base language; an unset preference
+uses the device language when supported, otherwise English. The preview supports English and Spanish and shows an
+availability message for other languages. Shortcuts and playback mode stay local;
+the response language has one account-owned value.
 
 Section and Instrument view switches preserve drafts without a discard dialog.
+Sections use the `section` query parameter, including `/chat/settings?section=voice`
+from Chat's compact recording panel. Back/Forward restores the section without
+reloading the app, and browser sessions do not expose the native voice section.
+On phones, Logs stacks the action/outcome above its place/time. The inspector holds
+arguments, purpose and process details; raw changes the action label without introducing
+horizontal table scrolling.
 Instrument retains Settings until the signed-in session ends; hiding it pauses
 background reads, UI notifications and model sign-in polling. Unsaved changes
 are reported for sign-out and browser unload handling. Retention does not save
@@ -37,20 +51,14 @@ continue to use their existing default connection.
 
 Custom MCP headers are an optional disclosure in the add-server form. Values remain masked, empty rows are ignored, and malformed or duplicate names cannot be submitted. Header drafts survive section and view changes and participate in sign-out and reload protection. Successful creation clears the values; failed creation retains them. Headers use the existing MCP transport contract and are never saved into browser storage.
 
-The existing settings surfaces remain available pending the retirement inventory. The old approval editor also only supports tool/target/action rules; it does not implement arbitrary conditional rules or an account-grant editor. Contacts, invitations, conversations and cross-Ship request management belong to Fleet. Future operator-owned WhatsApp Business and other adapter changes follow the [hosting plan](../../../../../../engineering/unified-hosting-and-web-release.md). Production prompt defaults are unchanged.
+The approval editor supports tool/target/action rules. Contacts, invitations, conversations, public profiles and cross-Ship request management belong to People.
 
 Settings includes a quiet sign-out action beside the current username. Unsaved work across all retained Instrument views requires confirmation before signing out; the shared session service clears the stored credential, revokes the current UI token and returns to login.
 
-Root has a People section for local human access: create and cancel a private,
-expiring invitation; see active and removed accounts; set a member's password;
-or remove their access after an inline confirmation. These local enrollments are
-distinct from Fleet's cross-space contact invitations. People never asks root to
-choose the invitee's initial password. The invitee opens `/join` on the space's
-own hostname, chooses a password, and retains the same recipient proof across a
-lost-reply retry. Password reset and removal explain credential and messenger
-revocation; removal preserves data and already-running work. People drafts use
-the same retention and teardown protection as the other Settings sections.
+Root's Sign-in section holds personal password reset and verified-owner linking.
+A reset selects the sole personal account and explains credential and messenger
+revocation. The password field is cleared when the section is hidden. Ordinary
+personal login asks only for a password; explicit Administrator sign-in selects root.
 
-Root's Sign-in section holds the verified-owner linking control. Local accounts
-sign in with their password through the existing session service and token
-rotation. No credential material is kept in UI drafts.
+Profile editing and publication belong to People, reached through the display-name
+link at the bottom of its sidebar. Cross-space contact invitations also belong to People.

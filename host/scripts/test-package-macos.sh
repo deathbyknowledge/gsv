@@ -13,12 +13,10 @@ for path in \
   host/Cargo.toml \
   host/scripts/package-macos.sh \
   host/packaging/macos/Info.plist \
+  host/packaging/macos/en.lproj/InfoPlist.strings \
   host/apps/desktop/Entitlements.plist \
   host/helpers/transcriber/THIRD_PARTY.md \
-  host/helpers/gestures/THIRD_PARTY.md \
-  host/helpers/gestures/models/LICENSE.apache-2.0 \
-  host/helpers/gestures/models/PROVENANCE.md \
-  web/public/icons/gsv-512.png; do
+  web/public/brand/gsv-ship.png; do
   mkdir -p "$fixture/$(dirname "$path")"
   cp "$repository_root/$path" "$fixture/$path"
 done
@@ -34,9 +32,18 @@ printf 'int main(void) { return 0; }\n' | clang -x c - -o "$scratch/executable"
 # Start with unsigned helpers on both architectures so signing order is tested.
 codesign --force --sign - "$scratch/executable"
 codesign --remove-signature "$scratch/executable"
-for binary in gsv-desktop gsv gsvd gsv-vision gsv-transcribe; do
+binary_names="$(cargo metadata --locked --no-deps --format-version 1 --manifest-path "$repository_root/host/Cargo.toml" | python3 -c '
+import json, sys
+packages = {"desktop", "gsv", "machine", "transcriber"}
+print(" ".join(target["name"] for package in json.load(sys.stdin)["packages"] if package["name"] in packages
+    for target in package["targets"] if "bin" in target["kind"]))
+')"
+read -r -a binaries <<< "$binary_names"
+binaries+=(gsv-speak)
+for binary in "${binaries[@]}"; do
   cp "$scratch/executable" "$binary_dir/$binary"
 done
+printf 'bundled speech notices\n' > "$binary_dir/gsv-speak-THIRD_PARTY.md"
 
 mkdir -p "$binary_dir/gsv-transcribe-runtime"
 printf 'int transcribe_fixture(void) { return 0; }\n' | clang -dynamiclib -x c - -o "$binary_dir/gsv-transcribe-runtime/libtranscribe.dylib"
@@ -52,10 +59,20 @@ ditto -x -k "${archives[0]}" "$scratch/unpacked"
 app="$scratch/unpacked/GSV.app"
 codesign --verify --deep --strict "$app"
 plutil -lint "$app/Contents/Info.plist"
+swift - "$app" <<'SWIFT'
+import Foundation
+let path = CommandLine.arguments[1]
+let bundle = Bundle(path: path)!
+assert(bundle.bundleIdentifier == "space.gsv.desktop")
+assert(bundle.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String == "Ship")
+let displayName = FileManager.default.displayName(atPath: path)
+assert(displayName == "Ship" || displayName == "Ship.app", displayName)
+SWIFT
 cmp "$repository_root/host/helpers/transcriber/THIRD_PARTY.md" \
   "$app/Contents/Resources/licenses/transcriber/THIRD_PARTY.md"
+cmp "$binary_dir/gsv-speak-THIRD_PARTY.md" "$app/Contents/Resources/licenses/speaker/THIRD_PARTY.md"
 [[ ! -e "$app/Contents/MacOS/THIRD_PARTY.md" ]]
-for binary in gsv-desktop gsv gsvd gsv-vision gsv-transcribe; do
+for binary in "${binaries[@]}"; do
   codesign --verify --strict "$app/Contents/MacOS/$binary"
 done
 codesign --verify --strict "$app/Contents/MacOS/gsv-transcribe-runtime/libtranscribe.dylib"

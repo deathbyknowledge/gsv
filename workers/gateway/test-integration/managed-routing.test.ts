@@ -127,6 +127,47 @@ describe("managed installation routing integration", () => {
     socket.close(1000, "test complete");
   });
 
+  it("recovers a lost setup link and activates an underscore account only with setup authority", async () => {
+    await beginProvisioning(harness, "first");
+    const socket = await openManagedSocket(harness, "first");
+    const credentials = { username: "sample_user", password: "test-password123" };
+    const connect = { protocol: 4, peer: { id: "setup-recovery-test", version: "test", platform: "browser" }, auth: credentials };
+    await expect(managedRpc(socket, "login-before-setup", "sys.connect", connect)).resolves.toMatchObject({
+      ok: false, error: { code: 503, details: { setupRecovery: true, setupUrl: "https://accounts.example/owner/signup/?resume=1" } },
+    });
+    await expect(managedRpc(socket, "expired-setup", "sys.setup", { username: credentials.username, password: credentials.password,
+      onboardingToken: "invalid" })).resolves.toMatchObject({ ok: false, error: { code: 401,
+        details: { setupRecovery: true, setupUrl: "https://accounts.example/owner/signup/?resume=1" } } });
+    await expectManagedRpcOk(socket, "recovered-setup", "sys.setup", { username: credentials.username, password: credentials.password,
+      onboardingToken: "integration-onboarding-first" });
+    await expectManagedRpcOk(socket, "login-after-setup", "sys.connect", connect);
+    socket.close(1000, "test complete");
+  });
+
+  it("requires a replacement operator link rather than offering owner-email recovery", async () => {
+    await beginProvisioning(harness, "second");
+    const socket = await openManagedSocket(harness, "second");
+    const response = await managedRpc(socket, "operator-expired-setup", "sys.setup", {
+      username: "second-owner", password: "test-password123", onboardingToken: "expired",
+    });
+    expect(response).toMatchObject({ ok: false, error: { code: 401, details: { setupRecovery: true } } });
+    expect(response).not.toHaveProperty("error.details.setupUrl");
+    await expectManagedRpcOk(socket, "operator-complete-setup", "sys.setup", {
+      username: "second-owner", password: "test-password123", onboardingToken: "integration-onboarding-second",
+    });
+    expect(await managedRpc(socket, "operator-consumed-setup", "sys.setup", {
+      username: "second-owner", password: "test-password123", onboardingToken: "integration-onboarding-second",
+    })).toMatchObject({ ok: false, error: { code: 401, details: { setupRecovery: true } } });
+    const peer = { id: "gsv-ui-setup-probe", version: "test", platform: "browser" };
+    const probe = await managedRpc(socket, "operator-active-probe", "sys.connect", { protocol: 4, peer });
+    expect(probe).toMatchObject({ ok: false, error: { code: 401 } });
+    expect(probe).not.toHaveProperty("error.details.setupRecovery");
+    await expectManagedRpcOk(socket, "operator-recovered-sign-in", "sys.connect", {
+      protocol: 4, peer, auth: { username: "second-owner", password: "test-password123" },
+    });
+    socket.close(1000, "test complete");
+  });
+
   it("retries accounts activation after setup completes locally", async () => {
     await beginProvisioning(harness, "first");
     await failNextOnboardingCompletion(harness, "first", "before-activation");

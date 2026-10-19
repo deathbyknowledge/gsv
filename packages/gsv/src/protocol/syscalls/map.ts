@@ -110,8 +110,6 @@ import type {
   AccountCreateResult,
   AccountListArgs,
   AccountListResult,
-  HumanInvitation,
-  LocalPerson,
   ConnectArgs,
   ConnectResult,
   SysBootstrapArgs,
@@ -438,6 +436,23 @@ export type SyscallDomains = {
   "sys.setup": { args: SysSetupArgs; result: SysSetupResult };
   "sys.bootstrap": { args: SysBootstrapArgs; result: SysBootstrapResult };
   "sys.feedback": { args: SysFeedbackArgs; result: SysFeedbackResult };
+  "sys.instance.catalog": { args: Instance.SysInstanceCatalogArgs; result: Instance.SysInstanceCatalogResult };
+  "sys.instance.start": { args: Instance.SysInstanceStartArgs; result: Instance.SysInstanceStartResult };
+  "sys.instance.list": { args: Instance.SysInstanceListArgs; result: Instance.SysInstanceListResult };
+  "sys.instance.get": { args: Instance.SysInstanceGetArgs; result: Instance.SysInstanceGetResult };
+  "sys.instance.stop": { args: Instance.SysInstanceStopArgs; result: Instance.SysInstanceStopResult };
+  "sys.browser.profile.create": { args: Instance.SysBrowserProfileCreateArgs; result: Instance.SysBrowserProfileCreateResult };
+  "sys.browser.profile.list": { args: Instance.SysBrowserProfileListArgs; result: Instance.SysBrowserProfileListResult };
+  "sys.browser.profile.get": { args: Instance.SysBrowserProfileGetArgs; result: Instance.SysBrowserProfileGetResult };
+  "sys.browser.profile.save": { args: Instance.SysBrowserProfileSaveArgs; result: Instance.SysBrowserProfileSaveResult };
+  "sys.browser.profile.delete": { args: Instance.SysBrowserProfileDeleteArgs; result: Instance.SysBrowserProfileDeleteResult };
+  "sys.browser.handoff.request": { args: Instance.SysBrowserHandoffRequestArgs; result: Instance.SysBrowserHandoffRequestResult };
+  "sys.browser.handoff.get": { args: Instance.SysBrowserHandoffGetArgs; result: Instance.SysBrowserHandoffGetResult };
+  "sys.browser.handoff.cancel": { args: Instance.SysBrowserHandoffCancelArgs; result: Instance.SysBrowserHandoffCancelResult };
+  "sys.browser.handoff.open": { args: Instance.SysBrowserHandoffOpenArgs; result: Instance.SysBrowserHandoffOpenResult };
+  "sys.browser.handoff.finish": { args: Instance.SysBrowserHandoffFinishArgs; result: Instance.SysBrowserHandoffFinishResult };
+  "sys.browser.watch": { args: Instance.SysBrowserWatchArgs; result: Instance.SysBrowserWatchResult };
+  "sys.browser.input": { args: Instance.SysBrowserInputArgs; result: Instance.SysBrowserInputResult };
   "sys.config.get": { args: SysConfigGetArgs; result: SysConfigGetResult };
   "sys.config.set": { args: SysConfigSetArgs; result: SysConfigSetResult };
   "sys.target.list": { args: SysTargetListArgs; result: SysTargetListResult };
@@ -471,15 +486,9 @@ export type SyscallDomains = {
   "account.list": { args: AccountListArgs; result: AccountListResult };
   "account.owner.link": { args: { id: string; secret: string }; result: { url: string; expiresAt: number } };
   "account.recovery.redeem": { args: { id: string; secret: string; proof: string; password: string }; result: { username: "root" } };
-  "account.recovery.code.start": { args: { id: string; username: string; proof: string }; result: { accepted: true; expiresAt: number } };
+  "account.recovery.code.start": { args: { id: string; username?: string; proof: string }; result: { accepted: true; expiresAt: number } };
   "account.recovery.code.redeem": { args: { id: string; proof: string; code: string; password: string }; result: { username: string } };
-  "account.invite.create": { args: { id: string; secret: string; username: string }; result: HumanInvitation };
-  "account.invite.list": { args: Record<string, never>; result: { invitations: HumanInvitation[] } };
-  "account.invite.cancel": { args: { id: string }; result: HumanInvitation };
-  "account.invite.redeem": { args: { id: string; secret: string; proof: string; password: string }; result: { uid: number; username: string } };
-  "account.people.list": { args: Record<string, never>; result: { people: LocalPerson[] } };
-  "account.password.set": { args: { uid: number; password: string }; result: { updated: true } };
-  "account.remove": { args: { uid: number }; result: { removed: true } };
+  "account.password.set": { args: { uid?: number; password: string }; result: { updated: true } };
 
   "sched.list": { args: SchedulerListArgs; result: SchedulerListResult };
   "sched.add": { args: SchedulerAddArgs; result: SchedulerAddResult };
@@ -524,3 +533,4 @@ export type SyscallDomains = {
 export type SyscallName = keyof SyscallDomains;
 export type ArgsOf<S extends SyscallName> = SyscallDomains[S]["args"];
 export type ResultOf<S extends SyscallName> = SyscallDomains[S]["result"];
+import type * as Instance from "./instance";

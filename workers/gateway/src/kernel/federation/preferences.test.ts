@@ -10,6 +10,27 @@ import { handleContactBlockSet, handleContactPreferencesUpdate } from "./prefere
 const OWNER = { uid: 1000, gid: 1000, gids: [1000], username: "person", home: "/home/person", cwd: "/home/person" };
 
 describe("contact policy authority", () => {
+  it("lets only the owner's canonical Ship change handling and retains revision checks", async () => {
+    await runWithRealKernelSql(async (_sql, storage) => {
+      const store = new FederationStore(storage);
+      const contact = store.activateContact({ ownerUid: OWNER.uid, remoteShipId: "ship:remote",
+        remoteSubject: { id: "subject:remote", displayName: "Remote" }, remoteOrigin: "https://remote.example",
+        remotePublicKey: { kty: "EC", crv: "P-256", x: "x", y: "y" }, sharedSecret: "secret",
+        generation: "generation:one", threadId: "thread:one" });
+      const ctx = policyContext(storage, store);
+      const change = { contactId: contact.id, expectedRevision: 1, patch: { shipHandlesMessages: true } };
+      for (const processId of ["proc:helper", "proc:foreign"]) {
+        await expect(handleContactPreferencesUpdate(change, { ...ctx, processId })).rejects.toThrow("signed-in human or their Ship");
+      }
+      const ship = { ...ctx, processId: "proc:ship" };
+      const result = await handleContactPreferencesUpdate(change, ship);
+      expect(result.contact.preferences).toMatchObject({ revision: 2, shipHandlesMessages: true });
+      expect(ctx.responsibilities.list(OWNER.uid).records).toEqual([]);
+      await expect(handleContactPreferencesUpdate({ ...change, patch: { shipHandlesMessages: false } }, ship)).rejects.toThrow("changed");
+      expect(store.get(contact.id)?.preferences.shipHandlesMessages).toBe(true);
+    });
+  });
+
   it("blocks the actor, pending transport, pairing and resource grants in one owner transition", async () => {
     await runWithRealKernelSql(async (_sql, storage) => {
       const store = new FederationStore(storage);
@@ -60,6 +81,7 @@ function policyContext(storage: DurableObjectStorage, federation: FederationStor
   const context = {
     peer: testPeer({ kind: "human", account: OWNER, calls: ["contact.*"] }), callerOwnerUid: OWNER.uid,
     connection: {}, federation, approaches: new ApproachStore(storage), responsibilities: new ResponsibilityStore(storage),
+    procs: { get: (id: string) => ({ ownerUid: id === "proc:foreign" ? OWNER.uid + 1 : OWNER.uid, isPersonalController: id !== "proc:helper" }) },
     auth: {
       getPasswdByUid: () => OWNER,
       getShadowByUsername: () => ({ hash: "unlocked" }),

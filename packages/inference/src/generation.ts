@@ -1,3 +1,4 @@
+import { exceptionDiagnostics, type ExceptionDiagnostics } from "@humansandmachines/gsv/telemetry";
 import {
   normalizeContext,
   type AssistantMessage,
@@ -19,6 +20,7 @@ import type { InferenceModelRouting, InferenceRequest, InferencePartial, Inferen
 
 const GSV_INFERENCE_API = "gsv-inference";
 const WORKERS_AI_MODEL_PREFIX = "workers-ai/";
+const MAX_ACQUISITION_RETRIES = 2;
 
 /** Provider transport only; generation ownership stays in this module. */
 export type InferenceTransport = {
@@ -47,6 +49,7 @@ export type InferenceAttempt = {
   model: InferenceModelRouting;
   result?: InferenceResult;
   failure?: InferenceFailure;
+  diagnostics?: ExceptionDiagnostics;
   accepted: boolean;
   startedAt: number;
   completedAt?: number;
@@ -133,8 +136,9 @@ export function createInferenceGeneration(
     attempts: () => attempts.slice(),
     accepted: () => activeAttempt?.accepted === true
       || attempts.some((attempt) => attempt.accepted),
-    failure: (message) => attempts.at(-1)?.failure
-      ?? classifyAttemptFailure(activeAttempt, end, message),
+    failure: (message) => end === "timed_out"
+      ? classifyAttemptFailure(activeAttempt, end, message)
+      : attempts.at(-1)?.failure ?? classifyAttemptFailure(activeAttempt, end, message),
     abort: async (reason = "cancelled") => {
       getEnd();
       finish(reason === "timeout" ? "timed_out" : "aborted");
@@ -180,12 +184,15 @@ async function* streamInferenceGeneration(
 // SAFETY: This assertion follows boundary validation or a test fixture with the declared owner contract.
     tools: input.tools as Context["tools"],
   };
-  for (const [index, modelRouting] of routing.models.entries()) {
+  let retries = 0;
+  for (let index = 0; index < routing.models.length;) {
     const terminal = getEnd();
     if (terminal && terminal !== "completed") {
       yield generationEndEvent(terminal, input);
       return;
     }
+    const modelRouting = routing.models[index];
+    let retryDelayMs: number | undefined;
     const attempt: InferenceAttempt = {
       model: modelRouting,
       accepted: false,
@@ -250,13 +257,24 @@ async function* streamInferenceGeneration(
           attempt.result = result;
           attempt.failure = failure;
           attempt.completedAt = Date.now();
-          const canFallback = event.type === "error"
+          const retryableBeforeOutput = event.type === "error"
             && event.reason === "error"
             && !attempt.outputExposed
             && !signal.aborted
-            && failure?.retryable === true
-            && index + 1 < routing.models.length;
-          if (canFallback) break;
+            && failure?.retryable === true;
+          if (retryableBeforeOutput && index + 1 < routing.models.length) {
+            index += 1;
+            retries = 0;
+            break;
+          }
+          // An accepted stream can incur usage even without visible output.
+          // Retry rejected acquisition only; reservations cover one accepted
+          // attempt per route. Explicit fallback routes still take priority.
+          if (retryableBeforeOutput && !attempt.accepted && retries < MAX_ACQUISITION_RETRIES) {
+            retryDelayMs = 500 * 2 ** retries;
+            retries += 1;
+            break;
+          }
           finish("completed");
           if (start) yield start;
           if (event.type === "done") {
@@ -287,6 +305,17 @@ async function* streamInferenceGeneration(
       attemptAbort.abort();
       const close = iterator.return?.();
       if (close) void close.catch(() => {});
+    }
+    if (retryDelayMs !== undefined) {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      try {
+        await Promise.race([
+          new Promise<void>((resolve) => { timer = setTimeout(resolve, retryDelayMs); }),
+          ended,
+        ]);
+      } finally {
+        if (timer !== undefined) clearTimeout(timer);
+      }
     }
   }
 }
@@ -324,6 +353,8 @@ function fetchForAttempt(
     try {
       const response = await providerFetch(request, init);
       attempt.providerStatusCode = response.status;
+      const requestId = response.headers.get("x-request-id") ?? response.headers.get("request-id");
+      if (requestId) attempt.diagnostics = { ...attempt.diagnostics, ...exceptionDiagnostics({ requestId }) };
       if (response.ok) attempt.accepted = true;
       if (signal.aborted) {
         void response.body?.cancel(signal.reason).catch(() => {});
@@ -334,6 +365,7 @@ function fetchForAttempt(
       return new Response(body, response);
     } catch (error) {
       attempt.transportFailed = true;
+      attempt.diagnostics = { ...attempt.diagnostics, ...exceptionDiagnostics(error) };
       throw error;
     }
   };
@@ -424,6 +456,7 @@ async function nextAttemptEvent(
     ));
   }
   if (outcome.kind === "failure") {
+    attempt.diagnostics = { ...attempt.diagnostics, ...exceptionDiagnostics(outcome.error) };
     return inferenceErrorEvent(
       signal.aborted,
       outcome.error,
@@ -450,7 +483,8 @@ function classifyAttemptFailure(
   };
   if (attempt?.providerStatusCode !== undefined) input.statusCode = attempt.providerStatusCode;
   if (message !== undefined) input.message = message;
-  return classifyProviderFailure(input);
+  const failure = classifyProviderFailure(input);
+  return { ...failure, diagnostics: { ...failure.diagnostics, ...attempt?.diagnostics } };
 }
 
 function generationEndEvent(

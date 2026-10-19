@@ -11,6 +11,31 @@ import {
 afterEach(() => vi.unstubAllGlobals());
 
 describe("semantic page snapshots", () => {
+  it("surfaces a visible dialog beyond the outline budget with a usable ref, without exposing hidden dialogs", async () => {
+    const content = Array.from({ length: 650 }, (_, index) => ({ ...ax(`text-${index}`, "StaticText", `Article ${index}`, 1000 + index), parentId: "root" }));
+    const dialog = { ...ax("dialog", "dialog", "Choose country", 2000, [], [{ name: "modal", value: true }]), parentId: "root" };
+    stubDebugger(vi.fn(async (_target: chrome.debugger.DebuggerSession, method: string) => {
+      if (method === "Accessibility.getFullAXTree") return { nodes: [
+        ax("root", "RootWebArea", "Shop", undefined, [...content.map(node => node.nodeId), "dialog", "hidden"]),
+        ...content, dialog,
+        { ...ax("ignored", "dialog", "Ignored dialog", 2001), ignored: true, parentId: "root" },
+        { ...ax("hidden", "generic", "", 2002, ["hidden-dialog"], [{ name: "hidden", value: true }]), parentId: "root" },
+        { ...ax("hidden-dialog", "dialog", "Hidden dialog", 2003), parentId: "hidden" },
+      ] };
+      if (method === "DOMSnapshot.captureSnapshot") return { documents: [] };
+      return fixtureResponse(method);
+    }));
+    const store = new PageReferenceStore();
+    const snapshot = await captureSemanticSnapshot({ tabId: 42 }, tab(), store);
+    expect(snapshot.truncated).toBe(true);
+    expect(snapshot.dialogs).toHaveLength(1);
+    expect(snapshot.dialogs![0]).toMatchObject({ role: "dialog", name: "Choose country", modal: true });
+    expect(store.resolve(snapshot.dialogs![0]!.ref!)).toMatchObject({ backendNodeId: 2000, documentId: "loader-1" });
+    const outline = formatSemanticSnapshot(snapshot);
+    expect(outline.split("\n")[3]).toMatch(/^visible-dialog @\S+ "Choose country" \[modal\]$/);
+    expect(outline).not.toContain("Hidden dialog");
+    expect(outline).not.toContain("Ignored dialog");
+  });
   it("assigns snapshot-scoped refs in semantic order and identifies scroll regions", async () => {
     const sendCommand = vi.fn(async (
       _target: chrome.debugger.DebuggerSession,
@@ -70,6 +95,34 @@ describe("semantic page snapshots", () => {
     expect(firstTextbox).not.toHaveProperty("valueLength");
     expect(firstTextbox?.ref).not.toBe(secondTextbox?.ref);
     expect(store.resolve(firstTextbox!.ref!)).toMatchObject({ backendNodeId: 201 });
+  });
+
+  it("preserves actionable descendants of named calendar rows and list items", async () => {
+    stubDebugger(vi.fn(async (_target: chrome.debugger.DebuggerSession, method: string) => {
+      if (method === "Accessibility.getFullAXTree") {
+        return { nodes: [
+          ax("root", "RootWebArea", "Planner", undefined, ["row", "item"]),
+          { ...ax("row", "row", "October 10", 301, ["cell"]), parentId: "root" },
+          { ...ax("cell", "gridcell", "October 10", 302, ["day"]), parentId: "row" },
+          { ...ax("day", "button", "October 10", 303, ["text"]), parentId: "cell" },
+          { ...ax("text", "StaticText", "October 10", 304), parentId: "day" },
+          { ...ax("item", "listitem", "Route details", 305, ["link"]), parentId: "root" },
+          { ...ax("link", "link", "Route details", 306), parentId: "item" },
+        ] };
+      }
+      if (method === "DOMSnapshot.captureSnapshot") return { documents: [] };
+      return fixtureResponse(method);
+    }));
+    const store = new PageReferenceStore();
+
+    const snapshot = await captureSemanticSnapshot({ tabId: 42 }, tab(), store);
+    const references = collectRefs(snapshot.nodes).map((ref) => store.resolve(ref));
+
+    expect(references).toEqual(expect.arrayContaining([
+      expect.objectContaining({ role: "button", name: "October 10", backendNodeId: 303 }),
+      expect.objectContaining({ role: "link", name: "Route details", backendNodeId: 306 }),
+    ]));
+    expect(formatSemanticSnapshot(snapshot)).not.toContain('text "October 10"');
   });
 });
 

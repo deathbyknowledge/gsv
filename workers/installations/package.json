@@ -1,6 +1,6 @@
 {
   "name": "@humansandmachines/gsv-installations",
-  "version": "0.6.6",
+  "version": "0.7.3",
   "private": true,
   "type": "module",
   "exports": {
@@ -26,8 +26,7 @@
     "./owner-http": "./src/owner-http.ts",
     "./owner-service": "./src/owner-service.ts",
     "./owner-front-door": "./src/owner-front-door.ts",
-    "./creation-invites": "./src/creation-invites.ts",
-    "./admin/invites": "./src/admin/invites.ts"
+    "./signup": "./src/signup.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",

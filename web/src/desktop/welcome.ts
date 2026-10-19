@@ -1,7 +1,8 @@
 import { ONBOARDING_KEY, OwnerWelcome } from "../app/services/session/ownerWelcome";
 import { invoke, type NativeSessionStorage } from "./bridge";
+import { publicDeployment } from "../app/services/deployment";
 
-const accountsOrigin = import.meta.env.VITE_GSV_ACCOUNTS_ORIGIN || "https://gsv.space";
+export const accountsOrigin = publicDeployment().accountsOrigin || import.meta.env.VITE_GSV_ACCOUNTS_ORIGIN || "";
 
 export async function loadDesktopWelcome(): Promise<OwnerWelcome> {
   const snapshot = await invoke("desktop_welcome");
@@ -10,9 +11,13 @@ export async function loadDesktopWelcome(): Promise<OwnerWelcome> {
   }, accountsOrigin);
 }
 
+export async function clearDesktopOnboardingToken(storage: NativeSessionStorage): Promise<void> {
+  storage.removeItem(ONBOARDING_KEY);
+  await storage.flush();
+}
+
 export async function completeDesktopOnboarding(storage: NativeSessionStorage): Promise<void> {
   const welcome = await loadDesktopWelcome();
   await welcome.completeCreation();
-  storage.removeItem(ONBOARDING_KEY);
-  await storage.flush();
+  await clearDesktopOnboardingToken(storage);
 }

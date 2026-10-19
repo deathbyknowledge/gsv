@@ -5,6 +5,8 @@ mod downloads;
 mod input;
 mod machine;
 mod session;
+mod shortcuts;
+mod speech;
 mod welcome;
 
 use fs2::FileExt;
@@ -28,6 +30,8 @@ struct Host {
     session: Mutex<SessionStore>,
     welcome: Mutex<welcome::WelcomeStore>,
     input: InputRuntime,
+    speech: speech::SpeechRuntime,
+    shortcuts: Mutex<shortcuts::Shortcuts>,
     machine: machine::MachineRuntime,
     control: ControlBridge,
     control_shutdown: Mutex<Option<tokio::sync::oneshot::Sender<()>>>,
@@ -36,7 +40,9 @@ struct Host {
 }
 
 impl Host {
-    async fn shutdown(&self) {
+    async fn shutdown(&self, app: &tauri::AppHandle) {
+        self.shortcuts.lock().await.stop(app).await;
+        self.speech.shutdown().await;
         self.control.reset();
         self.machine.shutdown().await;
         if let Some(stop) = self.control_shutdown.lock().await.take() {
@@ -79,6 +85,8 @@ async fn desktop_configure(
     host.machine.cancel();
     host.control.reset();
     host.input.reset().await;
+    host.shortcuts.lock().await.stop(window.app_handle()).await;
+    let _ = host.speech.command(speech::SpeechCommand::Cancel).await;
     Ok(next)
 }
 
@@ -112,7 +120,7 @@ async fn control_attach(
     main_window(&window)?;
     let session = host.session.lock().await;
     if generation != session.current.generation {
-        return Err("The configured space has changed.".into());
+        return Err("The selected Ship has changed.".into());
     }
     Ok(host.control.attach(updates))
 }
@@ -207,16 +215,15 @@ async fn input_attach(
     host: State<'_, Host>,
     generation: String,
     updates: tauri::ipc::Channel<InputUpdate>,
-    practice: bool,
 ) -> Result<Snapshot, String> {
     main_window(&window)?;
     let session = host.session.lock().await;
     if generation != session.current.generation
         || (session.current.origin.is_none() && cfg!(feature = "custom-protocol"))
     {
-        return Err("The configured space has changed.".into());
+        return Err("The selected Ship has changed.".into());
     }
-    host.input.attach(updates, practice).await
+    host.input.attach(updates).await
 }
 
 #[tauri::command]
@@ -240,6 +247,69 @@ async fn input_command(
 ) -> Result<(), String> {
     main_window(&window)?;
     host.input.command(lease, command).await
+}
+
+#[tauri::command]
+async fn speech_attach(
+    window: WebviewWindow,
+    host: State<'_, Host>,
+    generation: String,
+    updates: tauri::ipc::Channel<speech::SpeechEvent>,
+) -> Result<speech::SpeechStatus, String> {
+    main_window(&window)?;
+    let session = host.session.lock().await;
+    if session.current.generation != generation {
+        return Err("The configured space has changed.".into());
+    }
+    Ok(host.speech.attach(updates))
+}
+
+#[tauri::command]
+async fn speech_command(
+    window: WebviewWindow,
+    host: State<'_, Host>,
+    generation: String,
+    command: speech::SpeechCommand,
+) -> Result<(), String> {
+    main_window(&window)?;
+    let session = host.session.lock().await;
+    if session.current.generation != generation {
+        return Err("The configured space has changed.".into());
+    }
+    host.speech.command(command).await
+}
+
+#[tauri::command]
+async fn shortcuts_configure(
+    window: WebviewWindow,
+    host: State<'_, Host>,
+    generation: String,
+    settings: shortcuts::ShortcutSettings,
+) -> Result<(), String> {
+    main_window(&window)?;
+    let session = host.session.lock().await;
+    if session.current.generation != generation {
+        return Err("The configured space has changed.".into());
+    }
+    host.shortcuts
+        .lock()
+        .await
+        .configure(window.app_handle(), host.speech.clone(), settings)
+        .await
+}
+
+#[tauri::command]
+async fn shortcuts_edit(
+    window: WebviewWindow,
+    host: State<'_, Host>,
+    generation: String,
+) -> Result<(), String> {
+    main_window(&window)?;
+    let session = host.session.lock().await;
+    if session.current.generation != generation {
+        return Err("The configured space has changed.".into());
+    }
+    host.shortcuts.lock().await.edit().await
 }
 
 fn open_external(value: &str) -> Result<(), String> {
@@ -287,7 +357,7 @@ async fn desktop_open(window: WebviewWindow, url: String) -> Result<(), String> 
 async fn desktop_quit(window: WebviewWindow, host: State<'_, Host>) -> Result<(), String> {
     main_window(&window)?;
     host.exiting.store(true, Ordering::Release);
-    host.shutdown().await;
+    host.shutdown(window.app_handle()).await;
     window.app_handle().exit(0);
     Ok(())
 }
@@ -330,6 +400,7 @@ fn main() {
     }
 
     let app = tauri::Builder::default()
+        .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .invoke_handler(tauri::generate_handler![
             desktop_session,
             desktop_configure,
@@ -343,6 +414,10 @@ fn main() {
             input_attach,
             input_acknowledge,
             input_command,
+            speech_attach,
+            speech_command,
+            shortcuts_configure,
+            shortcuts_edit,
             control_attach,
             control_detach,
             control_active,
@@ -359,7 +434,7 @@ fn main() {
                 .open(directory.join("desktop.lock"))?;
             instance_lock
                 .try_lock_exclusive()
-                .map_err(|_| std::io::Error::other("GSV is already running."))?;
+                .map_err(|_| std::io::Error::other("Ship is already running."))?;
             // Import the explicitly supported upgrade once; never read CLI or driver credentials.
             if let Some(parent) = directory.parent() {
                 SessionStore::import_previous_session(
@@ -399,6 +474,8 @@ fn main() {
                 session: Mutex::new(session),
                 welcome: Mutex::new(welcome),
                 input: InputRuntime::start(),
+                speech: speech::SpeechRuntime::start(),
+                shortcuts: Mutex::new(shortcuts::Shortcuts::default()),
                 machine: machine::MachineRuntime::default(),
                 control,
                 control_shutdown: Mutex::new(Some(control_shutdown)),
@@ -407,6 +484,7 @@ fn main() {
             });
             app.manage(downloads::Downloads::default());
             let window = WebviewWindowBuilder::from_config(app, &app.config().app.windows[0])?
+                .background_throttling(tauri::utils::config::BackgroundThrottlingPolicy::Disabled)
                 .data_directory(directory.join("webview"))
                 .on_navigation(trusted_navigation)
                 .on_download(downloads::handle)
@@ -424,7 +502,7 @@ fn main() {
             Ok(())
         })
         .build(tauri::generate_context!())
-        .expect("start GSV");
+        .expect("start Ship");
     app.run(|app, event| match event {
         tauri::RunEvent::ExitRequested { api, .. } => {
             let host = app.state::<Host>();
@@ -432,7 +510,7 @@ fn main() {
                 api.prevent_exit();
                 let app = app.clone();
                 tauri::async_runtime::spawn(async move {
-                    app.state::<Host>().shutdown().await;
+                    app.state::<Host>().shutdown(&app).await;
                     app.exit(0);
                 });
             }

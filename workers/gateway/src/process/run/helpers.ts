@@ -13,6 +13,7 @@ import { z } from "zod";
 export type ProcessTask =
   | { callback: "onMediaPreparationTimeout"; payload: string; }
   | { callback: "onRunFinishDelivery"; payload: string; }
+  | { callback: "onMemoryReview"; payload: null; }
   | {
     callback: "onToolDispatchTimeout";
     payload: { runId: string; dispatchId: string; };
@@ -22,6 +23,7 @@ export type ProcessTask =
 export type ProcessTaskCallback = ProcessTask["callback"];
 
 export const PROCESS_TASK_SCHEMA = z.discriminatedUnion("callback", [
+  z.object({ callback: z.literal("onMemoryReview"), payload: z.null() }),
   z.object({
     callback: z.literal("onMediaPreparationTimeout"),
     payload: z.string(),
@@ -49,6 +51,7 @@ export function contextSnapshotFromRun(
     mcpServers: run.mcpServers ?? [],
     system: {
       timezone: config.system?.timezone ?? "UTC",
+      language: config.system?.language,
     },
     skillIndex: config.skillIndex ?? [],
     skillIndexMode: config.skillIndexMode ?? "summary",

@@ -1,6 +1,6 @@
 # Configuration Reference
 
-GSV configuration is a SQLite-backed key/value store owned by the Kernel Durable Object. Keys are slash-separated strings and explicit overrides are stored as strings. System-wide configuration lives under `config/`; per-user overrides live under `users/{uid}/`.
+Ship configuration is a SQLite-backed key/value store owned by the Kernel Durable Object. Keys are slash-separated strings and explicit overrides are stored as strings. System-wide configuration lives under `config/`; per-user overrides live under `users/{uid}/`.
 
 The same store is exposed through:
 
@@ -20,9 +20,28 @@ Sensitive final path segments include `api_key`, `secret`, `token`, `password`, 
 
 `users/{ownerUid}/locale/timezone` is the human's IANA timezone, for example `Europe/Amsterdam`. Ship's context and new schedules without an explicit timezone use this preference, falling back to `config/server/timezone` and then UTC. Existing schedules retain their saved timezone, and system crontabs retain their system/`CRON_TZ` semantics. Invalid personal timezones are rejected; clearing the preference restores the installation default. The Instrument preference does not change the browser's formatting timezone.
 
+The Instrument theme is not stored here. **Settings → preferences → Appearance** chooses Match system, Light or Dark for the current browser only; other devices and agents are unaffected. The `l` key switches directly between Light and Dark.
+
+## Language
+
+`users/{uid}/locale/language` stores the owner's initial response-language preference as a
+BCP 47 tag, such as `es` or `es-MX`. Web and Desktop setup detect it from the client's
+preferred browser language. Change it under **Settings → Preferences → Response language**,
+or ask Ship to change it. Clearing it leaves the conversation to establish the language.
+Invalid tags are rejected and valid tags are canonicalized.
+
+Ship receives the preference through `{{user.language}}` in runtime context. Later
+changes enter an existing context epoch as ordered context events. The preference is a
+starting hint: Ship follows the language the user is speaking, and explicit language
+requests take precedence. It does not change interface translations or date formatting.
+
+Desktop also reads this preference for local spoken replies.
+Regional tags use the matching voice language; without a saved value, it uses the
+device's language when supported, otherwise English. See [Use voice input](/how-to/voice-input) for supported voices.
+
 ## Reading and Writing
 
-Inside a GSV shell, use the filesystem view:
+Inside a Ship shell, use the filesystem view:
 
 ```sh
 cat /sys/config/ai/models
@@ -48,9 +67,9 @@ Text models resolve as one ordered stack built from three layers:
 
 1. The owner's own list at `users/{ownerUid}/ai/models`.
 2. The installation-wide list at `config/ai/models`, which root manages.
-3. The deployment base, which needs no configuration: **GSV Included** on managed installations and the Workers AI pair (GLM 5.3 Flash, then Kimi K2.6) on self-hosted ones.
+3. The deployment base, which needs no configuration: **Ship Included** on managed installations and the Workers AI pair (GLM 5.3 Flash, then Kimi K2.6) on self-hosted ones.
 
-Each layer extends the ones below it; nothing replaces the base. The first entry of the combined stack is primary and every later entry is tried in order after an eligible provider failure. An entry is skipped when an earlier layer already has the same id or the same provider, model, endpoint, API style, and transport target, so a personal copy of a base model appears once. Setup writes nothing unless the user explicitly chooses a model, and choosing GSV Included writes nothing because it is already the base. `ai.models` returns the effective stack with each entry's layer and whether it has a stored credential, never the credential itself.
+Each layer extends the ones below it; nothing replaces the base. The first entry of the combined stack is primary and every later entry is tried in order after an eligible provider failure. An entry is skipped when an earlier layer already has the same id or the same provider, model, endpoint, API style, and transport target, so a personal copy of a base model appears once. Setup writes nothing unless the user explicitly chooses a model, and choosing Ship Included writes nothing because it is already the base. `ai.models` returns the effective stack with each entry's layer and whether it has a stored credential, never the credential itself.
 
 ```json
 {
@@ -130,6 +149,7 @@ Policy shape:
   "default": "auto",
   "rules": [
     { "match": "shell.exec", "action": "ask" },
+    { "match": "shell.exec", "target": { "route": "instance", "platform": "browser" }, "action": "auto" },
     { "match": "fs.*", "target": "targets/*", "action": "ask" },
     { "match": "fs.delete", "action": "deny" },
     { "match": "mail.send", "action": "auto" }
@@ -139,20 +159,30 @@ Policy shape:
 
 - `action` is `auto`, `ask`, or `deny`. The console labels them **Allow**, **Ask**, and **Block**.
 - `match` is an exact syscall name or a domain wildcard ending in `.*`; `fs.*` matches `fs` and every `fs.` call.
-- `target` scopes a rule to where the call runs. Omit it, or use `*` or `any`, for every target. `gsv` is the cloud home (`gateway` and `local` are aliases). `targets/*` is any connected machine or browser. A bare target id scopes the rule to that one target. The legacy values `device` and `devices/*` are read as `targets/*`, and a legacy `when: { "target": ... }` object is read as `target`; nothing else inside `when` is honoured.
-- Precedence: the rule with the most specific target wins, then an exact `match` beats a wildcard, then list order. A rule that fails validation is dropped; a value that is not valid JSON falls back to the built-in default.
+- `target` scopes a rule to where the call runs. Omit it, or use `*` or `any`, for every target. `gsv` is the cloud home (`gateway` and `local` are aliases). `targets/*` is any connected machine or browser, including cloud browsers. A bare target id scopes the rule to that one target. The legacy values `device` and `devices/*` are read as `targets/*`, and a legacy `when: { "target": ... }` object is read as `target`; nothing else inside `when` is honoured.
+- A structured `target` matches Kernel-resolved metadata: `route` is `machine`, `adapter`, or `instance`, with an optional `platform`. For example, `{ "route": "instance", "platform": "browser" }` selects Ship-provisioned cloud browsers; Settings labels it **Cloud browsers**. A connected browser has a machine route and does not match this selector.
+- Precedence: an exact target id wins over route-and-platform selectors, then route-only selectors, then `targets/*`, then unscoped rules. Within a target scope, an exact `match` beats a wildcard, then list order breaks ties. A rule that fails validation is dropped; a value that is not valid JSON falls back to the built-in default.
 
-For a call, the target is resolved before matching: `fs.*`, `shell.exec`, and `net.fetch` use the call's `target` argument; a `shell.exec` carrying a `sessionId` resolves to `targets/*`; every other syscall resolves to `gsv`.
+For a call, the target is resolved before matching: `fs.*`, `shell.exec`, and `net.fetch` use the call's `target` argument; a `shell.exec` poll carrying only a `sessionId` resolves its target from the Process cache or the Kernel’s durable session record. A lost start response therefore does not prevent polling; an unknown or inaccessible session is rejected without replaying the start. Untargeted native calls resolve to `gsv`.
 
 Default policy (`default` is `auto`; the runtime, the Process fallback, and the permissions editor share this one definition in `@humansandmachines/gsv/protocol`):
 
 | Where | Runs automatically | Asks first |
 |---|---|---|
 | `gsv`, the cloud home | `fs.*`, `shell.exec`, `net.fetch` | — |
+| `{ "route": "instance", "platform": "browser" }`, Ship-provisioned browsers | `fs.*`, `shell.exec`, `net.fetch` | — |
+| `{ "route": "instance", "platform": "linux" }`, Ship-provisioned computers | `fs.*`, `shell.exec`, `net.fetch` | — |
 | `targets/*`, connected computers and browsers | `fs.read`, `fs.search`, `fs.transfer.stat`, `fs.transfer.send` | every other `fs.*` call, `shell.exec`, `net.fetch` |
 | any target | `web.search` | `sys.mcp.call`, `mail.send` |
 
-So native work in the cloud home and reads or searches on a connected target proceed without asking; changing files, running commands, or making network requests on a connected target asks first. Capability grants and resource checks still apply on top.
+Native work in the cloud home and Ship-provisioned browsers proceeds without asking. Connected personal browsers and computers still ask before changing files, running commands, or making network requests. Capability grants, ownership checks, and browser sign-in handoffs still apply. A cloud browser may retain website logins; use an Ask or Block rule for **Cloud browsers**, or for one target, to restrict its use.
+
+[Cloud computers](/how-to/cloud-computers) also run filesystem, shell and network
+work automatically under the built-in policy. Settings labels their selector
+**Cloud computers**. A personal Linux computer has a `machine` route, so this
+rule does not change its approval requirements.
+
+Metadata selectors use the Kernel’s resolved target record, never a target name or metadata supplied in tool arguments. A decision that depends on metadata is bound to that target’s owner, platform and route identity, checked again before dispatch. Pending human approvals retain the checked identity across Process restarts, and approval cannot authorize a replacement target. A lookup failure cannot fall back to a more permissive decision. Explicit stored policies keep their existing rules; this changes the built-in default, without rewriting account policies.
 
 A stored policy may leave either field out. An omitted `default` is `auto`, and an omitted `rules` keeps the built-in rules above, so `{"default":"deny"}` alone still runs native cloud-home work automatically. To replace every built-in rule, set `rules` explicitly, using `[]` for none. A value that is not valid JSON, or not an object, falls back to the built-in policy.
 
@@ -182,6 +212,11 @@ The `remember` field of `proc.hil` still exists for other clients: it keeps an A
 | `config/shell/network_enabled` | `true` | Enables network tools in native shell execution. |
 | `config/shell/max_output_bytes` | `524288` | Maximum stdout and stderr returned per `shell.exec`; bytes that only flow between pipeline stages or into files are not counted. |
 
+Native shell execution also has a 128 MiB aggregate output ceiling, including
+intermediate pipeline output. This keeps gzip decompression's output allowance
+within the Workers runtime's supported limit; it is separate from the returned
+stdout/stderr limit above.
+
 The protocol's `server.version` is this semantic product version. `server.release`
 identifies the deployed build: stable release bundles use their exact `vX.Y.Z` tag,
 while local and dev builds report `dev`. The release identifier is build metadata,
@@ -189,10 +224,18 @@ not a writable configuration key.
 
 ## Practical Notes
 
-Top-level configuration values are strings; structured values such as the model stack are JSON strings. Prefer the owner-scoped model stack and reserve system keys for defaults that should apply across the GSV instance.
+Top-level configuration values are strings; structured values such as the model stack are JSON strings. Prefer the owner-scoped model stack and reserve system keys for defaults that should apply across the Ship instance.
 
 ## See also
 
 - [CLI Commands](./cli-commands.md)
 - [Context Files](./context-files.md)
 - [Guides](../how-to/)
+
+## Operator presentation
+
+Public domains and operator links are deployment configuration, separate from
+Kernel `sys.config` and personal preferences. `GSV_PUBLIC_CONFIG` supplies the
+operator name, handle domain, account origin, documentation, installer and legal
+links. The operator composition derives the primary and legacy domains from its
+Accounts routing configuration. See [public domains and release briefs](../how-to/deploy-with-alchemy.md#public-domains-and-operator-links).

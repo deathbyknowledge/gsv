@@ -53,7 +53,7 @@ const responsibilityTransitionSchema: z.ZodMiniType<ResponsibilityTransition> = 
 
 const contextProjectionSchema = z.strictObject({
   version: z.literal(1),
-  runtime: z.strictObject({ date: z.string(), timezone: z.string() }),
+  runtime: z.strictObject({ date: z.string(), timezone: z.string(), language: z.optional(z.string()) }),
   targets: z.array(z.strictObject({
     id: z.string(),
     implements: z.array(z.string()),
@@ -94,6 +94,7 @@ export const procHistoryEventPayloadSchemas = {
     current: contextProjectionSchema,
   }),
   "context.runway": z.strictObject({
+    handover: z.optional(z.literal(true)),
     epochId: z.string(),
     remainingInputTokens: z.number(),
     runwayBeforeBoundaryTokens: z.number(),
@@ -213,7 +214,7 @@ export const procHistoryEventPayloadSchemas = {
 
 export type ProcHistoryContextProjection = {
   version: 1;
-  runtime: { date: string; timezone: string };
+  runtime: { date: string; timezone: string; language?: string };
   targets: { id: string; implements: string[]; label?: string; description?: string; platform?: string }[];
   mcpServers: string[];
   skills: { mode: "summary" | "names" | "off"; entries: { id: string; description: string }[] };
@@ -235,6 +236,8 @@ export type ProcHistoryIpcResponsePayload = {
 export type ProcHistoryEventPayloadMap = {
   "context.changed": { epochId: string; previous: ProcHistoryContextProjection; current: ProcHistoryContextProjection };
   "context.runway": {
+    /** New notices offer self-authored handovers; older records retain their original guidance. */
+    handover?: true;
     epochId: string;
     remainingInputTokens: number;
     runwayBeforeBoundaryTokens: number;

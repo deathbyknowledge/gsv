@@ -30,7 +30,7 @@ export type ProcessRuntimeHarness = {
   client: GSVClient;
   signals: RunSignal[];
   spawn(label: string, args?: Omit<ProcSpawnArgs, "label">): Promise<Extract<ProcSpawnResult, { ok: true }>>;
-  configureAi(pid: string): Promise<void>;
+  configureAi(pid: string, contextWindowTokens?: number): Promise<void>;
   connectMachine(peerId: string): Promise<GSVClient>;
   waitFor(
     predicate: () => boolean | Promise<boolean>,
@@ -42,6 +42,7 @@ export type ProcessRuntimeHarness = {
 
 export async function startProcessRuntimeHarness(options: {
   workersAi?: boolean;
+  instances?: boolean;
   managedMailQueue?: string;
 } = {}): Promise<ProcessRuntimeHarness> {
   const ai = await startOpenAiFixture();
@@ -128,16 +129,18 @@ export async function startProcessRuntimeHarness(options: {
       await machine.connect();
       return machine;
     },
-    configureAi: async (pid) => {
+    configureAi: async (pid, contextWindowTokens) => {
       const models: AiModelEntry[] = [{
         id: MODEL_ID,
         name: "Integration model",
+        contextWindowTokens,
         provider: "custom",
         model: MODEL_ID,
         baseUrl: ai.baseUrl,
         providerStyle: "openai-chat-completions",
         transportTarget: "gsv",
       }];
+      if (contextWindowTokens !== undefined) models[0]!.maxTokens = 4_000;
       // Any automatic Ship wake uses the local binding fixture, independently of this process's scripted model.
       if (options.workersAi !== false) {
         models.unshift({

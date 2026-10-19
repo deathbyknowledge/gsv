@@ -65,6 +65,9 @@ import { DEFAULT_IMAGE_GENERATION_MODEL } from "../inference/media-defaults";
 import { inferenceLogicalRequestId } from "../inference/provider";
 import { MAIL_SEND, syscallToolName } from "../syscalls/constants";
 import { SYSTEM_CONFIG_DEFAULTS } from "./config";
+import { RETIRED_MEMORY_CONTEXT_TEMPLATE } from "../prompts/agent-home";
+import { RipgitClient, type RipgitApplyOp } from "../fs/ripgit/client";
+import { assembleSystemPromptSnapshot } from "../process/context/assembly";
 
 // SAFETY: test fixture is constructed with the asserted kernel domain shape.
 const TEST_INSTALLATION_ID = "inst_test" as KernelContext["installationId"];
@@ -502,14 +505,86 @@ describe("handleAiConfig", () => {
     ].join(".");
   }
 
-  it("uses the owner's timezone for both standing context and live context facts", async () => {
+  it("uses the owner's locale for both standing context and live context facts", async () => {
     const ctx = makeAiConfigContext({
       "config/server/timezone": "UTC",
       "users/1000/locale/timezone": "Europe/Amsterdam",
       "users/2000/locale/timezone": "America/New_York",
+      "users/1000/locale/language": "es-MX",
+      "users/2000/locale/language": "en",
     }, { uid: 2000, ownerUid: 1000, processId: "task-1" });
-    await expect(handleAiConfig({}, ctx)).resolves.toMatchObject({ system: { timezone: "Europe/Amsterdam" } });
-    await expect(handleAiContext({}, ctx)).resolves.toMatchObject({ system: { timezone: "Europe/Amsterdam" } });
+    await expect(handleAiConfig({}, ctx)).resolves.toMatchObject({ system: { timezone: "Europe/Amsterdam", language: "es-MX" } });
+    await expect(handleAiContext({}, ctx)).resolves.toMatchObject({ system: { timezone: "Europe/Amsterdam", language: "es-MX" } });
+  });
+
+  it.each([false, true])("reconciles existing specialist and owner memory before rendering (customized: %s)", async (customized) => {
+    const memory = RETIRED_MEMORY_CONTEXT_TEMPLATE + (customized ? "\nOwner's instructions." : "");
+    const files = new Map(["friday", "sam"].flatMap((owner) => [
+      [`${owner}/context.d/15-memory.md`, memory],
+      [`${owner}/context.d/00-role.md`, "Existing account instructions."],
+    ]));
+    const fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(String(input));
+      const owner = url.pathname.split("/")[3]!;
+      if (url.pathname.endsWith("/refs")) return Response.json({ heads: { main: "existing" }, tags: {} });
+      if (url.pathname.endsWith("/read")) {
+        const path = `${owner}/${url.searchParams.get("path")}`;
+        if (url.searchParams.get("path") === "context.d") {
+          return Response.json([...files.keys()].filter((key) => key.startsWith(`${path}/`))
+            .map((key) => ({ name: key.slice(path.length + 1), type: "blob", mode: "100644", hash: "test" })));
+        }
+        const text = files.get(path);
+        return text === undefined ? new Response("missing", { status: 404 }) : new Response(text);
+      }
+      if (url.pathname.endsWith("/apply")) {
+        const body: { expectedHead: string; ops: RipgitApplyOp[] } = JSON.parse(String(init?.body));
+        expect(body.expectedHead).toBe("existing");
+        expect(body.ops).toEqual([{ type: "delete", path: "context.d/15-memory.md" }]);
+        files.delete(`${owner}/context.d/15-memory.md`);
+        return Response.json({ ok: true, head: "existing" });
+      }
+      throw new Error(`Unexpected request: ${url.pathname}`);
+    });
+    // SAFETY: this fixture implements the binding fetch used by RipgitClient.
+    const ripgit = { fetch } as Fetcher;
+    const ctx = makeAiConfigContext({
+      "config/ai/skills/index_mode": "off",
+      "config/ai/context.d/15-memory.md": SYSTEM_CONFIG_DEFAULTS["config/ai/context.d/15-memory.md"]!,
+    }, { uid: 2000, ownerUid: 1000, processId: "existing-specialist", ripgit });
+    const cachedConfig = await handleAiConfig({}, ctx);
+    const [snapshot] = await Promise.all([handleAiContext({}, ctx), handleAiContext({}, ctx)]);
+    expect(fetch.mock.calls.filter(([input]) => new URL(String(input)).pathname.endsWith("/refs"))).toHaveLength(2);
+    fetch.mockClear();
+    await handleAiContext({}, ctx);
+    expect(fetch).not.toHaveBeenCalled();
+
+    const rendered = await assembleSystemPromptSnapshot({
+      config: { ...cachedConfig, systemContextFiles: snapshot.systemContextFiles },
+      identity: principalOf(ctx)!.account,
+      ownerIdentity: cachedConfig.owner!,
+      targets: [], mcpServers: [], runtime: { date: "2026-10-16", timezone: "UTC" }, r12y: "",
+      ripgit: new RipgitClient(ripgit),
+      storage: { get: vi.fn(), list: vi.fn() },
+    });
+    expect(rendered.sources.filter((source) => source.name === "15-memory.md")).toHaveLength(customized ? 3 : 1);
+    for (const owner of ["friday", "sam"]) {
+      expect(files.get(`${owner}/context.d/15-memory.md`)).toBe(customized ? memory : undefined);
+      expect(files.get(`${owner}/context.d/00-role.md`)).toBe("Existing account instructions.");
+    }
+  });
+
+  it("retries account memory reconciliation after a failed read", async () => {
+    const fetch = vi.fn(async (input: RequestInfo | URL) => new URL(String(input)).pathname.endsWith("/refs")
+      ? Response.json({ heads: { main: "existing" }, tags: {} })
+      : new Response("missing", { status: 404 }));
+    fetch.mockRejectedValueOnce(new Error("ripgit temporarily unavailable"));
+    // SAFETY: this fixture implements the binding fetch used by RipgitClient.
+    const ctx = makeAiConfigContext({ "config/ai/skills/index_mode": "off" }, { processId: "existing-process", ripgit: { fetch } as Fetcher });
+    await expect(handleAiContext({}, ctx)).rejects.toThrow("ripgit temporarily unavailable");
+    await expect(handleAiContext({}, ctx)).resolves.toHaveProperty("skillIndex", []);
+    expect(fetch).toHaveBeenCalledTimes(3);
+    await handleAiContext({}, ctx);
+    expect(fetch).toHaveBeenCalledTimes(3);
   });
 
   it("resolves the generation streaming switch", async () => {
@@ -1830,7 +1905,7 @@ describe("handleAiConfig", () => {
       preferredModelId: null,
       models: [
         expect.objectContaining({ id: "mine", source: "personal", hasCredential: true }),
-        expect.objectContaining({ id: "gsv-included", name: "GSV Included", source: "base", hasCredential: false }),
+        expect.objectContaining({ id: "gsv-included", name: "Ship Included", source: "base", hasCredential: false }),
       ],
     });
     expect(JSON.stringify(handleAiModels(ctx))).not.toContain("sk-mine");

@@ -1,7 +1,7 @@
 /** Internal Process helpers primitives. */
 
 import {
-  type ArchivedMediaRewrite, type ArchivedMessageRecord, COMPACTION_SUMMARY_WINDOW_CHARS,
+  type ArchivedMediaRewrite, type ArchivedMessageRecord,
   CONTEXT_RUNWAY_ALERT_BUDGET_RATIO_BEFORE_BOUNDARY, CONTEXT_RUNWAY_ALERT_MAX_TOKENS_BEFORE_BOUNDARY,
 } from "../internal/lifecycle";
 import { COMPACTION_SUMMARY_SYSTEM_PROMPT } from "../../prompts/compaction";
@@ -20,7 +20,6 @@ import {
 import { normalizeToolResultOutcome } from "../internal/messages";
 import { parseStoredProcessMedia } from "../media";
 import { inferHistoryRecords, parseInteractionOrigin, parseInteractionOriginRecord } from "../storage/history-records";
-import { renderCompactionTranscriptWindow } from "./compaction-renderer";
 
 export { parseInteractionOrigin } from "../storage/history-records";
 export { formatCompactionSummaryMessage } from "./event-renderer";
@@ -100,17 +99,18 @@ export function defaultHistoryPolicy(): ProcHistoryContextPolicy {
 }
 
 export function buildCompactionSummaryContext(
-  messages: MessageRecord[],
+  transcript: string,
   systemPrompt = COMPACTION_SUMMARY_SYSTEM_PROMPT,
+  previousSummary?: string,
 ): Context {
-  const transcript = renderCompactionTranscriptWindow(messages, COMPACTION_SUMMARY_WINDOW_CHARS);
   return {
     systemPrompt,
     messages: [
       {
         role: "user",
         content: [
-          "Process history segment JSONL:",
+          ...(previousSummary ? ["Handover from earlier transcript parts:", previousSummary, ""] : []),
+          "Next process history segment JSONL (a record may continue across parts):",
           transcript || "(no messages)",
           "",
           "Write the replacement summary that will remain visible in the live process history.",

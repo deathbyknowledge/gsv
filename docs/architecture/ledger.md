@@ -147,6 +147,9 @@ notification. No recurring timer or history query drives this feed.
 Open **Settings → Logs** to inspect the complete list and an individual
 action's arguments, outcome and failure details. Process links open Fleet's
 process inspector. Fleet retains its compact activity summaries.
+On phones, each Logs entry stacks its action, outcome, place and time without horizontal
+scrolling. Tap the entry for its arguments, purpose and process; **raw** switches the action
+label to the syscall name.
 
 The shared Instrument cache merges by sequence, patches existing rows in place, and preserves page
 cursors. New rows are ordered against the last ordinary snapshot, so delayed
@@ -159,6 +162,9 @@ failed delivery closes that connection so reconnect recovers it too.
 
 The ledger labels `conversation.search` as “searched a conversation”; its query remains
 inspectable in the owning user's ledger arguments like other syscall inputs.
+An explicit `sys.browser.profile.save` is labeled “save browser state”; its
+arguments identify the instance, while cookies and website storage stay inside
+the instance service and never enter ledger arguments.
 
 ## Cost
 

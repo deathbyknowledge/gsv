@@ -1,4 +1,6 @@
 import type { JsonObject } from "../json";
+import type { CloudInstanceState } from "./instance";
+import type { PublicDeploymentConfig } from "../../services/deployment";
 
 export type ProcessIdentity = {
   uid: number;
@@ -44,7 +46,8 @@ export type ConnectArgs = {
     implements?: string[];
   };
   auth?: {
-    username: string;
+    /** Omit for the space's personal account; use `root` for administrator access. */
+    username?: string;
     password?: string;
     token?: string;
   };
@@ -54,6 +57,7 @@ export type ServerBuild = {
   version: string;
   release: string;
   features?: string[];
+  deployment?: PublicDeploymentConfig;
 };
 
 export type FeedbackActivity = {
@@ -99,11 +103,9 @@ export type UserPermissions = {
 export type AccountKind = "human" | "agent";
 
 export type AccountCreateArgs = {
-  kind: AccountKind;
+  kind: "agent";
   /** `^[a-z_][a-z0-9_-]{0,31}$`, globally unique across users and groups. */
   username: string;
-  /** Required for `kind: "human"`; must be at least 8 characters. */
-  password?: string;
   /** Optional GECOS/display string. */
   gecos?: string;
   /** Optional persona seed for `kind: "agent"` (written to context.d/05-persona.md). */
@@ -114,9 +116,7 @@ export type AccountCreateArgs = {
 
 export type AccountCreateResult = {
   account: ProcessIdentity;
-  kind: AccountKind;
-  /** For `kind: "human"`: the provisioned 1:1 personal agent identity. */
-  personalAgent?: ProcessIdentity;
+  kind: "agent";
 };
 
 /** How the listing caller relates to a listed account. */
@@ -143,18 +143,9 @@ export type AccountListResult = {
   accounts: AccountSummary[];
 };
 
-export type HumanInvitation = {
-  id: string;
-  username: string;
-  createdAt: number;
-  expiresAt: number;
-  status: "pending" | "redeemed" | "cancelled" | "expired";
-};
-
-export type LocalPerson = { uid: number; username: string; displayName: string; disabled: boolean };
-
 export type SysSetupArgs = {
-  username: string;
+  /** Existing clients may supply a local name; otherwise the Kernel derives it from the space. */
+  username?: string;
   password: string;
   onboardingToken?: string;
   rootPassword?: string;
@@ -166,6 +157,8 @@ export type SysSetupArgs = {
     apiKey?: string;
   };
   timezone?: string;
+  /** Initial response-language preference, normally derived from the client (BCP 47). */
+  language?: string;
   machine?: {
     peerId: string;
     label?: string;
@@ -304,6 +297,7 @@ export type SysTargetSummary = {
   version: string;
   online: boolean;
   lastSeenAt: number;
+  instance?: { instanceId: string; state: CloudInstanceState; expiresAt: number; profileId?: string };
 };
 
 export type SysTargetListResult = {

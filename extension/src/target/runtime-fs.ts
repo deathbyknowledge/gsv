@@ -40,9 +40,9 @@ const MAX_TEXT_CHARS = 120_000;
 const MAX_SEARCH_MATCHES = 200;
 
 const README = [
-  "GSV browser target",
+  "Ship browser target",
   "",
-  "This target exposes the current browser profile to GSV through shell.exec",
+  "This target exposes the current browser profile to Ship through shell.exec",
   "and fs.*. Run `help` or `commands` in shell.exec for browser-specific commands, and run",
   "`commands --json` for structured discovery. Run",
   "`<command> --help` for command-specific usage.",
@@ -59,12 +59,15 @@ const README = [
   "  windows list",
   "  windows focus <windowId>",
   "",
-  "  page snapshot [--tab <tabId>] [--json]",
+  "  page snapshot [--tab <tabId>] [--within <@ref>] [--json]",
   "  page snapshot [--tab <tabId>] --dom [selector]",
   "  page text [--tab <tabId>] [selector]",
   "  page screenshot [--tab <tabId>]",
   "  page click [--tab <tabId>] <@ref|selector> [index]",
   "  page type [--tab <tabId>] <@ref|selector> <text>",
+  "  page fill [--tab <tabId>] <locator> <value>",
+  "  page select [--tab <tabId>] <locator> <value> | --option-label <label>",
+  "  page check [--tab <tabId>] <locator> [--unchecked]",
   "  page key [--tab <tabId>] <key>",
   "  page scroll [--tab <tabId>] [@ref] <up|down|top|bottom|x,y>",
   "  page wait [--tab <tabId>] <selector> [--timeout ms]",
@@ -146,13 +149,20 @@ const README = [
   "  page snapshot returns a semantic accessibility outline with snapshot-scoped refs; canonical refs start with @ and bare generated refs are also accepted.",
   "  use page snapshot --dom for the bounded raw-DOM debugging view.",
   "  page click/type accept semantic refs or CSS selectors; refs remain pinned to their original tab and document.",
+  "  actions also accept --label <field label> or --role <role> --name <exact name>, optionally --within <@ref>; ambiguous matches fail with candidate refs.",
+  "  page fill replaces and verifies text, number, and native date/time values; page type inserts text only.",
+  "  page select sets a native dropdown by value or --option-label; custom dropdowns use page click --role option --name <name>.",
+  "  page check sets checked state without toggling an already matching control; use --unchecked to clear it.",
+  "  page snapshot --within <@ref> inspects one form or dialog; action --snapshot adds a readable outline after its intact JSON receipt.",
+  "  add --json to --snapshot for the full structured snapshot tree; use scoped snapshots to keep output focused.",
+  "  keep action receipts intact: do not pipe them through head. Chain dependent actions with &&; use set -o pipefail if an action must be piped.",
   "  taking a newer snapshot does not itself expire recent refs, though dynamic pages may replace or repurpose their nodes.",
   "  page click/type/key/scroll use Chrome input and report accepted delivery separately from observed page changes.",
   "  targeted scroll top/bottom repeats bounded native wheel input and reports whether it reached the requested boundary.",
   "  a target already at top/bottom returns skipped=already-at-boundary without dispatching input.",
   "  page snapshot/js/screenshot and page input briefly attach chrome.debugger to the target tab.",
   "  network start uses chrome.debugger and stays attached until network stop.",
-  "  media record uses tabCapture; when Chrome refuses, ask the person to focus the tab, open Your GSV from the toolbar and choose Allow recording, then retry.",
+  "  media record uses tabCapture; when Chrome refuses, ask the person to focus the tab, open Your Ship from the toolbar and choose Allow recording, then retry.",
   "  each allowance starts one media record start.",
   "  media record captures audio by default; use --video or --mode video for tab video with audio.",
   "  captured tab audio remains audible by default; use --monitor off to disable playback.",
@@ -201,7 +211,7 @@ const README = [
   "  /dev",
   "  /proc",
   "",
-  "GSV capabilities:",
+  "Ship capabilities:",
   "  shell.exec",
   "  fs.read",
   "  fs.write",
@@ -636,7 +646,7 @@ async function activeTabPath(): Promise<string> {
 
 async function tabText(tab: TabSummary): Promise<string> {
   try {
-    const extracted = await executeInTab<string>(tab.id, extractVisibleText);
+    const extracted = await executeInTab(tab.id, extractVisibleText, []);
     return compactPageText(extracted);
   } catch (error) {
     return `[text unavailable: ${errorMessage(error)}]\n`;

@@ -26,7 +26,7 @@ fn read_invitation(input: impl Read) -> PairResult<String> {
     let mut code = String::new();
     input.take(4097).read_to_string(&mut code)?;
     if code.len() > 4096 || code.trim().is_empty() {
-        return Err("Invalid GSV pairing code on stdin".into());
+        return Err("Invalid Ship pairing code on stdin".into());
     }
     Ok(code)
 }
@@ -81,7 +81,7 @@ struct PairedIdentity {
 }
 
 fn decode(code: &str) -> PairResult<PairingCode> {
-    let invalid = || "Invalid GSV pairing code. Copy a new invitation from GSV.";
+    let invalid = || "Invalid Ship pairing code. Copy a new invitation from Ship.";
     let raw = code.trim();
     if raw.len() > 4096 {
         return Err(invalid().into());
@@ -142,7 +142,7 @@ fn decode(code: &str) -> PairResult<PairingCode> {
 
 fn pending(config: &CliConfig) -> PairResult<Option<PendingPairing>> {
     config.device.extra.get(PENDING_KEY).cloned().map(|value| value.try_into()
-        .map_err(|_private_error| "Saved pairing is unreadable. Restore the local GSV configuration before pairing.".into())).transpose()
+        .map_err(|_private_error| "Saved pairing is unreadable. Restore the local Ship configuration before pairing.".into())).transpose()
 }
 
 fn already_paired(config: &CliConfig, invite: &PairingCode) -> bool {
@@ -159,7 +159,7 @@ fn already_paired(config: &CliConfig, invite: &PairingCode) -> bool {
 }
 
 fn pairing_config_file() -> PairResult<ConfigFile<CliConfig>> {
-    let path = CliConfig::config_path().ok_or("Could not find the GSV configuration directory")?;
+    let path = CliConfig::config_path().ok_or("Could not find the Ship configuration directory")?;
     Ok(ConfigFile::new(path))
 }
 
@@ -194,7 +194,7 @@ async fn pair_using(
     let saved = pending(&config)?;
     let raw = code
         .or_else(|| saved.as_ref().map(|value| value.code.clone()))
-        .ok_or("Copy an invitation from GSV and run: gsv pair CODE")?;
+        .ok_or("Copy an invitation from Ship and run: gsv pair CODE")?;
     let raw = raw.trim().to_string();
     let invite = decode(&raw)?;
     protect_existing_machine(&config, &invite, options.no_replace)?;
@@ -288,7 +288,7 @@ async fn pair_using(
         }
         let receipt: PairingReceipt =
             serde_json::from_value(response.data.ok_or("Pairing returned no receipt")?).map_err(
-                |_private_error| "GSV returned an invalid pairing receipt. Run gsv pair to retry.",
+                |_private_error| "Ship returned an invalid pairing receipt. Run gsv pair to retry.",
             )?;
         if receipt.pairing.id != invite.id
             || receipt.pairing.username != invite.username
@@ -296,7 +296,7 @@ async fn pair_using(
             || receipt.pairing.state != "paired"
             || receipt.token_id.is_empty()
         {
-            return Err("GSV returned a different pairing identity".into());
+            return Err("Ship returned a different pairing identity".into());
         }
         update_pairing_config(file, |local| {
             protect_existing_machine(local, &invite, options.no_replace)?;
@@ -348,7 +348,7 @@ async fn pair_using(
     if !options.no_install {
         let installed = device_service::device_service_is_installed()?;
         device_service::install_device_service(installed).map_err(|_private_error| "Pairing is saved, but service installation failed. Fix the service setup and run gsv daemon install to retry.")?;
-        println!("The GSV background service is running.");
+        println!("The Ship background service is running.");
     }
     Ok(())
 }

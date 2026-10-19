@@ -3,7 +3,6 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DIST_DIR="${ROOT_DIR}/dist/cloudflare"
-OUT_DIR="${1:-${ROOT_DIR}/release/local}"
 GSV_RELEASE_REF="${GSV_RELEASE_REF:-dev}"
 GSV_RELEASE_DEFINE="$(node -p 'JSON.stringify(process.argv[1])' "${GSV_RELEASE_REF}")"
 
@@ -83,66 +82,9 @@ if (emitted !== "index.js") {
 NODE
 done
 
-echo "==> Assembling component metadata"
-cp "${ROOT_DIR}/workers/gateway/wrangler.jsonc" "${DIST_DIR}/gateway/wrangler.jsonc"
+echo "==> Assembling deployment files"
 cp -R "${ROOT_DIR}/web/dist" "${DIST_DIR}/gateway/assets"
-cat > "${DIST_DIR}/gateway/manifest.json" <<'EOF'
-{
-  "component": "gateway",
-  "worker": {
-    "entrypoint": "worker/index.js",
-    "sourceMap": "worker/index.js.map",
-    "wranglerConfig": "wrangler.jsonc"
-  },
-  "assetsDir": "assets"
-}
-EOF
-
-cp "${ROOT_DIR}/workers/ripgit/wrangler.toml" "${DIST_DIR}/ripgit/wrangler.toml"
-cat > "${DIST_DIR}/ripgit/manifest.json" <<'EOF'
-{
-  "component": "ripgit",
-  "worker": {
-    "entrypoint": "worker/index.js",
-    "wranglerConfig": "wrangler.toml"
-  }
-}
-EOF
-
-for component in installations inference; do
-  cp "${ROOT_DIR}/workers/${component}/wrangler.jsonc" "${DIST_DIR}/${component}/wrangler.jsonc"
-  node --input-type=module - "${DIST_DIR}/${component}/manifest.json" "${component}" <<'NODE'
-import { writeFileSync } from "node:fs";
-const [output, component] = process.argv.slice(2);
-const manifest = { component, worker: { entrypoint: "worker/index.js", sourceMap: "worker/index.js.map", wranglerConfig: "wrangler.jsonc" } };
-if (component === "installations") manifest.migrationsDir = "migrations";
-writeFileSync(output, `${JSON.stringify(manifest, null, 2)}\n`);
-NODE
-done
 cp -R "${ROOT_DIR}/workers/installations/migrations" "${DIST_DIR}/installations/migrations"
-
-for row in "${ADAPTER_ROWS[@]}"; do
-  IFS=$'\t' read -r adapter_id display_name component source_dir wrangler_config _dev_state <<< "${row}"
-  cp "${ROOT_DIR}/${source_dir}/${wrangler_config}" "${DIST_DIR}/${component}/${wrangler_config}"
-  node --input-type=module - \
-    "${DIST_DIR}/${component}/manifest.json" \
-    "${adapter_id}" \
-    "${display_name}" \
-    "${component}" \
-    "${wrangler_config}" <<'NODE'
-import { writeFileSync } from "node:fs";
-const [output, id, displayName, component, wranglerConfig] = process.argv.slice(2);
-writeFileSync(output, `${JSON.stringify({
-  component,
-  adapter: { id, displayName },
-  worker: {
-    entrypoint: "worker/index.js",
-    sourceMap: "worker/index.js.map",
-    wranglerConfig,
-  },
-}, null, 2)}\n`);
-NODE
-done
 
 node "${ROOT_DIR}/scripts/build-deployment-manifest.mjs" \
   "${DIST_DIR}/deployment-manifest.json"
@@ -152,32 +94,5 @@ find "${DIST_DIR}" \
   \( -name '._*' -o -name '.DS_Store' -o -path '*/__MACOSX/*' \) \
   -type f -exec rm -f {} +
 
-echo "==> Creating local tarballs"
-mkdir -p "${OUT_DIR}"
-rm -f "${OUT_DIR}/gsv-cloudflare-"*.tar.gz "${OUT_DIR}/cloudflare-checksums.txt" 2>/dev/null || true
-cp "${DIST_DIR}/deployment-manifest.json" \
-  "${OUT_DIR}/gsv-cloudflare-deployment-manifest.json"
-
-tar -C "${DIST_DIR}" -czf "${OUT_DIR}/gsv-cloudflare-gateway.tar.gz" gateway
-tar -C "${DIST_DIR}" -czf "${OUT_DIR}/gsv-cloudflare-ripgit.tar.gz" ripgit
-tar -C "${DIST_DIR}" -czf "${OUT_DIR}/gsv-cloudflare-installations.tar.gz" installations
-tar -C "${DIST_DIR}" -czf "${OUT_DIR}/gsv-cloudflare-inference.tar.gz" inference
-for row in "${ADAPTER_ROWS[@]}"; do
-  IFS=$'\t' read -r _adapter_id _display_name component _source_dir _wrangler_config _dev_state <<< "${row}"
-  tar -C "${DIST_DIR}" -czf "${OUT_DIR}/gsv-cloudflare-${component}.tar.gz" "${component}"
-done
-
-(
-  cd "${OUT_DIR}"
-  sha256sum \
-    gsv-cloudflare-*.tar.gz \
-    gsv-cloudflare-deployment-manifest.json \
-    > cloudflare-checksums.txt
-)
-
 echo ""
-echo "Cloudflare bundles ready in: ${OUT_DIR}"
-ls -lh \
-  "${OUT_DIR}"/gsv-cloudflare-*.tar.gz \
-  "${OUT_DIR}/gsv-cloudflare-deployment-manifest.json" \
-  "${OUT_DIR}/cloudflare-checksums.txt"
+echo "Cloudflare deployment files ready in: ${DIST_DIR}"

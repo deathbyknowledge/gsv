@@ -57,8 +57,10 @@ export class AccountStore {
     private readonly baseDomain: string,
     private readonly installationOriginTemplate?: string,
     private readonly reservedHostnames: readonly string[] = [],
+    private readonly legacyDomains: readonly string[] = [],
   ) {
     parseBaseDomain(baseDomain);
+    for (const domain of legacyDomains) parseBaseDomain(domain);
   }
 
   validateHandle(value: string): string {
@@ -113,12 +115,11 @@ export class AccountStore {
     operationId: string;
     handle: string;
     provisionVersion?: number;
-    creationInviteId?: string;
+    ownerSetup?: boolean;
   }): Promise<InstallationReservation> {
     const principalId = parseOpaqueId(input.principalId, "principalId");
     const operationId = parseOpaqueId(input.operationId, "operationId");
     const handle = this.validateHandle(input.handle);
-    const inviteId = input.creationInviteId === undefined ? null : parseOpaqueId(input.creationInviteId, "invitationId");
     const existing = await this.getReservationByOperation(operationId);
     if (existing) {
       if (existing.ownerPrincipalId !== principalId || existing.handle !== handle) {
@@ -142,13 +143,13 @@ export class AccountStore {
         this.db.prepare(
           `INSERT INTO installations (
              id, owner_principal_id, handle, canonical_origin, state,
-             provision_version, reservation_expires_at, created_at
+             provision_version, reservation_expires_at, created_at, owner_setup
            )
-           SELECT ?, id, ?, ?, 'reserved', ?, ?, ?
+           SELECT ?, id, ?, ?, 'reserved', ?, ?, ?, ?
            FROM principals
            WHERE id = ? AND state = 'active' AND email_verified_at IS NOT NULL
-             AND (? IS NULL OR EXISTS (SELECT 1 FROM installation_creation_invites c
-               WHERE c.id = ? AND c.principal_id = principals.id AND c.revoked_at IS NULL AND c.installation_id IS NULL))`,
+             AND (? = 0 OR NOT EXISTS (SELECT 1 FROM installations i
+               WHERE i.owner_principal_id = principals.id AND i.state NOT IN ('cancelled', 'deleted')))`,
         ).bind(
           identity.installationId,
           identity.handle,
@@ -156,9 +157,9 @@ export class AccountStore {
           provisionVersion,
           reservationExpiresAt,
           now,
+          input.ownerSetup ? 1 : 0,
           principalId,
-          inviteId,
-          inviteId,
+          input.ownerSetup ? 1 : 0,
         ),
         this.db.prepare(
           `INSERT INTO hostnames (
@@ -176,9 +177,6 @@ export class AccountStore {
              attempt, last_error, updated_at
            ) VALUES (?, ?, ?, 'create', 'reserved', 0, NULL, ?)`,
         ).bind(operationId, identity.installationId, principalId, now),
-        ...(inviteId ? [this.db.prepare(`UPDATE installation_creation_invites SET installation_id = ?, updated_at = ?
-          WHERE id = ? AND principal_id = ? AND revoked_at IS NULL AND installation_id IS NULL`)
-          .bind(identity.installationId, now, inviteId, principalId)] : []),
       ]);
     } catch (error) {
       const replay = await this.getReservationByOperation(operationId);
@@ -198,6 +196,8 @@ export class AccountStore {
       if (!principal || principal.state !== "active" || principal.emailVerifiedAt === null) {
         throw new Error("verified active principal is required");
       }
+      if (input.ownerSetup && await this.db.prepare("SELECT 1 FROM installations WHERE owner_principal_id = ? AND state NOT IN ('cancelled', 'deleted')")
+        .bind(principalId).first()) throw new Error("You already have a Ship. Open it or continue setup.");
       throw error;
     }
 
@@ -255,15 +255,10 @@ export class AccountStore {
       this.baseDomain,
       this.installationOriginTemplate,
     );
-    if (replacement.canonicalOrigin !== previous.canonical_origin) {
-      throw new Error("installation canonical origin is inconsistent");
-    }
+    replacement.canonicalOrigin = previous.canonical_origin;
     const retiredHandle = `reset-${crypto.randomUUID()}`;
     const retiredOrigin = `https://${retiredHandle}.invalid`;
-    const canonicalHostname = hostnameForHandle(
-      previous.handle,
-      this.baseDomain,
-    );
+    const canonicalHostname = new URL(previous.canonical_origin).hostname;
     const now = Date.now();
 
     const results = await this.db.batch([
@@ -337,8 +332,7 @@ export class AccountStore {
         `UPDATE hostnames
          SET installation_id = ?, state = 'reserved', created_at = ?,
              retired_at = NULL
-         WHERE normalized_hostname = ? AND installation_id = ?
-           AND kind = 'canonical' AND state = 'active'
+         WHERE installation_id = ? AND state = 'active'
            AND EXISTS (
              SELECT 1 FROM installation_reset_operations
              WHERE operation_id = ? AND replacement_installation_id = ?
@@ -346,7 +340,6 @@ export class AccountStore {
       ).bind(
         replacement.installationId,
         now,
-        canonicalHostname,
         previousInstallationId,
         operationId,
         replacement.installationId,
@@ -408,7 +401,9 @@ export class AccountStore {
       if (
         (results[1]?.meta.changes ?? 0) === 1
         && requiredChanges.some(
-          (index) => (results[index]?.meta.changes ?? 0) !== 1,
+          (index) => index === 3
+            ? (results[index]?.meta.changes ?? 0) < 1
+            : (results[index]?.meta.changes ?? 0) !== 1,
         )
       ) {
         throw new Error("installation reset was not committed completely");
@@ -454,8 +449,46 @@ export class AccountStore {
     const hostname = normalizeHostname(hostnameValue);
     if (!hostname) return { found: false };
 
-    const row = await this.db.prepare(
-      `SELECT i.id, i.handle, i.canonical_origin, i.state
+    let row = await this.hostnameRow(hostname);
+    if (!row && this.legacyDomains.length && hostname.endsWith(`.${this.baseDomain}`)) {
+      const handle = hostname.slice(0, -(this.baseDomain.length + 1));
+      if (/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(handle) && !this.reservedHostnames.includes(hostname)) {
+        // Only a recorded canonical hostname may acquire the preferred-domain
+        // alias. Conflict handling preserves retired aliases and concurrent resets.
+        const canonicalHosts = this.legacyDomains.map((domain) => `${handle}.${domain}`);
+        const canonical = await this.db.prepare(
+          "SELECT id, canonical_origin FROM installations WHERE handle = ?",
+        ).bind(handle).first<{ id: string; canonical_origin: string }>();
+        const canonicalHostname = canonical ? new URL(canonical.canonical_origin).hostname : null;
+        if (canonical && canonicalHostname && canonicalHosts.includes(canonicalHostname)) {
+          await this.db.prepare(`INSERT INTO hostnames (normalized_hostname, installation_id, kind, state, created_at)
+            SELECT ?, i.id, 'alias', h.state, ? FROM installations i
+            JOIN hostnames h ON h.installation_id = i.id AND h.kind = 'canonical'
+            WHERE i.id = ? AND i.handle = ? AND i.canonical_origin = ?
+              AND h.normalized_hostname = ? AND h.state != 'retired'
+              AND i.state IN ('reserved', 'provisioning', 'active', 'restricted')
+            ON CONFLICT(normalized_hostname) DO NOTHING`)
+            .bind(hostname, Date.now(), canonical.id, handle, canonical.canonical_origin, canonicalHostname).run();
+        }
+        row = await this.hostnameRow(hostname);
+      }
+    }
+    if (!row) return { found: false };
+    const result: InstallationDirectoryResult = {
+      found: true,
+      installationId: row.id,
+      handle: row.handle,
+      canonicalOrigin: row.canonical_origin,
+      state: row.state,
+    };
+    if (row.owner_setup_recovery) result.ownerSetupRecovery = true;
+    return result;
+  }
+
+  private hostnameRow(hostname: string) {
+    return this.db.prepare(
+      `SELECT i.id, i.handle, i.canonical_origin, i.state,
+         i.owner_setup AS owner_setup_recovery
        FROM hostnames h
        JOIN installations i ON i.id = h.installation_id
        WHERE h.normalized_hostname = ? AND h.state != 'retired'
@@ -465,15 +498,8 @@ export class AccountStore {
       handle: string;
       canonical_origin: string;
       state: InstallationState;
+      owner_setup_recovery: number;
     }>();
-    if (!row) return { found: false };
-    return {
-      found: true,
-      installationId: row.id,
-      handle: row.handle,
-      canonicalOrigin: row.canonical_origin,
-      state: row.state,
-    };
   }
 
   async resolveInstallation(
@@ -487,28 +513,32 @@ export class AccountStore {
     }
 
     const row = await this.db.prepare(
-      `SELECT id, handle, canonical_origin, state
-       FROM installations
-       WHERE id = ?
+      `SELECT i.id, i.handle, i.canonical_origin, i.state,
+         i.owner_setup AS owner_setup_recovery
+       FROM installations i
+       WHERE i.id = ?
        LIMIT 1`,
     ).bind(installationId).first<{
       id: string;
       handle: string;
       canonical_origin: string;
       state: InstallationState;
+      owner_setup_recovery: number;
     }>();
     if (!row) {
       const retired = await this.db.prepare("SELECT installation_id FROM installation_account_deletions WHERE installation_id = ?")
         .bind(installationId).first<{ installation_id: string }>();
       return retired ? { found: true, installationId, handle: "deleted", canonicalOrigin: "https://deleted.invalid", state: "deleted" } : { found: false };
     }
-    return {
+    const result: InstallationDirectoryResult = {
       found: true,
       installationId: row.id,
       handle: row.handle,
       canonicalOrigin: row.canonical_origin,
       state: row.state,
     };
+    if (row.owner_setup_recovery) result.ownerSetupRecovery = true;
+    return result;
   }
 
   async getPrincipal(principalIdValue: string): Promise<PrincipalRecord | null> {
@@ -556,10 +586,7 @@ export class AccountStore {
         `UPDATE installations
          SET state = 'provisioning'
          WHERE id = ? AND owner_principal_id = ? AND state = 'reserved'
-           AND (reservation_expires_at > ? OR EXISTS (
-             SELECT 1 FROM installation_creation_invites c WHERE c.installation_id = installations.id
-               AND c.principal_id = installations.owner_principal_id AND c.revoked_at IS NULL
-           ) OR EXISTS (
+           AND (reservation_expires_at > ? OR owner_setup = 1 OR EXISTS (
              SELECT 1 FROM installation_reset_operations r
              WHERE r.operation_id = ? AND r.replacement_installation_id = installations.id
            ))`,
@@ -567,7 +594,7 @@ export class AccountStore {
       this.db.prepare(
         `UPDATE hostnames
          SET state = 'provisioning'
-         WHERE installation_id = ? AND kind = 'canonical' AND state = 'reserved'
+         WHERE installation_id = ? AND state = 'reserved'
            AND EXISTS (
              SELECT 1 FROM installations i WHERE i.id = hostnames.installation_id
                AND i.state = 'provisioning'
@@ -584,10 +611,13 @@ export class AccountStore {
            )`,
       ).bind(now, operationId, principalId),
     ]);
-    if (results.some((result) => (result.meta.changes ?? 0) !== 1)) {
+    const current = await this.requireOwnedReservation(operationId, principalId);
+    const resumed = results.every((result) => (result.meta.changes ?? 0) === 0)
+      && current.state === "provisioning" && current.operationState === "provisioning";
+    if (!resumed && results.some((result, index) => index === 1 ? (result.meta.changes ?? 0) < 1 : (result.meta.changes ?? 0) !== 1)) {
       throw new Error("installation could not enter provisioning");
     }
-    return await this.requireOwnedReservation(operationId, principalId);
+    return current;
   }
 
   async completeInstallationOnboarding(
@@ -618,8 +648,7 @@ export class AccountStore {
       this.db.prepare(
         `UPDATE hostnames
          SET state = 'active'
-         WHERE installation_id = ? AND kind = 'canonical'
-           AND state = 'provisioning'`,
+         WHERE installation_id = ? AND state = 'provisioning'`,
       ).bind(reservation.installationId),
       this.db.prepare(
         `UPDATE provisioning_operations
@@ -633,7 +662,7 @@ export class AccountStore {
            AND completed_at IS NULL AND revoked_at IS NULL`,
       ).bind(now, claimId, reservation.installationId),
     ]);
-    if (results.some((result) => (result.meta.changes ?? 0) !== 1)) {
+    if (results.some((result, index) => index === 1 ? (result.meta.changes ?? 0) < 1 : (result.meta.changes ?? 0) !== 1)) {
       throw new Error("installation onboarding could not be activated");
     }
     return await this.requireOwnedReservation(operationId, principalId);

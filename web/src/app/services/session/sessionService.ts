@@ -1,6 +1,7 @@
 import type { GSVClient, GsvConnectOptions } from "@humansandmachines/gsv/client";
 import { z } from "zod";
 import type {
+  ConnectArgs,
   ConnectResult,
   ServerBuild,
   SysSetupArgs,
@@ -9,6 +10,7 @@ import type {
 import {
   clearInstallationOnboardingToken,
   readInstallationOnboardingToken,
+  readSignupArrival,
 } from "./installationOnboarding";
 
 const STORAGE_USERNAME = "gsv.ui.gateway.username";
@@ -20,6 +22,14 @@ const SESSION_TOKEN_REFRESH_RETRY_MS = 60_000;
 const LOCK_REVOKE_WAIT_MS = 1_500;
 const SESSION_RECONNECT_DELAYS_MS = [0, 1_000, 2_000, 5_000, 10_000];
 const SESSION_RECONNECT_STABLE_MS = 10_000;
+const SETUP_PROBE_ARGS: ConnectArgs = {
+  protocol: 4,
+  peer: {
+    id: "gsv-ui-setup-probe",
+    version: "0.7.3",
+    platform: "browser",
+  },
+};
 
 type PersistedSessionToken = {
   username: string;
@@ -44,13 +54,20 @@ const persistedRevokesSchema = z.array(z.string().min(1)).catch([]);
 const sessionErrorSchema = z.object({
   code: z.number().optional(),
   retryable: z.boolean().optional(),
-  details: z.object({ setupMode: z.literal(true).optional() }).optional(),
+  details: z.object({
+    setupMode: z.literal(true).optional(),
+    setupRecovery: z.literal(true).optional(),
+    setupUrl: z.url({ protocol: /^https$/ }).optional().catch(undefined),
+    setupFeatures: z.array(z.string()).optional(),
+    /** The Kernel may state whether setup must still collect the terms agreement. */
+    consentRequired: z.boolean().optional(),
+  }).optional(),
 });
 const sessionWireSchema = z.unknown();
 type SessionWireValue = z.input<typeof sessionWireSchema>;
 const sessionMessageSchema = z.union([z.instanceof(Error), z.string()]);
 
-export type SessionPhase = "booting" | "setup" | "locked" | "authenticating" | "ready";
+export type SessionPhase = "booting" | "setup" | "setup-recovery" | "locked" | "authenticating" | "ready";
 
 export type SessionSnapshot = {
   phase: SessionPhase;
@@ -59,10 +76,15 @@ export type SessionSnapshot = {
   connectionId: string | null;
   server: ServerBuild | null;
   message: string | null;
+  setupRecoveryUrl?: string;
+  /** The owner was sent here straight from signup, so setup greets them as a new space. */
+  arrivedFromSignup?: boolean;
+  /** Whether setup still collects the terms agreement; self-signup already did. */
+  setupConsentRequired?: boolean;
 };
 
 export type SessionLoginInput = {
-  username: string;
+  username?: string;
   password?: string;
   token?: string;
 };
@@ -86,6 +108,7 @@ export type SessionService = {
   setup: (input: SessionSetupInput) => Promise<SysSetupResult>;
   lock: (reason?: string) => Promise<void>;
   start: () => Promise<void>;
+  resumeSetup?: (url: string) => void;
   dispose?: () => void;
 };
 
@@ -94,7 +117,8 @@ export type SessionStorage = Pick<Storage, "getItem" | "setItem" | "removeItem">
 export type SessionServiceOptions = {
   url?: string;
   storage?: SessionStorage;
-  onboarding?: false | { token: string; complete(): Promise<void> };
+  onboarding?: false | { token: string; signup?: boolean; discard(): Promise<void>; complete(): Promise<void> };
+  resumeSetup?: (url: string) => void;
 };
 
 function readStored(key: string, storage?: SessionStorage): string | null {
@@ -176,6 +200,23 @@ function isSetupRequiredError(value: SessionWireValue): boolean {
   return error.data.details?.setupMode === true;
 }
 
+type SetupFacts = Pick<SessionSnapshot, "arrivedFromSignup" | "setupConsentRequired">;
+
+/** Setup presentation facts: the Kernel's answer wins; otherwise a signup arrival already agreed to the terms. */
+function setupFacts(signupArrival: boolean, value?: SessionWireValue): SetupFacts {
+  const parsed = value === undefined ? null : sessionErrorSchema.safeParse(value);
+  const consentRequired = parsed?.success ? parsed.data.details?.consentRequired : undefined;
+  return { arrivedFromSignup: signupArrival, setupConsentRequired: consentRequired ?? !signupArrival };
+}
+
+function setupRecovery(value: SessionWireValue): Pick<SessionSnapshot, "phase" | "message" | "setupRecoveryUrl"> | null {
+  const parsed = sessionErrorSchema.safeParse(value);
+  const details = parsed.success ? parsed.data.details : undefined;
+  return details?.setupRecovery
+    ? { phase: "setup-recovery", message: "Finish setting up your Ship", setupRecoveryUrl: details.setupUrl }
+    : null;
+}
+
 function isAuthenticationRejectedError(value: SessionWireValue): boolean {
   const error = sessionErrorSchema.safeParse(value);
   return error.success && error.data.code === 401;
@@ -229,22 +270,28 @@ async function revokeSessionToken(client: SessionClient, tokenId: string, reason
   return result.revoked === true;
 }
 
-async function probeSetupMode(client: SessionClient, url: string): Promise<boolean> {
+async function probeSetupMode(client: SessionClient, url: string, signupArrival: boolean): Promise<Pick<SessionSnapshot, "phase" | "message" | "setupRecoveryUrl"> & Partial<SetupFacts>> {
   try {
-    await client.requestOnce(url, "sys.connect", {
-      protocol: 4,
-      peer: {
-        id: "gsv-ui-setup-probe",
-        version: "0.6.6",
-        platform: "browser",
-      },
-    });
+    await client.requestOnce(url, "sys.connect", SETUP_PROBE_ARGS);
+    return { phase: "locked", message: null };
+  } catch (error) {
+    const recovery = setupRecovery(error);
+    if (recovery) return recovery;
+    if (isSetupRequiredError(error)) {
+      return { phase: "setup", message: null, ...setupFacts(signupArrival, error) };
+    }
+    return { phase: "locked", message: isAuthenticationRejectedError(error) ? null : normalizeMessage(error) };
+  }
+}
+
+async function setupSupportsLanguage(client: SessionClient, url: string): Promise<boolean> {
+  try {
+    await client.requestOnce(url, "sys.connect", SETUP_PROBE_ARGS);
     return false;
   } catch (error) {
-    if (isSetupRequiredError(error)) {
-      return true;
-    }
-    return false;
+    if (!isSetupRequiredError(error) && !setupRecovery(error) && !isAuthenticationRejectedError(error)) throw error;
+    const parsed = sessionErrorSchema.safeParse(error);
+    return parsed.success && parsed.data.details?.setupFeatures?.includes("language") === true;
   }
 }
 
@@ -257,6 +304,8 @@ export function createSessionService(client: SessionClient, options: SessionServ
   let currentSessionToken: PersistedSessionToken | null = readPersistedToken(storage);
   let installationOnboardingToken = options.onboarding ? options.onboarding.token
     : options.onboarding === false ? null : readInstallationOnboardingToken();
+  const signupArrival = options.onboarding ? options.onboarding.signup === true
+    : installationOnboardingToken !== null && readSignupArrival(installationOnboardingToken);
 
   let snapshot: SessionSnapshot = {
     phase: "booting",
@@ -532,6 +581,11 @@ export function createSessionService(client: SessionClient, options: SessionServ
       }
       if (disposed || generation !== reconnectGeneration || !syncStoredSession()) return;
 
+      const recovery = setupRecovery(error);
+      if (recovery) {
+        setSnapshot({ ...recovery, url: gatewayUrl(), username: token.username, connectionId: null });
+        return;
+      }
       if (isSetupRequiredError(error)) {
         setSnapshot({
           phase: "setup",
@@ -539,6 +593,7 @@ export function createSessionService(client: SessionClient, options: SessionServ
           username: token.username,
           connectionId: null,
           message: null,
+          ...setupFacts(signupArrival, error),
         });
         return;
       }
@@ -637,7 +692,7 @@ export function createSessionService(client: SessionClient, options: SessionServ
     cancelSilentReconnect();
     const generation = reconnectGeneration;
     const url = gatewayUrl();
-    const username = input.username.trim();
+    const username = input.username?.trim() ?? "";
     const password = input.password ?? "";
     const token = input.token?.trim() ?? "";
 
@@ -658,12 +713,13 @@ export function createSessionService(client: SessionClient, options: SessionServ
     try {
       const result = await client.connect(options);
       if (disposed || generation !== reconnectGeneration) throw new Error("Session ended");
-      storeValue(STORAGE_USERNAME, username, storage);
+      const signedInUsername = result.peer.principal.account.username;
+      storeValue(STORAGE_USERNAME, signedInUsername, storage);
 
       setSnapshot({
         phase: "ready",
         url,
-        username,
+        username: signedInUsername,
         connectionId: result.server.connectionId,
         server: result.server,
         message: null,
@@ -675,6 +731,11 @@ export function createSessionService(client: SessionClient, options: SessionServ
       return result;
     } catch (error) {
       if (disposed || generation !== reconnectGeneration) throw error;
+      const recovery = setupRecovery(error);
+      if (recovery) {
+        setSnapshot({ ...recovery, url, username: username || snapshot.username, connectionId: null });
+        throw error;
+      }
       if (isSetupRequiredError(error)) {
         setSnapshot({
           phase: "setup",
@@ -682,6 +743,7 @@ export function createSessionService(client: SessionClient, options: SessionServ
           username: username || snapshot.username,
           connectionId: null,
           message: null,
+          ...setupFacts(signupArrival, error),
         });
         throw error;
       }
@@ -701,7 +763,7 @@ export function createSessionService(client: SessionClient, options: SessionServ
     cancelSilentReconnect();
     const setupGeneration = reconnectGeneration;
     const url = gatewayUrl();
-    const username = input.username.trim();
+    const username = input.username?.trim() ?? "";
     const password = input.password.trim();
 
     setSnapshot({
@@ -714,20 +776,40 @@ export function createSessionService(client: SessionClient, options: SessionServ
 
     let result: SysSetupResult;
     try {
+      const { language, ...args } = input;
+      const includeLanguage = language !== undefined && await setupSupportsLanguage(client, url);
+      if (disposed || setupGeneration !== reconnectGeneration) throw new Error("Session ended");
       result = await client.requestOnce(url, "sys.setup", {
-        ...input,
+        ...args,
+        ...(includeLanguage ? { language } : undefined),
         ...(installationOnboardingToken
           ? { onboardingToken: installationOnboardingToken }
           : undefined),
       });
     } catch (error) {
       if (setupGeneration === reconnectGeneration) {
+        let recovery = setupRecovery(error);
+        if (recovery && installationOnboardingToken) {
+          try {
+            if (options.onboarding) await options.onboarding.discard();
+            else clearInstallationOnboardingToken();
+            installationOnboardingToken = null;
+          } catch (storageError) {
+            if (setupGeneration === reconnectGeneration) setSnapshot({ phase: "setup", url,
+              username: username || snapshot.username, connectionId: null, message: normalizeMessage(storageError), ...setupFacts(signupArrival) });
+            throw storageError;
+          }
+        }
+        if (recovery) recovery = await probeSetupMode(client, url, signupArrival);
+        if (setupGeneration !== reconnectGeneration) throw error;
         setSnapshot({
           phase: "setup",
           url,
           username: username || snapshot.username,
           connectionId: null,
           message: normalizeMessage(error),
+          ...setupFacts(signupArrival),
+          ...recovery,
         });
       }
       throw error;
@@ -739,15 +821,15 @@ export function createSessionService(client: SessionClient, options: SessionServ
         if (options.onboarding) await options.onboarding.complete();
         else clearInstallationOnboardingToken();
       } catch (error) {
-        if (setupGeneration === reconnectGeneration) setSnapshot({ phase: "locked", url, username,
+        if (setupGeneration === reconnectGeneration) setSnapshot({ phase: "locked", url, username: result.user.username,
           connectionId: null, message: "Account created. Sign in to continue." });
         throw error;
       }
     }
     if (setupGeneration !== reconnectGeneration) return result;
 
-    storeValue(STORAGE_USERNAME, username, storage);
-    await login({ username, password });
+    storeValue(STORAGE_USERNAME, result.user.username, storage);
+    await login({ username: result.user.username, password });
     return result;
   };
 
@@ -798,54 +880,24 @@ export function createSessionService(client: SessionClient, options: SessionServ
         username: snapshot.username,
         connectionId: null,
         message: null,
+        ...setupFacts(signupArrival),
       });
       return;
     }
 
     if (!persisted) {
-      const setupRequired = await probeSetupMode(client, url);
+      const initial = await probeSetupMode(client, url, signupArrival);
       if (disposed || generation !== reconnectGeneration) return;
-      if (setupRequired) {
-        setSnapshot({
-          phase: "setup",
-          url,
-          username: snapshot.username,
-          connectionId: null,
-          message: null,
-        });
-      } else {
-        setSnapshot({
-          phase: "locked",
-          url,
-          username: snapshot.username,
-          connectionId: null,
-          message: null,
-        });
-      }
+      setSnapshot({ ...initial, url, username: snapshot.username, connectionId: null });
       return;
     }
 
     if (persisted.expiresAt !== null && persisted.expiresAt <= Date.now()) {
       clearStoredSessionToken();
-      const setupRequired = await probeSetupMode(client, url);
+      const initial = await probeSetupMode(client, url, signupArrival);
       if (disposed || generation !== reconnectGeneration) return;
-      if (setupRequired) {
-        setSnapshot({
-          phase: "setup",
-          url,
-          username: snapshot.username,
-          connectionId: null,
-          message: null,
-        });
-      } else {
-        setSnapshot({
-          phase: "locked",
-          url,
-          username: persisted.username,
-          connectionId: null,
-          message: "Session expired. Sign in again.",
-        });
-      }
+      setSnapshot({ ...initial, url, username: persisted.username, connectionId: null,
+        message: initial.message ?? (initial.phase === "locked" ? "Session expired. Sign in again." : null) });
       return;
     }
 
@@ -874,6 +926,7 @@ export function createSessionService(client: SessionClient, options: SessionServ
     setup,
     lock,
     start,
+    resumeSetup: options.resumeSetup,
     dispose: () => {
       disposed = true;
       cancelSilentReconnect();

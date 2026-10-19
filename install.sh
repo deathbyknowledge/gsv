@@ -296,7 +296,7 @@ play_animation() {
     trap 'exit 0' INT TERM HUP
     local resized=1
     trap 'resized=1' WINCH
-    local frames=() record size cols rows width height left top picture status index frame=0 title="GSV"
+    local frames=() record size cols rows width height left top picture status index frame=0 title="Ship"
     while true; do
         if [ "$resized" -eq 1 ]; then
             resized=0
@@ -353,7 +353,7 @@ start_animation() {
     download_file "$url" "$TMP_DIR/$asset" 3 >/dev/null 2>&1 && \
         verify_asset "$asset" "$TMP_DIR/$asset" "$TMP_DIR/checksums.txt" >/dev/null 2>&1 && \
         gzip -dc "$TMP_DIR/$asset" > "$TMP_DIR/animation.frames" 2>/dev/null || return 0
-    printf 'Downloading GSV' > "$TMP_DIR/animation.status"
+    printf 'Downloading Ship' > "$TMP_DIR/animation.status"
     exec 3>&1 4>&2
     ANIMATION_ACTIVE=1
     exec > "$TMP_DIR/install.log" 2>&1
@@ -434,7 +434,7 @@ explain_existing_install_dir() {
         info "Updating the existing installation in $INSTALL_DIR"
         return
     fi
-    warn "Updating the existing installation in $INSTALL_DIR. Automatic daemon updates need a directory this user can write; to move to the default, run: curl -fsSL https://install.gsv.space | GSV_INSTALL_DIR=\"\$HOME/.gsv/bin\" bash, then remove the old gsv, gsvd, gsv-desktop, gsv-transcribe, and gsv-vision files from $INSTALL_DIR and run gsv daemon install."
+    warn "Updating the existing installation in $INSTALL_DIR. Automatic daemon updates need a directory this user can write; to move to the default, run: curl -fsSL https://install.ship.space | GSV_INSTALL_DIR=\"\$HOME/.gsv/bin\" bash, then remove the old gsv, gsvd, gsv-desktop, gsv-transcribe, and gsv-vision files from $INSTALL_DIR and run gsv daemon install."
 }
 
 PATH_MARKER="# Added by the GSV installer"
@@ -497,7 +497,7 @@ open_desktop() {
     [ "${GSV_NO_LAUNCH:-0}" != 1 ] && [ -z "${CI:-}${SSH_CONNECTION:-}${SSH_TTY:-}" ] || return 0
     [ -t 1 ] && [ -t 2 ] || return 0
     if [ "$OS" = linux ] && [ -z "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ]; then return 0; fi
-    info "Opening GSV Desktop"
+    info "Opening Ship Desktop"
     if ! "$INSTALL_DIR/gsv" desktop; then
         warn "Desktop could not open. Installation succeeded; retry with: \"$INSTALL_DIR/gsv\" desktop"
     fi
@@ -638,6 +638,20 @@ replace_binaries() {
     done
 }
 
+# Gesture-vision helper and its model metadata
+retire_gesture_helper() {
+    local name target backup
+    for name in gsv-vision gsv-vision-LICENSE.apache-2.0 gsv-vision-PROVENANCE.md gsv-vision-THIRD_PARTY.md; do
+        target="$INSTALL_DIR/$name"
+        if as_installer test -e "$target"; then
+            backup="$INSTALL_DIR/.$name.backup.$$"
+            TARGETS+=("$name")
+            BACKUPS+=("$backup")
+            as_installer mv "$target" "$backup" || return 1
+        fi
+    done
+}
+
 remove_backups() {
     local backup
     for backup in "${BACKUPS[@]}"; do
@@ -724,6 +738,21 @@ cleanup() {
     exit "$status"
 }
 
+install_desktop_identity() {
+    [ "$OS" = linux ] || return 0
+    local directory="${XDG_DATA_HOME:-$HOME/.local/share}/applications"
+    local entry="$directory/space.gsv.desktop.desktop"
+    [ ! -e "$entry" ] || return 0
+    local executable="$INSTALL_DIR/gsv-desktop"
+    executable="${executable//\\/\\\\\\\\}"
+    executable="${executable//\"/\\\"}"
+    executable="${executable//\$/\\\$}"
+    executable="${executable//\`/\\\`}"
+    executable="${executable//%/%%}"
+    mkdir -p "$directory" || return 1
+    (set -o noclobber; printf '[Desktop Entry]\nType=Application\nName=Ship\nExec="%s"\nTerminal=false\nNoDisplay=true\n' "$executable" > "$entry")
+}
+
 main() {
     detect_platform
     validate_channel
@@ -744,29 +773,25 @@ main() {
         "gsvd-${PLATFORM}"
         "gsv-desktop-${PLATFORM}"
         "gsv-transcribe-${PLATFORM}"
-        "gsv-vision-${PLATFORM}"
         "gsv-transcribe-THIRD_PARTY.md"
-        "gsv-vision-LICENSE.apache-2.0"
-        "gsv-vision-PROVENANCE.md"
-        "gsv-vision-THIRD_PARTY.md"
         "gsv-transcribe-runtime-${PLATFORM}.tar.gz"
+        "gsv-speak-${PLATFORM}"
+        "gsv-speak-THIRD_PARTY-${PLATFORM}.md"
     )
     TARGETS=(
         "gsv"
         "gsvd"
         "gsv-desktop"
         "gsv-transcribe"
-        "gsv-vision"
         "gsv-transcribe-THIRD_PARTY.md"
-        "gsv-vision-LICENSE.apache-2.0"
-        "gsv-vision-PROVENANCE.md"
-        "gsv-vision-THIRD_PARTY.md"
         "gsv-transcribe-runtime"
+        "gsv-speak"
+        "gsv-speak-THIRD_PARTY.md"
     )
-    EXECUTABLES=(1 1 1 1 1 0 0 0 0 0)
+    EXECUTABLES=(1 1 1 1 0 0 1 0)
 
     echo ""
-    echo -e "  ${BOLD}GSV host installer${NC} · ${PLATFORM} · ${release_ref}"
+    echo -e "  ${BOLD}Ship host installer${NC} · ${PLATFORM} · ${release_ref}"
     echo ""
     info "Downloading release manifest"
     local checksum_url
@@ -796,7 +821,7 @@ main() {
     INSTALL_IN_PROGRESS=1
     stop_existing_service
 
-    if ! replace_binaries; then
+    if ! replace_binaries || ! retire_gesture_helper; then
         error "Could not replace the host binaries"
         exit 1
     fi
@@ -821,13 +846,14 @@ main() {
     INSTALL_IN_PROGRESS=0
     remove_backups
     configure_path
+    install_desktop_identity || warn "Could not register Ship with the desktop shortcut portal."
     local shell_needs_path=0
     if ! path_already_configured; then
         shell_needs_path=1
         if [ "${GSV_NO_MODIFY_PATH:-0}" != 1 ]; then export PATH="$INSTALL_DIR:$PATH"; fi
     fi
     stop_animation
-    success "Installed gsv, gsvd, Desktop, and local helpers to $INSTALL_DIR"
+    success "Installed gsv, gsvd, Desktop, and the local voice helpers to $INSTALL_DIR"
     echo ""
     if [ "$INSTALL_DIR_SOURCE" = "default" ] && [ "$shell_needs_path" -eq 1 ]; then
         echo "  Open a new shell, or run now: export PATH=\"\$HOME/.gsv/bin:\$PATH\""

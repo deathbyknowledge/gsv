@@ -1,4 +1,5 @@
 import type { ShipReplies } from "./ship-replies";
+import type { InitialOnboarding } from "./onboarding-responsibility";
 /**
  * KernelContext — the single shape passed to all syscall handlers.
  *
@@ -12,6 +13,7 @@ import type { LedgerStore } from "./ledger";
 import type { McpClientManager } from "./mcp-client";
 import type {
   FederationTransportReceipt,
+  BrowserHandoff,
   JsonObject,
   JsonValue,
   PeerPrincipalKind,
@@ -23,7 +25,6 @@ import type { AuthStore } from "./auth-store";
 import type { DevicePairingStore } from "./device-pairings";
 import type { MemberRecoveryStore } from "./member-recovery";
 import type { AccountRecoveryStore } from "./account-recovery";
-import type { PeopleStore } from "./people";
 import type { CapabilityStore } from "./capabilities";
 import type { ConfigStore } from "./config";
 import type { TargetRegistry } from "./target-registry";
@@ -49,7 +50,7 @@ import type { InstallationIdentity } from "../installation/identity";
 import type { KernelConnection, KernelConnectionState } from "./connection";
 import type { PeerContext } from "./peer";
 import type { RequestFrame, ResponseFrame } from "../protocol/frames";
-import type { ProcessToolOwner } from "../protocol/process-frames";
+import type { ProcessApprovalTarget, ProcessToolOwner } from "../protocol/process-frames";
 import type { GatewayEnv } from "../runtime-env";
 
 export type KernelContext = {
@@ -60,7 +61,6 @@ export type KernelContext = {
   pairings: DevicePairingStore;
   accountRecovery: AccountRecoveryStore;
   memberRecovery: MemberRecoveryStore;
-  people: PeopleStore;
   invalidateAccountConnections: (uid: number) => void;
   caps: CapabilityStore;
   config: ConfigStore;
@@ -81,6 +81,7 @@ export type KernelContext = {
   schedules: ScheduleStore;
   mailboxes: MailboxStore;
   responsibilities: ResponsibilityStore;
+  welcome: InitialOnboarding;
   responsibilitySources: ResponsibilitySourcePolicyStore;
   federation: FederationStore;
   federationIdentity: FederationIdentity;
@@ -92,6 +93,8 @@ export type KernelContext = {
   processId?: string;
   processRunId?: string;
   toolOwner?: ProcessToolOwner;
+  /** Constrain dispatch to the target scope used for Process approval. */
+  approvedTarget?: ProcessApprovalTarget;
   requestId?: string;
   requestSignal?: AbortSignal;
   callerOwnerUid?: number;
@@ -113,6 +116,7 @@ export type KernelContext = {
   scheduleScheduleWake: (scheduleId: string, dueAtMs: number) => Promise<string>;
   cancelScheduleWake: (wakeScheduleId: string) => Promise<void>;
   reconcileResponsibilityWake: (ownerUid: number) => Promise<void>;
+  trackBrowserHandoff: (ownerUid: number, handoff: BrowserHandoff) => Promise<void>;
   scheduleManagedOutboundEnqueue: (
     outboundId: string,
     dueAtMs: number,

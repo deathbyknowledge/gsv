@@ -17,6 +17,7 @@ import {
   contextBoundaryRemainingTokens, contextRunwayAlertThreshold, isCompactionSummaryMessage, messageSnapshotsMatch,
 } from "./helpers";
 import { formatCompactionSummaryMessage } from "./event-renderer";
+import { renderCompactionTranscriptChunks } from "./compaction-renderer";
 import { archivedHistoryRecords } from "./archive";
 import {
   isHistoryOverflowPolicy, isNonNegativeInteger, isPositiveInteger, normalizeOptionalString,
@@ -24,7 +25,7 @@ import {
 } from "../internal/messages";
 import { storedHistoryPolicySchema } from "../internal/schemas";
 import {
-  type ArchivedMessageRecord, COMPACTION_SUMMARY_MAX_TOKENS, CONTEXT_PROVIDER_OVERFLOW_REASON,
+  type ArchivedMessageRecord, COMPACTION_SUMMARY_MAX_TOKENS, COMPACTION_SUMMARY_CHUNK_CHARS, CONTEXT_PROVIDER_OVERFLOW_REASON,
   CONTEXT_RUNWAY_ALERT_EPOCH_KEY, MAX_KILL_ARCHIVE_ATTEMPTS,
 } from "../internal/lifecycle";
 import type {
@@ -50,11 +51,13 @@ import {
   buildProcContextState, estimateContextInputTokens, estimateContextMessagesTokens, measureContextInputTokens,
 } from "../context-pressure";
 import { formatContextRunwayAlertMessage } from "../../prompts/context-runway";
+import { enqueueMemoryReview } from "../memory-review";
 import {
   assembleSystemPromptSnapshot, contextProjectionFromManifest, contextProjectionsEqual, createContextProjection,
   countResponsibilityTemplates, parseContextProjection, type ContextProjection,
 } from "../context";
 import type { RunState } from "../run/state";
+import type { ProcessToolOwner } from "../../protocol/process-frames";
 import { contextSnapshotFromRun } from "../run/helpers";
 import {
   renderContextHistory, renderModelEvent, renderModelHistoryGroup, type ModelHistoryRenderOptions,
@@ -121,6 +124,7 @@ function archivedMessageProjection(
 }
 
 type CompactionFailure = Extract<ProcHistoryCompactResult, { ok: false }>;
+type CompletedCompactionResult = Exclude<ProcHistoryCompactResult, { pending: true }>;
 
 type CompactionRequest = {
   summary: string | null;
@@ -139,6 +143,7 @@ type CompactionSnapshot = {
   fromMessageId: number;
   toMessageId: number;
   contextPressure?: number;
+  preserveMessageId?: number;
 };
 
 type InstalledCompaction = {
@@ -985,6 +990,93 @@ export class ProcessHistory {
     );
   }
 
+  async requestHistoryCompaction(
+    args: ProcHistoryCompactArgs,
+    owner: ProcessToolOwner | undefined,
+    signal?: AbortSignal,
+  ): Promise<ProcHistoryCompactResult> {
+    if (!owner) return this.handleHistoryCompact(args, { signal });
+    const run = this.host.runs.active;
+    const pending = this.host.store.tools.getPending(owner.requestId);
+    if (this.compactionStopped({ activeRunId: owner.runId, signal }) || !run || pending?.runId !== owner.runId) {
+      return compactionFailure("Compaction requires a current owning tool call");
+    }
+    const summary = normalizeOptionalString(args.summary);
+    if (!summary || args.generateSummary || args.keepLast !== undefined
+      || args.throughMessageId !== undefined || args.targetPressure !== undefined) {
+      return compactionFailure("An active process submits a summary without a history selector");
+    }
+    if (summary.length > COMPACTION_SUMMARY_MAX_TOKENS * 4) {
+      return compactionFailure(`Keep the handover under ${COMPACTION_SUMMARY_MAX_TOKENS * 4} characters`);
+    }
+    if (run.pendingCompaction) return compactionFailure("A handover is already pending");
+    const epoch = this.host.store.epochs.getLiveContextEpoch();
+    if (!epoch || run.contextEpochId !== epoch.id) return compactionFailure("No current context epoch");
+    const records = this.host.store.messages.getMessagesForGeneration();
+    const toolIndex = records.findIndex((message) => normalizeModelHistoryGroup(message).records.some(
+      (record) => record.kind === "call" && record.payload.callId === pending.callId,
+    ));
+    if (toolIndex < 0) return compactionFailure("Owning tool call is missing from history");
+    // The model has not seen this tool batch's results. Keep the entire batch,
+    // including any concurrent calls and late results, outside its handover.
+    const selected = this.host.store.history.getHistoryPrefixMessages({ keepLast: records.length - toolIndex });
+    const inputId = this.host.store.messages.getRunInputMessageId(run.runId);
+    if (!selected.some((message) => message.id !== inputId && !isCompactionSummaryMessage(message))) {
+      return compactionFailure("No completed history to compact yet");
+    }
+    this.host.mutateActiveRun(run.runId, (current) => ({
+      ...current,
+      pendingCompaction: {
+        summary,
+        throughMessageId: selected.at(-1)!.id,
+        historyGeneration: this.host.store.state.getHistoryGeneration(),
+        contextEpochId: epoch.id,
+      },
+    }));
+    return { ok: true, pid: this.host.pid, pending: true };
+  }
+
+  async applyPendingCompaction(
+    runId: string,
+    state: ProcContextState,
+    context: Context,
+  ): Promise<"ready" | "compacted" | "stopped"> {
+    const run = this.host.runs.active;
+    const pending = run?.runId === runId ? run.pendingCompaction : undefined;
+    if (!pending) return "ready";
+    if (!this.host.store.tools.isRunResolved(runId) || this.host.store.tools.getPendingHilForRun(runId)) return "stopped";
+    const epoch = this.host.store.epochs.getLiveContextEpoch();
+    const selected = this.selectActiveCompactionPrefix(runId, state, context, this.getHistoryContextPolicy(), {
+      throughMessageId: pending.throughMessageId,
+      summary: pending.summary,
+    });
+    // A smaller model request may already fit after configuration or history
+    // changes. Never discard recent messages just to install a redundant summary.
+    if (epoch?.id === pending.contextEpochId
+      && this.host.store.state.getHistoryGeneration() === pending.historyGeneration
+      && selected.length === 0) {
+      this.host.mutateActiveRun(runId, (current) => {
+        delete current.pendingCompaction;
+        return current;
+      });
+      return "ready";
+    }
+    const result = epoch?.id === pending.contextEpochId
+      && this.host.store.state.getHistoryGeneration() === pending.historyGeneration
+      ? await this.handleHistoryCompact({ summary: pending.summary, throughMessageId: selected.at(-1)!.id }, {
+        allowActive: true, activeRunId: runId, reason: "checkpoint",
+      })
+      : compactionFailure("Context changed before the handover could be installed");
+    if (this.host.handleRunStopped(runId)) return "stopped";
+    if (!result.ok) {
+      await this.host.run.failWithHistoryEvent(runId, {
+        reason: "context.checkpoint.failed", error: result.error,
+      });
+      return "stopped";
+    }
+    return "compacted";
+  }
+
   private captureCompactionSnapshot(
     request: CompactionRequest,
     options: HistoryCompactionOptions,
@@ -1035,6 +1127,12 @@ export class ProcessHistory {
     if (selected.length === 0) {
       return compactionFailure("No history messages selected for compaction");
     }
+    const preserveMessageId = options.activeRunId
+      ? this.host.store.messages.getRunInputMessageId(options.activeRunId) ?? undefined
+      : undefined;
+    if (selected.every((message) => message.id === preserveMessageId)) {
+      return compactionFailure("No completed history to compact yet");
+    }
     const activeSignal = options.activeRunId
       ? this.host.run.runAbortSignal(options.activeRunId)
       : undefined;
@@ -1052,6 +1150,7 @@ export class ProcessHistory {
       fromMessageId: selected[0]!.id,
       toMessageId: selected.at(-1)!.id,
       contextPressure,
+      preserveMessageId,
     };
   }
 
@@ -1153,6 +1252,8 @@ export class ProcessHistory {
           generation: snapshot.generation,
           fromMessageId: snapshot.fromMessageId,
           toMessageId: snapshot.toMessageId,
+          preserveMessageId: snapshot.preserveMessageId,
+          summaryMessageId: snapshot.selected.find((message) => message.id !== snapshot.preserveMessageId)!.id,
           record: {
             kind: "event",
             payload: {
@@ -1175,6 +1276,10 @@ export class ProcessHistory {
           archivePath: archivedTo,
           summaryMessageId,
         });
+        enqueueMemoryReview(this.host, {
+          segmentId, archivePath: archivedTo, generation: snapshot.generation,
+          throughMessageId: snapshot.toMessageId,
+        });
         this.host.store.state.deleteContextState();
         if (snapshot.contextEpoch) {
           this.host.store.epochs.closeLiveContextEpoch(
@@ -1183,15 +1288,17 @@ export class ProcessHistory {
             contextArchivePath,
           );
         }
+        if (options.activeRunId) {
+          this.host.mutateActiveRun(options.activeRunId, (run) => {
+            delete run.contextEpochId;
+            delete run.generationContextId;
+            delete run.pendingCompaction;
+            return run;
+          });
+        }
       });
-      if (options.activeRunId) {
-        this.host.mutateActiveRun(options.activeRunId, (run) => {
-          delete run.contextEpochId;
-          delete run.generationContextId;
-          return run;
-        });
-      }
       installed = true;
+      await this.host.tasks.arm();
     } finally {
       if (!installed) {
         await this.deleteFailedCompactionArchive(archiveKey);
@@ -1207,7 +1314,7 @@ export class ProcessHistory {
   async handleHistoryCompact(
     args: ProcHistoryCompactArgs,
     options: HistoryCompactionOptions = {},
-  ): Promise<ProcHistoryCompactResult> {
+  ): Promise<CompletedCompactionResult> {
     const telemetryStartedAt = Date.now();
     let stage: "admission" | "summary" | "archive" = "admission";
     let committed = false;
@@ -1302,55 +1409,72 @@ export class ProcessHistory {
       throw new Error("AI config unavailable");
     }
 
-    const context = buildCompactionSummaryContext(messages);
+    const contextWindow = Math.min(...[primary, ...(primary.fallbacks ?? [])].map((config) =>
+      config.contextWindowTokens ?? 32_768,
+    ));
+    const maxTokens = Math.min(COMPACTION_SUMMARY_MAX_TOKENS, Math.floor(contextWindow / 8));
+    const promptTokens = estimateContextInputTokens(buildCompactionSummaryContext(
+      "", undefined, "x".repeat(maxTokens * 4),
+    ));
+    const chunkChars = Math.min(COMPACTION_SUMMARY_CHUNK_CHARS, Math.floor((contextWindow - maxTokens - promptTokens) * 2));
+    if (chunkChars <= 0) throw new Error("Model context is too small for a compaction handover");
+    let summary = "";
     const generationOptions: Omit<AiTextGenerateOptions, "timeoutMs"> = {
-      maxTokens: COMPACTION_SUMMARY_MAX_TOKENS,
+      maxTokens,
       reasoning: "off",
     };
     let config = primary;
     let fallbackIndex = 0;
-    let retriedEmptyResponse = false;
-    while (true) {
-      try {
-        const generated = await this.host.run.generateCompactionText({
-          config,
-          context,
-          options: {
-            ...generationOptions,
-            timeoutMs: config.generationTimeoutMs,
-          },
-          sessionAffinityKey: `${pid}:compaction`,
-          signal,
-        });
-        const summary = generated.trim();
-        if (summary) return summary;
-        throw new Error("Generation returned no text");
-      } catch (error) {
-        if (signal?.aborted) {
-          throw signal.reason ?? error;
+    for (const transcript of renderCompactionTranscriptChunks(messages, chunkChars)) {
+      const context = buildCompactionSummaryContext(transcript, undefined, summary || undefined);
+      let retriedEmptyResponse = false;
+      while (true) {
+        try {
+          const generated = await this.host.run.generateCompactionText({
+            config,
+            context,
+            options: {
+              ...generationOptions,
+              timeoutMs: config.generationTimeoutMs,
+            },
+            sessionAffinityKey: `${pid}:compaction`,
+            signal,
+          });
+          const next = generated.trim();
+          if (next) {
+            summary = next;
+            break;
+          }
+          throw new Error("Generation returned no text");
+        } catch (error) {
+          if (signal?.aborted) {
+            throw signal.reason ?? error;
+          }
+          const message = errorMessageFromUnknown(error);
+          if (!retriedEmptyResponse && isRetryableGenerationErrorMessage(message)) {
+            retriedEmptyResponse = true;
+            continue;
+          }
+          const formatted =
+            formatProviderErrorMessage(message, {
+              provider: config.provider,
+              model: config.model,
+            }) || message;
+          const fallback = nextAiConfigFallback(
+            primary,
+            config,
+            primary.fallbacks ?? [],
+            fallbackIndex,
+          );
+          if (!fallback) throw new Error(formatted);
+          config = fallback.config;
+          fallbackIndex = fallback.nextIndex;
+          retriedEmptyResponse = false;
         }
-        const message = errorMessageFromUnknown(error);
-        if (!retriedEmptyResponse && isRetryableGenerationErrorMessage(message)) {
-          retriedEmptyResponse = true;
-          continue;
-        }
-        const formatted =
-          formatProviderErrorMessage(message, {
-            provider: config.provider,
-            model: config.model,
-          }) || message;
-        const fallback = nextAiConfigFallback(
-          primary,
-          config,
-          primary.fallbacks ?? [],
-          fallbackIndex,
-        );
-        if (!fallback) throw new Error(formatted);
-        config = fallback.config;
-        fallbackIndex = fallback.nextIndex;
-        retriedEmptyResponse = false;
       }
     }
+    if (!summary) throw new Error("No model-visible history to summarize");
+    return summary;
   }
 
   async resolveCheckpointConfig(signal?: AbortSignal): Promise<AiConfigResult | null> {
@@ -1406,6 +1530,7 @@ export class ProcessHistory {
     }
 
     const content = formatContextRunwayAlertMessage({
+      handover: true,
       remainingInputTokens,
       runwayBeforeBoundaryTokens: Math.max(0, remainingInputTokens - boundaryRemainingTokens),
       policy,
@@ -1430,7 +1555,7 @@ export class ProcessHistory {
           kind: "event",
           payload: {
             kind: "context.runway", severity: "warn", audience: "model",
-            payload: { epochId: liveEpoch.id, remainingInputTokens,
+            payload: { epochId: liveEpoch.id, remainingInputTokens, handover: true,
               runwayBeforeBoundaryTokens: Math.max(0, remainingInputTokens - boundaryRemainingTokens), policy },
           },
         },
@@ -1489,7 +1614,7 @@ export class ProcessHistory {
       return "stopped";
     }
 
-    const selected = this.selectAutoCompactionPrefix(runId, state, context, policy, trigger);
+    const selected = this.selectActiveCompactionPrefix(runId, state, context, policy, { trigger });
     if (selected.length === 0) {
       await this.host.run.failWithHistoryEvent(runId, {
         reason: "context.auto_compact.empty", trigger, policy, pressure,
@@ -1541,30 +1666,22 @@ export class ProcessHistory {
     return "compacted";
   }
 
-  selectAutoCompactionPrefix(
+  selectActiveCompactionPrefix(
     runId: string,
     state: ProcContextState,
     context: Context,
     policy: ProcHistoryContextPolicy,
-    trigger: "preflight" | "provider-overflow",
+    options: { trigger?: "preflight" | "provider-overflow"; throughMessageId?: number; summary?: string },
   ): MessageRecord[] {
     const records = this.host.store.messages.getMessagesForGeneration();
     if (records.length <= 1) {
       return [];
     }
 
-    const firstActiveRunIndex = records.findIndex((message) => message.runId === runId);
     const runInputMessageId = this.host.store.messages.getRunInputMessageId(runId);
-    const runInputIndex =
-      runInputMessageId === null
-        ? -1
-        : records.findIndex((message) => message.id === runInputMessageId);
-    const protectedIndex =
-      firstActiveRunIndex >= 0
-        ? firstActiveRunIndex
-        : runInputIndex >= 0
-          ? runInputIndex
-          : records.length - 1;
+    const protectedIndex = options.throughMessageId === undefined
+      ? records.length - 1
+      : records.findLastIndex((message) => message.id <= options.throughMessageId!) + 1;
     if (protectedIndex <= 0) {
       return [];
     }
@@ -1573,7 +1690,7 @@ export class ProcessHistory {
     const inputBudgetTokens = state.inputBudgetTokens;
     const measuredInputTokens = Math.max(1, state.inputTokens);
     const effectiveInputTokens =
-      trigger === "provider-overflow" && inputBudgetTokens !== null
+      options.trigger === "provider-overflow" && inputBudgetTokens !== null
         ? Math.max(measuredInputTokens, inputBudgetTokens)
         : measuredInputTokens;
     return this.selectCompactionPrefixToPressure({
@@ -1583,10 +1700,12 @@ export class ProcessHistory {
         generationContextId: this.host.runs.active?.generationContextId,
       },
       protectedIndex,
+      preserveMessageId: runInputMessageId ?? undefined,
       estimatedContextTokens,
       effectiveInputTokens,
       inputBudgetTokens,
       targetPressure: policy.compactToPressure,
+      summary: options.summary,
     });
   }
 
@@ -1598,6 +1717,8 @@ export class ProcessHistory {
     effectiveInputTokens: number;
     inputBudgetTokens: number | null;
     targetPressure: number;
+    preserveMessageId?: number;
+    summary?: string;
   }): MessageRecord[] {
     const {
       records,
@@ -1612,7 +1733,7 @@ export class ProcessHistory {
       return [];
     }
     // Keep storage coordinates even when a person-only event has no provider message.
-    const allMessages = records.map((record) =>
+    const allMessages = records.map((record) => record.id === input.preserveMessageId ? null :
       renderModelHistoryGroup(normalizeModelHistoryGroup(record), input.renderOptions),
     );
 
@@ -1636,7 +1757,7 @@ export class ProcessHistory {
           segmentId: "segment",
           archivedMessages: protectedIndex,
           archivePath: "/home/process/history/compactions/segment.jsonl.gz",
-          summary: "x".repeat(COMPACTION_SUMMARY_MAX_TOKENS * 4),
+          summary: input.summary ?? "x".repeat(COMPACTION_SUMMARY_MAX_TOKENS * 4),
         },
       }, Date.now()),
     ]);
@@ -1999,7 +2120,7 @@ export class ProcessHistory {
   ): Promise<ContextEpochCandidate> {
     const promptConfig: AiConfigResult = {
       ...config,
-      system: { timezone: projection.runtime.timezone },
+      system: { timezone: projection.runtime.timezone, language: projection.runtime.language },
       skillIndex: projection.skills.entries.map((entry) => ({
         id: entry.id,
         name: entry.id,

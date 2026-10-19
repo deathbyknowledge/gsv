@@ -12,6 +12,7 @@ import {
   createOpaqueToken,
   sha256Hex,
   tokenPrefix,
+  type OpaqueToken,
 } from "./tokens";
 
 const ONBOARDING_TOKEN_TTL_MS = 60 * 60 * 1000;
@@ -25,6 +26,9 @@ export type IssuedInstallationOnboarding = {
 type OnboardingClaimRow = {
   id: string;
   token_hash: string;
+  expires_at: number;
+  legacy_token_hash: string | null;
+  legacy_expires_at: number | null;
   installation_id: string;
   handle: string;
   canonical_origin: string;
@@ -34,11 +38,13 @@ export class InstallationOnboardingStore {
   constructor(
     private readonly db: D1Database,
     private readonly accounts: AccountStore,
+    private readonly resumeSecret?: string,
   ) {}
 
   async begin(
     installationIdValue: string,
     now = Date.now(),
+    mode: "issue" | "resume" = "issue",
   ): Promise<IssuedInstallationOnboarding> {
     const installationId = parseOpaqueId(installationIdValue, "installationId");
     const operation = await this.db.prepare(
@@ -60,19 +66,22 @@ export class InstallationOnboardingStore {
         operation.principal_id,
       );
     }
-    return await this.issue(installationId, now);
+    return await this.issue(installationId, now, mode === "resume");
   }
 
   async issue(
     installationIdValue: string,
     now = Date.now(),
+    resume = false,
   ): Promise<IssuedInstallationOnboarding> {
     const installationId = parseOpaqueId(installationIdValue, "installationId");
     const installation = await this.db.prepare(
-      `SELECT i.id, i.handle, i.canonical_origin
+      `SELECT i.id, i.handle, i.canonical_origin, c.id AS claim_id, c.token_hash,
+         c.created_at, c.expires_at, c.revoked_at, c.completed_at
        FROM installations i
        JOIN provisioning_operations p
          ON p.installation_id = i.id AND p.kind = 'create'
+       LEFT JOIN installation_onboarding_claims c ON c.installation_id = i.id
        WHERE i.id = ? AND i.state = 'provisioning'
          AND p.state = 'provisioning'
        LIMIT 1`,
@@ -80,44 +89,94 @@ export class InstallationOnboardingStore {
       id: string;
       handle: string;
       canonical_origin: string;
+      claim_id: string | null;
+      token_hash: string | null;
+      created_at: number | null;
+      expires_at: number | null;
+      revoked_at: number | null;
+      completed_at: number | null;
     }>();
     if (!installation) throw new Error("installation is not awaiting onboarding");
 
-    const token = await createOpaqueToken("onboard");
+    const urlFor = (raw: string) => {
+      const url = new URL("/onboarding", installation.canonical_origin);
+      url.hash = raw;
+      return url.toString();
+    };
+    if (resume && installation.claim_id && installation.expires_at! > now
+      && installation.revoked_at === null && installation.completed_at === null) {
+      const token = await this.resumeToken(installationId, installation.claim_id, installation.created_at!, installation.expires_at!);
+      if (constantTimeEqual(token.hash, installation.token_hash!)) {
+        return { installationId, onboardingUrl: urlFor(token.raw), expiresAt: installation.expires_at! };
+      }
+    }
     // The Kernel retains this claim across activation retries; reissue only rotates its bearer.
-    const claimId = `onboarding_${crypto.randomUUID()}`;
+    const claimId = installation.claim_id ?? `onboarding_${crypto.randomUUID()}`;
+    const createdAt = Math.max(now, (installation.created_at ?? 0) + 1);
     const expiresAt = now + ONBOARDING_TOKEN_TTL_MS;
+    const token = resume || this.resumeSecret ? await this.resumeToken(installationId, claimId, createdAt, expiresAt) : await createOpaqueToken("onboard");
     const result = await this.db.prepare(
       `INSERT INTO installation_onboarding_claims (
          id, installation_id, token_prefix, token_hash,
-         expires_at, completed_at, revoked_at, created_at
-       ) VALUES (?, ?, ?, ?, ?, NULL, NULL, ?)
+         expires_at, completed_at, revoked_at, created_at, issuer_version
+       ) SELECT ?, i.id, ?, ?, ?, NULL, NULL, ?, 1
+         FROM installations i JOIN provisioning_operations p ON p.installation_id = i.id AND p.kind = 'create'
+         WHERE i.id = ? AND i.state = 'provisioning' AND p.state = 'provisioning'
        ON CONFLICT (installation_id) DO UPDATE SET
          token_prefix = excluded.token_prefix,
          token_hash = excluded.token_hash,
          expires_at = excluded.expires_at,
          completed_at = NULL,
          revoked_at = NULL,
-         created_at = excluded.created_at`,
+         created_at = excluded.created_at,
+         issuer_version = excluded.issuer_version,
+         legacy_token_hash = CASE WHEN ? THEN installation_onboarding_claims.legacy_token_hash ELSE NULL END,
+         legacy_expires_at = CASE WHEN ? THEN installation_onboarding_claims.legacy_expires_at ELSE NULL END
+       WHERE ? = 0 OR installation_onboarding_claims.token_hash = ?`,
     ).bind(
       claimId,
-      installationId,
       token.prefix,
       token.hash,
       expiresAt,
-      now,
+      createdAt,
+      installationId,
+      resume ? 1 : 0,
+      resume ? 1 : 0,
+      resume ? 1 : 0,
+      installation.token_hash,
     ).run();
     if ((result.meta.changes ?? 0) !== 1) {
+      if (resume) {
+        const current = await this.db.prepare(`SELECT c.id, c.token_hash, c.created_at, c.expires_at
+          FROM installation_onboarding_claims c JOIN installations i ON i.id = c.installation_id
+          WHERE c.installation_id = ? AND c.completed_at IS NULL AND c.revoked_at IS NULL
+            AND c.expires_at > ? AND i.state = 'provisioning'`)
+          .bind(installationId, now).first<{ id: string; token_hash: string; created_at: number; expires_at: number }>();
+        if (current) {
+          const accepted = await this.resumeToken(installationId, current.id, current.created_at, current.expires_at);
+          if (constantTimeEqual(accepted.hash, current.token_hash)) {
+            return { installationId, onboardingUrl: urlFor(accepted.raw), expiresAt: current.expires_at };
+          }
+        }
+      }
       throw new Error("installation is not awaiting onboarding");
     }
 
-    const onboardingUrl = new URL("/onboarding", installation.canonical_origin);
-    onboardingUrl.hash = token.raw;
     return {
       installationId,
-      onboardingUrl: onboardingUrl.toString(),
+      onboardingUrl: urlFor(token.raw),
       expiresAt,
     };
+  }
+
+  /** A stable server secret recreates a live bearer without storing it in D1. */
+  private async resumeToken(installationId: string, claimId: string, createdAt: number, expiresAt: number): Promise<OpaqueToken> {
+    if (!this.resumeSecret) throw new Error("Owner setup authorization is not configured");
+    const encoder = new TextEncoder();
+    const key = await crypto.subtle.importKey("raw", encoder.encode(this.resumeSecret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+    const signature = await crypto.subtle.sign("HMAC", key, encoder.encode(JSON.stringify(["installation-onboarding-v1", installationId, claimId, createdAt, expiresAt])));
+    const raw = `onboard_${btoa(String.fromCharCode(...new Uint8Array(signature))).replaceAll("+", "-").replaceAll("/", "_").replaceAll("=", "")}`;
+    return { raw, prefix: raw.slice(0, 16), hash: await sha256Hex(raw) };
   }
 
   /** Bootstrap retries retain one pre-generated claim; they never reissue it. */
@@ -127,8 +186,8 @@ export class InstallationOnboardingStore {
     const installationId = parseOpaqueId(installationIdValue, "installationId");
     await this.db.prepare(
       `INSERT INTO installation_onboarding_claims (
-         id, installation_id, token_prefix, token_hash, expires_at, completed_at, revoked_at, created_at
-       ) SELECT ?, i.id, ?, ?, ?, NULL, NULL, ?
+         id, installation_id, token_prefix, token_hash, expires_at, completed_at, revoked_at, created_at, issuer_version
+       ) SELECT ?, i.id, ?, ?, ?, NULL, NULL, ?, 1
        FROM installations i JOIN provisioning_operations p ON p.installation_id = i.id AND p.kind = 'create'
        WHERE i.id = ? AND i.state = 'provisioning' AND p.state = 'provisioning'
        ON CONFLICT (installation_id) DO NOTHING`,
@@ -148,30 +207,33 @@ export class InstallationOnboardingStore {
     now = Date.now(),
   ): Promise<InstallationOnboardingAuthorization> {
     let installationId: string;
-    let prefix: string;
     try {
       installationId = parseOpaqueId(input?.installationId, "installationId");
-      prefix = tokenPrefix(input?.token);
+      tokenPrefix(input?.token);
     } catch {
       return { ok: false };
     }
 
     const claim = await this.db.prepare(
       `SELECT
-         c.id, c.token_hash, c.installation_id,
+         c.id, c.token_hash, c.expires_at, c.legacy_token_hash, c.legacy_expires_at, c.installation_id,
          i.handle, i.canonical_origin
        FROM installation_onboarding_claims c
        JOIN installations i ON i.id = c.installation_id
        JOIN provisioning_operations p
          ON p.installation_id = i.id AND p.kind = 'create'
-       WHERE c.token_prefix = ? AND c.installation_id = ?
+       WHERE c.installation_id = ?
          AND c.completed_at IS NULL AND c.revoked_at IS NULL
-         AND c.expires_at > ?
+         AND (c.expires_at > ? OR c.legacy_expires_at > ?)
          AND i.state = 'provisioning' AND p.state = 'provisioning'
        LIMIT 1`,
-    ).bind(prefix, installationId, now).first<OnboardingClaimRow>();
+    ).bind(installationId, now, now).first<OnboardingClaimRow>();
     if (!claim) return { ok: false };
-    if (!constantTimeEqual(await sha256Hex(input.token), claim.token_hash)) {
+    const hash = await sha256Hex(input.token);
+    const current = claim.expires_at > now && constantTimeEqual(hash, claim.token_hash);
+    const legacy = claim.legacy_token_hash !== null && claim.legacy_expires_at !== null
+      && claim.legacy_expires_at > now && constantTimeEqual(hash, claim.legacy_token_hash);
+    if (!current && !legacy) {
       return { ok: false };
     }
     return {

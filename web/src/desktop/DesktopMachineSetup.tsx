@@ -23,7 +23,7 @@ export function DesktopMachineSetup({ storage, ...props }: Props) {
 
 function MachineSetup({ origin, generation, username, request, nativeReady }: Omit<Props, "storage"> & { username: string; nativeReady: boolean }) {
   const { client, connected } = useGateway();
-  const { theme } = useColorTheme();
+  const { theme } = useColorTheme("light");
   const [computer] = useState(createComputerScene);
   const key = `gsv.desktop.machine:${JSON.stringify([origin, username])}`;
   const [owner] = useState(() => new DesktopMachineSession(origin, username, nativeMachine(generation, username), client.sys.pair, {

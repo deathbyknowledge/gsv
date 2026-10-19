@@ -3,9 +3,18 @@ import {
   contextProjectionFromManifest,
   contextProjectionsEqual,
   createContextProjection,
+  parseContextProjection,
 } from "./projection";
 
 describe("context epoch projection", () => {
+  it("retains old epochs without a language and projects later preference changes", () => {
+    const before = createContextProjection({ mcpServers: [], system: { timezone: "UTC" }, skillIndexMode: "off" });
+    expect(parseContextProjection(JSON.parse(JSON.stringify(before)))).toEqual(before);
+    const after = createContextProjection({ mcpServers: [], system: { timezone: "UTC", language: "es-MX" }, skillIndexMode: "off" });
+    expect(after.runtime.language).toBe("es-MX");
+    expect(contextProjectionsEqual(before, after)).toBe(false);
+  });
+
   it("normalizes prompt-relevant Kernel state into a deterministic snapshot", () => {
     const projection = createContextProjection({
       targets: [

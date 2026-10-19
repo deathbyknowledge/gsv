@@ -3,7 +3,7 @@ import { env } from "cloudflare:workers";
 import { createInstallationStorage } from "../installation/storage";
 import type { Process } from "./do";
 import { initProcess, ROOT_IDENTITY, runInProcess } from "./do-test-harness";
-import { renderCompactionTranscriptWindow } from "./history/compaction-renderer";
+import { renderCompactionTranscriptChunks } from "./history/compaction-renderer";
 
 describe("selected target message context", () => {
   it("renders each message's target while deduplicating origins and omitting unselected context", async () => {
@@ -31,7 +31,7 @@ describe("selected target message context", () => {
       ]);
       const stored = process.store.messages.getMessages();
       expect(stored.map((item) => item.content)).toEqual(input.map((item) => item.text));
-      const summary = renderCompactionTranscriptWindow(stored, 20_000).split("\n").map((line) => JSON.parse(line));
+      const summary = [...renderCompactionTranscriptChunks(stored, 20_000)].join("").trimEnd().split("\n").map((line) => JSON.parse(line));
       expect(summary.map((item) => item.payload.selectedTarget)).toEqual(["macbook", "macbook", "gsv", undefined, undefined]);
     });
   });

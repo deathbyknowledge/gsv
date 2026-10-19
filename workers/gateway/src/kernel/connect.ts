@@ -24,6 +24,8 @@ import { FEEDBACK_FEATURE } from "@humansandmachines/gsv/services/feedback";
 import type { KernelContext } from "./context";
 import type { TargetRecord } from "./target-registry";
 import { SERVER_RELEASE } from "../version";
+import { machineUpdateInstallerUrl } from "@humansandmachines/gsv/device-setup";
+import { deploymentPresentation } from "@humansandmachines/gsv/services/deployment";
 import { ensureAccountHomeLayout } from "./account-home";
 import { ensurePublicAssetStorageLayout } from "../public-assets";
 import { USER_CONNECTION_SIGNALS } from "./user-signals";
@@ -39,15 +41,14 @@ export type ConnectOutcome =
   | { ok: false; code: number; message: string; details?: JsonValue };
 
 export const SETUP_REQUIRED_ERROR_CODE = 425;
-type SetupRequiredDetails = { setupMode: true; next: "sys.setup" };
+type SetupRequiredDetails = { setupMode: true; next: "sys.setup"; setupFeatures: string[] };
 
 export const PROTOCOL_VERSION = 4;
-const INSTALLER_URL = "https://install.gsv.space";
 const MACHINE_CONNECTION_CAPABILITIES: string[] = [];
 const SERVICE_CAPABILITY_GIDS = [102];
 
 export function setupRequiredDetails(): SetupRequiredDetails {
-  return { setupMode: true, next: "sys.setup" };
+  return { setupMode: true, next: "sys.setup", setupFeatures: ["language"] };
 }
 
 export async function ensureKernelBootstrapped(ctx: KernelContext): Promise<void> {
@@ -103,18 +104,19 @@ export async function handleConnect(
   }
 
   if (args.protocol !== PROTOCOL_VERSION) {
+    const installerUrl = machineUpdateInstallerUrl(args.peer?.platform, deploymentPresentation(ctx.env.GSV_PUBLIC_CONFIG).installUrl);
     return {
       ok: false,
       code: 102,
       message: args.protocol < PROTOCOL_VERSION
-        ? `This client speaks protocol ${args.protocol}; the gateway requires protocol ${PROTOCOL_VERSION}. Update the client with ${INSTALLER_URL}.`
+        ? `This client speaks protocol ${args.protocol}; the gateway requires protocol ${PROTOCOL_VERSION}. Update the client with ${installerUrl}.`
         : `This client speaks protocol ${args.protocol}; the gateway only supports protocol ${PROTOCOL_VERSION}. Redeploy the gateway.`,
       details: {
         requestedProtocol: args.protocol,
         supportedProtocol: PROTOCOL_VERSION,
         serverVersion: ctx.serverVersion,
         serverRelease: SERVER_RELEASE,
-        installer: INSTALLER_URL,
+        installer: installerUrl,
       },
     };
   }
@@ -131,7 +133,7 @@ export async function handleConnect(
     return {
       ok: false,
       code: 503,
-      message: "Space provisioning is incomplete",
+      message: "Ship setup is incomplete",
     };
   }
 
@@ -185,6 +187,7 @@ export async function handleConnect(
   };
 
   const serverFeatures = gsvInferenceFeaturesFromEnv(ctx.env);
+  if (ctx.env.INSTANCES && hasCapability(capabilities, "sys.instance.list")) serverFeatures.push("cloud-instances");
   if (ctx.env.FEEDBACK && hasCapability(capabilities, "sys.feedback")) serverFeatures.push(FEEDBACK_FEATURE);
   const result: ConnectResult = {
     protocol: PROTOCOL_VERSION,
@@ -192,6 +195,7 @@ export async function handleConnect(
       version: serverVersion,
       release: SERVER_RELEASE,
       connectionId: ctx.connection.id,
+      deployment: deploymentPresentation(ctx.env.GSV_PUBLIC_CONFIG),
     },
     peer,
   };
@@ -249,7 +253,7 @@ async function authenticatePeer(
     return { ok: false, error: "Authentication required" };
   }
 
-  const { username } = args.auth;
+  const username = args.auth.username ?? auth.getHumanAccount()?.username;
   if (!username) return { ok: false, error: "Username required" };
   const hasToken = !!args.auth.token;
   const hasPassword = !!args.auth.password;

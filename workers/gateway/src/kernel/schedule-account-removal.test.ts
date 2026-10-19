@@ -15,7 +15,7 @@ async function fixture(work: (kernel: Kernel, root: KernelContext) => Promise<vo
     for (const [uid, username] of [[1000, "removed"], [1001, "survivor"], [2000, "agent"]] as const) {
       kernel.auth.addUser({ username, uid, gid: uid, gecos: username, home: `/home/${username}`, shell: "/bin/init" });
       kernel.auth.addGroup({ name: username, gid: uid, members: [] });
-      if (uid < 2000) kernel.auth.setShadow(makeShadowEntry(username, password));
+      kernel.auth.setShadow(makeShadowEntry(username, uid === 1001 ? password : "!"));
       kernel.caps.grant(uid, "shell.exec");
       kernel.caps.grant(uid, "proc.spawn");
     }
@@ -54,7 +54,7 @@ describe("scheduled admission after account removal", () => {
       const spawn = dueSchedule(kernel, ownerUid, runAsUid, { kind: "process.spawn", prompt: "Must not be admitted" });
       const control = dueSchedule(kernel, 1001, 1001);
       const dispatch = vi.spyOn(kernel.scheduleRuntime, "dispatchScheduleTarget");
-      await kernel.people.remove(1000, root);
+      kernel.ctx.storage.sql.exec("INSERT INTO account_access (uid, disabled_at) VALUES (1000, ?)", Date.now());
 
       for (const record of [command, spawn]) {
         await kernel.scheduleRuntime.onScheduleDue(record.id);
@@ -82,7 +82,7 @@ describe("scheduled admission after account removal", () => {
         ? kernel.scheduleRuntime.runSchedules({ id: record.id, mode: "force" }, principalOf(root)!)
         : kernel.scheduleRuntime.onScheduleDue(record.id);
       expect(admission).toHaveBeenCalledTimes(1);
-      await kernel.people.remove(1000, root);
+      kernel.ctx.storage.sql.exec("INSERT INTO account_access (uid, disabled_at) VALUES (1000, ?)", Date.now());
       gate.resolve(mode === "restricted wake"
         ? { allowed: false, code: 423, message: "Installation is restricted" }
         : { allowed: true });
@@ -118,7 +118,7 @@ describe("scheduled admission after account removal", () => {
       });
       const pending = kernel.scheduleRuntime.runSchedules({ mode: "due" }, principalOf(root)!);
       await completed.promise;
-      await kernel.people.remove(1000, root);
+      kernel.ctx.storage.sql.exec("INSERT INTO account_access (uid, disabled_at) VALUES (1000, ?)", Date.now());
       release.resolve();
       const result = await pending;
 

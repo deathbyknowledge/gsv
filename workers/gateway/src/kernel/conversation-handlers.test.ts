@@ -78,6 +78,9 @@ function context(ownerUid = 1000): KernelContext {
       recordContactMessage: vi.fn(),
     },
     shipReplies: { recordClientInput: vi.fn() },
+    welcome: { activate: vi.fn(() => false) },
+    reconcileResponsibilityWake: vi.fn(async () => {}),
+    defer: vi.fn(),
     runRoutes: {
       setConnectionRoute: vi.fn(),
       delete: vi.fn(),
@@ -145,6 +148,8 @@ describe("conversation handlers", () => {
     }));
     const ctx = context();
 
+    vi.mocked(ctx.welcome.activate).mockReturnValue(true);
+
     await expect(handleConversationSend({
       conversationId: SHIP.id,
       text: "remember this",
@@ -163,6 +168,14 @@ describe("conversation handlers", () => {
       directed: false,
     });
     expect(ctx.runRoutes.delete).toHaveBeenCalledWith(expect.stringMatching(/^run:msg:/));
+    expect(ctx.welcome.activate).toHaveBeenCalledWith(1000);
+    expect(vi.mocked(ctx.welcome.activate).mock.invocationCallOrder[0]).toBeLessThan(
+      sendFrameToProcessMock.mock.invocationCallOrder[0],
+    );
+    expect(ctx.reconcileResponsibilityWake).toHaveBeenCalledWith(1000);
+    expect(vi.mocked(ctx.reconcileResponsibilityWake).mock.invocationCallOrder[0]).toBeGreaterThan(
+      sendFrameToProcessMock.mock.invocationCallOrder[0],
+    );
   });
 
   it.each([false, true])("keeps a replayed input preference without replacing newer activity=%s", async (newerActivity) => {
@@ -315,6 +328,7 @@ describe("conversation handlers", () => {
       processId: PROCESS.processId,
       uid: 1000,
       connectionId: "connection-1",
+      clientPlatform: "macos",
     });
     expect(vi.mocked(ctx.runRoutes.setConnectionRoute).mock.invocationCallOrder[0])
       .toBeLessThan(sendFrameToProcessMock.mock.invocationCallOrder[0]);

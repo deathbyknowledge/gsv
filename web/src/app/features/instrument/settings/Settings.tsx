@@ -3,43 +3,46 @@ import { LoadingState } from "../../../components/ui/Spinner";
 import { useQuery } from "../../../services/navigation/viewQueries";
 import { useCallback, useEffect, useLayoutEffect, useState } from "preact/hooks";
 import { RetainedView, useViewActive } from "../../../services/navigation/ViewActivity";
+import { navigateApp, useAppLocation } from "../../../services/navigation/appNavigation";
+import { useNativeInput } from "../../../services/platform/PlatformProvider";
 import { useGateway } from "../../../services/gateway/GatewayProvider";
 import { loadConsoleAccounts } from "../../../services/system/consoleService";
 import { SettingsError } from "./settingsShared";
+import { StandingResponsibilities } from "./StandingResponsibilities";
 import { Preferences } from "./Preferences";
 import { Permissions } from "./Permissions";
 import { Instructions } from "./Instructions";
 import { MessengerConnections } from "./MessengerConnections";
 import { Mcp } from "./Mcp";
-import { OwnerAccess } from "./OwnerAccess";
-import { People } from "./People";
+import { OwnerAccess, PersonalPasswordReset } from "./OwnerAccess";
 import { Logs } from "./Logs";
-import { Profile } from "./Profile";
+import { DesktopVoiceSettings } from "./DesktopVoiceSettings";
 import "./settings.css";
 
 export type SettingsProps = {
   onDirtyChange?: (dirty: boolean) => void;
   onSignOut?: () => void;
   onInspectProcess: (pid: string) => void;
-  openRequest?: { section: "profile" } | null;
 };
 
-const SECTIONS = ["preferences", "profile", "permissions", "instructions", "messengers", "mcp", "logs", "sign-in", "people"] as const;
+const SECTIONS = ["preferences", "voice", "standing", "permissions", "instructions", "messengers", "mcp", "logs", "sign-in"] as const;
 type Section = typeof SECTIONS[number];
 
-export function Settings({ onDirtyChange, onSignOut, onInspectProcess, openRequest }: SettingsProps) {
+export function Settings({ onDirtyChange, onSignOut, onInspectProcess }: SettingsProps) {
   const active = useViewActive();
+  const desktop = useNativeInput() !== null;
+  const location = useAppLocation();
   const { client, connected } = useGateway();
   const { service: session } = useSession();
-  const [section, setSection] = useState<Section>("preferences");
-  const [dirty, setDirty] = useState<Record<Section, boolean>>({ preferences: false, profile: false, permissions: false, instructions: false, messengers: false, mcp: false, logs: false, "sign-in": false, people: false });
-  useLayoutEffect(() => { if (openRequest) setSection(openRequest.section); }, [openRequest]);
-  const profileDirty = useCallback((value: boolean) => setDirty((old) => old.profile === value ? old : { ...old, profile: value }), []);
-  const peopleDirty = useCallback((value: boolean) => setDirty((old) => old.people === value ? old : { ...old, people: value }), []);
+  const requestedSection = () => SECTIONS.find((entry) => entry === new URLSearchParams(window.location.search).get("section") && (entry !== "voice" || desktop)) ?? "preferences";
+  const [section, setSection] = useState<Section>(requestedSection);
+  useLayoutEffect(() => { if (active) setSection(requestedSection()); }, [active, location.revision, desktop]);
+  const [dirty, setDirty] = useState<Record<Section, boolean>>({ preferences: false, voice: false, standing: false, permissions: false, instructions: false, messengers: false, mcp: false, logs: false, "sign-in": false });
   const preferencesDirty = useCallback((value: boolean) => setDirty((old) => old.preferences === value ? old : { ...old, preferences: value }), []);
   const permissionsDirty = useCallback((value: boolean) => setDirty((old) => old.permissions === value ? old : { ...old, permissions: value }), []);
   const instructionsDirty = useCallback((value: boolean) => setDirty((old) => old.instructions === value ? old : { ...old, instructions: value }), []);
   const mcpDirty = useCallback((value: boolean) => setDirty((old) => old.mcp === value ? old : { ...old, mcp: value }), []);
+  const voiceDirty = useCallback((value: boolean) => setDirty((old) => old.voice === value ? old : { ...old, voice: value }), []);
   const hasDrafts = Object.values(dirty).some(Boolean);
   useLayoutEffect(() => { onDirtyChange?.(hasDrafts); }, [hasDrafts, onDirtyChange]);
   useLayoutEffect(() => () => onDirtyChange?.(false), [onDirtyChange]);
@@ -53,27 +56,29 @@ export function Settings({ onDirtyChange, onSignOut, onInspectProcess, openReque
   const account = accounts.data?.find((entry) => entry.relation === "self");
   return <main class="settings" aria-label="Settings">
     <div class="settings-body">
-      <nav class="settings-sections" aria-label="Settings sections">{SECTIONS.filter((entry) => entry === "profile" ? !!account && account.uid >= 1000 : !["people", "sign-in"].includes(entry) || account?.uid === 0).map((entry) => <button class="ibtn" aria-current={section === entry ? "page" : undefined} onClick={() => setSection(entry)} key={entry}>{entry}{dirty[entry] ? " ·" : ""}</button>)}</nav>
-      <div class="settings-content">
+      <nav class="settings-sections" aria-label="Settings sections" data-scroll-edge>{SECTIONS.filter((entry) => (entry !== "sign-in" || account?.uid === 0) && (entry !== "voice" || desktop)).map((entry) => <button class="ibtn" aria-current={section === entry ? "page" : undefined} onClick={() => navigateApp(`/chat/settings?section=${entry}`)} key={entry}>{entry}{dirty[entry] ? " ·" : ""}</button>)}</nav>
+      <div class="settings-content" data-scroll-edge>
         <div class="settings-account"><span>{account?.username ?? "Your session"}</span><button class="settings-text-action" type="button" onClick={() => {
           if (onSignOut) { onSignOut(); return; }
           if (hasDrafts && !window.confirm("Discard your unsaved settings changes and sign out?")) return;
           void session.lock("Signed out");
         }}>sign out</button></div>
-        {!connected && <p class="settings-muted" role="status">Disconnected. Reconnect to load or save settings.</p>}
-        <SettingsError error={accounts.error} />
-        {accounts.isPending && connected && <LoadingState variant="panel">Loading your account…</LoadingState>}
-        {accounts.data && !account && <p class="settings-error" role="alert">Your account could not be identified. Settings cannot be edited.</p>}
+        {desktop && <RetainedView active={active && section === "voice"}><DesktopVoiceSettings active={active && section === "voice"} onDirty={voiceDirty} /></RetainedView>}
+        {section !== "voice" && <>
+          {!connected && <p class="settings-muted" role="status">Disconnected. Reconnect to load or save settings.</p>}
+          <SettingsError error={accounts.error} />
+          {accounts.isPending && connected && <LoadingState variant="panel">Loading your account…</LoadingState>}
+          {accounts.data && !account && <p class="settings-error" role="alert">Your account could not be identified. Settings cannot be edited.</p>}
+        </>}
         {account && <div key={account.uid}>
           <div hidden={section !== "preferences"}><Preferences account={account} active={active && section === "preferences"} onDirty={preferencesDirty} /></div>
-          {account.uid >= 1000 && <RetainedView active={active && section === "profile"}><Profile account={account} active={active && section === "profile"} onDirty={profileDirty} /></RetainedView>}
+          <RetainedView active={active && section === "standing"}><StandingResponsibilities account={account} /></RetainedView>
           <div hidden={section !== "permissions"}><Permissions account={account} active={active && section === "permissions"} onDirty={permissionsDirty} /></div>
           <div hidden={section !== "instructions"}><Instructions account={account} active={active && section === "instructions"} onDirty={instructionsDirty} /></div>
           <div hidden={section !== "messengers"}><MessengerConnections account={account} active={active && section === "messengers"} /></div>
           <div hidden={section !== "mcp"}><Mcp account={account} active={active && section === "mcp"} onDirty={mcpDirty} /></div>
           <RetainedView active={active && section === "logs"}><Logs account={account} onProcess={onInspectProcess} /></RetainedView>
-          {account.uid === 0 && <div hidden={section !== "people"}><People account={account} active={active && section === "people"} onDirty={peopleDirty} /></div>}
-          {account.uid === 0 && <div hidden={section !== "sign-in"}><h1>Sign-in</h1><OwnerAccess /></div>}
+          {account.uid === 0 && <div hidden={section !== "sign-in"}><h1>Sign-in</h1><PersonalPasswordReset active={active && section === "sign-in"} /><OwnerAccess /></div>}
         </div>}
       </div>
     </div>

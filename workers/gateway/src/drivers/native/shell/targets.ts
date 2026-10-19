@@ -2,6 +2,7 @@ import { defineCommand } from "just-bash";
 import type { ExecResult } from "just-bash";
 import { createPairingSecret, encodeDevicePairingCode, pairingGatewayUrl } from "@humansandmachines/gsv/protocol";
 import { buildCliInstallCommand, browserExtensionDownloadUrl, machineDeviceIdFromName } from "@humansandmachines/gsv/device-setup";
+import { deploymentPresentation } from "@humansandmachines/gsv/services/deployment";
 import type { KernelContext } from "../../../kernel/context";
 import { handleSysPairCreate, handleSysPairList, handleSysPairCancel } from "../../../kernel/sys/pair";
 import { SERVER_RELEASE } from "../../../version";
@@ -117,7 +118,7 @@ async function pairTarget(args: string[], ctx: KernelContext): Promise<ExecResul
     throw new Error("expected targets pair --name NAME --platform mac|linux|windows|browser");
   }
   if (replace && !targetId) throw new Error("--replace requires --id of an existing target");
-  if (!ctx.installationIdentity) throw new Error("Space address is unavailable");
+  if (!ctx.installationIdentity) throw new Error("Ship address is unavailable");
   const gatewayUrl = pairingGatewayUrl(ctx.installationIdentity.canonicalOrigin);
   const secret = createPairingSecret();
   const { pairing } = await handleSysPairCreate({
@@ -126,9 +127,9 @@ async function pairTarget(args: string[], ctx: KernelContext): Promise<ExecResul
   const code = encodeDevicePairingCode(gatewayUrl, pairing, secret);
   const instructions = platform === "browser" ? {
     extensionUrl: browserExtensionDownloadUrl(SERVER_RELEASE), code,
-    instructions: "Download and unzip Your GSV. Enable developer mode in chrome://extensions, load the folder, then open its toolbar panel and paste the invitation to pair this browser.",
+    instructions: "Download and unzip Your GSV. Enable developer mode in chrome://extensions and load the folder. Click the Your GSV icon in the toolbar, or find it under the Extensions button, then paste the invitation into its panel.",
   } : {
-    installCommand: buildCliInstallCommand(platform === "windows" ? "windows" : "unix", SERVER_RELEASE),
+    installCommand: buildCliInstallCommand(platform === "windows" ? "windows" : "unix", SERVER_RELEASE, deploymentPresentation(ctx.env.GSV_PUBLIC_CONFIG).installUrl),
     pairCommand: `${platform === "windows" ? "gsv.exe" : "gsv"} pair ${code}`,
   };
   return { stdout: `${JSON.stringify({ pairing, platform, ...instructions })}\n`, stderr: "", exitCode: 0 };

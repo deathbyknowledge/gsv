@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { testPeer } from "../../test-support/peers";
 import { env } from "cloudflare:workers";
 import { Bash } from "just-bash";
+import { GsvFs } from "../../fs/gsv-fs";
 import {
   DEFAULT_NATIVE_SHELL_TIMEOUT_MS,
   handleShellExec,
@@ -272,7 +273,7 @@ function makeContext(options?: {
     config: focusedFixture<KernelContext["config"]>({
       get(key: string) {
         if (key === "config/server/name") return "gsv";
-        if (key === "config/server/version") return "0.6.6";
+        if (key === "config/server/version") return "0.7.3";
         return configValues.get(key) ?? SYSTEM_CONFIG_DEFAULTS[key] ?? null;
       },
       getExplicit(key: string) {
@@ -348,7 +349,7 @@ function makeContext(options?: {
     processId: options?.processId === null ? undefined : options?.processId ?? "task:shell",
     processRunId: options?.processRunId,
     requestSignal: options?.requestSignal,
-    serverVersion: "0.6.6",
+    serverVersion: "0.7.3",
     scheduleIpcCallTimeout: options?.scheduleIpcCallTimeout,
     scheduleScheduleWake: options?.scheduleScheduleWake,
     reconcileResponsibilityWake: options?.reconcileResponsibilityWake,
@@ -690,6 +691,40 @@ describe("native shell execution", () => {
     const result = await handleFsRead({ path: "/tmp/does-not-exist" }, makeContext());
 
     expect(result.data).toMatchObject({ ok: false, error: expect.stringContaining("ENOENT") });
+  });
+
+  it("reads directory metadata concurrently without losing order or unstatable entries", async () => {
+    const path = "/tmp/directory-metadata";
+    const names = Array.from({ length: 19 }, (_, index) => `entry-${index}`);
+    const listing = vi.spyOn(GsvFs.prototype, "readdir").mockResolvedValue(names);
+    let pending = 0;
+    let peak = 0;
+    const stat = vi.spyOn(GsvFs.prototype, "stat").mockImplementation(async (entry) => {
+      const index = names.indexOf(entry.slice(path.length + 1));
+      if (entry !== path) {
+        pending++;
+        peak = Math.max(peak, pending);
+        await new Promise((resolve) => setTimeout(resolve, 6 - index % 6));
+        pending--;
+        if (index === 4) throw new Error("ENOENT: entry disappeared");
+      }
+      const directory = entry === path || index % 2 === 0;
+      return { isDirectory: directory, isFile: !directory, isSymbolicLink: false, mode: 0o755, size: 0, mtime: new Date(0) };
+    });
+    try {
+      const read = await handleFsRead({ path }, makeContext());
+      expect(read.data).toEqual({ ok: true, path,
+        files: names.filter((_, index) => index % 2 === 1 || index === 4),
+        directories: names.filter((_, index) => index % 2 === 0 && index !== 4),
+      });
+      expect(peak).toBeGreaterThan(1);
+      expect(peak).toBeLessThanOrEqual(6);
+      expect(pending).toBe(0);
+      expect(stat).toHaveBeenCalledTimes(names.length + 1);
+    } finally {
+      listing.mockRestore();
+      stat.mockRestore();
+    }
   });
 
   it("returns exact text ranges in frame bodies", async () => {
@@ -2620,6 +2655,20 @@ describe("proc native command", () => {
     );
   });
 
+  it("submits a current-process handover without choosing history ids", async () => {
+    sendFrameToProcessMock.mockResolvedValueOnce({ type: "res", id: "handover", ok: true, data: { ok: true, pid: "task:shell", pending: true } });
+    const result = await handleShellExec({ input: "proc compact --summary 'The source is verified; write the report next.'" }, makeContext({
+      capabilities: ["proc.history.compact"],
+      procs: { get: vi.fn((pid: string) => makeProcess({ processId: pid })), getOwnerUid: vi.fn(() => IDENTITY.uid) },
+    }));
+    expect(result.status).toBe("completed");
+    expect(result.stdout).toContain("Handover saved");
+    expect(result.stdout).not.toContain("archived=");
+    expect(sendFrameToProcessMock).toHaveBeenCalledWith(TEST_INSTALLATION_ID, "task:shell", expect.objectContaining({
+      call: "proc.history.compact", args: { pid: "task:shell", summary: "The source is verified; write the report next." },
+    }));
+  });
+
   it("reads live process history from the native proc command surface", async () => {
     sendFrameToProcessMock.mockResolvedValueOnce({
       type: "res",
@@ -2731,6 +2780,31 @@ describe("proc native command", () => {
         },
       }),
     );
+  });
+});
+
+describe("archived process history", () => {
+  it("requires file permission and preserves owner isolation after a process is gone", async () => {
+    const path = "/home/sam/history/owner-archive.jsonl.gz";
+    const content = JSON.stringify({ id: 7, generation: 1, role: "user", content: "Owner-only evidence" });
+    const compressed = new Blob([content]).stream().pipeThrough(new CompressionStream("gzip"));
+    await env.STORAGE.put(path.slice(1), await new Response(compressed).arrayBuffer(), {
+      customMetadata: { uid: "1000", gid: "1000", mode: "600" },
+    });
+    const input = `proc history --archive ${path} --generation 1 --full`;
+    const allowed = await handleShellExec({ input }, makeContext({ capabilities: ["fs.read"] }));
+    expect(allowed).toMatchObject({ status: "completed", stdout: expect.stringContaining("Owner-only evidence") });
+    expect(allowed.stdout).toContain("has_more=false");
+    const denied = await handleShellExec({ input }, makeContext({ capabilities: ["proc.history"] }));
+    expect(denied.status).toBe("failed");
+    expect(denied.error).toContain("fs.read");
+    await env.STORAGE.put("home/sam/history/other-owner.jsonl.gz", new Uint8Array(), {
+      customMetadata: { uid: "2000", gid: "2000", mode: "600" },
+    });
+    const other = await handleShellExec({ input: "proc history --archive /home/sam/history/other-owner.jsonl.gz" }, makeContext({ capabilities: ["fs.read"] }));
+    expect(other.status).toBe("failed");
+    expect(other.error).toContain("EACCES");
+    expect(sendFrameToProcessMock).not.toHaveBeenCalled();
   });
 });
 
@@ -2874,6 +2948,7 @@ describe("fs copy", () => {
     ctx.targets = focusedFixture<KernelContext["targets"]>({
       canAccess: vi.fn(() => true),
       canHandle: vi.fn(() => true),
+      get: vi.fn((target_id: string) => makeDevice({ target_id, implements: ["fs.*"] })),
     });
     let received = "";
 
@@ -2920,6 +2995,7 @@ describe("fs copy", () => {
     ctx.targets = focusedFixture<KernelContext["targets"]>({
       canAccess: vi.fn(() => true),
       canHandle: vi.fn(() => true),
+      get: vi.fn((target_id: string) => makeDevice({ target_id, implements: ["fs.*"] })),
     });
     let requestSignal: AbortSignal | undefined;
     const request = handleFsCopy({
@@ -2956,6 +3032,7 @@ describe("fs copy", () => {
     ctx.targets = focusedFixture<KernelContext["targets"]>({
       canAccess: vi.fn(() => true),
       canHandle: vi.fn(() => true),
+      get: vi.fn((target_id: string) => makeDevice({ target_id, implements: ["fs.*"] })),
     });
     const result = await handleFsCopy({
       source: { target: "gsv", path: "/home/sam/copy-test/device-send-fail.txt" },
@@ -2988,6 +3065,7 @@ describe("fs copy", () => {
     ctx.targets = focusedFixture<KernelContext["targets"]>({
       canAccess: vi.fn(() => true),
       canHandle: vi.fn(() => true),
+      get: vi.fn((target_id: string) => makeDevice({ target_id, implements: ["fs.*"] })),
     });
 
     const result = await handleFsCopy({
@@ -3039,6 +3117,7 @@ describe("fs copy", () => {
     ctx.targets = focusedFixture<KernelContext["targets"]>({
       canAccess: vi.fn(() => true),
       canHandle: vi.fn(() => true),
+      get: vi.fn((target_id: string) => makeDevice({ target_id, implements: ["fs.*"] })),
     });
     const result = await handleFsCopy({
       source: { target: "rearden", path: "/tmp/source.txt" },
@@ -3069,6 +3148,7 @@ describe("fs copy", () => {
     ctx.targets = focusedFixture<KernelContext["targets"]>({
       canAccess: vi.fn(() => true),
       canHandle: vi.fn(() => true),
+      get: vi.fn((target_id: string) => makeDevice({ target_id, implements: ["fs.*"] })),
     });
     let received = "";
 
@@ -3550,11 +3630,11 @@ describe("native administration shell commands", () => {
     expect(result.stderr).toBe("");
   });
 
-  it("lists and toggles built-in responsibility sources", async () => {
+  it.each(["mail.received", "memory.review"])("lists and toggles the %s responsibility source", async (sourceId) => {
     let enabled = true;
     const responsibilitySources = {
       list: vi.fn(() => [{
-        id: "mail.received",
+        id: sourceId,
         name: "Incoming mail",
         description: "Ask the Ship to review each newly received email.",
         control: "configurable",
@@ -3579,11 +3659,17 @@ describe("native administration shell commands", () => {
     });
 
     const listed = await handleShellExec({ input: "r12y sources" }, ctx);
-    const disabled = await handleShellExec({ input: "r12y source disable mail.received" }, ctx);
+    const disabled = await handleShellExec({ input: `r12y source disable ${sourceId}` }, ctx);
+    const reenabled = await handleShellExec({ input: `r12y source enable ${sourceId}` }, ctx);
+    const required = await handleShellExec({ input: "r12y source disable interaction.response" }, ctx);
 
-    expect(listed.stdout).toContain("mail.received\tenabled\tconfigurable\tIncoming mail");
+    expect(listed.stdout).toContain(`${sourceId}\tenabled\tconfigurable\tIncoming mail`);
     expect(disabled.stdout).toContain('"enabled":false');
-    expect(responsibilitySources.set).toHaveBeenCalledWith(IDENTITY.uid, "mail.received", false);
+    expect(reenabled.stdout).toContain('"enabled":true');
+    expect(required.status).toBe("failed");
+    expect(responsibilitySources.set).toHaveBeenCalledWith(IDENTITY.uid, sourceId, false);
+    expect(responsibilitySources.set).toHaveBeenCalledWith(IDENTITY.uid, sourceId, true);
+    expect(responsibilitySources.set).toHaveBeenCalledTimes(2);
   });
 
   it("installs and lists a user crontab", async () => {

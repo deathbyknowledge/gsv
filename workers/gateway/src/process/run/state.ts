@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { jsonObjectSchema } from "@humansandmachines/gsv/protocol";
+import { jsonObjectSchema, toolApprovalTargetSchema } from "@humansandmachines/gsv/protocol";
 import {
   aiToolsDeviceSchema,
   processIdentitySchema,
@@ -59,7 +59,7 @@ const aiConfigResultSchema = z.object({
     name: z.string(),
     text: z.string(),
   })).optional(),
-  system: z.object({ timezone: z.string() }).optional(),
+  system: z.object({ timezone: z.string(), language: z.string().optional() }).optional(),
   skillIndex: z.array(z.object({
     id: z.string(),
     name: z.string(),
@@ -100,7 +100,7 @@ const toolApprovalPolicySchema = z.object({
   default: z.enum(["auto", "ask", "deny"]),
   rules: z.array(z.object({
     match: z.string(),
-    target: z.string().optional(),
+    target: toolApprovalTargetSchema.optional(),
     action: z.enum(["auto", "ask", "deny"]),
   })),
 });
@@ -153,6 +153,12 @@ export const runStateSchema = z.object({
   mcpServers: z.array(z.string()).optional(),
   systemPrompt: z.string().optional(),
   contextEpochId: z.string().optional(),
+  pendingCompaction: z.object({
+    summary: z.string(),
+    throughMessageId: z.number().int().positive(),
+    historyGeneration: z.number().int(),
+    contextEpochId: z.string(),
+  }).optional(),
   generationContextId: z.string().optional(),
   approvalPolicy: toolApprovalPolicySchema.optional(),
   outputMedia: z.array(runOutputMediaSchema).optional(),

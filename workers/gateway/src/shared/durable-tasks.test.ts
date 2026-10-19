@@ -4,6 +4,28 @@ import { runWithRealKernelSql } from "../test-support/real-kernel-sql";
 import { DurableTaskScheduler } from "./durable-tasks";
 
 describe("durable task successors", () => {
+  it("commits a task atomically with its owner's state and arms it after reconstruction", async () => {
+    await runWithRealKernelSql(async (sql, storage) => {
+      const create = () => new DurableTaskScheduler(storage, (callback, payloadJson) => ({ callback, payload: z.string().parse(JSON.parse(payloadJson)) }), async () => {});
+      const tasks = create();
+      const insert = () => sql.exec("INSERT INTO browser_handoff_links (owner_uid, instance_id, request_id, responsibility_id) VALUES (1000, 'browser', 'login', 'work')");
+      const enqueue = () => tasks.enqueue(new Date(Date.now() + 10000), { callback: "atomic-fixture", payload: "login" });
+      expect(() => storage.transactionSync(() => { insert(); enqueue(); throw new Error("Interrupted commit"); })).toThrow("Interrupted commit");
+      expect(sql.exec("SELECT * FROM browser_handoff_links").toArray()).toHaveLength(0);
+      expect(sql.exec("SELECT * FROM cf_agents_schedules WHERE callback = 'atomic-fixture'").toArray()).toHaveLength(0);
+      const pending = storage.transactionSync(() => { insert(); return enqueue(); });
+      try {
+        await create().arm();
+        expect(await storage.getAlarm()).toBeGreaterThan(Date.now());
+        expect(sql.exec("SELECT * FROM browser_handoff_links").toArray()).toHaveLength(1);
+        expect(sql.exec("SELECT * FROM cf_agents_schedules WHERE callback = 'atomic-fixture'").toArray()).toHaveLength(1);
+      } finally {
+        sql.exec("DELETE FROM browser_handoff_links");
+        await tasks.cancel(pending.id);
+      }
+    });
+  });
+
   it("persists the successor before touching the running row and deduplicates an interrupted replay", async () => {
     await runWithRealKernelSql(async (sql, storage) => {
       const create = () => new DurableTaskScheduler(storage, (callback, payloadJson) => ({ callback, payload: z.string().parse(JSON.parse(payloadJson)) }), async () => {});

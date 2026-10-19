@@ -1,3 +1,4 @@
+import { redactDiagnosticText } from "../../../../packages/gsv/src/diagnostics.js";
 import {
   classifyNonIdempotentProviderStatus,
   type DeliveryFailureKind,
@@ -49,6 +50,7 @@ const graphErrorSchema = z.object({
     message: z.string().optional(),
     code: z.number().optional(),
     error_subcode: z.number().optional(),
+    fbtrace_id: z.string().optional(),
     error_data: z.object({ details: z.string().optional() }).passthrough().optional(),
   }).passthrough(),
 }).passthrough();
@@ -73,10 +75,16 @@ export class ManagedWhatsAppDeliveryError extends Error {
     readonly kind: DeliveryFailureKind,
     readonly graphStatus?: number,
     readonly graphCode?: number,
+    readonly subcode?: number,
+    readonly requestId?: string,
+    options?: ErrorOptions,
   ) {
-    super(message);
+    super(message, options);
     this.name = "ManagedWhatsAppDeliveryError";
   }
+
+  get status(): number | undefined { return this.graphStatus; }
+  get code(): number | undefined { return this.graphCode; }
 
   get windowClosed(): boolean {
     return this.graphCode === WHATSAPP_WINDOW_CLOSED_CODE;
@@ -248,7 +256,7 @@ export async function callWhatsAppGraph<T>(
     response = await fetcher(url, { method: init.method, headers, body });
   } catch (error) {
     if (error instanceof ManagedWhatsAppDeliveryError) throw error;
-    throw new ManagedWhatsAppDeliveryError("WhatsApp Graph API transport failed", unknownOutcome);
+    throw new ManagedWhatsAppDeliveryError("WhatsApp Graph API transport failed", unknownOutcome, undefined, undefined, undefined, undefined, { cause: error });
   }
 
   const graphBody = await readGraphBody(response);
@@ -263,10 +271,14 @@ export async function callWhatsAppGraph<T>(
   }
   const code = failure?.success ? failure.data.error.code : undefined;
   throw new ManagedWhatsAppDeliveryError(
-    rejectionMessage(response.status, code),
+    rejectionMessage(response.status, code) + (failure?.success
+      ? `: ${redactDiagnosticText(failure.data.error.error_data?.details ?? failure.data.error.message ?? "No provider detail", 2048)}`
+      : ""),
     classifyWhatsAppFailure(response.status, code, options.idempotent),
     response.status,
     code,
+    failure?.success ? failure.data.error.error_subcode : undefined,
+    failure?.success ? failure.data.error.fbtrace_id : undefined,
   );
 }
 

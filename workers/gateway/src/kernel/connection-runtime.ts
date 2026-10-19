@@ -11,6 +11,7 @@ import type {
 } from "@humansandmachines/gsv/protocol";
 import {
   emitTelemetry,
+  exceptionDiagnostics,
 } from "@humansandmachines/gsv/telemetry";
 import {
   type RouteOrigin,
@@ -176,11 +177,13 @@ async handleSysConnect(
     frame: RequestFrame<"sys.connect">,
   ): Promise<void> {
     const ctx = this.host.buildContext(connection);
-    const username = frame.args.auth?.username;
+    const username = frame.args.auth?.username ?? (frame.args.auth ? ctx.auth.getHumanAccount()?.username : undefined);
     const existingAccount = username ? ctx.auth.getPasswdByUsername(username) : null;
     const credentialEpoch = existingAccount ? ctx.auth.credentialEpoch(existingAccount.uid) : 0;
-
-    const outcome = await handleConnect(frame.args, ctx);
+    const args = frame.args.auth && username
+      ? { ...frame.args, auth: { ...frame.args.auth, username } }
+      : frame.args;
+    const outcome = await handleConnect(args, ctx);
 
     if (!outcome.ok) {
       this.host.transport.sendError(connection, frame.id, outcome.code, outcome.message, outcome.details);
@@ -242,7 +245,18 @@ async handleSysConnect(
     }
 
     if (outcome.peer.principal.kind === "human") {
-      this.reconcileOwnedIdentities(outcome.peer.principal.account.uid);
+      const ownerUid = outcome.peer.principal.account.uid;
+      this.reconcileOwnedIdentities(ownerUid);
+      if (ownerUid >= 1000 && !ctx.auth.isPersonalAgentUid(ownerUid)
+        && ctx.config.get(`users/${ownerUid}/ui/welcome_card_seen`) === "1") {
+        ctx.defer(Promise.resolve().then(async () => {
+          if (ctx.welcome.activate(ownerUid)) {
+            await ctx.reconcileResponsibilityWake(ownerUid);
+          }
+        }).catch((error) => {
+          console.warn("[Kernel] Failed to resume onboarding:", exceptionDiagnostics(error));
+        }));
+      }
     }
 
     this.host.transport.sendOk(connection, frame.id, outcome.result);

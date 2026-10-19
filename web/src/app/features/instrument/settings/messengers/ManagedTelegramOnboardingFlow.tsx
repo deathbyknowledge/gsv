@@ -142,10 +142,10 @@ function ManagedMessengerOnboardingFlow({
       : `${platform} ID ${candidate.actorId}${isDiscord ? ` · ${candidate.accountId}` : ""}`
     : "No identity loaded";
   const firstStepText = installsApp
-    ? `Install the GSV app in your ${isDiscord ? "server" : "workspace"}, then mention @GSV in a channel or message it directly. GSV sends you a short-lived pairing code by DM.`
+    ? `Install the Ship app in your ${isDiscord ? "server" : "workspace"}, then mention @Ship in a channel or message it directly. Ship sends you a short-lived pairing code by DM.`
     : isWhatsApp
-      ? `Send any message to the GSV WhatsApp number${chatNumber ? ` ${chatNumber}` : ""}. It replies with a short-lived pairing code. If this number is already connected to another GSV, send /link to get a new code.`
-      : "Send the official GSV bot any private message. It will reply with a short-lived pairing code.";
+      ? `Send any message to the Ship WhatsApp number${chatNumber ? ` ${chatNumber}` : ""}. It replies with a short-lived pairing code. If this number is already connected to another Ship, send /link to get a new code.`
+      : "Send the official Ship bot any private message. It will reply with a short-lived pairing code.";
 
   const inspectCode = async () => {
     if (!code.trim() || inspect.isPending) return;
@@ -186,18 +186,17 @@ function ManagedMessengerOnboardingFlow({
     key: `managed-${adapterId}`,
     navLabel: platform.toUpperCase(),
     parentLabel: "MESSENGERS",
-    icon: installsApp ? "chat" : isWhatsApp ? "whatsapp" : "telegram",
     title: `Connect ${platform}`,
     blurb: installsApp
-      ? `Install the GSV app, mention it in ${platform}, then confirm your identity here.`
+      ? `Install the Ship app, mention it in ${platform}, then confirm your identity here.`
       : isWhatsApp
-        ? "Message the GSV WhatsApp number, then confirm that WhatsApp identity here."
-        : "Message the official GSV bot, then confirm that Telegram identity here.",
+        ? "Message the Ship WhatsApp number, then confirm that WhatsApp identity here."
+        : "Message the official Ship bot, then confirm that Telegram identity here.",
     steps: [
       {
         key: "message",
-        label: installsApp ? "INSTALL & MENTION" : "MESSAGE GSV",
-        title: installsApp ? "Install and mention GSV" : isWhatsApp ? "Message the GSV number" : "Message the GSV bot",
+        label: installsApp ? "INSTALL & MENTION" : "MESSAGE Ship",
+        title: installsApp ? "Install and mention Ship" : isWhatsApp ? "Message the Ship number" : "Message the Ship bot",
         meta: `IN ${platform.toUpperCase()}`,
         status: paired ? "CONNECTED" : "NOT CONNECTED",
         tone: paired ? "online" : "idle",
@@ -211,13 +210,13 @@ function ManagedMessengerOnboardingFlow({
             {info.isError ? (
               <Alert variant="error" text={info.error?.message ?? `Unable to load ${platform} pairing details.`} />
             ) : !info.data?.configured ? (
-              <Alert variant="warning" text={`${platform} linking is not configured for this GSV yet.`} />
+              <Alert variant="warning" text={`${platform} linking is not configured for this Ship yet.`} />
             ) : null}
             <div class="gsv-cf-footer">
               <Button variant="secondary" label="BACK" onClick={onBack} />
               <span class="gsv-cf-footer-spacer" />
               <Link href={launchUrl}>{installsApp
-                ? info.data?.installUrl ? `INSTALL GSV IN ${platform.toUpperCase()}` : `VIEW ${platform.toUpperCase()} SETUP`
+                ? info.data?.installUrl ? `INSTALL Ship IN ${platform.toUpperCase()}` : `VIEW ${platform.toUpperCase()} SETUP`
                 : isWhatsApp
                   ? info.data?.installUrl ? "OPEN WHATSAPP" : "VIEW WHATSAPP SETUP"
                   : botUsername ? `OPEN @${botUsername}` : "OPEN TELEGRAM"}</Link>
@@ -235,7 +234,7 @@ function ManagedMessengerOnboardingFlow({
         key: "code",
         label: "ENTER CODE",
         title: `Enter the code from ${platform}`,
-        meta: "IN GSV",
+        meta: "IN Ship",
         status: paired ? "CONNECTED" : "PAIRING",
         tone: paired ? "online" : "idle",
         render: () => (
@@ -287,7 +286,7 @@ function ManagedMessengerOnboardingFlow({
         key: "confirm",
         label: "CONFIRM",
         title: `Confirm your ${platform} identity`,
-        meta: "IN GSV",
+        meta: "IN Ship",
         status: paired ? "CONNECTED" : "CONFIRM IDENTITY",
         tone: paired ? "online" : "idle",
         render: () => (
@@ -296,8 +295,8 @@ function ManagedMessengerOnboardingFlow({
               variant={candidate?.linked ? "warning" : "attention"}
               title={candidate?.linked ? "REPLACE THE EXISTING CONNECTION?" : "IS THIS YOU?"}
               text={candidate?.linked
-                ? `${displayIdentity} has an existing GSV link, which may be an old link to this space. Confirming replaces it and sends future messages to your account here.`
-                : `${platform} reported ${displayIdentity}. Confirm only if this is the account that contacted GSV.`}
+                ? `${displayIdentity} is already linked to a Ship. Confirming replaces that link and sends future messages to your account here.`
+                : `${platform} reported ${displayIdentity}. Confirm only if this is the account that contacted Ship.`}
             />
             <div class="gsv-cf-framed">
               <ListRow
@@ -332,7 +331,7 @@ function ManagedMessengerOnboardingFlow({
             <Alert
               variant="success"
               title="CONNECTED"
-              text={`${displayIdentity} now reaches your personal intelligence. You can move between GSV and ${platform} without choosing another agent.`}
+              text={`${displayIdentity} now reaches your personal intelligence. You can move between Ship and ${platform} without choosing another agent.`}
             />
             <div class="gsv-cf-framed">
               {MESSENGER_CAPABILITIES.map((cap) => (

@@ -978,6 +978,8 @@ describe("model context", () => {
       }));
       process.streams.emitProjection = vi.fn(async () => {});
       process.streams.complete = vi.fn(async () => {});
+      process.run.commitRunControlMessage = vi.fn(async () => ({ conversationId: "conv", id: "sent", text: "I handled it." }));
+      process.store.messages.appendMessage("user", "Repair the adapter.", { runId });
 
       const blockedYield = await process.run.executeRunControlAction(
         runId,
@@ -1001,12 +1003,14 @@ describe("model context", () => {
         error: expect.stringContaining(responsibilityId),
       });
       expect(blockedMessage).toMatchObject({
-        ok: false,
-        failureKind: "command",
-        error: expect.stringContaining(responsibilityId),
+        ok: true,
+        finish: false,
+        delivery: { kind: "message", messageId: "sent" },
+        yieldError: expect.stringContaining(responsibilityId),
       });
       expect(process.streams.emitProjection).not.toHaveBeenCalled();
-      expect(process.streams.complete).not.toHaveBeenCalled();
+      expect(process.streams.complete).toHaveBeenCalledOnce();
+      expect(process.run.commitRunControlMessage).toHaveBeenCalledOnce();
 
       process.kernel.kernelRpc.mockResolvedValue({
         responsibilities: [

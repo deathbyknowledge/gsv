@@ -25,7 +25,7 @@ function result(text = "Read this"): ConversationSendResult {
 }
 
 describe("pending chat sends", () => {
-  it("retains files, target and idempotency through a cancelled upload and retry", async () => {
+  it("retains text, files, target and idempotency through a cancelled upload and retry", async () => {
     const client = new GSVClient();
     const upload = deferred<Awaited<ReturnType<GSVClient["request"]>>>();
     const acknowledgement = deferred<ConversationSendResult>();
@@ -50,10 +50,11 @@ describe("pending chat sends", () => {
     });
     const outbox = await mountedOutbox(client);
     try {
+      const text = "Help me create a routine.\n\nUse the attached checklist";
       const file = new File(["image"], "photo.png", { type: "image/png" });
       const media = [{ body: file, filename: file.name, type: "image" as const, mimeType: file.type }];
       await act(() => { expect(outbox.current.send({ pid: "ship", conversationId: "ship-conversation",
-        message: "Read this", selectedTarget: "macbook", media })).toBe(true); });
+        message: text, selectedTarget: "macbook", media })).toBe(true); });
       const pending = outbox.current.messages[0]!;
       expect(pending.status).toBe("uploading");
       expect(pending.draft.media?.[0]?.body).toBe(file);
@@ -68,8 +69,9 @@ describe("pending chat sends", () => {
 
       await act(() => { expect(outbox.current.retry(outbox.current.messages[0]!)).toBe(true); });
       await vi.waitFor(() => expect(send).toHaveBeenCalledTimes(1));
-      expect(send).toHaveBeenCalledWith(expect.objectContaining({ text: "Read this", selectedTarget: "macbook",
+      expect(send).toHaveBeenCalledWith(expect.objectContaining({ text, selectedTarget: "macbook",
         idempotencyKey: pending.draft.idempotencyKey, media: [expect.objectContaining({ filename: "photo.png" })] }));
+      expect(send.mock.calls[0]![0]).not.toHaveProperty("action");
       expect(paths).toEqual([paths[0], paths[0]]);
       expect(outbox.current.messages).toHaveLength(1);
       expect(outbox.current.messages[0]).toMatchObject({ id: pending.id, status: "sending" });

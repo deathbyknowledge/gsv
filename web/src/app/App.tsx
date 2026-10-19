@@ -2,17 +2,26 @@ import { MemberRecoveryScreen } from "./features/session/MemberRecoveryScreen";
 import { AppProviders, type AppProviderDependencies } from "./providers/AppProviders";
 import { Instrument } from "./features/instrument/Instrument";
 import { AccountRecoveryScreen } from "./features/session/AccountRecoveryScreen";
-import { HumanInvitationScreen } from "./features/session/HumanInvitationScreen";
 import { AuthScene } from "./features/session/AuthLayout";
-import { useSessionLocation } from "./features/session/sessionNavigation";
+import { navigateApp, useAppLocation } from "./services/navigation/appNavigation";
 import { useSession } from "./services/session/SessionProvider";
+import { ContactInvitationScreen } from "./features/session/ContactInvitationScreen";
+import { pendingContactInvitation } from "./services/session/contactInvitationIntent";
+import { useLayoutEffect, useState } from "preact/hooks";
 
 function AppRoutes() {
-  const { pathname, revision } = useSessionLocation();
+  const { pathname, revision } = useAppLocation();
   const { snapshot } = useSession();
+  const [contactInvitation, setContactInvitation] = useState(pendingContactInvitation);
+  useLayoutEffect(() => {
+    if (snapshot.phase !== "ready" || !contactInvitation || pathname === "/recover" || pathname === "/recover-member") return;
+    setContactInvitation(null);
+    const destination = new URL(window.location.href);
+    destination.pathname = "/people";
+    navigateApp(destination.href, { replace: true });
+  }, [snapshot.phase, contactInvitation, pathname]);
   const recovery = pathname === "/recover-member" ? <MemberRecoveryScreen key={revision} />
-    : pathname === "/recover" ? <AccountRecoveryScreen key={revision} />
-    : pathname === "/join" ? <HumanInvitationScreen key={revision} /> : null;
+    : pathname === "/recover" ? <AccountRecoveryScreen key={revision} /> : null;
   if (recovery || snapshot.phase !== "ready") {
     return <AuthScene setup={!recovery && (snapshot.phase === "setup" || pathname === "/onboarding")}>
       {recovery ?? <Instrument initialPath={pathname} />}
@@ -22,5 +31,7 @@ function AppRoutes() {
 }
 
 export function App(dependencies: AppProviderDependencies = {}) {
+  const { pathname } = useAppLocation();
+  if (pathname === "/connect") return <AuthScene layout="welcome"><ContactInvitationScreen /></AuthScene>;
   return <AppProviders {...dependencies}><AppRoutes /></AppProviders>;
 }

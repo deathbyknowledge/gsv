@@ -228,6 +228,9 @@ function normalizeTarget(value: ConsoleWireValue): ConsoleTarget | null {
   }
 
   const platform = nonEmptyString(record.platform) ?? "";
+  const instance = z.object({
+    instanceId: z.string(), state: z.enum(["starting", "ready", "stopping", "stopped", "failed"]), expiresAt: z.number(), profileId: z.string().optional(),
+  }).safeParse(record.instance);
 
   return {
     deviceId,
@@ -241,6 +244,7 @@ function normalizeTarget(value: ConsoleWireValue): ConsoleTarget | null {
     online: record.online === true,
     lastSeenAt: numberOrNull(record.lastSeenAt),
     implements: asArray(record.implements).map(stringOrEmpty).filter(Boolean).sort(),
+    instance: instance.success ? instance.data : undefined,
   };
 }
 

@@ -207,9 +207,12 @@ async function pumpGsvInference(
             await target.abort(request.logicalRequestId);
           }
         } catch (error) {
+          const diagnostic = inferenceErrorMetadata(error);
+          const cancelled = signal?.aborted && !(signal.reason instanceof TimeoutError);
           reportInferenceClientResult(access.telemetry, request, {
-            diagnosticId, boundary: "managed", phase: "abort", outcome: "failed",
-            durationMs: Date.now() - startedAt, ...inferenceErrorMetadata(error),
+            diagnosticId, boundary: "managed", phase: "abort",
+            outcome: cancelled && diagnostic.rpcRetryable === true ? "cancelled" : "failed",
+            durationMs: Date.now() - startedAt, ...diagnostic,
           });
         }
       })();

@@ -284,6 +284,7 @@ describe("FederationStore", () => {
   it("persists one current pairing attempt before it can commit a contact", async () => {
     await withStore((store) => {
       const firstInput = {
+        shipHandlesMessages: true,
         tokenHash: "pairing:first",
         ownerUid: 1000,
         expiresAtMs: 20_000,
@@ -294,10 +295,13 @@ describe("FederationStore", () => {
         now: 1_000,
       };
       expect(store.beginPairingAttempt(firstInput)).toMatchObject({
+        shipHandlesMessages: true,
         state: "pending",
         tokenHash: firstInput.tokenHash,
         remoteShipId: firstInput.remoteShipId,
       });
+      expect(() => store.beginPairingAttempt({ ...firstInput, shipHandlesMessages: false })).toThrow("different handling choice");
+      expect(store.beginPairingAttempt({ ...firstInput, shipHandlesMessages: undefined }).shipHandlesMessages).toBe(true);
       expect(() => store.beginPairingAttempt({
         ...firstInput,
         remoteOrigin: "https://changed.example",

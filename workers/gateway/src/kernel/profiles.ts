@@ -1,14 +1,15 @@
 import type {
   ProfileGetResult, ProfilePublishArgs, ProfileResolveArgs, ProfileResolveResult,
-  ProfileUnpublishArgs, ProfileUpdateArgs, PublicProfile,
+  ProfileUnpublishArgs, ProfileUpdateArgs, PublicProfile, SpacePublicProfile,
 } from "@humansandmachines/gsv/protocol";
 import { jsonValueSchema, profileFieldsSchema, publicProfileSchema } from "@humansandmachines/gsv/protocol";
 import { z } from "zod/mini";
 import type { KernelContext } from "./context";
 import { isLocked } from "../auth/shadow";
 import { requireContactCaller, requireContactHuman } from "./federation/authority";
-import { fetchFederationJson } from "./federation/http";
+import { fetchFederation, readFederationJson } from "./federation/http";
 import { canonicalJson, normalizeFederationOrigin, sha256Base64Url, verifySignedValue } from "./federation-crypto";
+import type { PublicProfileLocator, PublicProfileProjection } from "./profile-store";
 
 const revisionSchema = z.int().check(z.nonnegative());
 
@@ -18,8 +19,8 @@ export function handleProfileGet(ctx: KernelContext): ProfileGetResult {
   const existing = ctx.profiles.get(ownerUid, origin);
   if (existing) return { profile: existing };
   const account = ctx.auth.getPasswdByUid(ownerUid)!;
-  return { profile: { revision: 0, draft: {
-    alias: "", displayName: account.gecos || account.username, about: "", contactPolicy: "closed", representation: "human",
+  return { profile: { revision: 0, url: `${origin}/profile`, draft: {
+    displayName: account.gecos || account.username, about: "", contactPolicy: "closed", representation: "human",
   } } };
 }
 
@@ -43,10 +44,10 @@ export async function handleProfilePublish(args: ProfilePublishArgs, ctx: Kernel
   const identity = await ctx.federationIdentity.ensure(profileOrigin(ctx));
   const subject = ctx.federation.subject(ownerUid);
   if (!subject) throw new Error("Profile subject is unavailable");
-  const unsigned: Omit<PublicProfile, "signature"> = {
-    ...state.draft, version: 2, domain: "gsv-federation/2/profile",
+  const unsigned: Omit<SpacePublicProfile, "signature"> = {
+    ...state.draft, version: 3, domain: "gsv-federation/3/profile",
     actor: { shipId: identity.shipId, subjectId: subject.id }, publicKey: identity.publicKey,
-    origin: identity.origin, url: `${identity.origin}/@${state.draft.alias}`,
+    origin: identity.origin, url: `${identity.origin}/profile`,
     revision, publishedAtMs: Date.now(),
   };
   const profile: PublicProfile = { ...unsigned, signature: await ctx.federationIdentity.sign(jsonValueSchema.parse(unsigned)) };
@@ -65,10 +66,22 @@ export async function handleProfileUnpublish(args: ProfileUnpublishArgs, ctx: Ke
 
 export async function handleProfileResolve(args: ProfileResolveArgs, ctx: KernelContext): Promise<ProfileResolveResult> {
   const ownerUid = requireContactCaller(ctx, false);
-  const input = z.string().check(z.maxLength(2_048)).parse(args.url);
-  const url = new URL(input);
-  if (!/^\/@[a-z][a-z0-9_-]{1,31}$/.test(url.pathname) || url.search || url.hash || url.username || url.password) throw new Error("Enter one public GSV profile address");
-  const profile = publicProfileSchema.parse(await fetchFederationJson(url.href, { method: "GET", headers: { accept: "application/json" }, signal: ctx.requestSignal }, ctx));
+  let url = publicProfileUrl(args.url);
+  let profile: PublicProfile;
+  for (let redirects = 0; ; redirects++) {
+    const response = await fetchFederation(url.href, {
+      method: "GET", headers: { accept: "application/json" }, signal: ctx.requestSignal,
+    }, ctx);
+    const location = response.headers.get("location");
+    if ([301, 302, 303, 307, 308].includes(response.status) && location) {
+      await response.body?.cancel();
+      if (redirects >= 3) throw new Error("Too many public profile redirects");
+      url = publicProfileUrl(new URL(location, url).href);
+      continue;
+    }
+    profile = publicProfileSchema.parse(await readFederationJson(response, ctx.requestSignal));
+    break;
+  }
   await verifyPublicProfile(profile, url.href);
   requireContactCaller(ctx, false);
   const pinned = ctx.federation.getByRemote(ownerUid, profile.actor.shipId, profile.actor.subjectId);
@@ -78,11 +91,44 @@ export async function handleProfileResolve(args: ProfileResolveArgs, ctx: Kernel
   return { profile };
 }
 
+function publicProfileUrl(value: string): URL {
+  const url = new URL(z.string().check(z.maxLength(2_048)).parse(value));
+  if (url.pathname === "/") url.pathname = "/profile";
+  if (!isProfilePath(url.pathname) || url.search || url.hash || url.username || url.password) throw new Error("Enter one public Ship profile address");
+  return url;
+}
+
 export async function verifyPublicProfile(profile: PublicProfile, expectedUrl: string): Promise<void> {
   const { signature, ...unsigned } = profile;
-  if (profile.url !== expectedUrl || profile.url !== `${profile.origin}/@${profile.alias}` || normalizeFederationOrigin(profile.origin) !== profile.origin) throw new Error("Profile address does not match its signed identity");
+  const expected = new URL(expectedUrl);
+  const addressMatches = profile.version === 2
+    ? profile.url === expectedUrl && profile.url === `${profile.origin}/@${profile.alias}`
+    : profile.url === `${profile.origin}/profile` && expected.origin === profile.origin && isProfilePath(expected.pathname)
+      && !expected.search && !expected.hash && !expected.username && !expected.password;
+  if (!addressMatches || normalizeFederationOrigin(profile.origin) !== profile.origin) throw new Error("Profile address does not match its signed identity");
   if (profile.actor.shipId !== `ship:${await sha256Base64Url(canonicalJson(jsonValueSchema.parse(profile.publicKey)))}`) throw new Error("Profile identity does not match its public key");
   if (!await verifySignedValue(profile.publicKey, jsonValueSchema.parse(unsigned), signature)) throw new Error("Profile signature is invalid");
+}
+
+function isProfilePath(path: string): boolean {
+  return path === "/profile" || /^\/@[a-z][a-z0-9_-]{1,31}$/.test(path);
+}
+
+export async function resolveSpacePublicProfile(locator: PublicProfileLocator, ctx: KernelContext): Promise<PublicProfileProjection | null> {
+  const previous = ctx.profiles.published(locator);
+  if (!previous || !profileOwnerActive(previous.ownerUid, ctx)) return null;
+  if (previous.profile.version === 2) {
+    const { alias: _alias, signature: _signature, version: _version, domain: _domain, ...snapshot } = previous.profile;
+    const identity = await ctx.federationIdentity.ensure(profileOrigin(ctx));
+    if (identity.shipId !== snapshot.actor.shipId) throw new Error("Published profile identity changed");
+    const unsigned: Omit<SpacePublicProfile, "signature"> = {
+      ...snapshot, version: 3, domain: "gsv-federation/3/profile", origin: identity.origin, url: `${identity.origin}/profile`,
+    };
+    const profile: SpacePublicProfile = { ...unsigned, signature: await ctx.federationIdentity.sign(jsonValueSchema.parse(unsigned)) };
+    ctx.profiles.upgradePublication(previous.ownerUid, previous.profile.signature, profile);
+  }
+  const current = ctx.profiles.published(locator);
+  return current && profileOwnerActive(current.ownerUid, ctx) ? current : null;
 }
 
 export function profileOwnerActive(ownerUid: number, ctx: KernelContext): boolean {

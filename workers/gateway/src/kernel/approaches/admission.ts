@@ -6,7 +6,7 @@ import { actorRefSchema, approachContentSchema, jsonValueSchema } from "@humansa
 import { z } from "zod/mini";
 import type { KernelContext } from "../context";
 import { APPROACH_LIFETIME_MS } from "../approach-store";
-import { requireContactHuman } from "../federation/authority";
+import { contactHandlingChoice, requireContactHuman } from "../federation/authority";
 import { handleProfileResolve, profileOwnerActive } from "../profiles";
 import { canonicalJson, randomBase64Url, sha256Base64Url } from "../federation-crypto";
 import { localShipDocumentV2 } from "../federation/protocol";
@@ -23,6 +23,7 @@ const createSchema = z.strictObject({
   profileUrl: z.string().check(z.maxLength(2048)), recipient: actorRefSchema, profileRevision: revisionSchema,
   displayName: z.string().check(z.minLength(1), z.maxLength(80)),
   text: z.string().check(z.minLength(1), z.maxLength(32_768)), idempotencyKey: idSchema,
+  shipHandlesMessages: z.optional(z.boolean()),
 });
 
 export function handleApproachGet(args: ApproachGetArgs, ctx: KernelContext): ApproachResult {
@@ -43,6 +44,7 @@ export function handleApproachList(args: ApproachListArgs, ctx: KernelContext): 
 export async function handleApproachCreate(input: ApproachCreateArgs, ctx: KernelContext): Promise<ApproachResult> {
   const ownerUid = requireContactHuman(ctx);
   const args = createSchema.parse(input);
+  contactHandlingChoice(args.shipHandlesMessages, ctx);
   return await ctx.coordinateFederationContact(`approach-send:${ownerUid}:${args.idempotencyKey}`, () => createApproach(args, ownerUid, ctx));
 }
 
@@ -52,6 +54,7 @@ async function createApproach(args: ApproachCreateArgs, ownerUid: number, ctx: K
   if (previous) {
     const content = { ...previous.metadata, recipient: args.recipient, profileRevision: args.profileRevision, displayName: args.displayName, text: args.text };
     if (previous.fingerprint !== await approachFingerprint(content, previous.setupTokenHash)
+      || previous.shipHandlesMessages !== (args.shipHandlesMessages ?? false)
       || new URL(args.profileUrl).origin !== previous.remoteOrigin) throw new Error("This send already has different content");
     return { approach: previous.summary };
   }
@@ -84,6 +87,7 @@ async function createApproach(args: ApproachCreateArgs, ownerUid: number, ctx: K
     const record = ctx.approaches.prepare({
       ownerUid, direction: "outgoing", peer: profile.actor, remoteOrigin: profile.origin, remotePublicKey: profile.publicKey,
       remoteDisplayName: profile.displayName, localDisplayName: args.displayName,
+      shipHandlesMessages: args.shipHandlesMessages,
       conversationId: peerContact?.conversationId ?? `conv:${crypto.randomUUID()}`, contactId: peerContact?.id ?? `contact:${crypto.randomUUID()}`,
       threadId, content, fingerprint, idempotencyKey: args.idempotencyKey, setupToken: token, setupTokenHash: tokenHash,
     }, () => consumeLocalRateLimits(ctx, [
@@ -106,10 +110,11 @@ export async function handleApproachDecide(args: ApproachDecideArgs, ctx: Kernel
   const id = idSchema.parse(args.approachId);
   const revision = revisionSchema.parse(args.expectedRevision);
   const decision = z.enum(["accept", "decline", "withdraw"]).parse(args.decision);
+  const shipHandlesMessages = decision === "accept" ? contactHandlingChoice(args.shipHandlesMessages, ctx) : false;
   const existing = ctx.approaches.owned(id, ownerUid);
   const record = await ctx.coordinateFederationContact(approachLock(existing), () => ctx.federation.transaction(() => {
     requireContactHuman(ctx);
-    if (decision === "accept") return ctx.approaches.beginAcceptance(id, ownerUid, revision, `attempt:${crypto.randomUUID()}`);
+    if (decision === "accept") return ctx.approaches.beginAcceptance(id, ownerUid, revision, `attempt:${crypto.randomUUID()}`, shipHandlesMessages);
     const changed = ctx.approaches.decide(id, ownerUid, revision, decision === "decline" ? "declined" : "withdrawn");
     if (changed.setupInviteId && ctx.federation.invite(changed.setupInviteId)?.state === "issued") {
       ctx.federation.cancelInvite(changed.setupInviteId, ownerUid);

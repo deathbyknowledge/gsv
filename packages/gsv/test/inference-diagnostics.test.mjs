@@ -11,19 +11,25 @@ describe("inference diagnostics", () => {
     assert.notEqual(inferenceDiagnosticId(), id);
   });
 
-  it("extracts closed exception metadata without exporting the exception", () => {
-    const error = Object.assign(new TypeError("secret provider response"), {
+  it("exports selected redacted exception diagnostics alongside RPC metadata", () => {
+    const error = Object.assign(new TypeError("Provider connection closed: token=secret-provider-token"), {
       status: 503, remote: true, retryable: true, overloaded: false,
       cause: new Error("private path /home/someone"),
     });
-    assert.deepEqual(inferenceErrorMetadata(error), {
+    const metadata = inferenceErrorMetadata(error);
+    assert.deepEqual({ errorType: metadata.errorType, httpStatus: metadata.httpStatus, rpcRemote: metadata.rpcRemote, rpcRetryable: metadata.rpcRetryable, rpcOverloaded: metadata.rpcOverloaded }, {
       errorType: "TypeError", httpStatus: 503, rpcRemote: true, rpcRetryable: true, rpcOverloaded: false,
     });
-    assert.deepEqual(inferenceErrorMetadata({ name: "private error category", status: 999 }), { errorType: "unknown" });
-    assert.deepEqual(inferenceErrorMetadata("secret response"), { errorType: "unknown" });
+    assert.equal(metadata.exceptionName, "TypeError");
+    assert.match(metadata.exceptionMessage, /Provider connection closed/);
+    assert.match(metadata.exceptionStack, /TypeError/);
+    assert.ok(!JSON.stringify(metadata).includes("secret-provider-token"));
+    assert.ok(!JSON.stringify(metadata).includes("/home/someone"));
+    assert.deepEqual(inferenceErrorMetadata({ name: "private error category", status: 999 }), { errorType: "unknown", exceptionName: "private error category" });
+    assert.deepEqual(inferenceErrorMetadata("socket closed"), { errorType: "unknown", exceptionMessage: "socket closed" });
   });
 
-  it("validates correlation records and rejects extra error text", () => {
+  it("validates diagnostic records and rejects arbitrary error properties", () => {
     const log = mock.method(console, "log", () => {});
     try {
       reportInferenceClientResult({ GSV_TELEMETRY_ENABLED: "1" }, {

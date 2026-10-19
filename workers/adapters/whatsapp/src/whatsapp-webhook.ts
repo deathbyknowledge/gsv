@@ -3,7 +3,7 @@ import {
   type WhatsAppInboundMediaSource,
 } from "./whatsapp-inbound-media";
 import { maskWhatsAppNumber } from "./managed-config";
-import { WHATSAPP_TEMPLATE_RELEASE_PAYLOAD } from "./whatsapp-template";
+import { WHATSAPP_TEMPLATE_REPLY_PAYLOAD } from "./whatsapp-template";
 import { z } from "zod";
 
 const MAX_TEXT_LENGTH = 16_384;
@@ -97,10 +97,12 @@ export type WhatsAppApprovalReply = {
 
 /**
  * A quick-reply tap on the template GSV sent outside the customer service
- * window. It reopens the window and releases the held messages; it is not
- * relayed to the Process.
+ * window. Its visible label is an ordinary user reply to Ship. The persisted
+ * event tag stays stable so already-admitted taps keep their deduplication id.
  */
 export type WhatsAppTemplateTap = {
+  /** Absent only on taps persisted before button text was forwarded. */
+  text?: string;
   /** The tap message's own id; it identifies one interaction. */
   interactionId: string;
   actorId: string;
@@ -255,11 +257,14 @@ function normalizeMessage(
   }
 
   if (message.type === "button") {
-    if (message.button?.payload?.trim() !== WHATSAPP_TEMPLATE_RELEASE_PAYLOAD) {
+    if (message.button?.payload?.trim() !== WHATSAPP_TEMPLATE_REPLY_PAYLOAD) {
       return unsupported(message.id, token, actorId, contacts, timestamp);
     }
     const providerMessageId = message.context?.id?.trim();
-    const tap: WhatsAppTemplateTap = { interactionId: messageId, actorId, surfaceId: actorId, timestamp };
+    const tap: WhatsAppTemplateTap = {
+      interactionId: messageId, actorId, surfaceId: actorId, timestamp,
+      text: normalizedText(message.button?.text) ?? undefined,
+    };
     if (providerMessageId && WAMID_PATTERN.test(providerMessageId)) tap.providerMessageId = providerMessageId;
     return { kind: "release", tap };
   }

@@ -1312,3 +1312,40 @@ test("coalesces small source reads into chunk-sized frames", async () => {
   assert.equal(joined[4096], 40);
   assert.equal(joined[9999], 99);
 });
+
+test("realtime bodies flush an open source without changing bulk chunking or cancellation", async () => {
+  for (const delivery of [undefined, "realtime"]) {
+    const frames = [];
+    let source, cancelled = false;
+    const sender = new BinaryBodyChannel({ sendFrame: frame => frames.push(frame) });
+    const outgoing = sender.prepare({ delivery, stream: new ReadableStream({ start(controller) { source = controller; }, cancel() { cancelled = true; } }) });
+    const sending = outgoing.send();
+    source.enqueue(new Uint8Array(32 * 1024));
+    await new Promise(resolve => setTimeout(resolve, 10));
+    assert.equal(frames.length, delivery === "realtime" ? 1 : 0);
+    if (delivery) assert.equal(parseBinaryFrame(frames[0]).payload.byteLength, 32 * 1024);
+    sender.handleFrame(buildBinaryFrame(outgoing.descriptor.streamId, BINARY_FRAME_CANCEL | BINARY_FRAME_END));
+    await sending;
+    assert.equal(cancelled, true);
+  }
+});
+
+test("realtime delivery bounds each stream to 32 KiB while bulk transfers keep their window", async () => {
+  const sent = [], credit = [];
+  let sender, receiver;
+  sender = new BinaryBodyChannel({ sendFrame(frame) { sent.push(frame.slice(0)); receiver.handleFrame(frame); } });
+  receiver = new BinaryBodyChannel({ sendFrame(frame) { credit.push(frame); sender.handleFrame(frame); } });
+  const outgoing = sender.prepare({ ...bodyFromBytes(new Uint8Array(128 * 1024)), delivery: "realtime" });
+  assert.equal(outgoing.descriptor.delivery, "realtime");
+  const incoming = receiver.receive(outgoing.descriptor);
+  assert.equal(incoming.delivery, "realtime", "relays preserve the delivery mode");
+  const sending = outgoing.send();
+  await new Promise(resolve => setTimeout(resolve, 10));
+  assert.equal(parsedFrames(sent).reduce((sum, frame) => sum + frame.payload.length, 0), 32 * 1024);
+  const reader = incoming.stream.getReader();
+  await reader.read();
+  await new Promise(resolve => setTimeout(resolve, 10));
+  assert.equal(parseWindowCredit(parseBinaryFrame(credit[0]).payload), 32 * 1024);
+  assert.equal(parsedFrames(sent).reduce((sum, frame) => sum + frame.payload.length, 0), 64 * 1024);
+  await reader.cancel(); await sending;
+});

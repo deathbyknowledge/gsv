@@ -20,3 +20,4 @@ docs/.vitepress/cache/
 web/dist-desktop/
 host/apps/desktop/gen/
 host/apps/desktop/binaries/
+.desktop-voice/

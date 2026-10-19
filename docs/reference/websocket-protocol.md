@@ -52,6 +52,11 @@ For syscall arguments, result shapes, and domain behavior, see [Syscalls Referen
 | `args` | `object` | Yes | Arguments for the exact syscall named by `call` |
 | `body` | `BodyDescriptor` | No | Attached request byte stream |
 
+Filesystem operations accept an optional string `args.target`, including writes,
+edits, deletes, searches and file transfers. The Kernel authorizes that target
+before routing the request; omitting it uses the native `gsv` target. `fs.copy`
+selects its source and destination targets separately in those endpoints.
+
 ### Response Frame
 
 Success:
@@ -114,6 +119,12 @@ Error:
 | `payload` | JSON value | No | Signal payload |
 | `seq` | `number` | No | Optional sequence number |
 
+`target.status` reports connected-target transitions. Cloud instance lifecycle,
+saved-state and handoff changes emit the payload-free `instance.changed` signal
+to the owning human's connections. Clients refresh their instance and target
+inventories and any open instance details, discarding reads begun before the
+notification. Reconnection reloads authoritative state after missed signals.
+
 ### ErrorShape
 
 ```json
@@ -152,7 +163,8 @@ The gateway rejects setup-mode connections with error code `425` and details:
 ```json
 {
   "setupMode": true,
-  "next": "sys.setup"
+  "next": "sys.setup",
+  "setupFeatures": ["language"]
 }
 ```
 
@@ -162,6 +174,19 @@ complete. `sys.setup` and `sys.setup.assist` must include the one-time
 `onboardingToken` issued for that exact installation. The Kernel removes the
 token before invoking the ordinary setup implementation and activates routing
 only after setup succeeds.
+
+Provisioning connections and rejected setup tokens return
+`details.setupRecovery: true`. For owner-claimed spaces, `details.setupUrl` points
+to the operator's configured owner verification page. Operator-issued links omit
+that URL and require reissue by the operator. Clients discard rejected setup
+tokens and re-probe `sys.connect` before resuming; an active space then opens ordinary sign-in, while an
+unfinished space receives fresh setup authorization after owner verification.
+
+Setup-mode and provisioning responses advertise optional setup fields through
+`details.setupFeatures`. Web and Desktop probe `sys.connect` before sending an
+initial `language` in `sys.setup`, and include it only when `"language"` is
+advertised. An older Gateway without this feature still accepts account creation
+with the existing setup fields.
 
 ---
 
@@ -200,9 +225,9 @@ derived from the password or token used to authenticate.
 | `protocol` | `number` | Yes | Must currently be `4`. A mismatch returns error `102` with `requestedProtocol`, `supportedProtocol`, `serverVersion`, and `installer` details so an outdated client can explain the upgrade. The negotiated version is stored with the hibernating socket; a socket restored after a deploy that negotiated another version is closed with code `1008` so the client reconnects and receives the same error. |
 | `peer.id` | `string` | Yes | Stable application, machine, or service identity |
 | `peer.version` | `string` | Yes | Peer version |
-| `peer.platform` | `string` | Yes | Platform string |
+| `peer.platform` | `string` | Yes | Platform string. The Instrument UI reports `web`, `phone`, `tablet`, or `desktop`; Rust clients report their operating system. The Kernel accepts any string, records it on the connection, and only ever exports a closed classification of it. |
 | `peer.implements` | `string[]` | No | Requested reverse syscall implementation patterns. Machine credentials require at least one. |
-| `auth.username` | `string` | No | Required when authenticating |
+| `auth.username` | `string` | No | Omit for the personal account; specify `root` for administration. Machine/service credentials retain their enrolled account name. |
 | `auth.password` | `string` | No | User-password auth |
 | `auth.token` | `string` | No | Human, machine, or service token auth. The token kind is the principal kind. |
 
@@ -372,7 +397,7 @@ Current principal defaults from `buildSignalList()`:
   - Carries a canonical `ConversationMessage`. `directed` is true only for the
     connection selected for the reply; other connected clients receive
     the same committed Message with `directed: false`. Personal Ship selects the
-    latest human origin or active client and falls back to a linked messenger
+    latest human message origin and falls back to a linked messenger
     when that client disconnects or is inactive for five minutes.
 - `message.aborted`
   - Discards the directed endpoint's transient projection when a Message cannot
@@ -405,9 +430,12 @@ trusted pointer, key and scroll events, at most once every 30 seconds. Opening o
 focusing a window, reconnecting and keepalives send no activity signal. The Kernel
 derives the owner and connection from the authenticated peer and timestamps receipt;
 callers cannot supply an owner, destination or timestamp. Machine, service, expired
-credential and unauthenticated peers cannot change this preference. The signal
-updates only Ship's private reply preference: it admits no Process work, enters no
-model context and does not fetch or rerender conversation history.
+credential and unauthenticated peers cannot refresh activity. The signal refreshes
+the idle timer only when this connection is already selected for Ship replies and
+has not expired. It never selects a destination or takes precedence over a message
+being admitted from another interface. Only sending a message selects a client,
+including after idle fallback. Activity admits no Process work, enters no model
+context and does not fetch or rerender conversation history.
 The idle window includes one reporting interval of grace to account for throttled input.
 
 ### Machine peers
@@ -557,9 +585,42 @@ exceeds its window is a protocol violation and is cancelled by the receiver.
 
 The window is the only receive-side bound. A receiver must accept any number
 of frames that fit its granted window, however small they are, so
-implementations must not cap buffered frames separately. Senders should
+implementations must not cap buffered frames separately. Bulk senders should
 coalesce small source reads into full chunks (1 MiB by default) so a window
-carries few frames.
+carries few frames. An in-process `BinaryBody` may instead specify
+`delivery: "realtime"` to flush each source chunk promptly. This optional field
+is preserved in the wire descriptor and through relays. It selects a 32 KiB
+initial and replenishment window on both sides, keeping live streams close to
+the consumer. Omitted delivery retains the 4 MiB initial window and bulk
+coalescing. Chunk limits and cancellation rules apply to both modes.
+
+### Browser view records
+
+Browser watch requests accept structured arguments only; the gateway
+cancels unexpected request bodies without reading them. Browser input bodies are
+consumed or cancelled even when authorization, service acquisition, or the
+request deadline fails.
+
+`sys.browser.watch` carries a continuous response body on the ordinary gateway
+WebSocket. Version 1 consists of records with two little-endian unsigned 32-bit
+lengths (metadata bytes, image bytes), followed by UTF-8 JSON metadata and raw
+JPEG bytes. Records may span binary transport chunks. Metadata is limited to
+256 KiB and an image to 4 MiB.
+
+`kind: "frame"` metadata contains `sequence`, `capturedAt` (Unix milliseconds),
+`tabId`, `documentId`, and logical `width`/`height`. `kind: "state"` has zero image
+bytes and contains `tabs`, `activeTabId`, optional `pointer` and optional
+`handoff`. Input coordinates use the logical dimensions, independent of image
+pixel density. Clients bind input to the displayed frame's document identity.
+
+Clients read the next image after presenting the current one; ordinary binary
+`WINDOW` credit provides pacing without a per-frame syscall. The provider retains
+only the newest unsent image and state. A viewer with pending image or state output
+that has not read for fifteen seconds is closed; quiet pages send state at least
+every ten seconds, so an abandoned viewer is released even when the page is still.
+Body cancellation releases the viewer and its capture subscription without
+stopping the instance. Images and page text never enter JSON syscall arguments
+or the agent's history.
 
 Flow control governs only body bytes. Cancellation, unrelated frames, and
 peer closure must remain readable while a body consumer is idle; a receiver
@@ -569,6 +630,8 @@ The current body-bearing syscalls are:
 
 | Syscall | Request body | Response body |
 |---|---|---|
+| `sys.browser.watch` | No | Continuous browser image/state records |
+| `sys.browser.input` | Bounded UTF-8 JSON input | No |
 | `sys.feedback` | Required UTF-8 JSON report (message and optional activity), at most 512 KiB | No |
 | `fs.read` | No | Raw UTF-8 text, or image bytes when `representation` is `content`. Resource-mode image reads, directory listings, and operation errors are JSON-only. |
 | `fs.transfer.receive` | Required file bytes | No |
@@ -629,3 +692,12 @@ denotes a new logical message.
 - [Syscalls Reference](./syscalls.md)
 - [Routing Reference](./routing.md)
 - [CLI Commands](./cli-commands.md)
+
+### Public deployment metadata
+
+`sys.connect` may include `server.deployment`: the operator's public
+`primaryDomain`, `legacyDomains`, `operatorName`, `accountsOrigin`, `docsUrl`,
+`installUrl`, `termsUrl` and `privacyUrl`. These optional presentation values let
+clients resolve handles and show the connected operator's links. They never
+choose an installation identity or grant authority. Older servers may omit the
+field. Gateway also embeds the same configuration in served app HTML.

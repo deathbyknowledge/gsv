@@ -16,6 +16,14 @@ export class ShipReplies {
     this.record(uid, connectionId, this.reserveOrder(uid));
   }
 
+  recordClientActivity(uid: number, connectionId: string): void {
+    const key = `ship-reply:${uid}`;
+    const preferred = this.storage.kv.get<ClientPreference>(key);
+    const now = Date.now();
+    if (preferred?.connectionId !== connectionId || now - preferred.activeAt >= SHIP_CLIENT_IDLE_MS) return;
+    this.storage.kv.put(key, { ...preferred, activeAt: now });
+  }
+
   recordClientInput(
     uid: number, connectionId: string, conversationId: string, idempotencyKey: string,
     routes: RunRouteStore,

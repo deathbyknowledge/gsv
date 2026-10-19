@@ -32,6 +32,14 @@ Generated namespace methods and `client.call()` are data-only.
 include `target`; dispatch strips it before the selected native or registered
 target implementation receives the syscall.
 
+Agent approval follows the resolved destination for direct tools, CodeMode and
+nested native commands. The default policy allows these operations on `gsv` and
+GSV-provisioned cloud browsers. Personal browser and computer targets retain their
+approval requirements. The Kernel supplies resolved route and platform metadata; approval cannot carry
+over to a replacement target. Capability
+and owner checks still apply. See [tool approval policy](configuration.md#tool-approval-policy)
+for target selectors and custom policies.
+
 ### Tool purpose
 
 When a Process calls a syscall through one of its capability tools, the tool
@@ -114,6 +122,11 @@ Runtime behavior:
 
 Device routing errors are frame-level errors: `403` for access denied, `503` for offline or missing connection, `400` for unsupported syscall, and `504` for route timeout.
 
+Native directory reads classify entries with a bounded number of concurrent
+metadata lookups. They preserve listing order and follow directory symlinks; an
+entry that cannot be statted remains in the file list, as before. This avoids
+serial storage round trips for each child in cloud-backed folders.
+
 ```ts
 type FilesystemSyscalls = {
   "fs.read": {
@@ -169,11 +182,16 @@ type FilesystemSyscalls = {
 ```
 
 `fs.copy` copies one file between two endpoints, each on `gsv` or on a target
-machine, so a machine-to-`gsv` copy needs no client in the middle. The
+that implements file transfers, including connected machines and cloud
+browsers. A target-to-`gsv` copy needs no client in the middle. Native commands
+such as `cp` and `img2txt` resolve their file sources through the same target
+discovery, authorization and routing as direct filesystem calls. The
 `fs.transfer.*` calls are the body-bearing transport: `fs.transfer.send`
 answers with the bytes as a response body, `fs.transfer.receive` takes them as
 a request body, and `fs.transfer.stat` reports size and revision without a
-body. See [Frame Bodies](/reference/websocket-protocol#frame-bodies).
+body. Browser receivers cancel and release their body reader on cancellation or
+deadline, including when a sender stalls. Cancellation while reading leaves
+the destination unchanged. See [Frame Bodies](/reference/websocket-protocol#frame-bodies).
 
 For a file result, `size` is the original file size; the body descriptor length
 is the transmitted payload size and can differ when `offset` or `limit` selects
@@ -288,12 +306,19 @@ rejects reuse of an existing ID. Machines start under that exact ID and detach
 immediately. The start acknowledgement consumes no output; the first poll owns it.
 Recovery polls or cancels the saved ID and never replays the start or stdin.
 Older machines reject the unknown session before executing the command and must
-be updated. Browser targets can accept a named start but remain foreground-only;
-disconnecting their request cancels the operation. The native `gsv` shell also
+be updated. Browser targets accept a named start but remain foreground-only;
+disconnecting their request cancels the operation, and they reject session polls
+and stdin. Their start response contains the terminal result. The native `gsv` shell also
 remains foreground-only and does not accept named sessions.
+
+Follow-up requests resolve the saved target against the caller's current target
+inventory, including cloud instances. A remembered session ID does not grant
+access to a target the caller can no longer see.
 
 When the Kernel rejects a named start before forwarding it, the error includes
 `details: { "shellStart": "rejected" }`. Clients may finish that attempt as failed.
+This includes cloud-browser service acquisition failures before the command is
+sent. A later attempt uses a fresh session ID; the rejected ID remains reserved.
 An unmarked transport error is uncertain: retain the saved session ID and recover
 by polling. A reused ID is also unmarked because its existing command may be live.
 
@@ -500,7 +525,7 @@ Runtime behavior:
 
 | Syscall | Handler | Behavior |
 |---|---|---|
-| `codemode.exec` | Process DO `executeCodeModeTool`; `executeCodeMode` | Runs code in an isolated Worker Loader worker with outbound network disabled. Provides `shell(input, options)`, `fs.read/write/edit/delete/search`, `mail.send`, `mcpTools` metadata, and connected MCP tools as generated async functions. Returns a structured `completed` or `failed` CodeMode result. |
+| `codemode.exec` | Process DO `executeCodeModeTool`; `executeCodeMode` | Runs code in an isolated Worker Loader worker with outbound network disabled. Provides `shell(input, options)`, `shell.cancel({sessionId, target?})`, `fs.read/write/edit/delete/search`, `mail.send`, `mcpTools` metadata, and connected MCP tools as generated async functions. Returns a structured `completed` or `failed` CodeMode result. |
 | `codemode.run` | Kernel `forwardToProcess`; Process DO `handleCodeModeRun`; `executeCodeMode` | Manual CodeMode execution for shell/CLI surfaces. Accepts code plus optional wrapper defaults and script arguments. Nested tools route through normal `shell.exec`, `fs.*`, `net.fetch`, `mail.send`, and `sys.mcp.*` syscalls. |
 
 ```ts
@@ -684,7 +709,7 @@ shared account system. Each installation keeps its own conversation, request,
 resource grants, delivery receipts, and Process state.
 
 Pairing is explicit and human-controlled. `contact.invite.create` returns a
-short-lived, one-use code; the other signed-in person accepts it with
+short-lived, one-use code and a shareable `url`; the other signed-in person accepts either with
 `contact.invite.accept`. The Kernel derives the remote installation and subject
 from the signed exchange. Callers never choose a remote local uid, Process,
 conversation, filesystem path, or installation id.
@@ -693,16 +718,27 @@ Trust changes may be initiated by the signed-in human or by that owner's exact
 canonical Ship Process. Delegated work Processes and remote callers cannot
 create, accept, cancel, or revoke Contact trust.
 
+`contact.invite.create` and `contact.invite.accept` accept an optional
+`shipHandlesMessages` boolean for the local owner's new contact. Setting it
+requires the signed-in owner or their canonical Ship with `contact.preferences.update`.
+Ship must explicitly supply the owner's choice; omission is rejected for Processes.
+The Kernel retains it with the invitation or acceptance attempt and applies it when
+that contact generation activates. Older human clients may omit it to keep automatic
+handling off. Replaying a completed acceptance does not overwrite later
+preference changes. `approach.create` and an `approach.decide` acceptance support
+the same local choice, retained through asynchronous pairing and retries. It is
+never supplied by the remote person, and activation admits no Ship work itself.
+
 | Syscall | Behavior |
 |---|---|
 | `contact.identity` | Returns this installation's signed Ship document and the caller's local federation subject. |
-| `contact.invite.create` | Creates a one-use pairing code, optionally with a shorter expiry. |
-| `contact.invite.accept` | Verifies and consumes a remote invite, creates both contact records, and ensures the local Contact conversation. |
+| `contact.invite.create` | Creates a one-use pairing code and shareable link, with an optional expiry of up to seven days. |
+| `contact.invite.accept` | Accepts a link or code, verifies and consumes the remote invite, creates both contact records, and ensures the local Contact conversation. |
 | `contact.invite.list` | Lists invitation lifecycle metadata without exposing recoverable invitation secrets. |
 | `contact.invite.cancel` | Cancels one unaccepted invitation. |
 | `contact.list` | Lists the caller's active contacts; `includeRevoked` includes terminal relationships. |
 | `contact.alias.set` | Sets or clears the owner's local name for a Contact without changing or federating its authenticated remote identity. |
-| `contact.preferences.update` | Human-only, revision-checked changes to saved, muted and standing Ship handling preferences. |
+| `contact.preferences.update` | Owner or canonical Ship, revision-checked changes to saved, muted and standing Ship handling preferences. |
 | `contact.block.set` | Human-only block or unblock of one remote actor; blocking also ends its active connection and pending first-contact requests. |
 | `contact.block.list` | Reads private blocks, optionally filtered by `actor`, with cursor paging. |
 | `contact.notice.dismiss` | Dismisses the one-time notice that global contact auto-wake has been retired. |
@@ -811,7 +847,7 @@ type ContactSyscalls = {
   };
   "contact.invite.create": {
     args: { expiresInSeconds?: number };
-    result: { inviteId: string; code: string; expiresAtMs: number };
+    result: { inviteId: string; code: string; url?: string; expiresAtMs: number };
   };
   "contact.invite.accept": {
     args: { code: string };
@@ -939,10 +975,9 @@ metadata. Each queued delivery retains the wire version chosen when it was creat
 
 ### Public profiles and first messages
 
-Profiles are opt-in, owner-authenticated snapshots at `https://SPACE/@alias`. Reading the same
+Each space has one opt-in, owner-authenticated profile at `https://SPACE/profile`. Reading the same
 address with `Accept: application/json` returns its signed document. Publication is atomic;
-draft changes stay private until the next explicit publish. Aliases remain reserved to their
-owner after unpublishing. All profile mutations and first-contact decisions require the direct
+draft changes stay private until the next explicit publish. No public alias is required. All profile mutations and first-contact decisions require the direct
 signed-in human; Ship may resolve a public profile but cannot publish or accept on their behalf.
 
 ```ts
@@ -1002,9 +1037,14 @@ type ProfileAndApproachSyscalls = {
 };
 ```
 
-`ProfileFields` contains `alias`, `displayName`, `about`, `contactPolicy`
+`ProfileFields` contains `displayName`, `about`, `contactPolicy`
 (`requests`, `invitation` or `closed`) and `representation` (`human` or `human-and-ship`).
-`ProfileState` returns those fields as `draft`, a revision and optional published URL/revision.
+`ProfileState` returns those fields as `draft`, its canonical `url`, a revision and optional published URL/revision.
+New signed documents use version 3 and domain `gsv-federation/3/profile`; federation
+transport remains v2. Readers also verify legacy v2 documents. On upgrade, the
+Kernel re-signs only the previously published snapshot at `/profile`, retaining
+the old published alias for links. Legacy HTML links redirect; JSON requests return
+the signed document directly. Concurrent unpublishing fences this conversion.
 `profile.resolve` verifies the signed identity and checks existing contact pins.
 Creating a first message binds it to the exact recipient and profile revision the sender reviewed.
 
@@ -1018,7 +1058,7 @@ actor independently of whether a contact was ever accepted. Unblocking does not 
 ```ts
 type ConversationInboxSyscalls = {
   "conversation.inbox": {
-    args: { archived?: boolean; before?: { updatedAt: number; conversationId: string }; limit?: number };
+    args: { archived?: boolean; attentionOnly?: boolean; before?: { updatedAt: number; conversationId: string }; limit?: number };
     result: { entries: ConversationInboxEntry[]; next?: { updatedAt: number; conversationId: string } };
   };
   "conversation.view.get": {
@@ -1033,7 +1073,9 @@ type ConversationInboxSyscalls = {
 ```
 
 `conversation.inbox` lists accepted contact conversations, optionally filtered by `archived`, with
-`before` and `limit` paging. Entries contain the contact ID, conversation, latest preview, unread
+`before` and `limit` paging. `attentionOnly: true` selects unread conversations with active,
+unmuted, unblocked contacts before pagination. This uses the same owner-private read state
+as the ordinary inbox. Entries contain the contact ID, conversation, latest preview, unread
 state and private view state. `conversation.view.get` reads one entry; `conversation.view.update`
 advances `readThroughSequence` monotonically or sets `archived`. Both use `conversationId`.
 Changing `archived` requires `expectedRevision` from the current view to avoid overwriting a newer change.
@@ -1066,7 +1108,7 @@ Runtime behavior:
 | `proc.trace` | Process DO | Returns the bounded wall-clock span tree for recent runs. Run, context assembly, inference, reasoning, model output, tool execution, approval, and Message delivery spans carry timing plus references into `proc.history`; the trace does not duplicate private payloads. Trace state is cleared with Process history and removed by `proc.kill`. |
 | `proc.history.policy.get` | Process DO | Returns the process context-overflow policy. The default is `auto-compact` at 90% pressure with a 40% post-compaction target. |
 | `proc.history.policy.set` | Process DO | Sets the process context-overflow policy. Supported `overflow` values are `auto-compact` and `fail`; the policy is applied during run preflight and after a provider-confirmed overflow. Provider overflow does not advance the main generation fallback chain. |
-| `proc.history.compact` | Process DO | Archives an old history prefix, inserts a typed `history.compacted` summary event, and records a `compaction` segment. Requires a supplied or generated summary and exactly one of `keepLast`, `throughMessageId`, or `targetPressure`. |
+| `proc.history.compact` | Process DO | Archives an old history prefix, inserts a typed `history.compacted` summary event, and records a `compaction` segment. Idle calls require a supplied or generated summary and exactly one of `keepLast`, `throughMessageId`, or `targetPressure`. An active process may submit its own `summary` without a selector: the Kernel supplies its owning tool identity, and `{ ok: true, pid, pending: true }` acknowledges a handover queued for installation after current tools finish. |
 | `proc.history.segment.read` | Process DO | Reads a compacted segment without restoring active history. `format: 2` adds typed records with stable segment ordinals and explicit unknown historical timestamps/linkage. Pages do not have a live synchronization cursor. |
 | `proc.history.segments` | Process DO | Lists compacted segments and context epochs, including immutable archive paths for closed records. |
 | `proc.fork` | `handleProcFork` | Creates a new process from committed source history through a raw `throughMessageId`, a canonical Conversation message's `throughRunId`, or a compacted `segmentId`. Run selection resolves to the corresponding Process input boundary. Its label defaults to `Branch of <source label>` and the canonical label is returned. Segment restore includes the live suffix present at the compaction boundary unless `includeLiveSuffix: false`. Active work, queued input, tools, and HIL are not copied. |
@@ -1260,7 +1302,7 @@ type ProcessSyscalls = {
 
   "proc.history.compact": {
     args: { pid?: string; summary?: string; generateSummary?: boolean; keepLast?: number; throughMessageId?: number; targetPressure?: number };
-    result: { ok: true; pid: string; segment: ProcHistorySegment; archivedMessages: number; archivedTo: string; summaryMessageId: number } | OperationError;
+    result: { ok: true; pid: string; pending: true } | { ok: true; pid: string; segment: ProcHistorySegment; archivedMessages: number; archivedTo: string; summaryMessageId: number } | OperationError;
   };
 
   "proc.history.segment.read": {
@@ -1368,6 +1410,7 @@ type ResponsibilitySourcePolicy =
     }
   | {
       id:
+        | "memory.review"
         | "mail.received"
         | "machine.added"
         | "adapter.connected"
@@ -1436,6 +1479,7 @@ type ResponsibilitySyscalls = {
   "r12y.source.update": {
     args: {
       id:
+        | "memory.review"
         | "mail.received"
         | "machine.added"
         | "adapter.connected"
@@ -1549,6 +1593,122 @@ type RepoSyscalls = {
 };
 ```
 
+## Cloud instances and browser control
+
+The optional instance service owns browser starts, deadlines, stop, profiles and
+usage. Kernel derives installation and human owner scope. Management calls are
+available through native `instance` and `browser` shell commands; ordinary browser
+commands run on the returned target. See [cloud browsers](/how-to/cloud-browsers).
+
+The `computer` template adds temporary Linux targets using the same machine
+syscalls, streamed bodies, shell sessions and cancellation. A new request ID
+creates a new computer; profile and fresh-browser options are rejected.
+Computers have independent concurrency and time allowances. Catalog and list
+responses include `usageByKind.browser` and `usageByKind.linux`; `usage` retains
+the browser allowance for existing clients. See [cloud computers](/how-to/cloud-computers).
+The service verifies each machine boot before admitting requests and never
+starts a replacement for a lost instance. Detached shell sessions survive
+connection loss within that instance's lifetime; physical stop terminates them.
+
+A start requires a persisted request ID. Repeating the same ID and arguments
+returns the same instance, including after it becomes terminal. With a new request
+ID, ordinary starts reuse the owner's ready or starting automatic browser without
+extending its lifetime or reserving more usage. `fresh: true` explicitly creates
+a separate temporary browser. Ordinary new browsers automatically use the
+account's automatic saved-login profile. Its durable `automatic` marker
+distinguishes it from explicitly created profiles. Ordinary starts only reuse a
+browser attached to that automatic profile; deleting it never selects another
+explicit profile. Every start request retains its own receipt, including
+when it reused an instance. The start result is `{ instance, disposition }`,
+where `disposition` is `created` or `reused` and remains stable on replay.
+Instance selectors accept the full instance ID, its exact displayed target ID,
+or the original start request ID. Unknown instance IDs fail; an unknown request
+ID returns `instance: null`, and stopping it fences any future admission of that
+request. Instance reservations and concurrency are space-wide, while
+access to instances, profiles and human requests is owner-scoped.
+
+`sys.instance.list` returns active instances. `includeTerminal: true` also
+includes the owner's 64 most recently created terminal instances. Inventory
+omits `persistence.issues`; use `sys.instance.get` for recent details. Older
+terminal records retain compact identity/status receipts for exact selectors
+and start-request replay, but discard `persistence`, `reason` and `diagnosticRef`.
+The private runtime is discarded at termination. Monthly usage and saved
+profiles have independent lifetimes.
+
+Usage starts at readiness and ends at the earlier of fixed `expiresAt` or
+confirmed termination. Settlement rounds up once to seconds, caps by the
+reservation, and assigns each started second to its UTC month. Cleanup retains
+the reservation until termination is confirmed but cannot add usage past expiry.
+
+`sys.browser.profile.list` accepts an optional nonnegative `offset` and returns
+`{ profiles, total, nextOffset? }`. Each page contains at most 32 summaries in
+creation order, excluding storage `usage` and `issues`; `sys.browser.profile.get`
+retrieves those details for one profile. Usage metadata has a 64 KiB aggregate
+budget; `siteCount` and `sitesTruncated` identify omitted site breakdowns while
+byte totals remain exact. These metadata limits never truncate saved state.
+
+Instance `persistence` and browser-profile results distinguish `saved`, `partial`
+and `failed` saves. A partial save commits supported sites and retains the failed
+origins' previous storage and matching cookies. Its `issues` list contains each
+origin, `unsupported` or `unavailable` reason, message, diagnostic reference and
+optional `retainedAt` timestamp. Snapshot `savedAt` does not imply those sites
+were updated. Partial saves allow ordinary stop; a whole-save failure preserves
+the previous snapshot and keeps the browser running. `force: true` explicitly
+discards unsaved changes.
+
+`handoff.open`, `handoff.finish`, `browser.watch`,
+and `browser.input` require a directly signed-in human.
+Processes cannot use them. A process's handoff request requires a writable
+responsibility ID. Only a pending or active handoff puts that work into waiting;
+retrying a terminal request reconciles completion without blocking the work again.
+Cancelling or resolving the linked responsibility commits locally even if the
+instances service is unavailable. Kernel-owned links and scheduled reconciliation
+retry human-control cleanup independently of editable work details and survive
+restart. Live links are checked every five seconds; provider-side stop, expiry,
+profile deletion or failure reopens the matching waiting work. Service failures
+retain a private diagnostic and back off retries to at most one minute.
+`input` accepts a
+bounded JSON body describing a click, key, text, scroll or tab selection. Viewing
+does not create a handoff or pause automation. Input names the displayed tab and
+document, and rejects a changed document before dispatch. Human and agent input
+actions are serialized; recent human activity gets priority automatically. Images
+and typed input are not syscall arguments or agent history. Automation on the
+instance is fenced while a human request is pending or active. Completion closes
+input admission and waits for accepted input before resuming automation.
+
+`browser.watch({ instanceId, tabId? })` returns `{ watchId, version: 1 }` and an
+open binary body containing image and state records. Omit `tabId` to follow the
+active tab. Clients drain frames as they display them; a small binary receive
+window and replacement of unsent images keep slow viewers from building an
+unbounded backlog. Cancelling the body closes only that viewer. Four viewers
+may share an instance; their capture producer is shared per page.
+See [browser view records](/reference/websocket-protocol#browser-view-records).
+
+The following argument and result types are exported from
+`@humansandmachines/gsv/protocol`:
+
+```ts
+type InstanceSyscalls = {
+  "sys.instance.catalog": { args: SysInstanceCatalogArgs; result: SysInstanceCatalogResult };
+  "sys.instance.start": { args: SysInstanceStartArgs; result: SysInstanceStartResult };
+  "sys.instance.list": { args: SysInstanceListArgs; result: SysInstanceListResult };
+  "sys.instance.get": { args: SysInstanceGetArgs; result: SysInstanceGetResult };
+  "sys.instance.stop": { args: SysInstanceStopArgs; result: SysInstanceStopResult };
+  "sys.browser.profile.create": { args: SysBrowserProfileCreateArgs; result: SysBrowserProfileCreateResult };
+  "sys.browser.profile.list": { args: SysBrowserProfileListArgs; result: SysBrowserProfileListResult };
+  "sys.browser.profile.get": { args: SysBrowserProfileGetArgs; result: SysBrowserProfileGetResult };
+  "sys.browser.profile.save": { args: SysBrowserProfileSaveArgs; result: SysBrowserProfileSaveResult };
+  "sys.browser.profile.delete": { args: SysBrowserProfileDeleteArgs; result: SysBrowserProfileDeleteResult };
+  "sys.browser.handoff.request": { args: SysBrowserHandoffRequestArgs; result: SysBrowserHandoffRequestResult };
+  "sys.browser.handoff.get": { args: SysBrowserHandoffGetArgs; result: SysBrowserHandoffGetResult };
+  "sys.browser.handoff.cancel": { args: SysBrowserHandoffCancelArgs; result: SysBrowserHandoffCancelResult };
+  "sys.browser.handoff.open": { args: SysBrowserHandoffOpenArgs; result: SysBrowserHandoffOpenResult };
+  "sys.browser.handoff.finish": { args: SysBrowserHandoffFinishArgs; result: SysBrowserHandoffFinishResult };
+  "sys.browser.watch": { args: SysBrowserWatchArgs; result: SysBrowserWatchResult };
+  "sys.browser.input": { args: SysBrowserInputArgs; result: SysBrowserInputResult };
+};
+```
+
 ## System: `sys.*`
 
 `sys.*` covers setup, configuration, devices, workspaces, tokens, and account links.
@@ -1559,15 +1719,15 @@ Runtime behavior:
 |---|---|---|
 | `sys.connect` | `handleConnect` | First request on a WebSocket connection. Authenticates the credential, derives the principal kind, returns independent call/signal/implementation grants, registers peers that implement syscalls as route targets, closes older sessions for the same logical peer, and ensures a human user's personal intelligence exists. Setup mode rejects with `425` and `next: "sys.setup"`. |
 | `sys.setup.assist` | `handleSysSetupAssist` | Pre-connect setup helper. Uses app AI config to guide onboarding, redacts secrets from drafts, and only accepts whitelisted non-secret patches from model output. Rejected if already connected or initialized. |
-| `sys.setup` | `handleSysSetup` | Pre-connect setup-mode bootstrap. Creates first user, root password, groups/home, personal agent and owned Crew account, optional timezone, optional AI config, optional machine token, home layout, imports the manual, and seeds built-in skills. Username, password, and timezone are validated. Setup recovery identifies the human separately from locked agent accounts. |
+| `sys.setup` | `handleSysSetup` | Pre-connect setup-mode bootstrap. Creates first user, root password, groups/home, personal agent and owned Crew account, optional timezone and owner language preference, optional AI config, optional machine token, home layout, imports the manual, and seeds built-in skills. Username, password, timezone, and BCP 47 language are validated. The Kernel prepares onboarding outside the model-visible ledger until the owner dismisses the welcome card or sends their first Ship message, then creates an open responsibility with no blocker. Retries preserve handled work. Setup recovery identifies the human separately from locked agent accounts. |
 | `sys.bootstrap` | `handleSysBootstrap` | Imports `root/gsv-manual`, registers it as a public system repository, and seeds the gateway's bundled skills into the caller's home without replacing existing files. `GSV_MANUAL_BOOTSTRAP_UPSTREAM` accepts `owner/repo`, a git URL, or either form with `#ref`; `GSV_MANUAL_BOOTSTRAP_REF` overrides its ref. The default is the compatible immutable revision in `workers/gateway/src/kernel/sys/manual-version.json`. Existing installations refresh on authenticated activity when that revision changes; failures retain the installed copy and local edits are preserved. `wiki refresh gsv-manual` refreshes only the Manual, without seeding skills. Requires `RIPGIT`. |
 | `sys.config.get` | `handleSysConfigGet` | Reads exact config key or visible prefix. Root sees all; non-root sees own `users/<uid>/` keys and non-sensitive `config/` keys. Sensitive names such as password, token, secret, and api key are hidden from non-root. |
-| `sys.config.set` | `handleSysConfigSet` | Writes a config value. Root can write any key; non-root can write only own user-overridable keys, currently under `users/<uid>/ai/`. Values are coerced with `String(value)`. |
+| `sys.config.set` | `handleSysConfigSet` | Writes a config value. Root can write any key; non-root can write permitted user-overridable keys for their own account and delegated agents, including `users/<uid>/ai/` and `users/<uid>/ui/`. Instrument stores `"1"` at `users/<uid>/ui/welcome_card_seen` when the person dismisses the welcome card, so the dismissal follows the account across web and Desktop. A direct human write of this flag for their own account activates pending onboarding as an open responsibility and reconciles its wake before acknowledgment; retries do not reopen handled work. Reconnecting recovers a saved dismissal in the background without delaying sign-in. Values are coerced with `String(value)`. |
 | `sys.feedback` | `handleSysFeedback` | Sends an explicit report to the optional operator `FEEDBACK` service. Requires authentication and `sys.feedback`. Arguments contain an optional UUID `id` for retry correlation and optional `context` with `view`, `platform`, and app `version`. A required UTF-8 JSON body carries `message` (1–8,000 characters) and optional `activity` (at most 20 message groups and 64,000 characters); the body is limited to 512 KiB. Report content stays out of syscall ledger arguments, and service exceptions become a generic delivery error. Kernel attaches the trusted installation, space origin, caller's human owner and server version. Returns `{ id }` after the service accepts it. Delivery has a ten-second deadline; timeout or caller cancellation disposes the remote call. Reuse the report ID when retrying an uncertain delivery. |
 | `sys.target.list` | `handleSysTargetList` | Lists targets accessible by owner uid or group ACL. Root sees all. Defaults to online devices only unless `includeOffline` is true. |
 | `sys.target.get` | `handleSysTargetGet` | Reads one target descriptor. Missing or inaccessible targets return `target: null` rather than a permission error. |
 | `sys.target.update` | `handleSysTargetUpdate` | Updates owner-managed target metadata. Root or the device owner may update the process-visible `description`; group-only device access can use the device but cannot edit its metadata. Missing or inaccessible targets return `target: null`. |
-| `sys.target.delete` | `handleSysTargetDelete` | Forgets an owned physical target, disconnects any live socket for it, and revokes active machine tokens bound to that peer id. Group-only access cannot forget. Missing or inaccessible devices return `deleted: false`. |
+| `sys.target.delete` | `handleSysTargetDelete` | Forgets an owned physical target, disconnects any live socket for it, and revokes active machine tokens bound to that peer id. Group-only access cannot forget. For an instance target, invokes `sys.instance.stop` with its capability and agent approval checks; the instance record remains and `deleted` is false. Missing or inaccessible devices return `deleted: false`. |
 | `sys.ledger.list` | `handleSysLedgerList` | Lists the ledger of dispatched syscalls, newest first, paged by `cursor`. Each line carries who, where, the call, its arguments as sent (JSON text, cut at 16 KB), the outcome, and duration; ai calls add tokens and cost. Failed responses retain their reported `error` message, capped at 4,096 characters; older entries may omit it. Provider metadata and response bodies are not copied into that field. Non-root sees the lines of its owning human; root sees all. Filters: `pid`, `target`, `callPrefix`, `since`, `until`. |
 | `sys.oauth.start` | `handleSysOAuthStart` | Starts an OAuth authorization-code + PKCE flow for an AI provider, MCP server, or generic integration. Returns an authorization URL and pending flow summary. Redirects must target `/oauth/callback` on the deployed GSV origin. Non-root is scoped to self. |
 | `sys.oauth.list` | `handleSysOAuthList` | Lists OAuth account summaries without access or refresh tokens. Non-root is scoped to self; root can list all or one uid. `includePending: true` also returns unexpired pending flows. |
@@ -1608,6 +1768,9 @@ at `/.well-known/oauth-client/gsv.json` for providers that accept client
 metadata URLs; in those cases the `clientId` can be that metadata URL, and the
 metadata document advertises the same URL as its `client_id`.
 
+In `sys.feedback`, the existing `"zen"` context value identifies the Chat view.
+It is metadata; the browser route is `/chat`.
+
 ```ts
 type SystemSyscalls = {
   "sys.feedback": {
@@ -1641,7 +1804,7 @@ type SystemSyscalls = {
     args: {
       protocol: 4;
       peer: { id: string; version: string; platform: string; implements?: string[] };
-      auth?: { username: string; password?: string; token?: string };
+      auth?: { username?: string; password?: string; token?: string };
     };
     result: {
       protocol: 4;
@@ -1661,8 +1824,8 @@ type SystemSyscalls = {
   };
 
   "sys.setup": {
-    args: { username: string; password: string; rootPassword?: string; timezone?: string; ai?: { provider?: string; model?: string; apiKey?: string }; machine?: { peerId: string; label?: string; expiresAt?: number } };
-    result: { server: { version: string; release: string; features?: string[] }; user: ProcessIdentity; rootLocked: boolean; bootstrap?: SystemSyscalls["sys.bootstrap"]["result"]; machineToken?: { tokenId: string; token: string; tokenPrefix: string; uid: number; kind: "machine"; label: string | null; peerId: string; createdAt: number; expiresAt: number | null } };
+    args: { username?: string; password: string; rootPassword?: string; timezone?: string; language?: string; ai?: { provider?: string; model?: string; apiKey?: string }; machine?: { peerId: string; label?: string; expiresAt?: number } };
+    result: { server: { version: string; release: string; features?: string[]; deployment?: PublicDeploymentConfig }; user: ProcessIdentity; rootLocked: boolean; bootstrap?: SystemSyscalls["sys.bootstrap"]["result"]; machineToken?: { tokenId: string; token: string; tokenPrefix: string; uid: number; kind: "machine"; label: string | null; peerId: string; createdAt: number; expiresAt: number | null } };
   };
 
   "sys.bootstrap": {
@@ -1793,8 +1956,8 @@ type SystemSyscalls = {
   };
 
   "account.create": {
-    args: { kind: "human" | "agent"; username: string; password?: string; gecos?: string; persona?: string; contextFiles?: Array<{ name: string; text: string }> };
-    result: { account: ProcessIdentity; kind: "human" | "agent"; personalAgent?: ProcessIdentity };
+    args: { kind: "agent"; username: string; gecos?: string; persona?: string; contextFiles?: Array<{ name: string; text: string }> };
+    result: { account: ProcessIdentity; kind: "agent" };
   };
 
   "account.list": {
@@ -1809,27 +1972,22 @@ type SystemSyscalls = {
     args: { id: string; secret: string; proof: string; password: string };
     result: { username: "root" };
   };
-  "account.recovery.code.start": { args: { id: string; username: string; proof: string }; result: { accepted: true; expiresAt: number } };
+  "account.recovery.code.start": { args: { id: string; username?: string; proof: string }; result: { accepted: true; expiresAt: number } };
   "account.recovery.code.redeem": { args: { id: string; proof: string; code: string; password: string }; result: { username: string } };
-  "account.invite.create": { args: { id: string; secret: string; username: string }; result: HumanInvitation };
-  "account.invite.list": { args: {}; result: { invitations: HumanInvitation[] } };
-  "account.invite.cancel": { args: { id: string }; result: HumanInvitation };
-  "account.invite.redeem": {
-    args: { id: string; secret: string; proof: string; password: string };
-    result: { uid: number; username: string };
-  };
-  "account.people.list": { args: {}; result: { people: LocalPerson[] } };
-  "account.password.set": { args: { uid: number; password: string }; result: { updated: true } };
-  "account.remove": { args: { uid: number }; result: { removed: true } };
+  "account.password.set": { args: { uid?: number; password: string }; result: { updated: true } };
 };
 ```
 
 `sys.oauth.device.start` and `sys.oauth.device.poll` run the device
 authorization flow for providers that sign in with a code shown to the person,
 currently the OpenAI Codex account. `account.create` and `account.list` manage
-the accounts a human owns: a `human` account gets a personal agent and a separate
-Crew execution account, and an
-`agent` account is a non-login identity the owner can run processes as.
+the personal account and its agents. Setup creates the sole human, with Ship and
+Crew execution accounts. `account.create` creates only non-login agents.
+`sys.setup.username` is optional: new spaces derive the internal account name from
+the trusted space handle (or `owner` when that name is reserved or invalid).
+Existing callers may retain an explicit setup username. `sys.connect` without
+`auth.username` selects the personal account; root sign-in must name `root`.
+Existing account UIDs, homes and credentials are preserved.
 
 `account.owner.link` requires a signed-in root human and attests the Kernel's
 immutable installation identity to Accounts. The browser then verifies the
@@ -1844,9 +2002,10 @@ password cannot reuse a consumed claim. Secrets are excluded from the ledger.
 
 Member recovery is available before authentication through `account.recovery.code.start`
 and `account.recovery.code.redeem`. The browser persists its UUID and 32-byte proof
-before requesting a code. The Kernel resolves a previously direct-human-confirmed
+before requesting a code. The optional legacy username must match the personal
+account; new callers omit it. The Kernel resolves a previously direct-human-confirmed
 private messenger link for that member; callers cannot select the recipient, uid,
-or space. Manual and legacy links without that confirmation are ineligible. Root
+or space. Manual, process-created, and legacy links without that confirmation are ineligible. Root
 uses verified owner recovery instead. The start response does not disclose whether
 an account or eligible link exists. At most one code is sent per member per minute;
 the eight hexadecimal digits expire after five minutes and permit five incorrect
@@ -1857,24 +2016,11 @@ Redemption rechecks the exact link generation and account credential epoch, then
 atomically replaces the member password, revokes existing credentials and messenger
 links, and commits the receipt. Identical retries cannot overwrite later credentials.
 
-Human invitations use a separate fixed `human-account` purpose; a device pairing
-cannot create a human. A signed-in root human fixes the username and supplies a
-UUID and 32-byte hexadecimal secret, which the Kernel stores hashed. Invitations
-expire after ten minutes; cancellation or root credential revocation prevents
-consumption. `/join` on the space's own hostname reads the invitation from its
-fragment and stores a recipient-generated proof before clearing the fragment.
-`account.invite.redeem` runs before authentication behind the installation work
-gate. It atomically creates the local account and stores the proof-and-password
-receipt; an identical retry completes home setup without changing credentials.
-The account gets its personal agent on first sign-in.
-
-`account.people.list`, invitation administration, `account.password.set` and
-`account.remove` require a root human session with credential provenance; a
-Process acting as root cannot invoke them. Password reset and removal apply to
-ordinary human accounts. Both revoke earlier credentials and linked messengers;
-removal also disables future sign-in and credential issuance. The uid, groups,
-data and already-admitted Processes remain. A removed uid cannot be linked to a
-messenger again. Enrollment secrets and new passwords never enter the ledger.
+`account.password.set` requires a root human session with credential provenance;
+a Process acting as root cannot invoke it. It resets the sole personal account.
+The optional legacy `uid` must match that account. Reset revokes its earlier
+credentials and messenger links, retaining its UID, groups, data and admitted
+Processes. Contact invitations connect separate spaces.
 
 ## AI: `ai.*`
 
@@ -1942,7 +2088,7 @@ type AiSyscalls = {
 
   "ai.context": {
     args: Empty;
-    result: { targets?: Array<{ id: string; implements: string[]; label?: string; description?: string; platform?: string }>; mcpServers: string[]; systemContextFiles?: Array<{ name: string; text: string }>; system: { timezone: string }; skillIndex?: Array<{ id: string; name: string; description: string; source: { kind: "home"; label: string; writable: boolean } }>; skillIndexMode: "summary" | "names" | "off" };
+    result: { targets?: Array<{ id: string; implements: string[]; label?: string; description?: string; platform?: string }>; mcpServers: string[]; systemContextFiles?: Array<{ name: string; text: string }>; system: { timezone: string; language?: string }; skillIndex?: Array<{ id: string; name: string; description: string; source: { kind: "home"; label: string; writable: boolean } }>; skillIndexMode: "summary" | "names" | "off" };
   };
 
   "ai.text.generate": {
@@ -1974,8 +2120,6 @@ and `adapterStatus`. Adapters call the Gateway's single
 every explicit or routed delivery is a correlated `adapter.send` request sent
 only to the exact adapter destination. User-state signals remain broadcast to
 clients independently. `adapterFrame` is the only Gateway-to-adapter carrier.
-Old channel-specific interfaces and direct channel RPC names are not part of
-this contract.
 
 Adapter media metadata stays in JSON. Inline bytes are concatenated into the
 request's single top-level binary body, and each media item identifies its
@@ -2020,16 +2164,16 @@ Runtime behavior:
 
 | Syscall | Handler | Behavior |
 |---|---|---|
-| `adapter.list` | `handleAdapterList` | Lists arbitrary configured `CHANNEL_*` bindings, their validated descriptors, caller-visible account status, operator readiness (`enabled`), and the current human’s linking authority (`canLink`). Shared pairing requires the same advertised capability, configured application, and direct human authority at its Kernel boundary. |
+| `adapter.list` | `handleAdapterList` | Lists arbitrary configured `CHANNEL_*` bindings, their validated descriptors, caller-visible account status, operator readiness (`enabled`), and linking authority (`canLink`). Shared pairing requires the advertised capability, configured application, and an active signed-in human or an authorized process owned by one. |
 | `adapter.connect` | `handleAdapterConnect` | User-role only. Rejects foreign-owned accounts, serializes lifecycle operations per account, durably assigns new accounts to the caller's owning human, and calls `CHANNEL_<ADAPTER>.adapterConnect({ installationId }, accountId, config)`. Ownership survives failed provisioning so the owner can retry safely. |
 | `adapter.disconnect` | `handleAdapterDisconnect` | Owner-or-root only. Serializes with connect, calls adapter disconnect, upserts local status as disconnected and unauthenticated, then best-effort refreshes live status. |
-| `adapter.pair.info` | `handleAdapterPairInfo` | Direct signed-in human only. Returns public information for a platform-owned managed adapter, such as the official bot username. |
-| `adapter.pair.inspect` | `handleAdapterPairInspect` | Direct signed-in human only. Resolves a short-lived code to the external identity that requested it. It does not create or move a link. |
-| `adapter.pair.confirm` | `handleAdapterPairConfirm` | Direct signed-in human only. Binds the inspected external identity to the caller's current installation and local uid, activates a fresh route generation, writes the Kernel identity link, and finalizes retryable cleanup of any previous installation. Agent processes cannot invoke this flow. |
+| `adapter.pair.info` | `handleAdapterPairInfo` | Signed-in human or authorized owned process. Returns adapter-owned public setup information: official bot username, install link, and optional instructions for obtaining a code. |
+| `adapter.pair.inspect` | `handleAdapterPairInspect` | Signed-in human or authorized owned process. Resolves a short-lived code to the external identity that requested it. It does not create or move a link. |
+| `adapter.pair.confirm` | `handleAdapterPairConfirm` | Signed-in human or authorized owned process. The Kernel derives the active human owner from the authenticated session or process registry and honors process tool policy. Binds the external identity to that owner and the current installation, activates a fresh route generation, writes the Kernel identity link, and finalizes retryable cleanup of any previous installation. The caller cannot choose the destination uid or installation. |
 | `adapter.pair.disconnect` | `handleAdapterPairDisconnect` | Direct signed-in human only. Generation-fences and disables the managed peer route before removing the matching Kernel identity link. Generic `sys.unlink` refuses managed links so the two sides cannot be orphaned. |
 | `adapter.inbound` | `handleAdapterInbound` | Service-role only. Requires a stable account-scoped ingress `deliveryId`, derived from the provider's complete event identity, and claims its durable receipt before link, command, route, media, or Process side effects. Actor and surface remain authorization metadata rather than receipt-key components, so alias normalization cannot bypass replay protection and equal provider stanza ids from different participants remain distinct. A platform-owned adapter also supplies its peer-route generation; the Kernel requires the exact currently linked generation and retains it on the run route. Completed replays return the persisted disposition; a concurrent live claim reports `replayed: "in_progress"`, while an abandoned or post-restart claim is fenced and reclaimed. Optional media bytes are cancelled before staging on any replay. New ingress resolves the exact identity link, issues link challenges for unlinked DMs, and drops unlinked non-DM messages. A linked non-DM message is admitted only when the adapter sets `wasMentioned: true`. Normal messages resolve the canonical Ship, Work, or Group conversation, append the user Message idempotently, derive an opaque run id, install its exact directed endpoint, and reconcile through kernel-only `proc.adapter.deliver`. Immediate replies and link challenges carry deterministic outbound `deliveryId` values and use the adapter's ordinary outbound ledger. Persistent first-party adapters retain the provider payload before this call, then replace it with any terminal response state before provider delivery; transport failures and `in_progress` retry through their existing account alarm. |
 | `adapter.state.update` | `handleAdapterStateUpdate` | Service-role only. Updates status without changing ownership and broadcasts a minimal `adapter.status` invalidation to root, the account owner, and linked users. |
-| `adapter.send` | `handleAdapterSend` | Accepts optional concatenated media bytes, validates the caller's identity link or exact observed surface route, allocates or validates a stable `deliveryId`, and forwards outbound text, media, reply id, and body to the adapter service. During a process run, a separate send to the current directed endpoint is rejected unless `also: true` acknowledges the additional message. Returns the delivery id, provider message id when available, and `sent`, `deduplicated`, or `ambiguous` delivery state. A failed result is retryable only when replaying the same delivery id is safe. |
+| `adapter.send` | `handleAdapterSend` | Accepts optional concatenated media bytes, validates the caller's identity link or exact observed surface route, allocates or validates a stable `deliveryId`, and forwards outbound text, media, reply id, and body to the adapter service. During a process run, a separate send to the current directed endpoint is rejected unless `also: true` acknowledges the additional message. Returns the delivery id, provider message id when available, and `sent`, `deduplicated`, or `ambiguous` delivery state. A failed result is retryable only when replaying the same delivery id is safe. Failed and ambiguous results may include bounded, redacted `diagnostics` (exception name/message/stack/cause, provider status, error code/subcode and request ID). |
 | `adapter.status` | `handleAdapterStatus` | Attempts live status refresh, swallowing live errors, then returns last known local statuses sorted newest first and optionally filtered by account id. |
 
 For explicit sends, the Kernel resolves the authorized linked actor for the
@@ -2067,7 +2211,7 @@ type AdapterSyscalls = {
 
   "adapter.pair.info": {
     args: { adapter: string };
-    result: { adapter: string; accountId: string; configured: boolean; botUsername?: string };
+    result: { adapter: string; accountId: string; configured: boolean; botUsername?: string; installUrl?: string; instructions?: string };
   };
 
   "adapter.pair.inspect": {

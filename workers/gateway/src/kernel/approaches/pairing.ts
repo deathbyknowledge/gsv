@@ -49,6 +49,7 @@ export async function claimApproach(input: ApproachClaim, ctx: KernelContext): P
       remoteOrigin: current.remoteOrigin, remotePublicKey: current.remotePublicKey,
       sharedSecret, generation, threadId: current.threadId,
       preferredContactId: current.contactId, preferredConversationId: current.summary.conversationId, saved: false,
+      shipHandlesMessages: current.shipHandlesMessages,
     }, ctx);
     if (contact.id !== current.contactId || contact.conversationId !== current.summary.conversationId) throw new PublicFederationError(409, "Message request conversation changed");
     const receipt = jsonObjectSchema.parse(proposed);
@@ -96,6 +97,7 @@ export async function acceptApproach(record: ApproachRecord, ctx: KernelContext)
       remoteOrigin: owned.remoteOrigin, remotePublicKey: owned.remotePublicKey, sharedSecret: secret,
       generation: response.generation, threadId: owned.threadId,
       preferredContactId: owned.contactId, preferredConversationId: owned.summary.conversationId, saved: false,
+      shipHandlesMessages: owned.shipHandlesMessages,
     }, ctx);
     if (contact.id !== owned.contactId || contact.conversationId !== owned.summary.conversationId) throw new Error("Message request conversation changed");
     ctx.federation.setProtocol(contact.id, contact.generation, { version: 2, features: ["messages", "approaches"], checkedAtMs: Date.now() });

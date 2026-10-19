@@ -8,12 +8,12 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { GsvDeployment, type GsvDeploymentProps } from "../src/installation.ts";
 import { GsvRuntime, type GsvRuntimeDependencies } from "../src/runtime.ts";
 import { GsvAdapterWorker } from "../src/adapter.ts";
-import type { OperatorResourceCatalog } from "../src/deletion-bindings.ts";
+import { GsvDeletionResourceBindings, type OperatorResourceCatalog } from "../src/deletion-bindings.ts";
 
 type RecordedWorker = { id: string; props: Cloudflare.Workers.WorkerProps<Cloudflare.Workers.WorkerBindingProps> };
 type RecordedBinding = { id: string; bindings: readonly { name: string; entrypoint?: string; props?: { authority?: string; canonicalOrigin?: unknown }; json?: unknown }[] };
 type RecordedRoute = { id: string; zoneId: string; pattern: string; script: unknown };
-type DeploymentRecorder = { workers: RecordedWorker[]; databases: { name: string; migrationsDir?: string; migrationsTable?: string }[]; bindings: RecordedBinding[]; routes: RecordedRoute[] };
+type DeploymentRecorder = { workers: RecordedWorker[]; databases: { name: string; migrations?: { dir: string; table: string } }[]; bindings: RecordedBinding[]; routes: RecordedRoute[] };
 const recorded: DeploymentRecorder = { workers: [], databases: [], bindings: [], routes: [] };
 const recordedCloudflare = {
   ...Cloudflare,
@@ -21,7 +21,8 @@ const recordedCloudflare = {
     recorded.workers.push({ id, props });
     return Effect.succeed({ workerName: props.name ?? id, url: `https://${id}.invalid`,
       durableObjectNamespaces: { Kernel: "1".repeat(32), Process: "2".repeat(32), Conversation: "3".repeat(32),
-        Repository: "4".repeat(32), InferenceExecutor: "5".repeat(32), TelegramInstallation: "6".repeat(32), WebSearchInstallation: "7".repeat(32) },
+        Repository: "4".repeat(32), InferenceExecutor: "5".repeat(32), TelegramInstallation: "6".repeat(32), WebSearchInstallation: "7".repeat(32),
+        InstanceCoordinator: "8".repeat(32), ComputerInstance: "9".repeat(32) },
       bind(bindingId: string, input: Omit<RecordedBinding, "id">) { recorded.bindings.push({ id: bindingId, ...input }); return Effect.void; } });
   },
   D1: { Database(_id: string, props: typeof recorded.databases[number]) { recorded.databases.push(props); return Effect.succeed({ databaseId: "fixture-database" }); } },
@@ -77,6 +78,26 @@ const catalog: OperatorResourceCatalog = [
 ];
 
 describe("public operator composition", () => {
+  it("passes public configuration and aliases to their owning services", async () => {
+    const presentation = { operatorName: "Example operator", accountsOrigin: input.adminOrigin, docsUrl: "https://docs.example.com" };
+    const operatorUpdates = { publisher: { id: "example", name: "Example operator" }, updates: [
+      { id: "new-domain", publishedAtMs: 1000, title: "A new address", brief: "Your old address still works." },
+    ] };
+    await run(GsvDeployment({ ...input, domainAliases: ["old.example"], presentation, operatorUpdates,
+      installations: { ...input.installations, ownerOriginAliases: ["https://join.example.com"] },
+    }, dependencies));
+    const accounts = recorded.workers.find((worker) => worker.id === "FixtureInstallations")!.props.env!;
+    const gateway = recorded.workers.find((worker) => worker.id === "FixtureGateway")!.props.env!;
+    expect(accounts.GSV_BASE_DOMAIN).toBe(input.domain);
+    expect(JSON.parse(String(accounts.GSV_DOMAIN_ALIASES))).toEqual(["old.example"]);
+    expect(JSON.parse(String(accounts.GSV_OWNER_ORIGIN_ALIASES))).toEqual(["https://join.example.com"]);
+    const config = { ...presentation, primaryDomain: input.domain, legacyDomains: ["old.example"] };
+    expect(JSON.parse(String(accounts.GSV_PUBLIC_CONFIG))).toEqual(config);
+    expect(JSON.parse(String(gateway.GSV_PUBLIC_CONFIG))).toEqual(config);
+    expect(JSON.parse(String(gateway.GSV_OPERATOR_UPDATES))).toEqual(operatorUpdates);
+    expect(accounts).not.toHaveProperty("GSV_OPERATOR_UPDATES");
+  });
+
   it("routes a configured signup alias to Accounts alongside the administration hostname", async () => {
     await run(GsvDeployment({ ...input, routing: { zoneId: "zone" }, installations: {
       ...input.installations, ownerSignupOrigin: "https://join.example.com",
@@ -88,6 +109,19 @@ describe("public operator composition", () => {
     ]);
     expect(recorded.workers.find((worker) => worker.id === "FixtureInstallations")?.props.env?.GSV_OWNER_SIGNUP_ORIGIN)
       .toBe("https://join.example.com");
+  });
+
+  it.each([
+    { label: "a path", aliases: ["https://owners.example/path"] },
+    { label: "HTTP", aliases: ["http://owners.example"] },
+    { label: "credentials", aliases: ["https://user:password@owners.example"] },
+    { label: "too many origins", aliases: Array.from({ length: 17 }, (_, index) => `https://owner-${index}.example`) },
+  ])("rejects owner aliases with $label before allocating resources", async ({ aliases }) => {
+    await expect(run(GsvDeployment({ ...input, installations: {
+      ...input.installations, ownerOriginAliases: aliases,
+    } }, dependencies))).rejects.toThrow();
+    expect(recorded.workers).toEqual([]);
+    expect(recorded.databases).toEqual([]);
   });
 
   it.each([undefined, input.adminOrigin])("does not duplicate Accounts routing for signup origin %s", async (ownerSignupOrigin) => {
@@ -156,6 +190,8 @@ describe("public operator composition", () => {
     expect(accounts.GSV_OWNER_AUTH_SECRET).toBe(authSecret);
     expect(JSON.stringify(accounts.GSV_OWNER_AUTH_SECRET)).not.toContain("synthetic-stable-owner-secret");
     expect(accounts.GSV_OWNER_OIDC_CLIENT_ID).toBe("owner-client");
+    expect(recorded.workers.find((worker) => worker.id === "FixtureGateway")?.props.env?.GSV_OWNER_SIGNUP_URL)
+      .toBe("https://accounts.example.com/owner/signup/?resume=1");
     if (!Effect.isEffect(accounts.OWNER_EMAIL)) throw new Error("Expected native email binding");
     expect(await run(accounts.OWNER_EMAIL)).toMatchObject({
       kind: "Cloudflare.Email.SendEmail", name: "OWNER_EMAIL",
@@ -173,11 +209,13 @@ describe("public operator composition", () => {
     expect(accounts).not.toHaveProperty("OWNER_EMAIL");
     expect(accounts).not.toHaveProperty("GSV_OWNER_EMAIL_FROM");
     expect(accounts).not.toHaveProperty("GSV_OWNER_AUTH_SECRET");
+    expect(recorded.workers.find((worker) => worker.id === "FixtureGateway")?.props.env)
+      .not.toHaveProperty("GSV_OWNER_SIGNUP_URL");
   });
 
   it("provisions a fresh directory and executor with the exact recovery authority bindings", async () => {
     await run(GsvDeployment(input, dependencies));
-    expect(recorded.databases).toEqual([{ name: "directory-db", migrationsDir: "public/migrations", migrationsTable: "installation_migrations" }]);
+    expect(recorded.databases).toEqual([{ name: "directory-db", migrations: { dir: "public/migrations", table: "installation_migrations" } }]);
     const gatewayWorker = recorded.workers.find((worker) => worker.id === "FixtureGateway");
     expect(gatewayWorker?.props.compatibility).toMatchObject({ flags: expect.arrayContaining(["global_fetch_strictly_public"]) });
     const gateway = gatewayWorker?.props.env;
@@ -267,6 +305,45 @@ describe("public operator composition", () => {
     });
   });
 
+  it("requires and binds an instance cleanup owner", async () => {
+    const instances = await run(dependencies.Cloudflare.Worker("Instances", { name: "instances-provider", main: "instances.js" }));
+    await expect(run(GsvDeployment({ ...input, services: { instances } }, dependencies))).rejects.toThrow("owned lifecycle");
+    await run(GsvDeployment({ ...input, services: { instances, instancesLifecycle: {
+      worker: instances, entrypoint: "InstanceLifecycleEntrypoint", namespaces: [
+        { className: "InstanceCoordinator", kind: "instance-installation" },
+        { className: "ComputerInstance", kind: "instance-computer" },
+      ],
+    } } }, dependencies));
+    expect(recorded.workers.find(worker => worker.id === "FixtureGateway")?.props.env?.INSTANCES).toBe(instances);
+    expect(recorded.bindings).toContainEqual({ id: "FixtureDirectoryInstancesDeletionBinding", bindings: [{ type: "service",
+      name: "DELETION_OWNER_INSTANCES", service: "instances-provider", entrypoint: "InstanceLifecycleEntrypoint", props: { authority: "installation-deletion" } }] });
+    const discovery = recorded.bindings.find(binding => binding.id === "FixtureDirectoryDeletionDiscoveryBinding");
+    expect(await run(Output.evaluate(discovery?.bindings[0].json, {}))).toMatchObject({
+      ["8".repeat(32)]: { ownerId: "instances", kind: "instance-installation" },
+      ["9".repeat(32)]: { ownerId: "instances", kind: "instance-computer" },
+    });
+  });
+
+  it("rejects incomplete or unrelated instance namespace ownership before creating resources", async () => {
+    const instances = await run(dependencies.Cloudflare.Worker("Instances", { name: "instances-provider", main: "instances.js" }));
+    recorded.workers.length = 0;
+    for (const namespaces of [
+      [],
+      [{ className: "InstanceCoordinator", kind: "instance-installation" }],
+      [{ className: "ComputerInstance", kind: "instance-computer" }],
+      [{ className: "SameObject", kind: "instance-installation" }, { className: "SameObject", kind: "instance-computer" }],
+      [{ className: "", kind: "instance-computer" }],
+      [{ className: "ComputerInstance", kind: "kernel" }],
+    ]) {
+      // SAFETY: These intentionally invalid namespace declarations exercise runtime configuration validation.
+      const instancesLifecycle = { worker: instances, entrypoint: "InstanceLifecycleEntrypoint", namespaces } as NonNullable<GsvDeploymentProps["services"]>["instancesLifecycle"];
+      await expect(run(GsvDeployment({ ...input, services: { instances, instancesLifecycle } }, dependencies)))
+        .rejects.toThrow("valid instance namespace ownership");
+      expect(recorded.workers).toEqual([]);
+      expect(recorded.databases).toEqual([]);
+    }
+  });
+
   it("rejects incomplete search ownership before creating deployment resources", async () => {
     const search = await run(dependencies.Cloudflare.Worker("Search", { name: "search-provider", main: "search.js" }));
     recorded.workers.length = 0;
@@ -351,6 +428,24 @@ describe("public operator composition", () => {
     const binding = recorded.bindings.find((binding) => binding.id === "FixtureDirectoryDeletionResourcesBinding");
     const scopes = binding?.bindings.find((entry) => entry.name === "DELETION_RESOURCE_SCOPES");
     await expect(run(Output.evaluate(scopes?.json, {}))).rejects.toThrow(/multipart uploads/);
+  });
+
+  it("requires browser storage and multipart inventory to use the same installation prefix", async () => {
+    const directory = await run(dependencies.Cloudflare.Worker("Directory", { name: "directory", main: "directory.js" }));
+    const scopes = { accounts: [], gateway: [], inference: [], instances: [
+      { kind: "r2" as const, namespace: "browser-profiles", r2Prefix: "installation-root" as const },
+    ] };
+    const browser: OperatorResourceCatalog[number] = { id: "browser-multipart", kind: "r2", namespace: "browser-profiles",
+      source: "cloudflare-r2-multipart", scope: "installation", disposition: "live" };
+    await run(GsvDeletionResourceBindings("WrongPrefix", directory, scopes, [browser]));
+    const wrong = recorded.bindings.find(binding => binding.id === "WrongPrefix")!.bindings.find(entry => entry.name === "DELETION_RESOURCE_SCOPES");
+    await expect(run(Output.evaluate(wrong?.json, {}))).rejects.toThrow(/multipart uploads/);
+    browser.r2Prefix = "installation-root";
+    await run(GsvDeletionResourceBindings("BrowserPrefix", directory, scopes, [browser]));
+    const correct = recorded.bindings.find(binding => binding.id === "BrowserPrefix")!.bindings.find(entry => entry.name === "DELETION_RESOURCE_SCOPES");
+    expect(await run(Output.evaluate(correct?.json, {}))).toMatchObject({
+      instances: scopes.instances, "operator-resources": [{ kind: "r2", namespace: "browser-profiles", r2Prefix: "installation-root" }],
+    });
   });
 
   it.each(["gateway-logs", "ripgit-logs", "workers-ai", "ai-gateway", "default-provider"])("rejects a catalog missing the known %s sink", async (id) => {

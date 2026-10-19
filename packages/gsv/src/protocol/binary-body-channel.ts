@@ -6,6 +6,7 @@ import {
   BINARY_FRAME_ERROR,
   BINARY_FRAME_WINDOW,
   BINARY_INITIAL_WINDOW_BYTES,
+  BINARY_REALTIME_WINDOW_BYTES,
   assertStreamId,
   buildBinaryFrame,
   buildWindowFrame,
@@ -33,6 +34,7 @@ type PendingBinaryBody = {
   consumedBytes: number;
   /** Credit granted to the sender so far, including the protocol's initial window. */
   grantedBytes: number;
+  windowBytes: number;
   /** Chunks received ahead of the consumer, delivered one per pull. */
   queue: Uint8Array[];
   /** The consumer is waiting for a chunk that has not arrived yet. */
@@ -50,6 +52,7 @@ type OutgoingBinaryBodyState = {
   status: "prepared" | "sending" | "cancelled" | "completed";
   cancelReason?: unknown;
   peerTerminated: boolean;
+  realtime: boolean;
   /** Bytes the receiver allows on the wire that have not been sent yet. */
   creditBytes: number;
   /** Resumes a send loop that is waiting for credit or cancellation. */
@@ -124,7 +127,8 @@ export class BinaryBodyChannel {
       throw new Error(`Binary stream already pending: ${descriptor.streamId}`);
     }
 
-    const { streamId, length } = descriptor;
+    const { streamId, length, delivery } = descriptor;
+    const initialWindow = delivery === "realtime" ? BINARY_REALTIME_WINDOW_BYTES : BINARY_INITIAL_WINDOW_BYTES;
     const source: UnderlyingByteSource = {
       type: "bytes",
       start: (controller) => {
@@ -139,7 +143,8 @@ export class BinaryBodyChannel {
           expectedBytes: length,
           receivedBytes: 0,
           consumedBytes: 0,
-          grantedBytes: BINARY_INITIAL_WINDOW_BYTES,
+          grantedBytes: initialWindow,
+          windowBytes: delivery === "realtime" ? Math.min(this.windowBytes, initialWindow) : this.windowBytes,
           queue: [],
           pullPending: false,
           ended: false,
@@ -182,6 +187,7 @@ export class BinaryBodyChannel {
     const body: BinaryBody = {
       stream: new ReadableStream(source, { highWaterMark: 0 }),
     };
+    if (delivery) body.delivery = delivery;
     if (length !== undefined) {
       body.length = length;
     }
@@ -288,11 +294,13 @@ export class BinaryBodyChannel {
       reader: null,
       status: "prepared",
       peerTerminated: false,
-      creditBytes: BINARY_INITIAL_WINDOW_BYTES,
+      realtime: body.delivery === "realtime",
+      creditBytes: body.delivery === "realtime" ? BINARY_REALTIME_WINDOW_BYTES : BINARY_INITIAL_WINDOW_BYTES,
       wake: null,
     };
     this.outgoing.set(streamId, state);
     const descriptor: BinaryFrameDescriptor = { streamId };
+    if (body.delivery) descriptor.delivery = body.delivery;
     if (body.length !== undefined) {
       descriptor.length = body.length;
     }
@@ -351,7 +359,7 @@ export class BinaryBodyChannel {
           pending.push(value);
           pendingBytes += value.byteLength;
         }
-        while (pendingBytes > 0 && (done || pendingBytes >= this.chunkBytes)) {
+        while (pendingBytes > 0 && (done || state.realtime || pendingBytes >= this.chunkBytes)) {
           const chunk = takeBytes(pending, Math.min(this.chunkBytes, pendingBytes));
           pendingBytes -= chunk.byteLength;
           for (let offset = 0; offset < chunk.byteLength;) {
@@ -490,12 +498,12 @@ export class BinaryBodyChannel {
     if (pending.ended) {
       return;
     }
-    const increment = pending.consumedBytes + this.windowBytes - pending.grantedBytes;
+    const increment = pending.consumedBytes + pending.windowBytes - pending.grantedBytes;
     if (increment <= 0) {
       return;
     }
     const senderStalled = pending.grantedBytes === pending.receivedBytes;
-    if (!senderStalled && increment < Math.ceil(this.windowBytes / 2)) {
+    if (!senderStalled && increment < Math.ceil(pending.windowBytes / 2)) {
       return;
     }
     pending.grantedBytes += increment;

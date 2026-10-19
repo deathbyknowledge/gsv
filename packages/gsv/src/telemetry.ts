@@ -1,7 +1,13 @@
 import * as z from "zod/mini";
+import { exceptionDiagnosticProperties } from "./diagnostics.js";
+export { exceptionDiagnostics, sanitizeExceptionDiagnostics, redactDiagnosticText, type ExceptionDiagnostics } from "./diagnostics.js";
 
 export const GSV_TELEMETRY_MARKER = "gsv.telemetry";
 export const GSV_TELEMETRY_VERSION = 1;
+
+export const telemetryErrorTypeSchema = z.enum([
+  "Error", "TypeError", "RangeError", "SyntaxError", "ReferenceError", "AbortError", "TimeoutError", "AggregateError", "unknown",
+]);
 
 const installationIdSchema = z.string().check(
   z.regex(/^[A-Za-z0-9](?:[A-Za-z0-9._:-]{0,126}[A-Za-z0-9])?$/),
@@ -130,6 +136,7 @@ const adapterDeliveryFinishedSchema = z.strictObject({
   stream: z.literal("operational"),
   name: z.literal("adapter.delivery.finished"),
   properties: z.strictObject({
+    ...exceptionDiagnosticProperties,
     adapter: adapterNameSchema,
     outcome: z.enum([
       "sent",
@@ -148,11 +155,14 @@ const adapterRouteDeliveryFailedSchema = z.strictObject({
   stream: z.literal("operational"),
   name: z.literal("adapter.route_delivery.failed"),
   properties: z.strictObject({
+    ...exceptionDiagnosticProperties,
     adapter: adapterNameSchema,
     deliveryKind: z.enum(["message", "approval"]),
     surface: z.enum(["dm", "group", "channel", "thread"]),
     outcome: z.literal("failed"),
     failureKind: z.enum(["permanent", "ambiguous", "exhausted"]),
+    stage: z.optional(z.enum(["route", "media", "adapter"])),
+    providerStatusCode: z.optional(httpStatusCodeSchema),
     attempts: positiveIntegerSchema,
   }),
 });
@@ -161,21 +171,24 @@ const delegationFinishedSchema = z.strictObject({
   stream: z.literal("operational"),
   name: z.literal("delegation.finished"),
   properties: z.strictObject({
-    outcome: z.enum(["completed", "failed", "timed_out", "killed"]),
+    outcome: z.enum(["completed", "failed", "aborted", "timed_out", "killed"]),
     durationMs: nonNegativeIntegerSchema,
   }),
 });
+
+export const inferenceProviderSchema = z.enum(["workers-ai", "modal", "together", "gsv", "other"]);
 
 const inferenceRequestFinishedSchema = z.strictObject({
   stream: z.literal("operational"),
   name: z.literal("inference.request.finished"),
   properties: z.strictObject({
+    ...exceptionDiagnosticProperties,
     diagnosticId: z.optional(z.string().check(z.uuid())),
     outcome: z.enum(["completed", "failed", "aborted", "abandoned"]),
     purpose: z.enum(["agent", "mail-intake"]),
     // Optional only for compatibility with producers during rolling upgrades.
     workload: z.optional(inferenceWorkloadSchema),
-    provider: z.enum(["workers-ai", "modal", "gsv"]),
+    provider: inferenceProviderSchema,
     model: z.optional(modelNameSchema),
     stopReason: z.optional(z.enum([
       "stop",
@@ -204,10 +217,11 @@ const inferenceProviderAttemptFailedSchema = z.strictObject({
   stream: z.literal("operational"),
   name: z.literal("inference.provider_attempt.failed"),
   properties: z.strictObject({
+    ...exceptionDiagnosticProperties,
     diagnosticId: z.optional(z.string().check(z.uuid())),
     purpose: z.enum(["agent", "mail-intake"]),
     workload: inferenceWorkloadSchema,
-    provider: z.enum(["workers-ai", "modal", "gsv"]),
+    provider: inferenceProviderSchema,
     model: modelNameSchema,
     attempt: positiveIntegerSchema,
     durationMs: nonNegativeIntegerSchema,
@@ -228,12 +242,30 @@ const installationActivatedSchema = z.strictObject({
   properties: z.strictObject({}),
 });
 
+// Closed allowlist so product analytics can break Ship replies down by the
+// surface that will receive them without ever carrying a raw peer platform
+// string or adapter name. Unknown clients and adapters classify as "other".
+export const shipPlatformSchema = z.enum([
+  "web",
+  "phone",
+  "tablet",
+  "desktop",
+  "cli",
+  "telegram",
+  "discord",
+  "slack",
+  "background",
+  "other",
+]);
+
 const shipMessageCommittedSchema = z.strictObject({
   stream: z.literal("product"),
   name: z.literal("ship.message.committed"),
   properties: z.strictObject({
     delivery: z.enum(["client", "adapter", "background"]),
     hasMedia: z.boolean(),
+    // Optional only for compatibility with producers during rolling upgrades.
+    platform: z.optional(shipPlatformSchema),
   }),
 });
 
@@ -288,15 +320,30 @@ const delegationCompletedSchema = z.strictObject({
 
 export const telemetryEventSchema = z.discriminatedUnion("name", [
   z.strictObject({
+    stream: z.literal("operational"), name: z.literal("memory.review.admission.failed"),
+    properties: z.strictObject({ diagnosticId: z.string().check(z.uuid()) }),
+  }),
+  z.strictObject({
+    stream: z.literal("operational"), name: z.literal("installation.setup.failed"),
+    properties: z.strictObject({
+      diagnosticId: z.string().check(z.uuid()),
+      outcome: z.literal("failed"),
+      stage: z.enum(["authorization", "recovery", "activation"]),
+      errorType: telemetryErrorTypeSchema,
+      durationMs: nonNegativeIntegerSchema,
+    }),
+  }),
+  z.strictObject({
     stream: z.literal("operational"), name: z.literal("inference.client.finished"),
     properties: z.strictObject({
+      ...exceptionDiagnosticProperties,
       diagnosticId: z.string().check(z.uuid()),
       boundary: z.enum(["execution", "managed"]),
       phase: z.enum(["acquisition", "request", "stream", "abort"]),
       outcome: z.enum(["completed", "failed", "cancelled", "timed_out"]),
       workload: inferenceWorkloadSchema,
       durationMs: nonNegativeIntegerSchema,
-      errorType: z.optional(z.enum(["Error", "TypeError", "RangeError", "SyntaxError", "ReferenceError", "AbortError", "TimeoutError", "AggregateError", "unknown"])),
+      errorType: z.optional(telemetryErrorTypeSchema),
       httpStatus: z.optional(httpStatusCodeSchema),
       rpcRemote: z.optional(z.boolean()),
       rpcRetryable: z.optional(z.boolean()),
@@ -381,6 +428,8 @@ export const telemetryEventSchema = z.discriminatedUnion("name", [
 // The owning component is part of the allowlist, not a claim made by an arbitrary producer.
 export type TelemetryEventOwnership = Record<z.infer<typeof telemetryEventSchema>["name"], readonly z.infer<typeof telemetryComponentSchema>[]>;
 export const telemetryEventComponents = {
+  "memory.review.admission.failed": ["gateway"],
+  "installation.setup.failed": ["gateway"],
   "inference.client.finished": ["gateway", "inference"],
   "inference.metadata.finished": ["gateway", "inference", "accounts"],
   "entitlements.refresh.finished": ["inference", "search", "mail"],
@@ -419,12 +468,14 @@ export type TelemetryComponent = z.infer<typeof telemetryComponentSchema>;
 export type TelemetryEvent = z.infer<typeof telemetryEventSchema>;
 export type TelemetryRecord = z.infer<typeof telemetryRecordSchema>;
 export type InferenceWorkload = z.infer<typeof inferenceWorkloadSchema>;
+export type InferenceProvider = z.infer<typeof inferenceProviderSchema>;
 export type InferenceFailureKind = z.infer<typeof inferenceFailureKindSchema>;
 export type InferenceFailureStage = z.infer<
   typeof inferenceFailureStageSchema
 >;
 export type IntegrationKind = z.infer<typeof integrationKindSchema>;
 export type IntegrationProvider = z.infer<typeof integrationProviderSchema>;
+export type ShipPlatform = z.infer<typeof shipPlatformSchema>;
 
 const INTEGRATION_PROVIDER_DOMAINS: ReadonlyArray<
   readonly [Exclude<IntegrationProvider, "other">, ReadonlyArray<string>]
@@ -437,6 +488,13 @@ const INTEGRATION_PROVIDER_DOMAINS: ReadonlyArray<
   ["slack", ["slack.com"]],
   ["atlassian", ["atlassian.com", "atlassian.net"]],
 ];
+
+/** Keep operator-selected transport names out of telemetry without losing the event. */
+export function inferenceProviderFromName(name?: string): InferenceProvider {
+  if (name === undefined) return "gsv";
+  const parsed = inferenceProviderSchema.safeParse(name);
+  return parsed.success ? parsed.data : "other";
+}
 
 function isIntegrationProvider(value: string): value is IntegrationProvider {
   return integrationProviderSchema.safeParse(value).success;
@@ -470,6 +528,42 @@ export function integrationProviderFromUrl(url: string): IntegrationProvider {
     }
   }
   return "other";
+}
+
+// Rust clients (CLI and machine daemon) report their operating system as the
+// peer platform; the Instrument UI reports its own closed set. Legacy UI
+// builds reported "browser" before they self-identified.
+const CLI_PEER_PLATFORMS = new Set(["macos", "linux", "windows", "freebsd", "openbsd", "netbsd"]);
+const ADAPTER_SHIP_PLATFORMS: readonly ShipPlatform[] = ["telegram", "discord", "slack"];
+
+/**
+ * Classify the free-form `peer.platform` string a connected client reported
+ * into the closed Ship platform allowlist. Only allowlist values leave this
+ * function; the reported string itself never enters a telemetry record.
+ */
+export function shipPlatformFromPeer(platform: string | undefined): ShipPlatform {
+  const normalized = (platform ?? "").trim().toLowerCase();
+  if (normalized === "browser") return "web";
+  if (CLI_PEER_PLATFORMS.has(normalized)) return "cli";
+  if (
+    normalized === "web"
+    || normalized === "phone"
+    || normalized === "tablet"
+    || normalized === "desktop"
+  ) {
+    return normalized;
+  }
+  return "other";
+}
+
+/**
+ * Classify an adapter name into the closed Ship platform allowlist. Adapters
+ * outside the allowlist become "other" so the record never carries a
+ * deployment-specific adapter slug.
+ */
+export function shipPlatformFromAdapter(adapter: string): ShipPlatform {
+  const normalized = adapter.trim().toLowerCase();
+  return ADAPTER_SHIP_PLATFORMS.find((platform) => platform === normalized) ?? "other";
 }
 
 export type TelemetryEnvironment = {

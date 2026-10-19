@@ -8,11 +8,12 @@ External messengers and native client releases are separate.
 
 [`preview.alchemy.ts`](../../preview.alchemy.ts) composes the existing public
 components. [GitHub Actions](../../.github/workflows/preview.yml) builds the PR
-and runs `alchemy deploy`; pushes update that same stack. Closing, merging or
-retargeting away from `main` runs `alchemy destroy` from `main`. Cleanup uses
+and runs `alchemy deploy`; pushes update that same stack. Stacked PRs targeting
+another branch get their own preview of the complete head revision. Changing
+the base keeps the preview and redeploys that revision. Closing or merging
+runs `alchemy destroy` from `main`. Cleanup uses
 `pull_request_target` so closing a PR with merge conflicts also triggers it.
 Alchemy owns state, dependencies and deletion.
-There is no separate preview registry or cleanup controller.
 
 ## Operator setup
 
@@ -58,7 +59,7 @@ Finally, set repository variable **`GSV_PREVIEWS_ENABLED=true`** to enable creat
 and updates. Cleanup remains enabled when this flag is false; keep the account
 configuration and credentials available until existing previews are gone.
 Before a preview account is configured, teardown skips cloud operations.
-Only same-repository PRs targeting `main` are eligible for deployment;
+Same-repository PRs are eligible for deployment regardless of their base branch;
 fork PRs receive no preview credentials. Trusted PR infrastructure runs with
 the preview token when Alchemy applies it. Review external contributions before
 bringing them into a trusted branch.
@@ -77,8 +78,9 @@ The shared `gsv-previews` environment supplies credentials with
 so cleanup and skipped jobs do not create deployment entries. No additional
 environment credentials are needed. GitHub custom deployment protection apps
 are incompatible with this option.
-Reopening or retargeting back to `main` after deletion creates a fresh preview
-when previews are enabled. Existing CI checks remain independent of that flag.
+Reopening after deletion creates a fresh preview when previews are enabled.
+Title and description edits do not redeploy. Existing CI checks remain
+independent of that flag.
 
 `allowResourceDeletion` defaults to **false** in the public components and
 `GSV_ALLOW_RESOURCE_DELETION` defaults to **false** in both entrypoints. CI

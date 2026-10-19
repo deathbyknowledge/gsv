@@ -7,6 +7,29 @@ import {
 } from "./schema/v036_supervise_delegated_ipc_calls";
 
 describe("IpcCallStore", () => {
+  it("retains an aborted run's status through delivery recovery", async () => {
+    await runWithRealKernelSql((sql) => {
+      const calls = new IpcCallStore(sql);
+      calls.create({
+        callId: "ipc:aborted", uid: 1000, sourcePid: "proc:ship", sourceRunId: "run:ship",
+        targetPid: "proc:worker", targetRunId: "run:worker", deadlineAt: Date.now() + 60_000,
+        responsibilityId: "r12y:11111111-1111-4111-8111-111111111111",
+      });
+      calls.completeByRun({
+        uid: 1000, targetPid: "proc:worker", runId: "run:worker", runStatus: "aborted",
+        response: null, error: "A custom interruption reason",
+      });
+      expect(calls.claimDelivery("ipc:aborted")).toMatchObject({
+        status: "completed", runStatus: "aborted", error: "A custom interruption reason",
+      });
+      const recovered = new IpcCallStore(sql);
+      expect(recovered.recoverDeliveryIds()).toEqual(["ipc:aborted"]);
+      expect(recovered.claimDelivery("ipc:aborted")).toMatchObject({
+        status: "completed", runStatus: "aborted", error: "A custom interruption reason",
+      });
+    });
+  });
+
   it("stores run correlation atomically and cancels pending calls by source run", async () => {
     await runWithRealKernelSql((sql) => {
       const calls = new IpcCallStore(sql);
@@ -46,6 +69,7 @@ describe("IpcCallStore", () => {
         uid: 1000,
         targetPid: "proc-target",
         runId: "run-target",
+        runStatus: "ok",
         response: { text: "completed before cancellation" },
       })).toHaveLength(1);
       expect(calls.findPendingByTargetRun({
@@ -63,6 +87,7 @@ describe("IpcCallStore", () => {
         uid: 1000,
         targetPid: "proc-target",
         runId: "run-target",
+        runStatus: "ok",
         response: { text: "late result" },
       })).toEqual([]);
     });
@@ -113,6 +138,7 @@ describe("IpcCallStore", () => {
         uid: 1000,
         targetPid: "proc-target",
         runId: "run-target",
+        runStatus: "ok",
         response: { text: "finished after the first check-in" },
       })).toEqual([callId]);
     });
@@ -154,6 +180,7 @@ describe("IpcCallStore", () => {
         uid: 1000,
         targetPid: `proc-target-${delegatedCallId}`,
         runId: `run-target-${delegatedCallId}`,
+        runStatus: "ok",
         response: { text: "legacy delegation finished during upgrade" },
       })).toEqual([delegatedCallId]);
     });
@@ -177,6 +204,7 @@ describe("IpcCallStore", () => {
         uid: 1000,
         targetPid: "proc-target",
         runId: "run-target",
+        runStatus: "ok",
         response: { text: "late result" },
       })).toEqual([]);
       expect(calls.get(callId)).toMatchObject({
@@ -205,6 +233,7 @@ describe("IpcCallStore", () => {
         uid: 1000,
         targetPid: "proc-target",
         runId: "run-target",
+        runStatus: "ok",
         response: { text: "eventual result" },
       })).toEqual([callId]);
       expect(calls.get(callId)).toMatchObject({
@@ -265,6 +294,7 @@ describe("IpcCallStore", () => {
         uid: 1000,
         targetPid: "proc:worker",
         runId: "run:worker",
+        runStatus: "ok",
         response: { text: "done" },
       })).toEqual(["ipc:linked-call"]);
       expect(calls.get("ipc:linked-call")).toMatchObject({

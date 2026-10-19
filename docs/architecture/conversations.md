@@ -14,6 +14,51 @@ conversation. Users can inspect the referenced Process while it exists or read i
 Web and Desktop render Ship's Markdown code blocks at a readable monospace size with a copy action.
 Long lines scroll inside the block. Copy preserves indentation and internal line breaks without
 adding the renderer's final newline to the clipboard.
+Chat renders human messages as plain text with clickable web URLs. External web links in human
+messages and Ship's Markdown replies open in a new tab.
+Human messages align right, with the timestamp before the sender's name, and balance line
+lengths to avoid a short final line. Ship's messages align left.
+The Chat transcript scrolls vertically. Long words, URLs and compaction notes wrap within the
+reading column; wide tables and code blocks scroll horizontally within their own bounds.
+Ship replies use ordinary line wrapping rather than paragraph balancing, filling each line
+with the words that fit. Explicit line breaks in a message remain intact.
+Chat and contact history mark the top scroll boundary with a lavender line only
+while it intersects text, clearing the line in gaps between text and messages.
+Chat's scroll boundary spans the full view width while its messages retain their reading column.
+When the activity line appears above the composer, Chat marks its bottom scroll boundary with
+the same lavender edge only while it cuts through text. Gaps and the end of the transcript stay clear.
+Initial rendering, font loading and padding changes keep Chat at the bottom unless the
+reader scrolls away. This includes content updates that briefly shrink and restore the
+transcript before the browser delivers a scroll event.
+When the reader scrolls above the latest chat message, a small button returns the transcript to
+the bottom and resumes following new replies.
+The Chat composer always uses "Message your ship" as its empty-field placeholder, across focus,
+connection and approval states.
+The composer shows connection problems, errors and an offline selected place; ordinary model
+and target readiness do not add a status line. Run activity remains visible in the transcript.
+On phones, both the prompt and its attachment, place and recording controls follow the visible
+area as the browser toolbar or keyboard opens and closes. The star field keeps its full height.
+Installed PWAs fill the screen, including the home-indicator area. The bottom safe-area inset
+is padding inside each surface; it does not shorten the page or its star field.
+The keyboard's return key requests a Send action. iOS owns the field-navigation and Done bar above its keyboard;
+the web app cannot hide that bar through a supported browser API.
+Clicking or tapping a message selects it without scrolling. Scrolling selects the message nearest
+the center of the visible transcript, or the first/latest message at either end, even while the composer has focus. The selection
+stays visible while typing; after leaving the input, `j` and `k` continue from that same message.
+On phones, the return-to-latest control is a down arrow at the right edge. Closed completed action
+receipts are hidden once they have a reply; action records remain inspectable in Settings → Logs.
+Running work, failed actions, fallback notices, approvals and already-open receipts remain visible.
+Direct `$` commands use a compact target header on phones, with running, unavailable or failed
+states when relevant. Expand it to read the complete command, output and terminal controls.
+
+A very long message in Zen folds behind **read more** once it has finished arriving, and **show
+less** folds it again. Folding uses the rendered height at the current width and text size:
+messages up to eighteen line-heights remain whole; longer messages show twelve line-heights
+with a short fade at the end. A reply the user watched stream in stays open. Opening or folding
+keeps the reading position, and the message text itself is unchanged. Selected text uses a solid
+lavender highlight with contrasting text in both themes.
+Inside the prompt, selected text stays light on a stronger purple highlight. Selecting a range
+restores the native selection tint and handles on iOS; a collapsed selection uses the block cursor.
 
 ## Conversation kinds
 
@@ -21,11 +66,15 @@ The Kernel owns the conversation directory and membership:
 
 - **Ship** is the stable conversation with the user's personal intelligence. Web, Desktop, CLI,
   Telegram, Slack, and other private surfaces all contribute to the same Ship message stream.
-  The current personal Process is replaceable; the Ship conversation is not. In the web and
-  Desktop clients an empty Ship conversation shows the interface greeting ("Welcome to the ship."
-  / "I am the ship. Who are you?"); the CLI and messengers show none. Nothing is sent on the
-  user's behalf, and the Ship's onboarding responsibility tells it which surfaces saw the greeting
-  so it can treat the first message as the answer or introduce itself first.
+  The current personal Process is replaceable; the Ship conversation is not. Dismissing
+  the welcome card creates an open onboarding responsibility through the ordinary wake
+  path. Ship sends a welcome in the owner's preferred language, initially detected from
+  the browser. The welcome is a canonical Message shared across clients. A user can
+  write first, including on surfaces without the card: onboarding becomes visible
+  before that message reaches Ship. Until either action, onboarding stays internal
+  to the Kernel rather than appearing as a blocked responsibility.
+  After greeting, Ship waits for a reply. Repeated dismissal
+  and reconnects recover pending work without reopening a handled welcome.
 - **Work** is a conversation handled by one explicit interactive work Process. Opening Work does not
   replace Ship or redefine the personal intelligence.
 - **Group** is tied to one normalized adapter surface and can retain multiple account and Process
@@ -109,16 +158,18 @@ contact destinations remain fixed. Personal Ship replies follow the owner's curr
   not play a notification or act as though the response was directed to them.
 - Adapters buffer Process output and deliver only the committed message. Provider-specific reply
   threading remains transport metadata.
-- A human message to Ship selects its originating endpoint. Real foreground input in Web or Desktop
-  also selects that client, at most once every 30 seconds; connecting, focusing a window, history
-  reads and keepalives do not. This preference survives the end of a run and Process replacement.
+- A human message to Ship selects its originating endpoint. Clicking, scrolling and typing without
+  sending never select a destination. Activity in the selected Web or Desktop client refreshes its
+  idle timer, at most once every 30 seconds; connecting, focusing, history reads and keepalives do not.
+  This preference survives the end of a run and Process replacement.
 - When the selected client disconnects or has been inactive for five minutes, Ship uses the owner's
   last authorized linked private messenger destination. A new messenger message selects that
-  messenger; returning to interact with the app selects the app again. Without a usable destination,
+  messenger; sending a new message in the app selects that client again. Activity cannot revive an
+  expired selection. Without a usable destination,
   the message remains in canonical history.
 - Idle expiry includes 30 seconds of reporting grace so throttled input cannot cause an early
   fallback. Accepted inputs preserve their preference decision across retries without replacing
-  newer activity. The Kernel orders input before asynchronous preparation, so overlapping sends
+  newer messages. The Kernel orders input before asynchronous preparation, so overlapping sends
   select the newest input regardless of which preparation finishes first.
 - Each outgoing message records its delivery decision before the canonical append. Retrying an
   uncertain append does not notify a different endpoint after the preference changes. Receipts expire after
@@ -133,6 +184,12 @@ was streamed: a match sends the remainder as one last delta, a difference aborts
 the client drops the preview and shows the committed message. A Send that fails validation, a
 generation that fails or retries, and a run that is interrupted, superseded, reset or killed also abort
 their projections, so no partial text outlives its message. Adapters never see the projection.
+
+Sending a message and yielding remain separate even when requested in one call. If
+outstanding responsibilities prevent a requested yield, the valid message still commits
+and stays visible while the Process continues working. The tool result identifies the
+remaining work and confirms that the message was sent, so Ship can finish or defer the
+work and yield without sending the same reply again.
 
 New Ship approval notifications use the same reply preference and authorized messenger fallback.
 Delegated Work retains its inherited approval route. An already queued adapter delivery keeps its
@@ -160,6 +217,11 @@ things as they are. Every answer saves ordinary rules to the same account policy
 the pending call approves it. Nothing is sent to the Ship, nothing is recorded, and it never opens on
 its own. An account that cannot change settings is told so instead, with **why?** for the reason.
 
+Web and Desktop present a failed run, and a failure reported above the composer, as a plain-language
+summary with a recommended next step, such as trying again, waiting a few minutes or restarting the
+process. The client derives that summary from the event kind and error text; the gateway's original
+error stays under **details** for diagnosis.
+
 Opening a Process activity inspector calls `proc.observe`. Raw Process signals then reach that
 specific client in addition to any connection that owns the active run. Closing the inspector calls
 `proc.unobserve`. Observation is explicit so every connected client does not receive every model
@@ -170,6 +232,19 @@ small Process-owned index, while reasoning, tool arguments, results, and message
 owner and are resolved only when a user inspects a span.
 
 ## Storage and retention
+
+Instrument's People indicator and Zen activity strip read the ordinary owner-scoped
+inbox with `attentionOnly: true` and the incoming request list. The Kernel filters
+unread, active, unmuted, unblocked conversations before pagination; the caller selects
+the usual archived state. Existing `conversation.changed`, `contact.changed` and
+`approach.changed` signals invalidate those bounded reads, and reconnect refreshes
+them. Attention survives reload through the private inbox projection. Zen and People
+observe the same paginated conversation cache. Only unfinished reply drafts and
+their submitted send identities remain local. A draft retains the read position where it began, so reads elsewhere do
+not hide its context or pull older read history into the panel. Each send retains the
+exact sequence it answers, so a later arrival stays unread when that reply completes.
+A failed read update leaves the inbox authoritative
+and surfaces the error without repeating the successful send.
 
 The Kernel Durable Object stores the conversation directory, membership, optional handler, surface
 mapping, latest sequence and private inbox projection. Contact previews, read positions and archive
@@ -195,13 +270,19 @@ Process history keeps its existing lifecycle and archive policy. Conversation hi
 activity can therefore rotate independently without conflating what the user saw with how the work
 was performed.
 
-Desktop keeps voice and hands-free controls at the right edge beneath the prompt. Reconnect feedback
+Desktop keeps voice controls at the right edge beneath the prompt. Reconnect feedback
 appears beside the attachment actions, without reserving blank space to the right of the input controls.
 The outgoing-message spinner lasts until delivery is acknowledged. Ship's activity mark follows the
 active run independently of its transcript, including context preparation and reasoning before any
 visible work arrives. A streaming reply takes over that feedback; a run that continues after sending
 shows activity again until it ends. The model label identifies the run's selected model, not whether
 the provider has started returning tokens.
+
+A paste of more than 400 characters or eight lines waits beside the prompt as a chip showing its
+character count instead of filling the input; a paste into a `$` or `!` command stays inline. Tap
+the chip to inspect its full text, or remove it before sending. Sending
+joins the typed words and then each pasted block, in paste order and separated by blank lines, into
+one message. Pasted text preserves its whitespace, with line endings normalized to match the textarea.
 
 Instrument resolves attachment bytes through its authenticated gateway connection. Browser clients
 use ordinary image links and downloads; Desktop opens raster images in an in-app preview and saves
@@ -214,7 +295,8 @@ native saves apply to the attachment blobs resolved by the authenticated fronten
 
 ## Search
 
-Zen opens conversation search with `/` in browse mode or `Ctrl/Cmd+F`; People uses the same search
+Chat opens conversation search from its header action or with `Ctrl+K` from any view.
+`/` in browse mode and `Ctrl/Cmd+F` in Chat remain available. People uses the same search
 dialog and syscall for the selected contact conversation. Selecting a result shows the
 original message and surrounding messages in the dialog, preserving the conversation position and
 any draft when the dialog closes.
@@ -265,3 +347,71 @@ the Kernel has resolved owner, route, Process, and conversation identity.
 
 Conversation IDs are opaque. Installation identity remains the outer physical boundary for the
 Kernel, Conversation Durable Object names, and R2 keys.
+
+Internal compaction handovers remain in Process history and its archives. Chat
+does not present them as “Memory” messages or interrupt the composer when the
+working context changes.
+
+
+## Contextual requests in Instrument
+
+Chat’s `+` menu can attach a file, find a person by handle, saved name or GSV address,
+reference a file on a place, or stage a request to create a routine, connect a
+computer or start a browser. Selecting a request keeps the current text and
+attachments. The person can add details, remove the request, or send it normally.
+No selection creates a schedule, connects a device or contacts another person.
+
+Requests are ordinary editable text in the composer, not hidden instructions or
+structured message actions. The whole request, including object IDs, profile URLs
+or file paths, can be changed or removed before sending. Sending uses the existing
+`conversation.send` text/media contract and the normal text history renderer; no
+request-specific gateway support or database migration is required.
+
+One activity line above the prompt combines the ongoing responsibility count and
+People activity. Its **N ongoing** button (or **plans** when none are active) opens
+the contextual panel, with one level of tabs: **ongoing**, **routines** and **history**.
+The `+` menu contains attachments and requests, without a second plans entry.
+Responsibilities retain hierarchy and show blockers before ordinary follow-ups.
+Rows use a short state label; the full blocker is readable prose in the inspector.
+Standing policies are configured in **Settings → standing**. Details allow inspection, cancellation and asking Ship about the exact
+record. Routines show their cadence and state, with pause/enable and edit controls;
+creating one stages a request to Ship. These panels use the existing authorized
+syscalls and signal-driven caches. Closing them preserves drafts and pauses hidden
+reads. The shared file browser can move above the home directory using **../**,
+stopping at the selected target’s root. Chat selects a file immediately into the
+draft; Fleet retains its file inspector. Fleet retains places and processes.
+
+The shell locks document scrolling and sizes the visible content from
+`VisualViewport`, keeping the header and composer outside the scrolling content.
+The viewport requests `interactive-widget=resizes-content` where supported;
+visual-viewport tracking also handles browsers that pan or resize only the visible
+area. The shell accounts for its actual position when the browser scrolls the
+document and briefly samples around input focus changes to catch delayed geometry.
+Touch WebKit’s first tap focuses text inputs with `preventScroll`, preventing the
+initial native page pan. Already-focused inputs, long presses and scroll gestures
+keep their native behavior. Programmatic composer focus also prevents page scroll.
+Position corrections apply immediately. A reported keyboard-height jump eases
+over 180ms, while incremental browser updates and reduced motion apply directly.
+Keyboard resizing uses the zoom present when an input gains or loses focus,
+including Safari's retained fractional zoom. Pinching between focus transitions
+magnifies the existing layout without reflowing it.
+Safari controls when it exposes the keyboard’s viewport geometry, so the height
+transition begins when that geometry is available. The star field keeps its
+independent full-screen size.
+
+### Withdrawing the local typed-request experiment
+
+The unshipped `message_action` migration (conversation ID 7) is no longer run.
+That ID remains reserved: subsequent migrations must start at 8. A local database
+that already applied it keeps its nullable `action_json` column and migration
+receipt untouched; ordinary text reads and inserts do not need either. Fresh
+conversations use the existing v6 schema. No down migration, archive rewrite,
+receipt deletion or database reset is part of this rollback.
+
+Previously stored experimental messages already contain the complete readable
+text. Archive reads omit the retired metadata field without changing the stored
+bytes or checksum; Instrument displays the ordinary text.
+Their old idempotency hashes may include the removed metadata, so retrying an
+in-flight experimental send after changing versions can fail with a payload
+conflict. Inspect canonical history before deciding whether to submit again;
+do not delete receipts or automatically issue a new send identity.

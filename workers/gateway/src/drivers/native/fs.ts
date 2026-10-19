@@ -16,6 +16,7 @@ import {
 } from "../../fs";
 import type { KernelContext } from "../../kernel/context";
 import { requirePrincipal } from "../../kernel/context";
+import { resolveVisibleTarget, targetCanHandle, type TargetDescriptor } from "../../kernel/targets";
 import type { FrameBody, ResponseOkFrame } from "../../protocol/frames";
 import type { FsReadArgs, FsReadResult } from "../../syscalls/read";
 import type { FsWriteArgs, FsWriteResult } from "../../syscalls/write";
@@ -76,7 +77,7 @@ export async function openFsSource(
   },
 ): Promise<FsOpenedSource> {
   ctx.requestSignal?.throwIfAborted();
-  assertCanAccessCopyEndpoint(source, ctx, "source");
+  const target = await assertCanAccessCopyEndpoint(source, ctx, "source");
 
   if (source.target === "gsv") {
     const opened = await (options?.fs ?? createNativeFileSystem(ctx)).openFile(source.path);
@@ -106,7 +107,7 @@ export async function openFsSource(
   if (!options?.transport) {
     throw new Error("Reading a non-gsv source requires device transfer support");
   }
-  assertCanUseDeviceCapabilities(source, ctx, [
+  assertTargetImplements(target, [
     "fs.transfer.stat",
     "fs.transfer.send",
   ]);
@@ -417,14 +418,22 @@ async function readDirectory(
   const files: string[] = [];
   const directories: string[] = [];
 
-  for (const name of names) {
-    const childPath = path.endsWith("/") ? path + name : path + "/" + name;
-    try {
-      const s = await fs.stat(childPath);
-      if (s.isDirectory) directories.push(name);
+  // Keep remote metadata reads bounded, and preserve the listing's order even
+  // when individual entries finish out of order. stat still follows symlinks.
+  const concurrency = 6;
+  for (let offset = 0; offset < names.length; offset += concurrency) {
+    const batch = names.slice(offset, offset + concurrency);
+    const kinds = await Promise.all(batch.map(async (name) => {
+      const childPath = path.endsWith("/") ? path + name : path + "/" + name;
+      try {
+        return (await fs.stat(childPath)).isDirectory;
+      } catch {
+        return false;
+      }
+    }));
+    for (const [index, name] of batch.entries()) {
+      if (kinds[index]) directories.push(name);
       else files.push(name);
-    } catch {
-      files.push(name);
     }
   }
 
@@ -600,8 +609,8 @@ export async function handleFsCopy(
     ctx.requestSignal?.throwIfAborted();
     const source = normalizeCopyEndpoint(args.source, ctx);
     let destination = normalizeCopyEndpoint(args.destination, ctx);
-    assertCanAccessCopyEndpoint(source, ctx, "source");
-    assertCanAccessCopyEndpoint(destination, ctx, "destination");
+    const sourceTarget = await assertCanAccessCopyEndpoint(source, ctx, "source");
+    const destinationTarget = await assertCanAccessCopyEndpoint(destination, ctx, "destination");
 
     if (source.target === "gsv" && destination.target === "gsv") {
       destination = await resolveGsvDestinationDirectory(
@@ -624,8 +633,7 @@ export async function handleFsCopy(
       destination.target !== "gsv" &&
       source.target === destination.target
     ) {
-      if (ctx.targets.canHandle(source.target, "fs.copy")) {
-        assertCanUseDeviceCapabilities(source, ctx, ["fs.copy"]);
+      if (sourceTarget && targetCanHandle(sourceTarget, "fs.copy")) {
         return await copyOnDevice(
           source,
           destination,
@@ -642,7 +650,7 @@ export async function handleFsCopy(
         ctx,
       );
     } else {
-      assertCanUseDeviceCapabilities(destination, ctx, ["fs.transfer.stat"]);
+      assertTargetImplements(destinationTarget, ["fs.transfer.stat"]);
       destination = await resolveDeviceDestinationDirectory(
         source,
         destination,
@@ -652,7 +660,7 @@ export async function handleFsCopy(
     }
 
     if (source.target === "gsv") {
-      assertCanUseDeviceCapabilities(destination, ctx, ["fs.transfer.receive"]);
+      assertTargetImplements(destinationTarget, ["fs.transfer.receive"]);
       return await copyGsvToDevice(source, destination, ctx, transport);
     }
 
@@ -660,7 +668,7 @@ export async function handleFsCopy(
       return await copyDeviceToGsv(source, destination, ctx, transport);
     }
 
-    assertCanUseDeviceCapabilities(destination, ctx, [
+    assertTargetImplements(destinationTarget, [
       "fs.transfer.stat",
       "fs.transfer.receive",
     ]);
@@ -1001,39 +1009,37 @@ function normalizeCopyEndpoint(
   };
 }
 
-function assertCanAccessCopyEndpoint(
+async function assertCanAccessCopyEndpoint(
   endpoint: Required<FsCopyEndpoint>,
   ctx: KernelContext,
   access: "source" | "destination",
-): void {
+): Promise<TargetDescriptor | null> {
   if (endpoint.target === "gsv") {
-    return;
+    return null;
   }
   if (isContactTarget(endpoint.target)) {
     if (access === "destination") throw new Error("Contact resources are read-only");
-    return;
+    return null;
   }
-  const identity = requirePrincipal(ctx).account;
-  if (!ctx.targets.canAccess(endpoint.target, identity.uid, identity.gids)) {
-    throw new Error(`Access denied to device: ${endpoint.target}`);
+  const target = await resolveVisibleTarget(ctx, endpoint.target, { includeOffline: true });
+  if (!target) {
+    throw new Error(`Access denied to target: ${endpoint.target}`);
   }
+  return target;
 }
 
 function isContactTarget(target: string): boolean {
   return target.startsWith("contact:") && target.length > "contact:".length;
 }
 
-function assertCanUseDeviceCapabilities(
-  endpoint: Required<FsCopyEndpoint>,
-  ctx: KernelContext,
+function assertTargetImplements(
+  target: TargetDescriptor | null,
   syscalls: string[],
 ): void {
-  if (endpoint.target === "gsv") {
-    return;
-  }
+  if (!target) return;
   for (const syscall of syscalls) {
-    if (!ctx.targets.canHandle(endpoint.target, syscall)) {
-      throw new Error(`Device ${endpoint.target} does not implement ${syscall}`);
+    if (!targetCanHandle(target, syscall)) {
+      throw new Error(`Target ${target.targetId} does not implement ${syscall}`);
     }
   }
 }

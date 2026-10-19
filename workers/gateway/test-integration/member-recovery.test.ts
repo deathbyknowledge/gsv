@@ -25,7 +25,7 @@ describe("clean-space messenger member recovery", () => {
     const storage = await harness.getWorker("gsv").getDurableObjectStorage("KERNEL", { name: "inst_integration_default" });
     await storage.exec(`INSERT INTO identity_links (adapter, account_id, actor_id, uid, created_at, linked_by_uid, metadata_json)
       VALUES ('telegram', 'recovery-account', 'recovery-person', 1000, ?, 1000, ?)`, Date.now(), JSON.stringify({ managed: true, surfaceKind: "dm", surfaceId: "recovery-dm", routeGeneration: "confirmed-generation" }));
-    const attempt = { id: crypto.randomUUID(), username: "person", proof: createPairingSecret() };
+    const attempt = { id: crypto.randomUUID(), proof: createPairingSecret() };
     expect(await oneShot.requestOnce(url, "account.recovery.code.start", attempt)).toMatchObject({ accepted: true });
     const response = await harness.getWorker("gsv-test-dependencies").fetch("http://gsv-test-dependencies/__test/outbound?installationId=inst_integration_default&accountId=recovery-account");
     // SAFETY: this fixture endpoint returns its declared outbound record contract.
@@ -47,7 +47,7 @@ describe("clean-space messenger member recovery", () => {
     expect(await oneShot.requestOnce(url, "account.recovery.code.redeem", redemption)).toEqual({ username: "person" });
     const later = new GSVClient({ url, username: "person", password: "later-password", peer: { id: "later-member" } });
     clients.push(later); await later.connect();
-    expect((await root.account.people.list({})).people.find((person) => person.uid === 1000)?.disabled).toBe(false);
+    expect((await later.account.list({})).accounts.find((account) => account.relation === "self")?.uid).toBe(1000);
     await expect(oneShot.requestOnce(url, "account.recovery.code.redeem", { ...redemption, proof: createPairingSecret() })).rejects.toMatchObject({ code: 400 });
   });
 });

@@ -4,7 +4,7 @@ import type {
   AssistantMessage, AssistantMessageEvent, Context, ToolCall, Tool,
 } from "@humansandmachines/gsv/services/inference-context";
 import { z } from "zod";
-import type { InternalRequestFrame } from "../../protocol/process-frames";
+import type { InternalRequestFrame, ProcessApprovalTarget } from "../../protocol/process-frames";
 import type {
   CommittedRunControlMessage, RunControlResult, TerminalResponsibilityCheck, CompletedRunTransition,
   RunFinishEffects, RunFinishedTelemetryProperties, PreparedRunTickContext, RunTickGenerationAttemptOutcome,
@@ -13,7 +13,7 @@ import type {
 } from "../internal/contracts";
 import {
   CORRECTION_FAILURE_NOTICE, MAX_TERMINAL_CORRECTION_ROUNDS, YIELD_CORRECTION_MESSAGE,
-  MAX_RETRYABLE_GENERATION_ATTEMPTS, SEND_TOOL_NAME, UNKNOWN_SHELL_SESSION_TARGET_MESSAGE, isRunControlCall,
+  MAX_RETRYABLE_GENERATION_ATTEMPTS, SEND_TOOL_NAME, isRunControlCall,
   MEDIA_PREPARATION_TIMEOUT_MS, TOOL_DISPATCH_TIMEOUT_MS,
 } from "../internal/lifecycle";
 import {
@@ -23,7 +23,7 @@ import {
 } from "@humansandmachines/gsv/protocol";
 import { parseAttachPath, type RunControlCommand, type RunControlCommandParseResult } from "../run-control-command";
 import { mediaTypeFromContentType } from "../history/helpers";
-import { DEFAULT_TOOL_APPROVAL_POLICY, resolveToolApproval, takePurpose } from "../approval";
+import { DEFAULT_TOOL_APPROVAL_POLICY, takePurpose } from "../approval";
 import { readPathKey } from "../tools/runtime";
 import type { FileResourceReference, FsReadArgs, FsReadResult, ResourceBlock } from "@humansandmachines/gsv/protocol";
 import type { RunOutputMedia, RunState } from "./state";
@@ -54,6 +54,7 @@ import {
 } from "../../inference/output";
 import { extractCompletedText } from "../../inference/generated-text";
 import { incrementRunControlFailure, isRunControlFailureExhausted, runControlFailureAttempt, PROCESS_TASK_SCHEMA, type ProcessTask, type ProcessTaskCallback, contextSnapshotFromRun, withRunControlInstructions } from "./helpers";
+import { deliverMemoryReview } from "../memory-review";
 import { formatRunControlToolResult, renderToolExecutionError, renderHistoryEvent } from "../history/event-renderer";
 import { ProcessStore, stringifyAssistantMessageMeta, type MessageMetadata, type ContextEpochRecord } from "../store";
 import { resolveToolSyscall } from "../../syscalls/constants";
@@ -61,7 +62,7 @@ import { stringifyStoredProcessMedia } from "../media";
 import { assistantHistoryRecords } from "../storage/history-records";
 import type { DurableTask, DurableTaskOptions } from "../../shared/durable-tasks";
 import { MANAGED_LIFECYCLE_RECHECK_MS, managedInstallationWorkGate } from "../../installation/lifecycle";
-import { GSV_DELEGATED_TASK_CONTEXT } from "../../prompts/system";
+import GSV_DELEGATED_TASK_CONTEXT from "../../prompts/tasks/delegated.md";
 import { createContextProjection, parseContextProjection } from "../context";
 import { deriveGenerationContextId } from "../context-message-metadata";
 import { SEND_TOOL, piToolParametersSchema } from "../internal/schemas";
@@ -101,23 +102,6 @@ export class ProcessRun {
         error: parsed.error,
       };
     }
-    // a finishing call is admitted by the responsibilities first, before anything it names is staged:
-    // a refused finish then leaves nothing behind for a later Send to carry by accident
-    let responsibilityAdmissionKey: string | undefined;
-    if (parsed.command.action === "yield" || parsed.command.finish) {
-      const responsibilityCheck = await this.verifyTerminalResponsibilities(runId);
-      if (!responsibilityCheck.ok) {
-        return {
-          ok: false,
-          action: parsed.command.action,
-          text: parsed.command.action === "message" ? parsed.command.text : "",
-          delivery: { kind: "none" },
-          failureKind: "command",
-          error: responsibilityCheck.error,
-        };
-      }
-      responsibilityAdmissionKey = responsibilityCheck.admissionKey;
-    }
     // files the Send names are referenced on their place, retained and staged; a message goes out whole or not at all
     let media = stagedMedia;
     if (parsed.command.action === "message" && parsed.command.attach && parsed.command.attach.length > 0) {
@@ -154,6 +138,20 @@ export class ProcessRun {
       };
     }
     if (command.action === "yield") {
+      // This preflight applies to a bare yield; a message commits independently below.
+      // a finishing call is admitted by the responsibilities first, before anything it names is staged:
+      // a refused finish then leaves nothing behind for a later Send to carry by accident
+      const responsibilityCheck = await this.verifyTerminalResponsibilities(runId);
+      if (!responsibilityCheck.ok) {
+        return {
+          ok: false,
+          action: "yield",
+          text: "",
+          delivery: { kind: "none" },
+          failureKind: "command",
+          error: responsibilityCheck.error,
+        };
+      }
       await this.host.streams.silence(runId, actionId);
       return {
         ok: true,
@@ -161,17 +159,21 @@ export class ProcessRun {
         finish: true,
         text: "",
         delivery: { kind: "none" },
-        responsibilityAdmissionKey,
+        responsibilityAdmissionKey: responsibilityCheck.admissionKey,
       };
     }
-    return await this.executeMessageRunControlAction({
+    const sent = await this.executeMessageRunControlAction({
       runId,
       actionId,
       text: command.text,
       finish: command.finish,
       media,
-      responsibilityAdmissionKey,
     });
+    if (!sent.ok || !command.finish) return sent;
+    const responsibilityCheck = await this.verifyTerminalResponsibilities(runId);
+    return responsibilityCheck.ok
+      ? { ...sent, responsibilityAdmissionKey: responsibilityCheck.admissionKey }
+      : { ...sent, finish: false, yieldError: responsibilityCheck.error };
   }
 
   /**
@@ -194,7 +196,7 @@ export class ProcessRun {
       const readArgs: FsReadArgs = target === "gsv"
         ? { path, representation: "reference" }
         : { target, path, representation: "reference" };
-      const approval = resolveToolApproval(policy, "fs.read", readArgs);
+      const approval = await this.host.tools.resolveApproval(policy, "fs.read", readArgs, this.runAbortSignal(runId));
       if (approval.action === "deny") {
         return { ok: false, error: `cannot attach ${spec}: reading it is not allowed by the tool approval rules` };
       }
@@ -206,7 +208,7 @@ export class ProcessRun {
           error: `cannot attach ${spec}: reading it needs the person's approval; read it with the Read tool first, then send`,
         };
       }
-      const referenced = await this.referenceFile(runId, spec, readArgs);
+      const referenced = await this.referenceFile(runId, spec, readArgs, approval.approvedTarget);
       if (!referenced.ok) return referenced;
       const ref = referenced.ref;
       // the place answers for itself and nothing else: a reference naming another place would be retained from
@@ -235,10 +237,11 @@ export class ProcessRun {
     runId: string,
     spec: string,
     readArgs: FsReadArgs,
+    approvedTarget?: ProcessApprovalTarget,
   ): Promise<{ ok: true; ref: FileResourceReference } | { ok: false; error: string }> {
     const read = async (args: FsReadArgs): Promise<FsReadResult> => {
       try {
-        return await this.host.kernel.kernelRpc("fs.read", args, this.runAbortSignal(runId));
+        return await this.host.kernel.kernelRpc("fs.read", args, this.runAbortSignal(runId), undefined, approvedTarget);
       } catch (error) {
         return { ok: false, error: errorMessageFromUnknown(error) };
       }
@@ -261,7 +264,6 @@ export class ProcessRun {
     text: string;
     finish: boolean;
     media: RunOutputMedia[];
-    responsibilityAdmissionKey?: string;
   }): Promise<RunControlResult> {
     try {
       await this.host.streams.complete(options.runId, options.actionId, options.text);
@@ -289,7 +291,6 @@ export class ProcessRun {
     text: string;
     finish: boolean;
     media: RunOutputMedia[];
-    responsibilityAdmissionKey?: string;
   }): Promise<RunControlResult> {
     const releaseCommit = this.beginRunControlCommit(options.runId);
     try {
@@ -311,7 +312,6 @@ export class ProcessRun {
           finish: options.finish,
           text: options.text,
           delivery: { kind: "none" },
-          responsibilityAdmissionKey: options.responsibilityAdmissionKey,
         };
       }
       const request = this.buildRunControlMessageCommitRequest(run, options);
@@ -344,7 +344,6 @@ export class ProcessRun {
           conversationId: committedMessage.conversationId,
           messageId: committedMessage.id,
         },
-        responsibilityAdmissionKey: options.responsibilityAdmissionKey,
       };
     } finally {
       releaseCommit();
@@ -1477,6 +1476,16 @@ export class ProcessRun {
       } else {
         this.host.store.tools.fail(dispatchId, result.error, "failed");
       }
+      const output: JsonObject = result.ok
+        ? { action: result.action, finish: result.finish, delivery: result.delivery }
+        : {
+          action: result.action,
+          finish: false,
+          delivery: result.delivery,
+          failureKind: result.failureKind,
+          attempt,
+        };
+      if (result.ok && result.yieldError) output.yieldError = result.yieldError;
       this.host.store.messages.appendToolResult(
         toolCallId,
         registration.resultName,
@@ -1486,17 +1495,8 @@ export class ProcessRun {
         result.ok ? "completed" : "failed",
         undefined,
         result.ok
-          ? { output: { action: result.action, finish: result.finish, delivery: result.delivery } }
-          : {
-            output: {
-              action: result.action,
-              finish: false,
-              delivery: result.delivery,
-              failureKind: result.failureKind,
-              attempt,
-            },
-            error: { message: result.error },
-          },
+          ? { output }
+          : { output, error: { message: result.error } },
       );
       this.host.store.tools.clearRun(runId);
       return true;
@@ -1719,9 +1719,6 @@ export class ProcessRun {
         prepared.args,
         takePurpose(prepared.args).purpose,
       );
-      if (prepared.missingShellSessionTarget) {
-        this.host.store.tools.fail(dispatchId, UNKNOWN_SHELL_SESSION_TARGET_MESSAGE);
-      }
     }
     for (const toolCall of turn.unofferedToolCalls) {
       const syscall = resolveToolSyscall(toolCall.name, this.host.runs.active?.toolSyscalls);
@@ -1898,6 +1895,9 @@ export class ProcessRun {
 
   async runScheduledTask(task: DurableTask<ProcessTask>): Promise<void> {
     switch (task.callback) {
+      case "onMemoryReview":
+        await deliverMemoryReview(this.host, task.id);
+        return;
       case "onMediaPreparationTimeout":
         await this.onMediaPreparationTimeout(task.payload);
         return;
@@ -2339,6 +2339,10 @@ export class ProcessRun {
     state: RunTickContextState,
   ): Promise<boolean> {
     if (!(await this.rebuildRunTickContext(runId, state))) return false;
+    if (!state.contextState) return false;
+    const handover = await this.host.history.applyPendingCompaction(runId, state.contextState, state.context);
+    if (handover === "stopped") return false;
+    if (handover === "compacted" && !(await this.rebuildRunTickContext(runId, state))) return false;
     const policy = await this.applyRunTickContextPolicy(runId, state, "preflight");
     if (policy === "stopped") return false;
     const contextState = state.contextState;

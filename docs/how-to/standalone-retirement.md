@@ -1,8 +1,8 @@
 # Standalone retirement
 
-GSV now deploys one operator stack with public Accounts, Gateway and inference
-Workers. Each space has an immutable installation identity, trusted directory
-routing and scoped storage. An operator may run one space or many; there is no
+Ship now deploys one operator stack with public Accounts, Gateway and inference
+Workers. Each installation has an immutable identity, trusted directory
+routing and scoped storage. An operator may run one installation or many; there is no
 separate singleton runtime or per-person messenger application setup.
 
 ## Preserved baseline
@@ -23,15 +23,16 @@ cutover. Those checks do not claim a new live deployment of the old release.
 Do not deploy this revision over a singleton environment. It removes the
 standalone Alchemy composition, Wrangler wrapper, unscoped physical routing and
 per-person Telegram, Slack and Discord application setup. The previous unofficial
-WhatsApp adapter is also removed; WhatsApp Business is separate future work.
+WhatsApp adapter is also removed. The current stack supports an operator-owned
+WhatsApp Business number; see [Messengers](./messengers.md).
 
 Pin the preserved release or source and keep its original deployment state and
 resource configuration. Export the data you need and prepare a new environment
 using the [operator deployment guide](./deploy-with-alchemy.md). There is no
 automatic conversion of old credentials, process identities or unprefixed R2
-objects to a new space. The current runtime does not reassign or erase that data.
+objects to a new installation. The current runtime does not reassign or erase that data.
 
-## Existing operators with scoped spaces
+## Existing operators with scoped installations {#existing-operators-with-scoped-spaces}
 
 Keep the same resource names, Durable Object namespaces, storage prefixes and
 Alchemy state. The cutover preserves those physical identities. Complete any

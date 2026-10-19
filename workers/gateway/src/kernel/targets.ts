@@ -7,6 +7,8 @@ import { hasCapability } from "./capabilities";
 import type { KernelContext } from "./context";
 import { principalOf } from "./context";
 import type { TargetRecord } from "./target-registry";
+import type { ProcessApprovalTarget } from "../protocol/process-frames";
+import { discoverInstanceTargets, type InstanceTargetRoute } from "./instance-targets";
 import {
   discoverVisibleAdapterTargets,
   type AdapterTargetRoute,
@@ -35,8 +37,30 @@ export type TargetDescriptor = {
   lastSeenAt: number;
   connectedAt: number | null;
   disconnectedAt: number | null;
-  route: { kind: "machine"; targetId: string } | AdapterTargetRoute;
+  instance?: SysTargetSummary["instance"];
+  route: { kind: "machine"; targetId: string } | AdapterTargetRoute | InstanceTargetRoute;
 };
+
+export function approvalTargetIdentity(target: TargetDescriptor): ProcessApprovalTarget {
+  const { targetId, ownerUid, platform, route } = target;
+  return { targetId, ownerUid, platform, route };
+}
+
+export function matchesApprovalTarget(target: TargetDescriptor, approved: ProcessApprovalTarget): boolean {
+  if (target.targetId !== approved.targetId || target.ownerUid !== approved.ownerUid || target.platform !== approved.platform) return false;
+  const actual = target.route;
+  const expected = approved.route;
+  switch (actual.kind) {
+    case "machine":
+      return expected.kind === "machine" && actual.targetId === expected.targetId;
+    case "instance":
+      return expected.kind === "instance" && actual.instanceId === expected.instanceId;
+    case "adapter":
+      return expected.kind === "adapter" && actual.adapter === expected.adapter
+        && actual.accountId === expected.accountId && actual.actorId === expected.actorId
+        && actual.adapterTargetId === expected.adapterTargetId && actual.routeGeneration === expected.routeGeneration;
+  }
+}
 
 export type TargetListOptions = {
   includeOffline?: boolean;
@@ -78,10 +102,10 @@ export async function discoverVisibleTargets(
   ctx: KernelContext,
   options: TargetListOptions = {},
 ): Promise<TargetDiscovery> {
-  const discovery = await discoverVisibleAdapterTargets(ctx, options);
+  const [discovery, instances] = await Promise.all([discoverVisibleAdapterTargets(ctx, options), discoverInstanceTargets(ctx, options)]);
   return {
-    targets: [...listVisibleTargets(ctx, options), ...discovery.targets],
-    complete: discovery.complete,
+    targets: [...listVisibleTargets(ctx, options), ...discovery.targets, ...instances.targets],
+    complete: discovery.complete && instances.complete,
   };
 }
 
@@ -108,11 +132,10 @@ export async function resolveVisibleTarget(
   targetId: string,
   options: TargetListOptions = {},
 ): Promise<TargetDescriptor | null> {
-  return getVisibleTarget(ctx, targetId, options)
-    ?? (await discoverVisibleAdapterTargets(ctx, options)).targets.find(
-      (target) => target.targetId === targetId,
-    )
-    ?? null;
+  const local = getVisibleTarget(ctx, targetId, options);
+  if (local) return local;
+  const [adapters, instances] = await Promise.all([discoverVisibleAdapterTargets(ctx, options), discoverInstanceTargets(ctx, options)]);
+  return [...adapters.targets, ...instances.targets].find(target => target.targetId === targetId) ?? null;
 }
 
 export async function resolveSelectedMessageTarget(ctx: KernelContext, targetId: string | undefined): Promise<string | undefined> {
@@ -174,6 +197,7 @@ export function targetToSummary(target: TargetDescriptor): SysTargetSummary {
     version: target.version,
     online: target.online,
     lastSeenAt: target.lastSeenAt,
+    instance: target.instance,
   };
 }
 

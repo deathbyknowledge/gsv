@@ -61,7 +61,7 @@ beforeEach(() => {
   fixture.request.mockReset();
   root = createTestRoot("feedback");
 });
-afterEach(async () => { await root.unmount(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
+afterEach(async () => { await root.unmount(); vi.restoreAllMocks(); vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
 
 
 async function mount() {
@@ -77,6 +77,22 @@ describe("feedback", () => {
     fixture.available = false;
     await mount();
     expect(collectNodes(tree)).toHaveLength(0);
+  });
+
+  it("shows the dialog without sending when reviewing a preview", async () => {
+    vi.stubEnv("VITE_GSV_PREVIEW", "true");
+    fixture.available = false;
+    await mount();
+    expect(collectText(tree)).toContain("Something broken, confusing, or missing?");
+    expect(collectText(tree)).toContain("Preview only — sending feedback is unavailable here.");
+    expect(element("textarea").props.disabled).toBe(true);
+    await send();
+    expect(fixture.request).not.toHaveBeenCalled();
+    // SAFETY: Feedback renders this button with the ElementProps click handler in preview mode.
+    const preview = collectNodes(tree).find(node => node.type === "button" && collectText(node.props.children) === "View confirmation") as VNode<ElementProps>;
+    await act(() => preview.props.onClick!());
+    expect(collectText(tree)).toContain("Preview only — no feedback was sent.");
+    expect(collectText(tree)).toContain("Thank you! This really helps us make Ship better. :)");
   });
 
   it("retains a failed draft and retries the same report identity", async () => {
@@ -95,7 +111,7 @@ describe("feedback", () => {
     await send();
     expect(fixture.request.mock.calls[1][1]).toEqual(first[1]);
     expect(await reportContent(1)).toEqual(content);
-    expect(collectText(tree)).toContain("Thanks for the feedback.");
+    expect(collectText(tree)).toContain("Thank you! This really helps us make Ship better. :)");
     await act(() => element("button").props.onClick!());
     expect(element("textarea").props.value).toBe("");
   });

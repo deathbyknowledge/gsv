@@ -71,9 +71,12 @@ async function pump(
       request.attribution!.logicalRequestId,
       abort.signal.reason instanceof TimeoutError ? "timeout" : "cancelled",
     ).catch((error) => {
+      const diagnostic = inferenceErrorMetadata(error);
+      const cancelled = abort.signal.aborted && !(abort.signal.reason instanceof TimeoutError);
       if (request.attribution) reportInferenceClientResult(env, request.attribution, {
-        diagnosticId, boundary: "execution", phase: "abort", outcome: "failed",
-        durationMs: Date.now() - startedAt, ...inferenceErrorMetadata(error),
+        diagnosticId, boundary: "execution", phase: "abort",
+        outcome: cancelled && diagnostic.rpcRetryable === true ? "cancelled" : "failed",
+        durationMs: Date.now() - startedAt, ...diagnostic,
       });
     });
   };

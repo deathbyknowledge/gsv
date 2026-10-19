@@ -4,7 +4,6 @@ on:
   push:
     branches: [main]
   pull_request:
-    branches: [main, feat/zen-fleet]
 
 permissions:
   contents: read
@@ -28,6 +27,7 @@ jobs:
       gateway: ${{ steps.filter.outputs.gateway }}
       installations: ${{ steps.filter.outputs.installations }}
       inference: ${{ steps.filter.outputs.inference }}
+      instances: ${{ steps.filter.outputs.instances }}
       deployment: ${{ steps.filter.outputs.deployment }}
       deletion_stack: ${{ steps.filter.outputs.deletion_stack }}
       adapters: ${{ steps.filter.outputs.adapters }}
@@ -115,6 +115,7 @@ jobs:
               - 'package.json'
               - 'package-lock.json'
               - 'packages/gsv/**'
+              - 'packages/browser/**'
               - 'extension/**'
             gateway:
               - '.github/workflows/ci.yml'
@@ -136,6 +137,14 @@ jobs:
               - 'packages/gsv/**'
               - 'packages/inference/**'
               - 'workers/inference/**'
+            instances:
+              - '.github/workflows/ci.yml'
+              - 'package.json'
+              - 'package-lock.json'
+              - 'packages/gsv/**'
+              - 'packages/browser/**'
+              - 'workers/instances/**'
+              - 'tools/instances/**'
             installations:
               - '.github/workflows/ci.yml'
               - 'package.json'
@@ -190,11 +199,14 @@ jobs:
               - 'host/crates/desktop-protocol/**'
             machine:
               - '.github/workflows/ci.yml'
+              - 'scripts/smoke-computer-image.sh'
+              - 'workers/instances/computer/**'
               - 'host/Cargo.toml'
               - 'host/Cargo.lock'
               - 'host/apps/machine/**'
               - 'host/crates/gateway-client/**'
               - 'host/crates/config/**'
+              - 'host/crates/daemon-protocol/**'
             desktop:
               - '.github/workflows/ci.yml'
               - '.github/workflows/release.yml'
@@ -209,12 +221,10 @@ jobs:
               - 'host/helpers/**'
               - 'host/packaging/**'
               - 'host/scripts/**'
-              - 'scripts/vision-native/**'
               - 'host/crates/gateway-client/**'
               - 'host/crates/config/**'
               - 'host/crates/desktop-protocol/**'
               - 'host/crates/daemon-protocol/**'
-              - 'host/crates/gesture-protocol/**'
               - 'web/**'
               - 'packages/gsv/**'
               - 'package*.json'
@@ -224,6 +234,9 @@ jobs:
               - 'host/Cargo.toml'
               - 'host/Cargo.lock'
               - 'host/helpers/transcriber/**'
+              - 'host/helpers/speaker/**'
+              - 'host/scripts/build-speaker.py'
+              - 'host/scripts/check-speaker.py'
               - 'host/scripts/check-transcriber.py'
               - 'host/scripts/check-transcription.py'
               - 'host/scripts/package-transcriber.py'
@@ -327,6 +340,7 @@ jobs:
       needs.changes.outputs.extension == 'true' ||
       needs.changes.outputs.installations == 'true' ||
       needs.changes.outputs.inference == 'true' ||
+      needs.changes.outputs.instances == 'true' ||
       needs.changes.outputs.deployment == 'true' ||
       needs.changes.outputs.source_review == 'true' ||
       needs.changes.outputs.deletion_stack == 'true'
@@ -374,6 +388,18 @@ jobs:
       - name: Test public inference Worker
         if: needs.changes.outputs.inference == 'true'
         run: npm test --workspace @humansandmachines/gsv-inference-worker
+
+      - name: Check cloud instances
+        if: needs.changes.outputs.instances == 'true'
+        run: npm run typecheck --workspace workers/instances
+
+      - name: Test cloud instances
+        if: needs.changes.outputs.instances == 'true'
+        run: npm test --workspace workers/instances
+
+      - name: Bundle cloud instances
+        if: needs.changes.outputs.instances == 'true'
+        run: npm exec --workspace workers/instances -- wrangler deploy --dry-run --outdir dist/worker
 
       - name: Check installation services
         if: needs.changes.outputs.installations == 'true'
@@ -437,6 +463,10 @@ jobs:
       - name: Build browser extension
         if: needs.changes.outputs.extension == 'true'
         run: npm run extension:build
+
+      - name: Test browser extension
+        if: needs.changes.outputs.extension == 'true'
+        run: npm run test:run --workspace extension
 
   gateway-test:
     name: Gateway Tests
@@ -604,21 +634,21 @@ jobs:
         run: >-
           cargo fmt --package gateway-client --package host-config
           --package daemon-protocol --package desktop-protocol
-          --package gesture-protocol --check
+          --check
 
       - name: Test shared crates
         working-directory: host
         run: >-
           cargo test --locked --package gateway-client --package host-config
           --package daemon-protocol --package desktop-protocol
-          --package gesture-protocol
+
 
       - name: Lint shared crates
         working-directory: host
         run: >-
           cargo clippy --locked --package gateway-client --package host-config
           --package daemon-protocol --package desktop-protocol
-          --package gesture-protocol --all-targets -- -D warnings
+          --all-targets -- -D warnings
 
   machine-build:
     name: Machine (${{ matrix.os }})
@@ -651,6 +681,11 @@ jobs:
       - name: Lint machine
         working-directory: host
         run: cargo clippy --locked --package machine --all-targets -- -D warnings
+
+      - name: Build and smoke the cloud computer image
+        if: matrix.os == 'ubuntu-latest'
+        timeout-minutes: 20
+        run: bash scripts/smoke-computer-image.sh
 
   desktop-build:
     name: Desktop (Linux)
@@ -689,9 +724,9 @@ jobs:
             libasound2-dev \
             libclang-dev \
             libopenblas-pthread-dev \
+            libpulse0 \
             libwebkit2gtk-4.1-dev \
             libgtk-3-dev \
-            libv4l-dev \
             gstreamer1.0-plugins-base \
             gstreamer1.0-plugins-good \
             gstreamer1.0-libav \
@@ -723,13 +758,20 @@ jobs:
             'CMAKE_CXX_COMPILER_LAUNCHER=ccache' >> "$GITHUB_ENV"
           CCACHE_DIR="$RUNNER_TEMP/gsv-desktop-ccache" ccache --zero-stats
 
-      - name: Check vision artifact scripts
+      - name: Check host packaging script
         run: |
           bash -n host/scripts/package-macos.sh
-          bash -n scripts/vision-native/benchmark.sh
-          bash -n scripts/vision-native/fixtures.sh
-          bash -n scripts/vision-native/parity.sh
-          bash -n scripts/vision-native/update-models.sh
+
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: '3.12'
+          enable-cache: true
+          cache-dependency-glob: host/helpers/speaker/uv.lock
+      - name: Build and check bundled speech runtime
+        run: |
+          uv run --frozen --project host/helpers/speaker python -m unittest discover -s host/helpers/speaker -p 'test_*.py'
+          uv run --frozen --group build --project host/helpers/speaker python host/scripts/build-speaker.py --output host/target/debug
+          python3 host/scripts/check-speaker.py host/target/debug/gsv-speak
 
       - uses: actions/setup-node@v4
         with:
@@ -746,13 +788,12 @@ jobs:
         working-directory: host
         run: >-
           cargo fmt --package desktop --package desktop-native --package transcriber
-          --package gestures --package gesture-protocol --check
+          --check
 
       - name: Test Desktop and helpers
         working-directory: host
         run: |
-          cargo test --locked --package desktop --package desktop-native --package transcriber \
-            --package gestures --package gesture-protocol
+          cargo test --locked --package desktop --package desktop-native --package transcriber
           ccache --show-stats --verbose
 
       - name: Check voice helper startup and bundled math
@@ -763,18 +804,12 @@ jobs:
       - name: Transcribe recorded speech
         run: python3 host/scripts/check-transcription.py
 
-      - name: Check public gesture fixtures and tracking recovery
-        working-directory: host
-        run: >-
-          ../scripts/vision-native/parity.sh --profile test
-          --package desktop --package desktop-native --package transcriber --package gestures --package gesture-protocol
-
       - name: Lint Desktop and helpers
         working-directory: host
         run: |
           ccache --zero-stats
           cargo clippy --locked --package desktop --package desktop-native --package transcriber \
-            --package gestures --package gesture-protocol --all-targets -- -D warnings
+            --all-targets -- -D warnings
           ccache --show-stats --verbose
 
   transcriber-arm64:
@@ -801,7 +836,17 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y \
             build-essential clang cmake libasound2-dev libclang-dev \
-            libopenblas-pthread-dev pkg-config
+            libopenblas-pthread-dev libpulse0 pkg-config
+
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: '3.12'
+          enable-cache: true
+          cache-dependency-glob: host/helpers/speaker/uv.lock
+      - name: Build and check bundled speech runtime
+        run: |
+          uv run --frozen --group build --project host/helpers/speaker python host/scripts/build-speaker.py --output host/target/aarch64-unknown-linux-gnu/release
+          python3 host/scripts/check-speaker.py host/target/aarch64-unknown-linux-gnu/release/gsv-speak
 
       - name: Build release voice helper
         working-directory: host

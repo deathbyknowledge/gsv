@@ -18,6 +18,7 @@ import { RipgitClient } from "../../fs";
 import { seedBuiltinSkillsToHome } from "./skills-seed";
 import { gsvInferenceFeaturesFromEnv } from "../../inference/features";
 import { ensurePersonalController } from "../personal-controller";
+import { normalizeLanguage } from "../language";
 import { getConversationById } from "../../shared/utils";
 import {
   aiModelApiKeyConfigKey,
@@ -107,16 +108,19 @@ function ensureSingleUserBootstrap(passwd: PasswdEntry[]): void {
   }
 }
 
-function parseSetupIdentity(args: SysSetupArgs): SetupIdentity {
-  if (!args.username.trim()) {
+function parseSetupIdentity(args: SysSetupArgs, ctx: KernelContext): SetupIdentity {
+  const handle = ctx.installationIdentity?.handle ?? "owner";
+  const defaultUsername = USERNAME_RE.test(handle) && !["root", "users", "drivers", "services", "ship", "crew"].includes(handle) ? handle : "owner";
+  const requestedUsername = args.username ?? ctx.auth.getHumanAccount()?.username ?? defaultUsername;
+  if (!requestedUsername.trim()) {
     throw new Error("username is required");
   }
   // Validate the raw (untrimmed) value so padded names like " alice " are
   // rejected at the syscall boundary, not only in the web wizard.
-  if (!USERNAME_RE.test(args.username)) {
+  if (!USERNAME_RE.test(requestedUsername)) {
     throw new Error("username must match ^[a-z_][a-z0-9_-]{0,31}$");
   }
-  const username = args.username;
+  const username = requestedUsername;
 
   const password = readRequiredString(args.password, "password");
   if (password.length < 8) {
@@ -169,13 +173,13 @@ function resolveSetupAiConfig(
 ): SetupAiConfig {
   if (ai.provider === GSV_INFERENCE_PROVIDER) {
     if (!managedInferenceAvailable) {
-      throw new Error("GSV included inference is not available");
+      throw new Error("Ship included inference is not available");
     }
     if (ai.model !== undefined && ai.model !== GSV_INFERENCE_MODEL) {
-      throw new Error("GSV included inference does not accept a model selection");
+      throw new Error("Ship included inference does not accept a model selection");
     }
     if (ai.apiKey?.trim()) {
-      throw new Error("GSV included inference does not accept an API key");
+      throw new Error("Ship included inference does not accept an API key");
     }
     return {
       provider: GSV_INFERENCE_PROVIDER,
@@ -251,7 +255,7 @@ export async function handleSysSetup(
   ctx: KernelContext,
 ): Promise<SysSetupResult> {
   const { auth, config } = ctx;
-  const requestedUsername = args.username.trim().length > 0
+  const requestedUsername = args.username?.trim()
     ? args.username.trim()
     : "<unknown>";
   const startedAt = Date.now();
@@ -261,7 +265,7 @@ export async function handleSysSetup(
     throw new Error("System already initialized");
   }
 
-  const { username, password } = parseSetupIdentity(args);
+  const { username, password } = parseSetupIdentity(args, ctx);
   const serverFeatures = gsvInferenceFeaturesFromEnv(ctx.env);
   const managedInferenceAvailable = serverFeatures.includes(GSV_INFERENCE_FEATURE);
   const ai = resolveSetupAiConfig(
@@ -270,6 +274,7 @@ export async function handleSysSetup(
   );
   const aiModels = setupAiModelStack(ai);
   const timezone = parseTimezone(args);
+  const language = args.language === undefined ? undefined : normalizeLanguage(args.language);
   const machine = parseMachineConfig(args);
   const rootPassword = readOptionalString(args.rootPassword);
   if (rootPassword && rootPassword.length < 8) {
@@ -360,6 +365,7 @@ export async function handleSysSetup(
       if (timezone !== undefined) {
         config.set("config/server/timezone", timezone);
       }
+      if (language !== undefined) config.set(`users/${uid}/locale/language`, language);
     });
 
     await timeSetupStep(timings, "write-ai-config", () => {
@@ -461,7 +467,7 @@ export async function recoverCompletedSysSetup(
   args: SysSetupArgs,
   ctx: KernelContext,
 ): Promise<SysSetupResult> {
-  const { username, password } = parseSetupIdentity(args);
+  const { username, password } = parseSetupIdentity(args, ctx);
   const humans = ctx.auth.getPasswdEntries().filter((entry) => {
     const shadow = ctx.auth.getShadowByUsername(entry.username);
     return entry.uid >= 1000 && shadow && !isLocked(shadow);

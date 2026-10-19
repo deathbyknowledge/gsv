@@ -97,9 +97,6 @@ export const RUNTIME_EVENT_TOMBSTONE_LIMIT = 512;
 
 export const SHELL_SESSION_TARGET_KEY_PREFIX = "shellSessionTarget:";
 
-export const UNKNOWN_SHELL_SESSION_TARGET_MESSAGE =
-  "Shell session continuation requires an explicit target because this process does not know which device owns the session";
-
 export const USER_INTERRUPTED_TOOL_MESSAGE = "User interrupted tool execution";
 
 export const MAX_TERMINAL_CORRECTION_ROUNDS = 3;
@@ -184,7 +181,7 @@ export const TOOL_DISPATCH_TIMEOUT_MS = 10 * 60_000;
 
 export const MEDIA_PREPARATION_TIMEOUT_MS = 10 * 60_000;
 
-export const COMPACTION_SUMMARY_WINDOW_CHARS = 24_000;
+export const COMPACTION_SUMMARY_CHUNK_CHARS = 256_000;
 
 export const COMPACTION_SUMMARY_MAX_TOKENS = 4_096;
 

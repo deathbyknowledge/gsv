@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<title>GSV form controls fixture</title>
+<style>body{font:16px system-ui;margin:32px}label{display:block;margin:12px 0}input,select,textarea,button{font:inherit;padding:6px}fieldset{margin:16px 0;max-width:600px}</style>
+<h1>Plan a trip</h1>
+<trip-form></trip-form>
+<form aria-label="Other trip"><button type="button">Plan</button></form>
+<form id="signin" aria-label="Sign in">
+  <label>Sign-in email<input id="signin-email" type="email" required></label>
+  <label>Sign-in password<input id="signin-password" type="password" required></label>
+  <span style="display:inline-block;position:relative;width:200px;height:40px">
+    <input id="signin-submit" type="submit" aria-label="Sign in" style="position:absolute;inset:0;width:100%;height:100%;opacity:.01;z-index:1">
+    <span aria-hidden="true">Sign in</span>
+  </span>
+</form>
+<script>
+window.formEvents = [];
+window.signinSubmissions = [];
+document.querySelector("#signin").addEventListener("submit", event => {
+  event.preventDefault();
+  window.signinSubmissions.push({ trusted: event.isTrusted, submitter: event.submitter.id });
+});
+customElements.define("trip-form", class extends HTMLElement {
+  constructor() {
+    super();
+    this.attachShadow({mode:"open"}).innerHTML = `<style>label{display:block;margin:12px 0}input,select,textarea,button{font:inherit;padding:6px}</style>
+    <form aria-label="Journey">
+      <label>From<input id="from" value="Old station"></label>
+      <label>Departure time<input id="time" type="time" value="21:39"></label>
+      <label>Departure date<input id="date" type="date" value="2026-10-06"></label>
+      <label>Passengers<input id="number" type="number" value="1"></label>
+      <label>Class<select id="class"><option value="2">Second</option><option value="1">First</option></select></label>
+      <label><input id="direct" type="checkbox">Direct only</label>
+      <label>Notes<textarea id="notes">Old notes</textarea></label>
+      <label>Password<input id="password" type="password"></label>
+      <label>Locked<input id="locked" readonly value="fixed"></label>
+      <label>Reverting<input id="reverting" oninput="this.value='fixed'" value="fixed"></label>
+      <div id="editor" role="textbox" aria-label="Draft" contenteditable="true">Old draft</div>
+      <button type="button" id="plan">Plan</button>
+      <output id="result"></output>
+    </form>`;
+    const root = this.shadowRoot;
+    for (const kind of ["input", "change"]) root.addEventListener(kind, event => window.formEvents.push({kind, id:event.target.id}));
+    root.querySelector("#direct").addEventListener("click", () => window.checkboxClicks = (window.checkboxClicks ?? 0) + 1);
+    root.querySelector("#plan").addEventListener("click", () => { root.querySelector("#result").textContent = "Journey ready"; });
+  }
+});
+</script>
+</html>

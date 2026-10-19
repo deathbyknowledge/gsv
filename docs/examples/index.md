@@ -1,6 +1,6 @@
 # Examples
 
-Real-world examples of GSV in use. Each example shows a concrete setup, what it enables, and how the pieces fit together.
+Real-world examples of Ship in use. Each example shows a concrete setup, what it enables, and how the pieces fit together.
 
 - Read a log on your home server from your phone
 - Delegate email triage to an agent that runs while your laptop is closed
@@ -12,5 +12,5 @@ _Examples coming soon._
 ## See also
 
 - [Get Started](/get-started/)
-- [Why GSV?](/why/)
+- [Why Ship?](/why/)
 - [Guides](/how-to/)

@@ -12,15 +12,9 @@
  * read time so code defaults remain live unless a key is explicitly set.
  */
 
-import {
-  GSV_CONTEXT_DISCOVERY,
-  GSV_PROCESS_ORCHESTRATION,
-  GSV_RESPONSIBILITY_CONTEXT,
-  GSV_RUNTIME_CONTEXT,
-  GSV_RUNTIME_FACTS,
-  GSV_TARGET_CONTEXT,
-} from "../prompts/system";
+import { contextFiles } from "../prompts/context";
 import { normalizeTimezone } from "./timezone";
+import { normalizeLanguage } from "./language";
 import { DEFAULT_SHELL_EXEC_TIMEOUT_MS, DEFAULT_TOOL_APPROVAL_POLICY } from "@humansandmachines/gsv/protocol";
 import {
   aiModelApiKeyConfigKey,
@@ -60,12 +54,7 @@ export const SYSTEM_CONFIG_DEFAULTS = defineSystemConfigDefaults({
   // System prompt context, assembled in lexical order, applied to every
   // process. Per-agent persona/context lives in each account's home
   // (/home/<account>/context.d), seeded at account creation.
-  "config/ai/context.d/00-runtime.md": GSV_RUNTIME_FACTS,
-  "config/ai/context.d/01-gsv.md": GSV_RUNTIME_CONTEXT,
-  "config/ai/context.d/05-targets.md": GSV_TARGET_CONTEXT,
-  "config/ai/context.d/10-responsibilities.md": GSV_RESPONSIBILITY_CONTEXT,
-  "config/ai/context.d/20-discovery.md": GSV_CONTEXT_DISCOVERY,
-  "config/ai/context.d/30-process-orchestration.md": GSV_PROCESS_ORCHESTRATION,
+  ...Object.fromEntries(contextFiles("system").map(({ name, text }) => [`config/ai/context.d/${name}`, text])),
   // Prompt-visible skill enumeration. Detailed skill discovery remains available
   // through `man --search` and `skills` even when this is `off`.
   "config/ai/skills/index_mode": "summary",
@@ -101,7 +90,7 @@ export const SYSTEM_CONFIG_DEFAULTS = defineSystemConfigDefaults({
   // Timezone used for cron scheduling and log timestamps (IANA format).
   "config/server/timezone": "UTC",
   // The current server version (set at boot, read-only for users).
-  "config/server/version": "0.6.6",
+  "config/server/version": "0.7.3",
 
   // -- Shell ------------------------------------------------------------------
   // Default shell timeout in ms for native shell.exec.
@@ -141,6 +130,10 @@ export class ConfigStore {
   }
 
   set(key: string, value: string): void {
+    if (/^users\/\d+\/locale\/language$/.test(key)) {
+      if (!value.trim()) { this.delete(key); return; }
+      value = normalizeLanguage(value);
+    }
     if (/^users\/\d+\/locale\/timezone$/.test(key)) {
       if (!value.trim()) { this.delete(key); return; }
       value = normalizeTimezone(value);

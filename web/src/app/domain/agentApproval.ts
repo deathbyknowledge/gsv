@@ -1,35 +1,19 @@
-import { z } from "zod";
+import {
+  isToolApprovalTargetSelector,
+  normalizeToolApprovalTarget,
+  normalizeToolApprovalTarget as approvalTargetFromValue,
+  type ToolApprovalAction as ApprovalPolicyAction,
+  type ToolApprovalPolicy as ApprovalPolicyValue,
+  type ToolApprovalRule as ApprovalPolicyRule,
+  type ToolApprovalTarget,
+} from "@humansandmachines/gsv/protocol";
 
-export function approvalTargetFromValue<T>(value: T): string | undefined {
-  const parsed = z.string().safeParse(value);
-  if (!parsed.success) {
-    return undefined;
-  }
-  const trimmed = parsed.data.trim();
-  if (!trimmed || trimmed === "*" || trimmed.toLowerCase() === "any") {
-    return undefined;
-  }
-  if (trimmed === "device" || trimmed === "devices/*") {
-    return "targets/*";
-  }
-  if (trimmed === "gateway" || trimmed === "local") {
-    return "gsv";
-  }
-  return trimmed;
-}
-
-export type ApprovalPolicyAction = "auto" | "ask" | "deny";
-
-export type ApprovalPolicyRule = {
-  match: string;
-  target?: string;
-  action: ApprovalPolicyAction;
-};
-
-export type ApprovalPolicyValue = {
-  default: ApprovalPolicyAction;
-  rules: ApprovalPolicyRule[];
-};
+export { normalizeToolApprovalTarget as approvalTargetFromValue } from "@humansandmachines/gsv/protocol";
+export type {
+  ToolApprovalAction as ApprovalPolicyAction,
+  ToolApprovalRule as ApprovalPolicyRule,
+  ToolApprovalPolicy as ApprovalPolicyValue,
+} from "@humansandmachines/gsv/protocol";
 
 export function protectManagedMailApproval(policy: ApprovalPolicyValue): ApprovalPolicyValue {
   if (
@@ -59,8 +43,8 @@ function approvalMatchIncludes(match: string, syscall: string): boolean {
   return syscall === domain || syscall.startsWith(`${domain}.`);
 }
 
-function approvalTargetIncludesGsv(target: string | undefined): boolean {
-  const normalized = approvalTargetFromValue(target);
+function approvalTargetIncludesGsv(target: ToolApprovalTarget | undefined): boolean {
+  const normalized = normalizeToolApprovalTarget(target);
   return normalized === undefined || normalized === "gsv";
 }
 
@@ -81,11 +65,15 @@ export type ApprovalCategory = {
   /** One concrete example in the person's words, no trailing period. */
   example: string;
   /** The rules a choice writes; the action is the choice. */
-  rules: readonly Pick<ApprovalPolicyRule, "match" | "target">[];
+  rules: readonly CategoryRule[];
   /** Exact rules an ask choice keeps automatic when the policy has none of its own, so a wildcard
    *  above only moves what the row names. */
-  keepsAuto?: readonly Pick<ApprovalPolicyRule, "match" | "target">[];
+  keepsAuto?: readonly CategoryRule[];
 };
+
+/** Categories name places, never route selectors: cloud browsers and other routes keep their own
+ *  Settings rows, so the walkthrough neither shows nor rewrites selector rules. */
+type CategoryRule = { match: string; target?: string };
 
 export type ApprovalChoices = Partial<Record<ApprovalCategoryId, ApprovalChoice>>;
 
@@ -118,18 +106,19 @@ export function currentApprovalChoices(policy: ApprovalPolicyValue): Record<Appr
 
 /** Expand a category at the scopes its existing rules can override. The same
  * rules drive both its displayed choice and the policy it writes. */
-function categoryPolicyRules(policy: ApprovalPolicyValue, category: ApprovalCategory): Pick<ApprovalPolicyRule, "match" | "target">[] {
+function categoryPolicyRules(policy: ApprovalPolicyValue, category: ApprovalCategory): CategoryRule[] {
+  const placeRules = policy.rules.filter((rule) => !isRouteRule(rule));
   return category.rules.flatMap((rule) => {
-    const target = approvalTargetFromValue(rule.target);
+    const target = placeScope(rule.target);
     const scopes = new Set([target]);
-    for (const existing of policy.rules) {
-      const scope = approvalTargetFromValue(existing.target);
+    for (const existing of placeRules) {
+      const scope = placeScope(existing.target);
       if (target === "targets/*" && scope && scope !== "gsv") scopes.add(scope);
       else if (target === undefined && scope === "gsv") scopes.add(scope);
     }
     return [...scopes].flatMap((scope) => {
       const matches = new Set([rule.match]);
-      for (const existing of policy.rules) {
+      for (const existing of placeRules) {
         if (approvalTargetMatchesScope(existing.target, scope ?? "gsv")
           && approvalMatchIncludes(rule.match, existing.match)
           && !category.keepsAuto?.some((kept) => kept.match === existing.match)
@@ -140,6 +129,16 @@ function categoryPolicyRules(policy: ApprovalPolicyValue, category: ApprovalCate
       return [...matches].map((match) => scope ? { match, target: scope } : { match });
     });
   });
+}
+
+function isRouteRule(rule: ApprovalPolicyRule): boolean {
+  return rule.target !== undefined && isToolApprovalTargetSelector(rule.target);
+}
+
+/** A place rule's normalized scope; route selectors are filtered out before this is asked. */
+function placeScope(target: ToolApprovalTarget | undefined): string | undefined {
+  const normalized = normalizeToolApprovalTarget(target);
+  return normalized === undefined || isToolApprovalTargetSelector(normalized) ? undefined : normalized;
 }
 
 /** The categories a policy currently asks about, in walkthrough order. */
@@ -212,9 +211,11 @@ export function approvalRuleForRequest(syscall: string, target: string): Approva
   return scope ? { match: syscall, target: scope, action: "auto" } : { match: syscall, action: "auto" };
 }
 
-/** Mirrors the gateway's resolution: most specific target, then exact match over wildcard, then list order. */
+/** Mirrors the gateway's resolution: most specific target, then exact match over wildcard, then list order.
+ *  Route selectors need the target's route metadata, which approval requests do not carry, so like the
+ *  gateway without metadata they never match here; see approvalRouteMayDecide. */
 export function resolveApprovalAction(policy: ApprovalPolicyValue, syscall: string, target: string): ApprovalPolicyAction {
-  const scope = approvalTargetFromValue(target) ?? "gsv";
+  const scope = placeScope(target) ?? "gsv";
   const candidates = policy.rules
     .map((rule, index) => ({
       rule,
@@ -230,16 +231,27 @@ export function resolveApprovalAction(policy: ApprovalPolicyValue, syscall: stri
   return policy.default;
 }
 
-function approvalTargetMatchesScope(ruleTarget: string | undefined, scope: string): boolean {
-  const normalized = approvalTargetFromValue(ruleTarget);
+/** Whether a route selector could resolve this call differently from resolveApprovalAction, as the
+ *  gateway's approvalNeedsTargetMetadata decides. Only the gateway can then say what the policy does. */
+export function approvalRouteMayDecide(policy: ApprovalPolicyValue, syscall: string, target: string): boolean {
+  const scope = placeScope(target) ?? "gsv";
+  const ordinary = resolveApprovalAction(policy, syscall, target);
+  return scope !== "gsv" && policy.rules.some((rule) =>
+    isRouteRule(rule) && rule.action !== ordinary && approvalMatchIncludes(rule.match, syscall));
+}
+
+function approvalTargetMatchesScope(ruleTarget: ToolApprovalTarget | undefined, scope: string): boolean {
+  const normalized = normalizeToolApprovalTarget(ruleTarget);
   if (normalized === undefined) return true;
+  if (isToolApprovalTargetSelector(normalized)) return false;
   if (normalized === "targets/*") return scope !== "gsv";
   if (scope === "targets/*") return normalized === "targets/*";
   return normalized === scope;
 }
 
-function approvalTargetSpecificity(ruleTarget: string | undefined): number {
-  const normalized = approvalTargetFromValue(ruleTarget);
+function approvalTargetSpecificity(ruleTarget: ToolApprovalTarget | undefined): number {
+  const normalized = normalizeToolApprovalTarget(ruleTarget);
   if (normalized === undefined) return 0;
-  return normalized === "targets/*" || normalized === "gsv" ? 1 : 2;
+  if (isToolApprovalTargetSelector(normalized)) return normalized.platform ? 3 : 2;
+  return normalized === "targets/*" || normalized === "gsv" ? 1 : 4;
 }

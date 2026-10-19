@@ -66,8 +66,11 @@ export class ProcessHistoryRepository {
     toMessageId: number;
     summary: string;
     record?: ProcHistoryRecordData;
+    preserveMessageId?: number;
+    summaryMessageId?: number;
   }): number {
-    const summaryMessageId = opts.fromMessageId;
+    const summaryMessageId = opts.summaryMessageId ?? opts.fromMessageId;
+    if (summaryMessageId === opts.preserveMessageId) throw new Error("Cannot replace the retained run input");
     const now = Date.now();
     const revision = this.store.state.invalidateHistoryCursors();
 
@@ -75,10 +78,12 @@ export class ProcessHistoryRepository {
       `DELETE FROM messages
         WHERE generation = ?
           AND COALESCE(group_message_id, id) >= ?
-          AND COALESCE(group_message_id, id) <= ?`,
+          AND COALESCE(group_message_id, id) <= ?
+          AND COALESCE(group_message_id, id) != ?`,
       opts.generation,
       opts.fromMessageId,
       opts.toMessageId,
+      opts.preserveMessageId ?? -1,
     );
     this.store.sql.exec(
       `INSERT INTO messages (

@@ -76,6 +76,55 @@ const SENSITIVE_METADATA = {
 };
 
 describe("managed Kernel mailbox", () => {
+  it.each([
+    ["old.example", "fleet.example"],
+    ["fleet.example", "old.example"],
+  ])("delivers %s and %s to one mailbox and wakes Ship once per message", async (firstDomain, aliasDomain) => {
+    await runWithRealKernelSql(async (sql, kernelStorage) => {
+      const storage = new MemoryR2Bucket();
+      const ctx = mailboxContext(sql, kernelStorage, storage);
+      const first = {
+        ...METADATA,
+        envelope: { ...METADATA.envelope, to: `hank@${firstDomain}` },
+      };
+      await acceptManagedInboundMail(first, bodyFromBytes(RAW), ctx);
+      const mailbox = ctx.mailboxes.getPrimaryMailbox();
+      const aliasRaw = new TextEncoder().encode(`To: hank@${aliasDomain}\r\n\r\nAlias delivery`);
+      const alias = {
+        ...METADATA,
+        intakeId: "intake-alias",
+        digest: `sha256:${"b".repeat(64)}`,
+        rawSize: aliasRaw.byteLength,
+        envelope: { ...METADATA.envelope, to: `hank@${aliasDomain}` },
+      };
+      const accepted = await acceptManagedInboundMail(alias, bodyFromBytes(aliasRaw), ctx);
+      await expect(acceptManagedInboundMail(
+        { ...alias, intakeId: "intake-alias-retry" }, bodyFromBytes(aliasRaw), ctx,
+      )).resolves.toEqual(accepted);
+
+      const stored = ctx.mailboxes.getMessage(1000, accepted.messageId)!;
+      expect(stored.envelopeTo).toBe(alias.envelope.to);
+      expect(storage.bytes(stored.rawPath.slice(1))).toEqual(aliasRaw);
+      expect(ctx.mailboxes.getPrimaryMailbox()).toEqual(mailbox);
+      expect(managedMailAddressForOwner(1000, ctx)).toBe(first.envelope.to);
+      expect(ctx.mailboxes.list(1000).count).toBe(2);
+      expect(ctx.mailboxes.list(1001).count).toBe(0);
+
+      const completion = {
+        version: 1,
+        intakeId: alias.intakeId,
+        messageId: accepted.messageId,
+        summary: { summary: "Alias delivery", category: "personal", requiresAttention: true, confidence: 0.9 },
+      } satisfies Parameters<typeof completeManagedInboundMail>[0];
+      const wake = vi.fn(async () => {});
+      ctx.reconcileResponsibilityWake = wake;
+      await completeManagedInboundMail(completion, ctx);
+      await completeManagedInboundMail(completion, ctx);
+      expect(ctx.responsibilities.list({ ownerUid: 1000 }).records).toHaveLength(1);
+      expect(wake).toHaveBeenCalledOnce();
+    });
+  });
+
   it("stores exact mail under the primary human and aliases exact-byte retries", async () => {
     await runWithRealKernelSql(async (sql, kernelStorage) => {
       const storage = new MemoryR2Bucket();
@@ -307,7 +356,7 @@ describe("managed mailbox account removal", () => {
       const mailbox = kernel.mailboxes.getPrimaryMailbox();
       const writes = vi.spyOn(kernel.bindings.STORAGE, "put");
       const wake = vi.spyOn(kernel.responsibilityRuntime, "reconcileResponsibilityWake");
-      await kernel.people.remove(1000, root);
+      kernel.ctx.storage.sql.exec("INSERT INTO account_access (uid, disabled_at) VALUES (1000, ?)", Date.now());
       expect(kernel.auth.isAccountDisabled(1000)).toBe(true);
       const cancelled = vi.fn();
       await expect(kernel.acceptManagedInboundMail({ ...METADATA, intakeId: "fresh-after-removal", digest: `sha256:${"c".repeat(64)}` }, unreadBody(cancelled)))
@@ -341,8 +390,9 @@ describe("managed mailbox account removal", () => {
   });
 
   it("excludes removed humans when selecting the first mailbox owner", async () => {
-    await withMailboxKernel(async (kernel, root) => {
-      await kernel.people.remove(1000, root);
+    await withMailboxKernel(async (kernel) => {
+      kernel.ctx.storage.sql.exec("INSERT INTO account_access (uid, disabled_at) VALUES (1000, ?)", Date.now());
+      kernel.auth.setShadow(makeShadowEntry("sam", await hashPassword("sam-password")));
       const accepted = await kernel.acceptManagedInboundMail(METADATA, bodyFromBytes(RAW));
       expect(kernel.mailboxes.getPrimaryMailbox()).toMatchObject({ ownerUid: 1001, mailboxId: "mailbox:1001:primary" });
       expect(kernel.mailboxes.getMessage(1001, accepted.messageId)?.rawPath).toContain("/home/sam/");
@@ -351,9 +401,9 @@ describe("managed mailbox account removal", () => {
   });
 
   it("does not create a mailbox or consume the body when no enabled human remains", async () => {
-    await withMailboxKernel(async (kernel, root) => {
-      await kernel.people.remove(1000, root);
-      await kernel.people.remove(1001, root);
+    await withMailboxKernel(async (kernel) => {
+      kernel.ctx.storage.sql.exec("INSERT INTO account_access (uid, disabled_at) VALUES (1000, ?)", Date.now());
+      kernel.ctx.storage.sql.exec("INSERT INTO account_access (uid, disabled_at) VALUES (1001, ?)", Date.now());
       const writes = vi.spyOn(kernel.bindings.STORAGE, "put");
       const cancelled = vi.fn();
       await expect(kernel.acceptManagedInboundMail(METADATA, unreadBody(cancelled))).rejects.toThrow("configured human account");
@@ -364,7 +414,7 @@ describe("managed mailbox account removal", () => {
   });
 
   it.each([false, true])("rechecks removal after the message hash before storage (existing mailbox: %s)", async (persisted) => {
-    await withMailboxKernel(async (kernel, root) => {
+    await withMailboxKernel(async (kernel) => {
       if (persisted) kernel.mailboxes.ensureMailbox("mailbox:1000:primary", 1000, METADATA.envelope.to);
       const before = kernel.mailboxes.getPrimaryMailbox();
       const entered = Promise.withResolvers<void>();
@@ -378,7 +428,7 @@ describe("managed mailbox account removal", () => {
       try {
         const pending = kernel.acceptManagedInboundMail(METADATA, unreadBody(cancelled));
         await entered.promise;
-        await kernel.people.remove(1000, root);
+        kernel.ctx.storage.sql.exec("INSERT INTO account_access (uid, disabled_at) VALUES (1000, ?)", Date.now());
         release.resolve();
         await expect(pending).rejects.toThrow("active human account");
         expect(kernel.mailboxes.getPrimaryMailbox()).toEqual(before);
@@ -390,7 +440,7 @@ describe("managed mailbox account removal", () => {
   });
 
   it("finishes storage admitted before removal and completes its summary without new notification work", async () => {
-    await withMailboxKernel(async (kernel, root) => {
+    await withMailboxKernel(async (kernel) => {
       const entered = Promise.withResolvers<void>();
       const release = Promise.withResolvers<void>();
       const body: BinaryBody = { length: RAW.byteLength, stream: new ReadableStream<Uint8Array>({
@@ -399,7 +449,7 @@ describe("managed mailbox account removal", () => {
       const pending = kernel.acceptManagedInboundMail(METADATA, body);
       await entered.promise;
       expect(kernel.mailboxes.getPrimaryMailbox()?.ownerUid).toBe(1000);
-      await kernel.people.remove(1000, root);
+      kernel.ctx.storage.sql.exec("INSERT INTO account_access (uid, disabled_at) VALUES (1000, ?)", Date.now());
       release.resolve();
       const accepted = await pending;
       const stored = kernel.mailboxes.getMessage(1000, accepted.messageId)!;
@@ -421,7 +471,7 @@ async function withMailboxKernel(work: (kernel: Kernel, root: KernelContext) => 
     for (const [uid, username] of [[1000, "hank"], [1001, "sam"]] as const) {
       kernel.auth.addUser({ username, uid, gid: uid, gecos: username, home: `/home/${username}`, shell: "/bin/init" });
       kernel.auth.addGroup({ name: username, gid: uid, members: [] });
-      kernel.auth.setShadow(makeShadowEntry(username, password));
+      kernel.auth.setShadow(makeShadowEntry(username, uid === 1000 ? password : "!"));
     }
     const root = kernel.buildKernelContext({ peer: testPeer({
       account: { uid: 0, gid: 0, gids: [0], username: "root", home: "/root", cwd: "/root" }, calls: ["*"],

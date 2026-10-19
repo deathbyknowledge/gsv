@@ -145,7 +145,7 @@ function renderError(message: string): string {
     <main class="viewer">
       <section class="stage">
         <div class="error">
-          <span>GSV Viewer</span>
+          <span>Ship Viewer</span>
           <strong>Could not open file</strong>
           <p>${escapeHtml(message)}</p>
         </div>

@@ -15,7 +15,7 @@ export const GSV_INCLUDED_MODEL_ID = "gsv-included";
 export function baseAiModelStack(): AiModelEntry[] {
   return [{
     id: GSV_INCLUDED_MODEL_ID,
-    name: "GSV Included",
+    name: "Ship Included",
     provider: GSV_INFERENCE_PROVIDER,
     model: GSV_INFERENCE_MODEL,
     maxTokens: DEFAULT_TEXT_GENERATION_MAX_TOKENS,

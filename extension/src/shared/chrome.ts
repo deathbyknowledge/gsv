@@ -136,15 +136,15 @@ export async function captureTabPng(tabId: number): Promise<Uint8Array> {
     return base64ToBytes(result.data);
   } finally {
     await releaseDebugger(tabId).catch((error: ExtensionBoundaryValue | Error) => {
-      console.warn("GSV browser target failed to detach debugger", error);
+      console.warn("Ship browser target failed to detach debugger", error);
     });
   }
 }
 
-export async function executeInTab<T>(
+export async function executeInTab<Args extends ExtensionBoundaryValue[], T>(
   tabId: number,
-  func: (...args: ExtensionBoundaryValue[]) => T,
-  args: ExtensionBoundaryValue[] = [],
+  func: (...args: Args) => T,
+  args: Args,
 ): Promise<T> {
   const results = await chrome.scripting.executeScript({
     target: { tabId },

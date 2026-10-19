@@ -80,6 +80,7 @@ export const frameErrorSchema = z.strictObject({
 export const binaryFrameDescriptorSchema: z.ZodMiniType<BinaryFrameDescriptor> = z.strictObject({
   streamId: z.int().check(z.positive()),
   length: z.optional(z.int().check(z.nonnegative())),
+  delivery: z.optional(z.literal("realtime")),
 });
 
 /**

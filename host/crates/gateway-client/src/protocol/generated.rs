@@ -16,11 +16,19 @@ pub struct ErrorShape {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum BinaryBodyDelivery {
+    #[serde(rename = "realtime")]
+    Realtime,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FrameBodyDescriptor {
     pub stream_id: u32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub length: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub delivery: Option<BinaryBodyDelivery>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -90,7 +98,9 @@ pub struct PeerInfo {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AuthInfo {
-    pub username: String,
+    /// Omit for the space's personal account; use `root` for administrator access.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub username: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub password: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -112,6 +122,29 @@ pub struct ServerInfo {
     pub release: String,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub features: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub deployment: Option<PublicDeploymentConfig>,
+}
+
+/// Public operator metadata. It carries no credentials or installation authority.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PublicDeploymentConfig {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub primary_domain: Option<String>,
+    pub legacy_domains: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub operator_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub accounts_origin: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub docs_url: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub install_url: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub terms_url: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub privacy_url: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

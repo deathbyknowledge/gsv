@@ -57,7 +57,7 @@ export class InstallationDeletionCoordinator {
     ]);
     const operation = await this.operation(request.operationId);
     if (!operation || operation.installation_id !== request.installationId || operation.inventory_sha256 !== reviewed.sha256 || operation.owners_json !== JSON.stringify(ids)) {
-      throw new Error("Deletion requires a retired space with completed reset preparation and a matching operation");
+      throw new Error("Deletion requires a retired installation with completed reset preparation and a matching operation");
     }
     const persisted = await this.participants(request.operationId);
     if (persisted.map((owner) => owner.owner_id).join("\n") !== ids.join("\n")) throw new Error("Deletion owner inventory changed");

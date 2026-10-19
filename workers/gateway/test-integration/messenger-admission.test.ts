@@ -219,7 +219,7 @@ describe("W6 real messenger → Gateway → Kernel admission", () => {
       }
     });
 
-    for (const change of ["restricted", "account removed", "disconnected"] as const) {
+    for (const change of ["restricted", "password reset", "disconnected"] as const) {
       it(`${adapter}: refuses held ingress after ${change} while the other space remains usable`, async () => {
         const a = await setup("first"); const b = await setup("second"); await start(adapter);
         const link = await pair(adapter, 0, a.owner); await pair(adapter, 1, b.owner);
@@ -228,8 +228,8 @@ describe("W6 real messenger → Gateway → Kernel admission", () => {
         const before = await admittedCount("first");
         if (change === "restricted") {
           expect((await harness.getWorker("gsv-test-dependencies").fetch("https://fixture/__test/installation-state?handle=first&state=restricted", { method: "POST" })).status).toBe(204);
-        } else if (change === "account removed") {
-          await ok(a.root, "account.remove", { uid: 1000 });
+        } else if (change === "password reset") {
+          await ok(a.root, "account.password.set", { password: "reset-password" });
         } else {
           await ok(a.owner, "adapter.pair.disconnect", { adapter, accountId: link.accountId, actorId: link.actorId });
         }
@@ -238,7 +238,7 @@ describe("W6 real messenger → Gateway → Kernel admission", () => {
         const held = await received(text);
         expect(held.installationId).toBe(installation("first"));
         if (change === "restricted") expect(held.response).toMatchObject({ ok: false, error: { code: 423 } });
-        else expect(held.response).toMatchObject({ ok: true, data: { ok: true, droppedReason: "stale_route_generation" } });
+        else expect(held.response).toMatchObject({ ok: true, data: { ok: true, droppedReason: change === "password reset" ? "revoked_identity" : "stale_route_generation" } });
         expect(await admittedCount("first")).toBe(before);
       });
     }

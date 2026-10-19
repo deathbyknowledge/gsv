@@ -4,9 +4,14 @@ import { describe, it, mock } from "node:test";
 import {
   createTelemetryRecord,
   emitTelemetry,
+  inferenceProviderFromName,
+  inferenceProviderSchema,
   integrationProviderFromName,
   integrationProviderFromUrl,
   integrationProviderSchema,
+  shipPlatformFromAdapter,
+  shipPlatformFromPeer,
+  shipPlatformSchema,
   telemetryRecordSchema,
 } from "../dist/telemetry.js";
 
@@ -21,6 +26,46 @@ const INPUT = {
 };
 
 describe("telemetry contract", () => {
+  it("classifies custom inference transports without exporting their names", () => {
+    for (const name of ["workers-ai", "modal", "together", "gsv", "other"]) {
+      assert.equal(inferenceProviderFromName(name), name);
+    }
+    assert.equal(inferenceProviderFromName(), "gsv");
+    assert.equal(inferenceProviderFromName("private-provider-name"), "other");
+    assert.equal(inferenceProviderSchema.safeParse("private-provider-name").success, false);
+  });
+  it("reports memory admission failures without including memory contents", () => {
+    const event = {
+      stream: "operational", name: "memory.review.admission.failed",
+      properties: { diagnosticId: "11111111-1111-4111-8111-111111111111" },
+    };
+    assert.ok(telemetryRecordSchema.safeParse(createTelemetryRecord({ ...INPUT, event })).success);
+    assert.throws(() => createTelemetryRecord({ ...INPUT, component: "accounts", event }));
+    for (const field of ["error", "archivePath", "summary", "contents"]) {
+      assert.throws(() => createTelemetryRecord({ ...INPUT, event: { ...event, properties: { ...event.properties, [field]: "private" } } }));
+    }
+  });
+  it("distinguishes an aborted delegation from a failed delegation", () => {
+    for (const outcome of ["aborted", "failed"]) {
+      const record = createTelemetryRecord({
+        ...INPUT,
+        event: { stream: "operational", name: "delegation.finished", properties: { outcome, durationMs: 123 } },
+      });
+      assert.equal(record.event.properties.outcome, outcome);
+    }
+  });
+
+  it("reports setup recovery failures without accepting raw diagnostics", () => {
+    const event = {
+      stream: "operational", name: "installation.setup.failed",
+      properties: { diagnosticId: "11111111-1111-4111-8111-111111111111", stage: "recovery", outcome: "failed", errorType: "TypeError", durationMs: 12 },
+    };
+    assert.ok(telemetryRecordSchema.safeParse(createTelemetryRecord({ ...INPUT, event })).success);
+    assert.throws(() => createTelemetryRecord({ ...INPUT, component: "accounts", event }));
+    for (const extra of [{ cause: "private" }, { errorType: "private-provider-value" }, { diagnosticId: "private" }]) {
+      assert.throws(() => createTelemetryRecord({ ...INPUT, event: { ...event, properties: { ...event.properties, ...extra } } }));
+    }
+  });
   it("allows correlated metadata timings only from the three lookup owners", () => {
     const event = {
       stream: "operational", name: "inference.metadata.finished",
@@ -103,7 +148,7 @@ describe("telemetry contract", () => {
     });
 
     assert.equal(telemetryRecordSchema.safeParse(failure).success, true);
-    for (const provider of ["modal", "gsv"]) {
+    for (const provider of ["modal", "together", "gsv", "other"]) {
       assert.equal(telemetryRecordSchema.safeParse({
         ...failure, event: { ...failure.event, properties: { ...failure.event.properties, provider } },
       }).success, true);
@@ -143,9 +188,11 @@ describe("telemetry contract", () => {
     });
 
     assert.equal(telemetryRecordSchema.safeParse(failure).success, true);
-    assert.equal(telemetryRecordSchema.safeParse({
-      ...failure, event: { ...failure.event, properties: { ...failure.event.properties, provider: "modal" } },
-    }).success, true);
+    for (const provider of ["modal", "together", "other"]) {
+      assert.equal(telemetryRecordSchema.safeParse({
+        ...failure, event: { ...failure.event, properties: { ...failure.event.properties, provider } },
+      }).success, true);
+    }
     assert.equal(telemetryRecordSchema.safeParse({
       ...failure,
       event: {
@@ -296,6 +343,64 @@ describe("integration.connected", () => {
       integrationProviderFromUrl("https://user:secret@mcp.example.com/private/path"),
     ]) {
       assert.equal(integrationProviderSchema.safeParse(value).success, true);
+      assert.equal(value, "other");
+    }
+  });
+});
+
+describe("ship.message.committed", () => {
+  const committed = (properties) => telemetryRecordSchema.safeParse(createTelemetryRecord(
+    {
+      installationId: "inst_telemetry",
+      component: "gateway",
+      event: { stream: "product", name: "ship.message.committed", properties },
+    },
+    1_789_000_000_000,
+    "11111111-1111-4111-8111-111111111111",
+  ));
+
+  it("accepts the platform breakdown and keeps it optional for rolling upgrades", () => {
+    assert.equal(committed({ delivery: "client", hasMedia: false }).success, true);
+    assert.equal(committed({ delivery: "client", hasMedia: false, platform: "phone" }).success, true);
+    assert.equal(committed({ delivery: "adapter", hasMedia: true, platform: "telegram" }).success, true);
+  });
+
+  it("rejects platforms outside the closed allowlist", () => {
+    for (const platform of ["browser", "gsv-cli-123", ""]) {
+      assert.throws(() => committed({ delivery: "client", hasMedia: false, platform }));
+    }
+  });
+
+  it("classifies reported peer platforms into the allowlist", () => {
+    assert.equal(shipPlatformFromPeer("web"), "web");
+    assert.equal(shipPlatformFromPeer(" Phone "), "phone");
+    assert.equal(shipPlatformFromPeer("tablet"), "tablet");
+    assert.equal(shipPlatformFromPeer("desktop"), "desktop");
+    assert.equal(shipPlatformFromPeer("browser"), "web");
+    assert.equal(shipPlatformFromPeer("macos"), "cli");
+    assert.equal(shipPlatformFromPeer("linux"), "cli");
+    assert.equal(shipPlatformFromPeer("windows"), "cli");
+    assert.equal(shipPlatformFromPeer("javascript"), "other");
+    assert.equal(shipPlatformFromPeer("telegram"), "other");
+    assert.equal(shipPlatformFromPeer(""), "other");
+    assert.equal(shipPlatformFromPeer(undefined), "other");
+  });
+
+  it("classifies adapter names into the allowlist", () => {
+    assert.equal(shipPlatformFromAdapter("telegram"), "telegram");
+    assert.equal(shipPlatformFromAdapter("Discord"), "discord");
+    assert.equal(shipPlatformFromAdapter("slack"), "slack");
+    assert.equal(shipPlatformFromAdapter("whatsapp"), "other");
+    assert.equal(shipPlatformFromAdapter("web"), "other");
+    assert.equal(shipPlatformFromAdapter(""), "other");
+  });
+
+  it("only ever returns allowlist members", () => {
+    for (const value of [
+      shipPlatformFromPeer("gsv-cli-11111111-1111-4111-8111-111111111111"),
+      shipPlatformFromAdapter("acme-internal"),
+    ]) {
+      assert.equal(shipPlatformSchema.safeParse(value).success, true);
       assert.equal(value, "other");
     }
   });

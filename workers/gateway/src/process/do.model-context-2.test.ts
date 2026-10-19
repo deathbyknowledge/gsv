@@ -344,6 +344,7 @@ describe("model context", () => {
         "fs.read",
         { path: "/root/allowed.txt" },
         undefined,
+        undefined,
       );
       expect(process.tools.executeCodeModeTool).not.toHaveBeenCalled();
       expect(process.store.tools.getResults(runId)).toEqual([]);

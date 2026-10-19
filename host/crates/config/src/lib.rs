@@ -8,6 +8,7 @@ use std::marker::PhantomData;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
+pub mod installer;
 pub mod release;
 
 pub const DEFAULT_SESSION_KEY: &str = "agent:main:cli:dm:main";

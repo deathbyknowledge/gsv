@@ -11,13 +11,13 @@ function fixture() {
   const reopen = () => new OwnerWelcome(structuredClone(stored), { save }, "https://gsv.space", fetcher);
   return { fetcher, save, reopen, stored: () => stored };
 }
-const invite = { id: "invite_owned", state: "claimed", handle: null, origin: null, lastError: null };
+const operationId = crypto.randomUUID();
 
-describe("desktop invite recovery", () => {
+describe("desktop signup recovery", () => {
   it("persists verification secrets before sending and authenticates after a lost verification response", async () => {
     const f = fixture();
     let client = f.reopen();
-    await client.save({ flow: "create", inviteCode: "invite_private" });
+    await client.save({ flow: "create", operationId });
     let sessionSecret = "";
     f.fetcher.mockImplementationOnce(async (_url, options) => {
       const input = JSON.parse(String(options?.body));
@@ -32,29 +32,25 @@ describe("desktop invite recovery", () => {
     f.fetcher.mockImplementationOnce(async (_url, options) => {
       expect(new Headers(options?.headers).get("authorization")).toBe(`Bearer ${sessionSecret}`);
       expect(options?.credentials).toBe("omit");
-      return Response.json({ email: "tester@example.com", expiresAt: Date.now() + 60_000, spaceDomain: "gsv.space", spaces: [], invites: [] });
+      return Response.json({ email: "tester@example.com", expiresAt: Date.now() + 60_000, spaceDomain: "gsv.space", spaces: [], setups: [], signupEnabled: true });
     });
     expect((await client.session())?.email).toBe("tester@example.com");
-    expect(f.stored().value?.inviteCode).toBe("invite_private");
+    expect(f.stored().value?.operationId).toBe(operationId);
   });
 
-  it("saves the selected invite and handle before allocation and retries the same operation after reopening", async () => {
+  it("saves the operation and handle before allocation and retries the same operation after reopening", async () => {
     const f = fixture();
     let client = f.reopen();
-    await client.save({ sessionSecret: "a".repeat(64), inviteCode: "invite_private" });
-    f.fetcher.mockResolvedValueOnce(Response.json(invite));
-    await client.claim();
-    expect(f.stored().value).toMatchObject({ inviteCode: null, inviteId: invite.id });
+    await client.save({ sessionSecret: "a".repeat(64), operationId });
     f.fetcher.mockImplementationOnce(async () => {
-      expect(f.stored().value).toMatchObject({ inviteId: invite.id, handle: "new-space" });
+      expect(f.stored().value).toMatchObject({ operationId, handle: "new-space" });
       throw new TypeError("Lost allocation response");
     });
-    await expect(client.prepare(invite.id, "new-space")).rejects.toThrow();
+    await expect(client.prepare("new-space")).rejects.toThrow();
     client = f.reopen();
-    f.fetcher.mockResolvedValueOnce(Response.json({ invite: { ...invite, state: "provisioning", handle: "new-space", origin: "https://new-space.gsv.space" },
-      origin: "https://new-space.gsv.space", handle: "new-space", onboardingToken: `onboard_${"a".repeat(43)}`, expiresAt: Date.now() + 60_000 }));
-    expect((await client.prepare(client.state.inviteId!, client.state.handle!)).handle).toBe("new-space");
-    expect(f.fetcher.mock.calls[1][0]).toBe(f.fetcher.mock.calls[2][0]);
+    f.fetcher.mockResolvedValueOnce(Response.json({ origin: "https://new-space.gsv.space", handle: "new-space", onboardingToken: `onboard_${"a".repeat(43)}`, expiresAt: Date.now() + 60_000 }));
+    expect((await client.prepare(client.state.handle!)).handle).toBe("new-space");
+    expect(f.fetcher.mock.calls[0][1]?.body).toBe(f.fetcher.mock.calls[1][1]?.body);
   });
 
   it("does not call the server if private persistence fails and preserves logout authority on a network failure", async () => {
@@ -72,15 +68,14 @@ describe("desktop invite recovery", () => {
     expect(f.stored().value).toBeNull();
   });
 
-  it("clears a completed invite after recovering a lost setup response without signing the owner out", async () => {
+  it("clears a completed signup after recovering a lost setup response without signing the owner out", async () => {
     const f = fixture();
     const beforeSetup = f.reopen();
-    await beforeSetup.save({ flow: "create", sessionSecret: "a".repeat(64), inviteId: invite.id, handle: "new-space" });
+    await beforeSetup.save({ flow: "create", sessionSecret: "a".repeat(64), operationId, handle: "new-space" });
     const resumed = f.reopen();
-    f.fetcher.mockResolvedValueOnce(Response.json({ invite: { ...invite, state: "active", handle: "new-space", origin: "https://new-space.gsv.space" },
-      origin: "https://new-space.gsv.space", handle: "new-space", onboardingToken: null, expiresAt: null }));
-    expect((await resumed.prepare(invite.id, "new-space")).onboardingToken).toBeNull();
-    expect(f.reopen().state).toMatchObject({ flow: "open", sessionSecret: "a".repeat(64), inviteId: null, inviteCode: null, handle: null });
-    await expect(beforeSetup.save({ flow: "create", inviteId: invite.id })).rejects.toThrow("stale write");
+    f.fetcher.mockResolvedValueOnce(Response.json({ origin: "https://new-space.gsv.space", handle: "new-space", onboardingToken: null, expiresAt: null }));
+    expect((await resumed.prepare("new-space")).onboardingToken).toBeNull();
+    expect(f.reopen().state).toMatchObject({ flow: "open", sessionSecret: "a".repeat(64), operationId: null, handle: null });
+    await expect(beforeSetup.save({ flow: "create", operationId })).rejects.toThrow("stale write");
   });
 });

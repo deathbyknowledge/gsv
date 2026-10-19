@@ -27,8 +27,11 @@ pub struct Welcome {
     pub flow: Flow,
     pub session_secret: Option<String>,
     pub challenge: Option<Challenge>,
-    pub invite_code: Option<String>,
-    pub invite_id: Option<String>,
+    #[serde(default, alias = "inviteId")]
+    pub operation_id: Option<String>,
+    // Read old saved sign-ins without keeping the retired signup code.
+    #[serde(default, rename = "inviteCode", skip_serializing)]
+    pub retired_invite_code: Option<String>,
     pub handle: Option<String>,
 }
 
@@ -104,8 +107,11 @@ impl Welcome {
         };
         if gateway_origin(&self.origin)? != self.origin
             || self.session_secret.as_deref().is_some_and(|v| !secret(v))
-            || self.invite_code.as_ref().is_some_and(|v| v.len() > 128)
-            || self.invite_id.as_ref().is_some_and(|v| v.len() > 128)
+            || self
+                .retired_invite_code
+                .as_ref()
+                .is_some_and(|v| v.len() > 128)
+            || self.operation_id.as_ref().is_some_and(|v| v.len() > 128)
             || self.handle.as_ref().is_some_and(|v| v.len() > 63)
             || self.challenge.as_ref().is_some_and(|c| {
                 Uuid::parse_str(&c.id).is_err() || c.email.len() > 254 || !secret(&c.browser_secret)
@@ -122,6 +128,21 @@ mod tests {
     use super::*;
 
     #[test]
+    fn reads_previous_signup_state_without_retaining_the_code() {
+        let previous = serde_json::json!({
+            "origin": "https://gsv.space", "flow": "create", "sessionSecret": null,
+            "challenge": null, "inviteCode": "invite_retired", "inviteId": "invite_existing", "handle": "alice"
+        });
+        let welcome: Welcome = serde_json::from_value(previous).unwrap();
+        welcome.validate().unwrap();
+        assert_eq!(welcome.operation_id.as_deref(), Some("invite_existing"));
+        let saved = serde_json::to_value(welcome).unwrap();
+        assert!(saved.get("inviteCode").is_none());
+        assert!(saved.get("inviteId").is_none());
+        assert_eq!(saved["operationId"], "invite_existing");
+    }
+
+    #[test]
     fn saves_before_requests_and_fences_late_writes_after_sign_out() {
         let directory = tempfile::tempdir().unwrap();
         let mut store = WelcomeStore::open(directory.path().to_owned()).unwrap();
@@ -134,8 +155,8 @@ mod tests {
                 email: "test@example.com".into(),
                 browser_secret: "b".repeat(64),
             }),
-            invite_code: Some("invite_test".into()),
-            invite_id: None,
+            retired_invite_code: None,
+            operation_id: Some(Uuid::new_v4().to_string()),
             handle: None,
         };
         let saved = store

@@ -1,4 +1,6 @@
 import type * as Cloudflare from "alchemy/Cloudflare";
+import { configuredOriginAliases, deploymentPresentationSchema, type PublicDeploymentConfig } from "../../packages/gsv/src/services/deployment.ts";
+import { operatorUpdateCatalogSchema, type OperatorUpdateCatalog } from "../../packages/gsv/src/services/operator-updates.ts";
 import * as Output from "alchemy/Output";
 import { operatorResourceCatalogSchema, type OperatorResourceCatalog } from "../../workers/installations/src/operator-resource-contracts.ts";
 import { GsvRuntime, gsvRuntimeDependencies, type GsvRuntimeProps, type GsvRuntimeServices } from "./runtime.ts";
@@ -10,6 +12,9 @@ export type GsvOperatorAccess = { kind: "operator" } | {
 
 export type GsvDeploymentProps = Omit<GsvRuntimeProps, "services"> & {
   domain: string;
+  domainAliases?: string[];
+  presentation?: Omit<PublicDeploymentConfig, "primaryDomain" | "legacyDomains">;
+  operatorUpdates?: OperatorUpdateCatalog;
   adminOrigin: string;
   access: GsvOperatorAccess;
   services?: Partial<GsvRuntimeServices> & {
@@ -24,6 +29,11 @@ export type GsvDeploymentProps = Omit<GsvRuntimeProps, "services"> & {
       entrypoint: string;
       namespaces: readonly { className: string; kind: "web-search-installation" }[];
     };
+    instancesLifecycle?: {
+      worker: Cloudflare.Workers.Worker;
+      entrypoint: string;
+      namespaces: readonly { className: string; kind: "instance-installation" | "instance-computer" }[];
+    };
   };
   /** Explicit current and historical operator inventory, including BYOK providers; known-sink checks do not discover that history. */
   deletion?: { operatorResources: OperatorResourceCatalog };
@@ -36,6 +46,8 @@ export type GsvDeploymentProps = Omit<GsvRuntimeProps, "services"> & {
     /** Accounts sends owner codes independently of installation-scoped mail. The operator owns the verified sender and stable secret. */
     ownerEmail?: { from: string; allowedRecipients?: string[]; authSecret: Cloudflare.Workers.WorkerBindingProps[string] };
     ownerSignupOrigin?: string;
+    openRegistration?: boolean;
+    ownerOriginAliases?: string[];
   };
   inference: {
     workerName: string;
@@ -57,7 +69,7 @@ export type GsvDeploymentProps = Omit<GsvRuntimeProps, "services"> & {
 export const GsvDeployment = (props: GsvDeploymentProps, dependencies = gsvRuntimeDependencies) => {
   const { Cloudflare, Effect, retain } = dependencies;
   return Effect.gen(function* () {
-  if (props.deletion && (props.services?.installationDirectory || props.services?.inferenceExecution || props.services?.mailOutbound || props.services?.webSearch)) {
+  if (props.deletion && (props.services?.installationDirectory || props.services?.inferenceExecution || props.services?.mailOutbound || props.services?.webSearch || props.services?.instances)) {
     throw new Error("An adopted operator composition must supply its complete resource inventory through GsvDeletionResourceBindings");
   }
   if (Boolean(props.services?.inferenceExecution) !== Boolean(props.services?.inferenceLifecycle)) {
@@ -76,6 +88,15 @@ export const GsvDeployment = (props: GsvDeploymentProps, dependencies = gsvRunti
     || webSearchLifecycle.namespaces.some((namespace) => !namespace.className.trim()
       || namespace.kind !== "web-search-installation"))) {
     throw new Error("Supplied web search lifecycle requires valid search namespace ownership");
+  }
+  const instancesLifecycle = props.services?.instancesLifecycle;
+  if (Boolean(props.services?.instances) !== Boolean(instancesLifecycle)) throw new Error("Supplied instances require their owned lifecycle and namespace inventory");
+  if (instancesLifecycle && (!instancesLifecycle.entrypoint.trim()
+    || ["instance-installation", "instance-computer"].some(kind => !instancesLifecycle.namespaces.some(namespace => namespace.kind === kind))
+    || new Set(instancesLifecycle.namespaces.map(namespace => namespace.className.trim())).size !== instancesLifecycle.namespaces.length
+    || instancesLifecycle.namespaces.some(namespace => !namespace.className.trim()
+      || !["instance-installation", "instance-computer"].includes(namespace.kind)))) {
+    throw new Error("Supplied instances lifecycle requires valid instance namespace ownership");
   }
   const domain = new URL(`https://${props.domain}`);
   const admin = new URL(props.adminOrigin);
@@ -136,6 +157,11 @@ export const GsvDeployment = (props: GsvDeploymentProps, dependencies = gsvRunti
     }
   }
   const compatibility = props.compatibility ?? { date: "2026-09-01", flags: ["nodejs_compat" as const] };
+  const publicConfiguration = JSON.stringify(deploymentPresentationSchema.parse({
+    ...props.presentation, primaryDomain: props.domain, legacyDomains: props.domainAliases ?? [],
+  }));
+  const ownerOriginAliases = JSON.stringify(props.installations.ownerOriginAliases ?? []);
+  configuredOriginAliases(ownerOriginAliases);
   const observability = { enabled: true, logs: { enabled: true, invocationLogs: false, persist: false }, traces: { enabled: false } };
   let directory = props.services?.installationDirectory;
   let database: Cloudflare.D1.Database | undefined;
@@ -144,17 +170,19 @@ export const GsvDeployment = (props: GsvDeploymentProps, dependencies = gsvRunti
     // supplied through its already-adopted directory Worker, never replayed here.
     database = yield* Cloudflare.D1.Database(`${props.logicalPrefix}InstallationsDatabase`, {
       name: props.installations.databaseName,
-      migrationsDir: props.installations.migrationsDirectory,
-      migrationsTable: "installation_migrations",
+      migrations: { dir: props.installations.migrationsDirectory, table: "installation_migrations" },
     }).pipe(retain(props.allowResourceDeletion !== true));
     const bindings: Cloudflare.Workers.WorkerBindingProps = {
       INSTALLATIONS_DB: database, ENVIRONMENT: "production", GSV_BASE_DOMAIN: props.domain,
+      GSV_DOMAIN_ALIASES: JSON.stringify(props.domainAliases ?? []), GSV_PUBLIC_CONFIG: publicConfiguration,
       GSV_ADMIN_ORIGIN: props.adminOrigin, GSV_OPERATOR_ACCESS_MODE: props.access.kind === "operator" ? "operator" : "access",
       GSV_ADMIN_ACCESS_TEAM_DOMAIN: props.access.kind === "cloudflare-access" ? props.access.teamDomain : "",
       GSV_ADMIN_ACCESS_AUD: accessAudience,
       GSV_OWNER_OIDC_ISSUER: props.installations.ownerIdentity?.issuer ?? "",
       GSV_OWNER_OIDC_CLIENT_ID: props.installations.ownerIdentity?.clientId ?? "",
       GSV_OWNER_SIGNUP_ORIGIN: props.installations.ownerSignupOrigin ?? "",
+      GSV_SIGNUP_ENABLED: props.installations.openRegistration ? "true" : "false",
+      GSV_OWNER_ORIGIN_ALIASES: ownerOriginAliases,
     };
     if (props.installations.ownerIdentity?.clientSecret) bindings.GSV_OWNER_OIDC_CLIENT_SECRET = props.installations.ownerIdentity.clientSecret;
     if (props.installations.ownerEmail) {
@@ -195,8 +223,15 @@ export const GsvDeployment = (props: GsvDeploymentProps, dependencies = gsvRunti
     }).pipe(retain(props.allowResourceDeletion !== true));
     inference = inferenceWorker;
   }
+  const extraBindings: Cloudflare.Workers.WorkerBindingProps = { GSV_PUBLIC_CONFIG: publicConfiguration };
+  if (props.operatorUpdates) extraBindings.GSV_OPERATOR_UPDATES = JSON.stringify(operatorUpdateCatalogSchema.parse(props.operatorUpdates));
+  if (props.installations.ownerEmail) {
+    extraBindings.GSV_OWNER_SIGNUP_URL = new URL("/owner/signup/?resume=1", props.adminOrigin).href;
+  }
+  Object.assign(extraBindings, props.services?.extraBindings);
   const runtime = yield* GsvRuntime({ ...props, compatibility,
-    services: { ...props.services, installationDirectory: directory, inferenceExecution: inference } }, dependencies);
+    services: { ...props.services, installationDirectory: directory, inferenceExecution: inference,
+      extraBindings } }, dependencies);
   const inferenceLifecycle = props.services?.inferenceLifecycle ?? {
     worker: inferenceWorker!, entrypoint: "InferenceLifecycleEntrypoint",
     namespaces: [{ className: "InferenceExecutor", kind: "inference-executor" as const }],
@@ -211,6 +246,12 @@ export const GsvDeployment = (props: GsvDeploymentProps, dependencies = gsvRunti
         entrypoint: webSearchLifecycle.entrypoint, props: { authority: "installation-deletion" } }],
     });
   }
+  if (instancesLifecycle) {
+    yield* directory.bind(`${props.logicalPrefix}DirectoryInstancesDeletionBinding`, {
+      bindings: [{ type: "service", name: "DELETION_OWNER_INSTANCES", service: instancesLifecycle.worker.workerName,
+        entrypoint: instancesLifecycle.entrypoint, props: { authority: "installation-deletion" } }],
+    });
+  }
   yield* GsvDeletionDiscoveryBindings(`${props.logicalPrefix}DirectoryDeletionDiscoveryBinding`, directory, [
     { ownerId: "gateway", worker: runtime.gateway, className: "Kernel", kind: "kernel" },
     { ownerId: "gateway", worker: runtime.gateway, className: "Process", kind: "process" },
@@ -218,6 +259,7 @@ export const GsvDeployment = (props: GsvDeploymentProps, dependencies = gsvRunti
     { ownerId: "gateway", worker: runtime.ripgit, className: "Repository", kind: "ripgit" },
     ...inferenceLifecycle.namespaces.map((namespace) => ({ ...namespace, ownerId: "inference", worker: inferenceLifecycle.worker })),
     ...(webSearchLifecycle?.namespaces.map((namespace) => ({ ...namespace, ownerId: "web-search", worker: webSearchLifecycle.worker })) ?? []),
+    ...(instancesLifecycle?.namespaces.map(namespace => ({ ...namespace, ownerId: "instances", worker: instancesLifecycle.worker })) ?? []),
     ...gsvAdapterDeletionNamespaces(props.services?.adapters ?? []),
   ]);
   if (catalog && database) {

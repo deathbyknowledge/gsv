@@ -2,18 +2,21 @@
 
 Step-by-step guides for common tasks. Each page focuses on one concrete goal — pick the one that matches what you're trying to do.
 
-- [Deploy / Update / Remove](/how-to/deploy) — get GSV running on your Cloudflare account, keep it updated, or take it down
+- [Deploy / Update / Remove](/how-to/deploy) — get Ship running on your Cloudflare account, keep it updated, or take it down
 - [Deploy with Alchemy](/how-to/deploy-with-alchemy) — the operator composition, its inputs, and the first bootstrap link
-- [Operate a GSV Deployment](/how-to/operate-gsv) — give people spaces, connect services, and verify cleanup
+- [Operate a Ship Deployment](/how-to/operate-gsv) — give people their own Ships, connect services, and verify cleanup
 - [Retire a Standalone Deployment](/how-to/standalone-retirement) — what to pin and migrate if you ran the old single-space stack
-- [Run GSV for Your Organisation](/how-to/organisations) — operate spaces for your people and talk to us about your deployment
-- [Invite People](/how-to/invite-people) — add accounts to your space, set passwords, and remove access
+- [Run Ship for Your Organisation](/how-to/organisations) — host Ships for your people and talk to us about your deployment
+- [One person per Ship](/how-to/invite-people) — personal sign-in, root access, and password recovery
 - [Install Host Applications](/how-to/install-host-apps) — install or upgrade the CLI, machine daemon, and native Desktop
+- [Use Voice Input](/how-to/voice-input) — record a message draft in the browser or dictate on Desktop
 - [Connect Devices](/how-to/connect-devices) — turn your laptop, phone, and server into one computer your agent can act across
-- [Connect a Messenger](/how-to/messengers) — talk to GSV from Telegram, Discord, or Slack
+- [Connect a Messenger](/how-to/messengers) — talk to Ship from Telegram, Discord, or Slack
 - [Bring Your Own Model](/how-to/bring-your-own-model) — use your own provider key for better speed and model choice
-- [Integrations (MCP)](/how-to/integrations) — wire in MCP servers to give GSV new tools
-- [Browse the Web](/how-to/browse-web) — pair the browser extension so GSV can act in your logged-in browser
+- [Integrations (MCP)](/how-to/integrations) — wire in MCP servers to give Ship new tools
+- [Browse the Web](/how-to/browse-web) — pair the browser extension so Ship can act in your logged-in browser
+- [Cloud Browsers](/how-to/cloud-browsers) — start an on-demand browser and remember website logins
+- [Cloud Computers](/how-to/cloud-computers) — run Linux builds and scripts while your computer is offline
 
 ## See also
 

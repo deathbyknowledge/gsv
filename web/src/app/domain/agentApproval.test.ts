@@ -1,8 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { DEFAULT_TOOL_APPROVAL_POLICY } from "@humansandmachines/gsv/protocol";
+import { DEFAULT_TOOL_APPROVAL_POLICY, isToolApprovalTargetSelector } from "@humansandmachines/gsv/protocol";
 import {
   APPROVAL_CATEGORIES,
   approvalPolicyAccount,
+  approvalRouteMayDecide,
   approvalRuleForRequest,
   askingCategories,
   composeApprovalChoices,
@@ -225,5 +226,42 @@ describe("resolveApprovalAction", () => {
     expect(resolveApprovalAction(policy, "fs.read", "gsv")).toBe("deny");
     expect(resolveApprovalAction(policy, "web.search", "gsv")).toBe("auto");
     expect(resolveApprovalAction({ default: "auto", rules: [] }, "mail.send", "gsv")).toBe("ask");
+  });
+
+  it("ranks route selectors between machine-wide and named rules, and never matches them without route metadata", () => {
+    const browsers = { route: "instance", platform: "browser" } as const;
+    const policy: ApprovalPolicyValue = { default: "ask", rules: [
+      { match: "shell.exec", target: "targets/*", action: "auto" },
+      { match: "shell.exec", target: browsers, action: "deny" },
+    ] };
+    expect(resolveApprovalAction(policy, "shell.exec", "browser-1")).toBe("auto");
+    expect(resolveApprovalAction(policy, "shell.exec", "gsv")).toBe("ask");
+    expect(approvalRouteMayDecide(policy, "shell.exec", "browser-1")).toBe(true);
+    expect(approvalRouteMayDecide(policy, "shell.exec", "gsv")).toBe(false);
+    expect(approvalRouteMayDecide(policy, "fs.read", "browser-1")).toBe(false);
+    const agreeing: ApprovalPolicyValue = { default: "ask", rules: [{ match: "shell.exec", target: browsers, action: "ask" }] };
+    expect(approvalRouteMayDecide(agreeing, "shell.exec", "browser-1")).toBe(false);
+  });
+});
+
+describe("route selector rules", () => {
+  const isRouteRule = (rule: ApprovalPolicyValue["rules"][number]) => rule.target !== undefined && isToolApprovalTargetSelector(rule.target);
+  const browsers = { route: "instance", platform: "browser" } as const;
+
+  it("leaves cloud-browser rules to their own settings row", () => {
+    const opened = composeApprovalChoices(shipped, null, { shell: "ask", "machine-files": "ask", web: "ask" });
+    expect(opened.rules.filter((rule) => isRouteRule(rule))).toEqual(
+      shipped.rules.filter((rule) => isRouteRule(rule)));
+    const browsersAsk: ApprovalPolicyValue = { ...shipped, rules: shipped.rules.map((rule) =>
+      isRouteRule(rule) ? { ...rule, action: "ask" as const } : rule) };
+    expect(currentApprovalChoices(composeApprovalChoices(browsersAsk, null, { shell: "auto" }))).toMatchObject({ shell: "auto" });
+    const allowed = composeApprovalChoices(browsersAsk, null, { shell: "auto" });
+    expect(allowed.rules).toContainEqual({ match: "shell.exec", target: browsers, action: "ask" });
+  });
+
+  it("keeps a selector rule in place when always allow writes the named target", () => {
+    const policy = upsertApprovalRule(shipped, approvalRuleForRequest("shell.exec", "browser-1"));
+    expect(policy.rules.slice(0, shipped.rules.length)).toEqual(shipped.rules);
+    expect(policy.rules.at(-1)).toEqual({ match: "shell.exec", target: "browser-1", action: "auto" });
   });
 });

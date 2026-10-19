@@ -1,6 +1,6 @@
 # Integrations (MCP)
 
-Integrations give GSV new tools through [MCP](https://modelcontextprotocol.io) servers — calendars, search, your own internal services, anything that speaks MCP. Once a server is connected, your agents discover its tools with `mcp list` and `mcp search`, and call them directly or from CodeMode.
+Integrations give Ship new tools through [MCP](https://modelcontextprotocol.io) servers — calendars, search, your own internal services, anything that speaks MCP. Once a server is connected, your agents discover its tools with `mcp list` and `mcp search`, and call them directly or from CodeMode.
 
 ## Add an MCP server
 
@@ -9,9 +9,20 @@ Integrations give GSV new tools through [MCP](https://modelcontextprotocol.io) s
 3. If the server needs an API key or another HTTP header, open **Custom headers** and add the header name and value.
 4. Click **add server.**
 
-Servers that use OAuth show a **sign in** link on their row after they are added; follow it to authorise GSV. Each row lists the server's tool, resource and prompt counts. **refresh** re-reads its catalogue and **remove** disconnects it. Servers added by another account appear as **read only**.
+Servers that use OAuth show a **sign in** link on their row after they are added; follow it to authorise Ship. Each row lists the server's tool, resource and prompt counts. **refresh** re-reads its catalogue and **remove** disconnects it. Servers added by another account appear as **read only**.
 
 Adding a server requires the `sys.mcp.add` capability; calling a tool through it asks for approval by default (see the [approval policy](/reference/configuration#tool-approval-policy)).
+
+Ship renews OAuth tokens automatically when the server supports it. Concurrent
+requests share the same renewal and sign-in flow. If the server
+requires you to authorise again, its row shows **authenticating** and a **sign in**
+link, including when this happens during discovery or a tool call. Follow that
+link to restore the existing connection; its server ID stays the same. **refresh**
+retries a failed connection or replaces an expired sign-in link. A tool call that
+required sign-in must be run again after authorization completes.
+
+If removing a server fails, it stays listed. Retry **remove** to finish deleting
+it, or use **refresh** to reconnect the saved server.
 
 ## From a shell
 

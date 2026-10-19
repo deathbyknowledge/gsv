@@ -3,16 +3,46 @@ import { createHash } from "node:crypto";
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
+import { fileURLToPath } from "node:url";
+import { legacyDatabaseProps, legacyDatabaseSeed } from "../acceptance/legacy-upgrade/database.ts";
 import { fixtureAdminRequest } from "../acceptance/legacy-upgrade/fixture-admin.ts";
 import { LEGACY_PRIVATE_REVISION, LEGACY_PUBLIC_REVISION, assertUpgradeEnvironment, assertUpgradeResourceContinuity, upgradeFixturePlan, upgradeFixtureSchema } from "../acceptance/legacy-upgrade/plan.ts";
 import { assertUpgradeBuildReceipt } from "../acceptance/legacy-upgrade/receipt.ts";
 import { readPrivateState, writePrivateState } from "../acceptance/legacy-upgrade/private-state.ts";
+import { planInstallationMigrationAdoption } from "../src/installation-migration-adoption.ts";
+import { installationMigrationInventory } from "../src/installation-migration-inventory.ts";
 
 const fixture = upgradeFixtureSchema.parse({ accountId: "1".repeat(32), zoneId: "2".repeat(32), domain: "example.com", fixtureId: "a1b2c3d4", profile: "fixture",
   publicRepository: "/sources/public", privateRepository: "/sources/private", currentPublicRevision: "3".repeat(40), currentPrivateRevision: "4".repeat(40), artifactsDirectory: "/evidence" });
 const plan = upgradeFixturePlan(fixture);
 const secret = "a".repeat(64);
 const environment = { FIXTURE_ADMIN_SECRET: secret, FIXTURE_ADMIN_ORIGIN: plan.adminOrigin };
+
+it("seeds the original ledger for adoption and relinquishes DDL ownership before handoff", () => {
+  expect(legacyDatabaseProps(plan.names.database, fixture.artifactsDirectory, "legacy"))
+    .toEqual({ name: plan.names.database, importFiles: ["/evidence/legacy/migrations/database.seed.sql"] });
+  for (const phase of ["handoff", "current"] as const) {
+    expect(legacyDatabaseProps(plan.names.database, fixture.artifactsDirectory, phase)).toEqual({ name: plan.names.database });
+  }
+  const migrations = installationMigrationInventory.slice(0, 2).map(({ name }) => ({ name,
+    sql: readFileSync(fileURLToPath(new URL(`../../workers/installations/migrations/${name}`, import.meta.url)), "utf8") }));
+  const database = new DatabaseSync(":memory:");
+  try {
+    database.exec(legacyDatabaseSeed(migrations.toReversed()));
+    expect(database.prepare("PRAGMA table_info(d1_migrations)").all().map(({ name, type, notnull, pk }) => ({ name, type, notnull, pk })))
+      .toEqual([{ name: "id", type: "TEXT", notnull: 0, pk: 1 }, { name: "name", type: "TEXT", notnull: 1, pk: 0 },
+        { name: "applied_at", type: "TEXT", notnull: 1, pk: 0 }]);
+    const adoption = planInstallationMigrationAdoption({ database, sources: migrations, handoffs: [], resetProofs: [], context: {
+      operationId: "fixture-adoption", environment: plan.stage, accountId: fixture.accountId, databaseId: "fixture-database",
+      legacyRunnerRevision: LEGACY_PRIVATE_REVISION, directoryRunnerRevision: fixture.currentPublicRevision,
+      policyRunnerRevision: fixture.currentPrivateRevision, legacySourceEvidenceSha256: "a".repeat(64), legacyRunnerFrozen: true,
+      legacyLedger: "d1_migrations", directoryLedger: "installation_migrations", policyLedger: "inference_migrations",
+    } });
+    expect(adoption.owners.find(({ owner }) => owner === "directory")?.seed.map(({ id, name }) => ({ id, name })))
+      .toEqual(migrations.map(({ name }, index) => ({ id: String(index + 1).padStart(5, "0"), name })));
+  } finally { database.close(); }
+});
 
 describe("isolated legacy upgrade admission", () => {
   it("requires exact deployment account, profile and unique stage", () => {

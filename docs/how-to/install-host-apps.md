@@ -1,18 +1,18 @@
-# Install and upgrade GSV host applications
+# Install and upgrade Ship host applications
 
-The GSV release is one versioned host distribution. The operator CLI (`gsv`),
-machine daemon (`gsvd`), Desktop, and Desktop's transcription and gesture-vision
-helpers share the version in the repository root `VERSION` file. The CLI
+The Ship release is one versioned host distribution. The operator CLI (`gsv`),
+machine daemon (`gsvd`), Desktop, and Desktop's transcription and speech
+helpers ship together under the version in the repository root `VERSION` file. The CLI
 refuses to manage a mismatched daemon.
 
 ## Supported release artifacts
 
-| Platform | `gsv` | `gsvd` | Desktop | Transcription | Gestures |
+| Platform | `gsv` | `gsvd` | Desktop | Transcription | Spoken replies |
 | --- | --- | --- | --- | --- | --- |
 | Linux x64 | yes | yes | yes | yes | yes |
 | Linux ARM64 | yes | yes | yes | yes | yes |
-| macOS Intel | yes | yes | yes | yes | yes |
-| macOS Apple Silicon | yes | yes | yes | yes | yes |
+| macOS Intel | yes | yes | yes | yes | macOS 13+ |
+| macOS Apple Silicon | yes | yes | yes | yes | macOS 13+ |
 | Windows 10+ x64 | yes | yes | yes | yes | yes |
 
 Windows ARM64 is not a supported release target. Other operating systems and architectures are
@@ -23,18 +23,18 @@ not currently published.
 On Linux or macOS:
 
 ```bash
-curl -fsSL https://install.gsv.space | bash
+curl -fsSL https://install.ship.space | bash
 ```
 
 On Windows, download `gsv-desktop-windows-x64-setup.exe` from the release and
 run it, or use Windows PowerShell 5.1 or PowerShell 7:
 
 ```powershell
-irm https://install.gsv.space/install.ps1 | iex
+irm https://install.ship.space/install.ps1 | iex
 ```
 
 After a successful installation in a local graphical terminal, the script opens
-GSV Desktop automatically. Set `GSV_NO_LAUNCH=1` to skip opening it. Headless,
+Ship Desktop automatically. Set `GSV_NO_LAUNCH=1` to skip opening it. Headless,
 SSH, CI and redirected sessions do not launch Desktop. A launch failure leaves
 the installation intact and prints the error so you can fix it and run
 `gsv desktop` again.
@@ -45,12 +45,12 @@ directory selected during the previous setup. The ZIP contains the same payload 
 `install.ps1`; extract it and run `./install.ps1 -AssetDirectory .`.
 Desktop needs WebView2 and the Visual C++ x64 runtime; the installer downloads
 and verifies Microsoft's installers when either is missing. Internet access is
-needed for missing runtimes even when the GSV payload is already downloaded.
+needed for missing runtimes even when the Ship payload is already downloaded.
 
 For a Windows server without Desktop:
 
 ```powershell
-Invoke-WebRequest -UseBasicParsing https://install.gsv.space/install.ps1 -OutFile install.ps1
+Invoke-WebRequest -UseBasicParsing https://install.ship.space/install.ps1 -OutFile install.ps1
 ./install.ps1 -Headless
 ```
 
@@ -72,11 +72,27 @@ to use text explicitly.
 
 ## Sign-in and multiple windows
 
-Desktop and browser windows can stay connected to the same space at once. They
+Look for the ASCII ship icon to open Ship Desktop. It matches the ship on the
+sign-in page and the browser's Home Screen shortcut.
+
+Desktop starts with **Create your Ship** and **Open Ship**. Create takes you through
+[signup](/get-started/); Open lets you sign in with email or enter a handle or domain.
+The address form also works for Ships owned by someone else or served by another
+operator. Contact invitation links open a modal on the signup site, where you can
+verify your email or enter your Ship address before sign-in and explicit acceptance.
+
+Desktop and browser windows can stay connected to the same Ship at once. They
 receive new conversation messages live and refresh server state after a
-reconnect. A remembered space sign-in lasts 30 days and renews during use.
+reconnect. A remembered sign-in lasts 30 days and renews during use.
 Browser tabs share renewal and sign-out; Desktop has its own stored session.
 A temporary network interruption reconnects without asking you to sign in again.
+
+If self-service setup of a Ship was interrupted, **Continue setup** returns to owner email
+sign-in and your existing Ship. For the Desktop app's configured operator,
+this stays inside the app; another operator's recovery page opens in the browser.
+The owner signs in with the email used at signup, then continues
+setup with fresh authorization instead of creating another Ship.
+For a setup link issued directly by an operator, ask that operator for a new link.
 An incompatible client or rejected connection shows the gateway's error instead
 of retrying indefinitely.
 
@@ -114,7 +130,7 @@ whole, so the installer leaves it and its service alone and adds a separate
 command-line installation in the default directory. To migrate by hand:
 
 ```bash
-curl -fsSL https://install.gsv.space | GSV_INSTALL_DIR="$HOME/.gsv/bin" bash
+curl -fsSL https://install.ship.space | GSV_INSTALL_DIR="$HOME/.gsv/bin" bash
 sudo rm /usr/local/bin/gsv /usr/local/bin/gsvd /usr/local/bin/gsv-desktop \
   /usr/local/bin/gsv-transcribe /usr/local/bin/gsv-vision
 gsv daemon install
@@ -143,7 +159,7 @@ Services. Use UNC paths for network shares and grant that account access.
 Reinstallation and upgrades preserve administrator-configured service settings,
 including its account, startup mode, recovery policy and state-directory access.
 A conflicting `gsvd`
-registration must be resolved by an administrator before GSV can replace it.
+registration must be resolved by an administrator before Ship can replace it.
 
 The protected executable lives at `%ProgramFiles%\GSV\service\gsvd.exe`.
 Daemon enrollment and logs live at `%ProgramData%\GSV\daemon`; CLI and Desktop
@@ -151,7 +167,7 @@ credentials stay in your profile. Only the enrolling user and administrators
 can manage this service. One machine service has one enrolled owner; another
 Windows user cannot silently replace it. `gsv daemon uninstall` stops and
 removes the service and its workspace access grant while retaining enrollment,
-logs, protected service binaries and workspace data. Removing GSV through Apps
+logs, protected service binaries and workspace data. Removing Ship through Apps
 also removes the user applications, shortcut and PATH entry. Saved service
 state remains available for reinstall by the same owner.
 Uninstall still removes the stopped service if its configuration is damaged or
@@ -227,10 +243,16 @@ gsv desktop
 
 `gsv desktop status`, `new`, and `use PID` use same-user local IPC. Desktop
 connects to the gateway as a user; it does not route chat through `gsvd`.
-The installer places `gsv-transcribe` and `gsv-vision` beside Desktop so it can
-supervise the exact same-version helpers. The vision executable embeds its
-checksum-pinned models; their Apache 2.0 license and provenance are installed
-as verified sidecar assets.
+The installer places `gsv-transcribe` and its runtime, plus `gsv-speak`, beside
+Desktop so it can supervise the matching voice helpers. `gsv-speak` bundles its
+Python runtime, pronunciation data and audio libraries. The Kokoro model downloads
+once on first use, is checksum-verified, and then runs from the local cache.
+See [Use voice input](/how-to/voice-input) for Handsfree mode and spoken replies.
+On Linux, installation creates a hidden desktop entry when one is missing, so
+the Wayland shortcut portal can identify Ship when launched from a terminal.
+A failed upgrade restores the previous
+installation. A Windows headless update leaves an existing Desktop installation
+alone.
 
 Desktop uses the same Instrument source as the web UI. It is the only desktop
 implementation shipped by releases. Launching opens the installed version;
@@ -238,36 +260,37 @@ rerun the installer to update it.
 
 After signing in, choose Connect this computer to make it a target. Desktop
 handles pairing and background service installation. Not now skips this step;
-reopen it from the space menu under This computer. An existing connection for
-the same space and account resumes automatically. Connections to another space
+reopen it from the Ship menu under This computer. An existing connection for
+the same Ship and account resumes automatically. Connections to another Ship
 or account and your separate CLI login are preserved. The background service
 continues after Desktop closes.
 
-Linux requires WebKitGTK 4.1 and GStreamer base/good/libav plugins. On Arch:
+Linux requires WebKitGTK 4.1 and GStreamer base/good/libav plugins. Local voice
+also requires libpulse and a running PipeWire PulseAudio server or PulseAudio.
+Ship shares audio devices with other applications. On Arch:
 
 ```bash
-sudo pacman -S --needed webkit2gtk-4.1 gst-plugins-base gst-plugins-good gst-libav
+sudo pacman -S --needed webkit2gtk-4.1 gst-plugins-base gst-plugins-good gst-libav libpulse
 ```
 
 On Ubuntu/Debian:
 
 ```bash
-sudo apt-get install libwebkit2gtk-4.1-0 gstreamer1.0-plugins-base gstreamer1.0-plugins-good gstreamer1.0-libav
+sudo apt-get install libwebkit2gtk-4.1-0 gstreamer1.0-plugins-base gstreamer1.0-plugins-good gstreamer1.0-libav libpulse0
 ```
 
 macOS releases also include `gsv-desktop-darwin-arm64.zip` and
 `gsv-desktop-darwin-x64.zip`, each containing `GSV.app` with the CLI, daemon and
 helpers. The developer app is ad-hoc signed and unnotarized. After the first
 blocked launch, use System Settings → Privacy & Security → Open Anyway.
-Replace the bundle to update it. Windows includes both local helpers; microphone
-and camera access require an interactive session and permission in Windows
+Replace the bundle to update it. Windows includes the local voice helper; microphone
+access requires an interactive session and permission in Windows
 Privacy settings.
-The Windows helpers use CPU inference. Local voice includes a baseline CPU backend
+The Windows voice helper uses CPU inference. Local voice includes a baseline CPU backend
 and automatically selects faster instructions when supported. AVX2 and AVX-512 are
 optional. The installer and app bundle include the required speech libraries in
 `gsv-transcribe-runtime` beside the helper; no separate installation or CPU setting
 is needed. Keep that directory with the helper when moving a manual installation.
-Gesture inference also selects supported CPU instructions at runtime.
 
 ## Manual verification
 
@@ -291,4 +314,16 @@ microphone. Its first run downloads the same verified model used by Desktop.
 
 Windows release artifacts are unsigned unless the release runner has a signing
 certificate configured. SmartScreen may show an unknown-publisher warning.
-The installer still checks every GSV asset against the release manifest.
+The installer still checks every Ship asset against the release manifest.
+
+## Product name and existing installations
+
+Ship is the product name; use `gsv` for the external CLI. The macOS application is
+displayed as Ship while the bundle remains `GSV.app` on disk, so replacing it
+updates existing installations and preserves Dock shortcuts. Bundle identifiers,
+executable names, service registrations, release asset names and `.gsv` storage
+paths remain stable.
+
+Updating the Gateway does not update an already-installed native CLI or Desktop.
+Keep using `gsv`. Do not rename existing
+configuration directories or daemon services.

@@ -27,6 +27,18 @@ async function fixture(work: (ctx: KernelContext, shell: Bash) => Promise<void>)
 }
 
 describe("native target pairing", () => {
+  it.each(["linux", "windows"])("uses the operator installer when pairing %s", async (platform) => {
+    await fixture(async (ctx, shell) => {
+      ctx.env = { ...ctx.env, GSV_PUBLIC_CONFIG: JSON.stringify({ installUrl: "https://downloads.example/host/install.sh?channel=stable" }) };
+      const result = await shell.exec(`targets pair --name Laptop --platform ${platform}`);
+      expect(result.exitCode, result.stderr).toBe(0);
+      const { installCommand } = JSON.parse(result.stdout);
+      expect(installCommand).toBe(platform === "windows"
+        ? "$env:GSV_CHANNEL='dev'; irm 'https://downloads.example/host/install.ps1?channel=stable' | iex"
+        : "curl -fsSL 'https://downloads.example/host/install.sh?channel=stable' | GSV_CHANNEL=dev bash");
+    });
+  });
+
   it.each(["mac", "linux", "windows", "browser"])("enrolls a %s for the process owner with the space's address", async (platform) => {
     await fixture(async (ctx, shell) => {
       const result = await shell.exec(`targets pair --name 'My computer' --platform ${platform}`);
@@ -35,10 +47,12 @@ describe("native target pairing", () => {
       const invite = decodeDevicePairingCode(platform === "browser" ? output.code : output.pairCommand.split(" ").at(-1));
       expect(invite).toMatchObject({ username: "owner", label: "My computer", targetId: "my-computer", gatewayUrl: "wss://test.staging.gsv.space/ws" });
       if (platform === "browser") {
-        expect(output.extensionUrl).toMatch(/\/dev\/gsv-browser-extension.zip$/);
+        expect(output.extensionUrl).toBe("https://github.com/deathbyknowledge/gsv/releases/download/dev/gsv-browser-extension.zip");
         expect(output.instructions).toContain("chrome://extensions");
+        expect(output.instructions).toContain("Extensions button");
         expect(output.pairCommand).toBeUndefined();
       } else {
+        expect(output.installCommand).toContain("https://install.ship.space");
         expect(output.installCommand).toContain(platform === "windows" ? "install.ps1" : "GSV_CHANNEL=dev bash");
         expect(output.pairCommand).toMatch(platform === "windows" ? /^gsv.exe pair / : /^gsv pair /);
       }
@@ -103,7 +117,7 @@ describe("native target pairing", () => {
         expect((await shell.exec(`targets pair --name Laptop ${options}`)).exitCode).toBe(1);
       }
       ctx.installationIdentity = null;
-      expect((await shell.exec("targets pair --name New --platform mac")).stderr).toContain("Space address is unavailable");
+      expect((await shell.exec("targets pair --name New --platform mac")).stderr).toContain("Ship address is unavailable");
       expect(ctx.pairings.list(1000)).toHaveLength(1);
     });
   });

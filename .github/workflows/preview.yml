@@ -2,10 +2,9 @@ name: GSV Preview
 
 on:
   pull_request:
-    branches: [main]
     types: [opened, reopened, synchronize, edited]
   pull_request_target:
-    types: [closed, edited]
+    types: [closed]
 
 permissions:
   contents: read
@@ -17,9 +16,7 @@ jobs:
       (
         (github.event_name == 'pull_request' && vars.GSV_PREVIEWS_ENABLED == 'true' &&
           (github.event.action != 'edited' || github.event.changes.base.ref.from != null)) ||
-        (github.event_name == 'pull_request_target' &&
-          (github.event.action == 'closed' ||
-            (github.event.changes.base.ref.from == 'main' && github.event.pull_request.base.ref != 'main')))
+        (github.event_name == 'pull_request_target' && github.event.action == 'closed')
       )
     runs-on: ubuntu-latest
     timeout-minutes: 45
@@ -56,8 +53,8 @@ jobs:
             });
             const teardown = context.eventName === "pull_request_target";
             if (pr.head.repo?.full_name !== context.payload.repository.full_name
-              || (teardown ? pr.state !== "closed" && pr.base.ref === "main"
-                : pr.state !== "open" || pr.base.ref !== "main" || pr.head.sha !== context.payload.pull_request.head.sha)) return;
+              || (teardown ? pr.state !== "closed"
+                : pr.state !== "open" || pr.head.sha !== context.payload.pull_request.head.sha)) return;
             if (teardown && !process.env.CLOUDFLARE_ACCOUNT_ID) {
               core.notice("No preview account is configured; skipping teardown.");
               return;
@@ -86,6 +83,8 @@ jobs:
           key: preview
       - name: Build the PR's public GSV stack
         if: steps.current.outputs.command == 'deploy'
+        env:
+          VITE_GSV_PREVIEW: 'true'
         run: npm run deployment:build
       - name: Install trusted cleanup dependencies
         if: steps.current.outputs.command == 'destroy'

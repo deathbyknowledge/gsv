@@ -9,6 +9,7 @@ const conversationIdSchema = z.string().check(z.minLength(1), z.maxLength(256));
 const sequenceSchema = z.int().check(z.minimum(0));
 const inboxArgsSchema = z.strictObject({
   archived: z.optional(z.boolean()),
+  attentionOnly: z.optional(z.boolean()),
   before: z.optional(z.strictObject({ updatedAt: sequenceSchema, conversationId: conversationIdSchema })),
   limit: z.optional(z.int().check(z.minimum(1), z.maximum(100))),
 });

@@ -4,8 +4,7 @@ import * as Config from "effect/Config";
 import { retain } from "alchemy/RemovalPolicy";
 import { join } from "node:path";
 import { upgradeFixturePlan, type UpgradeFixture, type UpgradePhase } from "./plan.ts";
-
-type FixtureDatabaseProps = { name: string; migrationsDir?: string };
+import { legacyDatabaseProps } from "./database.ts";
 
 /** No production overlay, wildcard routing, adapter credentials, mail or Access resources. */
 export function legacyUpgradeComposition(input: UpgradeFixture, phase: UpgradePhase) {
@@ -13,12 +12,11 @@ export function legacyUpgradeComposition(input: UpgradeFixture, phase: UpgradePh
   const current = phase === "current";
   const artifact = join(input.artifactsDirectory, current ? "current" : "legacy");
   return Effect.gen(function* () {
-    const databaseProps: FixtureDatabaseProps = { name: plan.names.database };
     // Stop the legacy DDL owner before the explicit freeze/adopt/forward commands.
-    if (phase === "legacy") databaseProps.migrationsDir = join(input.artifactsDirectory, "legacy", "migrations");
+    const databaseProps = legacyDatabaseProps(plan.names.database, input.artifactsDirectory, phase);
     const database = yield* Cloudflare.D1.Database("UpgradeAccountsDatabase", databaseProps).pipe(retain());
     const storage = yield* Cloudflare.R2.Bucket("UpgradeStorage", { name: plan.names.storage }).pipe(retain());
-    const adminSecret = yield* Config.redacted("GSV_UPGRADE_ADMIN_SECRET");
+    const adminSecret = yield* Config.Redacted("GSV_UPGRADE_ADMIN_SECRET");
     const accounts = yield* Cloudflare.Worker("UpgradeAccounts", {
       name: plan.names.accounts, main: join(artifact, "accounts/index.js"), bundle: false,
       compatibility: { date: "2026-07-29", flags: ["nodejs_compat"] },

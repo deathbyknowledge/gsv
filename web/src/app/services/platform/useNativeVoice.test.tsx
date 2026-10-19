@@ -7,10 +7,7 @@ import { useNativeVoice } from "./useNativeVoice";
 import { ClientControlProvider, type ClientControl, type ControlCommand, type ControlHandler } from "./ClientControl";
 
 const idle = (lease = "view-1"): NativeSnapshot => ({
-  lease, voice: null, gestures_enabled: false, gesture_status: "off",
-  gesture_context: { mode: "disarmed" }, gesture_progress: null, gesture_action: null, gesture_action_sequence: 0, gesture_needs_reset: false, gesture_reset_after_action: 0,
-  gesture_practice: null,
-  scroll_velocity: 0, scroll_sequence: 0, devices: [], devices_loading: false, devices_revision: 0, notice: null, events: [],
+  lease, voice: null, devices: [], devices_loading: false, devices_revision: 0, notice: null, events: [],
 });
 const voice = (text: string, segment = 0, revision = 1): NativeVoice => ({
   request_id: 10, segment_id: segment, revision, text, phase: "listening", progress: null,
@@ -34,7 +31,7 @@ afterEach(async () => {
   vi.unstubAllGlobals();
 });
 
-async function mounted(practice = false) {
+async function mounted(commands = true) {
   let value = "", renders = 0;
   const receives: ((update: NativeUpdate) => void)[] = [];
   const disposals: ReturnType<typeof vi.fn>[] = [];
@@ -48,15 +45,14 @@ async function mounted(practice = false) {
     acknowledge: vi.fn(async () => {}), command: vi.fn(async () => {}),
   };
   const prompt = { current: {
-    disabled: false, chip: null,
+    disabled: false, chip: null, commands,
     selection: () => ({ value, start: value.length, end: value.length }),
     setValue: (next) => { value = next; }, append: () => {}, focus: () => {}, blur: () => {}, submit: () => {},
   } satisfies PromptLineHandle };
   const send = vi.fn(() => true);
-  const scroll = vi.fn();
   let control: ReturnType<typeof useNativeVoice>;
   function Probe({ scope }: { scope: string }) {
-    control = useNativeVoice({ prompt, scope, enabled: true, practice, send, scroll });
+    control = useNativeVoice({ prompt, scope, enabled: true, send });
     renders++;
     return null;
   }
@@ -70,7 +66,7 @@ async function mounted(practice = false) {
   const render = (scope: string) => root.render(<ClientControlProvider control={cli}><NativeInputProvider input={input}><Probe scope={scope} /></NativeInputProvider></ClientControlProvider>);
   await render("ship");
   const push = (revision: number, snapshot: NativeSnapshot, listener = 0, age = 0) => act(() => {
-    receives[listener]({ revision, snapshot, sent_at_ms: Date.now() - age, scroll_age_ms: 0 });
+    receives[listener]({ revision, snapshot, sent_at_ms: Date.now() - age });
   });
   const start = () => push(1, { ...idle(), voice: voice("hello"), events: [
     { id: 1, request_id: 10, segment_id: 0, kind: "started", action: null, text: "" },
@@ -79,6 +75,33 @@ async function mounted(practice = false) {
 }
 
 describe("native input subscription", () => {
+  it("keeps the selected microphone when the input owner changes and restores it after reopening", async () => {
+    const values = new Map<string, string>();
+    vi.stubGlobal("localStorage", { getItem: (key: string) => values.get(key) ?? null, setItem: (key: string, value: string) => values.set(key, value) });
+    let lease = 0;
+    const dispose = vi.fn();
+    const input: NativeInput = {
+      subscribe: () => ({ initial: Promise.resolve(idle(`view-${++lease}`)), dispose }),
+      acknowledge: vi.fn(async () => {}), command: vi.fn(async () => {}),
+    };
+    let control!: ReturnType<typeof useNativeVoice>;
+    function Probe() {
+      control = useNativeVoice({ prompt: { current: null }, scope: "microphone", enabled: true, send: () => false });
+      return null;
+    }
+    const root = createTestRoot("shared microphone preference"); roots.push(root);
+    const render = (owner: string) => root.render(<NativeInputProvider input={input}><Probe key={owner} /></NativeInputProvider>);
+    await render("settings");
+    await act(() => control.setDevice("usb-microphone"));
+    await render("chat");
+    expect(dispose).toHaveBeenCalledOnce();
+    await act(() => control.start());
+    expect(input.command).toHaveBeenLastCalledWith("view-2", { kind: "start", device_id: "usb-microphone" });
+    await root.unmount();
+    await render("reopened");
+    expect(control.device).toBe("usb-microphone");
+  });
+
   it("selects the CLI microphone after discovery even when loading updates were coalesced", async () => {
     const app = await mounted();
     const result = app.handlers.get("microphoneUse")!({
@@ -134,6 +157,17 @@ describe("native input subscription", () => {
     expect(app.input.acknowledge).toHaveBeenLastCalledWith("view-1", 3, 2);
   });
 
+  it("clears dollar-prefixed notes after dictating an action request", async () => {
+    const app = await mounted(false);
+    app.prompt.current.setValue("$ ");
+    await app.start();
+    await app.push(2, { ...idle(), voice: voice("", 1, 0), events: [
+      { id: 2, request_id: 10, segment_id: 0, kind: "segment", action: "send", text: "30 a day" },
+    ] });
+    expect(app.send).toHaveBeenCalledExactlyOnceWith("$ 30 a day");
+    expect(app.value()).toBe("");
+  });
+
   it("finalizes Enter before submission and retains terminal mode for the next dictated command", async () => {
     const app = await mounted();
     app.prompt.current.setValue("$ ");
@@ -168,17 +202,6 @@ describe("native input subscription", () => {
     expect(app.input.command).toHaveBeenCalledWith("view-1", { kind: "cancel" });
   });
 
-  it("clears literal command-like text after a tutorial submission", async () => {
-    const app = await mounted(true);
-    app.prompt.current.setValue("$ ");
-    await app.start();
-    await app.push(2, { ...idle(), voice: voice("", 1, 0), events: [
-      { id: 2, request_id: 10, segment_id: 0, kind: "segment", action: "send", text: "example" },
-    ] });
-    expect(app.send).toHaveBeenCalledExactlyOnceWith("$ example");
-    expect(app.value()).toBe("");
-  });
-
   it("disposes the old subscription before another workspace can consume its output", async () => {
     const app = await mounted();
     await app.render("helper");
@@ -197,5 +220,19 @@ describe("native input subscription", () => {
     expect(app.send).not.toHaveBeenCalled();
     expect(app.value()).toBe("hello");
     expect(app.disposals[0]).toHaveBeenCalledOnce();
+  });
+
+  it("keeps live dictated text after a helper failure and ignores its late final", async () => {
+    const app = await mounted();
+    app.prompt.current.setValue("typed: ");
+    await app.start();
+    await app.push(2, { ...idle(), notice: "The speech engine stopped. Your unsent text is still in the prompt." });
+    expect(app.value()).toBe("typed: hello");
+    expect(app.control().snapshot?.notice).toContain("speech engine stopped");
+    await app.push(3, { ...idle(), events: [
+      { id: 2, request_id: 10, segment_id: 0, kind: "final", action: null, text: "late output" },
+    ] });
+    expect(app.value()).toBe("typed: hello");
+    expect(app.send).not.toHaveBeenCalled();
   });
 });

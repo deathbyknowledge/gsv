@@ -741,7 +741,7 @@ describe("model context", () => {
           provider: request.config.provider,
           model: request.config.model,
         });
-        expect(JSON.stringify(request.context)).toContain("old context A");
+        expect(JSON.stringify(request.context)).toContain(compactionConfigs.length === 1 ? "old context A" : "Fallback compact summary.");
         return "Fallback compact summary.";
       });
 
@@ -793,9 +793,10 @@ describe("model context", () => {
     expect(result.calls[1].context).toContain("Context that must stay live.");
     expect(result.calls[1].context).toContain("Context low:");
     expect(result.calls[1].context).not.toContain("old context A");
-    expect(result.compactionConfigs).toEqual([
-      { provider: "openrouter", model: "small-fallback" },
-    ]);
+    expect(result.compactionConfigs.length).toBeGreaterThan(1);
+    for (const config of result.compactionConfigs) {
+      expect(config).toEqual({ provider: "openrouter", model: "small-fallback" });
+    }
     expect(
       result.messages
         .filter((message: any) => message.role !== "toolResult")

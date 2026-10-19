@@ -174,16 +174,7 @@ export async function handleResponsibilityUpdate(
   const ownerUid = resolveCallerOwnerUid(ctx);
   const id = normalizeResponsibilityId(args.id);
   const restrictedProcessId = restrictedCallerProcessId(ctx);
-  if (restrictedProcessId) {
-    const current = ctx.responsibilities.get(ownerUid, id);
-    if (
-      !current
-      || current.assignee.kind !== "process"
-      || current.assignee.processId !== restrictedProcessId
-    ) {
-      throw new Error(`Responsibility not found: ${id}`);
-    }
-  }
+  requireWritableResponsibility(id, ctx);
   const patch = normalizePatch(args.patch, ownerUid, ctx);
   if (restrictedProcessId && patch.audience !== undefined) {
     throw new Error("A child process cannot change its conversation audience");
@@ -352,6 +343,16 @@ function callerIsShip(ctx: KernelContext): boolean {
 function restrictedCallerProcessId(ctx: KernelContext): string | undefined {
   if (!ctx.processId || callerIsShip(ctx)) return undefined;
   return ctx.processId;
+}
+
+/** Check before an external operation that will attach to this responsibility. */
+export function requireWritableResponsibility(id: string, ctx: KernelContext): ResponsibilityGetResult["responsibility"] {
+  const { responsibility } = handleResponsibilityGet({ id }, ctx);
+  const processId = restrictedCallerProcessId(ctx);
+  if (processId && (responsibility.assignee.kind !== "process" || responsibility.assignee.processId !== processId)) {
+    throw new Error(`Responsibility not found: ${id}`);
+  }
+  return responsibility;
 }
 
 function normalizeAssignee(value: ResponsibilityAssignee | undefined): ResponsibilityAssignee {
