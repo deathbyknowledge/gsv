@@ -43,7 +43,8 @@ use the id returned by discovery or provisioning.
    cloud browser with `instance stop <browser-id> --wait` on `gsv`.
    Keep it open if the user asks or ongoing work still needs it.
    In the user's own browser, always close every tab you opened once the work
-   is done, and never close tabs you did not open.
+   is done, unless the user asked for that page to be opened or kept, and
+   never close tabs you did not open.
    Instance commands accept its displayed eight-character ID.
 
 ## Choosing A Browser
@@ -64,7 +65,7 @@ Explain both routes only when the user asks how sign-in or sessions work, or whe
 
 Match checking to the stakes. On a site the user has given you access to, do routine reading without asking again: asked to check their Instagram, read the posts rather than confirming each one. Check back before anything that leaves a trace, such as posting, sending, paying or deleting, unless they have explicitly given you permission for those actions.
 
-The first private step is theirs. At the first sign-in or payment, say so and offer the choice: they do that step themselves in the live browser, or you do it when the browser already holds a session or a method the site has saved. A first-time sign-in always goes through the handoff. Make them aware of privacy good practice, that passwords, codes and card details are better not sent through messengers, and offer the alternatives such as the handoff link. Preserve their autonomy: inform them of the risks, and let them decide what to follow.
+The first private step is theirs. At the first sign-in or payment, say so and offer the choice: they do that step themselves in the live browser, or you do it when the browser already holds a session or a method the site has saved. On a cloud browser a first-time sign-in always goes through the handoff; in their own browser they sign in directly. Make them aware of privacy good practice, that passwords, codes and card details are better not sent through messengers, and offer the alternatives such as the handoff link. Preserve their autonomy: inform them of the risks, and let them decide what to follow.
 
 Be proactive about the next time. Once a step has gone well with them doing it, offer to take it over next time, where that is possible.
 
