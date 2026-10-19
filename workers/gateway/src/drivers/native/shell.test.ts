@@ -4110,6 +4110,9 @@ describe("native administration shell commands", () => {
     const duplicate = await handleShellExec({
       input: 'message send --to here --message "duplicate reply"',
     }, ctx);
+    const detachedAlso = await handleShellExec({
+      input: "message send --to contact:friend --message 'see you'\n\n--also",
+    }, ctx);
 
     expect(current).toMatchObject({ status: "completed", exitCode: 0 });
     expect(current.stdout).toContain("current conversation: Telegram direct message");
@@ -4136,6 +4139,7 @@ describe("native administration shell commands", () => {
     expect(duplicate.status).toBe("failed");
     expect(duplicate.stderr).toContain("stage files first with `message attach PATH...`");
     expect(duplicate.stderr).toContain("without --to or --also");
+    expect(detachedAlso.stderr).toContain("message send --to needs --also on the same command line");
     expect(terminalFallback).toMatchObject({ status: "failed", exitCode: 1 });
     expect(terminalFallback.stderr).toContain("direct Shell tool call");
     expect(yieldFallback).toMatchObject({ status: "failed", exitCode: 1 });
