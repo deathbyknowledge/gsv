@@ -117,6 +117,7 @@ function completionResponse(
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  vi.useRealTimers();
 });
 
 describe("shared Workers AI inference", () => {
@@ -260,7 +261,7 @@ describe("shared Workers AI inference", () => {
       headers: { "content-type": "application/json", "x-request-id": "provider-request-123" },
     }));
     const generation = createWorkersAiGeneration(
-      REQUEST,
+      { ...REQUEST, timeoutMs: 5_000 },
       testBinding(run).binding,
     );
     const result = await generation.result(ROUTING);
@@ -276,6 +277,70 @@ describe("shared Workers AI inference", () => {
     });
     expect(JSON.stringify(generation.failure(result.errorMessage)))
       .not.toContain("private-provider-token");
+  });
+
+  it.each([408, 429, 500, 502, 503, 504])("retries a single provider's HTTP %i before exposing output", async (status) => {
+    vi.useFakeTimers();
+    const run = vi.fn<NonNullable<AiBinding["fetch"]>>()
+      .mockResolvedValueOnce(new Response("temporarily unavailable", { status }))
+      .mockResolvedValueOnce(completionResponse());
+    const generation = createWorkersAiGeneration({ ...REQUEST, timeoutMs: 5_000 }, testBinding(run).binding);
+    const result = generation.result(ROUTING);
+    await vi.advanceTimersByTimeAsync(500);
+    expect(await result).toMatchObject({ stopReason: "stop", content: [{ type: "text", text: "pong" }] });
+    expect(run).toHaveBeenCalledTimes(2);
+    expect(generation.attempts()).toMatchObject([
+      { accepted: false, outputExposed: false, providerStatusCode: status, failure: { retryable: true } },
+      { accepted: true, result: { stopReason: "stop" } },
+    ]);
+  });
+
+  it("bounds rejected acquisition to three independently recorded attempts", async () => {
+    vi.useFakeTimers();
+    const run = vi.fn(async () => new Response("busy", { status: 503 }));
+    const generation = createWorkersAiGeneration({ ...REQUEST, timeoutMs: 5_000 }, testBinding(run).binding);
+    const result = generation.result(ROUTING);
+    await vi.advanceTimersByTimeAsync(1_500);
+    expect(await result).toMatchObject({ stopReason: "error" });
+    expect(run).toHaveBeenCalledTimes(3);
+    expect(generation.attempts()).toHaveLength(3);
+    expect(generation.attempts().map((attempt) => attempt.failure?.kind))
+      .toEqual(["provider_unavailable", "provider_unavailable", "provider_unavailable"]);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it.each(["cancel", "deadline"] as const)("stops %s during retry backoff without another provider request", async (reason) => {
+    vi.useFakeTimers();
+    const run = vi.fn(async () => new Response("busy", { status: 503 }));
+    const generation = createWorkersAiGeneration({ ...REQUEST, timeoutMs: 5_000,
+      ...(reason === "deadline" ? { deadlineAt: Date.now() + 200 } : {}),
+    }, testBinding(run).binding);
+    const result = generation.result(ROUTING);
+    await vi.advanceTimersByTimeAsync(100);
+    expect(generation.attempts()[0].completedAt).toBeDefined();
+    if (reason === "cancel") await generation.abort();
+    await vi.advanceTimersByTimeAsync(1_500);
+    expect(await result).toMatchObject({ stopReason: reason === "cancel" ? "aborted" : "error" });
+    if (reason === "deadline") expect(generation.failure()).toMatchObject({ kind: "timeout" });
+    expect(run).toHaveBeenCalledTimes(1);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it.each([400, 401, 402, 403, 413])("does not retry a permanent single-provider HTTP %i", async (status) => {
+    const run = vi.fn(async () => new Response("rejected", { status }));
+    const generation = createWorkersAiGeneration(REQUEST, testBinding(run).binding);
+    expect(await generation.result(ROUTING)).toMatchObject({ stopReason: "error" });
+    expect(run).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not repeat an accepted single-provider stream, even before visible output", async () => {
+    const run = vi.fn(async () => new Response("data: not-json\n\n", {
+      headers: { "content-type": "text/event-stream" },
+    }));
+    const generation = createWorkersAiGeneration(REQUEST, testBinding(run).binding);
+    expect(await generation.result(ROUTING)).toMatchObject({ stopReason: "error" });
+    expect(run).toHaveBeenCalledTimes(1);
+    expect(generation.attempts()[0]).toMatchObject({ accepted: true, outputExposed: false });
   });
 
   it("falls back after a retryable failure before output is exposed", async () => {
@@ -416,7 +481,7 @@ describe("shared Workers AI inference", () => {
       throw new TypeError("fetch failed");
     });
     const generation = createWorkersAiGeneration(
-      REQUEST,
+      { ...REQUEST, timeoutMs: 5_000 },
       testBinding(run).binding,
     );
     const result = await generation.result(ROUTING);
