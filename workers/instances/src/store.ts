@@ -168,8 +168,12 @@ export class InstanceStore {
         if (profile(existing).label !== label) throw new Error("Profile requestId has already been used with another label");
         return profile(existing);
       }
-      const count = this.sql.exec<{ count: number }>("SELECT count(*) AS count FROM profiles WHERE json_extract(record, '$.state') != 'deleted'").one().count;
-      if (!limits.enabled || count >= limits.savedProfiles) throw new Error("Saved browser profile limit reached");
+      if (!limits.enabled) throw new Error("Saved browser profile limit reached");
+      // Each owner's automatic profile is always available; the allowance limits additional saved profiles.
+      if (!automatic) {
+        const count = this.sql.exec<{ count: number }>("SELECT count(*) AS count FROM profiles WHERE json_extract(record, '$.state') != 'deleted' AND coalesce(json_extract(record, '$.automatic'), 0) != 1").one().count;
+        if (count >= limits.savedProfiles) throw new Error("Saved browser profile limit reached");
+      }
       const value: BrowserProfile = { profileId: crypto.randomUUID(), ownerUid: actor.ownerUid, label, createdAt: Date.now(), revision: 1, state: "active", saveStatus: "empty", automatic: automatic || undefined };
       this.sql.exec("INSERT INTO profiles (id, owner_uid, request_id, record, key) VALUES (?, ?, ?, ?, ?)", value.profileId, actor.ownerUid, requestId, JSON.stringify(value), crypto.getRandomValues(new Uint8Array(32)).buffer);
       return value;
