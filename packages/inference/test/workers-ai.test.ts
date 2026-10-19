@@ -313,7 +313,7 @@ describe("shared Workers AI inference", () => {
     vi.useFakeTimers();
     const run = vi.fn(async () => new Response("busy", { status: 503 }));
     const generation = createWorkersAiGeneration({ ...REQUEST, timeoutMs: 5_000,
-      ...(reason === "deadline" ? { deadlineAt: Date.now() + 200 } : {}),
+      deadlineAt: Date.now() + (reason === "deadline" ? 200 : 5_000),
     }, testBinding(run).binding);
     const result = generation.result(ROUTING);
     await vi.advanceTimersByTimeAsync(100);
