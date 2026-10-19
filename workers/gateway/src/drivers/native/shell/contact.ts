@@ -22,6 +22,9 @@ import {
   handleContactRevoke,
 } from "../../../kernel/federation";
 import { handleContactPreferencesUpdate } from "../../../kernel/federation/preferences";
+import { handleProfileResolve } from "../../../kernel/profiles";
+import { deploymentPresentation } from "@humansandmachines/gsv/services/deployment";
+import { shipAddress } from "../../../installation/identity";
 import {
   parseDurationMs,
   requireCommandCapability,
@@ -62,6 +65,10 @@ async function runContactCommand(args: string[], ctx: KernelContext): Promise<Ex
       requireCommandCapability(ctx, "contact.identity");
       requireArgumentCount(rest, 0, "identity accepts no arguments");
       return json(await handleContactIdentity(ctx));
+    case "find":
+      requireCommandCapability(ctx, "profile.resolve");
+      requireArgumentCount(rest, 1, "find requires: contact find @HANDLE|ADDRESS");
+      return json(await handleProfileResolve({ url: profileAddress(rest[0], ctx) }, ctx));
     case "list":
       return listContacts(rest, ctx);
     case "alias":
@@ -286,6 +293,17 @@ function parseOnlyFlags(args: string[], allowed: Set<string>): Set<string> {
   return flags;
 }
 
+/** A bare or @-prefixed handle names a Ship on this deployment's domain; anything else is a Ship's address. */
+function profileAddress(value: string, ctx: KernelContext): string {
+  const handle = value.replace(/^@/, "").toLowerCase();
+  if (/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(handle)) {
+    const domain = shipAddress(ctx.installationIdentity, deploymentPresentation(ctx.env.GSV_PUBLIC_CONFIG).primaryDomain)?.domain;
+    if (!domain) throw new Error("This Ship has no domain for handles; give the Ship's full address");
+    return `https://${handle}.${domain}/profile`;
+  }
+  return /^https?:\/\//i.test(value) ? value : `https://${value}`;
+}
+
 function requireArgumentCount(args: string[], count: number, message: string): void {
   if (args.length !== count) throw new Error(message);
 }
@@ -302,6 +320,7 @@ function contactUsage(): string {
   return [
     "Usage:",
     "  contact identity",
+    "  contact find @HANDLE|ADDRESS",
     "  contact list [--all] [--json]",
     "  contact alias CONTACT_ID NAME|--clear",
     "  contact invite create --handling manual|ship [--expires DURATION]",

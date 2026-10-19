@@ -48,6 +48,8 @@ export async function createPromptPreview(account: PreviewAccount): Promise<Prom
       }),
     },
     runtime: { date: "2026-01-01", timezone: "UTC" },
+    ship: { handle: "preview", origin: "https://preview.ship.space", domain: "ship.space" },
+    mailbox: { address: "preview@ship.space" },
     targets: [{ id: "laptop", label: "Laptop", implements: ["shell.exec", "fs.read"] }],
     mcpServers: [],
     r12y: "No unresolved responsibilities.",

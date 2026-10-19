@@ -3,7 +3,8 @@ import type { ProcessIdentity } from "@humansandmachines/gsv/protocol";
 import type { GsvFs } from "../../../fs/gsv-fs";
 import { hasCapability } from "../../../kernel/capabilities";
 import type { KernelContext } from "../../../kernel/context";
-import { principalOf } from "../../../kernel/context";
+import { principalOf, resolveCallerOwnerUid } from "../../../kernel/context";
+import { managedMailAddressForOwner } from "../../../kernel/mailbox";
 import {
   collectFilesystemSkillDocuments,
   collectKernelSkillDocuments,
@@ -62,8 +63,9 @@ const NATIVE_COMMAND_DESCRIPTORS = defineNativeCommandDescriptors({
   ]),
   crontab: command("Manage recurring native shell jobs.", "Run a shell command repeatedly on a cron schedule such as every morning or each weekday.", ["schedule", "recurring", "automation", "cron", "daily", "weekly"], ["sched"]),
   codemode: command("Run a reusable JavaScript GSV tool workflow.", "Combine several shell, filesystem, or connected integration operations in one scripted workflow.", ["script", "workflow", "automation", "tools", "javascript"]),
-  contact: command("Manage trusted contacts with other GSV Ships.", "Connect people using an invitation link. Ask who should handle new messages, then create or accept with --handling manual|ship. Inspect contacts, exchange structured requests, or change handling and trust.", ["contact", "people", "friend", "social", "connect", "ship", "federation", "pair", "invite", "request", "revoke"], [], [
+  contact: command("Find other Ships and manage trusted contacts.", "Find a person's Ship by handle or address and read its public profile. Connect people using an invitation link. Ask who should handle new messages, then create or accept with --handling manual|ship. Inspect contacts, exchange structured requests, or change handling and trust.", ["contact", "people", "person", "friend", "social", "connect", "ship", "handle", "find", "lookup", "profile", "address", "federation", "pair", "invite", "request", "revoke"], [], [
     "contact identity",
+    "contact find @HANDLE|ADDRESS",
     "contact list [--all] [--json]",
     "contact invite create --handling manual|ship [--expires DURATION]",
     "contact invite accept LINK_OR_CODE --handling manual|ship",
@@ -102,7 +104,7 @@ const NATIVE_COMMAND_DESCRIPTORS = defineNativeCommandDescriptors({
     "message send --to DESTINATION [--message TEXT] [--attach PATH]... [--mime TYPE] [--delivery-id ID] [--responsibility ID] [--also]",
   ]),
   yield: command("Finish the active agent run.", "Yield control after the current work is complete while keeping the durable Process available for future input.", ["finish", "complete", "done", "stop", "silent"], [], ["yield"]),
-  mail: command("Read, send, reply to, and inspect managed email.", "Read an inbox message, search received email, send email, reply to a message, or check whether a queued email was accepted.", ["email", "inbox", "read", "message", "search", "send", "reply", "status", "delivery"], [], [
+  mail: command("Read, send, reply to, and inspect this GSV's own email.", "Find this GSV's email address for a sign-up, verification code, receipt, parcel tracking or bill, read an inbox message, search received email, send email, reply to a message, or check whether a queued email was accepted.", ["email", "inbox", "address", "signup", "sign-up", "register", "verification", "account", "receipt", "tracking", "read", "message", "search", "send", "reply", "status", "delivery"], [], [
     "mail address",
     "mail list [--limit N] [--offset N]",
     "mail search QUERY [--limit N] [--offset N]",
@@ -184,6 +186,9 @@ export class ShellDiscoveryCatalog {
         !hasCapability(principalOf(this.ctx)?.calls ?? [], capability)
       );
       if (registered.name === "feedback" && !this.ctx.env.FEEDBACK) missing.push("configured feedback inbox");
+      if (registered.name === "mail" && managedMailAddressForOwner(resolveCallerOwnerUid(this.ctx), this.ctx) === null) {
+        missing.push("managed mailbox");
+      }
       if ((registered.name === "instance" || registered.name === "browser") && !this.ctx.env.INSTANCES) missing.push("configured instance service");
       const entry: ShellDiscoveryEntry = {
         kind: "command",

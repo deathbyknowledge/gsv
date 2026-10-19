@@ -66,6 +66,8 @@ const contextProjectionSchema = z.strictObject({
     mode: z.enum(["summary", "names", "off"]),
     entries: z.array(z.strictObject({ id: z.string(), description: z.string() })),
   }),
+  ship: z.optional(z.strictObject({ handle: z.string(), origin: z.string(), domain: z.string() })),
+  mailbox: z.optional(z.strictObject({ address: z.string() })),
 });
 
 const historyContextPolicySchema: z.ZodMiniType<ProcHistoryContextPolicy> = z.strictObject({
@@ -218,6 +220,8 @@ export type ProcHistoryContextProjection = {
   targets: { id: string; implements: string[]; label?: string; description?: string; platform?: string }[];
   mcpServers: string[];
   skills: { mode: "summary" | "names" | "off"; entries: { id: string; description: string }[] };
+  ship?: { handle: string; origin: string; domain: string };
+  mailbox?: { address: string };
 };
 
 export type ProcHistoryIpcResponsePayload = {

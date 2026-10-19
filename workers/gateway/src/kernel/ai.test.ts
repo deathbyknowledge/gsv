@@ -391,6 +391,8 @@ describe("handleAiConfig", () => {
       capabilities?: string[];
       oauthAccounts?: OAuthAccountRecord[];
       ripgit?: Fetcher;
+      /** Managed installation handle; its first human then owns `<handle>@gsv.space`. */
+      handle?: string;
     } = {},
   ): KernelContext {
     const uid = options.uid ?? 1000;
@@ -398,9 +400,25 @@ describe("handleAiConfig", () => {
     const oauthAccounts = options.oauthAccounts ?? [];
     const env: Partial<KernelContext["env"]> = {};
     if (options.ripgit) env.RIPGIT = options.ripgit;
+    const ownerEntry = {
+      uid: ownerUid,
+      gid: ownerUid,
+      username: "sam",
+      gecos: "sam",
+      home: "/home/sam",
+      shell: "/bin/init",
+    };
+    const installationIdentity = options.handle
+      ? {
+          installationId: TEST_INSTALLATION_ID,
+          handle: options.handle,
+          canonicalOrigin: `https://${options.handle}.gsv.space`,
+        }
+      : undefined;
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     return {
       installationId: TEST_INSTALLATION_ID,
+      installationIdentity,
       peer: testPeer({ kind: "human", account: {
           uid,
           gid: uid,
@@ -412,17 +430,18 @@ describe("handleAiConfig", () => {
       config: makeTestConfig(config),
       modelMetadata: new ModelMetadataResolver(env, TEST_INSTALLATION_ID),
       auth: {
-        getPasswdByUid: vi.fn((lookupUid: number) => lookupUid === ownerUid
-          ? {
-              uid: ownerUid,
-              gid: ownerUid,
-              username: "sam",
-              gecos: "sam",
-              home: "/home/sam",
-              shell: "/bin/init",
-            }
+        getPasswdByUid: vi.fn((lookupUid: number) => lookupUid === ownerUid ? ownerEntry : null),
+        getPasswdEntries: vi.fn(() => [ownerEntry]),
+        getShadowByUsername: vi.fn((username: string) => username === ownerEntry.username
+          ? { username, hash: "password-hash" }
           : null),
+        isPersonalAgentUid: vi.fn(() => false),
+        isAccountDisabled: vi.fn(() => false),
         resolveGids: vi.fn((_username: string, gid: number) => [gid]),
+      },
+      mailboxes: {
+        getMailboxForOwner: vi.fn(() => null),
+        getPrimaryMailbox: vi.fn(() => null),
       },
       procs: {
         getOwnerUid: vi.fn(() => ownerUid),
@@ -585,6 +604,23 @@ describe("handleAiConfig", () => {
     expect(fetch).toHaveBeenCalledTimes(3);
     await handleAiContext({}, ctx);
     expect(fetch).toHaveBeenCalledTimes(3);
+  });
+
+  it("reports the Ship's address and the owner's managed mailbox as context facts, and null without them", async () => {
+    await expect(handleAiContext({}, makeAiConfigContext({}, { handle: "sam" })))
+      .resolves.toMatchObject({
+        ship: { handle: "sam", origin: "https://sam.gsv.space", domain: "gsv.space" },
+        mailbox: { address: "sam@gsv.space" },
+      });
+    await expect(handleAiContext({}, makeAiConfigContext({}, { handle: "sam", uid: 2000, ownerUid: 1000, processId: "task-1" })))
+      .resolves.toMatchObject({ mailbox: { address: "sam@gsv.space" } });
+    await expect(handleAiContext({}, makeAiConfigContext()))
+      .resolves.toMatchObject({ ship: null, mailbox: null });
+    const legacy = makeAiConfigContext({}, { handle: "sam" });
+    legacy.env.GSV_PUBLIC_CONFIG = JSON.stringify({ primaryDomain: "ship.space" });
+    await expect(handleAiContext({}, legacy)).resolves.toMatchObject({
+      ship: { handle: "sam", origin: "https://sam.ship.space", domain: "ship.space" },
+    });
   });
 
   it("resolves the generation streaming switch", async () => {

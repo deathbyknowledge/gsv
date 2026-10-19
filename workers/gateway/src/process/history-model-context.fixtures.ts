@@ -54,6 +54,7 @@ export function goldenEvents(): EventFixture[] {
     version: 1, runtime: { date: "2023-11-15", timezone: "Europe/Amsterdam" },
     targets: [{ id: "new-target", label: "Synthetic target", implements: ["fs.read", "shell.exec"] }],
     mcpServers: ["new-server"], skills: { mode: "summary", entries: [{ id: "new-skill", description: "New synthetic skill" }] },
+    mailbox: { address: "golden@gsv.space" },
   };
   const transition: ResponsibilityTransition = {
     revision: 2, responsibilityId: "responsibility:golden", kind: "updated", beforeState: "open", afterState: "active",

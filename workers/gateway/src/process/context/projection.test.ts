@@ -69,6 +69,53 @@ describe("context epoch projection", () => {
     })).toEqual(projection);
   });
 
+  it("keeps the managed mailbox as a trailing optional fact", () => {
+    const base = {
+      mcpServers: [],
+      system: { timezone: "UTC" },
+      skillIndexMode: "off" as const,
+      skillIndex: [],
+      targets: [],
+    };
+    const without = createContextProjection({ ...base, mailbox: null });
+    expect(without).not.toHaveProperty("mailbox");
+    // A projection stored before the fact existed equals one for an installation without a mailbox.
+    const legacy = contextProjectionFromManifest({
+      version: 2,
+      contextProjection: {
+        version: 1,
+        runtime: without.runtime,
+        targets: [],
+        mcpServers: [],
+        skills: { mode: "off", entries: [] },
+      },
+    });
+    expect(legacy && contextProjectionsEqual(legacy, without)).toBe(true);
+
+    const withMailbox = createContextProjection({ ...base, mailbox: { address: " hank@gsv.space\n" } });
+    expect(withMailbox.mailbox).toEqual({ address: "hank@gsv.space" });
+    expect(Object.keys(withMailbox).at(-1)).toBe("mailbox");
+    expect(contextProjectionsEqual(withMailbox, without)).toBe(false);
+    const reparsed = contextProjectionFromManifest({ version: 2, contextProjection: withMailbox });
+    expect(reparsed).toEqual(withMailbox);
+    expect(reparsed && contextProjectionsEqual(reparsed, withMailbox)).toBe(true);
+    expect(createContextProjection({ ...base, mailbox: { address: "   " } })).not.toHaveProperty("mailbox");
+  });
+
+  it("keeps the Ship's address as an optional fact before the mailbox", () => {
+    const base = { mcpServers: [], system: { timezone: "UTC" }, skillIndexMode: "off" as const, skillIndex: [], targets: [] };
+    const ship = { handle: "hank", origin: "https://hank.ship.space", domain: "ship.space" };
+    const without = createContextProjection({ ...base, ship: null, mailbox: null });
+    expect(without).not.toHaveProperty("ship");
+    const withBoth = createContextProjection({ ...base, ship, mailbox: { address: "hank@ship.space" } });
+    expect(withBoth.ship).toEqual(ship);
+    expect(Object.keys(withBoth).slice(-2)).toEqual(["ship", "mailbox"]);
+    expect(contextProjectionsEqual(withBoth, without)).toBe(false);
+    const reparsed = contextProjectionFromManifest({ version: 2, contextProjection: withBoth });
+    expect(reparsed && contextProjectionsEqual(reparsed, withBoth)).toBe(true);
+    expect(createContextProjection({ ...base, ship: { ...ship, domain: " " }, mailbox: null })).not.toHaveProperty("ship");
+  });
+
   it("falls back to UTC and compares normalized snapshots exactly", () => {
     const input = {
       targets: [],
