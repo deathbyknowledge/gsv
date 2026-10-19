@@ -1,0 +1,49 @@
+.welcome-card {
+  position: absolute;
+  z-index: 20;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  box-sizing: border-box;
+  width: min(720px, calc(100% - 32px));
+  max-height: calc(var(--instrument-height) / var(--type-scale) - 32px);
+  overflow: auto;
+  padding: 28px 32px 32px;
+  border: 1px solid var(--border-raised);
+  background: var(--panel);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, .32);
+  color: var(--text);
+  font-family: var(--gsv-font-prose);
+  font-size: 24px;
+  line-height: 1.5;
+}
+.welcome-card h2 { margin: 0 32px 20px 0; font-size: 32px; font-weight: 500; }
+.welcome-card p { margin: 0 0 26px; }
+.welcome-card a { text-decoration: underline; text-underline-offset: 2px; }
+.welcome-card .welcome-card-close {
+  position: absolute;
+  top: 10px;
+  right: 12px;
+  width: 36px;
+  height: 36px;
+  color: var(--text-dim);
+  font-family: var(--gsv-font-mono);
+  font-size: 22px;
+  line-height: 1;
+}
+.welcome-card .welcome-card-try {
+  min-height: 44px;
+  margin-top: 4px;
+  padding: 8px 16px;
+  border: 1px solid var(--accent);
+  background: var(--accent);
+  color: var(--void);
+  font-family: var(--gsv-font-mono);
+  font-size: 18px;
+}
+.welcome-card .welcome-card-try:hover { filter: brightness(1.12); }
+@container instrument (max-width: 600px) {
+  .welcome-card { width: calc(100% - 24px); padding: 22px; font-size: 14px; }
+  .welcome-card h2 { font-size: 20px; }
+  .welcome-card .welcome-card-try { min-height: 34px; padding: 6px 12px; font-size: 13px; }
+}

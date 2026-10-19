@@ -35,6 +35,7 @@ export type AiContextResult = {
   systemContextFiles?: ContextFile[];
   system: {
     timezone: string;
+    language?: string;
   };
   /** Omitted when the catalog could not be read; retain the last observed projection. */
   skillIndex?: AiSkillIndexEntry[];
@@ -198,6 +199,7 @@ export type AiConfigResult = {
   systemContextFiles?: ContextFile[];
   system?: {
     timezone: string;
+    language?: string;
   };
   skillIndex?: AiSkillIndexEntry[];
   skillIndexMode?: AiSkillIndexMode;

@@ -6,11 +6,10 @@ runtime event, a schedule, another Process, or the Ship itself. Promises, mainte
 delegated work, follow-ups, and recovery are variations of the
 same record rather than separate task systems.
 
-The user's personal Process remains the Ship: the one intelligence that receives
-direct conversation and owner-level events. There is no maintenance supervisor or
-second hidden intelligence. Kernel SQLite owns durable responsibility state and
-deadlines; the Ship decides what to do; ordinary child Processes execute delegated
-work.
+The user's personal Process is the Ship: the one intelligence that receives
+direct conversation and owner-level events. Kernel SQLite owns durable
+responsibility state and deadlines; the Ship decides what to do; ordinary child
+Processes execute delegated work.
 
 ## Facts, interactions, responsibilities, and Messages
 
@@ -42,8 +41,7 @@ lifecycle signals, or conversation input.
 Kernel SQLite stores the authoritative responsibility ledger, its monotonic revision,
 transition journal, assignments, deadlines, and wake records. Records are scoped to
 the owning human uid inside the installation Kernel. This is the same coordination
-boundary that owns identities, Processes, schedules, and routing; no additional
-Durable Object is introduced.
+boundary that owns identities, Processes, schedules, and routing.
 
 The personal Process owns only its current execution and the model context through
 which it observes responsibility state. Replacing or resetting that Process cannot
@@ -55,9 +53,8 @@ let a child bypass the Ship's ordinary result path.
 ## Responsibility records
 
 A responsibility has one identity and state machine. Optional fields describe its
-source, audience, hierarchy, assignment, deadline, and blocker without
-creating separate commitment or duty concepts. Its id is `r12y:` followed by a
-UUID; syscalls and the `r12y` command also accept the bare UUID and restore the
+source, audience, hierarchy, assignment, deadline, and blocker. Its id is `r12y:`
+followed by a UUID; syscalls and the `r12y` command also accept the bare UUID and restore the
 prefix, so a caller that copies the id without it still reaches the same record.
 
 ```text
@@ -125,8 +122,10 @@ When a human or Process explicitly puts a Ship assignment into `waiting`, the le
 sets `nextCheckAtMs` to 24 hours later if no future check remains. An earlier future
 deadline brings that default forward. An explicit check time is preserved, and
 `nextCheckAtMs: null` explicitly clears the check. Metadata-only edits do not postpone
-it. System producers keep their own wake conditions, including initial onboarding,
-which must wait for the first user interaction.
+it. System producers keep their own wake conditions. Initial onboarding stays in
+Kernel-owned pending state until the owner dismisses the welcome card or sends
+their first Ship message. Only then does it enter the ledger as open work, without
+a blocker, through the ordinary wake path.
 
 A due Ship check is actionable even while a blocker remains. The review event directs
 Ship to read the current conversation and responsibility. If the human's answer is
@@ -188,7 +187,7 @@ appear in later updates. Agents can use the snapshot and subsequent events direc
 content.
 
 The same epoch owns a normalized availability projection for accessible online
-targets, ready MCP servers, current date and timezone, the visible skill catalog, and
+targets, ready MCP servers, current date, timezone, owner language preference, the visible skill catalog, and
 the owner's managed mailbox address when the installation has one.
 Before every provider turn, Process asks the Kernel for the current prompt-relevant
 snapshot and compares it with the last observed projection. A meaningful change is
@@ -237,20 +236,30 @@ enabled or disabled per owner without changing the subsystem's underlying data.
 
 System-owned producers use the same ledger contract:
 
-- Provisioning a new personal intelligence creates one high-priority initial
-  onboarding responsibility titled "Welcome to gsv". It waits for the user's first
-  message rather than waking the Ship on its own and is present in Ship's first
-  context epoch, rendered with its details like any Ship assignment. Those details
+- Provisioning a new personal intelligence durably prepares its onboarding brief
+  in Kernel storage, outside the responsibility ledger and model context. Dismissing
+  the welcome card records `users/<uid>/ui/welcome_card_seen = 1`, creates one open,
+  high-priority responsibility titled "Welcome to Ship" with no blocker, and
+  schedules its ordinary wake before acknowledging the dismissal. Its creation and
+  update timestamps both reflect activation, not prior onboarding progress. A saved dismissal
+  retries pending welcome activation on reconnect without delaying sign-in. Handled
+  and edited records are left alone.
+  A user can also start the conversation before dismissal or on a surface without
+  the card: their first message activates onboarding before Process admission;
+  wake recovery is scheduled afterwards, including if admission fails. Root actions
+  and messages to other work do not activate onboarding. Ship sends its welcome in
+  the owner's language and waits for a reply.
+  The responsibility is present in Ship's first context epoch, rendered with its
+  details like any Ship assignment. Those details
   carry the onboarding brief, the Markdown prompt file
   `workers/gateway/src/prompts/onboarding/welcome.md` with the goal, acceptance
   criteria, outcomes and step-by-step instructions. The system responsibilities
   context puts an unresolved onboarding record ahead of everything else: other
   responsibilities are parked or delegated until the Ship resolves it, once the user
-  has completed one small task. Ensuring the personal agent also rewrites an
-  unresolved record still carrying an earlier release's wording onto the current
-  contract; resolved, cancelled, or owner-edited records are left alone, and a
-  home that finished the earlier boot-file flow and has no record is never
-  onboarded again. This replaces the generated boot context file.
+  has completed one small task. The brief is copied when the responsibility is
+  prepared; existing records retain their saved instructions across releases. A home
+  that finished the earlier boot-file flow and has no record is never onboarded
+  again. This replaces the generated boot context file.
 - Managed mail completion creates one `mail.received` responsibility keyed by the
   immutable message id. The title contains no sender-controlled text. Bounded summary
   metadata is marked untrusted and is available only when the Ship inspects the record;
@@ -263,7 +272,6 @@ System-owned producers use the same ledger contract:
   work. A relevant reply reopens that responsibility regardless of human or Process
   authorship. Duplicates and acknowledgements create no work. Revocation cancels the
   standing handoff and returns unfinished tasks to Ship with the disconnection recorded.
-  The former global `contact.added` and `federation.received` source switches are retired.
 - Structured work requests retain their own participant-authorized lifecycle. A remote
   offer alone creates no local commitment; accepting work locally records that commitment.
 - The first registration of a physical machine creates one `machine.added`
@@ -344,3 +352,19 @@ Callers cannot select another owner's ledger or assign work to a foreign Process
   or archived Process Activity.
 - Epoch closure either installs a complete new baseline and archive reference or
   leaves the old epoch live.
+
+## Operator release responsibilities
+
+An operator may deploy a bounded catalog of release briefs. During reconciliation
+of an existing personal agent, Kernel creates ordinary `operator.update` records,
+deduplicated by owner, publisher ID and update ID. Terminal records retain that
+deduplication. Kernel retains onboarding preparation time separately from activation
+to exclude historical updates for new owners; existing onboarding records supply
+that cutoff for older installations. Accounts without either remain
+eligible. Future-dated briefs are skipped until an eligible later reconciliation.
+
+The records wait for a suitable user conversation and do not schedule a wake just
+for an announcement. Their revisions enter Process context through normal ledger
+observation. Publisher identity and brief remain inspectable, and user edits or
+resolutions are preserved. This adds no fleet scan, DO fanout, alternate prompt
+channel, or new scheduler.

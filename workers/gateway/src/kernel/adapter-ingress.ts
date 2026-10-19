@@ -44,6 +44,7 @@ import {
 import {
   ensurePersonalController,
 } from "./personal-controller";
+import { withInitialOnboarding } from "./onboarding-responsibility";
 import {
   identityLinkAllowsSurface,
   identityLinkRouteGeneration,
@@ -752,10 +753,10 @@ async function deliverAdapterInboundToProcess(input: {
       },
     },
   };
-  const response: InternalResponseFrame<"proc.adapter.deliver"> | null = await sendFrameToProcess(
-    ctx.installationId,
-    pid,
-    request,
+  const response: InternalResponseFrame<"proc.adapter.deliver"> | null = await withInitialOnboarding(
+    conversation.kind === "ship" ? uid : undefined,
+    ctx,
+    () => sendFrameToProcess(ctx.installationId, pid, request),
   );
 
   if (!response || response.type !== "res") {

@@ -63,6 +63,16 @@ const OWNER_IDENTITY: ProcessIdentity = {
 };
 
 describe("assembleSystemPrompt", () => {
+  it("renders the language preference as a runtime variable without changing account files", async () => {
+    const input = makeInput();
+    input.config = { ...input.config, systemContextFiles: [{ name: "runtime.md", text: "Preferred language: {{user.language}}" }] };
+    input.runtime.language = "es-MX";
+    const prompt = await assembleSystemPrompt(input, [createSystemContextProvider()]);
+    expect(prompt).toContain("Preferred language: es-MX");
+    delete input.runtime.language;
+    expect(await assembleSystemPrompt(input, [createSystemContextProvider()])).toContain("Preferred language: not set");
+  });
+
   it("preserves provider order and skips empty sections", async () => {
     const providers: PromptContextProvider[] = [
       {

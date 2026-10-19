@@ -2120,7 +2120,7 @@ export class ProcessHistory {
   ): Promise<ContextEpochCandidate> {
     const promptConfig: AiConfigResult = {
       ...config,
-      system: { timezone: projection.runtime.timezone },
+      system: { timezone: projection.runtime.timezone, language: projection.runtime.language },
       skillIndex: projection.skills.entries.map((entry) => ({
         id: entry.id,
         name: entry.id,

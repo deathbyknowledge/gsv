@@ -1,26 +1,6 @@
-import { z } from "zod";
-
 /** Quiet, cached synthesis based on the original native desktop's audio.rs. */
-export type SoundPreferences = { keys: boolean; gestures: boolean };
 export type InputCue = "character" | "space" | "delete" | "commit" | "navigate"
-  | "ready" | "listening" | "paused" | "off" | "accepted" | "clear" | "attention" | "practice_error";
-const storageKey = "gsv.input-sounds";
-let preferences: SoundPreferences = { keys: true, gestures: true };
-try {
-  preferences = z.object({ keys: z.boolean().catch(true), gestures: z.boolean().catch(true) })
-    .parse(JSON.parse(localStorage.getItem(storageKey) ?? "null"));
-} catch { /* Sound preferences are optional when local storage is unavailable. */ }
-const listeners = new Set<() => void>();
-export const soundPreferences = () => preferences;
-export const subscribeSoundPreferences = (listener: () => void) => {
-  listeners.add(listener);
-  return () => { listeners.delete(listener); };
-};
-export function setSoundPreferences(next: SoundPreferences) {
-  preferences = next;
-  try { localStorage.setItem(storageKey, JSON.stringify(next)); } catch { /* Keep the session preference. */ }
-  for (const listener of listeners) listener();
-}
+  | "listening" | "paused" | "attention";
 let context: AudioContext | null = null;
 const buffers = new Map<InputCue, AudioBuffer>();
 let lastKey = -Infinity, lastNavigation = -Infinity;
@@ -28,7 +8,6 @@ let activeSources = 0;
 
 // Called only inside a trusted user interaction. Native events never create or resume audio.
 export function unlockInputAudio() {
-  if (!preferences.keys && !preferences.gestures) return;
   try {
     context ??= new AudioContext();
     if (context.state === "suspended") void context.resume().catch(() => {});
@@ -40,9 +19,8 @@ const profiles = {
   navigate: [94, .036, .065, .016, .012],
 } as const;
 const notes = new Map<InputCue, readonly number[]>([
-  ["ready", [440, 660]], ["listening", [520, 780]], ["paused", [620, 440]],
-  ["off", [440, 330, 220]], ["accepted", [740]], ["clear", [520, 390]], ["attention", [280, 280]],
-  ["practice_error", [240, 180]],
+  ["listening", [520, 780]], ["paused", [620, 440]],
+  ["attention", [280, 280]],
 ]);
 function bufferFor(cue: InputCue, audio: AudioContext): AudioBuffer {
   const cached = buffers.get(cue);
@@ -51,8 +29,8 @@ function bufferFor(cue: InputCue, audio: AudioContext): AudioBuffer {
   // SAFETY: the membership check restricts this lookup to the closed profile table.
   const profile = cue in profiles ? profiles[cue as keyof typeof profiles] : null;
   const tones = notes.get(cue) ?? [];
-  const toneSeconds = cue === "practice_error" ? [.085, .16] : tones.map(() => .065);
-  const gap = cue === "practice_error" ? .035 : .01;
+  const toneSeconds = tones.map(() => .065);
+  const gap = .01;
   const duration = profile ? profile[0] / 1000 : toneSeconds.reduce((sum, span) => sum + span + gap, .025);
   const buffer = audio.createBuffer(1, Math.ceil(rate * duration), rate);
   const samples = buffer.getChannelData(0);
@@ -96,9 +74,9 @@ function bufferFor(cue: InputCue, audio: AudioContext): AudioBuffer {
   buffers.set(cue, buffer);
   return buffer;
 }
-export function playInputCue(cue: InputCue, channel: keyof SoundPreferences = "gestures") {
+export function playInputCue(cue: InputCue, channel: "keys" | "voice" = "voice") {
   const audio = context;
-  if (!preferences[channel] || !audio || audio.state !== "running" || activeSources >= 8) return;
+  if (!audio || audio.state !== "running" || activeSources >= 8) return;
   const now = performance.now();
   if (channel === "keys") {
     if (cue !== "commit" && now - lastKey < 18) return;
@@ -121,7 +99,7 @@ export function installInputSounds(): () => void {
     if (!event.isTrusted || event.isComposing || event.ctrlKey || event.metaKey || event.altKey) return;
     const target = event.target;
     if (!(target instanceof HTMLTextAreaElement) || target.disabled || target.readOnly
-      || !target.matches(".prompt-line textarea, .native-practice-draft")) return;
+      || !target.matches(".prompt-line textarea")) return;
     unlockInputAudio();
     const cue = event.key === "Enter" ? "commit" : event.key === " " ? "space"
       : event.key === "Backspace" || event.key === "Delete" ? "delete"

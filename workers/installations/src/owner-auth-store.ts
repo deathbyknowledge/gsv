@@ -15,7 +15,7 @@ const ipSchema = z.string().min(1).max(128);
 const resendSchema = z.boolean().optional();
 
 export type OwnerAuthPurpose = "login" | "link" | "recover";
-export type OwnerAuthErrorCode = "invalid" | "expired" | "locked" | "rate_limited" | "unavailable" | "already_used" | "credential_unavailable";
+export type OwnerAuthErrorCode = "invalid" | "expired" | "locked" | "rate_limited" | "unavailable" | "already_used" | "credential_unavailable" | "email_restricted";
 export class OwnerAuthError extends Error {
   constructor(readonly code: OwnerAuthErrorCode, readonly retryAt?: number) { super(`Owner authentication ${code}`); }
 }
@@ -77,13 +77,13 @@ const AUTHENTICATING_CONTEXT = `(c.purpose = 'login' OR EXISTS (
 const NATIVE_CREDENTIAL_AVAILABLE = `(EXISTS (
   SELECT 1 FROM principal_email_credentials e JOIN principals p ON p.id = e.principal_id
   WHERE e.email_normalized = c.email AND e.revoked_at IS NULL AND p.state = 'active' AND p.email_verified_at IS NOT NULL)
-  OR (c.purpose != 'recover' AND NOT EXISTS (SELECT 1 FROM principals p WHERE p.primary_email_normalized = c.email)
+  OR (? = 1 AND c.purpose != 'recover' AND NOT EXISTS (SELECT 1 FROM principals p WHERE p.primary_email_normalized = c.email)
     AND NOT EXISTS (SELECT 1 FROM principal_email_credentials e WHERE e.email_normalized = c.email)))`;
 
 /** Native email credentials are explicit; matching an external identity's email never grants its principal. */
 export class InstallationOwnerAuthStore {
   private readonly key: Promise<CryptoKey>;
-  constructor(private readonly db: D1Database, codeSecret: string) {
+  constructor(private readonly db: D1Database, codeSecret: string, private readonly allowsNewEmail?: (email: string) => boolean) {
     if (!codeSecretSchema.safeParse(codeSecret).success) throw new OwnerAuthError("unavailable");
     this.key = crypto.subtle.importKey("raw", new TextEncoder().encode(codeSecret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
   }
@@ -95,6 +95,10 @@ export class InstallationOwnerAuthStore {
     if (!resendSchema.safeParse(input.resend).success) throw new OwnerAuthError("invalid");
     const browser = await sha256Hex(secret(input.browserSecret));
     if (!ipSchema.safeParse(input.ip).success) throw new OwnerAuthError("invalid");
+    if (this.allowsNewEmail?.(email) === false && !await this.db.prepare(`SELECT 1
+      FROM principal_email_credentials e JOIN principals p ON p.id = e.principal_id
+      WHERE e.email_normalized = ? AND e.revoked_at IS NULL AND p.state = 'active' AND p.email_verified_at IS NOT NULL`)
+      .bind(email).first()) throw new OwnerAuthError("email_restricted");
     const [emailKey, ipKey] = await Promise.all([this.mac("email-rate", email), this.mac("ip-rate", input.ip)]);
     const existing = await this.get(id);
     const generation = existing?.code_generation ?? crypto.randomUUID();
@@ -176,6 +180,7 @@ export class InstallationOwnerAuthStore {
     }
     const verificationId = crypto.randomUUID();
     const principalId = `principal_native_${crypto.randomUUID()}`;
+    const allowCreation = this.allowsNewEmail?.(challenge.email) !== false;
     const success = `c.id = ? AND c.verification_id = ?`;
     await this.db.batch([
       this.db.prepare(`UPDATE owner_auth_challenges SET failed_attempts = failed_attempts + 1
@@ -187,7 +192,7 @@ export class InstallationOwnerAuthStore {
           AND verified_at IS NULL AND revoked_at IS NULL AND failed_attempts < 5 AND expires_at > ?
           AND ${AUTHENTICATING_CONTEXT} AND ${NATIVE_CREDENTIAL_AVAILABLE}
           AND NOT EXISTS (SELECT 1 FROM owner_auth_sessions WHERE token_hash = ?)`)
-        .bind(verificationId, now, sessionHash, id, browser, input.purpose, ownerAttemptId, verifier, now, now, sessionHash),
+        .bind(verificationId, now, sessionHash, id, browser, input.purpose, ownerAttemptId, verifier, now, now, allowCreation ? 1 : 0, sessionHash),
       this.db.prepare(`INSERT INTO principals (id, primary_email, primary_email_normalized, display_name, email_verified_at, state, created_at, updated_at)
         SELECT ?, c.email, c.email, c.email, ?, 'active', ?, ? FROM owner_auth_challenges c WHERE ${success}
           AND NOT EXISTS (SELECT 1 FROM principal_email_credentials WHERE email_normalized = c.email)`)
@@ -209,6 +214,7 @@ export class InstallationOwnerAuthStore {
     }
     if (current?.failed_attempts === 5) throw new OwnerAuthError("locked");
     if (constantTimeEqual(challenge.code_verifier, verifier)) {
+      if (!allowCreation) throw new OwnerAuthError("email_restricted");
       const collision = await this.db.prepare(`SELECT 1 FROM principals p WHERE p.primary_email_normalized = ?
         AND NOT EXISTS (SELECT 1 FROM principal_email_credentials e WHERE e.email_normalized = ?)`).bind(challenge.email, challenge.email).first();
       if (collision) throw new OwnerAuthError("credential_unavailable");

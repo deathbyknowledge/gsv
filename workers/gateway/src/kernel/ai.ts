@@ -95,6 +95,7 @@ import { isVectorImageMimeType } from "../inference/image-mime";
 import { RipgitClient } from "../fs";
 import { collectPromptSkillIndex } from "./skills";
 import { seedBuiltinSkillsToHome } from "./sys/skills-seed";
+import { ensureSharedMemoryContext } from "./account-home";
 import { discoverVisibleTargets, gsvTargetImplementations, listAllVisibleTargets, targetCanHandle, targetToAiTarget } from "./targets";
 import {
   isSameAiModelCredentialScope,
@@ -194,6 +195,13 @@ export async function handleAiContext(
   const config = ctx.config;
   const uid = principalOf(ctx)?.account.uid ?? 0;
   const owner = resolveOwnerIdentity(ctx);
+  if (ctx.processId) {
+    const account = requirePrincipal(ctx).account;
+    await Promise.all([
+      ensureSharedMemoryContext(ctx, account),
+      ...(owner && owner.uid !== account.uid ? [ensureSharedMemoryContext(ctx, owner)] : []),
+    ]);
+  }
   const accountConfigUids = resolveAiConfigAccountUids(uid, owner);
   const resolveConfig = createAiConfigValueResolver(config, accountConfigUids);
   const skillIndexMode = normalizeSkillIndexMode(resolveConfig("skills/index_mode"));
@@ -215,6 +223,7 @@ export async function handleAiContext(
     systemContextFiles: listConfigContextFiles(config, "config/ai/context.d"),
     system: {
       timezone: principalOf(ctx) ? ownerTimezone(config, resolveCallerOwnerUid(ctx)) : config.get("config/server/timezone") ?? "UTC",
+      language: principalOf(ctx) ? config.get(`users/${resolveCallerOwnerUid(ctx)}/locale/language`) ?? undefined : undefined,
     },
     skillIndexMode,
     mailbox: resolveContextMailbox(ctx),
@@ -296,6 +305,7 @@ export async function handleAiConfig(
     systemContextFiles,
     system: {
       timezone,
+      language: principalOf(ctx) ? config.get(`users/${resolveCallerOwnerUid(ctx)}/locale/language`) ?? undefined : undefined,
     },
     skillIndex,
     skillIndexMode,

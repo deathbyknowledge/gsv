@@ -179,10 +179,9 @@ Duplicate deliveries are idempotent within retained receipts; events older than
 the Process reset boundary are ignored. Raw history and client notices remain
 available independently of the canonical Conversation.
 
-Target connection notifications are best effort. SQL retains the watch, but this
-first source does not introduce a durable transition replay queue or a separate
-machine-rule runtime. Temporary Process lifecycle conflicts, service errors, and
-RPC failures leave watches eligible for later transitions, including one-shot
+Target connection notifications are best effort. SQL retains the watch.
+Temporary Process lifecycle conflicts, service errors, and RPC failures leave
+watches eligible for later transitions, including one-shot
 watches that have not received a matching successful acknowledgment. The missed
 transition is not replayed. Authorization failures, a gone Process, and invalid
 acknowledgments still disable the watch.

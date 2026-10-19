@@ -17,12 +17,18 @@ export type PromptLineProps = {
   /** The working directory a command runs in on that place, already shortened for display. */
   dir: string;
   placeholder: string;
+  ariaLabel?: string;
+  /** A surface may own its draft; updating it does not move an unchanged selection. */
+  value?: string;
   disabled?: boolean;
   onSubmit: (text: string) => void | boolean | Promise<void | boolean>;
   allowEmpty?: boolean;
+  commands?: boolean;
   /** A native composer can finalize its current segment before ordinary submission. */
   interceptSubmit?: () => boolean;
   onFiles?: (files: File[]) => void;
+  /** Called with pasted plain text; return true when the text was taken elsewhere, so it stays out of the input. */
+  onPasteText?: (text: string) => boolean;
   /** Called when the chip is pressed, to change the place. */
   onPlace?: () => void;
   /** Called on ArrowUp / ArrowDown with the input empty, for history browsing. */
@@ -38,6 +44,7 @@ export type PromptLineProps = {
 
 export type PromptLineHandle = {
   disabled: boolean;
+  commands?: boolean;
   /** The place chip, so the picker it opens can tell a press on it from one outside. */
   chip: HTMLButtonElement | null;
   setValue(value: string, caret?: number): void;
@@ -49,8 +56,8 @@ export type PromptLineHandle = {
   submit(): void;
 };
 
-export function promptAfterSubmit(text: string): string {
-  return text.trimStart().startsWith("$") ? "$ " : "";
+export function promptAfterSubmit(text: string, commands = true): string {
+  return commands && text.trimStart().startsWith("$") ? "$ " : "";
 }
 
 /**
@@ -61,7 +68,7 @@ export function promptAfterSubmit(text: string): string {
  * the chip and keeps taking words.
  */
 // The prompt grows from that first line as text wraps, up to a scrollable height.
-export const PromptLine = forwardRef<PromptLineHandle, PromptLineProps>(function PromptLine({ place, showPlace = true, dir, placeholder, disabled, onSubmit, allowEmpty, interceptSubmit, onFiles, onPlace, onHistory, autoFocus, onFocusChange, onInput, onKeyIntercept }, ref) {
+export const PromptLine = forwardRef<PromptLineHandle, PromptLineProps>(function PromptLine({ place, showPlace = true, dir, placeholder, ariaLabel = "Prompt", value, disabled, onSubmit, allowEmpty, commands = true, interceptSubmit, onFiles, onPasteText, onPlace, onHistory, autoFocus, onFocusChange, onInput, onKeyIntercept }, ref) {
   const active = useViewActive();
   const activeRef = useRef(active);
   activeRef.current = active;
@@ -72,6 +79,7 @@ export const PromptLine = forwardRef<PromptLineHandle, PromptLineProps>(function
   const mirrorText = useRef<{ before: Text; marker: HTMLSpanElement; after: Text } | null>(null);
   const caretRef = useRef<HTMLSpanElement>(null);
   const [command, setCommand] = useState(false);
+  useLayoutEffect(() => { setCommand(commands && (inputRef.current?.value.startsWith("$") ?? false)); }, [commands]);
   const revision = useRef(0);
   const submitting = useRef(false);
   const autoFocusHandled = useRef(false);
@@ -103,12 +111,16 @@ export const PromptLine = forwardRef<PromptLineHandle, PromptLineProps>(function
     const { fontSize, lineHeight } = metrics.current;
     const width = input.clientWidth;
     const at = input.selectionStart;
+    const selecting = at !== input.selectionEnd;
     const focused = document.activeElement === input && !input.disabled;
     const previous = measured.current;
     if (previous && previous.value === input.value && previous.start === at && previous.end === input.selectionEnd
       && previous.width === width && previous.top === input.scrollTop && previous.left === input.scrollLeft
       && previous.focused === focused
       && (!reveal || previous.reveal)) return;
+    // iOS uses caret-color for its native selection UI too. Restore that tint
+    // for a range while keeping our block cursor for an insertion point.
+    input.toggleAttribute("data-text-selected", selecting);
     if (!mirrorText.current) {
       const before = document.createTextNode("");
       const marker = document.createElement("span");
@@ -130,13 +142,13 @@ export const PromptLine = forwardRef<PromptLineHandle, PromptLineProps>(function
       const height = `${mirror.offsetHeight}px`;
       if (input.style.height !== height) input.style.height = height;
     }
-    if (reveal && focused && input.selectionStart === input.selectionEnd) {
+    if (reveal && focused && !selecting) {
       const bottom = lineTop + lineHeight;
       if (lineTop < input.scrollTop) input.scrollTop = lineTop;
       else if (bottom > input.scrollTop + input.clientHeight) input.scrollTop = bottom - input.clientHeight;
     }
     if (chip) chip.style.transform = `translateY(${-input.scrollTop}px)`;
-    const visible = focused && input.selectionStart === input.selectionEnd;
+    const visible = focused && !selecting;
     // Cursor geometry belongs to this measurement, without a component update after the frame callback.
     caret.style.transform = `translate(${left - input.scrollLeft}px, ${lineTop + (lineHeight - fontSize) / 2 - input.scrollTop}px)`;
     caret.style.visibility = visible ? "visible" : "hidden";
@@ -158,6 +170,14 @@ export const PromptLine = forwardRef<PromptLineHandle, PromptLineProps>(function
     });
   }, [measure]);
   useLayoutEffect(() => {
+    const input = inputRef.current;
+    if (value === undefined || !input || input.value === value) return;
+    input.value = value;
+    revision.current++;
+    setCommand(commands && value.startsWith("$"));
+    scheduleMeasure(true);
+  }, [value, commands, scheduleMeasure]);
+  useLayoutEffect(() => {
     if (!active) {
       cancelAnimationFrame(measureFrame.current);
       measureFrame.current = 0;
@@ -177,7 +197,7 @@ export const PromptLine = forwardRef<PromptLineHandle, PromptLineProps>(function
   useLayoutEffect(() => {
     if (!active || !autoFocus || disabled || autoFocusHandled.current) return;
     autoFocusHandled.current = true;
-    if (document.activeElement === document.body || document.activeElement === null) inputRef.current?.focus();
+    if (document.activeElement === document.body || document.activeElement === null) inputRef.current?.focus({ preventScroll: true });
   }, [active, autoFocus, disabled]);
   useEffect(() => {
     const field = fieldRef.current;
@@ -197,11 +217,12 @@ export const PromptLine = forwardRef<PromptLineHandle, PromptLineProps>(function
   const changed = (): void => {
     revision.current++;
     const value = read();
-    setCommand(value.startsWith("$"));
+    setCommand(commands && value.startsWith("$"));
     onInput?.(value);
     scheduleMeasure(true);
   };
   useImperativeHandle(ref, () => ({
+    commands,
     disabled: Boolean(disabled),
     get chip() { return chipRef.current; },
     selection: () => ({ value: read(), start: inputRef.current?.selectionStart ?? 0, end: inputRef.current?.selectionEnd ?? 0 }),
@@ -214,11 +235,11 @@ export const PromptLine = forwardRef<PromptLineHandle, PromptLineProps>(function
     append(text) {
       const input = inputRef.current;
       if (!input || disabled) return;
-      input.focus();
+      input.focus({ preventScroll: true });
       input.setRangeText(text, input.value.length, input.value.length, "end");
       changed();
     },
-    focus: () => inputRef.current?.focus(),
+    focus: () => inputRef.current?.focus({ preventScroll: true }),
     blur: () => inputRef.current?.blur(),
     submit: () => { void send(); },
   }));
@@ -227,13 +248,13 @@ export const PromptLine = forwardRef<PromptLineHandle, PromptLineProps>(function
     if (!input || disabled || submitting.current) return;
     if (interceptSubmit?.()) return;
     const text = input.value.trim();
-    if ((!text && !allowEmpty) || text === "$") return;
+    if ((!text && !allowEmpty) || (commands && text === "$")) return;
     const sentRevision = revision.current;
     submitting.current = true;
     try {
       const accepted = await onSubmit(text);
       if (accepted !== false && inputRef.current === input && revision.current === sentRevision) {
-        input.value = promptAfterSubmit(text);
+        input.value = promptAfterSubmit(text, commands);
         input.setSelectionRange(input.value.length, input.value.length);
         changed();
       }
@@ -287,15 +308,26 @@ export const PromptLine = forwardRef<PromptLineHandle, PromptLineProps>(function
           ref={inputRef}
           rows={1}
           placeholder={placeholder}
-          aria-label="Prompt"
+          aria-label={ariaLabel}
+          enterkeyhint="send"
           spellcheck={false}
           disabled={disabled}
           onKeyDown={onKeyDown}
           onScroll={() => scheduleMeasure()}
+          onSelect={() => scheduleMeasure(true)}
           onInput={changed}
           onPaste={(event) => {
             const files = Array.from(event.clipboardData?.files ?? []);
-            if (onFiles && files.length > 0) { event.preventDefault(); onFiles(files); }
+            if (onFiles && files.length > 0) { event.preventDefault(); onFiles(files); return; }
+            const text = event.clipboardData?.getData("text/plain") ?? "";
+            if (!text || !onPasteText?.(text)) return;
+            event.preventDefault();
+            // The paste went to a chip; a selection the person meant to replace still goes away.
+            const input = event.currentTarget;
+            if (input.selectionStart !== input.selectionEnd) {
+              input.setRangeText("", input.selectionStart, input.selectionEnd, "end");
+              changed();
+            }
           }}
           onFocus={() => {
             scheduleMeasure(true);

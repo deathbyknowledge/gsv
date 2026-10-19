@@ -26,15 +26,16 @@ export async function resolveMailRecipient(
   addressValue: string,
   mailDomainValue: string,
   webBaseDomainValue: string,
+  receivingDomainValues: readonly string[] = [mailDomainValue],
 ): Promise<ResolvedMailRecipient | null> {
-  const mailDomain = parseDomain(mailDomainValue, "MAIL_DOMAIN");
+  const mailDomains = receivingDomainValues.map((value) => parseDomain(value, "MAIL_RECEIVING_DOMAINS"));
   const webBaseDomain = parseDomain(webBaseDomainValue, "GSV_BASE_DOMAIN");
   const address = addressValue.trim().toLowerCase();
   const separator = address.indexOf("@");
   if (
     separator <= 0
     || separator !== address.lastIndexOf("@")
-    || address.slice(separator + 1) !== mailDomain
+    || !mailDomains.includes(address.slice(separator + 1))
   ) {
     return null;
   }

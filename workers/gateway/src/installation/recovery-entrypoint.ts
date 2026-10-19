@@ -20,7 +20,7 @@ export class GatewayRecoveryEntrypoint extends WorkerEntrypoint<GatewayEnv, { au
     if (this.ctx.props?.authority !== "installation-owner-recovery") throw new Error("Recovery binding authority is required");
     if (!this.env.INSTALLATION_DIRECTORY) throw new Error("Installation directory is required");
     const result = await this.env.INSTALLATION_DIRECTORY.resolveInstallation(installationId);
-    if (!result.found || result.installationId !== installationId || result.state !== "active") throw new Error("The space is unavailable");
+    if (!result.found || result.installationId !== installationId || result.state !== "active") throw new Error("This Ship is unavailable");
     return getKernelByInstallationId(this.env.KERNEL, installationId);
   }
 }

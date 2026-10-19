@@ -26,10 +26,10 @@ function signtool.exe { $signed.Add([string]$args[-1]); $global:LASTEXITCODE = 0
 function Get-AuthenticodeSignature { return @{ Status = 'Valid' } }
 try {
   New-Item -ItemType Directory -Force $AssetDirectory | Out-Null
-  foreach ($name in @('gsv', 'gsvd', 'gsv-desktop', 'gsv-transcribe', 'gsv-vision')) {
+  foreach ($name in @('gsv', 'gsvd', 'gsv-desktop', 'gsv-transcribe', 'gsv-speak')) {
     [IO.File]::WriteAllText((Join-Path $AssetDirectory "$name-windows-x64.exe"), 'binary-v1')
   }
-  foreach ($name in @('gsv-transcribe-THIRD_PARTY.md', 'gsv-vision-LICENSE.apache-2.0', 'gsv-vision-PROVENANCE.md', 'gsv-vision-THIRD_PARTY.md')) {
+  foreach ($name in @('gsv-transcribe-THIRD_PARTY.md', 'gsv-speak-THIRD_PARTY-windows-x64.md')) {
     [IO.File]::WriteAllText((Join-Path $AssetDirectory $name), 'license')
   }
   $runtime = Join-Path $root 'build/gsv-transcribe-runtime'
@@ -41,6 +41,7 @@ try {
   [IO.File]::WriteAllText((Join-Path $root 'build/deps/unshipped.dll'), 'build dependency')
   foreach ($version in @('v1', 'v2')) {
     [IO.File]::WriteAllText((Join-Path $runtime 'transcribe.dll'), "runtime-$version")
+    [IO.File]::WriteAllText((Join-Path $AssetDirectory 'gsv-speak-windows-x64.exe'), "speaker-$version")
     $env:GSV_WINDOWS_SIGNING_THUMBPRINT = 'fixture-certificate'
     $signed.Clear()
     & (Join-Path $PSScriptRoot 'sign-windows.ps1') -Directory (Split-Path $runtime)
@@ -54,16 +55,31 @@ try {
       (Get-FileHash $_.FullName).Hash.ToLowerInvariant() + '  ' + $_.Name
     }) -join "`n"
     [IO.File]::WriteAllText((Join-Path $AssetDirectory 'checksums.txt'), $checksums)
+    New-Item -ItemType Directory -Force $InstallDir | Out-Null
+    $retired = @('gsv-vision.exe', 'gsv-vision-LICENSE.apache-2.0', 'gsv-vision-PROVENANCE.md', 'gsv-vision-THIRD_PARTY.md')
+    foreach ($name in $retired) { [IO.File]::WriteAllText((Join-Path $InstallDir $name), 'legacy') }
     if ($version -eq 'v1') {
       Install-GsvHost
+      foreach ($name in $retired) {
+        if (Test-Path (Join-Path $InstallDir $name)) { throw 'Retired helper was not removed' }
+      }
     } else {
       function Ensure-ConfigFile { throw 'fixture rollback' }
       try { Install-GsvHost; throw 'Installer failed to roll back' } catch {
         if ($_.Exception.Message -notmatch 'fixture rollback') { throw }
       }
+      foreach ($name in $retired) {
+        if ((Get-Content -Raw (Join-Path $InstallDir $name)) -ne 'legacy') { throw 'Retired helper was not restored' }
+      }
     }
     if ((Get-Content -Raw (Join-Path $InstallDir 'gsv-transcribe-runtime/transcribe.dll')) -ne 'runtime-v1') {
       throw 'Runtime directory was not installed or restored with the helper'
+    }
+    if ((Get-Content -Raw (Join-Path $InstallDir 'gsv-speak.exe')) -ne 'speaker-v1') {
+      throw 'Speaker was not installed or restored with the other helpers'
+    }
+    if ((Get-Content -Raw (Join-Path $InstallDir 'gsv-speak-THIRD_PARTY.md')) -ne 'license') {
+      throw 'Speaker notices were not installed'
     }
     if (Get-ChildItem $InstallDir | Where-Object Name -Match '\.(new|backup)\.') { throw 'Installer left staged files' }
   }

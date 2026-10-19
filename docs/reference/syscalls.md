@@ -122,6 +122,11 @@ Runtime behavior:
 
 Device routing errors are frame-level errors: `403` for access denied, `503` for offline or missing connection, `400` for unsupported syscall, and `504` for route timeout.
 
+Native directory reads classify entries with a bounded number of concurrent
+metadata lookups. They preserve listing order and follow directory symlinks; an
+entry that cannot be statted remains in the file list, as before. This avoids
+serial storage round trips for each child in cloud-backed folders.
+
 ```ts
 type FilesystemSyscalls = {
   "fs.read": {
@@ -521,7 +526,7 @@ Runtime behavior:
 
 | Syscall | Handler | Behavior |
 |---|---|---|
-| `codemode.exec` | Process DO `executeCodeModeTool`; `executeCodeMode` | Runs code in an isolated Worker Loader worker with outbound network disabled. Provides `shell(input, options)`, `fs.read/write/edit/delete/search`, `mail.send`, `mcpTools` metadata, and connected MCP tools as generated async functions. Returns a structured `completed` or `failed` CodeMode result. |
+| `codemode.exec` | Process DO `executeCodeModeTool`; `executeCodeMode` | Runs code in an isolated Worker Loader worker with outbound network disabled. Provides `shell(input, options)`, `shell.cancel({sessionId, target?})`, `fs.read/write/edit/delete/search`, `mail.send`, `mcpTools` metadata, and connected MCP tools as generated async functions. Returns a structured `completed` or `failed` CodeMode result. |
 | `codemode.run` | Kernel `forwardToProcess`; Process DO `handleCodeModeRun`; `executeCodeMode` | Manual CodeMode execution for shell/CLI surfaces. Accepts code plus optional wrapper defaults and script arguments. Nested tools route through normal `shell.exec`, `fs.*`, `net.fetch`, `mail.send`, and `sys.mcp.*` syscalls. |
 
 ```ts
@@ -1596,6 +1601,16 @@ usage. Kernel derives installation and human owner scope. Management calls are
 available through native `instance` and `browser` shell commands; ordinary browser
 commands run on the returned target. See [cloud browsers](/how-to/cloud-browsers).
 
+The `computer` template adds temporary Linux targets using the same machine
+syscalls, streamed bodies, shell sessions and cancellation. A new request ID
+creates a new computer; profile and fresh-browser options are rejected.
+Computers have independent concurrency and time allowances. Catalog and list
+responses include `usageByKind.browser` and `usageByKind.linux`; `usage` retains
+the browser allowance for existing clients. See [cloud computers](/how-to/cloud-computers).
+The service verifies each machine boot before admitting requests and never
+starts a replacement for a lost instance. Detached shell sessions survive
+connection loss within that instance's lifetime; physical stop terminates them.
+
 A start requires a persisted request ID. Repeating the same ID and arguments
 returns the same instance, including after it becomes terminal. With a new request
 ID, ordinary starts reuse the owner's ready or starting automatic browser without
@@ -1705,10 +1720,10 @@ Runtime behavior:
 |---|---|---|
 | `sys.connect` | `handleConnect` | First request on a WebSocket connection. Authenticates the credential, derives the principal kind, returns independent call/signal/implementation grants, registers peers that implement syscalls as route targets, closes older sessions for the same logical peer, and ensures a human user's personal intelligence exists. Setup mode rejects with `425` and `next: "sys.setup"`. |
 | `sys.setup.assist` | `handleSysSetupAssist` | Pre-connect setup helper. Uses app AI config to guide onboarding, redacts secrets from drafts, and only accepts whitelisted non-secret patches from model output. Rejected if already connected or initialized. |
-| `sys.setup` | `handleSysSetup` | Pre-connect setup-mode bootstrap. Creates first user, root password, groups/home, personal agent and owned Crew account, optional timezone, optional AI config, optional machine token, home layout, imports the manual, and seeds built-in skills. Username, password, and timezone are validated. Setup recovery identifies the human separately from locked agent accounts. |
+| `sys.setup` | `handleSysSetup` | Pre-connect setup-mode bootstrap. Creates first user, root password, groups/home, personal agent and owned Crew account, optional timezone and owner language preference, optional AI config, optional machine token, home layout, imports the manual, and seeds built-in skills. Username, password, timezone, and BCP 47 language are validated. The Kernel prepares onboarding outside the model-visible ledger until the owner dismisses the welcome card or sends their first Ship message, then creates an open responsibility with no blocker. Retries preserve handled work. Setup recovery identifies the human separately from locked agent accounts. |
 | `sys.bootstrap` | `handleSysBootstrap` | Imports `root/gsv-manual`, registers it as a public system repository, and seeds the gateway's bundled skills into the caller's home without replacing existing files. `GSV_MANUAL_BOOTSTRAP_UPSTREAM` accepts `owner/repo`, a git URL, or either form with `#ref`; `GSV_MANUAL_BOOTSTRAP_REF` overrides its ref. The default is the compatible immutable revision in `workers/gateway/src/kernel/sys/manual-version.json`. Existing installations refresh on authenticated activity when that revision changes; failures retain the installed copy and local edits are preserved. `wiki refresh gsv-manual` refreshes only the Manual, without seeding skills. Requires `RIPGIT`. |
 | `sys.config.get` | `handleSysConfigGet` | Reads exact config key or visible prefix. Root sees all; non-root sees own `users/<uid>/` keys and non-sensitive `config/` keys. Sensitive names such as password, token, secret, and api key are hidden from non-root. |
-| `sys.config.set` | `handleSysConfigSet` | Writes a config value. Root can write any key; non-root can write only own user-overridable keys, currently under `users/<uid>/ai/`. Values are coerced with `String(value)`. |
+| `sys.config.set` | `handleSysConfigSet` | Writes a config value. Root can write any key; non-root can write permitted user-overridable keys for their own account and delegated agents, including `users/<uid>/ai/` and `users/<uid>/ui/`. Instrument stores `"1"` at `users/<uid>/ui/welcome_card_seen` when the person dismisses the welcome card, so the dismissal follows the account across web and Desktop. A direct human write of this flag for their own account activates pending onboarding as an open responsibility and reconciles its wake before acknowledgment; retries do not reopen handled work. Reconnecting recovers a saved dismissal in the background without delaying sign-in. Values are coerced with `String(value)`. |
 | `sys.feedback` | `handleSysFeedback` | Sends an explicit report to the optional operator `FEEDBACK` service. Requires authentication and `sys.feedback`. Arguments contain an optional UUID `id` for retry correlation and optional `context` with `view`, `platform`, and app `version`. A required UTF-8 JSON body carries `message` (1–8,000 characters) and optional `activity` (at most 20 message groups and 64,000 characters); the body is limited to 512 KiB. Report content stays out of syscall ledger arguments, and service exceptions become a generic delivery error. Kernel attaches the trusted installation, space origin, caller's human owner and server version. Returns `{ id }` after the service accepts it. Delivery has a ten-second deadline; timeout or caller cancellation disposes the remote call. Reuse the report ID when retrying an uncertain delivery. |
 | `sys.target.list` | `handleSysTargetList` | Lists targets accessible by owner uid or group ACL. Root sees all. Defaults to online devices only unless `includeOffline` is true. |
 | `sys.target.get` | `handleSysTargetGet` | Reads one target descriptor. Missing or inaccessible targets return `target: null` rather than a permission error. |
@@ -1810,8 +1825,8 @@ type SystemSyscalls = {
   };
 
   "sys.setup": {
-    args: { username?: string; password: string; rootPassword?: string; timezone?: string; ai?: { provider?: string; model?: string; apiKey?: string }; machine?: { peerId: string; label?: string; expiresAt?: number } };
-    result: { server: { version: string; release: string; features?: string[] }; user: ProcessIdentity; rootLocked: boolean; bootstrap?: SystemSyscalls["sys.bootstrap"]["result"]; machineToken?: { tokenId: string; token: string; tokenPrefix: string; uid: number; kind: "machine"; label: string | null; peerId: string; createdAt: number; expiresAt: number | null } };
+    args: { username?: string; password: string; rootPassword?: string; timezone?: string; language?: string; ai?: { provider?: string; model?: string; apiKey?: string }; machine?: { peerId: string; label?: string; expiresAt?: number } };
+    result: { server: { version: string; release: string; features?: string[]; deployment?: PublicDeploymentConfig }; user: ProcessIdentity; rootLocked: boolean; bootstrap?: SystemSyscalls["sys.bootstrap"]["result"]; machineToken?: { tokenId: string; token: string; tokenPrefix: string; uid: number; kind: "machine"; label: string | null; peerId: string; createdAt: number; expiresAt: number | null } };
   };
 
   "sys.bootstrap": {
@@ -2006,8 +2021,7 @@ links, and commits the receipt. Identical retries cannot overwrite later credent
 a Process acting as root cannot invoke it. It resets the sole personal account.
 The optional legacy `uid` must match that account. Reset revokes its earlier
 credentials and messenger links, retaining its UID, groups, data and admitted
-Processes. The old local-human invitation, listing and removal syscalls are
-removed; contact invitations continue to connect separate spaces.
+Processes. Contact invitations connect separate spaces.
 
 ## AI: `ai.*`
 
@@ -2075,7 +2089,7 @@ type AiSyscalls = {
 
   "ai.context": {
     args: Empty;
-    result: { targets?: Array<{ id: string; implements: string[]; label?: string; description?: string; platform?: string }>; mcpServers: string[]; systemContextFiles?: Array<{ name: string; text: string }>; system: { timezone: string }; skillIndex?: Array<{ id: string; name: string; description: string; source: { kind: "home"; label: string; writable: boolean } }>; skillIndexMode: "summary" | "names" | "off"; mailbox: { address: string } | null };
+    result: { targets?: Array<{ id: string; implements: string[]; label?: string; description?: string; platform?: string }>; mcpServers: string[]; systemContextFiles?: Array<{ name: string; text: string }>; system: { timezone: string; language?: string }; skillIndex?: Array<{ id: string; name: string; description: string; source: { kind: "home"; label: string; writable: boolean } }>; skillIndexMode: "summary" | "names" | "off" }; mailbox: { address: string } | null };
   };
 
   "ai.text.generate": {
@@ -2110,8 +2124,6 @@ and `adapterStatus`. Adapters call the Gateway's single
 every explicit or routed delivery is a correlated `adapter.send` request sent
 only to the exact adapter destination. User-state signals remain broadcast to
 clients independently. `adapterFrame` is the only Gateway-to-adapter carrier.
-Old channel-specific interfaces and direct channel RPC names are not part of
-this contract.
 
 Adapter media metadata stays in JSON. Inline bytes are concatenated into the
 request's single top-level binary body, and each media item identifies its

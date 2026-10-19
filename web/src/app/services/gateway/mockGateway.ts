@@ -26,6 +26,9 @@
 import { GSVClient, type GsvPeerInfo } from "@humansandmachines/gsv/client";
 import {
   wireFrameSchemas,
+  buildBinaryFrame,
+  BINARY_FRAME_DATA,
+  BINARY_FRAME_END,
   type AccountSummary,
   type AiTextContent,
   type AiThinkingContent,
@@ -42,6 +45,8 @@ import {
   type ProcHistoryRecordsResult,
   type ProcListEntry,
   type ProcMessageMetadata,
+  type ResponsibilityRecord,
+  type ScheduleRecord,
   type SysLedgerLine,
   type SysTargetSummary,
   type SysTokenCreateResult,
@@ -124,8 +129,34 @@ const targets: SysTargetSummary[] = [
 ];
 
 const accounts: AccountSummary[] = [
-  { uid: OWNER.uid, username: OWNER.username, displayName: "Esteve", relation: "self", runnable: false, capabilities: ["sys.ledger.list", "sys.target.list", "proc.list"] },
+  { uid: OWNER.uid, username: OWNER.username, displayName: "Esteve", relation: "self", runnable: false, capabilities: ["sys.ledger.list", "sys.target.list", "proc.list", "r12y.list", "r12y.source.list", "sched.list", "r12y.get", "r12y.update", "sched.add", "sched.update", "conversation.send", "profile.resolve", "contact.list", "sys.pair.create", "fs.read"] },
   { uid: SHIP.uid, username: SHIP.username, displayName: "Ship", relation: "personal-agent", runnable: true },
+];
+
+const responsibilityBase = {
+  ownerUid: OWNER.uid, source: { kind: "account" as const, uid: OWNER.uid, username: OWNER.username },
+  assignee: { kind: "ship" as const }, priority: "normal" as const, revision: 1,
+  createdAtMs: at(1, 9, 0), updatedAtMs: at(0, 8, 0),
+};
+const responsibilities: ResponsibilityRecord[] = [
+  { ...responsibilityBase, id: "mock-notes", title: "Organise the notes from this week", state: "active", assignee: { kind: "process", processId: HELPER.pid }, details: { outcome: "Keep the action items together and archive the older notes." } },
+  { ...responsibilityBase, id: "mock-pricing", title: "Follow up on pricing with Mara", state: "waiting", blocker: "Waiting for Mara’s reply", details: { outcome: "Confirm the revised quote before Thursday." } },
+  { ...responsibilityBase, id: "mock-backup", title: "Check that the studio backup finishes", state: "open", nextCheckAtMs: Date.now() + 2 * 3_600_000 },
+  { ...responsibilityBase, id: "mock-intro", title: "Introduce Lena to Mara", state: "resolved", resolvedAtMs: at(0, 8, 6), resolution: { result: "Lena accepted the introduction." } },
+];
+const scheduleBase = {
+  ownerUid: OWNER.uid, creator: { kind: "user" as const, uid: OWNER.uid, username: OWNER.username },
+  runAs: { kind: "user" as const, uid: OWNER.uid, username: OWNER.username },
+  enabled: true, overlapPolicy: "skip" as const, createdAtMs: at(7, 9, 0), updatedAtMs: at(0, 8, 0),
+};
+const scheduleState = {
+  nextRunAtMs: Date.now() + 8 * 3_600_000, runningAtMs: null, lastRunAtMs: at(0, 8, 0),
+  lastStatus: "ok" as const, lastError: null, lastDurationMs: 12_000, runCount: 7,
+};
+const schedules: ScheduleRecord[] = [
+  { ...scheduleBase, id: "mock-briefing", name: "Morning briefing", expression: { kind: "cron", expr: "0 8 * * *", timezone: "Europe/Amsterdam" }, target: { kind: "responsibility", message: "Bring together today’s plans and anything that needs my attention." }, state: scheduleState },
+  { ...scheduleBase, id: "mock-backup-routine", name: "Studio backup", expression: { kind: "cron", expr: "0 2 * * *", timezone: "Europe/Amsterdam" }, target: { kind: "responsibility", message: "Check the overnight backup and tell me if it needs attention." }, state: { ...scheduleState, nextRunAtMs: Date.now() + 14 * 3_600_000 } },
+  { ...scheduleBase, id: "mock-review", name: "Review the week", enabled: false, expression: { kind: "cron", expr: "0 17 * * 5", timezone: "Europe/Amsterdam" }, target: { kind: "responsibility", message: "Review this week’s notes and bring forward the unfinished items." }, state: { ...scheduleState, nextRunAtMs: null } },
 ];
 
 /* ---------- the scripted runs: what Ship does, step by step ---------- */
@@ -654,6 +685,8 @@ const connectArgs = z.object({ protocol: z.number() });
 const tokenArgs = z.object({ expiresAt: z.number().nullable().optional() });
 const hilArgs = z.object({ pid: z.string().optional(), requestId: z.string(), decision: z.enum(["approve", "deny"]) });
 const abortArgs = z.object({ pid: z.string().optional() });
+const responsibilityListArgs = z.object({ states: z.array(z.enum(["open", "active", "waiting", "resolved", "cancelled"])).optional(), includeTerminal: z.boolean().optional(), offset: z.number().optional(), limit: z.number().optional() });
+const scheduleListArgs = z.object({ includeDisabled: z.boolean().optional(), offset: z.number().optional(), limit: z.number().optional() });
 
 function respond<T>(id: string, data: T): string {
   return JSON.stringify({ type: "res", id, ok: true, data });
@@ -674,7 +707,18 @@ function route(socket: MockSocket, id: string, call: string, args: JsonValue): s
     }
     case "sys.token.revoke": return respond(id, { revoked: true });
     case "sys.token.list": return respond(id, { tokens: [] });
-    case "sys.config.get": return respond(id, { entries: [] });
+    case "sys.config.get": {
+      const key = z.object({ key: z.string().optional() }).parse(args).key;
+      const welcomeKey = `users/${OWNER.uid}/ui/welcome_card_seen`;
+      return respond(id, { entries: key === welcomeKey && window.localStorage.getItem("gsv.mock.welcome_seen") === "1"
+        ? [{ key: welcomeKey, value: "1" }] : [] });
+    }
+    case "sys.config.set": {
+      const { key, value } = z.object({ key: z.string(), value: z.string() }).parse(args);
+      if (key !== `users/${OWNER.uid}/ui/welcome_card_seen` || value !== "1") return refuse(id, 501, `The mock gateway does not implement ${call} for ${key}.`);
+      window.localStorage.setItem("gsv.mock.welcome_seen", "1");
+      return respond(id, { ok: true });
+    }
     case "account.list": return respond(id, { accounts });
     case "sys.target.list": return respond(id, { targets });
     case "sys.ledger.list": return respond(id, { lines: [...world.ledger].reverse(), nextCursor: null });
@@ -707,6 +751,7 @@ function route(socket: MockSocket, id: string, call: string, args: JsonValue): s
       if (run) result.runId = run.runId;
       return respond(id, result);
     }
+    case "conversation.ship": return respond(id, { conversation: conversation(SHIP.pid) });
     case "conversation.forProcess": return respond(id, { conversation: conversation(pidArgs.parse(args).pid) });
     case "conversation.history": {
       const { conversationId, beforeSequence = Infinity, afterSequence, limit = 100 } = conversationArgs.parse(args);
@@ -728,16 +773,62 @@ function route(socket: MockSocket, id: string, call: string, args: JsonValue): s
         nextBeforeSequence: matches.length > limit ? hits.at(-1)!.sequence : null });
     }
     case "conversation.send": {
-      const sent = receive(sendArgs.parse(args).text);
+      const input = sendArgs.parse(args);
+      const sent = receive(input.text);
       return respond(id, { message: sent.message, handlerPid: SHIP.pid, runId: sent.runId });
     }
     case "contact.list": return respond(id, { contacts: [] });
+    case "profile.resolve": {
+      const { url } = z.object({ url: z.string().url() }).parse(args);
+      const origin = new URL(url).origin;
+      return respond(id, { profile: { version: 1, origin, url: `${origin}/profile`, actor: { shipId: "mock-person", subjectId: "owner" },
+        displayName: "Mara", about: "Design, good coffee, and making things together.", contactPolicy: "requests", representation: "human-and-ship", revision: 1,
+        publishedAtMs: Date.now() } });
+    }
     case "contact.invite.list": return respond(id, { invites: [] });
     case "contact.request.list": return respond(id, { requests: [] });
     case "sys.link.list": return respond(id, { links: [] });
-    case "r12y.list": return respond(id, { responsibilities: [], count: 0, revision: 0 });
+    case "r12y.list": {
+      const { states, includeTerminal, offset = 0, limit = 100 } = responsibilityListArgs.parse(args);
+      const records = responsibilities.filter((record) => states ? states.includes(record.state) : includeTerminal || !["resolved", "cancelled"].includes(record.state));
+      return respond(id, { responsibilities: records.slice(offset, offset + limit), count: records.length, revision: 1 });
+    }
     case "r12y.source.list": return respond(id, { sources: [] });
-    case "sched.list": return respond(id, { schedules: [], count: 0 });
+    case "r12y.get": {
+      const { id: recordId } = z.object({ id: z.string() }).parse(args);
+      const responsibility = responsibilities.find((record) => record.id === recordId);
+      return responsibility ? respond(id, { responsibility, revision: 1 }) : refuse(id, 404, "Responsibility not found");
+    }
+    case "r12y.update": {
+      const input = z.object({ id: z.string(), expectedRevision: z.number(), patch: z.object({ state: z.literal("cancelled") }) }).parse(args);
+      const responsibility = responsibilities.find((record) => record.id === input.id);
+      if (!responsibility) return refuse(id, 404, "Responsibility not found");
+      if (responsibility.revision !== input.expectedRevision) return refuse(id, 409, "Responsibility changed");
+      responsibility.state = input.patch.state; responsibility.revision++;
+      broadcast("r12y.changed", { revision: responsibility.revision });
+      return respond(id, { responsibility, revision: responsibility.revision });
+    }
+    case "sched.list": {
+      const { includeDisabled, offset = 0, limit = 100 } = scheduleListArgs.parse(args);
+      const records = schedules.filter((record) => includeDisabled || record.enabled);
+      return respond(id, { schedules: records.slice(offset, offset + limit), count: records.length });
+    }
+    case "sched.update": {
+      const input = z.object({ id: z.string(), patch: z.object({ enabled: z.boolean() }) }).parse(args);
+      const schedule = schedules.find((entry) => entry.id === input.id);
+      if (!schedule) return refuse(id, 404, "Routine not found");
+      schedule.enabled = input.patch.enabled;
+      return respond(id, { schedule });
+    }
+    case "fs.read": {
+      const { path: requestedPath } = z.object({ path: z.string() }).parse(args);
+      const path = ["~", "."].includes(requestedPath) ? "/home/esteve" : requestedPath;
+      if (path === "/") return respond(id, { ok: true, path, files: [], directories: ["home"] });
+      if (path === "/home") return respond(id, { ok: true, path, files: [], directories: ["esteve"] });
+      if (path === "/home/esteve") return respond(id, { ok: true, path, files: ["notes.md"], directories: ["notes"] });
+      if (path === "/home/esteve/notes") return respond(id, { ok: true, path, files: ["backups.md"], directories: [] });
+      return socket.textResponse(id, { ok: true, path, kind: "text", contentType: "text/markdown", lines: 8, size: NOTES.length }, NOTES);
+    }
     case "sys.mcp.list": return respond(id, { servers: [] });
     case "repo.list": return respond(id, { repos: [] });
     default: return refuse(id, 501, `The mock gateway does not implement ${call}.`);
@@ -746,6 +837,7 @@ function route(socket: MockSocket, id: string, call: string, args: JsonValue): s
 
 /** The WebSocket the client thinks it opened; the other end is this module. */
 class MockSocket extends EventTarget implements WebSocket {
+  private nextStreamId = 2;
   readonly CONNECTING = 0;
   readonly OPEN = 1;
   readonly CLOSING = 2;
@@ -774,6 +866,19 @@ class MockSocket extends EventTarget implements WebSocket {
   /** A frame from the gateway's side of the wire. */
   deliver<T>(frame: T): void {
     this.deliverText(JSON.stringify(frame));
+  }
+
+  /** The small preview fixture fits in the protocol's initial receive window. */
+  textResponse<T>(id: string, data: T, text: string): string {
+    const streamId = this.nextStreamId;
+    this.nextStreamId += 2;
+    const bytes = new TextEncoder().encode(text);
+    window.setTimeout(() => {
+      if (this.readyState === this.OPEN) this.dispatchEvent(new MessageEvent("message", {
+        data: buildBinaryFrame(streamId, BINARY_FRAME_DATA | BINARY_FRAME_END, bytes),
+      }));
+    }, 0);
+    return JSON.stringify({ type: "res", id, ok: true, data, body: { streamId, length: bytes.length } });
   }
 
   send(data: string | ArrayBufferLike | Blob | ArrayBufferView): void {

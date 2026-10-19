@@ -40,6 +40,30 @@ async function ownerFixture(purpose: "link" | "recover") {
 }
 
 describe("native owner email authentication", () => {
+  it("rejects new email credentials before delivery and when verifying a previously issued code", async () => {
+    const f = fixture();
+    const restricted = new InstallationOwnerAuthStore(db, codeSecret, () => false);
+    await expect(restricted.issue(f.input, f.now)).rejects.toMatchObject({ code: "email_restricted" });
+    expect(await db.prepare("SELECT 1 FROM owner_auth_challenges WHERE id = ?").bind(f.input.challengeId).first()).toBeNull();
+    const issued = await f.auth.issue(f.input, f.now);
+    await expect(restricted.verify({ ...f.input, code: issued.code, sessionSecret: f.sessionSecret }, f.now))
+      .rejects.toMatchObject({ code: "email_restricted" });
+    expect(await db.prepare("SELECT 1 FROM principals WHERE primary_email_normalized = ?").bind(f.input.email).first()).toBeNull();
+    expect(await restricted.session(f.sessionSecret, f.now)).toBeNull();
+  });
+
+  it("lets existing native owners sign in when their email is no longer eligible for registration", async () => {
+    const f = await login();
+    const restricted = new InstallationOwnerAuthStore(db, codeSecret, () => false);
+    const now = f.now + OWNER_CODE_RESEND_MS;
+    const input = { ...f.input, challengeId: crypto.randomUUID() };
+    const issued = await restricted.issue(input, now);
+    const sessionSecret = browserSecret();
+    expect(await restricted.verify({ ...input, code: issued.code, sessionSecret }, now))
+      .toMatchObject({ principalId: f.receipt.principalId });
+    expect(await restricted.session(sessionSecret, now)).toMatchObject({ principalId: f.receipt.principalId });
+  });
+
   it("creates an explicit immutable native principal and hashed fixed-lifetime session without creating a space", async () => {
     const f = fixture();
     const before = await db.prepare("SELECT COUNT(*) AS count FROM installations").first();

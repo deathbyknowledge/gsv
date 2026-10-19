@@ -46,6 +46,81 @@ const browserInstance: CloudInstance = {
 };
 
 describe("instance gateway boundary", () => {
+  it.each(["browser", "linux"] as const)("derives %s target metadata from the instance environment", async kind => {
+    const instance: CloudInstance = { ...browserInstance, kind, targetId: `cloud:${kind}`, implements: ["shell.exec"], expiresAt: Date.now() + 60000 };
+    const { ctx } = context({ list: async () => ({ instances: [instance], handoffs: [], usage: {
+      periodStartsAt: 0, periodEndsAt: 1, usedSeconds: 0, reservedSeconds: 60, limitSeconds: 3600, activeInstances: 1, concurrentLimit: 2,
+    } }) });
+    expect(await discoverInstanceTargets(ctx, {})).toMatchObject({ complete: true, targets: [{
+      targetId: instance.targetId, platform: kind, online: true, implements: ["shell.exec"],
+      description: expect.stringContaining(kind === "linux" ? "Linux computer" : "browser"),
+      route: { kind: "instance", instanceId: instance.instanceId },
+    }] });
+  });
+
+  it("remembers yielded instance sessions and routes polling and cancellation through their saved target", async () => {
+    await runWithRealKernelSql(async sql => {
+      const instance: CloudInstance = { ...browserInstance, kind: "linux", targetId: "cloud:linux", implements: ["shell.exec", "shell.cancel"], expiresAt: Date.now() + 60000 };
+      const list = async () => ({ instances: [instance], handoffs: [], usage: {
+        periodStartsAt: 0, periodEndsAt: 1, usedSeconds: 0, reservedSeconds: 60, limitSeconds: 3600, activeInstances: 1, concurrentLimit: 2,
+      } });
+      const sessionId = crypto.randomUUID();
+      const execute = vi.fn<InstallationInstances["execute"]>()
+        .mockImplementationOnce(async (_actor, _id, frame) => ({ type: "res", id: frame.id, ok: true, data: { status: "running", sessionId, output: "started" } }))
+        .mockImplementationOnce(async (_actor, _id, frame) => ({ type: "res", id: frame.id, ok: true, data: { sessionId, cancelled: true } }))
+        .mockImplementationOnce(async (_actor, _id, frame) => ({ type: "res", id: frame.id, ok: true, data: { status: "failed", sessionId, output: "stopped", error: "Cancelled", exitCode: 143 } }));
+      const { ctx } = context({ list, execute });
+      // SAFETY: Instance dispatch uses only the durable session store from these dependencies.
+      const deps = { shellSessions: new ShellSessionStore(sql) } as DispatchDeps;
+      const origin = { type: "connection" as const, id: "app" };
+      expect(await dispatch({ type: "req", id: "start", call: "shell.exec", args: { target: instance.targetId, input: "sleep 60", yieldMs: 10 } }, origin, ctx, deps))
+        .toMatchObject({ response: { ok: true, data: { status: "running", sessionId } } });
+      deps.shellSessions = new ShellSessionStore(sql);
+      expect(deps.shellSessions.get(sessionId)).toMatchObject({ targetId: instance.targetId, status: "running" });
+
+      expect(await dispatch({ type: "req", id: "cancel", call: "shell.cancel", args: { sessionId } }, origin, ctx, deps))
+        .toMatchObject({ response: { ok: true, data: { cancelled: true } } });
+      expect(await dispatch({ type: "req", id: "poll", call: "shell.exec", args: { sessionId, input: "" } }, origin, ctx, deps))
+        .toMatchObject({ response: { ok: true, data: { status: "failed", sessionId } } });
+      expect(deps.shellSessions.get(sessionId)).toMatchObject({ targetId: instance.targetId, status: "failed", exitCode: 143, error: "Cancelled" });
+      expect(execute.mock.calls.map(([, id, frame]) => ({ id, call: frame.call, args: frame.args }))).toEqual([
+        { id: instance.instanceId, call: "shell.exec", args: { input: "sleep 60", yieldMs: 10 } },
+        { id: instance.instanceId, call: "shell.cancel", args: { sessionId } },
+        { id: instance.instanceId, call: "shell.exec", args: { sessionId, input: "" } },
+      ]);
+    });
+  });
+
+  it("preserves an uncertain named instance start across recovery without replaying it", async () => {
+    await runWithRealKernelSql(async sql => {
+      const instance: CloudInstance = { ...browserInstance, kind: "linux", targetId: "cloud:linux", implements: ["shell.exec"], expiresAt: Date.now() + 60000 };
+      const list = async () => ({ instances: [instance], handoffs: [], usage: {
+        periodStartsAt: 0, periodEndsAt: 1, usedSeconds: 0, reservedSeconds: 60, limitSeconds: 3600, activeInstances: 1, concurrentLimit: 2,
+      } });
+      const sessionId = crypto.randomUUID();
+      const execute = vi.fn<InstallationInstances["execute"]>()
+        .mockImplementationOnce(async () => { throw new Error("Response lost after dispatch"); })
+        .mockImplementationOnce(async (_actor, _id, frame) => ({ type: "res", id: frame.id, ok: true, data: { status: "completed", sessionId, output: "done", exitCode: 0 } }));
+      const { ctx } = context({ list, execute });
+      // SAFETY: Instance dispatch uses only the durable session store from these dependencies.
+      const deps = { shellSessions: new ShellSessionStore(sql) } as DispatchDeps;
+      const origin = { type: "connection" as const, id: "app" };
+      const start = () => dispatch({ type: "req", id: crypto.randomUUID(), call: "shell.exec", args: {
+        target: instance.targetId, sessionId, start: true, input: "run once",
+      } }, origin, ctx, deps);
+      await expect(start()).rejects.toThrow("Response lost after dispatch");
+      deps.shellSessions = new ShellSessionStore(sql);
+      expect(deps.shellSessions.get(sessionId)).toMatchObject({ targetId: instance.targetId, status: "running" });
+      expect(await start()).toMatchObject({ response: { ok: false, error: { code: 409 } } });
+      expect(execute).toHaveBeenCalledOnce();
+      expect(await dispatch({ type: "req", id: "recover", call: "shell.exec", args: { sessionId, input: "" } }, origin, ctx, deps))
+        .toMatchObject({ response: { ok: true, data: { status: "completed" } } });
+      expect(deps.shellSessions.get(sessionId)).toMatchObject({ targetId: instance.targetId, status: "completed", exitCode: 0 });
+      expect(execute).toHaveBeenLastCalledWith({ ownerUid: 1000, human: true }, instance.instanceId,
+        expect.objectContaining({ call: "shell.exec", args: { sessionId, input: "" } }), expect.any(Number));
+    });
+  });
+
   it("classifies the actual cloud route for nested approval and binds automatic approval to that instance", async () => {
     await runWithRealKernelSql(async sql => {
       const instance = { ...browserInstance, implements: ["shell.exec"], expiresAt: Date.now() + 60000 };

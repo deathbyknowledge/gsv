@@ -1,6 +1,6 @@
-# Run GSV for your organisation
+# Run Ship for your organisation
 
-Give your people their own GSV spaces on a deployment you operate. Each space
+Give your people their own Ships on a deployment you operate. Each Ship
 has its own agents, credentials, connected machines and data. Your organisation
 chooses the model providers and messaging applications it makes available.
 
@@ -10,6 +10,6 @@ the [operator guide](./operate-gsv) for the composition, setup process and
 current validation status.
 
 Planning a deployment for your organisation? Write to
-[hello@humansandmachin.es](mailto:hello@humansandmachin.es?subject=GSV%20for%20our%20organisation)
+[hello@humansandmachin.es](mailto:hello@humansandmachin.es?subject=Ship%20for%20our%20organisation)
 with the number of people, the systems you need to connect and who will operate
 it. We'd like to hear what you need.

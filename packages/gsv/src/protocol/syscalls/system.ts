@@ -1,5 +1,6 @@
 import type { JsonObject } from "../json";
 import type { CloudInstanceState } from "./instance";
+import type { PublicDeploymentConfig } from "../../services/deployment";
 
 export type ProcessIdentity = {
   uid: number;
@@ -56,6 +57,7 @@ export type ServerBuild = {
   version: string;
   release: string;
   features?: string[];
+  deployment?: PublicDeploymentConfig;
 };
 
 export type FeedbackActivity = {
@@ -155,6 +157,8 @@ export type SysSetupArgs = {
     apiKey?: string;
   };
   timezone?: string;
+  /** Initial response-language preference, normally derived from the client (BCP 47). */
+  language?: string;
   machine?: {
     peerId: string;
     label?: string;

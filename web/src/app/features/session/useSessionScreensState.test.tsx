@@ -11,6 +11,7 @@ type HistoryEntry = { url: string; state: SetupHistoryState };
 
 async function setupScreen(path = "/", preceding: HistoryEntry[] = [{ url: "https://space.example/previous", state: null }]) {
   vi.stubGlobal("document", {});
+  vi.stubGlobal("navigator", { languages: ["es-MX", "en"], language: "en" });
   const events = new EventTarget();
   const entries: HistoryEntry[] = [
     ...preceding,
@@ -85,7 +86,24 @@ describe("minimal account setup", () => {
       expect(screen.state().setup.step).toBe("consent");
       await act(() => screen.state().setup.onConsent(true));
       await act(() => { void screen.state().setup.onSubmit(new Event("submit")); });
-      expect(screen.setup).toHaveBeenCalledWith({ password: "password123", timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC" });
+      expect(screen.setup).toHaveBeenCalledWith({ password: "password123", timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC", language: "es-MX" });
+    } finally { await screen.unmount(); }
+  });
+
+  it("activates a self-signed-up space in one step without pushing a consent history entry", async () => {
+    const screen = await setupScreen("/onboarding");
+    try {
+      await screen.change({ setupConsentRequired: false, arrivedFromSignup: true });
+      expect(screen.state().setup.consentRequired).toBe(false);
+      await act(() => {
+        screen.state().setup.onPassword("password123");
+        screen.state().setup.onPasswordConfirm("password123");
+      });
+      const before = screen.history().entries.length;
+      await act(() => { void screen.state().setup.onSubmit(new Event("submit")); });
+      expect(screen.state().setup.step).toBe("credentials");
+      expect(screen.history().entries.length).toBe(before);
+      expect(screen.setup).toHaveBeenCalledWith({ password: "password123", timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC", language: "es-MX" });
     } finally { await screen.unmount(); }
   });
 
@@ -107,9 +125,20 @@ describe("minimal account setup", () => {
     } finally { await screen.unmount(); }
   });
 
+  it("keeps an untouched empty field quiet on blur until a submit is attempted", async () => {
+    const screen = await setupScreen();
+    try {
+      await act(() => screen.state().setup.onFieldBlur("password", null));
+      expect(screen.state().setup.fieldErrors.password).toBeUndefined();
+      await act(() => screen.state().setup.onSubmit(new Event("submit")));
+      expect(screen.state().setup.fieldErrors.password).toBe("Password must be at least 8 characters.");
+    } finally { await screen.unmount(); }
+  });
+
   it.each(["pointerup", "pointercancel", "blur"])("resumes blur validation after an abandoned submit press ends with %s", async (event) => {
     const screen = await setupScreen();
     try {
+      await act(() => screen.state().setup.onPassword("short"));
       await act(() => screen.state().setup.onSubmitPointerDown());
       await act(() => { window.dispatchEvent(new Event(event)); });
       await act(() => screen.state().setup.onFieldBlur("password", null));
@@ -299,7 +328,7 @@ describe("minimal account setup", () => {
       await act(() => { screen.state().setup.onConsent(true); });
       await act(() => { screen.state().setup.onSubmit(new Event("submit")); });
       expect(screen.setup).toHaveBeenCalledWith({
-        password: "password123", timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
+        password: "password123", timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC", language: "es-MX",
       });
 
       await screen.change({ phase: "authenticating" });
@@ -364,7 +393,7 @@ describe("minimal account setup", () => {
       expect(screen.state().setup.step).toBe("consent");
       await act(() => { screen.state().setup.onSubmit(new Event("submit")); });
       expect(screen.setup).toHaveBeenCalledWith({
-        password: "password123", timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
+        password: "password123", timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC", language: "es-MX",
       });
     } finally { await screen.unmount(); }
   });

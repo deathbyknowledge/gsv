@@ -2,7 +2,7 @@ import { ContactConversation, type ContactComposerProps } from "./ContactConvers
 import { ContactRequests } from "./ContactRequests";
 import { useMutation, useQueryClient } from "@tanstack/preact-query";
 import { useQuery } from "../../../services/navigation/viewQueries";
-import { useEffect, useState } from "preact/hooks";
+import { useEffect, useRef, useState } from "preact/hooks";
 import { useViewActive } from "../../../services/navigation/ViewActivity";
 import { contactDisplayName, type ContactPreferencesUpdateArgs, type ContactSummary } from "@humansandmachines/gsv/protocol";
 import { LoadingState } from "../../../components/ui/Spinner";
@@ -14,6 +14,7 @@ import { ConversationSearch } from "../shared/ConversationSearch";
 import { canConfigure } from "../settings/settingsModel";
 import { INSTRUMENT_CONTACTS_KEY as CONTACTS_KEY } from "../wire/queryKeys";
 import { PEOPLE_IDEAS } from "./PeopleWelcome";
+import { useDismissOnOutsideClick } from "../shared/useDismissOnOutsideClick";
 
 export function useContacts(account: ConsoleAccount | undefined) {
   const { client, connected } = useGateway();
@@ -38,8 +39,8 @@ export function ContactAttentionNotice({ account }: { account: ConsoleAccount | 
   </aside>;
 }
 
-export function ContactInspector({ contact, account, draft, onDraft, onSend, onRetry, onObserved, onAsk, idea }: ContactComposerProps & {
-  contact: ContactSummary; account: ConsoleAccount | undefined; onAsk: (task: string) => void; idea: number | null;
+export function ContactInspector({ contact, account, draft, onDraft, onSend, onRetry, onObserved, onAsk, onBack, idea }: ContactComposerProps & {
+  contact: ContactSummary; account: ConsoleAccount | undefined; onAsk: (task: string) => void; onBack?: () => void; idea: number | null;
 }) {
   const active = useViewActive();
   const { client, connected } = useGateway();
@@ -47,6 +48,10 @@ export function ContactInspector({ contact, account, draft, onDraft, onSend, onR
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const [requestsOpen, setRequestsOpen] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const header = useRef<HTMLElement>(null);
+  const menuButton = useRef<HTMLButtonElement>(null);
+  useDismissOnOutsideClick(menuOpen, () => [header.current], () => setMenuOpen(false));
   const [aliasDraft, setAliasDraft] = useState<string | null>(null);
   const name = contactDisplayName(contact);
   const alias = aliasDraft ?? name;
@@ -83,20 +88,20 @@ export function ContactInspector({ contact, account, draft, onDraft, onSend, onR
   }, [active, maySearch, detailsOpen]);
 
   return <section class="people-contact" aria-label={`Conversation with ${name}`}>
-    <header class="people-conversation-header">
-      <div><h1>{name}</h1>
+    <header class="people-conversation-header" ref={header} onKeyDown={(event) => {
+      if (event.key === "Escape" && menuOpen) { event.preventDefault(); event.stopPropagation(); setMenuOpen(false); menuButton.current?.focus({ preventScroll: true }); }
+    }}>
+      {onBack && <button type="button" class="people-action people-conversation-back" aria-label="Back to conversations" onClick={onBack}>←</button>}
+      <div class="people-conversation-title"><h1>{name}</h1>
         {contact.state !== "active" ? <p class="people-conversation-state">Connection ended</p>
-          : preferences && <label class="people-handling" title="Let Ship read and respond to new messages. Replies to tasks you assign can still reach Ship when this is off.">
-            <input type="checkbox" role="switch" aria-label="Automatically handle new messages" checked={(updatePreferences.isPending ? updatePreferences.variables?.shipHandlesMessages : undefined) ?? preferences.shipHandlesMessages} disabled={!controls.canEdit || controls.pending || contact.blocked} onChange={(event) => controls.update({ shipHandlesMessages: event.currentTarget.checked })} />
-            <span>Automatically handle new messages</span>
-            {controls.pending && updatePreferences.variables?.shipHandlesMessages !== undefined && <LoadingState>saving…</LoadingState>}
-          </label>}
+          : preferences && <button type="button" class="people-handling-summary" onClick={() => setDetailsOpen(true)}>{preferences.shipHandlesMessages ? "Ship handles new messages" : "You handle new messages"}</button>}
         {!detailsOpen && controls.error && <p class="people-error" role="alert">{controls.error.message}</p>}
       </div>
-      <div class="people-header-actions">
-        {contact.state === "active" && !contact.blocked && <button class="people-action is-accent" disabled={!connected || !account || !canConfigure(account, "conversation.send")} onClick={() => onAsk("Read my conversation with {name} and help me decide what to do next.")}>ask Ship</button>}
-        {maySearch && <button class="people-action" disabled={!connected} onClick={() => setSearchOpen(true)}>search</button>}
-        <button class="people-action" onClick={() => setDetailsOpen(true)}>details</button>
+      <button type="button" ref={menuButton} class="people-action people-conversation-menu" aria-label="Conversation actions" aria-expanded={menuOpen} aria-controls={`people-actions-${contact.id}`} onClick={() => setMenuOpen(!menuOpen)}>more</button>
+      <div class="people-header-actions" id={`people-actions-${contact.id}`} data-open={menuOpen}>
+        {contact.state === "active" && !contact.blocked && <button class="people-action is-accent" disabled={!connected || !account || !canConfigure(account, "conversation.send")} onClick={() => { setMenuOpen(false); onAsk("Read my conversation with {name} and help me decide what to do next."); }}>ask Ship</button>}
+        {maySearch && <button class="people-action" disabled={!connected} onClick={() => { setMenuOpen(false); setSearchOpen(true); }}>search</button>}
+        <button class="people-action" onClick={() => { setMenuOpen(false); setDetailsOpen(true); }}>details</button>
       </div>
     </header>
     {idea !== null && contact.state === "active" && !contact.blocked && <aside class="people-next-step"><span>You’re connected.</span><button class="people-action" disabled={!connected || !account || !canConfigure(account, "conversation.send")} onClick={() => onAsk(PEOPLE_IDEAS[idea].action)}>{PEOPLE_IDEAS[idea].title.toLocaleLowerCase()} with Ship →</button></aside>}
@@ -110,6 +115,11 @@ export function ContactInspector({ contact, account, draft, onDraft, onSend, onR
           {nameChanged && <button type="submit" class="people-action" disabled={!mayRename || save.isPending}>{save.isPending ? "saving…" : "save"}</button>}
         </form>
         {save.error && <p class="people-error" role="alert">{save.error.message}</p>}
+        {contact.state === "active" && preferences && <label class="people-setting">
+          <span>Automatically handle new messages<small>Let Ship read and respond for you. Replies to tasks you assign can still reach Ship when this is off.</small></span>
+          <input type="checkbox" role="switch" aria-label="Automatically handle new messages" checked={(updatePreferences.isPending ? updatePreferences.variables?.shipHandlesMessages : undefined) ?? preferences.shipHandlesMessages} disabled={!controls.canEdit || controls.pending || contact.blocked} onChange={(event) => controls.update({ shipHandlesMessages: event.currentTarget.checked })} />
+        </label>}
+        {controls.pending && updatePreferences.variables?.shipHandlesMessages !== undefined && <LoadingState>saving…</LoadingState>}
         <RelationshipPreferences contact={contact} account={account} controls={controls} />
         <details class="people-details-fold" onToggle={(event) => setRequestsOpen(event.currentTarget.open)}>
           <summary>Work requests</summary>

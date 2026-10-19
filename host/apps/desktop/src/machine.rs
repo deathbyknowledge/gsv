@@ -38,7 +38,7 @@ pub fn scope(session: &Session, generation: &str, username: &str) -> Result<Scop
         return Err("Sign in before connecting this computer.".into());
     }
     Ok(Scope {
-        origin: session.origin.clone().ok_or("Choose a space first.")?,
+        origin: session.origin.clone().ok_or("Choose a Ship first.")?,
         username: username.to_owned(),
     })
 }
@@ -285,9 +285,9 @@ impl MachineRuntime {
         let already_running = matches!(&command, MachineCommand::Start) && snapshot.running;
         let (args, input, expected) = command_arguments(&scope, &snapshot, command)?;
         let executable = std::env::current_exe()
-            .map_err(|_| "Cannot locate GSV.")?
+            .map_err(|_| "Cannot locate Ship.")?
             .parent()
-            .ok_or("Cannot locate GSV.")?
+            .ok_or("Cannot locate Ship.")?
             .join(if cfg!(windows) { "gsv.exe" } else { "gsv" });
         if !already_running {
             run_cli(
@@ -320,7 +320,7 @@ fn command_arguments(
         .chain(snapshot.pending.iter())
         .any(|identity| !identity.matches(scope))
     {
-        return Err("This computer is connected to another space or account. Its connection was not changed.".into());
+        return Err("This computer is connected to another Ship or account. Its connection was not changed.".into());
     }
     match command {
         MachineCommand::Start => {
@@ -352,7 +352,7 @@ fn command_arguments(
             }
             let expected = invitation_identity(&code)?;
             if !expected.matches(scope) {
-                return Err("The invitation belongs to another space or account.".into());
+                return Err("The invitation belongs to another Ship or account.".into());
             }
             Ok((
                 vec!["pair", "-", "--preserve-cli-login", "--no-replace"],
@@ -450,7 +450,7 @@ async fn run_cli(
     command.creation_flags(0x08000000 | 0x00000004);
     let process = command
         .spawn()
-        .map_err(|_| "Install the complete GSV desktop release to connect this computer.")?;
+        .map_err(|_| "Install the complete Ship desktop release to connect this computer.")?;
     #[cfg(windows)]
     let tree = {
         let tree = windows_host::process::ProcessTree::new()

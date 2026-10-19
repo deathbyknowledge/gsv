@@ -26,7 +26,7 @@ export function buildOAuthClientMetadata(origin: string): OAuthClientMetadata {
   const clientId = `${origin}/.well-known/oauth-client/gsv.json`;
   return {
     client_id: clientId,
-    client_name: "GSV",
+    client_name: "Ship",
     application_type: "web",
     response_types: ["code"],
     grant_types: ["authorization_code", "refresh_token"],

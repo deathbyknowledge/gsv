@@ -42,8 +42,9 @@ local credentials. A global owner session does not grant ordinary Kernel access.
   second installation.
 - Offer the existing computer enrollment flow after authentication. The user's
   first message remains their own; onboarding never inserts or sends prompt text.
-  The empty conversation shows "Welcome to the ship." and "I am the ship. Who
-  are you?"; the Ship reads the first message as the answer.
+  Dismissing the welcome card wakes Ship to send its greeting in the owner's
+  preferred language. The greeting stays in the conversation across clients.
+  A user can also write first; Ship responds to their message.
 
 The welcome screen owns these two choices. Each subsequent screen asks for the
 next necessary input and shows one primary action. Reuse the shared auth layout,

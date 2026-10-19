@@ -19,22 +19,22 @@ describe("machineProvision", () => {
 
   it("uses the gateway release for the extension download", () => {
     expect(browserExtensionDownloadUrl("v0.4.0")).toBe(
-      "https://gsv.space/browser?release=v0.4.0",
+      "https://github.com/deathbyknowledge/gsv/releases/download/v0.4.0/gsv-browser-extension.zip",
     );
     expect(browserExtensionDownloadUrl("dev")).toBe(
-      "https://gsv.space/browser?release=dev",
+      "https://github.com/deathbyknowledge/gsv/releases/download/dev/gsv-browser-extension.zip",
     );
     expect(browserExtensionDownloadUrl("unexpected")).toBe(
-      "https://gsv.space/browser?release=dev",
+      "https://github.com/deathbyknowledge/gsv/releases/download/dev/gsv-browser-extension.zip",
     );
   });
 
   it("builds canonical install commands for the gateway release", () => {
     expect(buildMachineInstallCommand("linux", "v0.4.0")).toBe(
-      "curl -fsSL https://install.gsv.space | GSV_VERSION=v0.4.0 bash",
+      "curl -fsSL 'https://install.ship.space' | GSV_VERSION=v0.4.0 bash",
     );
     expect(buildMachineInstallCommand("windows", "dev")).toBe(
-      "$env:GSV_CHANNEL='dev'; irm https://install.gsv.space/install.ps1 | iex",
+      "$env:GSV_CHANNEL='dev'; irm 'https://install.ship.space/install.ps1' | iex",
     );
     expect(buildMachineInstallCommand("browser", "dev")).toBe("");
   });

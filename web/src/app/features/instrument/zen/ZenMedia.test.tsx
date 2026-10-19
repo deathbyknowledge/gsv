@@ -2,14 +2,14 @@ import type { ComponentChildren, JSX, VNode } from "preact";
 import { act } from "preact/test-utils";
 import { QueryClient, QueryClientProvider } from "@tanstack/preact-query";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { collectNodes, createTestRoot } from "../../../testing/testHarness";
+import { collectNodes, collectText, createTestRoot } from "../../../testing/testHarness";
 import { MediaPreviewProvider } from "../../../services/platform/MediaPreview";
 import { GatewayProvider } from "../../../services/gateway/GatewayProvider";
 import { chatProcessMediaQueryKey } from "../../../services/chat/hooks/useChatProcesses";
-import { ZenMedia } from "./ZenMedia";
+import { ZenDraftPaste, ZenMedia } from "./ZenMedia";
 
-let root: ReturnType<typeof createTestRoot>;
-afterEach(async () => { await root?.unmount(); vi.unstubAllGlobals(); });
+let root: ReturnType<typeof createTestRoot> | undefined;
+afterEach(async () => { await root?.unmount(); root = undefined; vi.unstubAllGlobals(); });
 
 async function links(desktop: boolean, type: "image" | "document", mimeType: string, url?: string) {
   let tree: ComponentChildren;
@@ -65,5 +65,20 @@ describe("attachment opening", () => {
       expect(anchor.props.onClick).toBeUndefined();
     }
     expect(preview).not.toHaveBeenCalled();
+  });
+});
+
+describe("pasted text chip", () => {
+  it("keeps the complete paste in collapsed details and removes it on request", () => {
+    const onRemove = vi.fn();
+    const text = `${"x".repeat(434)}!`;
+    const tree = ZenDraftPaste({ paste: { id: "paste", text, characters: 435 }, onRemove });
+    const nodes = collectNodes(tree);
+    expect(collectText(nodes.find((node) => node.type === "summary"))).not.toContain(text);
+    expect(nodes.find((node) => node.type === "pre")?.props.children).toBe(text);
+    expect(nodes.find((node) => node.type === "details")?.props).not.toHaveProperty("open", true);
+    const remove = collectNodes(tree).find((node) => node.type === "button");
+    remove?.props.onClick?.();
+    expect(onRemove).toHaveBeenCalledOnce();
   });
 });

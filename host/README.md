@@ -10,7 +10,6 @@ host/
 │   ├── desktop/   # `gsv-desktop` shared Instrument application
 │   └── machine/   # `gsvd` machine driver
 ├── helpers/
-│   ├── gestures/  # isolated camera and gesture process
 │   └── transcriber/ # isolated microphone and speech process
 └── crates/
     ├── config/
@@ -18,7 +17,7 @@ host/
     ├── desktop-native/
     ├── desktop-protocol/
     ├── gateway-client/
-    └── gesture-protocol/
+    └── windows-host/
 ```
 
 Cargo package names describe architectural responsibilities. Installed binary
@@ -40,7 +39,7 @@ Build artifacts are written to `host/target/`. `workers/ripgit/` is a separate R
 project with its own manifest and lockfile.
 
 On macOS, assemble all host executables, the application metadata, the icon,
-and the local gesture models into one ad-hoc signed development application:
+and the local voice helper into one ad-hoc signed development application:
 
 ```bash
 ./host/scripts/package-macos.sh --debug

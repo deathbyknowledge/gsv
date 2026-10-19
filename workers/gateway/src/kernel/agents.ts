@@ -40,9 +40,10 @@ import {
 } from "./accounts";
 import { canOwnerRunAsAccount } from "./account-access";
 import { ensureAccountHomeLayout } from "./account-home";
-import { ensureInitialOnboardingResponsibility, reconcileInitialOnboardingResponsibility } from "./onboarding-responsibility";
 import { ensurePersonalMemory } from "./personal-memory";
-import { CREW_CONTEXT, crewDelegationContext } from "../prompts/personal-intelligence";
+import { reconcileOperatorUpdates } from "./operator-updates";
+import { shipContextFiles } from "../prompts/personal-intelligence";
+import { contextFiles } from "../prompts/context";
 
 /**
  * Curated, tasteful default names for the personal agent. The first available
@@ -185,12 +186,12 @@ export async function ensurePersonalAgent(
     if (entry) {
       const reconciled = reconcilePersonalAgentDisplayName(auth, entry, human) ?? entry;
       const identity = accountIdentity(auth, reconciled);
-      reconcileInitialOnboardingResponsibility(human.uid, ctx.responsibilities);
+      reconcileOperatorUpdates(human.uid, ctx.responsibilities, ctx.env.GSV_OPERATOR_UPDATES, Date.now(), ctx.welcome.createdAt(human.uid));
       await ensureAccountHomeLayout(ctx.env, identity, {
         seedPromptContext: true,
         personalAgent: true,
         beforeRetiringGeneratedBootContext: () => {
-          ensureInitialOnboardingResponsibility(human.uid, ctx.responsibilities);
+          ctx.welcome.prepare(human.uid);
         },
       });
       await ensureCrewAccount(ctx, human, identity);
@@ -200,7 +201,7 @@ export async function ensurePersonalAgent(
   }
 
   const agentName = pickAgentName(auth, preferredName);
-  ensureInitialOnboardingResponsibility(human.uid, ctx.responsibilities);
+  ctx.welcome.prepare(human.uid);
   const provision = await createAccount(ctx, {
     kind: "agent",
     username: agentName,
@@ -224,7 +225,7 @@ async function ensureCrewAccount(
     username: "crew",
     gecos: "Crew",
     ownerUid: human.uid,
-    contextFiles: [{ name: "00-role.md", text: CREW_CONTEXT }],
+    contextFiles: contextFiles("crew"),
   };
   const key = `config/accounts/crew/${human.uid}`;
   const savedUid = ctx.config.get(key);
@@ -246,7 +247,10 @@ async function ensureCrewAccount(
     ctx.config.set(key, String(crew.uid));
   }
   await prepareAccountHome(ctx.env, { ...input, username: crew.username }, crew);
-  await seedContextFile(ctx.env, ship, "10-delegation.md", crewDelegationContext(crew.username));
+  const seeded = new Set(shipContextFiles().map(({ name }) => name));
+  for (const file of shipContextFiles(crew.username)) {
+    if (!seeded.has(file.name)) await seedContextFile(ctx.env, ship, file.name, file.text);
+  }
 }
 
 /**

@@ -70,7 +70,7 @@ describe("account setup", () => {
     installWindow();
     const client = createSetupClient();
     const setupUrl = "https://accounts.example/owner/signup/?resume=1";
-    client.requestOnce.mockRejectedValueOnce({ code: 503, message: "Finish setting up your space",
+    client.requestOnce.mockRejectedValueOnce({ code: 503, message: "Finish setting up your Ship",
       details: { setupRecovery: true, setupUrl } });
     const service = createSessionService(client);
     await service.start();
@@ -190,6 +190,64 @@ describe("account setup", () => {
     expect(complete).toHaveBeenCalledOnce();
     expect(service.snapshot().phase).toBe("ready");
     expect(window.sessionStorage.getItem(onboardingStorageKey)).toBe("unrelated-browser-capability");
+  });
+
+  it.each([
+    { name: "current managed", code: 503, details: { setupRecovery: true, setupFeatures: ["language"] }, supported: true },
+    { name: "older managed", code: 503, details: { setupRecovery: true }, supported: false },
+    { name: "current setup-mode", code: 425, details: { setupMode: true, setupFeatures: ["language"] }, supported: true },
+    { name: "older setup-mode", code: 425, details: { setupMode: true }, supported: false },
+  ])("negotiates the initial language with a $name Gateway", async ({ code, details, supported }) => {
+    installWindow();
+    const client = createSetupClient();
+    client.requestOnce.mockRejectedValueOnce({ code, details });
+    const complete = vi.fn();
+    const discard = vi.fn();
+    const service = createSessionService(client, { onboarding: { token: onboardingToken, complete, discard } });
+    await service.start();
+    await service.setup({ password: "password123", timezone: "Europe/Madrid", language: "es-ES" });
+    expect(client.requestOnce).toHaveBeenCalledTimes(2);
+    expect(client.requestOnce).toHaveBeenLastCalledWith("wss://example.test/ws", "sys.setup", {
+      password: "password123", timezone: "Europe/Madrid", onboardingToken,
+      ...(supported ? { language: "es-ES" } : undefined),
+    });
+    expect(service.snapshot().phase).toBe("ready");
+    expect(complete).toHaveBeenCalledOnce();
+    expect(discard).not.toHaveBeenCalled();
+    service.dispose?.();
+  });
+
+  it("retains setup authorization and the cause when the feature probe fails", async () => {
+    installWindow();
+    const client = createSetupClient();
+    const failure = new Error("Connection interrupted");
+    client.requestOnce.mockRejectedValueOnce(failure);
+    const complete = vi.fn();
+    const discard = vi.fn();
+    const service = createSessionService(client, { onboarding: { token: onboardingToken, complete, discard } });
+    await expect(service.setup({ password: "password123", language: "es" })).rejects.toBe(failure);
+    expect(client.requestOnce).toHaveBeenCalledOnce();
+    expect(client.connect).not.toHaveBeenCalled();
+    expect(complete).not.toHaveBeenCalled();
+    expect(discard).not.toHaveBeenCalled();
+    expect(service.snapshot()).toMatchObject({ phase: "setup", message: failure.message });
+    service.dispose?.();
+  });
+
+  it("does not create an account after locking during the feature probe", async () => {
+    installWindow();
+    const client = createSetupClient();
+    const probeError = { code: 503, details: { setupRecovery: true, setupFeatures: ["language"] } };
+    let finishProbe!: (error: typeof probeError) => void;
+    client.requestOnce.mockReturnValueOnce(new Promise((_resolve, reject) => { finishProbe = reject; }));
+    const service = createSessionService(client);
+    const pending = service.setup({ password: "password123", language: "es" });
+    void service.lock();
+    finishProbe(probeError);
+    await expect(pending).rejects.toThrow("Session ended");
+    expect(client.requestOnce).toHaveBeenCalledOnce();
+    expect(service.snapshot().phase).toBe("locked");
+    service.dispose?.();
   });
 
   it("retains setup authorization when account creation fails so the user can retry", async () => {

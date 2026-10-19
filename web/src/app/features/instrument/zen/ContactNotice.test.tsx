@@ -44,7 +44,7 @@ describe("the contact notice", () => {
   it("counts waiting messages and identifies when the contact's Ship wrote the latest", () => {
     const three = { ...notice, messages: [message(1, "first"), message(2, "second"), message(3, "ok, sent it", true)] };
     const tree = ContactNoticePanel({ id: "people-panel", name: "Ada", notice: three, onClose: vi.fn(), onGoToChat: vi.fn() });
-    expect(text(tree)).toBe("Ada GSV close 3 messages open conversation ↗");
+    expect(text(tree)).toBe("Ada Ship close 3 messages open conversation ↗");
     expect(collectNodes(tree).some((node) => node.props.class === "sender-dot")).toBe(true);
   });
 

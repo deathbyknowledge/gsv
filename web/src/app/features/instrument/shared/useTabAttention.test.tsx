@@ -35,7 +35,7 @@ function committed(author: ConversationMessage["author"], id: string, conversati
 
 beforeEach(() => {
   signals.clear();
-  page = { title: "GSV", visibilityState: "hidden", hasFocus: () => false, querySelectorAll: () => [],
+  page = { title: "Ship", visibilityState: "hidden", hasFocus: () => false, querySelectorAll: () => [],
     addEventListener: () => {}, removeEventListener: () => {} };
   vi.stubGlobal("document", page);
   vi.stubGlobal("window", { location: { protocol: "https:", host: "space.example" }, addEventListener: () => {}, removeEventListener: () => {} });
@@ -70,7 +70,7 @@ describe("tab attention on the wire", () => {
     try {
       await tab.commit(committed({ kind: "process", pid: HELPER_PID, uid: AGENT_UID }, "helper-1", "work:helper"));
       await tab.commit(committed({ kind: "process", pid: HELPER_PID, uid: AGENT_UID }, "helper-2", "work:helper"));
-      expect(page.title).toBe("GSV");
+      expect(page.title).toBe("Ship");
     } finally {
       await tab.unmount();
     }
@@ -80,7 +80,7 @@ describe("tab attention on the wire", () => {
     const tab = await mounted();
     try {
       await tab.commit({ ...committed({ kind: "process", pid: SHIP_PID, uid: AGENT_UID }, "ship-sync", "canonical-ship"), directed: false });
-      expect(page.title).toBe("GSV");
+      expect(page.title).toBe("Ship");
     } finally { await tab.unmount(); }
   });
 
@@ -88,11 +88,11 @@ describe("tab attention on the wire", () => {
     const tab = await mounted();
     try {
       await tab.commit(committed({ kind: "user", uid: OWNER_UID }, "user-1", "canonical-ship"));
-      expect(page.title).toBe("GSV");
+      expect(page.title).toBe("Ship");
       await tab.commit(committed({ kind: "process", pid: SHIP_PID, uid: AGENT_UID }, "ship-1", "canonical-ship"));
-      expect(page.title).toBe("(1) GSV");
+      expect(page.title).toBe("(1) Ship");
       await tab.commit(committed({ kind: "process", pid: HELPER_PID, uid: AGENT_UID }, "helper-1", "work:helper"));
-      expect(page.title).toBe("(1) GSV");
+      expect(page.title).toBe("(1) Ship");
     } finally {
       await tab.unmount();
     }

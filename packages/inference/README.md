@@ -37,3 +37,16 @@ public contracts. No H&M resource or database migration accompanies this move.
 
 Run `npm run typecheck --workspace @humansandmachines/gsv-inference` and
 `npm test --workspace @humansandmachines/gsv-inference` from the repository root.
+
+## Transient request retries
+
+Before meaningful output, a transient failure tries the next configured route.
+On the final route, a request rejected before stream acceptance may retry twice,
+after 500 ms and 1 second. Retries share the original generation deadline and
+cancel immediately; each dispatch has its own attempt diagnostics. Provider SDK
+retries stay disabled so no attempt is hidden from accounting or telemetry.
+
+An accepted stream is not retried on the same route, even before visible output:
+it may already incur usage, and reservations cover one accepted attempt per
+route. Once text, reasoning or tool data has been exposed, the attempt can only
+complete or fail. These retries never repeat a Process run or execute tools.

@@ -5,19 +5,14 @@ members = [
     "helpers/*",
 ]
 resolver = "2"
+exclude = ["helpers/speaker"]
 
 [workspace.package]
-version = "0.7.0"
+version = "0.7.3"
 
 [profile.release]
 strip = true
 lto = true
-codegen-units = 1
-
-[profile.dev.package.gestures]
-opt-level = 3
-debug-assertions = false
-overflow-checks = false
 codegen-units = 1
 
 [profile.dev.package."*"]

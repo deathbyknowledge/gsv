@@ -191,11 +191,11 @@
   box-shadow: 0 0 6px #ff6f8c;
 }
 .gsv-fld.is-success .gsv-fld-msg {
-  color: #5ef2a0;
+  color: var(--online);
 }
 .gsv-fld.is-success .gsv-fld-dot {
-  background: #5ef2a0;
-  box-shadow: 0 0 6px #5ef2a0;
+  background: var(--online);
+  box-shadow: 0 0 6px var(--online);
 }
 .gsv-fld.is-info .gsv-fld-msg {
   color: #8f8aff;

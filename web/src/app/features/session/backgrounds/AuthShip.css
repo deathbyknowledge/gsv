@@ -42,6 +42,8 @@
   --ascii-foreground: var(--accent-bright);
   --ascii-stars: var(--text-hi);
 }
-@media (max-width: 600px) {
-  .gsv-auth-scene.gsv-auth-surface-setup .gsv-auth-illustration { width: 160px; justify-self: center; }
+/* Once the scene stacks, setup keeps the ship as a still picture below the form so it never fights the fields for touch. */
+@media (max-width: 900px) {
+  /* The scene leaves its top fifth empty; pull the box up so the ship sits closer to the form. */
+  .gsv-auth-scene.gsv-auth-surface-setup .gsv-auth-composition > .gsv-auth-illustration { order: 2; width: min(480px, 100%); margin-top: -12%; pointer-events: none; touch-action: auto; }
 }

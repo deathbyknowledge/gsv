@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { testPeer } from "../../test-support/peers";
 import { env } from "cloudflare:workers";
 import { Bash } from "just-bash";
+import { GsvFs } from "../../fs/gsv-fs";
 import {
   DEFAULT_NATIVE_SHELL_TIMEOUT_MS,
   handleShellExec,
@@ -291,7 +292,7 @@ function makeContext(options?: {
     config: focusedFixture<KernelContext["config"]>({
       get(key: string) {
         if (key === "config/server/name") return "gsv";
-        if (key === "config/server/version") return "0.7.0";
+        if (key === "config/server/version") return "0.7.3";
         return configValues.get(key) ?? SYSTEM_CONFIG_DEFAULTS[key] ?? null;
       },
       getExplicit(key: string) {
@@ -367,7 +368,7 @@ function makeContext(options?: {
     processId: options?.processId === null ? undefined : options?.processId ?? "task:shell",
     processRunId: options?.processRunId,
     requestSignal: options?.requestSignal,
-    serverVersion: "0.7.0",
+    serverVersion: "0.7.3",
     scheduleIpcCallTimeout: options?.scheduleIpcCallTimeout,
     scheduleScheduleWake: options?.scheduleScheduleWake,
     reconcileResponsibilityWake: options?.reconcileResponsibilityWake,
@@ -709,6 +710,40 @@ describe("native shell execution", () => {
     const result = await handleFsRead({ path: "/tmp/does-not-exist" }, makeContext());
 
     expect(result.data).toMatchObject({ ok: false, error: expect.stringContaining("ENOENT") });
+  });
+
+  it("reads directory metadata concurrently without losing order or unstatable entries", async () => {
+    const path = "/tmp/directory-metadata";
+    const names = Array.from({ length: 19 }, (_, index) => `entry-${index}`);
+    const listing = vi.spyOn(GsvFs.prototype, "readdir").mockResolvedValue(names);
+    let pending = 0;
+    let peak = 0;
+    const stat = vi.spyOn(GsvFs.prototype, "stat").mockImplementation(async (entry) => {
+      const index = names.indexOf(entry.slice(path.length + 1));
+      if (entry !== path) {
+        pending++;
+        peak = Math.max(peak, pending);
+        await new Promise((resolve) => setTimeout(resolve, 6 - index % 6));
+        pending--;
+        if (index === 4) throw new Error("ENOENT: entry disappeared");
+      }
+      const directory = entry === path || index % 2 === 0;
+      return { isDirectory: directory, isFile: !directory, isSymbolicLink: false, mode: 0o755, size: 0, mtime: new Date(0) };
+    });
+    try {
+      const read = await handleFsRead({ path }, makeContext());
+      expect(read.data).toEqual({ ok: true, path,
+        files: names.filter((_, index) => index % 2 === 1 || index === 4),
+        directories: names.filter((_, index) => index % 2 === 0 && index !== 4),
+      });
+      expect(peak).toBeGreaterThan(1);
+      expect(peak).toBeLessThanOrEqual(6);
+      expect(pending).toBe(0);
+      expect(stat).toHaveBeenCalledTimes(names.length + 1);
+    } finally {
+      listing.mockRestore();
+      stat.mockRestore();
+    }
   });
 
   it("returns exact text ranges in frame bodies", async () => {

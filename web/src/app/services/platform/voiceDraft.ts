@@ -63,13 +63,7 @@ export class VoiceDraft {
 
   finish(event: NativeEvent) {
     if (event.request_id !== this.requestId || event.segment_id !== this.segment) return null;
-    let text = joinVoice(this.settled, event.text);
-    if (event.action === "clear") text = "";
-    if (event.action === "delete") {
-      // Segmenter deletes a complete user-perceived character, including emoji joins.
-      const segments = Array.from(new Intl.Segmenter(undefined, { granularity: "grapheme" }).segment(text.trimEnd()));
-      text = segments.slice(0, -1).map((part) => part.segment).join("");
-    }
+    const text = joinVoice(this.settled, event.text);
     this.segment++;
     this.revision = -1;
     this.settled = text;

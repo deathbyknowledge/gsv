@@ -27,6 +27,7 @@ export type FsReadResult =
   | { ok: false; error: string };
 
 export type FsWriteArgs = {
+  target?: string;
   path: string;
   content: string;
 };
@@ -36,6 +37,7 @@ export type FsWriteResult =
   | { ok: false; error: string };
 
 export type FsEditArgs = {
+  target?: string;
   path: string;
   oldString: string;
   newString: string;
@@ -47,6 +49,7 @@ export type FsEditResult =
   | { ok: false; error: string };
 
 export type FsDeleteArgs = {
+  target?: string;
   path: string;
 };
 
@@ -55,6 +58,7 @@ export type FsDeleteResult =
   | { ok: false; error: string };
 
 export type FsSearchArgs = {
+  target?: string;
   query: string;
   path?: string;
   include?: string;
@@ -91,6 +95,7 @@ export type FsCopyResult =
   | { ok: false; error: string };
 
 export type FsTransferStatArgs = {
+  target?: string;
   path: string;
 };
 
@@ -123,6 +128,7 @@ export type FsTransferSendResult =
   | { ok: false; error: string };
 
 export type FsTransferReceiveArgs = {
+  target?: string;
   path: string;
   contentType?: string;
 };

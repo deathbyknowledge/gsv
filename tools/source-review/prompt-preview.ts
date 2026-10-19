@@ -4,14 +4,9 @@ import type { PromptAssemblyInput, PromptAssemblySnapshot, PromptSection } from 
 import { SYSTEM_CONFIG_DEFAULTS } from "../../workers/gateway/src/kernel/config";
 import { parseSkillMarkdown } from "../../workers/gateway/src/kernel/skills";
 import { BUILTIN_SKILL_FILES } from "../../workers/gateway/src/kernel/sys/builtin-skills";
-import {
-  DEFAULT_MEMORY_CONTEXT_TEMPLATE, PERSONAL_STANDING_CONTEXT,
-} from "../../workers/gateway/src/prompts/agent-home";
-import {
-  PERSONAL_INTELLIGENCE_CONTEXT, PERSONAL_INTELLIGENCE_VOICE_CONTEXT,
-  CREW_CONTEXT, crewDelegationContext,
-} from "../../workers/gateway/src/prompts/personal-intelligence";
-import { CONTEXT_SOURCE_PATHS, PROMPT_SOURCES, type PromptSource } from "./prompt-sources";
+import { contextFiles } from "../../workers/gateway/src/prompts/context";
+import { shipContextFiles } from "../../workers/gateway/src/prompts/personal-intelligence";
+import { PROMPT_SOURCES, type PromptSource } from "./prompt-sources";
 
 export type PreviewAccount = "ship" | "crew";
 type PreviewSection = PromptSection & { paths: string[]; provider: string };
@@ -27,17 +22,10 @@ export async function createPromptPreview(account: PreviewAccount): Promise<Prom
     .filter(([key]) => key.startsWith("config/ai/context.d/"))
     .map(([key, text]) => ({ name: key.slice("config/ai/context.d/".length), text }));
   const catalog = PROMPT_SOURCES;
-  const program = account === "ship" ? [
-    { name: "00-role.md", text: PERSONAL_INTELLIGENCE_CONTEXT },
-    { name: "05-voice.md", text: PERSONAL_INTELLIGENCE_VOICE_CONTEXT },
-    { name: "10-delegation.md", text: crewDelegationContext("crew") },
-  ] : [
-    { name: "00-role.md", text: CREW_CONTEXT },
-    { name: "15-memory.md", text: DEFAULT_MEMORY_CONTEXT_TEMPLATE },
-  ];
+  const program = account === "ship" ? shipContextFiles("crew") : contextFiles("crew");
   const files = new Map<string, string>([
     ...program.map(({ name, text }) => [`home/${account}/context.d/${name}`, text] as const),
-    ["home/alex/context.d/10-personal.md", PERSONAL_STANDING_CONTEXT] as const,
+    ...contextFiles("user").map(({ name, text }) => [`home/alex/context.d/${name}`, text] as const),
   ]);
   const identity = (username: string, uid: number) => ({
     username, uid, gid: uid, gids: [uid, 100], home: `/home/${username}`, cwd: `/home/${username}`,
@@ -90,7 +78,8 @@ export async function createPromptPreview(account: PreviewAccount): Promise<Prom
       for (const section of collected) {
         const root = section.contextRoot?.key;
         const sourceScope = root === "program" ? account : root === "user" ? "user" : "system";
-        const paths = CONTEXT_SOURCE_PATHS.get(`${sourceScope}/${section.name}`) ?? [];
+        const path = `${sourceScope}/context.d/${section.name}`;
+        const paths = catalog.some((source) => source.path === path) ? [path] : [];
         sections.push({ ...section, paths, provider: provider.name });
       }
       return collected;

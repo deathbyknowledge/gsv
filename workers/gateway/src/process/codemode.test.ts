@@ -9,6 +9,22 @@ import {
 import { CODE_MODE_UNAVAILABLE_ERROR } from "../codemode/availability";
 
 describe.sequential("CodeMode executor", () => {
+  it("cancels a durable shell through its owning syscall without replacing its target", async () => {
+    const calls: Array<{ call: string; args: Record<string, ProcessTestValue> }> = [];
+    const result = await executeCodeMode(env, `
+      await shell.cancel({ sessionId: "build-1" });
+      return await shell.cancel({ sessionId: "build-2", target: "computer" });
+    `, async (call, args) => {
+      calls.push({ call, args });
+      return { sessionId: args.sessionId, cancelled: true };
+    }, { defaultTarget: "gsv", defaultCwd: "/home/crew" });
+    expect(result).toMatchObject({ status: "completed", result: { sessionId: "build-2", cancelled: true } });
+    expect(calls).toEqual([
+      { call: "shell.cancel", args: { sessionId: "build-1" } },
+      { call: "shell.cancel", args: { sessionId: "build-2", target: "computer" } },
+    ]);
+  });
+
   it("keeps default web search on gsv and preserves an explicit search target", async () => {
     const calls: Array<{ call: string; args: Record<string, ProcessTestValue> }> = [];
     const result = await executeCodeMode(env, `

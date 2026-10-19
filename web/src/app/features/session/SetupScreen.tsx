@@ -1,7 +1,8 @@
-import { useId } from "preact/hooks";
+import { useId, useState } from "preact/hooks";
 import { TextInput } from "../../components/ui/TextInput";
+import { Alert } from "../../components/ui/Alert";
 import { AuthLayout } from "./AuthLayout";
-import { PrivacyPolicyLink, TermsOfServiceLink } from "./PolicyLinks";
+import { PolicyConsentLabel } from "./PolicyLinks";
 import { SessionError } from "./SessionChrome";
 import type { SetupAccount, SetupAccountErrors } from "./sessionDomain";
 import "./SetupScreen.css";
@@ -10,7 +11,11 @@ type SetupScreenProps = {
   visible: boolean;
   busy: boolean;
   space: string;
+  /** The owner was sent here straight from signup. */
+  arrivedFromSignup?: boolean;
   step: "credentials" | "consent";
+  /** False when signup already collected the terms agreement. */
+  consentRequired: boolean;
   password: string;
   passwordConfirm: string;
   consent: boolean;
@@ -26,20 +31,29 @@ type SetupScreenProps = {
   onSubmit: (event: Event) => void;
 };
 
-export function SetupScreen({ visible, busy, space, step, password, passwordConfirm, consent, consentError, error, fieldErrors, onPassword, onPasswordConfirm, onConsent, onBack, onFieldBlur, onSubmitPointerDown, onSubmit }: SetupScreenProps) {
+export function SetupScreen({ visible, busy, space, arrivedFromSignup = false, step, consentRequired, password, passwordConfirm, consent, consentError, error, fieldErrors, onPassword, onPasswordConfirm, onConsent, onBack, onFieldBlur, onSubmitPointerDown, onSubmit }: SetupScreenProps) {
   const consentId = useId();
+  const [noticeDismissed, setNoticeDismissed] = useState(false);
+  const dot = space.indexOf(".");
+  const [handle, domain] = dot > 0 ? [space.slice(0, dot), space.slice(dot)] : [space, ""];
+  const credentials = step === "credentials";
   return <AuthLayout visible={visible} surfaceClass="gsv-auth-surface-setup">
     <section class="gsv-setup-panel" data-session-setup-view aria-labelledby="setup-heading">
-      <div class={`gsv-setup-head${step === "consent" ? " is-consent" : ""}`}>
-        <div class="gsv-setup-meta">
+      {arrivedFromSignup && credentials && !noticeDismissed && <div class="gsv-setup-notice" role="status">
+        <Alert variant="success" text="Your Ship has been created." onDismiss={() => setNoticeDismissed(true)} />
+      </div>}
+      <div class={`gsv-setup-head${credentials ? "" : " is-consent"}`}>
+        {consentRequired && <div class="gsv-setup-meta">
           <p class="gsv-setup-space">{space}</p>
-          <p class="gsv-setup-progress">Step {step === "credentials" ? 1 : 2} of 2</p>
-        </div>
-        <h1 id="setup-heading" data-setup-heading tabIndex={-1}>{step === "credentials" ? "Welcome to your space" : "Before you begin"}</h1>
-        {step === "credentials" ? <p>Choose a password for your space.</p> : null}
+          <p class="gsv-setup-progress">Step {credentials ? 1 : 2} of 2</p>
+        </div>}
+        <h1 id="setup-heading" data-setup-heading tabIndex={-1}>{credentials
+          ? <><span class="gsv-setup-greeting">Welcome to</span> <span class="gsv-setup-host">{handle}<span class="gsv-setup-domain">{domain}</span></span></>
+          : "Before you begin"}</h1>
+        {credentials ? <p>Choose a password.</p> : null}
       </div>
       <form class="gsv-setup-form" data-session-setup-form aria-busy={busy} noValidate onSubmit={onSubmit}>
-        {step === "credentials" ? <>
+        {credentials ? <>
           <input type="hidden" name="username" autoComplete="username" value={space} />
           <TextInput label="Password" type="password" value={password} disabled={busy} clearable={false}
             status={fieldErrors.password ? "error" : "none"} message={fieldErrors.password}
@@ -51,9 +65,9 @@ export function SetupScreen({ visible, busy, space, step, password, passwordConf
             inputProps={{ autoComplete: "new-password", maxLength: 1024, "data-setup-password-confirm": true, onBlur: (event) => onFieldBlur("passwordConfirm", event.relatedTarget) }} />
         </> : <div class="gsv-setup-agreement">
           <div class="gsv-setup-disclosure">
-            <p>GSV is an AI assistant that can use your computer and connected services to get things done.</p>
+            <p>Ship is an AI assistant that can use your computer and connected services to get things done.</p>
             <p>Depending on what you allow, it can work with files, run commands, use websites and signed-in services, and send communications on your behalf.</p>
-            <p>GSV is in early access and can make mistakes. Some actions can be difficult to undo, so keep backups of important data and review consequential actions carefully.</p>
+            <p>Ship is in early access and can make mistakes. Some actions can be difficult to undo, so keep backups of important data and review consequential actions carefully.</p>
           </div>
           <div class={`gsv-setup-consent${consentError ? " is-error" : ""}`}>
             <div class="gsv-setup-consent-row">
@@ -62,8 +76,7 @@ export function SetupScreen({ visible, busy, space, step, password, passwordConf
                 aria-invalid={consentError ? true : undefined}
                 aria-describedby={consentError ? `${consentId}-error` : undefined}
                 onChange={(event) => onConsent(event.currentTarget.checked)} />
-              <span id={`${consentId}-label`}><label for={consentId}>I confirm that I’m 18 or older and agree to the </label>
-                <TermsOfServiceLink /> <label for={consentId}>and acknowledge the </label><PrivacyPolicyLink />.</span>
+              <PolicyConsentLabel id={consentId} />
             </div>
             {consentError ? <p class="gsv-setup-consent-error" id={`${consentId}-error`} role="alert">Confirm your age and agreement to continue.</p> : null}
           </div>
@@ -73,7 +86,7 @@ export function SetupScreen({ visible, busy, space, step, password, passwordConf
           {step === "consent" ? <button type="button" class="ibtn" disabled={busy} onClick={onBack}>Back</button> : null}
           <button type="submit" class="ibtn is-primary" data-setup-submit disabled={busy}
             onPointerDown={(event) => { if (event.button === 0) onSubmitPointerDown(); }}>
-            {busy ? "Opening your space…" : step === "credentials" ? "Continue" : "Create account"}
+            {busy ? "Opening Ship…" : credentials && consentRequired ? "Continue" : "Activate Ship"}
           </button>
         </div>
       </form>

@@ -1,9 +1,9 @@
 import { defineConfig } from "vitepress";
 
 export default defineConfig({
-  title: "GSV docs",
+  title: "Ship docs",
   description:
-    "GSV docs — an open-source personal AI computer, a distributed OS with AI in the kernel, that spans all your devices and stays always-on in your own Cloudflare account.",
+    "Ship docs — an open-source personal AI computer, a distributed OS with AI in the kernel, that spans all your devices and stays always-on in your own Cloudflare account.",
   cleanUrls: true,
 
   redirects: {
@@ -57,32 +57,32 @@ export default defineConfig({
     "/reference/workspace-files": "/reference/context-files",
   },
 
-  sitemap: {
-    hostname: "https://docs.gsv.space",
-  },
+  sitemap: process.env.GSV_DOCS_ORIGIN ? { hostname: process.env.GSV_DOCS_ORIGIN } : undefined,
 
   lastUpdated: true,
 
   head: [
-    ["link", { rel: "icon", type: "image/svg+xml", href: "/favicon.svg" }],
+    ["link", { rel: "icon", type: "image/x-icon", href: "/favicon.ico?v=ship" }],
+    ["link", { rel: "icon", type: "image/svg+xml", sizes: "any", href: "/favicon.svg?v=ship" }],
     ["meta", { name: "theme-color", content: "#0a0820" }],
     [
       "meta",
       {
         property: "og:description",
         content:
-          "GSV docs — an open-source personal AI computer, a distributed OS with AI in the kernel, that spans all your devices and stays always-on in your own Cloudflare account.",
+          "Ship docs — an open-source personal AI computer, a distributed OS with AI in the kernel, that spans all your devices and stays always-on in your own Cloudflare account.",
       },
     ],
-    ["meta", { property: "og:title", content: "GSV docs" }],
+    ["meta", { property: "og:title", content: "Ship docs" }],
   ],
 
   themeConfig: {
+    productUrl: process.env.GSV_PRODUCT_URL || "https://github.com/deathbyknowledge/gsv",
     siteTitle: false,
     logo: null,
 
     nav: [
-      { text: "Why GSV?", link: "/why/" },
+      { text: "Why Ship?", link: "/why/" },
       { text: "Get Started", link: "/get-started/" },
       { text: "Examples", link: "/examples/" },
       { text: "Guides", link: "/how-to/" },
@@ -93,9 +93,9 @@ export default defineConfig({
     sidebar: {
       "/why/": [
         {
-          text: "Why GSV?",
+          text: "Why Ship?",
           items: [
-            { text: "Why GSV?", link: "/why/" },
+            { text: "Why Ship?", link: "/why/" },
           ],
         },
       ],
@@ -126,10 +126,10 @@ export default defineConfig({
             { text: "Overview", link: "/how-to/" },
             { text: "Deploy / Update / Remove", link: "/how-to/deploy" },
             { text: "Deploy with Alchemy", link: "/how-to/deploy-with-alchemy" },
-            { text: "Operate a GSV Deployment", link: "/how-to/operate-gsv" },
+            { text: "Operate a Ship Deployment", link: "/how-to/operate-gsv" },
             { text: "Retire a Standalone Deployment", link: "/how-to/standalone-retirement" },
-            { text: "Run GSV for Your Organisation", link: "/how-to/organisations" },
-            { text: "Invite People", link: "/how-to/invite-people" },
+            { text: "Run Ship for Your Organisation", link: "/how-to/organisations" },
+            { text: "Personal Access", link: "/how-to/invite-people" },
             { text: "Contact People", link: "/how-to/contact-people" },
             { text: "Install Host Applications", link: "/how-to/install-host-apps" },
             { text: "Use Voice Input", link: "/how-to/voice-input" },
@@ -139,6 +139,7 @@ export default defineConfig({
             { text: "Integrations (MCP)", link: "/how-to/integrations" },
             { text: "Browse the Web", link: "/how-to/browse-web" },
             { text: "Cloud Browsers", link: "/how-to/cloud-browsers" },
+            { text: "Cloud Computers", link: "/how-to/cloud-computers" },
           ],
         },
       ],

@@ -39,7 +39,7 @@ export function useZenProcess(pidProp: string | null | undefined, onError: (mess
         const spawned = await spawnChatProcess(client, { interactive: true, label: "ship" });
         if (!cancelled) setShip({ pid: spawned.pid, ownerUid: null });
       } catch (error) {
-        if (!cancelled && !isCancelledError(error)) onError(error instanceof Error ? error.message : "Could not reach your ship.");
+        if (!cancelled && !isCancelledError(error)) onError(error instanceof Error ? error.message : "Could not reach your Ship.");
       }
     })();
     return () => { cancelled = true; };

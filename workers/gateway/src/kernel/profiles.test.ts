@@ -1,5 +1,5 @@
 import { env } from "cloudflare:workers";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ProfileFields } from "@humansandmachines/gsv/protocol";
 import { runWithRealKernelSql } from "../test-support/real-kernel-sql";
 import { testPeer } from "../test-support/peers";
@@ -8,7 +8,7 @@ import type { KernelContext } from "./context";
 import { FederationStore } from "./federation-store";
 import { FederationIdentity } from "./federation-crypto";
 import { ProfileStore } from "./profile-store";
-import { handleProfileGet, handleProfileUpdate, handleProfilePublish, handleProfileUnpublish, resolveSpacePublicProfile, verifyPublicProfile } from "./profiles";
+import { handleProfileGet, handleProfileUpdate, handleProfilePublish, handleProfileUnpublish, handleProfileResolve, resolveSpacePublicProfile, verifyPublicProfile } from "./profiles";
 import { KERNEL_V045_ADD_HUMAN_INVITATIONS } from "./schema/v045_add_human_invitations";
 import { KERNEL_V069_SINGLE_HUMAN_SPACE } from "./schema/v069_single_human_space";
 import { jsonValueSchema } from "@humansandmachines/gsv/protocol";
@@ -17,6 +17,42 @@ const OWNER = { uid: 1000, gid: 1000, gids: [1000], username: "private-login", g
 const DRAFT: ProfileFields = { displayName: "Published name", about: "Hello from my space", contactPolicy: "requests", representation: "human-and-ship" };
 
 describe("explicit profile publication", () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it("resolves an address alias through an HTTPS redirect while keeping the signed identity", async () => {
+    await runWithRealKernelSql(async (_sql, storage) => {
+      const ctx = profileContext(storage);
+      handleProfileUpdate({ expectedRevision: 0, draft: DRAFT }, ctx);
+      await handleProfilePublish({ expectedRevision: 1 }, ctx);
+      const profile = ctx.profiles.published({ space: true })!.profile;
+      const fetch = vi.spyOn(globalThis, "fetch")
+        .mockResolvedValueOnce(new Response(null, { status: 308, headers: { location: profile.url } }))
+        .mockResolvedValueOnce(Response.json(profile));
+      await expect(handleProfileResolve({ url: "https://local.new.example" }, ctx)).resolves.toEqual({ profile });
+      expect(fetch).toHaveBeenNthCalledWith(2, profile.url, expect.objectContaining({ redirect: "manual", method: "GET" }));
+      fetch.mockResolvedValueOnce(Response.json(profile));
+      await expect(handleProfileResolve({ url: "https://local.new.example" }, ctx)).rejects.toThrow("signed identity");
+    });
+  });
+
+  it.each(["https://127.0.0.1/profile", "https://private.internal/profile", "https://other.example/private", "https://user:pass@other.example/profile"])("refuses an unsafe profile redirect to %s", async (location) => {
+    await runWithRealKernelSql(async (_sql, storage) => {
+      const cancel = vi.fn();
+      const fetch = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(new Response(new ReadableStream({ cancel }), { status: 308, headers: { location } }));
+      await expect(handleProfileResolve({ url: "https://local.new.example" }, profileContext(storage))).rejects.toThrow();
+      expect(fetch).toHaveBeenCalledOnce();
+      expect(cancel).toHaveBeenCalledOnce();
+    });
+  });
+
+  it("bounds redirect loops", async () => {
+    await runWithRealKernelSql(async (_sql, storage) => {
+      const fetch = vi.spyOn(globalThis, "fetch").mockImplementation(async () => new Response(null, { status: 308, headers: { location: "/profile" } }));
+      await expect(handleProfileResolve({ url: "https://local.new.example" }, profileContext(storage))).rejects.toThrow("Too many public profile redirects");
+      expect(fetch).toHaveBeenCalledTimes(4);
+    });
+  });
+
   it.each([false, true])("upgrades a published alias without exposing the draft or undoing unpublish (concurrent unpublish: %s)", async (unpublish) => {
     await runWithRealKernelSql(async (sql, storage) => {
       const ctx = profileContext(storage);

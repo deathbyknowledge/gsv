@@ -48,7 +48,7 @@ export type InstanceUsage = {
 };
 
 export type SysInstanceCatalogArgs = Record<string, never>;
-export type SysInstanceCatalogResult = { templates: InstanceTemplate[]; usage: InstanceUsage };
+export type SysInstanceCatalogResult = { templates: InstanceTemplate[]; usage: InstanceUsage; usageByKind?: Partial<Record<CloudInstanceKind, InstanceUsage>> };
 export type SysInstanceStartArgs = {
   requestId: string;
   templateId: string;
@@ -60,7 +60,7 @@ export type SysInstanceStartArgs = {
 };
 export type SysInstanceStartResult = { instance: CloudInstance; disposition: "created" | "reused" };
 export type SysInstanceListArgs = { includeTerminal?: boolean };
-export type SysInstanceListResult = { instances: CloudInstance[]; handoffs: BrowserHandoff[]; usage: InstanceUsage };
+export type SysInstanceListResult = { instances: CloudInstance[]; handoffs: BrowserHandoff[]; usage: InstanceUsage; usageByKind?: Partial<Record<CloudInstanceKind, InstanceUsage>> };
 export type InstanceSelector = { instanceId: string; startRequestId?: never } | { startRequestId: string; instanceId?: never };
 export type SysInstanceGetArgs = InstanceSelector;
 export type SysInstanceGetResult = { instance: CloudInstance | null };

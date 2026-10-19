@@ -341,7 +341,7 @@ pub(crate) async fn run_shell(
     .await?;
 
     println!(
-        "Connected to GSV OS as {}",
+        "Connected to Ship OS as {}",
         username.unwrap_or_else(|| "setup".to_string())
     );
     println!("Type commands to execute, or :quit to exit\n");

@@ -64,7 +64,7 @@ architecture="$(uname -m)"
 output_dir="${output_override:-$target_root/package/macos/$architecture/$profile}"
 binary_dir="$target_root/${CARGO_BUILD_TARGET:+$CARGO_BUILD_TARGET/}$profile"
 plist_template="$host_root/packaging/macos/Info.plist"
-icon_source="$repository_root/web/public/icons/gsv-512.png"
+icon_source="$repository_root/web/public/brand/gsv-ship.png"
 version="$(awk -F '"' '/^version = "/ { print $2; exit }' "$host_root/Cargo.toml")"
 [[ -n "$version" ]] || die "could not read the workspace version"
 
@@ -77,16 +77,18 @@ if ((skip_build == 0)); then
     --package gsv
     --package machine
     --package desktop
-    --package gestures
     --package transcriber
   )
   if [[ "$profile" == "release" ]]; then
     cargo_args+=(--release)
   fi
   cargo build "${cargo_args[@]}"
+  MACOSX_DEPLOYMENT_TARGET=13.0 uv run --frozen --group build --project "$host_root/helpers/speaker" \
+    --python-platform "${architecture/arm64/aarch64}-apple-darwin" \
+    python "$script_dir/build-speaker.py" --output "$binary_dir"
 fi
 
-binaries=(gsv-desktop gsv gsvd gsv-vision gsv-transcribe)
+binaries=(gsv-desktop gsv gsvd gsv-transcribe gsv-speak)
 for binary in "${binaries[@]}"; do
   path="$binary_dir/$binary"
   [[ -x "$path" ]] || die "missing executable $path"
@@ -105,6 +107,9 @@ mkdir -p "$macos_dir" "$resources_dir"
 
 sed "s/__GSV_VERSION__/$version/g" "$plist_template" > "$app/Contents/Info.plist"
 printf 'APPL????' > "$app/Contents/PkgInfo"
+mkdir -p "$resources_dir/en.lproj"
+install -m 0644 "$host_root/packaging/macos/en.lproj/InfoPlist.strings" \
+  "$resources_dir/en.lproj/InfoPlist.strings"
 for binary in "${binaries[@]}"; do
   install -m 0755 "$binary_dir/$binary" "$macos_dir/$binary"
 done
@@ -116,15 +121,8 @@ transcriber_license_dir="$resources_dir/licenses/transcriber"
 mkdir -p "$transcriber_license_dir"
 install -m 0644 "$host_root/helpers/transcriber/THIRD_PARTY.md" \
   "$transcriber_license_dir/THIRD_PARTY.md"
-gesture_license_dir="$resources_dir/licenses/gesture-models"
-mkdir -p "$gesture_license_dir"
-install -m 0644 "$host_root/helpers/gestures/models/LICENSE.apache-2.0" \
-  "$gesture_license_dir/LICENSE.apache-2.0"
-install -m 0644 "$host_root/helpers/gestures/models/PROVENANCE.md" \
-  "$gesture_license_dir/PROVENANCE.md"
-install -m 0644 "$host_root/helpers/gestures/THIRD_PARTY.md" \
-  "$gesture_license_dir/THIRD_PARTY.md"
-
+mkdir -p "$resources_dir/licenses/speaker"
+install -m 0644 "$binary_dir/gsv-speak-THIRD_PARTY.md" "$resources_dir/licenses/speaker/THIRD_PARTY.md"
 icon_artwork="$stage/GSV-app-icon-1024.png"
 sips -z 1024 1024 "$icon_source" --out "$icon_artwork" >/dev/null
 [[ -f "$icon_artwork" ]] || die "application icon renderer produced no output"
@@ -148,10 +146,6 @@ plutil -lint "$app/Contents/Info.plist" >/dev/null
 [[ -f "$resources_dir/GSV.icns" ]] || die "bundle icon generation failed"
 [[ -f "$transcriber_license_dir/THIRD_PARTY.md" ]] \
   || die "bundle transcription-runtime notices staging failed"
-[[ -f "$gesture_license_dir/LICENSE.apache-2.0" ]] \
-  || die "bundle gesture-model license staging failed"
-[[ -f "$gesture_license_dir/THIRD_PARTY.md" ]] \
-  || die "bundle gesture-runtime notices staging failed"
 
 # Sign nested tools before the outer bundle signs its main executable.
 for library in "$runtime_dir/"*.dylib "$runtime_dir/"*.so; do
@@ -166,7 +160,7 @@ codesign --force --sign - --entitlements "$host_root/apps/desktop/Entitlements.p
 codesign --verify --deep --strict "$app"
 
 app_path="$output_dir/GSV.app"
-zip_path="$output_dir/GSV-$version-$architecture-$profile.zip"
+zip_path="$output_dir/Ship-$version-$architecture-$profile.zip"
 [[ "$(basename "$app_path")" == "GSV.app" ]] || die "unsafe app output path"
 rm -rf "$app_path"
 rm -f "$zip_path"

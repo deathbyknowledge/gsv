@@ -18,11 +18,11 @@ export class InstallationOwnerHttp {
     const path = url.pathname.startsWith(`${this.prefix}/`) ? `/owner/${url.pathname.slice(this.prefix.length + 1)}` : url.pathname;
     try {
       if (request.method === "GET" && path === "/owner/recover") {
-        return page(`<h1>Recover your GSV</h1><p>Sign in as the verified owner to reset the root password for your space.</p>
-          <form method="post" action="${this.prefix}/recover"><label>Space handle <input name="handle" required maxlength="63" autocomplete="off"></label><button>Verify owner</button></form>`, 200, noStoreFormHeaders());
+        return page(`<h1>Recover your Ship</h1><p>Sign in as the verified owner to reset your Ship’s administrator password.</p>
+          <form method="post" action="${this.prefix}/recover"><label>Handle <input name="handle" required maxlength="63" autocomplete="off"></label><button>Verify owner</button></form>`, 200, noStoreFormHeaders());
       }
       if (request.method === "GET" && path === "/owner/link") {
-        return page(`<h1>Link the owner of your GSV</h1><p>Continue to verify the identity that can recover root for this space.</p>
+        return page(`<h1>Account recovery</h1><p>Verify your identity to recover administrator access if you lose it.</p>
           <form method="post" action="${this.prefix}/link"><input type="hidden" name="id"><input type="hidden" name="secret"><button>Verify owner</button></form>
           <script>const p=new URLSearchParams(location.hash.slice(1));history.replaceState(null,"",location.pathname);document.querySelector('[name="id"]').value=p.get("id")||"";document.querySelector('[name="secret"]').value=p.get("secret")||"";</script>`, 200, noStoreFormHeaders());
       }
@@ -59,7 +59,7 @@ export class InstallationOwnerHttp {
       return page("Not found", 404);
     } catch {
       // Provider exceptions may carry authorization codes or token bodies. Never render or log them.
-      return page(`<h1>Owner verification could not complete</h1><p>The attempt may have expired or the identity may not own this space. Start again from your GSV settings or <a href="/owner/recover">owner recovery</a>.</p>`, 400);
+      return page(`<h1>Owner verification could not complete</h1><p>The attempt may have expired or the identity may not own this Ship. Start again from your Ship settings or <a href="/owner/recover">owner recovery</a>.</p>`, 400);
     }
   }
 
@@ -85,6 +85,6 @@ function readCookie(request: Request, name: string): string | undefined {
 }
 function page(content: string, status = 200, headers = noStoreHeaders()): Response {
   headers.set("content-type", "text/html; charset=utf-8");
-  return new Response(`<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>${escapeHtml("Your GSV · owner access")}</title><main>${content}</main></html>`,
+  return new Response(`<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>${escapeHtml("Ship · account recovery")}</title><main>${content}</main></html>`,
     { status, headers });
 }

@@ -41,7 +41,7 @@ pub struct SessionStore {
 }
 
 pub fn gateway_origin(value: &str) -> Result<String, String> {
-    let url = Url::parse(value.trim()).map_err(|_| "Enter the full HTTPS space address.")?;
+    let url = Url::parse(value.trim()).map_err(|_| "Enter the full HTTPS address of your Ship.")?;
     let loopback = matches!(url.host_str(), Some("localhost" | "127.0.0.1" | "[::1]"));
     if !(url.scheme() == "https" || (url.scheme() == "http" && loopback))
         || url.host_str().is_none()
@@ -71,7 +71,7 @@ impl SessionStore {
             .open(previous.join("prototype.lock"))
             .map_err(|_| "Cannot open the previous Desktop session.")?;
         lock.try_lock_exclusive()
-            .map_err(|_| "Close the older GSV window before upgrading.")?;
+            .map_err(|_| "Close the older Ship window before upgrading.")?;
         let previous = Self::open(previous.to_owned())?;
         let mut destination = Self::open(directory.to_owned())?;
         destination.commit(previous.current, previous.pending_revokes)
@@ -184,7 +184,7 @@ impl SessionStore {
         values: BTreeMap<String, String>,
     ) -> Result<(), String> {
         if generation != self.current.generation || self.current.origin.is_none() {
-            return Err("The configured space has changed.".into());
+            return Err("The selected Ship has changed.".into());
         }
         if values.len() > KEYS.len()
             || values

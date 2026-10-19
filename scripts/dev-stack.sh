@@ -3,6 +3,10 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DEV_STATE_DIR="${GSV_DEV_STATE_DIR:-$ROOT_DIR/.wrangler/operator-dev-state}"
+INSTANCES_CONFIG="$ROOT_DIR/workers/instances/wrangler.dev.jsonc"
+if [[ "${GSV_DEV_COMPUTERS:-0}" == "1" ]]; then
+  INSTANCES_CONFIG="$ROOT_DIR/workers/instances/wrangler.computer.dev.jsonc"
+fi
 mkdir -p "$DEV_STATE_DIR"
 DEV_STATE_DIR="$(cd "$DEV_STATE_DIR" && pwd -P)"
 
@@ -29,6 +33,6 @@ exec env CLOUDFLARE_INCLUDE_PROCESS_ENV=false node \
   --config "$ROOT_DIR/workers/gateway/wrangler.dev.jsonc" \
   --config "$ROOT_DIR/workers/installations/wrangler.dev.jsonc" \
   --config "$ROOT_DIR/workers/inference/wrangler.dev.jsonc" \
-  --config "$ROOT_DIR/workers/instances/wrangler.dev.jsonc" \
+  --config "$INSTANCES_CONFIG" \
   --config "$ROOT_DIR/workers/ripgit/wrangler.dev.jsonc" \
   --ip 127.0.0.1 --port 8976 --local --persist-to "$DEV_STATE_DIR"

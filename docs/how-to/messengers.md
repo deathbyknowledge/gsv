@@ -1,14 +1,14 @@
 # Connect a messenger
 
-Once a messenger is connected, you can talk to GSV from it just like you do on the desktop — anything you can ask GSV, you can ask from anywhere.
+Once a messenger is connected, you can talk to Ship from it just like you do on the desktop — anything you can ask Ship, you can ask from anywhere.
 
-GSV adapters are extensible. This page documents the messenger implementations
+Ship adapters are extensible. This page documents the messenger implementations
 bundled with the current release; it is not a complete list of transports an
 adapter can implement.
 
 Your deployment operator enables the Telegram, Slack, Discord, and WhatsApp
 apps offered in **Messengers**. You link your identity with a short-lived code.
-You do not need to create a bot or paste its token into the space.
+You do not need to create a bot or paste its token into your Ship.
 
 ## Ask Ship to connect
 
@@ -20,25 +20,25 @@ No visit to Settings is needed. If the code expires, request a new one.
 To also use that messenger for password recovery, connect it directly in Settings.
 
 Only share a code from your own messenger account. If it is already connected
-to another space, redeeming the code moves that connection to this space.
+to another Ship, redeeming the code moves that connection to this Ship.
 Send another message in the messenger after pairing to start talking to Ship.
 
 You can also connect through **Settings → Messengers**, using the steps below.
 
 ## Telegram
 
-1. In GSV, open **Messengers → Telegram** and use the link to open the official
-   GSV bot.
+1. In Ship, open **Messengers → Telegram** and use the link to open the official
+   Ship bot.
 2. Send the bot any private message. It replies with a short-lived pairing
    code.
-3. Enter that code back in GSV. GSV shows the Telegram display name, handle,
+3. Enter that code back in Ship. Ship shows the Telegram display name, handle,
    and numeric identity that requested it.
 4. Confirm only if that is your Telegram identity. The code alone cannot choose
-   an installation or user; the signed-in GSV session supplies both.
+   an installation or user; the signed-in Ship session supplies both.
 5. Send another message in Telegram. It reaches the same Ship conversation
-   you use in GSV, without selecting a process.
+   you use in Ship, without selecting a process.
 
-If the Telegram identity was linked to another GSV, requesting or inspecting a
+If the Telegram identity was linked to another Ship, requesting or inspecting a
 code does not interrupt it. The route moves only after confirmation succeeds.
 Use **Disconnect** on the linked identity to revoke it.
 
@@ -64,30 +64,30 @@ a command from an older prompt.
 
 ## Slack
 
-1. In GSV, open **Messengers → Slack** and choose **Install GSV in Slack**.
-2. Approve the official GSV app for the intended Slack workspace. If another
+1. In Ship, open **Messengers → Slack** and choose **Install Ship in Slack**.
+2. Approve the official Ship app for the intended Slack workspace. If another
    member already installed it there, you can continue with that installation.
-3. Mention `@GSV` in a channel, or send the app a direct message. GSV sends a
+3. Mention `@GSV` in a channel, or send the app a direct message. Ship sends a
    short-lived pairing code to your Slack direct messages.
-4. Enter the code back in GSV. Check the Slack user ID shown before confirming.
+4. Enter the code back in Ship. Check the Slack user ID shown before confirming.
 5. Confirm only if it is your Slack identity. The code itself cannot select an
-   installation or local user; the signed-in GSV session supplies both.
+   installation or local user; the signed-in Ship session supplies both.
 6. Mention `@GSV` again to start a conversation. In a channel, replies remain
    in the originating thread. The first mention only requested pairing and is
    not replayed to the agent.
 
 The app installation belongs to the Slack workspace, while the pairing belongs
 to one human author. If Alice and Bob use the same workspace, each pairs
-separately and each author's mentions keep routing to their own GSV. Making
-Alice and Bob Contacts does not change that default Slack route. A linked GSV
-can still contact the other explicitly through GSV's normal federation model.
+separately and each author's mentions keep routing to their own Ship. Making
+Alice and Bob Contacts does not change that default Slack route. A linked Ship
+can still contact the other explicitly through Ship's normal federation model.
 
-Public channel and thread responses identify whose GSV produced them, for
-example **From @Alice's GSV:**. Direct-message responses omit that prefix.
+Public channel and thread responses identify whose Ship produced them.
+Direct-message responses omit that prefix.
 Relinking a Slack identity moves future messages only after confirmation
 succeeds; delayed messages and replies from the old link are rejected.
 
-Slack supports incoming files and GSV resource attachments in addressed messages.
+Slack supports incoming files and Ship resource attachments in addressed messages.
 With personal Slack authorization, the paired workspace can also appear as a
 read-only filesystem and command target. The operator-owned app performs writes;
 your personal OAuth token determines read visibility. See the Slack adapter
@@ -95,35 +95,35 @@ README in the source tree for configuration and target details.
 
 ## Discord
 
-1. Open **Messengers → Discord** in the space you want to link.
+1. Open **Messengers → Discord** in the Ship you want to link.
 2. Use the operator application's install link if the bot is not already in the
    intended server, or open a direct message with it.
 3. Mention the bot with `pair`, or message it privately. It sends a private code.
-4. Enter the code in GSV, inspect the Discord identity, and confirm it.
+4. Enter the code in Ship, inspect the Discord identity, and confirm it.
 5. Send another DM or server mention to start a conversation.
 
 Installing the bot does not link everyone in a server. Each person pairs their
 own identity, and a server route is separate from a direct-message route. Two
-people in the same server can use different spaces. Replies remain bound to the
+people in the same server can use different Ships. Replies remain bound to the
 confirmed author and observed destination.
 
 ## WhatsApp
 
-GSV uses one operator-owned WhatsApp Business number on the WhatsApp Business
+Ship uses one operator-owned WhatsApp Business number on the WhatsApp Business
 Platform. You message that number from your own WhatsApp account.
 
-1. In GSV, open **Settings → Messengers → WhatsApp**. It shows the GSV number
+1. In Ship, open **Settings → Messengers → WhatsApp**. It shows the Ship number
    and a link that opens WhatsApp on it.
 2. Send the number any message. It replies with instructions and a separate
    code-only message you can copy. The code expires in 10 minutes. If your
-   number is already connected to another GSV, send `/link` to get a new code.
-3. Enter the code back in GSV. GSV shows the WhatsApp profile name and the
+   number is already connected to another Ship, send `/link` to get a new code.
+3. Enter the code back in Ship. Ship shows the WhatsApp profile name and the
    masked number that requested it.
-4. Confirm only if that is your WhatsApp number. The code alone cannot choose a
-   space or user; the signed-in GSV session supplies both.
-5. Send another message. It reaches the same Ship conversation you use in GSV.
+4. Confirm only if that is your WhatsApp number. The code alone cannot choose an
+   installation or user; the signed-in Ship session supplies both.
+5. Send another message. It reaches the same Ship conversation you use in Ship.
 
-You can send text, photos, documents, voice notes, videos, and locations. GSV
+You can send text, photos, documents, voice notes, videos, and locations. Ship
 replies with text and attachments, and a long reply arrives as several
 messages, one per prose paragraph. Headings stay with the following block;
 code blocks, lists, tables and quotations stay together. Approval
@@ -134,15 +134,15 @@ Markdown document uploads keep their `.md` filename and original contents;
 the WhatsApp adapter uploads them as plain text because Meta does not accept
 the Markdown MIME type.
 
-WhatsApp accepts a free-form message from GSV only within 24 hours of your last
-message to the number. After that, GSV uses an approved template to send the
-message, or a preview if it is too long. The full message remains in your GSV
-conversation. Open GSV to read it, or reply in WhatsApp to ask Ship about it.
+WhatsApp accepts a free-form message from Ship only within 24 hours of your last
+message to the number. After that, Ship uses an approved template to send the
+message, or a preview if it is too long. The full message remains in your Ship
+conversation. Open Ship to read it, or reply in WhatsApp to ask Ship about it.
 The **Show me** button sends an ordinary reply to Ship. Messages are not queued
 for automatic delivery when you return.
 
 Approval notifications outside the window ask you to review the request in
-GSV. Attachments require an open WhatsApp window or another authorized
+Ship. Attachments require an open WhatsApp window or another authorized
 destination.
 
 The operator must configure the matching Meta-approved `gsv_message` template
@@ -159,14 +159,14 @@ service is offered for your number.
 The earlier linked-device adapter, which paired by scanning a QR code, is no
 longer bundled, and its pairings do not carry over.
 
-## Disconnect or change a space
+## Disconnect or switch Ships {#disconnect-or-change-a-space}
 
 Use **Disconnect** on the linked identity to revoke its route. To move an
-identity, request a new code and confirm it from the destination space. Issuing
+identity, request a new code and confirm it from the destination Ship. Issuing
 or inspecting a code leaves the old route active; confirmation changes its
 generation. Delayed messages from the old route cannot cross into the new one.
 
 ## See also
 
-- [Connect Devices](/how-to/connect-devices) — give GSV access to your machines
+- [Connect Devices](/how-to/connect-devices) — give Ship access to your machines
 - [Get Started](/get-started/)

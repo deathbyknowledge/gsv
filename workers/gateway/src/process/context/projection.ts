@@ -13,6 +13,7 @@ const contextProjectionSchema = z.object({
   runtime: z.object({
     date: z.string(),
     timezone: z.string(),
+    language: z.string().optional(),
   }),
   targets: z.array(aiToolsDeviceSchema),
   mcpServers: z.array(z.string()),
@@ -44,6 +45,7 @@ export function createContextProjection(
     mcpServers: normalizeStringSet(snapshot.mcpServers),
     skills: normalizeSkillProjection(snapshot, fallback?.skills),
   };
+  if (snapshot.system.language !== undefined) projection.runtime.language = snapshot.system.language;
   const address = normalizeOptionalLine(snapshot.mailbox?.address);
   if (address) projection.mailbox = { address };
   return projection;

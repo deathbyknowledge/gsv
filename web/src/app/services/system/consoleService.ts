@@ -870,7 +870,7 @@ function sanitizeHtmlModelValidationError(message: string): string {
   if (HTML_CHALLENGE_OR_BLOCK_PATTERN.test(message)) {
     return [
       "Provider returned an HTML challenge or block page instead of a model response.",
-      "Check VPN/network access to the provider, or run GSV from an environment that can reach it.",
+      "Check VPN/network access to the provider, or run Ship from an environment that can reach it.",
     ].join(" ");
   }
   return "Provider returned an HTML error page instead of a model response.";

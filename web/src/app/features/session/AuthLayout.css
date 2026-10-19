@@ -14,6 +14,10 @@
   overflow: hidden;
   -webkit-font-smoothing: antialiased;
 }
+.gsv-auth-scene {
+  position: fixed;
+  inset: 0 0 auto;
+}
 .gsv-auth-header {
   position: absolute;
   inset: 0 0 auto;
@@ -31,7 +35,7 @@
   gap: clamp(24px, 4vw, 72px);
   max-width: 1440px;
   margin-inline: auto;
-  padding: 48px clamp(24px, 5vw, 80px) 64px;
+  padding: 48px clamp(24px, 5vw, 80px) calc(64px + var(--instrument-safe-bottom));
   overflow: auto;
 }
 .gsv-auth-panels { position: relative; min-width: 0; }
@@ -40,7 +44,7 @@
   align-content: safe center;
   justify-items: stretch;
   max-width: 1280px;
-  padding: 40px clamp(24px, 5vw, 64px);
+  padding: 40px clamp(24px, 5vw, 64px) calc(40px + var(--instrument-safe-bottom));
 }
 .gsv-auth-scene-welcome .gsv-auth-panels { width: 100%; }
 .gsv-auth-panels .session-screen,
@@ -86,7 +90,7 @@
     justify-items: center;
     gap: 12px;
     max-width: 560px;
-    padding: 12px 24px 48px;
+    padding: 12px 24px calc(48px + var(--instrument-safe-bottom));
   }
   .gsv-auth-panels { width: 100%; }
   .gsv-auth-content {

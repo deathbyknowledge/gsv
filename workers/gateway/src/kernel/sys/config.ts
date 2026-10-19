@@ -123,11 +123,12 @@ export function handleSysConfigGet(
   return { entries };
 }
 
-export function handleSysConfigSet(
+export async function handleSysConfigSet(
   args: SysConfigSetArgs,
   ctx: KernelContext,
-): SysConfigSetResult {
-  const uid = requirePrincipal(ctx).account.uid;
+): Promise<SysConfigSetResult> {
+  const principal = requirePrincipal(ctx);
+  const uid = principal.account.uid;
 
   if (!args.key) {
     throw new Error("sys.config.set requires a key");
@@ -167,5 +168,10 @@ export function handleSysConfigSet(
   }
 
   ctx.config.set(args.key, value);
+  if (principal.kind === "human" && !ctx.processId && uid >= 1000
+    && args.key === `users/${uid}/ui/welcome_card_seen` && value === "1"
+    && ctx.welcome.activate(uid)) {
+    await ctx.reconcileResponsibilityWake(uid);
+  }
   return { ok: true };
 }

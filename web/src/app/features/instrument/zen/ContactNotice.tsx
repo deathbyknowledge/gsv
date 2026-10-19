@@ -61,7 +61,7 @@ export function preview(text: string, attachments = 0): string {
 
 /* inline markup rather than a component, so the badge reads in the moment's own tree */
 function senderBadge(byShip: boolean) {
-  return <span class="sender-badge">{byShip && <span class="sender-dot" />}{byShip ? "GSV" : "PERSON"}</span>;
+  return <span class="sender-badge">{byShip && <span class="sender-dot" />}{byShip ? "Ship" : "PERSON"}</span>;
 }
 
 /**

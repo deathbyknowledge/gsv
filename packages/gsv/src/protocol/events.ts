@@ -53,7 +53,7 @@ const responsibilityTransitionSchema: z.ZodMiniType<ResponsibilityTransition> = 
 
 const contextProjectionSchema = z.strictObject({
   version: z.literal(1),
-  runtime: z.strictObject({ date: z.string(), timezone: z.string() }),
+  runtime: z.strictObject({ date: z.string(), timezone: z.string(), language: z.optional(z.string()) }),
   targets: z.array(z.strictObject({
     id: z.string(),
     implements: z.array(z.string()),
@@ -215,7 +215,7 @@ export const procHistoryEventPayloadSchemas = {
 
 export type ProcHistoryContextProjection = {
   version: 1;
-  runtime: { date: string; timezone: string };
+  runtime: { date: string; timezone: string; language?: string };
   targets: { id: string; implements: string[]; label?: string; description?: string; platform?: string }[];
   mcpServers: string[];
   skills: { mode: "summary" | "names" | "off"; entries: { id: string; description: string }[] };

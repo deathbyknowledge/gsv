@@ -5,7 +5,6 @@ import InstallationService from "./index";
 import { AccountStore } from "./store";
 import { InstallationOnboardingStore } from "./onboarding";
 import { InstallationResetCoordinator } from "./reset-preparation";
-import { InstallationCreationInvites } from "./creation-invites";
 
 it("runs directory, onboarding and an isolated reset without any commercial tables", async () => {
   const accounts = new AccountStore(env.INSTALLATIONS_DB, "example.com");
@@ -34,11 +33,12 @@ it("runs directory, onboarding and an isolated reset without any commercial tabl
   await expect(onboarding.begin(reset.installationId)).resolves.toMatchObject({ installationId: reset.installationId });
 });
 
-it("rejects configured service handles without consuming an invite, then completes signup with another handle", async () => {
-  const origin = "https://accounts.example.com";
+it.each(["https://accounts.example.com", "https://owners.example.com"])("completes owner signup at %s while reserving every configured service handle", async (origin) => {
+  const ownerHandle = `${new URL(origin).hostname.split(".")[0]}-pilot`;
   let code = "";
   const service = new InstallationService(createExecutionContext(), { ...env,
-    GSV_OWNER_SIGNUP_ORIGIN: "https://join.example.com", GSV_OWNER_AUTH_SECRET: "synthetic-auth-secret-".repeat(4),
+    GSV_OWNER_ORIGIN_ALIASES: '["https://owners.example.com"]',
+    GSV_SIGNUP_ENABLED: "true", GSV_OWNER_SIGNUP_ORIGIN: "https://join.example.com", GSV_OWNER_AUTH_SECRET: "synthetic-auth-secret-".repeat(4),
     GSV_OWNER_EMAIL_FROM: "accounts@example.com", OWNER_EMAIL: {
       async send(message: EmailMessage | EmailMessageBuilder): Promise<EmailSendResult> {
         if (!("subject" in message)) throw new Error("Expected composed mail");
@@ -53,32 +53,29 @@ it("rejects configured service handles without consuming an invite, then complet
     method: body ? "POST" : "GET", headers: { "content-type": "application/json", authorization: `Bearer ${sessionSecret}` },
     body: body ? JSON.stringify(body) : undefined,
   }));
-  const challenge = { challengeId: crypto.randomUUID(), browserSecret: secret(), email: "signup-owner@example.com" };
+  const challenge = { challengeId: crypto.randomUUID(), browserSecret: secret(), email: `${ownerHandle}@example.com` };
   expect((await request("/code", challenge)).status).toBe(200);
   expect((await request("/verify", { challengeId: challenge.challengeId, browserSecret: challenge.browserSecret, code, sessionSecret })).status).toBe(200);
-  const store = new AccountStore(env.INSTALLATIONS_DB, "example.com");
-  const invitations = new InstallationCreationInvites(env.INSTALLATIONS_DB, store, new InstallationOnboardingStore(env.INSTALLATIONS_DB, store));
-  const issued = await invitations.create({});
-  expect((await request("/invites/claim", { code: issued.code })).status).toBe(200);
-  for (const handle of ["accounts", "join"]) {
+  const operationId = crypto.randomUUID();
+  for (const handle of ["accounts", "join", "owners"]) {
     expect((await request(`/handle?value=${handle}`)).status).toBe(400);
-    const denied = await request(`/invites/${issued.invite.id}/space`, { handle });
+    const denied = await request("/spaces", { operationId, handle });
     expect(denied.status).toBe(400);
     expect(await denied.json()).toEqual({ error: "handle is reserved for an operator service" });
     expect(await service.resolveHostname(`${handle}.example.com`)).toEqual({ found: false });
   }
-  expect(await env.INSTALLATIONS_DB.prepare("SELECT installation_id FROM installation_creation_invites WHERE id = ?")
-    .bind(issued.invite.id).first()).toEqual({ installation_id: null });
   expect(await env.INSTALLATIONS_DB.prepare("SELECT operation_id FROM provisioning_operations WHERE operation_id = ?")
-    .bind(issued.invite.id).first()).toBeNull();
-  const prepared = await request(`/invites/${issued.invite.id}/space`, { handle: "new-owner" });
+    .bind(operationId).first()).toBeNull();
+  const prepared = await request("/spaces", { operationId, handle: ownerHandle });
   expect(prepared.status).toBe(200);
   const result = await prepared.json<{ origin: string; onboardingToken: string }>();
-  expect(result.origin).toBe("https://new-owner.example.com");
-  const space = await service.resolveHostname("new-owner.example.com");
+  expect(result.origin).toBe(`https://${ownerHandle}.example.com`);
+  const space = await service.resolveHostname(`${ownerHandle}.example.com`);
   if (!space.found) throw new Error("Expected created space");
   const authorization = await service.authorizeInstallationOnboarding({ installationId: space.installationId, token: result.onboardingToken });
   if (!authorization.ok) throw new Error("Expected setup authorization");
   await service.completeInstallationOnboarding({ installationId: space.installationId, claimId: authorization.claimId });
-  expect(await service.resolveHostname("new-owner.example.com")).toMatchObject({ state: "active" });
+  expect(await service.resolveHostname(`${ownerHandle}.example.com`)).toMatchObject({ state: "active" });
+  expect((await service.fetch(new Request("https://untrusted.example.com/owner/api/session"))).status).toBe(404);
+  expect((await service.fetch(new Request("https://owners.example.com/admin"))).status).toBe(403);
 });

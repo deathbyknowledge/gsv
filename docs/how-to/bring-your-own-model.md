@@ -1,6 +1,6 @@
 # Bring your own model
 
-GSV ships with access to Cloudflare's models, so it works the moment you finish setup — no extra account, no key to paste. That's the fastest way to start.
+Ship ships with access to Cloudflare's models, so it works the moment you finish setup — no extra account, no key to paste. That's the fastest way to start.
 
 For everyday use, we recommend connecting your own provider key. You'll get better speed, more reliable responses, and your pick of model. Think of the built-in Cloudflare models as the on-ramp, not the destination.
 
