@@ -261,6 +261,14 @@ describe("saved profile encryption", () => {
     expect(saved.some(value => value.profileId === automatic.profileId)).toBe(false);
     expect(profile(store.ownedProfile(actor, automatic.profileId!)!).automatic).toBe(true);
   }));
+  it("keeps the automatic profile available outside the saved-profile allowance", () => inStore(async store => {
+    const started = store.admit(actor, { requestId: "ordinary", templateId: "browser" }, { ...limits, savedProfiles: 0 });
+    expect(profile(store.ownedProfile(actor, started.profileId!)!).automatic).toBe(true);
+    expect(() => store.createProfile(actor, "named-0", "Work", { ...limits, savedProfiles: 0 })).toThrow("Saved browser profile limit reached");
+    const named = store.createProfile(actor, "named-1", "Work", { ...limits, savedProfiles: 1 });
+    expect(named.automatic).toBeUndefined();
+    expect(() => store.createProfile(actor, "named-2", "Personal", { ...limits, savedProfiles: 1 })).toThrow("Saved browser profile limit reached");
+  }));
   it("saves healthy sites while retaining a failed site's storage, cookies and original save time", () => inStore(async store => {
     const started = store.admit(actor, { requestId: "partial", templateId: "browser" }, limits);
     const storage = new ProfileStorage("partial", bucket, store);

@@ -1,5 +1,5 @@
-/** The accent used for the favicon dot; matches `--accent` in gsv-tokens.css. */
-export const ATTENTION_ACCENT = "#b3aeff";
+/** The coral of the favicon dot. The cursor favicon keeps its left, so the dot owns the lower-right corner; no token carries this colour yet. */
+export const ATTENTION_ACCENT = "#ff7f66";
 
 /** The parts of the page the tab signal touches, so the policy can run without a browser. */
 export type TabAttentionPage = {

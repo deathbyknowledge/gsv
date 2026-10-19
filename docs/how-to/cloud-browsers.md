@@ -371,7 +371,7 @@ or an `ENTITLEMENTS` service implementing these policy keys:
 | `browser.concurrent_instances` | Concurrent browser limit per Ship |
 | `browser.period_seconds` | Monthly allowance, calendar month in UTC |
 | `browser.max_instance_seconds` | Maximum lifetime for one instance |
-| `browser.saved_profiles` | Saved profile limit per Ship |
+| `browser.saved_profiles` | Limit on explicitly created saved profiles per Ship; each account's automatic login store is always available |
 | `browser.profile_storage_bytes` | Maximum saved state bytes per profile |
 
 The local default is 16 MiB of uncompressed serialized state per saved browser;
