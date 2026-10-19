@@ -1,4 +1,5 @@
 import { ShipReplies } from "./ship-replies";
+import { InitialOnboarding } from "./onboarding-responsibility";
 import {
   cancelUnlockedBody,
 } from "./do-shared";
@@ -434,6 +435,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
   readonly schedules: ScheduleStore;
   readonly mailboxes: MailboxStore;
   readonly responsibilities: ResponsibilityStore;
+  readonly welcome: InitialOnboarding;
   readonly responsibilitySources: ResponsibilitySourcePolicyStore;
   readonly federation: FederationStore;
   readonly profiles: ProfileStore;
@@ -532,6 +534,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
     this.mailboxes = new MailboxStore(sql);
 
     this.responsibilities = new ResponsibilityStore(ctx.storage, (ownerUid) => this.connectionRuntime.broadcastToUserUid(ownerUid, "r12y.changed"));
+    this.welcome = new InitialOnboarding(ctx.storage, this.responsibilities);
     this.responsibilitySources = new ResponsibilitySourcePolicyStore(sql, (ownerUid) => this.connectionRuntime.broadcastToUserUid(ownerUid, "r12y.source.changed"));
     this.federation = new FederationStore(ctx.storage);
     this.profiles = new ProfileStore(ctx.storage);
@@ -1560,6 +1563,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
       schedules: this.schedules,
       mailboxes: this.mailboxes,
       responsibilities: this.responsibilities,
+      welcome: this.welcome,
       responsibilitySources: this.responsibilitySources,
       federation: this.federation,
       federationIdentity: this.federationIdentity,

@@ -13,6 +13,7 @@ import type { ArgsOf, ResultOf, SyscallName } from "../syscalls";
 import type { KernelContext } from "./context";
 import { principalOf, requirePrincipal } from "./context";
 import { resolveCallerOwnerUid } from "./context";
+import { withInitialOnboarding } from "./onboarding-responsibility";
 import type {
   InteractionOrigin,
   JsonObject,
@@ -793,7 +794,11 @@ export async function forwardToProcess(
   if (frame.call === "proc.kill" && proc.isPersonalController) {
     invalidatePersonalControllerReadiness(proc.ownerUid, pid, ctx.procs);
   }
-  const responsePromise = sendFrameToProcess(ctx.installationId, pid, processFrame);
+  const responsePromise = withInitialOnboarding(
+    frame.call === "proc.send" && identity.kind === "human" && !ctx.processId
+      && identity.account.uid === proc.ownerUid && proc.isPersonalController ? proc.ownerUid : undefined,
+    ctx, () => sendFrameToProcess(ctx.installationId, pid, processFrame),
+  );
   let cancellation: Promise<unknown> | undefined;
   const signal = frame.call === "codemode.run" || frame.call === "proc.history.compact"
     ? ctx.requestSignal

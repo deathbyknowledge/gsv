@@ -28,7 +28,6 @@ import type {
 import { USER_OVERRIDABLE_PREFIXES } from "../config";
 import { canOwnerRunAsAccount } from "../account-access";
 import { canReadConfigKey } from "../config-access";
-import { activateInitialOnboardingResponsibility } from "../onboarding-responsibility";
 
 function parseUserConfigKey(key: string): { uid: number; sub: string } | null {
   const match = /^users\/(\d+)\/(.+)$/.exec(key);
@@ -171,7 +170,7 @@ export async function handleSysConfigSet(
   ctx.config.set(args.key, value);
   if (principal.kind === "human" && !ctx.processId && uid >= 1000
     && args.key === `users/${uid}/ui/welcome_card_seen` && value === "1"
-    && activateInitialOnboardingResponsibility(uid, ctx.responsibilities)) {
+    && ctx.welcome.activate(uid)) {
     await ctx.reconcileResponsibilityWake(uid);
   }
   return { ok: true };

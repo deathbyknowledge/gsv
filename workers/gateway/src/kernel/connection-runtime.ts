@@ -41,7 +41,6 @@ import {
 import type { Kernel } from "./do";
 import { deliverTargetConnectionEvent } from "./target-events";
 import { hasCapability } from "./capabilities";
-import { activateInitialOnboardingResponsibility } from "./onboarding-responsibility";
 import {
   sameRouteOrigin,
 } from "./do-shared";
@@ -251,7 +250,7 @@ async handleSysConnect(
       if (ownerUid >= 1000 && !ctx.auth.isPersonalAgentUid(ownerUid)
         && ctx.config.get(`users/${ownerUid}/ui/welcome_card_seen`) === "1") {
         ctx.defer(Promise.resolve().then(async () => {
-          if (activateInitialOnboardingResponsibility(ownerUid, ctx.responsibilities)) {
+          if (ctx.welcome.activate(ownerUid)) {
             await ctx.reconcileResponsibilityWake(ownerUid);
           }
         }).catch((error) => {

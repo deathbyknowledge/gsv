@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { RequestFrame } from "../protocol/frames";
 import { runWithRealKernelSql } from "../test-support/real-kernel-sql";
 import { ResponsibilityStore } from "./responsibility-store";
-import { ensureInitialOnboardingResponsibility } from "./onboarding-responsibility";
+import { InitialOnboarding, INITIAL_ONBOARDING_DEDUPE_KEY } from "./onboarding-responsibility";
 
 import * as utils from "../shared/utils";
 import * as connect from "./connect";
@@ -157,15 +157,18 @@ describe("Kernel personal controller connect lifecycle", () => {
   ])("recovers pending onboarding without delaying sign-in: %j", async ({ dismissed, handled, failWake, previousBrief }) => {
     await runWithRealKernelSql(async (_sql, storage) => {
       const responsibilities = new ResponsibilityStore(storage);
-      const welcome = ensureInitialOnboardingResponsibility(1000, responsibilities).record;
-      if (handled) responsibilities.update({ ownerUid: 1000, id: welcome.id,
+      const onboarding = new InitialOnboarding(storage, responsibilities);
+      onboarding.prepare(1000);
+      if (handled || previousBrief) onboarding.activate(1000);
+      const welcome = responsibilities.getByDedupeKey(1000, INITIAL_ONBOARDING_DEDUPE_KEY);
+      if (handled) responsibilities.update({ ownerUid: 1000, id: welcome!.id,
         patch: { state: "waiting", blocker: "Waiting for a reply", nextCheckAtMs: null },
         actor: { kind: "process", processId: "ship" }, observedByShip: true, now: Date.now() });
-      if (previousBrief) responsibilities.update({ ownerUid: 1000, id: welcome.id,
-        patch: { details: { responsibilityType: "onboarding.initial", instructions: "Previously saved onboarding instructions" },
+      if (previousBrief) responsibilities.update({ ownerUid: 1000, id: welcome!.id,
+        patch: { state: "waiting", details: { responsibilityType: "onboarding.initial", instructions: "Previously saved onboarding instructions" },
           blocker: "Waiting for the user's first message." },
         actor: { kind: "system", component: "onboarding" }, observedByShip: true, now: Date.now() });
-      const beforeConnect = responsibilities.get(1000, welcome.id);
+      const beforeConnect = responsibilities.getByDedupeKey(1000, INITIAL_ONBOARDING_DEDUPE_KEY);
       const pending = dismissed && !handled && !previousBrief;
       const deferred: Promise<unknown>[] = [];
       let finishWake = () => {};
@@ -178,7 +181,7 @@ describe("Kernel personal controller connect lifecycle", () => {
           credentialEpoch: () => 0, isAccountDisabled: () => false },
         conversations: { ensureShip: () => ({ id: "conv:ship", ownerUid: 1000, kind: "ship" }) },
         config: { get: vi.fn(() => dismissed ? "1" : null) },
-        responsibilities, reconcileResponsibilityWake: vi.fn(() => wake),
+        responsibilities, welcome: onboarding, reconcileResponsibilityWake: vi.fn(() => wake),
         defer: (promise: Promise<unknown>) => deferred.push(promise),
       };
       const connection = { id: "connection-1", setState: vi.fn() };
@@ -192,9 +195,10 @@ describe("Kernel personal controller connect lifecycle", () => {
         await kernel.connectionRuntime.handleSysConnect(connection, connectFrame());
         expect(kernel.transport.sendOk).toHaveBeenCalledOnce();
         expect(ctx.config.get).toHaveBeenCalledWith("users/1000/ui/welcome_card_seen");
-        expect(responsibilities.get(1000, welcome.id)?.state).toBe(pending ? "open" : "waiting");
+        expect(responsibilities.getByDedupeKey(1000, INITIAL_ONBOARDING_DEDUPE_KEY)?.state)
+          .toBe(pending ? "open" : handled || previousBrief ? "waiting" : undefined);
         expect(ctx.reconcileResponsibilityWake).toHaveBeenCalledTimes(pending ? 1 : 0);
-        if (previousBrief) expect(responsibilities.get(1000, welcome.id)).toEqual(beforeConnect);
+        if (previousBrief) expect(responsibilities.getByDedupeKey(1000, INITIAL_ONBOARDING_DEDUPE_KEY)).toEqual(beforeConnect);
         finishWake();
         await Promise.all(deferred);
         expect(warn).toHaveBeenCalledTimes(failWake ? 1 : 0);

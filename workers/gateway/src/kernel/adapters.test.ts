@@ -581,6 +581,7 @@ function makeContext(
       isEnabled: vi.fn(() => false),
     },
     reconcileResponsibilityWake: vi.fn(async () => undefined),
+    welcome: { activate: vi.fn(() => false) },
     shipReplies: { reserveOrder: vi.fn(() => 1), recordAdapter: vi.fn() },
     runRoutes: {
       setAdapterRoute: vi.fn(),
@@ -3434,6 +3435,7 @@ describe("adapter lifecycle handlers", () => {
       throw new Error(`Unexpected call: ${frame.call}`);
     });
     const ctx = makeContext({}, { upsert: vi.fn() }, { routePid: null });
+    vi.mocked(ctx.welcome.activate).mockReturnValueOnce(true);
 
     const first = await handleAdapterInbound({
       adapter: "whatsapp",
@@ -3461,6 +3463,9 @@ describe("adapter lifecycle handlers", () => {
     expect(ctx.procs.spawn).not.toHaveBeenCalled();
     expect(ctx.adapters.surfaceRoutes.setRoute).not.toHaveBeenCalled();
     expect(ensurePersonalControllerMock).toHaveBeenCalledTimes(2);
+    expect(ctx.welcome.activate).toHaveBeenCalledWith(1000);
+    expect(ctx.reconcileResponsibilityWake).toHaveBeenCalledWith(1000);
+    expect(vi.mocked(ctx.welcome.activate).mock.invocationCallOrder[0]).toBeLessThan(sendFrameToProcessMock.mock.invocationCallOrder[0]);
     expect(sendFrameToProcessMock.mock.calls.filter(([, , frame]) => (
       frame.call === "proc.adapter.deliver"
     ))).toHaveLength(2);

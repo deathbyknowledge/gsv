@@ -40,7 +40,6 @@ import {
 } from "./accounts";
 import { canOwnerRunAsAccount } from "./account-access";
 import { ensureAccountHomeLayout } from "./account-home";
-import { ensureInitialOnboardingResponsibility } from "./onboarding-responsibility";
 import { ensurePersonalMemory } from "./personal-memory";
 import { reconcileOperatorUpdates } from "./operator-updates";
 import { shipContextFiles } from "../prompts/personal-intelligence";
@@ -187,12 +186,12 @@ export async function ensurePersonalAgent(
     if (entry) {
       const reconciled = reconcilePersonalAgentDisplayName(auth, entry, human) ?? entry;
       const identity = accountIdentity(auth, reconciled);
-      reconcileOperatorUpdates(human.uid, ctx.responsibilities, ctx.env.GSV_OPERATOR_UPDATES);
+      reconcileOperatorUpdates(human.uid, ctx.responsibilities, ctx.env.GSV_OPERATOR_UPDATES, Date.now(), ctx.welcome.createdAt(human.uid));
       await ensureAccountHomeLayout(ctx.env, identity, {
         seedPromptContext: true,
         personalAgent: true,
         beforeRetiringGeneratedBootContext: () => {
-          ensureInitialOnboardingResponsibility(human.uid, ctx.responsibilities);
+          ctx.welcome.prepare(human.uid);
         },
       });
       await ensureCrewAccount(ctx, human, identity);
@@ -202,7 +201,7 @@ export async function ensurePersonalAgent(
   }
 
   const agentName = pickAgentName(auth, preferredName);
-  ensureInitialOnboardingResponsibility(human.uid, ctx.responsibilities);
+  ctx.welcome.prepare(human.uid);
   const provision = await createAccount(ctx, {
     kind: "agent",
     username: agentName,

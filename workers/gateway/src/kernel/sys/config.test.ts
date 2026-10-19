@@ -3,7 +3,7 @@ import { testPeer } from "../../test-support/peers";
 import type { KernelContext } from "../context";
 import { runWithRealKernelSql } from "../../test-support/real-kernel-sql";
 import { ResponsibilityStore } from "../responsibility-store";
-import { ensureInitialOnboardingResponsibility } from "../onboarding-responsibility";
+import { InitialOnboarding, INITIAL_ONBOARDING_DEDUPE_KEY } from "../onboarding-responsibility";
 import { handleSysConfigGet, handleSysConfigSet } from "./config";
 
 type EntryMap = Record<string, string>;
@@ -58,6 +58,7 @@ function makeContext(uid: number, entries: EntryMap, ownerUid?: number): KernelC
     callerOwnerUid: ownerUid,
     processId: ownerUid === undefined ? undefined : "proc:agent",
     responsibilities: { getByDedupeKey: () => null },
+    welcome: { activate: () => false },
     reconcileResponsibilityWake: vi.fn(async () => {}),
     procs: {
       getOwnerUid: () => ownerUid ?? null,
@@ -91,13 +92,15 @@ describe("sys.config.get", () => {
     await runWithRealKernelSql(async (_sql, storage) => {
       const ctx = makeContext(1000, {});
       ctx.responsibilities = new ResponsibilityStore(storage);
-      const seed = ensureInitialOnboardingResponsibility(1000, ctx.responsibilities).record;
+      ctx.welcome = new InitialOnboarding(storage, ctx.responsibilities);
+      ctx.welcome.prepare(1000);
       const reconcile = vi.fn(async () => {}).mockRejectedValueOnce(new Error("wake unavailable"));
       ctx.reconcileResponsibilityWake = reconcile;
       const args = { key: "users/1000/ui/welcome_card_seen", value: "1" };
       expect(ctx.responsibilities.nextWakeAt(1000, Date.now())).toBeNull();
       await expect(handleSysConfigSet(args, ctx)).rejects.toThrow("wake unavailable");
       expect(ctx.config.get(args.key)).toBe("1");
+      const seed = ctx.responsibilities.getByDedupeKey(1000, INITIAL_ONBOARDING_DEDUPE_KEY)!;
       expect(ctx.responsibilities.get(1000, seed.id)?.state).toBe("open");
       const revision = ctx.responsibilities.revision(1000);
       await handleSysConfigSet(args, ctx);
