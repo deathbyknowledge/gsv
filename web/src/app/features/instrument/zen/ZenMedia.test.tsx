@@ -81,4 +81,27 @@ describe("pasted text chip", () => {
     remove?.props.onClick?.();
     expect(onRemove).toHaveBeenCalledOnce();
   });
+
+  it("edits the paste in place when the composer accepts changes", () => {
+    const onChange = vi.fn();
+    const text = `${"y".repeat(434)}?`;
+    const tree = ZenDraftPaste({ paste: { id: "paste", text, characters: 435 }, onChange });
+    const nodes = collectNodes(tree);
+    expect(nodes.some((node) => node.type === "pre")).toBe(false);
+    // SAFETY: The matching node is the textarea VNode; the generic harness omits DOM-specific attributes.
+    const editor = nodes.find((node) => node.type === "textarea") as VNode<JSX.TextareaHTMLAttributes<HTMLTextAreaElement>> | undefined;
+    expect(editor?.props.value).toBe(text);
+    expect(editor?.props["aria-label"]).toBe("Edit pasted text");
+    const stopPropagation = vi.fn();
+    const keydown: Partial<JSX.TargetedKeyboardEvent<HTMLTextAreaElement>> = { key: "Enter", stopPropagation };
+    // SAFETY: the handler reads only stopPropagation from the event.
+    editor?.props.onKeyDown?.(keydown as JSX.TargetedKeyboardEvent<HTMLTextAreaElement>);
+    expect(stopPropagation).toHaveBeenCalledOnce();
+    // SAFETY: the handler reads only currentTarget.value from the event.
+    const edited = { value: "edited draft" } as HTMLTextAreaElement;
+    const input: Partial<JSX.TargetedInputEvent<HTMLTextAreaElement>> = { currentTarget: edited };
+    // SAFETY: the handler reads only currentTarget.value from the event.
+    editor?.props.onInput?.(input as JSX.TargetedInputEvent<HTMLTextAreaElement>);
+    expect(onChange).toHaveBeenCalledWith("edited draft");
+  });
 });

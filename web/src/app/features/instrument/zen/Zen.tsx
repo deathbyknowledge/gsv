@@ -1151,7 +1151,10 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
             {attachments.map((attachment) => <ZenDraftAttachment key={attachment.id} attachment={attachment}
               onRemove={() => setAttachments((current) => current.filter((file) => file.id !== attachment.id))} />)}
             {pastes.map((paste) => <ZenDraftPaste key={paste.id} paste={paste}
-              onRemove={() => setPastes((current) => current.filter((entry) => entry.id !== paste.id))} />)}
+              onRemove={() => setPastes((current) => current.filter((entry) => entry.id !== paste.id))}
+              onChange={(text) => setPastes((current) => text.trim()
+                ? current.map((entry) => entry.id === paste.id ? { ...entry, text, characters: Array.from(text).length } : entry)
+                : current.filter((entry) => entry.id !== paste.id))} />)}
           </ul>}
           {note && <div class="zen-feedback">
             <FeedbackNote note={note} />

@@ -701,6 +701,7 @@
 .zen-paste-preview { min-width: 0; }
 .zen-paste-preview > summary { cursor: pointer; text-decoration: underline; text-underline-offset: .25em; }
 .zen-paste-preview > pre { max-height: 10em; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font: 12px/1.5 var(--gsv-font-mono); }
+.zen-paste-preview > textarea { box-sizing: border-box; width: 100%; min-height: 6em; max-height: 10em; padding: .5rem; border: 1px solid var(--border); background: none; color: inherit; white-space: pre-wrap; overflow-wrap: anywhere; resize: vertical; font: 12px/1.5 var(--gsv-font-mono); }
 .zen-draft-attachment:has(.zen-paste-preview[open]) { width: 100%; align-items: flex-start; }
 .zen-draft-attachment button { font-size: 1rem; padding: .25rem; }
 .zen-drop-hint { position: absolute; inset: 1rem; z-index: 5; display: grid; place-items: center; border: 1px dashed var(--accent); background: var(--void); color: var(--accent); pointer-events: none; }
