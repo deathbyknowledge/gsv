@@ -3,7 +3,7 @@ import { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, u
 import { useQuery } from "@tanstack/preact-query";
 import { useGateway } from "../gateway/GatewayProvider";
 import { useChatOutbox } from "../chat/hooks/useChatOutbox";
-import { consoleConfigQueryKey } from "../system/useConsoleData";
+import { useLanguagePreference } from "../system/useConsoleData";
 import { useNativeInput } from "./PlatformProvider";
 import { useNativeSpeech, type SpeechLanguage } from "./NativeSpeech";
 import { useNativeVoice, type VoiceComposer } from "./useNativeVoice";
@@ -61,15 +61,7 @@ function VoiceSessionOwner({ children, onDirtyChange }: {
       return conversation;
     },
   });
-  const languagePreference = useQuery({
-    queryKey: [...consoleConfigQueryKey, "language", destination.data?.ownerUid],
-    enabled: connected && !!speech?.preferences.enabled && !!destination.data,
-    queryFn: async () => {
-      const key = `users/${destination.data!.ownerUid}/locale/language`;
-      const { entries } = await client.sys.config.get({ key });
-      return entries.find((entry) => entry.key === key)?.value ?? "";
-    },
-  });
+  const languagePreference = useLanguagePreference(destination.data?.ownerUid, { enabled: !!speech?.preferences.enabled });
   const requestedLanguage = (languagePreference.data || navigator.language || "en").split("-")[0].toLowerCase();
   const language = languagePreference.data === undefined ? null : requestedLanguage === "es" ? "es"
     : requestedLanguage === "en" || !languagePreference.data ? "en" : null;

@@ -1,9 +1,11 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/preact-query";
 import type { ComponentChildren, ComponentType } from "preact";
-import { useEffect, useRef } from "preact/hooks";
+import { useEffect, useLayoutEffect, useRef } from "preact/hooks";
+import { applyLanguagePreference } from "../i18n/locale";
 import { GatewayProvider } from "../services/gateway/GatewayProvider";
 import { GatewaySignalInvalidator } from "../services/query/GatewaySignalInvalidator";
 import { SessionProvider, useSession } from "../services/session/SessionProvider";
+import { useConsoleAccounts, useLanguagePreference } from "../services/system/useConsoleData";
 import type {
   SessionClient,
   SessionService,
@@ -105,6 +107,17 @@ export function SessionScopedQueryProvider({
   );
 }
 
+/** The signed-in human's language preference chooses the interface language; signed out, this device's languages do. */
+function InterfaceLanguage() {
+  const { snapshot } = useSession();
+  const ready = snapshot.phase === "ready";
+  const { accounts } = useConsoleAccounts({ enabled: ready });
+  const preference = useLanguagePreference(accounts.find((account) => account.relation === "self")?.uid, { enabled: ready });
+  const language = ready ? preference.data : undefined;
+  useLayoutEffect(() => applyLanguagePreference(language || undefined), [language]);
+  return null;
+}
+
 function SessionQueryProvider({
   children,
   QueryInvalidator,
@@ -129,6 +142,7 @@ export function AppProviders({
     <GatewayProvider>
       <SessionProvider createService={createSessionService}>
         <SessionQueryProvider QueryInvalidator={QueryInvalidator}>
+          <InterfaceLanguage />
           {children}
         </SessionQueryProvider>
       </SessionProvider>

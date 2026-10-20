@@ -16,6 +16,7 @@ import {
 } from "../../../../services/system/useConsoleData";
 import { MESSENGER_CAPABILITIES, adapterDocUrl } from "./messengerDocs";
 import { adapterDetailId } from "./messengerPresentation";
+import { useT } from "../../../../i18n/locale";
 
 type ManagedTelegramOnboardingFlowProps = {
   onBack: () => void;
@@ -109,6 +110,7 @@ function ManagedMessengerOnboardingFlow({
   onConnected,
   dependencies,
 }: ManagedMessengerOnboardingFlowProps): JSX.Element {
+  const t = useT();
   const info = dependencies.useConsoleAdapterPairingInfo(adapterId);
   const inspect = dependencies.useInspectConsoleAdapterPairing();
   const confirm = dependencies.useConfirmConsoleAdapterPairing();
@@ -132,20 +134,20 @@ function ManagedMessengerOnboardingFlow({
   const displayIdentity = isWhatsApp
     ? candidate?.actorName
       || candidate?.actorHandle
-      || (candidate ? `WhatsApp number ${candidate.actorId}` : "WhatsApp identity")
+      || (candidate ? t("settings.pairing.whatsappNumber", { id: candidate.actorId }) : t("settings.pairing.whatsappIdentity"))
     : candidate?.actorHandle
       || candidate?.actorName
-      || (candidate ? `${platform} user ${candidate.actorId}` : `${platform} identity`);
+      || (candidate ? t("settings.messengers.user", { platform, id: candidate.actorId }) : t("settings.pairing.identity", { platform }));
   const identityDetail = candidate
     ? isWhatsApp
-      ? `WhatsApp number ${candidate.actorHandle ?? candidate.actorId}`
-      : `${platform} ID ${candidate.actorId}${isDiscord ? ` · ${candidate.accountId}` : ""}`
-    : "No identity loaded";
+      ? t("settings.pairing.whatsappNumber", { id: candidate.actorHandle ?? candidate.actorId })
+      : `${t("settings.pairing.platformId", { platform, id: candidate.actorId })}${isDiscord ? ` · ${candidate.accountId}` : ""}`
+    : t("settings.pairing.noIdentity");
   const firstStepText = installsApp
-    ? `Install the Ship app in your ${isDiscord ? "server" : "workspace"}, then mention @Ship in a channel or message it directly. Ship sends you a short-lived pairing code by DM.`
+    ? t(isDiscord ? "settings.pairing.installDiscord" : "settings.pairing.installSlack")
     : isWhatsApp
-      ? `Send any message to the Ship WhatsApp number${chatNumber ? ` ${chatNumber}` : ""}. It replies with a short-lived pairing code. If this number is already connected to another Ship, send /link to get a new code.`
-      : "Send the official Ship bot any private message. It will reply with a short-lived pairing code.";
+      ? chatNumber ? t("settings.pairing.whatsappStartNumber", { number: chatNumber }) : t("settings.pairing.whatsappStart")
+      : t("settings.pairing.telegramStart");
 
   const inspectCode = async () => {
     if (!code.trim() || inspect.isPending) return;
@@ -185,44 +187,44 @@ function ManagedMessengerOnboardingFlow({
   const flow: ConnectFlowDef = {
     key: `managed-${adapterId}`,
     navLabel: platform.toUpperCase(),
-    parentLabel: "MESSENGERS",
-    title: `Connect ${platform}`,
+    parentLabel: t("settings.pairing.parent"),
+    title: t("settings.pairing.title", { platform }),
     blurb: installsApp
-      ? `Install the Ship app, mention it in ${platform}, then confirm your identity here.`
+      ? t("settings.pairing.blurbApp", { platform })
       : isWhatsApp
-        ? "Message the Ship WhatsApp number, then confirm that WhatsApp identity here."
-        : "Message the official Ship bot, then confirm that Telegram identity here.",
+        ? t("settings.pairing.blurbWhatsapp")
+        : t("settings.pairing.blurbTelegram"),
     steps: [
       {
         key: "message",
-        label: installsApp ? "INSTALL & MENTION" : "MESSAGE Ship",
-        title: installsApp ? "Install and mention Ship" : isWhatsApp ? "Message the Ship number" : "Message the Ship bot",
-        meta: `IN ${platform.toUpperCase()}`,
-        status: paired ? "CONNECTED" : "NOT CONNECTED",
+        label: t(installsApp ? "settings.pairing.installLabel" : "settings.pairing.messageLabel"),
+        title: t(installsApp ? "settings.pairing.installTitle" : isWhatsApp ? "settings.pairing.messageNumberTitle" : "settings.pairing.messageBotTitle"),
+        meta: t("settings.pairing.in", { platform: platform.toUpperCase() }),
+        status: t(paired ? "settings.pairing.connected" : "settings.pairing.notConnected"),
         tone: paired ? "online" : "idle",
         render: () => (
           <>
             <Alert
               variant="attention"
-              title={`START IN ${platform.toUpperCase()}`}
+              title={t("settings.pairing.startIn", { platform: platform.toUpperCase() })}
               text={firstStepText}
             />
             {info.isError ? (
-              <Alert variant="error" text={info.error?.message ?? `Unable to load ${platform} pairing details.`} />
+              <Alert variant="error" text={info.error?.message ?? t("settings.pairing.loadFailed", { platform })} />
             ) : !info.data?.configured ? (
-              <Alert variant="warning" text={`${platform} linking is not configured for this Ship yet.`} />
+              <Alert variant="warning" text={t("settings.pairing.notConfigured", { platform })} />
             ) : null}
             <div class="gsv-cf-footer">
-              <Button variant="secondary" label="BACK" onClick={onBack} />
+              <Button variant="secondary" label={t("settings.pairing.back")} onClick={onBack} />
               <span class="gsv-cf-footer-spacer" />
               <Link href={launchUrl}>{installsApp
-                ? info.data?.installUrl ? `INSTALL Ship IN ${platform.toUpperCase()}` : `VIEW ${platform.toUpperCase()} SETUP`
+                ? info.data?.installUrl ? t("settings.pairing.installIn", { platform: platform.toUpperCase() }) : t("settings.pairing.viewSetup", { platform: platform.toUpperCase() })
                 : isWhatsApp
-                  ? info.data?.installUrl ? "OPEN WHATSAPP" : "VIEW WHATSAPP SETUP"
-                  : botUsername ? `OPEN @${botUsername}` : "OPEN TELEGRAM"}</Link>
+                  ? info.data?.installUrl ? t("settings.pairing.open", { name: "WHATSAPP" }) : t("settings.pairing.viewSetup", { platform: "WHATSAPP" })
+                  : t("settings.pairing.open", { name: botUsername ? `@${botUsername}` : "TELEGRAM" })}</Link>
               <Button
                 variant="primary"
-                label="I HAVE A CODE"
+                label={t("settings.pairing.haveCode")}
                 disabled={!info.data?.configured}
                 onClick={() => setStep(STEP_CODE)}
               />
@@ -232,20 +234,17 @@ function ManagedMessengerOnboardingFlow({
       },
       {
         key: "code",
-        label: "ENTER CODE",
-        title: `Enter the code from ${platform}`,
-        meta: "IN Ship",
-        status: paired ? "CONNECTED" : "PAIRING",
+        label: t("settings.pairing.codeLabel"),
+        title: t("settings.pairing.codeTitle", { platform }),
+        meta: t("settings.pairing.inShip"),
+        status: t(paired ? "settings.pairing.connected" : "settings.pairing.pairing"),
         tone: paired ? "online" : "idle",
         render: () => (
           <>
-            <p class="gsv-cf-desc">
-              Codes expire after 10 minutes. Entering one only reveals the {platform} identity;
-              nothing is linked until you confirm it on the next step.
-            </p>
+            <p class="gsv-cf-desc">{t("settings.pairing.codeHint", { platform })}</p>
             <div style={fieldStyle}>
               <TextInput
-                label="PAIRING CODE"
+                label={t("settings.pairing.codeField")}
                 size="large"
                 requirement="required"
                 value={code}
@@ -270,11 +269,11 @@ function ManagedMessengerOnboardingFlow({
               />
             </div>
             <div class="gsv-cf-footer">
-              <Button variant="secondary" label="BACK" onClick={() => setStep(STEP_MESSAGE)} />
+              <Button variant="secondary" label={t("settings.pairing.back")} onClick={() => setStep(STEP_MESSAGE)} />
               <span class="gsv-cf-footer-spacer" />
               <Button
                 variant="primary"
-                label={inspect.isPending ? "CHECKING" : "CHECK CODE"}
+                label={t(inspect.isPending ? "settings.pairing.checking" : "settings.pairing.check")}
                 disabled={!code.trim() || inspect.isPending}
                 onClick={() => void inspectCode()}
               />
@@ -284,19 +283,19 @@ function ManagedMessengerOnboardingFlow({
       },
       {
         key: "confirm",
-        label: "CONFIRM",
-        title: `Confirm your ${platform} identity`,
-        meta: "IN Ship",
-        status: paired ? "CONNECTED" : "CONFIRM IDENTITY",
+        label: t("settings.pairing.confirmLabel"),
+        title: t("settings.pairing.confirmTitle", { platform }),
+        meta: t("settings.pairing.inShip"),
+        status: t(paired ? "settings.pairing.connected" : "settings.pairing.confirmStatus"),
         tone: paired ? "online" : "idle",
         render: () => (
           <>
             <Alert
               variant={candidate?.linked ? "warning" : "attention"}
-              title={candidate?.linked ? "REPLACE THE EXISTING CONNECTION?" : "IS THIS YOU?"}
+              title={t(candidate?.linked ? "settings.pairing.replaceTitle" : "settings.pairing.isThisYou")}
               text={candidate?.linked
-                ? `${displayIdentity} is already linked to a Ship. Confirming replaces that link and sends future messages to your account here.`
-                : `${platform} reported ${displayIdentity}. Confirm only if this is the account that contacted Ship.`}
+                ? t("settings.pairing.replaceText", { identity: displayIdentity })
+                : t("settings.pairing.confirmText", { platform, identity: displayIdentity })}
             />
             <div class="gsv-cf-framed">
               <ListRow
@@ -307,11 +306,11 @@ function ManagedMessengerOnboardingFlow({
             </div>
             {formError ? <Alert variant="error" text={formError} /> : null}
             <div class="gsv-cf-footer">
-              <Button variant="secondary" label="BACK" onClick={() => setStep(STEP_CODE)} />
+              <Button variant="secondary" label={t("settings.pairing.back")} onClick={() => setStep(STEP_CODE)} />
               <span class="gsv-cf-footer-spacer" />
               <Button
                 variant="primary"
-                label={confirm.isPending ? "CONNECTING" : "YES, CONNECT THIS IDENTITY"}
+                label={t(confirm.isPending ? "settings.pairing.connecting" : "settings.pairing.connectIdentity")}
                 disabled={!candidate || confirm.isPending}
                 onClick={() => void confirmIdentity()}
               />
@@ -321,27 +320,27 @@ function ManagedMessengerOnboardingFlow({
       },
       {
         key: "done",
-        label: "DONE",
-        title: `${platform} is connected`,
-        meta: "READY",
-        status: "CONNECTED",
+        label: t("settings.pairing.done"),
+        title: t("settings.pairing.doneTitle", { platform }),
+        meta: t("settings.pairing.ready"),
+        status: t("settings.pairing.connected"),
         tone: "online",
         render: () => (
           <>
             <Alert
               variant="success"
-              title="CONNECTED"
-              text={`${displayIdentity} now reaches your personal intelligence. You can move between Ship and ${platform} without choosing another agent.`}
+              title={t("settings.pairing.connected")}
+              text={t("settings.pairing.doneText", { identity: displayIdentity, platform })}
             />
             <div class="gsv-cf-framed">
               {MESSENGER_CAPABILITIES.map((cap) => (
-                <ListRow key={cap.title} label={cap.title} sub={cap.detail} status="none" />
+                <ListRow key={cap.title} label={t(cap.title)} sub={t(cap.detail)} status="none" />
               ))}
             </div>
             <div class="gsv-cf-footer">
-              <Button variant="secondary" label={`VIEW ${platform.toUpperCase()}`} onClick={() => onConnected(detailId)} />
+              <Button variant="secondary" label={t("settings.pairing.view", { platform: platform.toUpperCase() })} onClick={() => onConnected(detailId)} />
               <span class="gsv-cf-footer-spacer" />
-              <Button variant="primary" label="DONE" onClick={onBack} />
+              <Button variant="primary" label={t("settings.pairing.done")} onClick={onBack} />
             </div>
           </>
         ),

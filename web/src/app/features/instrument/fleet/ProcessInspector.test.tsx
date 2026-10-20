@@ -98,11 +98,18 @@ describe("Fleet process navigation", () => {
 
   it("opens the owning process inspector from a ledger entry", async () => {
     const onProcess = vi.fn();
-    const tree = LineInspector({
-      line: { id: "call", timestamp: 1, processId: "worker", place: "gsv", syscall: "fs.read",
-        what: "read a file", detail: "", args: "", outcome: "done", runId: "run", costNanoUsd: null },
-      placeLabelFor: (target) => target, processName: "worker", technical: false, onProcess,
-    });
+    const root = createTestRoot("Ledger line inspector");
+    let tree: ComponentChildren;
+    function Harness() {
+      tree = LineInspector({
+        line: { id: "call", timestamp: 1, processId: "worker", place: "gsv", syscall: "fs.read",
+          what: "read a file", detail: "", args: "", outcome: "done", runId: "run", costNanoUsd: null },
+        placeLabelFor: (target) => target, processName: "worker", technical: false, onProcess,
+      });
+      return null;
+    }
+    cleanup.push(() => root.unmount());
+    await root.render(<Harness />);
     const action = collectNodes(tree).find((node) => node.type === "button" && collectText(node) === "inspect process");
     expect(action).toBeDefined();
     await action?.props.onClick?.();

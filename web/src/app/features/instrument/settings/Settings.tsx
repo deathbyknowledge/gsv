@@ -17,6 +17,7 @@ import { Mcp } from "./Mcp";
 import { OwnerAccess, PersonalPasswordReset } from "./OwnerAccess";
 import { Logs } from "./Logs";
 import { DesktopVoiceSettings } from "./DesktopVoiceSettings";
+import { useT, type TextKey } from "../../../i18n/locale";
 import "./settings.css";
 
 export type SettingsProps = {
@@ -27,8 +28,20 @@ export type SettingsProps = {
 
 const SECTIONS = ["preferences", "voice", "standing", "permissions", "instructions", "messengers", "mcp", "logs", "sign-in"] as const;
 type Section = typeof SECTIONS[number];
+const SECTION_LABELS = {
+  preferences: "settings.section.preferences",
+  voice: "settings.section.voice",
+  standing: "settings.section.standing",
+  permissions: "settings.section.permissions",
+  instructions: "settings.section.instructions",
+  messengers: "settings.section.messengers",
+  mcp: "settings.section.mcp",
+  logs: "settings.section.logs",
+  "sign-in": "settings.section.signIn",
+} satisfies Record<Section, TextKey>;
 
 export function Settings({ onDirtyChange, onSignOut, onInspectProcess }: SettingsProps) {
+  const t = useT();
   const active = useViewActive();
   const desktop = useNativeInput() !== null;
   const location = useAppLocation();
@@ -54,21 +67,21 @@ export function Settings({ onDirtyChange, onSignOut, onInspectProcess }: Setting
   }, [hasDrafts]);
   const accounts = useQuery({ queryKey: ["accounts", "gsv-console"], queryFn: () => loadConsoleAccounts(client), enabled: connected });
   const account = accounts.data?.find((entry) => entry.relation === "self");
-  return <main class="settings" aria-label="Settings">
+  return <main class="settings" aria-label={t("settings.title")}>
     <div class="settings-body">
-      <nav class="settings-sections" aria-label="Settings sections" data-scroll-edge>{SECTIONS.filter((entry) => (entry !== "sign-in" || account?.uid === 0) && (entry !== "voice" || desktop)).map((entry) => <button class="ibtn" aria-current={section === entry ? "page" : undefined} onClick={() => navigateApp(`/chat/settings?section=${entry}`)} key={entry}>{entry}{dirty[entry] ? " ·" : ""}</button>)}</nav>
+      <nav class="settings-sections" aria-label={t("settings.sections")} data-scroll-edge>{SECTIONS.filter((entry) => (entry !== "sign-in" || account?.uid === 0) && (entry !== "voice" || desktop)).map((entry) => <button class="ibtn" aria-current={section === entry ? "page" : undefined} onClick={() => navigateApp(`/chat/settings?section=${entry}`)} key={entry}>{t(SECTION_LABELS[entry])}{dirty[entry] ? " ·" : ""}</button>)}</nav>
       <div class="settings-content" data-scroll-edge>
-        <div class="settings-account"><span>{account?.username ?? "Your session"}</span><button class="settings-text-action" type="button" onClick={() => {
+        <div class="settings-account"><span>{account?.username ?? t("settings.yourSession")}</span><button class="settings-text-action" type="button" onClick={() => {
           if (onSignOut) { onSignOut(); return; }
-          if (hasDrafts && !window.confirm("Discard your unsaved settings changes and sign out?")) return;
+          if (hasDrafts && !window.confirm(t("settings.confirmSignOut"))) return;
           void session.lock("Signed out");
-        }}>sign out</button></div>
+        }}>{t("settings.signOut")}</button></div>
         {desktop && <RetainedView active={active && section === "voice"}><DesktopVoiceSettings active={active && section === "voice"} onDirty={voiceDirty} /></RetainedView>}
         {section !== "voice" && <>
-          {!connected && <p class="settings-muted" role="status">Disconnected. Reconnect to load or save settings.</p>}
+          {!connected && <p class="settings-muted" role="status">{t("settings.disconnected")}</p>}
           <SettingsError error={accounts.error} />
-          {accounts.isPending && connected && <LoadingState variant="panel">Loading your account…</LoadingState>}
-          {accounts.data && !account && <p class="settings-error" role="alert">Your account could not be identified. Settings cannot be edited.</p>}
+          {accounts.isPending && connected && <LoadingState variant="panel">{t("settings.loadingAccount")}</LoadingState>}
+          {accounts.data && !account && <p class="settings-error" role="alert">{t("settings.accountUnknown")}</p>}
         </>}
         {account && <div key={account.uid}>
           <div hidden={section !== "preferences"}><Preferences account={account} active={active && section === "preferences"} onDirty={preferencesDirty} /></div>
@@ -78,7 +91,7 @@ export function Settings({ onDirtyChange, onSignOut, onInspectProcess }: Setting
           <div hidden={section !== "messengers"}><MessengerConnections account={account} active={active && section === "messengers"} /></div>
           <div hidden={section !== "mcp"}><Mcp account={account} active={active && section === "mcp"} onDirty={mcpDirty} /></div>
           <RetainedView active={active && section === "logs"}><Logs account={account} onProcess={onInspectProcess} /></RetainedView>
-          {account.uid === 0 && <div hidden={section !== "sign-in"}><h1>Sign-in</h1><PersonalPasswordReset active={active && section === "sign-in"} /><OwnerAccess /></div>}
+          {account.uid === 0 && <div hidden={section !== "sign-in"}><h1>{t("settings.signIn.title")}</h1><PersonalPasswordReset active={active && section === "sign-in"} /><OwnerAccess /></div>}
         </div>}
       </div>
     </div>
