@@ -56,14 +56,20 @@ export function useNativeVoice({ prompt, scope, enabled, send, global = false, s
     try { prompt.current?.setValue(value, caret); } finally { writing.current = false; }
   };
   const preparing = (value: boolean) => { startingRef.current = value; setStarting(value); };
-  const cancel = () => {
+  /** An explicit cancel discards the dictated words; capture ending for any other reason keeps them in the prompt. */
+  const cancel = (discardDictation = false) => {
     operation.current++;
     accepting.current = false;
     preparing(false);
     globalCapture.current = false;
     finishRequested.current = false;
     speaking.current?.recording(false);
+    const dictation = draft.current;
     draft.current = null;
+    if (discardDictation && dictation && prompt.current?.selection().value === dictation.rendered) {
+      const restored = dictation.discard();
+      write(restored.value, restored.caret);
+    }
     void command({ kind: "cancel" });
   };
   const requestFinish = () => {

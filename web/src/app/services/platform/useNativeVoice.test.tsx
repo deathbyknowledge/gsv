@@ -247,6 +247,24 @@ describe("native input subscription", () => {
     expect(app.disposals[0]).toHaveBeenCalledOnce();
   });
 
+  it("restores the pre-dictation draft when dictation is cancelled on purpose", async () => {
+    const app = await mounted();
+    app.prompt.current.setValue("typed: ");
+    await app.start();
+    expect(app.value()).toBe("typed: hello");
+    await act(() => { app.control().cancel(true); });
+    expect(app.value()).toBe("typed: ");
+    expect(app.input.command).toHaveBeenLastCalledWith(expect.anything(), { kind: "cancel" });
+  });
+
+  it("keeps dictated words when capture ends for another reason", async () => {
+    const app = await mounted();
+    app.prompt.current.setValue("typed: ");
+    await app.start();
+    await act(() => { app.control().cancel(); });
+    expect(app.value()).toBe("typed: hello");
+  });
+
   it("keeps live dictated text after a helper failure and ignores its late final", async () => {
     const app = await mounted();
     app.prompt.current.setValue("typed: ");

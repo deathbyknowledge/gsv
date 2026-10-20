@@ -198,7 +198,7 @@ export function useComposerVoice(options: ComposerVoiceOptions) {
     start: () => session.startComposer({ owner: owner.current, options: latest }),
     stop: () => { if (owned) input.stop(); },
     send: () => { if (owned) input.send(); },
-    cancel: () => { if (owned) input.cancel(); },
+    cancel: () => { if (owned) input.cancel(true); },
     onInput: (value: string) => { if (owned) input.onInput(value); },
     interceptSubmit: () => owned && input.interceptSubmit(),
   };
