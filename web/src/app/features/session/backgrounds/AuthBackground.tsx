@@ -3,6 +3,7 @@ import { AsciiAnimation } from "../../../components/ui/AsciiAnimation";
 import { createSpiralScene } from "./spiralScene";
 import type { ColorTheme } from "../../../components/ui/useColorTheme";
 import { GlyphStars } from "./GlyphStars";
+import { useT } from "../../../i18n/locale";
 import "./AuthBackground.css";
 
 export type AuthBgVariant = "galaxy" | "stars";
@@ -13,6 +14,7 @@ export type AuthBgVariant = "galaxy" | "stars";
  * star field (login / register).
  */
 export function AuthBackground({ variant, palette }: { variant: AuthBgVariant; palette?: ColorTheme }) {
+  const t = useT();
   const spiral = useMemo(createSpiralScene, []);
   return (
     <div class="auth-bg" data-ascii-palette={palette} aria-hidden="true">
@@ -22,7 +24,7 @@ export function AuthBackground({ variant, palette }: { variant: AuthBgVariant; p
           <AsciiAnimation
             scene={spiral}
             className="auth-bg-galaxy-scan"
-            label="A spiral galaxy"
+            label={t("session.scene.galaxy")}
             palette={palette}
             showTexture
           />

@@ -108,7 +108,7 @@ export function nativeSessionStorage(session: DesktopSession, onError: (message:
 }
 
 export async function disconnectSpace(service: SessionService, storage: NativeSessionStorage): Promise<void> {
-  await service.lock("Disconnected");
+  await service.lock("session.status.disconnected");
   await storage.flush();
   await invoke("desktop_configure", { origin: null });
   service.dispose?.();

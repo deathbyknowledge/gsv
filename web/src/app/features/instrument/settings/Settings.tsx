@@ -74,7 +74,7 @@ export function Settings({ onDirtyChange, onSignOut, onInspectProcess }: Setting
         <div class="settings-account"><span>{account?.username ?? t("settings.yourSession")}</span><button class="settings-text-action" type="button" onClick={() => {
           if (onSignOut) { onSignOut(); return; }
           if (hasDrafts && !window.confirm(t("settings.confirmSignOut"))) return;
-          void session.lock("Signed out");
+          void session.lock("session.status.signedOut");
         }}>{t("settings.signOut")}</button></div>
         {desktop && <RetainedView active={active && section === "voice"}><DesktopVoiceSettings active={active && section === "voice"} onDirty={voiceDirty} /></RetainedView>}
         {section !== "voice" && <>

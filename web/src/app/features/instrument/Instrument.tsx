@@ -410,7 +410,7 @@ function InstrumentReady({ initialPath, handsfreeDirty }: { initialPath: string;
         <RetainedView active={distance === "settings"}>
           <Settings onDirtyChange={setSettingsDirty} onInspectProcess={(pid) => { move("fleet", `proc:${pid}`); }} onSignOut={() => {
             if ((handsfreeDirty || settingsDirty || unsaved || fleetDirty || memoryDirty || peopleDirty) && !window.confirm("Discard your unsaved work and sign out?")) return;
-            void session.lock("Signed out");
+            void session.lock("session.status.signedOut");
           }} />
         </RetainedView>
         <RetainedView active={distance === "people"}>

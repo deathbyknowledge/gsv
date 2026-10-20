@@ -230,7 +230,7 @@ describe("account setup", () => {
     expect(client.connect).not.toHaveBeenCalled();
     expect(complete).not.toHaveBeenCalled();
     expect(discard).not.toHaveBeenCalled();
-    expect(service.snapshot()).toMatchObject({ phase: "setup", message: failure.message });
+    expect(service.snapshot()).toMatchObject({ phase: "setup", message: { text: failure.message } });
     service.dispose?.();
   });
 
@@ -260,7 +260,7 @@ describe("account setup", () => {
 
     await expect(service.setup(input)).rejects.toThrow("Account creation interrupted");
 
-    expect(service.snapshot()).toMatchObject({ phase: "setup", username: "alice", message: "Account creation interrupted" });
+    expect(service.snapshot()).toMatchObject({ phase: "setup", username: "alice", message: { text: "Account creation interrupted" } });
     expect(client.connect).not.toHaveBeenCalled();
     expect(window.sessionStorage.getItem(onboardingStorageKey)).toBe(onboardingToken);
 
@@ -292,7 +292,7 @@ describe("account setup", () => {
 
     await expect(service.setup(input)).rejects.toThrow("Connection interrupted");
 
-    expect(service.snapshot()).toMatchObject({ phase: "locked", username: "alice", message: "Connection interrupted" });
+    expect(service.snapshot()).toMatchObject({ phase: "locked", username: "alice", message: { text: "Connection interrupted" } });
     expect(window.sessionStorage.getItem(onboardingStorageKey)).toBeNull();
 
     await service.login(input);
