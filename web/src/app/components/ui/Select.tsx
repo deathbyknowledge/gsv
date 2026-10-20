@@ -1,5 +1,6 @@
 import { useEffect, useId, useRef, useState } from "preact/hooks";
 import { InfoTip } from "./InfoTip";
+import { useT } from "../../i18n/locale";
 import "./Select.css";
 
 export type SelectSize = "small" | "medium" | "large";
@@ -41,10 +42,11 @@ const SIZE_CLASS = {
 /** Select — ported from Select.dc.html. Custom dropdown with an options array
  *  (falls back to o0/o1/o2), outside-click close, field label/desc/status. */
 export function Select(props: SelectProps) {
+  const t = useT();
   const {
-    o0 = "GATEWAY DEFAULT",
-    o1 = "FAST MODEL",
-    o2 = "DEEP MODEL",
+    o0 = t("ui.select.gatewayDefault"),
+    o1 = t("ui.select.fastModel"),
+    o2 = t("ui.select.deepModel"),
     options,
     size = "medium",
     disabled = false,
@@ -198,7 +200,7 @@ export function Select(props: SelectProps) {
       {hasFldLabel ? (
         <div class="gsv-fld-lab">
           <span class="gsv-fld-lab-t gsv-sublabel" id={label.length > 0 ? labelId : undefined}>{label}</span>
-          {req ? <span class="gsv-fld-req gsv-sublabel">{req === "required" ? "· REQUIRED" : "· OPTIONAL"}</span> : null}
+          {req ? <span class="gsv-fld-req gsv-sublabel">{req === "required" ? t("ui.field.required") : t("ui.field.optional")}</span> : null}
           {info ? <InfoTip text={info} /> : null}
         </div>
       ) : null}

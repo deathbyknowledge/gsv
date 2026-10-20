@@ -6,6 +6,7 @@ import {
   aiProviderDisplayLabel,
   fixedAiProviderModel,
 } from "../aiProviders";
+import { t } from "../../i18n/locale";
 import { z } from "zod";
 
 const settingsValueSchema = z.unknown();
@@ -528,13 +529,13 @@ export function writableModelProfiles(
   try {
     value = JSON.parse(stored.value);
   } catch {
-    throw new Error("Your saved model definitions could not be read.");
+    throw new Error(t("config.models.unreadable"));
   }
   const payload = z.object({ version: z.literal(1), models: z.array(z.unknown()) }).safeParse(value);
-  if (stored.redacted || !payload.success) throw new Error("Your saved model definitions could not be read.");
+  if (stored.redacted || !payload.success) throw new Error(t("config.models.unreadable"));
   return payload.data.models.map((entry) => {
     const profile = normalizeCanonicalModel(entry, editable);
-    if (!profile) throw new Error("Your saved model definitions could not be read.");
+    if (!profile) throw new Error(t("config.models.unreadable"));
     return hydrateModelProfileSecrets(config, modelProfilesConfigKey(validUid.data), profile);
   });
 }
@@ -576,7 +577,7 @@ export function modelProfileSaveEntries(
   clearedSecretKeys: ClearedModelProfileSecretKeys = new Map(),
 ): ConsoleConfigWrite[] {
   if (uid === null) {
-    throw new Error("A signed-in account is required to save models.");
+    throw new Error(t("config.models.signInRequired"));
   }
   const entries: ConsoleConfigWrite[] = [{
     key: modelProfilesConfigKey(uid),
@@ -617,10 +618,10 @@ export function createModelProfile(
 ): ConsoleModelProfile[] {
   const normalizedName = normalizeProfileName(name);
   if (!normalizedName) {
-    throw new Error("Model name is required");
+    throw new Error(t("config.models.nameRequired"));
   }
   if (visibleProfiles.some((profile) => profile.name.toLowerCase() === normalizedName.toLowerCase())) {
-    throw new Error("Model name already exists");
+    throw new Error(t("config.models.nameExists"));
   }
   return [
     ...profiles,
@@ -657,7 +658,7 @@ export function updateModelProfile(
 ): ConsoleModelProfile[] {
   const normalizedName = normalizeProfileName(name);
   if (!normalizedName) {
-    throw new Error("Model name is required");
+    throw new Error(t("config.models.nameRequired"));
   }
   return profiles.map((profile) => profile.id === profileId
     ? {

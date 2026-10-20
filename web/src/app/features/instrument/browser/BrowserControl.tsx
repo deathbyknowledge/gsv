@@ -8,6 +8,7 @@ import { sendBrowserInput } from "../../../services/instances/browserControl";
 import type { BrowserHumanInput } from "@humansandmachines/gsv/protocol";
 import { INSTANCE_QUERY_KEY } from "../wire/queryKeys";
 import { useBrowserStream, type BrowserImage } from "./useBrowserStream";
+import { useT } from "../../../i18n/locale";
 import "./browser.css";
 
 type BrowserSelection = { instanceId: string; requestId?: string };
@@ -45,18 +46,23 @@ export function useCloudInstances() {
 }
 
 export function BrowserRequests() {
+  const t = useT();
   const { open, available } = useBrowserControl();
   const query = useCloudInstances();
   if (!available || !query.data?.handoffs.length) return null;
-  return <section class="browser-requests" aria-label="Browser requests">
+  return <section class="browser-requests" aria-label={t("browser.requests")}>
     {query.data.handoffs.map(request => <div class="browser-request" key={`${request.instanceId}/${request.requestId}`}>
-      <div><strong>{request.purpose}</strong><span>{request.site} · {Math.max(0, Math.ceil((request.expiresAt - Date.now()) / 60000))} minutes remaining</span></div>
-      <button type="button" class="fleet-text-action is-primary" disabled={!request.site} onClick={() => open(request)}>{request.site ? "open browser" : "preparing browser…"}</button>
+      <div><strong>{request.purpose}</strong><span>{request.site} · {t("browser.minutesLeft", { count: Math.max(0, Math.ceil((request.expiresAt - Date.now()) / 60000)) })}</span></div>
+      <button type="button" class="fleet-text-action is-primary" disabled={!request.site} onClick={() => open(request)}>{request.site ? t("browser.open") : t("browser.preparing")}</button>
     </div>)}
   </section>;
 }
 
+/** A failure shown in the viewer: as reported, or after the viewer's own lead-in when the person's input went unconfirmed. */
+type ViewerError = { cause: string; duringInput?: true };
+
 export function BrowserViewer({ request, onClose }: { request: BrowserSelection; onClose: () => void }) {
+  const t = useT();
   const { client, connected } = useGateway();
   const queryClient = useQueryClient();
   const instanceQuery = useQuery({ queryKey: ["cloud-instance", request.instanceId], queryFn: () => client.sys.instance.get({ instanceId: request.instanceId }), enabled: connected });
@@ -67,7 +73,7 @@ export function BrowserViewer({ request, onClose }: { request: BrowserSelection;
   const image = useRef<HTMLImageElement>(null);
   const displayed = useRef<BrowserImage | null>(null);
   const [selectedTab, setSelectedTab] = useState<number>();
-  const [error, setError] = useState("");
+  const [error, setError] = useState<ViewerError | null>(null);
   const [completedRequestId, setCompletedRequestId] = useState<string>();
   const [finishing, setFinishing] = useState(false);
   const { frame: view, state: viewState, error: frameError, selection } = useBrowserStream(client, request.instanceId, selectedTab, connected && ready);
@@ -97,7 +103,7 @@ export function BrowserViewer({ request, onClose }: { request: BrowserSelection;
     if (!connected || !requestMatches || handoff?.state !== "pending" || !handoff.site) return;
     let current = true;
     void client.sys.browser.handoff.open({ instanceId: request.instanceId, requestId: handoff.requestId })
-      .catch(cause => { if (current) setError(String(cause)); });
+      .catch(cause => { if (current) setError({ cause: String(cause) }); });
     return () => { current = false; };
   }, [client, connected, request.instanceId, requestMatches, handoff?.requestId, handoff?.state, handoff?.site]);
 
@@ -111,8 +117,8 @@ export function BrowserViewer({ request, onClose }: { request: BrowserSelection;
     inputQueue.current = inputQueue.current.then(async () => {
       if (!live.current || inputEpoch.current !== epoch || displayedFrame.signal.aborted) return;
       await sendBrowserInput(client, args, value);
-      setError("");
-    }).catch(cause => { inputEpoch.current++; setError(`Input could not be confirmed. ${String(cause)}`); });
+      setError(null);
+    }).catch(cause => { inputEpoch.current++; setError({ cause: String(cause), duringInput: true }); });
   };
   const selectTab = (tabId: number | undefined) => {
     if (tabId === selectedTab) return;
@@ -135,9 +141,9 @@ export function BrowserViewer({ request, onClose }: { request: BrowserSelection;
         setCompletedRequestId(handoff.requestId);
         selectTab(undefined);
       }
-      setError("");
+      setError(null);
       await queryClient.invalidateQueries({ queryKey: INSTANCE_QUERY_KEY });
-    } catch (cause) { setError(String(cause)); }
+    } catch (cause) { setError({ cause: String(cause) }); }
     finally { setFinishing(false); setBusy(false); }
   };
   const stop = async (force = false) => {
@@ -146,12 +152,12 @@ export function BrowserViewer({ request, onClose }: { request: BrowserSelection;
       await client.sys.instance.stop({ instanceId: request.instanceId, force: force || undefined });
       await queryClient.invalidateQueries({ queryKey: INSTANCE_QUERY_KEY });
       onClose();
-    } catch (cause) { setError(String(cause)); setBusy(false); live.current = connected; await instanceQuery.refetch(); }
+    } catch (cause) { setError({ cause: String(cause) }); setBusy(false); live.current = connected; await instanceQuery.refetch(); }
   };
   const save = async () => {
-    setBusy(true); setError("");
+    setBusy(true); setError(null);
     try { await client.sys.browser.profile.save({ instanceId: request.instanceId }); }
-    catch (cause) { setError(String(cause)); }
+    catch (cause) { setError({ cause: String(cause) }); }
     finally { setBusy(false); await instanceQuery.refetch(); }
   };
   const point = (event: MouseEvent | WheelEvent) => {
@@ -162,9 +168,9 @@ export function BrowserViewer({ request, onClose }: { request: BrowserSelection;
   const data = view && viewState ? { ...viewState, ...view.data } : undefined;
   const tab = data?.tabs.find(tab => tab.id === data.tabId);
   const pointer = data?.pointer?.tabId === data?.tabId ? data?.pointer : undefined;
-  return <dialog ref={dialog} class={`browser-viewer${expanded ? " is-expanded" : ""}`} aria-label="Live cloud browser" onCancel={event => { event.preventDefault(); close(); }} onKeyDown={event => event.stopPropagation()}>
+  return <dialog ref={dialog} class={`browser-viewer${expanded ? " is-expanded" : ""}`} aria-label={t("browser.viewer")} onCancel={event => { event.preventDefault(); close(); }} onKeyDown={event => event.stopPropagation()}>
     <header class="browser-chrome">
-      <div class="browser-tabs" role="tablist" aria-label="Browser tabs">
+      <div class="browser-tabs" role="tablist" aria-label={t("browser.tabs")}>
         {data?.tabs.map((item, index) => <button type="button" role="tab" aria-selected={item.id === data.tabId} tabIndex={item.id === data.tabId ? 0 : -1} key={item.id}
           onKeyDown={event => {
             const next = event.key === "ArrowRight" ? (index + 1) % data.tabs.length : event.key === "ArrowLeft" ? (index + data.tabs.length - 1) % data.tabs.length
@@ -175,53 +181,53 @@ export function BrowserViewer({ request, onClose }: { request: BrowserSelection;
             const button = event.currentTarget.parentElement?.children[next];
             if (button instanceof HTMLButtonElement) button.focus();
           }}
-          title={item.url} onClick={() => selectTab(item.id)}>{item.url === "about:blank" ? "New tab" : item.title || item.url}</button>)}
-        {!data && <span class="browser-tab-loading">{instance?.label ?? "Opening browser…"}</span>}
+          title={item.url} onClick={() => selectTab(item.id)}>{item.url === "about:blank" ? t("browser.newTab") : item.title || item.url}</button>)}
+        {!data && <span class="browser-tab-loading">{instance?.label ?? t("browser.opening")}</span>}
       </div>
       <div class="browser-window-actions">
-        <details class="browser-menu"><summary aria-label="Browser actions">more</summary>
-          <div><span>{instance?.label ?? "Browser"}</span><button type="button" onClick={() => void stop()} disabled={busy || !connected}>stop browser</button></div>
-          {instance?.profileId && <small aria-live="polite">{instance.persistence?.saveStatus === "saving" ? "Saving…"
-            : instance.persistence?.saveStatus === "failed" ? "Changes haven’t been saved"
-            : instance.persistence?.saveStatus === "partial" ? "Saved with exceptions"
-            : instance.persistence?.savedAt ? `Saved ${new Date(instance.persistence.savedAt).toLocaleTimeString()}` : "No saved state yet"}</small>}
+        <details class="browser-menu"><summary aria-label={t("browser.actions")}>{t("browser.more")}</summary>
+          <div><span>{instance?.label ?? t("browser.name")}</span><button type="button" onClick={() => void stop()} disabled={busy || !connected}>{t("browser.stop")}</button></div>
+          {instance?.profileId && <small aria-live="polite">{instance.persistence?.saveStatus === "saving" ? t("browser.save.saving")
+            : instance.persistence?.saveStatus === "failed" ? t("browser.save.unsaved")
+            : instance.persistence?.saveStatus === "partial" ? t("browser.save.partial")
+            : instance.persistence?.savedAt ? t("browser.save.savedAt", { time: new Date(instance.persistence.savedAt).toLocaleTimeString() }) : t("browser.save.none")}</small>}
         </details>
-        <button type="button" aria-label={expanded ? "Restore browser view" : "Expand browser view"} onClick={() => setExpanded(value => !value)}>{expanded ? "restore" : "expand"}</button>
-        <button type="button" aria-label="Close browser view" title="Close view · browser keeps running" onClick={close}>close <kbd>esc</kbd></button>
+        <button type="button" aria-label={expanded ? t("browser.restoreView") : t("browser.expandView")} onClick={() => setExpanded(value => !value)}>{expanded ? t("browser.restore") : t("browser.expand")}</button>
+        <button type="button" aria-label={t("browser.closeView")} title={t("browser.closeHint")} onClick={close}>{t("browser.close")} <kbd>esc</kbd></button>
       </div>
     </header>
     <div class="browser-toolbar">
-      <div class="browser-address" title={tab?.url}>{tab?.url === "about:blank" ? "New tab" : tab?.url ?? "Connecting…"}</div>
+      <div class="browser-address" title={tab?.url}>{tab?.url === "about:blank" ? t("browser.newTab") : tab?.url ?? t("fleet.connecting")}</div>
       <button type="button" class={`browser-follow${selectedTab === undefined ? " is-following" : ""}`} aria-pressed={selectedTab === undefined}
-        title="Follow Ship’s active tab" onClick={() => selectTab(undefined)}>{selectedTab === undefined ? "following Ship" : "follow Ship"}</button>
+        title={t("browser.followHint")} onClick={() => selectTab(undefined)}>{selectedTab === undefined ? t("browser.following") : t("browser.follow")}</button>
     </div>
-    {requestUnavailable && <p class="browser-notice" role="status">This browser request has expired or ended. Open the latest request from Ship.</p>}
-    {finishing && <p class="browser-notice" role="status">Saving before Ship resumes…</p>}
-    {!finishing && completedRequestId && !handoff && <p class="browser-notice" role="status">You’re done. Ship can continue.</p>}
-    {!finishing && requestMatches && handoff && <div class="browser-help"><span>{handoff.purpose}</span><button type="button" onClick={() => void finish()} disabled={busy || !connected || handoff.state !== "active"}>I’m done — resume Ship</button></div>}
-    {error && <p class="error" role="alert">{error}</p>}
+    {requestUnavailable && <p class="browser-notice" role="status">{t("browser.handoff.ended")}</p>}
+    {finishing && <p class="browser-notice" role="status">{t("browser.handoff.finishing")}</p>}
+    {!finishing && completedRequestId && !handoff && <p class="browser-notice" role="status">{t("browser.handoff.done")}</p>}
+    {!finishing && requestMatches && handoff && <div class="browser-help"><span>{handoff.purpose}</span><button type="button" onClick={() => void finish()} disabled={busy || !connected || handoff.state !== "active"}>{t("browser.handoff.finish")}</button></div>}
+    {error && <p class="error" role="alert">{error.duringInput ? t("browser.inputUnconfirmed", { error: error.cause }) : error.cause}</p>}
     {instanceQuery.error && <p class="error" role="alert">{String(instanceQuery.error)}</p>}
     {ready && instance?.persistence?.issues?.length && instance.persistence.saveStatus !== "failed" ? <div class="browser-help" role="status">
-      <span>Changes on {instance.persistence.issues.map(issue => new URL(issue.origin).host).join(", ")} couldn’t be saved. Other sites are saved; these sites may need another login after restarting.</span>
-      {instance.persistence.issues.some(issue => issue.reason === "unavailable") && <button type="button" onClick={() => void save()} disabled={busy || !connected}>retry save</button>}
+      <span>{t("browser.save.issues", { hosts: instance.persistence.issues.map(issue => new URL(issue.origin).host).join(", ") })}</span>
+      {instance.persistence.issues.some(issue => issue.reason === "unavailable") && <button type="button" onClick={() => void save()} disabled={busy || !connected}>{t("browser.save.retry")}</button>}
     </div> : null}
     {ready && instance?.persistence?.saveStatus === "failed" && <div class="browser-help" role="alert">
-      <span>{instance.persistence.error ?? "Changes could not be saved."} {instance.persistence.savedAt ? `Last saved ${new Date(instance.persistence.savedAt).toLocaleTimeString()}.` : "No saved state yet."}</span>
-      <button type="button" onClick={() => void save()} disabled={busy || !connected}>retry save</button>
-      <button type="button" onClick={() => void stop(true)} disabled={busy || !connected}>stop without saving</button>
+      <span>{instance.persistence.error ?? t("browser.save.failed")} {instance.persistence.savedAt ? t("browser.save.lastSaved", { time: new Date(instance.persistence.savedAt).toLocaleTimeString() }) : t("browser.save.noneYet")}</span>
+      <button type="button" onClick={() => void save()} disabled={busy || !connected}>{t("browser.save.retry")}</button>
+      <button type="button" onClick={() => void stop(true)} disabled={busy || !connected}>{t("browser.stopUnsaved")}</button>
     </div>}
-    {frameError && ready && <p class="browser-notice" role="status" title={frameError}>View interrupted. Reconnecting…</p>}
-    {instance && !ready && <p class="browser-notice" role="status">{instance.state === "starting" ? "Starting browser…" : instance.state === "stopping" ? "Stopping browser…" : "This browser has stopped."}</p>}
-    {!connected && <p class="browser-notice" role="alert">Disconnected. Reconnecting…</p>}
+    {frameError && ready && <p class="browser-notice" role="status" title={frameError}>{t("browser.interrupted")}</p>}
+    {instance && !ready && <p class="browser-notice" role="status">{instance.state === "starting" ? t("browser.starting") : instance.state === "stopping" ? t("browser.stopping") : t("browser.stopped")}</p>}
+    {!connected && <p class="browser-notice" role="alert">{t("browser.disconnected")}</p>}
     <div class="browser-screen" onClick={event => { if (image.current) { input({ kind: "click", ...point(event) }); keyboard.current?.focus({ preventScroll: true }); } }}
       onWheel={event => { event.preventDefault(); if (image.current) input({ kind: "scroll", ...point(event), deltaX: event.deltaX, deltaY: event.deltaY }); }}>
-      {view ? <img ref={image} src={view.source} onLoad={() => { displayed.current = view; view.presented(); }} alt="Live cloud browser page" draggable={false} /> : ready && <p>Connecting to the browser…</p>}
-      {pointer && <div class={`browser-pointer is-${pointer.actor}`} style={{ left: `${pointer.x / (data?.width ?? 1280) * 100}%`, top: `${pointer.y / (data?.height ?? 800) * 100}%` }} aria-label={pointer.actor === "ship" ? "Ship cursor" : "Your cursor"}>
+      {view ? <img ref={image} src={view.source} onLoad={() => { displayed.current = view; view.presented(); }} alt={t("browser.page")} draggable={false} /> : ready && <p>{t("browser.connecting")}</p>}
+      {pointer && <div class={`browser-pointer is-${pointer.actor}`} style={{ left: `${pointer.x / (data?.width ?? 1280) * 100}%`, top: `${pointer.y / (data?.height ?? 800) * 100}%` }} aria-label={pointer.actor === "ship" ? t("browser.cursor.ship") : t("browser.cursor.you")}>
         <svg width="20" height="27" viewBox="0 0 20 27" aria-hidden="true"><path d="M2 2V21L7 16L11 25L15 23L11 15H19Z" fill="currentColor" stroke="white" stroke-width="1.5" /></svg>
-        <span>{pointer.actor === "ship" ? "Ship" : "You"}</span>
+        <span>{pointer.actor === "ship" ? "Ship" : t("browser.cursor.youName")}</span>
         {pointer.clickedAt && <i class="browser-click" key={pointer.clickedAt} />}
       </div>}
-      <textarea ref={keyboard} class="browser-keyboard" aria-label="Type in the selected browser field" autoComplete="off" autoCapitalize="off" spellcheck={false}
+      <textarea ref={keyboard} class="browser-keyboard" aria-label={t("browser.keyboard")} autoComplete="off" autoCapitalize="off" spellcheck={false}
         disabled={!requestMatches || busy || !view || view.signal.aborted || view.selection !== selection || (handoff !== undefined && handoff.state !== "active")}
         onInput={event => { if (event.isComposing) return; const value = event.currentTarget.value; event.currentTarget.value = ""; if (value) input({ kind: "text", text: value }); }}
         onCompositionEnd={event => { const value = event.currentTarget.value; event.currentTarget.value = ""; if (value) input({ kind: "text", text: value }); }}

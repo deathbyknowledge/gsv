@@ -3,10 +3,12 @@ import { Spinner } from "../../components/ui/Spinner";
 import { TextInput } from "../../components/ui/TextInput";
 import "./LoginScreen.css";
 import { spaceAddress } from "../../services/session/spaceAddress";
+import { useT } from "../../i18n/locale";
 
 type Props = { ready?: boolean; disabled?: boolean; onConnect(origin: string): Promise<void> };
 
 export function SpaceAddressForm({ ready = true, disabled = false, onConnect }: Props) {
+  const t = useT();
   const [value, setValue] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -14,20 +16,20 @@ export function SpaceAddressForm({ ready = true, disabled = false, onConnect }: 
   const submit = async (event: Event) => {
     event.preventDefault();
     if (!ready || disabled || busy) return;
-    if (!address.origin) { setError("Enter a handle or domain."); return; }
+    if (!address.origin) { setError(t("session.address.required")); return; }
     setBusy(true); setError("");
     try { await onConnect(address.origin); }
-    catch (failure) { setError(failure instanceof Error ? failure.message : "Could not open Ship. Try again."); }
+    catch (failure) { setError(failure instanceof Error ? failure.message : t("session.address.failed")); }
     finally { setBusy(false); }
   };
 
   return <form class="gsv-login-fields desktop-connect" onSubmit={submit} aria-busy={busy}>
-    <TextInput label="Ship address" placeholder="handle or domain" value={value} suffix={address.suffix}
+    <TextInput label={t("session.address.label")} placeholder={t("session.address.placeholder")} value={value} suffix={address.suffix}
       disabled={disabled || busy} status={error ? "error" : "none"} message={error}
       onChange={(next) => { setValue(next); setError(""); }}
       inputProps={{ autoComplete: "off", autoCapitalize: "none", spellcheck: false, inputMode: "url" }} />
-    <button class="gsv-btn gsv-btn-secondary gsv-btn-block desktop-welcome-submit" type="submit" aria-label="Open Ship" disabled={!ready || disabled || busy || !value.trim()}>
-      {busy ? <Spinner /> : <span class="gsv-btn-label">Open Ship</span>}
+    <button class="gsv-btn gsv-btn-secondary gsv-btn-block desktop-welcome-submit" type="submit" aria-label={t("session.openShip")} disabled={!ready || disabled || busy || !value.trim()}>
+      {busy ? <Spinner /> : <span class="gsv-btn-label">{t("session.openShip")}</span>}
     </button>
   </form>;
 }

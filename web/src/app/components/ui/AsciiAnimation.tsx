@@ -1,6 +1,7 @@
 import type { JSX } from "preact";
 import { useEffect, useRef } from "preact/hooks";
 import type { ColorTheme } from "./useColorTheme";
+import { useT } from "../../i18n/locale";
 import "./AsciiGalaxyScan.css";
 
 export type AsciiAnimationFrame = {
@@ -38,6 +39,7 @@ export type AsciiAnimationProps = {
 export function AsciiAnimation({ scene, label, animate = true, frameRate = 30, fontSize = 8, palette,
   showTexture = false, showReplay = false, pauseWhenOffscreen = true, respectReducedMotion = true, className, inline = false,
 }: AsciiAnimationProps) {
+  const t = useT();
   const root = useRef<HTMLElement>(null);
   const nebula = useRef<HTMLElement>(null);
   const stars = useRef<HTMLElement>(null);
@@ -185,8 +187,8 @@ export function AsciiAnimation({ scene, label, animate = true, frameRate = 30, f
         <div class="gsv-ascii-galaxy-texture gsv-ascii-galaxy-scanlines" aria-hidden="true" />
         <div class="gsv-ascii-galaxy-texture gsv-ascii-galaxy-vignette" aria-hidden="true" />
       </> : null}
-      {showReplay ? <button ref={replay} hidden type="button" class="gsv-ascii-galaxy-replay gsv-label" aria-label={`Replay ${label}`}>
-        <span class="gsv-ascii-galaxy-replay-icon" aria-hidden="true">↻</span> Replay
+      {showReplay ? <button ref={replay} hidden type="button" class="gsv-ascii-galaxy-replay gsv-label" aria-label={t("ui.animation.replayLabel", { label })}>
+        <span class="gsv-ascii-galaxy-replay-icon" aria-hidden="true">↻</span> {t("ui.animation.replay")}
       </button> : null}
     </Root>
   );

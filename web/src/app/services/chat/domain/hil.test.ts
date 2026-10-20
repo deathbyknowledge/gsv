@@ -100,7 +100,7 @@ describe("HIL request wording", () => {
 
 describe("typed approval answers", () => {
   it.each([
-    ...["y", "yes", "yep", "yeah", "ok", "okay", "sure", "go", "go ahead", "do it", "run it"].map((text) => [text, "approve"] as const),
+    ...["y", "yes", "yep", "yeah", "ok", "okay", "sure", "go", "go ahead", "do it", "run it", "sí", "si"].map((text) => [text, "approve"] as const),
     ...["n", "no", "nope", "don't", "dont", "deny"].map((text) => [text, "deny"] as const),
     ["stop", null],
     ["YES", "approve"],

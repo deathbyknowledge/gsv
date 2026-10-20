@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { ledgerLabel } from "./ledgerLabels";
+import { t, type TextKey } from "../../../i18n/locale";
 import type { ProcHilRequest } from "@humansandmachines/gsv";
 import type { AsciiPlanetVariant } from "../../../components/ui/AsciiPlanet";
 import type { ChatTranscriptValue } from "../../../services/chat/domain/transcript";
@@ -8,7 +9,6 @@ import type { FleetRow } from "../Instrument";
 
 /** The cloud home is a place too; the target list does not carry it, so Fleet adds it. */
 export const CLOUD_TARGET_ID = "gsv";
-export const CLOUD_TARGET_LABEL = "your cloud";
 
 export type FleetApprovalReference = { kind: "approval"; pid: string; requestId: string };
 export type FleetConnectReference = { kind: "connect"; to: "place" };
@@ -54,6 +54,9 @@ export function placeActions(place: Place, uid: number | null): PlaceActions {
   return { pair: supported && owner && !place.online, forget: supported && uid !== null && (owner || uid === 0) };
 }
 
+/** A message and the words it names, such as a file name or a query; it is worded where it renders. */
+export type LedgerAction = { key: TextKey; values?: Readonly<Record<string, string>> };
+
 export type LedgerLine = {
   id: string;
   timestamp: number | null;
@@ -61,7 +64,7 @@ export type LedgerLine = {
   place: string;
   syscall: string;
   /** What happened, in a person's words: "read a file", "sent a message". */
-  what: string;
+  action: LedgerAction;
   /** The argument that matters, one line: a path, a command, a query. */
   detail: string;
   /** The call's arguments as the Kernel recorded them, JSON text; empty for a line made here. */
@@ -92,13 +95,13 @@ export function placeFromTarget(target: ConsoleTarget): Place {
 export function cloudPlace(): Place {
   return {
     id: CLOUD_TARGET_ID,
-    label: CLOUD_TARGET_LABEL,
+    label: t("fleet.place.cloud"),
     kind: "cloud",
     online: true,
     lastSeenAt: null,
     platform: "cloudflare",
     version: "",
-    description: "The gateway's own filesystem, memory, and inference.",
+    description: t("fleet.place.cloudAbout"),
     ownerUid: null,
   };
 }
@@ -129,23 +132,39 @@ export function planetVariantForKind(kind: PlaceKind): AsciiPlanetVariant {
   }
 }
 
-export function placeStateLabel(place: Place): string {
-  if (place.instance) return place.instance.state;
-  return place.online ? "connected" : "offline";
+export const PLACE_KIND_LABELS = {
+  machine: "fleet.place.kind.machine",
+  cloud: "fleet.place.kind.cloud",
+  browser: "fleet.place.kind.browser",
+  contact: "fleet.place.kind.contact",
+  unknown: "fleet.place.kind.unknown",
+} satisfies Record<PlaceKind, TextKey>;
+
+const INSTANCE_STATE_LABELS = {
+  starting: "fleet.place.state.starting",
+  ready: "fleet.place.state.ready",
+  stopping: "fleet.place.state.stopping",
+  stopped: "fleet.place.state.stopped",
+  failed: "fleet.place.state.failed",
+} satisfies Record<NonNullable<Place["instance"]>["state"], TextKey>;
+
+export function placeStateLabel(place: Place): TextKey {
+  if (place.instance) return INSTANCE_STATE_LABELS[place.instance.state];
+  return place.online ? "fleet.place.state.connected" : "fleet.place.state.offline";
 }
 
-export function processStateLabel(state: ConsoleProcessState): string {
+export function processStateLabel(state: ConsoleProcessState): TextKey {
   switch (state) {
     case "running":
-      return "running";
+      return "fleet.process.state.running";
     case "queued":
-      return "queued";
+      return "fleet.process.state.queued";
     case "waiting_hil":
-      return "waiting for approval";
+      return "fleet.process.state.waitingApproval";
     case "idle":
-      return "idle";
+      return "fleet.process.state.idle";
     default:
-      return "unknown";
+      return "fleet.process.state.unknown";
   }
 }
 
@@ -251,19 +270,19 @@ export function describeToolCall(syscall: string, args: ChatTranscriptValue | un
   return detail.replace(/\s+/g, " ").trim();
 }
 
-const SHELL_VERBS: readonly [RegExp, string][] = [
-  [/^(gsv\s+)?message\b/, "sent a message"],
-  [/^(ls|find|tree|du|pwd)\b/, "looked around"],
-  [/^(cat|head|tail|less|more|bat)\b/, "read a file"],
-  [/^(grep|rg|ag)\b/, "searched files"],
-  [/^cp\b/, "copied files"],
-  [/^mv\b/, "moved files"],
-  [/^(rm|rmdir|trash)\b/, "removed files"],
-  [/^(mkdir|touch)\b/, "made a place for files"],
-  [/^git\b/, "used git"],
-  [/^(curl|wget|http)\b/, "fetched from the web"],
-  [/^(python|python3|node|npm|npx|cargo|go|make|bun|deno)\b/, "ran a program"],
-  [/^(open|xdg-open)\b/, "opened something"],
+const SHELL_VERBS: readonly [RegExp, TextKey][] = [
+  [/^(gsv\s+)?message\b/, "fleet.ledger.conversationSend"],
+  [/^(ls|find|tree|du|pwd)\b/, "fleet.call.lookedAround"],
+  [/^(cat|head|tail|less|more|bat)\b/, "fleet.ledger.fsRead"],
+  [/^(grep|rg|ag)\b/, "fleet.ledger.fsSearch"],
+  [/^cp\b/, "fleet.call.copiedFiles"],
+  [/^mv\b/, "fleet.call.movedFiles"],
+  [/^(rm|rmdir|trash)\b/, "fleet.call.removedFiles"],
+  [/^(mkdir|touch)\b/, "fleet.call.madeRoom"],
+  [/^git\b/, "fleet.call.usedGit"],
+  [/^(curl|wget|http)\b/, "fleet.ledger.netFetch"],
+  [/^(python|python3|node|npm|npx|cargo|go|make|bun|deno)\b/, "fleet.call.ranProgram"],
+  [/^(open|xdg-open)\b/, "fleet.call.openedSomething"],
 ];
 
 function basename(path: string): string {
@@ -278,23 +297,23 @@ function hostOf(url: string): string {
 }
 
 /** What a call did, in the words a person would use, with the raw syscall left for the technical view. */
-export function humanCall(syscall: string, args: ChatTranscriptValue | undefined): string {
+export function humanCall(syscall: string, args: ChatTranscriptValue | undefined): LedgerAction {
   const parsed = parseToolArgs(args);
   if (syscall === "shell.exec") {
     const input = (parsed.input ?? "").replace(/\s+/g, " ").trim();
-    for (const [pattern, verb] of SHELL_VERBS) if (pattern.test(input)) return verb;
-    return "ran a command";
+    for (const [pattern, verb] of SHELL_VERBS) if (pattern.test(input)) return { key: verb };
+    return { key: "fleet.ledger.shellExec" };
   }
   const name = parsed.path ? basename(parsed.path) : "";
-  if (syscall === "fs.read") return name ? `read ${name}` : "read a file";
-  if (syscall === "fs.edit") return name ? `edited ${name}` : "edited a file";
-  if (syscall === "fs.write") return name ? `wrote ${name}` : "wrote a file";
-  if (syscall === "fs.delete") return name ? `removed ${name}` : "removed a file";
-  if (syscall === "fs.copy") return name ? `copied ${name}` : "copied a file";
-  if (syscall === "fs.search") return parsed.query ? `searched for ${parsed.query}` : "searched files";
-  if (syscall === "web.search") return parsed.query ? `searched the web for ${parsed.query}` : "searched the web";
-  if (syscall === "net.fetch") return parsed.url ? `fetched ${hostOf(parsed.url)}` : "fetched from the web";
-  return ledgerLabel(syscall);
+  if (syscall === "fs.read" && name) return { key: "fleet.call.readNamed", values: { name } };
+  if (syscall === "fs.edit" && name) return { key: "fleet.call.editedNamed", values: { name } };
+  if (syscall === "fs.write" && name) return { key: "fleet.call.wroteNamed", values: { name } };
+  if (syscall === "fs.delete" && name) return { key: "fleet.call.removedNamed", values: { name } };
+  if (syscall === "fs.copy" && name) return { key: "fleet.call.copiedNamed", values: { name } };
+  if (syscall === "fs.search" && parsed.query) return { key: "fleet.call.searchedFor", values: { query: parsed.query } };
+  if (syscall === "web.search" && parsed.query) return { key: "fleet.call.searchedWebFor", values: { query: parsed.query } };
+  if (syscall === "net.fetch" && parsed.url) return { key: "fleet.call.fetchedHost", values: { host: hostOf(parsed.url) } };
+  return { key: ledgerLabel(syscall) };
 }
 
 /** Newest first, capped. Lines without a timestamp sort last. */
@@ -360,15 +379,15 @@ export function recentlyTouched(ledger: readonly LedgerLine[], limit: number): L
 }
 
 export function relativeTime(timestamp: number | null, now: number): string {
-  if (timestamp === null) return "never";
+  if (timestamp === null) return t("fleet.time.never");
   const seconds = Math.max(0, Math.round((now - timestamp) / 1000));
-  if (seconds < 45) return "just now";
+  if (seconds < 45) return t("fleet.time.justNow");
   const minutes = Math.round(seconds / 60);
-  if (minutes < 60) return `${minutes}m ago`;
+  if (minutes < 60) return t("fleet.time.minutesAgo", { minutes });
   const hours = Math.round(minutes / 60);
-  if (hours < 36) return `${hours}h ago`;
+  if (hours < 36) return t("fleet.time.hoursAgo", { hours });
   const days = Math.round(hours / 24);
-  return `${days}d ago`;
+  return t("fleet.time.daysAgo", { days });
 }
 
 export function clockTime(timestamp: number | null): string {
@@ -436,13 +455,14 @@ const jsonValueSchema: z.ZodType<ChatTranscriptValue> = z.lazy(() =>
 export function ledgerFromSysLines(lines: readonly z.infer<typeof sysLedgerLineSchema>[]): LedgerLine[] {
   return lines.map((line) => {
     const args = parseLedgerArgs(line.args);
+    const action = humanCall(line.call, args);
     return {
       id: `sys:${line.seq}`,
       timestamp: line.timestamp,
       processId: line.pid ?? (line.principalKind === "human" ? "you" : "gsv"),
       place: line.target,
       syscall: line.call,
-      what: humanCall(line.call, args),
+      action,
       detail: describeToolCall(line.call, args),
       args: line.args,
       outcome: line.outcome === null ? "running" : line.outcome === "ok" ? "completed" : line.outcome,

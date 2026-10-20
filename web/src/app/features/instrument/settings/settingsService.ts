@@ -3,6 +3,7 @@ import type { FsWriteArgs } from "@humansandmachines/gsv/protocol";
 import { requestFsRead } from "../../../services/gateway/fsRead";
 import { instructionPath, newInstructionName } from "./settingsModel";
 import { z } from "zod";
+import { t } from "../../../i18n/locale";
 
 const writeResultSchema = z.discriminatedUnion("ok", [
   z.object({ ok: z.literal(true), path: z.string(), size: z.number() }),
@@ -19,7 +20,7 @@ async function instructionDirectory(client: Pick<GSVClient, "request">): Promise
     if (/^ENOENT\b/.test(result.error)) return { files: [], directories: [] };
     throw new Error(result.error);
   }
-  if (!("files" in result)) throw new Error("Your instructions path is not a folder");
+  if (!("files" in result)) throw new Error(t("settings.instructions.notFolder"));
   return result;
 }
 
@@ -31,8 +32,8 @@ export async function listInstructions(client: Pick<GSVClient, "request">): Prom
 export async function readInstruction(client: Pick<GSVClient, "request">, name: string): Promise<string> {
   const result = await requestFsRead(client, { target: "gsv", path: instructionPath(name) });
   if (!result.ok) throw new Error(result.error);
-  if (!("kind" in result) || result.kind !== "text") throw new Error("This instruction file is not readable text");
-  if (result.truncated) throw new Error("This instruction file is too large to edit here without losing content");
+  if (!("kind" in result) || result.kind !== "text") throw new Error(t("settings.instructions.notText"));
+  if (result.truncated) throw new Error(t("settings.instructions.tooLarge"));
   return result.content;
 }
 
@@ -46,7 +47,7 @@ export async function createInstruction(client: Pick<GSVClient, "call" | "reques
   const name = newInstructionName(value);
   const directory = await instructionDirectory(client);
   if (directory.files.includes(name) || directory.directories.includes(name)) {
-    throw new Error(`“${name}” already exists. Choose a different name.`);
+    throw new Error(t("settings.instructions.exists", { name }));
   }
   await saveInstruction(client, name, content);
   return name;
@@ -55,7 +56,7 @@ export async function createInstruction(client: Pick<GSVClient, "call" | "reques
 export async function deleteInstruction(client: Pick<GSVClient, "call" | "request">, name: string): Promise<void> {
   const path = instructionPath(name);
   const directory = await instructionDirectory(client);
-  if (!directory.files.includes(name)) throw new Error("This instruction file is no longer available.");
+  if (!directory.files.includes(name)) throw new Error(t("settings.instructions.gone"));
   const result = deleteResultSchema.parse(await client.call("fs.delete", { path }));
   if (!result.ok) throw new Error(result.error);
 }

@@ -17,11 +17,13 @@ import { accountsOrigin, clearDesktopOnboardingToken, completeDesktopOnboarding 
 import { ClientControlProvider } from "../app/services/platform/ClientControl";
 import { desktopControl } from "./control";
 import { useDesktopQuit } from "./useDesktopQuit";
+import { useT, type TextKey } from "../app/i18n/locale";
 import "./desktop.css";
 
 function ConnectedDesktop({ session, storage, mock, onError, onQuit, onResumeSetup }: {
-  session: DesktopSession; storage: NativeSessionStorage; mock: boolean; onError(message: string): void; onQuit(): void; onResumeSetup(): void;
+  session: DesktopSession; storage: NativeSessionStorage; mock: boolean; onError(message: TextKey): void; onQuit(): void; onResumeSetup(): void;
 }) {
+  const t = useT();
   const [service, setService] = useState<SessionService | null>(null);
   const [locked, setLocked] = useState(true);
   const [disconnecting, setDisconnecting] = useState(false);
@@ -47,7 +49,7 @@ function ConnectedDesktop({ session, storage, mock, onError, onQuit, onResumeSet
     const token = storage.getItem(ONBOARDING_KEY);
     const instance = createSessionService(client, { url: ws.href, storage, resumeSetup: (url) => {
       if (new URL(url).origin === accountsOrigin) onResumeSetup();
-      else void openInBrowser(url).catch(() => onError("Could not open your browser."));
+      else void openInBrowser(url).catch(() => onError("desktop.errors.openBrowser"));
     }, onboarding: token ? {
       // Desktop only issues a token through its own welcome flow; operator links open in the browser.
       token, signup: true, discard: () => clearDesktopOnboardingToken(storage), complete: () => completeDesktopOnboarding(storage),
@@ -71,7 +73,7 @@ function ConnectedDesktop({ session, storage, mock, onError, onQuit, onResumeSet
       window.localStorage.clear();
       window.location.replace("/");
     } catch {
-      onError("Could not disconnect. Try again.");
+      onError("desktop.errors.disconnect");
       setConfirmation(false);
     } finally {
       disconnectPending.current = false;
@@ -79,15 +81,15 @@ function ConnectedDesktop({ session, storage, mock, onError, onQuit, onResumeSet
     }
   };
   return <>
-    <dialog ref={confirmationDialog} class="desktop-confirm" role="alertdialog" aria-label="Discard unsent work?"
+    <dialog ref={confirmationDialog} class="desktop-confirm" role="alertdialog" aria-label={t("desktop.discardUnsent")}
       onCancel={(event) => { event.preventDefault(); if (!disconnecting) setConfirmation(false); }}
       onKeyDown={(event) => event.stopPropagation()}>
-      <p>Disconnect from this Ship? Unsent work will be discarded.</p>
-      <button type="button" disabled={disconnecting} onClick={() => setConfirmation(false)}>keep working</button>
-      <button type="button" disabled={disconnecting || !service} onClick={() => void disconnect()}>{disconnecting ? "disconnecting…" : "disconnect"}</button>
+      <p>{t("desktop.confirmDisconnect")}</p>
+      <button type="button" disabled={disconnecting} onClick={() => setConfirmation(false)}>{t("desktop.keepWorking")}</button>
+      <button type="button" disabled={disconnecting || !service} onClick={() => void disconnect()}>{t(disconnecting ? "desktop.disconnecting" : "desktop.disconnect")}</button>
     </dialog>
     <PlatformIdentityProvider identity={<><DesktopSpaceMenu origin={mock ? null : session.origin} locked={locked}
-      onRecover={() => void openInBrowser(`${session.origin}/recover-member`).catch(() => onError("Could not open your browser."))}
+      onRecover={() => void openInBrowser(`${session.origin}/recover-member`).catch(() => onError("desktop.errors.openBrowser"))}
       onMachine={!locked && !mock ? () => setMachineRequest((value) => value + 1) : undefined}
       onDisconnect={() => setConfirmation(true)} onQuit={onQuit} />
       {!locked && !mock && session.origin && <DesktopMachineSetup origin={session.origin} generation={session.generation}
@@ -102,8 +104,9 @@ function ConnectedDesktop({ session, storage, mock, onError, onQuit, onResumeSet
 }
 
 export function DesktopApp() {
+  const t = useT();
   const [session, setSession] = useState<DesktopSession | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<TextKey | null>(null);
   const [resumeSetup, setResumeSetup] = useState(false);
   const mock = import.meta.env.DEV && new URLSearchParams(window.location.search).get("mock") === "1";
   const storage = useMemo(() => session ? nativeSessionStorage(session, setError, mock) : null, [session?.generation, mock]);
@@ -123,7 +126,7 @@ export function DesktopApp() {
       } };
       setSession(value);
       setResumeSetup(!mock && !!value.values[ONBOARDING_KEY]);
-    }).catch(() => setError("Open this frontend with Ship Desktop."));
+    }).catch(() => setError("desktop.errors.openWithDesktop"));
   }, [mock]);
 
   useEffect(() => {
@@ -141,22 +144,22 @@ export function DesktopApp() {
       }
       if (url.protocol !== "https:" && url.protocol !== "http:") return;
       event.preventDefault(); event.stopImmediatePropagation();
-      void openInBrowser(url.href).catch(() => setError("Could not open your browser."));
+      void openInBrowser(url.href).catch(() => setError("desktop.errors.openBrowser"));
     };
     document.addEventListener("click", links);
     return () => document.removeEventListener("click", links);
   }, [mock, session?.origin]);
 
   return <BrowserNavigationProvider navigate={openInBrowser}><div class="desktop-root">
-    <dialog ref={confirmationDialog} class="desktop-confirm" role="alertdialog" aria-label="Discard unsent work?"
+    <dialog ref={confirmationDialog} class="desktop-confirm" role="alertdialog" aria-label={t("desktop.discardUnsent")}
       onCancel={(event) => { event.preventDefault(); cancel(); }} onKeyDown={(event) => event.stopPropagation()}>
-      <p>Quit Ship? Unsent work will be discarded.</p>
-      <button type="button" onClick={cancel}>keep working</button>
-      <button type="button" onClick={quit}>quit</button>
+      <p>{t("desktop.confirmQuit")}</p>
+      <button type="button" onClick={cancel}>{t("desktop.keepWorking")}</button>
+      <button type="button" onClick={quit}>{t("desktop.quit")}</button>
     </dialog>
-    {error && <div class="desktop-error" role="alert">{error}<button type="button" onClick={() => setError(null)}>dismiss</button></div>}
+    {error && <div class="desktop-error" role="alert">{t(error)}<button type="button" onClick={() => setError(null)}>{t("desktop.dismiss")}</button></div>}
     {session && storage && !resumeSetup && (session.origin || mock) ? <ConnectedDesktop key={`${session.generation}:${mock}`} session={session} storage={storage} mock={mock} onError={setError} onQuit={requestQuit} onResumeSetup={() => setResumeSetup(true)} /> :
-      <PlatformIdentityProvider identity={<button type="button" onClick={requestQuit}>quit</button>}>
+      <PlatformIdentityProvider identity={<button type="button" onClick={requestQuit}>{t("desktop.quit")}</button>}>
       <AuthScene layout="welcome"><DesktopWelcome ready={!!session} resume={resumeSetup} onConnect={async (origin, onboardingToken) => {
         setError(null);
         const next = await invoke("desktop_configure", { origin, onboardingToken });

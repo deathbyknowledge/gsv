@@ -63,6 +63,21 @@ describe("mock gateway", () => {
     expect(mockGatewayRequested()).toBe(true);
   });
 
+  it("lets the owner choose a language, kept in this browser, and refuses other config", async () => {
+    const client = await connectedClient();
+    const accounts = z.object({ accounts: z.array(z.object({ relation: z.string(), capabilities: z.array(z.string()).optional() })) })
+      .parse((await client.request("account.list", {})).data).accounts;
+    expect(accounts.find((account) => account.relation === "self")?.capabilities).toContain("sys.config.set");
+
+    const key = "users/1000/locale/language";
+    await client.request("sys.config.set", { key, value: "es" });
+    expect((await client.request("sys.config.get", { key })).data).toEqual({ entries: [{ key, value: "es" }] });
+    expect((await client.request("sys.config.get", {})).data).toEqual({ entries: [{ key, value: "es" }] });
+    expect(window.localStorage.getItem("gsv.mock.language")).toBe("es");
+    await expect(client.request("sys.config.set", { key: "users/1000/locale/timezone", value: "Europe/Madrid" }))
+      .rejects.toThrow("does not implement sys.config.set");
+  });
+
   it("raises an approval with a purpose on /approve and resolves it with one reply", async () => {
     const client = await connectedClient();
     const signals: Array<[string, JsonValue | undefined]> = [];

@@ -307,6 +307,19 @@ describe("Zen conversation entry", () => {
     } finally { await zen.unmount(); }
   });
 
+  it("holds a lone misspelt answer in the prompt instead of replacing the request", async () => {
+    activeRunId = "shell-run";
+    const zen = await mountedZen();
+    try {
+      await requestShellApproval(zen);
+      await act(() => { expect(zen.props(PromptLine).onSubmit("nno")).toBe(false); });
+      expect(send).not.toHaveBeenCalled();
+      expect(GSVClient.prototype.request).not.toHaveBeenCalledWith("proc.hil", expect.anything());
+      expect(zen.props(FeedbackNote).note).toEqual({ kind: "notice", message: "chat.notice.approvalUnclear" });
+      expect(zen.props(ApprovalCard).request.requestId).toBe("shell-approval");
+    } finally { await zen.unmount(); }
+  });
+
   it("invites a typed answer in the composer only while an approval is pending", async () => {
     activeRunId = "shell-run";
     const zen = await mountedZen();
@@ -533,7 +546,7 @@ describe("Zen conversation entry", () => {
       await act(() => { expect(zen.props(NativeVoiceControls).send("@cloud")).toBe(true); });
       expect(zen.props(PromptLine).place.id).toBe("gsv");
       await act(() => { zen.props(NativeVoiceControls).send("@missing"); });
-      expect(zen.props(FeedbackNote).note).toEqual({ kind: "notice", text: "No place called missing." });
+      expect(zen.props(FeedbackNote).note).toEqual({ kind: "notice", message: "chat.notice.noPlace", values: { name: "missing" } });
       expect(send).not.toHaveBeenCalled();
     } finally { await zen.unmount(); }
   });
@@ -567,7 +580,7 @@ describe("Zen conversation entry", () => {
       expect(zen.props(PromptLine).allowEmpty).toBe(true);
       expect(zen.dirty()).toBe(true);
       await act(() => { expect(zen.props(PromptLine).onSubmit("$ pwd")).toBe(false); });
-      expect(zen.props(FeedbackNote).note).toEqual({ kind: "notice", text: "Remove attachments and pasted text before running a command, or send them to your Ship in plain words." });
+      expect(zen.props(FeedbackNote).note).toEqual({ kind: "notice", message: "chat.notice.commandExtras" });
       await act(() => { zen.props(ZenDraftPaste).onRemove?.(); });
       expect(pastes()).toHaveLength(1);
       expect(zen.props(ZenDraftPaste).paste.text).toBe(log);

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
+import { t } from "../../../i18n/locale";
 import type { LibraryEntry } from "../../../services/memory/libraryTypes";
-import { buildMemoryTree, memoryTreePages } from "./memoryTree";
+import { buildMemoryTree, memoryPageTitle, memoryTreePages } from "./memoryTree";
 
 describe("Memory folder hierarchy", () => {
   const pages: LibraryEntry[] = [
@@ -12,7 +13,7 @@ describe("Memory folder hierarchy", () => {
 
   it("keeps Overview first and exposes directories inside the collection's pages root", () => {
     const tree = buildMemoryTree(pages, "personal");
-    expect(tree.map((node) => node.title)).toEqual(["Overview", "Topics", "Zebra"]);
+    expect(tree.map((node) => node.entry ? memoryPageTitle(t, node.entry, "personal") : node.title)).toEqual(["Overview", "Topics", "Zebra"]);
     expect(tree[1].children.map((node) => node.title)).toEqual(["Beans", "Coffee"]);
     expect(tree[1].children[0].children[0].entry?.path).toBe("personal/pages/topics/beans/roast.md");
   });

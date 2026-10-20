@@ -6,10 +6,12 @@ import type { ConsoleAccount } from "../../../domain/system/consoleModels";
 import { LoadingState } from "../../../components/ui/Spinner";
 import { canConfigure } from "../settings/settingsModel";
 import { INSTRUMENT_CONTACT_BLOCKS_KEY } from "../wire/queryKeys";
+import { useT } from "../../../i18n/locale";
 
 const NO_CURSOR: ContactBlockListArgs["cursor"] = undefined;
 
 export function BlockedPeople({ account }: { account: ConsoleAccount | undefined }) {
+  const t = useT();
   const { client, connected } = useGateway();
   const cache = useQueryClient();
   const allowed = (call: string) => connected && !!account && canConfigure(account, call);
@@ -23,15 +25,15 @@ export function BlockedPeople({ account }: { account: ConsoleAccount | undefined
     onSuccess: () => cache.invalidateQueries({ queryKey: INSTRUMENT_CONTACT_BLOCKS_KEY }),
   });
   const entries = blocks.data?.pages.flatMap((page) => page.blocks) ?? [];
-  return <section aria-label="Blocked people">
-    <p class="people-note">Unblocking allows new requests. Old connections stay ended.</p>
-    {blocks.isLoading && <LoadingState>Loading…</LoadingState>}
-    {blocks.data && !entries.length && <p class="people-note">No blocked people.</p>}
+  return <section aria-label={t("people.blocked.title")}>
+    <p class="people-note">{t("people.blocked.hint")}</p>
+    {blocks.isLoading && <LoadingState>{t("common.loading")}</LoadingState>}
+    {blocks.data && !entries.length && <p class="people-note">{t("people.blocked.none")}</p>}
     {entries.map((entry) => <div class="people-block-entry" key={`${entry.actor.shipId}/${entry.actor.subjectId}`}>
-      <div class="people-actions"><span>{entry.displayName ?? "Blocked identity"}</span><button class="people-action" disabled={!allowed("contact.block.set") || unblock.isPending} onClick={() => unblock.mutate(entry.actor)}>unblock</button></div>
-      <details><summary>identity</summary><p>{entry.actor.shipId}<br />{entry.actor.subjectId}</p></details>
+      <div class="people-actions"><span>{entry.displayName ?? t("people.blocked.unknown")}</span><button class="people-action" disabled={!allowed("contact.block.set") || unblock.isPending} onClick={() => unblock.mutate(entry.actor)}>{t("people.unblock")}</button></div>
+      <details><summary>{t("people.blocked.identity")}</summary><p>{entry.actor.shipId}<br />{entry.actor.subjectId}</p></details>
     </div>)}
-    {blocks.hasNextPage && <button class="people-action" disabled={blocks.isFetchingNextPage} onClick={() => void blocks.fetchNextPage()}>more</button>}
+    {blocks.hasNextPage && <button class="people-action" disabled={blocks.isFetchingNextPage} onClick={() => void blocks.fetchNextPage()}>{t("people.more")}</button>}
     {(blocks.error ?? unblock.error) && <p class="people-error" role="alert">{(blocks.error ?? unblock.error)?.message}</p>}
   </section>;
 }

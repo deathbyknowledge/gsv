@@ -1,4 +1,5 @@
 import type { ScheduleExpression, ScheduleRecord, SchedulerAddArgs, SchedulerUpdateArgs } from "@humansandmachines/gsv/protocol";
+import { t, type TextKey } from "../../../i18n/locale";
 
 export type RoutineDraft = {
   name: string;
@@ -40,23 +41,23 @@ export function routineDraft(schedule?: ScheduleRecord, timezone = "UTC"): Routi
 export function routineInput(draft: RoutineDraft, original?: ScheduleRecord): SchedulerAddArgs {
   const name = draft.name.trim();
   const message = draft.message.trim();
-  if (!name || !message) throw new Error("Give the routine a name and something for Ship to do.");
+  if (!name || !message) throw new Error(t("fleet.routine.incomplete"));
   let expression: ScheduleExpression;
   if (draft.cadence === "every") {
     const everyMs = Number(draft.interval) * Number(draft.unit);
-    if (!Number.isSafeInteger(everyMs) || everyMs < 1000) throw new Error("Choose an interval of at least one second.");
+    if (!Number.isSafeInteger(everyMs) || everyMs < 1000) throw new Error(t("fleet.routine.shortInterval"));
     expression = { kind: "every", everyMs };
     if (original?.expression.kind === "every" && original.expression.anchorMs !== undefined) expression.anchorMs = original.expression.anchorMs;
   } else {
     const timezone = draft.timezone.trim();
-    try { new Intl.DateTimeFormat("en", { timeZone: timezone }).format(); } catch { throw new Error("Choose a valid timezone, such as Europe/Amsterdam."); }
+    try { new Intl.DateTimeFormat("en", { timeZone: timezone }).format(); } catch { throw new Error(t("settings.timezone.invalid")); }
     let expr = draft.cron.trim();
     if (draft.cadence !== "cron") {
-      if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(draft.time)) throw new Error("Choose a time for this routine.");
+      if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(draft.time)) throw new Error(t("fleet.routine.noTime"));
       const [hour, minute] = draft.time.split(":").map(Number);
       expr = `${minute} ${hour} * * ${draft.cadence === "weekly" ? draft.day : "*"}`;
     }
-    if (expr.split(/\s+/).length !== 5) throw new Error("A custom schedule needs five cron fields.");
+    if (expr.split(/\s+/).length !== 5) throw new Error(t("fleet.routine.cronFieldCount"));
     expression = { kind: "cron", expr, timezone };
   }
   const target = original?.target.kind === "responsibility" ? { ...original.target, message } : { kind: "responsibility" as const, message };
@@ -76,18 +77,34 @@ export function routinePatch(input: SchedulerAddArgs): SchedulerUpdateArgs["patc
   return { name: input.name, enabled: input.enabled, expression: input.expression, target: input.target };
 }
 
+/** The days of the week from Sunday, as cron numbers them. */
+export const WEEKDAYS = [
+  "fleet.weekday.sunday", "fleet.weekday.monday", "fleet.weekday.tuesday", "fleet.weekday.wednesday",
+  "fleet.weekday.thursday", "fleet.weekday.friday", "fleet.weekday.saturday",
+] as const satisfies readonly TextKey[];
+
+const WEEKLY_CADENCES = [
+  "fleet.cadence.sundays", "fleet.cadence.mondays", "fleet.cadence.tuesdays", "fleet.cadence.wednesdays",
+  "fleet.cadence.thursdays", "fleet.cadence.fridays", "fleet.cadence.saturdays",
+] as const satisfies readonly TextKey[];
+
+const INTERVALS = [
+  { size: 86_400_000, one: "fleet.cadence.everyDay", many: "fleet.cadence.everyDays" },
+  { size: 3_600_000, one: "fleet.cadence.everyHour", many: "fleet.cadence.everyHours" },
+  { size: 60_000, one: "fleet.cadence.everyMinute", many: "fleet.cadence.everyMinutes" },
+  { size: 1000, one: "fleet.cadence.everySecond", many: "fleet.cadence.everySeconds" },
+] as const;
+
 export function cadenceLabel(expression: ScheduleExpression): string {
-  if (expression.kind === "at") return "once";
-  if (expression.kind === "after") return "once, after a delay";
+  if (expression.kind === "at") return t("fleet.cadence.once");
+  if (expression.kind === "after") return t("fleet.cadence.afterDelay");
   if (expression.kind === "every") {
-    const [unit, size] = expression.everyMs % 86_400_000 === 0 ? ["day", 86_400_000] as const
-      : expression.everyMs % 3_600_000 === 0 ? ["hour", 3_600_000] as const
-      : expression.everyMs % 60_000 === 0 ? ["minute", 60_000] as const : ["second", 1000] as const;
-    const count = expression.everyMs / size;
-    return count === 1 ? `every ${unit}` : `every ${count} ${unit}s`;
+    const interval = INTERVALS.find(({ size }) => expression.everyMs % size === 0) ?? INTERVALS[3];
+    const count = expression.everyMs / interval.size;
+    return count === 1 ? t(interval.one) : t(interval.many, { count });
   }
   const simple = /^(\d{1,2}) (\d{1,2}) \* \* (\*|[0-6])$/.exec(expression.expr);
   if (!simple) return `${expression.expr} · ${expression.timezone}`;
-  const day = simple[3] === "*" ? "daily" : ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"][Number(simple[3])];
-  return `${day} at ${simple[2].padStart(2, "0")}:${simple[1].padStart(2, "0")} · ${expression.timezone}`;
+  const values = { time: `${simple[2].padStart(2, "0")}:${simple[1].padStart(2, "0")}`, timezone: expression.timezone };
+  return t(simple[3] === "*" ? "fleet.cadence.daily" : WEEKLY_CADENCES[Number(simple[3])], values);
 }

@@ -7,6 +7,7 @@ import type {
   SysSetupArgs,
   SysSetupResult,
 } from "@humansandmachines/gsv/protocol";
+import type { TextKey } from "../../i18n/locale";
 import {
   clearInstallationOnboardingToken,
   readInstallationOnboardingToken,
@@ -26,7 +27,7 @@ const SETUP_PROBE_ARGS: ConnectArgs = {
   protocol: 4,
   peer: {
     id: "gsv-ui-setup-probe",
-    version: "0.7.3",
+    version: "0.7.4",
     platform: "browser",
   },
 };
@@ -69,13 +70,16 @@ const sessionMessageSchema = z.union([z.instanceof(Error), z.string()]);
 
 export type SessionPhase = "booting" | "setup" | "setup-recovery" | "locked" | "authenticating" | "ready";
 
+/** What the session says about itself, as a message key, or an error from the Kernel or storage, shown as sent. */
+export type SessionMessage = { key: TextKey } | { text: string };
+
 export type SessionSnapshot = {
   phase: SessionPhase;
   url: string;
   username: string;
   connectionId: string | null;
   server: ServerBuild | null;
-  message: string | null;
+  message: SessionMessage | null;
   setupRecoveryUrl?: string;
   /** The owner was sent here straight from signup, so setup greets them as a new space. */
   arrivedFromSignup?: boolean;
@@ -106,7 +110,7 @@ export type SessionService = {
   subscribe: (listener: (snapshot: SessionSnapshot) => void) => () => void;
   login: (input: SessionLoginInput) => Promise<ConnectResult>;
   setup: (input: SessionSetupInput) => Promise<SysSetupResult>;
-  lock: (reason?: string) => Promise<void>;
+  lock: (reason?: TextKey) => Promise<void>;
   start: () => Promise<void>;
   resumeSetup?: (url: string) => void;
   dispose?: () => void;
@@ -185,10 +189,10 @@ function deriveGatewayUrlFromOrigin(): string {
   return `${wsProtocol}//${host}/ws`;
 }
 
-function normalizeMessage(value: SessionWireValue): string {
+function normalizeMessage(value: SessionWireValue): SessionMessage {
   const parsed = sessionMessageSchema.safeParse(value);
-  if (parsed.success) return parsed.data instanceof Error ? parsed.data.message : parsed.data;
-  return "Authentication failed";
+  if (parsed.success) return { text: parsed.data instanceof Error ? parsed.data.message : parsed.data };
+  return { key: "session.status.authenticationFailed" };
 }
 
 function isSetupRequiredError(value: SessionWireValue): boolean {
@@ -213,7 +217,7 @@ function setupRecovery(value: SessionWireValue): Pick<SessionSnapshot, "phase" |
   const parsed = sessionErrorSchema.safeParse(value);
   const details = parsed.success ? parsed.data.details : undefined;
   return details?.setupRecovery
-    ? { phase: "setup-recovery", message: "Finish setting up your Ship", setupRecoveryUrl: details.setupUrl }
+    ? { phase: "setup-recovery", message: { key: "session.status.finishSetup" }, setupRecoveryUrl: details.setupUrl }
     : null;
 }
 
@@ -313,7 +317,7 @@ export function createSessionService(client: SessionClient, options: SessionServ
     username: currentSessionToken?.username ?? readStored(STORAGE_USERNAME, storage) ?? "",
     connectionId: null,
     server: null,
-    message: "Booting up...",
+    message: { key: "session.status.booting" },
   };
 
   let refreshTimerId: number | null = null;
@@ -486,7 +490,7 @@ export function createSessionService(client: SessionClient, options: SessionServ
     await drainPendingRevokes("ui session rotated");
   };
 
-  const setLockedAfterDisconnect = (message: string): void => {
+  const setLockedAfterDisconnect = (message: SessionMessage): void => {
     clearRefreshTimer();
     clearReconnectTimer();
     clearReconnectStableTimer();
@@ -505,7 +509,7 @@ export function createSessionService(client: SessionClient, options: SessionServ
     currentSessionToken = stored;
     if (!stored || stored.username !== snapshot.username) {
       cancelSilentReconnect();
-      setLockedAfterDisconnect(stored ? "Account changed in another tab. Sign in to continue." : "Signed out");
+      setLockedAfterDisconnect({ key: stored ? "session.status.accountChanged" : "session.status.signedOut" });
       client.disconnect();
       return false;
     }
@@ -528,7 +532,7 @@ export function createSessionService(client: SessionClient, options: SessionServ
     }, SESSION_RECONNECT_STABLE_MS);
   };
 
-  const finishSilentReconnectFailure = (message: string): void => {
+  const finishSilentReconnectFailure = (message: SessionMessage): void => {
     setLockedAfterDisconnect(message);
     client.disconnect();
   };
@@ -542,12 +546,12 @@ export function createSessionService(client: SessionClient, options: SessionServ
     if (!syncStoredSession()) return;
     const token = currentSessionToken;
     if (!token) {
-      finishSilentReconnectFailure("Disconnected");
+      finishSilentReconnectFailure({ key: "session.status.disconnected" });
       return;
     }
     if (isTokenExpired(token)) {
       clearStoredSessionToken();
-      finishSilentReconnectFailure("Session expired. Sign in again.");
+      finishSilentReconnectFailure({ key: "session.status.expired" });
       return;
     }
 
@@ -559,7 +563,7 @@ export function createSessionService(client: SessionClient, options: SessionServ
       url: gatewayUrl(),
       username: token.username,
       connectionId: null,
-      message: "Reconnecting...",
+      message: { key: "session.status.reconnecting" },
     });
 
     try {
@@ -601,7 +605,7 @@ export function createSessionService(client: SessionClient, options: SessionServ
       if (isAuthenticationRejectedError(error)) {
         if (currentSessionToken?.tokenId === token.tokenId) {
           clearStoredSessionToken();
-          finishSilentReconnectFailure("Session expired. Sign in again.");
+          finishSilentReconnectFailure({ key: "session.status.expired" });
           return;
         }
       } else if (!isRetryableConnectError(error)) {
@@ -631,12 +635,12 @@ export function createSessionService(client: SessionClient, options: SessionServ
     if (!syncStoredSession()) return;
     const token = currentSessionToken;
     if (!token) {
-      setLockedAfterDisconnect("Disconnected");
+      setLockedAfterDisconnect({ key: "session.status.disconnected" });
       return;
     }
     if (isTokenExpired(token)) {
       clearStoredSessionToken();
-      setLockedAfterDisconnect("Session expired. Sign in again.");
+      setLockedAfterDisconnect({ key: "session.status.expired" });
       return;
     }
     const generation = reconnectGeneration;
@@ -701,7 +705,7 @@ export function createSessionService(client: SessionClient, options: SessionServ
       url,
       username: username || snapshot.username,
       connectionId: null,
-      message: "Connecting...",
+      message: { key: "session.status.connecting" },
     });
 
     const options: GsvConnectOptions = {
@@ -771,7 +775,7 @@ export function createSessionService(client: SessionClient, options: SessionServ
       url,
       username: username || snapshot.username,
       connectionId: null,
-      message: "Creating your account...",
+      message: { key: "session.status.creatingAccount" },
     });
 
     let result: SysSetupResult;
@@ -822,7 +826,7 @@ export function createSessionService(client: SessionClient, options: SessionServ
         else clearInstallationOnboardingToken();
       } catch (error) {
         if (setupGeneration === reconnectGeneration) setSnapshot({ phase: "locked", url, username: result.user.username,
-          connectionId: null, message: "Account created. Sign in to continue." });
+          connectionId: null, message: { key: "session.status.accountCreated" } });
         throw error;
       }
     }
@@ -833,7 +837,7 @@ export function createSessionService(client: SessionClient, options: SessionServ
     return result;
   };
 
-  const lock = async (reason = "Session locked"): Promise<void> => {
+  const lock = async (reason: TextKey = "session.status.locked"): Promise<void> => {
     cancelSilentReconnect();
     const lockGeneration = reconnectGeneration;
     clearRefreshTimer();
@@ -842,7 +846,7 @@ export function createSessionService(client: SessionClient, options: SessionServ
       url: gatewayUrl(),
       username: snapshot.username,
       connectionId: null,
-      message: reason,
+      message: { key: reason },
     });
 
     const clearing = withSessionTokenLock(() => {
@@ -897,7 +901,7 @@ export function createSessionService(client: SessionClient, options: SessionServ
       const initial = await probeSetupMode(client, url, signupArrival);
       if (disposed || generation !== reconnectGeneration) return;
       setSnapshot({ ...initial, url, username: persisted.username, connectionId: null,
-        message: initial.message ?? (initial.phase === "locked" ? "Session expired. Sign in again." : null) });
+        message: initial.message ?? (initial.phase === "locked" ? { key: "session.status.expired" } : null) });
       return;
     }
 
@@ -906,7 +910,7 @@ export function createSessionService(client: SessionClient, options: SessionServ
       url,
       username: persisted.username,
       connectionId: null,
-      message: "Booting up...",
+      message: { key: "session.status.booting" },
     });
 
     await runSilentReconnect(generation);

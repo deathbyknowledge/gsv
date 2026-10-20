@@ -1,6 +1,7 @@
 import type { ProcHistoryEvent } from "@humansandmachines/gsv/protocol";
 import { describe, expect, it } from "vitest";
-import { describeChatError, describeHistoryEventError, type ChatErrorKind } from "./errorPresentation";
+import { t } from "../../../i18n/locale";
+import { describeChatError, describeHistoryEventError, type ChatErrorContext, type ChatErrorKind } from "./errorPresentation";
 
 function generationFailed(error: string, reason = "generation.error"): ProcHistoryEvent {
   return { kind: "generation.failed", payload: { reason, error }, severity: "error", audience: "both" };
@@ -24,12 +25,12 @@ describe("chat error presentation", () => {
     const presented = describeChatError(detail);
     expect(presented.kind).toBe(kind);
     expect(presented.detail).toBe(detail);
-    expect(presented.summary).not.toContain("Generation failed");
-    expect(presented.action.length).toBeGreaterThan(0);
+    expect(t(presented.summary)).not.toContain("Generation failed");
+    expect(t(presented.action).length).toBeGreaterThan(0);
   });
 
   it("describes an unrecognised cause by what was being attempted", () => {
-    const context = { summary: "The decision did not go through.", action: "Try again in a moment." };
+    const context: ChatErrorContext = { summary: "chat.error.decisionFailed.summary", action: "chat.error.decisionFailed.action" };
     expect(describeChatError("approval request hil:7 is not pending", context)).toMatchObject({ kind: "unknown", ...context });
     expect(describeChatError("socket closed", context).kind).toBe("network");
   });
@@ -45,7 +46,7 @@ describe("chat error presentation", () => {
   });
 
   it.each(["Unauthorized", "request timed out", "HTTP 503"])("keeps a gateway failure in its operation's context: %s", (detail) => {
-    const context = { summary: "The decision did not go through.", action: "Try again in a moment." };
+    const context: ChatErrorContext = { summary: "chat.error.decisionFailed.summary", action: "chat.error.decisionFailed.action" };
     expect(describeChatError(detail, context)).toEqual({ kind: "unknown", ...context, detail });
   });
 

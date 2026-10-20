@@ -1,8 +1,9 @@
-import { describe, expect, it, vi } from "vitest";
+import type { ComponentChildren } from "preact";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { JsonObject } from "@humansandmachines/gsv/protocol";
 import { Hint } from "../../../components/ui/Tooltip";
-import { collectNodes, collectText } from "../../../testing/testHarness";
-import { ApprovalCard } from "./ApprovalCard";
+import { collectNodes, collectText, createTestRoot } from "../../../testing/testHarness";
+import { ApprovalCard, type ApprovalCardProps } from "./ApprovalCard";
 
 const request = {
   pid: "ship", requestId: "r1", runId: "run1", callId: "c1", toolName: "Shell", syscall: "shell.exec",
@@ -10,10 +11,25 @@ const request = {
 };
 const props = { who: "jessicat", place: "my mac", onInspect: () => {}, onDecide: () => {} };
 
+async function approvalCardTree(cardProps: ApprovalCardProps): Promise<ComponentChildren> {
+  const root = createTestRoot("approval card");
+  let tree: ComponentChildren;
+  function Harness() { tree = ApprovalCard(cardProps); return null; }
+  try {
+    await root.render(<Harness />);
+  } finally {
+    await root.unmount();
+  }
+  return tree;
+}
+
+beforeEach(() => vi.stubGlobal("document", {}));
+afterEach(() => vi.unstubAllGlobals());
+
 describe("approval card", () => {
-  it("remembers only an explicit always-allow action and explains its scope", () => {
+  it("remembers only an explicit always-allow action and explains its scope", async () => {
     const onDecide = vi.fn();
-    const tree = ApprovalCard({ ...props, request, onDecide });
+    const tree = await approvalCardTree({ ...props, request, onDecide });
     const nodes = collectNodes(tree);
     const hint = nodes.find((node) => node.type === Hint);
     expect(hint?.props.text).toBe("Allow this process to run any shell command on my mac without asking again. Other processes still ask.");
@@ -24,7 +40,7 @@ describe("approval card", () => {
     nodes.find((node) => node.type === "button" && collectText(node).includes("don't"))?.props.onClick?.();
     expect(onDecide).toHaveBeenLastCalledWith("deny");
     onDecide.mockClear();
-    const disabled = ApprovalCard({ ...props, request, onDecide, disabled: true });
+    const disabled = await approvalCardTree({ ...props, request, onDecide, disabled: true });
     const remember = collectNodes(disabled).find((node) => node.type === "button" && collectText(node) === "always allow");
     expect(remember?.props.disabled).toBe(true);
     remember?.props.onClick?.();
@@ -34,12 +50,12 @@ describe("approval card", () => {
   it.each([
     { ...request, target: "targets/*" },
     { ...request, syscall: "mail.send" },
-  ])("does not offer shell permission for $syscall on $target", (pending) => {
-    expect(collectText(ApprovalCard({ ...props, request: pending }))).not.toContain("always allow");
+  ])("does not offer shell permission for $syscall on $target", async (pending) => {
+    expect(collectText(await approvalCardTree({ ...props, request: pending }))).not.toContain("always allow");
   });
 
-  it("leads with the model's purpose and folds the command away", () => {
-    const tree = ApprovalCard({ ...props, request: { ...request, purpose: "check whether Granola is running" } });
+  it("leads with the model's purpose and folds the command away", async () => {
+    const tree = await approvalCardTree({ ...props, request: { ...request, purpose: "check whether Granola is running" } });
     const text = collectText(tree);
     expect(text).toContain("Check whether Granola is running");
     expect(text).toContain("show the command");
@@ -51,15 +67,15 @@ describe("approval card", () => {
     expect(foldText).not.toContain("shell.exec");
   });
 
-  it("describes the request in the same shape when no purpose was given", () => {
-    const text = collectText(ApprovalCard({ ...props, request }));
+  it("describes the request in the same shape when no purpose was given", async () => {
+    const text = collectText(await approvalCardTree({ ...props, request }));
     expect(text).toContain("Run a command on my mac");
     expect(text).toContain("show the command");
     expect(text).toContain("pgrep -fl Granola");
   });
 
-  it("offers details rather than a command for a file request", () => {
-    const tree = ApprovalCard({
+  it("offers details rather than a command for a file request", async () => {
+    const tree = await approvalCardTree({
       ...props,
       request: { ...request, toolName: "Read", syscall: "fs.read", args: { path: "/Users/jessicat/notes.md" } },
     });
@@ -72,8 +88,8 @@ describe("approval card", () => {
     expect(text).not.toContain("$");
   });
 
-  it("names the recipient and subject for mail without faking a prompt", () => {
-    const tree = ApprovalCard({
+  it("names the recipient and subject for mail without faking a prompt", async () => {
+    const tree = await approvalCardTree({
       ...props,
       request: { ...request, toolName: "mail.send", syscall: "mail.send", target: "gsv", args: { to: "mike@example.com", subject: "Contract follow-up", text: "private" } },
     });
@@ -89,9 +105,9 @@ describe("approval card", () => {
     { syscall: "shell.exec", args: { input: "python task.py", cwd: "/home/user/project", env: { MODE: "write" }, timeout: 60 } },
     { syscall: "mail.send", args: { to: "guest@example.com", subject: "Update", text: "Complete mail body", attachments: [{ path: "/report.pdf" }] } },
     { syscall: "shell.exec", args: { sessionId: "pending-command", stdin: "yes\n" } },
-  ])("keeps every $syscall argument inspectable in closed details", ({ syscall, args }) => {
+  ])("keeps every $syscall argument inspectable in closed details", async ({ syscall, args }) => {
     const pending = { ...request, syscall, args };
-    const nodes = collectNodes(ApprovalCard({ ...props, request: pending }));
+    const nodes = collectNodes(await approvalCardTree({ ...props, request: pending }));
     const folds = nodes.filter((node) => node.type === "details");
     expect(folds.length).toBeGreaterThan(0);
     for (const fold of folds) expect(fold.props).not.toHaveProperty("open");

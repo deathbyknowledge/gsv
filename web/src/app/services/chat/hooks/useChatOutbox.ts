@@ -4,6 +4,7 @@ import { sendChatMessage } from "../backend/chatService";
 import type { ChatSendDraft } from "../domain/processes";
 import { useGateway } from "../../gateway/GatewayProvider";
 import { randomId } from "../../ids";
+import { t } from "../../../i18n/locale";
 
 export type OutgoingChatMessage = {
   id: string;
@@ -58,7 +59,9 @@ export function useChatOutboxRuntime(
           setMessages((current) => current.filter((row) => row.id !== message.id));
         }
       } catch (error) {
-        update({ status: "failed", error: error instanceof Error ? error.message : "The message did not go through." });
+        // Once the person cancels, say so rather than repeat whatever the interrupted transfer raised; the abort reason travels to the gateway, so it stays English.
+        update({ status: "failed", error: pending.controller.signal.aborted ? t("chat.outbox.uploadCancelled")
+          : error instanceof Error ? error.message : t("chat.outbox.failed") });
       } finally {
         if (active.current === pending) active.current = null;
       }

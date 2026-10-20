@@ -1,10 +1,12 @@
+import { t } from "../../i18n/locale";
+
 export const MAX_VOICE_SECONDS = 5 * 60;
 export const MAX_VOICE_BYTES = 25 * 1024 * 1024;
 
 export function browserRecordingUnavailable(): string | null {
-  if (!globalThis.isSecureContext) return "Voice recording needs HTTPS or localhost.";
+  if (!globalThis.isSecureContext) return t("desktop.browserVoice.errors.needsHttps");
   if (!navigator.mediaDevices?.getUserMedia || !("MediaRecorder" in globalThis)) {
-    return "Voice recording is unavailable in this browser.";
+    return t("desktop.browserVoice.errors.unsupported");
   }
   return null;
 }
@@ -44,18 +46,18 @@ export async function captureBrowserAudio(signal: AbortSignal, onStart: (stop: (
       recorder.ondataavailable = ({ data }) => {
         size += data.size;
         if (size > MAX_VOICE_BYTES) {
-          fail(new Error("Recording is too large. Try a shorter recording."));
+          fail(new Error(t("desktop.browserVoice.errors.tooLarge")));
           return;
         }
         if (data.size) chunks.push(data);
       };
       recorder.onerror = (event) => fail("error" in event && event.error instanceof DOMException
-        ? event.error : new Error("The microphone recording failed. Please try again.", { cause: event }));
+        ? event.error : new Error(t("desktop.browserVoice.errors.failed"), { cause: event }));
       recorder.onstop = () => {
         const audio = new Blob(chunks, { type: recorder.mimeType || chunks[0]?.type });
         cleanup();
-        if (!audio.size) reject(new Error("No audio was recorded. Please try again."));
-        else if (!audio.type.startsWith("audio/")) reject(new Error("The browser did not provide a supported audio format."));
+        if (!audio.size) reject(new Error(t("desktop.browserVoice.errors.empty")));
+        else if (!audio.type.startsWith("audio/")) reject(new Error(t("desktop.browserVoice.errors.format")));
         else resolve(audio);
       };
       signal.addEventListener("abort", cancel, { once: true });

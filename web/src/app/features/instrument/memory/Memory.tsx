@@ -15,7 +15,8 @@ import { refreshSavedMemoryPage } from "./memoryQueries";
 import { MemoryArticle } from "./MemoryArticle";
 import { memoryLinkFromUrl, type MemoryLink } from "./memoryLinks";
 import { MemoryPageTree } from "./MemoryPageTree";
-import { buildMemoryTree } from "./memoryTree";
+import { buildMemoryTree, memoryPageTitle } from "./memoryTree";
+import { rich, useT } from "../../../i18n/locale";
 import "./memory.css";
 
 export type MemoryProps = {
@@ -32,6 +33,7 @@ export type MemoryProps = {
  * when opened, a search in the gateway.
  */
 export function Memory({ initialPage, onAsk, onDirtyChange }: MemoryProps) {
+  const t = useT();
   const active = useViewActive();
   const { client, connected } = useGateway();
   const queryClient = useQueryClient();
@@ -45,7 +47,8 @@ export function Memory({ initialPage, onAsk, onDirtyChange }: MemoryProps) {
   const [editor, setEditor] = useState<LibrarySavePageInput | null>(null);
   const [newName, setNewName] = useState("");
   const [createError, setCreateError] = useState<string | null>(null);
-  const [status, setStatus] = useState<{ db: string; path: string; text: string; error: boolean } | null>(null);
+  /** The last save of a page: its failure as reported, or null once it is saved. */
+  const [status, setStatus] = useState<{ db: string; path: string; error: string | null } | null>(null);
   const searchRef = useRef<HTMLInputElement>(null);
   const editorRef = useRef<HTMLTextAreaElement>(null);
   const pagesRef = useRef<HTMLElement>(null);
@@ -110,16 +113,16 @@ export function Memory({ initialPage, onAsk, onDirtyChange }: MemoryProps) {
       setAsked("");
       setQuery("");
       setNewName("");
-      setStatus({ db: input.db, path: input.path, text: result.statusText || "saved", error: false });
+      setStatus({ db: input.db, path: input.path, error: null });
       await refreshSavedMemoryPage(queryClient, input);
     },
     onError: (error: Error, input) => {
       if (input.createOnly) setCreateError(error.message);
-      else setStatus({ db: input.db, path: input.path, text: error.message, error: true });
+      else setStatus({ db: input.db, path: input.path, error: error.message });
     },
   });
   useDraftGuard(dirty || save.isPending, onDirtyChange);
-  const canLeaveEditor = () => !save.isPending && (!dirty || window.confirm("Discard your unsaved page changes?"));
+  const canLeaveEditor = () => !save.isPending && (!dirty || window.confirm(t("memory.discard")));
   const closeEditor = () => { if (canLeaveEditor()) { setEditor(null); setCreateError(null); save.reset(); } };
   const saveEdit = () => {
     if (!editor || !editing || !connected || !writable || save.isPending) return;
@@ -143,7 +146,7 @@ export function Memory({ initialPage, onAsk, onDirtyChange }: MemoryProps) {
     setFragment("");
     setEditor(null);
     setStatus(null);
-  }, [dirty, save.isPending]);
+  }, [dirty, save.isPending, t]);
   const openLink = useCallback((link: MemoryLink) => {
     if (!canLeaveEditor()) return;
     setDb(link.db);
@@ -152,7 +155,7 @@ export function Memory({ initialPage, onAsk, onDirtyChange }: MemoryProps) {
     setFragment(link.fragment);
     setEditor(null);
     setStatus(null);
-  }, [dirty, save.isPending]);
+  }, [dirty, save.isPending, t]);
   const beginEdit = useCallback(() => {
     if (!note || !writable) return;
     setReading(true);
@@ -215,7 +218,7 @@ export function Memory({ initialPage, onAsk, onDirtyChange }: MemoryProps) {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [active, beginEdit, editing, dirty, save.isPending]);
+  }, [active, beginEdit, editing, dirty, save.isPending, t]);
 
   const onEditorKey = (event: KeyboardEvent) => {
     if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
@@ -227,22 +230,19 @@ export function Memory({ initialPage, onAsk, onDirtyChange }: MemoryProps) {
   const empty = connected && collectionsQuery.isSuccess && collections.length === 0;
 
   return (
-    <main class={`memory${reading ? " is-reading" : ""}`} aria-label="Memory">
+    <main class={`memory${reading ? " is-reading" : ""}`} aria-label={t("memory.title")}>
       {collectionsQuery.isError ? (
         <div class="memory-empty" role="alert">{collectionsQuery.error.message}</div>
       ) : empty ? (
         <div class="memory-empty">
-          <p>
-            Nothing here yet. Your Ship writes what it learns about you into its <span class="place">personal</span> wiki as you
-            work together, and this is where you read it and put it right.
-          </p>
+          <p>{rich(t("memory.empty"), { personal: <span class="place">personal</span> })}</p>
         </div>
       ) : (
         <div class="memory-body">
           <aside class="memory-rail" data-scroll-edge>
             <div class="memory-tools">
               {collections.length > 1 || (collections.length > 0 && !collection) ? (
-                <div class="collections" role="tablist" aria-label="Collections">
+                <div class="collections" role="tablist" aria-label={t("memory.collections")}>
                   {collections.map((entry) => (
                     <button
                       type="button"
@@ -276,8 +276,8 @@ export function Memory({ initialPage, onAsk, onDirtyChange }: MemoryProps) {
                   ref={searchRef}
                   type="text"
                   value={query}
-                  placeholder="search what is known"
-                  aria-label="Search memory"
+                  placeholder={t("memory.search.placeholder")}
+                  aria-label={t("memory.search.label")}
                   spellcheck={false}
                   onInput={(event) => setQuery(event.currentTarget.value)}
                 />
@@ -285,7 +285,7 @@ export function Memory({ initialPage, onAsk, onDirtyChange }: MemoryProps) {
                   <button
                     type="button"
                     class="clear"
-                    aria-label="Clear search"
+                    aria-label={t("memory.search.clear")}
                     onClick={() => {
                       setQuery("");
                       setAsked("");
@@ -296,20 +296,20 @@ export function Memory({ initialPage, onAsk, onDirtyChange }: MemoryProps) {
                 ) : null}
               </form>
             </div>
-            {writable && <button type="button" class="memory-new-page" disabled={!connected || save.isPending} onClick={newPage}>new page</button>}
-            {editing && <button type="button" class="memory-resume" onClick={() => setReading(true)}>continue editing →</button>}
-            <nav class="pages" ref={pagesRef} aria-label={asked ? "Matches" : "Pages"} onFocusCapture={(event) => {
+            {writable && <button type="button" class="memory-new-page" disabled={!connected || save.isPending} onClick={newPage}>{t("memory.newPage")}</button>}
+            {editing && <button type="button" class="memory-resume" onClick={() => setReading(true)}>{t("memory.resume")}</button>}
+            <nav class="pages" ref={pagesRef} aria-label={asked ? t("memory.matches") : t("memory.pages")} onFocusCapture={(event) => {
               if (event.target instanceof HTMLElement && event.target.matches(".page, .memory-folder > summary")) focusedRow.current = event.target;
             }}>
-              {!asked && (collectionsQuery.isLoading || pagesQuery.isLoading) ? <div class="memory-loading" role="status" aria-label="Loading memory"><Spinner size={160} /></div> : null}
+              {!asked && (collectionsQuery.isLoading || pagesQuery.isLoading) ? <div class="memory-loading" role="status" aria-label={t("memory.loading")}><Spinner size={160} /></div> : null}
               {!asked && pagesQuery.isError ? <div class="ph" role="alert">{pagesQuery.error.message}</div> : null}
               {asked ? (
                 <div class="ph">
-                  {searchQuery.isLoading ? <LoadingState>searching</LoadingState> : searchQuery.isError ? "Search failed" : pages.length === 0 ? "nothing matches" : `${pages.length} ${pages.length === 1 ? "match" : "matches"}`}
+                  {searchQuery.isLoading ? <LoadingState>{t("memory.search.searching")}</LoadingState> : searchQuery.isError ? t("memory.search.failed") : pages.length === 0 ? t("memory.search.none") : t("memory.search.count", { count: pages.length })}
                 </div>
               ) : null}
               {asked && searchQuery.isError ? <div class="ph" role="alert">{searchQuery.error.message}</div> : null}
-              {asked && searchQuery.data?.truncated ? <div class="ph">More matches exist. Narrow your search.</div> : null}
+              {asked && searchQuery.data?.truncated ? <div class="ph">{t("memory.search.truncated")}</div> : null}
               <MemoryPageTree nodes={pageTree} db={selectedDb} selectedPath={note?.path ?? null} hidden={Boolean(asked)} onOpen={open} />
               {asked ? pages.map((entry) => (
                 <button
@@ -319,7 +319,7 @@ export function Memory({ initialPage, onAsk, onDirtyChange }: MemoryProps) {
                   class={`page${entry.path === note?.path ? " is-sel" : ""}`}
                   onClick={() => open(entry)}
                 >
-                  <span class="title">{entry.title || entry.path}</span>
+                  <span class="title">{memoryPageTitle(t, entry, selectedDb)}</span>
                   <span class="page-path">{libraryPathInDb(entry.path, selectedDb)}</span>
                   {entry.snippet ? <span class="snippet">{entry.snippet}</span> : null}
                 </button>
@@ -328,33 +328,33 @@ export function Memory({ initialPage, onAsk, onDirtyChange }: MemoryProps) {
           </aside>
 
           <section class={`memory-page${editing ? " is-editing" : ""}`}>
-            <button type="button" class="memory-browse" onClick={() => setReading(false)}>← pages</button>
+            <button type="button" class="memory-browse" onClick={() => setReading(false)}>{t("memory.back")}</button>
             {note || creating ? (
               <>
                 <div class="page-head">
-                  {creating ? <input autoFocus class="memory-page-name" value={newName} aria-label="New page name" placeholder="Page name" disabled={save.isPending} onInput={(event) => setNewName(event.currentTarget.value)} /> : <span class="path">{note?.path}</span>}
+                  {creating ? <input autoFocus class="memory-page-name" value={newName} aria-label={t("memory.page.newName")} placeholder={t("memory.page.namePlaceholder")} disabled={save.isPending} onInput={(event) => setNewName(event.currentTarget.value)} /> : <span class="path">{note?.path}</span>}
                   <span class="actions">
-                    {pageStatus ? <span class={`status${pageStatus.error ? " is-error" : ""}`} role={pageStatus.error ? "alert" : "status"}>{pageStatus.text}</span> : null}
-                    {!editing && collection && note ? <button type="button" class="page-action" onClick={() => onAsk(`Use this file as context: @gsv /src/repos/${collection.repo}/${libraryPathInDb(note.path, selectedDb)}`)}>ask Ship</button> : null}
+                    {pageStatus ? <span class={`status${pageStatus.error !== null ? " is-error" : ""}`} role={pageStatus.error !== null ? "alert" : "status"}>{pageStatus.error ?? t("memory.page.saved", { path: pageStatus.path })}</span> : null}
+                    {!editing && collection && note ? <button type="button" class="page-action" onClick={() => onAsk(`Use this file as context: @gsv /src/repos/${collection.repo}/${libraryPathInDb(note.path, selectedDb)}`)}>{t("memory.page.ask")}</button> : null}
                     {editing ? (
                       <>
                         <button type="button" class="ibtn is-primary" disabled={save.isPending || !connected || !writable} onClick={() => saveEdit()}>
-                          {save.isPending ? <LoadingState>saving</LoadingState> : "save"}
+                          {save.isPending ? <LoadingState>{t("memory.page.saving")}</LoadingState> : t("memory.page.save")}
                         </button>
                         <button type="button" class="ibtn" disabled={save.isPending} onClick={closeEditor}>
-                          cancel
+                          {t("common.cancel")}
                         </button>
                       </>
                     ) : writable ? (
                       <button type="button" class="page-action" onClick={beginEdit}>
-                        <kbd>e</kbd>edit
+                        <kbd>e</kbd>{t("common.edit")}
                       </button>
                     ) : null}
                   </span>
                 </div>
                 {createError || (creating && save.error) ? <p class="memory-editor-error" role="alert">{createError ?? save.error?.message}</p> : null}
                 <div class="page-content" data-scroll-edge>
-                  {pageQuery.isError ? <div class="memory-none" role="alert">Could not refresh this page: {pageQuery.error.message}</div> : null}
+                  {pageQuery.isError ? <div class="memory-none" role="alert">{t("memory.page.refreshFailed", { error: pageQuery.error.message })}</div> : null}
                   {editing ? (
                     <textarea
                       disabled={save.isPending}
@@ -362,7 +362,7 @@ export function Memory({ initialPage, onAsk, onDirtyChange }: MemoryProps) {
                       class="editor"
                       value={editor?.markdown ?? ""}
                       spellcheck={true}
-                      aria-label="Page text"
+                      aria-label={t("memory.page.text")}
                       onInput={(event) => {
                         const markdown = event.currentTarget.value;
                         setEditor((current) => current ? { ...current, markdown } : current);
@@ -375,11 +375,11 @@ export function Memory({ initialPage, onAsk, onDirtyChange }: MemoryProps) {
                 </div>
               </>
             ) : collectionsQuery.isLoading || pageQuery.isLoading || pagesQuery.isLoading ? (
-              <div class="memory-loading" role="status" aria-label="Loading memory"><Spinner size={160} /></div>
+              <div class="memory-loading" role="status" aria-label={t("memory.loading")}><Spinner size={160} /></div>
             ) : (
               <div class="memory-none" role={pageQuery.isError || pagesQuery.isError || (db !== null && !collection) ? "alert" : undefined}>
                 {pageQuery.error?.message || pagesQuery.error?.message ||
-                  (db !== null && !collection ? `Collection “${db}” is unavailable.` : currentPath ? "This page is unavailable." : "No pages here yet.")}
+                  (db !== null && !collection ? t("memory.collectionUnavailable", { db }) : currentPath ? t("memory.pageUnavailable") : t("memory.noPages"))}
               </div>
             )}
           </section>

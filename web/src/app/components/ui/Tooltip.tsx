@@ -2,6 +2,7 @@ import type { ComponentChildren, JSX, RefObject } from "preact";
 import { cloneElement, isValidElement } from "preact";
 import { createPortal } from "preact/compat";
 import { useEffect, useId, useRef, useState } from "preact/hooks";
+import { useT } from "../../i18n/locale";
 import "./Tooltip.css";
 
 export type TooltipPosition =
@@ -426,11 +427,13 @@ function TooltipBubble({
  *  portaled to <body> so it escapes ancestor clipping/stacking, and tracks the
  *  trigger while open. */
 export function Tooltip({
-  trigger = "HOVER ME",
-  text = "A short hint about this control.",
+  trigger,
+  text: textProp,
   position = "top",
   children,
 }: TooltipProps) {
+  const t = useT();
+  const text = textProp ?? t("ui.tooltip.text");
   const bubbleId = useId();
   const bare = children != null;
   const { wrapRef, bubbleRef, open, shown, placement, theme } = useTooltipReveal(position);
@@ -441,7 +444,7 @@ export function Tooltip({
         class={`gsv-tt-trigger${bare ? " gsv-tt-trigger-bare" : ""}`}
         aria-describedby={bubbleId}
       >
-        {bare ? children : trigger}
+        {bare ? children : trigger ?? t("ui.tooltip.trigger")}
       </button>
       <span class="gsv-tt-desc" id={bubbleId} role="tooltip" aria-hidden="true">{text}</span>
       <TooltipBubble

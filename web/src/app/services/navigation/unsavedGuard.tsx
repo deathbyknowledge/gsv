@@ -2,6 +2,7 @@ import type { ComponentChildren } from "preact";
 import { createContext } from "preact";
 import { useCallback, useContext, useEffect, useId, useMemo, useRef, useState } from "preact/hooks";
 import { ConfirmModal } from "../../components/ui/ConfirmModal";
+import { useT } from "../../i18n/locale";
 
 /**
  * Shell-wide unsaved-changes guard.
@@ -58,6 +59,7 @@ export type UnsavedGuardController = {
 };
 
 export function useUnsavedGuardController(): UnsavedGuardController {
+  const t = useT();
   const registryRef = useRef<Map<string, DirtyProbe>>(new Map());
   const [pending, setPending] = useState<(() => void) | null>(null);
   // Mirror of `pending` readable inside the []-memoized requestLeave without
@@ -105,11 +107,11 @@ export function useUnsavedGuardController(): UnsavedGuardController {
       }}
     >
       <ConfirmModal
-        title="DISCARD CHANGES?"
-        message="This screen has unsaved changes."
-        note="If you leave now, your edits will be lost."
-        cancelLabel="KEEP EDITING"
-        confirmLabel="DISCARD"
+        title={t("ui.unsaved.title")}
+        message={t("ui.unsaved.message")}
+        note={t("ui.unsaved.note")}
+        cancelLabel={t("ui.unsaved.keepEditing")}
+        confirmLabel={t("ui.unsaved.discard")}
         onCancel={() => setPending(null)}
         onConfirm={() => {
           const proceed = pending;

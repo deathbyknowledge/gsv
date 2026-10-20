@@ -1,6 +1,7 @@
 import type { ComponentChildren } from "preact";
 import { useId, useLayoutEffect, useRef } from "preact/hooks";
 import { RetainedView } from "../../../services/navigation/ViewActivity";
+import { useT } from "../../../i18n/locale";
 
 export function FleetDialog({ open, title, onClose, children, className = "" }: {
   open: boolean;
@@ -9,6 +10,7 @@ export function FleetDialog({ open, title, onClose, children, className = "" }: 
   children: ComponentChildren;
   className?: string;
 }) {
+  const t = useT();
   const element = useRef<HTMLDialogElement>(null);
   const titleId = useId();
   const backdropPress = useRef(false);
@@ -39,7 +41,7 @@ export function FleetDialog({ open, title, onClose, children, className = "" }: 
     }}>
     <header class="fleet-dialog-head">
       <span id={titleId}>{title}</span>
-      <button type="button" class="fleet-text-action" aria-label="Close inspector" onClick={onClose}>close <kbd>esc</kbd></button>
+      <button type="button" class="fleet-text-action" aria-label={t("fleet.dialog.closeLabel")} onClick={onClose}>{t("fleet.dialog.close")} <kbd>esc</kbd></button>
     </header>
     <RetainedView active={open}>
       <section class="fleet-inspector" data-scroll-edge>{children}</section>

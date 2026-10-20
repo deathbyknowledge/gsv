@@ -1,4 +1,5 @@
 import type { ComponentChildren, JSX } from "preact";
+import { useT } from "../../i18n/locale";
 import "./SectionHeader.css";
 
 export interface SectionHeaderProps {
@@ -43,7 +44,7 @@ export function SectionHeader({
   chevron = false,
   className = "",
   density = "default",
-  title = "THE SHIP",
+  title: titleProp,
   meta = "",
   metaWord = "",
   divider = false,
@@ -53,6 +54,8 @@ export function SectionHeader({
   actions,
   onClick,
 }: SectionHeaderProps) {
+  const t = useT();
+  const title = titleProp ?? t("ui.sectionHeader.title");
   const hasMeta = !!meta;
   const hasMetaWord = !!metaWord;
   const hasActions = actions != null && actions !== false;

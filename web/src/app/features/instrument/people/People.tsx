@@ -22,6 +22,7 @@ import { BlockedPeople } from "./BlockedPeople";
 import { approachStatus, emptyApproachDraft, inboxPreview } from "./peopleModel";
 import { usePeopleRoute, type PeopleRoute } from "./peopleNavigation";
 import { navigateApp } from "../../../services/navigation/appNavigation";
+import { useT } from "../../../i18n/locale";
 import "../fleet/fleet.css";
 import "./people.css";
 
@@ -35,6 +36,7 @@ export function People({ onDirtyChange, onAsk }: {
   onDirtyChange: (dirty: boolean) => void;
   onAsk: (text: string) => void;
 }) {
+  const t = useT();
   const active = useViewActive();
   const { client, connected } = useGateway();
   const cache = useQueryClient();
@@ -126,70 +128,70 @@ export function People({ onDirtyChange, onAsk }: {
     open({ view: "requests", direction: "outgoing", history: false, requestId: value.id });
   };
 
-  if (accounts.isPending && connected) return <main class="people-access"><LoadingState variant="panel">Loading your account…</LoadingState></main>;
+  if (accounts.isPending && connected) return <main class="people-access"><LoadingState variant="panel">{t("people.loadingAccount")}</LoadingState></main>;
   if (accounts.error) return <main class="people-access"><p class="people-error" role="alert">{accounts.error.message}</p></main>;
-  if (account && !human) return <main class="people-access"><p>Sign in with your personal account to use People.</p></main>;
+  if (account && !human) return <main class="people-access"><p>{t("people.personalOnly")}</p></main>;
 
-  return <main class={`people${hasSelection ? " has-selection" : ""}${firstVisit ? " is-new" : ""}${listView === "inbox" ? " is-inbox" : ""}`} aria-label="People">
-    <aside class="people-list" aria-label="People and conversations">
+  return <main class={`people${hasSelection ? " has-selection" : ""}${firstVisit ? " is-new" : ""}${listView === "inbox" ? " is-inbox" : ""}`} aria-label={t("people.title")}>
+    <aside class="people-list" aria-label={t("people.listLabel")}>
       <div class="people-list-scroll" data-scroll-edge>
-      <header class="people-list-heading"><h1>{listView === "inbox" ? "People" : listView === "contacts" ? "Contacts" : history ? "Past requests" : direction === "outgoing" ? "Sent requests" : "Requests"}</h1>
+      <header class="people-list-heading"><h1>{t(listView === "inbox" ? "people.title" : listView === "contacts" ? "people.contacts.title" : history ? "people.requests.pastTitle" : direction === "outgoing" ? "people.requests.sentTitle" : "people.requests.title")}</h1>
         {listView !== "requests" && <div class="people-list-heading-actions">
           {listView === "inbox" && <button class="people-action people-request-entry" disabled={busy || !account || !canConfigure(account, "approach.list")} onClick={() => openList("requests")}>
-            <span>requests</span>{items.length > 0 && <span class="people-request-count">{items.length}{requests.hasNextPage ? "+" : ""}</span>}
+            <span>{t("people.requests.open")}</span>{items.length > 0 && <span class="people-request-count">{items.length}{requests.hasNextPage ? "+" : ""}</span>}
           </button>}
-          {listView === "inbox" && <button class="people-action" disabled={busy} onClick={() => openList("contacts")}>contacts</button>}
-          <button class="people-action" aria-label="Connect with someone" disabled={!connected || busy || !mayStart} onClick={() => setDialog("invitation")}>connect</button>
+          {listView === "inbox" && <button class="people-action" disabled={busy} onClick={() => openList("contacts")}>{t("people.contacts.open")}</button>}
+          <button class="people-action" aria-label={t("people.connect.title")} disabled={!connected || busy || !mayStart} onClick={() => setDialog("invitation")}>{t("people.connect.action")}</button>
         </div>}
       </header>
-      {listView !== "inbox" && <button class="people-action people-list-back" aria-label="Back to conversations" disabled={busy} onClick={() => openList("inbox")}>← conversations</button>}
+      {listView !== "inbox" && <button class="people-action people-list-back" aria-label={t("people.back.label")} disabled={busy} onClick={() => openList("inbox")}>{t("people.back.conversations")}</button>}
       {listView === "requests" ? <>
-        {account && !canConfigure(account, "approach.list") && <p class="people-note people-access-note">This account cannot read message requests.</p>}
-        <div class="people-list-tools"><button class="people-action" disabled={busy} onClick={() => { open({ direction: direction === "incoming" ? "outgoing" : "incoming", requestId: null }); }}>{direction === "incoming" ? "sent requests" : "received requests"}</button><button class="people-action" disabled={busy} onClick={() => { open({ history: !history, requestId: null }); }}>{history ? "current requests" : "history"}</button></div>
-        {requests.isFetching && !requests.data && <LoadingState variant="panel">Loading requests…</LoadingState>}
+        {account && !canConfigure(account, "approach.list") && <p class="people-note people-access-note">{t("people.requests.noAccess")}</p>}
+        <div class="people-list-tools"><button class="people-action" disabled={busy} onClick={() => { open({ direction: direction === "incoming" ? "outgoing" : "incoming", requestId: null }); }}>{t(direction === "incoming" ? "people.requests.showSent" : "people.requests.showReceived")}</button><button class="people-action" disabled={busy} onClick={() => { open({ history: !history, requestId: null }); }}>{t(history ? "people.requests.showCurrent" : "people.requests.showHistory")}</button></div>
+        {requests.isFetching && !requests.data && <LoadingState variant="panel">{t("people.requests.loading")}</LoadingState>}
         {requests.error && <p class="people-error" role="alert">{requests.error.message}</p>}
-        {requests.data && !items.length && <div class="people-empty-list"><p>{history ? "No past requests." : direction === "incoming" ? "No requests waiting for you." : "No requests waiting for a reply."}</p><span>{direction === "incoming" ? "People can reach you through your published profile." : "Start with someone’s public profile or a private invitation."}</span></div>}
-        <ul class="people-rows">{items.map((item) => <li key={item.id}><button class={`people-row${requestId === item.id ? " is-selected" : ""}`} disabled={busy} aria-current={requestId === item.id ? "true" : undefined} onClick={() => open({ requestId: item.id })}><span class="people-row-name">{item.displayName}</span><time>{new Date(item.createdAtMs).toLocaleDateString(undefined, { month: "short", day: "numeric" })}</time><span class="people-row-preview">{approachStatus(item)}</span></button></li>)}</ul>
-        {requests.hasNextPage && <button class="people-action people-more" disabled={requests.isFetchingNextPage} onClick={() => void requests.fetchNextPage()}>{requests.isFetchingNextPage ? "loading…" : "earlier requests"}</button>}
+        {requests.data && !items.length && <div class="people-empty-list"><p>{t(history ? "people.requests.noneHistory" : direction === "incoming" ? "people.requests.noneIncoming" : "people.requests.noneOutgoing")}</p><span>{t(direction === "incoming" ? "people.requests.reachHint" : "people.requests.startHint")}</span></div>}
+        <ul class="people-rows">{items.map((item) => <li key={item.id}><button class={`people-row${requestId === item.id ? " is-selected" : ""}`} disabled={busy} aria-current={requestId === item.id ? "true" : undefined} onClick={() => open({ requestId: item.id })}><span class="people-row-name">{item.displayName}</span><time>{new Date(item.createdAtMs).toLocaleDateString(undefined, { month: "short", day: "numeric" })}</time><span class="people-row-preview">{t(approachStatus(item))}</span></button></li>)}</ul>
+        {requests.hasNextPage && <button class="people-action people-more" disabled={requests.isFetchingNextPage} onClick={() => void requests.fetchNextPage()}>{t(requests.isFetchingNextPage ? "people.loadingMore" : "people.requests.earlier")}</button>}
       </> : <>
-        {listView === "inbox" && account && !canConfigure(account, "conversation.inbox") && <p class="people-note people-access-note">This account cannot read the inbox.</p>}
-        {account && !canConfigure(account, "contact.list") && <p class="people-note people-access-note">This account cannot read contacts.</p>}
-        <div class="people-list-tools"><input class="people-filter" aria-label={listView === "contacts" ? "Find a contact" : "Find a conversation"} value={filter} placeholder={listView === "contacts" ? "Find a contact…" : "Filter conversations…"} onInput={(event) => setFilter(event.currentTarget.value)} /></div>
-        {listView === "inbox" && archived && <div class="people-archive-heading"><span>Archived</span><button class="people-action" onClick={() => open({ archived: false })}>back to conversations</button></div>}
-        {(contactsQuery.isFetching && !contactsQuery.data || listView === "inbox" && inbox.isFetching && !inbox.data) && <LoadingState variant="panel">Loading conversations…</LoadingState>}
+        {listView === "inbox" && account && !canConfigure(account, "conversation.inbox") && <p class="people-note people-access-note">{t("people.inbox.noAccess")}</p>}
+        {account && !canConfigure(account, "contact.list") && <p class="people-note people-access-note">{t("people.contacts.noAccess")}</p>}
+        <div class="people-list-tools"><input class="people-filter" aria-label={t(listView === "contacts" ? "people.contacts.find" : "people.inbox.find")} value={filter} placeholder={t(listView === "contacts" ? "people.contacts.findPlaceholder" : "people.inbox.filter")} onInput={(event) => setFilter(event.currentTarget.value)} /></div>
+        {listView === "inbox" && archived && <div class="people-archive-heading"><span>{t("people.inbox.archived")}</span><button class="people-action" onClick={() => open({ archived: false })}>{t("people.inbox.leaveArchive")}</button></div>}
+        {(contactsQuery.isFetching && !contactsQuery.data || listView === "inbox" && inbox.isFetching && !inbox.data) && <LoadingState variant="panel">{t("people.inbox.loading")}</LoadingState>}
         {listView === "inbox" && inbox.error && <p class="people-error" role="alert">{inbox.error.message}</p>}
         {contactsQuery.error && <p class="people-error" role="alert">{contactsQuery.error.message}</p>}
-        {contactsQuery.data && (listView === "contacts" || inbox.data) && !visible.length && <div class="people-empty-list"><p>{filter ? "No matching people." : listView === "contacts" ? "Your address book starts here." : archived ? "No archived conversations." : "Your people will appear here."}</p><span>{filter ? "Try their name or Ship address." : "Invite someone you know, or accept a link they’ve shared with you."}</span></div>}
-        <ul class="people-rows">{visible.map((contact) => <li key={contact.id}><button class={`people-row${view === "inbox" && selectedContact?.id === contact.id ? " is-selected" : ""}${listView === "inbox" && inboxByContact.get(contact.id)?.unread ? " is-unread" : ""}`} disabled={busy} aria-current={view === "inbox" && selectedContact?.id === contact.id ? "true" : undefined} onClick={() => openContact(contact.id)}><span class="people-row-name">{contactDisplayName(contact)}{listView === "inbox" && inboxByContact.get(contact.id)?.unread && <span class="people-unread" aria-label="Unread" />}</span>{listView === "inbox" && <time>{new Date(inboxByContact.get(contact.id)?.conversation.updatedAt ?? contact.updatedAtMs).toLocaleDateString(undefined, { month: "short", day: "numeric" })}</time>}<span class="people-row-preview">{inboxPreview(contact, listView === "inbox" ? inboxByContact.get(contact.id) : undefined)}</span></button></li>)}</ul>
-        {listView === "inbox" && inbox.hasNextPage && <button class="people-action people-more" disabled={inbox.isFetchingNextPage} onClick={() => void inbox.fetchNextPage()}>{inbox.isFetchingNextPage ? "loading…" : "earlier conversations"}</button>}
+        {contactsQuery.data && (listView === "contacts" || inbox.data) && !visible.length && <div class="people-empty-list"><p>{t(filter ? "people.inbox.noMatch" : listView === "contacts" ? "people.contacts.empty" : archived ? "people.inbox.noArchived" : "people.inbox.empty")}</p><span>{t(filter ? "people.inbox.tryName" : "people.inbox.emptyHint")}</span></div>}
+        <ul class="people-rows">{visible.map((contact) => <li key={contact.id}><button class={`people-row${view === "inbox" && selectedContact?.id === contact.id ? " is-selected" : ""}${listView === "inbox" && inboxByContact.get(contact.id)?.unread ? " is-unread" : ""}`} disabled={busy} aria-current={view === "inbox" && selectedContact?.id === contact.id ? "true" : undefined} onClick={() => openContact(contact.id)}><span class="people-row-name">{contactDisplayName(contact)}{listView === "inbox" && inboxByContact.get(contact.id)?.unread && <span class="people-unread" aria-label={t("people.inbox.unread")} />}</span>{listView === "inbox" && <time>{new Date(inboxByContact.get(contact.id)?.conversation.updatedAt ?? contact.updatedAtMs).toLocaleDateString(undefined, { month: "short", day: "numeric" })}</time>}<span class="people-row-preview">{inboxPreview(contact, listView === "inbox" ? inboxByContact.get(contact.id) : undefined)}</span></button></li>)}</ul>
+        {listView === "inbox" && inbox.hasNextPage && <button class="people-action people-more" disabled={inbox.isFetchingNextPage} onClick={() => void inbox.fetchNextPage()}>{t(inbox.isFetchingNextPage ? "people.loadingMore" : "people.inbox.earlier")}</button>}
       </>}
       </div>
       <footer class="people-list-footer">
-        <details class="people-list-more"><summary>more</summary><div>
-          <button class="people-action" disabled={busy} onClick={(event) => { event.currentTarget.closest("details")?.removeAttribute("open"); setFilter(""); open({ view: "inbox", contactId: null, archived: !archived }); }}>{archived ? "conversations" : "archived conversations"}</button>
-          <button class="people-action" disabled={busy || !account || !canConfigure(account, "contact.block.list")} onClick={(event) => { event.currentTarget.closest("details")?.removeAttribute("open"); setDialog("blocked"); }}>blocked people</button>
+        <details class="people-list-more"><summary>{t("people.more")}</summary><div>
+          <button class="people-action" disabled={busy} onClick={(event) => { event.currentTarget.closest("details")?.removeAttribute("open"); setFilter(""); open({ view: "inbox", contactId: null, archived: !archived }); }}>{t(archived ? "people.inbox.showCurrent" : "people.inbox.showArchived")}</button>
+          <button class="people-action" disabled={busy || !account || !canConfigure(account, "contact.block.list")} onClick={(event) => { event.currentTarget.closest("details")?.removeAttribute("open"); setDialog("blocked"); }}>{t("people.blocked.open")}</button>
         </div></details>
-        {human && <button class="people-self" aria-current={view === "profile" ? "page" : undefined} disabled={busy || !canConfigure(account!, "profile.get")} onClick={() => open({ view: "profile" })}><span>{profile.data?.draft.displayName || account?.displayName || account?.username}</span><small>your profile{profileDirty ? " ·" : ""}</small></button>}
-        {!connected && <span role="status">reconnecting…</span>}
+        {human && <button class="people-self" aria-current={view === "profile" ? "page" : undefined} disabled={busy || !canConfigure(account!, "profile.get")} onClick={() => open({ view: "profile" })}><span>{profile.data?.draft.displayName || account?.displayName || account?.username}</span><small>{t("people.profile.footer")}{profileDirty ? " ·" : ""}</small></button>}
+        {!connected && <span role="status">{t("people.reconnecting")}</span>}
       </footer>
     </aside>
-    <section class="people-detail" ref={detail} tabIndex={-1} aria-label={view === "profile" ? "Your profile" : "Selected conversation"}>
-      {hasSelection && view !== "profile" && !(view === "inbox" && selectedContact) && <button class="people-action people-back" disabled={busy} onClick={() => { open({ view: view === "requests" ? "requests" : "inbox", contactId: null, requestId: null }); }}>← {view === "requests" ? "requests" : "conversations"}</button>}
+    <section class="people-detail" ref={detail} tabIndex={-1} aria-label={t(view === "profile" ? "people.profile.title" : "people.selected")}>
+      {hasSelection && view !== "profile" && !(view === "inbox" && selectedContact) && <button class="people-action people-back" disabled={busy} onClick={() => { open({ view: view === "requests" ? "requests" : "inbox", contactId: null, requestId: null }); }}>{t(view === "requests" ? "people.back.requests" : "people.back.conversations")}</button>}
       <RetainedView active={active && view === "inbox"}>
         {selectedContact ? <ContactInspector key={selectedContact.id} contact={selectedContact} account={account} onBack={() => open({ contactId: null })} idea={chosenIdea?.contactId === selectedContact.id ? chosenIdea.index : null} onAsk={(task) => onAsk(`Help me with ${JSON.stringify(contactDisplayName(selectedContact))}'s Ship profile: ${selectedContact.remoteOrigin}/profile\n\n${task.replaceAll("{name}", `${contactDisplayName(selectedContact)} (${new URL(selectedContact.remoteOrigin).host})`)}`)} draft={drafts.drafts.get(selectedContact.id) ?? EMPTY_CONTACT_DRAFT} onDraft={(change) => drafts.update(selectedContact.id, change)} onSend={() => void drafts.send(selectedContact)} onRetry={(id) => void drafts.send(selectedContact, id)} onObserved={(ids) => drafts.observed(selectedContact.id, ids)} />
-          : contactId ? contactsQuery.isFetching ? <LoadingState variant="panel">Opening conversation…</LoadingState> : <p class="people-note">This conversation is no longer available to this account.</p>
+          : contactId ? contactsQuery.isFetching ? <LoadingState variant="panel">{t("people.inbox.opening")}</LoadingState> : <p class="people-note">{t("people.inbox.unavailable")}</p>
           : firstVisit ? <PeopleWelcome idea={idea} onIdea={setIdea} disabled={busy || !connected || !mayStart} onConnect={() => { setChosenIdea({ index: idea, contactId: null }); setDialog("invitation"); }} />
-          : <div class="people-empty"><h2>Pick up where you left off.</h2><p>Choose a conversation to talk, share, or ask Ship to help.</p><button class="people-action" disabled={busy || !connected || !mayStart} onClick={() => setDialog("invitation")}>connect with someone</button></div>}
+          : <div class="people-empty"><h2>{t("people.inbox.resume")}</h2><p>{t("people.inbox.resumeHint")}</p><button class="people-action" disabled={busy || !connected || !mayStart} onClick={() => setDialog("invitation")}>{t("people.connect.prompt")}</button></div>}
         {!contactId && contactsQuery.data?.attentionNotice && <ContactAttentionNotice account={account} />}
       </RetainedView>
       <RetainedView active={active && view === "requests"}>
-        {requestId ? request.data ? <MessageRequest key={requestId} request={request.data} account={account} onOpen={showConversation} /> : request.error ? <p class="people-error" role="alert">{request.error.message}</p> : <LoadingState variant="panel">Opening request…</LoadingState>
-          : <div class="people-empty"><p>Select a request to read their first message.</p></div>}
+        {requestId ? request.data ? <MessageRequest key={requestId} request={request.data} account={account} onOpen={showConversation} /> : request.error ? <p class="people-error" role="alert">{request.error.message}</p> : <LoadingState variant="panel">{t("people.requests.opening")}</LoadingState>
+          : <div class="people-empty"><p>{t("people.requests.select")}</p></div>}
       </RetainedView>
       <RetainedView active={active && view === "profile"}>{account && <Profile key={account.uid} account={account} active={active && view === "profile"} onDirty={setProfileDirty} onBack={() => open({ view: "inbox", contactId: null })} />}</RetainedView>
-      {view === "contacts" && <div class="people-empty"><p>Choose a contact to open your conversation.</p></div>}
+      {view === "contacts" && <div class="people-empty"><p>{t("people.contacts.select")}</p></div>}
     </section>
-    <FleetDialog open={active && dialog !== null} title={dialog === "blocked" ? "Blocked people" : dialog === "invitation" ? "Connect with someone" : "Start a conversation"} onClose={() => { if (!busy) { clearContactInvitation(); setDialog(null); } }}>
+    <FleetDialog open={active && dialog !== null} title={t(dialog === "blocked" ? "people.blocked.title" : dialog === "invitation" ? "people.connect.title" : "people.compose.title")} onClose={() => { if (!busy) { clearContactInvitation(); setDialog(null); } }}>
       {dialog === "blocked" ? <BlockedPeople account={account} /> : dialog === "invitation" ? <InviteContact account={account} draft={invitation} onChange={setInvitation} onAdded={showConversation} onBusy={setBusy} onProfile={() => setDialog("profile")} />
         : dialog === "profile" ? <NewConversation account={account} draft={compose} onChange={setCompose} onSent={sent} onBusy={setBusy} contacts={contacts} onOpen={openContact} onInvitation={() => setDialog("invitation")} /> : null}
     </FleetDialog>

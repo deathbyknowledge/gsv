@@ -9,6 +9,7 @@ import type { ConsoleAccount } from "../../../domain/system/consoleModels";
 import { canConfigure } from "../settings/settingsModel";
 import { INSTRUMENT_CONTACTS_KEY, INSTRUMENT_CONTACT_INVITES_KEY } from "../wire/queryKeys";
 import { ContactHandlingChoice } from "./ContactHandlingChoice";
+import { useT, type TextKey } from "../../../i18n/locale";
 
 export type InvitationDraft = { code: string; issued: ContactInviteCreateResult | null; shipHandlesMessages: boolean | null };
 
@@ -20,10 +21,11 @@ export function InviteContact({ account, draft, onChange, onAdded, onBusy, onPro
   onBusy: (busy: boolean) => void;
   onProfile: () => void;
 }) {
+  const t = useT();
   const active = useViewActive();
   const { client, connected } = useGateway();
   const cache = useQueryClient();
-  const [copyStatus, setCopyStatus] = useState("");
+  const [copyStatus, setCopyStatus] = useState<TextKey | null>(null);
   const [accepting, setAccepting] = useState(!!draft.code);
   const [entering, setEntering] = useState(!draft.code);
   const [now, setNow] = useState(Date.now());
@@ -34,12 +36,12 @@ export function InviteContact({ account, draft, onChange, onAdded, onBusy, onPro
   const current = invites.data?.find((item) => item.inviteId === issued?.inviteId);
   const refreshInvites = () => cache.invalidateQueries({ queryKey: INSTRUMENT_CONTACT_INVITES_KEY });
   const create = useMutation({ mutationFn: () => {
-    if (draft.shipHandlesMessages === null) throw new Error("Choose who should handle new messages");
+    if (draft.shipHandlesMessages === null) throw new Error(t("people.handling.required"));
     return client.contact.invite.create({ expiresInSeconds: 7 * 24 * 60 * 60, shipHandlesMessages: draft.shipHandlesMessages });
   },
-    onSuccess: (invite) => { onChange({ ...draft, issued: invite }); setCopyStatus(""); void refreshInvites(); } });
+    onSuccess: (invite) => { onChange({ ...draft, issued: invite }); setCopyStatus(null); void refreshInvites(); } });
   const accept = useMutation({ mutationFn: () => {
-    if (draft.shipHandlesMessages === null) throw new Error("Choose who should handle new messages");
+    if (draft.shipHandlesMessages === null) throw new Error(t("people.handling.required"));
     return client.contact.invite.accept({ code: draft.code.trim(), shipHandlesMessages: draft.shipHandlesMessages });
   },
     onSuccess: async ({ contact }) => {
@@ -69,36 +71,36 @@ export function InviteContact({ account, draft, onChange, onAdded, onBusy, onPro
 
   return <section class="people-invite">
     {accepting ? <>
-      {entering && <p class="people-note">Paste the invitation they shared with you.</p>}
+      {entering && <p class="people-note">{t("people.invite.paste")}</p>}
       <form class="people-form" onSubmit={(event) => { event.preventDefault(); if (!busy && allowed("contact.invite.accept") && draft.shipHandlesMessages !== null && preview && "name" in preview && !preview.expired) accept.mutate(); }}>
-        {entering && <label>Invitation link or code<textarea rows={2} value={draft.code} autoComplete="off" spellcheck={false} disabled={busy} onInput={(event) => { accept.reset(); onChange({ ...draft, code: event.currentTarget.value, shipHandlesMessages: null }); }} /></label>}
-        {preview && ("error" in preview ? <p class="people-error" role="alert">{preview.error}</p> : <div class="people-invite-person"><h2>{preview.name}</h2><span>{preview.origin}</span><p class="people-note">{preview.expired ? "This invitation has expired. Ask them for a new link." : "Connect to message each other and ask your Ships to help."}</p></div>)}
+        {entering && <label>{t("people.invite.codeLabel")}<textarea rows={2} value={draft.code} autoComplete="off" spellcheck={false} disabled={busy} onInput={(event) => { accept.reset(); onChange({ ...draft, code: event.currentTarget.value, shipHandlesMessages: null }); }} /></label>}
+        {preview && ("error" in preview ? <p class="people-error" role="alert">{preview.error}</p> : <div class="people-invite-person"><h2>{preview.name}</h2><span>{preview.origin}</span><p class="people-note">{t(preview.expired ? "people.invite.expired" : "people.invite.connectHint")}</p></div>)}
         {preview && "name" in preview && !preview.expired && choice}
-        <button class="ibtn is-primary" type="submit" disabled={busy || !allowed("contact.invite.accept") || draft.shipHandlesMessages === null || !preview || "error" in preview || preview.expired}>{accept.isPending ? "connecting…" : "accept invitation"}</button>
+        <button class="ibtn is-primary" type="submit" disabled={busy || !allowed("contact.invite.accept") || draft.shipHandlesMessages === null || !preview || "error" in preview || preview.expired}>{t(accept.isPending ? "people.invite.connecting" : "people.invite.accept")}</button>
       </form>
-      <div class="people-actions">{!entering && <button class="people-action" disabled={busy} onClick={() => setEntering(true)}>use a different invitation</button>}
-        <button class="people-action" disabled={busy} onClick={() => { clearContactInvitation(); onChange({ code: "", issued: null, shipHandlesMessages: null }); setAccepting(false); setEntering(true); }}>invite someone instead</button></div>
+      <div class="people-actions">{!entering && <button class="people-action" disabled={busy} onClick={() => setEntering(true)}>{t("people.invite.useDifferent")}</button>}
+        <button class="people-action" disabled={busy} onClick={() => { clearContactInvitation(); onChange({ code: "", issued: null, shipHandlesMessages: null }); setAccepting(false); setEntering(true); }}>{t("people.invite.inviteInstead")}</button></div>
     </> : <>
-      <h2>Bring someone along.</h2>
-      <p class="people-note">Share a link. They can join Ship or connect their Ship.</p>
+      <h2>{t("people.invite.title")}</h2>
+      <p class="people-note">{t("people.invite.intro")}</p>
       {issued && link ? <div class="people-invite-link">
-        {expired || current?.state === "cancelled" ? <p role="status">This invitation {expired ? "has expired" : "was cancelled"}.</p> : <>
-          <label>Invitation link<input aria-label="Invitation link" value={link} readOnly onFocus={(event) => event.currentTarget.select()} /></label>
+        {expired || current?.state === "cancelled" ? <p role="status">{t(expired ? "people.invite.hasExpired" : "people.invite.wasCancelled")}</p> : <>
+          <label>{t("people.invite.link")}<input aria-label={t("people.invite.link")} value={link} readOnly onFocus={(event) => event.currentTarget.select()} /></label>
           <div class="people-actions"><button class="ibtn is-primary" onClick={async () => {
-            try { await navigator.clipboard.writeText(link); setCopyStatus("Link copied. Send it wherever you talk."); }
-            catch { setCopyStatus("Select the link above to copy it."); }
-          }}>copy link</button><span class="people-note" role="status">{copyStatus || "Ready to share"}</span></div>
-          <p class="people-note">For one person · expires {new Date(issued.expiresAtMs).toLocaleDateString(undefined, { month: "short", day: "numeric" })}</p>
+            try { await navigator.clipboard.writeText(link); setCopyStatus("people.invite.copied"); }
+            catch { setCopyStatus("people.invite.selectToCopy"); }
+          }}>{t("people.invite.copy")}</button><span class="people-note" role="status">{t(copyStatus ?? "people.invite.ready")}</span></div>
+          <p class="people-note">{t("people.invite.forOne", { date: new Date(issued.expiresAtMs).toLocaleDateString(undefined, { month: "short", day: "numeric" }) })}</p>
         </>}
-        <div class="people-actions"><button class="people-action" disabled={busy} onClick={() => onChange({ ...draft, issued: null, shipHandlesMessages: null })}>invite another person</button>
-          {!expired && current?.state !== "cancelled" && <button class="people-action" disabled={busy || !allowed("contact.invite.cancel")} onClick={() => cancel.mutate(issued.inviteId)}>cancel this invitation</button>}</div>
-      </div> : <>{choice}<button class="ibtn is-primary" disabled={busy || !allowed("contact.invite.create") || draft.shipHandlesMessages === null} onClick={() => create.mutate()}>{create.isPending ? "creating link…" : "create invitation link"}</button></>}
-      <div class="people-compose-footer"><button class="people-action" disabled={busy || !allowed("contact.invite.accept")} onClick={() => { onChange({ ...draft, issued: null, shipHandlesMessages: null }); setAccepting(true); }}>I have an invitation</button><button class="people-action" disabled={busy} onClick={onProfile}>use a profile address</button></div>
-      {pendingInvites.length > 0 && <details class="people-details-fold"><summary>{pendingInvites.length} pending invitation{pendingInvites.length === 1 ? "" : "s"}</summary>
-        {pendingInvites.map((item) => <div class="people-actions" key={item.inviteId}><span class="people-note">Expires {new Date(item.expiresAtMs).toLocaleDateString()}</span><button class="people-action" disabled={busy || !allowed("contact.invite.cancel")} onClick={() => cancel.mutate(item.inviteId)}>cancel</button></div>)}
+        <div class="people-actions"><button class="people-action" disabled={busy} onClick={() => onChange({ ...draft, issued: null, shipHandlesMessages: null })}>{t("people.invite.another")}</button>
+          {!expired && current?.state !== "cancelled" && <button class="people-action" disabled={busy || !allowed("contact.invite.cancel")} onClick={() => cancel.mutate(issued.inviteId)}>{t("people.invite.cancel")}</button>}</div>
+      </div> : <>{choice}<button class="ibtn is-primary" disabled={busy || !allowed("contact.invite.create") || draft.shipHandlesMessages === null} onClick={() => create.mutate()}>{t(create.isPending ? "people.invite.creating" : "people.invite.create")}</button></>}
+      <div class="people-compose-footer"><button class="people-action" disabled={busy || !allowed("contact.invite.accept")} onClick={() => { onChange({ ...draft, issued: null, shipHandlesMessages: null }); setAccepting(true); }}>{t("people.invite.have")}</button><button class="people-action" disabled={busy} onClick={onProfile}>{t("people.invite.useProfile")}</button></div>
+      {pendingInvites.length > 0 && <details class="people-details-fold"><summary>{t("people.invite.pending", { count: pendingInvites.length })}</summary>
+        {pendingInvites.map((item) => <div class="people-actions" key={item.inviteId}><span class="people-note">{t("people.invite.expiresOn", { date: new Date(item.expiresAtMs).toLocaleDateString() })}</span><button class="people-action" disabled={busy || !allowed("contact.invite.cancel")} onClick={() => cancel.mutate(item.inviteId)}>{t("common.cancel")}</button></div>)}
       </details>}
     </>}
     {error && <p class="people-error" role="alert">{error.message}</p>}
-    {!connected && <p class="people-note" role="status">Reconnecting… Your invitation is kept here.</p>}
+    {!connected && <p class="people-note" role="status">{t("people.invite.reconnecting")}</p>}
   </section>;
 }

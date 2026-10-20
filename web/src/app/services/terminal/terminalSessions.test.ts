@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { deferred } from "../../testing/testHarness";
 import { normalizeCommandInput, normalizeTranscriptEntry } from "./domain/normalization";
-import { TerminalSessions, type TerminalOperations } from "./terminalSessions";
+import { t } from "../../i18n/locale";
+import { TerminalSessions, terminalNotice, type TerminalOperations } from "./terminalSessions";
 
 const owners: TerminalSessions[] = [];
 const result = (output = "", status: "running" | "completed" | "failed" = "running") => normalizeTranscriptEntry({
@@ -69,7 +70,8 @@ describe("direct shell session ownership", () => {
     expect(row()).toMatchObject({ status: "starting", endedAt: null });
 
     owner.setConnected(false);
-    expect(row()).toMatchObject({ status: "failed", error: "Connection lost before the command finished." });
+    expect(row()).toMatchObject({ status: "failed", note: "lostBeforeFinish", error: "" });
+    expect(terminalNotice(t, row())).toBe("Connection lost before the command finished.");
     expect(row().endedAt).not.toBeNull();
 
     // Nothing can reach it after the request is gone, so reconnect must not revive it.
@@ -89,7 +91,8 @@ describe("direct shell session ownership", () => {
 
     owner.setConnected(false);
     // A session handle can still be polled, so this row stays live on purpose.
-    expect(row()).toMatchObject({ status: "unavailable", endedAt: null, error: "Connection lost. The command may still be running." });
+    expect(row()).toMatchObject({ status: "unavailable", endedAt: null, note: "stillRunning" });
+    expect(terminalNotice(t, row())).toBe("Connection lost. The command may still be running.");
   });
 
   it("restores a sessionless command as finished rather than permanently live", async () => {
@@ -105,8 +108,19 @@ describe("direct shell session ownership", () => {
     restored.setConnected(true);
     await vi.advanceTimersByTimeAsync(10_000);
     const row = restored.snapshot()[0];
-    expect(row).toMatchObject({ status: "failed", sessionId: null, error: "The command\u2019s status could not be confirmed." });
+    expect(row).toMatchObject({ status: "failed", sessionId: null, note: "unconfirmed" });
+    expect(terminalNotice(t, row)).toBe("The command\u2019s status could not be confirmed.");
     expect(row.endedAt).not.toBeNull();
+  });
+
+  it("restores a journal saved before rows kept their notes", () => {
+    const { storage } = harness();
+    storage.write(JSON.stringify([{ id: "you:old", scope: "ship", target: "macbook", command: "old", sessionId: null, startedAt: 1, endedAt: 2,
+      status: "failed", output: "", truncated: false, error: "Target offline: macbook", actionError: "", draft: "", inputOpen: false, action: null, stopRequested: false }]));
+    const restored = new TerminalSessions({ execute: vi.fn(), cancel: vi.fn() }, storage);
+    owners.push(restored);
+    expect(restored.snapshot()[0]).toMatchObject({ note: null, actionNote: null });
+    expect(terminalNotice(t, restored.snapshot()[0])).toBe("Target offline: macbook");
   });
 
   it("still opens a session for targets that support one", async () => {
@@ -268,7 +282,8 @@ describe("direct shell session ownership", () => {
     owner.setDraft(id, "one time only");
     expect(await owner.sendInput(id)).toBe(false);
     expect(row()).toMatchObject({ draft: "one time only", status: "unavailable" });
-    expect(row().actionError).toContain("could not be confirmed");
+    expect(row().actionNote).toBe("inputUnconfirmed");
+    expect(terminalNotice(t, row())).toContain("could not be confirmed");
     owner.setConnected(false);
     owner.setConnected(true);
     await vi.advanceTimersByTimeAsync(0);

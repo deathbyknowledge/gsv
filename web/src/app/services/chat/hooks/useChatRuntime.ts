@@ -4,6 +4,7 @@ import { useGateway } from "../../gateway/GatewayProvider";
 import { getProcessHistorySync } from "../backend/historySync";
 import { emptyChatRuntimeState } from "../domain/transcript";
 import { useChatProcessHistory } from "./useChatProcesses";
+import { t } from "../../../i18n/locale";
 
 export { mergeTranscriptRows } from "../domain/transcriptMerge";
 
@@ -53,7 +54,7 @@ export function useChatRuntime({
       await sync.loadOlder(processId, oldest, HISTORY_PAGE_SIZE);
     } catch (error) {
       if (currentProcess.current !== processId) return;
-      setHistoryError(error instanceof Error ? error.message : "History could not be loaded.");
+      setHistoryError(error instanceof Error ? error.message : t("chat.history.loadFailed"));
     } finally {
       if (currentProcess.current === processId) setLoadingOlderHistory(false);
     }

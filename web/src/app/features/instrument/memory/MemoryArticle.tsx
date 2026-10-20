@@ -5,6 +5,7 @@ import { assignLibraryHeadingIds } from "../../../services/memory/libraryLinks";
 import { renderMarkdownHtml } from "../shared/markdown";
 import { enhanceCodeBlocks } from "../shared/codeBlocks";
 import { memoryLinkFromUrl, memoryLinkHref, resolveMemoryLink, type MemoryLink } from "./memoryLinks";
+import { useT, type Translate } from "../../../i18n/locale";
 
 function scrollToHeading(article: HTMLElement, fragment: string): void {
   const heading = fragment ? [...article.querySelectorAll<HTMLElement>("[id]")].find((node) => node.id === fragment) : null;
@@ -18,15 +19,16 @@ export function MemoryArticle({ note, db, fragment, onOpen }: {
   fragment: string;
   onOpen(link: MemoryLink): void;
 }) {
+  const t = useT();
   const active = useViewActive();
   const ref = useRef<HTMLElement>(null);
-  const rendered = useRef<{ db: string; path: string; markdown: string } | null>(null);
+  const rendered = useRef<{ db: string; path: string; markdown: string; t: Translate } | null>(null);
   const location = useRef<{ db: string; path: string; fragment: string } | null>(null);
   useLayoutEffect(() => {
     const article = ref.current;
     if (!active || !article) return;
     const previous = rendered.current;
-    if (previous?.db === db && previous.path === note.path && previous.markdown === note.markdown) return;
+    if (previous?.db === db && previous.path === note.path && previous.markdown === note.markdown && previous.t === t) return;
     article.innerHTML = renderMarkdownHtml(note.markdown);
     enhanceCodeBlocks(article);
     assignLibraryHeadingIds(article);
@@ -42,11 +44,11 @@ export function MemoryArticle({ note, db, fragment, onOpen }: {
       } else if (!/^[a-z][a-z0-9+.-]*:/i.test(href)) {
         anchor.removeAttribute("href");
         anchor.setAttribute("aria-disabled", "true");
-        anchor.title = "This link does not point to a Memory page.";
+        anchor.title = t("memory.article.notMemoryLink");
       }
     }
-    rendered.current = { db, path: note.path, markdown: note.markdown };
-  }, [active, db, note.path, note.markdown]);
+    rendered.current = { db, path: note.path, markdown: note.markdown, t };
+  }, [active, db, note.path, note.markdown, t]);
 
   useLayoutEffect(() => {
     const article = ref.current;
