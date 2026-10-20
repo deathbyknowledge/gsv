@@ -16,9 +16,11 @@ Spanish in `es.ts` is the first translation. Development builds offer it until
 every screen reads from the catalog; production builds include only English.
 
 Development builds include the pseudo-locale `en-XA`. Choose `en-XA` as the
-language preference, or as the browser's language (Chromium's `--lang=en-XA`
-also works with the mock gateway), to accent, bracket and lengthen catalog
-text: plain text bypassed the catalog, and clipped text needs more room.
+language preference, or as the browser's language, to accent, bracket and
+lengthen catalog text: plain text bypassed the catalog, and clipped text needs
+more room. The mock gateway (`?mock=1`) keeps the language preference in the
+browser, so **Settings → Preferences → Language** switches between `en`, `es`
+and `en-XA` there too.
 
 ## Writing interface text
 
