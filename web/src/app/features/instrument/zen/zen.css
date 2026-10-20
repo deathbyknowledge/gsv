@@ -237,7 +237,8 @@
   text-align: center;
   font-style: normal;
   animation: zen-wave 1.6s ease-in-out infinite;
-  animation-delay: calc(var(--i) * -0.25s);
+  /* negative so every tilde starts mid-cycle; later tildes lag, so the crest travels left to right */
+  animation-delay: calc((3 - var(--i)) * -0.25s);
 }
 @keyframes zen-wave { 0%, 100% { transform: translateY(0.12em); opacity: 0.45; } 50% { transform: translateY(-0.12em); opacity: 1; } }
 @media (prefers-reduced-motion: reduce) {
