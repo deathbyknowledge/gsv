@@ -12,8 +12,9 @@ A test checks that each translation keeps every English `{slot}` and uses only
 its language's plural forms. A catalog's header states its conventions, such as
 the form of address.
 
-Spanish in `es.ts` is the first translation. Development builds offer it until
-every screen reads from the catalog; production builds include only English.
+Spanish in `es.ts` is the first translation. English is part of every bundle;
+a translation is fetched only when the interface switches to it, and each entry
+point renders its first screen once its language is in place.
 
 Development builds include the pseudo-locale `en-XA`. Choose `en-XA` as the
 language preference, or as the browser's language, to accent, bracket and

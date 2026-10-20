@@ -114,7 +114,7 @@ function InterfaceLanguage() {
   const { accounts } = useConsoleAccounts({ enabled: ready });
   const preference = useLanguagePreference(accounts.find((account) => account.relation === "self")?.uid, { enabled: ready });
   const language = ready ? preference.data : undefined;
-  useLayoutEffect(() => applyLanguagePreference(language || undefined), [language]);
+  useLayoutEffect(() => { void applyLanguagePreference(language || undefined); }, [language]);
   return null;
 }
 

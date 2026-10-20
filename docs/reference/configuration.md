@@ -37,8 +37,8 @@ requests take precedence.
 
 The web interface and Desktop show their own text in this language when a translation exists
 for it; a regional tag such as `es-MX` uses its base language. Signed out, or without a matching
-translation, they follow the device's languages, then English. English is the only interface
-translation so far. The preference does not change date or number formatting.
+translation, they follow the device's languages, then English. The interface is available in
+English and Spanish. The preference does not change date or number formatting.
 
 Desktop also reads this preference for local spoken replies.
 Regional tags use the matching voice language; without a saved value, it uses the

@@ -16,5 +16,5 @@ if (!app) {
   throw new Error("Missing #app mount");
 }
 
-applyLanguagePreference();
-render(<App />, app);
+// The first screen waits for its language, so it never shows English before a translation arrives.
+void applyLanguagePreference().then(() => render(<App />, app));

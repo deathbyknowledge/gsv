@@ -12,8 +12,8 @@ import { loadSignupPage } from "./page";
 const accountsOrigin = window.location.origin;
 const app = document.querySelector<HTMLElement>("#app");
 if (!app) throw new Error("Missing #app mount");
-applyLanguagePreference();
-void loadSignupPage(new BrowserWelcomeStorage(accountsOrigin), accountsOrigin)
+// The page writes its text as it loads, so its language is in place first.
+void applyLanguagePreference().then(() => loadSignupPage(new BrowserWelcomeStorage(accountsOrigin), accountsOrigin))
   .then((page) => render(<AuthScene layout="welcome">{page}</AuthScene>, app))
   .catch(() => render(<AuthScene layout="welcome"><AuthLayout visible>
     <p role="alert">{t("signup.loadFailed")}</p>

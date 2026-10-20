@@ -10,8 +10,8 @@ beforeEach(() => {
   vi.stubGlobal("document", { documentElement: {} });
 });
 
-afterEach(() => {
-  applyLanguagePreference("en");
+afterEach(async () => {
+  await applyLanguagePreference("en");
   vi.unstubAllGlobals();
 });
 
@@ -64,12 +64,20 @@ describe("interface language", () => {
     }
   });
 
-  it("translates into Spanish", () => {
-    applyLanguagePreference("es-ES");
+  it("translates into Spanish", async () => {
+    await applyLanguagePreference("es-ES");
     expect(document.documentElement.lang).toBe("es");
     expect(t("settings.mcp.tools", { count: 1 })).toBe("1 herramienta");
     expect(t("settings.mcp.tools", { count: 3 })).toBe("3 herramientas");
     expect(t("settings.logs.failed", { error: "timeout" })).toBe("No se han podido leer los registros: timeout");
+  });
+
+  it("keeps the newest choice when an earlier language arrives later", async () => {
+    const spanish = applyLanguagePreference("es");
+    await applyLanguagePreference("en");
+    await spanish;
+    expect(t("common.cancel")).toBe("cancel");
+    expect(document.documentElement.lang).toBe("en");
   });
 
   it("places elements into a message", () => {
