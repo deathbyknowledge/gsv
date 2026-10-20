@@ -1971,7 +1971,7 @@ export const en = {
   "fleet.missing.processGone": "This process is unavailable.",
   "fleet.missing.placeGone": "This place is unavailable.",
   "fleet.place.alwaysOn": "always on",
-  "fleet.place.runs": { other: "{count} runs" },
+  "fleet.place.runs": { one: "{count} run", other: "{count} runs" },
   "fleet.place.runCommand": "run a command",
   "fleet.place.browse": "browse files",
   "fleet.place.talk": "talk about it",
@@ -2372,7 +2372,7 @@ export const en = {
 
   // Browser view
   "browser.requests": "Browser requests",
-  "browser.minutesLeft": { other: "{count} minutes remaining" },
+  "browser.minutesLeft": { one: "{count} minute remaining", other: "{count} minutes remaining" },
   "browser.open": "open browser",
   "browser.preparing": "preparing browser…",
   "browser.viewer": "Live cloud browser",
