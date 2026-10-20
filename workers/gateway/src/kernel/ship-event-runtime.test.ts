@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import type { DurableTaskOptions } from "../shared/durable-tasks";
 import { runWithRealKernelSql } from "../test-support/real-kernel-sql";
 import * as processTransport from "../shared/utils";
 import * as personalController from "./personal-controller";
@@ -167,7 +168,7 @@ function pending(responsibilities: ResponsibilityStore) {
 function fixture(storage: DurableObjectStorage) {
   const shipEvents = new ShipEventStore(storage);
   const responsibilities = new ResponsibilityStore(storage);
-  const schedule = vi.fn(async (when: Date, _callback: string, _ownerUid: number, _options: object) =>
+  const schedule = vi.fn(async (when: Date, _callback: string, _ownerUid: number, _options: DurableTaskOptions) =>
     ({ id: `task:${when.getTime()}`, time: Math.floor(when.getTime() / 1_000) }));
   const contact = {
     id: "contact:remote", ownerUid: OWNER, generation: "1", conversationId: "conv:remote", state: "active", blocked: false,
