@@ -3,6 +3,7 @@ import { Button } from "../ui/Button";
 import { ListRow, type ListRowStatus } from "../ui/ListRow";
 import { SectionHeader } from "../ui/SectionHeader";
 import { StatusMeta, type StatusTone } from "../ui/StatusDot";
+import { useT } from "../../i18n/locale";
 import "./ConsoleDetailPage.css";
 
 export type ConsoleDetailRow = {
@@ -68,7 +69,7 @@ export function ConsoleDetailPage({
   onBack,
   onPrimary,
   parentLabel,
-  pendingLabel = "PENDING SURFACE",
+  pendingLabel,
   primaryLabel,
   sections = [],
   showBack = false,
@@ -76,6 +77,7 @@ export function ConsoleDetailPage({
   title,
   tone,
 }: ConsoleDetailPageProps) {
+  const t = useT();
   const hasSections = sections.some((section) => section.rows.length > 0);
   const hasActions = Boolean(primaryLabel) || (actions != null && actions !== false);
   const hasDanger = dangerAction != null && dangerAction !== false;
@@ -170,7 +172,7 @@ export function ConsoleDetailPage({
             <span class="gsv-detail-corner is-top-right" aria-hidden="true" />
             <span class="gsv-detail-corner is-bottom-left" aria-hidden="true" />
             <span class="gsv-detail-corner is-bottom-right" aria-hidden="true" />
-            <span>[ {title} · {pendingLabel} ]</span>
+            <span>[ {title} · {pendingLabel ?? t("ui.detail.pending")} ]</span>
           </div>
         ) : null}
       </div>

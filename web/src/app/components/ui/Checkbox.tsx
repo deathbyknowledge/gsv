@@ -1,5 +1,6 @@
 import { useEffect, useId, useRef, useState } from "preact/hooks";
 import { InfoTip } from "./InfoTip";
+import { useT } from "../../i18n/locale";
 import "./Checkbox.css";
 
 export type CheckboxSize = "small" | "medium" | "large";
@@ -29,11 +30,12 @@ const SIZE_CLASS = {
 /** Checkbox — ported from Checkbox.dc.html. Self-toggling box with check/dash
  *  fill, optional label, field description and status row. */
 export function Checkbox(props: CheckboxProps) {
+  const t = useT();
   const {
     indeterminate = false,
     disabled = false,
     size = "medium",
-    label = "RUN IN BACKGROUND",
+    label = t("ui.field.runInBackground"),
     info = "",
     description = "",
     requirement = "none",
@@ -63,7 +65,7 @@ export function Checkbox(props: CheckboxProps) {
   const statKey = rawStat === "warning" ? "warn" : rawStat;
   const hasStat = !!rawStat && message.length > 0;
   const req = requirement && requirement !== "none" ? requirement : "";
-  const fldReq = req === "required" ? "· REQUIRED" : "· OPTIONAL";
+  const fldReq = req === "required" ? t("ui.field.required") : t("ui.field.optional");
 
   const rootClass = `gsv-cb ${SIZE_CLASS[size]}${on ? " is-on" : ""}${disabled ? " is-disabled" : ""}`;
   const fldClass = `gsv-cb-fld${hasStat ? ` is-${statKey}` : ""}`;

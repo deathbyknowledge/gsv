@@ -7,6 +7,7 @@ import type {
 
 import { frameBodyFromBlob } from "./frameBody";
 import { randomId } from "../ids";
+import { t } from "../../i18n/locale";
 
 export type StagedResourceUpload = {
   type: "image" | "audio" | "video" | "document";
@@ -31,7 +32,7 @@ export async function withStagedResources<T>(
 ): Promise<T> {
   signal?.throwIfAborted();
   if (uploads.some(({ body }) => body.size > MAX_STAGED_RESOURCE_BYTES)) {
-    throw new Error("Attachments cannot exceed 25 MiB");
+    throw new Error(t("shell.attachments.tooLarge"));
   }
   const paths: string[] = [];
   const settled = await Promise.allSettled(uploads.map(async (upload, index) => {
@@ -70,7 +71,7 @@ async function uploadResource(
     received.data,
   );
   if (receiveResult.bytesWritten !== upload.body.size) {
-    throw new Error("Ship stored an unexpected attachment length");
+    throw new Error(t("shell.attachments.unexpectedLength"));
   }
   const stat = await client.request("fs.transfer.stat", { path: receiveResult.path }, { signal });
   await stat.body?.stream.cancel("fs.transfer.stat does not return a body").catch(() => {});
@@ -81,7 +82,7 @@ async function uploadResource(
     || statResult.contentType !== upload.mimeType
     || !statResult.revision
   ) {
-    throw new Error("Ship could not identify the uploaded attachment revision");
+    throw new Error(t("shell.attachments.unknownRevision"));
   }
   return {
     type: "resource",
@@ -115,6 +116,6 @@ async function deleteUploads(client: ResourceUploadClient, paths: string[]): Pro
 }
 
 function requireSuccess<T extends { ok: true }>(result: T | FailureResult): T {
-  if (!result.ok) throw new Error(result.error || "Ship resource request failed");
+  if (!result.ok) throw new Error(result.error || t("shell.attachments.requestFailed"));
   return result;
 }

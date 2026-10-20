@@ -2,6 +2,7 @@ import type { ListRowStatus } from "../ui/ListRow";
 import type { StatusTone } from "../ui/StatusDot";
 import type { ConsoleDetailRow } from "./ConsoleDetailPage";
 import { z } from "zod";
+import { t } from "../../i18n/locale";
 
 export function detailRow(
   id: string,
@@ -10,7 +11,7 @@ export function detailRow(
   options: Pick<ConsoleDetailRow, "status" | "statusLabel" | "labelInfo"> = {},
 ): ConsoleDetailRow | null {
   const sub = z.boolean().safeParse(value).success
-    ? (value ? "YES" : "NO")
+    ? (value ? t("ui.detail.yes") : t("ui.detail.no"))
     : z.number().safeParse(value).success
       ? String(value)
       : z.string().safeParse(value).data?.trim() ?? "";

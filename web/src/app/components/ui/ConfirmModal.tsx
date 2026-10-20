@@ -2,6 +2,7 @@ import type { ComponentChildren } from "preact";
 import { useEffect, useId, useRef, useState } from "preact/hooks";
 import { Button } from "./Button";
 import { TextInput } from "./TextInput";
+import { useT } from "../../i18n/locale";
 import "./ConfirmModal.css";
 
 export interface ConfirmModalProps {
@@ -27,19 +28,20 @@ export interface ConfirmModalProps {
 /** ConfirmModal — ported from ConfirmModal.dc.html. A destructive-confirmation
  *  dialog surface composing two Buttons (secondary cancel + danger confirm). */
 export function ConfirmModal({
-  title = "CONFIRM DELETE",
-  message = "Are you sure you want to delete “PERSONA”?",
-  note = "This file is removed from the agent — it can’t be recovered.",
-  cancelLabel = "CANCEL",
-  confirmLabel = "DELETE",
+  title,
+  message,
+  note,
+  cancelLabel,
+  confirmLabel,
   width = 440,
   children,
   confirmPhrase,
-  confirmInputLabel = "TYPE TO CONFIRM",
+  confirmInputLabel,
   confirmInputPlaceholder,
   onCancel,
   onConfirm,
 }: ConfirmModalProps) {
+  const t = useT();
   const titleId = useId();
   const descId = useId();
   const rootRef = useRef<HTMLDivElement>(null);
@@ -128,8 +130,8 @@ export function ConfirmModal({
         }}
       >
         <span style={{ width: "7px", height: "7px", flex: "none", borderRadius: "1px", background: "var(--warn)", boxShadow: "0 0 8px var(--warn)" }} />
-        <span id={titleId} class="gsv-label" style={{ letterSpacing: ".2em", color: "#e8d7b0" }}>{title}</span>
-        <button type="button" class="gsv-cm-close" aria-label="Close modal" onClick={onCancel}>
+        <span id={titleId} class="gsv-label" style={{ letterSpacing: ".2em", color: "#e8d7b0" }}>{title ?? t("ui.confirm.title")}</span>
+        <button type="button" class="gsv-cm-close" aria-label={t("ui.confirm.close")} onClick={onCancel}>
           {"✕"}
         </button>
       </div>
@@ -150,8 +152,8 @@ export function ConfirmModal({
           <rect x="11.1" y="16" width="1.8" height="1.8" fill="var(--warn)" stroke="none" />
         </svg>
         <div style={{ paddingTop: "2px", fontFamily: "'Space Grotesk',sans-serif", minWidth: 0, overflowWrap: "anywhere" }}>
-          <div id={descId} class="gsv-prose" style={{ lineHeight: "1.65", color: "var(--text)" }}>{message}</div>
-          <div class="gsv-prose-sm" style={{ color: "#9a95cf", marginTop: "9px", letterSpacing: ".04em" }}>{note}</div>
+          <div id={descId} class="gsv-prose" style={{ lineHeight: "1.65", color: "var(--text)" }}>{message ?? t("ui.confirm.message")}</div>
+          <div class="gsv-prose-sm" style={{ color: "#9a95cf", marginTop: "9px", letterSpacing: ".04em" }}>{note ?? t("ui.confirm.note")}</div>
           {children ? <div class="gsv-cm-extra">{children}</div> : null}
         </div>
       </div>
@@ -160,7 +162,7 @@ export function ConfirmModal({
         <div style={{ padding: "0 22px 18px" }}>
           <TextInput
             value={typedValue}
-            label={confirmInputLabel}
+            label={confirmInputLabel ?? t("ui.confirm.typeToConfirm")}
             placeholder={confirmInputPlaceholder ?? confirmPhrase}
             clearable
             status={phraseMatched && typedValue.length > 0 ? "success" : "none"}
@@ -170,8 +172,8 @@ export function ConfirmModal({
       ) : null}
 
       <div ref={footerRef} style={{ display: "flex", justifyContent: "flex-end", gap: "12px", padding: "0 22px 22px" }}>
-        <Button variant="secondary" label={cancelLabel} onClick={onCancel} />
-        <Button variant="danger" label={confirmLabel} disabled={!phraseMatched} onClick={onConfirm} />
+        <Button variant="secondary" label={cancelLabel ?? t("ui.confirm.cancel")} onClick={onCancel} />
+        <Button variant="danger" label={confirmLabel ?? t("ui.confirm.delete")} disabled={!phraseMatched} onClick={onConfirm} />
       </div>
     </div>
   );

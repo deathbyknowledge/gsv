@@ -1,3 +1,4 @@
+import { t } from "../../../i18n/locale";
 import "./codeBlocks.css";
 
 /** Add local controls after Markdown has been sanitized; copying never executes the code. */
@@ -14,24 +15,24 @@ export function enhanceCodeBlocks(container: HTMLElement): void {
     if (language.textContent === "text") block.classList.add("is-plain-text");
     const copy = document.createElement("button");
     copy.type = "button";
-    copy.textContent = "copy";
-    copy.title = "Copy code";
+    copy.textContent = t("shell.code.copy");
+    copy.title = t("shell.code.copyTitle");
     copy.setAttribute("aria-live", "polite");
     copy.addEventListener("click", async () => {
       try {
         // Omit Marked's added final newline while preserving the code's internal whitespace.
         await navigator.clipboard.writeText((code.textContent ?? "").replace(/\n$/, ""));
-        copy.textContent = "copied";
-        copy.title = "Copy code";
+        copy.textContent = t("shell.copied");
+        copy.title = t("shell.code.copyTitle");
       } catch {
-        copy.textContent = "couldn't copy";
-        copy.title = "Select the code and copy it manually";
+        copy.textContent = t("shell.code.copyFailed");
+        copy.title = t("shell.code.copyManually");
       }
     });
     header.append(language, copy);
     pre.before(block);
     pre.tabIndex = 0;
-    pre.setAttribute("aria-label", "Code block");
+    pre.setAttribute("aria-label", t("shell.code.label"));
     block.append(header, pre);
   }
 }
