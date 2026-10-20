@@ -6,6 +6,7 @@ import { enhanceCodeBlocks } from "../shared/codeBlocks";
 import { createGlyphReveal, type GlyphReveal } from "./glyphReveal";
 import { linkPlaceReferences, type Place } from "./zenModel";
 import { FOLDED_LINES, lineHeight, useFold } from "./zenFold";
+import { useT } from "../../../i18n/locale";
 
 export const ZenText = memo(function ZenText({ text, markdown, places, progress, tick, opened = false, onClick, onFold }: {
   text: string;
@@ -20,6 +21,7 @@ export const ZenText = memo(function ZenText({ text, markdown, places, progress,
   /** Called with the element to hold in place just before the message folds or opens. */
   onFold?: (element: HTMLElement) => void;
 }) {
+  const t = useT();
   const ref = useRef<HTMLDivElement>(null);
   const content = useRef<HTMLDivElement>(null);
   const reveal = useRef<GlyphReveal | null>(null);
@@ -100,7 +102,7 @@ export const ZenText = memo(function ZenText({ text, markdown, places, progress,
     ><div ref={content} /></div>
     {fold.state === "whole" ? null : (
       <button type="button" class="zen-fold-toggle" ref={toggleRef} aria-controls={id} aria-expanded={!folded} onClick={toggle}>
-        {folded ? "read more" : "show less"}
+        {t(folded ? "chat.text.more" : "chat.text.less")}
       </button>
     )}
   </>;

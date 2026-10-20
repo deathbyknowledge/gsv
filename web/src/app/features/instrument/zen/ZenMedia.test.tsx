@@ -69,11 +69,19 @@ describe("attachment opening", () => {
 });
 
 describe("pasted text chip", () => {
-  it("keeps the complete paste in collapsed details and removes it on request", () => {
+  it("keeps the complete paste in collapsed details and removes it on request", async () => {
     const onRemove = vi.fn();
     const text = `${"x".repeat(434)}!`;
-    const tree = ZenDraftPaste({ paste: { id: "paste", text, characters: 435 }, onRemove });
+    let tree: ComponentChildren;
+    function Harness() {
+      tree = ZenDraftPaste({ paste: { id: "paste", text, characters: 435 }, onRemove });
+      return null;
+    }
+    vi.stubGlobal("document", {});
+    root = createTestRoot("Pasted text chip");
+    await root.render(<Harness />);
     const nodes = collectNodes(tree);
+    expect(collectText(nodes.find((node) => node.type === "summary"))).toContain("435 characters");
     expect(collectText(nodes.find((node) => node.type === "summary"))).not.toContain(text);
     expect(nodes.find((node) => node.type === "pre")?.props.children).toBe(text);
     expect(nodes.find((node) => node.type === "details")?.props).not.toHaveProperty("open", true);

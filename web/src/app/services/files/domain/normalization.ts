@@ -11,6 +11,7 @@ import type {
 } from "./models";
 import { z } from "zod";
 import { childPath, detectPathStyle, normalizePath, normalizeTarget, parentPath } from "./paths";
+import { t } from "../../../i18n/locale";
 
 type FilesWireValue = string | number | boolean | null | FilesWireValue[] | FilesWireRecord;
 type FilesWireRecord = { [key: string]: FilesWireValue };
@@ -121,7 +122,7 @@ export function normalizeFilesRead(payload: FilesRpcPayload, target: string, req
       ok: false,
       target: normalizedTarget,
       path: fallbackPath,
-      error: asString(record?.error) ?? `Unable to open ${fallbackPath}`,
+      error: asString(record?.error) ?? t("chat.files.openFailed", { path: fallbackPath }),
     };
   }
 
@@ -174,7 +175,7 @@ export function normalizeFilesSearch(
       ok: false,
       target: normalizeTarget(target),
       path: normalizedPath,
-      error: asString(record?.error) ?? "Search failed",
+      error: asString(record?.error) ?? t("chat.files.searchFailed"),
     };
   }
 
@@ -207,7 +208,7 @@ export function normalizeFilesWrite(payload: FilesRpcPayload, target: string, pa
       ok: false,
       target: normalizeTarget(target),
       path: normalizedPath,
-      error: asString(record?.error) ?? `Failed to write ${normalizedPath}`,
+      error: asString(record?.error) ?? t("chat.files.writeFailed", { path: normalizedPath }),
     };
   }
   return {
@@ -226,7 +227,7 @@ export function normalizeFilesDelete(payload: FilesRpcPayload, target: string, p
       ok: false,
       target: normalizeTarget(target),
       path: normalizedPath,
-      error: asString(record?.error) ?? `Failed to delete ${normalizedPath}`,
+      error: asString(record?.error) ?? t("chat.files.deleteFailed", { path: normalizedPath }),
     };
   }
   return {
