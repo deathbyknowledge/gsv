@@ -22,6 +22,7 @@ import { BrowserRequests } from "../browser/BrowserControl";
 import { ChatPanels } from "./ChatPanels";
 import { ZenText } from "./ZenText";
 import { ThinkingMark } from "./ThinkingMark";
+import { WakingUp } from "./WakingUp";
 import { ApprovalCard } from "../shared/ApprovalCard";
 import { ConversationSearch } from "../shared/ConversationSearch";
 import { ZenDraftPaste } from "./ZenMedia";
@@ -557,6 +558,43 @@ describe("Zen conversation entry", () => {
     } finally { await zen.unmount(); }
   });
 
+  it("shows Ship waking up from the empty chat through its first run until the first message lands", async () => {
+    const zen = await mountedZen();
+    const waking = () => zen.nodes().filter((node) => node.type === WakingUp).length;
+    try {
+      await vi.waitFor(() => expect(waking()).toBe(1));
+      expect(zen.nodes().some((node) => node.type === ThinkingMark)).toBe(false);
+
+      activeRunId = "welcome-run";
+      await act(() => { for (const listener of signals) listener("proc.run.started", { pid: shipPid, runId: activeRunId }); });
+      await vi.waitFor(() => expect(zen.nodes().some((node) => node.type === ThinkingMark)).toBe(true));
+      expect(waking()).toBe(1);
+
+      const greeting = message("process", "Hi, I'm Ship.");
+      await act(() => {
+        messages = [greeting];
+        for (const listener of signals) listener("message.committed", { message: greeting, directed: false });
+      });
+      await vi.waitFor(() => expect(zen.props(ZenText).text).toBe(greeting.text));
+      expect(waking()).toBe(0);
+
+      activeRunId = "later-run";
+      await act(() => { for (const listener of signals) listener("proc.run.started", { pid: shipPid, runId: activeRunId }); });
+      await vi.waitFor(() => expect(zen.nodes().some((node) => node.type === ThinkingMark)).toBe(true));
+      expect(waking()).toBe(0);
+    } finally { await zen.unmount(); }
+  });
+
+  it("does not call an older conversation a waking Ship", async () => {
+    messages = [message("user", "Are you there?")];
+    hasMore = true;
+    const zen = await mountedZen();
+    try {
+      await vi.waitFor(() => expect(zen.props(ZenText).text).toBe("Are you there?"));
+      expect(zen.nodes().some((node) => node.type === WakingUp)).toBe(false);
+    } finally { await zen.unmount(); }
+  });
+
   it("renders a canonical translated welcome and retains it after reload", async () => {
     activeRunId = "welcome-run";
     const zen = await mountedZen();
@@ -679,6 +717,7 @@ describe("Zen conversation entry", () => {
     try {
       await vi.waitFor(() => expect(zen.text()).toContain("This helper has no messages yet."));
       expect(zen.text()).not.toContain("I am the Ship. Who are you?");
+      expect(zen.nodes().some((node) => node.type === WakingUp)).toBe(false);
       expect(send).not.toHaveBeenCalled();
     } finally { await zen.unmount(); }
   });

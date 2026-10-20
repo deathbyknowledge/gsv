@@ -49,6 +49,7 @@ import { useZenScroll } from "./useZenScroll";
 import { useZenProcess } from "./useZenProcess";
 import { ZenText } from "./ZenText";
 import { ThinkingMark, THINKING_MARK } from "./ThinkingMark";
+import { WakingUp } from "./WakingUp";
 import { ReceiptTimeline, RECEIPT_LAYOUT } from "./ReceiptTimeline";
 import { receiptsForMoments, type RunReceipt } from "./runReceipts";
 import { ZenDraftAttachment, ZenDraftPaste, ZenMedia } from "./ZenMedia";
@@ -59,6 +60,7 @@ import {
   activityDuration,
   answerAttribution,
   answerHistorySnapshot,
+  awaitingFirstMessage,
   countLabel,
   defaultPlace,
   momentsFromConversation,
@@ -591,6 +593,9 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
     return { moments, receipts: receiptsForMoments(moments, runtime.activeRunId, pid) };
   }, [answerHistory, conversation.rows, conversation.conversation?.id, outbox.messages, localRuns, runtime.activeRunId, runtime.rows, pid]);
 
+  /* a Ship that has never spoken: the owner's own chat, all of it loaded, with no words from Ship yet; what they read meanwhile is the waking line */
+  const waking = ready && !pidProp && !conversation.hasMore && !processRuntime.hasOlderHistory && awaitingFirstMessage(moments);
+
   /* the glyph thinking mark moves on the same clock as settling text; the dot keeps its own time in the stylesheet */
   const marking = THINKING_MARK === "glyphs" && moments.some((moment) => !moment.text && (moment.thinking || moment.streaming));
   const animating = streaming || settling.size > 0 || marking;
@@ -994,7 +999,7 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
           <ZenText text={moment.text} places={places} markdown progress={moment.streaming ? -1 : settleProgress(moment)} tick={moment.streaming || settling.has(moment.id) ? tick : 0}
             opened={streamed(moment)} onClick={onTextClick} onFold={pin} />
         ) : moment.thinking || moment.streaming ? (
-          <div class="text"><ThinkingMark tick={tick} /></div>
+          <div class="text">{waking ? <WakingUp /> : null}<ThinkingMark tick={tick} /></div>
         ) : null}
         {moment.media?.map((media, index) => <ZenMedia key={index} media={media} processId={moment.processId ?? pid ?? ""} />)}
         {moment.text && <MomentCopyButton text={moment.text} />}
@@ -1016,7 +1021,7 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
     });
   }, [ready, moments, who, today, timeZone, places, openActivities, toggleActivity, onFleet,
     receipts, memoryCollections.data, onMemory, pendingHil, settling, tick, onTextClick, pin, streamed,
-    pid, connected, outbox.sending, outbox.cancelUpload, outbox.retry, outbox.discard]);
+    pid, connected, outbox.sending, outbox.cancelUpload, outbox.retry, outbox.discard, waking]);
 
   /* the status line */
   const selectorPlaces = useMemo(() => orderPlaces(targetsQuery.data ?? []), [targetsQuery.data]);
@@ -1091,6 +1096,9 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
                   </div>
                 );
               })}
+              {waking && !moments.some((moment) => moment.role === "ship" && moment.thinking) ? (
+                <div class="zen-moment is-ship"><div class="text"><WakingUp /></div></div>
+              ) : null}
               {pendingHil ? (
                 <div class="zen-moment is-approval">
                   <ApprovalCard
