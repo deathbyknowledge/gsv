@@ -1,9 +1,10 @@
 import type { GSVClient } from "@humansandmachines/gsv/client";
 import { bodyFromText, decodeBrowserViewStream, type BrowserHumanInput, type SysBrowserWatchArgs, type SysBrowserInputArgs } from "@humansandmachines/gsv/protocol";
+import { t } from "../../i18n/locale";
 
 export async function watchBrowser(client: GSVClient, args: SysBrowserWatchArgs, signal: AbortSignal) {
   const result = await client.request("sys.browser.watch", args, { signal });
-  if (!result.body) throw new Error("Browser returned no view stream");
+  if (!result.body) throw new Error(t("browser.stream.missing"));
   return decodeBrowserViewStream(result.body, signal);
 }
 

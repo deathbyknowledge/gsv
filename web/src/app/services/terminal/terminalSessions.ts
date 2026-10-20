@@ -1,12 +1,16 @@
 import { z } from "zod";
 import type { ShellCancelResult } from "@humansandmachines/gsv/protocol";
-import type { TerminalCommandInput, TerminalTranscriptEntry } from "./domain/models";
+import { t, type Translate } from "../../i18n/locale";
+import { TERMINAL_NOTES, TerminalNoteError, type TerminalCommandInput, type TerminalNote, type TerminalTranscriptEntry } from "./domain/models";
 
+const noteSchema = z.custom<TerminalNote>((value) => Object.keys(TERMINAL_NOTES).some((note) => note === value));
+/** A row's failures are either worded here, as a note, or shown as the target reported them, as an error; never both. */
 const sessionSchema = z.object({
   id: z.string(), scope: z.string(), target: z.string(), command: z.string(),
   sessionId: z.string().nullable(), startedAt: z.number(), endedAt: z.number().nullable(),
   status: z.enum(["starting", "running", "unavailable", "completed", "failed", "stopped"]),
   output: z.string(), truncated: z.boolean(), error: z.string(), actionError: z.string(),
+  note: noteSchema.nullable().default(null), actionNote: noteSchema.nullable().default(null),
   draft: z.string(), inputOpen: z.boolean(), action: z.enum(["input", "stop"]).nullable(),
   stopRequested: z.boolean(),
 });
@@ -20,15 +24,29 @@ const OUTPUT_LIMIT = 32_000;
 const POLL_DELAY = 250;
 export const terminalFinished = (session: TerminalSession) => session.endedAt !== null;
 
+/** The failure a row shows: its last action's before the command's own. */
+export function terminalNotice(t: Translate, session: TerminalSession): string {
+  if (session.actionNote) return t(TERMINAL_NOTES[session.actionNote]);
+  if (session.actionError) return session.actionError;
+  return session.note ? t(TERMINAL_NOTES[session.note]) : session.error;
+}
+
+type Failure = Pick<TerminalSession, "note" | "error">;
+const noted = (note: TerminalNote): Failure => ({ note, error: "" });
+function failure(cause: unknown, fallback: TerminalNote): Failure {
+  if (cause instanceof TerminalNoteError) return noted(cause.note);
+  return cause instanceof Error ? { note: null, error: cause.message } : noted(fallback);
+}
+
 /** How a row settles when the request carrying it is interrupted. A session
  *  handle can be polled after a reconnect, so that row stays live and merely
  *  unavailable. Without one there is nothing left to poll or cancel, and the
  *  owner of the request owns its completion: the row ends here rather than
  *  leaving an activity that can never be retried, stopped, or pruned. */
-function interrupted(row: TerminalSession, pending: string, ended: string): Partial<TerminalSession> {
+function interrupted(row: TerminalSession, pending: Failure, ended: Failure): Partial<TerminalSession> {
   return row.sessionId
-    ? { status: "unavailable", error: pending }
-    : { status: "failed", endedAt: Date.now(), error: ended };
+    ? { status: "unavailable", ...pending }
+    : { status: "failed", endedAt: Date.now(), ...ended };
 }
 
 /** One owner for direct commands, independent of the currently mounted view. */
@@ -46,7 +64,7 @@ export class TerminalSessions {
       const stored = storage?.read();
       if (stored) this.rows = z.array(sessionSchema).parse(JSON.parse(stored)).map((row) => terminalFinished(row) ? row : {
         ...row, action: null,
-        ...interrupted(row, "Checking the command after reconnect…", "The command’s status could not be confirmed."),
+        ...interrupted(row, noted("checking"), noted("unconfirmed")),
       });
     } catch { /* A missing or unreadable local journal does not block a new command. */ }
   }
@@ -76,25 +94,25 @@ export class TerminalSessions {
       for (const timer of this.timers.values()) clearTimeout(timer);
       this.timers.clear();
       this.rows = this.rows.map((row) => terminalFinished(row) ? row
-        : { ...row, ...interrupted(row, "Connection lost. The command may still be running.", "Connection lost before the command finished.") });
+        : { ...row, ...interrupted(row, noted("stillRunning"), noted("lostBeforeFinish")) });
       this.publish();
     }
   }
 
   start(command: string, target: string, scope: string, supportsSessions = true): string {
-    if (!this.connected || this.disposed) throw new Error("Connect before running a command.");
+    if (!this.connected || this.disposed) throw new Error(t("fleet.terminal.connectFirst"));
     const id = `you:${crypto.randomUUID()}`;
     // Browser targets run one command at a time and reject sessions outright,
     // so they take the same sessionless path the cloud target does.
     const sessionId = target === "gsv" || !supportsSessions ? null : crypto.randomUUID();
     const rows: TerminalSession[] = [...this.rows, { id, scope, target, command, sessionId, startedAt: Date.now(), endedAt: null,
-      status: "starting", output: "", truncated: false, error: "", actionError: "", draft: "", inputOpen: false, action: null, stopRequested: false }];
+      status: "starting", output: "", truncated: false, error: "", actionError: "", note: null, actionNote: null, draft: "", inputOpen: false, action: null, stopRequested: false }];
     if (sessionId) {
       try {
         if (!this.storage) throw new Error("No session journal");
         this.storage.write(JSON.stringify(rows));
       } catch {
-        throw new Error("Could not save the command’s recovery handle. Free browser storage and try again.");
+        throw new Error(t("fleet.terminal.journalFailed"));
       }
     }
     this.rows = rows;
@@ -121,25 +139,26 @@ export class TerminalSessions {
     const connectionVersion = this.connectionVersion;
     const done = Promise.resolve().then(async () => {
       try {
-        if (this.disposed || !this.connected) throw new Error("Connection lost. The command’s status is unknown.");
+        if (this.disposed || !this.connected) throw new TerminalNoteError("statusUnknown");
         const result = await this.operations.execute(input, controller.signal);
         const row = this.find(id);
         if (!row) return false;
-        if (result.status === "running" && !result.sessionId) throw new Error("The command returned no session handle.");
+        if (result.status === "running" && !result.sessionId) throw new TerminalNoteError("noSessionHandle");
         const output = row.output + result.output;
         this.patch(id, { sessionId: result.sessionId ?? row.sessionId,
           output: output.slice(-OUTPUT_LIMIT), truncated: row.truncated || result.truncated || output.length > OUTPUT_LIMIT,
           status: result.status === "running" ? "running" : row.stopRequested ? "stopped" : result.status,
           endedAt: result.status === "running" ? null : Date.now(),
-          error: result.status === "failed" && !row.stopRequested ? result.stderr : "",
+          ...(result.status === "failed" && !row.stopRequested
+            ? { note: result.note ?? null, error: result.note ? "" : result.stderr } : { note: null, error: "" }),
         });
         return true;
       } catch (error) {
         const row = this.find(id);
-        const message = error instanceof Error ? error.message : "Could not check the command.";
+        const reason = failure(error, "checkFailed");
         if (row) this.patch(id, row.stopRequested && !row.sessionId && controller.signal.aborted && !this.disposed
-          ? { status: "stopped", endedAt: Date.now(), error: "" }
-          : interrupted(row, message, message));
+          ? { status: "stopped", endedAt: Date.now(), note: null, error: "" }
+          : interrupted(row, reason, reason));
         return false;
       } finally {
         this.jobs.delete(id);
@@ -171,7 +190,7 @@ export class TerminalSessions {
     if (!row?.sessionId || terminalFinished(row) || row.action || !this.connected) return false;
     const draft = row.draft;
     const connectionVersion = this.connectionVersion;
-    this.patch(id, { action: "input", actionError: "" });
+    this.patch(id, { action: "input", actionError: "", actionNote: null });
     await this.jobs.get(id)?.done;
     if (this.find(id)?.action !== "input") return false;
     if (this.disposed || !this.connected || connectionVersion !== this.connectionVersion || terminalFinished(this.find(id)!)) {
@@ -181,7 +200,7 @@ export class TerminalSessions {
     }
     const accepted = await this.execute(id, { sessionId: row.sessionId, input: `${draft}\n`, yieldMs: 1_000 });
     const update: Partial<TerminalSession> = { action: this.find(id)?.action === "stop" ? "stop" : null,
-      actionError: accepted ? "" : "Input delivery could not be confirmed. Check the output before sending it again." };
+      actionError: "", actionNote: accepted ? null : "inputUnconfirmed" };
     if (accepted && this.find(id)?.draft === draft) update.draft = "";
     this.patch(id, update);
     if (accepted && !terminalFinished(this.find(id)!) && !this.find(id)?.action) this.schedule(id);
@@ -191,9 +210,9 @@ export class TerminalSessions {
   async stop(id: string): Promise<void> {
     let row = this.find(id);
     if (!row || terminalFinished(row) || row.action === "stop" || !this.connected) return;
-    this.patch(id, { action: "stop", actionError: "" });
+    this.patch(id, { action: "stop", actionError: "", actionNote: null });
     const job = this.jobs.get(id);
-    if (row.action === "input" || job?.starting) job?.controller.abort(new Error("Stopping the command"));
+    if (row.action === "input" || job?.starting) job?.controller.abort(new TerminalNoteError("stopping"));
     // A sessionless command is a foreground request with nothing to cancel
     // server-side: aborting it is the only way to stop it, whatever the target.
     if (!row.sessionId) {
@@ -205,12 +224,13 @@ export class TerminalSessions {
     if (!row || terminalFinished(row) || this.disposed || !this.connected) { this.patch(id, { action: null }); return; }
     const controller = new AbortController();
     try {
-      if (!row.sessionId) throw new Error("The command’s session could not be recovered.");
+      if (!row.sessionId) throw new TerminalNoteError("sessionLost");
       const result = await this.operations.cancel(row.sessionId, controller.signal);
       if (result.cancelled) this.patch(id, { stopRequested: true });
       if (!this.disposed) await this.execute(id, { sessionId: row.sessionId, input: "", yieldMs: 1_000 });
     } catch (error) {
-      this.patch(id, { actionError: error instanceof Error ? error.message : "Could not stop the command." });
+      const reason = failure(error, "stopFailed");
+      this.patch(id, { actionNote: reason.note, actionError: reason.error });
     } finally {
       this.patch(id, { action: null });
       if (this.find(id)?.status === "running") this.schedule(id);

@@ -1,3 +1,4 @@
+import { useT } from "../../i18n/locale";
 import "./Tag.css";
 
 export type TagTone = "update" | "online" | "error" | "warn" | "info" | "accent" | "idle";
@@ -34,7 +35,9 @@ const BORDER = {
 };
 
 /** Tag — ported from Tag.dc.html. Badge in boxed or plain form, optional dot. */
-export function Tag({ tone = "update", label = "UPDATE", boxed = false, dot = false, pulse = false, size = "small" }: TagProps) {
+export function Tag({ tone = "update", label: labelProp, boxed = false, dot = false, pulse = false, size = "small" }: TagProps) {
+  const t = useT();
+  const label = labelProp ?? t("ui.tag.label");
   const color = COLOR[tone] ?? COLOR.update;
   const dotGlow = tone === "idle" ? "none" : `0 0 6px ${color}`;
   const dotEl = dot ? (

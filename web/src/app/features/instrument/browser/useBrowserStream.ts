@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "preact/hooks";
 import type { GSVClient } from "@humansandmachines/gsv/client";
 import type { BrowserViewFrame, BrowserViewState } from "@humansandmachines/gsv/protocol";
 import { watchBrowser } from "../../../services/instances/browserControl";
+import { t } from "../../../i18n/locale";
 
 export type BrowserImage = { source: string; data: BrowserViewFrame; selection: object; signal: AbortSignal; presented: () => void };
 
@@ -43,7 +44,7 @@ export function useBrowserStream(client: GSVClient, instanceId: string, tabId: n
           const source = URL.createObjectURL(new Blob([new Uint8Array(packet.image)], { type: "image/jpeg" }));
           urls.add(source);
           await new Promise<void>((resolve, reject) => {
-            const timeout = setTimeout(() => finish(new Error("Browser image did not display")), 10000);
+            const timeout = setTimeout(() => finish(new Error(t("browser.stream.imageTimeout"))), 10000);
             const abort = () => finish(active.signal.reason);
             const finish = (cause?: unknown) => {
               clearTimeout(timeout); active.signal.removeEventListener("abort", abort);
@@ -59,7 +60,7 @@ export function useBrowserStream(client: GSVClient, instanceId: string, tabId: n
           });
           retry = 250; setError("");
         }
-        if (!stopped) throw new Error("Browser view stream ended");
+        if (!stopped) throw new Error(t("browser.stream.ended"));
       } catch (cause) { if (!stopped) setError(String(cause)); }
       finally {
         active.abort();

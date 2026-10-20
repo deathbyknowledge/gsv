@@ -7,6 +7,7 @@ import { sameNativePresentation } from "./nativePresentation";
 import { useNativeSoundFeedback } from "./useInputSounds";
 import { ClientControlError, useClientControl, type MicrophoneStatus } from "./ClientControl";
 import { useNativeSpeech } from "./NativeSpeech";
+import { t } from "../../i18n/locale";
 
 export type VoiceComposer = Pick<PromptLineHandle, "selection" | "setValue" | "commands">;
 
@@ -101,11 +102,11 @@ export function useNativeVoice({ prompt, scope, enabled, send, global = false, s
       }
       if (action === "release") return;
       if (state.current?.voice || startingRef.current) {
-        setError("Finish the current recording before starting handsfree mode.");
+        setError(t("desktop.voice.errors.finishCurrent"));
         speaking.current?.cue("attention");
         return;
       }
-      if (!lease.current) { setError("Reconnect microphone controls to start recording."); return; }
+      if (!lease.current) { setError(t("desktop.voice.errors.reconnectToRecord")); return; }
       const unavailable = latest.current.prepareHandsfree?.();
       if (unavailable) { setError(unavailable); speaking.current?.cue("attention"); return; }
       globalCapture.current = true;
@@ -122,7 +123,7 @@ export function useNativeVoice({ prompt, scope, enabled, send, global = false, s
           globalCapture.current = false;
           finishRequested.current = false;
           speaking.current?.recording(false);
-          if (stopped === false) setError("Could not stop playback. Try recording again.");
+          if (stopped === false) setError(t("desktop.voice.errors.playbackStuck"));
         }
       })();
     });
@@ -210,7 +211,7 @@ export function useNativeVoice({ prompt, scope, enabled, send, global = false, s
         const requestedAt = Date.now();
         await input.acknowledge(ownedLease, revision, ack);
         if (!active || lease.current !== ownedLease) return;
-        if (Date.now() - requestedAt > 1000) throw new Error("Native input paused while the view was suspended. Reconnect input to continue.");
+        if (Date.now() - requestedAt > 1000) throw new Error(t("desktop.voice.errors.suspended"));
         if (finishRequested.current && state.current?.voice) await finish();
       } catch (error) { fail(String(error)); }
       finally {
@@ -236,7 +237,7 @@ export function useNativeVoice({ prompt, scope, enabled, send, global = false, s
             if (event.action === "send") {
               const submit = globalCapture.current ? latest.current.sendGlobal ?? latest.current.send : latest.current.send;
               if (!event.text.trim()) {
-                setError("No speech detected. Your draft is still here.");
+                setError(t("desktop.voice.errors.noSpeech"));
               } else if (latest.current.enabled && submit(result.value.trim())) {
                 speaking.current?.voiceSent();
                 speaking.current?.cue("sent");
@@ -246,7 +247,7 @@ export function useNativeVoice({ prompt, scope, enabled, send, global = false, s
               } else {
                 draft.current = null;
                 void command({ kind: "cancel" });
-                setError(globalCapture.current ? "Your message could not be sent. The voice draft is still here." : "Dictation stopped. Your unsent text is still in the prompt.");
+                setError(t(globalCapture.current ? "desktop.voice.errors.notSent" : "desktop.voice.errors.dictationStopped"));
               }
             }
             if (event.kind === "final") { draft.current = null; globalCapture.current = false; finishRequested.current = false; }
@@ -275,7 +276,7 @@ export function useNativeVoice({ prompt, scope, enabled, send, global = false, s
       if (update.snapshot.lease !== ownedLease || update.revision <= revision) return;
       try {
         const age = Date.now() - update.sent_at_ms;
-        if (age > 1000 || age < -1000) throw new Error("Native input paused while the view was suspended. Reconnect input to continue.");
+        if (age > 1000 || age < -1000) throw new Error(t("desktop.voice.errors.suspended"));
         revision = update.revision;
         apply(update.snapshot);
         void acknowledge();
@@ -331,7 +332,7 @@ export function useNativeVoice({ prompt, scope, enabled, send, global = false, s
         if ((stopped === false || !await command({ kind: "start", device_id: device || null })) && operation.current === attempt) {
           preparing(false);
           speaking.current?.recording(false);
-          if (stopped === false) setError("Could not stop playback. Try recording again.");
+          if (stopped === false) setError(t("desktop.voice.errors.playbackStuck"));
         }
       })();
     },
@@ -344,7 +345,7 @@ export function useNativeVoice({ prompt, scope, enabled, send, global = false, s
       if (writing.current || !draft.current) return;
       if (!draft.current.edit(value)) {
         cancel();
-        setError("Dictation stopped for your edit. Start voice again to continue.");
+        setError(t("desktop.voice.errors.editedDuringDictation"));
       }
     },
     interceptSubmit: () => {

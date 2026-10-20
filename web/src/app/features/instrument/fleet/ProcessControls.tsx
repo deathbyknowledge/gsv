@@ -10,6 +10,7 @@ import { requestFsRead } from "../../../services/gateway/fsRead";
 import { getChatProcessAiConfig, setChatProcessAiConfig, spawnChatProcess } from "../../../services/chat/backend/chatService";
 import { loadConsoleModels } from "../../../services/system/consoleService";
 import { instrumentProcessAiKey, INSTRUMENT_PROCESSES_KEY } from "../wire/queryKeys";
+import { useT } from "../../../i18n/locale";
 
 const modelChoicesSchema = z.array(z.object({ id: z.string(), name: z.string() }));
 type ModelChoice = z.infer<typeof modelChoicesSchema>[number];
@@ -21,19 +22,20 @@ function AiFields({ value, models, onChange }: {
   models: readonly ModelChoice[];
   onChange: (value: AiSelection) => void;
 }) {
+  const t = useT();
   return (
     <>
       <label>
-        First-choice model
+        {t("fleet.processAi.model")}
         <select class="fleet-select" value={value.modelId} onChange={(event) => onChange({ ...value, modelId: event.currentTarget.value })}>
-          <option value="">Use defaults</option>
+          <option value="">{t("fleet.processAi.useDefaults")}</option>
           {value.modelId && !models.some((model) => model.id === value.modelId)
-            ? <option value={value.modelId}>{value.modelId} (unavailable)</option> : null}
+            ? <option value={value.modelId}>{t("settings.unavailableOption", { value: value.modelId })}</option> : null}
           {models.map((model) => <option key={model.id} value={model.id}>{model.name}</option>)}
         </select>
       </label>
       <label>
-        Reasoning effort
+        {t("settings.reasoning.label")}
         <select class="fleet-select" value={value.reasoning} onChange={(event) => onChange({ ...value, reasoning: event.currentTarget.value })}>
           {reasoningOptions(undefined).map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
         </select>
@@ -43,6 +45,7 @@ function AiFields({ value, models, onChange }: {
 }
 
 export function NewProcess({ onCreated, onCancel }: { onCreated: (pid: string) => void; onCancel: () => void }) {
+  const t = useT();
   const { client, connected } = useGateway();
   const queryClient = useQueryClient();
   const [label, setLabel] = useState("");
@@ -71,20 +74,20 @@ export function NewProcess({ onCreated, onCancel }: { onCreated: (pid: string) =
 
   return (
     <div>
-      <h3>New process</h3>
-      <p class="note">Start a separate conversation with your agent. Choose its settings before the first message.</p>
+      <h3>{t("fleet.newProcess.title")}</h3>
+      <p class="note">{t("fleet.newProcess.note")}</p>
       <form class="fleet-process-form" onSubmit={(event) => { event.preventDefault(); create.mutate(); }}>
         <fieldset disabled={!connected || create.isPending}>
-          <label>Name (optional)<input autoFocus value={label} onInput={(event) => setLabel(event.currentTarget.value)} /></label>
+          <label>{t("fleet.newProcess.name")}<input autoFocus value={label} onInput={(event) => setLabel(event.currentTarget.value)} /></label>
           <AiFields value={ai} models={models.data?.models ?? []} onChange={setAi} />
-          <p class="note">Defaults inherit your account settings. Choosing a model puts it first; the rest of your fallback stack still applies.</p>
+          <p class="note">{t("fleet.newProcess.defaultsNote")}</p>
           <div class="fleet-actions">
-            <button class="ibtn is-primary" type="submit">{create.isPending ? <LoadingState>creating…</LoadingState> : "open conversation"}</button>
-            <button class="fleet-text-action" type="button" onClick={onCancel}>cancel</button>
+            <button class="ibtn is-primary" type="submit">{create.isPending ? <LoadingState>{t("fleet.newProcess.creating")}</LoadingState> : t("fleet.process.openConversation")}</button>
+            <button class="fleet-text-action" type="button" onClick={onCancel}>{t("common.cancel")}</button>
           </div>
         </fieldset>
-        {models.isPending ? <p class="note"><LoadingState>loading models…</LoadingState></p> : null}
-        {models.error ? <p class="error" role="alert">Could not load models: {models.error.message}</p> : null}
+        {models.isPending ? <p class="note"><LoadingState>{t("fleet.processAi.loadingModels")}</LoadingState></p> : null}
+        {models.error ? <p class="error" role="alert">{t("fleet.processAi.modelsFailed", { error: models.error.message })}</p> : null}
         {create.error ? <p class="error" role="alert">{create.error.message}</p> : null}
       </form>
     </div>
@@ -92,6 +95,7 @@ export function NewProcess({ onCreated, onCancel }: { onCreated: (pid: string) =
 }
 
 export function ProcessAiControls({ pid, canEdit }: { pid: string; canEdit: boolean }) {
+  const t = useT();
   const { client, connected } = useGateway();
   const queryClient = useQueryClient();
   const [draft, setDraft] = useState<AiSelection | null>(null);
@@ -105,7 +109,7 @@ export function ProcessAiControls({ pid, canEdit }: { pid: string; canEdit: bool
     queryFn: async () => {
       const result = await requestFsRead(client, { path: `/proc/${pid}/ai/models` });
       if (!result.ok) throw new Error(result.error);
-      if (!("kind" in result) || result.kind !== "text") throw new Error("Could not read this process's models");
+      if (!("kind" in result) || result.kind !== "text") throw new Error(t("fleet.processAi.modelsUnreadable"));
       return modelChoicesSchema.parse(JSON.parse(result.content));
     },
     enabled: connected && canEdit,
@@ -123,21 +127,21 @@ export function ProcessAiControls({ pid, canEdit }: { pid: string; canEdit: bool
 
   return (
     <form class="fleet-process-form" onSubmit={(event) => { event.preventDefault(); apply.mutate(); }}>
-      <h4>Next run</h4>
-      {config.isPending ? <p class="note"><LoadingState>loading settings…</LoadingState></p> : config.error ? (
-        <p class="error" role="alert">Could not read settings: {config.error.message}</p>
+      <h4>{t("fleet.processAi.nextRun")}</h4>
+      {config.isPending ? <p class="note"><LoadingState>{t("fleet.processAi.loading")}</LoadingState></p> : config.error ? (
+        <p class="error" role="alert">{t("fleet.processAi.failed", { error: config.error.message })}</p>
       ) : (
         <>
           <fieldset disabled={!connected || !canEdit || apply.isPending}>
             <AiFields value={value} models={models.data ?? []} onChange={setDraft} />
-            <p class="note">Applies to this process from its next run. Your normal model fallbacks still apply.</p>
+            <p class="note">{t("fleet.processAi.note")}</p>
             {canEdit ? <div class="fleet-actions">
-              <button class="ibtn is-primary" type="submit" disabled={!dirty}>{apply.isPending ? <LoadingState>saving…</LoadingState> : "apply settings"}</button>
-              <button class="fleet-text-action" type="button" onClick={() => setDraft(INHERIT)} disabled={!value.modelId && !value.reasoning}>use defaults</button>
+              <button class="ibtn is-primary" type="submit" disabled={!dirty}>{apply.isPending ? <LoadingState>{t("common.saving")}</LoadingState> : t("fleet.processAi.apply")}</button>
+              <button class="fleet-text-action" type="button" onClick={() => setDraft(INHERIT)} disabled={!value.modelId && !value.reasoning}>{t("fleet.processAi.reset")}</button>
             </div> : null}
           </fieldset>
-          {apply.isSuccess && !dirty ? <p class="note" role="status">Settings saved.</p> : null}
-          {models.error ? <p class="error" role="alert">Could not load models: {models.error.message}</p> : null}
+          {apply.isSuccess && !dirty ? <p class="note" role="status">{t("fleet.processAi.saved")}</p> : null}
+          {models.error ? <p class="error" role="alert">{t("fleet.processAi.modelsFailed", { error: models.error.message })}</p> : null}
           {apply.error ? <p class="error" role="alert">{apply.error.message}</p> : null}
         </>
       )}

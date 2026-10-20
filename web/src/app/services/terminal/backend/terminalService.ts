@@ -1,7 +1,7 @@
 import type { GSVClient } from "@humansandmachines/gsv/client";
 import { GsvClientError } from "@humansandmachines/gsv/client";
 import { z } from "zod";
-import type { TerminalCommandInput, TerminalTarget, TerminalTranscriptEntry } from "../domain/models";
+import { TerminalNoteError, type TerminalCommandInput, type TerminalTarget, type TerminalTranscriptEntry } from "../domain/models";
 import {
   normalizeCommandInput,
   normalizeTerminalTargets,
@@ -35,7 +35,7 @@ export async function executeTerminalCommand(
 ): Promise<TerminalTranscriptEntry> {
   const input = normalizeCommandInput(command);
   if (!input.input && (!input.sessionId || input.start)) {
-    throw new Error("Command is required.");
+    throw new TerminalNoteError("commandRequired");
   }
 
   const requestArgs: TerminalRequestArgs = { input: input.input };
@@ -66,9 +66,11 @@ export async function executeTerminalCommand(
     if (error instanceof GsvClientError) {
       if (input.start) {
         const legacyDaemon = error.message === `Unknown shell session: ${input.sessionId}`;
-        if (legacyDaemon || rejectedStartSchema.safeParse(error.details).success) {
-          const message = legacyDaemon ? "Update Ship on this computer before running commands here." : error.message;
-          return normalizeTranscriptEntry({ status: "failed", error: message, output: "" }, startedAt, input);
+        if (legacyDaemon) {
+          return { ...normalizeTranscriptEntry({ status: "failed", error: "", output: "" }, startedAt, input), note: "updateShip" };
+        }
+        if (rejectedStartSchema.safeParse(error.details).success) {
+          return normalizeTranscriptEntry({ status: "failed", error: error.message, output: "" }, startedAt, input);
         }
       } else if (!input.sessionId) {
         // A sessionless command leaves nothing behind to poll or cancel, so a
@@ -89,7 +91,7 @@ export async function cancelTerminalCommand(client: TerminalClient, sessionId: s
     return (await client.request("shell.cancel", { sessionId }, { signal })).data;
   } catch (error) {
     if (error instanceof GsvClientError && error.code === 400 && error.message.endsWith("does not implement shell.cancel")) {
-      throw new Error("Update Ship on this computer to use Stop.");
+      throw new TerminalNoteError("updateShipToStop");
     }
     throw error;
   }

@@ -2,6 +2,7 @@ import { forwardRef } from "preact/compat";
 import { useCallback, useEffect, useImperativeHandle, useLayoutEffect, useRef, useState } from "preact/hooks";
 import type { JSX } from "preact";
 import { useViewActive } from "../../../services/navigation/ViewActivity";
+import { useT } from "../../../i18n/locale";
 
 export type PromptPlace = {
   id: string;
@@ -68,7 +69,8 @@ export function promptAfterSubmit(text: string, commands = true): string {
  * the chip and keeps taking words.
  */
 // The prompt grows from that first line as text wraps, up to a scrollable height.
-export const PromptLine = forwardRef<PromptLineHandle, PromptLineProps>(function PromptLine({ place, showPlace = true, dir, placeholder, ariaLabel = "Prompt", value, disabled, onSubmit, allowEmpty, commands = true, interceptSubmit, onFiles, onPasteText, onPlace, onHistory, autoFocus, onFocusChange, onInput, onKeyIntercept }, ref) {
+export const PromptLine = forwardRef<PromptLineHandle, PromptLineProps>(function PromptLine({ place, showPlace = true, dir, placeholder, ariaLabel, value, disabled, onSubmit, allowEmpty, commands = true, interceptSubmit, onFiles, onPasteText, onPlace, onHistory, autoFocus, onFocusChange, onInput, onKeyIntercept }, ref) {
+  const t = useT();
   const active = useViewActive();
   const activeRef = useRef(active);
   activeRef.current = active;
@@ -289,7 +291,7 @@ export const PromptLine = forwardRef<PromptLineHandle, PromptLineProps>(function
       scheduleMeasure(true);
     }
   };
-  const chipTitle = command ? `runs on ${place.label} in ${dir}` : place.online ? `on ${place.label}; press to change` : `${place.label} is offline; press to change`;
+  const chipTitle = t(command ? "shell.prompt.commandPlace" : place.online ? "shell.prompt.place" : "shell.prompt.placeOffline", { place: place.label, dir });
   return (
     <form class={`prompt-line${command ? " is-command" : ""}${place.online ? "" : " is-offline"}`} onSubmit={submit} autocomplete="off">
       <span class="field" ref={fieldRef}>
@@ -300,7 +302,7 @@ export const PromptLine = forwardRef<PromptLineHandle, PromptLineProps>(function
             <>
               <span class={`dot${place.online ? " is-on" : ""}`} aria-hidden="true" />
               <span class="label">{place.label}</span>
-              {place.online ? null : <span class="state">offline</span>}
+              {place.online ? null : <span class="state">{t("shell.offline")}</span>}
             </>
           )}
         </button>}
@@ -308,7 +310,7 @@ export const PromptLine = forwardRef<PromptLineHandle, PromptLineProps>(function
           ref={inputRef}
           rows={1}
           placeholder={placeholder}
-          aria-label={ariaLabel}
+          aria-label={ariaLabel ?? t("shell.prompt.label")}
           enterkeyhint="send"
           spellcheck={false}
           disabled={disabled}

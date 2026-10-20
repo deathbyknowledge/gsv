@@ -5,6 +5,7 @@ import { loadConsoleProcesses } from "../../../services/system/consoleService";
 import { FleetApproval } from "../fleet/FleetApproval";
 import type { FleetReference } from "../fleet/fleetModel";
 import { INSTRUMENT_PROCESSES_KEY } from "../wire/queryKeys";
+import { useT } from "../../../i18n/locale";
 
 export function delegatedApprovalProcesses(processes: readonly ConsoleProcess[], pid: string): ConsoleProcess[] {
   const byPid = new Map(processes.map((process) => [process.pid, process]));
@@ -34,6 +35,7 @@ export function DelegatedApprovals({ pid, onFleet, placeLabelFor }: {
   onFleet: (reference: FleetReference) => void;
   placeLabelFor?: (target: string) => string;
 }) {
+  const t = useT();
   const { client, connected } = useGateway();
   const processes = useQuery({
     queryKey: INSTRUMENT_PROCESSES_KEY,
@@ -42,7 +44,7 @@ export function DelegatedApprovals({ pid, onFleet, placeLabelFor }: {
   });
   const waiting = delegatedApprovalProcesses(processes.data ?? [], pid);
   if (waiting.length === 0) return null;
-  return <div class="zen-delegated-approvals" aria-label="Delegated work approvals">
+  return <div class="zen-delegated-approvals" aria-label={t("chat.approvals.delegated")}>
     {waiting.map((process) => <FleetApproval key={`${process.pid}:${process.activeRunId}`}
       pid={process.pid} runId={process.activeRunId!} who={process.username} label={process.label || process.pid}
       placeLabelFor={placeLabelFor} onInspect={() => onFleet(`proc:${process.pid}`)} />)}

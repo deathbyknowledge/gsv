@@ -106,9 +106,9 @@ to inspect Chat; links use their labels. The original message stays unchanged.
 Very long replies stop with a spoken cue to read the rest in Chat.
 Kokoro runs locally. Desktop includes the speech runtime; its first use downloads
 and verifies the model, then reuses the local cache. Spoken replies and the voice preview follow **Settings →
-Preferences → Response language**, using Heart for English and Dora for Spanish;
+Preferences → Language**, using Heart for English and Dora for Spanish;
 regional tags such as `es-MX` use the matching language. Changes saved there apply
-without restarting Desktop. With no saved response language, Desktop uses the
+without restarting Desktop. With no saved language, Desktop uses the
 device's language when supported, otherwise English. Spoken replies support English and Spanish; other saved languages
 show an availability message in voice settings, while recording remains available.
 

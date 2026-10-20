@@ -1,5 +1,6 @@
 import type { JSX } from "preact";
 import { useEffect, useMemo, useRef } from "preact/hooks";
+import { useT } from "../../i18n/locale";
 
 export type AsciiPlanetVariant =
   | "orbit"
@@ -453,8 +454,9 @@ export function AsciiPlanet({
   showStars,
   size = 60,
   formDuration = 1.6,
-  label = "ASCII planet",
+  label,
 }: AsciiPlanetProps) {
+  const t = useT();
   const config = useMemo(() => configForVariant(variant), [variant]);
   const planet = useMemo(() => generatePlanet(config), [config]);
   const dimensions = useMemo(() => boxSize(config, size), [config, size]);
@@ -574,7 +576,7 @@ export function AsciiPlanet({
     <div
       class="gsv-ascii-planet"
       role="img"
-      aria-label={label}
+      aria-label={label ?? t("ui.planet.label")}
       style={{
         position: "relative",
         width: `${dimensions.width}px`,

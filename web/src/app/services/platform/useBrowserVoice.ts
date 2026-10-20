@@ -5,6 +5,7 @@ import { promptAfterSubmit, type PromptLineHandle } from "../../features/instrum
 import { frameBodyFromBlob } from "../gateway/frameBody";
 import { captureBrowserAudio } from "./browserAudio";
 import { composeVoice } from "./voiceDraft";
+import { t } from "../../i18n/locale";
 
 type Phase = "idle" | "permission" | "recording" | "transcribing" | "error";
 type Recording = {
@@ -69,7 +70,7 @@ export function useBrowserVoice({ client, prompt, pid, scope, enabled, send }: {
     recording.stop?.();
     setStream(null);
     setPhase(recording.audio ? "error" : "transcribing");
-    setError("Recording kept. Retry transcription when you’re ready.");
+    setError(t("desktop.browserVoice.errors.paused"));
   };
 
   useLayoutEffect(() => { if (!enabled) pause(); }, [enabled]);
@@ -106,9 +107,9 @@ export function useBrowserVoice({ client, prompt, pid, scope, enabled, send }: {
       if (current.current !== recording || recording.attempt !== attempt) return;
       const composer = prompt.current;
       if (!text.trim()) {
-        throw new Error("No speech was detected. Retry transcription or download the recording.");
+        throw new Error(t("desktop.browserVoice.errors.noSpeech"));
       }
-      if (!composer) throw new Error("The prompt is unavailable. Retry transcription when it’s ready.");
+      if (!composer) throw new Error(t("desktop.browserVoice.errors.noPrompt"));
       const selection = composer.selection();
       const draft = composeVoice(selection.value.slice(0, selection.start), text, selection.value.slice(selection.start));
       composer.setValue(draft.value, draft.caret);
@@ -149,7 +150,7 @@ export function useBrowserVoice({ client, prompt, pid, scope, enabled, send }: {
       recording.audio = audio;
       if (recording.paused || !available.current || document.visibilityState === "hidden") {
         setPhase("error");
-        setError("Recording kept. Retry transcription when you’re ready.");
+        setError(t("desktop.browserVoice.errors.paused"));
       } else await transcribe(recording, audio);
     } catch (error) {
       if (current.current !== recording) return;
@@ -157,7 +158,7 @@ export function useBrowserVoice({ client, prompt, pid, scope, enabled, send }: {
       setStream(null);
       setPhase("error");
       setError(error instanceof DOMException && error.name === "NotAllowedError"
-        ? "Microphone access was denied. Allow it in your browser’s site settings and try again."
+        ? t("desktop.browserVoice.errors.denied")
         : error instanceof Error ? error.message : String(error));
     }
   };

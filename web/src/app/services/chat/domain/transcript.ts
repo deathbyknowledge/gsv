@@ -10,6 +10,7 @@ import type { ChatHistory, ChatRunState } from "./processes";
 import { normalizeHilRequest } from "./hil";
 import { transcriptRowsFromRecords } from "./typedHistory";
 import { z } from "zod";
+import { t } from "../../../i18n/locale";
 
 export type ChatTranscriptRowRole = "assistant" | "system" | "tool" | "toolResult" | "user";
 
@@ -1039,7 +1040,7 @@ function normalizeBackupModelRef(value: TranscriptRpcPayload): ChatBackupModelIn
 
 function formatToolInput(value: TranscriptRpcPayload): string {
   const text = prettyJson(value);
-  return text === "{}" ? "Waiting for tool input." : text;
+  return text === "{}" ? t("chat.tool.waitingInput") : text;
 }
 
 function prettyJson(value: TranscriptRpcPayload): string {

@@ -9,9 +9,17 @@ import { canConfigure } from "../settings/settingsModel";
 import type { PeopleOpenRequest } from "../people/People";
 import { ChatActivity } from "./ChatActivity";
 import { ChatPerson } from "./ChatPerson";
+import { useT, type TextKey } from "../../../i18n/locale";
 import type { ChatContext } from "./chatContextModel";
 import "../fleet/fleet.css";
 import "../people/people.css";
+
+const TITLES = {
+  activity: "chat.panel.plans",
+  person: "chat.panel.person",
+  files: "chat.panel.files",
+  connect: "chat.panel.connect",
+} satisfies Record<ChatContext["kind"], TextKey>;
 
 export function ChatPanels({ context, active, account, targets, ready, onClose, onConnected, onAsk, onFleet, onPeople, onDirty }: {
   context: ChatContext | null;
@@ -26,6 +34,7 @@ export function ChatPanels({ context, active, account, targets, ready, onClose, 
   onPeople: (request: PeopleOpenRequest) => void;
   onDirty: (dirty: boolean) => void;
 }) {
+  const t = useT();
   const last = useRef<ChatContext>({ kind: "activity" });
   const activity = useRef<Extract<ChatContext, { kind: "activity" }>>({ kind: "activity" });
   const person = useRef<Extract<ChatContext, { kind: "person" }>>({ kind: "person" });
@@ -37,8 +46,7 @@ export function ChatPanels({ context, active, account, targets, ready, onClose, 
   useLayoutEffect(() => { onDirty(activityDirty || personDirty); }, [activityDirty, personDirty, onDirty]);
   const shown = last.current;
   const open = (kind: ChatContext["kind"]) => active && context?.kind === kind;
-  const title = shown.kind === "activity" ? "Plans" : shown.kind === "person" ? "Person" : shown.kind === "files" ? "Reference a file" : "Connect a computer";
-  return <FleetDialog className={`chat-context-panel is-${shown.kind}`} open={active && context !== null} title={title} onClose={onClose}>
+  return <FleetDialog className={`chat-context-panel is-${shown.kind}`} open={active && context !== null} title={t(TITLES[shown.kind])} onClose={onClose}>
     <RetainedView active={open("activity")}><ChatActivity account={account} request={activity.current.request}
       onAsk={onAsk} onFleet={onFleet} onDirty={setActivityDirty} /></RetainedView>
     <RetainedView active={open("person")}><ChatPerson account={account} request={person.current}
@@ -56,7 +64,8 @@ function ChatFiles({ targets, ready, allowed, onAsk }: {
   allowed: boolean;
   onAsk: (text: string) => void;
 }) {
-  if (!allowed) return <p class="note">Your account cannot read files.</p>;
+  const t = useT();
+  if (!allowed) return <p class="note">{t("chat.panel.noFiles")}</p>;
   const places = orderPlaces([...targets]);
   return <div class="fleet-tree">{places.map((place) =>
     <PlaceTree key={place.id} place={place} enabled={ready && place.online}

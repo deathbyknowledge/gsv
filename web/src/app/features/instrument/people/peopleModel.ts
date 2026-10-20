@@ -2,6 +2,7 @@ import type { ApproachCreateArgs, ApproachSummary, PublicProfile, ContactSummary
 import { randomId } from "../../../services/ids";
 import { publicDeployment } from "../../../services/deployment";
 import { deploymentDomains, type PublicDeploymentConfig } from "@humansandmachines/gsv/services/deployment";
+import { t, type TextKey } from "../../../i18n/locale";
 
 export type ApproachDraft = {
   url: string;
@@ -39,8 +40,8 @@ export function profileAddressLabel(origin: string, deployment: PublicDeployment
 }
 
 export function approachSendIntent(draft: ApproachDraft): ApproachCreateArgs {
-  if (!draft.profile) throw new Error("Open a profile before writing to someone");
-  if (draft.shipHandlesMessages === null) throw new Error("Choose who should handle new messages");
+  if (!draft.profile) throw new Error(t("people.compose.openFirst"));
+  if (draft.shipHandlesMessages === null) throw new Error(t("people.handling.required"));
   const displayName = (draft.displayName ?? "").trim();
   const previous = draft.intent;
   if (previous && previous.profileUrl === draft.profile.url && previous.profileRevision === draft.profile.revision
@@ -51,18 +52,18 @@ export function approachSendIntent(draft: ApproachDraft): ApproachCreateArgs {
     displayName, text: draft.text.trim(), shipHandlesMessages: draft.shipHandlesMessages, idempotencyKey: randomId() };
 }
 
-export function approachStatus(request: ApproachSummary): string {
-  if (request.state === "blocked") return "Blocked";
-  if (request.state === "declined") return "Declined";
-  if (request.state === "withdrawn") return "Withdrawn";
-  if (request.state === "expired") return "Expired";
-  if (request.connection === "failed") return "Connection needs a retry";
-  if (request.connection === "connecting") return "Connecting…";
-  if (request.connection === "connected" || request.state === "accepted") return "Accepted";
-  if (request.delivery === "failed") return "Could not confirm receipt";
-  if (request.state === "preparing") return "Preparing message…";
-  if (request.direction === "incoming") return "Waiting for your decision";
-  return request.delivery === "received" ? "Received · awaiting a reply" : "Sending…";
+export function approachStatus(request: ApproachSummary): TextKey {
+  if (request.state === "blocked") return "people.status.blocked";
+  if (request.state === "declined") return "people.status.declined";
+  if (request.state === "withdrawn") return "people.status.withdrawn";
+  if (request.state === "expired") return "people.status.expired";
+  if (request.connection === "failed") return "people.status.connectionFailed";
+  if (request.connection === "connecting") return "people.status.connecting";
+  if (request.connection === "connected" || request.state === "accepted") return "people.status.accepted";
+  if (request.delivery === "failed") return "people.status.deliveryFailed";
+  if (request.state === "preparing") return "people.status.preparing";
+  if (request.direction === "incoming") return "people.status.awaitingDecision";
+  return request.delivery === "received" ? "people.status.received" : "people.status.sending";
 }
 
 export function requestMayRetry(request: ApproachSummary): boolean {
@@ -71,15 +72,15 @@ export function requestMayRetry(request: ApproachSummary): boolean {
 }
 
 export function inboxPreview(contact: ContactSummary, entry?: ConversationInboxEntry): string {
-  if (contact.blocked) return "Blocked";
-  if (contact.state === "revoked") return "Connection ended · history available";
-  if (!entry?.preview) return contact.preferences?.muted ? "Muted" : new URL(contact.remoteOrigin).host;
+  if (contact.blocked) return t("people.contactBlocked");
+  if (contact.state === "revoked") return t("people.preview.ended");
+  if (!entry?.preview) return contact.preferences?.muted ? t("people.preview.muted") : new URL(contact.remoteOrigin).host;
   const preview = entry.preview;
-  const author = messagePreviewPrefix(preview);
-  return `${author}${preview.text || `${preview.attachmentCount} attachment${preview.attachmentCount === 1 ? "" : "s"}`}`;
+  return messagePreview(preview, preview.text || t("people.message.attachments", { count: preview.attachmentCount }));
 }
 
-export function messagePreviewPrefix(preview: NonNullable<ConversationInboxEntry["preview"]>): string {
-  return preview.author.kind === "user" ? "You: " : preview.author.kind === "process" ? "Your Ship: "
-    : preview.provenance?.kind === "process" ? "Their Ship: " : "";
+/** The preview's text, led by its author when that is you, your Ship or their Ship. */
+export function messagePreview(preview: NonNullable<ConversationInboxEntry["preview"]>, text: string): string {
+  return preview.author.kind === "user" ? t("people.preview.you", { text }) : preview.author.kind === "process" ? t("people.preview.yourShip", { text })
+    : preview.provenance?.kind === "process" ? t("people.preview.theirShip", { text }) : text;
 }

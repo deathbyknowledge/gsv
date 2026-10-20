@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { t } from "../../i18n/locale";
 
 export const ONBOARDING_KEY = "gsv.ui.installation-onboarding.v1";
 export type WelcomeState = {
@@ -65,12 +66,12 @@ export class OwnerWelcome {
     const result = await this.request("/code", deliverySchema, {
       challengeId: pending.id, email: pending.email, browserSecret: pending.browserSecret, resend,
     }, false);
-    if (result.deliveryStatus !== "sent") throw new OwnerApiError("Email is still sending. Try again shortly.");
+    if (result.deliveryStatus !== "sent") throw new OwnerApiError(t("session.owner.emailSending"));
   }
 
   async verify(code: string): Promise<void> {
     const pending = this.state.challenge;
-    if (!pending || !this.state.sessionSecret) throw new Error("Request a code first.");
+    if (!pending || !this.state.sessionSecret) throw new Error(t("session.owner.requestCode"));
     await this.request("/verify", verifiedSchema, { challengeId: pending.id, browserSecret: pending.browserSecret, sessionSecret: this.state.sessionSecret, code }, false);
     await this.save({ challenge: null });
   }
@@ -125,12 +126,12 @@ export class OwnerWelcome {
       const data: unknown = JSON.parse(await response.text());
       if (!response.ok) {
         const error = failureSchema.safeParse(data);
-        throw new OwnerApiError(error.success ? error.data.error ?? (error.data.deliveryStatus === "failed" ? "Could not send the email. Try again shortly." : "Could not continue. Try again.") : "Could not continue. Try again.", error.success ? error.data.code : undefined, response.status);
+        throw new OwnerApiError(error.success ? error.data.error ?? t(error.data.deliveryStatus === "failed" ? "session.owner.emailFailed" : "session.owner.failed") : t("session.owner.failed"), error.success ? error.data.code : undefined, response.status);
       }
       return schema.parse(data);
     } catch (error) {
       if (error instanceof OwnerApiError) throw error;
-      throw new OwnerApiError("Could not connect. Try again.");
+      throw new OwnerApiError(t("session.owner.connectFailed"));
     } finally { clearTimeout(timer); }
   }
 }

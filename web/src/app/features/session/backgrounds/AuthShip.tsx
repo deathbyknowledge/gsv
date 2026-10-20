@@ -2,13 +2,15 @@ import { useMemo, useRef } from "preact/hooks";
 import { AsciiAnimation } from "../../../components/ui/AsciiAnimation";
 import type { ColorTheme } from "../../../components/ui/useColorTheme";
 import { createShipScene } from "./ship/shipScene";
+import { useT } from "../../../i18n/locale";
 import "./AuthShip.css";
 
 export function AuthShip({ theme, compact = false }: { theme: ColorTheme; compact?: boolean }) {
+  const t = useT();
   const scene = useMemo(createShipScene, []);
   const drag = useRef<{ id: number; x: number; y: number; width: number } | null>(null);
   return <div class={`gsv-auth-illustration${compact ? " is-compact" : ""}`} tabIndex={0} role="group"
-    aria-label="Your Ship. Drag to turn. Arrow keys turn; Home resets."
+    aria-label={t("session.scene.shipControls")}
     aria-keyshortcuts="ArrowLeft ArrowRight ArrowUp ArrowDown Home"
     onPointerDown={(event) => {
       if (!event.isPrimary || event.button !== 0) return;
@@ -33,6 +35,6 @@ export function AuthShip({ theme, compact = false }: { theme: ColorTheme; compac
       else scene.turn(event.key === "ArrowLeft" ? -0.15 : event.key === "ArrowRight" ? 0.15 : 0,
         event.key === "ArrowUp" ? -0.15 : event.key === "ArrowDown" ? 0.15 : 0);
     }}>
-    <AsciiAnimation scene={scene} label="Your Ship" palette={theme} frameRate={18} className="gsv-auth-ship" />
+    <AsciiAnimation scene={scene} label={t("session.scene.ship")} palette={theme} frameRate={18} className="gsv-auth-ship" />
   </div>;
 }
