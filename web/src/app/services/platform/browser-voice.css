@@ -1,6 +1,8 @@
 .browser-voice-controls { display: flex; flex-wrap: wrap; align-items: center; gap: .75rem; margin-left: auto; min-width: 0; }
 .browser-voice-controls:empty { display: none; }
-.browser-voice-controls .browser-voice-error { color: var(--error); flex-basis: 100%; max-width: 36rem; overflow-wrap: anywhere; }
+.browser-voice-feedback { display: grid; gap: .35rem; padding-top: .6rem; font: .7rem/1.5 var(--gsv-font-mono); }
+.browser-voice-feedback:empty { display: none; }
+.browser-voice-error { color: var(--error); overflow-wrap: anywhere; }
 .browser-voice-surface { display: grid; gap: .5rem; border-top: 1px solid var(--border); padding: 14px 0 .15rem; outline: none; }
 .browser-voice-waveform { display: block; width: 100%; height: 3.5rem; overflow: hidden; fill: none; stroke-width: 3; stroke-linecap: butt; shape-rendering: crispEdges; }
 .browser-voice-baseline { stroke: var(--text-dim); opacity: .2; }

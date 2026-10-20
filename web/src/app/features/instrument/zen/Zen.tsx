@@ -757,6 +757,7 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
   const voiceInput = useRef<NativeVoiceHandle>(null);
   const nativePanels = useRef<HTMLDivElement>(null);
   const voiceSurface = useRef<HTMLDivElement>(null);
+  const voiceFeedback = useRef<HTMLDivElement>(null);
   const [recordingVoice, setRecordingVoice] = useState(false);
 
   const runDirectly = useCallback(
@@ -1243,12 +1244,13 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
                 enabled={active && connected && pid !== null && pendingHil === null && !searchOpen && !context && !addOpen}
                 send={onSubmit} />
                 : <BrowserVoiceControls ref={voiceInput} prompt={promptRef} client={client} pid={pid}
-                  surfaceHost={voiceSurface} onActiveChange={setRecordingVoice}
+                  surfaceHost={voiceSurface} feedbackHost={voiceFeedback} onActiveChange={setRecordingVoice}
                   scope={voiceScope}
                   enabled={active && connected && pid !== null && pendingHil === null && !searchOpen && !context && !addOpen && !outbox.sending}
                   send={onSubmit} />}
             </div>
           </div>
+          <div ref={voiceFeedback} />
           <span class="zen-connection-status" role="status">{connected ? "" : t("chat.reconnecting")}</span>
           <div ref={placesRef} id="zen-places" class="zen-place-section" hidden={!placesOpen}
             onKeyDown={(event) => {

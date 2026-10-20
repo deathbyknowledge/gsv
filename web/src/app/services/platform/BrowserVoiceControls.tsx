@@ -12,10 +12,12 @@ export type BrowserVoiceHandle = Pick<ReturnType<typeof useBrowserVoice>, "onInp
 
 type BrowserVoiceControlsProps = Parameters<typeof useBrowserVoice>[0] & {
   surfaceHost: RefObject<HTMLDivElement>;
+  /** Where errors and notices go: a full-width row below the composer's actions, clear of the record button. */
+  feedbackHost: RefObject<HTMLDivElement>;
   onActiveChange(active: boolean): void;
 };
 
-export const BrowserVoiceControls = forwardRef<BrowserVoiceHandle, BrowserVoiceControlsProps>(function BrowserVoiceControls({ surfaceHost, onActiveChange, ...options }, ref) {
+export const BrowserVoiceControls = forwardRef<BrowserVoiceHandle, BrowserVoiceControlsProps>(function BrowserVoiceControls({ surfaceHost, feedbackHost, onActiveChange, ...options }, ref) {
   const t = useT();
   const control = useBrowserVoice(options);
   const recordingUrl = useMediaObjectUrl(control.audio);
@@ -60,7 +62,9 @@ export const BrowserVoiceControls = forwardRef<BrowserVoiceHandle, BrowserVoiceC
     {control.canRetry && <button type="button" disabled={!options.enabled} onClick={control.retry}>{t("desktop.browserVoice.retry")}</button>}
     {control.canRetry && recordingUrl && <a href={recordingUrl} download={`ship-recording.${recordingExtension}`}>{t("desktop.browserVoice.download")}</a>}
     {control.canRetry && <button type="button" onClick={() => control.cancel(true)}>{t("desktop.browserVoice.discard")}</button>}
-    {control.error && <span class="browser-voice-error" role="alert">{control.error}</span>}
-    {control.canRetry && <span class="browser-voice-notice">{t("desktop.browserVoice.keptInTab")}</span>}
+    {(control.error || control.canRetry) && feedbackHost.current && createPortal(<div class="browser-voice-feedback">
+      {control.error && <span class="browser-voice-error" role="alert">{control.error}</span>}
+      {control.canRetry && <span class="browser-voice-notice">{t("desktop.browserVoice.keptInTab")}</span>}
+    </div>, feedbackHost.current)}
   </div>;
 });
