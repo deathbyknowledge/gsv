@@ -220,7 +220,8 @@ async attemptAdapterRouteDelivery(
     const terminalState = outcome.state === "retryable" ? "exhausted" : outcome.state;
     const deliveryError = outcome.error;
     const approval = frame.signal === "proc.run.hil.requested";
-    const label = approval ? "approval notification" : "message";
+    const label = approval ? "approval notification"
+      : frame.signal === "proc.run.finished" ? "run failure notice" : "message";
     await this.queueProcessDeliveryNotice(route, frame, {
       state: terminalState,
       message: terminalState === "ambiguous"
@@ -490,6 +491,21 @@ async deliverAdapterRouteEvent(
       }
     }
 
+    if (frame.signal === "proc.run.finished") {
+      const parsed = z.object({
+        pid: z.string(),
+        runId: z.string(),
+        status: z.literal("error"),
+      }).safeParse(frame.payload);
+      if (!parsed.success || parsed.data.pid !== route.processId || parsed.data.runId !== route.runId) {
+        return { state: "skipped" };
+      }
+      return await this.deliverAdapterRouteReply(route, {
+        deliveryId: await stableOpaqueId("process-run-failure", [route.processId, route.runId]),
+        text: "System notice: Ship couldn’t finish this request. Open Chat for details, or send another message to try again.",
+      }, undefined, "system");
+    }
+
     return { state: "skipped" };
   }
 
@@ -503,6 +519,7 @@ async deliverAdapterRouteReply(
       hil?: ProcHilRequest;
     },
     body?: BinaryBody,
+    presentationKind: "process" | "system" = "process",
   ): Promise<AdapterRouteDeliveryOutcome> {
     const ctx = this.host.buildProcessContext(route.processId, route.runId);
     if (!ctx) {
@@ -527,9 +544,9 @@ async deliverAdapterRouteReply(
       processId: route.processId,
       runId: route.runId,
     };
-    if (process?.isPersonalController === false) {
+    if (presentationKind === "process" && process?.isPersonalController === false) {
       presentation.processMode = "work";
-    } else if (process?.isPersonalController === true) {
+    } else if (presentationKind === "process" && process?.isPersonalController === true) {
       presentation.processMode = "ship";
       if (route.destination.surface.kind === "dm") {
         const selected = this.host.adapters.surfaceRoutes.resolveRoute({
