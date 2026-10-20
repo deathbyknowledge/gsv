@@ -702,10 +702,10 @@
 .zen-paste-preview > summary { cursor: pointer; text-decoration: underline; text-underline-offset: .25em; }
 .zen-paste-preview > pre { max-height: 10em; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font: 12px/1.5 var(--gsv-font-mono); }
 /* the same 12px at every width: this overrides the phone rule in styles.css that holds form fields at 16px */
-.zen-paste-preview > textarea { box-sizing: border-box; width: 100%; height: min(24em, 40vh); min-height: 6em; max-height: 40vh; padding: .5rem; border: 1px solid var(--border); background: none; color: inherit; white-space: pre-wrap; overflow-wrap: anywhere; resize: vertical; font-family: var(--gsv-font-mono); font-size: 12px !important; line-height: 1.5; }
+.zen-paste-preview > textarea { box-sizing: border-box; width: 100%; --zen-paste-editor-cap: calc(var(--instrument-height) / var(--type-scale) * .4); height: min(24em, var(--zen-paste-editor-cap)); min-height: 6em; max-height: var(--zen-paste-editor-cap); padding: .5rem; border: 1px solid var(--border); background: none; color: inherit; white-space: pre-wrap; overflow-wrap: anywhere; resize: vertical; font-family: var(--gsv-font-mono); font-size: 12px !important; line-height: 1.5; }
 .zen-draft-attachment:has(.zen-paste-preview[open]) { width: 100%; align-items: flex-start; }
-/* an open paste editor needs room for long text: the strip grows to hold one editor at its cap, so the editor scrolls inside its own box and its resize grip stays in reach; several open editors scroll the strip, keeping the compose line on screen */
-.zen-draft-attachments:has(.zen-paste-preview[open]) { max-height: 55vh; }
+/* an open paste editor needs room for long text: the strip grows to hold one editor at its cap, so the editor scrolls inside its own box and its resize grip stays in reach; several open editors scroll the strip, keeping the compose line on screen. both caps are fractions of the Instrument height divided by the type scale, like the prompt cap, so the 150% and 200% zoom levels keep them inside the viewport */
+.zen-draft-attachments:has(.zen-paste-preview[open]) { max-height: calc(var(--instrument-height) / var(--type-scale) * .55); }
 .zen-draft-attachment > .zen-paste-preview[open] { flex: 1; }
 .zen-draft-attachment button { font-size: 1rem; padding: .25rem; }
 .zen-drop-hint { position: absolute; inset: 1rem; z-index: 5; display: grid; place-items: center; border: 1px dashed var(--accent); background: var(--void); color: var(--accent); pointer-events: none; }
