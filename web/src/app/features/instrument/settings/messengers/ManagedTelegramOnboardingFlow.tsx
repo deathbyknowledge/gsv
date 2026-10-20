@@ -15,7 +15,6 @@ import {
   useInspectConsoleAdapterPairing,
 } from "../../../../services/system/useConsoleData";
 import { MESSENGER_CAPABILITIES, adapterDocUrl } from "./messengerDocs";
-import { adapterDetailId } from "./messengerPresentation";
 import { useT } from "../../../../i18n/locale";
 
 type ManagedTelegramOnboardingFlowProps = {
@@ -173,16 +172,7 @@ function ManagedMessengerOnboardingFlow({
     }
   };
 
-  const detailId = adapterDetailId({
-    adapter: adapterId,
-    accountId: candidate?.accountId ?? info.data?.accountId ?? "managed",
-    connected: true,
-    authenticated: true,
-    mode: "managed-shared",
-    lastActivity: null,
-    error: "",
-    extra: !installsApp && botUsername ? { botUsername } : {},
-  });
+  const detailId = `${adapterId}:${candidate?.accountId ?? info.data?.accountId ?? "managed"}`;
 
   const flow: ConnectFlowDef = {
     key: `managed-${adapterId}`,

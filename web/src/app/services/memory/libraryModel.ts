@@ -1,4 +1,4 @@
-import type { LibraryEntry, LibraryNote, LibraryTreeNode } from "./libraryTypes";
+import type { LibraryEntry, LibraryTreeNode } from "./libraryTypes";
 
 export function normalizeLibraryPath<T>(value: T): string {
   const trimmed = String(value ?? "")
@@ -69,62 +69,6 @@ export function extractLibraryTitle(markdown: string, fallback: string): string 
   const text = stripLibraryFrontmatter(markdown);
   const match = text.match(/^#\s+(.+)$/m);
   return match?.[1]?.trim() || libraryTitleFromPath(fallback);
-}
-
-export function extractLibraryHeadings(markdown: string): Array<{ level: number; text: string; id: string }> {
-  const seen = new Map<string, number>();
-  return stripLibraryFrontmatter(markdown)
-    .split("\n")
-    .flatMap((line) => {
-      const match = line.match(/^(#{2,4})\s+(.+)$/);
-      if (!match) {
-        return [];
-      }
-      const text = match[2].trim();
-      const base = slugifyHeading(text);
-      const count = seen.get(base) ?? 0;
-      seen.set(base, count + 1);
-      return [{ level: match[1].length, text, id: count === 0 ? base : `${base}-${count + 1}` }];
-    });
-}
-
-export function prepareLibraryArticleMarkdown(note: LibraryNote): string {
-  const title = note.title.trim();
-  const text = stripLibraryFrontmatter(note.markdown).replace(/\r\n/g, "\n");
-  const lines = text.split("\n");
-  let offset = 0;
-  while (offset < lines.length && !lines[offset].trim()) {
-    offset += 1;
-  }
-  const heading = lines[offset]?.match(/^#\s+(.+)$/);
-  if (heading?.[1]?.trim() === title) {
-    offset += 1;
-    while (offset < lines.length && !lines[offset].trim()) {
-      offset += 1;
-    }
-  }
-  return lines.slice(offset).join("\n").trim();
-}
-
-export function slugifyLibraryId(value: string): string {
-  return value
-    .trim()
-    .toLowerCase()
-    .replace(/\.md$/i, "")
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 64);
-}
-
-export function suggestLibraryPagePath(db: string, title: string, nearbyPath?: string): string {
-  const cleanDb = normalizeLibraryDbId(db);
-  const stem = slugifyLibraryId(title) || "note";
-  const nearby = nearbyPath ? normalizeDbScopedLibraryPath(nearbyPath, cleanDb) : "";
-  if (nearby.includes("/pages/")) {
-    const folder = nearby.slice(0, nearby.lastIndexOf("/") + 1);
-    return `${folder}${stem}.md`;
-  }
-  return `${cleanDb}/pages/${stem}.md`;
 }
 
 export function sortLibraryEntries(entries: readonly LibraryEntry[]): LibraryEntry[] {
@@ -202,59 +146,6 @@ export function ancestorFolderPaths(localPath: string): string[] {
     paths.push(parts.slice(0, index).join("/"));
   }
   return paths;
-}
-
-export function libraryEntrySub(entry: LibraryEntry, db: string): string {
-  const local = libraryPathInDb(entry.path, db);
-  return local || entry.path;
-}
-
-export function librarySnippet(markdown: string, title: string, query: string): string {
-  const text = stripLibraryFrontmatter(markdown).replace(/\s+/g, " ").trim();
-  if (!text) {
-    return title;
-  }
-  const target = query.trim().toLowerCase();
-  const lower = text.toLowerCase();
-  const index = target ? lower.indexOf(target) : -1;
-  if (index < 0) {
-    return text.slice(0, 180);
-  }
-  const start = Math.max(0, index - 64);
-  const end = Math.min(text.length, index + target.length + 116);
-  return `${start > 0 ? "..." : ""}${text.slice(start, end)}${end < text.length ? "..." : ""}`;
-}
-
-export function scoreLibraryMatch(path: string, title: string, markdown: string, terms: readonly string[]): number {
-  const haystacks = {
-    title: title.toLowerCase(),
-    path: path.toLowerCase(),
-    body: markdown.toLowerCase(),
-  };
-  let score = 0;
-  for (const term of terms) {
-    if (haystacks.title.includes(term)) score += 120;
-    if (haystacks.path.includes(term)) score += 40;
-    if (haystacks.body.includes(term)) score += 10;
-  }
-  return score;
-}
-
-export function normalizeLibraryQueryTerms(query: string): string[] {
-  return query
-    .toLowerCase()
-    .split(/\s+/)
-    .map((part) => part.trim())
-    .filter(Boolean);
-}
-
-function slugifyHeading<T>(value: T): string {
-  return String(value ?? "")
-    .toLowerCase()
-    .replace(/[^a-z0-9\s-]/g, "")
-    .trim()
-    .replace(/\s+/g, "-")
-    .replace(/-+/g, "-") || "section";
 }
 
 function titleCase(value: string): string {

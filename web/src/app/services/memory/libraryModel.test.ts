@@ -5,8 +5,6 @@ import {
   extractLibraryTitle,
   normalizeDbScopedLibraryPath,
   normalizeLibraryPath,
-  slugifyLibraryId,
-  suggestLibraryPagePath,
 } from "./libraryModel";
 
 describe("libraryModel", () => {
@@ -20,10 +18,8 @@ describe("libraryModel", () => {
     expect(() => normalizeLibraryPath("memory/../secrets.md")).toThrow("invalid library path");
   });
 
-  it("derives ids, titles, and suggested page paths", () => {
-    expect(slugifyLibraryId("Agent Memory.md")).toBe("agent-memory");
+  it("derives a page title from its heading", () => {
     expect(extractLibraryTitle("# Agent Memory\n\nBody", "memory/index.md")).toBe("Agent Memory");
-    expect(suggestLibraryPagePath("memory", "Auth Notes")).toBe("memory/pages/auth-notes.md");
   });
 
   it("builds a collapsed folder tree model from wiki pages", () => {
