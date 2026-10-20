@@ -68,6 +68,9 @@ describe("attachment opening", () => {
   });
 });
 
+/** Rendered through compat, the input handler lands on the lowercase prop. */
+type EditorProps = JSX.TextareaHTMLAttributes<HTMLTextAreaElement> & { oninput?: JSX.InputEventHandler<HTMLTextAreaElement> };
+
 describe("pasted text chip", () => {
   it("keeps the complete paste in collapsed details and removes it on request", async () => {
     const onRemove = vi.fn();
@@ -104,7 +107,7 @@ describe("pasted text chip", () => {
     const nodes = collectNodes(tree);
     expect(nodes.some((node) => node.type === "pre")).toBe(false);
     // SAFETY: The matching node is the textarea VNode; the generic harness omits DOM-specific attributes.
-    const editor = nodes.find((node) => node.type === "textarea") as VNode<JSX.TextareaHTMLAttributes<HTMLTextAreaElement>> | undefined;
+    const editor = nodes.find((node) => node.type === "textarea") as VNode<EditorProps> | undefined;
     expect(editor?.props.value).toBe(text);
     expect(editor?.props["aria-label"]).toBe("Edit pasted text");
     const stopPropagation = vi.fn();
@@ -116,7 +119,6 @@ describe("pasted text chip", () => {
     const edited = { value: "edited draft" } as HTMLTextAreaElement;
     const input: Partial<JSX.TargetedInputEvent<HTMLTextAreaElement>> = { currentTarget: edited };
     // SAFETY: the handler reads only currentTarget.value from the event.
-    // Rendered through compat, the handler lands on the lowercase prop.
     (editor?.props.onInput ?? editor?.props.oninput)?.(input as JSX.TargetedInputEvent<HTMLTextAreaElement>);
     expect(onChange).toHaveBeenCalledWith("edited draft");
   });
