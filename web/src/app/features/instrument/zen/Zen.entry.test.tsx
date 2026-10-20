@@ -33,6 +33,7 @@ let messages: ConversationMessage[];
 let targets: SysTargetSummary[];
 let targetsReady: Promise<void> | null;
 let hasMore: boolean;
+let historyUnavailable: boolean;
 let ownerUid: number;
 let gateway: string;
 let shipPid: string;
@@ -63,6 +64,7 @@ beforeEach(() => {
   targets = [];
   targetsReady = null;
   hasMore = false;
+  historyUnavailable = false;
   ownerUid = 1000;
   gateway = "wss://space.example/ws";
   shipPid = "ship";
@@ -92,7 +94,10 @@ beforeEach(() => {
     if (call === "sys.config.get") return { data: { entries: [] } };
     if (call === "account.list") return { data: { accounts: [] } };
     if (call === "conversation.forProcess") return { data: { conversation: conversation(z.object({ pid: z.string() }).parse(args).pid) } };
-    if (call === "conversation.history") return { data: { conversation: conversation(), messages, hasMore } };
+    if (call === "conversation.history") {
+      if (historyUnavailable) throw new Error("history unavailable");
+      return { data: { conversation: conversation(), messages, hasMore } };
+    }
     if (call === "proc.history") return { data: { ok: true, pid: z.object({ pid: z.string() }).parse(args).pid,
       format: 2, records: processRecords, messages: [], messageCount: processRecords.length, cursor: "epoch:1", hasMore: false,
       activeRunId, context: runContext, contextRevision: runContext?.revision ?? 0,
@@ -593,6 +598,15 @@ describe("Zen conversation entry", () => {
       activeRunId = "welcome-run";
       await act(() => { for (const listener of signals) listener("proc.run.started", { pid: shipPid, runId: activeRunId }); });
       await vi.waitFor(() => expect(zen.nodes().some((node) => node.type === ThinkingMark)).toBe(true));
+      expect(zen.nodes().some((node) => node.type === WakingUp)).toBe(false);
+    } finally { await zen.unmount(); }
+  });
+
+  it("does not call a conversation whose history failed to load a waking Ship", async () => {
+    historyUnavailable = true;
+    const zen = await mountedZen();
+    try {
+      await vi.waitFor(() => expect(zen.text()).toContain("Could not load your conversation: history unavailable"));
       expect(zen.nodes().some((node) => node.type === WakingUp)).toBe(false);
     } finally { await zen.unmount(); }
   });

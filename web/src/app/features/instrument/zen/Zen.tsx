@@ -605,8 +605,9 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
     return { moments, receipts: receiptsForMoments(moments, runtime.activeRunId, pid) };
   }, [answerHistory, conversation.rows, conversation.conversation?.id, outbox.messages, localRuns, runtime.activeRunId, runtime.rows, pid, t]);
 
-  /* a Ship that has never spoken: the owner's own chat, the welcome dismissed, all history loaded, with no words from Ship yet; what they read meanwhile is the waking line */
-  const waking = ready && !pidProp && !welcomeOpen && !conversation.hasMore && !processRuntime.hasOlderHistory && awaitingFirstMessage(moments);
+  /* a Ship that has never spoken: the owner's own chat, the welcome dismissed, all history loaded and none of it missing, with no words from Ship yet; what they read meanwhile is the waking line */
+  const waking = ready && !pidProp && !welcomeOpen && !conversation.historyError && !processRuntime.history.isError
+    && !conversation.hasMore && !processRuntime.hasOlderHistory && awaitingFirstMessage(moments);
 
   /* the glyph thinking mark moves on the same clock as settling text; the dot keeps its own time in the stylesheet */
   const marking = THINKING_MARK === "glyphs" && moments.some((moment) => !moment.text && (moment.thinking || moment.streaming));
