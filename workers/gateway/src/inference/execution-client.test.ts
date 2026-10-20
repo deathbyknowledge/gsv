@@ -4,6 +4,7 @@ import type { InferenceExecutor } from "@humansandmachines/gsv/services/inferenc
 import type { GatewayEnv } from "../runtime-env";
 import { createGenerationService } from "./execution-client";
 import { telemetryRecordSchema } from "@humansandmachines/gsv/telemetry";
+import { decodeInferenceRequest } from "@humansandmachines/gsv/services/inference-body";
 
 const config: AiConfigResult = {
   executor: { kind: "kernel" }, provider: "openai-codex", model: "gpt-6-astra",
@@ -21,8 +22,8 @@ const message: AiAssistantMessage = {
 };
 function fixture(telemetry = false) {
   const target = {
-    generate: vi.fn(async () => message),
-    generateStream: vi.fn(async () => new Response(encodeInferenceExecutionStreamEvent({ type: "done", reason: "stop", message })).body!),
+    generate: vi.fn<InferenceExecutor["generate"]>(async () => message),
+    generateStream: vi.fn<InferenceExecutor["generateStream"]>(async () => new Response(encodeInferenceExecutionStreamEvent({ type: "done", reason: "stop", message })).body!),
     abort: vi.fn(async () => {}), media: vi.fn(), [Symbol.dispose]: vi.fn(),
   };
   const getExecutor = vi.fn(async (_space: string): Promise<InferenceExecutor> => target);
@@ -34,6 +35,19 @@ function fixture(telemetry = false) {
 afterEach(() => vi.useRealTimers());
 
 describe("gateway inference execution boundary", () => {
+  it("sends context through its body without moving identity or model controls", async () => {
+    const { target, service, request } = fixture();
+    target.generate.mockImplementation(async (input) => {
+      expect(input).not.toHaveProperty("messages");
+      expect(input).not.toHaveProperty("systemPrompt");
+      expect(input).toMatchObject({ ...attribution, connection: { apiKey: "selected-credential" } });
+      const decoded = await decodeInferenceRequest(input);
+      expect(decoded.messages).toEqual(request.context.messages);
+      expect(decoded.systemPrompt).toEqual(request.context.systemPrompt);
+      return message;
+    });
+    expect(await service.generate(request)).toEqual(message);
+  });
   it("correlates failures before execution admission without exporting the exception message", async () => {
     const { getExecutor, service, request } = fixture(true);
     getExecutor.mockRejectedValue(Object.assign(new Error("private RPC detail"), { remote: true, overloaded: true }));

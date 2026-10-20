@@ -8,6 +8,7 @@ import type {
   AiToolCall,
 } from "../protocol/syscalls/ai";
 import type { ManagedInferencePolicy, ManagedInferenceUsageEvent } from "../protocol/managed";
+import type { InferenceRequest } from "./inference-body";
 
 export const GSV_INFERENCE_PROVIDER = "gsv";
 export const GSV_INFERENCE_MODEL = "default";
@@ -110,9 +111,9 @@ export type ManagedInferenceAbortRequest = {
 
 /** Installation-scoped inference capability returned to a Gateway deployment. */
 export interface InferenceTarget {
-  generate(input: ManagedInferenceRequest): Promise<ManagedInferenceResult>;
+  generate(input: InferenceRequest<ManagedInferenceRequest>): Promise<ManagedInferenceResult>;
   generateStream(
-    input: ManagedInferenceRequest,
+    input: InferenceRequest<ManagedInferenceRequest>,
   ): Promise<ReadableStream<Uint8Array>>;
   /** Omitted reasons mean cancellation; the service retains the first terminal cause. */
   abort(logicalRequestId: string, reason?: ManagedInferenceAbortReason): Promise<void>;
