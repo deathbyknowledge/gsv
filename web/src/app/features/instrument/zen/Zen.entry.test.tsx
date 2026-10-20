@@ -317,6 +317,9 @@ describe("Zen conversation entry", () => {
       expect(GSVClient.prototype.request).not.toHaveBeenCalledWith("proc.hil", expect.anything());
       expect(zen.props(FeedbackNote).note).toEqual({ kind: "notice", message: "chat.notice.approvalUnclear" });
       expect(zen.props(ApprovalCard).request.requestId).toBe("shell-approval");
+      await act(() => { expect(zen.props(PromptLine).onSubmit("no")).toBe(true); });
+      await vi.waitFor(() => expect(GSVClient.prototype.request).toHaveBeenCalledWith("proc.hil", expect.objectContaining({ decision: "deny" })));
+      expect(zen.nodes().some((node) => node.type === FeedbackNote)).toBe(false);
     } finally { await zen.unmount(); }
   });
 

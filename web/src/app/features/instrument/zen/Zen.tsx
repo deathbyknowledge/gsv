@@ -781,6 +781,7 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
   const decide = useCallback(
     async (decision: "approve" | "deny", remember?: boolean) => {
       if (!pid || !pendingHil) return;
+      setNote(null);
       try {
         const args: ProcHilArgs = { pid, requestId: pendingHil.requestId, decision };
         if (remember) args.remember = true;
