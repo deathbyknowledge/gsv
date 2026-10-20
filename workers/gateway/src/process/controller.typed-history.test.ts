@@ -150,6 +150,29 @@ describe("typed controller history producers", () => {
     });
   });
 
+  it("keeps retained contact attachments when their preparation fails", async () => {
+    const stub = await initProcess("typed-contact-media-unprepared", ROOT_IDENTITY);
+    await runInProcess(stub, async (process: Process) => {
+      isolateAdmission(process);
+      const retained = { type: "audio" as const, mimeType: "audio/ogg", key: "home/root/.gsv/media/archived-media:voice", size: 10, filename: "voice.ogg" };
+      vi.spyOn(process.resources, "resolveIncomingMedia").mockResolvedValue([retained]);
+      vi.spyOn(process.resources, "prepareEventMedia").mockRejectedValue(new Error("transcription timed out"));
+      await process.controller.handleProcessRuntimeEventDeliver({
+        eventId: "contact.message:msg:voice",
+        event: {
+          type: "contact.message", contactId: "contact:remote", conversationId: "conv:remote", messageId: "msg:voice",
+          from: "Xisca", text: "", media: [contactResource("voice.ogg", 10)],
+          responsibilityId: "r12y:00000000-0000-4000-8000-000000000092", ledgerRevision: 3,
+        },
+      });
+      const [row] = process.store.sql.exec<{ media_json: string | null }>("SELECT media_json FROM messages").toArray();
+      expect(JSON.parse(row?.media_json ?? "[]")).toEqual([expect.objectContaining({ key: retained.key, filename: "voice.ogg" })]);
+      expect(storedRecords(process)).toMatchObject([{ kind: "event", payload: { kind: "contact.message", payload: {
+        attachmentErrors: ["attachments could not be prepared: transcription timed out"],
+      } } }]);
+    });
+  });
+
   it("retains canonical interaction identity on direct and queued input", async () => {
     const stub = await initProcess("typed-input-origin", ROOT_IDENTITY);
     await runInProcess(stub, async (process: Process) => {

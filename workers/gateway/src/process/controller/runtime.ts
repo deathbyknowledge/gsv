@@ -1648,6 +1648,8 @@ export class ProcessController {
         try {
           preparedMedia = await this.host.resources.prepareEventMedia(media) ?? undefined;
         } catch (error) {
+          // Only enrichment failed: keep the retained attachments themselves.
+          preparedMedia = stringifyStoredProcessMedia(media) ?? undefined;
           attachmentErrors.push(`attachments could not be prepared: ${errorMessageFromUnknown(error)}`);
         }
       }
