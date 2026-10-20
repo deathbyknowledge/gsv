@@ -140,7 +140,7 @@ describe("Ship event delivery", () => {
 });
 
 function event(messageId: string, responsibilityId: string): ShipEvent {
-  return { type: "contact.message", contactId: "contact:remote", conversationId: "conv:remote", messageId,
+  return { type: "contact.message", contactId: "contact:remote", contactGeneration: "1", conversationId: "conv:remote", messageId,
     from: "Remote", text: messageId, responsibilityId, ledgerRevision: 1 };
 }
 
@@ -156,7 +156,7 @@ function fixture(storage: DurableObjectStorage) {
   const responsibilities = new ResponsibilityStore(storage);
   const schedule = vi.fn(async () => ({}));
   const contact = {
-    id: "contact:remote", ownerUid: OWNER, generation: 1, conversationId: "conv:remote", state: "active", blocked: false,
+    id: "contact:remote", ownerUid: OWNER, generation: "1", conversationId: "conv:remote", state: "active", blocked: false,
     remoteSubject: { displayName: "Remote" }, preferences: { shipHandlesMessages: true },
   };
   const federation = {

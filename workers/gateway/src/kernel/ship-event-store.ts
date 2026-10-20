@@ -24,6 +24,7 @@ type ShipEventRow = {
 const shipEventSchema = z.object({
   type: z.literal("contact.message"),
   contactId: z.string(),
+  contactGeneration: z.string(),
   conversationId: z.string(),
   messageId: z.string(),
   from: z.string(),
@@ -62,6 +63,14 @@ export class ShipEventStore {
       attemptCount: row.attempt_count,
       nextAttemptAtMs: row.next_attempt_at,
     };
+  }
+
+  queuedForContact(ownerUid: number, contactId: string): { eventId: string; responsibilityId: string }[] {
+    return this.sql.exec<{ event_id: string; responsibility_id: string }>(
+      `SELECT event_id, json_extract(event_json, '$.responsibilityId') AS responsibility_id FROM ship_events
+       WHERE owner_uid = ? AND json_extract(event_json, '$.contactId') = ?`,
+      ownerUid, contactId,
+    ).toArray().map((row) => ({ eventId: row.event_id, responsibilityId: row.responsibility_id }));
   }
 
   rebind(eventId: string, event: ShipEvent): void {

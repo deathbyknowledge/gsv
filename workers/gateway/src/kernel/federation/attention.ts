@@ -16,8 +16,16 @@ export function bindContactReply(contact: FederationContactRecord, message: Fede
   ctx.federation.bindReplyWait(contact, message.messageId, message.social?.reference.actor, work.id);
 }
 
-/** Ending standing handling cancels its open responsibility. */
+/**
+ * Ending standing handling withdraws its undelivered messages, including those whose
+ * handling Ship had already resolved, and cancels its open responsibility. Messages
+ * bound to a specific task stay with that task.
+ */
 export function cancelContactHandling(contact: FederationContactRecord, ctx: KernelContext): void {
+  for (const queued of ctx.shipEvents.queuedForContact(contact.ownerUid, contact.id)) {
+    const work = ctx.responsibilities.get(contact.ownerUid, queued.responsibilityId);
+    if (work?.dedupeKey?.startsWith(handoffPrefix(contact))) ctx.shipEvents.delivered(queued.eventId);
+  }
   const existing = standingHandling(contact, ctx);
   if (!existing) return;
   ctx.responsibilities.update({ ownerUid: contact.ownerUid, id: existing.id,
@@ -45,6 +53,7 @@ export function admitContactMessage(contact: FederationContactRecord, inbox: Fed
     const event: ShipEvent = {
       type: "contact.message",
       contactId: current.id,
+      contactGeneration: current.generation,
       conversationId: message.conversationId,
       messageId: message.id,
       from: current.localAlias ?? current.remoteSubject.displayName,
@@ -60,17 +69,19 @@ export function admitContactMessage(contact: FederationContactRecord, inbox: Fed
 }
 
 /**
- * Rebind or revoke a queued contact message before delivery. It stays with open work;
- * once that work ends it joins standing handling as a newly arriving message would,
- * and it is revoked when Ship no longer handles this contact. Returns the event to deliver.
+ * Rebind or revoke a queued contact message before delivery. It is fenced to the
+ * contact generation that queued it and stays with open work. If Ship resolved that
+ * work while the message waited, the message joins standing handling as a newly
+ * arriving one would; cancelled work withdraws it. Returns the event to deliver.
  */
 export function admitQueuedContactEvent(ownerUid: number, eventId: string, event: ShipEvent, ctx: KernelContext): ShipEvent | null {
   return ctx.federation.transaction(() => {
     const contact = ctx.federation.get(event.contactId);
-    if (!contact || contact.ownerUid !== ownerUid || contact.state !== "active" || contact.blocked) return null;
+    if (!contact || contact.ownerUid !== ownerUid || contact.generation !== event.contactGeneration ||
+        contact.state !== "active" || contact.blocked) return null;
     const work = ctx.responsibilities.get(ownerUid, event.responsibilityId);
     if (work && !terminal(work)) return event;
-    if (!contact.preferences.shipHandlesMessages) return null;
+    if (work?.state !== "resolved" || !contact.preferences.shipHandlesMessages) return null;
     const rebound = { ...event, responsibilityId: pendingMessages(contact, ctx).id, ledgerRevision: ctx.responsibilities.revision(ownerUid) };
     ctx.shipEvents.rebind(eventId, rebound);
     return rebound;

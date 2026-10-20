@@ -68,6 +68,7 @@ export type ProcessResponsibilityReadyRuntimeEvent = {
 export type ProcessContactMessageRuntimeEvent = {
   type: "contact.message";
   contactId: string;
+  contactGeneration: string;
   conversationId: string;
   messageId: string;
   from: string;

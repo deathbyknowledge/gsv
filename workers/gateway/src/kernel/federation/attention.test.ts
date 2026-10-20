@@ -6,7 +6,7 @@ import type { KernelContext } from "../context";
 import { FederationStore, type FederationContactRecord, type FederationOutboxLocalMessage } from "../federation-store";
 import { ResponsibilityStore } from "../responsibility-store";
 import { ShipEventStore } from "../ship-event-store";
-import { admitContactMessage, bindContactReply, endContactHandling } from "./attention";
+import { admitContactMessage, admitQueuedContactEvent, bindContactReply, endContactHandling } from "./attention";
 import { handleContactPreferencesUpdate } from "./preferences";
 
 const OWNER = { uid: 1000, gid: 1000, gids: [1000], username: "person", home: "/home/person", cwd: "/home/person" };
@@ -74,6 +74,45 @@ describe("contact attention admission", () => {
         .rejects.toThrow("Only an active contact");
       expect(ctx.federation.get(contact.id)?.preferences).toMatchObject({ revision, shipHandlesMessages: false });
       expect(ctx.reconcileResponsibilityWake).not.toHaveBeenCalled();
+    });
+  });
+
+  it("moves a queued message past resolved handling but withdraws it when the person takes over", async () => {
+    await runWithRealKernelSql(async (_sql, storage) => {
+      const ctx = context(storage);
+      const contact = activate(ctx);
+      await handleContactPreferencesUpdate({ contactId: contact.id, expectedRevision: 1, patch: { shipHandlesMessages: true } }, ctx);
+      const first = receive(contact, ctx, "human");
+      const second = receive(contact, ctx, "human");
+      admitContactMessage(contact, first.inbox, first.message, ctx);
+      admitContactMessage(contact, second.inbox, second.message, ctx);
+      const work = ctx.responsibilities.list({ ownerUid: OWNER.uid }).records[0]!;
+      ctx.responsibilities.update({ ownerUid: OWNER.uid, id: work.id, patch: { state: "resolved" }, actor: HUMAN, observedByShip: true, now: Date.now() });
+
+      const queued = ctx.shipEvents.next(OWNER.uid)!;
+      const rebound = admitQueuedContactEvent(OWNER.uid, queued.eventId, queued.event, ctx)!;
+      expect(rebound.responsibilityId).not.toBe(work.id);
+      expect(ctx.shipEvents.next(OWNER.uid)?.event.responsibilityId).toBe(rebound.responsibilityId);
+
+      // The second message still names the resolved record; taking over withdraws both.
+      await handleContactPreferencesUpdate({ contactId: contact.id, expectedRevision: 2, patch: { shipHandlesMessages: false } }, ctx);
+      await handleContactPreferencesUpdate({ contactId: contact.id, expectedRevision: 3, patch: { shipHandlesMessages: true } }, ctx);
+      expect(ctx.shipEvents.next(OWNER.uid)).toBeNull();
+    });
+  });
+
+  it("withdraws a queued message from an earlier contact generation or cancelled work", async () => {
+    await runWithRealKernelSql(async (_sql, storage) => {
+      const ctx = context(storage);
+      const contact = activate(ctx);
+      await handleContactPreferencesUpdate({ contactId: contact.id, expectedRevision: 1, patch: { shipHandlesMessages: true } }, ctx);
+      const incoming = receive(contact, ctx, "human");
+      admitContactMessage(contact, incoming.inbox, incoming.message, ctx);
+      const queued = ctx.shipEvents.next(OWNER.uid)!;
+      expect(admitQueuedContactEvent(OWNER.uid, queued.eventId, { ...queued.event, contactGeneration: "generation:zero" }, ctx)).toBeNull();
+      ctx.responsibilities.update({ ownerUid: OWNER.uid, id: queued.event.responsibilityId, patch: { state: "cancelled" },
+        actor: HUMAN, observedByShip: true, now: Date.now() });
+      expect(admitQueuedContactEvent(OWNER.uid, queued.eventId, queued.event, ctx)).toBeNull();
     });
   });
 

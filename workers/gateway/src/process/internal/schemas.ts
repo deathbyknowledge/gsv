@@ -119,6 +119,7 @@ export const responsibilityReadyRuntimeEventSchema = responsibilityBatchSchema.e
 export const contactMessageRuntimeEventSchema = z.strictObject({
   type: z.literal("contact.message"),
   contactId: z.string().trim().regex(/^contact:.+$/u),
+  contactGeneration: z.string().trim().min(1),
   conversationId: z.string().trim().min(1),
   messageId: z.string().trim().min(1),
   from: z.string(),

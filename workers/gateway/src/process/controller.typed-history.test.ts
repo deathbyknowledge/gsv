@@ -134,7 +134,7 @@ describe("typed controller history producers", () => {
       await process.controller.handleProcessRuntimeEventDeliver({
         eventId: "contact.message:msg:photo",
         event: {
-          type: "contact.message", contactId: "contact:remote", conversationId: "conv:remote", messageId: "msg:photo",
+          type: "contact.message", contactId: "contact:remote", contactGeneration: "1", conversationId: "conv:remote", messageId: "msg:photo",
           from: "Xisca", text: "", media: [photo, oversized],
           responsibilityId: "r12y:00000000-0000-4000-8000-000000000091", ledgerRevision: 3,
         },
@@ -162,7 +162,7 @@ describe("typed controller history producers", () => {
       await process.controller.handleProcessRuntimeEventDeliver({
         eventId: "contact.message:msg:voice",
         event: {
-          type: "contact.message", contactId: "contact:remote", conversationId: "conv:remote", messageId: "msg:voice",
+          type: "contact.message", contactId: "contact:remote", contactGeneration: "1", conversationId: "conv:remote", messageId: "msg:voice",
           from: "Xisca", text: "", media: [contactResource("voice.ogg", 10)],
           responsibilityId: "r12y:00000000-0000-4000-8000-000000000092", ledgerRevision: 3,
         },

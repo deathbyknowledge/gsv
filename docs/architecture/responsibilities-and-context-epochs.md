@@ -120,10 +120,12 @@ messages are the first producer.
 
 The producer decides again before every delivery attempt, including after the Ship
 controller starts, whether a queued event may still reach Ship. A contact message
-stays with open work. If that work ended while the message waited, it joins the
-contact's standing handling as a newly arriving message would. It is withdrawn when
-the account is removed, the contact is inactive or blocked, or Ship no longer
-handles that contact.
+is fenced to the contact generation that queued it and stays with open work. If
+Ship resolved that work while the message waited, the message joins the contact's
+standing handling as a newly arriving message would. It is withdrawn when the
+account is removed, the contact is inactive or blocked, or its work was cancelled.
+Taking back a contact's messages withdraws every queued message of its standing
+handling; messages bound to a specific task stay with that task.
 
 A responsibility-triggered run may yield only after every record in its current batch
 is resolved, delegated, waiting, or explicitly deferred. The overall ledger need not
