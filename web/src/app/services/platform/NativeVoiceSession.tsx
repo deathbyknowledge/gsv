@@ -8,6 +8,7 @@ import { useNativeInput } from "./PlatformProvider";
 import { useNativeSpeech, type SpeechLanguage } from "./NativeSpeech";
 import { useNativeVoice, type VoiceComposer } from "./useNativeVoice";
 import { useSpokenReplies } from "./useSpokenReplies";
+import { t } from "../../i18n/locale";
 
 export type ComposerVoiceOptions = Pick<Parameters<typeof useNativeVoice>[0], "prompt" | "scope" | "enabled" | "send">;
 type Composer = { owner: symbol; options: { current: ComposerVoiceOptions } };
@@ -58,7 +59,7 @@ function VoiceSessionOwner({ children, onDirtyChange }: {
     enabled: connected && !!speech?.preferences.enabled,
     queryFn: async () => {
       const { conversation } = await client.conversation.ship({});
-      if (conversation.kind !== "ship") throw new Error("Your personal Ship conversation is unavailable.");
+      if (conversation.kind !== "ship") throw new Error(t("desktop.voice.errors.conversationUnavailable"));
       return conversation;
     },
   });
@@ -90,12 +91,12 @@ function VoiceSessionOwner({ children, onDirtyChange }: {
   const input = useNativeVoice({
     prompt, scope: "desktop-session", enabled: true, global: true,
     prepareHandsfree: () => {
-      if (!current.current.connected) return "Reconnecting to your Ship. Your voice draft is still here.";
+      if (!current.current.connected) return t("desktop.voice.errors.reconnecting");
       if (!current.current.destination.data) {
         void current.current.destination.refetch();
-        return current.current.destination.error?.message ?? "Your Ship is getting ready. Try the shortcut again in a moment.";
+        return current.current.destination.error?.message ?? t("desktop.voice.errors.shipPreparing");
       }
-      if (current.current.outbox.sending) return "Your last message is still sending. Try again in a moment.";
+      if (current.current.outbox.sending) return t("desktop.voice.errors.stillSending");
       if (!textRef.current.trim()) {
         const ship = current.current.destination.data;
         recipient.current = { pid: ship.handlerPid, conversationId: ship.id };

@@ -5,6 +5,7 @@ import type { ControlEvent, ControlReply } from "./control";
 import type { MachineCommand, MachineSnapshot, NativeMachine } from "./machineSetup";
 import type { WelcomeSnapshot, WelcomeState } from "../app/services/session/ownerWelcome";
 import type { NativeSpeechDriver, SpeechCommand, SpeechEvent, SpeechStatus, ShortcutSettings } from "../app/services/platform/NativeSpeech";
+import { t, type TextKey } from "../app/i18n/locale";
 
 export type DesktopSession = { generation: string; origin: string | null; values: Record<string, string> };
 type NativeChannel<T> = { onmessage: (message: T) => void };
@@ -53,13 +54,13 @@ declare global {
 }
 
 export function invoke<C extends keyof DesktopCommands>(command: C, ...args: CommandArguments<C>): Promise<DesktopCommands[C]["result"]> {
-  if (!window.__TAURI__) return Promise.reject(new Error("Open this frontend in Ship."));
+  if (!window.__TAURI__) return Promise.reject(new Error(t("desktop.errors.openInShip")));
   return window.__TAURI__.core.invoke(command, ...args);
 }
 
 export async function openInBrowser(url: string): Promise<void> {
   try { await invoke("desktop_open", { url }); }
-  catch { throw new Error("Could not open your browser."); }
+  catch { throw new Error(t("desktop.errors.openBrowser")); }
 }
 
 /** Synchronous session-service view backed by serialized, generation-fenced host writes. */
@@ -76,7 +77,7 @@ function savedUsername(values: Record<string, string>): string | null {
   catch { return null; }
 }
 
-export function nativeSessionStorage(session: DesktopSession, onError: (message: string) => void, mock = false): NativeSessionStorage {
+export function nativeSessionStorage(session: DesktopSession, onError: (message: TextKey) => void, mock = false): NativeSessionStorage {
   const values = { ...session.values };
   let pending = Promise.resolve();
   let username = savedUsername(values);
@@ -91,7 +92,7 @@ export function nativeSessionStorage(session: DesktopSession, onError: (message:
       username = next;
       listeners.forEach((listener) => listener(username));
     });
-    void pending.catch(() => onError("This session could not be saved. Sign in again after restarting."));
+    void pending.catch(() => onError("desktop.errors.sessionNotSaved"));
   };
   return {
     getItem: (key) => values[key] ?? null,
@@ -116,7 +117,7 @@ export async function disconnectSpace(service: SessionService, storage: NativeSe
 export function nativeInput(generation: string): NativeInput {
   return {
     subscribe: (receive) => {
-      if (!window.__TAURI__) throw new Error("Open this frontend in Ship.");
+      if (!window.__TAURI__) throw new Error(t("desktop.errors.openInShip"));
       const updates = new window.__TAURI__.core.Channel<NativeUpdate>(receive);
       const initial = invoke("input_attach", { generation, updates });
       let disposed = false;
@@ -136,7 +137,7 @@ export function nativeSpeech(generation: string): NativeSpeechDriver {
   let configured = Promise.resolve();
   return {
     subscribe(receive) {
-      if (!window.__TAURI__) throw new Error("Open this frontend in Ship.");
+      if (!window.__TAURI__) throw new Error(t("desktop.errors.openInShip"));
       const updates = new window.__TAURI__.core.Channel<SpeechEvent>(receive);
       return { initial: invoke("speech_attach", { generation, updates }), dispose() { updates.onmessage = () => {}; } };
     },
@@ -155,14 +156,14 @@ export function nativeMachine(generation: string, username: string): NativeMachi
       try { return await invoke("machine_status", { generation, username }); }
       catch (error) {
         const message = z.string().safeParse(error);
-        throw new Error(message.success ? message.data : "Could not check this computer. Retry.");
+        throw new Error(message.success ? message.data : t("desktop.machine.checkFailed"));
       }
     },
     command: async (command) => {
       try { return await invoke("machine_command", { generation, username, command }); }
       catch (error) {
         const message = z.string().safeParse(error);
-        throw new Error(message.success ? message.data : "Could not connect this computer. Retry.");
+        throw new Error(message.success ? message.data : t("desktop.machine.connectFailed"));
       }
     },
   };

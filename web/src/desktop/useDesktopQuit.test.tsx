@@ -86,7 +86,7 @@ describe("desktop quit", () => {
       expect(state!.confirmation).toBe(false);
       expect(h.invoke).not.toHaveBeenCalled();
       await act(() => { h.close(); state.quit(); });
-      await vi.waitFor(() => expect(onError).toHaveBeenCalledWith("Could not quit Ship."));
+      await vi.waitFor(() => expect(onError).toHaveBeenCalledWith("desktop.errors.quit"));
       expect(h.invoke).not.toHaveBeenCalled();
       await act(() => { state.quit(); });
       await vi.waitFor(() => expect(h.invoke).toHaveBeenCalledExactlyOnceWith("desktop_quit"));

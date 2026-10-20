@@ -1,11 +1,13 @@
 import { useLayoutEffect, useRef, useState } from "preact/hooks";
 import { observeVoiceWaveform, VOICE_WAVEFORM_COLUMNS } from "./observeVoiceWaveform";
+import { useT } from "../../i18n/locale";
 
 const WIDTH = VOICE_WAVEFORM_COLUMNS * 8;
 const HEIGHT = 56;
 const baseline = Array.from({ length: VOICE_WAVEFORM_COLUMNS }, (_, index) => `M${index * 8 + 2},27v2`).join("");
 
 export function VoiceWaveform({ stream }: { stream: MediaStream | null }) {
+  const t = useT();
   const trace = useRef<SVGPathElement>(null);
   const [unavailable, setUnavailable] = useState(false);
   useLayoutEffect(() => {
@@ -31,6 +33,6 @@ export function VoiceWaveform({ stream }: { stream: MediaStream | null }) {
       <path class="browser-voice-baseline" d={baseline} />
       <path ref={trace} class="browser-voice-trace" />
     </svg>
-    {unavailable && <span class="browser-voice-notice" role="status">Recording continues; waveform unavailable.</span>}
+    {unavailable && <span class="browser-voice-notice" role="status">{t("desktop.browserVoice.waveformUnavailable")}</span>}
   </>;
 }
