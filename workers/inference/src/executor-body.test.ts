@@ -116,23 +116,50 @@ afterEach(() => {
 });
 
 describe("inference request bodies over real Worker RPC", () => {
-  it.each([false, true])("delivers fifteen images above the RPC value limit, streaming=%s", async (streaming) => {
+  it.each([
+    { source: "user", streaming: false },
+    { source: "user", streaming: true },
+    { source: "toolResult", streaming: false },
+    { source: "toolResult", streaming: true },
+  ] as const)("delivers fifteen $source images above the RPC value limit, streaming=$streaming", async ({ source, streaming }) => {
     const input = request();
+    if (streaming) {
+      input.connection = {
+        ...input.connection, provider: "custom", model: "body-test-model",
+        baseUrl: "https://selected-target.invalid/v1", providerStyle: "openai-chat-completions",
+        apiKey: "synthetic-body-test-credential",
+      };
+    }
     const images: AiImageContent[] = Array.from({ length: 15 }, (_, index) => ({
       type: "image",
       data: btoa(String.fromCharCode(index + 1).repeat(1_750_000 + index)),
       mimeType: index % 2 === 0 ? "image/png" : "image/jpeg",
     }));
     input.systemPrompt = "Keep every image in its original order.";
-    input.messages = [{
+    input.messages = source === "user" ? [{
       role: "user",
       content: [{ type: "text", text: "inspect the attached images" }, ...images],
       timestamp: 123,
+    }] : [{
+      role: "user", content: "Read and inspect the images.", timestamp: 123,
+    }, {
+      role: "assistant",
+      content: [{ type: "toolCall", id: "body-image-call", name: "read_images", arguments: { count: 15 } }],
+      api: "openai-completions", provider: input.connection.provider, model: input.connection.model,
+      usage: {
+        input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0,
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+      },
+      stopReason: "toolUse", timestamp: 124,
+    }, {
+      role: "toolResult", toolCallId: "body-image-call", toolName: "read_images", isError: false,
+      content: [{ type: "text", text: "inspect the attached images" }, ...images],
+      timestamp: 125,
     }];
     input.tools = [{
-      name: "record_image",
-      description: "Record the image index.",
-      parameters: { type: "object", properties: { index: { type: "integer" } }, required: ["index"] },
+      name: "read_images",
+      description: "Read the requested number of images.",
+      parameters: { type: "object", properties: { count: { type: "integer" } }, required: ["count"] },
     }];
     input.options = { maxTokens: 17 };
     input.sessionAffinityKey = "body-fixture-affinity";
@@ -145,6 +172,9 @@ describe("inference request bodies over real Worker RPC", () => {
       tools: unknown;
       contentTypes: string[];
       text?: string;
+      roles: string[];
+      toolCalls: unknown;
+      toolResults: unknown[];
       exactImages: boolean[];
       metadata: Record<string, string>;
     } | undefined;
@@ -153,10 +183,16 @@ describe("inference request bodies over real Worker RPC", () => {
       const payload = await outbound.json<{
         model: string;
         max_tokens: number;
-        messages: Array<{ role: string; content: string | Array<{ type: string; text?: string; image_url?: { url: string } }> }>;
+        messages: Array<{
+          role: string;
+          content: string | Array<{ type: string; text?: string; image_url?: { url: string } }>;
+          tool_calls?: Array<{ id: string; type: string; function: { name: string; arguments: string } }>;
+          tool_call_id?: string;
+        }>;
         tools: Array<{ type: string; function: { name: string; description: string; parameters: JsonValue } }>;
       }>();
-      const userContent = payload.messages.find((message) => message.role === "user")?.content;
+      const userContent = payload.messages.find((message) => message.role === "user"
+        && Array.isArray(message.content) && message.content.some((block) => block.type === "image_url"))?.content;
       const content = Array.isArray(userContent) ? userContent : [];
       observed = {
         maxTokens: payload.max_tokens,
@@ -164,19 +200,15 @@ describe("inference request bodies over real Worker RPC", () => {
         tools: payload.tools,
         contentTypes: content.map((block) => block.type),
         text: content[0]?.text,
+        roles: payload.messages.map((message) => message.role),
+        toolCalls: payload.messages.find((message) => message.role === "assistant")?.tool_calls,
+        toolResults: payload.messages.filter((message) => message.role === "tool"),
         exactImages: images.map((image, index) => content[index + 1]?.image_url?.url === `data:${image.mimeType};base64,${image.data}`),
         metadata: JSON.parse(outbound.headers.get("cf-aig-metadata") ?? "{}"),
       };
       return completion();
     });
     vi.stubGlobal("fetch", providerFetch);
-    if (streaming) {
-      input.connection = {
-        ...input.connection, provider: "custom", model: "body-test-model",
-        baseUrl: "https://selected-target.invalid/v1", providerStyle: "openai-chat-completions",
-        apiKey: "synthetic-body-test-credential",
-      };
-    }
     const encoded = encodeInferenceRequest(input);
     expect(JSON.stringify(encoded).length).toBeLessThan(2_000);
     expect(encoded).not.toHaveProperty("messages");
@@ -197,9 +229,24 @@ describe("inference request bodies over real Worker RPC", () => {
         system: { role: "system", content: input.systemPrompt },
         tools: [{ type: "function", function: input.tools[0] }],
         contentTypes: ["text", ...images.map(() => "image_url")],
-        text: "inspect the attached images",
         exactImages: images.map(() => true),
       });
+      if (source === "toolResult") {
+        expect(observed).toMatchObject({
+          roles: ["system", "user", "assistant", "tool", "user"],
+          toolCalls: [{
+            id: "body-image-call", type: "function",
+            function: { name: "read_images", arguments: '{"count":15}' },
+          }],
+          toolResults: [{
+            role: "tool", tool_call_id: "body-image-call", content: "inspect the attached images",
+          }],
+        });
+      } else {
+        expect(observed).toMatchObject({
+          roles: ["system", "user"], text: "inspect the attached images", toolResults: [],
+        });
+      }
       if (!streaming) {
         expect(observed?.metadata).toMatchObject({
           "gsv.installation_id": input.installationId,
