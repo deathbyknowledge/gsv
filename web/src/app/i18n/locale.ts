@@ -1,6 +1,7 @@
 import type { ComponentChildren, VNode } from "preact";
 import { useSyncExternalStore } from "preact/compat";
 import { en } from "./en";
+import { es } from "./es";
 
 /** English is the source catalog: a message is written there first, and every translation supplies the same keys. */
 type Source = typeof en;
@@ -26,8 +27,12 @@ const PSEUDO_LETTERS = new Map(Object.entries({
 }));
 
 const locales: InterfaceLocale[] = [{ tag: "en", dir: "ltr", message: (key) => en[key] }];
-// Development builds add a pseudo-locale: choose the language en-XA to find text that bypasses the catalog.
-if (import.meta.env.DEV) locales.push({ tag: "en-XA", dir: "ltr", message: (key) => pseudoMessage(en[key]) });
+if (import.meta.env.DEV) {
+  // Spanish ships once every screen reads from the catalog; until then only development builds offer it.
+  locales.push({ tag: "es", dir: "ltr", message: (key) => es[key] });
+  // The pseudo-locale en-XA finds text that bypasses the catalog.
+  locales.push({ tag: "en-XA", dir: "ltr", message: (key) => pseudoMessage(en[key]) });
+}
 
 let active = activate(locales[0]);
 const listeners = new Set<() => void>();

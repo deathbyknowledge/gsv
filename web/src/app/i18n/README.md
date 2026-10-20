@@ -8,6 +8,12 @@ rendered text in place, so drafts survive it.
 
 English in `en.ts` is the source catalog. Every translation supplies the same
 keys, and `tsc` rejects an unknown key or a plural message without its `count`.
+A test checks that each translation keeps every English `{slot}` and uses only
+its language's plural forms. A catalog's header states its conventions, such as
+the form of address.
+
+Spanish in `es.ts` is the first translation. Development builds offer it until
+every screen reads from the catalog; production builds include only English.
 
 Development builds include the pseudo-locale `en-XA`. Choose `en-XA` as the
 language preference, or as the browser's language (Chromium's `--lang=en-XA`
