@@ -29,6 +29,16 @@ export class ShipEventRuntime {
       await this.schedule(ownerUid, Date.now() + MANAGED_LIFECYCLE_RECHECK_MS, task.id);
       return;
     }
+    try {
+      await this.deliverQueued(ownerUid, task);
+    } finally {
+      // Delivery stamps recovery on the ledger; arm its wake even when this pass
+      // finds the queue already drained, so a failed reconcile is retried.
+      await this.host.responsibilityRuntime.reconcileResponsibilityWake(ownerUid);
+    }
+  }
+
+  private async deliverQueued(ownerUid: number, task: { id: string }): Promise<void> {
     for (let queued = this.host.shipEvents.next(ownerUid); queued; queued = this.host.shipEvents.next(ownerUid)) {
       if (queued.nextAttemptAtMs > Date.now()) {
         await this.schedule(ownerUid, queued.nextAttemptAtMs, task.id);
@@ -65,7 +75,6 @@ export class ShipEventRuntime {
       this.host.shipEvents.delivered(queued.eventId);
       this.host.responsibilities.markEventDelivered(queued.ownerUid, [queued.event.responsibilityId], now);
     });
-    await this.host.responsibilityRuntime.reconcileResponsibilityWake(queued.ownerUid);
   }
 
   private async schedule(ownerUid: number, at: number, excludeTaskId?: string): Promise<void> {

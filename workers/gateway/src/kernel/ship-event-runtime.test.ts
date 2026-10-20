@@ -46,6 +46,14 @@ describe("Ship event delivery", () => {
       expect(responsibilities.nextWakeAt(OWNER, Date.now())).toBeGreaterThan(Date.now());
     });
   });
+
+  it("arms the recovery wake on a pass that finds the queue already drained", async () => {
+    await runWithRealKernelSql(async (_sql, storage) => {
+      const { host, runtime } = fixture(storage);
+      await runtime.onShipEvents(OWNER, { id: "task:retry" });
+      expect(host.responsibilityRuntime.reconcileResponsibilityWake).toHaveBeenCalledExactlyOnceWith(OWNER);
+    });
+  });
 });
 
 function event(messageId: string, responsibilityId: string): ShipEvent {
