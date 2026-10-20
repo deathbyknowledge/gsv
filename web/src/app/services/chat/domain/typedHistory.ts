@@ -126,7 +126,7 @@ export function transcriptRowsFromRecords(records: readonly (ProcHistoryRecord |
       case "event":
         rows.push({
           ...base, role: "system", text: historyEventText(record.payload), event: record.payload,
-          isError: record.payload.severity === "error",
+          media: record.payload.media, isError: record.payload.severity === "error",
           status: record.payload.severity === "error" ? "error" : "done",
         });
         break;

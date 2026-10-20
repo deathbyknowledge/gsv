@@ -144,9 +144,11 @@ describe("typed controller history producers", () => {
       expect(process.store.sql.exec<{ media_json: string | null }>("SELECT media_json FROM messages").toArray())
         .toEqual([{ media_json: prepared }]);
       expect(process.runs.active?.pendingMediaMessageId).toBeUndefined();
-      expect(storedRecords(process)).toMatchObject([{ kind: "event", payload: { kind: "contact.message", payload: {
-        attachmentErrors: ["video.mp4 exceeds the message attachment byte limit"],
-      } } }]);
+      expect(storedRecords(process)).toMatchObject([{ kind: "event", payload: {
+        kind: "contact.message",
+        payload: { attachmentErrors: ["video.mp4 exceeds the message attachment byte limit"] },
+        media: JSON.parse(prepared),
+      } }]);
     });
   });
 

@@ -27,13 +27,13 @@ import {
   type ProcIpcDeliverResult, type ProcMediaInput, type ProcSendArgs, type ProcSendResult, type ResourceBlock,
   type ProcKillResult, type ProcResetResult, type ProcRunToolFinishedSignal, type ProcRunToolStartedSignal,
   type InteractionOrigin, type JsonObject,
-  type ProcHistoryEvent, type ProcHistoryEventPayload, REQUEST_CANCEL_SIGNAL, jsonObjectSchema,
+  type ProcHistoryEvent, type ProcHistoryEventPayload, type ProcHistoryRecordData, REQUEST_CANCEL_SIGNAL, jsonObjectSchema,
 } from "@humansandmachines/gsv/protocol";
 import { agentArchiveMediaPath } from "../../shared/process-media-path";
 import { MAX_MESSAGE_MEDIA_TOTAL_BYTES } from "../../shared/message-media-limits";
 import { parseInteractionOrigin, serializeInteractionOrigin, emptyProcessArchive } from "../history/helpers";
 import { historyCursor, parseHistoryCursor } from "../history/cursor";
-import { storeIncomingProcessMedia, stringifyStoredProcessMedia, deleteProcessMedia } from "../media";
+import { storeIncomingProcessMedia, stringifyStoredProcessMedia, parseStoredProcessMedia, deleteProcessMedia } from "../media";
 import { appendResponsibilityBatch, normalizeProcessRuntimeEvent } from "../internal/events";
 import { formatIpcMessage, formatIpcReplyMessage, formatScheduleEventMessage, renderHistoryEvent } from "../history/event-renderer";
 import type { AssistantHistoryContent, AsyncCleanupTask, CodeModeApprovalWaiter } from "../internal/contracts";
@@ -1806,6 +1806,10 @@ export class ProcessController {
     const timestamp = Date.now();
     const currentRun = this.host.runs.active;
     const nextRunId = currentRun ? null : (options.runId ?? crypto.randomUUID());
+    const eventMedia = parseStoredProcessMedia(options.media ?? null);
+    const record: ProcHistoryRecordData | undefined = options.event
+      ? { kind: "event", payload: eventMedia.length > 0 ? { ...options.event, media: eventMedia } : options.event }
+      : undefined;
     const { messageId, wakeRunId } = this.host.ctx.storage.transactionSync(() => {
       if (currentRun && options.distinctRun) {
         if (content === null) {
@@ -1817,7 +1821,7 @@ export class ProcessController {
           kind: options.kind ?? "runtime.event",
           origin: serializeInteractionOrigin(options.origin) ?? undefined,
           provenance: options.provenance,
-          record: options.event ? { kind: "event", payload: options.event } : undefined,
+          record,
         });
         return { messageId: -1, wakeRunId };
       }
@@ -1825,7 +1829,7 @@ export class ProcessController {
       if (content !== null) {
         const messageOptions: Parameters<ProcessStore["messages"]["appendMessage"]>[2] = {
           createdAt: timestamp,
-          record: options.event ? { kind: "event", payload: options.event } : undefined,
+          record,
           queueKind: options.kind,
           provenance: options.provenance
             ? jsonObjectSchema.parse(JSON.parse(options.provenance))

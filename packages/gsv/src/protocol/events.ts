@@ -1,5 +1,6 @@
 import * as z from "zod/mini";
 import { adapterSurfaceSchema } from "./adapters";
+import { procHistoryMediaSchema, type ProcHistoryMedia } from "./history-media";
 import { jsonObjectSchema, jsonValueSchema, type JsonObject, type JsonValue } from "./json";
 import type { ProcHistoryContextPolicy } from "./syscalls/proc";
 import type { EventReplyTarget } from "./syscalls/interaction-origin";
@@ -361,6 +362,7 @@ function eventSchema<K extends ProcHistoryEventKind>(kind: K) {
     payload: procHistoryEventPayloadSchemas[kind],
     severity: procHistoryEventSeveritySchema,
     audience: procHistoryEventAudienceSchema,
+    media: z.optional(z.array(procHistoryMediaSchema)),
   });
 }
 
@@ -401,6 +403,7 @@ export const procHistoryEventSchema: z.ZodMiniType<ProcHistoryEvent> = z.discrim
     }),
     severity: procHistoryEventSeveritySchema,
     audience: procHistoryEventAudienceSchema,
+    media: z.optional(z.array(procHistoryMediaSchema)),
   }),
 ]);
 
@@ -412,4 +415,5 @@ export type ProcHistoryEvent = ({
 }) & {
   severity: ProcHistoryEventSeverity;
   audience: ProcHistoryEventAudience;
+  media?: ProcHistoryMedia[];
 };

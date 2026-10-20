@@ -1,10 +1,13 @@
 import * as z from "zod/mini";
 import { adapterSurfaceSchema } from "./adapters";
 import { procHistoryEventSchema, type ProcHistoryEvent } from "./events";
+import { procHistoryMediaSchema, type ProcHistoryMedia } from "./history-media";
 import { jsonObjectSchema, jsonValueSchema, type JsonObject, type JsonValue } from "./json";
 import { resourceBlockSchema, type ResourceBlock } from "./resource";
 import type { InteractionOrigin } from "./syscalls/interaction-origin";
-import type { ProcMediaInput, ProcMessageMetadata, ProcToolResultOutcome } from "./syscalls/proc";
+import type { ProcMessageMetadata, ProcToolResultOutcome } from "./syscalls/proc";
+
+export { procHistoryMediaSchema, type ProcHistoryMedia } from "./history-media";
 
 const nonNegativeIntegerSchema = z.int().check(z.nonnegative());
 const positiveIntegerSchema = z.int().check(z.positive());
@@ -50,25 +53,6 @@ const historyInteractionOriginSchema: z.ZodMiniType<InteractionOrigin> = z.discr
     replyTo: z.optional(adapterMessageDestinationSchema),
   }),
 ]);
-
-const historyLegacyMediaSchema: z.ZodMiniType<ProcMediaInput & { description?: string; revision?: string }> = z.strictObject({
-  type: z.enum(["image", "audio", "video", "document"]),
-  mimeType: z.string(),
-  key: z.optional(z.string()),
-  conversationId: z.optional(z.string()),
-  path: z.optional(z.string()),
-  url: z.optional(z.string()),
-  filename: z.optional(z.string()),
-  // Match the finite numbers accepted by legacy ingress and stored descriptors.
-  size: z.optional(z.number()),
-  duration: z.optional(z.number()),
-  transcription: z.optional(z.string()),
-  description: z.optional(z.string()),
-  revision: z.optional(z.string()),
-});
-
-export type ProcHistoryMedia = ResourceBlock | (ProcMediaInput & { description?: string; revision?: string });
-export const procHistoryMediaSchema: z.ZodMiniType<ProcHistoryMedia> = z.union([resourceBlockSchema, historyLegacyMediaSchema]);
 
 export const procHistoryMessageOriginSchema: z.ZodMiniType<ProcHistoryMessageOrigin> = z.strictObject({
   interaction: z.optional(historyInteractionOriginSchema),
