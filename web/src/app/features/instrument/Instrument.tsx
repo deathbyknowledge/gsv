@@ -108,6 +108,8 @@ function InstrumentReady({ initialPath, handsfreeDirty }: { initialPath: string;
   const [selectedMemoryPage, setSelectedMemoryPage] = useState<MemoryPageRef | null>(null);
   const [settingsDirty, setSettingsDirty] = useState(false);
   const [zenDirty, setZenDirty] = useState(false);
+  /* the founders' welcome still stands over the chat; Ship is not waking until it is dismissed */
+  const [welcomeOpen, setWelcomeOpen] = useState(true);
   const [fleetDirty, setFleetDirty] = useState(false);
   const [memoryDirty, setMemoryDirty] = useState(false);
   const [peopleDirty, setPeopleDirty] = useState(false);
@@ -303,7 +305,7 @@ function InstrumentReady({ initialPath, handsfreeDirty }: { initialPath: string;
           setHelp(false);
           setNavigationOpen((open) => !open);
         }} />
-      <WelcomeCard />
+      <WelcomeCard onOpenChange={setWelcomeOpen} />
       {help ? (
         <aside id="instrument-help" class="instrument-help" aria-label="Help" ref={helpRef}>
           <button type="button" class="instrument-help-search" disabled={status.state !== "connected"} aria-keyshortcuts="Control+K" onClick={openSearch}>
@@ -389,7 +391,7 @@ function InstrumentReady({ initialPath, handsfreeDirty }: { initialPath: string;
             if (!move("memory")) return;
             if (page) setSelectedMemoryPage({ ...page });
           }} initialTarget={zenTarget} prefill={zenPrefill} requestPrefill={zenRequestPrefill} activityRequest={activityRequest}
-          onPrefillUsed={() => { setZenPrefill(null); setZenRequestPrefill(null); }} pid={zenPid}
+          onPrefillUsed={() => { setZenPrefill(null); setZenRequestPrefill(null); }} pid={zenPid} welcomeOpen={welcomeOpen}
           contactReplies={zenPid ? undefined : contactReplies}
           peopleActivity={zenPid ? undefined : peopleActivity}
           onPeopleActivity={(request) => {

@@ -103,6 +103,8 @@ export type ZenProps = {
   onSearchRequestHandled?: () => void;
   activityRequest?: ActivityRequest;
   requestPrefill?: string | null;
+  /** The founders' welcome card still stands over the chat, or its state is not known yet; Ship is not waking until it is dismissed. */
+  welcomeOpen?: boolean;
 };
 
 const HISTORY_LIMIT = 400;
@@ -329,7 +331,7 @@ const Receipt = memo(function Receipt({ receipt, who, places, collections, open,
   );
 });
 
-export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, onPrefillUsed, pid: pidProp, onDraftChange, contactReplies, peopleActivity, onPeopleActivity, searchRequested, onSearchRequestHandled, activityRequest, requestPrefill }: ZenProps) {
+export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, onPrefillUsed, pid: pidProp, onDraftChange, contactReplies, peopleActivity, onPeopleActivity, searchRequested, onSearchRequestHandled, activityRequest, requestPrefill, welcomeOpen = false }: ZenProps) {
   const active = useViewActive();
   const browserControl = useBrowserControl();
   const { client, connected } = useGateway();
@@ -593,8 +595,8 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
     return { moments, receipts: receiptsForMoments(moments, runtime.activeRunId, pid) };
   }, [answerHistory, conversation.rows, conversation.conversation?.id, outbox.messages, localRuns, runtime.activeRunId, runtime.rows, pid]);
 
-  /* a Ship that has never spoken: the owner's own chat, all of it loaded, with no words from Ship yet; what they read meanwhile is the waking line */
-  const waking = ready && !pidProp && !conversation.hasMore && !processRuntime.hasOlderHistory && awaitingFirstMessage(moments);
+  /* a Ship that has never spoken: the owner's own chat, the welcome dismissed, all history loaded, with no words from Ship yet; what they read meanwhile is the waking line */
+  const waking = ready && !pidProp && !welcomeOpen && !conversation.hasMore && !processRuntime.hasOlderHistory && awaitingFirstMessage(moments);
 
   /* the glyph thinking mark moves on the same clock as settling text; the dot keeps its own time in the stylesheet */
   const marking = THINKING_MARK === "glyphs" && moments.some((moment) => !moment.text && (moment.thinking || moment.streaming));

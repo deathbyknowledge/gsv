@@ -106,7 +106,7 @@ beforeEach(() => {
 });
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
-async function mountedZen(pid?: string, initialTarget?: string, native = false, searchRequested = false) {
+async function mountedZen(pid?: string, initialTarget?: string, native = false, searchRequested = false, welcomeOpen = false) {
   const root = createTestRoot("Zen entry");
   const cache = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
   let tree: ComponentChildren;
@@ -117,7 +117,7 @@ async function mountedZen(pid?: string, initialTarget?: string, native = false, 
     acknowledge: async () => {}, command: async () => {},
   };
   const searchHandled = vi.fn();
-  function Harness() { tree = Zen({ pid, initialTarget, onFleet, onDraftChange: draftChange, searchRequested, onSearchRequestHandled: searchHandled }); return null; }
+  function Harness() { tree = Zen({ pid, initialTarget, onFleet, onDraftChange: draftChange, searchRequested, onSearchRequestHandled: searchHandled, welcomeOpen }); return null; }
   const render = () => root.render(<GatewayProvider><SessionProvider createService={(client) => {
     const service = createSessionService(client);
     return { ...service, start: async () => {}, subscribe: () => () => {},
@@ -582,6 +582,18 @@ describe("Zen conversation entry", () => {
       await act(() => { for (const listener of signals) listener("proc.run.started", { pid: shipPid, runId: activeRunId }); });
       await vi.waitFor(() => expect(zen.nodes().some((node) => node.type === ThinkingMark)).toBe(true));
       expect(waking()).toBe(0);
+    } finally { await zen.unmount(); }
+  });
+
+  it("does not say Ship is waking while the welcome card still stands", async () => {
+    const zen = await mountedZen(undefined, undefined, false, false, true);
+    try {
+      await vi.waitFor(() => expect(zen.props(PromptLine).disabled).toBe(false));
+      expect(zen.nodes().some((node) => node.type === WakingUp)).toBe(false);
+      activeRunId = "welcome-run";
+      await act(() => { for (const listener of signals) listener("proc.run.started", { pid: shipPid, runId: activeRunId }); });
+      await vi.waitFor(() => expect(zen.nodes().some((node) => node.type === ThinkingMark)).toBe(true));
+      expect(zen.nodes().some((node) => node.type === WakingUp)).toBe(false);
     } finally { await zen.unmount(); }
   });
 
