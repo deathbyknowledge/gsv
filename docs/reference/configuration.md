@@ -24,16 +24,21 @@ The Instrument theme is not stored here. **Settings → preferences → Appearan
 
 ## Language
 
-`users/{uid}/locale/language` stores the owner's initial response-language preference as a
+`users/{uid}/locale/language` stores the owner's language preference as a
 BCP 47 tag, such as `es` or `es-MX`. Web and Desktop setup detect it from the client's
-preferred browser language. Change it under **Settings → Preferences → Response language**,
-or ask Ship to change it. Clearing it leaves the conversation to establish the language.
+preferred browser language. Change it under **Settings → Preferences → Language**,
+or ask Ship to change it. Clearing it leaves the conversation to establish Ship's language.
 Invalid tags are rejected and valid tags are canonicalized.
 
 Ship receives the preference through `{{user.language}}` in runtime context. Later
 changes enter an existing context epoch as ordered context events. The preference is a
 starting hint: Ship follows the language the user is speaking, and explicit language
-requests take precedence. It does not change interface translations or date formatting.
+requests take precedence.
+
+The web interface and Desktop show their own text in this language when a translation exists
+for it; a regional tag such as `es-MX` uses its base language. Signed out, or without a matching
+translation, they follow the device's languages, then English. English is the only interface
+translation so far. The preference does not change date or number formatting.
 
 Desktop also reads this preference for local spoken replies.
 Regional tags use the matching voice language; without a saved value, it uses the

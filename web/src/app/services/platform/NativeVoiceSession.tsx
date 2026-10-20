@@ -21,6 +21,7 @@ type VoiceSession = {
   connected: boolean;
   language: SpeechLanguage | null;
   languageError: string | null;
+  languageUnsupported: boolean;
   outbox: ReturnType<typeof useChatOutbox>;
   startComposer(composer: Composer): void;
   releaseComposer(owner: symbol): void;
@@ -65,8 +66,8 @@ function VoiceSessionOwner({ children, onDirtyChange }: {
   const requestedLanguage = (languagePreference.data || navigator.language || "en").split("-")[0].toLowerCase();
   const language = languagePreference.data === undefined ? null : requestedLanguage === "es" ? "es"
     : requestedLanguage === "en" || !languagePreference.data ? "en" : null;
-  const languageError = languagePreference.error?.message ?? (languagePreference.data !== undefined && !language
-    ? "Spoken replies currently support English and Spanish. Your response language is not supported yet." : null);
+  const languageError = languagePreference.error?.message ?? null;
+  const languageUnsupported = !languageError && languagePreference.data !== undefined && !language;
   // Conversation signals own the transcript; this outbox retains only delivery and retry state.
   const outbox = useChatOutbox(useCallback(() => {}, []));
   const current = useRef({ connected, outbox, destination, speech });
@@ -167,7 +168,7 @@ function VoiceSessionOwner({ children, onDirtyChange }: {
     }
     failed.current = new Set(outbox.messages.filter((message) => message.status === "failed").map((message) => message.id));
   }, [outbox.messages]);
-  return <Context.Provider value={{ input, capture, text, connected, language, languageError, outbox, ...actions }}>{children}</Context.Provider>;
+  return <Context.Provider value={{ input, capture, text, connected, language, languageError, languageUnsupported, outbox, ...actions }}>{children}</Context.Provider>;
 }
 
 /** Chat lends its composer only for local dictation; handsfree never borrows that draft. */

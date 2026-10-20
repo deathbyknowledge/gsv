@@ -136,7 +136,7 @@ describe("desktop handsfree session", () => {
     expect(app.typed()).toBe("Unsent text with an attachment");
   });
 
-  it("uses the owner's response language, follows preference saves across pages, and preserves local shortcuts", async () => {
+  it("uses the owner's language, follows preference saves across pages, and preserves local shortcuts", async () => {
     responseLanguage = "es-MX";
     const app = await mount();
     expect(app.session().language).toBe("es");
@@ -156,7 +156,8 @@ describe("desktop handsfree session", () => {
     responseLanguage = "fr";
     await act(() => app.cache.invalidateQueries({ queryKey: consoleConfigQueryKey }));
     await vi.waitFor(() => expect(app.session().language).toBeNull());
-    expect(app.session().languageError).toContain("not supported yet");
+    expect(app.session().languageUnsupported).toBe(true);
+    expect(app.session().languageError).toBeNull();
     await app.reply("personal-conversation", "french-reply");
     expect(vi.mocked(app.speech.command).mock.calls.filter(([command]) => command.kind === "speak")).toHaveLength(2);
 
@@ -164,6 +165,7 @@ describe("desktop handsfree session", () => {
     vi.stubGlobal("navigator", { language: "es-ES" });
     await act(() => app.cache.invalidateQueries({ queryKey: consoleConfigQueryKey }));
     await vi.waitFor(() => expect(app.session().language).toBe("es"));
+    expect(app.session().languageUnsupported).toBe(false);
     expect(app.session().languageError).toBeNull();
     vi.stubGlobal("navigator", { language: "C" });
     await app.render("memory");

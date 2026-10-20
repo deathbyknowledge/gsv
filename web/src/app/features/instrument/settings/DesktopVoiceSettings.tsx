@@ -25,7 +25,7 @@ export function DesktopVoiceSettings({ active, onDirty }: { active: boolean; onD
     if (active && snapshot && !microphone?.capturing) void microphone?.command({ kind: "devices" });
   }, [active, snapshot?.lease, microphone?.capturing]);
   if (!speech || !microphone || !session) return null;
-  const { language, languageError } = session;
+  const { language, languageError, languageUnsupported } = session;
   const { preferences, setPreferences } = speech;
   const speaking = speech.status.phase === "speaking";
   return <section class="settings-voice" aria-label={t("settings.voice.label")}>
@@ -78,9 +78,10 @@ export function DesktopVoiceSettings({ active, onDirty }: { active: boolean; onD
           <option value="voice">{t("settings.voice.repliesVoice")}</option><option value="all">{t("settings.voice.repliesAll")}</option><option value="off">{t("settings.voice.repliesOff")}</option>
         </select>
       </label>
-      <p class="settings-muted">{rich(t("settings.voice.usesLanguage"), { link: <AppLink href="/chat/settings?section=preferences">{t("settings.voice.responseLanguage")}</AppLink> })}</p>
+      <p class="settings-muted">{rich(t("settings.voice.usesLanguage"), { link: <AppLink href="/chat/settings?section=preferences">{t("settings.preferences.title")}</AppLink> })}</p>
       {languageError && <p class="settings-error" role="alert">{languageError}</p>}
-      {!language && !languageError && <p class="settings-muted" role="status">{t("settings.voice.loadingLanguage")}</p>}
+      {languageUnsupported && <p class="settings-error" role="alert">{t("settings.voice.languageUnsupported")}</p>}
+      {!language && !languageError && !languageUnsupported && <p class="settings-muted" role="status">{t("settings.voice.loadingLanguage")}</p>}
       <div class="settings-actions">
         <button type="button" class="settings-text-action" disabled={!speaking && !language} onClick={() => {
           if (speaking) void speech.command({ kind: "cancel" });

@@ -85,9 +85,9 @@ export const en = {
   "settings.reasoning.save": "save effort",
 
   // Settings: language, timezone and appearance
-  "settings.language.label": "Response language",
-  "settings.language.placeholder": "Follow the conversation",
-  "settings.language.hint": "A starting language for Ship. Choose a suggestion or enter a language code, such as es-MX. You can ask Ship to switch at any time.",
+  "settings.language.label": "Language",
+  "settings.language.placeholder": "Automatic",
+  "settings.language.hint": "Ship starts in this language, and the interface uses it when a translation is available. Choose a suggestion or enter a language code, such as es-MX. You can ask Ship to switch at any time.",
   "settings.language.save": "save language",
   "settings.language.useDevice": "use this device’s language",
   "settings.timezone.label": "Timezone",
@@ -438,8 +438,8 @@ export const en = {
   "settings.voice.repliesVoice": "While talking by voice",
   "settings.voice.repliesAll": "All new Ship replies",
   "settings.voice.repliesOff": "Off",
-  "settings.voice.usesLanguage": "Uses your {link}.",
-  "settings.voice.responseLanguage": "response language",
+  "settings.voice.usesLanguage": "Uses the language set in {link}.",
+  "settings.voice.languageUnsupported": "Spoken replies currently support English and Spanish. Your language is not supported yet.",
   "settings.voice.loadingLanguage": "Loading voice language…",
   "settings.voice.preview": "preview voice",
   "settings.voice.stopPreview": "stop preview",
