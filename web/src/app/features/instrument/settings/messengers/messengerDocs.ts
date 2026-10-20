@@ -1,5 +1,6 @@
 // External documentation per adapter (GSV docs site).
 import { publicDeployment } from "../../../../services/deployment";
+import type { TextKey } from "../../../../i18n/locale";
 // Returns the doc URL for an adapter, falling back to the adapters root.
 export function adapterDocUrl(adapter: string): string {
   const docsRoot = publicDeployment().docsUrl;
@@ -19,25 +20,25 @@ export const SLACK_APPS_URL = "https://api.slack.com/apps";
 
 // "Things you can do with your messenger-bot" — shown on the success step.
 export interface MessengerCapability {
-  title: string;
-  detail: string;
+  title: TextKey;
+  detail: TextKey;
 }
 
 export const MESSENGER_CAPABILITIES: MessengerCapability[] = [
   {
-    title: "Check remote files",
-    detail: "Browse and pull files from your Ship from anywhere.",
+    title: "settings.pairing.capability.files",
+    detail: "settings.pairing.capability.filesDetail",
   },
   {
-    title: "Approve tasks remotely",
-    detail: "Review and approve pending tasks without opening the console.",
+    title: "settings.pairing.capability.approve",
+    detail: "settings.pairing.capability.approveDetail",
   },
   {
-    title: "Message your Ship",
-    detail: "Chat with your Ship and get replies straight in the messenger.",
+    title: "settings.pairing.capability.message",
+    detail: "settings.pairing.capability.messageDetail",
   },
   {
-    title: "Stay in control",
-    detail: "Run commands and steer your Ship remotely, wherever you are.",
+    title: "settings.pairing.capability.control",
+    detail: "settings.pairing.capability.controlDetail",
   },
 ];

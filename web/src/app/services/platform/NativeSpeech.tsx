@@ -2,6 +2,7 @@ import { createContext, type ComponentChildren } from "preact";
 import { useCallback, useContext, useEffect, useMemo, useRef, useState } from "preact/hooks";
 import { z } from "zod";
 import { shortcutDefaults } from "./shortcutKeys";
+import { t } from "../../i18n/locale";
 
 export type SpeechStatus = { phase: string; id: string | null; error: string | null };
 export type SpeechLanguage = "en" | "es";
@@ -85,7 +86,7 @@ export function NativeSpeechProvider({ driver, active, children }: {
     return {
       command,
       async captureShortcuts(capturing: boolean) {
-        if (capturing && recording.current) { setError("Finish recording before choosing a shortcut."); return false; }
+        if (capturing && recording.current) { setError(t("desktop.voice.errors.finishBeforeShortcut")); return false; }
         capturingShortcut.current = capturing;
         const { active, preferences } = current.current;
         try {
@@ -133,7 +134,7 @@ export function NativeSpeechProvider({ driver, active, children }: {
         if (controller.current) controller.current(event.action);
         else if (event.action === "press") {
           actions.cue("attention");
-          setError("Handsfree mode is not ready. Reconnect microphone controls in Settings → voice.");
+          setError(t("desktop.voice.errors.handsfreeNotReady"));
         }
       }
     });

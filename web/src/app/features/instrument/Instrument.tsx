@@ -33,6 +33,7 @@ import { useGateway } from "../../services/gateway/GatewayProvider";
 import { trackClientActivity } from "../../services/gateway/clientActivity";
 import { NativeVoiceSession } from "../../services/platform/NativeVoiceSession";
 import { HandsfreeStatus } from "../../services/platform/HandsfreeStatus";
+import { useT } from "../../i18n/locale";
 import "./instrument.css";
 
 /** The three distances of the instrument. Zen is near, Fleet is far, the first day is Zen's empty state. */
@@ -85,6 +86,7 @@ export function Instrument({ initialPath }: { initialPath: string }) {
 }
 
 function InstrumentReady({ initialPath, handsfreeDirty }: { initialPath: string; handsfreeDirty: boolean }) {
+  const t = useT();
   const viewportRef = useInstrumentViewport();
   const { service: session } = useSession();
   const { client, status } = useGateway();
@@ -181,7 +183,7 @@ function InstrumentReady({ initialPath, handsfreeDirty }: { initialPath: string;
   const peopleActivity = usePeopleActivity(viewer);
   const move = useCallback(
     (to: Distance, reference: FleetReference | null = null) => {
-      if (reference && fleetDirty && !window.confirm("Discard unsaved Fleet edits and open this item?")) return false;
+      if (reference && fleetDirty && !window.confirm(t("shell.confirm.discardFleetEdits"))) return false;
       setNavigationOpen(false);
       if (to === distance) {
         if (reference) setFleetRequest({ reference });
@@ -191,7 +193,7 @@ function InstrumentReady({ initialPath, handsfreeDirty }: { initialPath: string;
       navigateApp(visitedPaths.current[to] ?? DISTANCE_TO_PATH[to]);
       return true;
     },
-    [distance, fleetDirty],
+    [distance, fleetDirty, t],
   );
 
   const openSearch = useCallback(() => {
@@ -295,7 +297,7 @@ function InstrumentReady({ initialPath, handsfreeDirty }: { initialPath: string;
       }} peopleWaiting={peopleActivity.conversations.length > 0 || peopleActivity.requests.length > 0}
         helper={distance === "zen" && zenPid !== null}
         onShip={() => {
-          if (!zenDirty || window.confirm("Discard your unsent message and attachments?")) setZenPid(null);
+          if (!zenDirty || window.confirm(t("shell.confirm.discardMessage"))) setZenPid(null);
         }} help={help} onHelp={() => {
           setNavigationOpen(false);
           setHelp((open) => !open);
@@ -307,78 +309,78 @@ function InstrumentReady({ initialPath, handsfreeDirty }: { initialPath: string;
         }} />
       <WelcomeCard onOpenChange={setWelcomeOpen} />
       {help ? (
-        <aside id="instrument-help" class="instrument-help" aria-label="Help" ref={helpRef}>
+        <aside id="instrument-help" class="instrument-help" aria-label={t("shell.help.label")} ref={helpRef}>
           <button type="button" class="instrument-help-search" disabled={status.state !== "connected"} aria-keyshortcuts="Control+K" onClick={openSearch}>
-            <span>Search Chat</span><kbd>Ctrl+K</kbd>
+            <span>{t("shell.help.search")}</span><kbd>Ctrl+K</kbd>
           </button>
-          <h4>Views & appearance</h4>
-          <p>Navigation shortcuts work outside text fields and setup forms.</p>
+          <h4>{t("shell.help.views")}</h4>
+          <p>{t("shell.help.viewsHint")}</p>
           <dl>
             <dt>c</dt><dd>Chat</dd>
             <dt>f</dt><dd>Fleet</dd>
-            <dt>m</dt><dd>Memory</dd>
-            <dt>p</dt><dd>People</dd>
-            <dt>s</dt><dd>Settings</dd>
-            <dt>l</dt><dd>Switch between light and dark</dd>
-            <dt>x</dt><dd>Cycle text size</dd>
-            <dt>?</dt><dd>Show or hide these shortcuts</dd>
-            <dt>Esc</dt><dd>Close this panel</dd>
+            <dt>m</dt><dd>{t("shell.help.memory")}</dd>
+            <dt>p</dt><dd>{t("shell.help.people")}</dd>
+            <dt>s</dt><dd>{t("settings.title")}</dd>
+            <dt>l</dt><dd>{t("shell.help.theme")}</dd>
+            <dt>x</dt><dd>{t("shell.help.textSize")}</dd>
+            <dt>?</dt><dd>{t("shell.help.toggle")}</dd>
+            <dt>Esc</dt><dd>{t("shell.help.closePanel")}</dd>
           </dl>
           {distance === "zen" && <>
-            <h4>Chat · browse</h4>
+            <h4>{t("shell.help.chatBrowse")}</h4>
             <dl>
-              <dt>j / k</dt><dd>Next / previous message or activity</dd>
-              <dt>gg / G</dt><dd>Earlier history / latest messages and follow</dd>
-              <dt>o</dt><dd>Show or hide the selected message’s activity</dd>
-              <dt>/</dt><dd>Search in browse mode · Ctrl/Cmd+F also works</dd>
-              <dt>y / n</dt><dd>Approve or deny a pending request</dd>
-              <dt>other keys</dt><dd>Start writing; the keystroke lands in the prompt</dd>
+              <dt>j / k</dt><dd>{t("shell.help.nextPrevious")}</dd>
+              <dt>gg / G</dt><dd>{t("shell.help.history")}</dd>
+              <dt>o</dt><dd>{t("shell.help.activity")}</dd>
+              <dt>/</dt><dd>{t("shell.help.browseSearch")}</dd>
+              <dt>y / n</dt><dd>{t("shell.help.approve")}</dd>
+              <dt>{t("shell.help.otherKeys")}</dt><dd>{t("shell.help.startWriting")}</dd>
             </dl>
-            <h4>Chat · input</h4>
+            <h4>{t("shell.help.chatInput")}</h4>
             <dl>
-              <dt>Enter</dt><dd>Send the message or run the command</dd>
-              <dt>Esc</dt><dd>Return to browse; closes the place picker first</dd>
-              <dt>↑</dt><dd>Recall the last input when the prompt is empty</dd>
-              <dt>@place</dt><dd>Choose a target with ↑ ↓ and Enter</dd>
-              <dt>$ command</dt><dd>Run a shell command on that target, without the model</dd>
+              <dt>{t("shell.keys.enter")}</dt><dd>{t("shell.help.send")}</dd>
+              <dt>Esc</dt><dd>{t("shell.help.returnToBrowse")}</dd>
+              <dt>↑</dt><dd>{t("shell.help.recall")}</dd>
+              <dt>{t("shell.help.placeSyntax")}</dt><dd>{t("shell.help.chooseTarget")}</dd>
+              <dt>{t("shell.help.commandSyntax")}</dt><dd>{t("shell.help.runCommand")}</dd>
             </dl>
           </>}
           {distance === "memory" && <>
-            <h4>Memory</h4>
+            <h4>{t("shell.help.memory")}</h4>
             <dl>
-              <dt>j / ↓</dt><dd>Highlight the next visible item</dd>
-              <dt>k / ↑</dt><dd>Highlight the previous visible item</dd>
-              <dt>Space / Enter</dt><dd>Open the highlighted page or toggle its folder</dd>
-              <dt>/</dt><dd>Focus page search</dd>
-              <dt>e</dt><dd>Edit the open page</dd>
-              <dt>⌘ / Ctrl + Enter</dt><dd>Save while editing page text</dd>
-              <dt>Esc</dt><dd>Leave search or close the editor</dd>
+              <dt>j / ↓</dt><dd>{t("shell.help.nextItem")}</dd>
+              <dt>k / ↑</dt><dd>{t("shell.help.previousItem")}</dd>
+              <dt>{t("shell.keys.spaceOrEnter")}</dt><dd>{t("shell.help.openPage")}</dd>
+              <dt>/</dt><dd>{t("shell.help.pageSearch")}</dd>
+              <dt>e</dt><dd>{t("shell.help.editPage")}</dd>
+              <dt>{t("shell.keys.save")}</dt><dd>{t("shell.help.savePage")}</dd>
+              <dt>Esc</dt><dd>{t("shell.help.leaveSearch")}</dd>
             </dl>
           </>}
           {distance === "fleet" && <>
             <h4>Fleet</h4>
             <dl>
-              <dt>j / ↓</dt><dd>Highlight the next row</dd>
-              <dt>k / ↑</dt><dd>Highlight the previous row</dd>
-              <dt>Space / Enter</dt><dd>Open the highlighted item or toggle a folder</dd>
-              <dt>Esc</dt><dd>Close the inspector</dd>
-              <dt>/</dt><dd>Open a command prompt for the highlighted place</dd>
+              <dt>j / ↓</dt><dd>{t("shell.help.nextRow")}</dd>
+              <dt>k / ↑</dt><dd>{t("shell.help.previousRow")}</dd>
+              <dt>{t("shell.keys.spaceOrEnter")}</dt><dd>{t("shell.help.openItem")}</dd>
+              <dt>Esc</dt><dd>{t("shell.help.closeInspector")}</dd>
+              <dt>/</dt><dd>{t("shell.help.commandPrompt")}</dd>
             </dl>
-            <h4>Expanded file</h4>
+            <h4>{t("shell.help.expandedFile")}</h4>
             <dl>
-              <dt>⌘ / Ctrl + Enter</dt><dd>Save file edits</dd>
-              <dt>Esc</dt><dd>Return to Fleet</dd>
+              <dt>{t("shell.keys.save")}</dt><dd>{t("shell.help.saveFile")}</dd>
+              <dt>Esc</dt><dd>{t("shell.help.returnToFleet")}</dd>
             </dl>
-            <h4>Contact messages</h4>
+            <h4>{t("shell.help.contactMessages")}</h4>
             <dl>
-              <dt>Enter</dt><dd>Send the message</dd>
+              <dt>{t("shell.keys.enter")}</dt><dd>{t("shell.help.sendMessage")}</dd>
             </dl>
           </>}
           {distance === "settings" && <>
-            <h4>Settings</h4>
+            <h4>{t("settings.title")}</h4>
             <dl>
-              <dt>Tab / Shift + Tab</dt><dd>Move between controls</dd>
-              <dt>Enter / Space</dt><dd>Activate the focused button</dd>
+              <dt>{t("shell.keys.tab")}</dt><dd>{t("shell.help.moveControls")}</dd>
+              <dt>{t("shell.keys.enterOrSpace")}</dt><dd>{t("shell.help.activate")}</dd>
             </dl>
           </>}
         </aside>
@@ -387,7 +389,7 @@ function InstrumentReady({ initialPath, handsfreeDirty }: { initialPath: string;
         <BrowserControlOverlay />
         <RetainedView active={distance === "zen"}>
           <Zen key={zenPid ?? "ship"} searchRequested={searchRequested} onSearchRequestHandled={() => setSearchRequested(false)} onDraftChange={setZenDirty} onFleet={(reference) => move("fleet", reference ?? null)} onMemory={(page) => {
-            if (page && memoryDirty && !window.confirm("Discard your unsaved page changes and open this page?")) return;
+            if (page && memoryDirty && !window.confirm(t("shell.confirm.discardPage"))) return;
             if (!move("memory")) return;
             if (page) setSelectedMemoryPage({ ...page });
           }} initialTarget={zenTarget} prefill={zenPrefill} requestPrefill={zenRequestPrefill} activityRequest={activityRequest}
@@ -402,7 +404,7 @@ function InstrumentReady({ initialPath, handsfreeDirty }: { initialPath: string;
         </RetainedView>
         <RetainedView active={distance === "memory"}>
           <Memory onDirtyChange={setMemoryDirty} initialPage={selectedMemoryPage} onAsk={(text) => {
-            if (zenPid && zenDirty && !window.confirm("Discard your unsent message and return to Ship?")) return;
+            if (zenPid && zenDirty && !window.confirm(t("shell.confirm.returnToShip"))) return;
             if (!move("zen")) return;
             setZenPid(null);
             setZenTarget(null);
@@ -411,13 +413,13 @@ function InstrumentReady({ initialPath, handsfreeDirty }: { initialPath: string;
         </RetainedView>
         <RetainedView active={distance === "settings"}>
           <Settings onDirtyChange={setSettingsDirty} onInspectProcess={(pid) => { move("fleet", `proc:${pid}`); }} onSignOut={() => {
-            if ((handsfreeDirty || settingsDirty || unsaved || fleetDirty || memoryDirty || peopleDirty) && !window.confirm("Discard your unsaved work and sign out?")) return;
-            void session.lock("Signed out");
+            if ((handsfreeDirty || settingsDirty || unsaved || fleetDirty || memoryDirty || peopleDirty) && !window.confirm(t("shell.confirm.signOut"))) return;
+            void session.lock("session.status.signedOut");
           }} />
         </RetainedView>
         <RetainedView active={distance === "people"}>
           <People onDirtyChange={setPeopleDirty} onAsk={(text) => {
-            if (zenPid && zenDirty && !window.confirm("Discard your unsent message and return to Ship?")) return;
+            if (zenPid && zenDirty && !window.confirm(t("shell.confirm.returnToShip"))) return;
             if (!move("zen")) return;
             setZenPid(null); setZenTarget(null); setZenPrefill(null); setZenRequestPrefill(text);
           }} />
@@ -426,13 +428,13 @@ function InstrumentReady({ initialPath, handsfreeDirty }: { initialPath: string;
           <Fleet
             onActivity={(request) => { if (move("zen")) setActivityRequest(request); }}
             onCommand={(target) => {
-              if (zenDirty && !window.confirm("Replace your unsent message and attachments with a command?")) return;
+              if (zenDirty && !window.confirm(t("shell.confirm.replaceWithCommand"))) return;
               if (move("zen")) { setZenTarget(target); setZenPrefill("$ "); setZenPid(null); }
             }}
             onDirtyChange={setFleetDirty}
             openRequest={fleetRequest}
             onZen={(prefill, pid, request) => {
-              if ((Boolean(prefill) || (pid ?? null) !== zenPid) && zenDirty && !window.confirm("Discard your unsent message and attachments?")) return;
+              if ((Boolean(prefill) || (pid ?? null) !== zenPid) && zenDirty && !window.confirm(t("shell.confirm.discardMessage"))) return;
               if (!move("zen")) return;
               if (prefill || (pid ?? null) !== zenPid) setZenTarget(null);
               if (prefill) setZenPrefill(prefill);

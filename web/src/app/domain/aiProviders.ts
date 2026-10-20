@@ -3,6 +3,7 @@ import {
   GSV_INFERENCE_MODEL,
   GSV_INFERENCE_PROVIDER,
 } from "@humansandmachines/gsv/protocol";
+import { t } from "../i18n/locale";
 
 export type AiProviderOption = {
   value: string;
@@ -10,17 +11,23 @@ export type AiProviderOption = {
   fixedModel?: string;
 };
 
+// Brand names stay as they are; the other labels are interface text, translated each time they are read.
 const GSV_AI_PROVIDER_OPTION: AiProviderOption = {
   value: GSV_INFERENCE_PROVIDER,
-  label: "Ship included",
+  get label() { return t("config.provider.included"); },
   fixedModel: GSV_INFERENCE_MODEL,
+};
+
+const WORKERS_AI_PROVIDER_OPTION: AiProviderOption = {
+  value: "workers-ai",
+  get label() { return t("config.provider.workersAi"); },
 };
 
 // Keep this to providers GSV can configure for chat/default model paths with
 // its current provider/model/API key fields.
 export const AI_PROVIDER_OPTIONS: ReadonlyArray<AiProviderOption> = [
-  { value: "workers-ai", label: "Workers AI (gateway binding)" },
-  { value: "custom", label: "Custom endpoint" },
+  WORKERS_AI_PROVIDER_OPTION,
+  { value: "custom", get label() { return t("config.provider.custom"); } },
   { value: "ant-ling", label: "Ant Ling" },
   { value: "anthropic", label: "Anthropic" },
   { value: "cerebras", label: "Cerebras" },
@@ -56,7 +63,7 @@ export const AI_PROVIDER_OPTIONS: ReadonlyArray<AiProviderOption> = [
 ];
 
 export const AI_OPENAI_WORKERS_PROVIDER_OPTIONS: ReadonlyArray<AiProviderOption> = [
-  { value: "workers-ai", label: "Workers AI (gateway binding)" },
+  WORKERS_AI_PROVIDER_OPTION,
   { value: "openai", label: "OpenAI" },
 ];
 
@@ -90,7 +97,7 @@ export function aiProviderOptionsForValue(
   }
   return [
     ...baseOptions,
-    { value: normalized, label: `${normalized} (custom)` },
+    { value: normalized, label: t("config.provider.customValue", { value: normalized }) },
   ];
 }
 

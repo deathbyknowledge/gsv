@@ -7,6 +7,7 @@ import { useInstrumentViewport } from "../instrument/shared/useInstrumentViewpor
 import { Wordmark } from "../instrument/shared/Wordmark";
 import { PlatformIdentity } from "../../services/platform/PlatformIdentity";
 import { AuthShip } from "./backgrounds/AuthShip";
+import { useT } from "../../i18n/locale";
 import "../../../styles/gsv-fonts.css";
 import "../instrument/instrument.css";
 import "./session-theme.css";
@@ -20,6 +21,7 @@ export function AuthScene({ children, setup = false, layout = "ship" }: {
   setup?: boolean;
   layout?: "ship" | "welcome";
 }) {
+  const t = useT();
   const { theme, toggleTheme } = useColorTheme("dark");
   const viewportRef = useInstrumentViewport();
   return (
@@ -28,8 +30,8 @@ export function AuthScene({ children, setup = false, layout = "ship" }: {
       <div class="instrument-viewport">
         <header class="instrument-top gsv-auth-header">
           <div class="gsv-auth-identity"><Wordmark /><PlatformIdentity /></div>
-          <button type="button" onClick={toggleTheme} aria-label={`Switch to ${theme === "light" ? "dark" : "light"} theme`}>
-            {theme === "light" ? "Dark" : "Light"}
+          <button type="button" onClick={toggleTheme} aria-label={t(theme === "light" ? "session.scene.toDark" : "session.scene.toLight")}>
+            {t(theme === "light" ? "settings.appearance.dark" : "settings.appearance.light")}
           </button>
         </header>
         <div class="gsv-auth-composition">

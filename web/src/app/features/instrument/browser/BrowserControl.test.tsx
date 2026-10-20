@@ -15,6 +15,9 @@ beforeEach(() => {
 
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
+/** The viewer's keyboard input as rendered: preact/compat, which the translated interface loads, names a DOM node's onInput handler oninput. */
+type KeyboardProps = { oninput: (event: JSX.TargetedInputEvent<HTMLTextAreaElement>) => void };
+
 async function openLinkedViewer(initialState: "pending" | "active" | undefined, initialId = "new-login", options: { manualFrames?: boolean; finish?: () => Promise<BrowserHandoff> } = {}) {
   vi.stubGlobal("document", new EventTarget());
   vi.stubGlobal("requestAnimationFrame", (callback: () => void) => setTimeout(callback, 0));
@@ -58,10 +61,10 @@ async function openLinkedViewer(initialState: "pending" | "active" | undefined, 
   return { request, handoff, inputResult, push, frame, nodes, text: () => collectText(tree),
     disconnect() { source.error(new Error("Viewer connection lost")); },
     type(value: string) {
-      // SAFETY: The intrinsic textarea handler reads only currentTarget.value and isComposing.
-      const keyboard = nodes().find(node => node.type === "textarea") as VNode<JSX.TextareaHTMLAttributes<HTMLTextAreaElement>>;
+      // SAFETY: The textarea is the viewer's keyboard input, rendered with the handler KeyboardProps names.
+      const keyboard = nodes().find(node => node.type === "textarea") as VNode<KeyboardProps>;
       // SAFETY: The handler reads only currentTarget.value and isComposing.
-      keyboard.props.onInput?.({ currentTarget: { value }, isComposing: false } as JSX.TargetedInputEvent<HTMLTextAreaElement>);
+      keyboard.props.oninput({ currentTarget: { value }, isComposing: false } as JSX.TargetedInputEvent<HTMLTextAreaElement>);
     },
     async close() { inputResult.resolve({ data: { accepted: true } }); await root.unmount(); cache.clear(); },
   };
@@ -380,12 +383,12 @@ describe("live browser viewing", () => {
     function Harness() { tree = BrowserViewer({ request: { instanceId: instance.instanceId }, onClose: close }); return null; }
     // SAFETY: These VNodes are selected by their intrinsic element, which defines these props.
     const image = () => collectNodes(tree).find(node => node.type === "img") as VNode<JSX.ImgHTMLAttributes<HTMLImageElement>> | undefined;
-    // SAFETY: The textarea is the viewer's keyboard input; its intrinsic props supply this event handler.
-    const keyboard = () => collectNodes(tree).find(node => node.type === "textarea") as VNode<JSX.TextareaHTMLAttributes<HTMLTextAreaElement>>;
+    // SAFETY: The textarea is the viewer's keyboard input, rendered with the handler KeyboardProps names.
+    const keyboard = () => collectNodes(tree).find(node => node.type === "textarea") as VNode<KeyboardProps>;
     const type = (value: string) => {
       // SAFETY: The handler reads only currentTarget.value and isComposing, both supplied here.
       const event = { currentTarget: { value }, isComposing: false } as JSX.TargetedInputEvent<HTMLTextAreaElement>;
-      keyboard().props.onInput?.(event);
+      keyboard().props.oninput(event);
     };
     try {
       await root.render(<GatewayProvider><QueryClientProvider client={cache}><Harness /></QueryClientProvider></GatewayProvider>);

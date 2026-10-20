@@ -4,6 +4,7 @@ import { TextInput } from "../../components/ui/TextInput";
 import { Button } from "../../components/ui/Button";
 import { AuthLayout } from "./AuthLayout";
 import { AppLink } from "../../services/navigation/appNavigation";
+import { rich, useT } from "../../i18n/locale";
 import "./LoginScreen.css";
 
 type LoginScreenProps = {
@@ -22,8 +23,9 @@ type LoginScreenProps = {
 
 /** On-brand skeleton (periwinkle shimmer) shown while the session is booting. */
 function LoginSkeleton() {
+  const t = useT();
   return (
-    <div class="gsv-login-skeleton" role="status" aria-label="Loading" aria-busy="true">
+    <div class="gsv-login-skeleton" role="status" aria-label={t("session.login.loading")} aria-busy="true">
       <div class="gsv-skel-field">
         <span class="gsv-skel gsv-skel-label" />
         <span class="gsv-skel gsv-skel-input" />
@@ -45,10 +47,11 @@ export function LoginScreen({
   onPassword,
   onSubmit,
 }: LoginScreenProps) {
+  const t = useT();
   return (
     <AuthLayout background="galaxy" visible={visible} surfaceClass="gsv-auth-surface-login">
       <div class="gsv-login-panel" data-session-login-view>
-          <SectionHeader title={administrator ? "ADMINISTRATOR SIGN-IN" : "WELCOME BACK"} titleSize="title" divider />
+          <SectionHeader title={t(administrator ? "session.login.adminTitle" : "session.login.welcomeBack")} titleSize="title" divider />
 
           <div class="gsv-login-body">
             {loading ? (
@@ -57,7 +60,7 @@ export function LoginScreen({
               <form class="gsv-login-fields" onSubmit={onSubmit}>
               <input type="hidden" name="username" autoComplete="username" value={administrator ? "root" : space} />
               <TextInput
-                label="PASSWORD"
+                label={t("session.login.password")}
                 type="password"
                 placeholder="••••••••••••"
                 value={password}
@@ -78,20 +81,20 @@ export function LoginScreen({
               <div class="gsv-login-submit">
                 <Button
                   variant="primary"
-                  label="SIGN IN"
+                  label={t("session.login.signIn")}
                   block
                   disabled={busy}
                   type="submit"
                 />
               </div>
-              {!administrator && <AppLink href="/recover-member" class="gsv-auth-link gsv-login-recovery-link">Forgot your password?</AppLink>}
+              {!administrator && <AppLink href="/recover-member" class="gsv-auth-link gsv-login-recovery-link">{t("session.login.forgotPassword")}</AppLink>}
               </form>
             )}
           </div>
 
           <footer class="gsv-sublabel gsv-login-credit">
-            <span>BY <a href="https://humansandmachin.es" target="_blank" rel="noreferrer">HUMANS &amp; MACHINES</a></span>
-            <button type="button" class="gsv-login-admin" aria-label={administrator ? "Back to personal sign-in" : "Administrator sign-in"} disabled={busy || loading} onClick={() => onAdministrator(!administrator)}>{administrator ? "personal sign-in" : "admin"}</button>
+            <span>{rich(t("session.login.credit"), { maker: <a href="https://humansandmachin.es" target="_blank" rel="noreferrer">HUMANS &amp; MACHINES</a> })}</span>
+            <button type="button" class="gsv-login-admin" aria-label={t(administrator ? "session.login.personalLabel" : "session.login.adminLabel")} disabled={busy || loading} onClick={() => onAdministrator(!administrator)}>{t(administrator ? "session.login.personal" : "session.login.admin")}</button>
           </footer>
         </div>
     </AuthLayout>

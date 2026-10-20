@@ -7,6 +7,7 @@ import { describeCall, normalizeCallPurpose } from "../../../services/chat/domai
 import type { ConsoleConfigEntry } from "../../../domain/system/consoleModels";
 import type { LibraryCollection } from "../../../services/memory/libraryTypes";
 import type { MemoryPageRef } from "../shared/navigation";
+import { t, type TextKey } from "../../../i18n/locale";
 
 /* ---------- the prompt line ---------- */
 
@@ -41,10 +42,12 @@ export type Place = {
 };
 
 export const CLOUD_PLACE_ID = "gsv";
-export const CLOUD_PLACE_LABEL = "your cloud";
+/** The target of a call whose record names none. */
+export const UNKNOWN_TARGET = "unknown target";
 
 export function placeLabel(id: string, places: readonly Place[]): string {
-  if (id === CLOUD_PLACE_ID) return CLOUD_PLACE_LABEL;
+  if (id === CLOUD_PLACE_ID) return t("chat.place.cloud");
+  if (id === UNKNOWN_TARGET) return t("chat.place.unknown");
   return places.find((place) => place.id === id)?.label ?? id;
 }
 
@@ -145,7 +148,8 @@ export function answerHistorySnapshot(
 export type AnswerAttribution = {
   model: string | null;
   provider: string | null;
-  fallbacks: Array<{ from: string; to: string; reason: string | null }>;
+  /** A model the metadata does not name is null. */
+  fallbacks: Array<{ from: string | null; to: string | null; reason: string | null }>;
   omittedFallbacks: number;
 };
 
@@ -169,8 +173,8 @@ export function answerAttribution(
   for (const entry of candidates) {
     const fallback = entry.metadata?.fallback;
     if (!fallback?.used) continue;
-    const from = fallback.from?.model?.trim() || fallback.from?.provider?.trim() || "unknown model";
-    const to = fallback.to?.model?.trim() || fallback.to?.provider?.trim() || "unknown model";
+    const from = fallback.from?.model?.trim() || fallback.from?.provider?.trim() || null;
+    const to = fallback.to?.model?.trim() || fallback.to?.provider?.trim() || null;
     const reason = fallback.reason?.slice(0, 241).replace(/\s+/g, " ").trim() || null;
     const key = JSON.stringify([from, to]);
     fallbacks.delete(key);
@@ -224,22 +228,23 @@ const searchResultSchema = z.object({ results: z.array(z.object({ path: z.string
 const webSearchResultSchema = z.object({ results: z.array(z.object({ title: z.string(), url: z.string(), snippet: z.string(), publishedAt: z.string().optional() })) });
 const fileSearchResultSchema = z.object({ ok: z.literal(true), matches: z.array(z.object({ path: z.string(), line: z.number(), content: z.string() })), count: z.number().int().nonnegative(), truncated: z.boolean().optional() });
 const mailResultSchema = z.object({ ok: z.literal(true), messageId: z.string() });
-const filesystemOperationVerbs = new Map([
-  ["fs.read", ["read", "reading", "read"]],
-  ["fs.write", ["write", "writing", "wrote"]],
-  ["fs.edit", ["edit", "editing", "edited"]],
-  ["fs.delete", ["delete", "deleting", "deleted"]],
-  ["fs.search", ["search", "searching", "searched"]],
+/** Each file operation as a plain verb, in progress, and done. */
+const filesystemOperationVerbs = new Map<string, readonly [TextKey, TextKey, TextKey]>([
+  ["fs.read", ["chat.op.read.verb", "chat.op.read.doing", "chat.op.read.done"]],
+  ["fs.write", ["chat.op.write.verb", "chat.op.write.doing", "chat.op.write.done"]],
+  ["fs.edit", ["chat.op.edit.verb", "chat.op.edit.doing", "chat.op.edit.done"]],
+  ["fs.delete", ["chat.op.delete.verb", "chat.op.delete.doing", "chat.op.delete.done"]],
+  ["fs.search", ["chat.op.search.verb", "chat.op.search.doing", "chat.op.search.done"]],
 ]);
 
 function mutationConfirmation(syscall: string, output: ChatTranscriptValue | undefined): { path: string; detail?: string } | null {
   if (syscall === "fs.write") {
     const result = fileWriteResultSchema.safeParse(output);
-    return result.success ? { path: result.data.path, detail: countLabel(result.data.size, "byte") } : null;
+    return result.success ? { path: result.data.path, detail: t("chat.op.bytes", { count: result.data.size }) } : null;
   }
   if (syscall === "fs.edit") {
     const result = fileEditResultSchema.safeParse(output);
-    return result.success ? { path: result.data.path, detail: countLabel(result.data.replacements, "replacement") } : null;
+    return result.success ? { path: result.data.path, detail: t("chat.op.replacements", { count: result.data.replacements }) } : null;
   }
   if (syscall === "fs.delete") {
     const result = fileDeleteResultSchema.safeParse(output);
@@ -253,7 +258,7 @@ export function outputText(syscall: string, output: ChatTranscriptValue | undefi
   if (output === undefined || output === null) return fallback;
   if (syscall === "web.search") {
     const search = webSearchResultSchema.safeParse(output);
-    if (search.success) return search.data.results.map((hit) => [hit.title, hit.url, hit.publishedAt, hit.snippet].filter(Boolean).join("\n")).join("\n\n") || "No results.";
+    if (search.success) return search.data.results.map((hit) => [hit.title, hit.url, hit.publishedAt, hit.snippet].filter(Boolean).join("\n")).join("\n\n") || t("chat.output.noResults");
   }
   if (syscall.startsWith("fs.")) {
     const error = fileOperationErrorSchema.safeParse(output);
@@ -267,7 +272,7 @@ export function outputText(syscall: string, output: ChatTranscriptValue | undefi
         : code.data.result === null ? ""
         : isStringValue(code.data.result) && code.data.result !== "" ? code.data.result
         : JSON.stringify(code.data.result, null, 2);
-      return [logs, result].filter((text) => text !== "").join("\n") || code.data.status;
+      return [logs, result].filter((text) => text !== "").join("\n") || t(code.data.status === "completed" ? "chat.output.completed" : "chat.output.failed");
     }
   }
   if (syscall === "shell.exec") {
@@ -279,20 +284,20 @@ export function outputText(syscall: string, output: ChatTranscriptValue | undefi
       const stderr = shell.data.stderr ?? "";
       const text = stderr ? (stdout ? `${stdout}\n${stderr}` : stderr) : stdout;
       const exit = shell.data.exitCode;
-      return text.trim() ? text : exit === 0 || exit === null || exit === undefined ? "" : `exit ${exit}`;
+      return text.trim() ? text : exit === 0 || exit === null || exit === undefined ? "" : t("chat.output.exit", { code: exit });
     }
   }
   if (syscall === "fs.write") {
     const file = fileWriteResultSchema.safeParse(output);
-    if (file.success) return `wrote ${file.data.size} ${file.data.size === 1 ? "byte" : "bytes"}`;
+    if (file.success) return t("chat.output.wrote", { count: file.data.size });
   }
   if (syscall === "fs.edit") {
     const file = fileEditResultSchema.safeParse(output);
-    if (file.success) return `replaced ${file.data.replacements} ${file.data.replacements === 1 ? "occurrence" : "occurrences"}`;
+    if (file.success) return t("chat.output.replaced", { count: file.data.replacements });
   }
   if (syscall === "fs.delete") {
     const file = fileDeleteResultSchema.safeParse(output);
-    if (file.success) return "deleted";
+    if (file.success) return t("chat.output.deleted");
   }
   if (syscall === "fs.read") {
     const file = fileResultSchema.safeParse(output);
@@ -308,7 +313,7 @@ export function outputText(syscall: string, output: ChatTranscriptValue | undefi
   }
   if (syscall === "mail.send") {
     const mail = mailResultSchema.safeParse(output);
-    if (mail.success) return `message ${mail.data.messageId}`;
+    if (mail.success) return t("chat.output.message", { id: mail.data.messageId });
   }
   if (isStringValue(output)) return output;
   return fallback;
@@ -341,29 +346,30 @@ function callFromRow(row: ChatTranscriptRow): ActivityCall {
     finished,
     failed: row.isError === true || row.status === "error" || (row.toolOutcome !== undefined && row.toolOutcome !== "completed"),
   };
-  const fields: Array<[key: string, label: string]> = syscall === "fs.write" ? [["content", "content"]]
-    : syscall === "fs.edit" ? [["oldString", "before"], ["newString", "after"]]
-    : syscall === "mail.send" ? [["to", "to"], ["subject", "subject"], ["text", "message"]]
+  const fields: Array<[key: string, label: TextKey]> = syscall === "fs.write" ? [["content", "chat.field.content"]]
+    : syscall === "fs.edit" ? [["oldString", "chat.field.before"], ["newString", "chat.field.after"]]
+    : syscall === "mail.send" ? [["to", "chat.field.to"], ["subject", "chat.field.subject"], ["text", "chat.field.message"]]
     : [];
   if (fields.length > 0 && isRecord(row.toolArgs)) {
     const args = row.toolArgs;
     call.details = fields.flatMap(([key, label]) => {
       const text = z.string().safeParse(args[key]);
-      return text.success ? [{ label, text: text.data }] : [];
+      return text.success ? [{ label: t(label), text: text.data }] : [];
     });
   }
   const verb = filesystemOperationVerbs.get(syscall);
   if (!verb) return call;
   const completed = finished && !call.failed && row.toolOutcome === "completed";
   const path = stringField(row.toolArgs, "path") ?? "";
-  call.operation = { label: !finished && !call.failed && row.status === "running" ? verb[1] : verb[0], subject: path };
+  call.operation = { label: t(!finished && !call.failed && row.status === "running" ? verb[1] : completed && syscall === "fs.read" ? verb[2] : verb[0]), subject: path };
   if (syscall === "fs.search") {
     const query = stringField(row.toolArgs, "query") ?? "";
-    call.operation.subject = [query, path ? `in ${path}` : ""].filter(Boolean).join(" ");
+    call.operation.subject = query && path ? t("chat.op.queryIn", { query, path }) : path ? t("chat.op.inPath", { path }) : query;
     const result = fileSearchResultSchema.safeParse(row.toolOutput);
     if (completed && result.success) {
-      call.operation.label = verb[2];
-      call.operation.detail = result.data.truncated ? `${result.data.count}+ results` : countLabel(result.data.count, "result");
+      call.operation.label = t(verb[2]);
+      const { count } = result.data;
+      call.operation.detail = result.data.truncated ? t("chat.op.resultsMore", { count }) : t("chat.op.results", { count });
       call.output = result.data.matches.map((match) => `${match.path}:${match.line}\n${match.content}`).join("\n\n");
     } else if (finished && result.success) {
       call.output = row.text || JSON.stringify(row.toolOutput, null, 2);
@@ -371,7 +377,7 @@ function callFromRow(row: ChatTranscriptRow): ActivityCall {
   } else if (syscall !== "fs.read") {
     const result = mutationConfirmation(syscall, row.toolOutput);
     if (completed && result) {
-      call.operation.label = verb[2];
+      call.operation.label = t(verb[2]);
       call.operation.subject = result.path;
       if (result.detail) call.operation.detail = result.detail;
       call.output = "";
@@ -406,7 +412,7 @@ export function activitiesForRows(rows: readonly ChatTranscriptRow[], runKey: st
   for (const row of rows) {
     if (!isToolRow(row) || isMessageSend(row)) continue;
     const target = row.toolSyscall === "codemode.exec" || row.toolSyscall === "codemode.run" || (row.toolSyscall == null && row.toolName === "CodeMode")
-      ? null : row.toolTarget ?? "unknown target";
+      ? null : row.toolTarget ?? UNKNOWN_TARGET;
     const call = callFromRow(row);
     const existing = activities.find((activity) => activity.target === target);
     const timestamp = row.timestamp ?? null;
@@ -594,15 +600,14 @@ export function activityDuration(activity: Activity): string {
   return formatSeconds(Math.max(0, activity.endedAt - activity.startedAt));
 }
 
-export function countLabel(count: number, singular: string, plural = `${singular}s`): string {
-  return `${count} ${count === 1 ? singular : plural}`;
-}
-
 export function placesUsed(moment: Moment): number {
   return new Set(moment.activities.flatMap((activity) => activity.target === null ? [] : [activity.target])).size;
 }
 
-const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+const MONTHS = [
+  "chat.time.month.jan", "chat.time.month.feb", "chat.time.month.mar", "chat.time.month.apr", "chat.time.month.may", "chat.time.month.jun",
+  "chat.time.month.jul", "chat.time.month.aug", "chat.time.month.sep", "chat.time.month.oct", "chat.time.month.nov", "chat.time.month.dec",
+] as const satisfies readonly TextKey[];
 
 /** The zone the owner reads times in, as the Kernel resolves it for Ship: their own setting, else the server's, else this browser's. */
 export function ownerTimeZone(config: readonly ConsoleConfigEntry[] | undefined, uid: number | undefined): string {
@@ -638,7 +643,7 @@ export function momentTime(timestamp: number, timeZone: string, now = Date.now()
   const clock = `${String(at.hour).padStart(2, "0")}:${String(at.minute).padStart(2, "0")}`;
   const sameDay = at.year === today.year && at.month === today.month && at.day === today.day;
   return {
-    label: sameDay ? clock : `${at.day} ${MONTHS[at.month - 1]} · ${clock}`,
+    label: sameDay ? clock : t("chat.time.dayMonth", { day: at.day, month: t(MONTHS[at.month - 1]), clock }),
     title: new Intl.DateTimeFormat(locale, {
       timeZone, weekday: "long", year: "numeric", month: "long", day: "numeric",
       hour: "2-digit", minute: "2-digit", second: "2-digit", hourCycle: "h23",
@@ -941,6 +946,20 @@ export function timelineCalls(moment: Moment): CallEvent[] {
 
 export type SummaryPart = { text: string; tone?: "place" | "failed" };
 
+/** A translated message as summary parts, with each {name} slot replaced by the parts given for it. */
+function fillParts(message: string, slots: Readonly<Record<string, readonly SummaryPart[]>>): SummaryPart[] {
+  return message.split(/(\{\w+\})/).flatMap((piece) => {
+    const name = /^\{(\w+)\}$/.exec(piece)?.[1];
+    return name !== undefined && name in slots ? [...slots[name]] : piece ? [{ text: piece }] : [];
+  });
+}
+
+function failureText(failed: number, retried: number): string {
+  if (retried === failed) return t("chat.receipt.failedRetried", { count: failed });
+  if (retried === 0) return t("chat.receipt.failed", { count: failed });
+  return t("chat.receipt.someRetried", { failed: t("chat.receipt.failed", { count: failed }), retried: t("chat.receipt.retried", { count: retried }) });
+}
+
 /**
  * The receipt's one line while folded: the current purpose, or the actions and places in this message interval.
  * Related calls retain retry relationships across messages without adding their work to this receipt.
@@ -949,27 +968,23 @@ export function receiptSummary(moment: Moment, places: readonly Place[], related
   const calls = timelineCalls(moment);
   if (calls.length === 0) {
     const processWork = moment.activities.filter((activity) => !activity.you && activity.target === null);
-    if (processWork.length > 0) return [{ text: processWork.some((activity) => activity.live) ? "working" : "worked" }];
-    return [{ text: moment.narration ? "working notes" : "response details" }];
+    if (processWork.length > 0) return [{ text: t(processWork.some((activity) => activity.live) ? "chat.receipt.working" : "chat.receipt.worked") }];
+    return [{ text: t(moment.narration ? "chat.receipt.notes" : "chat.receipt.details") }];
   }
-  const label = (target: string | null) => target === null ? "the process" : placeLabel(target, places);
+  const label = (target: string | null) => target === null ? t("chat.receipt.process") : placeLabel(target, places);
   const failed = calls.filter((event) => event.call.failed);
   const retried = failed.filter((event) => (relatedCalls ?? calls).some((later) => later.retryOf === event.call.callId)).length;
-  const failures: SummaryPart[] = failed.length > 0
-    ? [{ text: ` · ${failed.length} failed${retried === failed.length ? " and retried" : retried > 0 ? `, ${retried} retried` : ""}`, tone: "failed" }]
-    : [];
+  const failures: SummaryPart[] = failed.length > 0 ? [{ text: ` · ${failureText(failed.length, retried)}`, tone: "failed" }] : [];
   if (moment.thinking) {
     const running = calls.find((event) => !event.call.finished);
     if (running) return [{ text: running.call.description }, ...failures];
   }
   const named = [...new Set(calls.map((event) => event.target))].map(label);
-  const parts: SummaryPart[] = [{ text: `${countLabel(calls.length, "action")} on ` }];
-  named.forEach((name, index) => {
-    if (index > 0) parts.push({ text: index === named.length - 1 ? " and " : ", " });
-    parts.push({ text: name, tone: "place" });
-  });
-  parts.push(...failures);
-  return parts;
+  const list = named.slice(1).reduce<SummaryPart[]>((joined, name, index) => fillParts(
+    t(index === named.length - 2 ? "chat.list.and" : "chat.list.comma"),
+    { list: joined, item: [{ text: name, tone: "place" }] },
+  ), [{ text: named[0], tone: "place" }]);
+  return [...fillParts(t("chat.receipt.actions", { count: calls.length }), { places: list }), ...failures];
 }
 
 export function receiptTargets(moment: Moment): { target: string; live: boolean; failed: boolean }[] {

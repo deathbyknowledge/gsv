@@ -1,5 +1,6 @@
 import { Fragment } from "preact";
 import { useState } from "preact/hooks";
+import { useT } from "../../i18n/locale";
 import "./Stepper.css";
 
 export type StepperSize = "small" | "medium" | "large";
@@ -26,6 +27,7 @@ const SIZE_CLASS = {
 /** Stepper — ported from Stepper.dc.html. Step / wizard progress indicator with
  *  clickable numbered dots, connecting lines and optional per-step labels. */
 export function Stepper(props: StepperProps) {
+  const t = useT();
   const { count = 4, current = 1, l0, l1, l2, l3, l4, size = "medium", width = 360, onChange } = props;
 
   const [stateCur, setStateCur] = useState<number | undefined>(undefined);
@@ -68,7 +70,7 @@ export function Stepper(props: StepperProps) {
   }
 
   return (
-    <div role="group" aria-label="Progress" class={rootClass} style={{ width: `${width}px`, maxWidth: "100%" }}>
+    <div role="group" aria-label={t("ui.stepper.label")} class={rootClass} style={{ width: `${width}px`, maxWidth: "100%" }}>
       {steps.map((s, i) => (
         <Fragment key={s.num}>
           {s.hasLine ? <span class={s.lineCls} /> : null}
@@ -77,7 +79,7 @@ export function Stepper(props: StepperProps) {
             class="gsv-sp-step"
             disabled={!s.navigable}
             aria-current={i === cur ? "step" : undefined}
-            aria-label={`Step ${s.num}${s.label ? `: ${s.label}` : ""}`}
+            aria-label={t(s.label ? "ui.stepper.namedStep" : "ui.stepper.step", { number: s.num, label: s.label })}
             onClick={s.pick}
           >
             <span class={s.dotCls}>{s.num}</span>

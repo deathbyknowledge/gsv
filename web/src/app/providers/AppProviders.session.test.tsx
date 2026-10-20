@@ -75,7 +75,7 @@ describe("session bootstrap ownership", () => {
     const harness = createSessionHarness();
     const lifecycle: string[] = [];
     const createSessionService = vi.fn(() => harness.service);
-    vi.stubGlobal("document", {});
+    vi.stubGlobal("document", { documentElement: {} });
 
     try {
       await root.render(

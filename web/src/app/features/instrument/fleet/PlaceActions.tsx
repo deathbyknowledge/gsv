@@ -7,8 +7,10 @@ import { useDevicePairing } from "../../../services/machines/DevicePairingProvid
 import { DevicePairingPanel } from "../shared/DevicePairingPanel";
 import { INSTRUMENT_TARGETS_KEY } from "../wire/queryKeys";
 import { placeActions, type Place } from "./fleetModel";
+import { rich, useT, type TextKey } from "../../../i18n/locale";
 
 export function PlaceActions({ place, uid, focusPair }: { place: Place; uid: number | null; focusPair: boolean }) {
+  const t = useT();
   const active = useViewActive();
   const { connected } = useGateway();
   const { pairing } = useDevicePairing();
@@ -16,7 +18,7 @@ export function PlaceActions({ place, uid, focusPair }: { place: Place; uid: num
   const allowed = placeActions(place, uid);
   const [mode, setMode] = useState<"pair" | "forget" | null>(null);
   const [confirmation, setConfirmation] = useState("");
-  const [error, setError] = useState("");
+  const [error, setError] = useState<TextKey | null>(null);
   const pairButton = useRef<HTMLButtonElement>(null);
   const focused = useRef(false);
   const confirmInput = useRef<HTMLInputElement>(null);
@@ -37,13 +39,13 @@ export function PlaceActions({ place, uid, focusPair }: { place: Place; uid: num
     <div class="fleet-actions">
       {allowed.pair && <button ref={pairButton} type="button" class="fleet-text-action" disabled={!connected || mode !== null} onClick={() => {
         const platform = place.kind === "browser" ? "browser" : /win/i.test(place.platform) && !/darwin/i.test(place.platform) ? "windows" : /darwin|mac/i.test(place.platform) ? "mac" : "linux";
-        if (pairing.selectExisting(place.label, place.id, platform)) { setError(""); setMode("pair"); }
-        else setError("Finish or cancel the current invitation in Connect before pairing another place.");
-      }}>pair again</button>}
-      {allowed.forget && <button type="button" class="fleet-text-action is-danger" disabled={!connected || mode !== null} onClick={() => { setError(""); setConfirmation(""); setMode("forget"); }}>forget place</button>}
+        if (pairing.selectExisting(place.label, place.id, platform)) { setError(null); setMode("pair"); }
+        else setError("fleet.placeActions.invitationBusy");
+      }}>{t("fleet.placeActions.pairAgain")}</button>}
+      {allowed.forget && <button type="button" class="fleet-text-action is-danger" disabled={!connected || mode !== null} onClick={() => { setError(null); setConfirmation(""); setMode("forget"); }}>{t("fleet.placeActions.forget")}</button>}
     </div>
     {mode === "pair" ? <>
-      <h4>Pair {place.label} again</h4>
+      <h4>{t("fleet.placeActions.pairTitle", { label: place.label })}</h4>
       <DevicePairingPanel targets={[{ deviceId: place.id, online: place.online }]} onClose={() => setMode(null)} />
     </> : mode === "forget" ? (
         <form class="fleet-place-form" onSubmit={(event) => {
@@ -51,16 +53,16 @@ export function PlaceActions({ place, uid, focusPair }: { place: Place; uid: num
           if (confirmation !== place.id || !allowed.forget || !connected || remove.isPending) return;
           remove.mutate({ deviceId: place.id }, { onSuccess: () => { void queryClient.invalidateQueries({ queryKey: INSTRUMENT_TARGETS_KEY }); } });
         }}>
-          <h4>Forget {place.label}?</h4>
-          <p class="note">The place record is removed, any live device connection is disconnected, and active node tokens for this place are revoked.</p>
-          <label>Type <code>{place.id}</code> to confirm <input ref={confirmInput} value={confirmation} disabled={remove.isPending} onInput={(event) => setConfirmation(event.currentTarget.value)} autoComplete="off" spellcheck={false} /></label>
+          <h4>{t("fleet.placeActions.forgetTitle", { label: place.label })}</h4>
+          <p class="note">{t("fleet.placeActions.forgetNote")}</p>
+          <label>{rich(t("fleet.placeActions.confirm"), { id: <code>{place.id}</code> })} <input ref={confirmInput} value={confirmation} disabled={remove.isPending} onInput={(event) => setConfirmation(event.currentTarget.value)} autoComplete="off" spellcheck={false} /></label>
           <div class="fleet-actions">
-            <button type="submit" class="ibtn is-danger" disabled={!connected || confirmation !== place.id || remove.isPending}>{remove.isPending ? "forgetting…" : "forget place"}</button>
-            <button type="button" class="fleet-text-action" disabled={remove.isPending} onClick={() => setMode(null)}>cancel</button>
+            <button type="submit" class="ibtn is-danger" disabled={!connected || confirmation !== place.id || remove.isPending}>{remove.isPending ? t("fleet.placeActions.forgetting") : t("fleet.placeActions.forget")}</button>
+            <button type="button" class="fleet-text-action" disabled={remove.isPending} onClick={() => setMode(null)}>{t("common.cancel")}</button>
           </div>
-          {remove.error ? <p class="error" role="alert">Could not forget this place: {remove.error.message}</p> : null}
+          {remove.error ? <p class="error" role="alert">{t("fleet.placeActions.forgetFailed", { error: remove.error.message })}</p> : null}
         </form>
     ) : null}
-    {error && <p class="error" role="alert">{error}</p>}
+    {error && <p class="error" role="alert">{t(error)}</p>}
   </section>;
 }

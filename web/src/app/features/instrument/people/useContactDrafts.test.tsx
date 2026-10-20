@@ -85,7 +85,7 @@ describe("optimistic human contact sends", () => {
       const id = view.current.drafts.get(contact.id)!.sent[0].intent.idempotencyKey;
       await act(async () => { await view.current.send({ ...contact, generation: "generation:new" }, id); });
       expect(send).toHaveBeenCalledOnce();
-      expect(view.current.drafts.get(contact.id)!.sent[0].error).toContain("connection changed");
+      expect(view.current.drafts.get(contact.id)!.sent[0].error).toEqual({ key: "people.send.connectionChanged" });
     } finally { await view.unmount(); }
   });
 });

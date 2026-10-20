@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "preact/hooks";
 import { useGateway } from "../../../services/gateway/GatewayProvider";
+import { rich, useT } from "../../../i18n/locale";
 import "./welcome-card.css";
 
 const WELCOME_SEEN = "ui/welcome_card_seen";
@@ -11,6 +12,7 @@ type Props = {
 
 /** The person's config follows them between the web app and Desktop. */
 export function WelcomeCard({ onOpenChange }: Props = {}) {
+  const t = useT();
   const { client, connected } = useGateway();
   const [ownerUid, setOwnerUid] = useState<number | null>(null);
   const [dismissing, setDismissing] = useState(false);
@@ -66,19 +68,21 @@ export function WelcomeCard({ onOpenChange }: Props = {}) {
   };
 
   if (loadState === "failed") return <aside class="welcome-card">
-    <p role="alert">Couldn't load the welcome.</p>
-    <button type="button" class="welcome-card-try" disabled={!connected} onClick={() => setLoadState("pending")}>Retry</button>
+    <p role="alert">{t("shell.welcome.loadFailed")}</p>
+    <button type="button" class="welcome-card-try" disabled={!connected} onClick={() => setLoadState("pending")}>{t("shell.retryButton")}</button>
   </aside>;
   if (ownerUid === null) return null;
   return <aside class="welcome-card" role="dialog" aria-labelledby="welcome-card-title">
-    <button type="button" class="welcome-card-close" aria-label="Dismiss welcome" disabled={dismissing} onClick={dismiss}>×</button>
-    <h2 id="welcome-card-title">Welcome to your Ship!</h2>
-    <p>I'm Kawah, one of the founders of Ship. Steve, Jessica and I have been building this for the past months, and we're really happy you're here!</p>
-    <p>Ship is still early, so you might run into some rough edges. If something breaks, feels confusing, or makes you think "I wish it could…", we'd love to hear from you.</p>
-    <p>You can use the Feedback button in the top anytime, or talk to us directly on <a href="https://discord.gg/hy9ExJJFvn" target="_blank" rel="noopener noreferrer">Discord</a> (and see Steve's dog).</p>
-    <p>Thanks for being one of the first. It means a lot to us!</p>
+    <button type="button" class="welcome-card-close" aria-label={t("shell.welcome.dismiss")} disabled={dismissing} onClick={dismiss}>×</button>
+    <h2 id="welcome-card-title">{t("shell.welcome.title")}</h2>
+    <p>{t("shell.welcome.intro")}</p>
+    <p>{t("shell.welcome.early")}</p>
+    <p>{rich(t("shell.welcome.contact"), {
+      discord: <a href="https://discord.gg/hy9ExJJFvn" target="_blank" rel="noopener noreferrer">Discord</a>,
+    })}</p>
+    <p>{t("shell.welcome.thanks")}</p>
     <p>Kawah :)</p>
-    {dismissError && <p role="alert">Couldn't finish dismissing the welcome. Please try again.</p>}
-    <button type="button" class="welcome-card-try" disabled={dismissing} onClick={dismiss}>Try it out!</button>
+    {dismissError && <p role="alert">{t("shell.welcome.dismissFailed")}</p>}
+    <button type="button" class="welcome-card-try" disabled={dismissing} onClick={dismiss}>{t("shell.welcome.start")}</button>
   </aside>;
 }

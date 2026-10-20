@@ -7,11 +7,13 @@ import "./PolicySummaryLink.css";
 type PolicySummaryLinkProps = {
   title: string;
   href: string;
+  /** The link to the full document, worded for its title. */
+  readLabel: string;
   introduction: string;
   points: readonly [string, string];
 };
 
-export function PolicySummaryLink({ title, href, introduction, points }: PolicySummaryLinkProps) {
+export function PolicySummaryLink({ title, href, readLabel, introduction, points }: PolicySummaryLinkProps) {
   const id = useId();
   const triggerRef = useRef<HTMLButtonElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
@@ -105,7 +107,7 @@ export function PolicySummaryLink({ title, href, introduction, points }: PolicyS
         <h2 id={`${id}-title`}>{title}</h2>
         <p>{introduction}</p>
         <ul>{points.map((point) => <li key={point}>{point}</li>)}</ul>
-        <a href={href} target="_blank" rel="noopener noreferrer">Read full {title}</a>
+        <a href={href} target="_blank" rel="noopener noreferrer">{readLabel}</a>
       </div>
     </>, document.body)}
   </>;

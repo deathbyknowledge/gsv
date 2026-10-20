@@ -1,5 +1,6 @@
 import { z } from "zod";
 import type { WelcomeSnapshot, WelcomeState, WelcomeStorage } from "../app/services/session/ownerWelcome";
+import { t } from "../app/i18n/locale";
 
 const snapshotSchema = z.object({
   revision: z.string().min(1),
@@ -26,8 +27,8 @@ export class BrowserWelcomeStorage implements WelcomeStorage {
       const opening = indexedDB.open("gsv-owner-welcome", 1);
       let blocked = false;
       opening.onupgradeneeded = () => { opening.result.createObjectStore("flow"); };
-      opening.onerror = () => reject(new Error("Could not save signup in this browser."));
-      opening.onblocked = () => { blocked = true; reject(new Error("Close other signup tabs and retry.")); };
+      opening.onerror = () => reject(new Error(t("signup.storage.saveFailed")));
+      opening.onblocked = () => { blocked = true; reject(new Error(t("signup.storage.blocked"))); };
       opening.onsuccess = () => {
         const db = opening.result;
         if (blocked) { db.close(); return; }
@@ -38,20 +39,20 @@ export class BrowserWelcomeStorage implements WelcomeStorage {
         let failure: Error | undefined;
         transaction.oncomplete = () => { db.close(); resolve(result); };
         transaction.onabort = transaction.onerror = () => {
-          db.close(); reject(failure ?? new Error("Could not save signup in this browser."));
+          db.close(); reject(failure ?? new Error(t("signup.storage.saveFailed")));
         };
         read.onsuccess = () => {
           try {
             result = read.result === undefined ? { revision: "initial", value: null } : snapshotSchema.parse(read.result);
             if ((result.value && result.value.origin !== this.origin) || (change?.value && change.value.origin !== this.origin)) {
-              throw new Error("Signup belongs to a different Accounts address.");
+              throw new Error(t("signup.storage.otherOrigin"));
             }
             if (!change) return;
-            if (result.revision !== change.revision) throw new Error("Signup changed in another tab. Reload to continue.");
+            if (result.revision !== change.revision) throw new Error(t("signup.storage.changed"));
             result = { revision: crypto.randomUUID(), value: change.value };
             records.put(result, "current");
           } catch (error) {
-            failure = error instanceof Error ? error : new Error("Could not read saved signup.");
+            failure = error instanceof Error ? error : new Error(t("signup.storage.readFailed"));
             transaction.abort();
           }
         };

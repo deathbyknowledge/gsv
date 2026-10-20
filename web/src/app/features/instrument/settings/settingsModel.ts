@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { toolApprovalTargetSelectorSchema } from "@humansandmachines/gsv/protocol";
 import type { ConsoleAccount } from "../../../domain/system/consoleModels";
+import { t } from "../../../i18n/locale";
 
 export {
   consoleConfigQueryKey as SETTINGS_CONFIG_KEY,
@@ -40,7 +41,7 @@ export function readSettingsPolicy(value: string): SettingsPolicy | null {
 
 export function instructionPath(name: string): string {
   if (!name.endsWith(".md") || name.includes("/") || name.includes("\\") || name.includes("\0")) {
-    throw new Error("Select a Markdown file from your instructions folder");
+    throw new Error(t("settings.instructions.selectMarkdown"));
   }
   return `~/context.d/${name}`;
 }
@@ -49,10 +50,10 @@ export function newInstructionName(value: string): string {
   const stem = value.trim().replace(/\.md$/i, "");
   // eslint-disable-next-line no-control-regex -- File names must reject ASCII control bytes.
   if (!stem.trim() || stem === "." || stem === ".." || /[\x00-\x1f\x7f]/.test(stem)) {
-    throw new Error("Give your instruction a file name");
+    throw new Error(t("settings.instructions.nameRequired"));
   }
   const name = `${stem}.md`;
-  if (name.includes("/") || name.includes("\\")) throw new Error("Use a file name without folders");
+  if (name.includes("/") || name.includes("\\")) throw new Error(t("settings.instructions.noFolders"));
   instructionPath(name);
   return name;
 }

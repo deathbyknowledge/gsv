@@ -18,7 +18,8 @@ const listeners = new Set<(status: GsvClientStatus) => void>();
 const connectedStatus: GsvClientStatus = { state: "connected", url: null, username: null, connectionId: "test", message: null };
 
 type ElementProps = {
-  onInput?: (event: { currentTarget: { value: string } }) => void;
+  /** preact/compat, which the interface translator loads, renames a textarea's onInput to oninput. */
+  oninput?: (event: { currentTarget: { value: string } }) => void;
   onSubmit?: (event: { preventDefault: () => void }) => void;
   onClick?: () => void;
   onChange?: (event: { currentTarget: { checked: boolean } }) => void;
@@ -36,7 +37,7 @@ function element(type: string): VNode<ElementProps> {
   if (!node) throw new Error(`Missing ${type}`);
   return node;
 }
-const type = (value: string) => act(() => element("textarea").props.onInput!({ currentTarget: { value } }));
+const type = (value: string) => act(() => element("textarea").props.oninput!({ currentTarget: { value } }));
 const send = () => act(async () => { element("form").props.onSubmit!({ preventDefault: () => {} }); });
 const includeActivity = (checked: boolean) => act(async () => { element("input").props.onChange!({ currentTarget: { checked } }); });
 

@@ -21,6 +21,11 @@ link to restore the existing connection; its server ID stays the same. **refresh
 retries a failed connection or replaces an expired sign-in link. A tool call that
 required sign-in must be run again after authorization completes.
 
+When Ship reconnects saved servers in the background, it retries a server that
+fails to list its tools a few times before marking it **failed**, and opens a new
+session if the server no longer recognises the saved one. **refresh** makes one
+attempt and shows its result.
+
 If removing a server fails, it stays listed. Retry **remove** to finish deleting
 it, or use **refresh** to reconnect the saved server.
 

@@ -8,6 +8,8 @@
  * `?fresh=1` is a brand-new space instead: no conversation, the welcome card up, and dismissing it
  * wakes Ship the way the Kernel does, a quiet beat, a long think, then the welcome landing whole.
  * `?fresh=0` returns to the seeded conversation.
+ * Of the config, this browser keeps only the welcome card's dismissal and the Language preference, so
+ * Settings can switch the interface language; other settings refuse to save.
  * The real GSVClient runs unchanged over an in-memory WebSocket, so the frames, statuses and signals
  * are the ones the wire would carry, in the order the gateway emits them: stream events, run output,
  * typed history records, tool signals, ledger rows and the message stream. Fixtures are the plain
@@ -116,6 +118,11 @@ const OWNER = { uid: 1000, username: "esteve", home: "/home/esteve" };
 const SHIP = { pid: "p-ship", uid: 1001, username: "ship", home: "/home/ship" };
 const HELPER = { pid: "p-helper", label: "tidy the notes archive" };
 const SHIP_CONVERSATION = "c-ship";
+/** The config this browser keeps for the mock, with its storage key: the welcome card's dismissal and the owner's language. */
+const STORED_CONFIG = new Map([
+  [`users/${OWNER.uid}/ui/welcome_card_seen`, WELCOME_SEEN],
+  [`users/${OWNER.uid}/locale/language`, "gsv.mock.language"],
+]);
 const MODEL = { api: "anthropic-messages", provider: "anthropic", model: "claude-sonnet-4-5", responseModel: "claude-sonnet-4-5-20250929" };
 
 /** A wall-clock instant some days back, so the conversation always spans yesterday and today. */
@@ -151,7 +158,7 @@ const targets: SysTargetSummary[] = [
 ];
 
 const accounts: AccountSummary[] = [
-  { uid: OWNER.uid, username: OWNER.username, displayName: "Esteve", relation: "self", runnable: false, capabilities: ["sys.ledger.list", "sys.target.list", "proc.list", "r12y.list", "r12y.source.list", "sched.list", "r12y.get", "r12y.update", "sched.add", "sched.update", "conversation.send", "profile.resolve", "contact.list", "sys.pair.create", "fs.read"] },
+  { uid: OWNER.uid, username: OWNER.username, displayName: "Esteve", relation: "self", runnable: false, capabilities: ["sys.ledger.list", "sys.target.list", "proc.list", "r12y.list", "r12y.source.list", "sched.list", "r12y.get", "r12y.update", "sched.add", "sched.update", "conversation.send", "profile.resolve", "contact.list", "sys.pair.create", "fs.read", "sys.config.set"] },
   { uid: SHIP.uid, username: SHIP.username, displayName: "Ship", relation: "personal-agent", runnable: true },
 ];
 
@@ -769,15 +776,17 @@ function route(socket: MockSocket, id: string, call: string, args: JsonValue): s
     case "sys.token.list": return respond(id, { tokens: [] });
     case "sys.config.get": {
       const key = z.object({ key: z.string().optional() }).parse(args).key;
-      const welcomeKey = `users/${OWNER.uid}/ui/welcome_card_seen`;
-      return respond(id, { entries: key === welcomeKey && window.localStorage.getItem(WELCOME_SEEN) === "1"
-        ? [{ key: welcomeKey, value: "1" }] : [] });
+      return respond(id, { entries: [...STORED_CONFIG].filter(([stored]) => key === undefined || stored === key).flatMap(([stored, storage]) => {
+        const value = window.localStorage.getItem(storage);
+        return value === null ? [] : [{ key: stored, value }];
+      }) });
     }
     case "sys.config.set": {
       const { key, value } = z.object({ key: z.string(), value: z.string() }).parse(args);
-      if (key !== `users/${OWNER.uid}/ui/welcome_card_seen` || value !== "1") return refuse(id, 501, `The mock gateway does not implement ${call} for ${key}.`);
-      window.localStorage.setItem(WELCOME_SEEN, "1");
-      if (fresh) void wake();
+      const storage = STORED_CONFIG.get(key);
+      if (!storage) return refuse(id, 501, `The mock gateway does not implement ${call} for ${key}.`);
+      window.localStorage.setItem(storage, value);
+      if (fresh && storage === WELCOME_SEEN && value === "1") void wake();
       return respond(id, { ok: true });
     }
     case "account.list": return respond(id, { accounts });

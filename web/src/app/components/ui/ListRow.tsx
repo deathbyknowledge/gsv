@@ -2,6 +2,7 @@ import type { ComponentChildren, JSX } from "preact";
 import { IconButton } from "./IconButton";
 import { Tag, type TagTone } from "./Tag";
 import { Hint } from "./Tooltip";
+import { useT } from "../../i18n/locale";
 import "./ListRow.css";
 
 export type ListRowStatus = "online" | "error" | "idle" | "live" | "none" | "update" | "warn";
@@ -53,7 +54,7 @@ const DOT_COLOR = {
 /** ListRow — full-width clickable row with status, optional tag/status text, and chevron. */
 export function ListRow({
   className = "",
-  label = "Item",
+  label: labelProp,
   labelInfo,
   status = "online",
   statusLabel = "",
@@ -69,6 +70,8 @@ export function ListRow({
   active = false,
   onClick,
 }: ListRowProps) {
+  const t = useT();
+  const label = labelProp ?? t("ui.listRow.label");
   const compact = density === "compact";
   const st = status || "online";
   const hasDot = st !== "none";
@@ -133,7 +136,7 @@ export function ListRow({
             <span style={{ display: "inline-flex", alignItems: "center", gap: "6px", maxWidth: "100%" }}>
               <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0 }}>{label}</span>
               <Hint text={labelInfo} position="top">
-                <IconButton glyph="help" ghost size={16} ariaLabel={`About ${label}`} />
+                <IconButton glyph="help" ghost size={16} ariaLabel={t("ui.listRow.about", { label })} />
               </Hint>
             </span>
           ) : label}

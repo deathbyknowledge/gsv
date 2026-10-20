@@ -37,6 +37,7 @@ import type {
 import { modelEntryIdFromOptionValue } from "../../domain/system/consoleAi";
 import { isSensitiveSettingKey, type ConsoleModelListing } from "../../domain/system/consoleSettings";
 import { requestFsRead } from "../gateway/fsRead";
+import { t, type TextKey } from "../../i18n/locale";
 import { z } from "zod";
 export type { AgentApprovalAction } from "../../domain/system/consoleAgentBehavior";
 
@@ -164,6 +165,12 @@ export type StartConsoleOpenAiCodexOAuthInput = { accountKey: string };
 export type CheckConsoleOpenAiCodexOAuthInput = { accountKey: string; uid: number };
 
 export type ConsoleProcessAction = "abort" | "reset" | "kill";
+
+const PROCESS_ACTION_FAILURES = {
+  abort: "shell.process.abortFailed",
+  reset: "shell.process.resetFailed",
+  kill: "shell.process.killFailed",
+} satisfies Record<ConsoleProcessAction, TextKey>;
 
 export type RunConsoleProcessActionInput = {
   pid: string;
@@ -349,7 +356,7 @@ export async function validateConsoleModelConfig(
     });
     const stopReason = result.message.stopReason;
     if (stopReason === "error" || stopReason === "aborted") {
-      throw new Error(result.message.errorMessage || `model validation ended with ${stopReason}`);
+      throw new Error(result.message.errorMessage || t(stopReason === "error" ? "config.validation.endedError" : "config.validation.endedAborted"));
     }
     return {
       ok: true,
@@ -420,7 +427,7 @@ export async function runConsoleProcessAction(
     throw new Error(`unsupported process action: ${input.action}`);
   }
   if (result.ok === false) {
-    throw new Error(result.error || `failed to ${input.action} process`);
+    throw new Error(result.error || t(PROCESS_ACTION_FAILURES[input.action]));
   }
 
   return { ok: true, action: input.action, pid };
@@ -852,7 +859,7 @@ function hasOpenAiCodexAccountId(metadata: GatewayPayload): boolean {
 }
 
 function sanitizeModelValidationError(error: GatewayPayload, secretValues: readonly string[]): string {
-  let message = error instanceof Error ? error.message : error ? String(error) : "model validation failed";
+  let message = error instanceof Error ? error.message : error ? String(error) : t("config.validation.failed");
   message = sanitizeHtmlModelValidationError(message);
   for (const secret of secretValues) {
     if (secret.length < 4) {
@@ -860,7 +867,7 @@ function sanitizeModelValidationError(error: GatewayPayload, secretValues: reado
     }
     message = message.replace(new RegExp(escapeRegExp(secret), "g"), "redacted");
   }
-  return message || "model validation failed";
+  return message || t("config.validation.failed");
 }
 
 function sanitizeHtmlModelValidationError(message: string): string {
@@ -868,12 +875,9 @@ function sanitizeHtmlModelValidationError(message: string): string {
     return message;
   }
   if (HTML_CHALLENGE_OR_BLOCK_PATTERN.test(message)) {
-    return [
-      "Provider returned an HTML challenge or block page instead of a model response.",
-      "Check VPN/network access to the provider, or run Ship from an environment that can reach it.",
-    ].join(" ");
+    return t("config.validation.htmlChallenge");
   }
-  return "Provider returned an HTML error page instead of a model response.";
+  return t("config.validation.htmlError");
 }
 
 function escapeRegExp(value: string): string {

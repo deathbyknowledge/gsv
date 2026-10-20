@@ -34,6 +34,7 @@ import {
 import { INSTRUMENT_TARGETS_KEY } from "../wire/queryKeys";
 import { canConfigure, SETTINGS_CONFIG_KEY, SETTINGS_MODELS_KEY, signInUrl } from "./settingsModel";
 import { modelConnectionChanged, modelProfileChangeWrites } from "./modelProfiles";
+import { rich, useT, type TextKey } from "../../../i18n/locale";
 
 export function ModelEditor({ account, config, models, profile, active, onDirty, onCancel, onSaved }: {
   account: ConsoleAccount;
@@ -45,6 +46,7 @@ export function ModelEditor({ account, config, models, profile, active, onDirty,
   onCancel: () => void;
   onSaved: () => void;
 }) {
+  const t = useT();
   const { client, connected } = useGateway();
   const { snapshot } = useSession();
   const cache = useQueryClient();
@@ -57,7 +59,7 @@ export function ModelEditor({ account, config, models, profile, active, onDirty,
   const [clearApiKey, setClearApiKey] = useState(false);
   const [makeFirst, setMakeFirst] = useState(false);
   const [signedIn, setSignedIn] = useState(false);
-  const [signInError, setSignInError] = useState("");
+  const [signInError, setSignInError] = useState<TextKey | null>(null);
   const provider = values["config/ai/provider"] ?? "";
   const fixedModel = fixedAiProviderModel(provider);
   const codex = provider === "openai-codex";
@@ -84,7 +86,7 @@ export function ModelEditor({ account, config, models, profile, active, onDirty,
     onMutate: (accountKey) => {
       setValues((current) => ({ ...current, "config/ai/oauth_account_key": accountKey }));
       setSignedIn(false);
-      setSignInError("");
+      setSignInError(null);
     },
   });
   const authenticated = signedIn || (auth.data?.connected === true && !login.data);
@@ -96,7 +98,7 @@ export function ModelEditor({ account, config, models, profile, active, onDirty,
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout>;
     const poll = async () => {
-      if (Date.now() >= flow.expiresAt) { setSignInError("This sign-in code has expired. Start again."); return; }
+      if (Date.now() >= flow.expiresAt) { setSignInError("settings.models.codeExpired"); return; }
       try {
         const result = await pollConsoleOpenAiCodexOAuth(client, { flowId: flow.flow.flowId });
         if (cancelled) return;
@@ -105,7 +107,7 @@ export function ModelEditor({ account, config, models, profile, active, onDirty,
           void cache.invalidateQueries({ queryKey: ["instrument", "codex-sign-in"] });
         } else timer = setTimeout(() => void poll(), Math.max(1, result.intervalSeconds) * 1000);
       } catch {
-        if (!cancelled) setSignInError("Could not finish sign-in. Start again to get a new code.");
+        if (!cancelled) setSignInError("settings.models.signInFailed");
       }
     };
     timer = setTimeout(() => void poll(), Math.max(1, flow.intervalSeconds) * 1000);
@@ -151,22 +153,22 @@ export function ModelEditor({ account, config, models, profile, active, onDirty,
   const canSave = editable && !!provider && !!model.trim() && !duplicateName && !pending && dirty
     && (!custom || !!values["config/ai/base_url"]?.trim())
     && (!testRequired || !codex || (authenticated && !!transport && transport !== "gsv"));
-  const connectionOrigin = <label>Connect through<select name="transport" value={transport} onChange={(event) => change("transport_target", event.currentTarget.value)} required={codex}>
-    {codex ? <option value="" disabled>Choose a machine</option> : <option value="gsv">Your cloud home</option>}
-    {transport && transport !== "gsv" && !fetchTargets.some((target) => target.deviceId === transport) && <option value={transport}>{transport} (unavailable)</option>}
-    {fetchTargets.map((target) => <option key={target.deviceId} value={target.deviceId}>{target.label || target.deviceId}{target.online ? "" : " (offline)"}</option>)}
+  const connectionOrigin = <label>{t("settings.models.connectThrough")}<select name="transport" value={transport} onChange={(event) => change("transport_target", event.currentTarget.value)} required={codex}>
+    {codex ? <option value="" disabled>{t("settings.models.chooseMachine")}</option> : <option value="gsv">{t("settings.models.cloudHome")}</option>}
+    {transport && transport !== "gsv" && !fetchTargets.some((target) => target.deviceId === transport) && <option value={transport}>{t("settings.unavailableOption", { value: transport })}</option>}
+    {fetchTargets.map((target) => <option key={target.deviceId} value={target.deviceId}>{target.online ? target.label || target.deviceId : t("settings.models.offline", { name: target.label || target.deviceId })}</option>)}
   </select></label>;
   const error = save.error ?? login.error ?? (codex ? auth.error : null);
 
   return <div class="settings-model-editor">
-    <div class="settings-model-heading"><h2>{initial.profile ? "Edit model" : "Add model"}</h2><button class="settings-text-action" type="button" disabled={pending} onClick={onCancel}>cancel</button></div>
-    <form class="settings-form settings-add-model" aria-label={initial.profile ? "Edit model" : "Add model"} onSubmit={(event) => {
+    <div class="settings-model-heading"><h2>{t(initial.profile ? "settings.models.edit" : "settings.models.addTitle")}</h2><button class="settings-text-action" type="button" disabled={pending} onClick={onCancel}>{t("common.cancel")}</button></div>
+    <form class="settings-form settings-add-model" aria-label={t(initial.profile ? "settings.models.edit" : "settings.models.addTitle")} onSubmit={(event) => {
       event.preventDefault();
       if (!canSave) return;
       save.mutate({ name: displayName, values: { ...values, "config/ai/model": model, "config/ai/transport_target": fixedModel ? "" : values["config/ai/transport_target"] || (codex ? transport : "") }, first: makeFirst, clearApiKey: clearApiKey || (connectionChanged && !values["config/ai/api_key"]?.trim()) });
     }}>
       <fieldset disabled={!editable || pending}>
-        <label>Provider<select name="provider" value={provider} required onChange={(event) => {
+        <label>{t("settings.models.provider")}<select name="provider" value={provider} required onChange={(event) => {
           const next = event.currentTarget.value;
           setValues({
             "config/ai/provider": next,
@@ -174,53 +176,53 @@ export function ModelEditor({ account, config, models, profile, active, onDirty,
           });
           setClearApiKey(false);
           setSignedIn(false);
-          setSignInError("");
+          setSignInError(null);
           login.reset();
           save.reset();
-        }}><option value="" disabled>Choose a provider</option>{provider && !providers.some((option) => option.value === provider) && <option value={provider}>{provider}</option>}{providers.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label>
+        }}><option value="" disabled>{t("settings.models.chooseProvider")}</option>{provider && !providers.some((option) => option.value === provider) && <option value={provider}>{provider}</option>}{providers.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label>
         {provider && <>
           {codex && <div class="settings-model-login">
-            <p class="settings-muted">Use your ChatGPT subscription.</p>
-            {authenticated && <p role="status">{auth.data?.email ? `Connected as ${auth.data.email}` : "ChatGPT is connected."}</p>}
-            <button class={authenticated ? "settings-text-action" : "ibtn"} type="button" onClick={() => login.mutate(crypto.randomUUID())} disabled={login.isPending}>{login.isPending ? <LoadingState>connecting…</LoadingState> : authenticated ? "change account" : login.data ? "start sign-in again" : "sign in with ChatGPT"}</button>
+            <p class="settings-muted">{t("settings.models.codexHint")}</p>
+            {authenticated && <p role="status">{auth.data?.email ? t("settings.models.connectedAs", { email: auth.data.email }) : t("settings.models.chatgptConnected")}</p>}
+            <button class={authenticated ? "settings-text-action" : "ibtn"} type="button" onClick={() => login.mutate(crypto.randomUUID())} disabled={login.isPending}>{login.isPending ? <LoadingState>{t("settings.models.connecting")}</LoadingState> : t(authenticated ? "settings.models.changeAccount" : login.data ? "settings.models.restartSignIn" : "settings.models.signInChatgpt")}</button>
             {!authenticated && <>
-              {login.data && loginUrl && <p>Enter <strong class="settings-login-code">{login.data.userCode}</strong> at <a href={loginUrl} target="_blank" rel="noreferrer">OpenAI sign-in ↗</a>.</p>}
-              {login.data && loginUrl && <p class="settings-muted">Use the browser profile for the ChatGPT account you want.</p>}
+              {login.data && loginUrl && <p>{rich(t("settings.models.enterCode"), { code: <strong class="settings-login-code">{login.data.userCode}</strong>, link: <a href={loginUrl} target="_blank" rel="noreferrer">{t("settings.models.openaiSignIn")}</a> })}</p>}
+              {login.data && loginUrl && <p class="settings-muted">{t("settings.models.browserProfile")}</p>}
             </>}
-            {signInError && <p class="settings-error" role="alert">{signInError}</p>}
+            {signInError && <p class="settings-error" role="alert">{t(signInError)}</p>}
           </div>}
-          {!fixedModel && <label>Model<input name="model" value={model} required autoComplete="off" placeholder="Model ID from your provider" onInput={(event) => change("model", event.currentTarget.value)} /></label>}
-          {fixedModel && <p class="settings-muted">Use the model included with your installation.</p>}
-          {custom && <label>Endpoint URL<input name="base-url" type="url" value={values["config/ai/base_url"] ?? ""} placeholder="https://…/v1" required onInput={(event) => change("base_url", event.currentTarget.value)} /></label>}
+          {!fixedModel && <label>{t("settings.models.model")}<input name="model" value={model} required autoComplete="off" placeholder={t("settings.models.modelPlaceholder")} onInput={(event) => change("model", event.currentTarget.value)} /></label>}
+          {fixedModel && <p class="settings-muted">{t("settings.models.includedHint")}</p>}
+          {custom && <label>{t("settings.models.endpointUrl")}<input name="base-url" type="url" value={values["config/ai/base_url"] ?? ""} placeholder="https://…/v1" required onInput={(event) => change("base_url", event.currentTarget.value)} /></label>}
           {!codex && !fixedModel && provider !== "workers-ai" && <>
-            <label>API key
-              {hasStoredKey && !connectionChanged && !clearApiKey && <small>A key is saved. Leave blank to keep it.</small>}
-              {hasStoredKey && connectionChanged && <small>The connection changed. Enter a key for this connection if it needs one.</small>}
+            <label>{t("settings.models.apiKey")}
+              {hasStoredKey && !connectionChanged && !clearApiKey && <small>{t("settings.models.keySaved")}</small>}
+              {hasStoredKey && connectionChanged && <small>{t("settings.models.keyConnectionChanged")}</small>}
               <input name="api-key" type="password" value={values["config/ai/api_key"] ?? ""} autoComplete="new-password" onInput={(event) => { setClearApiKey(false); change("api_key", event.currentTarget.value); }} />
             </label>
-            {hasStoredKey && !connectionChanged && <label class="settings-check"><input name="clear-api-key" type="checkbox" checked={clearApiKey} onChange={(event) => { setClearApiKey(event.currentTarget.checked); change("api_key", ""); }} />Remove saved API key</label>}
+            {hasStoredKey && !connectionChanged && <label class="settings-check"><input name="clear-api-key" type="checkbox" checked={clearApiKey} onChange={(event) => { setClearApiKey(event.currentTarget.checked); change("api_key", ""); }} />{t("settings.models.removeKey")}</label>}
           </>}
-          {codex && <>{connectionOrigin}<p class="settings-muted">Codex requests need a connected machine. {fetchTargets.length === 0 ? "Connect one in Fleet first." : "Choose where your requests should start."}</p></>}
-          <label>Name <small>Optional · how it appears in your stack</small><input name="display-name" value={name} maxLength={80} placeholder={model || "Model name"} aria-invalid={duplicateName} onInput={(event) => { setName(event.currentTarget.value); save.reset(); }} /></label>
-          {duplicateName && <p class="settings-error" role="alert">That name is already in your stack. Give this model a different name.</p>}
-          <details class="settings-model-options"><summary>More options</summary>
+          {codex && <>{connectionOrigin}<p class="settings-muted">{t(fetchTargets.length === 0 ? "settings.models.codexNoMachine" : "settings.models.codexChooseMachine")}</p></>}
+          <label>{t("settings.models.name")} <small>{t("settings.models.nameHint")}</small><input name="display-name" value={name} maxLength={80} placeholder={model || t("settings.models.namePlaceholder")} aria-invalid={duplicateName} onInput={(event) => { setName(event.currentTarget.value); save.reset(); }} /></label>
+          {duplicateName && <p class="settings-error" role="alert">{t("settings.models.duplicateName")}</p>}
+          <details class="settings-model-options"><summary>{t("settings.models.moreOptions")}</summary>
             {!fixedModel && !codex && <>
               {connectionOrigin}
-              {!custom && <label>Endpoint URL <small>Optional</small><input name="base-url" type="url" value={values["config/ai/base_url"] ?? ""} onInput={(event) => change("base_url", event.currentTarget.value)} /></label>}
-              <label>API format<select name="api-format" value={values["config/ai/provider_style"] || "auto"} onChange={(event) => change("provider_style", event.currentTarget.value)}>
-                <option value="auto">Automatic</option><option value="openai-chat-completions">OpenAI Chat Completions</option><option value="openai-responses">OpenAI Responses</option><option value="anthropic-messages">Anthropic Messages</option>
+              {!custom && <label>{t("settings.models.endpointUrl")} <small>{t("settings.models.optional")}</small><input name="base-url" type="url" value={values["config/ai/base_url"] ?? ""} onInput={(event) => change("base_url", event.currentTarget.value)} /></label>}
+              <label>{t("settings.models.apiFormat")}<select name="api-format" value={values["config/ai/provider_style"] || "auto"} onChange={(event) => change("provider_style", event.currentTarget.value)}>
+                <option value="auto">{t("settings.models.automatic")}</option><option value="openai-chat-completions">OpenAI Chat Completions</option><option value="openai-responses">OpenAI Responses</option><option value="anthropic-messages">Anthropic Messages</option>
               </select></label>
             </>}
-            <label>Maximum output tokens<input name="max-tokens" type="number" min="1" step="1" value={values["config/ai/max_tokens"] ?? ""} placeholder="Provider default" onInput={(event) => change("max_tokens", event.currentTarget.value)} /></label>
-            <label>Context window tokens<input name="context-window" type="number" min="1" step="1" value={values["config/ai/context_window_tokens"] ?? ""} placeholder="Automatic" onInput={(event) => change("context_window_tokens", event.currentTarget.value)} /></label>
+            <label>{t("settings.models.maxTokens")}<input name="max-tokens" type="number" min="1" step="1" value={values["config/ai/max_tokens"] ?? ""} placeholder={t("settings.models.providerDefault")} onInput={(event) => change("max_tokens", event.currentTarget.value)} /></label>
+            <label>{t("settings.models.contextTokens")}<input name="context-window" type="number" min="1" step="1" value={values["config/ai/context_window_tokens"] ?? ""} placeholder={t("settings.models.automatic")} onInput={(event) => change("context_window_tokens", event.currentTarget.value)} /></label>
           </details>
-          {!initial.profile && <label class="settings-check"><input name="make-first" type="checkbox" checked={makeFirst} onChange={(event) => setMakeFirst(event.currentTarget.checked)} />Use this model first</label>}
+          {!initial.profile && <label class="settings-check"><input name="make-first" type="checkbox" checked={makeFirst} onChange={(event) => setMakeFirst(event.currentTarget.checked)} />{t("settings.models.useThisFirst")}</label>}
         </>}
       </fieldset>
       {error && <p class="settings-error" role="alert">{error.message}</p>}
-      {targets.error && <p class="settings-error" role="alert">Could not load machines: {targets.error.message}</p>}
-      <div class="settings-actions"><button class="ibtn" type="submit" disabled={!canSave}>{save.isPending ? <LoadingState>{testRequired ? "testing and saving…" : "saving…"}</LoadingState> : initial.profile ? testRequired ? "test and save changes" : "save changes" : "test and add model"}</button></div>
-      {testRequired && <p class="settings-muted">We’ll check the connection before {initial.profile ? "saving these changes" : "adding it to your stack"}.</p>}
+      {targets.error && <p class="settings-error" role="alert">{t("settings.models.machinesFailed", { error: targets.error.message })}</p>}
+      <div class="settings-actions"><button class="ibtn" type="submit" disabled={!canSave}>{save.isPending ? <LoadingState>{t(testRequired ? "settings.models.testingSaving" : "common.saving")}</LoadingState> : t(initial.profile ? testRequired ? "settings.models.testSave" : "settings.models.saveChanges" : "settings.models.testAdd")}</button></div>
+      {testRequired && <p class="settings-muted">{t(initial.profile ? "settings.models.checkBeforeSave" : "settings.models.checkBeforeAdd")}</p>}
     </form>
   </div>;
 }

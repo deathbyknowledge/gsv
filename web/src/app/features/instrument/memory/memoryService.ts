@@ -1,6 +1,7 @@
 import type { GSVClient } from "@humansandmachines/gsv/client";
 import { extractLibraryTitle, libraryPathInDb, libraryTitleFromPath, normalizeLibraryPath } from "../../../services/memory/libraryModel";
 import type { LibraryCollection, LibraryEntry, LibraryNote } from "../../../services/memory/libraryTypes";
+import { t } from "../../../i18n/locale";
 
 type MemoryClient = Pick<GSVClient, "call">;
 
@@ -43,7 +44,7 @@ export async function listMemoryPages(client: MemoryClient, collection: LibraryC
   const pages: LibraryEntry[] = [];
   const root = await treeEntries(client, collection.repo, "");
   if (root.some((entry) => entry.name === "index.md" && entry.type !== "tree")) {
-    pages.push({ kind: "file", path: `${collection.id}/index.md`, title: "Overview" });
+    pages.push({ kind: "file", path: `${collection.id}/index.md`, title: libraryTitleFromPath("index.md") });
   }
   await collectPages(client, collection, "pages", pages);
   return pages;
@@ -53,14 +54,14 @@ export async function listMemoryPages(client: MemoryClient, collection: LibraryC
 export async function readMemoryPage(client: MemoryClient, collection: LibraryCollection, externalPath: string): Promise<LibraryNote | null> {
   const path = normalizeLibraryPath(externalPath);
   if (!path.startsWith(`${collection.id}/`)) {
-    throw new Error("This page does not belong to the selected collection.");
+    throw new Error(t("memory.error.otherCollection"));
   }
   const localPath = libraryPathInDb(path, collection.id);
   try {
     const node = await client.call("repo.read", { repo: collection.repo, path: localPath });
     if (node.kind !== "file") return null;
     if (node.isBinary || node.content === null) {
-      throw new Error("This page is not readable text.");
+      throw new Error(t("memory.error.notText"));
     }
     const markdown = node.content;
     return { path, title: extractLibraryTitle(markdown, path), markdown };
@@ -86,7 +87,7 @@ export async function searchMemory(client: MemoryClient, collection: LibraryColl
     byPath.set(externalPath, {
       kind: "file",
       path: externalPath,
-      title: match.path === "index.md" ? "Overview" : libraryTitleFromPath(match.path),
+      title: libraryTitleFromPath(match.path),
       snippet: match.content.trim().slice(0, 160),
       hits: 1,
     });
@@ -103,6 +104,6 @@ export async function searchMemory(client: MemoryClient, collection: LibraryColl
 export function newMemoryPagePath(db: string, value: string): string {
   const name = value.trim().replace(/\.md$/i, "");
   // eslint-disable-next-line no-control-regex -- Page names must reject ASCII control bytes and path separators.
-  if (!name || name === "." || name === ".." || /[/\\\x00-\x1f\x7f]/.test(name)) throw new Error("Give the page a name without folders.");
+  if (!name || name === "." || name === ".." || /[/\\\x00-\x1f\x7f]/.test(name)) throw new Error(t("memory.error.pageName"));
   return `${db}/pages/${name}.md`;
 }

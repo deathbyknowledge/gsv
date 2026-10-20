@@ -44,10 +44,10 @@ describe("saved messenger connections", () => {
     const account = { adapter: "telegram", accountId: "managed", connected: true, authenticated: true, mode: "managed-shared", lastActivity: null, error: "", extra: {} };
     const adapter = { adapter: "telegram", available: true, enabled: true, canLink: true, supportsConnect: false, supportsDisconnect: false, supportsSend: true, supportsStatus: true, supportsActivity: true, supportsPairing: true, accounts: [account] };
     expect(messengerConnectionStatus(adapter, "managed")).toBe("connected");
-    expect(messengerConnectionStatus(adapter, "missing")).toBe("linked · status unavailable");
-    expect(messengerConnectionStatus(undefined, "managed")).toBe("linked · service unavailable");
-    expect(messengerConnectionStatus({ ...adapter, available: false }, "managed")).toBe("linked · service unavailable");
-    expect(messengerConnectionStatus({ ...adapter, accounts: [{ ...account, authenticated: false }] }, "managed")).toBe("linked · reconnect needed");
-    expect(messengerConnectionStatus({ ...adapter, accounts: [{ ...account, error: "Delivery unavailable" }] }, "managed")).toBe("linked · needs attention");
+    expect(messengerConnectionStatus(adapter, "missing")).toBe("status-unavailable");
+    expect(messengerConnectionStatus(undefined, "managed")).toBe("service-unavailable");
+    expect(messengerConnectionStatus({ ...adapter, available: false }, "managed")).toBe("service-unavailable");
+    expect(messengerConnectionStatus({ ...adapter, accounts: [{ ...account, authenticated: false }] }, "managed")).toBe("reconnect-needed");
+    expect(messengerConnectionStatus({ ...adapter, accounts: [{ ...account, error: "Delivery unavailable" }] }, "managed")).toBe("needs-attention");
   });
 });

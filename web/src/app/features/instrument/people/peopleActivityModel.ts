@@ -1,7 +1,8 @@
 import { contactDisplayName, type ContactSummary, type ConversationMessage } from "@humansandmachines/gsv/protocol";
 import type { ContactNotice, ContactNoticeMessage, ContactReplyDraft } from "../zen/ContactNotice";
 import type { PeopleActivity } from "./usePeopleActivity";
-import { messagePreviewPrefix } from "./peopleModel";
+import { messagePreview } from "./peopleModel";
+import { t } from "../../../i18n/locale";
 
 export type PeopleConversationItem = {
   contactId: string;
@@ -28,11 +29,10 @@ export function peopleConversations(activity: PeopleActivity, drafts: ReadonlyMa
     const waiting = !quiet && !!entry?.unread;
     const conversationId = contact?.conversationId ?? entry?.conversation.id;
     if (!conversationId || !waiting && !draft) return [];
-    const prefix = entry?.preview ? messagePreviewPrefix(entry.preview) : "";
     return [{ contactId, conversationId, contact, draft: !!draft,
       readThroughSequence: draft && held ? held.readThroughSequence : entry?.view.readThroughSequence ?? 0,
-      name: contact ? contactDisplayName(contact) : entry?.conversation.title ?? "New message",
-      text: draft || `${prefix}${entry?.preview?.text ?? ""}`,
+      name: contact ? contactDisplayName(contact) : entry?.conversation.title ?? t("people.activity.newMessage"),
+      text: draft || (entry?.preview ? messagePreview(entry.preview, entry.preview.text) : ""),
       attachmentCount: entry?.preview?.attachmentCount ?? 0 }];
   });
 }
