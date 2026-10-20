@@ -1,14 +1,15 @@
 import { useEffect, useState } from "preact/hooks";
 import { RESOLVE_GLYPHS } from "./zenModel";
 
-export type ThinkingMarkKind = "glyphs" | "dot";
+export type ThinkingMarkKind = "glyphs" | "dot" | "wave";
 
 /**
  * What stands where the reply will be while Ship has no words yet. It must never read as a place to type.
  * "glyphs" is the stream's own noise: four glyphs settling towards where the words will start.
  * "dot" is one accent dot with a slow breath. Flip here to compare the two.
+ * "wave" is four tildes bobbing in turn: the same restlessness without the glyph set reading as a curse.
  */
-export const THINKING_MARK: ThinkingMarkKind = "glyphs";
+export const THINKING_MARK: ThinkingMarkKind = "wave";
 
 const GLYPH_COUNT = 4;
 /** How readily each glyph, left to right, changes on a frame: calmer where the words will start, restless at the end. */
@@ -26,5 +27,10 @@ export function ThinkingMark({ tick }: { tick: number }) {
     setGlyphs((current) => current.map((glyph, index) => (Math.random() < RESTLESSNESS[index] ? roll() : glyph)));
   }, [tick]);
   if (THINKING_MARK === "dot") return <span class="zen-thinking is-dot" aria-hidden="true"><i class="dot" /></span>;
+  if (THINKING_MARK === "wave") {
+    return <span class="zen-thinking is-wave" aria-hidden="true">
+      {Array.from({ length: GLYPH_COUNT }, (_, index) => <i key={index} style={{ "--i": index }}>~</i>)}
+    </span>;
+  }
   return <span class="zen-thinking is-glyphs" aria-hidden="true">{glyphs.map((glyph, index) => <i key={index}>{glyph}</i>)}</span>;
 }

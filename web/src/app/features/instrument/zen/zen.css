@@ -230,8 +230,19 @@
   animation: zen-breathe 2.4s ease-in-out infinite;
 }
 @keyframes zen-breathe { 0%, 100% { opacity: 0.3; } 50% { opacity: 1; } }
+.zen-thinking.is-wave { color: var(--glyph); }
+.zen-thinking.is-wave i {
+  display: inline-block;
+  width: 0.6em;
+  text-align: center;
+  font-style: normal;
+  animation: zen-wave 1.6s ease-in-out infinite;
+  animation-delay: calc(var(--i) * -0.25s);
+}
+@keyframes zen-wave { 0%, 100% { transform: translateY(0.12em); opacity: 0.45; } 50% { transform: translateY(-0.12em); opacity: 1; } }
 @media (prefers-reduced-motion: reduce) {
   .zen-thinking.is-dot .dot { animation: none; opacity: 0.7; }
+  .zen-thinking.is-wave i { animation: none; opacity: 0.7; }
 }
 
 /* activity along the target axis: collapsed by default, the raw run one click away */
