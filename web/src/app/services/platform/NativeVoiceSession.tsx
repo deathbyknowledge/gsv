@@ -197,6 +197,7 @@ export function useComposerVoice(options: ComposerVoiceOptions) {
     error: session.capture?.kind === "handsfree" ? null : input.error,
     start: () => session.startComposer({ owner: owner.current, options: latest }),
     stop: () => { if (owned) input.stop(); },
+    send: () => { if (owned) input.send(); },
     cancel: () => { if (owned) input.cancel(); },
     onInput: (value: string) => { if (owned) input.onInput(value); },
     interceptSubmit: () => owned && input.interceptSubmit(),

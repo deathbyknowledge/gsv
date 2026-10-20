@@ -332,6 +332,8 @@ export function useNativeVoice({ prompt, scope, enabled, send, global = false, s
     stop: () => { const voice = state.current?.voice; if (voice) void command({ kind: "stop", request_id: voice.request_id }); },
     cancel,
     finish: requestFinish,
+    /** Sends the dictated draft and pauses capture: the host's finish settles the final text with a send action. */
+    send: () => { if (state.current?.voice?.phase === "listening") requestFinish(); },
     onInput: (value: string) => {
       if (writing.current || !draft.current) return;
       if (!draft.current.edit(value)) {

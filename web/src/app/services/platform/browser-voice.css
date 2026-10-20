@@ -12,6 +12,6 @@
 .browser-voice-status::before { content: ""; display: inline-block; width: 5px; height: 5px; margin-right: .65rem; vertical-align: middle; background: currentColor; }
 .browser-voice-actions { display: flex; flex-shrink: 0; gap: 1.25rem; }
 .browser-voice-actions button { padding: .25rem 0; border: 0; background: none; color: var(--text-dim); font: inherit; cursor: pointer; }
-.browser-voice-actions .browser-voice-stop, .browser-voice-actions button:hover { color: var(--accent); }
+.browser-voice-actions .browser-voice-send, .browser-voice-actions button:hover { color: var(--accent); }
 .browser-voice-actions kbd { margin-left: .3rem; color: var(--faint); font: inherit; font-size: .6rem; }
 .browser-voice-notice { color: var(--text-dim); font-size: .7rem; }

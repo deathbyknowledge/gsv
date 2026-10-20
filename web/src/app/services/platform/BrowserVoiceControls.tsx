@@ -32,22 +32,25 @@ export const BrowserVoiceControls = forwardRef<BrowserVoiceHandle, BrowserVoiceC
     if (event.key === "Enter" || event.key === " ") event.stopPropagation();
   }}>
     {!busy && !control.canRetry && <button type="button" disabled={!options.enabled || !!unavailable}
-      title={unavailable ?? "Record up to 5 minutes. Your Ship transcribes the audio for you to review before sending."}
+      title={unavailable ?? "Record up to 5 minutes. Send it straight away, or pause to review the transcript first."}
       onClick={() => void control.start()}>record</button>}
     {busy && surfaceHost.current && createPortal(<div ref={surface} class={`browser-voice-surface is-${control.phase}`}
       role="group" aria-label="Voice recording" tabIndex={-1} onKeyDown={(event) => {
         event.stopPropagation();
         if (event.key === "Escape") { event.preventDefault(); control.cancel(true); }
-        if (event.key === "Enter" && event.target === event.currentTarget) { event.preventDefault(); control.stop(); }
+        if (event.key === "Enter" && event.target === event.currentTarget) { event.preventDefault(); control.finish(); }
       }}>
       <VoiceWaveform stream={control.stream} />
       <div class="browser-voice-caption">
         <span class="browser-voice-status" role="status">{control.phase === "recording" ? "listening"
-          : control.phase === "permission" ? "allow microphone access…" : "transcribing…"}</span>
+          : control.phase === "permission" ? "allow microphone access…" : control.sending ? "sending…" : "transcribing…"}</span>
         <div class="browser-voice-actions">
-          {control.phase === "recording" && <button type="button" class="browser-voice-stop" aria-label="Stop recording" onClick={control.stop}>
-            stop <kbd aria-hidden="true">↵</kbd>
-          </button>}
+          {control.phase === "recording" && <>
+            <button type="button" class="browser-voice-send" aria-label="Send recording" onClick={control.finish}>
+              send <kbd aria-hidden="true">↵</kbd>
+            </button>
+            <button type="button" aria-label="Pause recording" onClick={control.stop}>pause</button>
+          </>}
           <button type="button" onClick={() => control.cancel(true)}>cancel <kbd aria-hidden="true">esc</kbd></button>
         </div>
       </div>

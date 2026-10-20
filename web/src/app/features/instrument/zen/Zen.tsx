@@ -1235,7 +1235,8 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
                 : <BrowserVoiceControls ref={voiceInput} prompt={promptRef} client={client} pid={pid}
                   surfaceHost={voiceSurface} onActiveChange={setRecordingVoice}
                   scope={voiceScope}
-                  enabled={active && connected && pid !== null && pendingHil === null && !searchOpen && !context && !addOpen && !outbox.sending} />}
+                  enabled={active && connected && pid !== null && pendingHil === null && !searchOpen && !context && !addOpen && !outbox.sending}
+                  send={onSubmit} />}
             </div>
           </div>
           <span class="zen-connection-status" role="status">{connected ? "" : "Reconnecting..."}</span>

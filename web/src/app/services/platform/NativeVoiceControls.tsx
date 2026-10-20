@@ -51,10 +51,13 @@ export const NativeVoiceControls = forwardRef<NativeVoiceHandle, NativeVoiceCont
       onClick={() => setPanel((current) => !current)}>
       {voice && <span class="native-sensor-dot" aria-hidden="true" />}<span aria-live="polite">{voiceLabel}</span>
     </button>
-    {control.capturing && <button type="button" disabled={voice?.phase === "finishing"}
-      onClick={voice?.phase === "listening" ? control.stop : control.cancel}>
-      {voice?.phase === "listening" || voice?.phase === "finishing" ? "pause" : "cancel"}
-    </button>}
+    {control.capturing && <>
+      <button type="button" class="native-primary" disabled={voice?.phase !== "listening"} onClick={control.send}>send</button>
+      <button type="button" disabled={voice?.phase === "finishing"}
+        onClick={voice?.phase === "listening" ? control.stop : control.cancel}>
+        {voice?.phase === "listening" ? "pause" : voice?.phase === "finishing" ? "pausing…" : "cancel"}
+      </button>
+    </>}
     {speech?.preferences.enabled && speech.status.phase === "speaking" && <button type="button" onClick={() => void speech.command({ kind: "cancel" })}>stop speaking</button>}
     {notice && !panel && <>
       <button type="button" class="native-input-notice" onClick={() => setPanel(true)}>input needs attention</button>
@@ -74,12 +77,16 @@ export const NativeVoiceControls = forwardRef<NativeVoiceHandle, NativeVoiceCont
       {!snapshot && <button type="button" disabled={!options.enabled} onClick={control.reconnect}>reconnect input</button>}
       <div class="native-panel-actions">
         {!control.capturing ? <button type="button" class="native-primary" disabled={busy} onClick={control.start}>listen</button>
-          : <button type="button" class="native-primary" disabled={voice?.phase === "finishing"}
-            onClick={voice?.phase === "listening" ? control.stop : control.cancel}>{voice?.phase === "listening" ? "pause" : voice?.phase === "finishing" ? "pausing…" : "cancel"}</button>}
+          : <>
+            <button type="button" class="native-primary" disabled={voice?.phase !== "listening"} onClick={control.send}>send</button>
+            {(voice?.phase === "listening" || voice?.phase === "finishing")
+              && <button type="button" disabled={voice.phase === "finishing"} onClick={control.stop}>{voice.phase === "finishing" ? "pausing…" : "pause"}</button>}
+            <button type="button" disabled={voice?.phase === "finishing"} onClick={control.cancel}>cancel</button>
+          </>}
         <span class="native-panel-state" role="status">{control.capturing ? voiceLabel : control.blocked ? "Handsfree is recording" : "Microphone off"}</span>
       </div>
       {preparation && <progress max={1} value={preparation.progress} aria-label={preparation.message} />}
-      <p class="native-panel-footnote">Pause keeps your draft. Enter sends and keeps listening.</p>
+      <p class="native-panel-footnote">Send delivers what you dictated. Pause keeps it in the prompt. Cancel discards it.</p>
       <AppLink href="/chat/settings?section=voice" class="native-voice-settings-link">voice settings</AppLink>
     </section>, panelHost.current)}
   </div>;

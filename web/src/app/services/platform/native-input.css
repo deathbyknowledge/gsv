@@ -1,6 +1,7 @@
 .native-input-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 1rem; margin-left: auto; min-width: 0; }
 .native-input-controls .native-input-trigger { position: relative; display: inline-flex; align-items: center; gap: 7px; min-height: 24px; }
 .native-input-controls .is-active { color: var(--accent); }
+.native-input-controls .native-primary:not(:disabled) { color: var(--accent); }
 .native-sensor-dot { width: 5px; height: 5px; background: var(--online); flex-shrink: 0; }
 .native-input-controls .is-error, .native-input-controls .native-input-notice, .native-input-error { color: var(--error); }
 .native-input-controls progress, .native-input-panel progress { accent-color: var(--accent); }
