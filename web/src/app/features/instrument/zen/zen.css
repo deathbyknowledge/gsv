@@ -706,6 +706,9 @@
 .zen-draft-attachment:has(.zen-paste-preview[open]) { width: 100%; align-items: flex-start; }
 /* an open paste editor needs room for long text: the strip grows to hold one editor at its cap, so the editor scrolls inside its own box and its resize grip stays in reach; several open editors scroll the strip, keeping the compose line on screen. both caps are fractions of the Instrument height divided by the type scale, like the prompt cap, so the 150% and 200% zoom levels keep them inside the viewport */
 .zen-draft-attachments:has(.zen-paste-preview[open]) { max-height: calc(var(--instrument-height) / var(--type-scale) * .55); }
+/* the strip and the delegated approvals list are each capped on their own, and together with the compose line they could outgrow the bottom row, which .zen clips. while an editor is open the bottom row takes a budget of the available height and lays its children out as a column, so the two scrolling lists shrink to share what is left after the compose line, the context bar and any notes take theirs; the composer needs an explicit minimum so its strip can give way */
+.zen-bottom:has(.zen-paste-preview[open]) { display: flex; flex-direction: column; max-height: calc((var(--instrument-height) / var(--type-scale) - var(--instrument-header-height)) * .85); }
+.zen-bottom:has(.zen-paste-preview[open]) > .zen-composer { display: flex; flex-direction: column; min-height: 0; }
 .zen-draft-attachment > .zen-paste-preview[open] { flex: 1; }
 .zen-draft-attachment button { font-size: 1rem; padding: .25rem; }
 .zen-drop-hint { position: absolute; inset: 1rem; z-index: 5; display: grid; place-items: center; border: 1px dashed var(--accent); background: var(--void); color: var(--accent); pointer-events: none; }
