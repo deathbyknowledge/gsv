@@ -714,6 +714,51 @@ describe("McpClientManager reconnects", () => {
     expect(gone?.discover).not.toHaveBeenCalled();
     expect(gone?.connectionState).toBe("failed");
   });
+
+  it("reconnects to retry a restored server whose discovery timed out", async () => {
+    const timedOut = (connection: FakeConnection) => async () => {
+      connection.connectionState = "connected";
+      connection.connectionError = "Failed to discover MCP server capabilities: Discovery timed out after 15000ms";
+      return { success: false, error: "Discovery timed out after 15000ms" };
+    };
+    const { manager, rows, connections } = makeManager({
+      "https://slow.example/mcp": (connection) => {
+        connection.discover.mockImplementationOnce(timedOut(connection));
+      },
+      "https://down.example/mcp": (connection) => {
+        connection.discover.mockImplementation(timedOut(connection));
+      },
+    });
+    for (const name of ["slow", "down"]) {
+      rows.save({
+        id: `mcp-${name}`,
+        name,
+        server_url: `https://${name}.example/mcp`,
+        client_id: null,
+        auth_url: null,
+        callback_url: "",
+        server_options: null,
+      });
+    }
+
+    manager.restoreConnectionsFromStorage();
+    await manager.whenIdle();
+
+    const slow = connections.get("https://slow.example/mcp");
+    const down = connections.get("https://down.example/mcp");
+    expect(slow?.init).toHaveBeenCalledTimes(2);
+    expect(slow?.discover).toHaveBeenCalledTimes(2);
+    expect(slow?.connectionState).toBe("ready");
+    expect(slow?.connectionError).toBeNull();
+    expect(down?.init).toHaveBeenCalledTimes(3);
+    expect(down?.discover).toHaveBeenCalledTimes(3);
+    expect(down?.connectionError).toContain("Discovery timed out after 15000ms");
+
+    // A refresh answers the person waiting on it after one attempt.
+    await manager.refreshConnection("mcp-down");
+    expect(down?.init).toHaveBeenCalledTimes(4);
+    expect(down?.discover).toHaveBeenCalledTimes(4);
+  });
 });
 
 describe("McpClientConnection transports", () => {
@@ -1142,6 +1187,58 @@ describe("McpClientManager OAuth recovery", () => {
     expect(init).toHaveBeenCalledTimes(1);
     expect(connection.connectionState).toBe("ready");
     expect(connection.connectionError).toBeNull();
+  });
+
+  it("retries discovery after a wake when the server briefly fails to answer", async () => {
+    const { fixture, createManager } = await setup();
+    const fetchFixture = fixture.fetch;
+    let unavailable = 1;
+    vi.spyOn(fixture, "fetch").mockImplementation(async (request) => {
+      if (
+        unavailable > 0
+        && request.method === "POST"
+        && (await request.clone().text()).includes('"method":"tools/list"')
+      ) {
+        unavailable -= 1;
+        return new Response("upstream timeout", { status: 503 });
+      }
+      return fetchFixture(request);
+    });
+
+    const restored = createManager();
+    restored.restoreConnectionsFromStorage();
+    await restored.whenIdle();
+
+    const connection = restored.mcpConnections["mcp-1"];
+    expect(connection.connectionState).toBe("ready");
+    expect(connection.connectionError).toBeNull();
+    expect(connection.tools.map((tool) => tool.name)).toEqual(["operate"]);
+  });
+
+  it("opens a fresh session after a wake when the server dropped the saved one", async () => {
+    const { fixture, rows, createManager } = await setup();
+    expect(rows.get("mcp-1")?.server_options).toContain('"sessionId":"fixture-session"');
+    const fetchFixture = fixture.fetch;
+    vi.spyOn(fixture, "fetch").mockImplementation(async (request) => {
+      if (request.headers.get("mcp-session-id") === "fixture-session") {
+        return new Response("Session not found", { status: 404 });
+      }
+      const response = await fetchFixture(request);
+      if (!response.headers.has("mcp-session-id")) return response;
+      const headers = new Headers(response.headers);
+      headers.set("mcp-session-id", "fresh-session");
+      return new Response(response.body, { status: response.status, headers });
+    });
+
+    const restored = createManager();
+    restored.restoreConnectionsFromStorage();
+    await restored.whenIdle();
+
+    const connection = restored.mcpConnections["mcp-1"];
+    expect(connection.connectionState).toBe("ready");
+    expect(connection.tools.map((tool) => tool.name)).toEqual(["operate"]);
+    expect(connection.sessionId).toBe("fresh-session");
+    expect(rows.get("mcp-1")?.server_options).toContain('"sessionId":"fresh-session"');
   });
 
   it("keeps one sign-in when rejected calls overlap and fences older discovery", async () => {

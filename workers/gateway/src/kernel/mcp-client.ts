@@ -327,8 +327,18 @@ export class McpClientConnection implements McpConnection {
         await this.client.close().catch(() => undefined);
         this.transport = undefined;
         const transport = this.createTransport(candidate);
+        const resumed = transport.sessionId !== undefined;
         try {
           await this.client.connect(transport);
+          if (resumed) {
+            // Resuming a saved session sends nothing, so ask the server whether
+            // it still holds the session; one it dropped answers 404 below.
+            try {
+              await this.client.ping({ timeout: DISCOVERY_TIMEOUT_MS });
+            } catch (error) {
+              if (!isMethodNotFound(error)) throw error;
+            }
+          }
           this.transport = { kind: candidate, instance: transport };
           return { state: "connected" };
         } catch (error) {
@@ -734,7 +744,7 @@ export class McpClientManager {
       if (!row) throw new Error(`MCP server ${serverId} is not registered`);
       connection = this.restoreConnection(row);
       if (connection.connectionState !== "authenticating") {
-        return this.track(serverId, this.connectAndDiscover(serverId));
+        return this.track(serverId, this.connectAndDiscover(serverId, { discoveryAttempts: 1 }));
       }
     }
     return this.track(serverId, this.refreshRegisteredConnection(serverId, connection));
@@ -764,7 +774,7 @@ export class McpClientManager {
     this.clearAuthUrl(serverId);
     connection.connectionState = "connecting";
     connection.connectionError = null;
-    await this.connectAndDiscover(serverId);
+    await this.connectAndDiscover(serverId, { discoveryAttempts: 1 });
   }
 
   /**
@@ -998,23 +1008,42 @@ export class McpClientManager {
     return tracked;
   }
 
-  private async connectAndDiscover(serverId: string): Promise<void> {
-    const result = await this.connectWithRetry(serverId);
-    if (result.state === "failed") {
-      console.error(`[MCP] Error connecting to ${serverId}:`, result.error);
-      const connection = this.mcpConnections[serverId];
-      if (connection) {
-        connection.connectionState = "failed";
-        connection.connectionError = result.error;
+  /**
+   * Connect, then discover. A discovery that fails for a transient reason is
+   * retried on a new connection, so one slow answer does not leave a restored
+   * server without tools. A refresh makes one attempt; the person waiting on
+   * it can refresh again.
+   */
+  private async connectAndDiscover(
+    serverId: string,
+    options: { discoveryAttempts?: number } = {},
+  ): Promise<void> {
+    const discoveryAttempts = options.discoveryAttempts ?? RECONNECT_ATTEMPTS;
+    const session = this.mcpConnections[serverId];
+    for (let attempt = 1; ; attempt += 1) {
+      const result = await this.connectWithRetry(serverId);
+      if (result.state === "failed") {
+        console.error(`[MCP] Error connecting to ${serverId}:`, result.error);
+        const connection = this.mcpConnections[serverId];
+        if (connection) {
+          connection.connectionState = "failed";
+          connection.connectionError = result.error;
+        }
+        this.fireStateChanged();
+        return;
       }
-      this.fireStateChanged();
-      return;
-    }
-    if (result.state === "connected") {
+      if (result.state !== "connected") return;
       const discovery = await this.discoverIfConnected(serverId);
-      if (discovery?.error !== undefined && discovery.state !== "authenticating") {
+      if (discovery?.error === undefined || discovery.state === "authenticating") return;
+      if (attempt >= discoveryAttempts || !isTransientFailure(discovery.error)) {
         console.error(`[MCP] Error discovering ${serverId}:`, discovery.error);
+        return;
       }
+      await this.waitToRetry(attempt);
+      // A removal, or a sign-in that a tool call started meanwhile, ends the retries.
+      if (this.mcpConnections[serverId] !== session || session.connectionState === "authenticating") return;
+      session.connectionState = "connecting";
+      session.connectionError = null;
     }
   }
 
@@ -1025,13 +1054,15 @@ export class McpClientManager {
   private async connectWithRetry(serverId: string): Promise<McpConnectionResult> {
     for (let attempt = 1; ; attempt += 1) {
       const result = await this.connectToServer(serverId);
-      const transient = result.state === "failed"
-        && !isUnauthorized(result.error)
-        && !isTransportNotImplemented(result.error);
+      const transient = result.state === "failed" && isTransientFailure(result.error);
       if (!transient || attempt >= RECONNECT_ATTEMPTS) return result;
-      const delay = this.retryBackoffMs * 2 ** (attempt - 1);
-      if (delay > 0) await new Promise((resolve) => setTimeout(resolve, delay));
+      await this.waitToRetry(attempt);
     }
+  }
+
+  private async waitToRetry(attempt: number): Promise<void> {
+    const delay = this.retryBackoffMs * 2 ** (attempt - 1);
+    if (delay > 0) await new Promise((resolve) => setTimeout(resolve, delay));
   }
 
   private async closeConnection(id: string): Promise<void> {
@@ -1178,6 +1209,11 @@ function isUnauthorized<T>(error: T): boolean {
   if (error instanceof UnauthorizedError || errorCode(error) === 401) return true;
   const message = errorMessage(error);
   return message.includes("Unauthorized") || message.includes("401");
+}
+
+/** A failure worth another attempt: neither a sign-in request nor a transport the server lacks. */
+function isTransientFailure(error: string): boolean {
+  return !isUnauthorized(error) && !isTransportNotImplemented(error);
 }
 
 function isTransportNotImplemented<T>(error: T): boolean {
