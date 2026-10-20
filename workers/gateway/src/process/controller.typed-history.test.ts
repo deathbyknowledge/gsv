@@ -1,7 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
 import {
-  procHistoryRecordDataSchema, type ProcHistoryRecordData, type ProcIpcDeliverArgs,
+  procHistoryRecordDataSchema, type ProcHistoryRecordData, type ProcIpcDeliverArgs, type ResourceBlock,
 } from "@humansandmachines/gsv/protocol";
+import { MAX_MESSAGE_MEDIA_TOTAL_BYTES } from "../shared/message-media-limits";
 import type { Process } from "./do";
 import type { ProcessRuntimeEventDeliverArgs, ProcessScheduleDeliverArgs } from "../protocol/process-frames";
 import { evictDurableObject } from "cloudflare:test";
@@ -115,6 +116,37 @@ describe("typed controller history producers", () => {
       });
       expect(storedRecords(process)).toHaveLength(2);
       expect(await process.history.buildContextMessages()).toHaveLength(2);
+    });
+  });
+
+  it.each([false, true])("prepares a contact message's attachments before admission with active run=%s", async (busy) => {
+    const stub = await initProcess(`typed-contact-media-${busy}`, ROOT_IDENTITY);
+    await runInProcess(stub, async (process: Process) => {
+      isolateAdmission(process);
+      if (busy) process.runs.active = { runId: "existing-run" };
+      const retained = { type: "image" as const, mimeType: "image/png", key: "home/root/.gsv/media/archived-media:photo", size: 10, filename: "selfie.png" };
+      const resolve = vi.spyOn(process.resources, "resolveIncomingMedia").mockResolvedValue([retained]);
+      const prepared = JSON.stringify([{ ...retained, description: "A person at the beach" }]);
+      const prepare = vi.spyOn(process.resources, "prepareEventMedia").mockResolvedValue(prepared);
+      const photo = contactResource("selfie.png", 10);
+      // The second attachment no longer fits the message's byte budget and is never fetched.
+      const oversized = contactResource("video.mp4", MAX_MESSAGE_MEDIA_TOTAL_BYTES);
+      await process.controller.handleProcessRuntimeEventDeliver({
+        eventId: "contact.message:msg:photo",
+        event: {
+          type: "contact.message", contactId: "contact:remote", conversationId: "conv:remote", messageId: "msg:photo",
+          from: "Xisca", text: "", media: [photo, oversized],
+          responsibilityId: "r12y:00000000-0000-4000-8000-000000000091", ledgerRevision: 3,
+        },
+      });
+      expect(resolve).toHaveBeenCalledExactlyOnceWith([photo]);
+      expect(prepare).toHaveBeenCalledExactlyOnceWith([retained]);
+      expect(process.store.sql.exec<{ media_json: string | null }>("SELECT media_json FROM messages").toArray())
+        .toEqual([{ media_json: prepared }]);
+      expect(process.runs.active?.pendingMediaMessageId).toBeUndefined();
+      expect(storedRecords(process)).toMatchObject([{ kind: "event", payload: { kind: "contact.message", payload: {
+        attachmentErrors: ["video.mp4 exceeds the message attachment byte limit"],
+      } } }]);
     });
   });
 
@@ -392,3 +424,10 @@ describe("typed controller history producers", () => {
     });
   });
 });
+
+function contactResource(filename: string, size: number): ResourceBlock {
+  return {
+    type: "resource", filename,
+    ref: { type: "file", target: "contact:remote", path: `/resources/${filename}`, revision: "r1", contentType: "image/png", size },
+  };
+}

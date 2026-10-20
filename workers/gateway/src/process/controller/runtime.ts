@@ -30,6 +30,7 @@ import {
   type ProcHistoryEvent, type ProcHistoryEventPayload, REQUEST_CANCEL_SIGNAL, jsonObjectSchema,
 } from "@humansandmachines/gsv/protocol";
 import { agentArchiveMediaPath } from "../../shared/process-media-path";
+import { MAX_MESSAGE_MEDIA_TOTAL_BYTES } from "../../shared/message-media-limits";
 import { parseInteractionOrigin, serializeInteractionOrigin, emptyProcessArchive } from "../history/helpers";
 import { historyCursor, parseHistoryCursor } from "../history/cursor";
 import { storeIncomingProcessMedia, stringifyStoredProcessMedia, deleteProcessMedia } from "../media";
@@ -1642,6 +1643,14 @@ export class ProcessController {
       });
     } else if (event.type === "contact.message") {
       const { media, attachmentErrors } = await this.retainContactAttachments(event.media ?? []);
+      let preparedMedia: string | undefined;
+      if (media.length > 0) {
+        try {
+          preparedMedia = await this.host.resources.prepareEventMedia(media) ?? undefined;
+        } catch (error) {
+          attachmentErrors.push(`attachments could not be prepared: ${errorMessageFromUnknown(error)}`);
+        }
+      }
       const payload: ProcHistoryEventPayload<"contact.message"> = {
         contactId: event.contactId,
         conversationId: event.conversationId,
@@ -1663,7 +1672,7 @@ export class ProcessController {
           ledgerRevision: event.ledgerRevision,
           responsibilityIds: [event.responsibilityId],
         },
-        media,
+        media: preparedMedia,
       });
     } else {
       const historyEvent: ProcHistoryEvent = {
@@ -1695,9 +1704,16 @@ export class ProcessController {
   }> {
     const media: ProcMediaInput[] = [];
     const attachmentErrors: string[] = [];
+    // The message's byte budget is checked against declared sizes before any bytes are fetched.
+    let remainingBytes = MAX_MESSAGE_MEDIA_TOTAL_BYTES;
     for (const block of blocks) {
+      if (block.ref.size > remainingBytes) {
+        attachmentErrors.push(`${block.filename ?? "an attachment"} exceeds the message attachment byte limit`);
+        continue;
+      }
       try {
         media.push(...await this.host.resources.resolveIncomingMedia([block]));
+        remainingBytes -= block.ref.size;
       } catch (error) {
         attachmentErrors.push(errorMessageFromUnknown(error));
       }
@@ -1764,8 +1780,8 @@ export class ProcessController {
       dedupeId?: string;
       responsibilityBatch?: ResponsibilityBatchState;
       event?: ProcHistoryEvent;
-      /** Attachments carried by the event, retained as this Process's media. */
-      media?: ProcMediaInput[];
+      /** Stored media JSON for attachments the event carries, already prepared. */
+      media?: string;
     } = {},
   ): Promise<RuntimeEventAdmission> {
     if (!this.host.isInitialized()) {
@@ -1788,7 +1804,6 @@ export class ProcessController {
     const timestamp = Date.now();
     const currentRun = this.host.runs.active;
     const nextRunId = currentRun ? null : (options.runId ?? crypto.randomUUID());
-    const media = options.media?.length ? options.media : undefined;
     const { messageId, wakeRunId } = this.host.ctx.storage.transactionSync(() => {
       if (currentRun && options.distinctRun) {
         if (content === null) {
@@ -1813,7 +1828,7 @@ export class ProcessController {
           provenance: options.provenance
             ? jsonObjectSchema.parse(JSON.parse(options.provenance))
             : undefined,
-          media: media ? (stringifyStoredProcessMedia(media) ?? undefined) : undefined,
+          media: options.media,
         };
         if (nextRunId) {
           messageOptions.runId = nextRunId;
@@ -1831,7 +1846,6 @@ export class ProcessController {
         if (options.responsibilityBatch) {
           nextRun.responsibilityBatches = [options.responsibilityBatch];
         }
-        if (media && messageId >= 0) nextRun.pendingMediaMessageId = messageId;
         this.host.runs.active = nextRun;
       } else {
         currentRun.pendingRuntimeEvents = (currentRun.pendingRuntimeEvents ?? 0) + 1;
@@ -1864,27 +1878,6 @@ export class ProcessController {
         `runtime event queue notification for ${wakeRunId}`,
         this.host.signals.changed(["queue"], { enqueuedRunId: wakeRunId }),
       );
-    } else if (nextRunId && media && messageId >= 0) {
-      // The run starts once its media is prepared, as for a message with attachments.
-      try {
-        await this.host.run.schedule(
-          new Date(Date.now() + MEDIA_PREPARATION_TIMEOUT_MS),
-          "onMediaPreparationTimeout",
-          nextRunId,
-        );
-        this.host.startBackground(
-          `media preparation for ${nextRunId}`,
-          this.host.resources.prepareRunMedia(nextRunId, messageId, media),
-        );
-      } catch (error) {
-        await this.host.resources.failPendingMedia(
-          nextRunId,
-          messageId,
-          `Failed to schedule media timeout: ${errorMessageFromUnknown(error)}`,
-          "media.error",
-        );
-      }
-      this.announceRun(nextRunId, reason);
     } else if (nextRunId) {
       const scheduled = await this.scheduleRunOrFinish(
         nextRunId,
