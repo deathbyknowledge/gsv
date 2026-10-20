@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { hilDetailLabel, hilRequestLine, hilRequestSentence, normalizeHilRequest } from "./hil";
+import { approvalAnswer, hilDetailLabel, hilRequestLine, hilRequestSentence, normalizeHilRequest } from "./hil";
 import { describeCall } from "./callDescription";
 
 const BASE_REQUEST = {
@@ -95,5 +95,24 @@ describe("HIL request wording", () => {
       hilRequestLine({ ...shell, syscall: "net.fetch", args: { url: "u" } }),
     ];
     for (const line of lines) expect(line?.text).not.toMatch(/\b(shell|fs|net)\.[a-z]+\b/);
+  });
+});
+
+describe("typed approval answers", () => {
+  it.each([
+    ...["y", "yes", "yep", "yeah", "ok", "okay", "sure", "go", "go ahead", "do it", "run it"].map((text) => [text, "approve"] as const),
+    ...["n", "no", "nope", "don't", "dont", "deny", "stop"].map((text) => [text, "deny"] as const),
+    ["YES", "approve"],
+    ["Ok.", "approve"],
+    ["no!", "deny"],
+    ["  yes  ", "approve"],
+    ["Go   Ahead", "approve"],
+    ["", null],
+    ["yes but later", null],
+    ["yes please", null],
+    ["maybe", null],
+    ["yes!!", null],
+  ] as const)("reads %j as %s", (text, decision) => {
+    expect(approvalAnswer(text)).toBe(decision);
   });
 });
