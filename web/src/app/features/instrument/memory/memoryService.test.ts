@@ -70,7 +70,7 @@ describe("Memory repository browsing", () => {
     client.call.mockResolvedValueOnce(tree("pages/nested", [["second-page.md", "blob"]]));
 
     expect(await listMemoryPages(client, collection)).toEqual([
-      { kind: "file", path: "personal/index.md", title: "Overview" },
+      { kind: "file", path: "personal/index.md", title: "Index" },
       { kind: "file", path: "personal/pages/alpha_note.MD", title: "Alpha Note" },
       { kind: "file", path: "personal/pages/nested/second-page.md", title: "Second Page" },
       { kind: "file", path: "personal/pages/zebra.md", title: "Zebra" },
@@ -88,7 +88,7 @@ describe("Memory repository browsing", () => {
     client.call.mockRejectedValueOnce(new Error("Path not found: pages"));
 
     expect(await listMemoryPages(client, collection)).toEqual([
-      { kind: "file", path: "personal/index.md", title: "Overview" },
+      { kind: "file", path: "personal/index.md", title: "Index" },
     ]);
   });
 
@@ -189,7 +189,7 @@ describe("Memory repository search", () => {
     expect(await searchMemory(client, collection, "lit:memory")).toEqual({
       entries: [
         { kind: "file", path: "personal/pages/alpha.MD", title: "Alpha", snippet: "x".repeat(160) },
-        { kind: "file", path: "personal/index.md", title: "Overview", snippet: "overview memory" },
+        { kind: "file", path: "personal/index.md", title: "Index", snippet: "overview memory" },
         { kind: "file", path: "personal/pages/zebra.md", title: "Zebra", snippet: "zebra memory" },
       ],
       truncated: true,

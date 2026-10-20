@@ -6,6 +6,7 @@ import { parentPath } from "../../../services/files/domain/paths";
 import { LoadingState } from "../../../components/ui/Spinner";
 import type { FleetRow } from "../Instrument";
 import { CLOUD_TARGET_ID, type Place } from "../fleet/fleetModel";
+import { useT } from "../../../i18n/locale";
 
 export type OpenFile = { target: string; path: string; name: string };
 type OpenFileHandler = (file: OpenFile) => void;
@@ -35,6 +36,7 @@ function DirNode({
   initiallyOpen?: boolean;
   onParent?: (path: string) => void;
 }) {
+  const t = useT();
   const rowKey: FleetRow = `dir:${place.id}:${path}`;
   const { client } = useGateway();
   const [open, setOpen] = useState(initiallyOpen);
@@ -68,12 +70,12 @@ function DirNode({
       >
         <span class="tri">{open ? "▾" : "▸"}</span>
         {depth === 0 ? place.label : `${name}/`}
-        {depth === 0 ? <span class="m" title={directory ?? path}>{enabled ? directory ?? path : "offline"}</span> : null}
+        {depth === 0 ? <span class="m" title={directory ?? path}>{enabled ? directory ?? path : t("shell.offline")}</span> : null}
       </div>
       {open ? (
         <ul>
-          {onParent && parent && parent !== directory && <li><button type="button" class="file d" aria-label="Parent folder" onClick={() => onParent(parent)}>../</button></li>}
-          {listing.isPending ? <li class="m">{enabled ? <LoadingState>reading…</LoadingState> : "offline"}</li> : null}
+          {onParent && parent && parent !== directory && <li><button type="button" class="file d" aria-label={t("shell.files.parent")} onClick={() => onParent(parent)}>../</button></li>}
+          {listing.isPending ? <li class="m">{enabled ? <LoadingState>{t("shell.reading")}</LoadingState> : t("shell.offline")}</li> : null}
           {error ? <li class="m">{error}</li> : null}
           {entries.slice(0, visible).map((entry) =>
             entry.kind === "directory" ? (
@@ -95,8 +97,8 @@ function DirNode({
               </li>
             ),
           )}
-          {entries.length > visible ? <li><button type="button" class="file m" onClick={() => setVisible((count) => count + 60)}>show more ({entries.length - visible})</button></li> : null}
-          {!listing.isPending && !error && entries.length === 0 ? <li class="m">empty</li> : null}
+          {entries.length > visible ? <li><button type="button" class="file m" onClick={() => setVisible((count) => count + 60)}>{t("shell.files.showMore", { remaining: entries.length - visible })}</button></li> : null}
+          {!listing.isPending && !error && entries.length === 0 ? <li class="m">{t("shell.files.empty")}</li> : null}
         </ul>
       ) : null}
     </div>

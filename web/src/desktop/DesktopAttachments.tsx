@@ -2,8 +2,10 @@ import type { ComponentChildren } from "preact";
 import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
 import { LoadingState } from "../app/components/ui/Spinner";
 import { MediaPreviewProvider, type ImagePreview } from "../app/services/platform/MediaPreview";
+import { useT } from "../app/i18n/locale";
 
 function AttachmentPreview({ image, close, feedback }: { image: ImagePreview; close: () => void; feedback: ComponentChildren }) {
+  const t = useT();
   const dialog = useRef<HTMLDialogElement>(null);
   const [source, setSource] = useState(image.source.startsWith("blob:") ? "" : image.source);
   const [failed, setFailed] = useState(false);
@@ -29,19 +31,20 @@ function AttachmentPreview({ image, close, feedback }: { image: ImagePreview; cl
     onCancel={(event) => { event.preventDefault(); close(); }} onKeyDown={(event) => event.stopPropagation()}>
     <header>
       <span>{image.filename}</span>
-      {source && <a href={source} download={image.filename} target={source.startsWith("blob:") ? undefined : "_blank"} rel="noreferrer">download</a>}
-      <button type="button" autoFocus onClick={close} aria-label="Close preview">close <kbd>esc</kbd></button>
+      {source && <a href={source} download={image.filename} target={source.startsWith("blob:") ? undefined : "_blank"} rel="noreferrer">{t("desktop.attachment.download")}</a>}
+      <button type="button" autoFocus onClick={close} aria-label={t("desktop.attachment.closePreview")}>{t("desktop.close")} <kbd>esc</kbd></button>
     </header>
     <div class="desktop-attachment-image">
-      {failed ? <p role="alert">Could not open this image.</p> : source
+      {failed ? <p role="alert">{t("desktop.attachment.openFailed")}</p> : source
         ? <img src={source} alt={image.description} onError={() => setFailed(true)} />
-        : <LoadingState>Loading image…</LoadingState>}
+        : <LoadingState>{t("desktop.attachment.loading")}</LoadingState>}
     </div>
     {feedback}
   </dialog>;
 }
 
 export function DesktopAttachments({ children, active = true }: { children: ComponentChildren; active?: boolean }) {
+  const t = useT();
   const [image, setImage] = useState<ImagePreview | null>(null);
   const [download, setDownload] = useState<{ success: boolean } | null>(null);
   useEffect(() => { if (!active) { setImage(null); setDownload(null); } }, [active]);
@@ -61,8 +64,8 @@ export function DesktopAttachments({ children, active = true }: { children: Comp
     return () => window.clearTimeout(timer);
   }, [download]);
   const feedback = download && <div class="desktop-download-status" role={download.success ? "status" : "alert"}>
-      <span>{download.success ? "Saved to Downloads" : "Could not save the file. Try again."}</span>
-      <button type="button" onClick={() => setDownload(null)} aria-label="Dismiss download status">×</button>
+      <span>{t(download.success ? "desktop.attachment.saved" : "desktop.attachment.saveFailed")}</span>
+      <button type="button" onClick={() => setDownload(null)} aria-label={t("desktop.attachment.dismissStatus")}>×</button>
     </div>;
   return <MediaPreviewProvider preview={setImage}>
     {children}

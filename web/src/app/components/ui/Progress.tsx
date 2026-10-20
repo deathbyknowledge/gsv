@@ -1,3 +1,4 @@
+import { useT } from "../../i18n/locale";
 import "./Progress.css";
 
 export type ProgressSize = "small" | "medium" | "large";
@@ -22,22 +23,24 @@ const SIZE_CLASS = {
 export function Progress({
   value = 60,
   indeterminate = false,
-  label = "CONTEXT",
+  label,
   showValue = true,
   size = "medium",
   width = 260,
 }: ProgressProps) {
+  const t = useT();
+  const text = label ?? t("ui.progress.label");
   const val = Number(value);
   const pct = Math.max(0, Math.min(100, isNaN(val) ? 0 : val));
   const showVal = showValue && !indeterminate;
-  const hasTop = (label?.length ?? 0) > 0 || showVal;
+  const hasTop = text.length > 0 || showVal;
   const rootClass = `gsv-pr ${SIZE_CLASS[size]}`;
 
   return (
     <div class={rootClass} style={{ width: `${width}px`, maxWidth: "100%" }}>
       {hasTop ? (
         <div class="gsv-pr-top">
-          <span class="gsv-pr-label gsv-sublabel">{label}</span>
+          <span class="gsv-pr-label gsv-sublabel">{text}</span>
           {showVal ? <span class="gsv-pr-num gsv-sublabel">{`${pct}%`}</span> : null}
         </div>
       ) : null}

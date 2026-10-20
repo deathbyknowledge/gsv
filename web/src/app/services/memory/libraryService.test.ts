@@ -69,7 +69,7 @@ describe("library page saving", () => {
 
     expect(await saveLibraryPage(client, {
       db: "personal", path: "personal/pages/example.md", markdown: "# Corrected\n\nUpdated page.\n",
-    })).toEqual({ db: "personal", openPath: "personal/pages/example.md", statusText: "Saved personal/pages/example.md" });
+    })).toEqual({ db: "personal", openPath: "personal/pages/example.md" });
 
     expect(client.call).toHaveBeenLastCalledWith("repo.apply", {
       repo: "agent/knowledge",

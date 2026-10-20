@@ -1,5 +1,6 @@
 import type { JsonValue, ProcHilRequest } from "@humansandmachines/gsv/protocol";
 import { z } from "zod";
+import { t, type TextKey } from "../../../i18n/locale";
 import { callArgumentText as argText, describeCall, normalizeCallPurpose } from "./callDescription";
 
 type HilWireValue = string | number | boolean | null | HilWireValue[] | HilWireRecord;
@@ -71,6 +72,13 @@ export type HilRequestLine = {
   text: string;
 };
 
+const FILE_LINES = new Map<string, TextKey>([
+  ["fs.read", "chat.hil.read"],
+  ["fs.write", "chat.hil.write"],
+  ["fs.edit", "chat.hil.edit"],
+  ["fs.delete", "chat.hil.delete"],
+]);
+
 export function hilRequestLine(request: ProcHilRequest): HilRequestLine | null {
   switch (request.syscall) {
     case "shell.exec": {
@@ -82,24 +90,27 @@ export function hilRequestLine(request: ProcHilRequest): HilRequestLine | null {
     case "fs.edit":
     case "fs.delete": {
       const path = argText(request, "path");
-      return path ? { lead: "place", text: `${request.syscall.slice("fs.".length)} ${path}` } : null;
+      const line = FILE_LINES.get(request.syscall);
+      return path && line ? { lead: "place", text: t(line, { path }) } : null;
     }
     case "fs.search": {
       const query = argText(request, "query") ?? argText(request, "pattern");
       const path = argText(request, "path");
-      const text = [query, path].filter((part) => part !== null).join(" in ");
-      return text ? { lead: "place", text: `search ${text}` } : null;
+      if (query && path) return { lead: "place", text: t("chat.hil.searchIn", { query, path }) };
+      if (query) return { lead: "place", text: t("chat.hil.search", { query }) };
+      return path ? { lead: "place", text: t("chat.hil.searchPath", { path }) } : null;
     }
     case "net.fetch": {
       const url = argText(request, "url");
-      return url ? { lead: "place", text: `fetch ${url}` } : null;
+      return url ? { lead: "place", text: t("chat.hil.fetch", { url }) } : null;
     }
     case "mail.send": {
       const to = argText(request, "to");
       const subject = argText(request, "subject");
       const replyTo = argText(request, "replyToMessageId");
-      const parts = [to ? `to ${to}` : replyTo ? `reply to ${replyTo}` : null, subject].filter((part) => part !== null);
-      return parts.length ? { lead: "none", text: parts.join(" · ") } : null;
+      if (to) return { lead: "none", text: subject ? t("chat.hil.mailToAbout", { to, subject }) : t("chat.hil.mailTo", { to }) };
+      if (replyTo) return { lead: "none", text: subject ? t("chat.hil.replyAbout", { message: replyTo, subject }) : t("chat.hil.reply", { message: replyTo }) };
+      return subject ? { lead: "none", text: subject } : null;
     }
     default: {
       const name = request.syscall === "sys.mcp.call" ? argText(request, "name") ?? plainToolName(request.toolName) : plainToolName(request.toolName);
@@ -116,7 +127,7 @@ function plainToolName(toolName: string): string {
 }
 
 export function hilDetailLabel(request: ProcHilRequest): string {
-  return request.syscall === "shell.exec" ? "show the command" : "show the details";
+  return t(request.syscall === "shell.exec" ? "chat.hil.showCommand" : "chat.hil.showDetails");
 }
 
 function isText(value: JsonValue | undefined): value is string {

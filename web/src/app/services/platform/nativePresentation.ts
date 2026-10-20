@@ -1,20 +1,21 @@
+import type { Translate } from "../../i18n/locale";
 import type { NativeSnapshot, NativeVoice } from "./PlatformProvider";
 
 type VoicePreparation = { message: string; progress: number | undefined };
 
-export function voicePreparation(voice: NativeVoice | null | undefined): VoicePreparation | null {
+export function voicePreparation(t: Translate, voice: NativeVoice | null | undefined): VoicePreparation | null {
   switch (voice?.phase) {
     case "preparing":
-      return { message: "Preparing voice…", progress: undefined };
+      return { message: t("desktop.voice.model.preparing"), progress: undefined };
     case "downloading":
       return {
-        message: voice.progress == null ? "Downloading voice model…" : `Downloading voice model · ${Math.round(voice.progress * 100)}%`,
+        message: voice.progress == null ? t("desktop.voice.model.downloading") : t("desktop.voice.model.downloadProgress", { percent: Math.round(voice.progress * 100) }),
         progress: voice.progress ?? undefined,
       };
     case "verifying":
-      return { message: "Verifying voice model…", progress: undefined };
+      return { message: t("desktop.voice.model.verifying"), progress: undefined };
     case "loading":
-      return { message: "Loading voice model…", progress: undefined };
+      return { message: t("desktop.voice.model.loading"), progress: undefined };
     default:
       return null;
   }

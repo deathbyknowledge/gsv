@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
 import { invoke } from "./bridge";
+import type { TextKey } from "../app/i18n/locale";
 
 /** Window lifecycle belongs to the app, including welcome and session loading. */
-export function useDesktopQuit(flush: (() => Promise<void>) | undefined, onError: (message: string) => void) {
+export function useDesktopQuit(flush: (() => Promise<void>) | undefined, onError: (message: TextKey) => void) {
   const [confirmation, setConfirmation] = useState(false);
   const quitting = useRef(false);
   const quit = useCallback(() => {
@@ -10,7 +11,7 @@ export function useDesktopQuit(flush: (() => Promise<void>) | undefined, onError
     quitting.current = true;
     void Promise.resolve().then(() => flush?.()).then(() => invoke("desktop_quit")).catch(() => {
       quitting.current = false;
-      onError("Could not quit Ship.");
+      onError("desktop.errors.quit");
     });
   }, [flush, onError]);
   const requestQuit = useCallback(() => {
@@ -30,7 +31,7 @@ export function useDesktopQuit(flush: (() => Promise<void>) | undefined, onError
     }).then((stop) => {
       if (disposed) stop();
       else unlisten = stop;
-    }).catch(() => onError("Could not connect the window close action. Use Quit to exit."));
+    }).catch(() => onError("desktop.errors.closeAction"));
     return () => { disposed = true; unlisten?.(); };
   }, [onError]);
   return { requestQuit, quit, confirmation, cancel: () => setConfirmation(false) };

@@ -53,13 +53,13 @@ import { ReceiptTimeline, RECEIPT_LAYOUT } from "./ReceiptTimeline";
 import { receiptsForMoments, type RunReceipt } from "./runReceipts";
 import { ZenDraftAttachment, ZenDraftPaste, ZenMedia } from "./ZenMedia";
 import { longPaste, zenAttachment, zenDraftMessage, type ZenAttachment, type ZenPaste } from "./zenAttachments";
-import { FeedbackNote, NoteMoment, zenFailure, zenNotice, type ZenNote } from "./ZenNotes";
+import { FeedbackNote, NoteMoment, zenErrorText, zenFailure, zenNotice, type ZenNote } from "./ZenNotes";
 import type { ChatErrorContext } from "../../../services/chat/domain/errorPresentation";
+import { rich, useT, type TextKey } from "../../../i18n/locale";
 import {
   activityDuration,
   answerAttribution,
   answerHistorySnapshot,
-  countLabel,
   defaultPlace,
   momentsFromConversation,
   momentTime,
@@ -73,7 +73,7 @@ import {
   receiptSummary,
   startsWriting,
   CLOUD_PLACE_ID,
-  CLOUD_PLACE_LABEL,
+  UNKNOWN_TARGET,
   type Activity,
   type Moment,
   type Place,
@@ -118,9 +118,9 @@ const SETTLE_STAGGER_MS = 6;
 const BROWSE_KEYS: ReadonlySet<string> = new Set(["j", "k", "g", "G", "o"]);
 const CLAIMED_KEYS: ReadonlySet<string> = new Set([...BROWSE_KEYS, ...SHELL_KEYS]);
 /* what each status-line failure was attempting, for causes the client cannot name */
-const SHIP_UNREACHABLE: ChatErrorContext = { summary: "Could not reach your Ship.", action: "Check your connection, then reload the page." };
-const ACTIVITY_UNAVAILABLE: ChatErrorContext = { summary: "Could not load the work behind this conversation.", action: "Reload the page to try again." };
-const DECISION_FAILED: ChatErrorContext = { summary: "The decision did not go through.", action: "Try again in a moment." };
+const SHIP_UNREACHABLE: ChatErrorContext = { summary: "chat.error.shipUnreachable.summary", action: "chat.error.shipUnreachable.action" };
+const ACTIVITY_UNAVAILABLE: ChatErrorContext = { summary: "chat.error.activityUnavailable.summary", action: "chat.error.activityUnavailable.action" };
+const DECISION_FAILED: ChatErrorContext = { summary: "chat.error.decisionFailed.summary", action: "chat.error.decisionFailed.action" };
 
 /** The element a key or paste would already edit, or null when it would reach nothing. */
 function editableElement(target: EventTarget | null): HTMLElement | null {
@@ -138,22 +138,24 @@ function placesFromTargets(targets: Awaited<ReturnType<typeof loadConsoleTargets
 
 /** When the moment was sent, read in the owner's zone. Always in the label row so nothing moves; the stylesheet reveals it on hover, focus or the browse cursor. */
 const MomentTime = memo(function MomentTime({ timestamp, today, timeZone }: { timestamp: number; today: number; timeZone: string }) {
+  useT(); // the label names its month in the interface language, so a language change renders it again
   const when = momentTime(timestamp, timeZone, today);
   return <time class="when" dateTime={new Date(timestamp).toISOString()} title={when.title}>{when.label}</time>;
 });
 
 function MomentCopyButton({ text }: { text: string }) {
-  const [status, setStatus] = useState("");
-  useEffect(() => { setStatus(""); }, [text]);
+  const t = useT();
+  const [status, setStatus] = useState<TextKey | null>(null);
+  useEffect(() => { setStatus(null); }, [text]);
   return <div class="zen-message-actions">
-    <button type="button" class="zen-copy-message" aria-label={status || "Copy message"} aria-live="polite" onClick={async () => {
+    <button type="button" class="zen-copy-message" aria-label={t(status ?? "chat.copy.label")} aria-live="polite" onClick={async () => {
       try {
         await navigator.clipboard.writeText(text);
-        setStatus("copied");
+        setStatus("chat.copy.done");
       } catch {
-        setStatus("couldn't copy");
+        setStatus("chat.copy.failed");
       }
-    }}>{status || "copy"}</button>
+    }}>{t(status ?? "chat.copy.action")}</button>
   </div>;
 }
 
@@ -172,7 +174,8 @@ const ActivityLine = memo(function ActivityLine({
   onToggle: (key: string) => void;
   onFleet: ZenProps["onFleet"];
 }) {
-  const label = activity.target === null ? "process working" : placeLabel(activity.target, places);
+  const t = useT();
+  const label = activity.target === null ? t("chat.command.process") : placeLabel(activity.target, places);
   const running = activity.calls.find((call) => !call.finished);
   const unavailable = activity.terminal?.status === "unavailable";
   const [now, setNow] = useState(Date.now);
@@ -184,28 +187,29 @@ const ActivityLine = memo(function ActivityLine({
     const timer = window.setInterval(() => setNow(Date.now()), 1000);
     return () => window.clearInterval(timer);
   }, [active, timing]);
+  const place = <span class="place">{label}</span>;
   const head = activity.live && running ? (
     <>
       {!unavailable && <span class="pulse blink" />}
-      {activity.you ? unavailable ? "you started a command on" : "you are using" : "using"} <span class="place">{label}</span>
-      {unavailable && <span class="n"> · status unavailable</span>}
+      {rich(t(activity.you ? unavailable ? "chat.command.youStarted" : "chat.command.youUsing" : "chat.command.using"), { place })}
+      {unavailable && <span class="n"> · {t("chat.work.unavailable")}</span>}
       {timing && activity.startedAt !== null && <span class="n"> · {Math.max(0, Math.floor((now - activity.startedAt) / 1000))}s</span>}
     </>
   ) : (
     <>
-      {activity.you ? "you used" : "used"} <span class="place">{label}</span>{" "}
+      {rich(t(activity.you ? "chat.command.youUsed" : "chat.command.used"), { place })}{" "}
       <span class="n">
-        · {countLabel(activity.calls.length, "command")}
+        · {t("chat.command.count", { count: activity.calls.length })}
         {activityDuration(activity) ? ` · ${activityDuration(activity)}` : ""}
-        {activity.you ? " · no model" : ""}
-        {activity.terminal?.status === "stopped" ? " · stopped" : activity.terminal?.status === "failed" ? " · failed" : ""}
+        {activity.you ? ` · ${t("chat.command.noModel")}` : ""}
+        {activity.terminal?.status === "stopped" ? ` · ${t("chat.work.stopped")}` : activity.terminal?.status === "failed" ? ` · ${t("chat.work.failed")}` : ""}
       </span>
     </>
   );
-  const state = unavailable ? "status unavailable"
-    : activity.terminal?.status === "stopped" ? "stopped"
-    : activity.terminal?.status === "failed" || activity.calls.some((call) => call.failed) ? "failed"
-    : activity.live ? "running…" : "";
+  const stopped = activity.terminal?.status === "stopped";
+  const failed = !stopped && (activity.terminal?.status === "failed" || activity.calls.some((call) => call.failed));
+  const state: TextKey | null = unavailable ? "chat.work.unavailable" : stopped ? "chat.work.stopped"
+    : failed ? "chat.work.failed" : activity.live ? "chat.work.running" : null;
   return (
     <div class={`activity${open ? " is-open" : ""}${activity.you ? " is-you" : ""}`}>
       <div
@@ -213,7 +217,7 @@ const ActivityLine = memo(function ActivityLine({
         role="button"
         tabIndex={0}
         aria-expanded={open}
-        aria-label={activity.you ? `Command on ${label}${state ? ` · ${state}` : ""}` : undefined}
+        aria-label={!activity.you ? undefined : state ? t("chat.command.labelState", { place: label, state: t(state) }) : t("chat.command.label", { place: label })}
         onClick={() => onToggle(activity.key)}
         onKeyDown={(event) => {
           if (event.key === "Enter" || event.key === " ") {
@@ -226,12 +230,12 @@ const ActivityLine = memo(function ActivityLine({
         <span class="activity-summary">{head}</span>
         {activity.you && <span class="activity-compact" aria-hidden="true">
           <span>$</span><span class="place" title={label}>{label}</span>
-          {state && <span class={`activity-state${state === "failed" || unavailable ? " is-failed" : ""}`}>{state}</span>}
+          {state && <span class={`activity-state${failed || unavailable ? " is-failed" : ""}`}>{t(state)}</span>}
         </span>}
       </div>
       {open ? (
         <div class="detail">
-          {activity.target !== null ? <button type="button" class="work-link" onClick={() => onFleet(`target:${activity.target}`)}>view {label}</button> : null}
+          {activity.target !== null ? <button type="button" class="work-link" onClick={() => onFleet(`target:${activity.target}`)}>{t("chat.command.view", { place: label })}</button> : null}
           <ActivityWorking activity={activity} who={who} />
           {activity.terminal && <TerminalControls session={activity.terminal} />}
         </div>
@@ -253,10 +257,11 @@ const Receipt = memo(function Receipt({ receipt, who, places, collections, open,
   onToggleDetail: (key: string) => void;
   waitingCallId?: string;
 }) {
+  const t = useT();
   const moment = receipt.work;
   const live = moment.thinking;
   let summary = receiptSummary(moment, places, receipt.relatedCalls);
-  if (waitingCallId) summary = [{ text: "waiting for your approval" }, ...summary.filter((part) => part.tone === "failed")];
+  if (waitingCallId) summary = [{ text: t("chat.receipt.waiting") }, ...summary.filter((part) => part.tone === "failed")];
   const running = live && !waitingCallId && (moment.timeline ?? []).some((event) => event.kind === "call" && !event.call.finished);
   const worked = moment.activities.filter((activity) => !activity.you);
   const pages = onMemory ? memoryPagesForMoment(moment, collections) : [];
@@ -270,7 +275,7 @@ const Receipt = memo(function Receipt({ receipt, who, places, collections, open,
           <span class="receipt-chevron" aria-hidden="true">›</span>
           {running ? <span class="pulse blink" /> : null}
           {summary.map((part, index) => part.tone ? <span key={index} class={part.tone === "place" ? "place" : "is-failed"}>{part.text}</span> : part.text)}
-          {fallback ? <span class="is-failed"> · fallback used</span> : null}
+          {fallback ? <span class="is-failed"> · {t("chat.receipt.fallbackUsed")}</span> : null}
         </button>
       </div>
       {open ? (
@@ -282,45 +287,49 @@ const Receipt = memo(function Receipt({ receipt, who, places, collections, open,
             <>
               {worked.map((activity) => (
                 <div key={activity.key} class="place-rail">
-                  <div class="ph">{activity.target === null ? "working" : <>on {activity.target === "unknown target" ? placeLabel(activity.target, places) : (
-                    <button type="button" class="work-link" onClick={() => onFleet(`target:${activity.target}`)}>{placeLabel(activity.target, places)}</button>
-                  )}</>}</div>
+                  <div class="ph">{activity.target === null ? t("chat.receipt.processRail") : rich(t("chat.receipt.on"), {
+                    place: activity.target === UNKNOWN_TARGET ? <>{placeLabel(activity.target, places)}</> : (
+                      <button type="button" class="work-link" onClick={() => onFleet(`target:${activity.target}`)}>{placeLabel(activity.target, places)}</button>
+                    ),
+                  })}</div>
                   <ActivityWorking activity={activity} who={who} />
                 </div>
               ))}
               {moment.narration ? (
                 <div class="place-rail">
-                  <div class="ph">thought it through</div>
+                  <div class="ph">{t("chat.receipt.thought")}</div>
                   <div class="machine-rail narration">{moment.narration}</div>
                 </div>
               ) : null}
             </>
           )}
           {pages.length > 0 ? (
-            <div class="memory-references">from your memory: {pages.map((page, index) => (
+            <div class="memory-references">{rich(t("chat.receipt.memory"), { pages: <>{pages.map((page, index) => (
               <span key={`${page.db}:${page.path}`}>
                 {index > 0 ? ", " : ""}
-                <button type="button" class="work-link" title={page.path} onClick={() => onMemory?.(page)}>{page.path === `${page.db}/index.md` ? "Overview" : libraryTitleFromPath(page.path)}</button>
+                <button type="button" class="work-link" title={page.path} onClick={() => onMemory?.(page)}>{page.path === `${page.db}/index.md` ? t("memory.overview") : libraryTitleFromPath(page.path)}</button>
               </span>
-            ))}</div>
+            ))}</> })}</div>
           ) : null}
           {replies.map((reply, index) => (
             <div key={reply.id} class="receipt-reply">
               {reply.attribution?.model ? <div class="receipt-meta" title={reply.text}>
-                {receipt.replies.length > 1 ? <span>reply {receipt.replies.indexOf(reply) + 1}</span> : null}
-                <span class="answer-model" title={reply.attribution.provider ?? undefined}>answered by {reply.attribution.model}</span>
+                {receipt.replies.length > 1 ? <span>{t("chat.receipt.reply", { number: receipt.replies.indexOf(reply) + 1 })}</span> : null}
+                <span class="answer-model" title={reply.attribution.provider ?? undefined}>{t("chat.receipt.answeredBy", { model: reply.attribution.model })}</span>
               </div> : null}
               {reply.attribution?.fallbacks.length ? <div class="zen-model-fallback">
-                {reply.attribution.fallbacks.map((fallback, fallbackIndex) => (
-                  <span key={`${index}:${fallback.from}:${fallback.to}`} title={fallback.reason ?? undefined}>
-                    {fallbackIndex ? " · " : "fallback: "}{fallback.from} → {fallback.to}
-                  </span>
-                ))}
-                {reply.attribution.omittedFallbacks ? ` · ${reply.attribution.omittedFallbacks} earlier` : ""}
+                {reply.attribution.fallbacks.map((fallback, fallbackIndex) => {
+                  const from = fallback.from ?? t("chat.model.unknown");
+                  const to = fallback.to ?? t("chat.model.unknown");
+                  return <span key={`${index}:${fallback.from}:${fallback.to}`} title={fallback.reason ?? undefined}>
+                    {fallbackIndex ? ` · ${from} → ${to}` : t("chat.receipt.fallback", { from, to })}
+                  </span>;
+                })}
+                {reply.attribution.omittedFallbacks ? ` · ${t("chat.receipt.earlier", { count: reply.attribution.omittedFallbacks })}` : ""}
               </div> : null}
             </div>
           ))}
-          {moment.processId ? <button type="button" class="work-link" onClick={() => onFleet(`proc:${moment.processId}`)}>view process</button> : null}
+          {moment.processId ? <button type="button" class="work-link" onClick={() => onFleet(`proc:${moment.processId}`)}>{t("chat.receipt.viewProcess")}</button> : null}
         </div>
       ) : null}
     </div>
@@ -334,7 +343,8 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
   const nativeInput = useNativeInput();
   const speech = useNativeSpeech();
   const { snapshot } = useSession();
-  const who = snapshot.username || "you";
+  const t = useT();
+  const who = snapshot.username || t("chat.you");
 
   /* message times follow the owner's zone; `today` moves once at that zone's midnight so a clock label gains its date */
   const config = useConsoleConfig();
@@ -417,10 +427,10 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
   const [pickerIndex, setPickerIndex] = useState(0);
   const pickerPlaces = useMemo(() => {
     if (pickerQuery === null) return [];
-    const all = [{ id: "gsv", label: CLOUD_PLACE_LABEL, online: true }, ...places.filter((place) => place.id !== "gsv" && place.online)];
+    const all = [{ id: "gsv", label: t("chat.place.cloud"), online: true }, ...places.filter((place) => place.id !== "gsv" && place.online)];
     const needle = pickerQuery.toLowerCase();
     return all.filter((place) => !needle || place.id.toLowerCase().includes(needle) || place.label.toLowerCase().includes(needle)).slice(0, 8);
-  }, [pickerQuery, places]);
+  }, [pickerQuery, places, t]);
   const onPromptInput = useCallback((value: string) => {
     setHasDraft(value !== "" && value.trim() !== "$");
     const match = value.match(/^@(\S*)$/);
@@ -447,10 +457,10 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
   useDismissOnOutsideClick(pickerOpen, () => [pickerRef.current, promptRef.current?.chip], () => setPickerQuery(null));
   const currentPlace = useMemo<PromptPlace>(() => {
     const id = where ?? CLOUD_PLACE_ID;
-    if (id === CLOUD_PLACE_ID) return { id, label: CLOUD_PLACE_LABEL, online: true };
+    if (id === CLOUD_PLACE_ID) return { id, label: t("chat.place.cloud"), online: true };
     const place = places.find((entry) => entry.id === id);
     return { id, label: place?.label ?? id, online: place?.online ?? false };
-  }, [places, where]);
+  }, [places, where, t]);
   const onPromptKey = useCallback(
     (event: KeyboardEvent): boolean => {
       if (pickerQuery === null || pickerPlaces.length === 0) return false;
@@ -572,7 +582,7 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
             {
               callId: run.id,
               syscall: "shell.exec",
-              description: "run a command",
+              description: t("chat.call.shell"),
               summary: run.command,
               output: run.output,
               finished: terminalFinished(run),
@@ -589,7 +599,7 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
     }));
     const moments = [...fromRuntime, ...fromLocal].sort((a, b) => (a.timestamp ?? 0) - (b.timestamp ?? 0));
     return { moments, receipts: receiptsForMoments(moments, runtime.activeRunId, pid) };
-  }, [answerHistory, conversation.rows, conversation.conversation?.id, outbox.messages, localRuns, runtime.activeRunId, runtime.rows, pid]);
+  }, [answerHistory, conversation.rows, conversation.conversation?.id, outbox.messages, localRuns, runtime.activeRunId, runtime.rows, pid, t]);
 
   /* the glyph thinking mark moves on the same clock as settling text; the dot keeps its own time in the stylesheet */
   const marking = THINKING_MARK === "glyphs" && moments.some((moment) => !moment.text && (moment.thinking || moment.streaming));
@@ -707,7 +717,7 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
   const addFiles = useCallback((files: File[]) => {
     const accepted = files.filter((file) => file.size <= MAX_CHAT_PROCESS_MEDIA_BYTES);
     setAttachments((current) => [...current, ...accepted.map(zenAttachment)]);
-    setNote(accepted.length < files.length ? zenNotice("Each attachment must be 25 MiB or smaller.") : null);
+    setNote(accepted.length < files.length ? zenNotice("chat.notice.attachmentTooLarge") : null);
     promptRef.current?.focus();
   }, []);
   /* a long paste waits beside the prompt as a chip; a command keeps its paste inline, since it runs as typed,
@@ -725,7 +735,7 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
   const say = useCallback(
     (text: string) => {
       if (!pid) {
-        setNote(zenNotice("Your Ship is still starting."));
+        setNote(zenNotice("chat.notice.starting"));
         return false;
       }
       const accepted = outbox.send({
@@ -759,7 +769,7 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
         setOpenActivities((current) => new Set([...current, id]));
         return true;
       } catch (error) {
-        setNote(zenNotice(error instanceof Error ? error.message : "The command did not run."));
+        setNote(error instanceof Error ? zenErrorText(error.message) : zenNotice("chat.notice.commandFailed"));
         return false;
       }
     },
@@ -777,11 +787,11 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
       if (intent.kind === "switch") {
         const id = resolvePlace(intent.name, places);
         if (id) setWhere(id);
-        else setNote(zenNotice(`No place called ${intent.name}.`));
+        else setNote(zenNotice("chat.notice.noPlace", { name: intent.name }));
         return true;
       }
       if (intent.kind === "run") {
-        if (extras) { setNote(zenNotice("Remove attachments and pasted text before running a command, or send them to your Ship in plain words.")); return false; }
+        if (extras) { setNote(zenNotice("chat.notice.commandExtras")); return false; }
         return runDirectly(intent.command);
       }
       return say(intent.text);
@@ -954,7 +964,7 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
         {moment.role === "human" || moment.text || moment.media?.length || moment.streaming ? <div class="who">
           {moment.role === "human" ? who : "Ship"}
           {moment.outgoing && moment.outgoing.status !== "failed" ? (
-            <span class="zen-send-status" role="status" aria-label={moment.outgoing.status === "uploading" ? "Uploading attachments" : "Sending message"}>
+            <span class="zen-send-status" role="status" aria-label={t(moment.outgoing.status === "uploading" ? "chat.message.uploading" : "chat.message.sending")}>
               <Spinner size={14} />
             </span>
           ) : null}
@@ -999,27 +1009,27 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
         {moment.media?.map((media, index) => <ZenMedia key={index} media={media} processId={moment.processId ?? pid ?? ""} />)}
         {moment.text && <MomentCopyButton text={moment.text} />}
         {moment.outgoing && !moment.media?.length && Boolean(moment.outgoing.draft.media?.length) ? (
-          <ul class="zen-draft-attachments" aria-label="Message attachments">
+          <ul class="zen-draft-attachments" aria-label={t("chat.message.attachments")}>
             {moment.outgoing.draft.media?.map((attachment, index) => <ZenDraftAttachment key={index} attachment={attachment} />)}
           </ul>
         ) : null}
         {moment.outgoing?.status === "uploading" ? (
-          <div class="zen-send-actions"><button type="button" onClick={() => outbox.cancelUpload(moment.outgoing!.id)}>cancel upload</button></div>
+          <div class="zen-send-actions"><button type="button" onClick={() => outbox.cancelUpload(moment.outgoing!.id)}>{t("chat.message.cancelUpload")}</button></div>
         ) : moment.outgoing?.status === "failed" ? (
           <div class="zen-send-actions">
             <span class="is-err" role="alert">{moment.outgoing.error}</span>
-            <button type="button" disabled={!connected || outbox.sending} onClick={() => outbox.retry(moment.outgoing!)}>retry</button>
-            <button type="button" onClick={() => outbox.discard(moment.outgoing!.id)}>dismiss</button>
+            <button type="button" disabled={!connected || outbox.sending} onClick={() => outbox.retry(moment.outgoing!)}>{t("chat.retry")}</button>
+            <button type="button" onClick={() => outbox.discard(moment.outgoing!.id)}>{t("chat.message.dismiss")}</button>
           </div>
         ) : null}
       </>;
     });
   }, [ready, moments, who, today, timeZone, places, openActivities, toggleActivity, onFleet,
     receipts, memoryCollections.data, onMemory, pendingHil, settling, tick, onTextClick, pin, streamed,
-    pid, connected, outbox.sending, outbox.cancelUpload, outbox.retry, outbox.discard]);
+    pid, connected, outbox.sending, outbox.cancelUpload, outbox.retry, outbox.discard, t]);
 
   /* the status line */
-  const selectorPlaces = useMemo(() => orderPlaces(targetsQuery.data ?? []), [targetsQuery.data]);
+  const selectorPlaces = useMemo(() => orderPlaces(targetsQuery.data ?? []), [targetsQuery.data, t]);
   /* the cloud is always listed; once places are known and it is alone, it is not a choice, so it reads as plain text and offers to connect a place */
   const cloudAlone = !!targetsQuery.data && !targetsQuery.isError && selectorPlaces.length === 1;
 
@@ -1027,8 +1037,8 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
     moment.role === "human" || (moment.role === "ship" && (moment.text !== "" || moment.media?.length || moment.streaming)) ? index : latest, -1), [moments]);
   const historyFailure = conversation.historyError ? (
     <div class="zen-history-status is-err" role="alert">
-      <span>Could not load your conversation: {conversation.historyError.message}</span>
-      <button type="button" disabled={!connected || conversation.historyFetching} onClick={() => void conversation.retryHistory()}>retry</button>
+      <span>{t("chat.history.failed", { error: conversation.historyError.message })}</span>
+      <button type="button" disabled={!connected || conversation.historyFetching} onClick={() => void conversation.retryHistory()}>{t("chat.retry")}</button>
     </div>
   ) : null;
   const helperEmpty = ready && moments.length === 0 && pid !== null && Boolean(pidProp) && pendingHil === null;
@@ -1043,11 +1053,11 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
         if (files.length === 0) return;
         event.preventDefault(); dragDepth.current = 0; setDraggingFiles(false); addFiles(files);
       }}>
-      {draggingFiles && <div class="zen-drop-hint">drop to attach</div>}
+      {draggingFiles && <div class="zen-drop-hint">{t("chat.composer.drop")}</div>}
 
       <div class="zen-body">
         {helperEmpty ? (
-          <div class="zen-empty"><p>This helper has no messages yet.</p></div>
+          <div class="zen-empty"><p>{t("chat.history.helperEmpty")}</p></div>
         ) : !ready ? (
           <div class="zen-moments" ref={momentsRef} data-scroll-edge data-scroll-edge-bottom>
             <div class="zen-content" ref={contentRef}>{historyFailure}</div>
@@ -1056,10 +1066,10 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
           <div class="zen-moments" ref={momentsRef} data-scroll-edge data-scroll-edge-bottom>
             <div class={`zen-content${pendingHil ? " has-approval" : ""}`} ref={contentRef}>
               {historyFailure}
-              {(conversation.loadingOlder || processRuntime.loadingOlderHistory) && <div class="zen-history-status"><LoadingState>loading earlier messages</LoadingState></div>}
+              {(conversation.loadingOlder || processRuntime.loadingOlderHistory) && <div class="zen-history-status"><LoadingState>{t("chat.history.loadingOlder")}</LoadingState></div>}
               {(conversation.error || processRuntime.historyError) && <div class="zen-history-status is-err" role="alert">
                 {conversation.error || processRuntime.historyError}
-                <button type="button" onClick={scrolling.readOlder}>retry</button>
+                <button type="button" onClick={scrolling.readOlder}>{t("chat.retry")}</button>
               </div>}
               {moments.map((moment, index) => {
                 const settleStart = settling.get(moment.id);
@@ -1109,14 +1119,14 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
           </div>
         )}
         {!helperEmpty && ready && scrolling.awayFromBottom && <button type="button" class="zen-jump-bottom"
-          aria-label="Jump to latest message" onClick={scrolling.follow}>↓<span> latest</span></button>}
+          aria-label={t("chat.jump.label")} onClick={scrolling.follow}>↓<span> {t("chat.jump.latest")}</span></button>}
       </div>
 
       <div class="zen-bottom">
         {/* contact messages that landed while the person was here, owned by Instrument so a helper switch keeps them */}
         {/* a helper's view has no contact notices */}
         {/* a new contact notice sits under the transcript; keep it in view the way an approval is */}
-        <div class="zen-context-bar" role="group" aria-label="Chat activity">
+        <div class="zen-context-bar" role="group" aria-label={t("chat.composer.activity")}>
           {!pidProp && <ChatPlans account={viewer} onOpen={() => setContext({ kind: "activity", request: { tab: "ongoing" } })} />}
           {peopleActivity && contactReplies && onPeopleActivity && <PeopleActivity activity={peopleActivity} replies={contactReplies} account={viewer} onOpen={onPeopleActivity} />}
         </div>
@@ -1125,7 +1135,7 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
 
         <div class="zen-composer">
           {pickerOpen ? (
-            <div class="zen-picker" role="listbox" aria-label="Places" ref={pickerRef}>
+            <div class="zen-picker" role="listbox" aria-label={t("chat.composer.places")} ref={pickerRef}>
               {pickerPlaces.map((place, index) => (
                 <button
                   type="button"
@@ -1143,11 +1153,11 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
                   <span class="id">@{place.id}</span>
                 </button>
               ))}
-              <div class="hint">↑ ↓ choose · enter move the prompt · esc</div>
+              <div class="hint">{t("chat.composer.pickerHint")}</div>
             </div>
           ) : null}
 
-          {extras && <ul class="zen-draft-attachments" aria-label="Attachments to send">
+          {extras && <ul class="zen-draft-attachments" aria-label={t("chat.composer.toSend")}>
             {attachments.map((attachment) => <ZenDraftAttachment key={attachment.id} attachment={attachment}
               onRemove={() => setAttachments((current) => current.filter((file) => file.id !== attachment.id))} />)}
             {pastes.map((paste) => <ZenDraftPaste key={paste.id} paste={paste}
@@ -1157,7 +1167,7 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
             <FeedbackNote note={note} />
           </div>}
           <div class="zen-compose-line" hidden={recordingVoice}>
-            <input ref={fileInput} type="file" multiple hidden aria-label="Choose attachments" onChange={(event) => {
+            <input ref={fileInput} type="file" multiple hidden aria-label={t("chat.composer.choose")} onChange={(event) => {
               addFiles(Array.from(event.currentTarget.files ?? [])); event.currentTarget.value = "";
             }} />
             <PromptLine
@@ -1170,7 +1180,7 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
               place={currentPlace}
               showPlace={false}
               dir="~"
-              placeholder="Message your Ship"
+              placeholder={t("chat.composer.placeholder")}
               disabled={!pid || recordingVoice}
               onSubmit={onSubmit}
               allowEmpty={extras}
@@ -1180,19 +1190,19 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
             />
             {(hasDraft || extras) && <button type="button" class="zen-submit"
               onPointerDown={(event) => { if (promptFocused) event.preventDefault(); }}
-              disabled={!connected || !pid || outbox.sending || recordingVoice} onClick={() => promptRef.current?.submit()}>send</button>}
+              disabled={!connected || !pid || outbox.sending || recordingVoice} onClick={() => promptRef.current?.submit()}>{t("chat.send")}</button>}
           </div>
           <div ref={voiceSurface} />
           {!currentPlace.online && <div class="zen-feedback" role="status">
             <button type="button" class="is-warn" onClick={() => onFleet(`target:${currentPlace.id}`)}>
-              {currentPlace.label} is offline · view place
+              {t("chat.composer.offline", { place: currentPlace.label })}
             </button>
           </div>}
           <div class="zen-compose-actions">
-            <button ref={addButton} type="button" class="zen-attach" aria-label="Add to chat" title="Add to chat"
+            <button ref={addButton} type="button" class="zen-attach" aria-label={t("chat.composer.add")} title={t("chat.composer.add")}
               aria-haspopup="menu" aria-expanded={addOpen} aria-controls="zen-add-menu"
               disabled={recordingVoice} onClick={() => { setPlacesOpen(false); setAddOpen((value) => !value); }}>+</button>
-            <div ref={addMenu} id="zen-add-menu" class="zen-add-menu" role="menu" hidden={!addOpen} aria-label="Add to chat"
+            <div ref={addMenu} id="zen-add-menu" class="zen-add-menu" role="menu" hidden={!addOpen} aria-label={t("chat.composer.add")}
               onKeyDown={(event) => {
                 event.stopPropagation();
                 if (event.key === "Escape") { event.preventDefault(); setAddOpen(false); addButton.current?.focus(); }
@@ -1205,20 +1215,20 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
                 if (event.key === "Tab") setAddOpen(false);
               }}>
               <div class="zen-add-section" role="group" aria-labelledby="zen-add-context-label">
-                <div class="zen-add-heading" id="zen-add-context-label">add context</div>
-                <button type="button" role="menuitem" class="is-file" onClick={() => { setAddOpen(false); fileInput.current?.click(); }}>attach a file <small>this device</small></button>
-                <button type="button" role="menuitem" disabled={!viewer || (!canConfigure(viewer, "profile.resolve") && !canConfigure(viewer, "contact.list"))} onClick={() => { setAddOpen(false); setContext({ kind: "person" }); }}>find a person <small>@handle</small></button>
-                <button type="button" role="menuitem" class="is-file" disabled={!viewer || !canConfigure(viewer, "fs.read")} onClick={() => { setAddOpen(false); setContext({ kind: "files" }); }}>reference a file <small>your places</small></button>
+                <div class="zen-add-heading" id="zen-add-context-label">{t("chat.add.context")}</div>
+                <button type="button" role="menuitem" class="is-file" onClick={() => { setAddOpen(false); fileInput.current?.click(); }}>{t("chat.add.file")} <small>{t("chat.add.fileHint")}</small></button>
+                <button type="button" role="menuitem" disabled={!viewer || (!canConfigure(viewer, "profile.resolve") && !canConfigure(viewer, "contact.list"))} onClick={() => { setAddOpen(false); setContext({ kind: "person" }); }}>{t("chat.add.person")} <small>{t("chat.add.personHint")}</small></button>
+                <button type="button" role="menuitem" class="is-file" disabled={!viewer || !canConfigure(viewer, "fs.read")} onClick={() => { setAddOpen(false); setContext({ kind: "files" }); }}>{t("chat.add.reference")} <small>{t("chat.add.referenceHint")}</small></button>
               </div>
               <div class="zen-add-section" role="group" aria-labelledby="zen-add-ship-label">
-                <div class="zen-add-heading" id="zen-add-ship-label">ask Ship</div>
-                <button type="button" role="menuitem" disabled={!viewer || !canConfigure(viewer, "conversation.send")} onClick={() => stageRequest("Help me create a routine.")}>create a routine</button>
-                <button type="button" role="menuitem" disabled={!viewer || !canConfigure(viewer, "conversation.send")} onClick={() => stageRequest("Help me connect a computer to my Ship.")}>connect a computer</button>
-                <button type="button" role="menuitem" disabled={!viewer || !canConfigure(viewer, "conversation.send")} onClick={() => stageRequest("Start a browser for me.")}>start a browser</button>
+                <div class="zen-add-heading" id="zen-add-ship-label">{t("chat.askShip")}</div>
+                <button type="button" role="menuitem" disabled={!viewer || !canConfigure(viewer, "conversation.send")} onClick={() => stageRequest("Help me create a routine.")}>{t("chat.add.routine")}</button>
+                <button type="button" role="menuitem" disabled={!viewer || !canConfigure(viewer, "conversation.send")} onClick={() => stageRequest("Help me connect a computer to my Ship.")}>{t("chat.add.computer")}</button>
+                <button type="button" role="menuitem" disabled={!viewer || !canConfigure(viewer, "conversation.send")} onClick={() => stageRequest("Start a browser for me.")}>{t("chat.add.browser")}</button>
               </div>
             </div>
             <button ref={placeButtonRef} type="button" class="zen-place-trigger"
-              aria-label={`Choose a place, currently ${currentPlace.label}`} aria-expanded={placesOpen} aria-controls="zen-places"
+              aria-label={t("chat.place.choose", { place: currentPlace.label })} aria-expanded={placesOpen} aria-controls="zen-places"
               onKeyDown={(event) => {
                 if (event.key === "Escape" && placesOpen) { event.preventDefault(); event.stopPropagation(); setPlacesOpen(false); }
               }}
@@ -1238,7 +1248,7 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
                   enabled={active && connected && pid !== null && pendingHil === null && !searchOpen && !context && !addOpen && !outbox.sending} />}
             </div>
           </div>
-          <span class="zen-connection-status" role="status">{connected ? "" : "Reconnecting..."}</span>
+          <span class="zen-connection-status" role="status">{connected ? "" : t("chat.reconnecting")}</span>
           <div ref={placesRef} id="zen-places" class="zen-place-section" hidden={!placesOpen}
             onKeyDown={(event) => {
               event.stopPropagation();
@@ -1248,14 +1258,14 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
               const next = event.relatedTarget;
               if (next !== placeButtonRef.current && (!(next instanceof Node) || !event.currentTarget.contains(next))) setPlacesOpen(false);
             }}>
-            <ul class="zen-places" aria-label="Places and live browsers">
+            <ul class="zen-places" aria-label={t("chat.place.list")}>
               {selectorPlaces.map((target) => {
-                const label = target.id === CLOUD_PLACE_ID ? CLOUD_PLACE_LABEL : target.label;
+                const label = target.id === CLOUD_PLACE_ID ? t("chat.place.cloud") : target.label;
                 const viewBrowser = browserControl.available && target.kind === "browser" && target.instance && ["starting", "ready"].includes(target.instance.state);
                 return (
                   <li key={target.id}>
                     <button type="button" class={`zen-place${cloudAlone ? " is-alone" : target.id === currentPlace.id ? " is-selected" : ""}`}
-                      aria-label={viewBrowser ? `View ${label}` : target.online ? `Use ${label} for the next message or command` : `${label} is offline`}
+                      aria-label={t(viewBrowser ? "chat.place.view" : target.online ? "chat.place.use" : "chat.place.offline", { place: label })}
                       aria-pressed={viewBrowser ? undefined : target.id === currentPlace.id}
                       disabled={!viewBrowser && !target.online}
                       onClick={() => { setPlacesOpen(false); if (viewBrowser) onFleet(`target:${target.id}`); else { setWhere(target.id); setPickerQuery(null); promptRef.current?.focus(); } }}>
@@ -1263,7 +1273,7 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
                       <span>{label}</span>
                       {viewBrowser && <span class="zen-browser-open" aria-hidden="true">↗</span>}
                     </button>
-                    {cloudAlone && <button type="button" class="zen-connect-place" onClick={() => { setPlacesOpen(false); setContext({ kind: "connect" }); }}>+ connect place</button>}
+                    {cloudAlone && <button type="button" class="zen-connect-place" onClick={() => { setPlacesOpen(false); setContext({ kind: "connect" }); }}>{t("chat.place.connect")}</button>}
                   </li>
                 );
               })}

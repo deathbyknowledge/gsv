@@ -1,3 +1,5 @@
+import { t } from "../app/i18n/locale";
+
 /** Marks a space opened straight from signup; it carries no authority, so setup may still require terms. */
 export const SIGNUP_ARRIVAL_PARAM = "signup";
 
@@ -10,9 +12,9 @@ export function presumedSpaceDomain(hostname: string): string | undefined {
 export function signupDestination(origin: string, onboardingToken?: string | null, contactInvitation?: string | null): string {
   const url = new URL(origin);
   const local = url.protocol === "http:" && (["localhost", "127.0.0.1", "[::1]"].includes(url.hostname) || url.hostname.endsWith(".localhost"));
-  if (url.origin !== origin || (url.protocol !== "https:" && !local)) throw new Error("Invalid Ship address.");
+  if (url.origin !== origin || (url.protocol !== "https:" && !local)) throw new Error(t("signup.invalidAddress"));
   if (onboardingToken) {
-    if (!/^onboard_[A-Za-z0-9_-]{43}$/.test(onboardingToken)) throw new Error("Invalid setup authorization.");
+    if (!/^onboard_[A-Za-z0-9_-]{43}$/.test(onboardingToken)) throw new Error(t("signup.invalidAuthorization"));
     url.pathname = "/onboarding";
     url.searchParams.set(SIGNUP_ARRIVAL_PARAM, "1");
     url.hash = contactInvitation ? new URLSearchParams({ onboarding: onboardingToken, contact: contactInvitation }).toString() : onboardingToken;

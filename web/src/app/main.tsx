@@ -8,6 +8,7 @@ import "../styles.css";
 import "../styles/gsv-scrollbar.css";
 import { render } from "preact";
 import { App } from "./App";
+import { applyLanguagePreference } from "./i18n/locale";
 
 const app = document.querySelector<HTMLElement>("#app");
 
@@ -15,4 +16,5 @@ if (!app) {
   throw new Error("Missing #app mount");
 }
 
-render(<App />, app);
+// The first screen waits for its language, so it never shows English before a translation arrives.
+void applyLanguagePreference().then(() => render(<App />, app));

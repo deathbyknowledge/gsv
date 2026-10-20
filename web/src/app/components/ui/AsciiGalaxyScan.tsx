@@ -1,5 +1,6 @@
 import { useMemo } from "preact/hooks";
 import { AsciiAnimation, type AsciiAnimationFrame, type AsciiAnimationScene } from "./AsciiAnimation";
+import { useT } from "../../i18n/locale";
 import type { ColorTheme } from "./useColorTheme";
 
 export type AsciiGalaxyScanProps = {
@@ -546,6 +547,7 @@ export function AsciiGalaxyScan({
   text = "Ship", showNebula = true, showStars = true, cols = 200, rows = 72,
   particleCount = 3500, frameRate = 30, label, ...presentation
 }: AsciiGalaxyScanProps) {
+  const t = useT();
   const renderer = useMemo(() => new AsciiGalaxyScanRenderer({ text, cols, rows, particleCount, frameRate }),
     [cols, frameRate, particleCount, rows, text]);
   const scene = useMemo<AsciiAnimationScene>(() => ({
@@ -560,5 +562,5 @@ export function AsciiGalaxyScan({
       nebula: showNebula ? renderer.nebulaText : undefined,
     }),
   }), [renderer, showNebula, showStars]);
-  return <AsciiAnimation {...presentation} scene={scene} frameRate={frameRate} label={label ?? `${text} ASCII galaxy scan`} />;
+  return <AsciiAnimation {...presentation} scene={scene} frameRate={frameRate} label={label ?? t("ui.galaxyScan.label", { text })} />;
 }

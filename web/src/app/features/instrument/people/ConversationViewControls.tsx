@@ -4,8 +4,10 @@ import { useGateway } from "../../../services/gateway/GatewayProvider";
 import type { ConsoleAccount } from "../../../domain/system/consoleModels";
 import { canConfigure } from "../settings/settingsModel";
 import { conversationViewKey, INSTRUMENT_INBOX_KEY } from "../wire/queryKeys";
+import { useT } from "../../../i18n/locale";
 
 export function ConversationViewControls({ conversationId, account }: { conversationId: string; account: ConsoleAccount | undefined }) {
+  const t = useT();
   const { client, connected } = useGateway();
   const cache = useQueryClient();
   const canRead = !!account && account.uid >= 1000 && canConfigure(account, "conversation.view.get");
@@ -16,7 +18,7 @@ export function ConversationViewControls({ conversationId, account }: { conversa
   });
   const archive = useMutation({
     mutationFn: () => {
-      if (!view.data) throw new Error("Open the conversation before changing its inbox state");
+      if (!view.data) throw new Error(t("people.archive.openFirst"));
       return client.conversation.view.update({ conversationId, archived: !view.data.entry.view.archived, expectedRevision: view.data.entry.view.revision });
     },
     onSuccess: (result) => {
@@ -26,7 +28,7 @@ export function ConversationViewControls({ conversationId, account }: { conversa
   });
   if (!canRead) return null;
   return <div class="people-view-controls">
-    {view.data && <button class="fleet-text-action" disabled={!connected || !canEdit || archive.isPending} onClick={() => archive.mutate()}>{archive.isPending ? "updating…" : view.data.entry.view.archived ? "return to inbox" : "archive conversation"}</button>}
+    {view.data && <button class="fleet-text-action" disabled={!connected || !canEdit || archive.isPending} onClick={() => archive.mutate()}>{t(archive.isPending ? "people.archive.updating" : view.data.entry.view.archived ? "people.archive.restore" : "people.archive.archive")}</button>}
     {(view.error ?? archive.error) && <p class="error" role="alert">{(view.error ?? archive.error)?.message}</p>}
   </div>;
 }

@@ -1,6 +1,7 @@
 import type { ComponentChildren, JSX } from "preact";
 import { useId, useState } from "preact/hooks";
 import { InfoTip } from "./InfoTip";
+import { useT } from "../../i18n/locale";
 import "./TextInput.css";
 
 export type TextInputSize = "small" | "medium" | "large";
@@ -44,9 +45,10 @@ const SIZE_CLASS = {
 /** TextInput — ported from TextInput.dc.html. Full bordered field with optional
  *  label row, description, status row + counter, prefix/suffix, clear, reveal. */
 export function TextInput(props: TextInputProps) {
+  const t = useT();
   const {
-    placeholder = "e.g. PERSONAL AGENT",
-    label = "ROLE",
+    placeholder = t("ui.textInput.placeholder"),
+    label = t("ui.textInput.label"),
     info = "",
     description = "",
     size = "medium",
@@ -83,7 +85,7 @@ export function TextInput(props: TextInputProps) {
   const effectiveStatus: TextInputStatus =
     status !== "none" ? status : showRequiredError ? "error" : "none";
   const effectiveMessage =
-    status !== "none" ? message : showRequiredError ? "REQUIRED" : message;
+    status !== "none" ? message : showRequiredError ? t("ui.field.requiredError") : message;
 
   const rawStatus = effectiveStatus && effectiveStatus !== "none" ? effectiveStatus : "";
   const statusKey = rawStatus === "warning" ? "warn" : rawStatus;
@@ -119,7 +121,7 @@ export function TextInput(props: TextInputProps) {
         <div class="gsv-fld-lab">
           <span class="gsv-fld-lab-t gsv-sublabel" id={`${fieldId}-label`}>
             {label}
-            {req ? <span class="gsv-fld-req gsv-sublabel"> {req === "required" ? "· REQUIRED" : "· OPTIONAL"}</span> : null}
+            {req ? <span class="gsv-fld-req gsv-sublabel"> {req === "required" ? t("ui.field.required") : t("ui.field.optional")}</span> : null}
           </span>
           {info ? <InfoTip text={info} /> : null}
         </div>
@@ -147,7 +149,7 @@ export function TextInput(props: TextInputProps) {
           }}
         />
         {showClear ? (
-          <button type="button" class="gsv-ti-x" aria-label="Clear input" onClick={() => emit("")}>
+          <button type="button" class="gsv-ti-x" aria-label={t("ui.textInput.clear")} onClick={() => emit("")}>
             <svg aria-hidden="true" width="11" height="11" viewBox="0 0 16 16" stroke="currentColor" stroke-width="1.6" stroke-linecap="square">
               <line x1="3" y1="3" x2="13" y2="13" />
               <line x1="13" y1="3" x2="3" y2="13" />
@@ -160,10 +162,10 @@ export function TextInput(props: TextInputProps) {
             class="gsv-ti-btn gsv-sublabel"
             disabled={disabled}
             aria-pressed={revealed}
-            aria-label={revealed ? "Hide password" : "Show password"}
+            aria-label={revealed ? t("ui.textInput.hidePassword") : t("ui.textInput.showPassword")}
             onClick={() => setRevealed((r) => !r)}
           >
-            {revealed ? "HIDE" : "SHOW"}
+            {revealed ? t("ui.textInput.hide") : t("ui.textInput.show")}
           </button>
         ) : null}
         {suffix ? <span class="gsv-ti-affix gsv-label">{suffix}</span> : null}

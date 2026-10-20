@@ -1,5 +1,6 @@
 import { useId, useState } from "preact/hooks";
 import { InfoTip } from "./InfoTip";
+import { useT } from "../../i18n/locale";
 import "./Toggle.css";
 
 export type ToggleSize = "small" | "medium" | "large";
@@ -26,10 +27,11 @@ const SIZE_CLASS = {
 /** Toggle — ported from Toggle.dc.html. Self-toggling track + knob switch with
  *  optional label, field description and status row. */
 export function Toggle(props: ToggleProps) {
+  const t = useT();
   const {
     disabled = false,
     size = "medium",
-    label = "RUN IN BACKGROUND",
+    label = t("ui.field.runInBackground"),
     info = "",
     description = "",
     status = "none",

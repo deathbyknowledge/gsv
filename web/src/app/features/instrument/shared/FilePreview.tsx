@@ -4,6 +4,7 @@ import { useQuery } from "../../../services/navigation/viewQueries";
 import { readFilesPath } from "../../../services/files/backend/filesService";
 import { CLOUD_TARGET_ID } from "../fleet/fleetModel";
 import type { OpenFile } from "./PlaceFiles";
+import { useT } from "../../../i18n/locale";
 
 function readArgsFor(target: string, path: string) {
   return { target: target === CLOUD_TARGET_ID ? null : target, path };
@@ -27,6 +28,7 @@ export function FilePreview({
   onAsk: (text: string) => void;
   enabled?: boolean;
 }) {
+  const t = useT();
   const { client, connected } = useGateway();
   const read = useQuery({
     queryKey: ["fleet", "file", file.target, file.path],
@@ -46,18 +48,19 @@ export function FilePreview({
         {label} · {file.path}
       </div>
       <dl class="fleet-kv">
-        <dt>Size</dt>
-        <dd>{payload && payload.ok && "size" in payload && payload.size !== null ? `${payload.size.toLocaleString()} bytes` : "—"}</dd>
-        <dt>Lines</dt>
+        <dt>{t("shell.file.size")}</dt>
+        <dd>{payload && payload.ok && "size" in payload && payload.size !== null
+          ? t("shell.file.bytes", { count: payload.size, size: payload.size.toLocaleString() }) : "—"}</dd>
+        <dt>{t("shell.file.lines")}</dt>
         <dd>{payload && payload.ok && "lines" in payload && payload.lines !== null ? payload.lines : "—"}</dd>
       </dl>
       <div class="file-preview">
-        {read.isPending ? <p class="note"><LoadingState>{connected ? "reading…" : "Reconnecting…"}</LoadingState></p> : null}
+        {read.isPending ? <p class="note"><LoadingState>{connected ? t("shell.reading") : t("shell.reconnecting")}</LoadingState></p> : null}
         {error ? <p class="error">{error}</p> : null}
         {linkedEntries ? (
           <>
             {/* TODO: remove once fix/symlink-dirs is in a released daemon; machines then report linked folders as folders */}
-            <p class="note">This is a folder reached through a link; the place reported it as a file. What it holds:</p>
+            <p class="note">{t("shell.file.linkedFolder")}</p>
             <pre>{linkedEntries.map((entry) => `${entry.name}${entry.kind === "directory" ? "/" : ""}`).join("\n")}</pre>
           </>
         ) : null}
@@ -65,18 +68,18 @@ export function FilePreview({
         {image && image.type === "image" ? <img src={`data:${image.mimeType};base64,${image.data}`} alt={file.name} /> : null}
       </div>
       <div class="fleet-actions">
-        {onExpand && <button type="button" class="fleet-text-action" onClick={onExpand}>expand</button>}
+        {onExpand && <button type="button" class="fleet-text-action" onClick={onExpand}>{t("shell.file.expand")}</button>}
         <button type="button" class="fleet-text-action is-primary" onClick={() => onAsk(`Use this file as context: @${file.target} ${file.path}`)}>
-          talk about it
+          {t("shell.file.ask")}
         </button>
         <button type="button" class="fleet-text-action" onClick={() => void navigator.clipboard?.writeText(file.path)}>
-          copy path
+          {t("shell.file.copyPath")}
         </button>
         <button type="button" class="fleet-text-action" onClick={onClose}>
-          close
+          {t("shell.close")}
         </button>
       </div>
-      <p class="note">Talking about it puts a reference to this file in the prompt; the Ship reads it from {label} when it needs to, without copying it.</p>
+      <p class="note">{t("shell.file.askNote", { place: label })}</p>
     </div>
   );
 }
