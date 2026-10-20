@@ -36,10 +36,15 @@ export class ShipEventRuntime {
       // finds the queue already drained, so a failed reconcile is retried.
       await this.host.responsibilityRuntime.reconcileResponsibilityWake(ownerUid);
     }
+    // An event queued while this pass awaited joined this running task, which ends now.
+    const late = this.host.shipEvents.next(ownerUid);
+    if (late && !this.host.auth.isAccountDisabled(ownerUid)) await this.schedule(ownerUid, late.nextAttemptAtMs, task.id);
   }
 
   private async deliverQueued(ownerUid: number, task: { id: string }): Promise<void> {
     for (let queued = this.host.shipEvents.next(ownerUid); queued; queued = this.host.shipEvents.next(ownerUid)) {
+      // Removal can land while the gate or a previous delivery awaited.
+      if (this.host.auth.isAccountDisabled(ownerUid)) return;
       if (queued.nextAttemptAtMs > Date.now()) {
         await this.schedule(ownerUid, queued.nextAttemptAtMs, task.id);
         return;

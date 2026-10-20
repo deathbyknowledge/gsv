@@ -47,6 +47,31 @@ describe("Ship event delivery", () => {
     });
   });
 
+  it("stops delivery when the account is removed while the managed-work gate is pending", async () => {
+    await runWithRealKernelSql(async (_sql, storage) => {
+      const { host, runtime, shipEvents } = fixture(storage);
+      shipEvents.enqueue(OWNER, "contact.message:msg:one", event("msg:one", "r12y:one"), Date.now());
+      let disabled = false;
+      host.auth.isAccountDisabled = () => disabled;
+      host.onboarding.managedWorkGate = async () => { disabled = true; return { allowed: true }; };
+      const ensure = vi.spyOn(personalController, "ensurePersonalController");
+      await runtime.onShipEvents(OWNER, { id: "task:removed" });
+      expect(ensure).not.toHaveBeenCalled();
+      expect(shipEvents.next(OWNER)).toMatchObject({ eventId: "contact.message:msg:one", attemptCount: 0 });
+    });
+  });
+
+  it("keeps a successor task for an event queued while reconciliation is pending", async () => {
+    await runWithRealKernelSql(async (_sql, storage) => {
+      const { host, runtime, shipEvents, schedule } = fixture(storage);
+      host.responsibilityRuntime.reconcileResponsibilityWake.mockImplementationOnce(async () => {
+        shipEvents.enqueue(OWNER, "contact.message:msg:late", event("msg:late", "r12y:late"), Date.now());
+      });
+      await runtime.onShipEvents(OWNER, { id: "task:running" });
+      expect(schedule).toHaveBeenCalledExactlyOnceWith(expect.any(Date), "onShipEvents", OWNER, { idempotent: true, excludeTaskId: "task:running" });
+    });
+  });
+
   it("arms the recovery wake on a pass that finds the queue already drained", async () => {
     await runWithRealKernelSql(async (_sql, storage) => {
       const { host, runtime } = fixture(storage);
@@ -70,9 +95,9 @@ function fixture(storage: DurableObjectStorage) {
     ctx: { storage, waitUntil: () => {} },
     shipEvents,
     responsibilities,
-    auth: { isAccountDisabled: () => false },
+    auth: { isAccountDisabled: (_uid: number) => false },
     onboarding: { managedWorkGate: async () => ({ allowed: true }) },
-    responsibilityRuntime: { reconcileResponsibilityWake: vi.fn(async () => {}) },
+    responsibilityRuntime: { reconcileResponsibilityWake: vi.fn(async (_uid: number) => {}) },
     buildKernelContext: () => ({}),
     schedule,
   };
