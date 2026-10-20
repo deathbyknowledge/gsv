@@ -47,6 +47,22 @@ describe("Ship event delivery", () => {
     });
   });
 
+  it("drops a queued message once its responsibility or contact no longer admits Ship work", async () => {
+    await runWithRealKernelSql(async (_sql, storage) => {
+      const { host, runtime, shipEvents, responsibilities } = fixture(storage);
+      const work = responsibilities.create({ ownerUid: OWNER, title: "Pending messages from Remote", source: actor, actor,
+        assignee: { kind: "ship" }, state: "open", priority: "normal", observedByShip: false, announced: true, now: Date.now() }).record;
+      shipEvents.enqueue(OWNER, "contact.message:msg:cancelled", event("msg:cancelled", work.id), Date.now());
+      shipEvents.enqueue(OWNER, "contact.message:msg:blocked", event("msg:blocked", "r12y:other"), Date.now());
+      responsibilities.update({ ownerUid: OWNER, id: work.id, patch: { state: "cancelled" }, actor, observedByShip: false, now: Date.now() });
+      host.federation.get = () => ({ state: "active", blocked: true });
+      const ensure = vi.spyOn(personalController, "ensurePersonalController");
+      await runtime.onShipEvents(OWNER, { id: "task:fenced" });
+      expect(ensure).not.toHaveBeenCalled();
+      expect(shipEvents.next(OWNER)).toBeNull();
+    });
+  });
+
   it("stops delivery when the account is removed while the managed-work gate is pending", async () => {
     await runWithRealKernelSql(async (_sql, storage) => {
       const { host, runtime, shipEvents } = fixture(storage);
@@ -95,6 +111,7 @@ function fixture(storage: DurableObjectStorage) {
     ctx: { storage, waitUntil: () => {} },
     shipEvents,
     responsibilities,
+    federation: { get: (_contactId: string): { state: string; blocked: boolean } | null => ({ state: "active", blocked: false }) },
     auth: { isAccountDisabled: (_uid: number) => false },
     onboarding: { managedWorkGate: async () => ({ allowed: true }) },
     responsibilityRuntime: { reconcileResponsibilityWake: vi.fn(async (_uid: number) => {}) },

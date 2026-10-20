@@ -45,6 +45,10 @@ export class ShipEventRuntime {
     for (let queued = this.host.shipEvents.next(ownerUid); queued; queued = this.host.shipEvents.next(ownerUid)) {
       // Removal can land while the gate or a previous delivery awaited.
       if (this.host.auth.isAccountDisabled(ownerUid)) return;
+      if (!this.authorized(queued)) {
+        this.host.shipEvents.delivered(queued.eventId);
+        continue;
+      }
       if (queued.nextAttemptAtMs > Date.now()) {
         await this.schedule(ownerUid, queued.nextAttemptAtMs, task.id);
         return;
@@ -60,6 +64,14 @@ export class ShipEventRuntime {
         return;
       }
     }
+  }
+
+  /** A queued message stays deliverable only while its contact and responsibility still admit Ship work. */
+  private authorized({ ownerUid, event }: QueuedShipEvent): boolean {
+    const contact = this.host.federation.get(event.contactId);
+    const work = this.host.responsibilities.get(ownerUid, event.responsibilityId);
+    return !!contact && contact.state === "active" && !contact.blocked &&
+      !!work && work.state !== "resolved" && work.state !== "cancelled";
   }
 
   private async deliver(queued: QueuedShipEvent): Promise<void> {
