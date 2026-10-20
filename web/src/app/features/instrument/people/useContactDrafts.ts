@@ -5,8 +5,14 @@ import { contactSendMessageId } from "@humansandmachines/gsv/protocol/stable-id"
 import { sendContactMessage, retryContactMessage } from "../../../services/contacts/contactsService";
 import { selectContactSendIntent, type ContactDraftSendIntent } from "../../../services/contacts/contactSendIntent";
 import type { ZenAttachment } from "../zen/zenAttachments";
+import { t, type TextKey } from "../../../i18n/locale";
 
-export type ContactReply = { reference: OriginMessageRef; author: string; preview: string };
+/** `author` is the contact's name, or null for a message of yours. */
+export type ContactReply = { reference: OriginMessageRef; author: string | null; preview: string };
+/** A problem this view describes holds its message key; an error raised elsewhere keeps its text. */
+export type SendError = { key: TextKey } | { message: string };
+/** Why the composer turned files away. */
+export type ComposerError = "fileTooLarge" | "tooManyFiles" | "totalTooLarge";
 export type PendingContactMessage = {
   intent: ContactDraftSendIntent<ZenAttachment>;
   reply: ContactReply | null;
@@ -14,7 +20,7 @@ export type PendingContactMessage = {
   messageId: string | null;
   deliveryId: string | null;
   state: "sending" | "queued" | "delivered" | "failed" | "unconfirmed";
-  error: string | null;
+  error: SendError | null;
   createdAt: number;
   attachmentCount: number;
   retryable: boolean;
@@ -27,7 +33,7 @@ export type ContactDraft = {
   media: readonly ZenAttachment[];
   intent: ContactDraftSendIntent<ZenAttachment> | null;
   pending: boolean;
-  error: string | null;
+  error: ComposerError | null;
   status: string | null;
 };
 export const EMPTY_CONTACT_DRAFT: ContactDraft = { text: "", media: [], reply: null, sent: [], intent: null, pending: false, error: null, status: null };
@@ -71,7 +77,7 @@ export function useContactDrafts(onDirtyChange?: (dirty: boolean) => void) {
     if (!previous && (!draft.text.trim() && !draft.media.length)) return;
     if (draft.sent.filter((entry) => entry.state === "sending").length >= 3) return;
     if (previous && previous.generation !== contact.generation) {
-      changeSent(contact.id, previous.intent.idempotencyKey, { state: "failed", retryable: false, error: "This connection changed. Review the message before sending it through the new connection." });
+      changeSent(contact.id, previous.intent.idempotencyKey, { state: "failed", retryable: false, error: { key: "people.send.connectionChanged" } });
       return;
     }
     const intent = previous?.intent ?? selectContactSendIntent(draft.intent, contact.id, draft.text, draft.media, draft.reply?.reference);
@@ -87,7 +93,7 @@ export function useContactDrafts(onDirtyChange?: (dirty: boolean) => void) {
       changeSent(contact.id, intent.idempotencyKey, { messageId });
       const status = previous?.deliveryId ? (await client.contact.delivery.get({ deliveryId: previous.deliveryId })).delivery : null;
       if (controller.signal.aborted) return;
-      if (previous?.deliveryId && !status) throw new Error("The delivery receipt is no longer available. Check the conversation before composing another message.");
+      if (previous?.deliveryId && !status) throw new Error(t("people.send.receiptGone"));
       const result = status?.state === "failed"
         ? await retryContactMessage(client, intent, status, controller.signal)
         : status ? { deliveryId: status.deliveryId, conversationId: status.conversationId, state: status.state }
@@ -96,9 +102,9 @@ export function useContactDrafts(onDirtyChange?: (dirty: boolean) => void) {
       const failed = result.state === "failed" ? (await client.contact.delivery.get({ deliveryId: result.deliveryId })).delivery : null;
       changeSent(contact.id, intent.idempotencyKey, { deliveryId: result.deliveryId, state: result.state, retryable: failed?.retryable ?? result.state !== "failed",
         intent: result.state === "failed" ? intent : { ...intent, media: [] },
-        error: result.state === "failed" ? "Delivery could not be confirmed. Review the delivery state before retrying." : null });
+        error: result.state === "failed" ? { key: "people.send.notConfirmed" } : null });
     } catch (error) {
-      if (!controller.signal.aborted) changeSent(contact.id, intent.idempotencyKey, { state: "unconfirmed", error: error instanceof Error ? error.message : "Could not confirm the send." });
+      if (!controller.signal.aborted) changeSent(contact.id, intent.idempotencyKey, { state: "unconfirmed", error: error instanceof Error ? { message: error.message } : { key: "people.send.failed" } });
     } finally {
       if (uploads.current.get(intent.idempotencyKey) === controller) uploads.current.delete(intent.idempotencyKey);
     }

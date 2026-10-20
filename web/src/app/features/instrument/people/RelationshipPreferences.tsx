@@ -6,6 +6,7 @@ import type { ConsoleAccount } from "../../../domain/system/consoleModels";
 import { canConfigure } from "../settings/settingsModel";
 import { INSTRUMENT_CONTACTS_KEY } from "../wire/queryKeys";
 import { ConversationViewControls } from "./ConversationViewControls";
+import { useT } from "../../../i18n/locale";
 
 export type ContactPreferenceControls = {
   update: (patch: ContactPreferencesUpdateArgs["patch"]) => void;
@@ -15,6 +16,7 @@ export type ContactPreferenceControls = {
 };
 
 export function RelationshipPreferences({ contact, account, controls }: { contact: ContactSummary; account: ConsoleAccount | undefined; controls: ContactPreferenceControls }) {
+  const t = useT();
   const { client, connected } = useGateway();
   const cache = useQueryClient();
   const [confirm, setConfirm] = useState<"block" | "end" | null>(null);
@@ -35,28 +37,28 @@ export function RelationshipPreferences({ contact, account, controls }: { contac
   const disabled = pending || !controls.canEdit;
   const error = controls.error ?? block.error ?? revoke.error;
 
-  return <section class="people-relationship" aria-label="Conversation preferences">
+  return <section class="people-relationship" aria-label={t("people.prefs.label")}>
     {preferences && <div class="people-settings">
-      <label class="people-setting"><span>Mute conversation<small>New messages won’t bring an archived conversation back.</small></span><input type="checkbox" role="switch" checked={preferences.muted} disabled={disabled} onChange={(event) => controls.update({ muted: event.currentTarget.checked })} /></label>
+      <label class="people-setting"><span>{t("people.prefs.mute")}<small>{t("people.prefs.muteHint")}</small></span><input type="checkbox" role="switch" checked={preferences.muted} disabled={disabled} onChange={(event) => controls.update({ muted: event.currentTarget.checked })} /></label>
     </div>}
     <div class="people-contact-actions">
-      {preferences && <button class="people-action" disabled={disabled} onClick={() => controls.update({ saved: !preferences.saved })}>{preferences.saved ? "remove from contacts" : "save contact"}</button>}
+      {preferences && <button class="people-action" disabled={disabled} onClick={() => controls.update({ saved: !preferences.saved })}>{t(preferences.saved ? "people.prefs.unsave" : "people.prefs.save")}</button>}
       <ConversationViewControls conversationId={contact.conversationId} account={account} />
     </div>
     <details class="people-details-fold">
-      <summary>Connection</summary>
-      <dl class="people-connection-facts"><dt>Connected</dt><dd>{new Date(contact.createdAtMs).toLocaleDateString()}</dd><dt>Status</dt><dd>{contact.blocked ? "Blocked" : contact.state === "active" ? "Connected" : "Ended"}</dd></dl>
+      <summary>{t("people.connection.title")}</summary>
+      <dl class="people-connection-facts"><dt>{t("people.connection.since")}</dt><dd>{new Date(contact.createdAtMs).toLocaleDateString()}</dd><dt>{t("people.connection.status")}</dt><dd>{t(contact.blocked ? "people.contactBlocked" : contact.state === "active" ? "people.connection.active" : "people.connection.ended")}</dd></dl>
       {confirm ? <div class="people-confirm">
-        <p>{confirm === "end" ? "End this connection? Messages and sharing will stop."
-          : contact.blocked ? "Allow new requests from this person? The old connection stays ended."
-            : "End this connection and block future messages and requests? Delivered messages will stay in history."}</p>
+        <p>{t(confirm === "end" ? "people.connection.confirmEnd"
+          : contact.blocked ? "people.connection.confirmUnblock"
+            : "people.connection.confirmBlock")}</p>
         <div class="people-actions">
-          <button class="people-action is-danger" disabled={pending || !(confirm === "end" ? mayEnd : allowed("contact.block.set"))} onClick={() => confirm === "end" ? revoke.mutate() : block.mutate()}>{confirm === "end" ? "end connection" : contact.blocked ? "unblock" : "block"}</button>
-          <button class="people-action" disabled={pending} onClick={() => setConfirm(null)}>cancel</button>
+          <button class="people-action is-danger" disabled={pending || !(confirm === "end" ? mayEnd : allowed("contact.block.set"))} onClick={() => confirm === "end" ? revoke.mutate() : block.mutate()}>{t(confirm === "end" ? "people.connection.end" : contact.blocked ? "people.unblock" : "people.block")}</button>
+          <button class="people-action" disabled={pending} onClick={() => setConfirm(null)}>{t("common.cancel")}</button>
         </div>
       </div> : <div class="people-actions">
-        {contact.state === "active" && <button class="people-action is-danger" disabled={pending || !mayEnd} onClick={() => setConfirm("end")}>end connection</button>}
-        <button class="people-action is-danger" disabled={pending || !allowed("contact.block.set")} onClick={() => setConfirm("block")}>{contact.blocked ? "unblock person" : "block person"}</button>
+        {contact.state === "active" && <button class="people-action is-danger" disabled={pending || !mayEnd} onClick={() => setConfirm("end")}>{t("people.connection.end")}</button>}
+        <button class="people-action is-danger" disabled={pending || !allowed("contact.block.set")} onClick={() => setConfirm("block")}>{t(contact.blocked ? "people.connection.unblockPerson" : "people.connection.blockPerson")}</button>
       </div>}
     </details>
     {error && <p class="people-error" role="alert">{error.message}</p>}
