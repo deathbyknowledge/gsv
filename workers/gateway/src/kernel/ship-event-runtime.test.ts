@@ -130,6 +130,19 @@ describe("Ship event delivery", () => {
     });
   });
 
+  it("moves a stale backoff task earlier when the queue head becomes due now", async () => {
+    await runWithRealKernelSql(async (_sql, storage) => {
+      const { host, runtime, shipEvents, schedule } = fixture(storage);
+      const stale = Date.now() + 5 * 60_000;
+      schedule.mockResolvedValueOnce({ id: "task:backoff", time: Math.floor(stale / 1_000) });
+      shipEvents.enqueue(OWNER, "contact.message:msg:fresh", event("msg:fresh", "r12y:fresh"), Date.now());
+      await runtime.queue(OWNER);
+      expect(host.cancelSchedule).toHaveBeenCalledExactlyOnceWith("task:backoff");
+      expect(schedule).toHaveBeenCalledTimes(2);
+      expect(schedule.mock.calls[1]![0].getTime()).toBeLessThanOrEqual(Date.now());
+    });
+  });
+
   it("arms the recovery wake on a pass that finds the queue already drained", async () => {
     await runWithRealKernelSql(async (_sql, storage) => {
       const { host, runtime } = fixture(storage);
@@ -154,7 +167,8 @@ function pending(responsibilities: ResponsibilityStore) {
 function fixture(storage: DurableObjectStorage) {
   const shipEvents = new ShipEventStore(storage);
   const responsibilities = new ResponsibilityStore(storage);
-  const schedule = vi.fn(async () => ({}));
+  const schedule = vi.fn(async (when: Date, _callback: string, _ownerUid: number, _options: object) =>
+    ({ id: `task:${when.getTime()}`, time: Math.floor(when.getTime() / 1_000) }));
   const contact = {
     id: "contact:remote", ownerUid: OWNER, generation: "1", conversationId: "conv:remote", state: "active", blocked: false,
     remoteSubject: { displayName: "Remote" }, preferences: { shipHandlesMessages: true },
@@ -174,6 +188,7 @@ function fixture(storage: DurableObjectStorage) {
     responsibilityRuntime: { reconcileResponsibilityWake: vi.fn(async (_uid: number) => {}) },
     buildKernelContext: () => ({ federation, responsibilities, shipEvents }),
     schedule,
+    cancelSchedule: vi.fn(async (_id: string) => true),
   };
   // SAFETY: ShipEventRuntime reaches only these Kernel members.
   const runtime = new ShipEventRuntime(host as Kernel);

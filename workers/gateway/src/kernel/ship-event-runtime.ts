@@ -12,8 +12,9 @@ const MAX_RETRY_DELAY_MS = 5 * 60_000;
 export class ShipEventRuntime {
   constructor(readonly host: Kernel) {}
 
-  queue(ownerUid: number): Promise<void> {
-    return this.schedule(ownerUid, Date.now());
+  async queue(ownerUid: number): Promise<void> {
+    const next = this.host.shipEvents.next(ownerUid);
+    if (next) await this.schedule(ownerUid, next.nextAttemptAtMs);
   }
 
   async recover(): Promise<void> {
@@ -99,9 +100,15 @@ export class ShipEventRuntime {
     });
   }
 
+  /** One pending task per owner, moved earlier when the queue head becomes due sooner than a stale backoff. */
   private async schedule(ownerUid: number, at: number, excludeTaskId?: string): Promise<void> {
+    const due = Math.max(Date.now(), at);
     const options: DurableTaskOptions = { idempotent: true };
     if (excludeTaskId) options.excludeTaskId = excludeTaskId;
-    await this.host.schedule(new Date(Math.max(Date.now(), at)), "onShipEvents", ownerUid, options);
+    const existing = await this.host.schedule(new Date(due), "onShipEvents", ownerUid, options);
+    // Task times are whole seconds; a pending task due no later than this one stands.
+    if (existing.time * 1_000 <= due + 1_000) return;
+    await this.host.cancelSchedule(existing.id);
+    await this.host.schedule(new Date(due), "onShipEvents", ownerUid, options);
   }
 }
