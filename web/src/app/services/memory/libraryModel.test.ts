@@ -33,7 +33,7 @@ describe("libraryModel", () => {
       { kind: "file", path: "memory/pages/team/billing.md", title: "Billing" },
     ], "memory");
 
-    expect(tree.children.map((node) => node.title)).toEqual(["Overview", "Pages"]);
+    expect(tree.children.map((node) => node.title)).toEqual(["Memory", "Pages"]);
     expect(tree.children[1].children[0].title).toBe("Team");
     expect(tree.children[1].children[0].count).toBe(2);
     expect(ancestorFolderPaths("pages/team/auth.md")).toEqual(["pages", "pages/team"]);

@@ -33,19 +33,18 @@ describe("pending child approval controls", () => {
       const cache = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
       const root = createTestRoot("Child approval");
       let tree: ComponentChildren;
-      let cardTree: ComponentChildren = null;
-      // The card uses hooks, so it renders inside the tree rather than being called afterwards.
-      function CardProbe(props: ApprovalCardProps) { cardTree = ApprovalCard(props); return null; }
+      let card: ComponentChildren = null;
+      // The card renders inside the root, so its hooks have a component to belong to.
+      function Card(props: ApprovalCardProps) { card = ApprovalCard(props); return null; }
       function Harness() {
         tree = FleetApproval({ pid: "child", runId, who: "crew", label: "Read the example page" });
         // SAFETY: The VNode is selected by the exact component whose props type is ApprovalCardProps.
         const node = collectNodes(tree).find((node) => node.type === ApprovalCard) as VNode<ApprovalCardProps> | undefined;
-        if (!node) cardTree = null;
-        return node ? <CardProbe {...node.props} /> : null;
+        if (!node) card = null;
+        return node ? <Card {...node.props} /> : null;
       }
       await root.render(<GatewayProvider><QueryClientProvider client={cache}><Harness /></QueryClientProvider></GatewayProvider>);
-      const card = () => cardTree;
-      return { text: () => collectText([tree, card()]), buttons: () => collectNodes(card()).filter((node) => node.type === "button"),
+      return { text: () => collectText([tree, card]), buttons: () => collectNodes(card).filter((node) => node.type === "button"),
         close: async () => { await root.unmount(); cache.clear(); } };
     }
     let view = await mount("child-run");

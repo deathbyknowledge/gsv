@@ -30,6 +30,7 @@ import {
   modelByProcess,
   orderPlaces,
   orderProcesses,
+  PLACE_KIND_LABELS,
   placeStateLabel,
   processRow,
   processStateLabel,
@@ -52,6 +53,7 @@ import { useBrowserControl, useCloudInstances } from "../browser/BrowserControl"
 import { FleetApproval } from "./FleetApproval";
 import { NewProcess, ProcessAiControls } from "./ProcessControls";
 import { canConfigure } from "../settings/settingsModel";
+import { useT } from "../../../i18n/locale";
 import "./fleet.css";
 
 export type FleetProps = {
@@ -84,6 +86,7 @@ function isFleetRow(value: string | undefined): value is FleetRow {
 }
 
 export function Fleet({ openRequest, onZen, onCommand, onDirtyChange, onActivity }: FleetProps) {
+  const t = useT();
   useCloudInstances();
   const active = useViewActive();
   const [fileDirty, setFileDirty] = useState(false);
@@ -117,7 +120,8 @@ export function Fleet({ openRequest, onZen, onCommand, onDirtyChange, onActivity
   const viewer = accountsQuery.data?.find((account) => account.relation === "self");
   const work = useResponsibilities(viewer, { routines: false });
 
-  const places = useMemo(() => orderPlaces(targetsQuery.data ?? []), [targetsQuery.data]);
+  // The cloud home's name is interface text, so the list follows the language.
+  const places = useMemo(() => orderPlaces(targetsQuery.data ?? []), [targetsQuery.data, t]);
   const processes = useMemo(() => orderProcesses(processesQuery.data ?? []), [processesQuery.data]);
   const sysLedgerQuery = useLedger(!!viewer && canConfigure(viewer, "sys.ledger.list"));
 
@@ -165,7 +169,7 @@ export function Fleet({ openRequest, onZen, onCommand, onDirtyChange, onActivity
   const missingRequestedRow = selected !== null && selected === initialRow && (
     (selected.startsWith("proc:") && !selectedProcess) || (selected.startsWith("target:") && !selectedPlace)
   );
-  const requestedKind = selected?.startsWith("proc:") ? "process" : "place";
+  const requestedProcess = selected?.startsWith("proc:") ?? false;
   const requestedQuery = selected?.startsWith("proc:") ? processesQuery : targetsQuery;
 
   const [processLimit, setProcessLimit] = useState(PROCESS_PAGE);
@@ -275,9 +279,9 @@ export function Fleet({ openRequest, onZen, onCommand, onDirtyChange, onActivity
       row?.focus({ preventScroll: true });
     });
   };
-  const inspectorTitle = connecting === "place" ? "Connect a place"
-    : creatingProcess ? "New process" : openFile ? "File" : filesPlace ? `${filesPlace.label} files`
-      : selected?.startsWith("proc:") ? "Process" : "Place";
+  const inspectorTitle = connecting === "place" ? t("fleet.connect.title")
+    : creatingProcess ? t("fleet.newProcess.title") : openFile ? t("fleet.inspector.file") : filesPlace ? t("fleet.inspector.files", { place: filesPlace.label })
+      : selected?.startsWith("proc:") ? t("fleet.field.process") : t("fleet.field.place");
 
   return (
     <main class="fleet" aria-label="Fleet">
@@ -299,21 +303,21 @@ export function Fleet({ openRequest, onZen, onCommand, onDirtyChange, onActivity
 
           <section class="fleet-block">
             <h2>
-              <i /> Places
+              <i /> {t("fleet.places.title")}
               <StartCloudBrowser allowed={Boolean(viewer && canConfigure(viewer, "sys.instance.start"))} />
-              <button type="button" class="fleet-heading-action" disabled={!connected || !viewer || !canConfigure(viewer, "sys.pair.create")} onClick={() => connect("place")}>connect</button>
+              <button type="button" class="fleet-heading-action" disabled={!connected || !viewer || !canConfigure(viewer, "sys.pair.create")} onClick={() => connect("place")}>{t("fleet.places.connect")}</button>
               <span class="count">{places.length}</span>
             </h2>
-            {targetsQuery.error ? <p class="error">Could not list places: {String(targetsQuery.error)}</p> : null}
+            {targetsQuery.error ? <p class="error">{t("fleet.places.failed", { error: String(targetsQuery.error) })}</p> : null}
             <div class="tablewrap">
             <table class="fleet-places-table">
               <thead>
                 <tr>
-                  <th>Place</th>
-                  <th>Kind</th>
-                  <th>State</th>
-                  <th>Last seen</th>
-                  <th class="num">Runs today</th>
+                  <th>{t("fleet.field.place")}</th>
+                  <th>{t("fleet.field.kind")}</th>
+                  <th>{t("fleet.field.state")}</th>
+                  <th>{t("fleet.field.lastSeen")}</th>
+                  <th class="num">{t("fleet.field.runsToday")}</th>
                 </tr>
               </thead>
               <tbody>
@@ -325,12 +329,12 @@ export function Fleet({ openRequest, onZen, onCommand, onDirtyChange, onActivity
                     onClick={() => selectRow(targetRow(place.id))}
                   >
                     <td>
-                      <span class={`dot ${place.kind === "cloud" ? "is-on" : place.online ? "is-on" : "is-idle"}`} role="img" aria-label={placeStateLabel(place)} />
+                      <span class={`dot ${place.kind === "cloud" ? "is-on" : place.online ? "is-on" : "is-idle"}`} role="img" aria-label={t(placeStateLabel(place))} />
                       {place.label}
                     </td>
-                    <td class="kind">{place.kind}</td>
-                    <td class="dim">{placeStateLabel(place)}</td>
-                    <td class="dim">{place.kind === "cloud" ? "always" : relativeTime(place.lastSeenAt, now)}</td>
+                    <td class="kind">{t(PLACE_KIND_LABELS[place.kind])}</td>
+                    <td class="dim">{t(placeStateLabel(place))}</td>
+                    <td class="dim">{place.kind === "cloud" ? t("fleet.places.always") : relativeTime(place.lastSeenAt, now)}</td>
                     <td class="num">{runsToday.get(place.id) ?? 0}</td>
                   </tr>
                 ))}
@@ -341,27 +345,27 @@ export function Fleet({ openRequest, onZen, onCommand, onDirtyChange, onActivity
 
           <section class="fleet-block">
             <h2>
-              <i /> Processes
+              <i /> {t("fleet.processes.title")}
               {viewer && canConfigure(viewer, "proc.spawn") ? <button type="button" class="fleet-heading-action" disabled={!connected} onClick={() => {
                 setSelected(null);
                 setOpenFile(null);
                 setConnecting(null);
                 setCreatingProcess(true);
                 setInspectorOpen(true);
-              }}>new process</button> : null}
+              }}>{t("fleet.processes.new")}</button> : null}
               <span class="count">{processes.length}</span>
             </h2>
-            {processesQuery.error ? <p class="error">Could not list processes: {String(processesQuery.error)}</p> : null}
+            {processesQuery.error ? <p class="error">{t("fleet.processes.failed", { error: String(processesQuery.error) })}</p> : null}
             <div class="tablewrap">
             <table class="fleet-processes-table">
               <thead>
                 <tr>
-                  <th>Process</th>
-                  <th>Id</th>
-                  <th>Responsibilities</th>
-                  <th>State</th>
-                  <th>Last active</th>
-                  <th class="num">Today</th>
+                  <th>{t("fleet.field.process")}</th>
+                  <th>{t("fleet.field.id")}</th>
+                  <th>{t("fleet.field.responsibilities")}</th>
+                  <th>{t("fleet.field.state")}</th>
+                  <th>{t("fleet.field.lastActive")}</th>
+                  <th class="num">{t("fleet.field.today")}</th>
                 </tr>
               </thead>
               <tbody>
@@ -374,10 +378,12 @@ export function Fleet({ openRequest, onZen, onCommand, onDirtyChange, onActivity
                   >
                     <td class="name">{process.personal ? "ship" : process.label}</td>
                     <td class="id" title={process.pid}>{shortPid(process.pid)}</td>
-                    <td class="dim"><button type="button" class="fleet-count-action" aria-label={`Responsibilities for ${process.personal ? "ship" : process.label}`} onClick={(event) => { event.stopPropagation(); onActivity({ processId: process.pid }); }}>{work.current.isPending || work.current.isError ? "-" : `${responsibilityCount(process.pid)}${work.current.hasNextPage ? "+" : ""}`}<span class="fleet-mobile-label"> {responsibilityCount(process.pid) === 1 && !work.current.hasNextPage ? "responsibility" : "responsibilities"}</span></button></td>
+                    <td class="dim"><button type="button" class="fleet-count-action" aria-label={t("fleet.processes.responsibilitiesFor", { name: process.personal ? "ship" : process.label })} onClick={(event) => { event.stopPropagation(); onActivity({ processId: process.pid }); }}>
+                      <ResponsibilityCount count={work.current.isPending || work.current.isError ? null : responsibilityCount(process.pid)} more={work.current.hasNextPage} />
+                    </button></td>
                     <td>
                       <span class={`dot is-${processStateTone(process.state)}`} />
-                      {processStateLabel(process.state)}
+                      {t(processStateLabel(process.state))}
                     </td>
                     <td class="dim">{relativeTime(process.lastActiveAt, now)}</td>
                     <td class="num">{formatUsd(costFor(process.pid))}</td>
@@ -388,11 +394,11 @@ export function Fleet({ openRequest, onZen, onCommand, onDirtyChange, onActivity
                     <td colSpan={6}>
                       {shownProcesses.length < processes.length ? (
                         <button type="button" data-row={moreRow} onClick={() => setProcessLimit(shownProcesses.length + 20)}>
-                          show {Math.min(20, processes.length - shownProcesses.length)} more of {processes.length}
+                          {t("fleet.processes.showMore", { count: Math.min(20, processes.length - shownProcesses.length), total: processes.length })}
                         </button>
                       ) : (
                         <button type="button" data-row={moreRow} onClick={() => setProcessLimit(PROCESS_PAGE)}>
-                          show fewer
+                          {t("fleet.processes.showFewer")}
                         </button>
                       )}
                     </td>
@@ -450,18 +456,18 @@ export function Fleet({ openRequest, onZen, onCommand, onDirtyChange, onActivity
             />
           ) : missingRequestedRow ? (
             <div>
-              <h3>{requestedKind === "process" ? "Process" : "Place"}</h3>
+              <h3>{requestedProcess ? t("fleet.field.process") : t("fleet.field.place")}</h3>
               <div class="sub">{selected?.slice(selected.indexOf(":") + 1)}</div>
               {!connected || requestedQuery.isPending || requestedQuery.isFetching ? (
-                <p class="note"><LoadingState>{connected ? `Loading ${requestedKind}…` : "Connecting…"}</LoadingState></p>
+                <p class="note"><LoadingState>{!connected ? t("fleet.connecting") : requestedProcess ? t("fleet.missing.loadingProcess") : t("fleet.missing.loadingPlace")}</LoadingState></p>
               ) : requestedQuery.isError ? (
-                <p class="error" role="alert">Could not load this {requestedKind}: {requestedQuery.error.message}</p>
+                <p class="error" role="alert">{t(requestedProcess ? "fleet.missing.processFailed" : "fleet.missing.placeFailed", { error: requestedQuery.error.message })}</p>
               ) : (
-                <p class="note" role="status">This {requestedKind} is unavailable.</p>
+                <p class="note" role="status">{requestedProcess ? t("fleet.missing.processGone") : t("fleet.missing.placeGone")}</p>
               )}
             </div>
           ) : (
-            <p class="note">{connected ? "Nothing here yet." : "Connecting…"}</p>
+            <p class="note">{connected ? t("fleet.inspector.empty") : t("fleet.connecting")}</p>
           )}
         </FleetDialog>
       </div>
@@ -483,45 +489,46 @@ type PlaceInspectorProps = {
 };
 
 function PlaceInspector({ place, uid, focusPair, runsToday, now, onRun, onBrowse, onZen }: PlaceInspectorProps) {
+  const t = useT();
   return (
     <div>
       <h3>{place.label}</h3>
       <div class="sub">
-        {place.kind} · {placeStateLabel(place)}
+        {t(PLACE_KIND_LABELS[place.kind])} · {t(placeStateLabel(place))}
       </div>
       <div class="full-id">{place.id}</div>
       <dl class="fleet-kv">
-        <dt>Runtime</dt>
+        <dt>{t("fleet.field.runtime")}</dt>
         <dd>{place.platform || "—"}</dd>
-        <dt>Driver</dt>
+        <dt>{t("fleet.field.driver")}</dt>
         <dd>{place.version ? `${place.kind === "cloud" ? "gateway" : "gsvd"} ${place.version}` : place.kind === "cloud" ? "gateway" : "—"}</dd>
-        <dt>Last seen</dt>
-        <dd>{place.kind === "cloud" ? "always on" : relativeTime(place.lastSeenAt, now)}</dd>
-        <dt>Today</dt>
-        <dd>{runsToday} runs</dd>
+        <dt>{t("fleet.field.lastSeen")}</dt>
+        <dd>{place.kind === "cloud" ? t("fleet.place.alwaysOn") : relativeTime(place.lastSeenAt, now)}</dd>
+        <dt>{t("fleet.field.today")}</dt>
+        <dd>{t("fleet.place.runs", { count: runsToday })}</dd>
         {place.description ? (
           <>
-            <dt>About</dt>
+            <dt>{t("fleet.field.about")}</dt>
             <dd>{place.description}</dd>
           </>
         ) : null}
       </dl>
       <div class="fleet-actions">
         <button type="button" class="fleet-text-action is-primary" onClick={onRun} disabled={!place.online}>
-          run a command
+          {t("fleet.place.runCommand")}
         </button>
         <button type="button" class="fleet-text-action" onClick={onBrowse}>
-          browse files
+          {t("fleet.place.browse")}
         </button>
         <button type="button" class="fleet-text-action" onClick={() => onZen()}>
-          talk about it
+          {t("fleet.place.talk")}
         </button>
       </div>
       {place.instance
         ? <CloudBrowserActions targetId={place.id} allowed={uid === place.ownerUid} />
         : <PlaceActions place={place} uid={uid} focusPair={focusPair} />}
       <p class="note">
-        Run a command opens Chat on this place. Commands run directly and appear in Logs.
+        {t("fleet.place.note")}
       </p>
     </div>
   );
@@ -542,6 +549,7 @@ type ProcessInspectorProps = {
 };
 
 export function ProcessInspector({ client, process, requestedApprovalId, model, cost, responsibilities, canEditAi, now, onZen, lines, placeLabelFor }: ProcessInspectorProps) {
+  const t = useT();
   const queryClient = useQueryClient();
   const invalidate = () => {
     void queryClient.invalidateQueries({ queryKey: INSTRUMENT_PROCESSES_KEY });
@@ -557,24 +565,24 @@ export function ProcessInspector({ client, process, requestedApprovalId, model, 
     <div>
       <h3>{process.personal ? "ship" : process.label}</h3>
       <div class="sub">
-        {shortPid(process.pid)} · {processStateLabel(process.state)}
+        {shortPid(process.pid)} · {t(processStateLabel(process.state))}
       </div>
       <div class="full-id">{process.pid}</div>
       <dl class="fleet-kv">
-        <dt>State</dt>
+        <dt>{t("fleet.field.state")}</dt>
         <dd>
-          {process.activeRunId ? "running" : processStateLabel(process.state)}
-          {process.queuedCount > 0 ? ` · ${process.queuedCount} queued` : ""}
+          {t(process.activeRunId ? "fleet.process.state.running" : processStateLabel(process.state))}
+          {process.queuedCount > 0 ? ` · ${t("fleet.process.queued", { count: process.queuedCount })}` : ""}
         </dd>
-        <dt>Last model request</dt>
+        <dt>{t("fleet.field.lastModel")}</dt>
         <dd>{model ?? "—"}</dd>
-        <dt>Responsibilities</dt>
-        <dd>{responsibilities === 0 ? "none open" : `${responsibilities} open`}</dd>
-        <dt>Last active</dt>
+        <dt>{t("fleet.field.responsibilities")}</dt>
+        <dd>{responsibilities === 0 ? t("fleet.process.noneOpen") : t("fleet.process.open", { count: responsibilities })}</dd>
+        <dt>{t("fleet.field.lastActive")}</dt>
         <dd>{relativeTime(process.lastActiveAt, now)}</dd>
-        <dt>Today</dt>
+        <dt>{t("fleet.field.today")}</dt>
         <dd>{formatUsd(cost)}</dd>
-        <dt>Runs as</dt>
+        <dt>{t("fleet.field.runsAs")}</dt>
         <dd>
           {process.username} · {process.cwd}
         </dd>
@@ -585,21 +593,21 @@ export function ProcessInspector({ client, process, requestedApprovalId, model, 
       <div class="fleet-actions">
         {process.interactive && (
           <button type="button" class="fleet-text-action is-primary" onClick={() => onZen(undefined, process.personal ? undefined : process.pid)}>
-            open conversation
+            {t("fleet.process.openConversation")}
           </button>
         )}
         <button type="button" class="fleet-text-action is-danger" onClick={() => stop.mutate()} disabled={!process.activeRunId || stop.isPending}>
-          stop
+          {t("fleet.process.stop")}
         </button>
       </div>
       {error ? <p class="error">{String(error)}</p> : null}
       <ProcessAiControls pid={process.pid} canEdit={canEditAi} />
       {lines.length > 0 ? (
         <div class="inspector-lines">
-          <div class="kicker">recently</div>
+          <div class="kicker">{t("fleet.process.recently")}</div>
           {lines.map((line) => (
             <div class="line" key={line.id}>
-              <span class="t">{relativeTime(line.timestamp, now)}</span> <span class="place">{placeLabelFor(line.place)}</span> {line.what}
+              <span class="t">{relativeTime(line.timestamp, now)}</span> <span class="place">{placeLabelFor(line.place)}</span> {t(line.action.key, line.action.values)}
               <span class="m"> · {line.detail}</span>
             </div>
           ))}
@@ -607,4 +615,14 @@ export function ProcessInspector({ client, process, requestedApprovalId, model, 
       ) : null}
     </div>
   );
+}
+
+/** A process's open responsibilities: the bare count in the table, the counted phrase where the table collapses on narrow screens. */
+function ResponsibilityCount({ count, more }: { count: number | null; more: boolean }) {
+  const t = useT();
+  return <>
+    <span class="fleet-desktop-label">{count === null ? "-" : `${count}${more ? "+" : ""}`}</span>
+    <span class="fleet-mobile-label">{count === null ? t("fleet.processes.responsibilitiesPending")
+      : more ? t("fleet.processes.responsibilitiesMore", { count }) : t("fleet.processes.responsibilityCount", { count })}</span>
+  </>;
 }

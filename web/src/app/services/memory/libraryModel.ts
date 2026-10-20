@@ -183,7 +183,7 @@ export function buildLibraryTree(entries: readonly LibraryEntry[], db: string): 
       id: `file:${entry.path}`,
       name: parts[parts.length - 1] ?? entry.path,
       path: local,
-      title: local === "index.md" ? "Overview" : entry.title,
+      title: entry.title,
       kind: "file",
       children: [],
       entry,

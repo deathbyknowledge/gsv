@@ -307,7 +307,7 @@ const Receipt = memo(function Receipt({ receipt, who, places, collections, open,
             <div class="memory-references">{rich(t("chat.receipt.memory"), { pages: <>{pages.map((page, index) => (
               <span key={`${page.db}:${page.path}`}>
                 {index > 0 ? ", " : ""}
-                <button type="button" class="work-link" title={page.path} onClick={() => onMemory?.(page)}>{page.path === `${page.db}/index.md` ? t("chat.receipt.overview") : libraryTitleFromPath(page.path)}</button>
+                <button type="button" class="work-link" title={page.path} onClick={() => onMemory?.(page)}>{page.path === `${page.db}/index.md` ? t("memory.overview") : libraryTitleFromPath(page.path)}</button>
               </span>
             ))}</> })}</div>
           ) : null}
@@ -1029,7 +1029,7 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
     pid, connected, outbox.sending, outbox.cancelUpload, outbox.retry, outbox.discard, t]);
 
   /* the status line */
-  const selectorPlaces = useMemo(() => orderPlaces(targetsQuery.data ?? []), [targetsQuery.data]);
+  const selectorPlaces = useMemo(() => orderPlaces(targetsQuery.data ?? []), [targetsQuery.data, t]);
   /* the cloud is always listed; once places are known and it is alone, it is not a choice, so it reads as plain text and offers to connect a place */
   const cloudAlone = !!targetsQuery.data && !targetsQuery.isError && selectorPlaces.length === 1;
 

@@ -39,7 +39,6 @@ export type LibraryLoadArgs = {
 export type LibraryMutationResult = {
   db: string;
   openPath: string;
-  statusText: string;
 };
 
 export type LibraryMode = "read" | "edit" | "ingest" | "build";

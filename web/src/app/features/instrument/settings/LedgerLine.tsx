@@ -43,7 +43,7 @@ export function LineInspector({
   const failed = line.outcome === "failed" || line.outcome === "denied";
   return (
     <div>
-      <h3>{line.what}</h3>
+      <h3>{t(line.action.key, line.action.values)}</h3>
       <div class="sub">
         {placeLabelFor(line.place)} · <LineTime timestamp={line.timestamp} />
       </div>

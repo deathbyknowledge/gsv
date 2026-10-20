@@ -103,7 +103,7 @@ describe("Fleet process navigation", () => {
     function Harness() {
       tree = LineInspector({
         line: { id: "call", timestamp: 1, processId: "worker", place: "gsv", syscall: "fs.read",
-          what: "read a file", detail: "", args: "", outcome: "done", runId: "run", costNanoUsd: null },
+          action: { key: "fleet.ledger.fsRead" }, detail: "", args: "", outcome: "done", runId: "run", costNanoUsd: null },
         placeLabelFor: (target) => target, processName: "worker", technical: false, onProcess,
       });
       return null;

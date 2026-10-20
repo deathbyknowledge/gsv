@@ -1,6 +1,8 @@
 import { useEffect, useState } from "preact/hooks";
 import { ancestorFolderPaths } from "../../../services/memory/libraryModel";
 import type { LibraryEntry, LibraryTreeNode } from "../../../services/memory/libraryTypes";
+import { useT } from "../../../i18n/locale";
+import { memoryPageTitle } from "./memoryTree";
 
 export function MemoryPageTree({ nodes, db, selectedPath, hidden, onOpen }: {
   nodes: readonly LibraryTreeNode[];
@@ -9,6 +11,7 @@ export function MemoryPageTree({ nodes, db, selectedPath, hidden, onOpen }: {
   hidden: boolean;
   onOpen(entry: LibraryEntry): void;
 }) {
+  const t = useT();
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(() => new Set());
   useEffect(() => {
     if (!selectedPath) return;
@@ -34,7 +37,7 @@ export function MemoryPageTree({ nodes, db, selectedPath, hidden, onOpen }: {
         class={`page${entry.path === selectedPath ? " is-sel" : ""}`}
         title={node.path}
         onClick={() => onOpen(entry)}
-      ><span class="title">{node.title || entry.path}</span></button>;
+      ><span class="title">{memoryPageTitle(t, entry, db)}</span></button>;
     }
     const path = `${db}/${node.path}`;
     return <details

@@ -22,7 +22,7 @@ export function Logs({ account, onProcess }: { account: ConsoleAccount; onProces
   const query = useLedger(allowed);
   const targets = useQuery({ queryKey: INSTRUMENT_TARGETS_KEY, queryFn: () => loadConsoleTargets(client), enabled: connected && allowed && canConfigure(account, "sys.target.list") });
   const processes = useQuery({ queryKey: INSTRUMENT_PROCESSES_KEY, queryFn: () => loadConsoleProcesses(client), enabled: connected && allowed && canConfigure(account, "proc.list") });
-  const places = useMemo(() => orderPlaces(targets.data ?? []), [targets.data]);
+  const places = useMemo(() => orderPlaces(targets.data ?? []), [targets.data, t]);
   const lines = useMemo(() => query.data?.pages.flatMap((page) => page.lines) ?? [], [query.data]);
   const [selected, setSelected] = useState<string | null>(null);
   /* the technical view shows raw syscalls and arguments; t toggles it */
@@ -57,7 +57,7 @@ export function Logs({ account, onProcess }: { account: ConsoleAccount; onProces
         }}>
           <span role="cell" class="t">{clockTime(entry.timestamp)}</span>
           <span role="cell" class="place">{placeLabel(entry.place)}</span>
-          <span role="cell" class="what">{technical ? entry.syscall : entry.what}</span>
+          <span role="cell" class="what">{technical ? entry.syscall : t(entry.action.key, entry.action.values)}</span>
           <span role="cell" class="m detail" title={entry.detail}>{entry.detail || "—"}</span>
           <span role="cell" class={`outcome ${entry.outcome === "completed" ? "ok" : entry.outcome === "failed" || entry.outcome === "denied" ? "no" : "m"}`}>{outcomeWord(t, entry.outcome)}</span>
           <span role="cell" class="m who">{processName(entry.processId)}</span>

@@ -1,14 +1,15 @@
 import { useTerminalSessions } from "../../../services/terminal/TerminalProvider";
-import { terminalFinished, type TerminalSession } from "../../../services/terminal/terminalSessions";
+import { terminalFinished, terminalNotice, type TerminalSession } from "../../../services/terminal/terminalSessions";
 import { useT } from "../../../i18n/locale";
 
 export function TerminalControls({ session }: { session: TerminalSession }) {
   const t = useT();
   const { sessions, connected } = useTerminalSessions();
   const live = !terminalFinished(session);
+  const notice = terminalNotice(t, session);
   return <div class="terminal-controls">
     {session.truncated && <div class="terminal-note">{t("chat.terminal.latest")}</div>}
-    {(session.error || session.actionError) && <div class="terminal-error" role="alert">{session.actionError || session.error}</div>}
+    {notice && <div class="terminal-error" role="alert">{notice}</div>}
     {live && <div class="terminal-actions">
       {session.sessionId && <button type="button" onClick={() => sessions.toggleInput(session.id)} aria-expanded={session.inputOpen}>{t("chat.terminal.input")}</button>}
       {session.status === "unavailable" && session.sessionId && <button type="button" disabled={!connected || !!session.action} onClick={() => sessions.retry(session.id)}>{t("chat.retry")}</button>}

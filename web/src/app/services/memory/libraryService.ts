@@ -31,6 +31,7 @@ import type {
   LibraryWorkspaceState,
 } from "./libraryTypes";
 import { requestFsRead } from "../gateway/fsRead";
+import { t } from "../../i18n/locale";
 
 type LibraryClient = Pick<GSVClient, "call" | "request">;
 
@@ -146,7 +147,6 @@ export async function createLibraryCollection(
   return {
     db,
     openPath: `${db}/index.md`,
-    statusText: `Created ${db}`,
   };
 }
 
@@ -160,7 +160,7 @@ export async function saveLibraryPage(
     throw new Error("page path is required");
   }
   if (!path.startsWith(`${db}/`)) {
-    throw new Error("This page does not belong to the selected collection.");
+    throw new Error(t("memory.error.otherCollection"));
   }
   const collection = await requireCollection(client, db);
   const localPath = libraryPathInDb(path, db);
@@ -168,11 +168,11 @@ export async function saveLibraryPage(
   if (input.createOnly || input.expectedMarkdown !== undefined) {
     const history = await client.call("repo.log", { repo: collection.repo, limit: 1 });
     expectedHead = history.entries[0]?.hash;
-    if (!expectedHead) throw new Error("This collection has no saved revision to edit.");
+    if (!expectedHead) throw new Error(t("memory.error.noRevision"));
     const current = await readRepoPath(client, collection.repo, localPath);
-    if (input.createOnly && current.kind !== "missing") throw new Error("A page with this name already exists. Choose another name.");
+    if (input.createOnly && current.kind !== "missing") throw new Error(t("memory.error.exists"));
     if (input.expectedMarkdown !== undefined && (current.kind !== "file" || current.isBinary || current.content !== input.expectedMarkdown)) {
-      throw new Error("This page changed since you opened the editor. Your draft is kept; reopen the latest page before saving.");
+      throw new Error(t("memory.error.changed"));
     }
   }
   const ops: RepoApplyOp[] = [{
@@ -197,7 +197,6 @@ export async function saveLibraryPage(
   return {
     db,
     openPath: path,
-    statusText: `Saved ${path}`,
   };
 }
 
@@ -230,11 +229,7 @@ export async function ingestLibrarySource(
     "",
   ].join("\n");
 
-  const result = await saveLibraryPage(client, { db, path, markdown });
-  return {
-    ...result,
-    statusText: `Captured ${sourceTarget}:${sourcePath}`,
-  };
+  return saveLibraryPage(client, { db, path, markdown });
 }
 
 export async function startLibraryBuild(
@@ -287,7 +282,6 @@ export async function startLibraryBuild(
   return {
     db,
     openPath: `${db}/index.md`,
-    statusText: `Started background wiki build for ${db}`,
   };
 }
 
@@ -601,7 +595,7 @@ async function indexUpdateOp(
   } else if (existing.kind === "file" && !existing.isBinary && existing.content !== null) {
     current = existing.content;
   } else {
-    throw new Error("The collection overview is not a readable text file.");
+    throw new Error(t("memory.error.overviewUnreadable"));
   }
   const updated = mergeLibraryIndexPage(current, pageEntry);
   return updated === current ? null : { type: "put", path: "index.md", content: updated };
