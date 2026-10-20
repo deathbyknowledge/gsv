@@ -83,6 +83,8 @@ rules. Accepting or enabling the setting does not wake Ship or replay existing
 messages; the next incoming message starts handling. Turning it off ends that
 standing assignment. Replies to tasks you assign separately can still resume
 those tasks until they finish. Messages distinguish the person from their Ship.
+Ship receives each message it handles with its photos and files, as it does a
+messenger message, and keeps them as its own copies.
 
 For a particular task, choose **ask Ship** in the conversation. This opens an
 editable request in your ordinary Ship chat. Review it and send it when ready.

@@ -27,7 +27,7 @@ import {
   type ProcIpcDeliverResult, type ProcMediaInput, type ProcSendArgs, type ProcSendResult, type ResourceBlock,
   type ProcKillResult, type ProcResetResult, type ProcRunToolFinishedSignal, type ProcRunToolStartedSignal,
   type InteractionOrigin, type JsonObject,
-  type ProcHistoryEvent, REQUEST_CANCEL_SIGNAL, jsonObjectSchema,
+  type ProcHistoryEvent, type ProcHistoryEventPayload, REQUEST_CANCEL_SIGNAL, jsonObjectSchema,
 } from "@humansandmachines/gsv/protocol";
 import { agentArchiveMediaPath } from "../../shared/process-media-path";
 import { parseInteractionOrigin, serializeInteractionOrigin, emptyProcessArchive } from "../history/helpers";
@@ -1607,49 +1607,77 @@ export class ProcessController {
       throw new Error("Runtime event id is invalid");
     }
     const runId = eventId;
-    const historyEvent: ProcHistoryEvent = event.type === "r12y.ready"
-      ? {
-          kind: "responsibility.ready",
-          payload: {
-            batchId: event.batchId,
-            ledgerRevision: event.ledgerRevision,
-            responsibilityIds: event.responsibilityIds,
-            receivedAtMs: Date.now(),
-          },
-          severity: "info",
-          audience: "model",
-        }
-      : {
-          kind: "adapter.work.returned",
-          payload: { eventId, workPid: event.workPid },
-          severity: "info",
-          audience: "model",
-        };
-    const admission =
-      event.type === "r12y.ready"
-        ? await this.handleRuntimeEvent(renderHistoryEvent(historyEvent), event.type, {
-            runId,
-            event: historyEvent,
-            kind: event.type,
-            dedupeId: eventId,
-            provenance: JSON.stringify({
-              source: "kernel",
-              eventId,
-              eventType: event.type,
-              batchId: event.batchId,
-              ledgerRevision: event.ledgerRevision,
-            }),
-            responsibilityBatch: {
-              batchId: event.batchId,
-              ledgerRevision: event.ledgerRevision,
-              responsibilityIds: event.responsibilityIds,
-            },
-          })
-        : await this.handleRuntimeEvent(renderHistoryEvent(historyEvent), event.type, {
-            distinctRun: true,
-            runId,
-            event: historyEvent,
-          });
+    const admitted = this.runtimeEventAdmission(eventId);
+    if (admitted) return { eventId, runId: admitted.runId, queued: admitted.queued };
+    let admission: RuntimeEventAdmission;
+    if (event.type === "r12y.ready") {
+      const historyEvent: ProcHistoryEvent = {
+        kind: "responsibility.ready",
+        payload: {
+          batchId: event.batchId,
+          ledgerRevision: event.ledgerRevision,
+          responsibilityIds: event.responsibilityIds,
+          receivedAtMs: Date.now(),
+        },
+        severity: "info",
+        audience: "model",
+      };
+      admission = await this.handleRuntimeEvent(renderHistoryEvent(historyEvent), event.type, {
+        runId,
+        event: historyEvent,
+        kind: event.type,
+        dedupeId: eventId,
+        provenance: JSON.stringify({
+          source: "kernel",
+          eventId,
+          eventType: event.type,
+          batchId: event.batchId,
+          ledgerRevision: event.ledgerRevision,
+        }),
+        responsibilityBatch: {
+          batchId: event.batchId,
+          ledgerRevision: event.ledgerRevision,
+          responsibilityIds: event.responsibilityIds,
+        },
+      });
+    } else if (event.type === "contact.message") {
+      const { media, attachmentErrors } = await this.retainContactAttachments(event.media ?? []);
+      const payload: ProcHistoryEventPayload<"contact.message"> = {
+        contactId: event.contactId,
+        conversationId: event.conversationId,
+        messageId: event.messageId,
+        from: event.from,
+        text: event.text,
+        responsibilityId: event.responsibilityId,
+      };
+      if (attachmentErrors.length > 0) payload.attachmentErrors = attachmentErrors;
+      const historyEvent: ProcHistoryEvent = { kind: "contact.message", payload, severity: "info", audience: "model" };
+      admission = await this.handleRuntimeEvent(renderHistoryEvent(historyEvent), event.type, {
+        runId,
+        event: historyEvent,
+        kind: event.type,
+        dedupeId: eventId,
+        provenance: JSON.stringify({ source: "kernel", eventId, eventType: event.type, contactId: event.contactId }),
+        responsibilityBatch: {
+          batchId: eventId,
+          ledgerRevision: event.ledgerRevision,
+          responsibilityIds: [event.responsibilityId],
+        },
+        media,
+      });
+    } else {
+      const historyEvent: ProcHistoryEvent = {
+        kind: "adapter.work.returned",
+        payload: { eventId, workPid: event.workPid },
+        severity: "info",
+        audience: "model",
+      };
+      admission = await this.handleRuntimeEvent(renderHistoryEvent(historyEvent), event.type, {
+        distinctRun: true,
+        runId,
+        event: historyEvent,
+      });
+    }
     if (!admission.ok) {
       throw new Error(admission.error);
     }
@@ -1658,6 +1686,23 @@ export class ProcessController {
       runId: admission.runId,
       queued: admission.queued,
     };
+  }
+
+  /** Contact attachments become this Process's own media, as messenger attachments do. */
+  private async retainContactAttachments(blocks: ResourceBlock[]): Promise<{
+    media: ProcMediaInput[];
+    attachmentErrors: string[];
+  }> {
+    const media: ProcMediaInput[] = [];
+    const attachmentErrors: string[] = [];
+    for (const block of blocks) {
+      try {
+        media.push(...await this.host.resources.resolveIncomingMedia([block]));
+      } catch (error) {
+        attachmentErrors.push(errorMessageFromUnknown(error));
+      }
+    }
+    return { media, attachmentErrors };
   }
 
   async handleProcScheduleDeliver(
@@ -1719,6 +1764,8 @@ export class ProcessController {
       dedupeId?: string;
       responsibilityBatch?: ResponsibilityBatchState;
       event?: ProcHistoryEvent;
+      /** Attachments carried by the event, retained as this Process's media. */
+      media?: ProcMediaInput[];
     } = {},
   ): Promise<RuntimeEventAdmission> {
     if (!this.host.isInitialized()) {
@@ -1741,6 +1788,7 @@ export class ProcessController {
     const timestamp = Date.now();
     const currentRun = this.host.runs.active;
     const nextRunId = currentRun ? null : (options.runId ?? crypto.randomUUID());
+    const media = options.media?.length ? options.media : undefined;
     const { messageId, wakeRunId } = this.host.ctx.storage.transactionSync(() => {
       if (currentRun && options.distinctRun) {
         if (content === null) {
@@ -1765,6 +1813,7 @@ export class ProcessController {
           provenance: options.provenance
             ? jsonObjectSchema.parse(JSON.parse(options.provenance))
             : undefined,
+          media: media ? (stringifyStoredProcessMedia(media) ?? undefined) : undefined,
         };
         if (nextRunId) {
           messageOptions.runId = nextRunId;
@@ -1782,6 +1831,7 @@ export class ProcessController {
         if (options.responsibilityBatch) {
           nextRun.responsibilityBatches = [options.responsibilityBatch];
         }
+        if (media && messageId >= 0) nextRun.pendingMediaMessageId = messageId;
         this.host.runs.active = nextRun;
       } else {
         currentRun.pendingRuntimeEvents = (currentRun.pendingRuntimeEvents ?? 0) + 1;
@@ -1814,6 +1864,27 @@ export class ProcessController {
         `runtime event queue notification for ${wakeRunId}`,
         this.host.signals.changed(["queue"], { enqueuedRunId: wakeRunId }),
       );
+    } else if (nextRunId && media && messageId >= 0) {
+      // The run starts once its media is prepared, as for a message with attachments.
+      try {
+        await this.host.run.schedule(
+          new Date(Date.now() + MEDIA_PREPARATION_TIMEOUT_MS),
+          "onMediaPreparationTimeout",
+          nextRunId,
+        );
+        this.host.startBackground(
+          `media preparation for ${nextRunId}`,
+          this.host.resources.prepareRunMedia(nextRunId, messageId, media),
+        );
+      } catch (error) {
+        await this.host.resources.failPendingMedia(
+          nextRunId,
+          messageId,
+          `Failed to schedule media timeout: ${errorMessageFromUnknown(error)}`,
+          "media.error",
+        );
+      }
+      this.announceRun(nextRunId, reason);
     } else if (nextRunId) {
       const scheduled = await this.scheduleRunOrFinish(
         nextRunId,

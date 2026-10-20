@@ -124,6 +124,15 @@ export const procHistoryEventPayloadSchemas = {
     responsibilityIds: z.array(z.string()),
     receivedAtMs: z.number(),
   }),
+  "contact.message": z.strictObject({
+    contactId: z.string(),
+    conversationId: z.string(),
+    messageId: z.string(),
+    from: z.string(),
+    text: z.string(),
+    responsibilityId: z.string(),
+    attachmentErrors: z.optional(z.array(z.string())),
+  }),
   "correction.text-only": z.strictObject({
     attempt: nonNegativeIntegerSchema,
     limit: nonNegativeIntegerSchema,
@@ -270,6 +279,19 @@ export type ProcHistoryEventPayloadMap = {
     responsibilityIds: string[];
     receivedAtMs: number;
   };
+  /** One message from a contact Ship handles; its attachments are the event's media. */
+  "contact.message": {
+    contactId: string;
+    conversationId: string;
+    messageId: string;
+    /** The contact's local alias or display name. */
+    from: string;
+    text: string;
+    /** The open responsibility this message belongs to. */
+    responsibilityId: string;
+    /** Attachments that could not be retrieved from the contact's Ship. */
+    attachmentErrors?: string[];
+  };
   "correction.text-only": { attempt: number; limit: number };
   "correction.exhausted": { attempts: number; limit: number; conversationId?: string; messageId?: string };
   "generation.failed": { reason: string; error: string; provider?: string; model?: string };
@@ -354,6 +376,7 @@ export const procHistoryEventSchema: z.ZodMiniType<ProcHistoryEvent> = z.discrim
   eventSchema("context.failed"),
   eventSchema("responsibility.revision"),
   eventSchema("responsibility.ready"),
+  eventSchema("contact.message"),
   eventSchema("correction.text-only"),
   eventSchema("correction.exhausted"),
   eventSchema("generation.failed"),

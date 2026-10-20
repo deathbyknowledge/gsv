@@ -5,6 +5,7 @@ import { testPeer } from "../../test-support/peers";
 import type { KernelContext } from "../context";
 import { FederationStore, type FederationContactRecord, type FederationOutboxLocalMessage } from "../federation-store";
 import { ResponsibilityStore } from "../responsibility-store";
+import { ShipEventStore } from "../ship-event-store";
 import { admitContactMessage, bindContactReply, endContactHandling } from "./attention";
 import { handleContactPreferencesUpdate } from "./preferences";
 
@@ -21,6 +22,29 @@ describe("contact attention admission", () => {
       expect(admitContactMessage(contact, incoming.inbox, incoming.message, ctx)).toBe(false);
       expect(admitContactMessage(contact, incoming.inbox, incoming.message, ctx)).toBe(false);
       expect(ctx.responsibilities.list({ ownerUid: OWNER.uid, includeTerminal: true }).records).toEqual([]);
+    });
+  });
+
+  it("queues each handled message as its own Ship event without rewriting or waking the ledger", async () => {
+    await runWithRealKernelSql(async (_sql, storage) => {
+      const ctx = context(storage);
+      const contact = activate(ctx);
+      await handleContactPreferencesUpdate({ contactId: contact.id, expectedRevision: 1, patch: { shipHandlesMessages: true } }, ctx);
+      const photo = receive(contact, ctx, "human");
+      const caption = receive(contact, ctx, "human");
+      expect(admitContactMessage(contact, photo.inbox, photo.message, ctx)).toBe(true);
+      const work = ctx.responsibilities.list({ ownerUid: OWNER.uid }).records[0]!;
+      expect(work).toMatchObject({ title: "Pending messages from Remote", state: "open", assignee: { kind: "ship" } });
+      expect(admitContactMessage(contact, caption.inbox, caption.message, ctx)).toBe(true);
+      expect(ctx.responsibilities.get(OWNER.uid, work.id)?.revision).toBe(work.revision);
+      expect(ctx.responsibilities.createReadyBatch(OWNER.uid, Date.now())).toBeNull();
+
+      const first = ctx.shipEvents.next(OWNER.uid)!;
+      expect(first).toMatchObject({ eventId: `contact.message:${photo.message.id}`, event: {
+        type: "contact.message", contactId: contact.id, messageId: photo.message.id, from: "Remote", text: "Friday works", responsibilityId: work.id,
+      } });
+      ctx.shipEvents.delivered(first.eventId);
+      expect(ctx.shipEvents.next(OWNER.uid)?.eventId).toBe(`contact.message:${caption.message.id}`);
     });
   });
 
@@ -67,7 +91,8 @@ describe("contact attention admission", () => {
         const incoming = receive(contact, ctx, kind);
         expect(admitContactMessage(contact, incoming.inbox, incoming.message, ctx)).toBe(true);
         const updated = ctx.responsibilities.get(OWNER.uid, work.id)!;
-        expect(updated).toMatchObject({ state: "open", details: { contactReply: { messageId: incoming.message.id, provenance: kind } } });
+        expect(updated.state).toBe("open");
+        expect(updated.details).toEqual(work.details);
         expect(admitContactMessage(contact, incoming.inbox, incoming.message, ctx)).toBe(false);
         expect(ctx.responsibilities.get(OWNER.uid, work.id)?.revision).toBe(updated.revision);
       }
@@ -201,7 +226,7 @@ describe("contact attention admission", () => {
 
 function context(storage: DurableObjectStorage): KernelContext {
   const result = {
-    federation: new FederationStore(storage), responsibilities: new ResponsibilityStore(storage),
+    federation: new FederationStore(storage), responsibilities: new ResponsibilityStore(storage), shipEvents: new ShipEventStore(storage),
     peer: testPeer({ kind: "human", account: OWNER, calls: ["contact.*", "r12y.*"] }),
     callerOwnerUid: OWNER.uid, connection: {},
     auth: { getPasswdByUid: () => OWNER, getShadowByUsername: () => ({ hash: "unlocked" }), isPersonalAgentUid: () => false },

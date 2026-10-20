@@ -7,7 +7,8 @@ import type { ProcessRuntimeEvent } from "../../protocol/process-frames";
 import type { ResponsibilityBatchState, RunState } from "../run/state";
 import type { TerminalResponsibilitySnapshot } from "./contracts";
 import {
-  processRuntimeEventSchema, responsibilityReadyRuntimeEventSchema, workReturnedRuntimeEventSchema,
+  contactMessageRuntimeEventSchema, processRuntimeEventSchema, responsibilityReadyRuntimeEventSchema,
+  workReturnedRuntimeEventSchema,
 } from "./schemas";
 import { z } from "zod";
 
@@ -21,6 +22,11 @@ export function normalizeProcessRuntimeEvent(
   if (discriminator.data.type === "r12y.ready") {
     const result = responsibilityReadyRuntimeEventSchema.safeParse(value);
     if (!result.success) throw new Error("r12y.ready fields are invalid");
+    return result.data;
+  }
+  if (discriminator.data.type === "contact.message") {
+    const result = contactMessageRuntimeEventSchema.safeParse(value);
+    if (!result.success) throw new Error("contact.message fields are invalid");
     return result.data;
   }
   if (discriminator.data.type !== "adapter.work.returned") {

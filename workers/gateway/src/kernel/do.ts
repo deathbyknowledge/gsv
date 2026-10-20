@@ -187,6 +187,8 @@ import type {
   IpcCallTimeout,
 } from "./do-shared";
 import { ResponsibilityRuntime } from "./responsibility-runtime";
+import { ShipEventRuntime } from "./ship-event-runtime";
+import { ShipEventStore } from "./ship-event-store";
 import { FederationRuntime } from "./federation-runtime";
 import { ProcessOutput } from "./process-output";
 import { AdapterDelivery } from "./adapter-delivery";
@@ -247,6 +249,7 @@ type KernelTask =
       callback: "onResponsibilityWake";
       payload: { ownerUid: number; generation: number };
     }
+  | { callback: "onShipEvents"; payload: number }
   | { callback: "onLedgerRotate"; payload: string }
   | { callback: "onBrowserHandoffs"; payload: null };
 
@@ -323,6 +326,7 @@ const KERNEL_TASK_SCHEMA = z.discriminatedUnion("callback", [
       generation: z.number().int().nonnegative(),
     }),
   }),
+  z.object({ callback: z.literal("onShipEvents"), payload: z.number().int().nonnegative() }),
   z.object({ callback: z.literal("onLedgerRotate"), payload: z.string() }),
   z.object({ callback: z.literal("onBrowserHandoffs"), payload: z.null() }),
 ]);
@@ -395,6 +399,7 @@ export function kernelRuntimes(host: Kernel) {
     processOutput: new ProcessOutput(host),
     federationRuntime: new FederationRuntime(host),
     responsibilityRuntime: new ResponsibilityRuntime(host),
+    shipEventRuntime: new ShipEventRuntime(host),
     browserHandoffs: new BrowserHandoffRuntime(host),
     ipc: new IpcRuntime(host),
     scheduleRuntime: new ScheduleRuntime(host),
@@ -435,6 +440,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
   readonly schedules: ScheduleStore;
   readonly mailboxes: MailboxStore;
   readonly responsibilities: ResponsibilityStore;
+  readonly shipEvents: ShipEventStore;
   readonly welcome: InitialOnboarding;
   readonly responsibilitySources: ResponsibilitySourcePolicyStore;
   readonly federation: FederationStore;
@@ -454,6 +460,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
   declare readonly scheduleRuntime: ScheduleRuntime;
   declare readonly ipc: IpcRuntime;
   declare readonly responsibilityRuntime: ResponsibilityRuntime;
+  declare readonly shipEventRuntime: ShipEventRuntime;
   declare readonly federationRuntime: FederationRuntime;
   declare readonly processOutput: ProcessOutput;
   declare readonly adapterDelivery: AdapterDelivery;
@@ -534,6 +541,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
     this.mailboxes = new MailboxStore(sql);
 
     this.responsibilities = new ResponsibilityStore(ctx.storage, (ownerUid) => this.connectionRuntime.broadcastToUserUid(ownerUid, "r12y.changed"));
+    this.shipEvents = new ShipEventStore(ctx.storage);
     this.welcome = new InitialOnboarding(ctx.storage, this.responsibilities);
     this.responsibilitySources = new ResponsibilitySourcePolicyStore(sql, (ownerUid) => this.connectionRuntime.broadcastToUserUid(ownerUid, "r12y.source.changed"));
     this.federation = new FederationStore(ctx.storage);
@@ -567,6 +575,12 @@ export class Kernel extends DurableObject<GatewayEnv> {
     ctx.waitUntil(this.responsibilityRuntime.recoverResponsibilityWakes().catch((error) => {
       console.warn(
         "[Kernel] Failed to recover responsibility wakes:",
+        error instanceof Error ? error.message : String(error),
+      );
+    }));
+    ctx.waitUntil(this.shipEventRuntime.recover().catch((error) => {
+      console.warn(
+        "[Kernel] Failed to recover Ship events:",
         error instanceof Error ? error.message : String(error),
       );
     }));
@@ -934,6 +948,9 @@ export class Kernel extends DurableObject<GatewayEnv> {
         return;
       case "onResponsibilityWake":
         await this.responsibilityRuntime.onResponsibilityWake(task.payload, task);
+        return;
+      case "onShipEvents":
+        await this.shipEventRuntime.onShipEvents(task.payload, task);
         return;
       case "onBrowserHandoffs":
         await this.browserHandoffs.run(task.id);
@@ -1563,6 +1580,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
       schedules: this.schedules,
       mailboxes: this.mailboxes,
       responsibilities: this.responsibilities,
+      shipEvents: this.shipEvents,
       welcome: this.welcome,
       responsibilitySources: this.responsibilitySources,
       federation: this.federation,
@@ -1587,6 +1605,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
         await this.cancelSchedule(wakeScheduleId);
       },
       reconcileResponsibilityWake: this.responsibilityRuntime.reconcileResponsibilityWake.bind(this.responsibilityRuntime),
+      queueShipEvents: this.shipEventRuntime.queue.bind(this.shipEventRuntime),
       trackBrowserHandoff: this.browserHandoffs.track.bind(this.browserHandoffs),
       scheduleManagedOutboundEnqueue: async (outboundId, dueAtMs) => {
         await this.scheduleManagedOutboundEnqueue(outboundId, dueAtMs);
