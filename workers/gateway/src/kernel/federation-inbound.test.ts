@@ -917,7 +917,7 @@ describe("federation inbound boundary", () => {
       });
     });
     const wake = vi.spyOn(ShipEventRuntime.prototype, "queue")
-      .mockImplementationOnce(() => { throw new Error("Injected scheduler failure"); });
+      .mockRejectedValueOnce(new Error("Injected scheduler failure"));
     const envelope = await signedEnvelope({
       kind: "message", messageId: "message:handoff", threadId: contact.threadId, text: "Continue our conversation",
     }, "delivery:handoff");

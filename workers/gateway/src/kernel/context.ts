@@ -119,7 +119,7 @@ export type KernelContext = {
   cancelScheduleWake: (wakeScheduleId: string) => Promise<void>;
   reconcileResponsibilityWake: (ownerUid: number) => Promise<void>;
   /** Deliver the owner's queued Ship events, in order, after the producer's transaction commits. */
-  queueShipEvents: (ownerUid: number) => void;
+  queueShipEvents: (ownerUid: number) => Promise<void>;
   trackBrowserHandoff: (ownerUid: number, handoff: BrowserHandoff) => Promise<void>;
   scheduleManagedOutboundEnqueue: (
     outboundId: string,

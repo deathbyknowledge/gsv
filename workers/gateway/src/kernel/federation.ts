@@ -1930,7 +1930,7 @@ async function commitInboundMessage(
   if (appended.created) broadcastCommittedMessage(contact, appended.message, ctx);
   admitContactMessage(contact, inbox, appended.message, ctx);
   // Queue even on recovery: the event may have committed before its delivery was scheduled.
-  ctx.queueShipEvents(contact.ownerUid);
+  await ctx.queueShipEvents(contact.ownerUid);
 }
 
 async function commitInboundRequest(

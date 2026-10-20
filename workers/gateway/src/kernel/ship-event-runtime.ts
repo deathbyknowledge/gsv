@@ -11,8 +11,8 @@ const MAX_RETRY_DELAY_MS = 5 * 60_000;
 export class ShipEventRuntime {
   constructor(readonly host: Kernel) {}
 
-  queue(ownerUid: number): void {
-    this.host.ctx.waitUntil(this.schedule(ownerUid, Date.now()));
+  queue(ownerUid: number): Promise<void> {
+    return this.schedule(ownerUid, Date.now());
   }
 
   async recover(): Promise<void> {
