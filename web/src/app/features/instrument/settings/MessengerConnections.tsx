@@ -9,18 +9,27 @@ import { INSTRUMENT_MESSENGERS_KEY } from "../wire/queryKeys";
 import { refreshMessengerConnections } from "../wire/messengerSync";
 import { MessengerPairing } from "./Telegram";
 import type { ManagedMessengerId } from "./messengers/ManagedTelegramOnboardingFlow";
-import { loadMessengerConnections, messengerConnectionStatus } from "./messengerConnectionsService";
+import { loadMessengerConnections, messengerConnectionStatus, type MessengerConnectionStatus } from "./messengerConnectionsService";
 import { canConfigure } from "./settingsModel";
 import { SettingsError, type SettingsSectionProps } from "./settingsShared";
+import { useT, type TextKey } from "../../../i18n/locale";
 
-const MESSENGERS: ReadonlyArray<{ id: ManagedMessengerId; name: string; blurb: string }> = [
-  { id: "telegram", name: "Telegram", blurb: "Talk to your Ship from Telegram." },
-  { id: "slack", name: "Slack", blurb: "Talk to your Ship from your Slack workspace." },
-  { id: "discord", name: "Discord", blurb: "Talk to your Ship from Discord DMs and servers." },
-  { id: "whatsapp", name: "WhatsApp", blurb: "Talk to your Ship from WhatsApp." },
+const MESSENGERS: ReadonlyArray<{ id: ManagedMessengerId; name: string; blurb: TextKey }> = [
+  { id: "telegram", name: "Telegram", blurb: "settings.messengers.telegram" },
+  { id: "slack", name: "Slack", blurb: "settings.messengers.slack" },
+  { id: "discord", name: "Discord", blurb: "settings.messengers.discord" },
+  { id: "whatsapp", name: "WhatsApp", blurb: "settings.messengers.whatsapp" },
 ];
+const STATUS_LABELS = {
+  connected: "settings.messengers.status.connected",
+  "reconnect-needed": "settings.messengers.status.reconnectNeeded",
+  "needs-attention": "settings.messengers.status.needsAttention",
+  "status-unavailable": "settings.messengers.status.statusUnavailable",
+  "service-unavailable": "settings.messengers.status.serviceUnavailable",
+} satisfies Record<MessengerConnectionStatus, TextKey>;
 
 export function MessengerConnections({ account, active }: Pick<SettingsSectionProps, "account" | "active">) {
+  const t = useT();
   const { client, connected } = useGateway();
   const cache = useQueryClient();
   const [pairing, setPairing] = useState<ManagedMessengerId | null>(null);
@@ -41,12 +50,12 @@ export function MessengerConnections({ account, active }: Pick<SettingsSectionPr
   });
 
   return <section class="settings-messengers" aria-labelledby="settings-messengers-title">
-    <h1 id="settings-messengers-title">Messengers</h1>
-    <p class="settings-intro">Choose where you talk to your Ship.</p>
-    {!canList && <p class="settings-muted">Your account cannot view messaging connections.</p>}
+    <h1 id="settings-messengers-title">{t("settings.messengers.title")}</h1>
+    <p class="settings-intro">{t("settings.messengers.intro")}</p>
+    {!canList && <p class="settings-muted">{t("settings.messengers.noAccess")}</p>}
     <SettingsError error={connections.error ?? unlink.error} />
-    {connections.isPending && connected && canList && <LoadingState variant="panel">Loading messaging connections…</LoadingState>}
-    {connections.isError && <button class="settings-text-action" disabled={!connected || connections.isFetching} onClick={() => void connections.refetch()}>try again</button>}
+    {connections.isPending && connected && canList && <LoadingState variant="panel">{t("settings.messengers.loading")}</LoadingState>}
+    {connections.isError && <button class="settings-text-action" disabled={!connected || connections.isFetching} onClick={() => void connections.refetch()}>{t("common.tryAgain")}</button>}
     {connections.data && MESSENGERS.map(({ id, name, blurb }) => {
       const adapter = connections.data.adapters.find((entry) => entry.adapter === id);
       const links = connections.data.links.filter((entry) => entry.adapter === id);
@@ -57,29 +66,29 @@ export function MessengerConnections({ account, active }: Pick<SettingsSectionPr
         <div class="settings-messenger-heading">
           <h2>{name}</h2>
           <button class="settings-text-action" disabled={pairing === id ? unlink.isPending : !canConnect} onClick={() => { setRemoving(null); setPairing(pairing === id ? null : id); }}>
-            {pairing === id ? "close setup" : links.length ? "connect another" : `connect ${name}`}
+            {pairing === id ? t("settings.messengers.closeSetup") : links.length ? t("settings.messengers.connectAnother") : t("settings.messengers.connect", { name })}
           </button>
         </div>
-        <p class="settings-muted">{blurb}</p>
-        {!available && <p class="settings-muted">{name} linking is not available on this Ship.</p>}
-        {available && !canPair && <p class="settings-muted">Your account cannot link a {name} identity.</p>}
-        {links.length === 0 && available && <p class="settings-muted">No {name} identity is linked to you.</p>}
+        <p class="settings-muted">{t(blurb)}</p>
+        {!available && <p class="settings-muted">{t("settings.messengers.unavailable", { name })}</p>}
+        {available && !canPair && <p class="settings-muted">{t("settings.messengers.cannotLink", { name })}</p>}
+        {links.length === 0 && available && <p class="settings-muted">{t("settings.messengers.noLinks", { name })}</p>}
         <ul class="settings-list settings-messenger-links">{links.map((link) => {
           const status = messengerConnectionStatus(adapter, link.accountId);
           const error = adapter?.accounts.find((entry) => entry.accountId === link.accountId)?.error;
           const isRemoving = removing?.adapter === link.adapter && removing.accountId === link.accountId && removing.actorId === link.actorId;
           return <li key={JSON.stringify([link.accountId, link.actorId])}>
-            <div class="settings-server-heading"><strong>{name} user {link.actorId}</strong><span class={`settings-messenger-status${status === "connected" ? " is-connected" : ""}`}><i aria-hidden="true" />{status}</span></div>
-            {id === "slack" && <small>workspace {link.accountId}</small>}
+            <div class="settings-server-heading"><strong>{t("settings.messengers.user", { platform: name, id: link.actorId })}</strong><span class={`settings-messenger-status${status === "connected" ? " is-connected" : ""}`}><i aria-hidden="true" />{t(STATUS_LABELS[status])}</span></div>
+            {id === "slack" && <small>{t("settings.messengers.workspace", { id: link.accountId })}</small>}
             {error && <p class="settings-error" role="alert">{error}</p>}
             <div class="settings-actions">
               {isRemoving ? <>
-                <span>Unlink this identity from your Ship?</span>
-                <button class="settings-text-action settings-danger" disabled={!connected || !canUnlink || unlink.isPending} onClick={() => unlink.mutate(link)}>{unlink.isPending ? <LoadingState>unlinking…</LoadingState> : "confirm unlink"}</button>
-                <button class="settings-text-action" disabled={unlink.isPending} onClick={() => setRemoving(null)}>keep linked</button>
+                <span>{t("settings.messengers.confirmUnlink")}</span>
+                <button class="settings-text-action settings-danger" disabled={!connected || !canUnlink || unlink.isPending} onClick={() => unlink.mutate(link)}>{unlink.isPending ? <LoadingState>{t("settings.messengers.unlinking")}</LoadingState> : t("settings.messengers.confirm")}</button>
+                <button class="settings-text-action" disabled={unlink.isPending} onClick={() => setRemoving(null)}>{t("settings.messengers.keep")}</button>
               </> : <>
-                <button class="settings-text-action" disabled={!canConnect} onClick={() => { setRemoving(null); setPairing(id); }}>reconnect</button>
-                <button class="settings-text-action settings-danger" disabled={!connected || !canUnlink || unlink.isPending} onClick={() => { unlink.reset(); setRemoving(link); setPairing(null); }}>unlink</button>
+                <button class="settings-text-action" disabled={!canConnect} onClick={() => { setRemoving(null); setPairing(id); }}>{t("settings.messengers.reconnect")}</button>
+                <button class="settings-text-action settings-danger" disabled={!connected || !canUnlink || unlink.isPending} onClick={() => { unlink.reset(); setRemoving(link); setPairing(null); }}>{t("settings.messengers.unlink")}</button>
               </>}
             </div>
           </li>;

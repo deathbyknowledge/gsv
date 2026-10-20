@@ -5,6 +5,7 @@ import { useMediaObjectUrl } from "../chat/hooks/useChatMediaSource";
 import { browserRecordingUnavailable } from "./browserAudio";
 import { useBrowserVoice } from "./useBrowserVoice";
 import { VoiceWaveform } from "./VoiceWaveform";
+import { useT } from "../../i18n/locale";
 import "./browser-voice.css";
 
 export type BrowserVoiceHandle = Pick<ReturnType<typeof useBrowserVoice>, "onInput" | "interceptSubmit">;
@@ -15,6 +16,7 @@ type BrowserVoiceControlsProps = Parameters<typeof useBrowserVoice>[0] & {
 };
 
 export const BrowserVoiceControls = forwardRef<BrowserVoiceHandle, BrowserVoiceControlsProps>(function BrowserVoiceControls({ surfaceHost, onActiveChange, ...options }, ref) {
+  const t = useT();
   const control = useBrowserVoice(options);
   const recordingUrl = useMediaObjectUrl(control.audio);
   const recordingExtension = control.audio?.type.startsWith("audio/mp4") ? "m4a"
@@ -28,34 +30,34 @@ export const BrowserVoiceControls = forwardRef<BrowserVoiceHandle, BrowserVoiceC
     return () => onActiveChange(false);
   }, [busy, onActiveChange]);
   useLayoutEffect(() => { if (busy) surface.current?.focus({ preventScroll: true }); }, [control.phase, busy]);
-  return <div class="browser-voice-controls" aria-label="Voice input" onKeyDown={(event) => {
+  return <div class="browser-voice-controls" aria-label={t("desktop.voice.input")} onKeyDown={(event) => {
     if (event.key === "Enter" || event.key === " ") event.stopPropagation();
   }}>
     {!busy && !control.canRetry && <button type="button" disabled={!options.enabled || !!unavailable}
-      title={unavailable ?? "Record up to 5 minutes. Your Ship transcribes the audio for you to review before sending."}
-      onClick={() => void control.start()}>record</button>}
+      title={unavailable ?? t("desktop.browserVoice.hint")}
+      onClick={() => void control.start()}>{t("desktop.browserVoice.record")}</button>}
     {busy && surfaceHost.current && createPortal(<div ref={surface} class={`browser-voice-surface is-${control.phase}`}
-      role="group" aria-label="Voice recording" tabIndex={-1} onKeyDown={(event) => {
+      role="group" aria-label={t("desktop.browserVoice.label")} tabIndex={-1} onKeyDown={(event) => {
         event.stopPropagation();
         if (event.key === "Escape") { event.preventDefault(); control.cancel(true); }
         if (event.key === "Enter" && event.target === event.currentTarget) { event.preventDefault(); control.stop(); }
       }}>
       <VoiceWaveform stream={control.stream} />
       <div class="browser-voice-caption">
-        <span class="browser-voice-status" role="status">{control.phase === "recording" ? "listening"
-          : control.phase === "permission" ? "allow microphone access…" : "transcribing…"}</span>
+        <span class="browser-voice-status" role="status">{t(control.phase === "recording" ? "desktop.voice.listening"
+          : control.phase === "permission" ? "desktop.browserVoice.permission" : "desktop.browserVoice.transcribing")}</span>
         <div class="browser-voice-actions">
-          {control.phase === "recording" && <button type="button" class="browser-voice-stop" aria-label="Stop recording" onClick={control.stop}>
-            stop <kbd aria-hidden="true">↵</kbd>
+          {control.phase === "recording" && <button type="button" class="browser-voice-stop" aria-label={t("desktop.browserVoice.stopLabel")} onClick={control.stop}>
+            {t("desktop.browserVoice.stop")} <kbd aria-hidden="true">↵</kbd>
           </button>}
-          <button type="button" onClick={() => control.cancel(true)}>cancel <kbd aria-hidden="true">esc</kbd></button>
+          <button type="button" onClick={() => control.cancel(true)}>{t("common.cancel")} <kbd aria-hidden="true">esc</kbd></button>
         </div>
       </div>
     </div>, surfaceHost.current)}
-    {control.canRetry && <button type="button" disabled={!options.enabled} onClick={control.retry}>retry transcription</button>}
-    {control.canRetry && recordingUrl && <a href={recordingUrl} download={`ship-recording.${recordingExtension}`}>download audio</a>}
-    {control.canRetry && <button type="button" onClick={() => control.cancel(true)}>discard recording</button>}
+    {control.canRetry && <button type="button" disabled={!options.enabled} onClick={control.retry}>{t("desktop.browserVoice.retry")}</button>}
+    {control.canRetry && recordingUrl && <a href={recordingUrl} download={`ship-recording.${recordingExtension}`}>{t("desktop.browserVoice.download")}</a>}
+    {control.canRetry && <button type="button" onClick={() => control.cancel(true)}>{t("desktop.browserVoice.discard")}</button>}
     {control.error && <span class="browser-voice-error" role="alert">{control.error}</span>}
-    {control.canRetry && <span class="browser-voice-notice">Audio is kept in this tab. Retry or download it before leaving.</span>}
+    {control.canRetry && <span class="browser-voice-notice">{t("desktop.browserVoice.keptInTab")}</span>}
   </div>;
 });

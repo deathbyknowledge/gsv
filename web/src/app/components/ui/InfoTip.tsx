@@ -1,5 +1,6 @@
 import { IconButton } from "./IconButton";
 import { Hint, type TooltipPosition } from "./Tooltip";
+import { useT } from "../../i18n/locale";
 import "./InfoTip.css";
 
 export interface InfoTipProps {
@@ -18,11 +19,12 @@ export interface InfoTipProps {
  *  so the bubble escapes any `overflow`-clipping ancestor (a field label row,
  *  a list row, a scroll container). The `gsv-infotip` wrapper is kept so
  *  InfoTip.css can align/space the trigger after a label. */
-export function InfoTip({ text, position = "top", label = "More info" }: InfoTipProps) {
+export function InfoTip({ text, position = "top", label }: InfoTipProps) {
+  const t = useT();
   return (
     <span class="gsv-infotip">
       <Hint text={text} position={position}>
-        <IconButton glyph="help" ghost size={16} ariaLabel={label} />
+        <IconButton glyph="help" ghost size={16} ariaLabel={label ?? t("ui.infoTip.label")} />
       </Hint>
     </span>
   );

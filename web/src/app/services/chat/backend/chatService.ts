@@ -38,6 +38,7 @@ import {
 import { frameBodyToBlob } from "../../gateway/frameBody";
 import { withStagedResources } from "../../gateway/stagedResources";
 import { z } from "zod";
+import { t } from "../../../i18n/locale";
 
 const mediaReadDataSchema = z.union([
   z.object({ ok: z.literal(true), key: z.string(), path: z.string().optional(), mimeType: z.string(), size: z.number(), conversationId: z.string().optional() }),
@@ -104,7 +105,7 @@ export type ChatResource = {
 
 function throwIfFailed<T extends { ok: true }>(result: T | FailureResult): T {
   if (!result.ok) {
-    throw new Error(result.error || "Ship process request failed");
+    throw new Error(result.error || t("chat.request.failed"));
   }
   return result;
 }
@@ -132,7 +133,7 @@ export async function sendChatMessage(
   options.signal?.throwIfAborted();
   const uploads = draft.media ?? [];
   if (uploads.some(({ body }) => body.size > MAX_CHAT_PROCESS_MEDIA_BYTES)) {
-    throw new Error("Chat attachments cannot exceed 25 MiB");
+    throw new Error(t("chat.outbox.tooLarge"));
   }
   const pid = draft.pid?.trim();
   if (!pid) throw new Error("Chat requires a process");
@@ -193,7 +194,7 @@ export async function getChatHistory(
     await client.proc.history({ ...args, format: 2 }),
   );
   if (result.format !== 2) {
-    throw new Error("This gateway does not support typed process history. Update the gateway to inspect process activity.");
+    throw new Error(t("chat.history.unsupported"));
   }
   return normalizeHistory(result);
 }
@@ -247,12 +248,12 @@ export async function readChatProcessMedia(
   const data = mediaReadDataSchema.parse(response.data);
   if (!data.ok) {
     await response.body?.stream.cancel(data.error).catch(() => {});
-    throw new Error(data.error || "Ship process media request failed");
+    throw new Error(data.error || t("chat.media.requestFailed"));
   }
   if (data.size > MAX_CHAT_PROCESS_MEDIA_BYTES) {
-    const error = new Error("Process media exceeds the 25 MiB display limit");
-    await response.body?.stream.cancel(error).catch(() => {});
-    throw error;
+    // The cancellation reason travels to the gateway, so it stays in English; the person reads the thrown message.
+    await response.body?.stream.cancel("Process media exceeds the 25 MiB display limit").catch(() => {});
+    throw new Error(t("chat.media.tooLarge"));
   }
   if (!response.body) {
     throw new Error("Process media response did not include a body");
@@ -275,13 +276,13 @@ export async function readChatResource(
 ): Promise<ChatResource> {
   const ref = fileResourceReferenceSchema.parse(reference);
   if (ref.expiresAt !== undefined && ref.expiresAt <= Date.now()) {
-    throw new Error("Resource reference has expired");
+    throw new Error(t("chat.resource.expired"));
   }
   const displayLimit = ref.target.startsWith("contact:")
     ? MAX_FEDERATION_RESOURCE_BYTES
     : MAX_CHAT_PROCESS_MEDIA_BYTES;
   if (ref.size > displayLimit) {
-    throw new Error(`Resource exceeds the ${displayLimit / (1024 * 1024)} MiB display limit`);
+    throw new Error(t("chat.resource.tooLarge", { limit: displayLimit / (1024 * 1024) }));
   }
   const response = await client.request("fs.transfer.send", {
     target: ref.target,
@@ -291,7 +292,7 @@ export async function readChatResource(
   const data = resourceTransferDataSchema.parse(response.data) satisfies FsTransferSendResult;
   if (!data.ok) {
     await response.body?.stream.cancel(data.error).catch(() => {});
-    throw new Error(data.error || "Ship resource request failed");
+    throw new Error(data.error || t("chat.resource.failed"));
   }
   if (
     data.path !== ref.path
@@ -352,7 +353,7 @@ export async function readChatHistorySegment(
     await client.proc.history.segment.read({ ...args, format: 2 }),
   );
   if (result.format !== 2) {
-    throw new Error("This gateway does not support typed process archives. Update the gateway to inspect archived activity.");
+    throw new Error(t("chat.history.archiveUnsupported"));
   }
   return result;
 }

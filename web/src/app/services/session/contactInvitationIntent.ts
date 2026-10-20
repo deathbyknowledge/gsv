@@ -1,4 +1,5 @@
 import { parseContactInvitation } from "@humansandmachines/gsv/protocol";
+import { t } from "../../i18n/locale";
 
 const KEY = "gsv.contact-invitation";
 
@@ -33,7 +34,8 @@ export function contactInvitationPreview(value: string): { name: string; origin:
   try {
     const { invitation } = parseContactInvitation(value);
     return { name: invitation.subject.displayName, origin: new URL(invitation.origin).host, expired: invitation.expiresAtMs <= Date.now() };
-  } catch (error) {
-    return { error: error instanceof Error ? error.message : "This invitation is not valid." };
+  } catch {
+    // Any failure here means the pasted link or code is not a usable invitation.
+    return { error: t("session.contact.invalid") };
   }
 }

@@ -1,6 +1,7 @@
 import { orderAiModelIds, type AiModelListEntry, type AiModelsResult } from "@humansandmachines/gsv/protocol";
 import type { ConsoleConfigEntry } from "../../../domain/system/consoleModels";
 import { preferredModelSaveEntry, type ConsoleConfigWrite } from "../../../domain/system/consoleSettings";
+import { t } from "../../../i18n/locale";
 
 export type ModelStackDraft = { ids: string[]; customized: boolean };
 
@@ -38,7 +39,7 @@ export function useModelFirst(listing: AiModelsResult, order: ModelStackDraft, i
 export function modelOrderWrites(listing: AiModelsResult, config: readonly ConsoleConfigEntry[], uid: number, order: ModelStackDraft): ConsoleConfigWrite[] {
   const available = new Set(listing.models.map((model) => model.id));
   if (order.ids.length !== available.size || new Set(order.ids).size !== available.size || order.ids.some((id) => !available.has(id))) {
-    throw new Error("Your model stack changed while you were editing. Discard these changes and try again.");
+    throw new Error(t("settings.models.stackChanged"));
   }
   const writes = [
     { key: `users/${uid}/ai/model_order`, value: order.customized ? JSON.stringify(order.ids) : "" },

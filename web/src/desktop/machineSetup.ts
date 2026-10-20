@@ -1,6 +1,7 @@
 import type { GSVClient } from "@humansandmachines/gsv/client";
 import { encodeDevicePairingCode } from "@humansandmachines/gsv/protocol";
 import { DevicePairingSession } from "../app/services/machines/devicePairing";
+import { t } from "../app/i18n/locale";
 
 export type MachineIdentity = { origin: string; username: string; targetId: string; label: string };
 export type MachineSnapshot = {
@@ -51,7 +52,7 @@ export class DesktopMachineSession {
     } catch (error) {
       if (this.disposed || this.state.busy) return;
       this.publish({ ...this.state, loading: false,
-        error: error instanceof Error ? error.message : "Could not check this computer. Retry." });
+        error: error instanceof Error ? error.message : t("desktop.machine.checkFailed") });
     }
   };
 
@@ -63,7 +64,7 @@ export class DesktopMachineSession {
       if (this.disposed) return false;
       this.publish({ ...this.state, machine });
       if ([machine.configured, machine.pending].some((identity) => identity && !this.matches(identity))) {
-        throw new Error("This computer is connected to another Ship or account.");
+        throw new Error(t("desktop.machine.otherOwner"));
       }
       if (existingOnly && !machine.configured && !machine.pending) {
         this.publish({ machine, loading: false, busy: false, error: "" });
@@ -81,16 +82,16 @@ export class DesktopMachineSession {
         await this.pairing.create();
         if (this.disposed) return false;
         const { invitation, error } = this.pairing.snapshot();
-        if (error || !invitation?.pairing) throw new Error(error || "Could not prepare the connection. Retry.");
+        if (error || !invitation?.pairing) throw new Error(error || t("desktop.machine.prepareFailed"));
         if (invitation.pairing.state !== "pending" || invitation.pairing.expiresAt <= Date.now()) {
-          throw new Error("This invitation has expired. Retry to create another.");
+          throw new Error(t("desktop.machine.invitationExpired"));
         }
         command = { kind: "pair", code: encodeDevicePairingCode(this.origin, invitation.pairing, invitation.request.secret) };
       }
       const result = await this.native.command(command);
       if (this.disposed) return false;
       this.publish({ machine: result, loading: false, busy: false,
-        error: !existingOnly && !result.configured && !result.pending ? "Connect this computer again." : "" });
+        error: !existingOnly && !result.configured && !result.pending ? t("desktop.machine.connectAgain") : "" });
       return result.connected;
     } catch (error) {
       if (this.disposed) return false;
@@ -99,7 +100,7 @@ export class DesktopMachineSession {
       let machine = this.state.machine;
       try { machine = await this.native.status(); } catch { /* Retain the last confirmed identity. */ }
       this.publish({ machine, loading: false, busy: false,
-        error: error instanceof Error ? error.message : "Could not connect this computer. Retry." });
+        error: error instanceof Error ? error.message : t("desktop.machine.connectFailed") });
       return false;
     }
   };

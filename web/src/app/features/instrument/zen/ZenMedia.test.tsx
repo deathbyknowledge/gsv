@@ -69,11 +69,19 @@ describe("attachment opening", () => {
 });
 
 describe("pasted text chip", () => {
-  it("keeps the complete paste in collapsed details and removes it on request", () => {
+  it("keeps the complete paste in collapsed details and removes it on request", async () => {
     const onRemove = vi.fn();
     const text = `${"x".repeat(434)}!`;
-    const tree = ZenDraftPaste({ paste: { id: "paste", text, characters: 435 }, onRemove });
+    let tree: ComponentChildren;
+    function Harness() {
+      tree = ZenDraftPaste({ paste: { id: "paste", text, characters: 435 }, onRemove });
+      return null;
+    }
+    vi.stubGlobal("document", {});
+    root = createTestRoot("Pasted text chip");
+    await root.render(<Harness />);
     const nodes = collectNodes(tree);
+    expect(collectText(nodes.find((node) => node.type === "summary"))).toContain("435 characters");
     expect(collectText(nodes.find((node) => node.type === "summary"))).not.toContain(text);
     expect(nodes.find((node) => node.type === "pre")?.props.children).toBe(text);
     expect(nodes.find((node) => node.type === "details")?.props).not.toHaveProperty("open", true);
@@ -82,10 +90,17 @@ describe("pasted text chip", () => {
     expect(onRemove).toHaveBeenCalledOnce();
   });
 
-  it("edits the paste in place when the composer accepts changes", () => {
+  it("edits the paste in place when the composer accepts changes", async () => {
     const onChange = vi.fn();
     const text = `${"y".repeat(434)}?`;
-    const tree = ZenDraftPaste({ paste: { id: "paste", text, characters: 435 }, onChange });
+    let tree: ComponentChildren;
+    function Harness() {
+      tree = ZenDraftPaste({ paste: { id: "paste", text, characters: 435 }, onChange });
+      return null;
+    }
+    vi.stubGlobal("document", {});
+    root = createTestRoot("Pasted text editor");
+    await root.render(<Harness />);
     const nodes = collectNodes(tree);
     expect(nodes.some((node) => node.type === "pre")).toBe(false);
     // SAFETY: The matching node is the textarea VNode; the generic harness omits DOM-specific attributes.
@@ -101,7 +116,8 @@ describe("pasted text chip", () => {
     const edited = { value: "edited draft" } as HTMLTextAreaElement;
     const input: Partial<JSX.TargetedInputEvent<HTMLTextAreaElement>> = { currentTarget: edited };
     // SAFETY: the handler reads only currentTarget.value from the event.
-    editor?.props.onInput?.(input as JSX.TargetedInputEvent<HTMLTextAreaElement>);
+    // Rendered through compat, the handler lands on the lowercase prop.
+    (editor?.props.onInput ?? editor?.props.oninput)?.(input as JSX.TargetedInputEvent<HTMLTextAreaElement>);
     expect(onChange).toHaveBeenCalledWith("edited draft");
   });
 });

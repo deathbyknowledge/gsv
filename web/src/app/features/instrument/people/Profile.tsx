@@ -7,8 +7,10 @@ import { LoadingState } from "../../../components/ui/Spinner";
 import { INSTRUMENT_PROFILE_KEY } from "../wire/queryKeys";
 import { canConfigure } from "../settings/settingsModel";
 import type { ConsoleAccount } from "../../../domain/system/consoleModels";
+import { rich, useT } from "../../../i18n/locale";
 
 export function Profile({ account, active, onDirty, onBack }: { account: ConsoleAccount; active: boolean; onDirty: (dirty: boolean) => void; onBack: () => void }) {
+  const t = useT();
   const { client, connected } = useGateway();
   const cache = useQueryClient();
   const key = [...INSTRUMENT_PROFILE_KEY, account.uid];
@@ -48,44 +50,44 @@ export function Profile({ account, active, onDirty, onBack }: { account: Console
 
   return <section class="people-profile" aria-labelledby="people-profile-title">
     <header class="people-conversation-header">
-      <button type="button" class="people-action people-conversation-back" aria-label="Back to conversations" onClick={onBack}>←</button>
-      <div class="people-conversation-title"><h1 id="people-profile-title">Your profile</h1></div>
+      <button type="button" class="people-action people-conversation-back" aria-label={t("people.back.label")} onClick={onBack}>←</button>
+      <div class="people-conversation-title"><h1 id="people-profile-title">{t("people.profile.title")}</h1></div>
     </header>
     <div class="people-profile-scroll" data-scroll-edge><div class="people-own-profile">
-    <p class="people-note">Choose what people see on your profile.</p>
-    {!canRead && <p class="people-note">Your account cannot manage a public profile.</p>}
+    <p class="people-note">{t("people.profile.intro")}</p>
+    {!canRead && <p class="people-note">{t("people.profile.noAccess")}</p>}
     {error && <p class="people-error" role="alert">{error.message}</p>}
-    {profile.isPending && connected && canRead && <LoadingState variant="panel">Loading your profile…</LoadingState>}
+    {profile.isPending && connected && canRead && <LoadingState variant="panel">{t("people.profile.loading")}</LoadingState>}
     {state && fields && <>
-      <p role="status" class="people-note">{state.published ? <>Published at <a href={state.published.url} target="_blank" rel="noopener noreferrer">{state.published.url}</a></> : "Your profile is private."}</p>
+      <p role="status" class="people-note">{state.published ? rich(t("people.profile.publishedAt"), { link: <a href={state.published.url} target="_blank" rel="noopener noreferrer">{state.published.url}</a> }) : t("people.profile.private")}</p>
       <form class="people-form" onSubmit={(event) => { event.preventDefault(); if (draft && valid && editable && !stale) save.mutate(draft); }}>
-        <label>Display name<input value={fields.displayName} maxLength={80} disabled={!editable} onInput={(event) => edit({ displayName: event.currentTarget.value })} /></label>
-        <label>About you<textarea value={fields.about} maxLength={2048} rows={4} disabled={!editable} onInput={(event) => edit({ about: event.currentTarget.value })} /></label>
-        <label>New conversations<select value={fields.contactPolicy} disabled={!editable} onChange={(event) => {
+        <label>{t("people.profile.displayName")}<input value={fields.displayName} maxLength={80} disabled={!editable} onInput={(event) => edit({ displayName: event.currentTarget.value })} /></label>
+        <label>{t("people.profile.about")}<textarea value={fields.about} maxLength={2048} rows={4} disabled={!editable} onInput={(event) => edit({ about: event.currentTarget.value })} /></label>
+        <label>{t("people.profile.policy")}<select value={fields.contactPolicy} disabled={!editable} onChange={(event) => {
           const value = event.currentTarget.value;
           if (value === "requests" || value === "invitation" || value === "closed") edit({ contactPolicy: value });
-        }}><option value="requests">Open to message requests</option><option value="invitation">By invitation</option><option value="closed">Closed</option></select></label>
-        <label class="people-profile-representation"><input type="checkbox" checked={fields.representation === "human-and-ship"} disabled={!editable} onChange={(event) => edit({ representation: event.currentTarget.checked ? "human-and-ship" : "human" })} />Let visitors know my Ship may reply</label>
-        <p class="people-note">This describes your profile. Allowing your Ship to help is a separate choice.</p>
-        {stale && <p class="people-error">Your saved profile changed in another session. Reload the draft before saving.</p>}
+        }}><option value="requests">{t("people.profile.policyRequests")}</option><option value="invitation">{t("people.profile.policyInvitation")}</option><option value="closed">{t("people.profile.policyClosed")}</option></select></label>
+        <label class="people-profile-representation"><input type="checkbox" checked={fields.representation === "human-and-ship"} disabled={!editable} onChange={(event) => edit({ representation: event.currentTarget.checked ? "human-and-ship" : "human" })} />{t("people.profile.representation")}</label>
+        <p class="people-note">{t("people.profile.representationHint")}</p>
+        {stale && <p class="people-error">{t("people.profile.stale")}</p>}
         <div class="people-actions">
-          <button class="ibtn" type="submit" disabled={!editable || !valid || !dirty || stale}>{save.isPending ? "saving…" : "save draft"}</button>
-          {draft && <button class="people-action" type="button" disabled={pending} onClick={() => { setDraft(null); save.reset(); }}>discard edits</button>}
+          <button class="ibtn" type="submit" disabled={!editable || !valid || !dirty || stale}>{save.isPending ? t("common.saving") : t("people.profile.saveDraft")}</button>
+          {draft && <button class="people-action" type="button" disabled={pending} onClick={() => { setDraft(null); save.reset(); }}>{t("people.profile.discard")}</button>}
         </div>
       </form>
-      <div class="people-profile-preview" aria-label="Public profile preview">
-        <p class="people-note">Preview · {dirty ? "unsaved edits" : "saved draft"}</p>
+      <div class="people-profile-preview" aria-label={t("people.profile.preview")}>
+        <p class="people-note">{t(dirty ? "people.profile.previewUnsaved" : "people.profile.previewSaved")}</p>
         <span class="people-profile-address">{state.url}</span><h2>{fields.displayName}</h2>
         {fields.about && <p class="people-profile-about">{fields.about}</p>}
-        <p>{fields.contactPolicy === "requests" ? "Open to message requests" : fields.contactPolicy === "invitation" ? "Connect by invitation" : "Not receiving new message requests"}</p>
-        {fields.representation === "human-and-ship" && <p class="people-note">You may hear from this person or their Ship. Each message shows who sent it.</p>}
+        <p>{t(fields.contactPolicy === "requests" ? "people.profile.showsRequests" : fields.contactPolicy === "invitation" ? "people.profile.showsInvitation" : "people.profile.showsClosed")}</p>
+        {fields.representation === "human-and-ship" && <p class="people-note">{t("people.profile.representationNote")}</p>}
       </div>
-      <p class="people-note">{dirty ? "Save your edits before publishing." : "Only the saved preview is published. Later draft edits stay private until you publish again."}</p>
+      <p class="people-note">{t(dirty ? "people.profile.saveFirst" : "people.profile.publishHint")}</p>
       <div class="people-actions">
-        <button type="button" class="ibtn is-primary" disabled={!connected || pending || dirty || !valid || !state.revision || !canConfigure(account, "profile.publish") || state.published?.revision === state.revision} onClick={() => publish.mutate(state.revision)}>{publish.isPending ? "publishing…" : "publish profile"}</button>
-        {state.published && <button type="button" class="people-action is-danger" disabled={!connected || pending || !canConfigure(account, "profile.unpublish")} onClick={() => unpublish.mutate(state.revision)}>unpublish</button>}
+        <button type="button" class="ibtn is-primary" disabled={!connected || pending || dirty || !valid || !state.revision || !canConfigure(account, "profile.publish") || state.published?.revision === state.revision} onClick={() => publish.mutate(state.revision)}>{t(publish.isPending ? "people.profile.publishing" : "people.profile.publish")}</button>
+        {state.published && <button type="button" class="people-action is-danger" disabled={!connected || pending || !canConfigure(account, "profile.unpublish")} onClick={() => unpublish.mutate(state.revision)}>{t("people.profile.unpublish")}</button>}
       </div>
-      <p class="people-note">Unpublishing removes your public page. People may retain copies they already viewed. Existing conversations continue.</p>
+      <p class="people-note">{t("people.profile.unpublishHint")}</p>
     </>}
     </div></div>
   </section>;

@@ -1,5 +1,6 @@
 import type { ComponentChildren } from "preact";
 import { IconButton } from "./IconButton";
+import { useT, type TextKey } from "../../i18n/locale";
 import "./Alert.css";
 
 export type AlertVariant = "info" | "attention" | "warning" | "neutral" | "success" | "error";
@@ -44,16 +45,17 @@ const DEFAULT_ICON = {
 // SAFETY: Component boundary provides the asserted DOM/test shape.
 const ICON_GLYPH = { info: "help", attention: "attention" } as const;
 // SAFETY: Component boundary provides the asserted DOM/test shape.
-const ICON_LABEL = { info: "Information", attention: "Attention" } as const;
+const ICON_LABEL = { info: "ui.alert.info", attention: "ui.alert.attention" } satisfies Record<"info" | "attention", TextKey>;
 
 export function Alert({ variant = "info", title, text, icon, children, onDismiss }: AlertProps) {
+  const t = useT();
   const resolved = icon === undefined ? DEFAULT_ICON[variant] : icon;
 
   let iconNode: ComponentChildren = null;
   if (resolved === "info" || resolved === "attention") {
     iconNode = (
       <span class="gsv-alert-icon">
-        <IconButton glyph={ICON_GLYPH[resolved]} ghost size={20} title={ICON_LABEL[resolved]} />
+        <IconButton glyph={ICON_GLYPH[resolved]} ghost size={20} title={t(ICON_LABEL[resolved])} />
       </span>
     );
   } else if (resolved && resolved !== "none") {
@@ -70,7 +72,7 @@ export function Alert({ variant = "info", title, text, icon, children, onDismiss
       </div>
       {onDismiss ? (
         <span class="gsv-alert-dismiss">
-          <IconButton glyph="close" ghost size={18} ariaLabel="Dismiss" title="Dismiss" onClick={onDismiss} />
+          <IconButton glyph="close" ghost size={18} ariaLabel={t("ui.alert.dismiss")} title={t("ui.alert.dismiss")} onClick={onDismiss} />
         </span>
       ) : null}
     </div>

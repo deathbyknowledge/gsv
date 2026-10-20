@@ -2,6 +2,7 @@ import type { FleetReference } from "../fleet/fleetModel";
 import { placeLabel, type CallEvent, type Moment, type Place } from "./zenModel";
 import { receiptActions, type ReceiptNote } from "./runReceipts";
 import { CallWorking } from "./ActivityWorking";
+import { useT, type TextKey } from "../../../i18n/locale";
 
 export type ReceiptLayout = "timeline" | "grouped";
 /**
@@ -23,6 +24,7 @@ export function ReceiptTimeline({ moment, who, places, relatedCalls, onFleet, sc
   onToggle: (key: string) => void;
   waitingCallId?: string;
 }) {
+  const t = useT();
   const events = moment.timeline ?? [];
   const { actions, trailingNotes } = receiptActions(events);
   return (
@@ -38,7 +40,7 @@ export function ReceiptTimeline({ moment, who, places, relatedCalls, onFleet, sc
       </ol>
       {trailingNotes.length > 0 ? (
         <div class="tl-run-notes">
-          <button type="button" class="work-link" aria-expanded={expanded.has(`${scope}:notes`)} onClick={() => onToggle(`${scope}:notes`)}>working notes</button>
+          <button type="button" class="work-link" aria-expanded={expanded.has(`${scope}:notes`)} onClick={() => onToggle(`${scope}:notes`)}>{t("chat.receipt.notes")}</button>
           {expanded.has(`${scope}:notes`) ? <Notes notes={trailingNotes} /> : null}
         </div>
       ) : null}
@@ -60,35 +62,37 @@ function CallRow({ event, notes, who, places, live, onFleet, retryOf, retried, o
   onToggle: () => void;
   waiting: boolean;
 }) {
+  const t = useT();
   const { call } = event;
   const state = call.failed ? "failed" : call.finished ? "done" : waiting ? "waiting" : live ? "running" : "unfinished";
   const meta = [
-    retryOf ? "retry of an earlier action" : null,
-    retried ? "retried" : null,
+    retryOf ? t("chat.receipt.retryOf") : null,
+    retried ? t("chat.receipt.state.retried") : null,
   ].filter(Boolean);
-  const stateLabel = state === "done" ? (retryOf ? "retried" : null)
-    : state === "waiting" ? "needs approval"
-    : state === "failed" && retried ? "failed · retried" : state;
+  const stateLabel: TextKey | null = state === "done" ? (retryOf ? "chat.receipt.state.retried" : null)
+    : state === "waiting" ? "chat.receipt.state.waiting"
+    : state === "failed" ? retried ? "chat.receipt.state.failedRetried" : "chat.receipt.state.failed"
+    : state === "running" ? "chat.receipt.state.running" : "chat.receipt.state.unfinished";
   return (
     <li class={`tl-row is-call is-${state}${open ? " is-open" : ""}${event.retryOf ? " is-retry" : ""}`}>
       <button type="button" class="tl-toggle" aria-expanded={open} onClick={onToggle}>
         <span class="tl-chevron" aria-hidden="true">›</span>
         <span class={`dot is-${state}${state === "running" ? " blink" : ""}`} aria-hidden="true" />
         <span class="tl-purpose">{call.description}</span>
-        {stateLabel ? <span class="tl-state">{stateLabel}</span> : null}
+        {stateLabel ? <span class="tl-state">{t(stateLabel)}</span> : null}
       </button>
       {open ? (
         <div class="tl-body">
           <div class="tl-meta">
             {event.target !== null ? (
               <button type="button" class="work-link tl-place" onClick={() => onFleet(`target:${event.target}`)}>{placeLabel(event.target, places)}</button>
-            ) : <span class="tl-place">the process</span>}
+            ) : <span class="tl-place">{t("chat.receipt.process")}</span>}
             {meta.length > 0 ? <span> · {meta.join(" · ")}</span> : null}
           </div>
           <CallWorking call={call} who={who} target={event.target} />
           {notes.length > 0 ? (
             <>
-              <div class="tl-label">notes before this action</div>
+              <div class="tl-label">{t("chat.receipt.notesBefore")}</div>
               <Notes notes={notes} />
             </>
           ) : null}

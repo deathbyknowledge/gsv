@@ -1,33 +1,40 @@
 import { PolicySummaryLink } from "./PolicySummaryLink";
 import { publicDeployment } from "../../services/deployment";
+import { useT } from "../../i18n/locale";
 
 export function TermsOfServiceLink() {
+  const t = useT();
   const deployment = publicDeployment();
   if (!deployment.termsUrl) return null;
-  return <PolicySummaryLink title="Terms of Service" href={deployment.termsUrl}
-    introduction={`Your agreement with ${deployment.operatorName ?? "your operator"}.`}
+  return <PolicySummaryLink title={t("session.policy.terms")} href={deployment.termsUrl} readLabel={t("session.policy.termsFull")}
+    introduction={deployment.operatorName ? t("session.policy.termsAgreement", { operator: deployment.operatorName }) : t("session.policy.termsAgreementDefault")}
     points={[
-      "Read your operator's terms before signing up.",
-      "Check the conditions that apply to your use of the service.",
+      t("session.policy.termsRead"),
+      t("session.policy.termsConditions"),
     ]} />;
 }
 
 export function PolicyConsentLabel({ id }: { id: string }) {
+  const t = useT();
   const deployment = publicDeployment();
+  const sentence = deployment.termsUrl
+    ? t(deployment.privacyUrl ? "session.consent.ageTermsPrivacy" : "session.consent.ageTerms")
+    : t(deployment.privacyUrl ? "session.consent.agePrivacy" : "session.consent.age");
+  // The policy links open their summaries; the rest of the sentence labels the checkbox.
   return <span id={`${id}-label`}>
-    <label for={id}>I confirm that I’m 18 or older</label>
-    {deployment.termsUrl && <><label for={id}> and agree to the </label><TermsOfServiceLink /></>}
-    {deployment.privacyUrl && <><label for={id}> and acknowledge the </label><PrivacyPolicyLink /></>}.
+    {sentence.split(/(\{terms\}|\{privacy\})/).map((part) => part === "{terms}" ? <TermsOfServiceLink />
+      : part === "{privacy}" ? <PrivacyPolicyLink /> : part && <label for={id}>{part}</label>)}
   </span>;
 }
 
 export function PrivacyPolicyLink() {
+  const t = useT();
   const deployment = publicDeployment();
   if (!deployment.privacyUrl) return null;
-  return <PolicySummaryLink title="Privacy Policy" href={deployment.privacyUrl}
-    introduction={`How ${deployment.operatorName ?? "your operator"} handles your data.`}
+  return <PolicySummaryLink title={t("session.policy.privacy")} href={deployment.privacyUrl} readLabel={t("session.policy.privacyFull")}
+    introduction={deployment.operatorName ? t("session.policy.privacyHandling", { operator: deployment.operatorName }) : t("session.policy.privacyHandlingDefault")}
     points={[
-      "Review how your account information, conversations, files, and connected services are handled.",
-      "Check your operator's policies on sharing, retention, access, corrections, and deletion.",
+      t("session.policy.privacyReview"),
+      t("session.policy.privacyPolicies"),
     ]} />;
 }

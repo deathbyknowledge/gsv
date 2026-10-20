@@ -7,9 +7,11 @@ import { Button } from "../../components/ui/Button";
 import { SectionHeader } from "../../components/ui/SectionHeader";
 import { SessionError } from "./SessionChrome";
 import { AppLink } from "../../services/navigation/appNavigation";
+import { useT } from "../../i18n/locale";
 import "./LoginScreen.css";
 
 export function MemberRecoveryScreen() {
+  const t = useT();
   const { service, snapshot } = useSession();
   const [attempt, setAttempt] = useState(() => { try { return readMemberRecoveryAttempt(); } catch { return null; } });
   const [code, setCode] = useState("");
@@ -25,7 +27,7 @@ export function MemberRecoveryScreen() {
       const next = createMemberRecoveryAttempt();
       setAttempt(next); setCode("");
       await startMemberRecovery(service.client, snapshot.url, next);
-    } catch (cause) { setError(cause instanceof Error ? cause.message : "Could not request recovery"); }
+    } catch (cause) { setError(cause instanceof Error ? cause.message : t("session.recovery.requestFailed")); }
     finally { setBusy(false); }
   };
   const redeem = async (event: Event) => {
@@ -35,26 +37,26 @@ export function MemberRecoveryScreen() {
     try {
       setDone(await redeemMemberRecovery(service.client, snapshot.url, attempt, code, password));
       setCode(""); setPassword("");
-    } catch (cause) { setError(cause instanceof Error ? cause.message : "Recovery failed"); }
+    } catch (cause) { setError(cause instanceof Error ? cause.message : t("session.recovery.failed")); }
     finally { setBusy(false); }
   };
   return <AuthLayout background="galaxy" visible surfaceClass="gsv-auth-surface-login"><div class="gsv-login-panel">
-    <SectionHeader title="RECOVER ACCOUNT" titleSize="title" divider />
+    <SectionHeader title={t("session.recovery.title")} titleSize="title" divider />
     <div class="gsv-login-body gsv-recovery-body">
-      {done ? <><p>Your password has changed. Sign in with the new password.</p><AppLink href="/" class="gsv-auth-link">Return to sign-in</AppLink></> : <>
-        <p>Use a messenger you’ve confirmed with your Ship. To recover administrator access, use your operator’s owner sign-in page.</p>
+      {done ? <><p>{t("session.recovery.done")}</p><AppLink href="/" class="gsv-auth-link">{t("session.recovery.return")}</AppLink></> : <>
+        <p>{t("session.recovery.intro")}</p>
         <form class="gsv-login-fields" onSubmit={(event) => void start(event)}>
-          <Button variant="secondary" block type="submit" label={busy ? "PLEASE WAIT…" : attempt ? "REQUEST A NEW CODE" : "REQUEST A CODE"} disabled={busy} />
+          <Button variant="secondary" block type="submit" label={t(busy ? "session.recovery.wait" : attempt ? "session.recovery.requestNew" : "session.recovery.request")} disabled={busy} />
         </form>
         {attempt && <form class="gsv-login-fields" onSubmit={(event) => void redeem(event)}>
-          <p>If you have a confirmed messenger, check it for a code. Enter it here within five minutes. If delivery fails, wait at least one minute before requesting a new code, or use administrator access to reset your password.</p>
-          <TextInput label="RECOVERY CODE" placeholder="Your code" value={code} onChange={setCode} clearable={false} inputProps={{ autoComplete: "one-time-code", maxLength: 9 }} />
-          <TextInput label="NEW PASSWORD" placeholder="••••••••••••" type="password" value={password} onChange={setPassword} clearable={false} inputProps={{ autoComplete: "new-password", minLength: 8, maxLength: 1024 }} />
-          <p>Existing credentials and messenger links for this account will stop working. Link your messenger again after signing in.</p>
-          <Button variant="primary" block type="submit" label="RESET PASSWORD" disabled={busy || password.length < 8 || !code.trim()} />
+          <p>{t("session.recovery.codeHint")}</p>
+          <TextInput label={t("session.recovery.code")} placeholder={t("session.recovery.codePlaceholder")} value={code} onChange={setCode} clearable={false} inputProps={{ autoComplete: "one-time-code", maxLength: 9 }} />
+          <TextInput label={t("session.recovery.password")} placeholder="••••••••••••" type="password" value={password} onChange={setPassword} clearable={false} inputProps={{ autoComplete: "new-password", minLength: 8, maxLength: 1024 }} />
+          <p>{t("session.recovery.warning")}</p>
+          <Button variant="primary" block type="submit" label={t("session.recovery.reset")} disabled={busy || password.length < 8 || !code.trim()} />
         </form>}
         <SessionError message={error} />
-        <AppLink href="/" class="gsv-auth-link">Return to sign-in</AppLink>
+        <AppLink href="/" class="gsv-auth-link">{t("session.recovery.return")}</AppLink>
       </>}
     </div>
   </div></AuthLayout>;
