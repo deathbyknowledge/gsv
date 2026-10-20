@@ -63,6 +63,23 @@ describe("Ship event delivery", () => {
     });
   });
 
+  it("drops a message whose responsibility is cancelled while the Ship controller starts", async () => {
+    await runWithRealKernelSql(async (_sql, storage) => {
+      const { runtime, shipEvents, responsibilities } = fixture(storage);
+      const work = responsibilities.create({ ownerUid: OWNER, title: "Pending messages from Remote", source: actor, actor,
+        assignee: { kind: "ship" }, state: "open", priority: "normal", observedByShip: false, announced: true, now: Date.now() }).record;
+      shipEvents.enqueue(OWNER, "contact.message:msg:takeover", event("msg:takeover", work.id), Date.now());
+      vi.spyOn(personalController, "ensurePersonalController").mockImplementation(async () => {
+        responsibilities.update({ ownerUid: OWNER, id: work.id, patch: { state: "cancelled" }, actor, observedByShip: false, now: Date.now() });
+        return "proc:ship";
+      });
+      const send = vi.spyOn(processTransport, "sendFrameToProcess");
+      await runtime.onShipEvents(OWNER, { id: "task:takeover" });
+      expect(send).not.toHaveBeenCalled();
+      expect(shipEvents.next(OWNER)).toBeNull();
+    });
+  });
+
   it("stops delivery when the account is removed while the managed-work gate is pending", async () => {
     await runWithRealKernelSql(async (_sql, storage) => {
       const { host, runtime, shipEvents } = fixture(storage);

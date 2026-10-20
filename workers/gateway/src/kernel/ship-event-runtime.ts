@@ -43,9 +43,9 @@ export class ShipEventRuntime {
 
   private async deliverQueued(ownerUid: number, task: { id: string }): Promise<void> {
     for (let queued = this.host.shipEvents.next(ownerUid); queued; queued = this.host.shipEvents.next(ownerUid)) {
-      // Removal can land while the gate or a previous delivery awaited.
-      if (this.host.auth.isAccountDisabled(ownerUid)) return;
-      if (!this.authorized(queued)) {
+      const admission = this.admission(queued);
+      if (admission === "stop") return;
+      if (admission === "revoked") {
         this.host.shipEvents.delivered(queued.eventId);
         continue;
       }
@@ -66,19 +66,28 @@ export class ShipEventRuntime {
     }
   }
 
-  /** A queued message stays deliverable only while its contact and responsibility still admit Ship work. */
-  private authorized({ ownerUid, event }: QueuedShipEvent): boolean {
+  /**
+   * Whether a queued event may still reach Ship. Checked again after every await:
+   * removal stops delivery, and a message is revoked once its contact or
+   * responsibility no longer admits Ship work.
+   */
+  private admission({ ownerUid, event }: QueuedShipEvent): "deliver" | "revoked" | "stop" {
+    if (this.host.auth.isAccountDisabled(ownerUid)) return "stop";
     const contact = this.host.federation.get(event.contactId);
     const work = this.host.responsibilities.get(ownerUid, event.responsibilityId);
-    return !!contact && contact.state === "active" && !contact.blocked &&
-      !!work && work.state !== "resolved" && work.state !== "cancelled";
+    const open = !!work && work.state !== "resolved" && work.state !== "cancelled";
+    return contact?.state === "active" && !contact.blocked && open ? "deliver" : "revoked";
   }
 
+  /** Delivers one event; the Process frame is sent synchronously after the last admission check. */
   private async deliver(queued: QueuedShipEvent): Promise<void> {
     const processId = await ensurePersonalController(
       queued.ownerUid,
       this.host.buildKernelContext({ callerOwnerUid: queued.ownerUid }),
     );
+    const admission = this.admission(queued);
+    if (admission === "revoked") this.host.shipEvents.delivered(queued.eventId);
+    if (admission !== "deliver") return;
     const response = await sendFrameToProcess(this.host.installationId, processId, {
       type: "req",
       id: crypto.randomUUID(),

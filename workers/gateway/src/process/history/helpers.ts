@@ -176,7 +176,7 @@ function rewriteHistoryMedia(
   record: ProcHistoryRecordData,
   rewrites: ReadonlyMap<string, ArchivedMediaRewrite>,
 ): ProcHistoryRecordData {
-  if (record.kind !== "message" && record.kind !== "note" && record.kind !== "result") return record;
+  if (record.kind === "call") return record;
   if (!record.payload.media) return record;
   const media = record.payload.media.map((item) => {
     if (item.type === "resource") return item;
@@ -192,6 +192,7 @@ function rewriteHistoryMedia(
     case "message": return { ...record, payload: { ...record.payload, media } };
     case "note": return { ...record, payload: { ...record.payload, media } };
     case "result": return { ...record, payload: { ...record.payload, media } };
+    case "event": return { ...record, payload: { ...record.payload, media } };
   }
 }
 
