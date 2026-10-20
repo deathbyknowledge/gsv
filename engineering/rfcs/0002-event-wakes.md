@@ -112,6 +112,15 @@ type ShipEvent = {
 };
 ```
 
+**Media must outlive the queue.** An event may carry only references whose source
+lasts at least as long as the event can wait: an immutable revision in owned
+storage, or a grant that lives as long as the relationship that issued it. A
+producer holding temporary media retains the exact revision into Ship-owned
+storage before committing the event, as a Process retains a source before
+committing a Message. Contact attachments today rely on the sender's grant; the
+planned eager copy at federation admission makes them owned by the receiving Ship
+before they are queued.
+
 #466 stores the payload of one kind (`contact.message`). Generalising means a
 registry of kinds alongside the existing `procHistoryEventPayloadSchemas`, so the
 Kernel queue, the Process admission and the history renderer share one schema per
@@ -133,7 +142,14 @@ queueShipEvents(owner) ─► onShipEvents(owner)
 
 - Order is per owner. A failing event blocks later ones, so Ship never sees a
   caption before its photo.
-- Process deduplicates by `eventId` (existing runtime-event admission records).
+- Process deduplicates by `eventId` using its runtime-event admission records.
+  Those records belong to one pid. If an acknowledgement is lost and Ship is
+  replaced before the retry, the new pid would admit the event again. The queue
+  closes this gap by recording which pid each attempt went to; when a retry
+  resolves a different pid, the replacement first receives its predecessor's
+  recent admission records, as replacement already carries memory-review
+  sources, so the receipt survives the pid. #466 has this gap; closing it is
+  part of step 1.
 - Account removal and the managed lifecycle gate pause delivery exactly as they
   pause ledger wakes today.
 - Recovery on Kernel start reschedules every owner with queued events.
@@ -197,23 +213,27 @@ Each step is one PR. It converts one producer and deletes its old wake path.
 | # | Producer | Becomes | Deletes |
 |---|---|---|---|
 | 0 | Contact messages | `contact.message` (wake) | `contactReply` details. **Done in #466.** |
-| 1 | Delegation return | `ipc.reply` on the Ship queue, naming the returned record | the second `r12y.ready`; the IPC call's own Ship retry |
+| 1 | Delegation return | `ipc.reply` on the Ship queue, naming the returned record; admission receipts survive Ship replacement | the second `r12y.ready`; the IPC call's own Ship retry |
 | 2 | Schedules | `schedule.fired` for `--ship`, reply-route and `--to` targets (wake, wake, context) | the `schedule.due` responsibility per occurrence; Ship-bound `proc.schedule.deliver` (non-Ship targets keep it) |
 | 3 | Mail | `mail.received` (wake, untrusted, summary in payload) | summary in responsibility details |
 | 4 | Lifecycle, contact requests, browser handoff, memory review, onboarding | one typed event each | their `observedByShip: false` wakes |
 | 5 | Person edits | `r12y.edited` (wake) | the remaining `change_pending` callers |
 | 6 | Clock | `r12y.due`, `r12y.check`, `r12y.lease_expired` | the due, check and lease clauses of `nextWakeAt` |
 | 7 | Recovery | `r12y.unsettled` from the queue | `wake_retry_at` |
-| 8 | Cleanup | — | `change_pending`, wake batches, `r12y.ready`, `onResponsibilityWake`, `responsibility_wake_batches` (migration) |
+| 8 | Direct Ship paths | `adapter.work.returned`, `target.connection` and `signal.watched` on the Ship queue when the target is Ship | their Ship-specific delivery and retry (non-Ship pids keep pid-addressed delivery) |
+| 9 | Cleanup | — | `change_pending`, wake batches, `r12y.ready`, `onResponsibilityWake`, `responsibility_wake_batches` (migration) |
 
-After step 8, `ResponsibilityRuntime`'s wake code, the batch table and the
-`r12y.ready` runtime event are gone, and every source shares one delivery path.
+After step 9, `ResponsibilityRuntime`'s wake code, the batch table and the
+`r12y.ready` runtime event are gone, and every source that addresses the Ship
+shares one delivery path. Events between other Processes, such as a child's IPC
+result to a worker parent, stay pid-addressed.
 
 ## Invariants
 
 - One queue, one delivery path, one Ship.
-- An event is delivered at most once into Process history and is retried until
-  admitted.
+- An event is admitted at most once into the Ship's history, across Ship
+  replacement, and is retried until admitted.
+- An event's media outlives the event's time in the queue.
 - Events from one owner reach Ship in the order their producers committed them.
 - A producer's ledger change and its event commit together or not at all.
 - The ledger never wakes Ship on its own; only events do.
