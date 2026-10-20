@@ -64,6 +64,10 @@ export class ShipEventStore {
     };
   }
 
+  rebind(eventId: string, event: ShipEvent): void {
+    this.sql.exec("UPDATE ship_events SET event_json = ? WHERE event_id = ?", JSON.stringify(event), eventId);
+  }
+
   delivered(eventId: string): void {
     this.sql.exec("DELETE FROM ship_events WHERE event_id = ?", eventId);
   }

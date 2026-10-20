@@ -1,6 +1,7 @@
 import type { DurableTaskOptions } from "../shared/durable-tasks";
 import { sendFrameToProcess } from "../shared/utils";
 import { MANAGED_LIFECYCLE_RECHECK_MS } from "../installation/lifecycle";
+import { admitQueuedContactEvent } from "./federation/attention";
 import { ensurePersonalController } from "./personal-controller";
 import type { QueuedShipEvent } from "./ship-event-store";
 import type { Kernel } from "./do";
@@ -43,51 +44,46 @@ export class ShipEventRuntime {
 
   private async deliverQueued(ownerUid: number, task: { id: string }): Promise<void> {
     for (let queued = this.host.shipEvents.next(ownerUid); queued; queued = this.host.shipEvents.next(ownerUid)) {
-      const admission = this.admission(queued);
-      if (admission === "stop") return;
-      if (admission === "revoked") {
+      const admitted = this.admit(queued);
+      if (admitted === "stop") return;
+      if (admitted === "revoked") {
         this.host.shipEvents.delivered(queued.eventId);
         continue;
       }
-      if (queued.nextAttemptAtMs > Date.now()) {
-        await this.schedule(ownerUid, queued.nextAttemptAtMs, task.id);
+      if (admitted.nextAttemptAtMs > Date.now()) {
+        await this.schedule(ownerUid, admitted.nextAttemptAtMs, task.id);
         return;
       }
       try {
-        await this.deliver(queued);
+        await this.deliver(admitted);
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        const retryAt = Date.now() + Math.min(MAX_RETRY_DELAY_MS, 1_000 * (2 ** Math.min(8, queued.attemptCount + 1)));
-        this.host.shipEvents.failed(queued.eventId, message, retryAt, Date.now());
-        console.warn(`[Kernel] Failed to deliver Ship event ${queued.eventId}:`, message);
+        const retryAt = Date.now() + Math.min(MAX_RETRY_DELAY_MS, 1_000 * (2 ** Math.min(8, admitted.attemptCount + 1)));
+        this.host.shipEvents.failed(admitted.eventId, message, retryAt, Date.now());
+        console.warn(`[Kernel] Failed to deliver Ship event ${admitted.eventId}:`, message);
         await this.schedule(ownerUid, retryAt, task.id);
         return;
       }
     }
   }
 
-  /**
-   * Whether a queued event may still reach Ship. Checked again after every await:
-   * removal stops delivery, and a message is revoked once its contact or
-   * responsibility no longer admits Ship work.
-   */
-  private admission({ ownerUid, event }: QueuedShipEvent): "deliver" | "revoked" | "stop" {
-    if (this.host.auth.isAccountDisabled(ownerUid)) return "stop";
-    const contact = this.host.federation.get(event.contactId);
-    const work = this.host.responsibilities.get(ownerUid, event.responsibilityId);
-    const open = !!work && work.state !== "resolved" && work.state !== "cancelled";
-    return contact?.state === "active" && !contact.blocked && open ? "deliver" : "revoked";
+  /** Checked again after every await: removal stops delivery, and the event's producer rebinds or revokes it. */
+  private admit(queued: QueuedShipEvent): QueuedShipEvent | "revoked" | "stop" {
+    if (this.host.auth.isAccountDisabled(queued.ownerUid)) return "stop";
+    const ctx = this.host.buildKernelContext({ callerOwnerUid: queued.ownerUid });
+    const event = admitQueuedContactEvent(queued.ownerUid, queued.eventId, queued.event, ctx);
+    return event ? { ...queued, event } : "revoked";
   }
 
   /** Delivers one event; the Process frame is sent synchronously after the last admission check. */
-  private async deliver(queued: QueuedShipEvent): Promise<void> {
+  private async deliver(admitted: QueuedShipEvent): Promise<void> {
     const processId = await ensurePersonalController(
-      queued.ownerUid,
-      this.host.buildKernelContext({ callerOwnerUid: queued.ownerUid }),
+      admitted.ownerUid,
+      this.host.buildKernelContext({ callerOwnerUid: admitted.ownerUid }),
     );
-    const admission = this.admission(queued);
-    if (admission === "revoked") this.host.shipEvents.delivered(queued.eventId);
-    if (admission !== "deliver") return;
+    const queued = this.admit(admitted);
+    if (queued === "revoked") this.host.shipEvents.delivered(admitted.eventId);
+    if (queued === "revoked" || queued === "stop") return;
     const response = await sendFrameToProcess(this.host.installationId, processId, {
       type: "req",
       id: crypto.randomUUID(),

@@ -59,6 +59,24 @@ export function admitContactMessage(contact: FederationContactRecord, inbox: Fed
   });
 }
 
+/**
+ * Rebind or revoke a queued contact message before delivery. It stays with open work;
+ * once that work ends it joins standing handling as a newly arriving message would,
+ * and it is revoked when Ship no longer handles this contact. Returns the event to deliver.
+ */
+export function admitQueuedContactEvent(ownerUid: number, eventId: string, event: ShipEvent, ctx: KernelContext): ShipEvent | null {
+  return ctx.federation.transaction(() => {
+    const contact = ctx.federation.get(event.contactId);
+    if (!contact || contact.ownerUid !== ownerUid || contact.state !== "active" || contact.blocked) return null;
+    const work = ctx.responsibilities.get(ownerUid, event.responsibilityId);
+    if (work && !terminal(work)) return event;
+    if (!contact.preferences.shipHandlesMessages) return null;
+    const rebound = { ...event, responsibilityId: pendingMessages(contact, ctx).id, ledgerRevision: ctx.responsibilities.revision(ownerUid) };
+    ctx.shipEvents.rebind(eventId, rebound);
+    return rebound;
+  });
+}
+
 export function endContactHandling(contact: FederationContactRecord, ctx: KernelContext): boolean {
   const tasks = ctx.federation.replyResponsibilities(contact);
   ctx.federation.clearReplyWaits(contact);

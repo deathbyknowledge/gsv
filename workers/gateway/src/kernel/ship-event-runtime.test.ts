@@ -47,29 +47,54 @@ describe("Ship event delivery", () => {
     });
   });
 
-  it("drops a queued message once its responsibility or contact no longer admits Ship work", async () => {
+  it("revokes a queued message once Ship no longer handles its contact", async () => {
     await runWithRealKernelSql(async (_sql, storage) => {
-      const { host, runtime, shipEvents, responsibilities } = fixture(storage);
-      const work = responsibilities.create({ ownerUid: OWNER, title: "Pending messages from Remote", source: actor, actor,
-        assignee: { kind: "ship" }, state: "open", priority: "normal", observedByShip: false, announced: true, now: Date.now() }).record;
-      shipEvents.enqueue(OWNER, "contact.message:msg:cancelled", event("msg:cancelled", work.id), Date.now());
-      shipEvents.enqueue(OWNER, "contact.message:msg:blocked", event("msg:blocked", "r12y:other"), Date.now());
+      const { contact, runtime, shipEvents, responsibilities } = fixture(storage);
+      const work = pending(responsibilities);
+      shipEvents.enqueue(OWNER, "contact.message:msg:takeover", event("msg:takeover", work.id), Date.now());
       responsibilities.update({ ownerUid: OWNER, id: work.id, patch: { state: "cancelled" }, actor, observedByShip: false, now: Date.now() });
-      host.federation.get = () => ({ state: "active", blocked: true });
+      contact.preferences.shipHandlesMessages = false;
       const ensure = vi.spyOn(personalController, "ensurePersonalController");
-      await runtime.onShipEvents(OWNER, { id: "task:fenced" });
+      await runtime.onShipEvents(OWNER, { id: "task:takeover" });
+      expect(shipEvents.next(OWNER)).toBeNull();
+
+      const open = pending(responsibilities);
+      shipEvents.enqueue(OWNER, "contact.message:msg:blocked", event("msg:blocked", open.id), Date.now());
+      contact.blocked = true;
+      await runtime.onShipEvents(OWNER, { id: "task:blocked" });
       expect(ensure).not.toHaveBeenCalled();
       expect(shipEvents.next(OWNER)).toBeNull();
     });
   });
 
-  it("drops a message whose responsibility is cancelled while the Ship controller starts", async () => {
+  it("moves a message whose shared work Ship already resolved to fresh standing work", async () => {
     await runWithRealKernelSql(async (_sql, storage) => {
       const { runtime, shipEvents, responsibilities } = fixture(storage);
-      const work = responsibilities.create({ ownerUid: OWNER, title: "Pending messages from Remote", source: actor, actor,
-        assignee: { kind: "ship" }, state: "open", priority: "normal", observedByShip: false, announced: true, now: Date.now() }).record;
+      const work = pending(responsibilities);
+      shipEvents.enqueue(OWNER, "contact.message:msg:later", event("msg:later", work.id), Date.now());
+      responsibilities.update({ ownerUid: OWNER, id: work.id, patch: { state: "resolved" }, actor, observedByShip: true, now: Date.now() });
+      vi.spyOn(personalController, "ensurePersonalController").mockResolvedValue("proc:ship");
+      const delivered: string[] = [];
+      vi.spyOn(processTransport, "sendFrameToProcess").mockImplementation(async (_installation, _pid, frame) => {
+        if (frame.type === "req" && frame.call === "proc.runtime.event.deliver") delivered.push(frame.args.event.responsibilityId);
+        return { type: "res", id: "response", ok: true, data: {} };
+      });
+      await runtime.onShipEvents(OWNER, { id: "task:later" });
+      const reopened = responsibilities.list({ ownerUid: OWNER }).records.filter((record) => record.state === "open");
+      expect(reopened).toHaveLength(1);
+      expect(reopened[0]!.id).not.toBe(work.id);
+      expect(delivered).toEqual([reopened[0]!.id]);
+      expect(shipEvents.next(OWNER)).toBeNull();
+    });
+  });
+
+  it("revokes a message when the owner takes over while the Ship controller starts", async () => {
+    await runWithRealKernelSql(async (_sql, storage) => {
+      const { contact, runtime, shipEvents, responsibilities } = fixture(storage);
+      const work = pending(responsibilities);
       shipEvents.enqueue(OWNER, "contact.message:msg:takeover", event("msg:takeover", work.id), Date.now());
       vi.spyOn(personalController, "ensurePersonalController").mockImplementation(async () => {
+        contact.preferences.shipHandlesMessages = false;
         responsibilities.update({ ownerUid: OWNER, id: work.id, patch: { state: "cancelled" }, actor, observedByShip: false, now: Date.now() });
         return "proc:ship";
       });
@@ -119,23 +144,38 @@ function event(messageId: string, responsibilityId: string): ShipEvent {
     from: "Remote", text: messageId, responsibilityId, ledgerRevision: 1 };
 }
 
+function pending(responsibilities: ResponsibilityStore) {
+  return responsibilities.create({ ownerUid: OWNER, title: "Pending messages from Remote", source: actor, actor,
+    assignee: { kind: "ship" }, state: "open", priority: "normal",
+    dedupeKey: `contact.handoff:contact:remote:1:${crypto.randomUUID()}`,
+    observedByShip: false, announced: true, now: Date.now() }).record;
+}
+
 function fixture(storage: DurableObjectStorage) {
   const shipEvents = new ShipEventStore(storage);
   const responsibilities = new ResponsibilityStore(storage);
   const schedule = vi.fn(async () => ({}));
+  const contact = {
+    id: "contact:remote", ownerUid: OWNER, generation: 1, conversationId: "conv:remote", state: "active", blocked: false,
+    remoteSubject: { displayName: "Remote" }, preferences: { shipHandlesMessages: true },
+  };
+  const federation = {
+    get: (_contactId: string) => contact,
+    transaction: <Value>(callback: () => Value): Value => storage.transactionSync(callback),
+  };
   const host = {
     installationId: "installation:test",
     ctx: { storage, waitUntil: () => {} },
     shipEvents,
     responsibilities,
-    federation: { get: (_contactId: string): { state: string; blocked: boolean } | null => ({ state: "active", blocked: false }) },
+    federation,
     auth: { isAccountDisabled: (_uid: number) => false },
     onboarding: { managedWorkGate: async () => ({ allowed: true }) },
     responsibilityRuntime: { reconcileResponsibilityWake: vi.fn(async (_uid: number) => {}) },
-    buildKernelContext: () => ({}),
+    buildKernelContext: () => ({ federation, responsibilities, shipEvents }),
     schedule,
   };
   // SAFETY: ShipEventRuntime reaches only these Kernel members.
   const runtime = new ShipEventRuntime(host as Kernel);
-  return { host, runtime, shipEvents, responsibilities, schedule };
+  return { host, contact, runtime, shipEvents, responsibilities, schedule };
 }
