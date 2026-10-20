@@ -26,7 +26,8 @@ const hilRequestSchema = z.object({
 });
 
 const APPROVE_ANSWERS = new Set(["y", "yes", "yep", "yeah", "ok", "okay", "sure", "go", "go ahead", "do it", "run it"]);
-const DENY_ANSWERS = new Set(["n", "no", "nope", "don't", "dont", "deny", "stop"]);
+// "stop" is deliberately absent: it must keep going out as a message, which supersedes and aborts the run.
+const DENY_ANSWERS = new Set(["n", "no", "nope", "don't", "dont", "deny"]);
 
 /** Maps a typed reply to a pending approval onto a decision, so typing an answer does not cancel the request. */
 export function approvalAnswer(text: string): "approve" | "deny" | null {
