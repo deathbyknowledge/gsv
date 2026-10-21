@@ -20,9 +20,10 @@ use the id returned by discovery or provisioning.
 
 1. On `gsv`, run `instance list` for the account's active cloud browsers,
    including ones still starting, and
-   `targets list --online --search browser --limit 100 --json` for connected
-   personal browsers. Choose a suitable browser as described under Choosing A
-   Browser. An empty list does not rule out cloud provisioning. `targets` and
+   `targets list --online --search browser --limit 100 --json` for every
+   online browser target. Entries whose id appears in `instance list` are
+   cloud browsers; the rest are connected personal browsers. Choose a suitable
+   browser as described under Choosing A Browser. An empty list does not rule out cloud provisioning. `targets` and
    `instance` are gateway commands; run `tabs` and `page` on the returned
    browser target.
 2. If no suitable browser is available, run `instance catalog` on `gsv`.
