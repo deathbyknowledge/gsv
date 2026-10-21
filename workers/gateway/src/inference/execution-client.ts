@@ -18,6 +18,7 @@ import { applyManagedInferenceEvent } from "./stream-projection";
 import { extractCompletedText } from "./generated-text";
 import { errorMessageFromUnknown } from "./errors";
 import { inferenceDiagnosticId, inferenceErrorMetadata, reportInferenceClientResult } from "@humansandmachines/gsv/services/inference-diagnostics";
+import { encodeInferenceRequest, cancelInferenceRequest } from "@humansandmachines/gsv/services/inference-body";
 
 type GenerateRequest = {
   config: AiConfigResult;
@@ -63,6 +64,7 @@ async function pump(
   let target: InferenceExecutor | undefined;
   let transport: RoutedInferenceTransport | undefined;
   let started = false;
+  let input: ReturnType<typeof encodeInferenceRequest<InferenceExecutionRequest>> | undefined;
   let abortSent = false;
   const abortGeneration = () => {
     if (!target || !started || abortSent) return;
@@ -92,7 +94,8 @@ async function pump(
       onLateResolve: (late) => { if (!acquisitionDisposed) disposeRpc(late); },
     });
     abort.signal.throwIfAborted();
-    const input = { ...executionRequest(request, timeoutMs, abort.deadlineAt), diagnosticId };
+    input = encodeInferenceRequest({ ...executionRequest(request, timeoutMs, abort.deadlineAt), diagnosticId });
+    abort.signal.throwIfAborted();
     transport = request.fetch ? new RoutedInferenceTransport(request.fetch) : undefined;
     started = true;
     phase = "request";
@@ -163,6 +166,7 @@ async function pump(
     abort.signal.removeEventListener("abort", abortGeneration);
     abort.clear();
     transport?.close();
+    if (input) cancelInferenceRequest(input, abort.signal.reason);
     disposeRpc(target);
   }
 }

@@ -30,7 +30,8 @@ import type { MessageRecord } from "../store";
 import { storedHistoryMedia } from "../storage/history-media";
 import type { ImageContent, TextContent } from "@humansandmachines/gsv/services/inference-context";
 import {
-  MAX_PROCESS_MEDIA_READ_BYTES, retainedResourceBlock, type ArchivedMediaRewrite, type ResourceRetentionOptions,
+  MAX_PROCESS_MEDIA_READ_BYTES, MEDIA_PREPARATION_TIMEOUT_MS, retainedResourceBlock, type ArchivedMediaRewrite,
+  type ResourceRetentionOptions,
   type ResourceRetentionResult,
 } from "../internal/lifecycle";
 import { encodeBase64Bytes } from "../../shared/base64";
@@ -495,6 +496,28 @@ export class ProcessResources {
           "media.error",
         );
       }
+    } finally {
+      releaseMedia();
+    }
+  }
+
+  /** Prepare media carried by a runtime event before admission, so an idle and a busy Process see the same media. */
+  async prepareEventMedia(input: ProcMediaInput[]): Promise<string | null> {
+    const identity = this.host.identity;
+    const releaseMedia = await this.acquireMediaKeyAdmissions(input.flatMap((item) => (item.key ? [item.key] : [])));
+    try {
+      const signal = AbortSignal.timeout(MEDIA_PREPARATION_TIMEOUT_MS);
+      const options = await raceWithAbort(this.resolveMediaProcessingOptions(input), signal);
+      return await raceWithAbort(
+        storeIncomingProcessMedia(this.host.storage, identity.uid, this.host.pid, input, {
+          ...options,
+          signal,
+          allowedStoredKeys: new Set(
+            input.flatMap((item) => (item.key && agentArchiveMediaPath(identity.home, item.key) ? [item.key] : [])),
+          ),
+        }),
+        signal,
+      );
     } finally {
       releaseMedia();
     }

@@ -38,6 +38,7 @@ import {
   GSV_INFERENCE_PROVIDER,
   type AiConfigResult,
   type ManagedInferenceResult,
+  type ManagedInferenceRequest,
 } from "@humansandmachines/gsv/protocol";
 import type {
   InferenceService as ManagedInferenceService,
@@ -45,6 +46,7 @@ import type {
 } from "@humansandmachines/gsv/services/inference";
 import type { AssistantMessage, Context } from "@earendil-works/pi-ai";
 import { createGsvInferenceProviderFactory } from "../../src/text/gsv-provider";
+import { decodeInferenceRequest } from "@humansandmachines/gsv/services/inference-body";
 
 function managedResultStream(
   message: ManagedInferenceResult,
@@ -237,9 +239,12 @@ describe("createGenerationService", () => {
       stopReason: "stop",
       timestamp: 1,
     };
-    const generateStream = vi.fn<ManagedInferenceTarget["generateStream"]>(
-      async () => managedResultStream(managedResult),
-    );
+    let decoded: ManagedInferenceRequest | undefined;
+    const generateStream = vi.fn<ManagedInferenceTarget["generateStream"]>(async (input) => {
+      expect(input).not.toHaveProperty("messages");
+      decoded = await decodeInferenceRequest(input);
+      return managedResultStream(managedResult);
+    });
     const target: ManagedInferenceTarget = {
       generate: vi.fn(),
       generateStream,
@@ -278,7 +283,8 @@ describe("createGenerationService", () => {
 
     expect(result.content).toEqual([{ type: "text", text: "managed pong" }]);
     expect(getInstallation).toHaveBeenCalledWith("inst_test");
-    expect(generateStream).toHaveBeenCalledWith(expect.objectContaining({
+    expect(generateStream).toHaveBeenCalledOnce();
+    expect(decoded).toMatchObject({
       installationId: "inst_test",
       logicalRequestId: "request_test",
       actor: { localUid: 1000, processId: "proc_test", runId: "run_test" },
@@ -287,7 +293,7 @@ describe("createGenerationService", () => {
       maxOutputTokens: 128,
       reasoning: "low",
       timeoutMs: 1_000,
-    }));
+    });
     expect(completePiAiSimpleMock).toHaveBeenCalledWith(
       expect.objectContaining({ provider: "gsv", id: "default" }),
       expect.objectContaining({ systemPrompt: "Be direct." }),

@@ -4,6 +4,7 @@ import { KERNEL_V067_CONTACT_HANDLING_CHOICE } from "./v067_contact_handling_cho
 import { KERNEL_V068_RETAIN_IPC_RUN_STATUS } from "./v068_retain_ipc_run_status";
 import { KERNEL_V069_SINGLE_HUMAN_SPACE } from "./v069_single_human_space";
 import { KERNEL_V070_PRESERVE_SYSTEM_CONTEXT_OVERRIDES } from "./v070_preserve_system_context_overrides";
+import { KERNEL_V071_SHIP_EVENTS } from "./v071_ship_events";
 import { runSqlMigrations, type SqlMigration } from "../../schema/runner";
 import { KERNEL_V001_INITIAL_SCHEMA } from "./v001_initial";
 import { KERNEL_V002_REMOVE_DEVICE_LIFECYCLE } from "./v002_remove_device_lifecycle";
@@ -192,6 +193,7 @@ export const KERNEL_MIGRATIONS: readonly SqlMigration[] = [
   KERNEL_V068_RETAIN_IPC_RUN_STATUS,
   KERNEL_V069_SINGLE_HUMAN_SPACE,
   KERNEL_V070_PRESERVE_SYSTEM_CONTEXT_OVERRIDES,
+  KERNEL_V071_SHIP_EVENTS,
 ];
 
 export function runKernelSqlMigrations(storage: DurableObjectStorage): void {

@@ -142,6 +142,7 @@ message send [--message TEXT]
 yield
 message send --to DESTINATION [--message TEXT] [--attach PATH]... [--mime TYPE] [--delivery-id ID] [--responsibility ID] [--also]
 contact identity
+contact find @HANDLE|ADDRESS
 contact list [--all] [--json]
 contact alias CONTACT_ID NAME|--clear
 contact invite create --handling manual|ship [--expires DURATION]
@@ -360,6 +361,9 @@ automatic retry. An outcome that may have reached the provider is reported as
 `sent=false`, `delivery_confirmed=false`, and `delivery_state=ambiguous`.
 
 `contact` manages relationships with people on other Ships.
+`contact find @HANDLE|ADDRESS` reads a published public profile. An unavailable
+profile does not establish whether the Ship exists; private invitations work
+without a published profile or an existing contact.
 `contact invite create --handling manual|ship` returns a short-lived one-use code and a shareable `url`;
 the other person accepts either while signed in to their own Ship. The default
 lifetime is one hour; `--expires` accepts up to seven days. Pairing and revocation may
@@ -375,6 +379,24 @@ independently. To change an existing contact, read `preferences.revision` from
 `contact list --json` and use `contact handling CONTACT_ID manual|ship --revision N`.
 The Kernel accepts changes from the owner or their canonical Ship, keeps capability
 and revision checks, and starts no work merely because the setting changed.
+
+To invite someone at a known email address, create a private invitation, put its
+returned `url` in a message file, and send that file with managed mail:
+
+```bash
+contact invite create --handling manual --expires 7d
+# Save the returned url and your message in /tmp/invitation.txt before sending.
+mail send --to FRIEND_EMAIL --subject 'Connect on Ship' --body /tmp/invitation.txt
+mail status DELIVERY_ID
+contact invite list --all --json
+```
+
+Use `--handling ship` instead when the owner has chosen automatic handling. The
+recipient may use a managed Ship mailbox without publishing a profile. Use their
+known email address; a custom Ship website address does not establish its mail
+domain. Sending follows the ordinary `mail.send` approval policy. Email status
+describes transport progress, while invitation status records acceptance. The
+recipient still chooses their own handling and accepts the invitation.
 
 `contact invite list --all` exposes retained invitation lifecycle metadata but
 never a recoverable code. `message history --with contact:...` reads the Contact

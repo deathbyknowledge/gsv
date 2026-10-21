@@ -17,6 +17,17 @@ describe("typed history projection", () => {
     expect(rows[0]).toMatchObject({ text: "Review requested for 1 responsibility.", event: { kind: "responsibility.ready", audience: "model", severity: "info" } });
   });
 
+  it("keeps a contact message's attachments on its event row", () => {
+    const media = [{ type: "image", mimeType: "image/png", key: "home/u/.gsv/media/photo", filename: "selfie.png" }];
+    const rows = transcriptRowsFromRecords([procHistoryRecordSchema.parse({
+      ...identity, kind: "event", payload: {
+        kind: "contact.message", severity: "info", audience: "model", media,
+        payload: { contactId: "contact:1", conversationId: "conv:1", messageId: "msg:1", from: "Xisca", text: "", responsibilityId: "r12y:1" },
+      },
+    })]);
+    expect(rows).toEqual([expect.objectContaining({ text: "Xisca: (an attachment)", media })]);
+  });
+
   it("retains purpose through result deltas, late call records and a history reload", () => {
     const call = procHistoryRecordSchema.parse({ ...identity, kind: "call", payload: {
       runId: "r", callId: "disk", tool: "Shell", syscall: "shell.exec", target: "studio",

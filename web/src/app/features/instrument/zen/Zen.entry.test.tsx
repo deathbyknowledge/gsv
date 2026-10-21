@@ -22,6 +22,7 @@ import { BrowserRequests } from "../browser/BrowserControl";
 import { ChatPanels } from "./ChatPanels";
 import { ZenText } from "./ZenText";
 import { ThinkingMark } from "./ThinkingMark";
+import { WakingUp } from "./WakingUp";
 import { ApprovalCard } from "../shared/ApprovalCard";
 import { ConversationSearch } from "../shared/ConversationSearch";
 import { ZenDraftPaste } from "./ZenMedia";
@@ -32,6 +33,7 @@ let messages: ConversationMessage[];
 let targets: SysTargetSummary[];
 let targetsReady: Promise<void> | null;
 let hasMore: boolean;
+let historyUnavailable: boolean;
 let ownerUid: number;
 let gateway: string;
 let shipPid: string;
@@ -62,6 +64,7 @@ beforeEach(() => {
   targets = [];
   targetsReady = null;
   hasMore = false;
+  historyUnavailable = false;
   ownerUid = 1000;
   gateway = "wss://space.example/ws";
   shipPid = "ship";
@@ -91,7 +94,10 @@ beforeEach(() => {
     if (call === "sys.config.get") return { data: { entries: [] } };
     if (call === "account.list") return { data: { accounts: [] } };
     if (call === "conversation.forProcess") return { data: { conversation: conversation(z.object({ pid: z.string() }).parse(args).pid) } };
-    if (call === "conversation.history") return { data: { conversation: conversation(), messages, hasMore } };
+    if (call === "conversation.history") {
+      if (historyUnavailable) throw new Error("history unavailable");
+      return { data: { conversation: conversation(), messages, hasMore } };
+    }
     if (call === "proc.history") return { data: { ok: true, pid: z.object({ pid: z.string() }).parse(args).pid,
       format: 2, records: processRecords, messages: [], messageCount: processRecords.length, cursor: "epoch:1", hasMore: false,
       activeRunId, context: runContext, contextRevision: runContext?.revision ?? 0,
@@ -105,7 +111,7 @@ beforeEach(() => {
 });
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
-async function mountedZen(pid?: string, initialTarget?: string, native = false, searchRequested = false) {
+async function mountedZen(pid?: string, initialTarget?: string, native = false, searchRequested = false, welcomeOpen = false) {
   const root = createTestRoot("Zen entry");
   const cache = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
   let tree: ComponentChildren;
@@ -116,7 +122,7 @@ async function mountedZen(pid?: string, initialTarget?: string, native = false, 
     acknowledge: async () => {}, command: async () => {},
   };
   const searchHandled = vi.fn();
-  function Harness() { tree = Zen({ pid, initialTarget, onFleet, onDraftChange: draftChange, searchRequested, onSearchRequestHandled: searchHandled }); return null; }
+  function Harness() { tree = Zen({ pid, initialTarget, onFleet, onDraftChange: draftChange, searchRequested, onSearchRequestHandled: searchHandled, welcomeOpen }); return null; }
   const render = () => root.render(<GatewayProvider><SessionProvider createService={(client) => {
     const service = createSessionService(client);
     return { ...service, start: async () => {}, subscribe: () => () => {},
@@ -270,6 +276,67 @@ describe("Zen conversation entry", () => {
       const expected: ProcHilArgs = { pid: shipPid, requestId: "shell-approval", decision: "approve" };
       if (remember) expected.remember = true;
       expect(GSVClient.prototype.request).toHaveBeenCalledWith("proc.hil", expected);
+    } finally { await zen.unmount(); }
+  });
+
+  async function requestShellApproval(zen: Awaited<ReturnType<typeof mountedZen>>) {
+    await act(() => {
+      for (const listener of signals) listener("proc.run.hil.requested", {
+        pid: shipPid, requestId: "shell-approval", runId: activeRunId, callId: "shell-call",
+        toolName: "Shell", syscall: "shell.exec", target: "laptop",
+        args: { target: "laptop", input: "pwd" }, createdAt: 2,
+      });
+    });
+    await vi.waitFor(() => expect(zen.props(ApprovalCard).request.requestId).toBe("shell-approval"));
+  }
+
+  it.each([["yes", "approve"], ["no", "deny"]] as const)("answers a pending approval when %s is typed instead of messaging Ship", async (text, decision) => {
+    activeRunId = "shell-run";
+    const zen = await mountedZen();
+    try {
+      await requestShellApproval(zen);
+      await act(() => { expect(zen.props(PromptLine).onSubmit(text)).toBe(true); });
+      const expected: ProcHilArgs = { pid: shipPid, requestId: "shell-approval", decision };
+      await vi.waitFor(() => expect(GSVClient.prototype.request).toHaveBeenCalledWith("proc.hil", expected));
+      expect(send).not.toHaveBeenCalled();
+    } finally { await zen.unmount(); }
+  });
+
+  it("sends any other reply to a pending approval to Ship as a message", async () => {
+    activeRunId = "shell-run";
+    send.mockResolvedValueOnce({ message: message("user", "yes but first show me the file"), handlerPid: shipPid, runId: "shell-run" });
+    const zen = await mountedZen();
+    try {
+      await requestShellApproval(zen);
+      await act(() => { expect(zen.props(PromptLine).onSubmit("yes but first show me the file")).toBe(true); });
+      await vi.waitFor(() => expect(send).toHaveBeenCalledWith(expect.objectContaining({ text: "yes but first show me the file" })));
+      expect(GSVClient.prototype.request).not.toHaveBeenCalledWith("proc.hil", expect.anything());
+    } finally { await zen.unmount(); }
+  });
+
+  it("holds a lone misspelt answer in the prompt instead of replacing the request", async () => {
+    activeRunId = "shell-run";
+    const zen = await mountedZen();
+    try {
+      await requestShellApproval(zen);
+      await act(() => { expect(zen.props(PromptLine).onSubmit("nno")).toBe(false); });
+      expect(send).not.toHaveBeenCalled();
+      expect(GSVClient.prototype.request).not.toHaveBeenCalledWith("proc.hil", expect.anything());
+      expect(zen.props(FeedbackNote).note).toEqual({ kind: "notice", message: "chat.notice.approvalUnclear" });
+      expect(zen.props(ApprovalCard).request.requestId).toBe("shell-approval");
+      await act(() => { expect(zen.props(PromptLine).onSubmit("no")).toBe(true); });
+      await vi.waitFor(() => expect(GSVClient.prototype.request).toHaveBeenCalledWith("proc.hil", expect.objectContaining({ decision: "deny" })));
+      expect(zen.nodes().some((node) => node.type === FeedbackNote)).toBe(false);
+    } finally { await zen.unmount(); }
+  });
+
+  it("invites a typed answer in the composer only while an approval is pending", async () => {
+    activeRunId = "shell-run";
+    const zen = await mountedZen();
+    try {
+      expect(zen.props(PromptLine).placeholder).toBe("Message your Ship");
+      await requestShellApproval(zen);
+      expect(zen.props(PromptLine).placeholder).toBe("yes or no, or write back");
     } finally { await zen.unmount(); }
   });
 
@@ -536,6 +603,28 @@ describe("Zen conversation entry", () => {
     } finally { await zen.unmount(); }
   });
 
+  it("edits a pasted chip in place and sends the edited text", async () => {
+    send.mockResolvedValueOnce({ message: message("user", "edited"), handlerPid: shipPid, runId: "edited-paste" });
+    const zen = await mountedZen();
+    try {
+      const pastes = () => zen.nodes().filter((node) => node.type === ZenDraftPaste);
+      await act(() => { expect(zen.props(PromptLine).onPasteText?.("w".repeat(500))).toBe(true); });
+      await act(() => { zen.props(ZenDraftPaste).onChange?.("   \n  "); });
+      expect(pastes()).toHaveLength(0);
+      await act(() => { expect(zen.props(PromptLine).onPasteText?.("q".repeat(500))).toBe(true); });
+      // An edited paste stays a chip however short it gets.
+      const edited = "Dear Sam,\nthanks — see you Tuesday.";
+      await act(() => { zen.props(ZenDraftPaste).onChange?.(edited); });
+      expect(pastes()).toHaveLength(1);
+      expect(zen.props(ZenDraftPaste).paste.text).toBe(edited);
+      expect(zen.props(ZenDraftPaste).paste.characters).toBe(Array.from(edited).length);
+      await act(() => { expect(zen.props(PromptLine).onSubmit("Send this?")).toBe(true); });
+      await vi.waitFor(() => expect(send).toHaveBeenCalledOnce());
+      expect(send.mock.calls[0]?.[0].text).toBe(`Send this?\n\n${edited}`);
+      expect(pastes()).toHaveLength(0);
+    } finally { await zen.unmount(); }
+  });
+
   it("sends ordinary native text through the conversation outbox", async () => {
     send.mockResolvedValueOnce({ message: message("user", "Hello from voice"), handlerPid: shipPid, runId: "voice" });
     const zen = await mountedZen(undefined, undefined, true);
@@ -555,6 +644,64 @@ describe("Zen conversation entry", () => {
       expect(zen.props<ComponentProps<typeof PromptLine>>(PromptLine).disabled).toBe(false);
       expect(send).not.toHaveBeenCalled();
       expect([...storage.values()]).toEqual([]);
+    } finally { await zen.unmount(); }
+  });
+
+  it("shows Ship waking up from the empty chat through its first run until the first message lands", async () => {
+    const zen = await mountedZen();
+    const waking = () => zen.nodes().filter((node) => node.type === WakingUp).length;
+    try {
+      await vi.waitFor(() => expect(waking()).toBe(1));
+      expect(zen.nodes().some((node) => node.type === ThinkingMark)).toBe(false);
+
+      activeRunId = "welcome-run";
+      await act(() => { for (const listener of signals) listener("proc.run.started", { pid: shipPid, runId: activeRunId }); });
+      await vi.waitFor(() => expect(zen.nodes().some((node) => node.type === ThinkingMark)).toBe(true));
+      expect(waking()).toBe(1);
+
+      const greeting = message("process", "Hi, I'm Ship.");
+      await act(() => {
+        messages = [greeting];
+        for (const listener of signals) listener("message.committed", { message: greeting, directed: false });
+      });
+      await vi.waitFor(() => expect(zen.props(ZenText).text).toBe(greeting.text));
+      expect(waking()).toBe(0);
+
+      activeRunId = "later-run";
+      await act(() => { for (const listener of signals) listener("proc.run.started", { pid: shipPid, runId: activeRunId }); });
+      await vi.waitFor(() => expect(zen.nodes().some((node) => node.type === ThinkingMark)).toBe(true));
+      expect(waking()).toBe(0);
+    } finally { await zen.unmount(); }
+  });
+
+  it("does not say Ship is waking while the welcome card still stands", async () => {
+    const zen = await mountedZen(undefined, undefined, false, false, true);
+    try {
+      await vi.waitFor(() => expect(zen.props(PromptLine).disabled).toBe(false));
+      expect(zen.nodes().some((node) => node.type === WakingUp)).toBe(false);
+      activeRunId = "welcome-run";
+      await act(() => { for (const listener of signals) listener("proc.run.started", { pid: shipPid, runId: activeRunId }); });
+      await vi.waitFor(() => expect(zen.nodes().some((node) => node.type === ThinkingMark)).toBe(true));
+      expect(zen.nodes().some((node) => node.type === WakingUp)).toBe(false);
+    } finally { await zen.unmount(); }
+  });
+
+  it("does not call a conversation whose history failed to load a waking Ship", async () => {
+    historyUnavailable = true;
+    const zen = await mountedZen();
+    try {
+      await vi.waitFor(() => expect(zen.text()).toContain("Could not load your conversation: history unavailable"));
+      expect(zen.nodes().some((node) => node.type === WakingUp)).toBe(false);
+    } finally { await zen.unmount(); }
+  });
+
+  it("does not call an older conversation a waking Ship", async () => {
+    messages = [message("user", "Are you there?")];
+    hasMore = true;
+    const zen = await mountedZen();
+    try {
+      await vi.waitFor(() => expect(zen.props(ZenText).text).toBe("Are you there?"));
+      expect(zen.nodes().some((node) => node.type === WakingUp)).toBe(false);
     } finally { await zen.unmount(); }
   });
 
@@ -680,6 +827,7 @@ describe("Zen conversation entry", () => {
     try {
       await vi.waitFor(() => expect(zen.text()).toContain("This helper has no messages yet."));
       expect(zen.text()).not.toContain("I am the Ship. Who are you?");
+      expect(zen.nodes().some((node) => node.type === WakingUp)).toBe(false);
       expect(send).not.toHaveBeenCalled();
     } finally { await zen.unmount(); }
   });

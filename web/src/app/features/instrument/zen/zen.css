@@ -233,6 +233,23 @@
 @media (prefers-reduced-motion: reduce) {
   .zen-thinking.is-dot .dot { animation: none; opacity: 0.7; }
 }
+/* a Ship that has never spoken: the line stands where its first words will, breathing, its dots walking one at a time */
+.zen-moment .text .zen-waking {
+  margin: 0 0 0.3em;
+  color: var(--text-dim);
+  animation: zen-waking-breathe 3.6s ease-in-out infinite;
+}
+.zen-waking-dots i { font-style: normal; }
+.zen-waking-dots i:nth-child(1) { animation: zen-waking-dot-1 1.6s steps(1) infinite; }
+.zen-waking-dots i:nth-child(2) { animation: zen-waking-dot-2 1.6s steps(1) infinite; }
+.zen-waking-dots i:nth-child(3) { animation: zen-waking-dot-3 1.6s steps(1) infinite; }
+@keyframes zen-waking-breathe { 0%, 100% { opacity: 0.55; } 50% { opacity: 1; } }
+@keyframes zen-waking-dot-1 { 0%, 24% { opacity: 0; } 25%, 100% { opacity: 1; } }
+@keyframes zen-waking-dot-2 { 0%, 49% { opacity: 0; } 50%, 100% { opacity: 1; } }
+@keyframes zen-waking-dot-3 { 0%, 74% { opacity: 0; } 75%, 100% { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) {
+  .zen-moment .text .zen-waking, .zen-waking-dots i { animation: none; opacity: 1; }
+}
 
 /* activity along the target axis: collapsed by default, the raw run one click away */
 .activity {
@@ -701,7 +718,15 @@
 .zen-paste-preview { min-width: 0; }
 .zen-paste-preview > summary { cursor: pointer; text-decoration: underline; text-underline-offset: .25em; }
 .zen-paste-preview > pre { max-height: 10em; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font: 12px/1.5 var(--gsv-font-mono); }
+/* the same 12px at every width: this overrides the phone rule in styles.css that holds form fields at 16px */
+.zen-paste-preview > textarea { box-sizing: border-box; width: 100%; --zen-paste-editor-cap: calc(var(--instrument-height) / var(--type-scale) * .4); height: min(24em, var(--zen-paste-editor-cap)); min-height: 6em; max-height: var(--zen-paste-editor-cap); padding: .5rem; border: 1px solid var(--border); background: none; color: inherit; white-space: pre-wrap; overflow-wrap: anywhere; resize: vertical; font-family: var(--gsv-font-mono); font-size: 12px !important; line-height: 1.5; }
 .zen-draft-attachment:has(.zen-paste-preview[open]) { width: 100%; align-items: flex-start; }
+/* an open paste editor needs room for long text: the strip grows to hold one editor at its cap, so the editor scrolls inside its own box and its resize grip stays in reach; several open editors scroll the strip, keeping the compose line on screen. both caps are fractions of the Instrument height divided by the type scale, like the prompt cap, so the 150% and 200% zoom levels keep them inside the viewport */
+.zen-draft-attachments:has(.zen-paste-preview[open]) { max-height: calc(var(--instrument-height) / var(--type-scale) * .55); }
+/* the strip and the delegated approvals list are each capped on their own, and together with the compose line they could outgrow the bottom row, which .zen clips. while an editor is open the bottom row takes a budget of the available height and lays its children out as a column, so the two scrolling lists shrink to share what is left after the compose line, the context bar and any notes take theirs; the composer needs an explicit minimum so its strip can give way */
+.zen-bottom:has(.zen-paste-preview[open]) { display: flex; flex-direction: column; max-height: calc((var(--instrument-height) / var(--type-scale) - var(--instrument-header-height)) * .85); }
+.zen-bottom:has(.zen-paste-preview[open]) > .zen-composer { display: flex; flex-direction: column; min-height: 0; }
+.zen-draft-attachment > .zen-paste-preview[open] { flex: 1; }
 .zen-draft-attachment button { font-size: 1rem; padding: .25rem; }
 .zen-drop-hint { position: absolute; inset: 1rem; z-index: 5; display: grid; place-items: center; border: 1px dashed var(--accent); background: var(--void); color: var(--accent); pointer-events: none; }
 .zen-media { margin: 1rem 0; max-width: 100%; font: .75rem/1.6 var(--gsv-font-mono); }

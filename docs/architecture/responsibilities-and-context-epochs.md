@@ -106,6 +106,27 @@ revision unchanged. Replayed admission does not append another event. The baseli
 and revisioned transitions continue to supply the responsibility state without
 duplicating it in the wake event or changing the frozen system prompt.
 
+### Ship events
+
+Some producers address Ship with an event rather than a ledger wake. The Kernel
+stores each Ship event durably per owner in `ship_events`, keyed by a stable event
+id, and delivers the owner's events in order to the current Ship pid through
+`proc.runtime.event.deliver`, retrying with backoff until the Process admits one.
+The Process deduplicates by event id. A producer that changes the ledger in the same
+transaction marks that change announced, so the ledger does not wake Ship for it;
+once the event is admitted, the records it names get the same recovery wake as a
+delivered batch, and the run that receives it gates yield on those records. Contact
+messages are the first producer.
+
+The producer decides again before every delivery attempt, including after the Ship
+controller starts, whether a queued event may still reach Ship. A contact message
+is fenced to the contact generation that queued it and stays with open work. If
+Ship resolved that work while the message waited, the message joins the contact's
+standing handling as a newly arriving message would. It is withdrawn when the
+account is removed, the contact is inactive or blocked, or its work was cancelled.
+Taking back a contact's messages withdraws every queued message of its standing
+handling; messages bound to a specific task stay with that task.
+
 A responsibility-triggered run may yield only after every record in its current batch
 is resolved, delegated, waiting, or explicitly deferred. The overall ledger need not
 be empty. Future and delegated records retain their own wake conditions.
@@ -265,12 +286,17 @@ System-owned producers use the same ledger contract:
   metadata is marked untrusted and is available only when the Ship inspects the record;
   exact content stays in the mailbox.
 - Pairing a contact and accepting a first message create no agent responsibility.
-  An explicit standing handoff reuses one active `contact.handoff` responsibility for
-  that contact generation. Enabling handling again or receiving a message after Ship
-  completes that work creates a fresh responsibility; terminal records stay terminal.
+  An explicit standing handoff keeps one active `contact.handoff` responsibility,
+  "Pending messages from" the contact, for that contact generation. Each handled
+  message reaches Ship as its own `contact.message` Ship event, whose attachments
+  Process retains as its own media. A message reuses the active record without
+  rewriting it, returning it to Ship only when it was waiting or delegated, and its
+  event replaces the ledger's own wake. A message after Ship completes that work
+  creates a fresh responsibility; terminal records stay terminal.
   Task-specific sends can instead bind replies to existing Ship
-  work. A relevant reply reopens that responsibility regardless of human or Process
-  authorship. Duplicates and acknowledgements create no work. Revocation cancels the
+  work. A relevant reply returns that responsibility to Ship regardless of human or
+  Process authorship and arrives as its event. Duplicates and acknowledgements create
+  no work. Revocation cancels the
   standing handoff and returns unfinished tasks to Ship with the disconnection recorded.
 - Structured work requests retain their own participant-authorized lifecycle. A remote
   offer alone creates no local commitment; accepting work locally records that commitment.

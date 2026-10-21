@@ -653,6 +653,12 @@ async function sendMessage(
   }
 
   const activeRun = Boolean(ctx.processId && ctx.processRunId);
+  if (activeRun && !also && to && to.trim().toLowerCase() !== "here") {
+    throw new Error(
+      "message send --to needs --also on the same command line during an active run, "
+      + "acknowledging the additional delivery; keep the whole command on one line or end lines with \\",
+    );
+  }
   if (activeRun && !also) {
     throw new Error(
       "the current-conversation form of message send must be invoked as a direct Shell tool "

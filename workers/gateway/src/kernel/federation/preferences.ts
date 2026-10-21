@@ -6,7 +6,7 @@ import { actorRefSchema, contactPreferencesPatchSchema } from "@humansandmachine
 import { z } from "zod/mini";
 import type { KernelContext } from "../context";
 import { contactSummary, requireContactCaller, requireContactHuman } from "./authority";
-import { changeContactHandling } from "./attention";
+import { cancelContactHandling } from "./attention";
 import { revokeFederationContact } from "./pairing";
 
 export async function handleContactPreferencesUpdate(args: ContactPreferencesUpdateArgs, ctx: KernelContext): Promise<ContactPreferencesUpdateResult> {
@@ -21,7 +21,7 @@ export async function handleContactPreferencesUpdate(args: ContactPreferencesUpd
     if (handlingChanged && current.preferences.shipHandlesMessages && (current.state !== "active" || current.blocked)) {
       throw new Error("Only an active contact can enable Ship replies");
     }
-    if (handlingChanged && !current.preferences.shipHandlesMessages) changeContactHandling(current, ctx);
+    if (handlingChanged && !current.preferences.shipHandlesMessages) cancelContactHandling(current, ctx);
     return current;
   }));
   if (handlingChanged && !contact.preferences.shipHandlesMessages) await ctx.reconcileResponsibilityWake(ownerUid);

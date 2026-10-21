@@ -6,6 +6,7 @@ import {
   GSV_INFERENCE_PROVIDER,
   type ManagedInferenceResult,
   type ManagedInferenceStreamEvent,
+  type ManagedInferenceRequest,
 } from "@humansandmachines/gsv/protocol";
 import type {
   InferenceService as ManagedInferenceService,
@@ -19,6 +20,7 @@ import {
 import { createGenerationService } from "../../src/text/service";
 import { createWorkersAiGeneration } from "../../src/workers-ai";
 import { telemetryRecordSchema } from "@humansandmachines/gsv/telemetry";
+import { decodeInferenceRequest, type InferenceRequest } from "@humansandmachines/gsv/services/inference-body";
 
 const ATTRIBUTION = {
   installationId: "inst_test",
@@ -117,7 +119,12 @@ describe("GSV inference provider", () => {
   });
 
   it("preserves prompts, tools and history across pi-ai's transcript boundary", async () => {
-    const generateStream = vi.fn(async () => eventStream({ type: "done", reason: "stop", message: RESULT }));
+    let decoded: ManagedInferenceRequest | undefined;
+    const generateStream = vi.fn(async (input: InferenceRequest<ManagedInferenceRequest>) => {
+      expect(input).not.toHaveProperty("messages");
+      decoded = await decodeInferenceRequest(input);
+      return eventStream({ type: "done", reason: "stop", message: RESULT });
+    });
     const { service } = managedService(generateStream);
     const models = createModels();
     models.setProvider(createGsvInferenceProviderFactory(service).create(ATTRIBUTION));
@@ -126,11 +133,12 @@ describe("GSV inference provider", () => {
 
     await models.completeSimple(models.getModel("gsv", GSV_INFERENCE_MODEL)!, context);
 
-    expect(generateStream).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+    expect(generateStream).toHaveBeenCalledOnce();
+    expect(decoded).toMatchObject({
       systemPrompt: context.systemPrompt,
       tools: JSON.parse(JSON.stringify(tools)),
       messages: CONTEXT.messages,
-    }));
+    });
     expect(context.messages).toEqual(CONTEXT.messages);
   });
 
@@ -146,7 +154,7 @@ describe("GSV inference provider", () => {
       "data: [DONE]\n\n",
     ].join(""), { headers: { "content-type": "text/event-stream" } }));
     const { service, target } = managedService(async (input) => {
-      const generation = createWorkersAiGeneration(input, { aiGatewayLogId: null, fetch: bindingFetch });
+      const generation = createWorkersAiGeneration(await decodeInferenceRequest(input), { aiGatewayLogId: null, fetch: bindingFetch });
       const message = await generation.result({
         version: 2,
         updatedAt: 1,

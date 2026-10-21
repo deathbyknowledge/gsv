@@ -198,6 +198,18 @@ readonly pendingProcessSignals = new Map<string, Promise<void>>();
       return;
     }
     if (frame.signal === "proc.run.finished") {
+      if (
+        userFrame.payload?.status === "error"
+        && userFrame.payload.aborted !== true
+        // Process already commits its own correction-exhausted notice.
+        && userFrame.payload.reason !== "message.action.missing"
+      ) {
+        await this.host.adapterDelivery.queueAdapterRouteDelivery(route, {
+          type: "sig",
+          signal: "proc.run.finished",
+          payload: { pid: processId, runId, status: "error" },
+        }, 1);
+      }
       this.host.runRoutes.delete(runId);
       await setAdapterActivityForKernel(
         this.host.bindings,
