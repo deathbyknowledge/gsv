@@ -715,6 +715,10 @@ short-lived, one-use code and a shareable `url`; the other signed-in person acce
 from the signed exchange. Callers never choose a remote local uid, Process,
 conversation, filesystem path, or installation id.
 
+Invitation links keep the code in the URL fragment, with a literal colon in
+`#contact=gsv-contact-v1:…` for mobile messenger link detection. Previously issued
+links with `%3A` still identify the same invitation.
+
 Trust changes may be initiated by the signed-in human or by that owner's exact
 canonical Ship Process. Delegated work Processes and remote callers cannot
 create, accept, cancel, or revoke Contact trust.

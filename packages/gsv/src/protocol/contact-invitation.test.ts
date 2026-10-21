@@ -9,12 +9,28 @@ describe("contact invitation links", () => {
     const code = encodeContactInvitation(invitation);
     expect(parseContactInvitation(code).invitation).toEqual(invitation);
     const shared = contactInvitationUrl(code, "https://accounts.example/owner/signup/?resume=1");
+    expect(new URL(shared).hash).toBe(`#contact=${code}`);
     expect(new URL(shared).search).toBe("?resume=1");
     expect(new URL(shared).search).not.toContain(code);
     const selected = contactInvitationDestination("https://bob.example", parseContactInvitation(shared).code);
     expect(new URL(selected).pathname).toBe("/people");
     expect(new URL(selected).search).toBe("");
+    expect(new URL(selected).hash).toBe(`#contact=${code}`);
     expect(parseContactInvitation(selected)).toEqual({ code, invitation });
+  });
+
+  it("accepts existing links with an encoded separator", () => {
+    const code = encodeContactInvitation(invitation);
+    const url = `https://accounts.example/#${new URLSearchParams({ contact: code })}`;
+    expect(url).toContain("%3A");
+    expect(parseContactInvitation(url)).toEqual({ code, invitation });
+  });
+
+  it("keeps other fragment delimiters inside the contact value", () => {
+    const code = "gsv-contact-v1:invalid&onboarding=other+#fragment%3A";
+    const url = new URL(contactInvitationUrl(code, "https://accounts.example/?resume=1"));
+    expect([...new URLSearchParams(url.hash.slice(1))]).toEqual([["contact", code]]);
+    expect(url.search).toBe("?resume=1");
   });
 
   it("rejects broken invitations and non-space destinations", () => {

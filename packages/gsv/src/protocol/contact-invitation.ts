@@ -43,7 +43,8 @@ export function parseContactInvitation(input: string): ParsedContactInvitation {
 /** Keep the invitation out of HTTP requests, access logs and referrer headers. */
 export function contactInvitationUrl(code: string, destination: string): string {
   const url = new URL(destination);
-  url.hash = new URLSearchParams({ contact: code }).toString();
+  // Colons are valid in fragments; mobile link detectors can stop at the encoded separator.
+  url.hash = new URLSearchParams({ contact: code }).toString().replaceAll("%3A", ":");
   return url.href;
 }
 
