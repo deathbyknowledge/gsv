@@ -40,8 +40,9 @@ export default {
     console.error = (...args) => diagnostics.push(args.map(String).join(" "));
     try {
       const method = request.headers.get("x-fixture-method");
-      const forwarded = new Request(request.url, { method, headers: request.headers,
-        ...(method === "GET" || method === "HEAD" ? {} : { body: request.body }) });
+      const init = { method, headers: request.headers };
+      if (method !== "GET" && method !== "HEAD") init.body = request.body;
+      const forwarded = new Request(request.url, init);
       const response = await new ripgit(ctx, { ...env, REPOSITORY: new DurableObjectNamespace() }).fetch(forwarded);
       outcome = { status: response.status, body: await response.text() };
     } catch (error) {

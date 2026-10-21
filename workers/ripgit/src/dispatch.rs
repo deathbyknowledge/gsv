@@ -51,14 +51,15 @@ fn retryable(error: &JsValue) -> bool {
             .ok()?
             .as_bool()
     };
-    if flag("overloaded") == Some(true)
-        || flag("remote") == Some(true)
-        || flag("retryable") == Some(false)
-    {
+    if flag("overloaded") == Some(true) || flag("retryable") == Some(false) {
         return false;
     }
     if flag("retryable") == Some(true) {
         return true;
+    }
+    // Infrastructure failures can also be remote; trust explicit retryability first.
+    if flag("remote") == Some(true) {
+        return false;
     }
     // Older platform errors omit flags but include this diagnostic reference.
     let Some(error) = error.dyn_ref::<js_sys::Error>() else {

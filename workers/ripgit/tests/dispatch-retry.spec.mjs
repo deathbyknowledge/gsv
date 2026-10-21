@@ -14,11 +14,12 @@ describe("repository read dispatch retries", () => {
   afterAll(async () => { await miniflare.dispose(); });
 
   async function dispatch(scenario, method = "GET", path = "/hyperspace/repos/alice/home/refs") {
-    const response = await miniflare.dispatchFetch(`https://ripgit${path}`, {
+    const init = {
       method: "POST", headers: { "x-gsv-installation-id": "inst_fixture", "x-fixture-scenario": JSON.stringify(scenario),
         "x-fixture-method": method },
-      ...(method === "POST" || method === "PUT" || method === "PATCH" ? { body: "fixture body" } : {}),
-    });
+    };
+    if (method === "POST" || method === "PUT" || method === "PATCH") init.body = "fixture body";
+    const response = await miniflare.dispatchFetch(`https://ripgit${path}`, init);
     expect(response.status).toBe(200);
     return response.json();
   }
@@ -40,6 +41,12 @@ describe("repository read dispatch retries", () => {
   it("does not retry a successful initial read", async () => {
     const result = await dispatch({ failures: 0 });
     expect(result.attempts).toHaveLength(1);
+    expect(result.outcome).toEqual({ status: 200, body: "fixture success" });
+  });
+
+  it("honors explicit retryability on a remote infrastructure failure", async () => {
+    const result = await dispatch({ failures: 1, remote: true, retryable: true, message: "Network connection lost." });
+    expect(result.attempts).toHaveLength(2);
     expect(result.outcome).toEqual({ status: 200, body: "fixture success" });
   });
 
@@ -69,7 +76,7 @@ describe("repository read dispatch retries", () => {
     { overloaded: true, retryable: true },
     { overloaded: true },
     { retryable: false },
-    { remote: true, retryable: true },
+    { remote: true },
     { message: "application validation failed" },
     { message: "INTERNAL SERVER ERROR" },
     { message: "internal error; reference = fixture123 trailing application text" },
