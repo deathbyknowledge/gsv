@@ -164,7 +164,7 @@ describe("owner welcome", () => {
       expect(collectText(tree)).toContain("Create your Ship");
       expect(fieldOf(tree, "Handle")!.props).toMatchObject({ prefix: "@" });
       expect(fieldOf(tree, "Handle")!.props).not.toHaveProperty("suffix");
-      expect(collectText(tree)).toMatch(/Handle or address\s+your-name\s*\.\s*example\.com/);
+      expect(collectText(tree)).toMatch(/Your address\s+your-name\s*\.\s*example\.com/);
       expect(submit().props["aria-label"]).toBe("Continue");
       await act(() => { fieldOf(tree, "Handle")!.props.onChange?.("SpaceCowboy"); });
       expect(fieldOf(tree, "Handle")!.props.value).toBe("spacecowboy");
@@ -590,7 +590,7 @@ describe("owner welcome", () => {
       await root.render(<Harness />);
       const field = () => fieldOf(tree, "Handle")!;
       await vi.waitFor(() => expect(field()?.props.disabled).toBe(false));
-      expect(collectText(tree)).toMatch(/Handle or address\s+your-name\s*\.\s*example\.com/);
+      expect(collectText(tree)).toMatch(/Your address\s+your-name\s*\.\s*example\.com/);
       expect(collectText(tree)).not.toContain("presumed.example");
       expect(fetcher).toHaveBeenCalledWith(`${ORIGIN}/owner/api/session`, expect.objectContaining({ method: "GET" }));
       await act(() => { field().props.onChange?.("Xamenace"); });
