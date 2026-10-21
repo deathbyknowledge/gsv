@@ -2131,7 +2131,7 @@ export const es = {
   "fleet.call.copiedFiles": "se copiaron archivos",
   "fleet.call.movedFiles": "se movieron archivos",
   "fleet.call.removedFiles": "se eliminaron archivos",
-  "fleet.call.madeRoom": "se creó una carpeta",
+  "fleet.call.madeRoom": "se creó un archivo o una carpeta",
   "fleet.call.usedGit": "se usó git",
   "fleet.call.ranProgram": "se ejecutó un programa",
   "fleet.call.openedSomething": "se abrió algo",

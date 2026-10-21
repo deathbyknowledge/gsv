@@ -2130,7 +2130,7 @@ export const en = {
   "fleet.call.copiedFiles": "copied files",
   "fleet.call.movedFiles": "moved files",
   "fleet.call.removedFiles": "removed files",
-  "fleet.call.madeRoom": "made a folder",
+  "fleet.call.madeRoom": "created a file or folder",
   "fleet.call.usedGit": "used git",
   "fleet.call.ranProgram": "ran a program",
   "fleet.call.openedSomething": "opened something",
