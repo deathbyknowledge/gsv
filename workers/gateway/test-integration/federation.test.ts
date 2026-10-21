@@ -85,7 +85,7 @@ describe("cross-GSV federation integration", () => {
     await first.profile.update({ expectedRevision: 1, draft: { ...draft, about: "Unpublished revision" } });
     expect((await second.profile.resolve({ url })).profile.about).toBe(draft.about);
     await first.profile.unpublish({ expectedRevision: 2 });
-    await expect(second.profile.resolve({ url })).rejects.toThrow("404");
+    await expect(second.profile.resolve({ url })).rejects.toThrow("No public profile is available at this address");
     const unavailableSubject = await fetch(subjectUrl);
     expect(unavailableSubject.status).toBe(404);
     await unavailableSubject.arrayBuffer();
