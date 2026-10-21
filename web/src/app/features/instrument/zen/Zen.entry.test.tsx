@@ -602,6 +602,28 @@ describe("Zen conversation entry", () => {
     } finally { await zen.unmount(); }
   });
 
+  it("edits a pasted chip in place and sends the edited text", async () => {
+    send.mockResolvedValueOnce({ message: message("user", "edited"), handlerPid: shipPid, runId: "edited-paste" });
+    const zen = await mountedZen();
+    try {
+      const pastes = () => zen.nodes().filter((node) => node.type === ZenDraftPaste);
+      await act(() => { expect(zen.props(PromptLine).onPasteText?.("w".repeat(500))).toBe(true); });
+      await act(() => { zen.props(ZenDraftPaste).onChange?.("   \n  "); });
+      expect(pastes()).toHaveLength(0);
+      await act(() => { expect(zen.props(PromptLine).onPasteText?.("q".repeat(500))).toBe(true); });
+      // An edited paste stays a chip however short it gets.
+      const edited = "Dear Sam,\nthanks — see you Tuesday.";
+      await act(() => { zen.props(ZenDraftPaste).onChange?.(edited); });
+      expect(pastes()).toHaveLength(1);
+      expect(zen.props(ZenDraftPaste).paste.text).toBe(edited);
+      expect(zen.props(ZenDraftPaste).paste.characters).toBe(Array.from(edited).length);
+      await act(() => { expect(zen.props(PromptLine).onSubmit("Send this?")).toBe(true); });
+      await vi.waitFor(() => expect(send).toHaveBeenCalledOnce());
+      expect(send.mock.calls[0]?.[0].text).toBe(`Send this?\n\n${edited}`);
+      expect(pastes()).toHaveLength(0);
+    } finally { await zen.unmount(); }
+  });
+
   it("sends ordinary native text through the conversation outbox", async () => {
     send.mockResolvedValueOnce({ message: message("user", "Hello from voice"), handlerPid: shipPid, runId: "voice" });
     const zen = await mountedZen(undefined, undefined, true);

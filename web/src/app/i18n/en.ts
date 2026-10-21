@@ -1844,6 +1844,7 @@ export const en = {
   "chat.media.pasted": "pasted text",
   "chat.media.characters": { one: "{characters} character", other: "{characters} characters" },
   "chat.media.removePasted": "Remove pasted text",
+  "chat.media.editPasted": "Edit pasted text",
   "chat.media.loadFailed": "Could not load {filename}.",
   "chat.media.unavailable": "{filename} is unavailable.",
   "chat.media.loading": "Loading {filename}…",

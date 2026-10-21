@@ -1845,6 +1845,7 @@ export const es = {
   "chat.media.pasted": "texto pegado",
   "chat.media.characters": { one: "{characters} carácter", other: "{characters} caracteres" },
   "chat.media.removePasted": "Quitar texto pegado",
+  "chat.media.editPasted": "Editar texto pegado",
   "chat.media.loadFailed": "No se ha podido cargar {filename}.",
   "chat.media.unavailable": "{filename} no está disponible.",
   "chat.media.loading": "Cargando {filename}…",
