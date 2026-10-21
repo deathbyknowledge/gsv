@@ -62,7 +62,7 @@ contract and the distinction between peers, adapters, machines, and targets.
 
 ## Why deployment names still say `channel-*`
 
-User-facing docs prefer **adapter** because that is the better product term.
+User-facing docs and the interface say **messenger** for a connected messaging app; **adapter** remains the engineering term for the transport that implements it.
 Some deployed components and worker names still use `channel-*` because those
 are compatibility names in release artifacts and service bindings. Each
 adapter's `adapter.json` owns that deployment metadata; the public Alchemy stack
