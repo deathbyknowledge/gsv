@@ -71,6 +71,8 @@ With the machine connected, ask your agent things like:
 When Ship asks to run a command, Chat and Fleet show the same approval card. Expand
 **show the command** to inspect it, then **full request** for all execution
 arguments. Choose **run it** to approve once or **don't** to decline.
+Typing **yes** or **no** in the prompt answers too; anything else you write
+goes to your Ship as a message and replaces the request.
 **Always allow** approves this command and remembers shell access to that
 computer for the requesting process. Its tooltip explains the scope; other
 processes still use their own approval rules.

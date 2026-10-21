@@ -13,6 +13,7 @@ import { useGateway } from "../../../services/gateway/GatewayProvider";
 import { useSession } from "../../../services/session/SessionProvider";
 import { LoadingState, Spinner } from "../../../components/ui/Spinner";
 import { MAX_CHAT_PROCESS_MEDIA_BYTES } from "../../../services/chat/domain/processes";
+import { approvalAnswer } from "../../../services/chat/domain/hil";
 import {
   decideChatHil,
 } from "../../../services/chat/backend/chatService";
@@ -784,9 +785,35 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
     [sessions, places, where, pidProp, scrolling.follow],
   );
 
+  /* approvals */
+  const decide = useCallback(
+    async (decision: "approve" | "deny", remember?: boolean) => {
+      if (!pid || !pendingHil) return;
+      setNote(null);
+      try {
+        const args: ProcHilArgs = { pid, requestId: pendingHil.requestId, decision };
+        if (remember) args.remember = true;
+        await decideChatHil(client, args);
+      } catch (error) {
+        setNote(zenFailure(error instanceof Error ? error.message : "", DECISION_FAILED));
+      }
+    },
+    [client, pendingHil, pid],
+  );
+
   const onSubmit = useCallback(
     (raw: string) => {
       if (!connected || !pid || outbox.sending) return false;
+      const answer = pendingHil ? approvalAnswer(raw) : null;
+      if (answer) {
+        void decide(answer);
+        return true;
+      }
+      // A lone word that is not an answer is most likely a typo: keep it in the prompt rather than let it replace the request.
+      if (pendingHil && raw.trim() && !/\s/.test(raw.trim())) {
+        setNote(zenNotice("chat.notice.approvalUnclear"));
+        return false;
+      }
       setNote(null);
       if (raw) setInputHistory((current) => [...current.filter((entry) => entry !== raw), raw].slice(-50));
       setHistoryIndex(null);
@@ -804,7 +831,7 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
       }
       return say(intent.text);
     },
-    [extras, connected, outbox.sending, pid, pidProp, places, runDirectly, say],
+    [extras, connected, decide, outbox.sending, pendingHil, pid, pidProp, places, runDirectly, say],
   );
 
   const onHistory = useCallback(
@@ -816,21 +843,6 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
       promptRef.current?.setValue(nextIndex === null ? empty : inputHistory[nextIndex]);
     },
     [historyIndex, inputHistory],
-  );
-
-  /* approvals */
-  const decide = useCallback(
-    async (decision: "approve" | "deny", remember?: boolean) => {
-      if (!pid || !pendingHil) return;
-      try {
-        const args: ProcHilArgs = { pid, requestId: pendingHil.requestId, decision };
-        if (remember) args.remember = true;
-        await decideChatHil(client, args);
-      } catch (error) {
-        setNote(zenFailure(error instanceof Error ? error.message : "", DECISION_FAILED));
-      }
-    },
-    [client, pendingHil, pid],
   );
 
   useEffect(() => {
@@ -1191,7 +1203,7 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
               place={currentPlace}
               showPlace={false}
               dir="~"
-              placeholder={t("chat.composer.placeholder")}
+              placeholder={t(pendingHil ? "chat.composer.placeholderApproval" : "chat.composer.placeholder")}
               disabled={!pid || recordingVoice}
               onSubmit={onSubmit}
               allowEmpty={extras}

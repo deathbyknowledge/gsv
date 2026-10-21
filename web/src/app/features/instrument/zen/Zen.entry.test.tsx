@@ -278,6 +278,67 @@ describe("Zen conversation entry", () => {
     } finally { await zen.unmount(); }
   });
 
+  async function requestShellApproval(zen: Awaited<ReturnType<typeof mountedZen>>) {
+    await act(() => {
+      for (const listener of signals) listener("proc.run.hil.requested", {
+        pid: shipPid, requestId: "shell-approval", runId: activeRunId, callId: "shell-call",
+        toolName: "Shell", syscall: "shell.exec", target: "laptop",
+        args: { target: "laptop", input: "pwd" }, createdAt: 2,
+      });
+    });
+    await vi.waitFor(() => expect(zen.props(ApprovalCard).request.requestId).toBe("shell-approval"));
+  }
+
+  it.each([["yes", "approve"], ["no", "deny"]] as const)("answers a pending approval when %s is typed instead of messaging Ship", async (text, decision) => {
+    activeRunId = "shell-run";
+    const zen = await mountedZen();
+    try {
+      await requestShellApproval(zen);
+      await act(() => { expect(zen.props(PromptLine).onSubmit(text)).toBe(true); });
+      const expected: ProcHilArgs = { pid: shipPid, requestId: "shell-approval", decision };
+      await vi.waitFor(() => expect(GSVClient.prototype.request).toHaveBeenCalledWith("proc.hil", expected));
+      expect(send).not.toHaveBeenCalled();
+    } finally { await zen.unmount(); }
+  });
+
+  it("sends any other reply to a pending approval to Ship as a message", async () => {
+    activeRunId = "shell-run";
+    send.mockResolvedValueOnce({ message: message("user", "yes but first show me the file"), handlerPid: shipPid, runId: "shell-run" });
+    const zen = await mountedZen();
+    try {
+      await requestShellApproval(zen);
+      await act(() => { expect(zen.props(PromptLine).onSubmit("yes but first show me the file")).toBe(true); });
+      await vi.waitFor(() => expect(send).toHaveBeenCalledWith(expect.objectContaining({ text: "yes but first show me the file" })));
+      expect(GSVClient.prototype.request).not.toHaveBeenCalledWith("proc.hil", expect.anything());
+    } finally { await zen.unmount(); }
+  });
+
+  it("holds a lone misspelt answer in the prompt instead of replacing the request", async () => {
+    activeRunId = "shell-run";
+    const zen = await mountedZen();
+    try {
+      await requestShellApproval(zen);
+      await act(() => { expect(zen.props(PromptLine).onSubmit("nno")).toBe(false); });
+      expect(send).not.toHaveBeenCalled();
+      expect(GSVClient.prototype.request).not.toHaveBeenCalledWith("proc.hil", expect.anything());
+      expect(zen.props(FeedbackNote).note).toEqual({ kind: "notice", message: "chat.notice.approvalUnclear" });
+      expect(zen.props(ApprovalCard).request.requestId).toBe("shell-approval");
+      await act(() => { expect(zen.props(PromptLine).onSubmit("no")).toBe(true); });
+      await vi.waitFor(() => expect(GSVClient.prototype.request).toHaveBeenCalledWith("proc.hil", expect.objectContaining({ decision: "deny" })));
+      expect(zen.nodes().some((node) => node.type === FeedbackNote)).toBe(false);
+    } finally { await zen.unmount(); }
+  });
+
+  it("invites a typed answer in the composer only while an approval is pending", async () => {
+    activeRunId = "shell-run";
+    const zen = await mountedZen();
+    try {
+      expect(zen.props(PromptLine).placeholder).toBe("Message your Ship");
+      await requestShellApproval(zen);
+      expect(zen.props(PromptLine).placeholder).toBe("yes or no, or write back");
+    } finally { await zen.unmount(); }
+  });
+
   // Regression coverage for the former interaction:
   /* an approval takes the keys: the prompt lets go so y and n reach the decision */
   it.each([false, true])("shows a mail approval without interrupting a draft, with a newer event: %s", async (newerEvent) => {
