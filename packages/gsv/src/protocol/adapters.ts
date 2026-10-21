@@ -449,6 +449,8 @@ export type AdapterPairingInfo = {
   botUsername?: string;
   installUrl?: string;
   instructions?: string;
+  /** Calling codes the provider keeps this account from messaging, so pairing cannot complete from there. */
+  unreachableCallingCodes?: string[];
 };
 
 export type AdapterPairingRouteScope = "surface" | "actor";

@@ -80,6 +80,17 @@ describe("deployment manifest", () => {
     expect(gsvDeploymentManifestSchema.parse(manifest)).toEqual(manifest);
   });
 
+  it("keeps optional variables apart from required ones", () => {
+    const [adapter] = manifest.adapters;
+    const deployment = { ...adapter.deployment, requiredVariables: ["MATRIX_HOMESERVER"], optionalVariables: ["MATRIX_ROOM_ALIAS"] };
+    const parsed = gsvDeploymentManifestSchema.parse({ ...manifest, adapters: [{ ...adapter, deployment }] });
+    expect(parsed.adapters[0].deployment.requiredVariables).toEqual(["MATRIX_HOMESERVER"]);
+    expect(parsed.adapters[0].deployment.optionalVariables).toEqual(["MATRIX_ROOM_ALIAS"]);
+    expect(() => gsvDeploymentManifestSchema.parse({ ...manifest,
+      adapters: [{ ...adapter, deployment: { ...deployment, optionalVariables: ["room-alias"] } }],
+    })).toThrow();
+  });
+
   it("rejects the old variant manifest instead of choosing a runtime implicitly", () => {
     expect(() => gsvDeploymentManifestSchema.parse({ ...manifest, version: 2 })).toThrow();
     const { deployment, ...adapter } = manifest.adapters[0];

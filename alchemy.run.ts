@@ -55,6 +55,11 @@ export default Alchemy.Stack("gsv", {
     if (!adapter) throw new Error(`No operator adapter deployment is available for ${id}`);
     const adapterEnvironment: Cloudflare.Workers.WorkerBindingProps = { GSV_ACCOUNT_ORIGIN: adminOrigin };
     for (const variable of adapter.deployment.requiredVariables ?? []) adapterEnvironment[variable] = yield* Config.String(variable);
+    for (const variable of adapter.deployment.optionalVariables ?? []) {
+      // Passed through only when the operator sets it, so an explicit empty value still reaches the Worker.
+      const value = Option.getOrUndefined(yield* Config.String(variable).pipe(Config.option));
+      if (value !== undefined) adapterEnvironment[variable] = value;
+    }
     const worker = yield* GsvAdapterWorker({ logicalId: `GsvAdapter-${id}`, workerName: `${prefix}-channel-${id}`,
       allowResourceDeletion,
       adapter, deployment: adapter.deployment,

@@ -715,6 +715,10 @@ short-lived, one-use code and a shareable `url`; the other signed-in person acce
 from the signed exchange. Callers never choose a remote local uid, Process,
 conversation, filesystem path, or installation id.
 
+Invitation links keep the URL-safe encoded payload in the `#contact=` fragment,
+without the `gsv-contact-v1:` code prefix, so mobile messengers can link the entire
+address. Existing prefixed codes and links still identify the same invitation.
+
 Trust changes may be initiated by the signed-in human or by that owner's exact
 canonical Ship Process. Delegated work Processes and remote callers cannot
 create, accept, cancel, or revoke Contact trust.
@@ -2176,7 +2180,7 @@ Runtime behavior:
 | `adapter.list` | `handleAdapterList` | Lists arbitrary configured `CHANNEL_*` bindings, their validated descriptors, caller-visible account status, operator readiness (`enabled`), and linking authority (`canLink`). Shared pairing requires the advertised capability, configured application, and an active signed-in human or an authorized process owned by one. |
 | `adapter.connect` | `handleAdapterConnect` | User-role only. Rejects foreign-owned accounts, serializes lifecycle operations per account, durably assigns new accounts to the caller's owning human, and calls `CHANNEL_<ADAPTER>.adapterConnect({ installationId }, accountId, config)`. Ownership survives failed provisioning so the owner can retry safely. |
 | `adapter.disconnect` | `handleAdapterDisconnect` | Owner-or-root only. Serializes with connect, calls adapter disconnect, upserts local status as disconnected and unauthenticated, then best-effort refreshes live status. |
-| `adapter.pair.info` | `handleAdapterPairInfo` | Signed-in human or authorized owned process. Returns adapter-owned public setup information: official bot username, install link, and optional instructions for obtaining a code. |
+| `adapter.pair.info` | `handleAdapterPairInfo` | Signed-in human or authorized owned process. Returns adapter-owned public setup information: official bot username, install link, optional instructions for obtaining a code, and the calling codes the provider keeps the account from messaging. |
 | `adapter.pair.inspect` | `handleAdapterPairInspect` | Signed-in human or authorized owned process. Resolves a short-lived code to the external identity that requested it. It does not create or move a link. |
 | `adapter.pair.confirm` | `handleAdapterPairConfirm` | Signed-in human or authorized owned process. The Kernel derives the active human owner from the authenticated session or process registry and honors process tool policy. Binds the external identity to that owner and the current installation, activates a fresh route generation, writes the Kernel identity link, and finalizes retryable cleanup of any previous installation. The caller cannot choose the destination uid or installation. |
 | `adapter.pair.disconnect` | `handleAdapterPairDisconnect` | Direct signed-in human only. Generation-fences and disables the managed peer route before removing the matching Kernel identity link. Generic `sys.unlink` refuses managed links so the two sides cannot be orphaned. |
@@ -2220,7 +2224,7 @@ type AdapterSyscalls = {
 
   "adapter.pair.info": {
     args: { adapter: string };
-    result: { adapter: string; accountId: string; configured: boolean; botUsername?: string; installUrl?: string; instructions?: string };
+    result: { adapter: string; accountId: string; configured: boolean; botUsername?: string; installUrl?: string; instructions?: string; unreachableCallingCodes?: string[] };
   };
 
   "adapter.pair.inspect": {

@@ -12,16 +12,20 @@ mention a browser or no browser target is listed. Browser access is a built-in
 GSV capability: use a suitable existing browser or provision a cloud browser.
 The user does not need to connect their personal browser first.
 
-Browser targets have kind `browser` or platform `browser` or `browser-extension`.
+Browser targets have platform `browser` or `browser-extension`.
 Their ids may look like `browser:chrome`, `rearden:brave`, or an instance id;
 use the id returned by discovery or provisioning.
 
 ## Quick Start
 
-1. On `gsv`, run `targets list --kind browser` and choose a suitable browser if
-   one is already available. This lists existing targets; an empty list does not
-   rule out cloud provisioning. `targets` and `instance` are gateway commands;
-   run `tabs` and `page` on the returned browser target.
+1. On `gsv`, run `instance list` for the account's active cloud browsers,
+   including ones still starting, and
+   `targets list --online --search browser --limit 100 --json` for every
+   online browser target. Entries whose id appears in `instance list` are
+   cloud browsers; the rest are connected personal browsers. Choose a suitable
+   browser as described under Choosing A Browser. An empty list does not rule out cloud provisioning. `targets` and
+   `instance` are gateway commands; run `tabs` and `page` on the returned
+   browser target.
 2. If no suitable browser is available, run `instance catalog` on `gsv`.
    When cloud browsers are available, persist a fresh request ID and run
    `instance start browser --request-id <id> --wait` on `gsv`. It returns when
@@ -39,8 +43,34 @@ use the id returned by discovery or provisioning.
 5. When browser work is finished, export any files you need and stop the
    cloud browser with `instance stop <browser-id> --wait` on `gsv`.
    Keep it open if the user asks or ongoing work still needs it.
-   For an extension-connected browser, close only tabs you opened.
+   In the user's own browser, always close every tab you opened once the work
+   is done, unless the user asked for that page to be opened or kept, and
+   never close tabs you did not open.
    Instance commands accept its displayed eight-character ID.
+
+## Choosing A Browser
+
+- Respect a stated preference without re-arguing it. If the user has said they would rather use their own browser, for example "I don't want to share my logins with Ship", use it.
+- Reuse only a cloud browser that fits the task. `instance list` on `gsv` shows each active cloud browser with its `profileId` and whether it is `isolated` (temporary); `browser profile list` marks which profile is the automatic one. For signed-in work use the browser on the account's automatic profile; use a named profile only when the task calls for that profile; use a temporary browser only for work that needs no login or for a site the person already signed into in that instance, while it runs.
+- Never infer login persistence from `instance catalog` output or an instance lifetime. The lifetime caps one instance, not the logins: an ordinary start restores the account's saved logins.
+
+## Signed-In Sessions: Two Routes
+
+Explain both routes only when the user asks how sign-in or sessions work, or when the conversation requires it. Keep it brief and name the tradeoffs that matter for their site.
+
+**Cloud browser with saved logins.** Lead with convenience: it keeps working with their computer off, they sign in once through a handoff link, the login is remembered from then on, and credentials stay out of chat. If they want to see it work first, they can watch the cloud browser's live view from Chat or Fleet, or try Ship on a task that needs no login in their own browser through the Your Ship extension, before giving it any logins. Set expectations with the limits when relevant: passkeys and hardware keys do not work, nothing is copied from their personal browser, some sites ask to sign in again, sessions can expire, and some sites, such as social media and email, detect and reject clicks from a cloud browser.
+
+**Their own browser through the Your Ship extension.** Costs: Chrome must be open on their machine with the extension paired, actions run on their real profile, connected browsers ask for approval by default, and they can pause or stop the connection at any time.
+
+## Build Trust At The User's Pace
+
+Match checking to the stakes. On a site the user has given you access to, do routine reading without asking again: asked to check their Instagram, read the posts rather than confirming each one. Check back before anything that leaves a trace, such as posting, sending, paying or deleting, unless they have explicitly given you permission for those actions.
+
+The first private step is theirs. At the first sign-in or payment, say so and offer the choice: they do that step themselves in the live browser, or you do it when the browser already holds a session or a method the site has saved. On a cloud browser a first-time sign-in always goes through the handoff; in their own browser they sign in directly. Make them aware of privacy good practice, that passwords, codes and card details are better not sent through messengers, and offer the alternatives such as the handoff link. Preserve their autonomy: inform them of the risks, and let them decide what to follow.
+
+Be proactive about the next time. Once a step has gone well with them doing it, offer to take it over next time, where that is possible.
+
+Example: booking a train ticket, find the connection and fill in the passenger details they gave you. At checkout, send the handoff link so they pay themselves. Once they have paid and the booking succeeded, mention that next time you can complete the payment with a method the site has saved.
 
 ## Model
 
@@ -69,7 +99,7 @@ From the native `gsv` target, identify the browser target and inspect its
 descriptor:
 
 ```bash
-targets list --kind browser
+targets list --online --search browser --limit 100 --json
 targets show rearden:brave
 ```
 
@@ -362,7 +392,7 @@ Audio recordings are WebM/Opus when supported. Use `--video` or
 supported and can grow quickly, so set `--max-bytes` explicitly for longer
 captures. Chrome only lets the extension record a tab the person has invoked
 it on, so a first `media record start` on a tab may be refused. When it is,
-ask the person to focus that tab, open Your GSV from the toolbar, and choose
+ask the person to focus that tab, open Your Ship from the toolbar, and choose
 Allow recording, then run the command again; each allowance starts one
 recording. By default, captured tab audio remains audible; use `--monitor off`
 only when the task calls for disabling playback. To move a finished recording

@@ -2,7 +2,7 @@ import { useEffect, useState } from "preact/hooks";
 import { useMutation, useQueryClient } from "@tanstack/preact-query";
 import { useQuery } from "../../../services/navigation/viewQueries";
 import { useViewActive } from "../../../services/navigation/ViewActivity";
-import { contactInvitationUrl, type ContactInviteCreateResult } from "@humansandmachines/gsv/protocol";
+import { contactInvitationUrl, parseContactInvitation, type ContactInviteCreateResult } from "@humansandmachines/gsv/protocol";
 import { useGateway } from "../../../services/gateway/GatewayProvider";
 import { contactInvitationPreview, clearContactInvitation } from "../../../services/session/contactInvitationIntent";
 import type { ConsoleAccount } from "../../../domain/system/consoleModels";
@@ -42,7 +42,7 @@ export function InviteContact({ account, draft, onChange, onAdded, onBusy, onPro
     onSuccess: (invite) => { onChange({ ...draft, issued: invite }); setCopyStatus(null); void refreshInvites(); } });
   const accept = useMutation({ mutationFn: () => {
     if (draft.shipHandlesMessages === null) throw new Error(t("people.handling.required"));
-    return client.contact.invite.accept({ code: draft.code.trim(), shipHandlesMessages: draft.shipHandlesMessages });
+    return client.contact.invite.accept({ code: parseContactInvitation(draft.code).code, shipHandlesMessages: draft.shipHandlesMessages });
   },
     onSuccess: async ({ contact }) => {
       clearContactInvitation(); onChange({ code: "", issued: null, shipHandlesMessages: null });
