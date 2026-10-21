@@ -37,7 +37,9 @@ If someone shares a link or a contact code, **I have an invitation** lets you
 paste it in People.
 
 Ship can create or accept these same invitations when asked, after you choose
-who handles new messages. In Shell, use `contact invite create --handling manual`
+who handles new messages. The built-in `contacts` skill covers inviting people,
+accepting links, messaging and coordinating work; load it with `skills show contacts`.
+In Shell, use `contact invite create --handling manual`
 or `--handling ship`. A private invitation needs neither a published profile nor
 an existing contact. If you know the person's email address, Ship can send the
 returned URL with `mail send`, using the ordinary mail approval policy. Use the
