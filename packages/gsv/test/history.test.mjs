@@ -237,6 +237,10 @@ const eventFixtures = {
   "context.failed": { reason: "context.policy.fail", policy, pressure: 0.9 },
   "responsibility.revision": { epochId: "epoch:1", transition },
   "responsibility.ready": { batchId: "batch:1", ledgerRevision: 2, responsibilityIds: ["r12y:1"], receivedAtMs: 300 },
+  "contact.message": {
+    contactId: "contact:1", conversationId: "conv:1", messageId: "msg:1", from: "Xisca", text: "The photo",
+    responsibilityId: "r12y:1", attachmentErrors: ["video.mp4 exceeds the message attachment byte limit"],
+  },
   "correction.text-only": { attempt: 1, limit: 3 },
   "correction.exhausted": { attempts: 3, limit: 3, conversationId: "conversation:1", messageId: "message:1" },
   "generation.failed": { reason: "generation.error", error: "Provider unavailable", provider: "provider", model: "model" },

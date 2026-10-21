@@ -190,7 +190,7 @@ export class ProcessMessageRepository {
     );
     if (!row) return;
     const record = readHistoryRecord(row);
-    if (record && (record.kind === "message" || record.kind === "note" || record.kind === "result")) {
+    if (record && (record.kind !== "call")) {
       record.payload.media = parseStoredProcessMedia(media);
     }
     this.store.sql.exec(
@@ -223,7 +223,7 @@ export class ProcessMessageRepository {
       if (parseStoredProcessMedia(row.media_json).some((item) => item.key === key)) return true;
       if (row.record_json) {
         const record = procHistoryRecordDataSchema.parse(JSON.parse(row.record_json));
-        if ((record.kind === "message" || record.kind === "note" || record.kind === "result") &&
+        if ((record.kind !== "call") &&
             record.payload.media?.some((item) => item.type !== "resource" && item.key === key)) return true;
       }
     }

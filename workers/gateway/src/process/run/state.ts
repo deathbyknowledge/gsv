@@ -124,7 +124,9 @@ export const runOutputMediaSchema = processMediaInputSchema.extend({
   revision: z.string().optional(),
 });
 
+// Keyed by the wake batch or event that handed these responsibilities to the run.
 const responsibilityBatchStateSchema = responsibilityBatchSchema.extend({
+  batchId: z.string().trim().regex(/^[a-zA-Z0-9._:-]{1,200}$/u),
   ledgerRevision: z.number().int().nonnegative().safe().optional(),
 });
 

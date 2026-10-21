@@ -60,6 +60,7 @@ export function historyEventText(event: ProcHistoryEvent): string {
       ?? (event.payload.targetPid ? t("chat.event.replyTimeout", { pid: event.payload.targetPid }) : t("chat.event.replyTimeoutAny"));
     case "process.approval": return t("chat.event.approval", { pid: event.payload.pid, syscall: event.payload.syscall, target: event.payload.target });
     case "adapter.work.returned": return t("chat.event.returned", { pid: event.payload.workPid });
+    case "contact.message": return `${event.payload.from}: ${event.payload.text || t("chat.contact.attachment")}`;
     case "target.connection": return t(event.payload.event === "connected" ? "chat.event.connected" : "chat.event.disconnected", {
       target: event.payload.label ?? event.payload.targetId,
     });
@@ -145,7 +146,7 @@ export function transcriptRowsFromRecords(records: readonly (ProcHistoryRecord |
       case "event":
         rows.push({
           ...base, role: "system", text: historyEventText(record.payload), event: record.payload,
-          isError: record.payload.severity === "error",
+          media: record.payload.media, isError: record.payload.severity === "error",
           status: record.payload.severity === "error" ? "error" : "done",
         });
         break;

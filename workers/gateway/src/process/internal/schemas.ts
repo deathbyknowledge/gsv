@@ -4,7 +4,7 @@ import type { CodeModeExecArgs } from "../../syscalls/codemode";
 import { RUN_CONTROL_INSTRUCTION, SEND_TOOL_DESCRIPTION, SEND_TOOL_NAME } from "./lifecycle";
 import { MAX_MESSAGE_MEDIA_ITEMS } from "../../shared/message-media-limits";
 import type { Tool } from "@humansandmachines/gsv/services/inference-context";
-import { jsonObjectSchema, jsonValueSchema, procHistoryRecordDataSchema } from "@humansandmachines/gsv/protocol";
+import { jsonObjectSchema, jsonValueSchema, procHistoryRecordDataSchema, resourceBlockSchema, type ResourceBlock } from "@humansandmachines/gsv/protocol";
 import { z } from "zod";
 import { processIdentitySchema } from "../../protocol/peer-schemas";
 
@@ -116,9 +116,24 @@ export const responsibilityReadyRuntimeEventSchema = responsibilityBatchSchema.e
   type: z.literal("r12y.ready"),
 });
 
+export const contactMessageRuntimeEventSchema = z.strictObject({
+  type: z.literal("contact.message"),
+  contactId: z.string().trim().regex(/^contact:.+$/u),
+  contactGeneration: z.string().trim().min(1),
+  conversationId: z.string().trim().min(1),
+  messageId: z.string().trim().min(1),
+  from: z.string(),
+  text: z.string(),
+  media: z.array(z.custom<ResourceBlock>((value) => resourceBlockSchema.safeParse(value).success))
+    .max(MAX_MESSAGE_MEDIA_ITEMS).optional(),
+  responsibilityId: z.string().trim().regex(/^r12y:[0-9a-f-]{36}$/u),
+  ledgerRevision: z.number().int().nonnegative().safe(),
+});
+
 export const processRuntimeEventSchema = z.discriminatedUnion("type", [
   workReturnedRuntimeEventSchema,
   responsibilityReadyRuntimeEventSchema,
+  contactMessageRuntimeEventSchema,
 ]);
 
 const federationResponsibilityBaseSchema = {
