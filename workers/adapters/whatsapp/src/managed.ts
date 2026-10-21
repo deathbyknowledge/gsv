@@ -183,7 +183,7 @@ export class ManagedWhatsAppChannel extends WorkerEntrypoint<Env> implements Ada
       accountId: MANAGED_WHATSAPP_ACCOUNT_ID,
       configured: this.isConfigured(),
       installUrl: managedWhatsAppChatUrl(this.env.WHATSAPP_DISPLAY_NUMBER),
-      instructions: "Open the chat link and send /link to get a pairing code.",
+      instructions: "Open the chat link and send /link to get a pairing code. Meta currently blocks this number from messaging WhatsApp numbers in Brazil (+55) and Indonesia (+62), so people there cannot receive the code. If the user may be there, tell them before they try and offer another enabled messenger or email.",
     };
   }
 

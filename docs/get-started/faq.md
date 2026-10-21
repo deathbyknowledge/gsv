@@ -90,7 +90,8 @@ credentials. Link your own identity from Settings → Messengers. One external
 identity has one active Ship for each private-message adapter route.
 
 WhatsApp works through an operator-owned WhatsApp Business number where Meta
-permits it. See
+permits it. Meta does not let that number message people in Brazil or
+Indonesia, so WhatsApp is not offered there. See
 [Messengers](/how-to/messengers) for the supported flows.
 
 ### What can it actually do today?
