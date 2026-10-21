@@ -36,7 +36,7 @@ export function renderAdapterCommandHelp(): string {
     "Commands:",
     ...COMMANDS.map((command) => `/${command.name} - ${command.description}`),
     "",
-    "When approval is pending, reply approve, deny, or approve always.",
+    "When an approval is pending, answer it with its Allow once, Always allow or Block buttons, or in Chat.",
   ].join("\n");
 }
 
