@@ -99,7 +99,7 @@ export const en = {
   // Settings: preferences and models
   "settings.unavailableOption": "{value} (unavailable)",
   "settings.preferences.title": "Preferences",
-  "settings.preferences.intro": "Defaults for {name}. Helpers without their own settings inherit your defaults.",
+  "settings.preferences.intro": "Defaults for {name}. Helpers without their own settings inherit these defaults.",
   "settings.preferences.loading": "Loading preferences…",
   "settings.preferences.readOnly": "Your account can view these preferences but cannot change them.",
   "settings.models.title": "Model order",
@@ -172,7 +172,7 @@ export const en = {
 
   // Settings: permissions
   "settings.permissions.title": "Permissions",
-  "settings.permissions.intro": "Choose when Ship and its helpers ask before using a capability. More specific targets win, then more specific capabilities; list order breaks ties. Account capability grants still set the outer limit.",
+  "settings.permissions.intro": "Choose when work on this account asks before using a capability. More specific targets win, then more specific capabilities; list order breaks ties. Account capability grants still set the outer limit.",
   "settings.permissions.mailHint": "Mail needs an explicit Allow rule to send without asking, even when the default is Allow.",
   "settings.permissions.loading": "Loading permissions…",
   "settings.permissions.targetsUnavailable": "Target names could not be loaded. Stored target IDs remain available.",
@@ -203,7 +203,7 @@ export const en = {
 
   // Settings: instructions
   "settings.instructions.title": "Instructions",
-  "settings.instructions.intro": "Your standing instructions, in Markdown. Helpers inherit your instructions alongside their own. Changes take effect on the next run.",
+  "settings.instructions.intro": "Your standing instructions, in Markdown. Helpers inherit these instructions alongside their own. Changes take effect on the next run.",
   "settings.instructions.new": "new instruction",
   "settings.instructions.newTitle": "New instruction",
   "settings.instructions.edit": "Edit instruction",
@@ -1230,7 +1230,7 @@ export const en = {
   "shell.help.label": "Help",
   "shell.help.search": "Search Chat",
   "shell.help.views": "Views & appearance",
-  "shell.help.viewsHint": "Navigation shortcuts work outside text fields and activation forms.",
+  "shell.help.viewsHint": "Navigation shortcuts work outside text fields and the connection and model forms.",
   "shell.help.memory": "Memory",
   "shell.help.people": "People",
   "shell.help.theme": "Switch between light and dark",

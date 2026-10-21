@@ -100,7 +100,7 @@ export const es = {
   // Settings: preferences and models
   "settings.unavailableOption": "{value} (no disponible)",
   "settings.preferences.title": "Preferencias",
-  "settings.preferences.intro": "Valores predeterminados para {name}. Los ayudantes sin ajustes propios heredan los tuyos.",
+  "settings.preferences.intro": "Valores predeterminados para {name}. Los ayudantes sin ajustes propios heredan estos valores.",
   "settings.preferences.loading": "Cargando preferencias…",
   "settings.preferences.readOnly": "Tu cuenta puede ver estas preferencias, pero no cambiarlas.",
   "settings.models.title": "Orden de los modelos",
@@ -173,7 +173,7 @@ export const es = {
 
   // Settings: permissions
   "settings.permissions.title": "Permisos",
-  "settings.permissions.intro": "Elige cuándo deben preguntar Ship y sus ayudantes antes de usar una capacidad. Ganan los destinos más específicos y, después, las capacidades más específicas; si hay empate, decide el orden de la lista. Las capacidades concedidas a la cuenta siguen marcando el límite.",
+  "settings.permissions.intro": "Elige cuándo debe preguntar el trabajo de esta cuenta antes de usar una capacidad. Ganan los destinos más específicos y, después, las capacidades más específicas; si hay empate, decide el orden de la lista. Las capacidades concedidas a la cuenta siguen marcando el límite.",
   "settings.permissions.mailHint": "El correo necesita una regla explícita de Permitir para enviar sin preguntar, aunque el valor predeterminado sea Permitir.",
   "settings.permissions.loading": "Cargando permisos…",
   "settings.permissions.targetsUnavailable": "No se han podido cargar los nombres de los destinos. Los ID guardados siguen disponibles.",
@@ -204,7 +204,7 @@ export const es = {
 
   // Settings: instructions
   "settings.instructions.title": "Instrucciones",
-  "settings.instructions.intro": "Tus instrucciones permanentes, en Markdown. Los ayudantes heredan tus instrucciones además de las suyas. Los cambios se aplican en la próxima ejecución.",
+  "settings.instructions.intro": "Instrucciones permanentes, en Markdown. Los ayudantes heredan estas instrucciones además de las suyas. Los cambios se aplican en la próxima ejecución.",
   "settings.instructions.new": "nueva instrucción",
   "settings.instructions.newTitle": "Nueva instrucción",
   "settings.instructions.edit": "Editar instrucción",
@@ -1231,7 +1231,7 @@ export const es = {
   "shell.help.label": "Ayuda",
   "shell.help.search": "Buscar en Chat",
   "shell.help.views": "Vistas y apariencia",
-  "shell.help.viewsHint": "Los atajos de navegación funcionan fuera de los campos de texto y los formularios de activación.",
+  "shell.help.viewsHint": "Los atajos de navegación funcionan fuera de los campos de texto y de los formularios de conexión y de modelo.",
   "shell.help.memory": "Memoria",
   "shell.help.people": "Personas",
   "shell.help.theme": "Cambiar entre claro y oscuro",
