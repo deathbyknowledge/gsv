@@ -37,6 +37,11 @@ import type {
   InferenceService as ManagedInferenceService,
   InferenceTarget as ManagedInferenceTargetContract,
 } from "@humansandmachines/gsv/services/inference";
+import {
+  cancelInferenceRequest,
+  decodeInferenceRequest,
+  type InferenceRequest,
+} from "@humansandmachines/gsv/services/inference-body";
 const INTEGRATION_INSTALLATION_ID = "inst_integration_default";
 const RECORDER_NAME = "integration-recorder";
 import { handleAdapterFrame } from "../../../adapters/shared/src/adapter-frame";
@@ -238,13 +243,15 @@ class ManagedInferenceTarget
   }
 
   async generate(
-    input: ManagedInferenceRequest,
+    inputValue: InferenceRequest<ManagedInferenceRequest>,
   ): Promise<ManagedInferenceResult> {
-    if (input.installationId !== this.#installationId) {
+    if (inputValue.installationId !== this.#installationId) {
+      cancelInferenceRequest(inputValue);
       throw new Error(
         "Managed inference installation does not match its target",
       );
     }
+    const input = await decodeInferenceRequest(inputValue);
     const waitsForCancellation = input.messages.some((message) => (
       message.role === "user" && message.content === "wait for cancellation"
     ));
@@ -305,12 +312,11 @@ class ManagedInferenceTarget
   }
 
   async generateStream(
-    input: ManagedInferenceRequest,
+    input: InferenceRequest<ManagedInferenceRequest>,
   ): Promise<ReadableStream<Uint8Array>> {
-    const result = this.generate(input);
+    const message = await this.generate(input);
     return new ReadableStream({
       async start(controller) {
-        const message = await result;
         const content = message.content[0];
         if (!content) throw new Error("managed inference fixture returned no content");
         controller.enqueue(encodeManagedInferenceStreamEvent({

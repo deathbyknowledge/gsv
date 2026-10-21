@@ -1,4 +1,5 @@
 import type { ProcHistoryEvent } from "@humansandmachines/gsv/protocol";
+import type { TextKey } from "../../../i18n/locale";
 
 /** What went wrong, in the terms a person can act on; the gateway's own wording stays in `detail`. */
 export type ChatErrorKind =
@@ -22,9 +23,9 @@ export type ChatErrorKind =
 export type ChatErrorPresentation = {
   kind: ChatErrorKind;
   /** One plain sentence saying what happened. */
-  summary: string;
+  summary: TextKey;
   /** The recommended next step. */
-  action: string;
+  action: TextKey;
   /** The original text, kept inspectable for diagnosis. */
   detail: string;
 };
@@ -33,70 +34,22 @@ export type ChatErrorPresentation = {
 export type ChatErrorContext = Pick<ChatErrorPresentation, "summary" | "action">;
 
 const PRESENTATION = {
-  "timeout": {
-    summary: "The model took too long to respond.",
-    action: "Try again. If it keeps happening, wait a few minutes or switch to another model.",
-  },
-  "cancelled": {
-    summary: "The request was cancelled before it finished.",
-    action: "Send your message again if you still need an answer.",
-  },
-  "context-limit": {
-    summary: "This conversation is too long for the model to read at once.",
-    action: "Compact or reset the conversation, remove large attachments, or switch to a model with a larger context window.",
-  },
-  "provider-account": {
-    summary: "The AI provider account needs attention.",
-    action: "Check credits, quota, or billing for your AI provider, then try again.",
-  },
-  "rate-limit": {
-    summary: "The AI provider is receiving too many requests right now.",
-    action: "Wait a few minutes, then try again.",
-  },
-  "authentication": {
-    summary: "The AI provider did not accept the configured credentials.",
-    action: "Check the API key for your AI provider, then try again.",
-  },
-  "provider-unavailable": {
-    summary: "The AI provider is unavailable right now.",
-    action: "Wait a few minutes, then try again, or switch to another model.",
-  },
-  "setup": {
-    summary: "No AI model is ready to answer.",
-    action: "Check the AI provider and model configuration, then try again.",
-  },
-  "empty-response": {
-    summary: "The model returned no usable answer.",
-    action: "Try again. If it keeps happening, switch to another model.",
-  },
-  "network": {
-    summary: "The connection was interrupted.",
-    action: "Check your connection, then try again.",
-  },
-  "runtime": {
-    summary: "This process ran into an internal problem and stopped.",
-    action: "Try again. If it keeps happening, restart the process.",
-  },
-  "delivery": {
-    summary: "A reply could not be delivered.",
-    action: "Check the messaging connection, then try again in a few minutes.",
-  },
-  "media": {
-    summary: "An attachment could not be processed.",
-    action: "Attach it again, or try a smaller or different file.",
-  },
-  "incomplete-response": {
-    summary: "The reply stopped before it was finished.",
-    action: "Try again, or rephrase your request.",
-  },
-  "process-timeout": {
-    summary: "Another process did not reply in time.",
-    action: "Try again, or check on that process.",
-  },
-  "unknown": {
-    summary: "Something went wrong.",
-    action: "Try again. If it keeps happening, restart the process and check the details.",
-  },
+  "timeout": { summary: "chat.error.timeout.summary", action: "chat.error.timeout.action" },
+  "cancelled": { summary: "chat.error.cancelled.summary", action: "chat.error.cancelled.action" },
+  "context-limit": { summary: "chat.error.contextLimit.summary", action: "chat.error.contextLimit.action" },
+  "provider-account": { summary: "chat.error.providerAccount.summary", action: "chat.error.providerAccount.action" },
+  "rate-limit": { summary: "chat.error.rateLimit.summary", action: "chat.error.rateLimit.action" },
+  "authentication": { summary: "chat.error.authentication.summary", action: "chat.error.authentication.action" },
+  "provider-unavailable": { summary: "chat.error.providerUnavailable.summary", action: "chat.error.providerUnavailable.action" },
+  "setup": { summary: "chat.error.setup.summary", action: "chat.error.setup.action" },
+  "empty-response": { summary: "chat.error.emptyResponse.summary", action: "chat.error.emptyResponse.action" },
+  "network": { summary: "chat.error.network.summary", action: "chat.error.network.action" },
+  "runtime": { summary: "chat.error.runtime.summary", action: "chat.error.runtime.action" },
+  "delivery": { summary: "chat.error.delivery.summary", action: "chat.error.delivery.action" },
+  "media": { summary: "chat.error.media.summary", action: "chat.error.media.action" },
+  "incomplete-response": { summary: "chat.error.incompleteResponse.summary", action: "chat.error.incompleteResponse.action" },
+  "process-timeout": { summary: "chat.error.processTimeout.summary", action: "chat.error.processTimeout.action" },
+  "unknown": { summary: "chat.error.unknown.summary", action: "chat.error.unknown.action" },
 } satisfies Record<ChatErrorKind, ChatErrorContext>;
 
 /** Ordered: the first match wins, so a timed-out connection reads as a timeout and a quota 429 as an account issue. */
@@ -137,11 +90,14 @@ export function describeHistoryEventError(event: ProcHistoryEvent, detail: strin
   if (event.severity !== "error") return null;
   switch (event.kind) {
     case "generation.failed":
-      return present(event.payload.reason === "generation.empty" ? "empty-response" : classify(detail), detail);
-    case "context.failed": return present(classify(detail) === "context-limit" ? "context-limit" : "unknown", detail, {
-      summary: "The conversation could not be prepared for the model.",
-      action: "Try again. If it keeps happening, check the details.",
-    });
+      return present(event.payload.reason === "generation.empty" ? "empty-response" : classify(event.payload.error), detail);
+    case "context.failed": {
+      const { error } = event.payload;
+      return present(error === undefined || classify(error) === "context-limit" ? "context-limit" : "unknown", detail, {
+        summary: "chat.error.contextFailed.summary",
+        action: "chat.error.contextFailed.action",
+      });
+    }
     case "runtime.failed": return present("runtime", detail);
     case "delivery.failed": return present("delivery", detail);
     case "media.failed": return present("media", detail);

@@ -9,6 +9,7 @@ import { canConfigure } from "../app/features/instrument/settings/settingsModel"
 import { nativeMachine, type NativeSessionStorage } from "./bridge";
 import { DesktopMachineSession } from "./machineSetup";
 import { COMPUTER_COLUMNS, COMPUTER_ROWS, createComputerScene } from "./computerScene";
+import { useT } from "../app/i18n/locale";
 
 type Props = { origin: string; generation: string; request: number; storage: NativeSessionStorage };
 
@@ -22,6 +23,7 @@ export function DesktopMachineSetup({ storage, ...props }: Props) {
 }
 
 function MachineSetup({ origin, generation, username, request, nativeReady }: Omit<Props, "storage"> & { username: string; nativeReady: boolean }) {
+  const t = useT();
   const { client, connected } = useGateway();
   const { theme } = useColorTheme("light");
   const [computer] = useState(createComputerScene);
@@ -103,27 +105,27 @@ function MachineSetup({ origin, generation, username, request, nativeReady }: Om
       event.preventDefault();
       void owner.connect(label, targets.targets.map((target) => target.deviceId));
     }}>
-      <h2 id="desktop-machine-title">{machine?.configured?.label ?? "Connect this computer"}</h2>
-      {showComputer && <AsciiAnimation scene={computer} label="Computer" palette={theme}
+      <h2 id="desktop-machine-title">{machine?.configured?.label ?? t("desktop.machine.title")}</h2>
+      {showComputer && <AsciiAnimation scene={computer} label={t("desktop.machine.art")} palette={theme}
         frameRate={12} className="desktop-machine-art" />}
-      {state.loading && !error ? <LoadingState>checking…</LoadingState> : other ?
-        <p class="note">Already connected to {new URL(other.origin).host} as {other.username}.</p> : machine?.configured ?
-        !error && <p class="note" role="status">{state.busy ? "Connecting…" : online ? "Connected" : machine.running ? "Connecting…" : "Connection stopped"}</p> : <>
-          <p class="note">Let your Ship use this computer’s files and commands, even when the app is closed.</p>
-          {navigator.platform.startsWith("Win") && <p class="note">Windows asks for administrator approval so this computer can reconnect after a restart, before you sign in. Commands use a separate account with access to the configured workspace; the default is the GSV folder in your user profile.</p>}
-          {!machine?.pending && <label>Display name<input value={label} maxLength={100} required autoComplete="off"
+      {state.loading && !error ? <LoadingState>{t("desktop.machine.checking")}</LoadingState> : other ?
+        <p class="note">{t("desktop.machine.otherBinding", { host: new URL(other.origin).host, username: other.username })}</p> : machine?.configured ?
+        !error && <p class="note" role="status">{t(state.busy ? "desktop.machine.connecting" : online ? "desktop.machine.connected" : machine.running ? "desktop.machine.connecting" : "desktop.machine.stopped")}</p> : <>
+          <p class="note">{t("desktop.machine.intro")}</p>
+          {navigator.platform.startsWith("Win") && <p class="note">{t("desktop.machine.windowsNote")}</p>}
+          {!machine?.pending && <label>{t("desktop.machine.displayName")}<input value={label} maxLength={100} required autoComplete="off"
             disabled={state.busy} onInput={(event) => setLabel(event.currentTarget.value)} /></label>}
-          {needsInvitation && !allowed && !accounts.isPending && <p class="note">Your account cannot connect a computer.</p>}
+          {needsInvitation && !allowed && !accounts.isPending && <p class="note">{t("desktop.machine.notAllowed")}</p>}
         </>}
       {error && <p class="error" role="alert">{error}</p>}
       <div class="desktop-machine-actions">
-        {complete ? <button type="button" class="ibtn is-primary desktop-machine-connect" onClick={close}>done</button> : <>
-          <button type="button" class="fleet-text-action" onClick={close}>{state.busy ? "close" : machine?.configured || other ? "done" : "not now"}</button>
+        {complete ? <button type="button" class="ibtn is-primary desktop-machine-connect" onClick={close}>{t("desktop.machine.done")}</button> : <>
+          <button type="button" class="fleet-text-action" onClick={close}>{t(state.busy ? "desktop.close" : machine?.configured || other ? "desktop.machine.done" : "desktop.machine.notNow")}</button>
           {!other && <button type={machine ? "submit" : "button"} class="ibtn is-primary desktop-machine-connect"
             disabled={state.busy || state.loading || !nativeReady || !connected || !allowed || needsInvitation && (!label.trim() || targets.isPending)}
-            aria-label={state.busy ? "Connecting" : undefined} aria-busy={state.busy}
+            aria-label={state.busy ? t("desktop.machine.connectingLabel") : undefined} aria-busy={state.busy}
             onClick={machine ? undefined : () => void owner.load()}>
-            {state.busy ? <Spinner /> : error || machine?.pending ? "retry" : "connect"}
+            {state.busy ? <Spinner /> : t(error || machine?.pending ? "desktop.retry" : "desktop.machine.connect")}
           </button>}
         </>}
       </div>

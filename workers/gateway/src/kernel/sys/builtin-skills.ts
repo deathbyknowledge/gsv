@@ -1,4 +1,5 @@
 import browserTargetSkill from "../../../../../skills/browser-target/SKILL.md";
+import contactsSkill from "../../../../../skills/contacts/SKILL.md";
 import gsvManualSkill from "../../../../../skills/gsv-manual/SKILL.md";
 import imageReadingSkill from "../../../../../skills/image-reading/SKILL.md";
 import memorySkill from "../../../../../skills/memory/SKILL.md";
@@ -86,6 +87,10 @@ export const BUILTIN_SKILL_FILES = [
       // Untouched skill before the browser choice, sign-in routes and trust guidance.
       "a3a63d79ea483b2407507699e1dab6d9fa353f6ed8ccaa5d1793faf54010315b",
     ],
+  },
+  {
+    path: "contacts/SKILL.md",
+    content: contactsSkill,
   },
   {
     path: "gsv-manual/SKILL.md",

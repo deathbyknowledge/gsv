@@ -1,3 +1,4 @@
+import { useT } from "../../i18n/locale";
 import "./Button.css";
 
 export type ButtonVariant = "primary" | "secondary" | "success" | "danger" | "dangerGhost" | "link";
@@ -26,7 +27,8 @@ const VARIANT_CLASS = {
 };
 
 /** Button — ported from Button.dc.html. */
-export function Button({ variant = "primary", tone, label = "BUTTON", disabled = false, block = false, type = "button", onClick, dataAttrs }: ButtonProps) {
+export function Button({ variant = "primary", tone, label, disabled = false, block = false, type = "button", onClick, dataAttrs }: ButtonProps) {
+  const t = useT();
   const toneClass = variant === "link" && tone ? ` is-tone-${tone}` : "";
   const cls = `gsv-btn ${VARIANT_CLASS[variant]}${toneClass}${block ? " gsv-btn-block" : ""}${disabled ? " is-disabled" : ""}`;
   return (
@@ -37,7 +39,7 @@ export function Button({ variant = "primary", tone, label = "BUTTON", disabled =
       disabled={disabled}
       onClick={disabled ? undefined : onClick}
     >
-      <span class="gsv-btn-label">{label}</span>
+      <span class="gsv-btn-label">{label ?? t("ui.button.label")}</span>
       {variant === "link" ? (
         <svg width="8" height="11" viewBox="0 0 9 12">
           <path d="M0 0 L9 6 L0 12 Z" fill="currentColor" />

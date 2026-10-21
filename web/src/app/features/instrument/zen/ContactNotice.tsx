@@ -7,6 +7,7 @@ import { sendContactMessage } from "../../../services/contacts/contactsService";
 import { useGateway } from "../../../services/gateway/GatewayProvider";
 import type { StagedResourceUpload } from "../../../services/gateway/stagedResources";
 import { canConfigure } from "../settings/settingsModel";
+import { t as translate, useT, type Translate } from "../../../i18n/locale";
 import { ZenMedia } from "./ZenMedia";
 import "../shared/senderBadge.css";
 
@@ -55,13 +56,16 @@ export function noticeName(notice: ContactNotice, contact: ContactSummary | unde
 /** The first words of a message, clipped; one with no text is named by what it carries. */
 export function preview(text: string, attachments = 0): string {
   const words = text.trim().split(/\s+/).filter(Boolean);
-  if (words.length === 0) return attachments === 0 ? "(an empty message)" : attachments === 1 ? "(an attachment)" : `(${attachments} attachments)`;
+  if (words.length === 0) {
+    return attachments === 0 ? translate("chat.contact.empty")
+      : attachments === 1 ? translate("chat.contact.attachment") : translate("chat.contact.attachments", { count: attachments });
+  }
   return words.length > PREVIEW_WORDS ? `${words.slice(0, PREVIEW_WORDS).join(" ")}…` : words.join(" ");
 }
 
 /* inline markup rather than a component, so the badge reads in the moment's own tree */
-function senderBadge(byShip: boolean) {
-  return <span class="sender-badge">{byShip && <span class="sender-dot" />}{byShip ? "Ship" : "PERSON"}</span>;
+function senderBadge(t: Translate, byShip: boolean) {
+  return <span class="sender-badge">{byShip && <span class="sender-dot" />}{byShip ? "Ship" : t("chat.contact.person")}</span>;
 }
 
 /**
@@ -79,14 +83,15 @@ export function ContactNoticePanel({ id, name, notice, panelRef, onClose, onGoTo
   onGoToChat: () => void;
   children?: ComponentChildren;
 }) {
+  const t = useT();
   const latest = notice?.messages.at(-1);
   return (
-    <section id={id} ref={panelRef} tabIndex={-1} class="zen-people-panel" aria-label={`Messages from ${name}`}>
-      <header class="zen-people-heading"><span>{name}{latest && senderBadge(latest.social.provenance.kind === "process")}</span>
-        <button type="button" class="fleet-text-action" onClick={onClose}>close</button></header>
+    <section id={id} ref={panelRef} tabIndex={-1} class="zen-people-panel" aria-label={t("chat.contact.from", { name })}>
+      <header class="zen-people-heading"><span>{name}{latest && senderBadge(t, latest.social.provenance.kind === "process")}</span>
+        <button type="button" class="fleet-text-action" onClick={onClose}>{t("chat.contact.close")}</button></header>
       {children}
-      <footer class="zen-people-foot"><span>{notice ? `${notice.messages.length} message${notice.messages.length === 1 ? "" : "s"}` : ""}</span>
-        <button type="button" class="fleet-text-action" onClick={onGoToChat}>open conversation <span aria-hidden="true">↗</span></button></footer>
+      <footer class="zen-people-foot"><span>{notice ? t("chat.contact.count", { count: notice.messages.length }) : ""}</span>
+        <button type="button" class="fleet-text-action" onClick={onGoToChat}>{t("chat.contact.open")} <span aria-hidden="true">↗</span></button></footer>
     </section>
   );
 }
@@ -105,9 +110,11 @@ export function ContactReplyBox({ notice, contact, account, draft, onDraft, onSe
   /** the reply went out, answering the batch through this sequence */
   onSent: (through: number, intent: NonNullable<ContactReplyDraft["intent"]>) => void;
 }) {
+  const t = useT();
   const { client, connected } = useGateway();
   const [state, setState] = useState<"idle" | "sending" | "undelivered" | "failed">("idle");
-  const [error, setError] = useState<string | null>(null);
+  /* a send the Kernel recorded as undelivered, or a failure in its own words */
+  const [error, setError] = useState<{ kind: "undelivered" } | { kind: "failed"; text: string } | null>(null);
   const name = noticeName(notice, contact);
   const maySend = connected && !!account && !!contact && contact.state === "active" && !contact.blocked
     && canConfigure(account, "contact.send") && (account.uid === 0 || account.uid === contact.ownerUid);
@@ -125,14 +132,14 @@ export function ContactReplyBox({ notice, contact, account, draft, onDraft, onSe
       const result = await sendContactMessage(client, notice.contactId, intent);
       if (result.state === "failed") {
         setState("undelivered");
-        setError("not delivered — open the chat to retry");
+        setError({ kind: "undelivered" });
         return;
       }
       setState("idle");
       onSent(intent.throughSequence, intent);
     } catch (cause) {
       setState("failed");
-      setError(cause instanceof Error ? cause.message : String(cause));
+      setError({ kind: "failed", text: cause instanceof Error ? cause.message : String(cause) });
     }
   };
 
@@ -145,18 +152,18 @@ export function ContactReplyBox({ notice, contact, account, draft, onDraft, onSe
           {message.media?.map((media, index) => <ZenMedia key={index} media={media} processId="" />)}
         </div>
       ))}</div>
-      <textarea class="reply" rows={2} aria-label={`Reply to ${name}`} placeholder={`Reply to ${name}…`} value={draft.text} disabled={!maySend || state === "sending"}
+      <textarea class="reply" rows={2} aria-label={t("chat.contact.replyTo", { name })} placeholder={t("chat.contact.replyPlaceholder", { name })} value={draft.text} disabled={!maySend || state === "sending"}
         onInput={(event: JSX.TargetedEvent<HTMLTextAreaElement>) => {
           onDraft({ ...draft, text: event.currentTarget.value });
           if (state !== "sending") setState("idle");
         }} />
       <div class="send">
         <button type="button" class="ibtn is-primary" disabled={!maySend || !body || tooLong || state === "sending" || undelivered} onClick={() => void send()}>
-          {state === "sending" ? "sending…" : `send to ${name}`}
+          {state === "sending" ? t("chat.sending") : t("chat.contact.sendTo", { name })}
         </button>
-        {!maySend && <span>{!contact ? "contact not loaded yet" : contact.state !== "active" ? "this connection has ended" : "you can't send here"}</span>}
-        {tooLong && <span class="error">too long to send</span>}
-        {error && <span class="error" role="alert">{error}</span>}
+        {!maySend && <span>{t(!contact ? "chat.contact.notLoaded" : contact.state !== "active" ? "chat.contact.ended" : "chat.contact.cannotSend")}</span>}
+        {tooLong && <span class="error">{t("chat.contact.tooLong")}</span>}
+        {error && <span class="error" role="alert">{error.kind === "undelivered" ? t("chat.contact.undelivered") : error.text}</span>}
       </div>
     </div>
   );

@@ -1,12 +1,12 @@
 import {
   isToolApprovalTargetSelector, toolApprovalTargetSchema, type ToolApprovalTarget,
 } from "@humansandmachines/gsv/protocol";
-import type { SelectOption } from "./Select";
 import type {
   ApprovalPolicyAction,
   ApprovalPolicyRule,
   ApprovalPolicyValue,
 } from "../../domain/agentApproval";
+import { t, type TextKey } from "../../i18n/locale";
 
 /** Shared model + option builders for tool-approval editing. Extracted from
  *  AgentToolsPanel so other approval editors (e.g. the CREW overrides drawer)
@@ -25,121 +25,69 @@ export type AgentToolTarget = {
   implements?: readonly string[];
 };
 
-type CapabilityFamily = {
-  label: string;
-  options: ApprovalMatchOption[];
-};
-
-type ApprovalMatchOption = {
-  match: string;
-  label: string;
-  description?: string;
-};
+/** A choice in a rule's select: the stored value and the text shown for it. */
+export type ApprovalOption = { value: string; label: string };
 
 export const APPROVAL_ACTIONS: AgentToolApprovalAction[] = ["auto", "ask", "deny"];
 
-export const CAPABILITY_FAMILIES: CapabilityFamily[] = [
-  {
-    label: "Filesystem",
-    options: [
-      { match: "fs.*", label: "All file tools", description: "Read, write, edit, search, copy, and delete files." },
-      { match: "fs.read", label: "Read files" },
-      { match: "fs.write", label: "Write files" },
-      { match: "fs.edit", label: "Edit files" },
-      { match: "fs.search", label: "Search files" },
-      { match: "fs.copy", label: "Copy files" },
-      { match: "fs.delete", label: "Delete files" },
-    ],
-  },
-  {
-    label: "Shell",
-    options: [
-      { match: "shell.*", label: "All shell tools", description: "Every shell operation." },
-      { match: "shell.exec", label: "Run shell commands" },
-    ],
-  },
-  {
-    label: "Network",
-    options: [
-      { match: "net.*", label: "All network tools", description: "Every network operation." },
-      { match: "net.fetch", label: "Fetch URLs" },
-    ],
-  },
-  {
-    label: "Mail",
-    options: [
-      { match: "mail.send", label: "Send mail", description: "Send a new email or reply to an existing message." },
-    ],
-  },
-  {
-    label: "Web search",
-    options: [
-      { match: "web.search", label: "Search the web", description: "Send a query to the configured search service." },
-    ],
-  },
-  {
-    label: "Repositories",
-    options: [
-      { match: "repo.*", label: "All repository tools", description: "Every ripgit repository operation." },
-      { match: "repo.list", label: "List repositories" },
-      { match: "repo.read", label: "Read repository content" },
-      { match: "repo.search", label: "Search repositories" },
-      { match: "repo.compare", label: "Compare refs" },
-      { match: "repo.diff", label: "Read diffs" },
-      { match: "repo.apply", label: "Apply repository changes" },
-      { match: "repo.import", label: "Pull upstream" },
-      { match: "repo.delete", label: "Delete repositories" },
-      { match: "repo.visibility.set", label: "Change repository visibility" },
-    ],
-  },
-  {
-    label: "Processes",
-    options: [
-      { match: "proc.*", label: "All process tools", description: "Every process and history operation." },
-      { match: "proc.spawn", label: "Start processes" },
-      { match: "proc.send", label: "Send process messages" },
-      { match: "proc.history", label: "Read process history" },
-      { match: "proc.abort", label: "Abort runs" },
-      { match: "proc.reset", label: "Reset processes" },
-      { match: "proc.kill", label: "Kill processes" },
-    ],
-  },
-  {
-    label: "MCP",
-    options: [
-      { match: "sys.mcp.*", label: "All MCP tools", description: "Every MCP server operation." },
-      { match: "sys.mcp.call", label: "Call MCP tools" },
-      { match: "sys.mcp.list", label: "List MCP servers" },
-      { match: "sys.mcp.add", label: "Add MCP servers" },
-      { match: "sys.mcp.refresh", label: "Refresh MCP servers" },
-      { match: "sys.mcp.remove", label: "Remove MCP servers" },
-    ],
-  },
-  {
-    label: "System Config",
-    options: [
-      { match: "sys.config.*", label: "All system config tools", description: "Read and write gateway config." },
-      { match: "sys.config.get", label: "Read system config" },
-      { match: "sys.config.set", label: "Write system config" },
-    ],
-  },
-];
+const ACTION_LABELS = {
+  auto: "approval.action.allow",
+  ask: "approval.action.ask",
+  deny: "approval.action.block",
+} satisfies Record<AgentToolApprovalAction, TextKey>;
 
-export const APPROVAL_MATCH_OPTIONS: SelectOption[] = CAPABILITY_FAMILIES.flatMap((family) =>
-  family.options.map((option) => ({
-    group: family.label,
-    label: option.label,
-    value: option.match,
-    description: option.description ?? "",
-  })),
-);
-const APPROVAL_MATCH_VALUES = CAPABILITY_FAMILIES.flatMap((family) => family.options.map((option) => option.match));
-const APPROVAL_MATCH_LABELS = new Map(
-  CAPABILITY_FAMILIES.flatMap((family) =>
-    // SAFETY: Component boundary provides the asserted DOM/test shape.
-    family.options.map((option) => [option.match, option.label] as const)
-  ),
-);
+/** The capabilities a rule can name, by family, with the message that labels each. */
+const CAPABILITY_LABELS = new Map(Object.entries({
+  // Filesystem
+  "fs.*": "approval.match.fsAll",
+  "fs.read": "approval.match.fsRead",
+  "fs.write": "approval.match.fsWrite",
+  "fs.edit": "approval.match.fsEdit",
+  "fs.search": "approval.match.fsSearch",
+  "fs.copy": "approval.match.fsCopy",
+  "fs.delete": "approval.match.fsDelete",
+  // Shell
+  "shell.*": "approval.match.shellAll",
+  "shell.exec": "approval.match.shellExec",
+  // Network
+  "net.*": "approval.match.netAll",
+  "net.fetch": "approval.match.netFetch",
+  // Mail
+  "mail.send": "approval.match.mailSend",
+  // Web search
+  "web.search": "approval.match.webSearch",
+  // Repositories
+  "repo.*": "approval.match.repoAll",
+  "repo.list": "approval.match.repoList",
+  "repo.read": "approval.match.repoRead",
+  "repo.search": "approval.match.repoSearch",
+  "repo.compare": "approval.match.repoCompare",
+  "repo.diff": "approval.match.repoDiff",
+  "repo.apply": "approval.match.repoApply",
+  "repo.import": "approval.match.repoImport",
+  "repo.delete": "approval.match.repoDelete",
+  "repo.visibility.set": "approval.match.repoVisibility",
+  // Processes
+  "proc.*": "approval.match.procAll",
+  "proc.spawn": "approval.match.procSpawn",
+  "proc.send": "approval.match.procSend",
+  "proc.history": "approval.match.procHistory",
+  "proc.abort": "approval.match.procAbort",
+  "proc.reset": "approval.match.procReset",
+  "proc.kill": "approval.match.procKill",
+  // MCP
+  "sys.mcp.*": "approval.match.mcpAll",
+  "sys.mcp.call": "approval.match.mcpCall",
+  "sys.mcp.list": "approval.match.mcpList",
+  "sys.mcp.add": "approval.match.mcpAdd",
+  "sys.mcp.refresh": "approval.match.mcpRefresh",
+  "sys.mcp.remove": "approval.match.mcpRemove",
+  // System config
+  "sys.config.*": "approval.match.configAll",
+  "sys.config.get": "approval.match.configGet",
+  "sys.config.set": "approval.match.configSet",
+} satisfies Record<string, TextKey>));
+
 export function targetOptionValue(target: ToolApprovalTarget | undefined): string {
   return target === undefined ? "" : JSON.stringify(target);
 }
@@ -148,38 +96,22 @@ export function targetFromOptionValue(value: string): ToolApprovalTarget | undef
   return value ? toolApprovalTargetSchema.parse(JSON.parse(value)) : undefined;
 }
 
-export const BUILTIN_TARGET_OPTIONS: SelectOption[] = [
-  {
-    label: "All machines",
-    value: "",
-  },
-  {
-    label: "Ship computer",
-    value: targetOptionValue("gsv"),
-  },
-  {
-    label: "Cloud browsers",
-    value: targetOptionValue({ route: "instance", platform: "browser" }),
-  },
-  {
-    label: "Cloud computers",
-    value: targetOptionValue({ route: "instance", platform: "linux" }),
-  },
-];
-const LEGACY_EXTERNAL_TARGET_OPTION: SelectOption = {
-  group: "Stored machine",
-  label: "All machines",
-  value: targetOptionValue("targets/*"),
-};
+const BUILTIN_TARGETS = [
+  { value: "", label: "approval.target.allMachines" },
+  { value: targetOptionValue("gsv"), label: "approval.target.shipComputer" },
+  { value: targetOptionValue({ route: "instance", platform: "browser" }), label: "approval.target.cloudBrowsers" },
+  { value: targetOptionValue({ route: "instance", platform: "linux" }), label: "approval.target.cloudComputers" },
+] satisfies { value: string; label: TextKey }[];
+const LEGACY_EXTERNAL_TARGET = { value: targetOptionValue("targets/*"), label: "approval.target.allMachines" } satisfies { value: string; label: TextKey };
 
 export function humanToolCapabilityLabel(capability: string): string {
   const normalized = capability.trim();
   if (!normalized) {
-    return "Capability";
+    return t("approval.capability");
   }
-  const known = APPROVAL_MATCH_LABELS.get(normalized);
+  const known = CAPABILITY_LABELS.get(normalized);
   if (known) {
-    return known;
+    return t(known);
   }
   return normalized
     .replace(/\.\*/g, "")
@@ -190,9 +122,7 @@ export function humanToolCapabilityLabel(capability: string): string {
 }
 
 export function actionLabel(action: AgentToolApprovalAction): string {
-  if (action === "auto") return "Allow";
-  if (action === "deny") return "Block";
-  return "Ask";
+  return t(ACTION_LABELS[action]);
 }
 
 export function defaultOverrideAction(defaultAction: AgentToolApprovalAction): AgentToolApprovalAction {
@@ -201,85 +131,66 @@ export function defaultOverrideAction(defaultAction: AgentToolApprovalAction): A
   return "deny";
 }
 
-export function matchOptionsForRule(match: string): SelectOption[] {
-  if (!match || APPROVAL_MATCH_VALUES.includes(match)) {
-    return APPROVAL_MATCH_OPTIONS;
-  }
-  return [
-    ...APPROVAL_MATCH_OPTIONS,
-    {
-      group: "Custom",
-      label: "Custom match",
-      value: match,
-      description: "Stored custom approval match.",
-    },
-  ];
+/** Whether a rule names a capability this editor does not list; it stays selectable as a custom match. */
+export function isCustomMatch(match: string): boolean {
+  return match !== "" && !CAPABILITY_LABELS.has(match);
+}
+
+export function matchOptionsForRule(match: string): ApprovalOption[] {
+  const options = [...CAPABILITY_LABELS].map(([value, label]) => ({ value, label: t(label) }));
+  return isCustomMatch(match) ? [...options, { value: match, label: t("approval.customMatch") }] : options;
 }
 
 export function matchIndexForRule(match: string): number {
-  const options = matchOptionsForRule(match);
-  const index = options.findIndex((option) => selectOptionValue(option) === match);
+  const index = matchOptionsForRule(match).findIndex((option) => option.value === match);
   return index >= 0 ? index : 0;
 }
 
-export function approvalOptionValue(option: SelectOption): string {
-  return selectOptionValue(option);
+function translated(option: { value: string; label: TextKey }): ApprovalOption {
+  return { value: option.value, label: t(option.label) };
 }
 
-function selectOptionValue(option: SelectOption): string {
-  const candidate = Object(option);
-  return "value" in candidate ? String(candidate.value ?? candidate.label) : String(option);
-}
-
-export function targetOptionsForRule(target: ToolApprovalTarget | undefined, targets: readonly AgentToolTarget[]): SelectOption[] {
+export function targetOptionsForRule(target: ToolApprovalTarget | undefined, targets: readonly AgentToolTarget[]): ApprovalOption[] {
+  const builtinOptions = BUILTIN_TARGETS.map(translated);
   const targetOptions = targets
     .filter((candidate) => candidate.id.trim().length > 0)
-    .map((candidate) => {
-      const label = candidate.label?.trim() || candidate.id;
-      return {
-        group: "Machines",
-        label,
-        value: targetOptionValue(candidate.id),
-      };
-    });
-  const knownValues = new Set([
-    ...BUILTIN_TARGET_OPTIONS.map(selectOptionValue),
-    ...targetOptions.map((option) => option.value ?? option.label),
-  ]);
+    .map((candidate) => ({
+      value: targetOptionValue(candidate.id),
+      label: candidate.label?.trim() || candidate.id,
+    }));
+  const knownValues = new Set([...builtinOptions, ...targetOptions].map((option) => option.value));
   const baseOptions = target === "targets/*"
-    ? [...BUILTIN_TARGET_OPTIONS, LEGACY_EXTERNAL_TARGET_OPTION, ...targetOptions]
-    : [...BUILTIN_TARGET_OPTIONS, ...targetOptions];
+    ? [...builtinOptions, translated(LEGACY_EXTERNAL_TARGET), ...targetOptions]
+    : [...builtinOptions, ...targetOptions];
   if (!target || knownValues.has(targetOptionValue(target)) || target === "targets/*") {
     return baseOptions;
   }
   return [
     ...baseOptions,
     {
-      group: "Stored machine",
-      label: targetLabelForRule(target, targets),
       value: targetOptionValue(target),
+      label: targetLabelForRule(target, targets),
     },
   ];
 }
 
 export function targetIndexForRule(target: ToolApprovalTarget | undefined, targets: readonly AgentToolTarget[]): number {
-  const options = targetOptionsForRule(target, targets);
   const value = targetOptionValue(target);
-  const index = options.findIndex((option) => selectOptionValue(option) === value);
+  const index = targetOptionsForRule(target, targets).findIndex((option) => option.value === value);
   return index >= 0 ? index : 0;
 }
 
 /** Human label for a rule's machine scope (mirrors the target Select options). */
 export function targetLabelForRule(target: ToolApprovalTarget | undefined, targets: readonly AgentToolTarget[]): string {
   if (!target || target === "targets/*") {
-    return "All machines";
+    return t("approval.target.allMachines");
   }
   if (target === "gsv") {
-    return "Ship computer";
+    return t("approval.target.shipComputer");
   }
   if (isToolApprovalTargetSelector(target)) {
-    if (target.route === "instance" && target.platform === "browser") return "Cloud browsers";
-    if (target.route === "instance" && target.platform === "linux") return "Cloud computers";
+    if (target.route === "instance" && target.platform === "browser") return t("approval.target.cloudBrowsers");
+    if (target.route === "instance" && target.platform === "linux") return t("approval.target.cloudComputers");
     return target.platform ? `${target.route} · ${target.platform}` : target.route;
   }
   const known = targets.find((candidate) => candidate.id === target);

@@ -69,10 +69,12 @@ export async function renderContextHistory(
     const primary = group.records[0];
     const text = primary.kind === "message"
       ? selectedMessageText(group.compatibility.text, primary.payload.selectedTarget)
-      : group.compatibility.text;
+      : primary.kind === "event"
+        ? modelEventText(primary.payload)
+        : group.compatibility.text;
     const content = await hydrate(text, group.compatibility.mediaJson!, budget);
     const message = messages[index]!;
-    if (primary.kind === "message") {
+    if (primary.kind === "message" || (primary.kind === "event" && message.role === "user")) {
       messages[index] = { role: "user", content, timestamp: group.createdAt };
     } else if (message.role === "toolResult") {
       messages[index] = { ...message, content };
@@ -125,7 +127,7 @@ function annotateContextOrigins(groups: readonly ModelHistoryGroup[], messages: 
       source, shouldRenderSource, replyDestination, shouldRenderReplyDestination,
     );
     messages[index] = primary.kind === "event"
-      ? renderModelEvent(primary.payload, group.createdAt, annotations)
+      ? annotateModelEvent(message, primary.payload, group.createdAt, annotations)
       : prefixUserMessageContent(message, annotations);
   }
   return previousReplyDestinationKey;
@@ -166,7 +168,21 @@ function hasModelHistoryMessage(group: ModelHistoryGroup): boolean {
 }
 
 export function renderModelEvent(event: ProcHistoryEvent, timestamp: number, annotations?: string): UserMessage {
-  return { role: "user", content: ["[GSV EVENT]", ...(annotations ? [annotations] : []), renderHistoryEvent(event)].join("\n"), timestamp };
+  return { role: "user", content: modelEventText(event, annotations), timestamp };
+}
+
+/** Annotations follow the event marker; an event with attachments keeps its hydrated content. */
+function annotateModelEvent(message: UserMessage, event: ProcHistoryEvent, timestamp: number, annotations: string): UserMessage {
+  const content = Array.isArray(message.content) ? [...message.content] : null;
+  const first = content?.[0];
+  const plain = modelEventText(event);
+  if (!content || first?.type !== "text" || !first.text.startsWith(plain)) return renderModelEvent(event, timestamp, annotations);
+  content[0] = { ...first, text: `${modelEventText(event, annotations)}${first.text.slice(plain.length)}` };
+  return { ...message, content };
+}
+
+function modelEventText(event: ProcHistoryEvent, annotations?: string): string {
+  return ["[GSV EVENT]", ...(annotations ? [annotations] : []), renderHistoryEvent(event)].join("\n");
 }
 
 function assistantHistoryMessage(

@@ -338,7 +338,7 @@ describe("minimal account setup", () => {
       await act(() => { screen.state().setup.onSubmit(new Event("submit")); });
       expect(screen.setup).toHaveBeenCalledOnce();
 
-      await screen.change({ phase: "setup", message: "Please try again." });
+      await screen.change({ phase: "setup", message: { text: "Please try again." } });
       expect(screen.state().setup).toMatchObject({ step: "consent", password: "password123", passwordConfirm: "password123", consent: true, error: "Please try again." });
       await act(() => { screen.state().setup.onSubmit(new Event("submit")); });
       expect(screen.setup).toHaveBeenCalledTimes(2);
@@ -356,7 +356,7 @@ describe("minimal account setup", () => {
       await act(() => { screen.state().setup.onSubmit(new Event("submit")); });
       await act(() => { screen.state().setup.onSubmit(new Event("submit")); });
       await screen.change({ phase: "authenticating" });
-      await screen.change({ phase: "locked", username: "alice", message: "Connection interrupted." });
+      await screen.change({ phase: "locked", username: "alice", message: { text: "Connection interrupted." } });
       expect(screen.state().visibleView).toBe("login");
       expect(screen.state().login).toMatchObject({ password: "", error: "Connection interrupted." });
       expect(screen.state().setup.password).toBe("");

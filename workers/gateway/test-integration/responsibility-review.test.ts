@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import type { ScriptedOpenAiResponse } from "./openai-fixture";
 import { startProcessRuntimeHarness } from "./process-runtime-harness";
 
 describe("waiting responsibility reviews", () => {
@@ -10,24 +11,25 @@ describe("waiting responsibility reviews", () => {
       if (!ship) throw new Error("Setup did not create Ship");
       await runtime.configureAi(ship.pid);
       await runtime.client.sys.config.set({ key: `users/${ship.uid}/ai/tools/approval`, value: JSON.stringify({ default: "auto", rules: [] }) });
-      const onboarding = (await runtime.client.r12y.list({})).responsibilities.find(
-        ({ details }) => details?.responsibilityType === "onboarding.initial",
-      );
-      if (!onboarding) throw new Error("Setup did not create the onboarding responsibility");
       const { conversation } = await runtime.client.conversation.ship({});
       const text = "What would you like me to look up?";
-      runtime.ai.enqueue(
-        { kind: "tool-calls", calls: [{ id: "begin-onboarding", name: "Shell", arguments: { input: `r12y update ${onboarding.id} --json '{"state":"active","blocker":null}'` } }] },
-      );
+      // The owner's first message activates onboarding, so its id is known only once that step is requested.
+      const update = (id: string, patch: string): ScriptedOpenAiResponse => ({ kind: "tool-calls", calls: [{ id, name: "Shell", arguments: { input: patch } }] });
+      const begin = runtime.ai.hold(update("begin-onboarding", "true"));
+      releases.push(begin.release);
       const reply = runtime.ai.hold({ kind: "tool-calls", calls: [{ id: "onboarding-question", name: "Send", arguments: { text, yield: true } }] });
       releases.push(reply.release);
-      const held = runtime.ai.hold({
-        kind: "tool-calls", calls: [{ id: "wait-for-answer", name: "Shell", arguments: { input: `r12y update ${onboarding.id} --json '{"state":"waiting","blocker":"Waiting for your answer"}'` } }],
-      });
+      const held = runtime.ai.hold(update("wait-for-answer", "true"));
       releases.push(held.release);
       runtime.ai.enqueue({ kind: "tool-calls", calls: [{ id: "finish-onboarding-turn", name: "Send", arguments: { yield: true } }] });
       const sent = await runtime.client.proc.send({ pid: ship.pid, message: "Hello, I would like some help." });
       if (!sent.ok) throw new Error(sent.error);
+      await begin.started;
+      const onboarding = (await runtime.client.r12y.list({})).responsibilities.find(
+        ({ details }) => details?.responsibilityType === "onboarding.initial",
+      );
+      if (!onboarding) throw new Error("The first message did not activate the onboarding responsibility");
+      begin.release(update("begin-onboarding", `r12y update ${onboarding.id} --json '{"state":"active","blocker":null}'`));
       await reply.started;
       await runtime.waitFor(async () => {
         const history = await runtime.client.proc.history({ pid: ship.pid, format: 2 });
@@ -49,7 +51,7 @@ describe("waiting responsibility reviews", () => {
       expect(continuation).toContain("Message committed; run remains active");
       expect(continuation).toContain(onboarding.id);
 
-      held.release();
+      held.release(update("wait-for-answer", `r12y update ${onboarding.id} --json '{"state":"waiting","blocker":"Waiting for your answer"}'`));
       await runtime.waitFor(async () => {
         const history = await runtime.client.proc.history({ pid: ship.pid });
         return history.ok && history.activeRunId === null;

@@ -1,5 +1,6 @@
-import type { JsonValue, ProcHistoryEvent, ProcHistoryRecord, ProcHistoryArchivedRecord } from "@humansandmachines/gsv/protocol";
+import type { JsonValue, ProcHistoryEvent, ProcHistoryRecord, ProcHistoryArchivedRecord, ResponsibilityState } from "@humansandmachines/gsv/protocol";
 import { z } from "zod";
+import { t, type TextKey } from "../../../i18n/locale";
 import type { ChatTranscriptRow } from "./transcript";
 import { formatTranscriptTime } from "./transcript";
 
@@ -19,31 +20,51 @@ function displayValue(value: JsonValue): string {
   return literal.success ? literal.data : value === null ? "" : JSON.stringify(value, null, 2);
 }
 
+const RESPONSIBILITY_STATES = {
+  open: "chat.event.state.open",
+  active: "chat.event.state.active",
+  waiting: "chat.event.state.waiting",
+  resolved: "chat.event.state.resolved",
+  cancelled: "chat.event.state.cancelled",
+} satisfies Record<ResponsibilityState, TextKey>;
+
+/** An event as the person reads it: the interface's own words around the Kernel's text, which shows as sent. */
 export function historyEventText(event: ProcHistoryEvent): string {
   const generic = `${event.kind}: ${JSON.stringify(event.payload)}`;
   switch (event.kind) {
     case "legacy": return event.payload.text;
     case "history.compacted": return event.payload.summary;
-    case "generation.failed": return `Generation failed: ${event.payload.error}`;
-    case "context.failed": return event.payload.error ?? `Context limit: ${event.payload.reason}`;
+    case "generation.failed": return t("chat.event.generationFailed", { error: event.payload.error });
+    case "context.failed": return event.payload.error ?? t("chat.event.contextLimit", { reason: event.payload.reason });
     case "runtime.failed": return event.payload.prefix ? `${event.payload.prefix}: ${event.payload.error}` : event.payload.error;
     case "delivery.failed":
     case "media.failed": return event.payload.error;
-    case "context.changed": return `Context updated: ${event.payload.current.targets.length} targets, ${event.payload.current.mcpServers.length} connected services.`;
-    case "context.runway": return `${event.payload.remainingInputTokens.toLocaleString()} input tokens remain before the context limit.`;
-    case "responsibility.revision": return `${event.payload.transition.record.title} — ${event.payload.transition.afterState}`;
-    case "responsibility.ready": return `Review requested for ${event.payload.responsibilityIds.length} ${event.payload.responsibilityIds.length === 1 ? "responsibility" : "responsibilities"}.`;
-    case "correction.text-only": return `A response needs to finish with Send (${event.payload.attempt}/${event.payload.limit}).`;
-    case "correction.exhausted": return `The run stopped after ${event.payload.attempts} response corrections.`;
+    case "context.changed": return t("chat.event.contextChanged", {
+      targets: t("chat.event.targets", { count: event.payload.current.targets.length }),
+      services: t("chat.event.services", { count: event.payload.current.mcpServers.length }),
+    });
+    case "context.runway": return t("chat.event.runway", { count: event.payload.remainingInputTokens, tokens: event.payload.remainingInputTokens.toLocaleString() });
+    case "responsibility.revision": return t("chat.event.responsibility", {
+      title: event.payload.transition.record.title, state: t(RESPONSIBILITY_STATES[event.payload.transition.afterState]),
+    });
+    case "responsibility.ready": return t("chat.event.review", { count: event.payload.responsibilityIds.length });
+    case "correction.text-only": return t("chat.event.correction", { attempt: event.payload.attempt, limit: event.payload.limit });
+    case "correction.exhausted": return t("chat.event.correctionExhausted", { count: event.payload.attempts });
     case "schedule.fired": return `${event.payload.scheduleName ?? event.payload.scheduleId}: ${event.payload.message}`;
-    case "signal.watched": return `Observed ${event.payload.signal}${event.payload.sourcePid ? ` from ${event.payload.sourcePid}` : ""}.`;
+    case "signal.watched": return event.payload.sourcePid
+      ? t("chat.event.signalFrom", { signal: event.payload.signal, source: event.payload.sourcePid })
+      : t("chat.event.signal", { signal: event.payload.signal });
     case "ipc.reply": return event.payload.error ?? displayValue(event.payload.response ?? null);
-    case "ipc.overdue": return `Waiting for ${event.payload.targetPid ?? "process reply"}.`;
-    case "ipc.timeout": return event.payload.error ?? `The reply from ${event.payload.targetPid ?? "another process"} timed out.`;
-    case "process.approval": return `${event.payload.pid} is waiting for your approval of ${event.payload.syscall} on ${event.payload.target}.`;
-    case "adapter.work.returned": return `Returned from work process ${event.payload.workPid}.`;
-    case "target.connection": return `${event.payload.label ?? event.payload.targetId} ${event.payload.event}.`;
-    case "runtime.wake": return "A runtime event arrived while this process was busy.";
+    case "ipc.overdue": return event.payload.targetPid ? t("chat.event.waitingFor", { pid: event.payload.targetPid }) : t("chat.event.waitingReply");
+    case "ipc.timeout": return event.payload.error
+      ?? (event.payload.targetPid ? t("chat.event.replyTimeout", { pid: event.payload.targetPid }) : t("chat.event.replyTimeoutAny"));
+    case "process.approval": return t("chat.event.approval", { pid: event.payload.pid, syscall: event.payload.syscall, target: event.payload.target });
+    case "adapter.work.returned": return t("chat.event.returned", { pid: event.payload.workPid });
+    case "contact.message": return `${event.payload.from}: ${event.payload.text || t("chat.contact.attachment")}`;
+    case "target.connection": return t(event.payload.event === "connected" ? "chat.event.connected" : "chat.event.disconnected", {
+      target: event.payload.label ?? event.payload.targetId,
+    });
+    case "runtime.wake": return t("chat.event.wake");
   }
   return generic;
 }
@@ -125,7 +146,7 @@ export function transcriptRowsFromRecords(records: readonly (ProcHistoryRecord |
       case "event":
         rows.push({
           ...base, role: "system", text: historyEventText(record.payload), event: record.payload,
-          isError: record.payload.severity === "error",
+          media: record.payload.media, isError: record.payload.severity === "error",
           status: record.payload.severity === "error" ? "error" : "done",
         });
         break;

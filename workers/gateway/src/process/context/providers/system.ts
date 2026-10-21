@@ -67,6 +67,8 @@ function renderContextTemplate(
       timezone: string;
       language?: string;
     };
+    ship?: { handle: string; origin: string; domain: string };
+    mailbox?: { address: string };
   },
 ): string {
   const user = input.ownerIdentity ?? input.identity;
@@ -97,6 +99,10 @@ function renderContextTemplate(
     ["targets", formatTargets(input.targets)],
     ["devices", formatTargets(input.targets)],
     ["mcpServers", formatMcpServers(input.mcpServers)],
+    ["ship.handle", input.ship?.handle ?? "none"],
+    ["ship.address", input.ship?.origin ?? "none"],
+    ["ship.domain", input.ship?.domain ?? "none"],
+    ["mailbox.address", input.mailbox?.address ?? "none"],
     ["r12y", input.r12y],
   ]);
 

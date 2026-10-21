@@ -12,6 +12,9 @@
  */
 
 import { principalOf, requirePrincipal, resolveCallerOwnerUid, type KernelContext } from "./context";
+import { managedMailAddressForOwner } from "./mailbox";
+import { deploymentPresentation } from "@humansandmachines/gsv/services/deployment";
+import { shipAddress } from "../installation/identity";
 import { ownerTimezone } from "./timezone";
 import { baseAiModelStack } from "../inference/base-model-stack";
 import { peerActingAs } from "./peer";
@@ -225,10 +228,18 @@ export async function handleAiContext(
       language: principalOf(ctx) ? config.get(`users/${resolveCallerOwnerUid(ctx)}/locale/language`) ?? undefined : undefined,
     },
     skillIndexMode,
+    ship: shipAddress(ctx.installationIdentity, deploymentPresentation(ctx.env.GSV_PUBLIC_CONFIG).primaryDomain),
+    mailbox: resolveContextMailbox(ctx),
   };
   if (targetDiscovery.complete) result.targets = targetDiscovery.targets.map(targetToAiTarget);
   if (skillIndex !== undefined) result.skillIndex = skillIndex;
   return result;
+}
+
+function resolveContextMailbox(ctx: KernelContext): AiContextResult["mailbox"] {
+  if (!principalOf(ctx)) return null;
+  const address = managedMailAddressForOwner(resolveCallerOwnerUid(ctx), ctx);
+  return address ? { address } : null;
 }
 
 export async function handleAiConfig(

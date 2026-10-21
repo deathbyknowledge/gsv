@@ -9,6 +9,7 @@ import { NewConversation } from "../people/NewConversation";
 import { emptyApproachDraft, profileAddress, profileAddressLabel } from "../people/peopleModel";
 import type { PeopleOpenRequest } from "../people/People";
 import { canConfigure } from "../settings/settingsModel";
+import { useT } from "../../../i18n/locale";
 import type { ChatContext } from "./chatContextModel";
 
 export function ChatPerson({ account, request, onAsk, onPeople, onDirty }: {
@@ -18,6 +19,7 @@ export function ChatPerson({ account, request, onAsk, onPeople, onDirty }: {
   onPeople: (request: PeopleOpenRequest) => void;
   onDirty: (dirty: boolean) => void;
 }) {
+  const t = useT();
   const { client, connected } = useGateway();
   const [address, setAddress] = useState(request.url ?? "");
   const [draft, setDraft] = useState(() => emptyApproachDraft());
@@ -34,7 +36,7 @@ export function ChatPerson({ account, request, onAsk, onPeople, onDirty }: {
       if (revision.current === resolved) { setAddress(profile.url); setDraft({ ...emptyApproachDraft(profile.url), profile }); }
     },
   });
-  const mayReplace = () => !busy && (!draft.text || window.confirm("Discard this unsent contact request and open another person?"));
+  const mayReplace = () => !busy && (!draft.text || window.confirm(t("chat.person.discard")));
   const lookup = (address: string) => {
     if (!mayReplace()) return;
     setSelectedContactId(null); setDraft(emptyApproachDraft()); setContacting(false); setSent(false);
@@ -64,8 +66,8 @@ export function ChatPerson({ account, request, onAsk, onPeople, onDirty }: {
   const allowed = connected && !!account && canConfigure(account, "profile.resolve");
   return <div class={`chat-person${!contacting && !preview ? " is-searching" : ""}`}>
     {contacting ? <>
-      <button type="button" class="fleet-text-action chat-context-back" disabled={busy} onClick={() => setContacting(false)}>← profile</button>
-      {sent ? <p role="status">Message request sent.</p> : <NewConversation account={account} draft={draft} onChange={setDraft}
+      <button type="button" class="fleet-text-action chat-context-back" disabled={busy} onClick={() => setContacting(false)}>{t("chat.person.back")}</button>
+      {sent ? <p role="status">{t("chat.person.sent")}</p> : <NewConversation account={account} draft={draft} onChange={setDraft}
         contacts={contacts.data?.contacts ?? []} onBusy={setBusy} onSent={() => { setDraft((value) => ({ ...value, text: "" })); setSent(true); }}
         onOpen={(contactId) => onPeople({ contactId })} />}
     </> : <>
@@ -73,10 +75,10 @@ export function ChatPerson({ account, request, onAsk, onPeople, onDirty }: {
         event.preventDefault(); const url = profileAddress(address);
         if (url && allowed) lookup(url);
       }}>
-        <label>Find a person<input placeholder="@handle, name or address" value={address} autoComplete="off" autoCapitalize="none" spellcheck={false}
+        <label>{t("chat.person.find")}<input placeholder={t("chat.person.placeholder")} value={address} autoComplete="off" autoCapitalize="none" spellcheck={false}
           onInput={(event) => { revision.current++; resolve.reset(); setAddress(event.currentTarget.value); if (!draft.text) setDraft(emptyApproachDraft()); setSent(false); setSelectedContactId(null); }} /></label>
         {profileAddress(address) && <button type="submit" class="fleet-text-action" disabled={!allowed || resolve.isPending}>
-          {resolve.isPending ? <LoadingState>opening profile…</LoadingState> : "open profile"}
+          {resolve.isPending ? <LoadingState>{t("chat.person.opening")}</LoadingState> : t("chat.person.open")}
         </button>}
       </form>
       {(resolve.error ?? contacts.error) && <p class="people-error" role="alert">{(resolve.error ?? contacts.error)?.message}</p>}
@@ -84,17 +86,17 @@ export function ChatPerson({ account, request, onAsk, onPeople, onDirty }: {
         <span class="people-kicker">{profileAddressLabel(preview.origin)}</span><h3>{preview.displayName}</h3>
         {preview.about && <p>{preview.about}</p>}
         <div class="fleet-actions">
-          <button type="button" class="fleet-text-action is-primary" onClick={() => onAsk(`Help me with ${JSON.stringify(preview.displayName)}'s Ship profile: ${preview.url}`)}>mention in message</button>
-          <button type="button" class="fleet-text-action" onClick={() => selectedContact ? onPeople({ contactId: selectedContact.id }) : setContacting(true)}>{selectedContact ? "open conversation" : "contact"}</button>
+          <button type="button" class="fleet-text-action is-primary" onClick={() => onAsk(`Help me with ${JSON.stringify(preview.displayName)}'s Ship profile: ${preview.url}`)}>{t("chat.person.mention")}</button>
+          <button type="button" class="fleet-text-action" onClick={() => selectedContact ? onPeople({ contactId: selectedContact.id }) : setContacting(true)}>{t(selectedContact ? "chat.contact.open" : "chat.person.contact")}</button>
         </div>
-      </div> : <ul class="people-recipient-list" aria-label="Saved people" data-scroll-edge>
+      </div> : <ul class="people-recipient-list" aria-label={t("chat.person.saved")} data-scroll-edge>
         {found.map((contact) => <li key={contact.id}><button type="button" class="people-recipient"
           onClick={() => { if (!mayReplace()) return; revision.current++; resolve.reset(); setDraft(emptyApproachDraft()); setAddress(`${contact.remoteOrigin}/profile`); setSelectedContactId(contact.id); }}>
           <span>{contactDisplayName(contact)}</span><small>{profileAddressLabel(contact.remoteOrigin)}</small>
         </button></li>)}
-        {!found.length && <li class="people-note">Enter a handle or another Ship's full address.</li>}
+        {!found.length && <li class="people-note">{t("chat.person.hint")}</li>}
       </ul>}
-      {!connected && <p class="people-note" role="status">Reconnecting…</p>}
+      {!connected && <p class="people-note" role="status">{t("chat.person.reconnecting")}</p>}
     </>}
   </div>;
 }

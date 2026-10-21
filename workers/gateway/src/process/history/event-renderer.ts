@@ -19,6 +19,7 @@ export { formatIpcReplyMessage } from "../../prompts/ipc-events";
 import { formatContextProjectionEvent } from "../../prompts/context-events";
 import { formatContextRunwayAlertMessage } from "../../prompts/context-runway";
 import { formatTargetConnectionEvent } from "../../prompts/target-events";
+import { formatContactMessageEvent } from "../../prompts/contact-events";
 import { formatScheduleEventMessage } from "../../prompts/schedule-events";
 export { formatScheduleEventMessage } from "../../prompts/schedule-events";
 import { formatResponsibilityReadyEvent, formatResponsibilityTransitionEvent } from "../../prompts/responsibility-events";
@@ -47,6 +48,7 @@ export function renderHistoryEvent(event: ProcHistoryEvent): string {
     case "ipc.overdue":
     case "ipc.timeout": return formatIpcReplyMessage(event.kind, event.payload);
     case "adapter.work.returned": return formatProcessRuntimeEvent({ type: event.kind, ...event.payload });
+    case "contact.message": return formatContactMessageEvent(event.payload);
     case "target.connection": return formatTargetConnectionEvent(event.payload);
     case "history.compacted": return formatCompactionSummaryMessage(event.payload);
     case "runtime.wake": return RUNTIME_EVENT_WAKE_MESSAGE;

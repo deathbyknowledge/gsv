@@ -10,6 +10,7 @@ import { publicDeployment } from "../app/services/deployment";
 import { captureContactInvitation } from "./invitation";
 import { contactInvitationDestination } from "@humansandmachines/gsv/protocol";
 import { pendingContactInvitation, contactInvitationPreview, clearContactInvitation } from "../app/services/session/contactInvitationIntent";
+import { t } from "../app/i18n/locale";
 
 export async function loadSignupPage(storage: WelcomeStorage & { load(): Promise<WelcomeSnapshot> }, accountsOrigin: string): Promise<VNode> {
   let contactInvitation = pendingContactInvitation();
@@ -30,7 +31,7 @@ export async function loadSignupPage(storage: WelcomeStorage & { load(): Promise
   }
   const preview = contactInvitation ? contactInvitationPreview(contactInvitation) : null;
   const invitationError = preview && ("error" in preview ? preview.error
-    : preview.expired ? `Your invitation from ${preview.name} has expired. Ask them for a new link.` : null);
+    : preview.expired ? t("signup.invitationExpired", { name: preview.name }) : null);
   // Old signup links remain useful destinations, but their codes no longer authorize creation.
   const url = new URL(window.location.href);
   const fragment = new URLSearchParams(url.hash.slice(1));
@@ -51,10 +52,10 @@ export async function loadSignupPage(storage: WelcomeStorage & { load(): Promise
   // A friend's invitation opens as a centered card; ordinary signup lives on the page so the rest of it stays usable.
   const Frame = contactInvitation ? SignupDialog : Fragment;
   return <Frame>{invitationError
-    ? <AuthLayout visible><section class="desktop-welcome"><h1>Connect on Ship</h1><p role="alert">{invitationError}</p>
+    ? <AuthLayout visible><section class="desktop-welcome"><h1>{t("session.contact.title")}</h1><p role="alert">{invitationError}</p>
       <a class="gsv-auth-link" href="/owner/signup/?resume=1" onClick={async (event) => {
         event.preventDefault(); await leave("/owner/signup/?resume=1");
-      }}>open Ship</a></section></AuthLayout>
+      }}>{t("signup.openShip")}</a></section></AuthLayout>
     : <OwnerWelcomeScreen ready resume initialStep={contactInvitation ? "email" : "claim"} compact={!!contactInvitation}
       spaceDomain={publicDeployment().primaryDomain ?? presumedSpaceDomain(new URL(accountsOrigin).hostname)}
       invitation={preview && "name" in preview ? preview : undefined} chooseSpace={!!contactInvitation}

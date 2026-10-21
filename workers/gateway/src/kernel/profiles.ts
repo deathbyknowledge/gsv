@@ -8,6 +8,7 @@ import type { KernelContext } from "./context";
 import { isLocked } from "../auth/shadow";
 import { requireContactCaller, requireContactHuman } from "./federation/authority";
 import { fetchFederation, readFederationJson } from "./federation/http";
+import { FederationHttpError } from "./federation/errors";
 import { canonicalJson, normalizeFederationOrigin, sha256Base64Url, verifySignedValue } from "./federation-crypto";
 import type { PublicProfileLocator, PublicProfileProjection } from "./profile-store";
 
@@ -78,6 +79,11 @@ export async function handleProfileResolve(args: ProfileResolveArgs, ctx: Kernel
       if (redirects >= 3) throw new Error("Too many public profile redirects");
       url = publicProfileUrl(new URL(location, url).href);
       continue;
+    }
+    if (response.status === 404) {
+      await response.body?.cancel().catch(() => {});
+      throw new FederationHttpError(404,
+        "No public profile is available at this address. A private invitation does not require a public profile.");
     }
     profile = publicProfileSchema.parse(await readFederationJson(response, ctx.requestSignal));
     break;

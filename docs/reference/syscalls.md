@@ -368,11 +368,12 @@ mail reply MESSAGE_ID --body ./reply.txt
 mail status DELIVERY_ID
 ```
 
-Both commands run inside `shell.exec`, so a model invocation is governed by the
-outer `shell.exec` approval. They do not create a second nested `mail.send`
-approval. Use `--delivery-id` to retain an idempotency key across a deliberate
-retry; otherwise the command derives one from the outer request and the
-invocation's ordinal.
+Both commands run inside `shell.exec`, but approval follows the actual
+destination: a model invocation still raises the `mail.send` approval, from
+Shell and CodeMode alike, and a denial leaves nothing queued. Use
+`--delivery-id` to retain an idempotency key across a deliberate retry;
+otherwise the command derives one from the outer request and the invocation's
+ordinal.
 
 ## Mail: `mail.send`
 
@@ -1045,7 +1046,9 @@ transport remains v2. Readers also verify legacy v2 documents. On upgrade, the
 Kernel re-signs only the previously published snapshot at `/profile`, retaining
 the old published alias for links. Legacy HTML links redirect; JSON requests return
 the signed document directly. Concurrent unpublishing fences this conversion.
-`profile.resolve` verifies the signed identity and checks existing contact pins.
+`profile.resolve` reads a published profile, verifies the signed identity and checks
+existing contact pins. A 404 means no public profile is available at that address;
+it does not establish whether the Ship exists or prevent a private invitation.
 Creating a first message binds it to the exact recipient and profile revision the sender reviewed.
 
 First-contact messages expire after 30 days and accept text only, up to 32 KiB. Acceptance promotes
@@ -2088,7 +2091,7 @@ type AiSyscalls = {
 
   "ai.context": {
     args: Empty;
-    result: { targets?: Array<{ id: string; implements: string[]; label?: string; description?: string; platform?: string }>; mcpServers: string[]; systemContextFiles?: Array<{ name: string; text: string }>; system: { timezone: string; language?: string }; skillIndex?: Array<{ id: string; name: string; description: string; source: { kind: "home"; label: string; writable: boolean } }>; skillIndexMode: "summary" | "names" | "off" };
+    result: { targets?: Array<{ id: string; implements: string[]; label?: string; description?: string; platform?: string }>; mcpServers: string[]; systemContextFiles?: Array<{ name: string; text: string }>; system: { timezone: string; language?: string }; skillIndex?: Array<{ id: string; name: string; description: string; source: { kind: "home"; label: string; writable: boolean } }>; skillIndexMode: "summary" | "names" | "off" }; ship: { handle: string; origin: string; domain: string } | null; mailbox: { address: string } | null };
   };
 
   "ai.text.generate": {
@@ -2100,9 +2103,15 @@ type AiSyscalls = {
 
 `ai.context` is the process-facing projection of everything a run needs
 besides the model: reachable targets, ready MCP servers, system context files,
-and the skill index. An omitted `targets` or `skillIndex` means that catalog
+the skill index, the Ship's address, and the managed mailbox. An omitted `targets` or `skillIndex` means that catalog
 could not be refreshed; Process retains its last observed projection. An empty
-array is an authoritative catalog with no entries. `ai.text.generate` runs one model turn through the
+array is an authoritative catalog with no entries. `ship` is the Ship's handle,
+its address on the operator's primary domain (or its canonical origin when none is
+configured), and the domain every Ship's handle address shares; it is `null` for an
+installation without a handle. `mailbox` is the address the
+caller's owner reads and sends as through `mail`, or `null` when the
+installation has no managed mailbox for that owner; Process renders it as a
+runtime fact and reports a change as a context event. `ai.text.generate` runs one model turn through the
 gateway's provider stack; `AiTextMessage`, `AiAssistantMessage`, and
 `AiTextGenerationReasoning` are the message and reasoning records in
 `packages/gsv/src/protocol/syscalls/ai.ts`.

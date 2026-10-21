@@ -9,6 +9,7 @@ import { decideChatHil, getChatHistory } from "../../../services/chat/backend/ch
 import { ApprovalCard } from "../shared/ApprovalCard";
 import { INSTRUMENT_LEDGER_KEY, INSTRUMENT_PROCESSES_KEY } from "../wire/queryKeys";
 import { referencedApproval } from "./fleetModel";
+import { useT } from "../../../i18n/locale";
 
 export function FleetApproval({ pid, who, label, requestId, runId, placeLabelFor = (target) => target, onInspect }: {
   pid: string;
@@ -19,6 +20,7 @@ export function FleetApproval({ pid, who, label, requestId, runId, placeLabelFor
   placeLabelFor?: (target: string) => string;
   onInspect?: () => void;
 }) {
+  const t = useT();
   const active = useViewActive();
   const { client, connected } = useGateway();
   const queryClient = useQueryClient();
@@ -52,11 +54,11 @@ export function FleetApproval({ pid, who, label, requestId, runId, placeLabelFor
   const decisionApplies = !request || decide.variables?.requestId === request.requestId;
   const ready = connected && !!request && !pending.isError && !pending.isFetching && !decide.isPending && !(decide.isSuccess && decisionApplies);
 
-  return <section class="fleet-approval" ref={region} tabIndex={-1} aria-label="Approval request">
-    {!connected ? <p class="note" role="status">Connecting…</p>
-      : pending.isPending ? <p class="note"><LoadingState>Loading approval…</LoadingState></p>
-      : pending.isError ? <p class="error" role="alert">Could not load this approval: {pending.error.message}</p>
-      : !request ? <p class="note" role="status">{requestId ? "This approval is no longer pending." : "No approval is pending."}{pending.data && requestId ? " A different request is now waiting; open its approval from Chat." : ""}</p>
+  return <section class="fleet-approval" ref={region} tabIndex={-1} aria-label={t("fleet.approval.label")}>
+    {!connected ? <p class="note" role="status">{t("fleet.connecting")}</p>
+      : pending.isPending ? <p class="note"><LoadingState>{t("fleet.approval.loading")}</LoadingState></p>
+      : pending.isError ? <p class="error" role="alert">{t("fleet.approval.failed", { error: pending.error.message })}</p>
+      : !request ? <p class="note" role="status">{!requestId ? t("fleet.approval.none") : pending.data ? t("fleet.approval.replaced") : t("fleet.approval.gone")}</p>
       : <ApprovalCard
         key={request.requestId}
         request={request}
@@ -74,7 +76,7 @@ export function FleetApproval({ pid, who, label, requestId, runId, placeLabelFor
           decide.mutate(input);
         }}
       />}
-    {decide.isSuccess && decisionApplies ? <p class="note" role="status">Decision recorded.</p> : null}
-    {decide.error && decisionApplies ? <p class="error" role="alert">Could not record the decision: {decide.error.message}</p> : null}
+    {decide.isSuccess && decisionApplies ? <p class="note" role="status">{t("fleet.approval.recorded")}</p> : null}
+    {decide.error && decisionApplies ? <p class="error" role="alert">{t("fleet.approval.recordFailed", { error: decide.error.message })}</p> : null}
   </section>;
 }

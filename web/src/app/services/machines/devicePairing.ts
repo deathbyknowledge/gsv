@@ -3,6 +3,7 @@ import { createPairingSecret, type SysPairCreateArgs } from "@humansandmachines/
 import { GsvClientError, type GSVClient } from "@humansandmachines/gsv/client";
 import { parseDeviceId } from "../../domain/deviceId";
 import { machineDeviceIdFromName, type MachineProvisionPlatform } from "./machineProvision";
+import { t, type TextKey } from "../../i18n/locale";
 
 const storedSchema = z.object({
   draft: z.object({ label: z.string(), targetId: z.string(), customId: z.boolean(), replace: z.boolean().optional(), platform: z.enum(["mac", "linux", "windows", "browser"]) }),
@@ -32,7 +33,7 @@ export class DevicePairingSession {
     try {
       const raw = storage.read();
       if (raw) this.state = { ...storedSchema.parse(JSON.parse(raw)), pending: false, error: "" };
-    } catch { this.state.error = "Could not restore pairing. Check that browser storage is available."; }
+    } catch { this.state.error = t("fleet.pairing.restoreFailed"); }
   }
 
   snapshot = (): DevicePairingState => this.state;
@@ -81,7 +82,7 @@ export class DevicePairingSession {
     try {
       const { pairing } = await this.api.create(request);
       if (!this.disposed) this.save({ ...this.state, invitation: { request, pairing }, pending: false });
-    } catch (error) { this.fail(error instanceof Error ? error : null, "Could not create the invitation. Retry when connected."); }
+    } catch (error) { this.fail(error instanceof Error ? error : null, "fleet.pairing.createFailed"); }
   };
 
   refresh = async (): Promise<void> => {
@@ -93,7 +94,7 @@ export class DevicePairingSession {
       const pairing = pairings.find((item) => item.id === current.request.id);
       if (pairing) this.save({ ...this.state, invitation: { ...current, pairing } });
     } catch (error) {
-      if (!this.state.pending && this.state.invitation === current) this.fail(error instanceof Error ? error : null, "Could not check the invitation. Retry when connected.");
+      if (!this.state.pending && this.state.invitation === current) this.fail(error instanceof Error ? error : null, "fleet.pairing.checkFailed");
     }
   };
 
@@ -107,7 +108,7 @@ export class DevicePairingSession {
       await this.api.create(current.request);
       const { pairing } = await this.api.cancel({ id: current.request.id });
       if (!this.disposed) this.save({ ...this.state, invitation: { ...current, pairing }, pending: false });
-    } catch (error) { this.fail(error instanceof Error ? error : null, "Could not cancel the invitation. Retry when connected."); }
+    } catch (error) { this.fail(error instanceof Error ? error : null, "fleet.pairing.cancelFailed"); }
   };
 
   startAnother = (): void => {
@@ -118,9 +119,9 @@ export class DevicePairingSession {
     this.save({ ...emptyPairing(), draft, pending: false, error: "" });
   };
 
-  private fail(error: Error | null, fallback: string): void {
+  private fail(error: Error | null, fallback: TextKey): void {
     if (this.disposed) return;
-    const state = { ...this.state, pending: false, error: error?.message ?? fallback };
+    const state = { ...this.state, pending: false, error: error?.message ?? t(fallback) };
     if (error instanceof GsvClientError && creationRejectionSchema.safeParse(error.details).success) {
       this.save({ ...state, invitation: null });
     } else this.publish(state);
@@ -133,7 +134,7 @@ export class DevicePairingSession {
       this.publish(state);
       return true;
     } catch {
-      this.publish({ ...this.state, pending: false, error: "Could not save pairing in this browser. Check that storage is available and retry." });
+      this.publish({ ...this.state, pending: false, error: t("fleet.pairing.saveFailed") });
       return false;
     }
   }

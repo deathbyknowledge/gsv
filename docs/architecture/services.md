@@ -61,6 +61,20 @@ still own their reservations, counters, idempotency, and settlement.
 
 ## Inference execution
 
+Both inference hops—Gateway to executor and executor to funded inference—carry
+identity, model controls and deadlines as RPC metadata. The context travels in a
+separate byte stream using multipart form data: JSON for text, message structure
+and tools, binary parts for images. Receivers reconstruct the model SDK's base64
+image blocks after transfer. A large image history therefore does not count
+toward Cloudflare's 32 MiB serialized RPC argument limit.
+
+Each receiver claims the request identity and checks its installation before
+reading the body. Upload shares the original deadline and cancellation owner;
+rejected or interrupted requests cancel their incoming bodies. A 64 MiB context
+body limit bounds multipart parsing independently of token and media admission.
+Deploy receiving services before sending gateways. Receivers continue to accept
+inline context during this rolling upgrade; new senders always use body streams.
+
 The shared generation loop accepts an operator-selected transport for each
 explicitly routed model. Provider credentials and endpoint configuration stay
 with the operator; the loop owns deadlines, first-output fallback, cancellation,

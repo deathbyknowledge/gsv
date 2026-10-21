@@ -7,3 +7,4 @@ export {
   parseContextProjection,
 } from "./projection";
 export type { ContextProjection } from "./projection";
+export type { PromptAssemblyInput } from "./types";

@@ -198,6 +198,7 @@ function makeContext(options?: {
   procs?: Partial<KernelContext["procs"]>;
   targets?: Partial<KernelContext["targets"]>;
   auth?: Partial<KernelContext["auth"]>;
+  mailboxes?: Partial<KernelContext["mailboxes"]>;
   caps?: Partial<KernelContext["caps"]>;
   schedules?: Partial<KernelContext["schedules"]>;
   ipcCalls?: Partial<KernelContext["ipcCalls"]>;
@@ -245,6 +246,19 @@ function makeContext(options?: {
       }
       : null),
     getPersonalAgentUid: vi.fn(() => null),
+    getPasswdEntries: vi.fn(() => [{
+      username: identity.username,
+      uid: identity.uid,
+      gid: identity.gid,
+      gecos: identity.username,
+      home: identity.home,
+      shell: "/bin/init",
+    }]),
+    getShadowByUsername: vi.fn((username: string) => username === identity.username
+      ? { username, hash: "password-hash" }
+      : null),
+    isPersonalAgentUid: vi.fn(() => false),
+    isAccountDisabled: vi.fn(() => false),
     resolveGids: vi.fn(() => [...identity.gids]),
   };
   const testEnv = focusedFixture<Env>({
@@ -266,6 +280,11 @@ function makeContext(options?: {
       ...defaultAuth,
       ...options?.auth,
     }),
+    mailboxes: focusedFixture<KernelContext["mailboxes"]>({
+      getMailboxForOwner: vi.fn(() => null),
+      getPrimaryMailbox: vi.fn(() => null),
+      ...options?.mailboxes,
+    }),
     caps: focusedFixture<KernelContext["caps"]>({
       resolve: vi.fn(() => []),
       ...options?.caps,
@@ -273,7 +292,7 @@ function makeContext(options?: {
     config: focusedFixture<KernelContext["config"]>({
       get(key: string) {
         if (key === "config/server/name") return "gsv";
-        if (key === "config/server/version") return "0.7.3";
+        if (key === "config/server/version") return "0.7.4";
         return configValues.get(key) ?? SYSTEM_CONFIG_DEFAULTS[key] ?? null;
       },
       getExplicit(key: string) {
@@ -349,7 +368,7 @@ function makeContext(options?: {
     processId: options?.processId === null ? undefined : options?.processId ?? "task:shell",
     processRunId: options?.processRunId,
     requestSignal: options?.requestSignal,
-    serverVersion: "0.7.3",
+    serverVersion: "0.7.4",
     scheduleIpcCallTimeout: options?.scheduleIpcCallTimeout,
     scheduleScheduleWake: options?.scheduleScheduleWake,
     reconcileResponsibilityWake: options?.reconcileResponsibilityWake,
@@ -965,7 +984,7 @@ describe("native shell capability discovery", () => {
 
     expect(result.ok).toBe(true);
     expect(result.stdout).toContain("GSV live capability manual");
-    expect(result.stdout).toContain("contact      Manage trusted contacts with other GSV Ships");
+    expect(result.stdout).toContain("contact      Find other Ships and manage trusted contacts");
     expect(result.stdout).toContain("message      Send messages, attach files, and route conversations");
     expect(result.stdout).toContain("yield        Finish the active agent run");
     expect(result.stdout).toContain("skills       Inspect and maintain reusable agent workflows");
@@ -982,6 +1001,10 @@ describe("native shell capability discovery", () => {
     ["save this workflow for next time", "skills"],
     ["send this file to the chat", "message"],
     ["send an email to this person", "mail"],
+    ["what is my email address", "mail"],
+    ["sign up for a website with an email address", "mail"],
+    ["find the verification email", "mail"],
+    ["track my parcel delivery", "mail"],
     ["start a new chat in this conversation", "message"],
   ])("maps a plain-language task '%s' to %s", async (query, expectedCommand) => {
     const result = await handleShellExec(
@@ -994,6 +1017,20 @@ describe("native shell capability discovery", () => {
     expect(result.stdout.split("\n")[2]).toContain(`command\t${expectedCommand}\t`);
     expect(result.stdout).toContain(`command\t${expectedCommand}\t`);
     expect(result.stdout).toContain(`man '${expectedCommand}'`);
+  });
+
+  it("reports mail as available only when the owner has a managed mailbox", async () => {
+    const query = "man --search -- 'what is my email address'";
+    const withMailbox = await handleShellExec({ input: query }, makeContext({ capabilities: ["shell.exec"] }));
+    expect(withMailbox.ok).toBe(true);
+    expect(withMailbox.stdout).toContain("command\tmail\tyes\t");
+
+    const withoutMailbox = await handleShellExec(
+      { input: query },
+      makeContext({ capabilities: ["shell.exec"], auth: { getPasswdEntries: vi.fn(() => []) } }),
+    );
+    expect(withoutMailbox.ok).toBe(true);
+    expect(withoutMailbox.stdout).toContain("command\tmail\tno (managed mailbox)\t");
   });
 
   it("supports the standard man -k search alias", async () => {
@@ -4073,6 +4110,9 @@ describe("native administration shell commands", () => {
     const duplicate = await handleShellExec({
       input: 'message send --to here --message "duplicate reply"',
     }, ctx);
+    const detachedAlso = await handleShellExec({
+      input: "message send --to contact:friend --message 'see you'\n\n--also",
+    }, ctx);
 
     expect(current).toMatchObject({ status: "completed", exitCode: 0 });
     expect(current.stdout).toContain("current conversation: Telegram direct message");
@@ -4099,6 +4139,7 @@ describe("native administration shell commands", () => {
     expect(duplicate.status).toBe("failed");
     expect(duplicate.stderr).toContain("stage files first with `message attach PATH...`");
     expect(duplicate.stderr).toContain("without --to or --also");
+    expect(detachedAlso.stderr).toContain("message send --to needs --also on the same command line");
     expect(terminalFallback).toMatchObject({ status: "failed", exitCode: 1 });
     expect(terminalFallback.stderr).toContain("direct Shell tool call");
     expect(yieldFallback).toMatchObject({ status: "failed", exitCode: 1 });

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { ProcHilRequest } from "@humansandmachines/gsv";
 import type { ConsoleProcess, ConsoleTarget } from "../../../domain/system/consoleModels";
+import { t } from "../../../i18n/locale";
 import {
   CLOUD_TARGET_ID,
   describeToolCall,
@@ -24,7 +25,10 @@ import {
   placeActions,
   placeFromTarget,
   cloudPlace,
+  type LedgerAction,
 } from "./fleetModel";
+
+const words = (action: LedgerAction) => t(action.key, action.values);
 
 describe("Fleet references and supported place actions", () => {
   it("opens connection controls without selecting a row or treating them as approvals", () => {
@@ -249,17 +253,17 @@ describe("shortPid", () => {
 
 describe("humanCall", () => {
   it("names shell work by its first word", () => {
-    expect(humanCall("shell.exec", { input: "message ana <<GSV_MESSAGE\nhello\nGSV_MESSAGE" })).toBe("sent a message");
-    expect(humanCall("shell.exec", { input: "ls -la ~/Downloads" })).toBe("looked around");
-    expect(humanCall("shell.exec", { input: "cp a b" })).toBe("copied files");
-    expect(humanCall("shell.exec", { input: "./deploy.sh" })).toBe("ran a command");
+    expect(words(humanCall("shell.exec", { input: "message ana <<GSV_MESSAGE\nhello\nGSV_MESSAGE" }))).toBe("sent a message");
+    expect(words(humanCall("shell.exec", { input: "ls -la ~/Downloads" }))).toBe("looked around");
+    expect(words(humanCall("shell.exec", { input: "cp a b" }))).toBe("copied files");
+    expect(words(humanCall("shell.exec", { input: "./deploy.sh" }))).toBe("ran a command");
   });
   it("names file and web calls by what they touched", () => {
-    expect(humanCall("fs.read", { path: "/home/e/Downloads/invoice-0231.pdf" })).toBe("read invoice-0231.pdf");
-    expect(humanCall("fs.search", { query: "invoice" })).toBe("searched for invoice");
-    expect(humanCall("net.fetch", { url: "https://api.github.com/repos" })).toBe("fetched api.github.com");
-    expect(humanCall("ai.text.generate", undefined)).toBe("generated text");
-    expect(humanCall("codemode.exec", { code: "const x = 1;\nreturn x;" })).toBe("ran a script");
+    expect(words(humanCall("fs.read", { path: "/home/e/Downloads/invoice-0231.pdf" }))).toBe("read invoice-0231.pdf");
+    expect(words(humanCall("fs.search", { query: "invoice" }))).toBe("searched for invoice");
+    expect(words(humanCall("net.fetch", { url: "https://api.github.com/repos" }))).toBe("fetched api.github.com");
+    expect(words(humanCall("ai.text.generate", undefined))).toBe("generated text");
+    expect(words(humanCall("codemode.exec", { code: "const x = 1;\nreturn x;" }))).toBe("ran a script");
   });
   it("collapses a heredoc to one line in the detail", () => {
     expect(describeToolCall("shell.exec", { input: "message ana <<GSV_MESSAGE\nhello there\nGSV_MESSAGE" })).toBe("message ana <<GSV_MESSAGE hello there GSV_MESSAGE");
@@ -282,7 +286,7 @@ describe("ledgerFromSysLines", () => {
       sysLine({ call: "sys.config.set", args: '{"key":"users/1000/ai/reasoning","value":"private fixture"}' }),
       sysLine({ call: "future.operation", args: '{"secret":"private fixture"}' }),
     ]);
-    expect(lines.map(({ what, detail }) => ({ what, detail }))).toEqual([
+    expect(lines.map(({ action, detail }) => ({ what: words(action), detail }))).toEqual([
       { what: "read the ledger", detail: "" },
       { what: "listed accounts", detail: "" },
       { what: "listed responsibilities", detail: "open · active · waiting" },
@@ -299,10 +303,11 @@ describe("ledgerFromSysLines", () => {
       sysLine({ seq: 8, timestamp: 6_000, principalKind: "human", pid: null, runId: null, target: "gsv", call: "fs.read", args: JSON.stringify({ path: "~/notes.md" }), outcome: null, durationMs: null }),
       sysLine({ seq: 9, timestamp: 7_000, call: "codemode.exec", args: '{"code":"const x = 1;\\nconst y = "…' }),
     ]);
-    expect(lines[0]).toMatchObject({ id: "sys:7", place: "laptop", what: "looked around", detail: "ls -la", outcome: "completed", processId: "p1" });
-    expect(lines[1]).toMatchObject({ id: "sys:8", what: "read notes.md", outcome: "running", processId: "you" });
+    expect(lines[0]).toMatchObject({ id: "sys:7", place: "laptop", action: { key: "fleet.call.lookedAround" }, detail: "ls -la", outcome: "completed", processId: "p1" });
+    expect(lines[1]).toMatchObject({ id: "sys:8", action: { key: "fleet.call.readNamed", values: { name: "notes.md" } }, outcome: "running", processId: "you" });
+    expect(lines.map((line) => words(line.action))).toEqual(["looked around", "read notes.md", "ran a script"]);
     // a line cut at the size bound is not JSON any more; it is shown as the text it is
     // The plain row now omits it; the technical inspector still retains the exact recorded text.
-    expect(lines[2]).toMatchObject({ what: "ran a script", detail: "", args: '{"code":"const x = 1;\\nconst y = "…' });
+    expect(lines[2]).toMatchObject({ detail: "", args: '{"code":"const x = 1;\\nconst y = "…' });
   });
 });

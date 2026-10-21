@@ -19,6 +19,10 @@ export type PromptAssemblyInput = {
   };
   /** Frozen responsibility-ledger projection for this context epoch. */
   r12y: string;
+  /** The installation's handle and canonical address rendered into this epoch; absent without a hosted identity. */
+  ship?: { handle: string; origin: string; domain: string };
+  /** The managed mailbox rendered into this epoch; absent when the installation has none. */
+  mailbox?: { address: string };
   storage: PromptStorage;
   ripgit: PromptRipgitClient | null;
 };

@@ -85,7 +85,7 @@ describe("cross-GSV federation integration", () => {
     await first.profile.update({ expectedRevision: 1, draft: { ...draft, about: "Unpublished revision" } });
     expect((await second.profile.resolve({ url })).profile.about).toBe(draft.about);
     await first.profile.unpublish({ expectedRevision: 2 });
-    await expect(second.profile.resolve({ url })).rejects.toThrow("404");
+    await expect(second.profile.resolve({ url })).rejects.toThrow("No public profile is available at this address");
     const unavailableSubject = await fetch(subjectUrl);
     expect(unavailableSubject.status).toBe(404);
     await unavailableSubject.arrayBuffer();
@@ -467,7 +467,6 @@ describe("cross-GSV federation integration", () => {
       idempotencyKey: "integration-task-question",
     };
     await waitForDelivery(first, question);
-    expect((await first.r12y.get({ id: responsibility.id })).responsibility.details?.contactReply).toBeUndefined();
     const questionHistory = await waitForMessage(second, secondContact.conversationId, question.text);
     const reference = messagesWithText(questionHistory, question.text)[0]?.social?.reference;
     if (!reference) throw new Error("Task question must retain an origin reference");
@@ -476,8 +475,7 @@ describe("cross-GSV federation integration", () => {
       idempotencyKey: "integration-task-reply",
     };
     await waitForDelivery(second, reply);
-    await expect.poll(async () => (await first.r12y.get({ id: responsibility.id })).responsibility.details)
-      .toMatchObject({ contactReply: { contactId: firstContact.id, provenance: "human" } });
+    await expect.poll(async () => (await first.r12y.get({ id: responsibility.id })).responsibility.state).toBe("open");
     expect((await waitForContact(first)).preferences?.shipHandlesMessages).toBe(false);
     const admitted = (await first.r12y.get({ id: responsibility.id })).responsibility;
     await waitForDelivery(second, reply);
@@ -507,7 +505,7 @@ describe("cross-GSV federation integration", () => {
     await waitForDelivery(second, incoming);
     await expect.poll(async () => (await handling()).length).toBe(1);
     const [work] = await handling();
-    expect(work.details).toMatchObject({ contactReply: { contactId: contact.id, provenance: "human" } });
+    expect(work).toMatchObject({ state: "open", details: { contactId: contact.id } });
     await waitForDelivery(second, incoming);
     expect((await handling()).map((entry) => entry.id)).toEqual([work.id]);
 
@@ -516,6 +514,47 @@ describe("cross-GSV federation integration", () => {
     ({ contact } = await first.contact.preferences.update({ contactId: contact.id, expectedRevision: contact.preferences!.revision, patch: { shipHandlesMessages: true } }));
     expect((await handling()).map((entry) => entry.id)).toEqual([work.id]);
     expect((await first.r12y.get({ id: work.id })).responsibility.state).toBe("cancelled");
+    await first.contact.preferences.update({ contactId: contact.id, expectedRevision: contact.preferences!.revision, patch: { shipHandlesMessages: false } });
+  });
+
+  it("hands each contact message to Ship as its own event, with attachments as Ship's media", async () => {
+    let contact = await waitForContact(first);
+    const remote = await waitForContact(second);
+    ({ contact } = await first.contact.preferences.update({ contactId: contact.id, expectedRevision: contact.preferences!.revision, patch: { shipHandlesMessages: true } }));
+    const bytes = Uint8Array.from([137, 80, 78, 71, 13, 10, 26, 10, 83, 69, 76, 70, 73, 69]);
+    await second.request("fs.transfer.receive", { path: "/tmp/selfie.png", contentType: "image/png" }, { body: bodyFromBytes(bytes) });
+    const read = (await second.request("fs.read", { path: "/tmp/selfie.png", representation: "resource" })).data;
+    if (!read.ok || !("resource" in read) || !read.resource) throw new Error("fs.read returned no resource reference");
+    // A photo and its caption sent back to back must both reach Ship.
+    await waitForDelivery(second, {
+      contactId: remote.id,
+      text: "",
+      media: [{ type: "resource", ref: read.resource, mediaType: "image", filename: "selfie.png" }],
+      idempotencyKey: "integration-contact-photo-to-ship",
+    });
+    const caption = "That's me at the beach";
+    await waitForDelivery(second, { contactId: remote.id, text: caption, idempotencyKey: "integration-contact-caption-to-ship" });
+
+    const ship = await poll(async () => (await first.proc.list({})).processes.find(({ personal }) => personal) ?? null, "first Ship");
+    const records = await poll(async () => {
+      const history = await first.proc.history({ pid: ship.pid, format: 2 });
+      if (!history.ok || history.format !== 2) return null;
+      const messages = history.records.flatMap((record) => record.kind === "event" && record.payload.kind === "contact.message"
+        && ["", caption].includes(record.payload.payload.text) ? [record.payload.payload] : []);
+      return messages.some(({ text }) => text === caption) ? { messages, records: history.records } : null;
+    }, "both contact messages on Ship");
+    expect(records.messages.map(({ text, contactId }) => ({ text, contactId }))).toEqual([
+      { text: "", contactId: contact.id },
+      { text: caption, contactId: contact.id },
+    ]);
+    const work = records.messages[0]!.responsibilityId;
+    expect(records.messages[1]!.responsibilityId).toBe(work);
+    expect(records.records.some((record) => record.kind === "event" && record.payload.kind === "responsibility.ready"
+      && record.payload.payload.responsibilityIds.includes(work))).toBe(false);
+    const history = JSON.stringify(await first.proc.history({ pid: ship.pid }));
+    expect(history).toMatch(/\.gsv\/media\/archived-media:/u);
+    expect(history).toContain("selfie.png");
+    expect(history).not.toContain("/resources/resource%3A");
     await first.contact.preferences.update({ contactId: contact.id, expectedRevision: contact.preferences!.revision, patch: { shipHandlesMessages: false } });
   });
 });

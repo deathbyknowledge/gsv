@@ -1,5 +1,6 @@
 import * as z from "zod/mini";
 import { adapterSurfaceSchema } from "./adapters";
+import { procHistoryMediaSchema, type ProcHistoryMedia } from "./history-media";
 import { jsonObjectSchema, jsonValueSchema, type JsonObject, type JsonValue } from "./json";
 import type { ProcHistoryContextPolicy } from "./syscalls/proc";
 import type { EventReplyTarget } from "./syscalls/interaction-origin";
@@ -66,6 +67,8 @@ const contextProjectionSchema = z.strictObject({
     mode: z.enum(["summary", "names", "off"]),
     entries: z.array(z.strictObject({ id: z.string(), description: z.string() })),
   }),
+  ship: z.optional(z.strictObject({ handle: z.string(), origin: z.string(), domain: z.string() })),
+  mailbox: z.optional(z.strictObject({ address: z.string() })),
 });
 
 const historyContextPolicySchema: z.ZodMiniType<ProcHistoryContextPolicy> = z.strictObject({
@@ -121,6 +124,15 @@ export const procHistoryEventPayloadSchemas = {
     ledgerRevision: nonNegativeIntegerSchema,
     responsibilityIds: z.array(z.string()),
     receivedAtMs: z.number(),
+  }),
+  "contact.message": z.strictObject({
+    contactId: z.string(),
+    conversationId: z.string(),
+    messageId: z.string(),
+    from: z.string(),
+    text: z.string(),
+    responsibilityId: z.string(),
+    attachmentErrors: z.optional(z.array(z.string())),
   }),
   "correction.text-only": z.strictObject({
     attempt: nonNegativeIntegerSchema,
@@ -218,6 +230,8 @@ export type ProcHistoryContextProjection = {
   targets: { id: string; implements: string[]; label?: string; description?: string; platform?: string }[];
   mcpServers: string[];
   skills: { mode: "summary" | "names" | "off"; entries: { id: string; description: string }[] };
+  ship?: { handle: string; origin: string; domain: string };
+  mailbox?: { address: string };
 };
 
 export type ProcHistoryIpcResponsePayload = {
@@ -265,6 +279,19 @@ export type ProcHistoryEventPayloadMap = {
     ledgerRevision: number;
     responsibilityIds: string[];
     receivedAtMs: number;
+  };
+  /** One message from a contact Ship handles; its attachments are the event's media. */
+  "contact.message": {
+    contactId: string;
+    conversationId: string;
+    messageId: string;
+    /** The contact's local alias or display name. */
+    from: string;
+    text: string;
+    /** The open responsibility this message belongs to. */
+    responsibilityId: string;
+    /** Attachments that could not be retrieved from the contact's Ship. */
+    attachmentErrors?: string[];
   };
   "correction.text-only": { attempt: number; limit: number };
   "correction.exhausted": { attempts: number; limit: number; conversationId?: string; messageId?: string };
@@ -335,6 +362,7 @@ function eventSchema<K extends ProcHistoryEventKind>(kind: K) {
     payload: procHistoryEventPayloadSchemas[kind],
     severity: procHistoryEventSeveritySchema,
     audience: procHistoryEventAudienceSchema,
+    media: z.optional(z.array(procHistoryMediaSchema)),
   });
 }
 
@@ -350,6 +378,7 @@ export const procHistoryEventSchema: z.ZodMiniType<ProcHistoryEvent> = z.discrim
   eventSchema("context.failed"),
   eventSchema("responsibility.revision"),
   eventSchema("responsibility.ready"),
+  eventSchema("contact.message"),
   eventSchema("correction.text-only"),
   eventSchema("correction.exhausted"),
   eventSchema("generation.failed"),
@@ -374,6 +403,7 @@ export const procHistoryEventSchema: z.ZodMiniType<ProcHistoryEvent> = z.discrim
     }),
     severity: procHistoryEventSeveritySchema,
     audience: procHistoryEventAudienceSchema,
+    media: z.optional(z.array(procHistoryMediaSchema)),
   }),
 ]);
 
@@ -385,4 +415,5 @@ export type ProcHistoryEvent = ({
 }) & {
   severity: ProcHistoryEventSeverity;
   audience: ProcHistoryEventAudience;
+  media?: ProcHistoryMedia[];
 };
