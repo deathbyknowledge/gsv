@@ -55,10 +55,9 @@ export const NativeVoiceControls = forwardRef<NativeVoiceHandle, NativeVoiceCont
     </button>
     {control.capturing && <>
       <button type="button" class="native-primary" disabled={voice?.phase !== "listening"} onClick={control.send}>{t("desktop.voice.send")}</button>
-      <button type="button" disabled={voice?.phase === "finishing"}
-        onClick={voice?.phase === "listening" ? control.stop : control.cancel}>
-        {t(voice?.phase === "listening" ? "desktop.voice.pause" : voice?.phase === "finishing" ? "desktop.voice.pausing" : "common.cancel")}
-      </button>
+      {voice?.phase === "listening" && <button type="button" onClick={control.stop}>{t("desktop.voice.pause")}</button>}
+      {/* Cancel stays available while the host finalizes, so a mistaken recording can still be stopped before it sends. */}
+      <button type="button" onClick={control.cancel}>{t("common.cancel")}</button>
     </>}
     {speech?.preferences.enabled && speech.status.phase === "speaking" && <button type="button" onClick={() => void speech.command({ kind: "cancel" })}>{t("desktop.voice.stopSpeaking")}</button>}
     {notice && !panel && <>
@@ -83,7 +82,7 @@ export const NativeVoiceControls = forwardRef<NativeVoiceHandle, NativeVoiceCont
             <button type="button" class="native-primary" disabled={voice?.phase !== "listening"} onClick={control.send}>{t("desktop.voice.send")}</button>
             {(voice?.phase === "listening" || voice?.phase === "finishing")
               && <button type="button" disabled={voice.phase === "finishing"} onClick={control.stop}>{t(voice.phase === "finishing" ? "desktop.voice.pausing" : "desktop.voice.pause")}</button>}
-            <button type="button" disabled={voice?.phase === "finishing"} onClick={control.cancel}>{t("common.cancel")}</button>
+            <button type="button" onClick={control.cancel}>{t("common.cancel")}</button>
           </>}
         <span class="native-panel-state" role="status">{control.capturing ? voiceLabel : t(control.blocked ? "desktop.voice.handsfreeRecording" : "desktop.voice.microphoneOff")}</span>
       </div>
