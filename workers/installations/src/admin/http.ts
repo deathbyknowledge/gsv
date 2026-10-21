@@ -59,7 +59,7 @@ export class InstallationAdminHttp<
       }
       if (route && !route[2] && (request.method === "GET" || head)) {
         const installation = await this.service.getInstallation(decodeInstallationId(route[1]));
-        if (!installation) return adminErrorPage("The installation does not exist.", 404, head, this.presentation.navigation);
+        if (!installation) return adminErrorPage("The Ship does not exist.", 404, head, this.presentation.navigation);
         return adminInstallationPage(installation, undefined, undefined, head, 200, this.presentation);
       }
       if (url.pathname === "/admin/installations" && request.method === "POST") {

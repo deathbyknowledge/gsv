@@ -54,9 +54,9 @@ resource identities and complete the directory migration ownership handoff.
 After the first successful apply, use the deployment's directory database ID and
 administration origin with the [bootstrap command](https://github.com/deathbyknowledge/gsv/blob/main/deployment/operator-bootstrap.md).
 It prints a one-time link only to your local controlling terminal. The link
-creates the first installation and its setup invitation. Further installations
+creates the first Ship and its activation link. Further Ships
 are created explicitly in administration. Ordinary redeployments do not create
-installations or rotate credentials.
+Ships or rotate credentials.
 
 ## Give someone a Ship {#give-someone-a-space}
 
@@ -65,14 +65,14 @@ access mode, open `<admin-origin>/operator` and sign in with the operator
 credential saved during bootstrap. In `access` mode, open
 `<admin-origin>/admin` through the configured Cloudflare Access policy.
 Create a Ship, reserve its handle, and give the person the resulting one-time
-setup link. They use that link to create their personal account and root
+activation link. They use that link to create their personal account and root
 password. Further Ships use this same administration flow.
 
 To let people sign up themselves, enable `GSV_SIGNUP_ENABLED` and configure
 owner email delivery. They choose a handle and verify their email at
 `<admin-origin>/owner/signup/`, the configured public signup alias, or in
 Desktop. Registration needs no invite code. One verified email can create one
-Ship, and an interrupted setup resumes with the same email.
+Ship, and an interrupted activation resumes with the same email.
 
 With native owner email enabled, `<admin-origin>/owner/login` verifies the
 person's email and opens **My Ships**. Signing in there does not create a
@@ -122,7 +122,7 @@ deletion contract in the repository's engineering notes.
 
 For local development, `npm run dev` builds the SDK and web assets, applies public
 migrations to a separate local database and runs the four public Workers. Open
-`http://localhost:8976/admin`, create an installation and follow its setup link at
+`http://localhost:8976/admin`, create a Ship and follow its activation link at
 `http://<handle>.localhost:8976`. No private repository is required. The local
 administration bypass admits only the configured localhost origin; both local
 development scripts bind to `127.0.0.1` so this bypass is not exposed to the LAN.
