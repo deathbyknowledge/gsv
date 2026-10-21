@@ -115,7 +115,7 @@ export const es = {
   "settings.models.fallbackOrder": "Orden de prioridad de los modelos",
   "settings.models.firstChoice": "Primera opción",
   "settings.models.fallback": "Alternativa {index}",
-  "settings.models.source.installation": "Modelo incluido",
+  "settings.models.source.installation": "Modelo de Ship",
   "settings.models.source.own": "Tu modelo",
   "settings.models.source.included": "Modelo incluido",
   "settings.models.source.shared": "Modelo compartido",

@@ -114,7 +114,7 @@ export const en = {
   "settings.models.fallbackOrder": "Model fallback order",
   "settings.models.firstChoice": "First choice",
   "settings.models.fallback": "Fallback {index}",
-  "settings.models.source.installation": "Included model",
+  "settings.models.source.installation": "Ship model",
   "settings.models.source.own": "Your model",
   "settings.models.source.included": "Included model",
   "settings.models.source.shared": "Shared model",
