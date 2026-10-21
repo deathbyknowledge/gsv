@@ -284,7 +284,7 @@ export function Fleet({ openRequest, onZen, onCommand, onDirtyChange, onActivity
       : selected?.startsWith("proc:") ? t("fleet.field.process") : t("fleet.field.place");
 
   return (
-    <main class="fleet" aria-label="Fleet">
+    <main class="fleet" aria-label={t("shell.help.work")}>
       {expandedFile && <FileReader key={`${expandedFile.target}:${expandedFile.path}`} file={expandedFile} account={viewer} onDirtyChange={setFileDirty} onClose={(deleted) => {
         if (deleted) { setOpenFile(null); setInspectorOpen(false); }
         setExpandedFile(null);

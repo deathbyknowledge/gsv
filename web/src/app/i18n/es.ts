@@ -432,7 +432,7 @@ export const es = {
   // Settings: sign-in and recovery
   "settings.signIn.resetFailed": "No se ha podido restablecer la contraseña",
   "settings.signIn.personal": "Acceso personal",
-  "settings.signIn.resetHint": "Restablece la contraseña de tu cuenta. Se cerrarán sus sesiones y se desconectarán sus cuentas de mensajería.",
+  "settings.signIn.resetHint": "Restablece la contraseña de la cuenta personal. Se cerrarán sus sesiones y se desconectarán sus cuentas de mensajería.",
   "settings.signIn.newPassword": "Nueva contraseña personal",
   "settings.signIn.changed": "Tu contraseña personal ha cambiado.",
   "settings.signIn.resetting": "restableciendo…",

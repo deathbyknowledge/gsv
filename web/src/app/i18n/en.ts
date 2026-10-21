@@ -431,7 +431,7 @@ export const en = {
   // Settings: sign-in and recovery
   "settings.signIn.resetFailed": "Password reset failed",
   "settings.signIn.personal": "Personal sign-in",
-  "settings.signIn.resetHint": "Reset the password for your account. This signs out its sessions and disconnects its messenger accounts.",
+  "settings.signIn.resetHint": "Reset the password for the personal account. This signs out its sessions and disconnects its messenger accounts.",
   "settings.signIn.newPassword": "New personal password",
   "settings.signIn.changed": "Your personal password has changed.",
   "settings.signIn.resetting": "resetting…",
