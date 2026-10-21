@@ -158,8 +158,9 @@ service is offered for your number.
 
 WhatsApp is not offered to numbers in Brazil (+55) or Indonesia (+62). Meta
 restricts business numbers outside those countries from messaging people
-there, so the Ship number cannot deliver the pairing code. Ship says so before
-you try and offers Telegram, Discord, Slack, email, or the Ship app instead.
+there, so the Ship number cannot deliver the pairing code. The WhatsApp page in
+**Settings → Messengers** shows this, and Ship says so when you ask it to
+connect, offering Telegram, Discord, Slack, email, or the Ship app instead.
 
 The earlier linked-device adapter, which paired by scanning a QR code, is no
 longer bundled, and its pairings do not carry over.

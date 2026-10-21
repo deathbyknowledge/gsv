@@ -61,6 +61,34 @@ export function managedWhatsAppDisplayDigits(value: string | undefined): string 
   return normalizedManagedWhatsAppDisplayNumber(value).replace(/^\+/, "");
 }
 
+const WHATSAPP_CROSS_BORDER_COUNTRIES: ReadonlyArray<readonly [callingCode: string, name: string]> = [
+  ["55", "Brazil"],
+  ["62", "Indonesia"],
+];
+
+/**
+ * Calling codes Meta keeps this number from reaching. Meta restricts WhatsApp Business
+ * messaging across the borders of Brazil and Indonesia, so a number outside both cannot
+ * reach either, and a number inside one cannot reach the other.
+ */
+export function managedWhatsAppUnreachableCallingCodes(value: string | undefined): string[] {
+  const digits = managedWhatsAppDisplayDigits(value);
+  return WHATSAPP_CROSS_BORDER_COUNTRIES
+    .filter(([code]) => !digits.startsWith(code))
+    .map(([code]) => code);
+}
+
+/** The agent-facing sentence about who this number cannot reach; empty when it reaches everyone. */
+export function managedWhatsAppReachNote(value: string | undefined): string {
+  const unreachable = managedWhatsAppUnreachableCallingCodes(value);
+  if (!unreachable.length) return "";
+  const countries = WHATSAPP_CROSS_BORDER_COUNTRIES
+    .filter(([code]) => unreachable.includes(code))
+    .map(([code, name]) => `${name} (+${code})`)
+    .join(" and ");
+  return `Meta currently blocks this number from messaging WhatsApp numbers in ${countries}, so people there cannot receive the code. If the user may be there, tell them before they try and offer another enabled messenger or email.`;
+}
+
 export function managedWhatsAppChatUrl(value: string | undefined): string | undefined {
   if (!validManagedWhatsAppDisplayNumber(value)) return undefined;
   return `https://wa.me/${managedWhatsAppDisplayDigits(value)}?text=${encodeURIComponent("/link")}`;

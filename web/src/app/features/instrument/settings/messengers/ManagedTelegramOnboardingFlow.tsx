@@ -91,6 +91,20 @@ export function ManagedWhatsAppOnboardingFlow({ onBack, onConnected, dependencie
   return <ManagedMessengerOnboardingFlow adapterId="whatsapp" onBack={onBack} onConnected={onConnected} dependencies={dependencies} />;
 }
 
+type WhatsAppUnreachable = "both" | "brazil" | "indonesia";
+
+/**
+ * Meta restricts WhatsApp Business messaging across the borders of Brazil and Indonesia:
+ * a number outside both reaches neither, and a number inside one does not reach the other.
+ */
+function whatsAppUnreachableCountries(number: string): WhatsAppUnreachable | null {
+  const digits = number.replace(/^\+/, "");
+  if (!digits) return null;
+  if (digits.startsWith("55")) return "indonesia";
+  if (digits.startsWith("62")) return "brazil";
+  return "both";
+}
+
 /** The operator's WhatsApp number travels as a wa.me chat link; show it as a number. */
 function whatsAppNumberFromChatUrl(value: string | undefined): string {
   if (!value) return "";
@@ -127,6 +141,7 @@ function ManagedMessengerOnboardingFlow({
   const platform = isSlack ? "Slack" : isDiscord ? "Discord" : isWhatsApp ? "WhatsApp" : "Telegram";
   const botUsername = info.data?.botUsername?.replace(/^@/, "") ?? "";
   const chatNumber = isWhatsApp ? whatsAppNumberFromChatUrl(info.data?.installUrl) : "";
+  const unreachable = isWhatsApp ? whatsAppUnreachableCountries(chatNumber) : null;
   const launchUrl = installsApp || isWhatsApp
     ? info.data?.installUrl ?? adapterDocUrl(adapterId)
     : botUsername ? `https://t.me/${botUsername}` : "https://telegram.org/";
@@ -203,6 +218,11 @@ function ManagedMessengerOnboardingFlow({
               <Alert variant="error" text={info.error?.message ?? t("settings.pairing.loadFailed", { platform })} />
             ) : !info.data?.configured ? (
               <Alert variant="warning" text={t("settings.pairing.notConfigured", { platform })} />
+            ) : unreachable ? (
+              <Alert
+                variant="warning"
+                text={t("settings.pairing.whatsappUnreachable", { countries: t(`settings.pairing.whatsappCountries.${unreachable}`) })}
+              />
             ) : null}
             <div class="gsv-cf-footer">
               <Button variant="secondary" label={t("settings.pairing.back")} onClick={onBack} />

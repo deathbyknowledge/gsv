@@ -20,6 +20,7 @@ const mocks = vi.hoisted(() => ({
   currentFlow: null as ConnectFlowDef | null,
   currentStep: -1,
   infoAdapter: "",
+  installUrl: "https://wa.me/34600000000?text=%2Flink",
   inspect: vi.fn<
     ReturnType<ManagedTelegramDependencies["useInspectConsoleAdapterPairing"]>["mutateAsync"]
   >(),
@@ -34,7 +35,7 @@ const dependencies: ManagedTelegramDependencies = {
         adapter: "whatsapp",
         accountId: "managed",
         configured: true,
-        installUrl: "https://wa.me/34600000000?text=%2Flink",
+        installUrl: mocks.installUrl,
       },
       isError: false,
       error: null,
@@ -80,6 +81,7 @@ beforeEach(async () => {
   mocks.currentFlow = null;
   mocks.currentStep = -1;
   mocks.infoAdapter = "";
+  mocks.installUrl = "https://wa.me/34600000000?text=%2Flink";
   mocks.inspect.mockReset();
   mocks.onConnected.mockReset();
   mocks.inspect.mockResolvedValue({
@@ -126,6 +128,24 @@ describe("ManagedWhatsAppOnboardingFlow", () => {
     expect(instructions?.props.text).toContain("send /link to get a new code");
     const open = nodes().find((node) => node.props.href === "https://wa.me/34600000000?text=%2Flink");
     expect(collectText(open)).toBe("OPEN WHATSAPP");
+  });
+
+  it("warns that Meta keeps the operator's number from reaching Brazil and Indonesia", async () => {
+    const warning = () => nodes().find((node) => node.props.text?.includes("cannot connect"));
+    expect(warning()?.props.text).toContain("Brazil (+55) and Indonesia (+62)");
+
+    await root?.unmount();
+    mocks.installUrl = "https://wa.me/5511900000000?text=%2Flink";
+    root = createTestRoot("Managed WhatsApp onboarding harness");
+    await root.render(
+      <ManagedWhatsAppOnboardingFlow
+        onBack={() => undefined}
+        onConnected={mocks.onConnected}
+        dependencies={dependencies}
+      />,
+    );
+    expect(warning()?.props.text).toContain("WhatsApp numbers in Indonesia (+62) cannot connect");
+    expect(warning()?.props.text).not.toContain("Brazil");
   });
 
   it("reveals the profile name and masked number before linking, then opens the account detail", async () => {
