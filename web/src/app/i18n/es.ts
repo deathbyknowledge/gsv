@@ -1523,9 +1523,9 @@ export const es = {
   "shell.attachments.unexpectedLength": "Ship ha guardado un archivo adjunto con un tamaño inesperado",
   "shell.attachments.unknownRevision": "Ship no ha podido identificar la revisión del archivo adjunto subido",
   "shell.attachments.requestFailed": "Ha fallado la solicitud de recursos de Ship",
-  "shell.process.abortFailed": "no se ha podido interrumpir esta conversación",
-  "shell.process.resetFailed": "no se ha podido restablecer esta conversación",
-  "shell.process.killFailed": "no se ha podido detener esta conversación",
+  "shell.process.abortFailed": "no se ha podido interrumpir",
+  "shell.process.resetFailed": "no se ha podido restablecer",
+  "shell.process.killFailed": "no se ha podido detener",
 
   // Configuration: providers and models
   "config.provider.included": "Incluido con Ship",

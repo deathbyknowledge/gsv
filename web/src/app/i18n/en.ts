@@ -1522,9 +1522,9 @@ export const en = {
   "shell.attachments.unexpectedLength": "Ship stored an unexpected attachment length",
   "shell.attachments.unknownRevision": "Ship could not identify the uploaded attachment revision",
   "shell.attachments.requestFailed": "Ship resource request failed",
-  "shell.process.abortFailed": "failed to abort this conversation",
-  "shell.process.resetFailed": "failed to reset this conversation",
-  "shell.process.killFailed": "failed to stop this conversation",
+  "shell.process.abortFailed": "failed to abort",
+  "shell.process.resetFailed": "failed to reset",
+  "shell.process.killFailed": "failed to stop",
 
   // Configuration: providers and models
   "config.provider.included": "Ship included",
