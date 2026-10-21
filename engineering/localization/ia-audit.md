@@ -57,10 +57,12 @@ content was read but is protected; nothing here proposes editing it without expl
    messenger pairing reply, the machine daemon's update notices, the extension's page titles and
    most of the technical docs. The manual itself carries five sentences and the stale `gsv.space`
    domain.
-5. **No surface has localization scaffolding.** Every string is an inline literal; `lang="en"` is
-   hardcoded on every HTML page; the Settings rail prints raw ids as its labels; sentences are
-   assembled from fragments on every surface; dates use `en-US` or the browser locale, never the
-   owner's "Response language" preference (section 6).
+5. **At the time of the audit, no surface had localization scaffolding.** Every string was an
+   inline literal; `lang="en"` was hardcoded on every HTML page; the Settings rail printed raw ids
+   as its labels; sentences were assembled from fragments on every surface; dates used `en-US` or
+   the browser locale, never the owner's "Response language" preference (section 6). Since #475
+   the web app has a catalog and runtime (see the section 6 addendum); the other surfaces still
+   stand as described.
 
 ## 1. Concept map
 
