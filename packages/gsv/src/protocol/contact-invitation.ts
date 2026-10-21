@@ -2,6 +2,7 @@ import { z } from "zod/mini";
 import { federationSubjectSchema } from "./syscalls/contact";
 
 const PREFIX = "gsv-contact-v1:";
+const BASE64URL = /^[A-Za-z0-9_-]+$/;
 const invitationSchema = z.strictObject({
   version: z.literal(1),
   origin: z.string().check(z.minLength(1), z.maxLength(2_048)),
@@ -24,17 +25,16 @@ export function parseContactInvitation(input: string): ParsedContactInvitation {
     const value = input.trim();
     if (value.length > 12_000) throw new Error();
     let code = value;
-    if (!code.startsWith(PREFIX)) {
+    if (!code.startsWith(PREFIX) && !BASE64URL.test(code)) {
       const url = new URL(value);
       if (!["https:", "http:"].includes(url.protocol) || url.username || url.password) throw new Error();
       code = new URLSearchParams(url.hash.slice(1)).get("contact") ?? "";
     }
-    if (!code.startsWith(PREFIX)) throw new Error();
-    const encoded = code.slice(PREFIX.length);
-    if (!/^[A-Za-z0-9_-]+$/.test(encoded)) throw new Error();
+    const encoded = code.startsWith(PREFIX) ? code.slice(PREFIX.length) : code;
+    if (!BASE64URL.test(encoded)) throw new Error();
     const bytes = Uint8Array.from(atob(encoded.replace(/-/g, "+").replace(/_/g, "/")), (char) => char.charCodeAt(0));
     const invitation = invitationSchema.parse(JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)));
-    return { code, invitation };
+    return { code: PREFIX + encoded, invitation };
   } catch {
     throw new Error("This invitation is not valid. Paste the complete link or code.");
   }
@@ -43,8 +43,9 @@ export function parseContactInvitation(input: string): ParsedContactInvitation {
 /** Keep the invitation out of HTTP requests, access logs and referrer headers. */
 export function contactInvitationUrl(code: string, destination: string): string {
   const url = new URL(destination);
-  // Colons are valid in fragments; mobile link detectors can stop at the encoded separator.
-  url.hash = new URLSearchParams({ contact: code }).toString().replaceAll("%3A", ":");
+  // The fragment identifies the invitation; share only its URL-safe payload.
+  const payload = code.startsWith(PREFIX) ? code.slice(PREFIX.length) : code;
+  url.hash = new URLSearchParams({ contact: payload }).toString();
   return url.href;
 }
 
@@ -53,5 +54,8 @@ export function contactInvitationDestination(origin: string, code: string): stri
   const local = url.protocol === "http:" && (url.hostname === "localhost" || url.hostname.endsWith(".localhost")
     || ["127.0.0.1", "[::1]"].includes(url.hostname));
   if (url.origin !== origin || (url.protocol !== "https:" && !local)) throw new Error("Enter your GSV space address.");
-  return contactInvitationUrl(code, `${origin}/people`);
+  // Browser navigation bypasses messenger link detection; retain older recipient compatibility.
+  url.pathname = "/people";
+  url.hash = new URLSearchParams({ contact: parseContactInvitation(code).code }).toString();
+  return url.href;
 }

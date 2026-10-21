@@ -715,9 +715,9 @@ short-lived, one-use code and a shareable `url`; the other signed-in person acce
 from the signed exchange. Callers never choose a remote local uid, Process,
 conversation, filesystem path, or installation id.
 
-Invitation links keep the code in the URL fragment, with a literal colon in
-`#contact=gsv-contact-v1:…` for mobile messenger link detection. Previously issued
-links with `%3A` still identify the same invitation.
+Invitation links keep the URL-safe encoded payload in the `#contact=` fragment,
+without the `gsv-contact-v1:` code prefix, so mobile messengers can link the entire
+address. Existing prefixed codes and links still identify the same invitation.
 
 Trust changes may be initiated by the signed-in human or by that owner's exact
 canonical Ship Process. Delegated work Processes and remote callers cannot

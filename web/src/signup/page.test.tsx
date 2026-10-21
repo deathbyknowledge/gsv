@@ -1,6 +1,6 @@
 import type { ComponentProps, VNode } from "preact";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { encodeContactInvitation } from "@humansandmachines/gsv/protocol";
+import { contactInvitationUrl, encodeContactInvitation } from "@humansandmachines/gsv/protocol";
 import { collectNodes } from "../app/testing/testHarness";
 import type { WelcomeSnapshot, WelcomeState } from "../app/services/session/ownerWelcome";
 
@@ -18,7 +18,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   storage.load.mockResolvedValue({ revision: "initial", value: null });
   storage.save.mockImplementation(async (_revision: string, value: WelcomeState | null): Promise<WelcomeSnapshot> => ({ revision: crypto.randomUUID(), value }));
-  vi.stubGlobal("window", { location: { origin, search: "", href: `${origin}/#contact=${encodeURIComponent(contact)}`, assign },
+  vi.stubGlobal("window", { location: { origin, search: "", href: contactInvitationUrl(contact, origin), assign },
     history: { replaceState: vi.fn() } });
   vi.stubGlobal("sessionStorage", { getItem: () => null, setItem: vi.fn(), removeItem: vi.fn() });
 });
@@ -39,6 +39,20 @@ function expectContactNavigation() {
 }
 
 describe("signup entrypoint recovery", () => {
+  it.each([contact, encodeURIComponent(contact)])("accepts a legacy invitation fragment", async (value) => {
+    window.location.href = `${origin}/#contact=${value}`;
+    const props = await screen();
+    expect(props.invitation?.name).toBe("Sponsor");
+    await props.onConnect("https://custom.example.com");
+    expectContactNavigation();
+  });
+
+  it("stores the canonical invitation code from a shared URL", async () => {
+    const props = await screen();
+    expect((await props.load()).state.contactInvite).toBe(contact);
+    expect(sessionStorage.setItem).toHaveBeenCalledWith("gsv.contact-invitation", contact);
+  });
+
   it.each(["load", "save"] as const)("opens an existing space when signup storage cannot %s", async (operation) => {
     const failure = new Error("Storage unavailable");
     storage[operation].mockRejectedValue(failure);

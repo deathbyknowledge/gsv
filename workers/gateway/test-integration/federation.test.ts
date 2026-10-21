@@ -148,7 +148,7 @@ describe("cross-GSV federation integration", () => {
     });
 
     const invite = await first.contact.invite.create({ expiresInSeconds: 300 });
-    expect(new URL(invite.url!).hash).toBe(`#contact=${invite.code}`);
+    expect(new URL(invite.url!).hash).toMatch(/^#contact=[A-Za-z0-9_-]+$/);
     const [accepted, acceptanceReplay] = await Promise.all([
       second.contact.invite.accept({ code: invite.url! }),
       second.contact.invite.accept({ code: invite.code }),
