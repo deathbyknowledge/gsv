@@ -1286,7 +1286,7 @@ export const en = {
   "shell.approval.fullRequest": "full request",
   "shell.approval.run": "Allow once",
   "shell.approval.deny": "Block",
-  "shell.approval.alwaysAllowHint": "Allow Ship or this helper to run any shell command on {place} without asking again, until it is reset or replaced. Others still ask.",
+  "shell.approval.alwaysAllowHint": "Allow Ship or this helper to run any shell command on {place} without asking again. Others still ask.",
   "shell.approval.alwaysAllow": "Always allow",
   "shell.approval.waiting": "nothing runs until you answer",
 

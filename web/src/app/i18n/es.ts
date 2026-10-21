@@ -1287,7 +1287,7 @@ export const es = {
   "shell.approval.fullRequest": "solicitud completa",
   "shell.approval.run": "Permitir una vez",
   "shell.approval.deny": "Bloquear",
-  "shell.approval.alwaysAllowHint": "Permite que Ship o este ayudante ejecute cualquier comando en la terminal de {place} sin volver a preguntar, hasta que se restablezca o se sustituya. Los demás siguen preguntando.",
+  "shell.approval.alwaysAllowHint": "Permite que Ship o este ayudante ejecute cualquier comando en la terminal de {place} sin volver a preguntar. Los demás siguen preguntando.",
   "shell.approval.alwaysAllow": "Permitir siempre",
   "shell.approval.waiting": "no se ejecuta nada hasta que respondas",
 

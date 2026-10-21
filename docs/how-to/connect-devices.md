@@ -74,8 +74,9 @@ arguments. Choose **Allow once** to approve it once or **Block** to decline.
 Typing **yes** or **no** in the prompt answers too; anything else you write
 goes to your Ship as a message and replaces the request.
 **Always allow** approves this command and remembers shell access to that
-computer for this conversation. Its tooltip explains the scope; other
-conversations and helpers still use their own permission rules.
+computer for Ship or the helper that asked, for as long as that one runs; a
+replaced Ship asks again. Its tooltip explains the scope; other helpers still
+use their own permission rules.
 
 Some actions — reading your screen, controlling apps — need extra permissions from your operating system, not just Ship. Your OS will prompt you the first time Ship tries one; grant what you're comfortable with. You can connect a computer and use the basics without granting these.
 

@@ -148,8 +148,9 @@ Full request details remain available inside the fold, including structured
 arguments that the readable command or path does not show.
 Cards offer Allow once, Always allow and Block. Shell approvals expose Always allow
 through the existing `proc.hil` remember option for a concrete target; it applies to
-this conversation (the requesting Process) on that target. A hover/focus tooltip
-explains that scope; it never changes another conversation's or helper's policy or
+the requesting Process (Ship or a helper) on that target and lives in that Process's
+state, so a replaced Ship asks again while a reset keeps it. A hover/focus tooltip
+explains that scope; it never changes another Process's policy or
 remembers a denial.
 
 Chat owns the conversation. Dismissing the welcome card records the owner's choice and wakes Ship through its initial onboarding responsibility; a failed request leaves the card available to retry. Ship sends a welcome in the owner's language, initially detected from the browser. Chat renders it as an ordinary canonical Message, shared across clients. The composer remains available, and Ship responds to a user who writes first. Helpers keep a simple empty conversation state.

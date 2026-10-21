@@ -204,8 +204,9 @@ The **full request** fold preserves every argument, including structured MCP
 parameters, mail bodies and execution options. Requests without a readable
 summary still expose their complete request in the details fold.
 Shell approvals on a specific target also offer **Always allow**. Its tooltip
-explains that this remembers all shell commands on that target for this
-conversation, not just the displayed command. Other conversations, helpers and targets still use
+explains that this remembers all shell commands on that target for the
+requesting Ship or helper, not just the displayed command. The memory lives in
+that process, so a replaced Ship asks again. Other helpers and targets still use
 their own permission rules; ordinary approval and denial never remember a rule.
 
 Web and Desktop present a failed run, and a failure reported above the composer, as a plain-language
