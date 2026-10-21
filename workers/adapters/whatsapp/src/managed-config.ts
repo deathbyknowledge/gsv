@@ -68,22 +68,28 @@ const WHATSAPP_CROSS_BORDER_COUNTRIES: ReadonlyArray<readonly [callingCode: stri
 ];
 const CALLING_CODE_PATTERN = /^[1-9][0-9]{0,2}$/;
 
+/** The operator's override as a list, or undefined when unset or when any entry is not a calling code. */
+function configuredUnreachableCallingCodes(value: string | undefined): string[] | undefined {
+  if (value === undefined) return undefined;
+  const codes = value.split(",").map((code) => code.trim()).filter(Boolean).map((code) => code.replace(/^\+/, ""));
+  if (!codes.every((code) => CALLING_CODE_PATTERN.test(code))) return undefined;
+  return [...new Set(codes)];
+}
+
 /**
  * Calling codes Meta keeps this account from messaging. Unset, it follows Meta's restriction
  * on WhatsApp Business messaging across the borders of Brazil and Indonesia, keyed to the
  * display number's country: a number outside both reaches neither, and a number inside one
  * does not reach the other. Operators whose Meta record differs set
  * `WHATSAPP_UNREACHABLE_CALLING_CODES`, comma-separated, or empty once the account has
- * unlocked cross-border messaging.
+ * unlocked cross-border messaging. A malformed value keeps the default rule rather than
+ * reading as unlocked.
  */
 export function managedWhatsAppUnreachableCallingCodes(
   env: Pick<ManagedWhatsAppConfigEnv, "WHATSAPP_DISPLAY_NUMBER" | "WHATSAPP_UNREACHABLE_CALLING_CODES">,
 ): string[] {
-  const configured = env.WHATSAPP_UNREACHABLE_CALLING_CODES;
-  if (configured !== undefined) {
-    const codes = configured.split(",").map((code) => code.trim().replace(/^\+/, "")).filter((code) => CALLING_CODE_PATTERN.test(code));
-    return [...new Set(codes)];
-  }
+  const configured = configuredUnreachableCallingCodes(env.WHATSAPP_UNREACHABLE_CALLING_CODES);
+  if (configured) return configured;
   const digits = managedWhatsAppDisplayDigits(env.WHATSAPP_DISPLAY_NUMBER);
   return WHATSAPP_CROSS_BORDER_COUNTRIES
     .filter(([code]) => !digits.startsWith(code))

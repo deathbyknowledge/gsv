@@ -23,12 +23,21 @@ describe("managedWhatsAppUnreachableCallingCodes", () => {
   });
 
   it("lets the operator state Meta's record instead", () => {
-    const env = { WHATSAPP_DISPLAY_NUMBER: "+34600000000", WHATSAPP_UNREACHABLE_CALLING_CODES: " +62, 55 ,62, bad " };
+    const env = { WHATSAPP_DISPLAY_NUMBER: "+34600000000", WHATSAPP_UNREACHABLE_CALLING_CODES: " +62, 55 ,62, " };
     expect(managedWhatsAppUnreachableCallingCodes(env)).toEqual(["62", "55"]);
     expect(managedWhatsAppReachNote(env)).toContain("in Indonesia (+62) and Brazil (+55), so");
     const unlocked = { WHATSAPP_DISPLAY_NUMBER: "+34600000000", WHATSAPP_UNREACHABLE_CALLING_CODES: "" };
     expect(managedWhatsAppUnreachableCallingCodes(unlocked)).toEqual([]);
     expect(managedWhatsAppReachNote(unlocked)).toBe("");
+  });
+
+  it("keeps the default rule when the override is malformed", () => {
+    for (const value of ["6x", "55, bad", "+", "1234"]) {
+      expect(managedWhatsAppUnreachableCallingCodes({ WHATSAPP_DISPLAY_NUMBER: "+34600000000", WHATSAPP_UNREACHABLE_CALLING_CODES: value }))
+        .toEqual(["55", "62"]);
+      expect(managedWhatsAppUnreachableCallingCodes({ WHATSAPP_DISPLAY_NUMBER: "+5511900000000", WHATSAPP_UNREACHABLE_CALLING_CODES: value }))
+        .toEqual(["62"]);
+    }
   });
 });
 
