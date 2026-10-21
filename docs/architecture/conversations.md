@@ -370,7 +370,7 @@ creating one stages a request to Ship. These panels use the existing authorized
 syscalls and signal-driven caches. Closing them preserves drafts and pauses hidden
 reads. The shared file browser can move above the home directory using **../**,
 stopping at the selected target’s root. Chat selects a file immediately into the
-draft; Work retains its file inspector. Work retains connections and helpers.
+draft; Work retains its file inspector. Work retains connections, Ship and its helpers.
 
 The shell locks document scrolling and sizes the visible content from
 `VisualViewport`, keeping the header and composer outside the scrolling content.

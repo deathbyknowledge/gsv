@@ -32,7 +32,7 @@ describe("approval card", () => {
     const tree = await approvalCardTree({ ...props, request, onDecide });
     const nodes = collectNodes(tree);
     const hint = nodes.find((node) => node.type === Hint);
-    expect(hint?.props.text).toBe("Allow this conversation to run any shell command on my mac without asking again. Other conversations still ask.");
+    expect(hint?.props.text).toBe("Allow this conversation to run any shell command on my mac without asking again. Others still ask.");
     nodes.find((node) => node.type === "button" && collectText(node) === "Always allow")?.props.onClick?.();
     expect(onDecide).toHaveBeenLastCalledWith("approve", true);
     nodes.find((node) => node.type === "button" && collectText(node).includes("Allow once"))?.props.onClick?.();

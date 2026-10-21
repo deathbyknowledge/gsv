@@ -76,7 +76,7 @@ Existing standalone deployments should read the
 The web app has five views:
 
 - **Chat** is your Ship conversation, and where you inspect what a run did.
-- **Work** lists your connections and helpers, with files opened from a connection.
+- **Work** lists your connections, then Ship and its helpers, with files opened from a connection.
 - **Memory** shows your personal knowledge pages.
 - **People** holds conversations, message requests and private contacts across Ships, plus your public profile.
 - **Settings** holds **Preferences** (models), **Standing responsibilities**, **Permissions**, **Instructions**, **Messengers**, **MCP servers** and **Logs** for actions and their outcomes. The **Sign-in** section appears only for the administrator, for personal password resets and administrator recovery.

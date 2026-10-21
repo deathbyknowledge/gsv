@@ -334,7 +334,7 @@ The composer’s `+` opens attach a file, find a person, reference a file, creat
 
 Profile lookup uses saved contacts, a gsv.space handle or an explicit GSV address; contacting someone reuses People’s existing request UI and permissions. It does not send through Ship automatically. Memory and People “ask Ship” controls use the same editable text prefills. Exact routine and responsibility IDs, profile URLs and file paths appear in the text, not in hidden controls.
 
-Work’s narrow layout presents connections and helpers as two-line rows. Platform details, activity times and costs remain in their inspectors; the desktop keeps table columns. File browsing starts from a connection’s inspector, with the existing preview and reader/editor.
+Work’s narrow layout presents connections, Ship and helpers as two-line rows. Platform details, activity times and costs remain in their inspectors; the desktop keeps table columns. File browsing starts from a connection’s inspector, with the existing preview and reader/editor.
 
 Memory’s mobile layout shows a full-height page browser or reader/editor. The browser shows loading feedback while collections and pages load. “← pages” returns to the mounted browser without losing its scroll or the editor draft; “continue editing →” resumes the draft. Desktop keeps the split panes. Memory has one quiet new-page action. It reuses the correction editor, refuses a name already in use, and fences page/index writes with the repository head. Existing-page corrections compare the editor baseline before saving. Moving to another view retains the editor; replacing its page or reloading protects unsaved drafts.
 
