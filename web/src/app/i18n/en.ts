@@ -1208,6 +1208,7 @@ export const en = {
   "shell.header.views": "Views",
   "shell.nav.memory": "memory",
   "shell.nav.work": "work",
+  "shell.help.work": "Work",
   "shell.nav.people": "people",
   "shell.nav.settings": "settings",
   "shell.nav.help": "help",

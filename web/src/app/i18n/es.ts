@@ -1209,6 +1209,7 @@ export const es = {
   "shell.header.views": "Vistas",
   "shell.nav.memory": "memoria",
   "shell.nav.work": "trabajo",
+  "shell.help.work": "Trabajo",
   "shell.nav.people": "personas",
   "shell.nav.settings": "ajustes",
   "shell.nav.help": "ayuda",
