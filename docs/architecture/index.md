@@ -162,6 +162,11 @@ paths for clone/fetch/push and an internal `/hyperspace/repos/...` API used by
 the Kernel for reads, writes, search, and upstream
 imports.
 
+Ripgit retries transient Durable Object dispatch failures for `GET` and `HEAD`
+reads at most twice, using a fresh stub and bounded backoff. Writes, overloads,
+and HTTP error responses are not retried; exhausted reads retain the original
+failure diagnostic.
+
 Repository slugs are installation-local. The Gateway binds internal Ripgit
 requests to the resolved installation, and Ripgit includes that identity in
 the physical Repository Durable Object name. Public Git paths remain

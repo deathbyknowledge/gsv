@@ -1,5 +1,6 @@
 mod api;
 mod diff;
+mod dispatch;
 mod git;
 mod hyperspace;
 mod pack;
@@ -83,10 +84,6 @@ async fn forward_hyperspace_request(
     let repo = parts[3];
     let do_name = repository_do_name(installation_id, owner, repo);
     retirement::register(env, installation_id, &do_name).await?;
-    let namespace = env.durable_object("REPOSITORY")?;
-    let id = namespace.id_from_name(&do_name)?;
-    let stub = id.get_stub()?;
-
     let mut target_path = format!("/{}/{}/hyperspace", owner, repo);
     if parts.len() > 4 {
         target_path.push('/');
@@ -110,7 +107,7 @@ async fn forward_hyperspace_request(
     }
 
     let forwarded = Request::new_with_init(&target_url, &init)?;
-    stub.fetch_with_request(forwarded).await
+    dispatch::repository_fetch(env, &do_name, forwarded).await
 }
 
 #[event(fetch)]
@@ -149,10 +146,7 @@ async fn fetch(req: Request, env: Env, _ctx: Context) -> Result<Response> {
         let mut req = req.clone_mut()?;
         req.headers_mut()?
             .set(retirement::RESOURCE_HEADER, &do_name)?;
-        let namespace = env.durable_object("REPOSITORY")?;
-        let id = namespace.id_from_name(&do_name)?;
-        let stub = id.get_stub()?;
-        return stub.fetch_with_request(req).await;
+        return dispatch::repository_fetch(&env, &do_name, req).await;
     }
 
     Response::from_json(&serde_json::json!({
