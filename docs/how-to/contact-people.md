@@ -37,14 +37,26 @@ If someone shares a link or a contact code, **I have an invitation** lets you
 paste it in People.
 
 Ship can create or accept these same invitations when asked, after you choose
-who handles new messages. In Shell, use `contact invite create --handling manual`
-or `--handling ship`. There are no signup-place reservations or registration
-codes. Ordinary contact expiry, cancellation and rate limits still apply.
+who handles new messages. The built-in `contacts` skill covers inviting people,
+accepting links, messaging and coordinating work; load it with `skills show contacts`.
+In Shell, use `contact invite create --handling manual`
+or `--handling ship`. A private invitation needs neither a published profile nor
+an existing contact. If you know the person's email address, Ship can send the
+returned URL with `mail send`, using the ordinary mail approval policy. Use the
+recipient's known email address, including their managed Ship mailbox; a custom
+Ship website address does not establish its email address.
+
+Emailing the link leaves acceptance to the recipient. `mail status DELIVERY_ID`
+tracks the email, while `contact invite list --all` shows whether the invitation was
+accepted. There are no signup-place reservations or registration codes. Ordinary
+contact expiry, cancellation and rate limits still apply.
 
 Choose **connect → use a profile address** to find a saved contact by name or enter
 a handle such as `esteve` or `@esteve`, or someone's public profile address.
 Handles resolve on the operator’s configured primary domain. Accepted legacy domains also display as handles; overlapping domains use the most specific match. Full addresses still reach other operators.
 In Shell, `contact find @esteve` (or a full address) shows the same public profile.
+This lookup only finds published profiles. An unavailable profile does not mean
+the Ship is missing and does not prevent sharing a private invitation.
 Chat’s **+ → find a person** uses the same lookup and lets you mention the profile
 in your draft without contacting them. Review the profile and your prefilled display
 name, choose who handles new messages, then send a first message.
@@ -78,8 +90,11 @@ status beneath the person's name also opens details when space permits.
 The composer uses Chat's growing prompt and selection styling. Its **+** opens the
 file picker for attachments, and **send** appears beside the prompt when there is
 text or an attachment to send. Ship's target and request controls remain in Chat.
-When on, Ship can respond using its ordinary permissions and approval
-rules. Accepting or enabling the setting does not wake Ship or replay existing
+When on, Ship follows the conversation, replies when appropriate within your
+preferences, and brings important updates or decisions to you. Your choice gives
+Ship standing permission for appropriate replies without asking you to approve
+each one; its ordinary capabilities and tool approvals still apply.
+Accepting or enabling the setting does not wake Ship or replay existing
 messages; the next incoming message starts handling. Turning it off ends that
 standing assignment. Replies to tasks you assign separately can still resume
 those tasks until they finish. Messages distinguish the person from their Ship.

@@ -1046,7 +1046,9 @@ transport remains v2. Readers also verify legacy v2 documents. On upgrade, the
 Kernel re-signs only the previously published snapshot at `/profile`, retaining
 the old published alias for links. Legacy HTML links redirect; JSON requests return
 the signed document directly. Concurrent unpublishing fences this conversion.
-`profile.resolve` verifies the signed identity and checks existing contact pins.
+`profile.resolve` reads a published profile, verifies the signed identity and checks
+existing contact pins. A 404 means no public profile is available at that address;
+it does not establish whether the Ship exists or prevent a private invitation.
 Creating a first message binds it to the exact recipient and profile revision the sender reviewed.
 
 First-contact messages expire after 30 days and accept text only, up to 32 KiB. Acceptance promotes
