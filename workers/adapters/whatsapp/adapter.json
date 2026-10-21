@@ -56,6 +56,9 @@
       "WHATSAPP_BUSINESS_ACCOUNT_ID",
       "WHATSAPP_WEBHOOK_BASE_URL",
       "WHATSAPP_DISPLAY_NUMBER"
+    ],
+    "optionalVariables": [
+      "WHATSAPP_UNREACHABLE_CALLING_CODES"
     ]
   }
 }
