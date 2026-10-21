@@ -169,6 +169,10 @@ export type ProcessRunAttachResult =
     }
   | { ok: false; error: string };
 
+/** Files staged for a run's next current-conversation message and not yet sent. */
+export type ProcessRunStagedArgs = { runId: string };
+export type ProcessRunStagedResult = { ok: true; count: number };
+
 export type ProcessResourcesRetainArgs = {
   batchId: string;
   resources: ResourceBlock[];
@@ -208,6 +212,7 @@ export type InternalSyscallDomains = {
   };
   "proc.adapter.deliver": { args: ProcessAdapterDeliverArgs; result: ProcSendResult };
   "proc.run.attach": { args: ProcessRunAttachArgs; result: ProcessRunAttachResult };
+  "proc.run.staged": { args: ProcessRunStagedArgs; result: ProcessRunStagedResult };
   "proc.resources.retain": {
     args: ProcessResourcesRetainArgs;
     result: { resources: ResourceBlock[] };

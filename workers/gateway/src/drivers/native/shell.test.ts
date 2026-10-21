@@ -59,9 +59,10 @@ beforeEach(() => {
   sendFrameToProcessMock.mockReset();
   getConversationByIdMock.mockReset();
   sendFrameToProcessMock.mockImplementation(async (_installationId, _pid, frame) => (
-    frame.type === "req" && frame.call === "proc.setidentity"
-      ? { type: "res", id: frame.id, ok: true, data: { ok: true } }
-      : null
+    frame.type !== "req" ? null
+      : frame.call === "proc.setidentity" ? { type: "res", id: frame.id, ok: true, data: { ok: true } }
+        : frame.call === "proc.run.staged" ? { type: "res", id: frame.id, ok: true, data: { ok: true, count: 0 } }
+          : null
   ));
   generateMock.mockReset();
 });
@@ -4545,6 +4546,26 @@ describe("native administration shell commands", () => {
       expect(rejected.exitCode).toBe(1);
       expect(rejected.stderr).toContain("--responsibility requires a contact destination");
       expect(send).toHaveBeenCalledTimes(1);
+    } finally { send.mockRestore(); }
+  });
+
+  it("refuses a contact send that would leave staged files for the owner's reply", async () => {
+    const send = vi.spyOn(federationService, "handleContactSend").mockResolvedValue({
+      deliveryId: "delivery:photo", conversationId: "conversation:friend", state: "queued",
+    });
+    sendFrameToProcessMock.mockImplementation(async (_installationId, _pid, frame) => {
+      if (frame.type !== "req" || frame.call !== "proc.run.staged") return null;
+      return responseFixture({ type: "res", id: frame.id, ok: true, data: { ok: true, count: 1 } });
+    });
+    try {
+      const ctx = makeContext({ capabilities: ["shell.exec", "contact.send"], processRunId: "run-photo" });
+      const refused = await handleShellExec({
+        input: 'message send --to contact:friend --message "the photo" --also',
+      }, ctx);
+      expect(refused).toMatchObject({ status: "failed", exitCode: 1 });
+      expect(refused.stderr).toContain("1 file staged with `message attach` goes with your next reply in this conversation");
+      expect(refused.stderr).toContain("--attach PATH");
+      expect(send).not.toHaveBeenCalled();
     } finally { send.mockRestore(); }
   });
 
