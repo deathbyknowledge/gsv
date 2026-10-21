@@ -1,5 +1,9 @@
 # Information architecture and terminology audit
 
+> **Temporary.** This folder is working material for the localization effort. Delete it once the
+> i18n work is complete; the glossary's decisions will by then be reflected in the product and the
+> manual themselves.
+
 Groundwork for offering Ship in several languages. Before translation keys exist, the vocabulary
 and the hierarchy of concepts need to be settled, because every inconsistency in the source
 language is multiplied per locale and every label the agent quotes to a person must match what the
