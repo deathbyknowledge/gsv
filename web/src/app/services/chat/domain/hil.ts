@@ -30,12 +30,28 @@ const APPROVE_ANSWERS = new Set(["y", "yes", "yep", "yeah", "ok", "okay", "sure"
 // "stop" is deliberately absent: it must keep going out as a message, which supersedes and aborts the run.
 const DENY_ANSWERS = new Set(["n", "no", "nope", "don't", "dont", "deny"]);
 
+/** One-word messages that must still reach Ship while an approval waits: they supersede and abort the run. */
+const INTERRUPTIONS = new Set(["stop", "wait", "cancel", "abort", "halt", "hold", "nevermind"]);
+
+function normalizeReply(text: string): string {
+  return text.trim().toLowerCase().replace(/[.!]$/, "").trim().replace(/\s+/g, " ");
+}
+
 /** Maps a typed reply to a pending approval onto a decision, so typing an answer does not cancel the request. */
 export function approvalAnswer(text: string): "approve" | "deny" | null {
-  const answer = text.trim().toLowerCase().replace(/[.!]$/, "").trim().replace(/\s+/g, " ");
+  const answer = normalizeReply(text);
   if (APPROVE_ANSWERS.has(answer)) return "approve";
   if (DENY_ANSWERS.has(answer)) return "deny";
   return null;
+}
+
+/**
+ * A lone word that is neither an answer nor an interruption is most likely a misspelt answer: it should stay
+ * in the prompt rather than go out as a message that replaces the request. Sentences and interruptions still go.
+ */
+export function unclearApprovalReply(text: string): boolean {
+  const reply = normalizeReply(text);
+  return reply !== "" && !reply.includes(" ") && approvalAnswer(reply) === null && !INTERRUPTIONS.has(reply);
 }
 
 export function normalizeHilRequest<T>(value: T): ProcHilRequest | null {

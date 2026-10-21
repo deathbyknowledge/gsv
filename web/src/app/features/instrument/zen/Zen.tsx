@@ -13,7 +13,7 @@ import { useGateway } from "../../../services/gateway/GatewayProvider";
 import { useSession } from "../../../services/session/SessionProvider";
 import { LoadingState, Spinner } from "../../../components/ui/Spinner";
 import { MAX_CHAT_PROCESS_MEDIA_BYTES } from "../../../services/chat/domain/processes";
-import { approvalAnswer } from "../../../services/chat/domain/hil";
+import { approvalAnswer, unclearApprovalReply } from "../../../services/chat/domain/hil";
 import {
   decideChatHil,
 } from "../../../services/chat/backend/chatService";
@@ -801,8 +801,8 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
         void decide(answer);
         return true;
       }
-      // A lone word that is not an answer is most likely a typo: keep it in the prompt rather than let it replace the request.
-      if (pendingHil && raw.trim() && !/\s/.test(raw.trim())) {
+      // A lone misspelt answer stays in the prompt rather than replacing the request; "stop" and sentences still go to Ship.
+      if (pendingHil && unclearApprovalReply(raw)) {
         setNote(zenNotice("chat.notice.approvalUnclear"));
         return false;
       }

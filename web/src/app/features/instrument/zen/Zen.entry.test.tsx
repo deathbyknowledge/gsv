@@ -323,6 +323,18 @@ describe("Zen conversation entry", () => {
     } finally { await zen.unmount(); }
   });
 
+  it("lets a typed stop reach Ship and supersede the approval", async () => {
+    activeRunId = "shell-run";
+    send.mockResolvedValueOnce({ message: message("user", "stop"), handlerPid: shipPid, runId: "shell-run" });
+    const zen = await mountedZen();
+    try {
+      await requestShellApproval(zen);
+      await act(() => { expect(zen.props(PromptLine).onSubmit("stop")).toBe(true); });
+      await vi.waitFor(() => expect(send).toHaveBeenCalledWith(expect.objectContaining({ text: "stop" })));
+      expect(GSVClient.prototype.request).not.toHaveBeenCalledWith("proc.hil", expect.anything());
+    } finally { await zen.unmount(); }
+  });
+
   it("invites a typed answer in the composer only while an approval is pending", async () => {
     activeRunId = "shell-run";
     const zen = await mountedZen();

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { approvalAnswer, hilDetailLabel, hilRequestLine, hilRequestSentence, normalizeHilRequest } from "./hil";
+import { approvalAnswer, unclearApprovalReply, hilDetailLabel, hilRequestLine, hilRequestSentence, normalizeHilRequest } from "./hil";
 import { describeCall } from "./callDescription";
 
 const BASE_REQUEST = {
@@ -115,5 +115,11 @@ describe("typed approval answers", () => {
     ["yes!!", null],
   ] as const)("reads %j as %s", (text, decision) => {
     expect(approvalAnswer(text)).toBe(decision);
+  });
+});
+
+describe("unclear approval replies", () => {
+  it.each([["nno", true], ["yess", true], ["okey", true], ["stop", false], ["wait", false], ["cancel", false], ["yes", false], ["no", false], ["yes but later", false], ["", false], ["   ", false]])("%s → held: %s", (text, held) => {
+    expect(unclearApprovalReply(text)).toBe(held);
   });
 });
