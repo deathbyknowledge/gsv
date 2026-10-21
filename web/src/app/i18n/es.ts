@@ -1784,6 +1784,7 @@ export const es = {
   "chat.message.dismiss": "descartar",
   "chat.history.failed": "No se ha podido cargar tu conversación: {error}",
   "chat.history.helperEmpty": "Este ayudante aún no tiene mensajes.",
+  "chat.history.waking": "Ship se está despertando",
   "chat.history.loadingOlder": "cargando mensajes anteriores",
   "chat.history.loadFailed": "No se ha podido cargar el historial.",
   "chat.history.unsupported": "Este gateway no admite el historial tipado de los procesos. Actualiza el gateway para inspeccionar su actividad.",

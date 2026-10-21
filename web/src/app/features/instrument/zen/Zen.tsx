@@ -49,6 +49,7 @@ import { useZenScroll } from "./useZenScroll";
 import { useZenProcess } from "./useZenProcess";
 import { ZenText } from "./ZenText";
 import { ThinkingMark, THINKING_MARK } from "./ThinkingMark";
+import { WakingUp } from "./WakingUp";
 import { ReceiptTimeline, RECEIPT_LAYOUT } from "./ReceiptTimeline";
 import { receiptsForMoments, type RunReceipt } from "./runReceipts";
 import { ZenDraftAttachment, ZenDraftPaste, ZenMedia } from "./ZenMedia";
@@ -60,6 +61,7 @@ import {
   activityDuration,
   answerAttribution,
   answerHistorySnapshot,
+  awaitingFirstMessage,
   defaultPlace,
   momentsFromConversation,
   momentTime,
@@ -101,6 +103,8 @@ export type ZenProps = {
   onSearchRequestHandled?: () => void;
   activityRequest?: ActivityRequest;
   requestPrefill?: string | null;
+  /** The founders' welcome card still stands over the chat, or its state is not known yet; Ship is not waking until it is dismissed. */
+  welcomeOpen?: boolean;
 };
 
 const HISTORY_LIMIT = 400;
@@ -336,7 +340,7 @@ const Receipt = memo(function Receipt({ receipt, who, places, collections, open,
   );
 });
 
-export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, onPrefillUsed, pid: pidProp, onDraftChange, contactReplies, peopleActivity, onPeopleActivity, searchRequested, onSearchRequestHandled, activityRequest, requestPrefill }: ZenProps) {
+export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, onPrefillUsed, pid: pidProp, onDraftChange, contactReplies, peopleActivity, onPeopleActivity, searchRequested, onSearchRequestHandled, activityRequest, requestPrefill, welcomeOpen = false }: ZenProps) {
   const active = useViewActive();
   const browserControl = useBrowserControl();
   const { client, connected } = useGateway();
@@ -600,6 +604,10 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
     const moments = [...fromRuntime, ...fromLocal].sort((a, b) => (a.timestamp ?? 0) - (b.timestamp ?? 0));
     return { moments, receipts: receiptsForMoments(moments, runtime.activeRunId, pid) };
   }, [answerHistory, conversation.rows, conversation.conversation?.id, outbox.messages, localRuns, runtime.activeRunId, runtime.rows, pid, t]);
+
+  /* a Ship that has never spoken: the owner's own chat, the welcome dismissed, all history loaded and none of it missing, with no words from Ship yet; what they read meanwhile is the waking line */
+  const waking = ready && !pidProp && !welcomeOpen && !conversation.historyError && !processRuntime.history.isError
+    && !conversation.hasMore && !processRuntime.hasOlderHistory && awaitingFirstMessage(moments);
 
   /* the glyph thinking mark moves on the same clock as settling text; the dot keeps its own time in the stylesheet */
   const marking = THINKING_MARK === "glyphs" && moments.some((moment) => !moment.text && (moment.thinking || moment.streaming));
@@ -1004,7 +1012,7 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
           <ZenText text={moment.text} places={places} markdown progress={moment.streaming ? -1 : settleProgress(moment)} tick={moment.streaming || settling.has(moment.id) ? tick : 0}
             opened={streamed(moment)} onClick={onTextClick} onFold={pin} />
         ) : moment.thinking || moment.streaming ? (
-          <div class="text"><ThinkingMark tick={tick} /></div>
+          <div class="text">{waking ? <WakingUp /> : null}<ThinkingMark tick={tick} /></div>
         ) : null}
         {moment.media?.map((media, index) => <ZenMedia key={index} media={media} processId={moment.processId ?? pid ?? ""} />)}
         {moment.text && <MomentCopyButton text={moment.text} />}
@@ -1026,7 +1034,7 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
     });
   }, [ready, moments, who, today, timeZone, places, openActivities, toggleActivity, onFleet,
     receipts, memoryCollections.data, onMemory, pendingHil, settling, tick, onTextClick, pin, streamed,
-    pid, connected, outbox.sending, outbox.cancelUpload, outbox.retry, outbox.discard, t]);
+    pid, connected, outbox.sending, outbox.cancelUpload, outbox.retry, outbox.discard, t, waking]);
 
   /* the status line */
   const selectorPlaces = useMemo(() => orderPlaces(targetsQuery.data ?? []), [targetsQuery.data, t]);
@@ -1101,6 +1109,9 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
                   </div>
                 );
               })}
+              {waking && !moments.some((moment) => moment.role === "ship" && moment.thinking) ? (
+                <div class="zen-moment is-ship"><div class="text"><WakingUp /></div></div>
+              ) : null}
               {pendingHil ? (
                 <div class="zen-moment is-approval">
                   <ApprovalCard
