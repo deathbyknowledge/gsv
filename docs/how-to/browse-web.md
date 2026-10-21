@@ -20,7 +20,7 @@ Connecting your personal browser is optional. Use it when you want Ship to work
 in its existing tabs and signed-in sessions, or when a site needs a feature
 available only on your device.
 
-1. In Ship, open **Work**, click **connect** beside Connections, and choose **Browser.** Give it a name or leave the default.
+1. In Ship, open **Work** (called Fleet in older versions), click **connect** beside Connections (Places in older versions), and choose **Browser.** Give it a name or leave the default.
 2. Download the extension, **Your Ship**, and load it at `chrome://extensions` with developer mode on.
 3. Click its toolbar icon, a pale block on a dark square, paste the invitation from Ship, and choose **connect this browser**.
 4. The panel says **Ready** once it's connected. Chrome shows a banner in a tab while your Ship works there; that's normal.
