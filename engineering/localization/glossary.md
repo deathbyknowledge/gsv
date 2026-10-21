@@ -13,7 +13,7 @@ Source: `ia-audit.md` and `term-inventory.md` in this folder. Round-2 items are 
 |---|---|---|
 | **Ship** | The product, the agent you talk to, and its home, as one thing. "Ship is an AI assistant that can use your computer and connected services to get things done." | personal intelligence · personal agent · your agent(s) · installation · space · gateway · deployment · "personal AI computer" · "cloud computer" (for the product) · lowercase "ship" |
 | **your Ship** | Ship as it belongs to one person. | your personal Ship · your agent · your installation · your space |
-| **handle** | Your Ship's name and address: `@name`, living at `name.domain`, with mail at `name@domain`. | Ship address · GSV address · profile address · public address |
+| **handle** | Your Ship's name and address: `@name`, living at `name.domain`. (Email is the separate, optional mailbox term below.) | Ship address · GSV address · profile address · public address |
 | **your account** | The person's account on their Ship. | personal account · owner (except on Accounts/operator pages) · Your session · username |
 | **administrator** | The separate sign-in with full control of a Ship. Short form "admin" on the login toggle only. | root · administrative login · root password ("administrator password") · root credentials ("administrator credentials") |
 | **operator** | The organisation that hosts your Ship. Use its name where known ("Humans & Machines"); "operator" is the fallback word. | hosting operator · installation operator |
@@ -46,12 +46,12 @@ Source: `ia-audit.md` and `term-inventory.md` in this folder. Round-2 items are 
 | **messenger** | A messaging app connected to your Ship (Telegram, WhatsApp, Discord, Slack). | adapter · channel · messaging connection · messenger link · messaging identity · surface · bot (as the concept) |
 | **your Telegram account** (etc.) | The account on a messenger that you connect to your Ship. | identity · Telegram identity · messaging identity |
 | **code** | What you paste to connect a messenger or a computer. | pairing code · link code · one-time link code |
-| **your Ship's email address** | The mailbox your Ship has of its own. | mailbox · managed mail address |
+| **your Ship's email address** | The mailbox your Ship has of its own, when the operator provides managed mail; it uses the handle at the operator's mail domain, which may differ from the Ship's hostname domain. | mailbox · managed mail address |
 | **contact** | A person on another Ship you are connected with, identified by their handle. | Contact (capitalised as a term) · connection (for a person) · relationship |
 | **request** | A message request: someone asking to talk. Only this sense. | Work requests · approval request · composer request · cross-Ship request (round 2 for the others) |
 | **Instructions** | The Settings section holding your standing instructions to Ship and its helpers, in Markdown. | standing context · standing instructions (as a heading) · context files · context.d · personal context · user context · Program context · Home context |
 | **skill** | A reusable procedure Ship loads for relevant work. Manual only. | – |
-| **Permissions** | The Settings section that decides when Ship asks before acting. Rules are **Allow / Ask / Block**. Cards and messenger buttons are **Allow once / Always allow / Block**. "Always" means at account level, and the result text says so. | approval policy (as a heading) · auto / ask / deny (shown values) · run it / don't / always allow · Approve once / Always approve / Deny · "Approved for this conversation." |
+| **Permissions** | The Settings section that decides when Ship asks before acting. Rules are **Allow / Ask / Block**. Cards and messenger buttons are **Allow once / Always allow / Block**. Today "Always" remembers the rule for the requesting Ship or helper on that target, and the interface says so; making it account-level is HAM-1099, after which the wording follows. | approval policy (as a heading) · auto / ask / deny (shown values) · run it / don't / always allow · Approve once / Always approve / Deny · "Approved for this conversation." |
 | **capability** | A kind of action Ship may be allowed to take. Used inside Permissions; elsewhere "what Ship can do". | – |
 
 ## Reverted after Steve's review
