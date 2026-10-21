@@ -145,8 +145,8 @@ denied, cancelled and stale-expired calls all use the same store transition
 notification. No recurring timer or history query drives this feed.
 
 Open **Settings → Logs** to inspect the complete list and an individual
-action's arguments, outcome and failure details. Process links open Work's
-helper inspector. Work retains its compact activity summaries.
+action's arguments, outcome and failure details. Rows for Ship and for
+helpers open Work's inspector. Work retains its compact activity summaries.
 On phones, each Logs entry stacks its action, outcome, connection and time without horizontal
 scrolling. Tap the entry for its arguments, purpose and process; **raw** switches the action
 label to the syscall name.

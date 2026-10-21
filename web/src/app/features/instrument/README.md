@@ -219,7 +219,7 @@ Settings owns model order and creation, permissions, instructions, and integrati
 
 Processes update from owner-scoped registry signals even when created or run from another client. WireSync patches known runtime states and exits locally; new processes and changed labels reload only the process list. A change cancels any older list snapshot before it can overwrite current state. Closed lists become stale without background reads, and reconnect recovers missed changes. Raw run events remain for explicit Process observation, and registry-only notices do not reload history.
 
-Only interactive processes offer a conversation action. Logs helper links and delegated responsibility assignees select the helper inspector; Ship assignees retain the direct Ship shortcut.
+Only interactive processes offer a conversation action. Logs links for Ship and helper rows, and delegated responsibility assignees, select the Work inspector; Ship assignees retain the direct Ship shortcut.
 
 Chat accepts attachments through the + button beside the prompt, paste, or drag-and-drop. Files stay local until Send, use the shared 25 MiB limit, and travel through the existing staged body upload service. Send moves the draft into the optimistic outbox; retries reuse its identity and upload paths, cancellation stops uploads and cleans staging, and a completed send preserves text/files added in the meantime. View changes retain the draft and uploads; teardown warns before discarding unsent work. Attachments cannot be silently consumed by a direct shell command. Canonical resource references and older media descriptors use the same reader in both chat surfaces; Chat renders images, documents, audio and video, including messages containing only media.
 
