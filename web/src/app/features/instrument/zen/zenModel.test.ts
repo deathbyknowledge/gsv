@@ -11,6 +11,7 @@ import {
   answerAttribution,
   answerHistorySnapshot,
   argumentThatMatters,
+  awaitingFirstMessage,
   defaultPlace,
   formatSeconds,
   linkPlaceReferences,
@@ -1043,6 +1044,27 @@ describe("memoryPagesForMoment", () => {
     const value = moment([read("read", "/src/repos/owner/wiki/pages/example.md")]);
     expect(memoryPagesForMoment(value, [personal, { ...personal, id: "other" }])).toEqual([]);
     expect(memoryPagesForMoment(value, [personal, { ...personal, repo: "other/wiki" }])).toEqual([]);
+  });
+});
+
+describe("awaitingFirstMessage", () => {
+  const moment = (partial: Partial<Moment> & { id: string; role: Moment["role"] }): Moment =>
+    ({ text: "", streaming: false, thinking: false, runId: null, timestamp: 1, activities: [], narration: "", ...partial });
+
+  it("holds while Ship has only thought, worked or been written to", () => {
+    expect(awaitingFirstMessage([])).toBe(true);
+    expect(awaitingFirstMessage([moment({ id: "think", role: "ship", thinking: true, runId: "run-1" })])).toBe(true);
+    expect(awaitingFirstMessage([
+      moment({ id: "you", role: "human", text: "Hello?" }),
+      moment({ id: "work", role: "ship", runId: "run-1", activities: [{ key: "a", target: "gsv", calls: [], live: false, you: false, startedAt: 1, endedAt: 2 }] }),
+    ])).toBe(true);
+  });
+
+  it("ends at Ship's first words, media or stream, however they arrived", () => {
+    expect(awaitingFirstMessage([moment({ id: "said", role: "ship", text: "Hi, I'm Ship." })])).toBe(false);
+    expect(awaitingFirstMessage([moment({ id: "draft", role: "ship", streaming: true })])).toBe(false);
+    expect(awaitingFirstMessage([moment({ id: "pic", role: "ship", media: [{ kind: "image" }] })])).toBe(false);
+    expect(awaitingFirstMessage([moment({ id: "note", role: "note", text: "Earlier history was folded." })])).toBe(true);
   });
 });
 

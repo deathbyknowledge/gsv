@@ -396,6 +396,11 @@ function isToolRow(row: ChatTranscriptRow): boolean {
  * Group a run's tool rows by the place they touched, in first-touch order.
  * The last activity of an active run is live while its latest call is unfinished.
  */
+/** Nothing from Ship has reached the conversation yet: no words, media or stream, however much it has thought or done. */
+export function awaitingFirstMessage(moments: readonly Moment[]): boolean {
+  return !moments.some((moment) => moment.role === "ship" && (moment.text !== "" || Boolean(moment.media?.length) || moment.streaming));
+}
+
 /** A `message` command is the ship sending the moment itself; it is not something it did along the way. */
 export function isMessageSend(row: ChatTranscriptRow): boolean {
   return row.toolSyscall === null && (row.toolName === "Send"

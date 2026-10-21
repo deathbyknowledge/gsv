@@ -233,6 +233,23 @@
 @media (prefers-reduced-motion: reduce) {
   .zen-thinking.is-dot .dot { animation: none; opacity: 0.7; }
 }
+/* a Ship that has never spoken: the line stands where its first words will, breathing, its dots walking one at a time */
+.zen-moment .text .zen-waking {
+  margin: 0 0 0.3em;
+  color: var(--text-dim);
+  animation: zen-waking-breathe 3.6s ease-in-out infinite;
+}
+.zen-waking-dots i { font-style: normal; }
+.zen-waking-dots i:nth-child(1) { animation: zen-waking-dot-1 1.6s steps(1) infinite; }
+.zen-waking-dots i:nth-child(2) { animation: zen-waking-dot-2 1.6s steps(1) infinite; }
+.zen-waking-dots i:nth-child(3) { animation: zen-waking-dot-3 1.6s steps(1) infinite; }
+@keyframes zen-waking-breathe { 0%, 100% { opacity: 0.55; } 50% { opacity: 1; } }
+@keyframes zen-waking-dot-1 { 0%, 24% { opacity: 0; } 25%, 100% { opacity: 1; } }
+@keyframes zen-waking-dot-2 { 0%, 49% { opacity: 0; } 50%, 100% { opacity: 1; } }
+@keyframes zen-waking-dot-3 { 0%, 74% { opacity: 0; } 75%, 100% { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) {
+  .zen-moment .text .zen-waking, .zen-waking-dots i { animation: none; opacity: 1; }
+}
 
 /* activity along the target axis: collapsed by default, the raw run one click away */
 .activity {

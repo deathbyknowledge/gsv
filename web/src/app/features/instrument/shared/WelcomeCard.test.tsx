@@ -105,6 +105,27 @@ describe("welcome card", () => {
     expect(request).toHaveBeenCalledWith("sys.config.get", { key: "users/1001/ui/welcome_card_seen" });
   });
 
+  it("reports that it stands until this person dismisses it", async () => {
+    const onOpenChange = vi.fn<(open: boolean) => void>();
+    function Reporting() { tree = WelcomeCard({ onOpenChange }); return null; }
+    root = createTestRoot("welcome standing");
+    await root.render(<GatewayProvider><Reporting /></GatewayProvider>);
+    expect(onOpenChange).toHaveBeenLastCalledWith(true);
+    await vi.waitFor(() => expect(collectText(tree)).toContain("Welcome to your Ship!"));
+    expect(onOpenChange).toHaveBeenLastCalledWith(true);
+    const tryIt = collectNodes(tree).find((node) => node.type === "button" && collectText(node.props.children) === "Try it out!")!;
+    await act(async () => { await tryIt.props.onClick!(); });
+    await vi.waitFor(() => expect(onOpenChange).toHaveBeenLastCalledWith(false));
+    await root.unmount();
+
+    onOpenChange.mockClear();
+    root = createTestRoot("welcome already seen");
+    await root.render(<GatewayProvider><Reporting /></GatewayProvider>);
+    expect(onOpenChange).toHaveBeenLastCalledWith(true);
+    await vi.waitFor(() => expect(onOpenChange).toHaveBeenLastCalledWith(false));
+    expect(collectText(tree)).not.toContain("Welcome to your Ship!");
+  });
+
   it("does not show to the root account", async () => {
     uid = 0;
     root = createTestRoot("root welcome card");

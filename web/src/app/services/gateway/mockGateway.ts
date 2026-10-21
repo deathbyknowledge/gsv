@@ -5,6 +5,9 @@
  * `?mock=1` (http://localhost:5180/?mock=1); production builds drop this module. The choice sticks to
  * the tab, since Instrument rewrites the URL on navigation, and `?mock=0` turns it off again. A seeded
  * session lands straight in Zen signed in; with storage cleared, any username and password sign in.
+ * `?fresh=1` is a brand-new space instead: no conversation, the welcome card up, and dismissing it
+ * wakes Ship the way the Kernel does, a quiet beat, a long think, then the welcome landing whole.
+ * `?fresh=0` returns to the seeded conversation.
  * Of the config, this browser keeps only the welcome card's dismissal and the Language preference, so
  * Settings can switch the interface language; other settings refuse to save.
  * The real GSVClient runs unchanged over an in-memory WebSocket, so the frames, statuses and signals
@@ -56,6 +59,8 @@ import {
 import { z } from "zod";
 
 const MOCK_FLAG = "gsv.ui.mock";
+const FRESH_FLAG = "gsv.ui.mock.fresh";
+const WELCOME_SEEN = "gsv.mock.welcome_seen";
 /** The session service's persisted token (sessionService.ts); seeding one is how the mock signs in without the form. */
 const SESSION_TOKEN_KEY = "gsv.ui.session.token.v1";
 const SEEDED_TOKEN_ID = "mock-session";
@@ -70,6 +75,21 @@ export function mockGatewayRequested(): boolean {
       forgetSeededSession();
     }
     return window.sessionStorage.getItem(MOCK_FLAG) === "1";
+  } catch {
+    return false;
+  }
+}
+
+/** A fresh space sticks to the tab like the mock itself; asking for it again puts the welcome card back up. */
+function freshRequested(): boolean {
+  try {
+    const asked = new URLSearchParams(window.location.search).get("fresh");
+    if (asked === "1") {
+      window.sessionStorage.setItem(FRESH_FLAG, "1");
+      window.localStorage.removeItem(WELCOME_SEEN);
+    }
+    if (asked === "0") window.sessionStorage.removeItem(FRESH_FLAG);
+    return window.sessionStorage.getItem(FRESH_FLAG) === "1";
   } catch {
     return false;
   }
@@ -100,7 +120,7 @@ const HELPER = { pid: "p-helper", label: "tidy the notes archive" };
 const SHIP_CONVERSATION = "c-ship";
 /** The config this browser keeps for the mock, with its storage key: the welcome card's dismissal and the owner's language. */
 const STORED_CONFIG = new Map([
-  [`users/${OWNER.uid}/ui/welcome_card_seen`, "gsv.mock.welcome_seen"],
+  [`users/${OWNER.uid}/ui/welcome_card_seen`, WELCOME_SEEN],
   [`users/${OWNER.uid}/locale/language`, "gsv.mock.language"],
 ]);
 const MODEL = { api: "anthropic-messages", provider: "anthropic", model: "claude-sonnet-4-5", responseModel: "claude-sonnet-4-5-20250929" };
@@ -122,6 +142,8 @@ const LINES: [who: "you" | "ship", createdAt: number, text: string][] = [
   ["ship", at(0, 8, 6), "Nothing urgent. The studio backup ran clean overnight after I cleared the old build caches, and Lena replied about the intro; she is in. Standup is at 9:30."],
 ];
 
+const WELCOME = "Hi, I'm Ship. I'm here to do the things you'd rather not deal with: booking restaurants, planning trips, sorting out emails, managing your calendar, even making purchases and tracking parcels for you. Tell me a little about yourself. What do you do, and is there anything I can help with?";
+const FIRST_THOUGHT = "A new owner, and the welcome responsibility comes first. I know nothing about them yet, so the brief says to introduce myself briefly, ask them to introduce themselves, then yield and wait for the reply.";
 const SHORT_REPLY = "Done. The action items are in your notes under Mara, and the reminder is set for Wednesday evening.";
 const ECHO_REPLY = "Noted. I will take care of it and let you know when it is done.";
 const LONG_REPLY = [
@@ -270,7 +292,8 @@ function approvalFor(trigger: string): ApprovalScenario | null {
 type OpenStep = { step: Step; callId: string; executionId: string; startedAt: number; seq: number };
 type ApprovalScenario = { step: Step; approved: string; denied: string };
 type PendingApproval = ApprovalScenario & { request: ProcHilRequest };
-type OpenRun = { runId: string; question: ConversationMessage; open: OpenStep | null; approval: PendingApproval | null; superseded: boolean };
+/** The Kernel's welcome wake has no question: that run was started by a responsibility, not a message. */
+type OpenRun = { runId: string; question: ConversationMessage | null; open: OpenStep | null; approval: PendingApproval | null; superseded: boolean };
 type Revised = { revision: number; record: ProcHistoryRecord };
 type World = {
   messages: ConversationMessage[]; sequence: number;
@@ -281,6 +304,7 @@ type World = {
   run: OpenRun | null; connections: number; sockets: Set<MockSocket>;
 };
 const world: World = { messages: [], sequence: 0, records: [], revision: 1, messageId: 0, recordId: 0, ledger: [], context: null, contextRevision: 0, run: null, connections: 0, sockets: new Set() };
+const fresh = freshRequested();
 let streamSeq = 0;
 
 function record(who: "you" | "ship", text: string, createdAt: number, runId: string): ConversationMessage {
@@ -298,7 +322,7 @@ function record(who: "you" | "ship", text: string, createdAt: number, runId: str
   world.messages.push(message);
   return message;
 }
-for (const [who, createdAt, text] of LINES) record(who, text, createdAt, `run-${world.sequence + 1}`);
+if (!fresh) for (const [who, createdAt, text] of LINES) record(who, text, createdAt, `run-${world.sequence + 1}`);
 
 /** One history group: the records share a messageId and land in one revision, the way a Process appends them. */
 function appendGroup(runId: string, data: ProcHistoryRecordData[], metadata?: ProcMessageMetadata): number {
@@ -647,6 +671,40 @@ async function answer(run: OpenRun, trigger: string): Promise<void> {
   await send(run, trigger === "/stream" ? LONG_REPLY : trigger === "/reply" ? SHORT_REPLY : ECHO_REPLY, trigger === "/stream");
 }
 
+/**
+ * The Kernel wakes a fresh Ship for the welcome: the alarm's quiet beat, then a run with no question that
+ * assembles its context in silence, thinks at length, and lands its first message whole. Clients hear
+ * only `proc.run.started`, the thinking stream and the commit, as they do from the gateway.
+ */
+async function wake(): Promise<void> {
+  if (world.run || world.messages.length > 0) return;
+  await wait(jitter(1500));
+  if (world.run || world.messages.length > 0) return;
+  const run: OpenRun = { runId: "run-welcome", question: null, open: null, approval: null, superseded: false };
+  world.run = run;
+  announce("running", run.runId);
+  broadcast("proc.run.started", { pid: SHIP.pid, runId: run.runId, reason: "r12y.ready", queuedCount: 0, timestamp: Date.now() });
+  changed(["context"], { context: contextState(run) });
+  await wait(jitter(2500));
+  if (!live(run)) return;
+  const content: AssistantContent[] = [{ type: "thinking", thinking: "" }];
+  stream(run, { type: "thinking_start", contentIndex: 0, partial: partial(content) });
+  for (const piece of FIRST_THOUGHT.split(/(?<=[,.;] )/)) {
+    await wait(jitter(700));
+    if (!live(run)) return;
+    content[0] = { type: "thinking", thinking: `${thinkingBlock.parse(content[0]).thinking}${piece}` };
+    stream(run, { type: "thinking_delta", contentIndex: 0, delta: piece, partial: partial(content) });
+  }
+  stream(run, { type: "thinking_end", contentIndex: 0, content: FIRST_THOUGHT, partial: partial(content) });
+  await wait(jitter(800));
+  if (!live(run)) return;
+  // No routed client, so nothing streams: the welcome lands whole, a plain first message with no receipt under it.
+  const message = record("ship", WELCOME, Date.now(), run.runId);
+  broadcast("message.committed", { message, directed: false });
+  appendGroup(run.runId, [{ kind: "message", payload: { direction: "out", text: WELCOME, media: [], origin: { kind: "run-control", provenance: { source: "process" } }, conversationId: SHIP_CONVERSATION, conversationMessageId: message.id, deliveryId: `send-${run.runId}` } }]);
+  finishRun(run, WELCOME);
+}
+
 /** A control trigger while a run is open: the open step finishes and the run replies under the question that opened it. */
 async function resolve(run: OpenRun, trigger: string): Promise<void> {
   await wait(0);
@@ -660,7 +718,7 @@ type Sent = { message: ConversationMessage; runId: string };
 function receive(text: string): Sent {
   const trigger = text.trim().toLowerCase();
   const open = world.run;
-  if (open && !open.approval && (trigger === "/reply" || trigger === "/stream")) {
+  if (open?.question && !open.approval && (trigger === "/reply" || trigger === "/stream")) {
     // The script stops at its next check; a continuation of the same run answers instead.
     const tail: OpenRun = { ...open, superseded: false };
     open.superseded = true;
@@ -707,6 +765,8 @@ function route(socket: MockSocket, id: string, call: string, args: JsonValue): s
   switch (call) {
     case "sys.connect":
       world.sockets.add(socket);
+      // Reconnecting after the card was dismissed resumes the welcome, as the Kernel does on sign-in.
+      if (fresh && window.localStorage.getItem(WELCOME_SEEN) === "1") void wake();
       return respond(id, connectResult(connectArgs.safeParse(args).data?.protocol ?? 4));
     case "sys.token.create": {
       const token: SysTokenCreateResult = { token: { tokenId: SEEDED_TOKEN_ID, token: "mock-session-token", tokenPrefix: "mock", uid: OWNER.uid, kind: "human", label: "gsv-ui-session", peerId: null, createdAt: Date.now(), expiresAt: tokenArgs.parse(args).expiresAt ?? null } };
@@ -726,6 +786,7 @@ function route(socket: MockSocket, id: string, call: string, args: JsonValue): s
       const storage = STORED_CONFIG.get(key);
       if (!storage) return refuse(id, 501, `The mock gateway does not implement ${call} for ${key}.`);
       window.localStorage.setItem(storage, value);
+      if (fresh && storage === WELCOME_SEEN && value === "1") void wake();
       return respond(id, { ok: true });
     }
     case "account.list": return respond(id, { accounts });
