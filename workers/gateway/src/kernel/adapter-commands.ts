@@ -50,9 +50,9 @@ export function renderAdapterProcessList(processes: ProcListEntry[]): string {
       : "[SHIP] unavailable",
   ];
   if (work.length === 0) {
-    lines.push("", "WORK: none");
+    lines.push("", "HELPERS: none");
   } else {
-    lines.push("", "WORK:", ...work.map((process) => `- ${describeProcess(process)}`));
+    lines.push("", "HELPERS:", ...work.map((process) => `- ${describeProcess(process)}`));
   }
   if (processes.length > visible.length) {
     lines.push(`…and ${processes.length - visible.length} more.`);
