@@ -24,6 +24,7 @@ const mocks = vi.hoisted(() => ({
     ReturnType<ManagedTelegramDependencies["useInspectConsoleAdapterPairing"]>["mutateAsync"]
   >(),
   onConnected: vi.fn<(detailId: string) => void>(),
+  unreachableCallingCodes: ["55", "62"],
 }));
 
 const dependencies: ManagedTelegramDependencies = {
@@ -35,6 +36,7 @@ const dependencies: ManagedTelegramDependencies = {
         accountId: "managed",
         configured: true,
         installUrl: "https://wa.me/34600000000?text=%2Flink",
+        unreachableCallingCodes: mocks.unreachableCallingCodes,
       },
       isError: false,
       error: null,
@@ -80,6 +82,7 @@ beforeEach(async () => {
   mocks.currentFlow = null;
   mocks.currentStep = -1;
   mocks.infoAdapter = "";
+  mocks.unreachableCallingCodes = ["55", "62"];
   mocks.inspect.mockReset();
   mocks.onConnected.mockReset();
   mocks.inspect.mockResolvedValue({
@@ -126,6 +129,24 @@ describe("ManagedWhatsAppOnboardingFlow", () => {
     expect(instructions?.props.text).toContain("send /link to get a new code");
     const open = nodes().find((node) => node.props.href === "https://wa.me/34600000000?text=%2Flink");
     expect(collectText(open)).toBe("OPEN WHATSAPP");
+  });
+
+  it("warns about the countries the adapter reports the operator's number cannot reach", async () => {
+    const warning = () => nodes().find((node) => node.props.text?.includes("cannot connect"));
+    expect(warning()?.props.text).toContain("Brazil (+55) and Indonesia (+62)");
+
+    await root?.unmount();
+    mocks.unreachableCallingCodes = ["62"];
+    root = createTestRoot("Managed WhatsApp onboarding harness");
+    await root.render(
+      <ManagedWhatsAppOnboardingFlow
+        onBack={() => undefined}
+        onConnected={mocks.onConnected}
+        dependencies={dependencies}
+      />,
+    );
+    expect(warning()?.props.text).toContain("WhatsApp numbers in Indonesia (+62) cannot connect");
+    expect(warning()?.props.text).not.toContain("Brazil");
   });
 
   it("reveals the profile name and masked number before linking, then opens the account detail", async () => {

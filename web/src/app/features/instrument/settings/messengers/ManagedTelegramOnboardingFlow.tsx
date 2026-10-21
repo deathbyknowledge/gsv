@@ -15,7 +15,7 @@ import {
   useInspectConsoleAdapterPairing,
 } from "../../../../services/system/useConsoleData";
 import { MESSENGER_CAPABILITIES, adapterDocUrl } from "./messengerDocs";
-import { useT } from "../../../../i18n/locale";
+import { useT, type Translate } from "../../../../i18n/locale";
 
 type ManagedTelegramOnboardingFlowProps = {
   onBack: () => void;
@@ -91,6 +91,17 @@ export function ManagedWhatsAppOnboardingFlow({ onBack, onConnected, dependencie
   return <ManagedMessengerOnboardingFlow adapterId="whatsapp" onBack={onBack} onConnected={onConnected} dependencies={dependencies} />;
 }
 
+/** Names the countries the operator's WhatsApp number cannot reach, as the adapter reports them. */
+function whatsAppCountryList(codes: readonly string[], t: Translate): string {
+  const sorted = [...codes].sort();
+  if (sorted.join(",") === "55,62") return t("settings.pairing.whatsappCountries.both");
+  return sorted
+    .map((code) => code === "55"
+      ? t("settings.pairing.whatsappCountries.brazil")
+      : code === "62" ? t("settings.pairing.whatsappCountries.indonesia") : `+${code}`)
+    .join(", ");
+}
+
 /** The operator's WhatsApp number travels as a wa.me chat link; show it as a number. */
 function whatsAppNumberFromChatUrl(value: string | undefined): string {
   if (!value) return "";
@@ -127,6 +138,7 @@ function ManagedMessengerOnboardingFlow({
   const platform = isSlack ? "Slack" : isDiscord ? "Discord" : isWhatsApp ? "WhatsApp" : "Telegram";
   const botUsername = info.data?.botUsername?.replace(/^@/, "") ?? "";
   const chatNumber = isWhatsApp ? whatsAppNumberFromChatUrl(info.data?.installUrl) : "";
+  const unreachable = isWhatsApp ? info.data?.unreachableCallingCodes ?? [] : [];
   const launchUrl = installsApp || isWhatsApp
     ? info.data?.installUrl ?? adapterDocUrl(adapterId)
     : botUsername ? `https://t.me/${botUsername}` : "https://telegram.org/";
@@ -203,6 +215,11 @@ function ManagedMessengerOnboardingFlow({
               <Alert variant="error" text={info.error?.message ?? t("settings.pairing.loadFailed", { platform })} />
             ) : !info.data?.configured ? (
               <Alert variant="warning" text={t("settings.pairing.notConfigured", { platform })} />
+            ) : unreachable.length ? (
+              <Alert
+                variant="warning"
+                text={t("settings.pairing.whatsappUnreachable", { countries: whatsAppCountryList(unreachable, t) })}
+              />
             ) : null}
             <div class="gsv-cf-footer">
               <Button variant="secondary" label={t("settings.pairing.back")} onClick={onBack} />

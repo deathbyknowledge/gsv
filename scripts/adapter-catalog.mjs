@@ -39,6 +39,7 @@ const workerDeployment = {
     },
     requiredSecrets: { type: "array", items: bindingName },
     requiredVariables: { type: "array", items: bindingName },
+    optionalVariables: { type: "array", items: bindingName },
     crons: { type: "array", items: { type: "string", minLength: 1 } },
     lifecycle: {
       type: "object", additionalProperties: false, required: ["entrypoint", "namespaces"],
