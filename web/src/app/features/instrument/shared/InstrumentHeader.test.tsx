@@ -35,12 +35,12 @@ describe("Instrument header", () => {
     "keeps Search out of the top bar while %s is open",
     async (distance: Distance) => {
       const buttons = await headerButtons(distance);
-      expect(buttons.map(collectText)).toEqual(["c chat", "f fleet", "m memory", "p people", "s settings", "? help"]);
+      expect(buttons.map(collectText)).toEqual(["c chat", "f work", "m memory", "p people", "s settings", "? help"]);
     },
   );
 
   it("keeps Search out of the Chat top bar", async () => {
-    expect((await headerButtons("zen")).map(collectText)).toEqual(["c chat", "f fleet", "m memory", "p people", "s settings", "? help"]);
+    expect((await headerButtons("zen")).map(collectText)).toEqual(["c chat", "f work", "m memory", "p people", "s settings", "? help"]);
   });
 
   it.each(["zen", "fleet", "memory", "people", "settings"] as const)(

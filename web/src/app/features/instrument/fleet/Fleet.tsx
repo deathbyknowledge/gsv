@@ -376,7 +376,7 @@ export function Fleet({ openRequest, onZen, onCommand, onDirtyChange, onActivity
                     tabIndex={0}
                     onClick={() => selectRow(processRow(process.pid))}
                   >
-                    <td class="name">{process.personal ? "ship" : process.label}</td>
+                    <td class="name">{process.personal ? "Ship" : process.label}</td>
                     <td class="id" title={process.pid}>{shortPid(process.pid)}</td>
                     <td class="dim"><button type="button" class="fleet-count-action" aria-label={t("fleet.processes.responsibilitiesFor", { name: process.personal ? "ship" : process.label })} onClick={(event) => { event.stopPropagation(); onActivity({ processId: process.pid }); }}>
                       <ResponsibilityCount count={work.current.isPending || work.current.isError ? null : responsibilityCount(process.pid)} more={work.current.hasNextPage} />
@@ -563,7 +563,7 @@ export function ProcessInspector({ client, process, requestedApprovalId, model, 
 
   return (
     <div>
-      <h3>{process.personal ? "ship" : process.label}</h3>
+      <h3>{process.personal ? "Ship" : process.label}</h3>
       <div class="sub">
         {shortPid(process.pid)} · {t(processStateLabel(process.state))}
       </div>

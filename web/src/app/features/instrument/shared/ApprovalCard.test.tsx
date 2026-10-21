@@ -32,16 +32,16 @@ describe("approval card", () => {
     const tree = await approvalCardTree({ ...props, request, onDecide });
     const nodes = collectNodes(tree);
     const hint = nodes.find((node) => node.type === Hint);
-    expect(hint?.props.text).toBe("Allow this process to run any shell command on my mac without asking again. Other processes still ask.");
-    nodes.find((node) => node.type === "button" && collectText(node) === "always allow")?.props.onClick?.();
+    expect(hint?.props.text).toBe("Allow this conversation to run any shell command on my mac without asking again. Other conversations still ask.");
+    nodes.find((node) => node.type === "button" && collectText(node) === "Always allow")?.props.onClick?.();
     expect(onDecide).toHaveBeenLastCalledWith("approve", true);
-    nodes.find((node) => node.type === "button" && collectText(node).includes("run it"))?.props.onClick?.();
+    nodes.find((node) => node.type === "button" && collectText(node).includes("Allow once"))?.props.onClick?.();
     expect(onDecide).toHaveBeenLastCalledWith("approve");
-    nodes.find((node) => node.type === "button" && collectText(node).includes("don't"))?.props.onClick?.();
+    nodes.find((node) => node.type === "button" && collectText(node).includes("Block"))?.props.onClick?.();
     expect(onDecide).toHaveBeenLastCalledWith("deny");
     onDecide.mockClear();
     const disabled = await approvalCardTree({ ...props, request, onDecide, disabled: true });
-    const remember = collectNodes(disabled).find((node) => node.type === "button" && collectText(node) === "always allow");
+    const remember = collectNodes(disabled).find((node) => node.type === "button" && collectText(node) === "Always allow");
     expect(remember?.props.disabled).toBe(true);
     remember?.props.onClick?.();
     expect(onDecide).not.toHaveBeenCalled();
@@ -51,7 +51,7 @@ describe("approval card", () => {
     { ...request, target: "targets/*" },
     { ...request, syscall: "mail.send" },
   ])("does not offer shell permission for $syscall on $target", async (pending) => {
-    expect(collectText(await approvalCardTree({ ...props, request: pending }))).not.toContain("always allow");
+    expect(collectText(await approvalCardTree({ ...props, request: pending }))).not.toContain("Always allow");
   });
 
   it("leads with the model's purpose and folds the command away", async () => {

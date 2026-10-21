@@ -24,7 +24,7 @@ the cached session token from `gsv auth login`, or prompt/login when needed.
 
 ## Chat and Shell
 
-When the operator enables feedback, the Instrument header has a **feedback** action.
+When the operator enables feedback, the web app's header has a **feedback** action.
 Reports include the text you submit, your Ship, account, and app/server versions.
 The optional **Include last 20 Ship messages** checkbox starts unchecked. It
 captures recent messages, thinking, tool inputs/results and runtime events through
@@ -99,7 +99,7 @@ unsupported website storage. Inspect save status and per-site usage with
 saved logins and stops the browser using them.
 Ordinary browsers
 remember logins automatically. Use `browser handoff` when Ship needs a human to
-complete a sign-in; opening Fleet's browser view otherwise leaves Ship running
+complete a sign-in; opening Work's browser view otherwise leaves Ship running
 and accepts direct input. These are native target commands, available to Ship
 through Shell as well. See [cloud browsers](/how-to/cloud-browsers) for saved
 logins, recovery after a lost response, and the complete sign-in flow.
@@ -550,7 +550,7 @@ release. Download and unzip the extension, load its folder from
 `chrome://extensions` with developer mode enabled, then open **Your Ship** from
 the toolbar or Extensions button and paste `code` into its panel.
 
-Open **Fleet**, click **connect** beside Places, name the computer and create an invitation.
+Open **Work**, click **connect** beside Connections, name the computer and create an invitation.
 After installing Ship, paste the provided command:
 
 ```bash

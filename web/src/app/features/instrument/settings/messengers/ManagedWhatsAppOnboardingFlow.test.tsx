@@ -142,7 +142,7 @@ describe("ManagedWhatsAppOnboardingFlow", () => {
     expect(nodeWithLabel(nodes(), "Hank Human").props.sub).toBe("WhatsApp number +34•••••••89");
     expect(collectText(nodes())).not.toContain("34611111189");
 
-    await click("YES, CONNECT THIS IDENTITY");
+    await click("YES, CONNECT THIS ACCOUNT");
     expect(mocks.confirm).toHaveBeenCalledWith({
       adapter: "whatsapp",
       code: "ABCD-EFGH-JKLM",

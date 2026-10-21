@@ -31,10 +31,10 @@ it("shows the configured Ship address in fresh Desktop signup before verificatio
     const create = () => collectNodes(tree).find((node) => node.props["aria-label"] === "Create your Ship")!;
     await vi.waitFor(() => expect(create().props.disabled).toBe(false));
     await act(() => { create().props.onClick?.(); });
-    await vi.waitFor(() => expect(collectText(tree)).toMatch(/Ship address\s+your-name\s*\.\s*fleet\.example/));
+    await vi.waitFor(() => expect(collectText(tree)).toMatch(/Handle or address\s+your-name\s*\.\s*fleet\.example/));
     const handle = collectNodes(tree).find((node) => node.type === TextInput && node.props.label === "Handle")!;
     await act(() => { handle.props.onChange?.("luna"); });
-    expect(collectText(tree)).toMatch(/Ship address\s+luna\s*\.\s*fleet\.example/);
+    expect(collectText(tree)).toMatch(/Handle or address\s+luna\s*\.\s*fleet\.example/);
     expect(fetcher).not.toHaveBeenCalled();
   } finally { await root.unmount(); }
 });

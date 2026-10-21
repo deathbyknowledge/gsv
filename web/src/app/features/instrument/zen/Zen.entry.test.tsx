@@ -233,7 +233,7 @@ describe("Zen conversation entry", () => {
       await act(() => { placeButton("Laptop")!.props.onClick!(); });
       expect(zen.props(PromptLine).place.id).toBe("laptop");
       expect(voice().scope).not.toBe(initialScope);
-      await act(() => { placeButton("your cloud")!.props.onClick!(); });
+      await act(() => { placeButton("Ship’s home")!.props.onClick!(); });
       expect(voice().scope).toBe(initialScope);
     } finally { await zen.unmount(); }
   });
@@ -340,7 +340,7 @@ describe("Zen conversation entry", () => {
       zen.props(BrowserVoiceControls).prompt.current = input;
       await act(() => { prompt().onInput?.("Keep this draft"); });
       const cloud = () => zen.nodes().find((node) => node.type === "button"
-        && node.props["aria-label"] === "Use your cloud for the next message or command")!;
+        && node.props["aria-label"] === "Use Ship’s home for the next message or command")!;
       await act(() => { cloud().props.onClick!(); });
       expect(focus).toHaveBeenCalledOnce();
       expect(setValue).not.toHaveBeenCalled();
@@ -359,7 +359,7 @@ describe("Zen conversation entry", () => {
     const zen = await mountedZen();
     try {
       const cloud = () => zen.nodes().find((node) => node.type === "button"
-        && node.props["aria-label"] === "Use your cloud for the next message or command")!;
+        && node.props["aria-label"] === "Use Ship’s home for the next message or command")!;
       const connect = () => zen.nodes().find((node) => node.type === "button" && node.props.class === "zen-connect-place")!;
       expect(cloud().props.class).toBe("zen-place is-alone");
       expect(connect()).toBeDefined();
@@ -387,7 +387,7 @@ describe("Zen conversation entry", () => {
     const zen = await mountedZen();
     try {
       const cloud = zen.nodes().find((node) => node.type === "button"
-        && node.props["aria-label"] === "Use your cloud for the next message or command")!;
+        && node.props["aria-label"] === "Use Ship’s home for the next message or command")!;
       expect(cloud.props.class).toBe("zen-place is-selected");
       expect(zen.nodes().some((node) => node.props.class === "zen-connect-place")).toBe(false);
       expect(zen.props(ChatPanels).context).toBeNull();
@@ -409,11 +409,11 @@ describe("Zen conversation entry", () => {
     const zen = await mountedZen(undefined, target);
     const text = () => zen.text().replace(/\s+/g, " ");
     const expectQuietComposer = () => {
-      expect(text()).not.toContain("your cloud is ready");
+      expect(text()).not.toContain("Ship’s home is ready");
       expect(text()).not.toContain("previous-model");
       expect(text()).not.toContain("active-model");
       expect(text()).not.toContain("attempting");
-      expect(text().includes("laptop is offline · view place")).toBe(target === "laptop");
+      expect(text().includes("laptop is offline · view connection")).toBe(target === "laptop");
     };
     try {
       expectQuietComposer();

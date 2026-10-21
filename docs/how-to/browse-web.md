@@ -11,29 +11,29 @@ When your operator enables cloud browsers, Ship can
 personal browser is connected. Ask for the task; Ship checks for a suitable
 browser and starts one when needed. Ship reuses your account's current cloud
 browser, and website logins are remembered automatically. Click the browser in
-Fleet to watch Ship's cursor and clicks or enter input yourself. Watching and
+Work to watch Ship's cursor and clicks or enter input yourself. Watching and
 closing the view leave Ship running.
 
 ## Connect your browser
 
 Connecting your personal browser is optional. Use it when you want Ship to work
 in its existing tabs and signed-in sessions, or when a site needs a feature
-available only on your device.
+available only in your own browser.
 
-1. In Ship, open **Fleet**, click **connect** beside Places, and choose **Browser.** Give it a name or leave the default.
+1. In Ship, open **Work**, click **connect** beside Connections, and choose **Browser.** Give it a name or leave the default.
 2. Download the extension, **Your Ship**, and load it at `chrome://extensions` with developer mode on.
 3. Click its toolbar icon, a pale block on a dark square, paste the invitation from Ship, and choose **Pair this browser**.
 4. The panel says **Ready** once it's connected. Chrome shows a banner in a tab while your Ship works there; that's normal.
 
-You can close the sidebar after pairing. The extension keeps working while Chrome is open. The browser control stays near the bottom of the sidebar: **Pause** disconnects this browser from Ship until you choose **Resume**. When the panel shows active browser work, **Stop** ends network captures, tab recordings, and debugger sessions, then disconnects. Your pairing is saved, so you do not need a new invitation.
+You can close the sidebar after connecting. The extension keeps working while Chrome is open. The browser control stays near the bottom of the sidebar: **Pause** disconnects this browser from Ship until you choose **Resume**. When the panel shows active browser work, **Stop** ends network captures, tab recordings, and debugger sessions, then disconnects. Your connection is saved, so you do not need a new invitation.
 
 ## Try it
 
-Ask your agent: *What can you do with my browser extension?*
+Ask Ship: *What can you do with my browser extension?*
 
 ### Cross-device: fire from your phone, act on your laptop
 
-Text Ship from Telegram while you're away from your desk: *Go to my billing portal and grab this month's invoice.* The browser action runs in your logged-in session on your laptop. This is the one that makes it clear this isn't just a browser agent — the browser is one tool a mind on the edge reaches across the machines it spans.
+Text Ship from Telegram while you're away from your desk: *Go to my billing portal and grab this month's invoice.* The browser action runs in your logged-in session on your laptop. This is the one that makes it clear this isn't just a browser agent — the browser is one tool a mind on the edge reaches across the computers it spans.
 
 ### Sites with no API, behind your login
 
@@ -46,7 +46,7 @@ Most of the web you actually use has no API and no export button. The extension 
 
 ### Always-on watching
 
-Ship keeps watching on the edge whether or not you're at the machine. Point it at a page and tell it what to wait for.
+Ship keeps watching on the edge whether or not you're at your computer. Point it at a page and tell it what to wait for.
 
 - *Check [URL] every hour and tell me when the price drops below $X.*
 - *Watch [support ticket] and message me when the status changes.*
@@ -55,6 +55,6 @@ Ship keeps watching on the edge whether or not you're at the machine. Point it a
 
 ## See also
 
-- [Connect Devices](/how-to/connect-devices) — connect your machines for broader OS-level access
+- [Connect Devices](/how-to/connect-devices) — connect your computers for broader OS-level access
 - [Examples](/examples/)
 - [Get Started](/get-started/)

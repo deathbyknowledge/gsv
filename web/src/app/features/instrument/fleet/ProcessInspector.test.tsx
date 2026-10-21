@@ -110,7 +110,7 @@ describe("Fleet process navigation", () => {
     }
     cleanup.push(() => root.unmount());
     await root.render(<Harness />);
-    const action = collectNodes(tree).find((node) => node.type === "button" && collectText(node) === "inspect process");
+    const action = collectNodes(tree).find((node) => node.type === "button" && collectText(node) === "inspect helper");
     expect(action).toBeDefined();
     await action?.props.onClick?.();
     expect(onProcess).toHaveBeenCalledWith("worker");

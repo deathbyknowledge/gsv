@@ -1,14 +1,14 @@
 # Use a cloud computer
 
-A cloud computer gives Ship and Crew an on-demand Linux environment for documents,
+A cloud computer gives Ship and its helpers an on-demand Linux environment for documents,
 spreadsheets, charts, media processing and other software. Computer fluency is part
-of Ship's personal intelligence: the user asks for an outcome, and Ship chooses
+of Ship's job: the user asks for an outcome, and Ship chooses
 the tools and environment to accomplish it.
 
-Connected user devices and cloud instances use the same target and tool
-interfaces. Choose a user device when the work needs resources or access there;
+Connected computers and cloud instances use the same target and tool
+interfaces. Choose a connected computer when the work needs resources or access there;
 choose a cloud computer when it suits the task. Its availability is controlled
-by the operator, independently of whether the user's devices are online.
+by the operator, independently of whether the user's own computers are online.
 
 The initial image includes Node.js, npm, Python, Git and build tools. Install
 additional software as needed and work in `/workspace`. Save useful files in
@@ -38,8 +38,8 @@ Read, Write, Edit and filesystem transfers use that target too.
 GSV management commands belong on `gsv`; Python, Node.js and installed software
 run on the computer target.
 
-In Chat, choose the ready computer from the place selector to use it for the
-next message or command. Fleet opens its ordinary inspector for commands and
+In Chat, choose the ready computer from the connection selector to use it for the
+next message or command. Work opens its ordinary inspector for commands and
 files. The live browser viewer is only for browser instances.
 
 For a recoverable command, use `shell.exec` with `start: true` and a fresh,
@@ -56,8 +56,8 @@ instance stop <targetId>
 
 ## Permissions and limits
 
-Default permissions allow agent shell, filesystem and network work on cloud
-computers. **Settings → permissions → Cloud computers** changes that policy.
+Default permissions allow Ship's shell, filesystem and network work on cloud
+computers. **Settings → Permissions → Cloud computers** changes that policy.
 Personal computers retain their separate approval rules, and existing custom
 policies are preserved.
 
@@ -76,7 +76,7 @@ GSV_DEV_COMPUTERS=1 GSV_DEV_STATE_DIR=/tmp/gsv-computer-trial npm run dev
 ```
 
 Use a new state directory for fresh onboarding. Open
-`http://localhost:8976/admin`, create a Ship and follow its setup link. Ask Ship
+`http://localhost:8976/admin`, create a Ship and follow its activation link. Ask Ship
 to start a cloud computer, analyze a small CSV, copy the result back to `gsv` and
 stop the computer. Model calls still need a configured inference provider.
 
