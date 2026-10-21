@@ -4569,6 +4569,23 @@ describe("native administration shell commands", () => {
     } finally { send.mockRestore(); }
   });
 
+  it("names the sending tool call so the Process can fence parallel attaches", async () => {
+    const send = vi.spyOn(federationService, "handleContactSend").mockResolvedValue({
+      deliveryId: "delivery:text", conversationId: "conversation:friend", state: "queued",
+    });
+    try {
+      const ctx = makeContext({ capabilities: ["shell.exec", "contact.send"], processRunId: "run-photo" });
+      ctx.toolOwner = { runId: "run-photo", requestId: "call-send" };
+      const sent = await handleShellExec({ input: 'message send --to contact:friend --message "hi" --also' }, ctx);
+      expect(sent).toMatchObject({ status: "completed", exitCode: 0 });
+      expect(sendFrameToProcessMock).toHaveBeenCalledWith(TEST_INSTALLATION_ID, "task:shell", expect.objectContaining({
+        call: "proc.run.staged",
+        args: { runId: "run-photo", requestId: "call-send", destination: "contact:friend" },
+      }));
+      expect(send).toHaveBeenCalledOnce();
+    } finally { send.mockRestore(); }
+  });
+
   it("lets Ship search its conversation through the shared syscall and enforces the capability", async () => {
     const conversation = { id: "conv:ship", ownerUid: IDENTITY.uid, kind: "ship" as const,
       title: "Ship", handlerPid: "proc:ship", latestSequence: 12, createdAt: 1, updatedAt: 2 };
@@ -5141,6 +5158,7 @@ describe("native administration shell commands", () => {
       return null;
     });
 
+    ctx.toolOwner = { runId: "run-native-file", requestId: "call-attach" };
     const result = await handleShellExec({ input: "message attach /tmp/final.png" }, ctx);
 
     expect(result).toMatchObject({ status: "completed", exitCode: 0 });
@@ -5153,6 +5171,7 @@ describe("native administration shell commands", () => {
         call: "proc.run.attach",
         args: expect.objectContaining({
           runId: "run-native-file",
+          requestId: "call-attach",
           media: [expect.objectContaining({
             type: "resource",
             ref: expect.objectContaining({

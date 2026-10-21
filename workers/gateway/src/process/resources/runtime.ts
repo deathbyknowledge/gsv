@@ -25,6 +25,8 @@ import type { InternalRequestFrame } from "../../protocol/process-frames";
 import type {
   ProcessRunAttachArgs,
   ProcessRunAttachResult,
+  ProcessRunStagedArgs,
+  ProcessRunStagedResult,
 } from "../../protocol/process-frames";
 import type { MessageRecord } from "../store";
 import { storedHistoryMedia } from "../storage/history-media";
@@ -952,6 +954,25 @@ export class ProcessResources {
     return { media, resources };
   }
 
+  handleProcRunStaged(args: ProcessRunStagedArgs): ProcessRunStagedResult {
+    return this.host.ctx.storage.transactionSync((): ProcessRunStagedResult => {
+      const run = this.host.runs.active;
+      if (!run || run.runId !== args.runId) return { ok: true, count: 0 };
+      const count = run.outputMedia?.length ?? 0;
+      if (count > 0 || !args.requestId) return { ok: true, count };
+      const running = this.host.store.tools.pendingDispatchIds(run.runId);
+      const fenced = new Set(running);
+      run.stagingFences = [
+        ...(run.stagingFences ?? []).filter((item) => fenced.has(item.dispatchId)),
+        ...running
+          .filter((dispatchId) => dispatchId !== args.requestId)
+          .map((dispatchId) => ({ dispatchId, destination: args.destination })),
+      ];
+      this.host.runs.active = run;
+      return { ok: true, count };
+    });
+  }
+
   async handleProcRunAttach(args: ProcessRunAttachArgs): Promise<ProcessRunAttachResult> {
     if (!this.host.isInitialized()) {
       return { ok: false, error: "Process no longer exists" };
@@ -1007,6 +1028,15 @@ export class ProcessResources {
         const run = this.host.runs.active;
         if (!run || run.runId !== runId) {
           return { ok: false, error: "the process run is no longer active" };
+        }
+        const fence = run.stagingFences?.find((item) => item.dispatchId === args.requestId);
+        if (fence) {
+          return {
+            ok: false,
+            error: `a message went to ${fence.destination} without files while this attach was running, `
+              + "so these files would have gone to your owner instead. To send them to "
+              + `${fence.destination}, use message send --to ${fence.destination} --attach PATH --also`,
+          };
         }
         const merged = new Map((run.outputMedia ?? []).map((item) => [item.key, item]));
         for (const item of normalized) {

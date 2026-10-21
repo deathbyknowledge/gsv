@@ -290,7 +290,7 @@ async function attachToReply(
     type: "req",
     id: crypto.randomUUID(),
     call: "proc.run.attach",
-    args: { runId, media: resources },
+    args: { runId, media: resources, ...(ctx.toolOwner ? { requestId: ctx.toolOwner.requestId } : undefined) },
   };
   const response = await sendFrameToProcess(ctx.installationId, pid, request);
   if (!response || response.type !== "res" || !response.ok) {
@@ -313,12 +313,12 @@ async function attachToReply(
   ].join("\n"));
 }
 
-async function stagedReplyFileCount(pid: string, runId: string, ctx: KernelContext): Promise<number> {
+async function stagedReplyFileCount(pid: string, runId: string, destination: string, ctx: KernelContext): Promise<number> {
   const request: InternalRequestFrame<"proc.run.staged"> = {
     type: "req",
     id: crypto.randomUUID(),
     call: "proc.run.staged",
-    args: { runId },
+    args: { runId, destination, ...(ctx.toolOwner ? { requestId: ctx.toolOwner.requestId } : undefined) },
   };
   const response = await sendFrameToProcess(ctx.installationId, pid, request);
   if (!response || response.type !== "res" || !response.ok) {
@@ -697,8 +697,9 @@ async function sendMessage(
     );
   }
   // A send elsewhere never takes staged files, and the run's final reply would carry them to the owner instead.
+  // The Process also stops tool calls running alongside this one from staging files afterwards.
   const staged = ctx.processId && ctx.processRunId && attachmentPaths.length === 0
-    ? await stagedReplyFileCount(ctx.processId, ctx.processRunId, ctx) : 0;
+    ? await stagedReplyFileCount(ctx.processId, ctx.processRunId, requestedDestination, ctx) : 0;
   if (staged > 0) {
     throw new Error(
       `${staged === 1 ? "1 file" : `${staged} files`} staged with \`message attach\` goes with your next reply in this conversation, `

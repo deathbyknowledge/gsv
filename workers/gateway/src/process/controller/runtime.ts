@@ -2165,11 +2165,9 @@ export class ProcessController {
         case "proc.run.attach":
           data = await this.host.resources.handleProcRunAttach(frame.args);
           break;
-        case "proc.run.staged": {
-          const run = this.host.runs.active;
-          data = { ok: true, count: run?.runId === frame.args.runId ? run.outputMedia?.length ?? 0 : 0 };
+        case "proc.run.staged":
+          data = this.host.resources.handleProcRunStaged(frame.args);
           break;
-        }
         default:
           return await this.handleHistoryOrLifecycleRequest(frame);
       }

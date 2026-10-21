@@ -159,6 +159,8 @@ export type ProcessAdapterDeliverArgs = {
 export type ProcessRunAttachArgs = {
   runId: string;
   media: ResourceBlock[];
+  /** The tool call staging these files. */
+  requestId?: string;
 };
 
 export type ProcessRunAttachResult =
@@ -169,8 +171,12 @@ export type ProcessRunAttachResult =
     }
   | { ok: false; error: string };
 
-/** Files staged for a run's next current-conversation message and not yet sent. */
-export type ProcessRunStagedArgs = { runId: string };
+/**
+ * Asked before a send elsewhere without files: counts the files staged for the run's next
+ * current-conversation message. With none, the tool calls running alongside `requestId` may no
+ * longer stage any, so a parallel `message attach` cannot reach the owner instead of `destination`.
+ */
+export type ProcessRunStagedArgs = { runId: string; requestId?: string; destination: string };
 export type ProcessRunStagedResult = { ok: true; count: number };
 
 export type ProcessResourcesRetainArgs = {
