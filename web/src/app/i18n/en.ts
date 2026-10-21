@@ -1749,7 +1749,7 @@ export const en = {
   "chat.receipt.answeredBy": "answered by {model}",
   "chat.receipt.fallback": "fallback: {from} → {to}",
   "chat.receipt.earlier": { one: "{count} earlier", other: "{count} earlier" },
-  "chat.receipt.viewProcess": "view helper",
+  "chat.receipt.viewProcess": "view in Work",
   "chat.receipt.state.failed": "failed",
   "chat.receipt.state.running": "running",
   "chat.receipt.state.unfinished": "unfinished",
