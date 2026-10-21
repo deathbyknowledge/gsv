@@ -156,11 +156,13 @@ Availability depends on the operator's Meta account and the current terms for
 this use of the WhatsApp Business Platform. Ask your operator whether the
 service is offered for your number.
 
-WhatsApp is not offered to numbers in Brazil (+55) or Indonesia (+62). Meta
-restricts business numbers outside those countries from messaging people
-there, so the Ship number cannot deliver the pairing code. The WhatsApp page in
-**Settings → Messengers** shows this, and Ship says so when you ask it to
-connect, offering Telegram, Discord, Slack, email, or the Ship app instead.
+Meta restricts WhatsApp Business messaging across the borders of Brazil (+55)
+and Indonesia (+62). A Ship number registered elsewhere cannot deliver the
+pairing code to numbers in either country, and a number registered in one of
+them cannot reach the other. The WhatsApp page in **Settings → Messengers**
+names the countries the Ship number cannot reach, and Ship says so when you
+ask it to connect, offering Telegram, Discord, Slack, email, or the Ship app
+instead.
 
 The earlier linked-device adapter, which paired by scanning a QR code, is no
 longer bundled, and its pairings do not carry over.
