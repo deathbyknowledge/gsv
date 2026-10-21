@@ -437,8 +437,9 @@ Structural facts that will shape the translation-key work, by surface. All are c
 
 **Everywhere**
 
-- No i18n scaffolding on any surface: no catalog, no `t()` helper, no `_locales`, no VitePress
-  `locales`, no Fluent/gettext in Rust. Every string is an inline literal.
+- At the time of the audit, no i18n scaffolding on any surface: no catalog, no `t()` helper, no
+  `_locales`, no VitePress `locales`, no Fluent/gettext in Rust; every string was an inline literal.
+  Since #475 the web app is the exception (see the addendum above); the other surfaces still hold.
 - `lang="en"` is hardcoded in `web/index.html:2`, every extension HTML page, every Accounts page.
 - The owner's "Response language" preference (`users/{uid}/locale/language`) steers only the
   agent's replies; `settings/README.md:15` says so. No surface formats dates or numbers by it.
