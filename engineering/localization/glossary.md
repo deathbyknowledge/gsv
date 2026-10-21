@@ -34,7 +34,7 @@ Source: `ia-audit.md` and `term-inventory.md` in this folder. Round-2 items are 
 | **Your Ship** (the extension) | The browser extension that connects your browser to your Ship. The name stays "Your Ship" on purpose: Chrome's banner then reads `"Your Ship" is debugging this browser` while Ship is using it (Steve). | Your GSV · GSV Viewer · "the Ship extension" |
 | **the web app** | Ship in your browser. Not given a product name. | Instrument · web console · web UI · web application · Instrument UI · the console |
 | **Ship Desktop** | The desktop app. "the desktop app" in prose. | GSV Desktop · the beta desktop app · Desktop application · GSV.app (in prose) |
-| **Work** | The view that holds Connections and Helpers. Nav key `w`. | Fleet · Machines console · operational view |
+| **Work** | The view that holds Connections and the Ship-and-helpers table (Ship's own row sits there too, so the section is headed "Ship and helpers"). Nav key `w`. | Fleet · Machines console · operational view |
 | **Memory** | The view for what Ship has learned about you. (Its inner vocabulary is round 2.) | – |
 | **People** | The view for conversations and contacts across Ships. | – |
 | **Settings** | The settings view; each section's rail label equals its heading. | configuration · config (in customer text) |
