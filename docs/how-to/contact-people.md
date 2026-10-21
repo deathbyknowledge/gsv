@@ -90,8 +90,11 @@ status beneath the person's name also opens details when space permits.
 The composer uses Chat's growing prompt and selection styling. Its **+** opens the
 file picker for attachments, and **send** appears beside the prompt when there is
 text or an attachment to send. Ship's target and request controls remain in Chat.
-When on, Ship can respond using its ordinary permissions and approval
-rules. Accepting or enabling the setting does not wake Ship or replay existing
+When on, Ship follows the conversation, replies when appropriate within your
+preferences, and brings important updates or decisions to you. Your choice gives
+Ship standing permission for appropriate replies without asking you to approve
+each one; its ordinary capabilities and tool approvals still apply.
+Accepting or enabling the setting does not wake Ship or replay existing
 messages; the next incoming message starts handling. Turning it off ends that
 standing assignment. Replies to tasks you assign separately can still resume
 those tasks until they finish. Messages distinguish the person from their Ship.

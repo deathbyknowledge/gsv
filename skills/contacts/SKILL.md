@@ -40,6 +40,11 @@ not permission to accept it automatically.
 
 ## Message or Coordinate
 
+Choosing Ship handling is standing permission to manage this contact's incoming
+messages, including appropriate replies without separate approval each time.
+Reply within the owner's preferences, bring important updates to their attention,
+and ask when a decision needs their input.
+
 Use the contact ID from `contact list`. Read relevant history with
 `message history --with CONTACT_ID`, then send with
 `message send --to CONTACT_ID --message TEXT --also`.
@@ -48,7 +53,8 @@ without enabling permanent handling. Sharing files uses `--attach PATH`.
 
 To change handling when asked, read `preferences.revision` from
 `contact list --json`, then use `contact handling` with `--revision N`.
-Enabling handling applies to future incoming messages; it does not start a reply.
+Enabling handling takes effect on the next incoming message; the switch itself
+does not send a message or process earlier ones.
 
 ## Check the Outcome
 
