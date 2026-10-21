@@ -20,11 +20,11 @@ const mocks = vi.hoisted(() => ({
   currentFlow: null as ConnectFlowDef | null,
   currentStep: -1,
   infoAdapter: "",
-  installUrl: "https://wa.me/34600000000?text=%2Flink",
   inspect: vi.fn<
     ReturnType<ManagedTelegramDependencies["useInspectConsoleAdapterPairing"]>["mutateAsync"]
   >(),
   onConnected: vi.fn<(detailId: string) => void>(),
+  unreachableCallingCodes: ["55", "62"],
 }));
 
 const dependencies: ManagedTelegramDependencies = {
@@ -35,7 +35,8 @@ const dependencies: ManagedTelegramDependencies = {
         adapter: "whatsapp",
         accountId: "managed",
         configured: true,
-        installUrl: mocks.installUrl,
+        installUrl: "https://wa.me/34600000000?text=%2Flink",
+        unreachableCallingCodes: mocks.unreachableCallingCodes,
       },
       isError: false,
       error: null,
@@ -81,7 +82,7 @@ beforeEach(async () => {
   mocks.currentFlow = null;
   mocks.currentStep = -1;
   mocks.infoAdapter = "";
-  mocks.installUrl = "https://wa.me/34600000000?text=%2Flink";
+  mocks.unreachableCallingCodes = ["55", "62"];
   mocks.inspect.mockReset();
   mocks.onConnected.mockReset();
   mocks.inspect.mockResolvedValue({
@@ -130,12 +131,12 @@ describe("ManagedWhatsAppOnboardingFlow", () => {
     expect(collectText(open)).toBe("OPEN WHATSAPP");
   });
 
-  it("warns that Meta keeps the operator's number from reaching Brazil and Indonesia", async () => {
+  it("warns about the countries the adapter reports the operator's number cannot reach", async () => {
     const warning = () => nodes().find((node) => node.props.text?.includes("cannot connect"));
     expect(warning()?.props.text).toContain("Brazil (+55) and Indonesia (+62)");
 
     await root?.unmount();
-    mocks.installUrl = "https://wa.me/5511900000000?text=%2Flink";
+    mocks.unreachableCallingCodes = ["62"];
     root = createTestRoot("Managed WhatsApp onboarding harness");
     await root.render(
       <ManagedWhatsAppOnboardingFlow

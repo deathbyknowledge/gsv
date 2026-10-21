@@ -28,7 +28,7 @@ function pairingService(ctx: KernelContext, adapter: string) {
       connect: false, disconnect: false, send: true, status: true, activity: true, pairing: true,
       surfaces: ["dm"], media: { inbound: [], outbound: [] },
     } })),
-    adapterPairingInfo: vi.fn(async () => ({ accountId: "managed", configured: true, installUrl: "https://messenger.example/bot", instructions: "Send link to the bot to get a code." })),
+    adapterPairingInfo: vi.fn(async () => ({ accountId: "managed", configured: true, installUrl: "https://messenger.example/bot", instructions: "Send link to the bot to get a code.", unreachableCallingCodes: ["55", "62"] })),
     adapterPairingInspect: vi.fn(async () => candidate),
     adapterPairingPrepare: vi.fn(async () => prepared),
     adapterPairingActivate: vi.fn(async () => prepared),
@@ -66,7 +66,7 @@ describe("messenger pairing from the native shell", () => {
       expect(JSON.parse(list.stdout).adapters).toContainEqual(expect.objectContaining({ adapter, canLink: true, enabled: true }));
       const setup = await shell.exec(`messenger setup ${adapter}`);
       expect(setup.exitCode, setup.stderr).toBe(0);
-      expect(JSON.parse(setup.stdout)).toMatchObject({ adapter, instructions: "Send link to the bot to get a code.", installUrl: "https://messenger.example/bot" });
+      expect(JSON.parse(setup.stdout)).toMatchObject({ adapter, instructions: "Send link to the bot to get a code.", installUrl: "https://messenger.example/bot", unreachableCallingCodes: ["55", "62"] });
       expect((await shell.exec(`messenger inspect ${adapter} < /tmp/code.txt`)).exitCode).toBe(0);
       expect(service.adapterPairingPrepare).not.toHaveBeenCalled();
       for (let attempt = 0; attempt < 2; attempt++) {
