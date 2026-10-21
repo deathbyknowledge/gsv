@@ -292,7 +292,7 @@ function makeContext(options?: {
     config: focusedFixture<KernelContext["config"]>({
       get(key: string) {
         if (key === "config/server/name") return "gsv";
-        if (key === "config/server/version") return "0.7.3";
+        if (key === "config/server/version") return "0.7.4";
         return configValues.get(key) ?? SYSTEM_CONFIG_DEFAULTS[key] ?? null;
       },
       getExplicit(key: string) {
@@ -368,7 +368,7 @@ function makeContext(options?: {
     processId: options?.processId === null ? undefined : options?.processId ?? "task:shell",
     processRunId: options?.processRunId,
     requestSignal: options?.requestSignal,
-    serverVersion: "0.7.3",
+    serverVersion: "0.7.4",
     scheduleIpcCallTimeout: options?.scheduleIpcCallTimeout,
     scheduleScheduleWake: options?.scheduleScheduleWake,
     reconcileResponsibilityWake: options?.reconcileResponsibilityWake,
@@ -4110,6 +4110,9 @@ describe("native administration shell commands", () => {
     const duplicate = await handleShellExec({
       input: 'message send --to here --message "duplicate reply"',
     }, ctx);
+    const detachedAlso = await handleShellExec({
+      input: "message send --to contact:friend --message 'see you'\n\n--also",
+    }, ctx);
 
     expect(current).toMatchObject({ status: "completed", exitCode: 0 });
     expect(current.stdout).toContain("current conversation: Telegram direct message");
@@ -4136,6 +4139,7 @@ describe("native administration shell commands", () => {
     expect(duplicate.status).toBe("failed");
     expect(duplicate.stderr).toContain("stage files first with `message attach PATH...`");
     expect(duplicate.stderr).toContain("without --to or --also");
+    expect(detachedAlso.stderr).toContain("message send --to needs --also on the same command line");
     expect(terminalFallback).toMatchObject({ status: "failed", exitCode: 1 });
     expect(terminalFallback.stderr).toContain("direct Shell tool call");
     expect(yieldFallback).toMatchObject({ status: "failed", exitCode: 1 });

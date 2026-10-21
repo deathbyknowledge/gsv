@@ -5,8 +5,13 @@ import "./welcome-card.css";
 
 const WELCOME_SEEN = "ui/welcome_card_seen";
 
+type Props = {
+  /** Whether the card still stands over the chat: up, loading or failed to load. False once this person has dismissed it. */
+  onOpenChange?: (open: boolean) => void;
+};
+
 /** The person's config follows them between the web app and Desktop. */
-export function WelcomeCard() {
+export function WelcomeCard({ onOpenChange }: Props = {}) {
   const t = useT();
   const { client, connected } = useGateway();
   const [ownerUid, setOwnerUid] = useState<number | null>(null);
@@ -40,6 +45,9 @@ export function WelcomeCard() {
     })();
     return () => { cancelled = true; };
   }, [client, connected, loadState]);
+
+  const open = loadState !== "ready" || ownerUid !== null;
+  useEffect(() => { onOpenChange?.(open); }, [onOpenChange, open]);
 
   const dismiss = async () => {
     if (ownerUid === null || pendingDismissal.current) return;

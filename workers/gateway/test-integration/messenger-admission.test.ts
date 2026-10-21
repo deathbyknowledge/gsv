@@ -182,6 +182,53 @@ describe("W6 real messenger → Gateway → Kernel admission", () => {
     expect(await worker().listDurableObjectIds("KERNEL")).toEqual([]);
   });
 
+  it("delivers one system failure notice through durable provider retry without creating a Ship Message", async () => {
+    const { owner } = await setup("first");
+    await pair("telegram", 0, owner);
+    const { processes } = z.object({
+      processes: z.array(z.object({ pid: z.string(), personal: z.boolean() })),
+    }).parse(await ok(owner, "proc.list", {}));
+    const ship = processes.find((process) => process.personal);
+    if (!ship) throw new Error("Missing personal process");
+    await ok(owner, "sys.config.set", {
+      key: "users/1000/ai/models",
+      value: JSON.stringify({ version: 1, models: [{
+        id: "failure-fixture",
+        name: "Unavailable metadata",
+        provider: "custom",
+        model: "integration-metadata-error",
+        baseUrl: "https://fixture.invalid",
+        providerStyle: "openai-chat-completions",
+        transportTarget: "gsv",
+      }] }),
+    });
+    await ok(owner, "proc.ai.config.set", { pid: ship.pid, modelId: "failure-fixture" });
+    const notice = "System notice: Ship couldn’t finish this request. Open Chat for details, or send another message to try again.";
+    await provider("telegram", "/__test/outcome", { text: notice, kind: "retryable" });
+    const id = await send("telegram", 0, "A request whose run will fail");
+    await assertAdmitted("A request whose run will fail", "first");
+    const delivered = await until(() => messages("telegram"), (rows) => rows.some((row) => row.body.text === notice));
+    expect(delivered.filter((row) => row.body.text === notice)).toHaveLength(1);
+    const noticeAttempts = (await attempts("telegram")).filter((entry) => entry.text === notice);
+    expect(noticeAttempts).toHaveLength(2);
+    expect(new Set(noticeAttempts.map((entry) => entry.destination)).size).toBe(1);
+    const wires = (await records()).filter((row) => row.direction === "outbound" && row.text === notice);
+    expect(wires).toHaveLength(2);
+    expect(new Set(wires.map((row) => row.deliveryId)).size).toBe(1);
+
+    await send("telegram", 0, "A request whose run will fail", { id });
+    expect(await admittedCount("first")).toBe(1);
+    const { conversation } = z.object({ conversation: z.object({ id: z.string() }) })
+      .parse(await ok(owner, "conversation.ship", {}));
+    const history = z.object({ messages: z.array(z.object({ text: z.string() })) })
+      .parse(await ok(owner, "conversation.history", { conversationId: conversation.id }));
+    expect(history.messages.some((message) => message.text === notice)).toBe(false);
+    const processHistory = JSON.stringify(await ok(owner, "proc.history", { pid: ship.pid, format: 2 }));
+    expect(processHistory).toContain("Fixture model metadata unavailable");
+    expect(JSON.stringify(wires)).not.toContain("Fixture model metadata unavailable");
+    expect((await messages("telegram")).filter((row) => row.body.text === notice)).toHaveLength(1);
+  });
+
   for (const adapter of messengers) {
     it(`${adapter}: invalid proof and an unpaired actor select no Kernel`, async () => {
       await start(adapter);

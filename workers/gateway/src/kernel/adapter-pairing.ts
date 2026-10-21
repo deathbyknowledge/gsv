@@ -93,6 +93,7 @@ export async function handleAdapterPairInfo(
   if (info.botUsername) result.botUsername = info.botUsername;
   if (info.installUrl) result.installUrl = info.installUrl;
   if (info.instructions) result.instructions = info.instructions;
+  if (info.unreachableCallingCodes?.length) result.unreachableCallingCodes = info.unreachableCallingCodes;
   return result;
 }
 

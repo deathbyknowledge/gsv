@@ -32,6 +32,7 @@ import type { ProcessRegistry } from "./processes";
 import * as personalController from "./personal-controller";
 import type { ResponsibilityStore } from "./responsibility-store";
 import { ResponsibilityRuntime } from "./responsibility-runtime";
+import { ShipEventRuntime } from "./ship-event-runtime";
 import { syncFederationRequestResponsibility } from "./federation/requests";
 import { handleContactPreferencesUpdate } from "./federation/preferences";
 import { handleContactSend } from "./federation";
@@ -908,14 +909,14 @@ describe("federation inbound boundary", () => {
     expect(personalController.ensurePersonalController).not.toHaveBeenCalled();
   });
 
-  it("recovers Ship scheduling after committing contact attention without repeating the handoff", async () => {
+  it("recovers Ship event delivery after committing contact attention without repeating the handoff", async () => {
     await runInDurableObject(kernel, async (instance: Kernel) => {
       instance.auth.setShadow(makeShadowEntry(OWNER.username, await hashPassword("federation-fixture-password")));
       instance.federation.updatePreferences(OWNER.uid, {
         contactId: contact.id, expectedRevision: 1, patch: { shipHandlesMessages: true },
       });
     });
-    const wake = vi.spyOn(ResponsibilityRuntime.prototype, "reconcileResponsibilityWake")
+    const wake = vi.spyOn(ShipEventRuntime.prototype, "queue")
       .mockRejectedValueOnce(new Error("Injected scheduler failure"));
     const envelope = await signedEnvelope({
       kind: "message", messageId: "message:handoff", threadId: contact.threadId, text: "Continue our conversation",
@@ -937,7 +938,9 @@ describe("federation inbound boundary", () => {
       });
       expect(instance.federation.inbox(contact.id, contact.generation, envelope.deliveryId)?.state).toBe("committed");
       expect(instance.responsibilities.list({ ownerUid: OWNER.uid, includeTerminal: true }).records).toEqual([committed]);
-      expect(state.storage.sql.exec("SELECT 1 FROM cf_agents_schedules WHERE callback = 'onResponsibilityWake'").toArray()).toHaveLength(1);
+      expect(state.storage.sql.exec("SELECT event_id FROM ship_events").toArray()).toEqual([{ event_id: `contact.message:${messages[0]?.id}` }]);
+      expect(state.storage.sql.exec("SELECT 1 FROM cf_agents_schedules WHERE callback = 'onShipEvents'").toArray()).toHaveLength(1);
+      expect(state.storage.sql.exec("SELECT 1 FROM cf_agents_schedules WHERE callback = 'onResponsibilityWake'").toArray()).toHaveLength(0);
     });
     expect(messages).toHaveLength(1);
     const replay = await deliver(envelope);
@@ -988,7 +991,8 @@ describe("federation inbound boundary", () => {
     await runInDurableObject(kernel, (instance: Kernel) => {
       const records = instance.responsibilities.list({ ownerUid: OWNER.uid, includeTerminal: true }).records;
       expect(records).toHaveLength(1);
-      expect(records[0]).toMatchObject({ details: { contactReply: { messageId: messages[1]?.id } } });
+      expect(records[0]).toMatchObject({ details: { contactId: contact.id } });
+      expect(instance.shipEvents.next(OWNER.uid)?.event).toMatchObject({ messageId: messages[1]?.id, responsibilityId: records[0]!.id });
     });
     expect(messages).toHaveLength(2);
   });
@@ -1041,7 +1045,9 @@ describe("federation inbound boundary", () => {
     expect(later.status).toBe(200);
     await later.arrayBuffer();
     const updated = await runInDurableObject(kernel, (instance: Kernel) => instance.responsibilities.get(OWNER.uid, workId));
-    expect(updated).toMatchObject({ state: "open", details: { contactReply: { messageId: messages[1]?.id } } });
+    expect(updated).toMatchObject({ state: "open" });
+    expect(await runInDurableObject(kernel, (instance: Kernel) => instance.shipEvents.next(OWNER.uid)?.event))
+      .toMatchObject({ messageId: messages[1]?.id, responsibilityId: workId });
     const replay = await deliver(earlier);
     expect(replay.status).toBe(200);
     await replay.arrayBuffer();

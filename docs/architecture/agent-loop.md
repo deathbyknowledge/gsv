@@ -114,6 +114,8 @@ embedded in standing context.
 System-provided skills are bundled into the gateway and seeded into user home
 `skills.d` during bootstrap. Before prompt skill discovery, the gateway restores
 any missing built-in paths while preserving existing files.
+This includes the `contacts` workflow for invitations and contact messaging:
+existing accounts receive it on their next AI configuration load, without a reset.
 
 The rendered standing prompt belongs to the live context epoch and may be reused
 across ordinary runs. Resolved model config, tool list, and approval policy are run

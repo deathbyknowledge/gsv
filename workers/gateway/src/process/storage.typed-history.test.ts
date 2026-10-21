@@ -209,6 +209,26 @@ describe("typed Process history storage", () => {
     });
   });
 
+  it("rewrites a contact event's media to its archived copy", async () => {
+    const stub = await getProcessByPid("typed-history-event-media", "inst_test");
+    await runInDurableObject(stub, (process: Process) => {
+      const { store } = process;
+      const photo = { type: "image" as const, mimeType: "image/png", key: "process-media:photo", filename: "selfie.png" };
+      store.messages.appendMessage("system", "Message from contact Xisca", {
+        runId: "run:contact", createdAt: 100, media: JSON.stringify([photo]),
+        record: { kind: "event", payload: {
+          kind: "contact.message", severity: "info", audience: "model", media: [photo],
+          payload: { contactId: "contact:1", conversationId: "conv:1", messageId: "msg:1", from: "Xisca", text: "", responsibilityId: "r12y:1" },
+        } },
+      });
+      const rewrites = new Map([["process-media:photo", { key: "archived:photo", path: "/home/root/.gsv/media/photo.png", revision: "rev:1" }]]);
+      const archived = parseArchivedMessageRecord(serializeArchivedMessage(store.messages.getMessages()[0]!, rewrites));
+      expect(archived.records).toMatchObject([{ kind: "event", payload: { media: [{
+        key: "archived:photo", path: "/home/root/.gsv/media/photo.png", revision: "rev:1", filename: "selfie.png",
+      }] } }]);
+    });
+  });
+
   it("preserves legacy denied and interrupted outcomes through an archive roundtrip", async () => {
     const stub = await getProcessByPid("typed-history-legacy-outcomes", "inst_test");
     await runInDurableObject(stub, (process: Process) => {

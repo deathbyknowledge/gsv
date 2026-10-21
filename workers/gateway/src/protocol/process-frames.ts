@@ -64,9 +64,24 @@ export type ProcessResponsibilityReadyRuntimeEvent = {
   responsibilityIds: string[];
 };
 
+/** One contact message for Ship, with its attachments as references to the contact's Ship. */
+export type ProcessContactMessageRuntimeEvent = {
+  type: "contact.message";
+  contactId: string;
+  contactGeneration: string;
+  conversationId: string;
+  messageId: string;
+  from: string;
+  text: string;
+  media?: ResourceBlock[];
+  responsibilityId: string;
+  ledgerRevision: number;
+};
+
 export type ProcessRuntimeEvent =
   | ProcessAdapterWorkReturnedRuntimeEvent
-  | ProcessResponsibilityReadyRuntimeEvent;
+  | ProcessResponsibilityReadyRuntimeEvent
+  | ProcessContactMessageRuntimeEvent;
 
 export type ProcessRuntimeEventDeliverArgs = {
   eventId: string;

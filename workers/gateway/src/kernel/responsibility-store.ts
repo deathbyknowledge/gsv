@@ -115,6 +115,8 @@ export type ResponsibilityCreateInput = {
   dedupeKey?: string;
   actor: ResponsibilitySource;
   observedByShip: boolean;
+  /** A Ship event carries this change, so the ledger does not wake Ship for it. */
+  announced?: boolean;
   now: number;
 };
 
@@ -138,6 +140,8 @@ export type ResponsibilityUpdateInput = {
   };
   actor: ResponsibilitySource;
   observedByShip: boolean;
+  /** A Ship event carries this change, so the ledger does not wake Ship for it. */
+  announced?: boolean;
   now: number;
 };
 
@@ -432,7 +436,7 @@ export class ResponsibilityStore {
         dueAtMs: input.dueAtMs,
         nextCheckAtMs: input.nextCheckAtMs,
         leaseExpiresAtMs: input.leaseExpiresAtMs,
-      }, input.observedByShip, input.now);
+      }, input.observedByShip, input.now, input.announced);
       this.storage.sql.exec(
         `INSERT INTO responsibilities (
           responsibility_id, owner_uid, parent_id, title, details_json, source_json,
@@ -532,6 +536,7 @@ export class ResponsibilityStore {
         next,
         input.observedByShip,
         input.now,
+        input.announced,
       );
       this.storage.sql.exec(
         `UPDATE responsibilities SET
@@ -846,6 +851,21 @@ export class ResponsibilityStore {
     );
   }
 
+  /**
+   * A Ship event naming these records reached Ship. Like a delivered wake batch, an
+   * actionable record gets a recovery wake in case the run that received it fails.
+   */
+  markEventDelivered(ownerUid: number, ids: string[], now: number): void {
+    for (const record of this.recordsByIds(ownerUid, ids)) {
+      this.storage.sql.exec(
+        "UPDATE responsibilities SET wake_retry_at = ? WHERE owner_uid = ? AND responsibility_id = ?",
+        responsibilityRequiresAction(record, now) ? now + RESPONSIBILITY_WAKE_RETRY_MS : null,
+        ownerUid,
+        record.id,
+      );
+    }
+  }
+
   markBatchDelivered(batchId: string): void {
     this.storage.sql.exec(
       "DELETE FROM responsibility_wake_batches WHERE batch_id = ?",
@@ -1041,7 +1061,9 @@ function shouldMarkChangePending(
   >,
   observedByShip: boolean,
   now: number,
+  announced?: boolean,
 ): 0 | 1 {
+  if (announced) return 0;
   if (!observedByShip) return 1;
   return responsibilityRequiresAction(responsibility, now) ? 1 : 0;
 }

@@ -35,6 +35,7 @@ import { raceWithAbort } from "../shared/abort";
 import type { TelemetryEnvironment } from "@humansandmachines/gsv/telemetry";
 import { inferenceDiagnosticId, inferenceErrorMetadata, reportInferenceClientResult } from "@humansandmachines/gsv/services/inference-diagnostics";
 import { errorMessageFromUnknown, formatProviderErrorDiagnostic } from "./errors";
+import { encodeInferenceRequest, cancelInferenceRequest } from "@humansandmachines/gsv/services/inference-body";
 
 const GSV_INFERENCE_API = "gsv-inference";
 
@@ -196,6 +197,7 @@ async function pumpGsvInference(
   let target: ManagedInferenceTarget | undefined;
   let acquisitionDisposesLateTarget = false;
   let generationStarted = false;
+  let input: ReturnType<typeof encodeInferenceRequest<ManagedInferenceRequest>> | undefined;
   let generationAbort: Promise<void> | undefined;
   const abortGeneration = () => {
     if (target && generationStarted && !generationAbort) {
@@ -245,7 +247,9 @@ async function pumpGsvInference(
       return;
     }
     phase = "request";
-    const bodyPromise = target.generateStream(request);
+    input = encodeInferenceRequest(request);
+    signal?.throwIfAborted();
+    const bodyPromise = target.generateStream(input);
     generationStarted = true;
     if (signal?.aborted) abortGeneration();
     const body = await raceWithAbort(bodyPromise, signal, {
@@ -294,6 +298,7 @@ async function pumpGsvInference(
       ...failure,
     });
     signal?.removeEventListener("abort", abortGeneration);
+    if (input) cancelInferenceRequest(input, signal?.reason);
     disposeManagedInferenceTarget(target);
   }
 }

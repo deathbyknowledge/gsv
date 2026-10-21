@@ -124,6 +124,11 @@ The platform operator configures these Worker secrets and variables:
 - `WHATSAPP_BUSINESS_ACCOUNT_ID` — the WhatsApp Business Account id
 - `WHATSAPP_WEBHOOK_BASE_URL` — the adapter Worker's public origin
 - `WHATSAPP_DISPLAY_NUMBER` — the number people message, in E.164, shown in GSV
+- `WHATSAPP_UNREACHABLE_CALLING_CODES` — optional comma-separated calling codes
+  Meta keeps the account from messaging; unset, Brazil (55) and Indonesia (62)
+  follow from the display number's country, an empty value reports none once
+  Meta has unlocked cross-border messaging for the account, and a malformed
+  value keeps the default rule
 - `WHATSAPP_TEMPLATE_NAME` — the notification template sent outside the 24-hour
   window; defaults to `gsv_message`, and an empty value switches templates off
 - `WHATSAPP_TEMPLATE_LANGUAGE` — that template's language code; defaults to `en`
