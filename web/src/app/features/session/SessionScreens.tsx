@@ -5,6 +5,7 @@ import { useSessionScreensState } from "./useSessionScreensState";
 import { AuthLayout } from "./AuthLayout";
 import { SectionHeader } from "../../components/ui/SectionHeader";
 import { Button } from "../../components/ui/Button";
+import { useT } from "../../i18n/locale";
 
 type SessionScreensProps = {
   session: SessionService;
@@ -12,6 +13,7 @@ type SessionScreensProps = {
 };
 
 export function SessionScreens({ session, snapshot }: SessionScreensProps) {
+  const t = useT();
   const state = useSessionScreensState({ session, snapshot });
   const { visibleView } = state;
   return <section class="session-screen" data-session-screen data-session-view={visibleView} hidden={visibleView === "ready"} ref={state.screenRef}>
@@ -22,12 +24,12 @@ export function SessionScreens({ session, snapshot }: SessionScreensProps) {
         arrivedFromSignup={snapshot.arrivedFromSignup === true} {...state.setup} />
       {visibleView === "setup-recovery" && <AuthLayout background="galaxy" visible surfaceClass="gsv-auth-surface-login">
         <div class="gsv-login-panel">
-          <SectionHeader title="Finish setting up Ship" titleSize="title" divider />
+          <SectionHeader title={t("session.setupRecovery.title")} titleSize="title" divider />
           <div class="gsv-login-body">
-            <p>{snapshot.setupRecoveryUrl ? "Sign in with the email you used to claim it." : "Ask the person who invited you for a new setup link."}</p>
+            <p>{t(snapshot.setupRecoveryUrl ? "session.setupRecovery.signIn" : "session.setupRecovery.askInviter")}</p>
             {snapshot.setupRecoveryUrl && (session.resumeSetup
-              ? <Button label="Continue setup" variant="primary" block onClick={() => session.resumeSetup!(snapshot.setupRecoveryUrl!)} />
-              : <a class="gsv-btn gsv-btn-primary gsv-btn-block" href={snapshot.setupRecoveryUrl}>Continue setup</a>)}
+              ? <Button label={t("session.setupRecovery.continue")} variant="primary" block onClick={() => session.resumeSetup!(snapshot.setupRecoveryUrl!)} />
+              : <a class="gsv-btn gsv-btn-primary gsv-btn-block" href={snapshot.setupRecoveryUrl}>{t("session.setupRecovery.continue")}</a>)}
           </div>
         </div>
       </AuthLayout>}

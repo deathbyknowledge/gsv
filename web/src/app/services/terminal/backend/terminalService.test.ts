@@ -1,7 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
 import { GSVClient, GsvClientError } from "@humansandmachines/gsv/client";
 import { cancelTerminalCommand, executeTerminalCommand } from "./terminalService";
-import { TerminalSessions } from "../terminalSessions";
+import { t } from "../../../i18n/locale";
+import { TerminalSessions, terminalNotice } from "../terminalSessions";
 
 describe("terminal service", () => {
   it("starts under the journaled identity with command options and never falls back to an unsafe start", async () => {
@@ -12,7 +13,7 @@ describe("terminal service", () => {
     await executeTerminalCommand(client, command);
     expect(request).toHaveBeenCalledWith("shell.exec", { input: "run once", target: "macbook", sessionId, start: true, cwd: "/tmp", timeout: 20_000, background: true, yieldMs: 1_000 }, { signal: undefined });
     request.mockRejectedValue(new GsvClientError({ code: 500, message: `Unknown shell session: ${sessionId}` }));
-    await expect(executeTerminalCommand(client, command)).resolves.toMatchObject({ status: "failed", stderr: "Update Ship on this computer before running commands here." });
+    await expect(executeTerminalCommand(client, command)).resolves.toMatchObject({ status: "failed", stderr: "", note: "updateShip" });
     expect(request).toHaveBeenCalledTimes(2);
   });
 
@@ -40,8 +41,8 @@ describe("terminal service", () => {
         details: message ? { shellStart: "rejected" } : undefined,
       }));
       await vi.advanceTimersByTimeAsync(0);
-      expect(owner.snapshot()[0]).toMatchObject({ status: "failed", endedAt: expect.any(Number),
-        error: message ?? "Update Ship on this computer before running commands here." });
+      expect(owner.snapshot()[0]).toMatchObject({ status: "failed", endedAt: expect.any(Number) });
+      expect(terminalNotice(t, owner.snapshot()[0])).toBe(message ?? "Update Ship on this computer before running commands here.");
       await owner.stop(id);
       owner.retry(id);
       owner.setConnected(false);

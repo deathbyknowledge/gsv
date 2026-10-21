@@ -1,10 +1,15 @@
 import { useEffect, useState } from "preact/hooks";
 import { useViewActive } from "../../../services/navigation/ViewActivity";
 import { relativeTime, type LedgerLine } from "../fleet/fleetModel";
+import { useT, type Translate } from "../../../i18n/locale";
 
-export function outcomeWord(outcome: string): string {
-  if (outcome === "completed") return "done";
-  if (outcome === "held" || outcome === "pending") return "held";
+export function outcomeWord(t: Translate, outcome: string): string {
+  if (outcome === "completed") return t("settings.logs.outcomes.done");
+  if (outcome === "held" || outcome === "pending") return t("settings.logs.outcomes.held");
+  if (outcome === "running") return t("settings.logs.outcomes.running");
+  if (outcome === "failed") return t("settings.logs.outcomes.failed");
+  if (outcome === "denied") return t("settings.logs.outcomes.denied");
+  if (outcome === "cancelled") return t("settings.logs.outcomes.cancelled");
   return outcome;
 }
 
@@ -34,43 +39,44 @@ export function LineInspector({
   technical: boolean;
   onProcess: (pid: string) => void;
 }) {
+  const t = useT();
   const failed = line.outcome === "failed" || line.outcome === "denied";
   return (
     <div>
-      <h3>{line.what}</h3>
+      <h3>{t(line.action.key, line.action.values)}</h3>
       <div class="sub">
         {placeLabelFor(line.place)} · <LineTime timestamp={line.timestamp} />
       </div>
       <dl class="fleet-kv">
-        <dt>Outcome</dt>
-        <dd class={failed ? "error" : ""}>{outcomeWord(line.outcome)}</dd>
-        <dt>By</dt>
+        <dt>{t("settings.logs.outcome")}</dt>
+        <dd class={failed ? "error" : ""}>{outcomeWord(t, line.outcome)}</dd>
+        <dt>{t("settings.logs.by")}</dt>
         <dd>{processName}</dd>
-        {line.durationMs != null && <><dt>Duration</dt><dd>{line.durationMs < 1000 ? `${line.durationMs} ms` : `${(line.durationMs / 1000).toFixed(1)} s`}</dd></>}
+        {line.durationMs != null && <><dt>{t("settings.logs.duration")}</dt><dd>{line.durationMs < 1000 ? `${line.durationMs} ms` : `${(line.durationMs / 1000).toFixed(1)} s`}</dd></>}
         {technical ? (
           <>
-            <dt>Syscall</dt>
+            <dt>{t("settings.logs.syscall")}</dt>
             <dd>{line.syscall}</dd>
           </>
         ) : null}
         {(technical || line.detail) && <>
-          <dt>{technical ? "Arguments" : "Detail"}</dt>
+          <dt>{t(technical ? "settings.logs.arguments" : "settings.logs.detail")}</dt>
           <dd><pre class="line-detail">{technical ? line.args : line.detail}</pre></dd>
         </>}
       </dl>
-      {line.error && <div class="fleet-line-error"><h4>Failure</h4><pre class="line-detail error">{line.error}</pre></div>}
-      <details class="fleet-work-technical"><summary>Request details</summary><dl class="fleet-work-details"><div><dt>Call</dt><dd>{line.syscall}</dd></div><div><dt>Target</dt><dd>{line.place}</dd></div>{line.runId && <div><dt>Run</dt><dd>{line.runId}</dd></div>}</dl><pre class="line-detail">{line.args}</pre></details>
+      {line.error && <div class="fleet-line-error"><h4>{t("settings.logs.failure")}</h4><pre class="line-detail error">{line.error}</pre></div>}
+      <details class="fleet-work-technical"><summary>{t("settings.logs.requestDetails")}</summary><dl class="fleet-work-details"><div><dt>{t("settings.logs.call")}</dt><dd>{line.syscall}</dd></div><div><dt>{t("settings.logs.target")}</dt><dd>{line.place}</dd></div>{line.runId && <div><dt>{t("settings.logs.run")}</dt><dd>{line.runId}</dd></div>}</dl><pre class="line-detail">{line.args}</pre></details>
       <div class="fleet-actions">
         {line.processId !== "you" ? (
           <button type="button" class="fleet-text-action is-primary" onClick={() => onProcess(line.processId)}>
-            inspect process
+            {t("settings.logs.inspectProcess")}
           </button>
         ) : null}
         {(technical || line.detail) && <button type="button" class="fleet-text-action" onClick={() => void navigator.clipboard?.writeText(technical ? line.args ?? "" : line.detail)}>
-          copy
+          {t("settings.logs.copy")}
         </button>}
       </div>
-      <p class="note">{technical ? "Raw view. Press t for plain words." : "Press t for the raw syscall and arguments."}</p>
+      <p class="note">{t(technical ? "settings.logs.rawHint" : "settings.logs.plainHint")}</p>
     </div>
   );
 }

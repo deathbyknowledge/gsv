@@ -3,11 +3,12 @@ import { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, u
 import { useQuery } from "@tanstack/preact-query";
 import { useGateway } from "../gateway/GatewayProvider";
 import { useChatOutbox } from "../chat/hooks/useChatOutbox";
-import { consoleConfigQueryKey } from "../system/useConsoleData";
+import { useLanguagePreference } from "../system/useConsoleData";
 import { useNativeInput } from "./PlatformProvider";
 import { useNativeSpeech, type SpeechLanguage } from "./NativeSpeech";
 import { useNativeVoice, type VoiceComposer } from "./useNativeVoice";
 import { useSpokenReplies } from "./useSpokenReplies";
+import { t } from "../../i18n/locale";
 
 export type ComposerVoiceOptions = Pick<Parameters<typeof useNativeVoice>[0], "prompt" | "scope" | "enabled" | "send">;
 type Composer = { owner: symbol; options: { current: ComposerVoiceOptions } };
@@ -21,6 +22,7 @@ type VoiceSession = {
   connected: boolean;
   language: SpeechLanguage | null;
   languageError: string | null;
+  languageUnsupported: boolean;
   outbox: ReturnType<typeof useChatOutbox>;
   startComposer(composer: Composer): void;
   releaseComposer(owner: symbol): void;
@@ -57,24 +59,16 @@ function VoiceSessionOwner({ children, onDirtyChange }: {
     enabled: connected && !!speech?.preferences.enabled,
     queryFn: async () => {
       const { conversation } = await client.conversation.ship({});
-      if (conversation.kind !== "ship") throw new Error("Your personal Ship conversation is unavailable.");
+      if (conversation.kind !== "ship") throw new Error(t("desktop.voice.errors.conversationUnavailable"));
       return conversation;
     },
   });
-  const languagePreference = useQuery({
-    queryKey: [...consoleConfigQueryKey, "language", destination.data?.ownerUid],
-    enabled: connected && !!speech?.preferences.enabled && !!destination.data,
-    queryFn: async () => {
-      const key = `users/${destination.data!.ownerUid}/locale/language`;
-      const { entries } = await client.sys.config.get({ key });
-      return entries.find((entry) => entry.key === key)?.value ?? "";
-    },
-  });
+  const languagePreference = useLanguagePreference(destination.data?.ownerUid, { enabled: !!speech?.preferences.enabled });
   const requestedLanguage = (languagePreference.data || navigator.language || "en").split("-")[0].toLowerCase();
   const language = languagePreference.data === undefined ? null : requestedLanguage === "es" ? "es"
     : requestedLanguage === "en" || !languagePreference.data ? "en" : null;
-  const languageError = languagePreference.error?.message ?? (languagePreference.data !== undefined && !language
-    ? "Spoken replies currently support English and Spanish. Your response language is not supported yet." : null);
+  const languageError = languagePreference.error?.message ?? null;
+  const languageUnsupported = !languageError && languagePreference.data !== undefined && !language;
   // Conversation signals own the transcript; this outbox retains only delivery and retry state.
   const outbox = useChatOutbox(useCallback(() => {}, []));
   const current = useRef({ connected, outbox, destination, speech });
@@ -97,12 +91,12 @@ function VoiceSessionOwner({ children, onDirtyChange }: {
   const input = useNativeVoice({
     prompt, scope: "desktop-session", enabled: true, global: true,
     prepareHandsfree: () => {
-      if (!current.current.connected) return "Reconnecting to your Ship. Your voice draft is still here.";
+      if (!current.current.connected) return t("desktop.voice.errors.reconnecting");
       if (!current.current.destination.data) {
         void current.current.destination.refetch();
-        return current.current.destination.error?.message ?? "Your Ship is getting ready. Try the shortcut again in a moment.";
+        return current.current.destination.error?.message ?? t("desktop.voice.errors.shipPreparing");
       }
-      if (current.current.outbox.sending) return "Your last message is still sending. Try again in a moment.";
+      if (current.current.outbox.sending) return t("desktop.voice.errors.stillSending");
       if (!textRef.current.trim()) {
         const ship = current.current.destination.data;
         recipient.current = { pid: ship.handlerPid, conversationId: ship.id };
@@ -175,7 +169,7 @@ function VoiceSessionOwner({ children, onDirtyChange }: {
     }
     failed.current = new Set(outbox.messages.filter((message) => message.status === "failed").map((message) => message.id));
   }, [outbox.messages]);
-  return <Context.Provider value={{ input, capture, text, connected, language, languageError, outbox, ...actions }}>{children}</Context.Provider>;
+  return <Context.Provider value={{ input, capture, text, connected, language, languageError, languageUnsupported, outbox, ...actions }}>{children}</Context.Provider>;
 }
 
 /** Chat lends its composer only for local dictation; handsfree never borrows that draft. */

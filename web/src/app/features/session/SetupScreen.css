@@ -13,8 +13,8 @@
 .gsv-setup-head .gsv-setup-space { color: var(--accent); font-family: var(--gsv-font-mono); font-size: 12px; overflow-wrap: anywhere; }
 .gsv-setup-meta { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; }
 .gsv-setup-head .gsv-setup-progress { flex: none; font-size: 12px; }
-.gsv-setup-greeting { display: block; font-size: 18px; font-weight: 400; color: var(--text); }
-.gsv-setup-host { display: block; font-family: var(--gsv-font-mono); font-size: 32px; overflow-wrap: anywhere; }
+.gsv-setup-head h1.gsv-setup-greeting { font-size: 18px; font-weight: 400; color: var(--text); }
+.gsv-setup-host { display: block; color: var(--text-hi); font-family: var(--gsv-font-mono); font-size: 32px; font-weight: 500; overflow-wrap: anywhere; }
 .gsv-setup-domain { color: var(--text-dim); font-size: .62em; white-space: nowrap; }
 @media (max-width: 900px) { .gsv-setup-host { font-size: 26px; } .gsv-setup-domain { display: block; } }
 .gsv-setup-form { display: flex; flex-direction: column; gap: 20px; min-width: 0; }

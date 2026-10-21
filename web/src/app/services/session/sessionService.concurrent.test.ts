@@ -155,7 +155,7 @@ describe("remembered sessions across windows", () => {
     await vi.advanceTimersByTimeAsync(DAY);
     expect(client.connect).toHaveBeenCalledOnce();
     expect(persisted()).toBeNull();
-    expect(session.snapshot()).toMatchObject({ phase: "locked", message: "Session expired. Sign in again." });
+    expect(session.snapshot()).toMatchObject({ phase: "locked", message: { key: "session.status.expired" } });
     session.dispose?.();
   });
 
@@ -173,7 +173,7 @@ describe("remembered sessions across windows", () => {
     await session.start();
     await vi.advanceTimersByTimeAsync(45_000);
     expect(client.connect).toHaveBeenCalledOnce();
-    expect(session.snapshot()).toMatchObject({ phase: "locked", message: error.message });
+    expect(session.snapshot()).toMatchObject({ phase: "locked", message: { text: error.message } });
     expect(persisted()?.tokenId).toBe("saved");
     session.dispose?.();
   });

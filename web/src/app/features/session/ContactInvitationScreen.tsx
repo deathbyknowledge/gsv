@@ -3,18 +3,20 @@ import { contactInvitationDestination } from "@humansandmachines/gsv/protocol";
 import { AuthLayout } from "./AuthLayout";
 import { SpaceAddressForm } from "./SpaceAddressForm";
 import { pendingContactInvitation, contactInvitationPreview } from "../../services/session/contactInvitationIntent";
+import { rich, useT } from "../../i18n/locale";
 import "./LoginScreen.css";
 import "./OwnerWelcomeScreen.css";
 
 export function ContactInvitationScreen() {
+  const t = useT();
   const [code] = useState(pendingContactInvitation);
-  const preview = code ? contactInvitationPreview(code) : { error: "This link is missing its invitation." };
+  const preview = code ? contactInvitationPreview(code) : { error: t("session.contact.missing") };
   return <AuthLayout visible surfaceClass="gsv-auth-surface-login"><section class="desktop-welcome">
-    <h1>{"name" in preview ? <><strong class="desktop-welcome-inviter">{preview.name}</strong> invited you</> : "Connect on Ship"}</h1>
-    {"error" in preview ? <p role="alert">{preview.error}</p> : preview.expired ? <p>This invitation has expired. Ask {preview.name} for a new link.</p> : <>
-      <p class="desktop-welcome-detail">Talk directly, share things, and let your Ships help you make plans.</p>
+    <h1>{"name" in preview ? rich(t("session.contact.invitedYou"), { name: <strong class="desktop-welcome-inviter">{preview.name}</strong> }) : t("session.contact.title")}</h1>
+    {"error" in preview ? <p role="alert">{preview.error}</p> : preview.expired ? <p>{t("session.contact.expired", { name: preview.name })}</p> : <>
+      <p class="desktop-welcome-detail">{t("session.contact.pitch")}</p>
       <SpaceAddressForm onConnect={async (origin) => { window.location.assign(contactInvitationDestination(origin, code!)); }} />
-      <p class="desktop-welcome-detail">Review the invitation in Ship before connecting.</p>
+      <p class="desktop-welcome-detail">{t("session.contact.review")}</p>
     </>}
   </section></AuthLayout>;
 }

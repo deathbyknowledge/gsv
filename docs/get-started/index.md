@@ -16,7 +16,7 @@ heading "Welcome to your Ship!" and large, readable text. Close it
 or choose **Try it out!** to dismiss it for your account across web and Desktop.
 If the welcome cannot be loaded, choose **Retry** to check again.
 Ship then greets you in a language detected from your browser. You can write first,
-ask Ship to switch languages, or change **Settings → Preferences → Response language**.
+ask Ship to switch languages, or change **Settings → Preferences → Language**.
 The welcome stays in your conversation across devices.
 The card links to the community Discord; the **Feedback** button in the header
 is available when your operator offers it.

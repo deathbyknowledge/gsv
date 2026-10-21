@@ -25,7 +25,7 @@ describe("typed history projection", () => {
         payload: { contactId: "contact:1", conversationId: "conv:1", messageId: "msg:1", from: "Xisca", text: "", responsibilityId: "r12y:1" },
       },
     })]);
-    expect(rows).toEqual([expect.objectContaining({ text: "Xisca: (attachment)", media })]);
+    expect(rows).toEqual([expect.objectContaining({ text: "Xisca: (an attachment)", media })]);
   });
 
   it("retains purpose through result deltas, late call records and a history reload", () => {

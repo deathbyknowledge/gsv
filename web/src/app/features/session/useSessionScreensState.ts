@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
 import { z } from "zod";
-import type { SessionService, SessionSnapshot } from "../../services/session/sessionService";
+import type { SessionMessage, SessionService, SessionSnapshot } from "../../services/session/sessionService";
+import { useT, type TextKey } from "../../i18n/locale";
 import { validateSetupAccount, type SetupAccount } from "./sessionDomain";
 
 type UseSessionScreensStateOptions = {
@@ -11,8 +12,9 @@ type UseSessionScreensStateOptions = {
 const setupHistoryStateSchema = z.object({ gsvSetupConsent: z.boolean() });
 
 export function useSessionScreensState({ session, snapshot }: UseSessionScreensStateOptions) {
+  const t = useT();
   const [pendingAction, setPendingAction] = useState<"login" | "setup" | null>(null);
-  const [loginValidationError, setLoginValidationError] = useState<string | null>(null);
+  const [loginValidationError, setLoginValidationError] = useState<TextKey | null>(null);
   const [setupTouched, setSetupTouched] = useState<Partial<Record<keyof SetupAccount, boolean>>>({});
   const [setupValidationAttempt, setSetupValidationAttempt] = useState(0);
   const [administrator, setAdministrator] = useState(false);
@@ -147,7 +149,7 @@ export function useSessionScreensState({ session, snapshot }: UseSessionScreensS
   const submitLogin = (event: Event): void => {
     event.preventDefault();
     if (busy) return;
-    if (!loginPassword) { setLoginValidationError("Password is required."); return; }
+    if (!loginPassword) { setLoginValidationError("session.login.passwordRequired"); return; }
     setLoginValidationError(null);
     setPendingAction("login");
     void session.login({ username: administrator ? "root" : undefined, password: loginPassword }).catch(() => {
@@ -186,12 +188,14 @@ export function useSessionScreensState({ session, snapshot }: UseSessionScreensS
     });
   };
 
+  // The session's own notices are translated; Kernel and storage errors are shown as sent.
+  const messageText = (message: SessionMessage | null) => message && ("key" in message ? t(message.key) : message.text);
   return {
     screenRef,
     visibleView,
     busy,
     login: {
-      error: loginValidationError ?? (snapshot.phase === "locked" ? snapshot.message : null),
+      error: loginValidationError ? t(loginValidationError) : messageText(snapshot.phase === "locked" ? snapshot.message : null),
       administrator,
       password: loginPassword,
       onAdministrator: (value: boolean) => { setAdministrator(value); setLoginPassword(""); setLoginValidationError(null); },
@@ -201,16 +205,16 @@ export function useSessionScreensState({ session, snapshot }: UseSessionScreensS
     setup: {
       step: setupStep,
       consentRequired: setupConsentRequired,
-      error: snapshot.phase === "setup" ? snapshot.message : null,
+      error: messageText(snapshot.phase === "setup" ? snapshot.message : null),
       // An untouched field stays quiet until something is typed in it or a submit is attempted.
       fieldErrors: {
-        password: setupTouched.password && (setupPassword || setupValidationAttempt > 0) ? setupErrors.password : undefined,
-        passwordConfirm: setupTouched.passwordConfirm && (setupPasswordConfirm || setupValidationAttempt > 0) ? setupErrors.passwordConfirm : undefined,
+        password: setupTouched.password && (setupPassword || setupValidationAttempt > 0) && setupErrors.password ? t(setupErrors.password) : undefined,
+        passwordConfirm: setupTouched.passwordConfirm && (setupPasswordConfirm || setupValidationAttempt > 0) && setupErrors.passwordConfirm ? t(setupErrors.passwordConfirm) : undefined,
       },
       password: setupPassword,
       passwordConfirm: setupPasswordConfirm,
       consent: setupConsent,
-      consentError: setupConsentTouched && !setupConsent ? "Confirm your age and agreement to continue." : null,
+      consentError: setupConsentTouched && !setupConsent ? t("session.consent.required") : null,
       onPassword: setSetupPassword,
       onPasswordConfirm: setSetupPasswordConfirm,
       onConsent: (checked: boolean) => { setSetupConsent(checked); setSetupConsentTouched(true); },

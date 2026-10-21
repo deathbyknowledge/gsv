@@ -279,6 +279,20 @@ export function useConsoleConfig(options: ConsoleQueryOptions = {}) {
   };
 }
 
+/** A human's chosen language, or "" before they choose one. */
+export function useLanguagePreference(uid: number | undefined, options: ConsoleQueryOptions = {}) {
+  const { client, connected } = useGateway();
+  return useQuery({
+    queryKey: [...consoleConfigQueryKey, "language", uid],
+    enabled: connected && uid !== undefined && (options.enabled ?? true),
+    queryFn: async () => {
+      const key = `users/${uid}/locale/language`;
+      const { entries } = await client.sys.config.get({ key });
+      return entries.find((entry) => entry.key === key)?.value ?? "";
+    },
+  });
+}
+
 export function useConsoleModels(options: ConsoleQueryOptions = {}) {
   const { client, connected } = useGateway();
   const enabled = connected && (options.enabled ?? true);

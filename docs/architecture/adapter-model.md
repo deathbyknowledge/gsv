@@ -219,6 +219,15 @@ The canonical outbound path is:
 Again, the adapter is a transport surface, not the place where durable agent
 or conversation state lives.
 
+A failed run with an existing adapter destination queues one bounded system
+notice before the Kernel removes its run route. The notice retains that exact
+destination and route generation through the ordinary durable delivery retry
+path, with a stable delivery identity. It contains no provider error or private
+run content and does not create an agent-authored conversation Message. The
+failure details remain inspectable in Process history. Cancelled or superseded
+runs do not send failure notices, and connection-only runs do not select a
+messenger just to report a failure.
+
 HIL uses the same structured request rather than a prompt-text side channel.
 Web, Desktop, and CLI receive `proc.run.hil.requested` as a broadcast signal; an
 exact routed adapter receives the same `ProcHilRequest` in its targeted

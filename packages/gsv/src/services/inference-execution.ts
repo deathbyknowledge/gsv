@@ -9,6 +9,7 @@ import type {
 } from "../protocol/syscalls/ai";
 import type { JsonObject } from "../protocol/json";
 import type { InferenceModelLookup } from "../telemetry";
+import type { InferenceRequest } from "./inference-body";
 import type {
   ManagedInferenceAbortReason,
   ManagedInferenceActor,
@@ -62,11 +63,11 @@ export interface InferenceTransport {
 /** Returned only to a trusted gateway; its identity cannot change per call. */
 export interface InferenceExecutor {
   generate(
-    request: InferenceExecutionRequest,
+    request: InferenceRequest<InferenceExecutionRequest>,
     transport?: InferenceTransport,
   ): Promise<ManagedInferenceResult>;
   generateStream(
-    request: InferenceExecutionRequest,
+    request: InferenceRequest<InferenceExecutionRequest>,
     transport?: InferenceTransport,
   ): Promise<ReadableStream<Uint8Array>>;
   abort(requestId: string, reason?: ManagedInferenceAbortReason): Promise<void>;

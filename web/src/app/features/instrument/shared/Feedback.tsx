@@ -6,10 +6,12 @@ import { useSession } from "../../../services/session/SessionProvider";
 import { useNativeInput } from "../../../services/platform/PlatformProvider";
 import { Spinner } from "../../../components/ui/Spinner";
 import { loadShipActivity } from "../../../services/feedback/shipActivity";
+import { useT } from "../../../i18n/locale";
 import type { Distance } from "../Instrument";
 import "./feedback.css";
 
 export function Feedback({ view }: { view: Distance }) {
+  const t = useT();
   const { client, connected } = useGateway();
   const { snapshot } = useSession();
   const native = useNativeInput();
@@ -92,53 +94,53 @@ export function Feedback({ view }: { view: Distance }) {
     <button type="button" class="feedback-trigger" aria-haspopup="dialog" onClick={() => {
       if (state === "sent") setState("idle");
       setOpen(true);
-    }}>feedback</button>
+    }}>{t("shell.feedback.trigger")}</button>
     <dialog ref={dialog} class="feedback-dialog" aria-labelledby={titleId}
       onCancel={(event) => { event.preventDefault(); setOpen(false); }}
       onKeyDown={(event) => event.stopPropagation()}>
       <header>
-        <span id={titleId}>Feedback</span>
-        <button type="button" aria-label="Close feedback" onClick={() => setOpen(false)}>close <kbd>esc</kbd></button>
+        <span id={titleId}>{t("shell.feedback.title")}</span>
+        <button type="button" aria-label={t("shell.feedback.close")} onClick={() => setOpen(false)}>{t("shell.close")} <kbd>esc</kbd></button>
       </header>
       {state === "sent" ? <div class="feedback-sent" role="status">
-        {!available && <p class="feedback-preview">Preview only — no feedback was sent.</p>}
-        <p>Thank you! This really helps us make Ship better. :)</p>
-        <button type="button" class="feedback-send" onClick={() => setOpen(false)}>Done</button>
+        {!available && <p class="feedback-preview">{t("shell.feedback.previewSent")}</p>}
+        <p>{t("shell.feedback.thanks")}</p>
+        <button type="button" class="feedback-send" onClick={() => setOpen(false)}>{t("shell.feedback.done")}</button>
       </div> : <form onSubmit={(event) => { event.preventDefault(); void submit(); }}>
-        <p class="feedback-intro">Something broken, confusing, or missing? An idea or something you love? We read every message.</p>
-        <textarea aria-label="Feedback" aria-describedby={available ? `${contactId} ${detailsId}` : contactId} autoFocus rows={6}
+        <p class="feedback-intro">{t("shell.feedback.intro")}</p>
+        <textarea aria-label={t("shell.feedback.title")} aria-describedby={available ? `${contactId} ${detailsId}` : contactId} autoFocus rows={6}
           maxLength={FEEDBACK_MAX_LENGTH} value={message} disabled={!available || state === "sending"}
           onInput={(event) => {
             setMessage(event.currentTarget.value);
             submission.current = null;
             if (state === "error") setState("idle");
           }} />
-        <p id={contactId} class="feedback-contact">Want us to get back to you? Leave your email or Discord handle.</p>
+        <p id={contactId} class="feedback-contact">{t("shell.feedback.contact")}</p>
         {!available && <p class="feedback-preview" role="status">
-          Preview only — sending feedback is unavailable here. <button type="button" onClick={() => setState("sent")}>View confirmation</button>
+          {t("shell.feedback.previewUnavailable")} <button type="button" onClick={() => setState("sent")}>{t("shell.feedback.viewConfirmation")}</button>
         </p>}
         <div class="feedback-activity">
           <label><input type="checkbox" checked={activityState !== "off"} disabled={!available || state === "sending" || !connected}
             onChange={(event) => { void selectActivity(event.currentTarget.checked); }} />
-            Include last {FEEDBACK_ACTIVITY_MESSAGES} Ship messages
+            {t("shell.feedback.includeActivity", { count: FEEDBACK_ACTIVITY_MESSAGES })}
           </label>
-          {activityState === "loading" && <span role="status"><Spinner /> Loading activity…</span>}
+          {activityState === "loading" && <span role="status"><Spinner /> {t("shell.feedback.loadingActivity")}</span>}
           {activityState === "ready" && activity && <details>
-            <summary>Review {activity.messageCount} messages{activity.truncated ? " · shortened" : ""}</summary>
-            <p>Includes thinking, tool inputs/results and runtime events.</p>
-            <pre tabIndex={0}>{activity.text || "No recent activity."}</pre>
+            <summary>{t(activity.truncated ? "shell.feedback.reviewShortened" : "shell.feedback.review", { count: activity.messageCount })}</summary>
+            <p>{t("shell.feedback.activityNote")}</p>
+            <pre tabIndex={0}>{activity.text || t("shell.feedback.noActivity")}</pre>
           </details>}
-          {activityState === "error" && <p role="alert">Could not load Ship activity. <button type="button" onClick={() => { void selectActivity(true); }}>Retry</button></p>}
+          {activityState === "error" && <p role="alert">{t("shell.feedback.activityFailed")} <button type="button" onClick={() => { void selectActivity(true); }}>{t("shell.retryButton")}</button></p>}
         </div>
         <footer>
-          {available && <span id={detailsId}>Includes your Ship and app version.</span>}
-          <button type="submit" class="feedback-send" aria-label={state === "sending" ? "Sending feedback" : undefined}
+          {available && <span id={detailsId}>{t("shell.feedback.versionNote")}</span>}
+          <button type="submit" class="feedback-send" aria-label={state === "sending" ? t("shell.feedback.sending") : undefined}
             aria-busy={state === "sending"} disabled={!available || !connected || !message.trim() || state === "sending" || activityState === "loading" || activityState === "error"}>
-            {state === "sending" ? <Spinner /> : "Send"}
+            {state === "sending" ? <Spinner /> : t("shell.feedback.send")}
           </button>
         </footer>
-        {state === "error" && <p class="feedback-error" role="alert">Could not send. Try again.</p>}
-        {!connected && <p class="feedback-error" role="status">Waiting for connection.</p>}
+        {state === "error" && <p class="feedback-error" role="alert">{t("shell.feedback.sendFailed")}</p>}
+        {!connected && <p class="feedback-error" role="status">{t("shell.feedback.waiting")}</p>}
       </form>}
     </dialog>
   </>;

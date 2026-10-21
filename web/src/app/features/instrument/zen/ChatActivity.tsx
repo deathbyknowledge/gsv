@@ -9,7 +9,14 @@ import { canConfigure } from "../settings/settingsModel";
 import { ResponsibilitiesSection, ResponsibilityInspector, RoutinesSection, RoutineInspector, useResponsibilities } from "../shared/Responsibilities";
 import { INSTRUMENT_PROCESSES_KEY, INSTRUMENT_RESPONSIBILITIES_KEY } from "../wire/queryKeys";
 import type { FleetReference } from "../fleet/fleetModel";
+import { useT, type TextKey } from "../../../i18n/locale";
 import type { ActivityRequest, ActivityRow } from "./chatContextModel";
+
+const TABS = {
+  ongoing: "chat.plans.tab.ongoing",
+  routines: "chat.plans.tab.routines",
+  history: "chat.plans.tab.history",
+} satisfies Record<NonNullable<ActivityRequest["tab"]>, TextKey>;
 
 export function ChatActivity({ account, request, onAsk, onFleet, onDirty }: {
   account?: ConsoleAccount;
@@ -18,6 +25,7 @@ export function ChatActivity({ account, request, onAsk, onFleet, onDirty }: {
   onFleet: (reference: FleetReference) => void;
   onDirty: (dirty: boolean) => void;
 }) {
+  const t = useT();
   const active = useViewActive();
   const { client, connected } = useGateway();
   const [tab, setTab] = useState<NonNullable<ActivityRequest["tab"]>>("ongoing");
@@ -27,7 +35,7 @@ export function ChatActivity({ account, request, onAsk, onFleet, onDirty }: {
   const [now, setNow] = useState(Date.now);
   useLayoutEffect(() => { onDirty(dirty); }, [dirty, onDirty]);
   useLayoutEffect(() => {
-    if (!request || (dirty && !window.confirm("Discard this unsaved routine?"))) return;
+    if (!request || (dirty && !window.confirm(t("chat.plans.discardRoutine")))) return;
     setDirty(false);
     setRow(request?.row ?? null);
     work.setFilterPid(request?.processId ?? null);
@@ -53,31 +61,31 @@ export function ChatActivity({ account, request, onAsk, onFleet, onDirty }: {
       void work.routines.fetchNextPage();
     }
   }, [active, row, routine, work.routines.hasNextPage, work.routines.isFetchingNextPage, work.routines.error, work.routines.fetchNextPage]);
-  const leaveDetail = () => !dirty || window.confirm("Discard this unsaved routine?");
+  const leaveDetail = () => !dirty || window.confirm(t("chat.plans.discardRoutine"));
   const select = (next: ActivityRow | null) => { if (leaveDetail()) { setDirty(false); setRow(next); } };
 
   return <div class="chat-activity">
-    <nav class="chat-context-tabs" aria-label="Ship activity">
+    <nav class="chat-context-tabs" aria-label={t("chat.plans.label")}>
       {(["ongoing", "routines", "history"] as const).map((value) => <button type="button" aria-pressed={tab === value}
-        onClick={() => { if (leaveDetail()) { setDirty(false); setRow(null); setTab(value); } }}>{value}</button>)}
+        onClick={() => { if (leaveDetail()) { setDirty(false); setRow(null); setTab(value); } }}>{t(TABS[value])}</button>)}
     </nav>
     {row ? <>
-      <button type="button" class="fleet-text-action chat-context-back" onClick={() => select(null)}>← {tab}</button>
+      <button type="button" class="fleet-text-action chat-context-back" onClick={() => select(null)}>← {t(TABS[tab])}</button>
       {record ? <>
         <ResponsibilityInspector key={record.id} record={record} account={account}
           processName={(pid) => processes.data?.find((process) => process.pid === pid)?.label ?? pid}
           onProcess={(pid) => { if (pid) onFleet(`proc:${pid}`); }} />
-        <button type="button" class="fleet-text-action is-primary" disabled={!account || !canConfigure(account, "conversation.send")} onClick={() => onAsk(`Help me with the responsibility ${JSON.stringify(record.title)} (${record.id}).`)}>ask Ship</button>
+        <button type="button" class="fleet-text-action is-primary" disabled={!account || !canConfigure(account, "conversation.send")} onClick={() => onAsk(`Help me with the responsibility ${JSON.stringify(record.title)} (${record.id}).`)}>{t("chat.askShip")}</button>
         {record.source.kind === "schedule" && <button type="button" class="fleet-text-action" onClick={() => {
           if (record.source.kind === "schedule") { setTab("routines"); select(`routine:${record.source.scheduleId}`); }
-        }}>view routine</button>}
+        }}>{t("chat.plans.viewRoutine")}</button>}
       </> : routine ? <>
         <RoutineInspector key={routine.id} schedule={routine} account={account} onDirty={setDirty} onSelect={(id) => { setDirty(false); setRow(`routine:${id}`); }} />
         <button type="button" class="fleet-text-action is-primary" disabled={!account || !canConfigure(account, "conversation.send")}
-          onClick={() => onAsk(`Help me with the routine ${JSON.stringify(routine.name)} (${routine.id}).`)}>ask Ship</button>
-      </> : account && !canConfigure(account, responsibilityId ? "r12y.get" : "sched.list") ? <p class="note">Your account cannot read this item.</p>
-        : (responsibilityId ? responsibility.isPending : work.routines.isPending || work.routines.isFetchingNextPage) ? <LoadingState>Loading…</LoadingState>
-        : <p class="note" role="status">{responsibility.error?.message ?? work.routines.error?.message ?? "This item is no longer available."}</p>}
+          onClick={() => onAsk(`Help me with the routine ${JSON.stringify(routine.name)} (${routine.id}).`)}>{t("chat.askShip")}</button>
+      </> : account && !canConfigure(account, responsibilityId ? "r12y.get" : "sched.list") ? <p class="note">{t("chat.plans.noAccess")}</p>
+        : (responsibilityId ? responsibility.isPending : work.routines.isPending || work.routines.isFetchingNextPage) ? <LoadingState>{t("common.loading")}</LoadingState>
+        : <p class="note" role="status">{responsibility.error?.message ?? work.routines.error?.message ?? t("chat.plans.gone")}</p>}
     </> : tab === "routines" ? <RoutinesSection work={work} account={account} now={now} onSelect={select} onCreate={() => onAsk("Help me create a routine.")} />
         : <ResponsibilitiesSection work={work} account={account} now={now} processes={processes.data ?? []} onSelect={select} />}
   </div>;

@@ -1,5 +1,6 @@
 import type { AiModelsResult } from "@humansandmachines/gsv/protocol";
 import type { ConsoleConfigEntry } from "../../../domain/system/consoleModels";
+import { t } from "../../../i18n/locale";
 import {
   deleteModelProfile,
   editableModelSource,
@@ -36,19 +37,19 @@ export function modelProfileChangeWrites(
   original: ConsoleModelProfile,
   change: ModelChange,
 ): ConsoleConfigWrite[] {
-  if (original.source !== editableModelSource(uid)) throw new Error("Inherited model definitions cannot be changed here.");
+  if (original.source !== editableModelSource(uid)) throw new Error(t("settings.models.inheritedReadOnly"));
   const writable = writableModelProfiles(listing, config, uid).map((profile) => ({
     ...profile, values: { ...profile.values, "config/ai/api_key": "" },
   }));
   const current = writable.find((profile) => profile.id === original.id);
   if (!current || serializeModelProfiles([current]) !== serializeModelProfiles([original])) {
-    throw new Error("This model changed while you were editing. Reopen it to see the latest settings.");
+    throw new Error(t("settings.models.changedWhileEditing"));
   }
   if (change.kind === "edit") {
     const name = normalizeProfileName(change.name);
     const reserved = [...writable, ...modelProfilesFromListing(listing, [], uid)];
     if (reserved.some((profile) => profile.id !== original.id && profile.name.toLowerCase() === name.toLowerCase())) {
-      throw new Error("That name is already in your stack. Give this model a different name.");
+      throw new Error(t("settings.models.duplicateName"));
     }
     return modelProfileSaveEntries(uid, updateModelProfile(writable, original.id, name, change.values),
       new Map([[original.id, new Set(change.clearApiKey ? ["config/ai/api_key"] : [])]]));

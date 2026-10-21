@@ -10,6 +10,7 @@ import { useSession } from "../../../services/session/SessionProvider";
 import { useDevicePairing } from "../../../services/machines/DevicePairingProvider";
 import { buildMachineInstallCommand, type MachineProvisionPlatform } from "../../../services/machines/machineProvision";
 import { SetupCommand } from "./SetupCommand";
+import { rich, useT } from "../../../i18n/locale";
 
 export function DevicePairingPanel({ targets, allowed = true, ready = true, initialPlatform, onClose, onConnected }: {
   targets: readonly Pick<ConsoleTarget, "deviceId" | "online">[];
@@ -19,6 +20,7 @@ export function DevicePairingPanel({ targets, allowed = true, ready = true, init
   onClose?: () => void;
   onConnected?: (targetId: string) => void;
 }) {
+  const t = useT();
   const visible = useViewActive();
   const { connected } = useGateway();
   const { snapshot } = useSession();
@@ -44,56 +46,59 @@ export function DevicePairingPanel({ targets, allowed = true, ready = true, init
   }, [visible, active, pairing?.expiresAt, owner]);
 
   return <div class="device-pairing fleet-connection">
-    {!allowed && <p class="note">Your account cannot create device invitations.</p>}
+    {!allowed && <p class="note">{t("shell.pairing.notAllowed")}</p>}
     {!invitation ? <form class="fleet-place-form" onSubmit={(event) => { event.preventDefault(); void owner.create(); }}>
       <fieldset disabled={disabled}>
-        {draft.replace ? <p class="note">Pair {draft.label} again as <code>{draft.targetId}</code>.</p> : <>
-          <label>Name<input name="pairing-label" value={draft.label} placeholder="My macbook" autoComplete="off" maxLength={100} onInput={(event) => owner.setLabel(event.currentTarget.value, targets.map((target) => target.deviceId))} /></label>
-          <label>Target ID<input name="pairing-target" value={draft.targetId} placeholder="my-macbook" autoComplete="off" spellcheck={false} maxLength={48} onInput={(event) => owner.setTargetId(event.currentTarget.value)} /></label>
-          <p class="note">The ID follows the name until you edit it.</p>
+        {draft.replace ? <p class="note">{rich(t("shell.pairing.replace", { name: draft.label }), { id: <code>{draft.targetId}</code> })}</p> : <>
+          <label>{t("shell.pairing.name")}<input name="pairing-label" value={draft.label} placeholder={t("shell.pairing.namePlaceholder")} autoComplete="off" maxLength={100} onInput={(event) => owner.setLabel(event.currentTarget.value, targets.map((target) => target.deviceId))} /></label>
+          <label>{t("shell.pairing.targetId")}<input name="pairing-target" value={draft.targetId} placeholder={t("shell.pairing.targetIdPlaceholder")} autoComplete="off" spellcheck={false} maxLength={48} onInput={(event) => owner.setTargetId(event.currentTarget.value)} /></label>
+          <p class="note">{t("shell.pairing.targetIdHint")}</p>
         </>}
         <PlatformChoice platform={draft.platform} onChange={(value) => owner.setPlatform(value)} />
-        <div class="fleet-actions"><button class="ibtn is-primary" type="submit" disabled={!draft.label.trim() || !parseDeviceId(draft.targetId)}>{pending ? <LoadingState>creating…</LoadingState> : "create invitation"}</button></div>
+        <div class="fleet-actions"><button class="ibtn is-primary" type="submit" disabled={!draft.label.trim() || !parseDeviceId(draft.targetId)}>{pending ? <LoadingState>{t("shell.pairing.creating")}</LoadingState> : t("shell.pairing.create")}</button></div>
       </fieldset>
     </form> : !pairing ? <>
-      <p class="note">{pending ? "Preparing the invitation…" : "Invitation creation needs a retry. Its identity is saved in this browser."}</p>
-      <button type="button" class="fleet-text-action" disabled={disabled} onClick={() => void owner.create()}>retry</button>
+      <p class="note">{pending ? t("shell.pairing.preparing") : t("shell.pairing.createFailed")}</p>
+      <button type="button" class="fleet-text-action" disabled={disabled} onClick={() => void owner.create()}>{t("shell.retry")}</button>
     </> : pairing.state === "paired" ? <>
-      <p class="note is-on" role="status">{pairing.label} is paired{online ? " and connected." : ". Waiting for its connection."}</p>
+      <p class="note is-on" role="status">{t(online ? "shell.pairing.pairedOnline" : "shell.pairing.pairedWaiting", { name: pairing.label })}</p>
       <div class="fleet-actions">
-        {online && onConnected && <button type="button" class="fleet-text-action is-primary" onClick={() => onConnected(pairing.targetId)}>view place</button>}
-        <button type="button" class="fleet-text-action" onClick={owner.startAnother}>pair another place</button>
+        {online && onConnected && <button type="button" class="fleet-text-action is-primary" onClick={() => onConnected(pairing.targetId)}>{t("shell.pairing.viewPlace")}</button>}
+        <button type="button" class="fleet-text-action" onClick={owner.startAnother}>{t("shell.pairing.pairAnother")}</button>
       </div>
     </> : !active ? <>
-      <p class="note" role="status">This invitation {expired ? "expired" : "was cancelled"}.</p>
-      <button type="button" class="fleet-text-action" onClick={owner.startAnother}>new invitation</button>
+      <p class="note" role="status">{t(expired ? "shell.pairing.expired" : "shell.pairing.cancelled")}</p>
+      <button type="button" class="fleet-text-action" onClick={owner.startAnother}>{t("shell.pairing.newInvitation")}</button>
     </> : <>
-      <p class="note" role="status">Invitation for {pairing.label} · <code>{pairing.targetId}</code>. Expires at {new Date(pairing.expiresAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}.</p>
+      <p class="note" role="status">{rich(t("shell.pairing.invitation", {
+        name: pairing.label, time: new Date(pairing.expiresAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+      }), { id: <code>{pairing.targetId}</code> })}</p>
       <PlatformChoice platform={draft.platform} onChange={(value) => owner.setPlatform(value)} />
       {draft.platform === "browser" ? <>
-        <p class="note">Download and unzip the extension. In <code>chrome://extensions</code>, enable developer mode and load its folder. Click the Your Ship icon in the toolbar, or find it under the Extensions button, then paste this invitation into its panel.</p>
-        <div class="fleet-actions"><a class="fleet-text-action" href={browserExtensionDownloadUrl(release)} target="_blank" rel="noreferrer">download extension</a></div>
-        <SetupCommand text={code} label="copy invitation" />
+        <p class="note">{rich(t("shell.pairing.extensionSteps"), { extensions: <code>chrome://extensions</code> })}</p>
+        <div class="fleet-actions"><a class="fleet-text-action" href={browserExtensionDownloadUrl(release)} target="_blank" rel="noreferrer">{t("shell.pairing.downloadExtension")}</a></div>
+        <SetupCommand text={code} label={t("shell.pairing.copyInvitation")} />
       </> : <>
-        <p class="note">Open {draft.platform === "windows" ? "PowerShell" : "Terminal"} on the computer you want to connect.</p>
-        <p class="note">1 · Paste and run this command to install Ship.</p>
-        <SetupCommand text={buildMachineInstallCommand(draft.platform, release)} label="copy install command" />
-        <p class="note">2 · When it finishes, run this command in the same window to connect.</p>
-        <SetupCommand text={`${draft.platform === "windows" ? "gsv.exe" : "gsv"} pair ${code}`} label="copy connect command" />
+        <p class="note">{t("shell.pairing.openTerminal", { app: draft.platform === "windows" ? "PowerShell" : "Terminal" })}</p>
+        <p class="note">{t("shell.pairing.installStep")}</p>
+        <SetupCommand text={buildMachineInstallCommand(draft.platform, release)} label={t("shell.pairing.copyInstall")} />
+        <p class="note">{t("shell.pairing.connectStep")}</p>
+        <SetupCommand text={`${draft.platform === "windows" ? "gsv.exe" : "gsv"} pair ${code}`} label={t("shell.pairing.copyConnect")} />
       </>}
-      <p class="note">You can close this panel and come back. Cancelling an invitation leaves an already-paired device connected.</p>
+      <p class="note">{t("shell.pairing.closeHint")}</p>
     </>}
     <div class="fleet-actions">
-      {onClose && <button class="fleet-text-action" type="button" onClick={onClose}>{invitation ? "done" : "cancel"}</button>}
-      {invitation && (!pairing || active) && <button type="button" class="fleet-text-action is-danger" disabled={!connected || pending} onClick={() => void owner.cancel()}>{pending ? "please wait…" : "cancel invitation"}</button>}
+      {onClose && <button class="fleet-text-action" type="button" onClick={onClose}>{t(invitation ? "shell.pairing.done" : "common.cancel")}</button>}
+      {invitation && (!pairing || active) && <button type="button" class="fleet-text-action is-danger" disabled={!connected || pending} onClick={() => void owner.cancel()}>{pending ? t("shell.pairing.wait") : t("shell.pairing.cancelInvitation")}</button>}
     </div>
     {error && <p class="error" role="alert">{error}</p>}
   </div>;
 }
 
 function PlatformChoice({ platform, onChange }: { platform: MachineProvisionPlatform; onChange: (platform: MachineProvisionPlatform) => void }) {
-  return <label class="pairing-platform">Place <select class="fleet-select" value={platform} onChange={(event) => {
+  const t = useT();
+  return <label class="pairing-platform">{t("shell.pairing.place")} <select class="fleet-select" value={platform} onChange={(event) => {
     const value = event.currentTarget.value;
     if (value === "mac" || value === "linux" || value === "windows" || value === "browser") onChange(value);
-  }}><option value="mac">Mac</option><option value="linux">Linux</option><option value="windows">Windows</option><option value="browser">Browser</option></select></label>;
+  }}><option value="mac">Mac</option><option value="linux">Linux</option><option value="windows">Windows</option><option value="browser">{t("shell.pairing.browser")}</option></select></label>;
 }

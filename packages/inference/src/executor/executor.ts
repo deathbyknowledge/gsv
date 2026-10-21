@@ -2,6 +2,7 @@ import { DurableObject, RpcTarget } from "cloudflare:workers";
 import type { Context } from "@earendil-works/pi-ai";
 import { encodeInferenceExecutionStreamEvent as encodeManagedInferenceStreamEvent } from "@humansandmachines/gsv/protocol";
 import type { InferenceExecutionRequest, InferenceExecutor as ExecutorContract, InferenceTransport, InferenceMediaRequest, InferenceMediaResult } from "@humansandmachines/gsv/services/inference-execution";
+import { cancelInferenceRequest, decodeInferenceRequest, type InferenceRequest } from "@humansandmachines/gsv/services/inference-body";
 import type { ManagedInferenceAbortReason, ManagedInferenceResult, ManagedInferenceStreamEvent } from "@humansandmachines/gsv/services/inference";
 import { createGenerationService } from "../text/service";
 import type { InferenceProviderFactory } from "../text/provider";
@@ -30,6 +31,7 @@ type ActiveRequest = {
   transport?: InferenceTransport;
   errorMessage?: string;
   transportError?: string;
+  providerStarted?: boolean;
 };
 
 /** Shared request ownership for reference hosting and commercial composition. */
@@ -57,11 +59,17 @@ export class InferenceExecutor<Environment extends ExecutorEnvironment = Executo
     return new ExecutorTarget(this);
   }
 
-  async generate(input: InferenceExecutionRequest, transport?: InferenceTransport): Promise<ManagedInferenceResult> {
-    const request = this.open(input, transport);
+  async generate(inputValue: InferenceRequest<InferenceExecutionRequest>, transport?: InferenceTransport): Promise<ManagedInferenceResult> {
+    let request: ActiveRequest | undefined;
     try {
-      await this.admit(input, request, this.outputTokens(input));
-      if (request.state) return terminalResult(input, request.state);
+      request = this.open(inputValue, transport);
+      await this.admit(inputValue, request, this.outputTokens(inputValue));
+      if (request.state) return terminalResult(inputValue, request.state);
+      const input = await decodeInferenceRequest(inputValue, request.controller.signal);
+      if (!Array.isArray(input.messages)) throw new Error("Invalid inference messages");
+      this.checkDeadline(request);
+      if (request.state) return terminalResult(inputValue, request.state);
+      request.providerStarted = true;
       const response = await raceWithAbort(
         this.service(request).generate(this.generationInput(input, request)), request.controller.signal,
       );
@@ -72,17 +80,26 @@ export class InferenceExecutor<Environment extends ExecutorEnvironment = Executo
       this.finish(request, result.stopReason === "aborted" ? "cancelled" : result.stopReason === "error" ? "error" : "completed", result.usage.output);
       return result;
     } catch (error) {
-      if (request.state) return terminalResult(input, request.state);
-      this.finish(request, "error");
+      if (request?.state) return terminalResult(inputValue, request.state);
+      if (request) this.finish(request, "error");
+      else dispose(transport);
       throw error;
+    } finally {
+      cancelInferenceRequest(inputValue);
     }
   }
 
-  async generateStream(input: InferenceExecutionRequest, transport?: InferenceTransport): Promise<ReadableStream<Uint8Array>> {
-    const request = this.open(input, transport);
+  async generateStream(inputValue: InferenceRequest<InferenceExecutionRequest>, transport?: InferenceTransport): Promise<ReadableStream<Uint8Array>> {
+    let opened: ActiveRequest | undefined;
     try {
-      await this.admit(input, request, this.outputTokens(input));
-      if (request.state) return terminalStream(input, request.state);
+      const request = opened = this.open(inputValue, transport);
+      await this.admit(inputValue, request, this.outputTokens(inputValue));
+      if (request.state) return terminalStream(inputValue, request.state);
+      const input = await decodeInferenceRequest(inputValue, request.controller.signal);
+      if (!Array.isArray(input.messages)) throw new Error("Invalid inference messages");
+      this.checkDeadline(request);
+      if (request.state) return terminalStream(inputValue, request.state);
+      request.providerStarted = true;
       const iterator = this.service(request).stream(this.generationInput(input, request))[Symbol.asyncIterator]();
       let closed = false;
       const cleanup = () => {
@@ -137,9 +154,12 @@ export class InferenceExecutor<Environment extends ExecutorEnvironment = Executo
         },
       });
     } catch (error) {
-      if (request.state) return terminalStream(input, request.state);
-      this.finish(request, "error");
+      if (opened?.state) return terminalStream(inputValue, opened.state);
+      if (opened) this.finish(opened, "error");
+      else dispose(transport);
       throw error;
+    } finally {
+      cancelInferenceRequest(inputValue);
     }
   }
 
@@ -169,6 +189,7 @@ export class InferenceExecutor<Environment extends ExecutorEnvironment = Executo
       const signal = request.controller.signal;
       const rawFetch = request.transport ? createInferenceTransportFetch(request.transport, signal) : fetch;
       const providerFetch: typeof fetch = (url, init) => rawFetch(url, { ...init, signal: init?.signal ? AbortSignal.any([signal, init.signal]) : signal });
+      request.providerStarted = true;
       const operation = executeMedia(this.env, input.kind === "image-read" ? { ...input, input: { ...input.input, maxTokens: tokens } } : input, body, signal, providerFetch);
       const result = await raceWithAbort(operation, signal, { onLateResolve: (late) => { if ("body" in late) void late.body?.cancel(signal.reason).catch(() => {}); } });
       this.checkDeadline(request);
@@ -267,10 +288,13 @@ export class InferenceExecutor<Environment extends ExecutorEnvironment = Executo
   }
 
   async alarm(): Promise<void> {
-    for (const id of this.store.expire(Date.now())) {
-      const request = this.active.get(id);
-      if (request) this.finish(request, "timeout");
+    const now = Date.now();
+    // Live owners know whether provider work started. Settle those before the
+    // store conservatively expires requests whose execution owner was lost.
+    for (const request of this.active.values()) {
+      if (request.deadline <= now) this.finish(request, "timeout");
     }
+    this.store.expire(now);
     this.scheduleExpiry();
   }
 
@@ -323,8 +347,8 @@ export class InferenceExecutor<Environment extends ExecutorEnvironment = Executo
     this.scheduleExpiry();
   }
 
-  private outputTokens(input: InferenceExecutionRequest): number {
-    if (!input.connection || !z.string().safeParse(input.connection.provider).success || !z.string().safeParse(input.connection.model).success || !Array.isArray(input.messages)) throw new Error("Invalid inference request");
+  private outputTokens(input: InferenceRequest<InferenceExecutionRequest>): number {
+    if (!input.connection || !z.string().safeParse(input.connection.provider).success || !z.string().safeParse(input.connection.model).success) throw new Error("Invalid inference request");
     const limits = executorLimits(this.env);
     const maxTokens = Math.min(input.options?.maxTokens ?? input.connection.maxTokens, input.connection.maxTokens, limits.maxOutputTokens);
     if (!Number.isSafeInteger(maxTokens) || maxTokens <= 0) throw new Error("Invalid inference output token limit");
@@ -354,7 +378,7 @@ export class InferenceExecutor<Environment extends ExecutorEnvironment = Executo
 
   private finish(request: ActiveRequest, state: TerminalState, outputTokens?: number): void {
     if (request.state) return;
-    request.state = this.store.finish(request.id, state, outputTokens);
+    request.state = this.store.finish(request.id, state, outputTokens ?? (request.providerStarted ? undefined : 0));
     clearTimeout(request.timer);
     this.active.delete(request.id);
     if (request.state !== "completed") {
@@ -393,7 +417,7 @@ function retainTransport(value: InferenceTransport | undefined): InferenceTransp
   return resource?.dup?.() ?? value;
 }
 
-function terminalResult(input: InferenceExecutionRequest, state: TerminalState, errorMessage?: string): ManagedInferenceResult {
+function terminalResult(input: InferenceRequest<InferenceExecutionRequest>, state: TerminalState, errorMessage?: string): ManagedInferenceResult {
   return {
     role: "assistant", content: [], api: "inference-execution", provider: input.connection.provider, model: input.connection.model,
     stopReason: state === "cancelled" ? "aborted" : "error",
@@ -403,11 +427,11 @@ function terminalResult(input: InferenceExecutionRequest, state: TerminalState, 
   };
 }
 
-function terminalEvent(input: InferenceExecutionRequest, state: TerminalState, errorMessage?: string): ManagedInferenceStreamEvent {
+function terminalEvent(input: InferenceRequest<InferenceExecutionRequest>, state: TerminalState, errorMessage?: string): ManagedInferenceStreamEvent {
   const error = terminalResult(input, state, errorMessage);
   return { type: "error", reason: state === "cancelled" ? "aborted" : "error", error };
 }
 
-function terminalStream(input: InferenceExecutionRequest, state: TerminalState): ReadableStream<Uint8Array> {
+function terminalStream(input: InferenceRequest<InferenceExecutionRequest>, state: TerminalState): ReadableStream<Uint8Array> {
   return new ReadableStream({ start(controller) { controller.enqueue(encodeManagedInferenceStreamEvent(terminalEvent(input, state))); controller.close(); } });
 }

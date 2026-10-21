@@ -1,7 +1,10 @@
 import type { ContactSummary } from "@humansandmachines/gsv/protocol";
-import { describe, expect, it, vi } from "vitest";
-import { collectNodes, collectText } from "../../../testing/testHarness";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { collectNodes, collectText, createTestRoot } from "../../../testing/testHarness";
 import { ContactNoticePanel, noticeName, preview, replyIntentFor, type ContactNotice, type ContactNoticeMessage } from "./ContactNotice";
+
+let root: ReturnType<typeof createTestRoot> | undefined;
+afterEach(async () => { await root?.unmount(); root = undefined; vi.unstubAllGlobals(); });
 
 function message(sequence: number, text: string, byShip = false): ContactNoticeMessage {
   return { id: `message:${sequence}`, conversationId: "conversation:ada", sequence, text, createdAt: sequence, media: [],
@@ -19,6 +22,17 @@ const contact: ContactSummary = {
   conversationId: notice.conversationId, localAlias: "Ada", createdAtMs: 1, updatedAtMs: 1,
 };
 
+/* the panel reads the interface language, so it renders inside a test root */
+async function panel(props: Parameters<typeof ContactNoticePanel>[0]): Promise<ReturnType<typeof ContactNoticePanel>> {
+  let tree: ReturnType<typeof ContactNoticePanel> | undefined;
+  function Harness() { tree = ContactNoticePanel(props); return null; }
+  vi.stubGlobal("document", {});
+  root = createTestRoot("Contact notice");
+  await root.render(<Harness />);
+  if (!tree) throw new Error("The contact notice did not render");
+  return tree;
+}
+
 function buttons(tree: ReturnType<typeof ContactNoticePanel>) {
   return collectNodes(tree).filter((node) => node.type === "button");
 }
@@ -28,10 +42,10 @@ function text(tree: ReturnType<typeof ContactNoticePanel>) {
 }
 
 describe("the contact notice", () => {
-  it("keeps sender provenance and explicit close and full conversation actions in the panel", () => {
+  it("keeps sender provenance and explicit close and full conversation actions in the panel", async () => {
     const onClose = vi.fn();
     const onGoToChat = vi.fn();
-    const tree = ContactNoticePanel({ id: "people-panel", name: "Ada", notice, onClose, onGoToChat, children: "Waiting message" });
+    const tree = await panel({ id: "people-panel", name: "Ada", notice, onClose, onGoToChat, children: "Waiting message" });
     expect(text(tree)).toBe("Ada PERSON close Waiting message 1 message open conversation ↗");
     expect(tree.props["aria-label"]).toBe("Messages from Ada");
     const [close, goToChat] = buttons(tree);
@@ -41,9 +55,9 @@ describe("the contact notice", () => {
     expect(onGoToChat).toHaveBeenCalledOnce();
   });
 
-  it("counts waiting messages and identifies when the contact's Ship wrote the latest", () => {
+  it("counts waiting messages and identifies when the contact's Ship wrote the latest", async () => {
     const three = { ...notice, messages: [message(1, "first"), message(2, "second"), message(3, "ok, sent it", true)] };
-    const tree = ContactNoticePanel({ id: "people-panel", name: "Ada", notice: three, onClose: vi.fn(), onGoToChat: vi.fn() });
+    const tree = await panel({ id: "people-panel", name: "Ada", notice: three, onClose: vi.fn(), onGoToChat: vi.fn() });
     expect(text(tree)).toBe("Ada Ship close 3 messages open conversation ↗");
     expect(collectNodes(tree).some((node) => node.props.class === "sender-dot")).toBe(true);
   });
@@ -52,6 +66,7 @@ describe("the contact notice", () => {
     expect(preview("one two three")).toBe("one two three");
     expect(preview("one two three four five six seven eight nine ten")).toBe("one two three four five six seven eight…");
     expect(preview("   ")).toBe("(an empty message)");
+    expect(preview("", 1)).toBe("(an attachment)");
     expect(preview("", 2)).toBe("(2 attachments)");
   });
 
