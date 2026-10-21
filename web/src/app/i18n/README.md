@@ -12,16 +12,19 @@ A test checks that each translation keeps every English `{slot}` and uses only
 its language's plural forms. A catalog's header states its conventions, such as
 the form of address.
 
-Spanish in `es.ts` is the first translation. English is part of every bundle;
-a translation is fetched only when the interface switches to it, and each entry
-point renders its first screen once its language is in place.
+Spanish in `es.ts` is the first translation; Brazilian Portuguese in `pt-BR.ts`
+follows it. English is part of every bundle; a translation is fetched only when
+the interface switches to it, and each entry point renders its first screen once
+its language is in place. A tag without its own catalog resolves to the first
+catalog of its base language, so `es-MX` reads `es` and `pt` or `pt-PT` read
+`pt-BR`.
 
 Development builds include the pseudo-locale `en-XA`. Choose `en-XA` as the
 language preference, or as the browser's language, to accent, bracket and
 lengthen catalog text: plain text bypassed the catalog, and clipped text needs
 more room. The mock gateway (`?mock=1`) keeps the language preference in the
-browser, so **Settings → Preferences → Language** switches between `en`, `es`
-and `en-XA` there too.
+browser, so **Settings → Preferences → Language** switches between `en`, `es`,
+`pt-BR` and `en-XA` there too.
 
 ## Writing interface text
 
