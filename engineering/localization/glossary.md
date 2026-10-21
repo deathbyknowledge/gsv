@@ -24,7 +24,7 @@ Source: `ia-audit.md` and `term-inventory.md` in this folder. Round-2 items are 
 | **Logs** | The record of every action Ship took: who asked, where it ran, what it did, why, and how it ended. Its table is "Actions". | ledger · the ledger · action history · action records · Syscall history |
 | **routine** | Something Ship takes care of regularly. "Reminder" is fine in plain speech for a one-off. | schedule · scheduled task · Custom schedule · automation · recurring job · recurring task · cron |
 | **hand off** | The verb for Ship giving a bounded task to a helper. No noun. | delegation · delegate (noun uses) · Crew delegation |
-| **connection** (plural **Connections**) | A computer or browser you have connected to your Ship. | place · Places · target · Target ID · device · machine · node · laptop |
+| **connection** (plural **Connections**) | A computer or browser you have connected to your Ship. "Target" stays the generic word for any environment Ship can act in (Ship's home, a connection, or an external service account), in commands and technical text; it becomes "connection" only where the text means a connected computer or browser. | place · Places · target (in that sense only) · Target ID · device · machine · node · laptop |
 | **computer** | A connection that is a computer. | machine · device · laptop · server (as a kind) |
 | **browser** | A connection that is a browser, either your own through the Your Ship extension or a cloud browser. | browser target · browser profile |
 | **connect** | The verb for adding a connection or a messenger. Panel titles match the button that opened them. | pair · pair again · enroll · link (for messengers) |

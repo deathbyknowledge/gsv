@@ -410,7 +410,10 @@ are in `gsv-traces.md`. Summary by surface:
 | Man pages and tools | 22 in man pages ("GSV filesystem files", "this GSV's own mailbox", sample `mail send … 'Hello from GSV'` the agent may copy into real mail, "GSV Manual"); "Run a GSV shell command" (Send tool); "the live GSV capability manual" (Shell tool) | `GSV(1)` / `man gsv` |
 
 The AGENTS.md rule keeps `gsv` as the runtime, target, CLI and path name. Every bucket B item is
-compatible with that rule; every bucket A item is not. Three bucket A groups deserve their own
+compatible with that rule. Most bucket A items are not; the exceptions are the entries that name the
+runtime deliberately (the "Ship And The GSV Runtime" rule itself, "GSV management commands on
+`gsv`", "the native GSV shell"), which the per-surface lists mark and which need a wording decision
+rather than a rename. Three bucket A groups deserve their own
 decision because they are not free to change: the WhatsApp Meta template (re-approval), the Slack
 app and bot name (`@GSV` is what users type), and the macOS bundle name `GSV.app` (kept on purpose
 per `host/packaging/macos/README.md:5`).
@@ -557,7 +560,14 @@ Structural facts that will shape the translation-key work, by surface. All are c
 
 ## 7. Open decisions
 
-Places where the audit shows the conflict but choosing the canonical term is a product call.
+> **Resolved 2026-10-20.** This list is the audit's pre-decision view, kept for the reasoning. The
+> canonical choices are in `glossary.md` (round 1: items 1 to 10 and 12 to 14 below, with Fleet →
+> Work, connection, Ship's home, helper, Logs, messenger, administrator, Allow / Ask / Block). Still
+> genuinely open, as glossary round 2: Activity's senses, responsibilities vs plans, the "standing"
+> tab name, CLI naming, invitations and requests, Memory's inner vocabulary, and the single-sense
+> word list; the GSV identifiers in item 12 belong to the separate GSV sweep.
+
+Places where the audit showed the conflict but choosing the canonical term was a product call.
 
 1. **May "Ship" mean both the agent and the hosted instance?** Today it does, everywhere
    ("Create your Ship" then "Message your Ship"). If yes, the other instance words (space,
