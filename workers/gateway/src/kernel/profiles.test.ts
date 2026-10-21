@@ -53,6 +53,23 @@ describe("explicit profile publication", () => {
     });
   });
 
+  it("reports an unavailable public profile without treating it as an invitation refusal", async () => {
+    await runWithRealKernelSql(async (_sql, storage) => {
+      const cancel = vi.fn();
+      const fetch = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+        new Response(new ReadableStream({ cancel }), { status: 404 }),
+      );
+      await expect(handleProfileResolve({ url: "https://other.example/profile" }, profileContext(storage)))
+        .rejects.toMatchObject({
+          name: "FederationHttpError",
+          status: 404,
+          message: expect.stringContaining("A private invitation does not require a public profile"),
+        });
+      expect(fetch).toHaveBeenCalledOnce();
+      expect(cancel).toHaveBeenCalledOnce();
+    });
+  });
+
   it.each([false, true])("upgrades a published alias without exposing the draft or undoing unpublish (concurrent unpublish: %s)", async (unpublish) => {
     await runWithRealKernelSql(async (sql, storage) => {
       const ctx = profileContext(storage);
