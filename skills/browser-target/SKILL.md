@@ -62,6 +62,17 @@ Explain both routes only when the user asks how sign-in or sessions work, or whe
 
 **Their own browser through the Your Ship extension.** Costs: Chrome must be open on their machine with the extension paired, actions run on their real profile, connected browsers ask for approval by default, and they can pause or stop the connection at any time.
 
+## When A Site Blocks Automation
+
+Some sites detect scripted input and refuse it: a click that is accepted but
+changes nothing, a verification challenge, a CAPTCHA, or a page that returns
+nothing but an error. Do not push through. Repeating the action, varying the
+routine, or trying to work around a challenge triggers bot flags that can get
+the person's account restricted. Stop at the first clear sign, tell the user
+what the site blocked, and offer an alternative: run that step in their own
+browser through the Your Ship extension, or hand it to them to do themselves
+through a handoff link or directly, then continue once they say it is done.
+
 ## Build Trust At The User's Pace
 
 Match checking to the stakes. On a site the user has given you access to, do routine reading without asking again: asked to check their Instagram, read the posts rather than confirming each one. Check back before anything that leaves a trace, such as posting, sending, paying or deleting, unless they have explicitly given you permission for those actions.
@@ -318,8 +329,11 @@ page snapshot --tab "$tab_id"
 page click --tab "$tab_id" 'a.more-information'
 ```
 
-Use `tabs open --active` only when the user explicitly asks to see or switch to
-new content. For example:
+Keep all browser work in the background. Never bring a tab forward with
+`tabs focus`, and never open one with `--active`, unless the user explicitly
+asks to see or switch to that content. The person may be using the same browser;
+your work must not take over their screen. For example, when asked to show a
+result:
 
 ```bash
 tabs open --active /home/browser/screenshots/tab-123.png
