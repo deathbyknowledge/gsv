@@ -7,8 +7,9 @@ const KEY = "gsv.contact-invitation";
 export function pendingContactInvitation(): string | null {
   const url = new URL(window.location.href);
   const fragment = new URLSearchParams(url.hash.slice(1));
-  const supplied = fragment.get("contact");
+  let supplied = fragment.get("contact");
   if (supplied) {
+    try { supplied = parseContactInvitation(supplied).code; } catch { /* Keep invalid input for the error UI. */ }
     // Invalid links remain visible to the connection form, which explains the error.
     try {
       sessionStorage.setItem(KEY, supplied);
