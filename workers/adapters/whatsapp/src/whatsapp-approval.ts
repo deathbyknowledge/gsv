@@ -106,9 +106,9 @@ export async function prepareWhatsAppApproval(
     token,
     text,
     buttons: [
-      { id: replyButtonId(token, "o"), title: "Approve once" },
-      { id: replyButtonId(token, "a"), title: "Always approve" },
-      { id: replyButtonId(token, "d"), title: "Deny" },
+      { id: replyButtonId(token, "o"), title: "Allow once" },
+      { id: replyButtonId(token, "a"), title: "Always allow" },
+      { id: replyButtonId(token, "d"), title: "Block" },
     ].map((button) => ({ ...button, title: button.title.slice(0, REPLY_BUTTON_TITLE_LIMIT) })),
   };
 }
@@ -181,9 +181,9 @@ export async function handleWhatsAppApprovalReply(
 
 function resolutionText(resolution: AdapterHilResolution | undefined): string {
   switch (resolution) {
-    case "approve": return "Approved once.";
-    case "approve_always": return "Approved for this conversation.";
-    case "deny": return "Denied.";
+    case "approve": return "Allowed once.";
+    case "approve_always": return "Allowed for this conversation.";
+    case "deny": return "Blocked.";
     default: return "This approval is no longer pending.";
   }
 }

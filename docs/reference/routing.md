@@ -197,8 +197,8 @@ the override immediately,
 even while the work process is active, and admits a typed return event to the
 personal process with the work PID but no copied transcript. Exact run routes
 still return late work output to its originating DM with a
-`[WORK SESSION]` label. A late personal reply is labeled
-`[PERSONAL INTELLIGENCE]` when that DM currently selects work.
+`[HELPER]` label. A late personal reply carries no label, even when that DM
+currently selects a helper.
 
 Groups, channels, and threads retain distinct persisted `surface` routes. An
 unrouted shared surface starts an ordinary interactive process running as the

@@ -11,7 +11,7 @@ When your operator enables cloud browsers, Ship can
 personal browser is connected. Ask for the task; Ship checks for a suitable
 browser and starts one when needed. Ship reuses your account's current cloud
 browser, and website logins are remembered automatically. Click the browser in
-Fleet to watch Ship's cursor and clicks or enter input yourself. Watching and
+Work to watch Ship's cursor and clicks or enter input yourself. Watching and
 closing the view leave Ship running.
 
 ## Connect your browser
@@ -20,12 +20,12 @@ Connecting your personal browser is optional. Use it when you want Ship to work
 in its existing tabs and signed-in sessions, or when a site needs a feature
 available only on your device.
 
-1. In Ship, open **Fleet**, click **connect** beside Places, and choose **Browser.** Give it a name or leave the default.
+1. In Ship, open **Work**, click **connect** beside Connections, and choose **Browser.** Give it a name or leave the default.
 2. Download the extension, **Your Ship**, and load it at `chrome://extensions` with developer mode on.
-3. Click its toolbar icon, a pale block on a dark square, paste the invitation from Ship, and choose **Pair this browser**.
+3. Click its toolbar icon, a pale block on a dark square, paste the invitation from Ship, and choose **connect this browser**.
 4. The panel says **Ready** once it's connected. Chrome shows a banner in a tab while your Ship works there; that's normal.
 
-You can close the sidebar after pairing. The extension keeps working while Chrome is open. The browser control stays near the bottom of the sidebar: **Pause** disconnects this browser from Ship until you choose **Resume**. When the panel shows active browser work, **Stop** ends network captures, tab recordings, and debugger sessions, then disconnects. Your pairing is saved, so you do not need a new invitation.
+You can close the sidebar after connecting. The extension keeps working while Chrome is open. The browser control stays near the bottom of the sidebar: **Pause** disconnects this browser from Ship until you choose **Resume**. When the panel shows active browser work, **Stop** ends network captures, tab recordings, and debugger sessions, then disconnects. Your connection is saved, so you do not need a new invitation.
 
 ## Try it
 

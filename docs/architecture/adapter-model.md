@@ -246,7 +246,7 @@ and thread mappings. It selects destinations through `here`, opaque GSV ids, or
 unambiguous generic labels rather than provider fields, and only accepts owned
 interactive processes. The canonical personal process may also set a private
 DM to an owned non-personal process when that exact latest DM message started
-its current run. This opens an explicitly labeled INTERNAL WORK / WORK SESSION;
+its current run. This opens an explicitly labeled HELPER;
 the human uses `/ship` for the canonical SHIP.
 Changing a selection does not change an existing run route: the current Message
 stays directed to its origin, while the next inbound message enters the new selection.

@@ -183,7 +183,7 @@ export class ManagedWhatsAppChannel extends WorkerEntrypoint<Env> implements Ada
       accountId: MANAGED_WHATSAPP_ACCOUNT_ID,
       configured: this.isConfigured(),
       installUrl: managedWhatsAppChatUrl(this.env.WHATSAPP_DISPLAY_NUMBER),
-      instructions: "Open the chat link and send /link to get a pairing code.",
+      instructions: "Open the chat link and send /link to get a code.",
     };
   }
 

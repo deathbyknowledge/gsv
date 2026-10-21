@@ -177,7 +177,7 @@ describe("WhatsApp webhook normalization", () => {
     expect(normalizeWhatsAppWebhook(notification([{
       from: "34611111189", id: "wamid.reply", type: "interactive", timestamp: "1700000100",
       context: { from: "34600000000", id: "wamid.prompt" },
-      interactive: { type: "button_reply", button_reply: { id: "gsvh:abcdefghijklmnop:a", title: "Always approve" } },
+      interactive: { type: "button_reply", button_reply: { id: "gsvh:abcdefghijklmnop:a", title: "Always allow" } },
     }]), PHONE_NUMBER_ID)).toEqual({
       kind: "accepted",
       events: [{

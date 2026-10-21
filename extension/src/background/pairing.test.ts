@@ -50,7 +50,7 @@ describe("browser pairing", () => {
     operations.redeem.mockRejectedValueOnce(new Error("Connection closed"));
     await expect(owner.pair(code)).rejects.toThrow();
     const another = encodeDevicePairingCode("https://other.example", pairing, createPairingSecret());
-    await expect(owner.pair(another)).rejects.toThrow("previous pairing");
+    await expect(owner.pair(another)).rejects.toThrow("previous invitation");
     expect(operations.redeem).toHaveBeenCalledTimes(1);
   });
 
@@ -68,7 +68,7 @@ describe("browser pairing", () => {
       owner.stop();
       return { pairing: { ...pairing, state: "paired" }, tokenId: "fixture-token" };
     });
-    await expect(owner.pair(code)).rejects.toThrow("Pairing stopped");
+    await expect(owner.pair(code)).rejects.toThrow("Connecting stopped");
     expect(operations.commit).not.toHaveBeenCalled();
     expect(await operations.load()).not.toBeNull();
     expect(owner.isPairing).toBe(false);
