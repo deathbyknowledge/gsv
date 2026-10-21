@@ -471,7 +471,7 @@ export const es = {
   "settings.logs.call": "Llamada",
   "settings.logs.target": "Destino",
   "settings.logs.run": "Ejecución",
-  "settings.logs.inspectProcess": "inspeccionar ayudante",
+  "settings.logs.inspectProcess": "inspeccionar en Trabajo",
   "settings.logs.copy": "copiar",
   "settings.logs.rawHint": "Vista técnica. Pulsa la tecla t para verlo en lenguaje sencillo.",
   "settings.logs.plainHint": "Pulsa la tecla t para ver la llamada al sistema y sus argumentos.",

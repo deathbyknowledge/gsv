@@ -470,7 +470,7 @@ export const en = {
   "settings.logs.call": "Call",
   "settings.logs.target": "Target",
   "settings.logs.run": "Run",
-  "settings.logs.inspectProcess": "inspect helper",
+  "settings.logs.inspectProcess": "inspect in Work",
   "settings.logs.copy": "copy",
   "settings.logs.rawHint": "Raw view. Press t for plain words.",
   "settings.logs.plainHint": "Press t for the raw syscall and arguments.",
