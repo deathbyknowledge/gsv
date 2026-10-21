@@ -24,6 +24,7 @@ export const es = {
   "approval.capability": "Capacidad",
   "approval.customMatch": "Capacidad personalizada",
   "approval.target.allMachines": "Todas las conexiones",
+  "approval.target.allExternal": "Todas las conexiones excepto el hogar de Ship",
   "approval.target.shipComputer": "Hogar de Ship",
   "approval.target.cloudBrowsers": "Navegadores en la nube",
   "approval.target.cloudComputers": "Ordenadores en la nube",

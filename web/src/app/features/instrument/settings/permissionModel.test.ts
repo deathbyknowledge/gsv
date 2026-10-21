@@ -57,6 +57,7 @@ describe("Settings approval labels", () => {
 
   it("keeps the legacy external-machine scope distinct from the default all-target scope", () => {
     const options = permissionOptionsForRule({ match: "fs.*", target: "targets/*", action: "ask" }, []);
-    expect(options.targets.filter((option) => option.label === "All connections").map((option) => option.value)).toEqual(["", targetOptionValue("targets/*")]);
+    expect(options.targets.filter((option) => option.label === "All connections").map((option) => option.value)).toEqual([""]);
+    expect(options.targets.filter((option) => option.label === "All connections except Ship’s home").map((option) => option.value)).toEqual([targetOptionValue("targets/*")]);
   });
 });

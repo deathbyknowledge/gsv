@@ -23,6 +23,7 @@ export const en = {
   "approval.capability": "Capability",
   "approval.customMatch": "Custom match",
   "approval.target.allMachines": "All connections",
+  "approval.target.allExternal": "All connections except Ship’s home",
   "approval.target.shipComputer": "Ship’s home",
   "approval.target.cloudBrowsers": "Cloud browsers",
   "approval.target.cloudComputers": "Cloud computers",
