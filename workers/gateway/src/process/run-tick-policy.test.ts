@@ -66,6 +66,21 @@ describe("run tick policy", () => {
     ).toMatchObject({ kind: "terminal", text: "done" });
   });
 
+  it("requires the offered Shell capability for explicitly addressed messages", () => {
+    const call = {
+      type: "toolCall" as const,
+      id: "addressed-message",
+      name: "Shell",
+      arguments: { input: "message send --to telegram --message hello", target: "gsv" },
+    };
+    expect(classifyAssistantTurn(assistant([call]), ["Shell", "Send"])).toMatchObject({
+      kind: "tools", toolCalls: [call], runControlCalls: [],
+    });
+    expect(classifyAssistantTurn(assistant([call]), ["Send"])).toMatchObject({
+      kind: "unoffered-tools", unofferedToolCalls: [call], runControlCalls: [],
+    });
+  });
+
   it("still classifies run control when the call carries a purpose for the person", () => {
     const shell = (id: string, args: Record<string, string>) => ({
       type: "toolCall" as const,
