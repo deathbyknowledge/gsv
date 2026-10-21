@@ -412,15 +412,21 @@ per `host/packaging/macos/README.md:5`).
 ## 6. Localization readiness
 
 > **Addendum, 2026-10-21.** After this audit was taken (main 4a4cf996e), PR #475 (merged 2026-10-20)
-> moved every web interface string into a catalog: `web/src/app/i18n/en.ts` (2,241 keys) with a
+> moved nearly every web interface string into a catalog: `web/src/app/i18n/en.ts` (2,241 keys) with a
 > Spanish `es.ts` carrying the same keys, a small runtime (`t`, `useT`, `rich`, plurals through
 > `Intl.PluralRules`), `<html lang dir>` handling, and on-demand loading of non-English catalogs.
 > The "Instrument web UI" findings below therefore describe the state before that change: raw ids
 > in the Settings rail, `+ "s"` plurals, fragment assembly and CSS casing were largely addressed by
 > it. Still true for the web after #475: `ZenMedia.tsx` formats with `en-US`, dates follow the
 > browser rather than the owner's language, handles and slugs are ASCII-only, voice is English and
-> Spanish only, and model-facing prefills stay English by design. The other surfaces (manual, docs,
-> extension, adapters, Accounts, host apps, prompts) are unchanged.
+> Spanish only, and model-facing prefills stay English by design. Literals that still bypass the
+> catalog after #475: the keyboard-help panel's view names "Chat" and "Fleet" and its "Fleet"
+> heading (`web/src/app/features/instrument/Instrument.tsx:319-320,361`), the header's printed view
+> id for Fleet (`shared/InstrumentHeader.tsx:41,56`), and the personal row label "ship" in the
+> Fleet table and inspector (`fleet/Fleet.tsx:379,566`); "Chat" is kept as a name by the catalog's
+> convention, and the Fleet and "ship" literals are moved to the catalog or capitalised by the
+> `glossary-web` pull request. The other surfaces (manual, docs, extension, adapters, Accounts, host
+> apps, prompts) are unchanged.
 
 Structural facts that will shape the translation-key work, by surface. All are cited in
 `term-inventory.md` section 6 per surface.
