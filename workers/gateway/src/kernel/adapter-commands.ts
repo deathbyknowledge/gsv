@@ -13,9 +13,9 @@ const COMMANDS: ReadonlyArray<{
   description: string;
 }> = [
   { name: "help", description: "show available commands" },
-  { name: "list", description: "list Ship and work processes" },
-  { name: "where", description: "show Ship or the selected work session" },
-  { name: "ship", description: "leave the work session and return to Ship" },
+  { name: "list", description: "list Ship and its helpers" },
+  { name: "where", description: "show Ship or the selected helper" },
+  { name: "ship", description: "leave the helper and return to Ship" },
 ];
 
 export function parseAdapterCommand(text: string): ParsedAdapterCommand | null {

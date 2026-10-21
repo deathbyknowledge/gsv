@@ -1026,7 +1026,7 @@ async function handleAdapterCommand(args: {
     return replyToAdapterCommand(
       message,
       selection.route
-        ? `[INTERNAL WORK / WORK SESSION] ${describeProcessRoute(selection.process)} [${selection.process.state}]. Use /ship to return.`
+        ? `[HELPER] ${describeProcessRoute(selection.process)} [${selection.process.state}]. Use /ship to return.`
         : `[SHIP] ${describeProcessRoute(selection.process)} [${selection.process.state}].`,
     );
   }
