@@ -94,9 +94,9 @@ import {
 } from "../inference/media-defaults";
 import { createMediaExecutor } from "../inference/media-client";
 import { isVectorImageMimeType } from "../inference/image-mime";
-import { RipgitClient } from "../fs";
 import { collectPromptSkillIndex } from "./skills";
-import { seedBuiltinSkillsToHome } from "./sys/skills-seed";
+import { retireSeededSkills } from "./sys/seeded-skills";
+import { exceptionDiagnostics } from "@humansandmachines/gsv/telemetry";
 import { ensureSharedMemoryContext } from "./account-home";
 import { discoverVisibleTargets, gsvTargetImplementations, listAllVisibleTargets, targetCanHandle, targetToAiTarget } from "./targets";
 import {
@@ -202,6 +202,7 @@ export async function handleAiContext(
     await Promise.all([
       ensureSharedMemoryContext(ctx, account),
       ...(owner && owner.uid !== account.uid ? [ensureSharedMemoryContext(ctx, owner)] : []),
+      retireSeededSkillsForPrompt(ctx, owner),
     ]);
   }
   const accountConfigUids = resolveAiConfigAccountUids(uid, owner);
@@ -249,7 +250,7 @@ export async function handleAiConfig(
   const config = ctx.config;
   const uid = principalOf(ctx)?.account.uid ?? 0;
   const owner = resolveOwnerIdentity(ctx);
-  const builtinSkillsReady = ensureBuiltinSkillsForPrompt(ctx, owner);
+  const seededSkillsRetired = retireSeededSkillsForPrompt(ctx, owner);
   const accountConfigUids = resolveAiConfigAccountUids(uid, owner);
   const input = args;
   const resolveConfig = createAiConfigValueResolver(config, accountConfigUids);
@@ -282,7 +283,7 @@ export async function handleAiConfig(
     accountConfigUids,
   );
   const timezone = principalOf(ctx) ? ownerTimezone(config, resolveCallerOwnerUid(ctx)) : config.get("config/server/timezone") ?? "UTC";
-  await builtinSkillsReady;
+  await seededSkillsRetired;
   const skillIndexMode = normalizeSkillIndexMode(resolveConfig("skills/index_mode"));
   const skillIndex = skillIndexMode === "off"
     ? []
@@ -326,22 +327,20 @@ export async function handleAiConfig(
   return result;
 }
 
-async function ensureBuiltinSkillsForPrompt(
+/** Both skill homes a process reads give up their copies of built-in skills. */
+async function retireSeededSkillsForPrompt(
   ctx: KernelContext,
   owner: ProcessIdentity | null,
 ): Promise<void> {
-  const identity = owner ?? principalOf(ctx)?.account;
-  if (!ctx.env.RIPGIT || !identity) {
-    return;
-  }
-
-  try {
-    await seedBuiltinSkillsToHome(new RipgitClient(ctx.env.RIPGIT), identity);
-  } catch (error) {
-    console.warn(
-      `[Prompt] failed to reconcile built-in skills: ${error instanceof Error ? error.message : String(error)}`,
-    );
-  }
+  const account = principalOf(ctx)?.account;
+  const homes = [account, owner].filter((identity): identity is ProcessIdentity => identity != null);
+  await Promise.all(homes.map(async (identity) => {
+    try {
+      await retireSeededSkills(ctx, identity);
+    } catch (error) {
+      console.warn("[Prompt] failed to retire copied built-in skills:", exceptionDiagnostics(error));
+    }
+  }));
 }
 
 export async function handleAiTextGenerate(

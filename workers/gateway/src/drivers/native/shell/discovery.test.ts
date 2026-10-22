@@ -5,7 +5,7 @@ import type { GsvFs } from "../../../fs/gsv-fs";
 import type { KernelContext } from "../../../kernel/context";
 import * as skills from "../../../kernel/skills";
 import { testPeer } from "../../../test-support/peers";
-import { ShellDiscoveryCatalog, formatShellDiscoveryResults } from "./discovery";
+import { ShellDiscoveryCatalog, formatShellDiscoveryResults, rankShellDiscoveryEntries, type ShellDiscoveryEntry } from "./discovery";
 
 const identity: ProcessIdentity = { uid: 1000, gid: 1000, gids: [1000], username: "person", home: "/home/person", cwd: "/home/person" };
 
@@ -55,3 +55,21 @@ function fixture(configured: boolean, calls: string[]): ShellDiscoveryCatalog {
   catalog.registerCommands(["feedback", "web", "messenger"].map(name => defineCommand(name, async () => ({ stdout: "", stderr: "", exitCode: 0 }))));
   return catalog;
 }
+
+describe("discovery ranking", () => {
+  it("ranks a command that describes the task above a workflow that only mentions it in its body", () => {
+    const entries: ShellDiscoveryEntry[] = [
+      {
+        kind: "workflow", name: "long-guide", summary: "A long guide.", useWhen: "Read the guide.", keywords: [],
+        searchText: "Send this file to the chat when the person asks.", next: "skills show long-guide", available: true,
+      },
+      {
+        kind: "command", name: "message", summary: "Send a message.", useWhen: "Send text to the chat.", keywords: [],
+        next: "man message", available: true,
+      },
+    ];
+
+    expect(rankShellDiscoveryEntries(entries, "send this file to the chat").map((entry) => entry.name))
+      .toEqual(["message", "long-guide"]);
+  });
+});

@@ -65,7 +65,7 @@ const aiConfigResultSchema = z.object({
     name: z.string(),
     description: z.string(),
     source: z.object({
-      kind: z.literal("home"),
+      kind: z.enum(["system", "home"]),
       label: z.string(),
       writable: z.boolean(),
     }),

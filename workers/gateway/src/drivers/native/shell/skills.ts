@@ -4,9 +4,11 @@ import type { GsvFs } from "../../../fs/gsv-fs";
 import type { KernelContext } from "../../../kernel/context";
 import {
   collectFilesystemSkillDocuments,
+  isBuiltinSkillName,
   listSkillFiles,
   renderSkillMarkdown,
   resolveSkillDocument,
+  skillReader,
   type SkillDocument,
   validateSkillMarkdown,
 } from "../../../kernel/skills";
@@ -97,7 +99,7 @@ async function runSkillsCommand(
       if (!root) {
         throw new Error(`skill '${resolved.doc.id}' does not have supporting files`);
       }
-      const content = await fs.readFile(`${root}/${filePath}`);
+      const content = await skillReader(fs, resolved.doc).readFile(`${root}/${filePath}`);
       return { stdout: content.endsWith("\n") ? content : `${content}\n`, stderr: "", exitCode: 0 };
     }
     case "create": {
@@ -105,6 +107,9 @@ async function runSkillsCommand(
         return { stdout: skillsCreateUsage(), stderr: "", exitCode: 0 };
       }
       const parsed = parseCreateArgs(rest);
+      if (isBuiltinSkillName(parsed.name)) {
+        throw new Error(`'${parsed.name}' is a built-in skill; choose another name`);
+      }
       const body = await readSkillBody(parsed.from, commandCtx, fs, identity);
       const content = renderSkillMarkdown({
         name: parsed.name,
@@ -474,12 +479,13 @@ function skillsUsage(): string {
     "",
     ...(nativeCommandSynopsis("skills") ?? ["skills --help"]).map((line) => `  ${line}`),
     "",
-    "Skill names come from layered skills.d directories. `skills list`",
-    "shows top-level skills; `skills list <skill>` and `skills tree <skill>`",
-    "disclose nested skills under a parent.",
+    "Skill names come from the read-only built-ins in /sys/skills.d and the",
+    "home skills.d directories. `skills list` shows top-level skills; `skills",
+    "list <skill>` and `skills tree <skill>` disclose nested skills under a parent.",
     "",
     "`skills create` reads a Markdown instruction body from --from or stdin and",
-    "writes ~/skills.d/<name>/SKILL.md. It never overwrites without --replace.",
+    "writes ~/skills.d/<name>/SKILL.md. It never overwrites without --replace,",
+    "and built-in skill names are reserved.",
     "",
   ].join("\n");
 }
