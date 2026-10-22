@@ -17,11 +17,6 @@ import { Tag } from "../../../components/ui/Tag";
 import { TextArea } from "../../../components/ui/TextArea";
 import { Hint } from "../../../components/ui/Tooltip";
 
-/** The space handle is the first label of the profile's canonical host. */
-function profileHandle(url: string): string {
-  return new URL(url).hostname.split(".")[0];
-}
-
 export function Profile({ account, active, edit: editing, focusBio, onDirty, onEdit, onBack }: {
   account: ConsoleAccount; active: boolean; edit: boolean; focusBio: boolean; onDirty: (dirty: boolean) => void;
   onEdit: (focus?: "bio") => void; onBack: () => void;
@@ -91,13 +86,14 @@ export function Profile({ account, active, edit: editing, focusBio, onDirty, onE
   useEffect(() => { if (editing && focusBio && state) bio.current?.focus(); }, [editing, focusBio, !!state]);
   useEffect(() => { setCopied(null); }, [editing]);
 
-  const handle = state ? profileHandle(state.url) : "";
-  // The handle is the profile's name; saving publishes it even when an older draft carried another name.
-  const named = (shown: ProfileFields): ProfileFields => ({ ...shown, displayName: handle });
+  // The recorded handle is the profile's name; saving publishes it even when an older draft carried another.
+  // Without a recorded handle, the profile keeps the name it already has.
+  const named = (shown: ProfileFields): ProfileFields => state?.handle ? { ...shown, displayName: state.handle } : shown;
+  const title = state ? (state.handle ? `@${state.handle}` : state.draft.displayName) : "";
   const policyLabel = (policy: ProfileFields["contactPolicy"]) => t(policy === "requests" ? "people.profile.policyRequests" : "people.profile.policyInvitation");
   const status = state && <p role="status" class="people-note">{state.published ? rich(t("people.profile.publishedAt"), { link: <a href={state.published.url} target="_blank" rel="noopener noreferrer">{state.published.url}</a> }) : t("people.profile.private")}</p>;
   const copyAddress = state && <span class="people-profile-handle">
-    <h2>@{handle}</h2>
+    <h2>{title}</h2>
     <Hint text={t("people.profile.copyAddress")}>
       <IconButton glyph="copy" ghost size="small" ariaLabel={t("people.profile.copyAddress")} onClick={() => {
         void navigator.clipboard.writeText(state.url).then(() => setCopied("copied"), () => setCopied("failed"));

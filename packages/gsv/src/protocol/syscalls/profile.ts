@@ -14,6 +14,8 @@ export type ProfileState = {
   url: string;
   draft: ProfileFields;
   published?: { url: string; revision: number };
+  /** The space's recorded handle, which names the profile; absent when the installation has none. */
+  handle?: string;
 };
 
 type ProfilePublication = ProfileFields & {

@@ -120,7 +120,7 @@ const SHIP = { pid: "p-ship", uid: 1001, username: "ship", home: "/home/ship" };
 const PROFILE_URL = `https://${OWNER.username}.ship.space/profile`;
 /** The owner's own profile, public by default with an empty bio, editable in memory. */
 let ownProfile: ProfileState = {
-  revision: 1, url: PROFILE_URL, draft: { displayName: OWNER.username, about: "", contactPolicy: "requests", representation: "human" }, published: { url: PROFILE_URL, revision: 1 },
+  revision: 1, url: PROFILE_URL, draft: { displayName: OWNER.username, about: "", contactPolicy: "requests", representation: "human" }, published: { url: PROFILE_URL, revision: 1 }, handle: OWNER.username,
 };
 const HELPER = { pid: "p-helper", label: "tidy the notes archive" };
 const SHIP_CONVERSATION = "c-ship";
@@ -867,7 +867,7 @@ function route(socket: MockSocket, id: string, call: string, args: JsonValue): s
       return respond(id, { profile: ownProfile });
     }
     case "profile.unpublish": {
-      ownProfile = { revision: ownProfile.revision + 1, url: ownProfile.url, draft: ownProfile.draft };
+      ownProfile = { revision: ownProfile.revision + 1, url: ownProfile.url, draft: ownProfile.draft, handle: ownProfile.handle };
       return respond(id, { profile: ownProfile });
     }
     case "profile.resolve": {

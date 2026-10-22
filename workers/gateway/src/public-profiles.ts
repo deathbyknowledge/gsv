@@ -36,7 +36,7 @@ export async function servePublicProfileRequest(
   const profile = projection.profile;
   const source = JSON.stringify(profile);
   const json = path.json || (request.headers.get("accept") ?? "").split(",").some((entry) => entry.trim().split(";")[0] === "application/json");
-  const body = json ? source : renderPublicProfile(profile, homeOrigin);
+  const body = json ? source : renderPublicProfile(profile, homeOrigin, projection.handle);
   const etag = `"${await sha256Base64Url(body)}"`;
   const current = await resolve(path.locator);
   if (!current || current.profile.signature !== profile.signature || current.revision !== profile.revision) return unavailable();

@@ -171,7 +171,7 @@ export function People({ onDirtyChange, onAsk }: {
           <button class="people-action" disabled={busy} onClick={(event) => { event.currentTarget.closest("details")?.removeAttribute("open"); setFilter(""); open({ view: "inbox", contactId: null, archived: !archived }); }}>{t(archived ? "people.inbox.showCurrent" : "people.inbox.showArchived")}</button>
           <button class="people-action" disabled={busy || !account || !canConfigure(account, "contact.block.list")} onClick={(event) => { event.currentTarget.closest("details")?.removeAttribute("open"); setDialog("blocked"); }}>{t("people.blocked.open")}</button>
         </div></details>
-        {human && <button class="people-self" aria-current={view === "profile" ? "page" : undefined} disabled={busy || !canConfigure(account!, "profile.get")} onClick={() => open({ view: "profile", edit: false, focusBio: false })}><span>{profile.data ? `@${new URL(profile.data.url).hostname.split(".")[0]}` : account?.displayName || account?.username}{profileDirty ? " ·" : ""}</span></button>}
+        {human && <button class="people-self" aria-current={view === "profile" ? "page" : undefined} disabled={busy || !canConfigure(account!, "profile.get")} onClick={() => open({ view: "profile", edit: false, focusBio: false })}><span>{profile.data?.handle ? `@${profile.data.handle}` : profile.data?.draft.displayName || account?.displayName || account?.username}{profileDirty ? " ·" : ""}</span></button>}
         {!connected && <span role="status">{t("people.reconnecting")}</span>}
       </footer>
     </aside>

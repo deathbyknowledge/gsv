@@ -10,7 +10,11 @@ type ProfileRow = {
   published_revision: number | null;
   published_json: string | null;
 };
-export type PublicProfileProjection = { ownerUid: number; revision: number; profile: PublicProfile };
+export type PublicProfileProjection = {
+  ownerUid: number; revision: number; profile: PublicProfile;
+  /** The space's recorded handle for the public page, added by the Kernel when it serves the page. */
+  handle?: string;
+};
 export type PublicProfileLocator = { space: true } | { alias: string } | { subjectId: string };
 
 export class ProfileStore {

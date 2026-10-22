@@ -1050,7 +1050,7 @@ type ProfileAndApproachSyscalls = {
 
 `ProfileFields` contains `displayName`, `about`, `contactPolicy`
 (`requests`, `invitation` or `closed`) and `representation` (`human` or `human-and-ship`).
-`ProfileState` returns those fields as `draft`, its canonical `url`, a revision and optional published URL/revision.
+`ProfileState` returns those fields as `draft`, its canonical `url`, a revision, optional published URL/revision, and the space's recorded `handle` when the installation has one. Clients name the profile by that handle rather than parsing it from the URL.
 New signed documents use version 3 and domain `gsv-federation/3/profile`; federation
 transport remains v2. Readers also verify legacy v2 documents. On upgrade, the
 Kernel re-signs only the previously published snapshot at `/profile`, retaining

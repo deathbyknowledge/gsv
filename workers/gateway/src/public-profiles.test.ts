@@ -27,6 +27,9 @@ describe("public profile projection serving", () => {
     expect(html).toContain('data-profile="https://profile.example/@person"');
     expect(html).toContain('src="/social/connect.js"');
     expect(html).not.toContain("data-handle-domain");
+    expect(html).toContain("<h1>@person</h1>");
+    const recorded = await (await servePublicProfileRequest(new Request(PROFILE.url), { locator: { alias: "person" }, json: false }, async () => ({ ...projection, handle: "ada" }))).text();
+    expect(recorded).toContain("<h1>@ada</h1>");
     expect(html).toContain('<span class="brand wordmark">Ship</span>');
     const linked = await (await servePublicProfileRequest(new Request(PROFILE.url), { locator: { alias: "person" }, json: false }, async () => projection, "https://ship.example")).text();
     expect(linked).toContain('<a class="brand wordmark" href="https://ship.example">Ship</a>');
