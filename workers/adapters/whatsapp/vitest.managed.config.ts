@@ -48,12 +48,12 @@ export default defineConfig({
                   calls.push({ installation, linkedContext: context, call: frame.call, args: frame.args });
                   if (frame.args.requestId === "obsolete-approval-404" || frame.args.requestId === "obsolete-approval-503") {
                     const unavailable = frame.args.requestId === "obsolete-approval-503" && !obsoleteApprovalRecovered;
+                    // Mirrors AdapterGatewayEntrypoint: a thrown Kernel failure becomes a retryable 503.
                     return {
                       type: "res", id: frame.id, ok: false,
-                      error: {
-                        code: unavailable ? 503 : 404,
-                        message: unavailable ? "Process service unavailable" : "Process not found: proc-deleted",
-                      },
+                      error: unavailable
+                        ? { code: 503, message: "Linked adapter request failed", retryable: true }
+                        : { code: 404, message: "Process not found: proc-deleted", retryable: false },
                     };
                   }
                   if (frame.args.requestId === "held-retirement-approval") {

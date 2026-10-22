@@ -134,6 +134,51 @@ describe("AdapterGatewayEntrypoint", () => {
     );
   });
 
+  it("keeps a linked request retryable when the Kernel call fails", async () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    const linkedAdapterPeerFrame = vi.fn(async () => { throw new Error("Durable Object reset because its code was updated"); });
+    const gateway = gatewayWithEnv({
+      KERNEL: { getByName: vi.fn(() => ({ linkedAdapterPeerFrame })) },
+      INSTALLATION_DIRECTORY: activeDirectory(),
+    });
+    const frame: Frame = {
+      type: "req", id: "linked-approval", call: "proc.hil",
+      args: { pid: "proc-1", requestId: "request-1", decision: "approve" },
+    };
+
+    await expect(gateway.linkedPeerFrame(
+      { installationId: "inst_adapter_fixture" },
+      { accountId: "default", actorId: "telegram:user:42", surface: { kind: "dm", id: "chat-42" }, interactionId: "callback-1" },
+      frame,
+    )).resolves.toEqual({
+      type: "res", id: "linked-approval", ok: false,
+      error: { code: 503, message: "Linked adapter request failed", retryable: true },
+    });
+    error.mockRestore();
+  });
+
+  it("rejects a malformed linked request as terminal before selecting a Kernel", async () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    const getByName = vi.fn();
+    const gateway = gatewayWithEnv({ KERNEL: { getByName }, INSTALLATION_DIRECTORY: activeDirectory() });
+    const frame: Frame = {
+      type: "req", id: "linked-approval", call: "proc.hil",
+      args: { pid: "proc-1", requestId: "request-1", decision: "approve" },
+    };
+
+    await expect(gateway.linkedPeerFrame(
+      { installationId: "inst_adapter_fixture" },
+      // SAFETY: a hostile adapter can send any shape across the service binding.
+      { accountId: "default" } as never,
+      frame,
+    )).resolves.toEqual({
+      type: "res", id: "linked-approval", ok: false,
+      error: { code: 403, message: "Linked adapter request was rejected", retryable: false },
+    });
+    expect(getByName).not.toHaveBeenCalled();
+    error.mockRestore();
+  });
+
   it("gates managed calls by their explicit installation", async () => {
     const installation = { installationId: "inst_adapter_gateway" };
     const response = {
