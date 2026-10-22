@@ -1,6 +1,11 @@
 import { ADMIN_VISIBLE_INSTALLATION_STATES, type AdminInstallationListQuery } from "../administration";
-import { hasExpectedOrigin, json, noStoreHeaders, readJsonObject, requireString } from "../http";
-import type { InstallationAdminAccess } from "./access";
+import { hasExpectedOrigin, json, noStoreHeaders, readJsonObject, requireString, type JsonValue } from "../http";
+import { AdminForbiddenError, type InstallationAdminAccess } from "./access";
+import type { AdminAuditRecorder } from "./insight";
+import { exceptionDiagnostics } from "@humansandmachines/gsv/telemetry";
+import { z } from "zod";
+
+const operatorReasonSchema = z.string().max(500).nullish();
 import type { InstallationAdminService } from "./service";
 
 type AdminService = Pick<InstallationAdminService,
@@ -13,6 +18,7 @@ export class InstallationAdminApi {
     private readonly service: AdminService,
     private readonly access: InstallationAdminAccess,
     private readonly origin: string,
+    private readonly audited: AdminAuditRecorder = async (_request, _action, mutation) => await mutation(),
   ) {}
 
   async handle(request: Request): Promise<Response | null> {
@@ -29,9 +35,10 @@ export class InstallationAdminApi {
       if (collection) {
         if (request.method === "GET") return json(await this.service.listInstallations(readInstallationListQuery(url)));
         const body = await readJsonObject(request);
-        return json(await this.service.create({
-          operationId: requireString(body.operationId, "operationId"), handle: requireString(body.handle, "handle"),
-        }), 201);
+        const input = { operationId: requireString(body.operationId, "operationId"), handle: requireString(body.handle, "handle") };
+        const issued = await this.audited(request, { name: "ship.create" }, () => this.service.create(input),
+          (result) => ({ installationId: result.installation.installationId }));
+        return json(issued, 201);
       }
       if (!route) return null;
       let installationId: string;
@@ -43,26 +50,39 @@ export class InstallationAdminApi {
         return installation ? json(installation) : json({ error: "Not Found" }, 404);
       }
       if (request.method === "POST") {
-        if (action === "onboarding") return json(await this.service.reissueOnboarding(installationId));
+        if (action === "onboarding") {
+          const issued = await this.audited(request, { name: "ship.setup-link.reissue", installationId },
+            () => this.service.reissueOnboarding(installationId));
+          return json(issued);
+        }
         if (action === "lifecycle") {
-          const { state } = await readJsonObject(request);
+          const { state, reason: reasonValue } = await readJsonObject(request);
           if (state !== "active" && state !== "restricted") throw new Error("installation state is invalid");
-          await this.service.setInstallationState(installationId, state);
+          const reason = readOperatorReason(reasonValue);
+          await this.audited(request, { name: state === "restricted" ? "ship.suspend" : "ship.reactivate", installationId, reason },
+            () => this.service.setInstallationState(installationId, state));
           return json({ installationId, state });
         }
         if (action === "reset") {
           const body = await readJsonObject(request);
-          return json(await this.service.resetInstallation(installationId, {
+          const reason = readOperatorReason(body.reason);
+          const input = {
             operationId: requireString(body.operationId, "operationId"),
             confirmHandle: requireString(body.confirmHandle, "confirmHandle"),
-          }), 201);
+          };
+          const reset = await this.audited(request, { name: "ship.reset", installationId, reason },
+            () => this.service.resetInstallation(installationId, input),
+            (result) => ({ detail: { replacementInstallationId: result.installation.installationId } }));
+          return json(reset, 201);
         }
       }
       return json({ error: "Not Found" }, 404);
     } catch (error) {
+      if (error instanceof AdminForbiddenError) return json({ error: "Forbidden" }, 403);
       const message = error instanceof Error ? error.message : "";
       if (["handle ", "installation", "operationId ", "request ", "JSON ", "query ", "state ", "page "]
         .some((prefix) => message.startsWith(prefix))) return json({ error: message }, 400);
+      console.warn("[Operator] Admin request failed:", url.pathname, exceptionDiagnostics(error));
       return json({ error: "The operator request could not be completed." }, 503);
     }
   }
@@ -79,4 +99,10 @@ export function readInstallationListQuery(url: URL): AdminInstallationListQuery 
   const page = pageValue ? Number(pageValue) : 1;
   if (!Number.isSafeInteger(page) || page < 1 || page > 1_000_000) throw new Error("page is invalid");
   return { query, state: state ?? null, page };
+}
+
+function readOperatorReason(value: JsonValue | undefined): string | null {
+  const reason = operatorReasonSchema.safeParse(value);
+  if (!reason.success) throw new Error("request reason is invalid");
+  return reason.data ?? null;
 }

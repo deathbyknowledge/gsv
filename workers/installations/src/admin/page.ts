@@ -1,5 +1,6 @@
 import { noStoreFormHeaders } from "../http";
 import type { IssuedAdminInstallation } from "./service";
+import type { OperatorAuditEvent } from "./insight";
 
 export type AdminNavigationItem = { section: string; href: string; label: string };
 
@@ -25,6 +26,7 @@ export function adminPageResponse(input: {
       <nav aria-label="Operator navigation">
         ${navLink("/admin/installations", "Ships", input.section === "installations")}
         ${(input.navigation ?? []).map((item) => navLink(item.href, item.label, input.section === item.section)).join("")}
+        ${navLink("/admin/audit", "Audit", input.section === "audit")}
       </nav>
       <small>private operator surface</small>
     </header>
@@ -93,6 +95,45 @@ export function formatDate(timestamp: number | null): string {
   }).format(new Date(timestamp))) + " UTC";
 }
 
+export function formatTime(timestamp: number): string {
+  return escapeHtml(new Intl.DateTimeFormat("en", {
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hourCycle: "h23",
+    timeZone: "UTC",
+  }).format(new Date(timestamp))) + " UTC";
+}
+
+/** Durations as an operator reads them: 200ms, 3s, 6m 15s, 2h 4m. */
+export function formatDuration(ms: number): string {
+  if (ms < 1_000) return `${ms}ms`;
+  const seconds = Math.round(ms / 1_000);
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m ${seconds % 60}s`;
+  return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
+}
+
+const AUDIT_OUTCOME_NOTES = {
+  completed: "",
+  error: "<small>Returned an error</small>",
+  pending: "<small>Outcome not recorded</small>",
+} satisfies Record<OperatorAuditEvent["outcome"], string>;
+
+export function auditTable(events: readonly OperatorAuditEvent[], showShip: boolean): string {
+  return `<div class="table-wrap"><table class="audit"><thead><tr><th>When</th><th>Operator</th><th>Action</th>${showShip ? "<th>Ship</th>" : ""}<th>Reason</th></tr></thead>
+    <tbody>${events.map((event) => `<tr>
+      <td>${formatTime(event.at)}</td>
+      <td>${escapeHtml(event.actor)}</td>
+      <td><strong>${escapeHtml(event.action)}</strong>${AUDIT_OUTCOME_NOTES[event.outcome]}${event.detail ? `<small>${Object.entries(event.detail).map(([key, value]) => `${escapeHtml(key)}: ${escapeHtml(value)}`).join(" · ")}</small>` : ""}</td>
+      ${showShip ? `<td>${event.installationId ? `<a href="/admin/installations/${encodeURIComponent(event.installationId)}">${escapeHtml(event.handle ?? event.installationId)}</a>${event.handle ? `<small>${escapeHtml(event.installationId)}</small>` : ""}` : "—"}</td>` : ""}
+      <td>${event.reason ? escapeHtml(event.reason) : "—"}</td>
+    </tr>`).join("")}</tbody></table></div>`;
+}
+
 export function formatInteger(value: number): string {
   return value.toLocaleString("en-US");
 }
@@ -135,6 +176,7 @@ const ADMIN_STYLES = `
 :root { color: #e8e8ef; background: #09090d; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; color-scheme: dark; }
 body { min-width: 320px; min-height: 100vh; margin: 0; }
 a { color: #b9b6ff; }
+.select-all { user-select: all; }
 .topbar { min-height: 62px; display: flex; align-items: center; gap: 30px; padding: 0 28px; border-bottom: 1px solid #292932; }
 .brand { display: flex; align-items: center; gap: 14px; color: inherit; text-decoration: none; }
 .brand strong { letter-spacing: .12em; } .brand span, .topbar small { color: #858593; }
@@ -179,5 +221,12 @@ td strong, td small { display: block; } td small { margin-top: 6px; color: #8585
 .form-actions { display: flex; align-items: end; flex-wrap: wrap; gap: 10px; margin-top: 18px; }
 .form-actions label { min-width: 180px; flex: 1; }
 .danger-zone { border-color: #513137; background: #130d10; }
+.subtitle { margin: 8px 0 0; font-family: ui-monospace, monospace; font-size: 12px; overflow-wrap: anywhere; }
+.definition-list small { color: #858593; }
+.badge-ok, .badge-online { border-color: #315f4b; color: #9de0be; background: #0d1713; } .badge-error, .badge-aborted, .badge-offline { border-color: #743b42; color: #efafb5; background: #1a0e10; }
+.timeline td, .audit td { padding: 10px 14px; vertical-align: top; }
+details summary { cursor: pointer; color: #c4c4ce; } .flag { color: #f1c48a; }
+.steps { margin: 10px 0 0; padding-left: 18px; font: 11px/1.7 ui-monospace, monospace; color: #a7a7b2; }
+.steps span { color: #6f6f7c; } .steps .step-slow { color: #f1c48a; } .steps .step-error { color: #efafb5; }
 @media (max-width: 760px) { .topbar { flex-wrap: wrap; gap: 8px 18px; padding: 12px 18px 0; } .topbar nav { order: 3; width: 100%; height: 44px; } .topbar nav a { padding: 0 10px; } .topbar small { display: none; } main { padding: 32px 16px 60px; } .page-heading { align-items: start; flex-direction: column; } .filters { grid-template-columns: 1fr; } .grid, .metrics { grid-template-columns: 1fr; } .metric { border-right: 0; border-bottom: 1px solid #292932; } .metric:last-child { border-bottom: 0; } .notice { grid-template-columns: 1fr; } .notice .button, .notice code, .notice small { grid-column: 1; } .definition-list { grid-template-columns: 1fr; } .definition-list dt { padding-bottom: 3px; border-bottom: 0; } .definition-list dd { padding-top: 3px; } }
 `;

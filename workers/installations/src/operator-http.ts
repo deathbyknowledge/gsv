@@ -16,6 +16,16 @@ export class OperatorInstallationAdminAccess implements InstallationAdminAccess 
       .find((part) => part.startsWith(`${COOKIE}=`))?.slice(COOKIE.length + 1);
     return this.bootstrap.authorizeOperator(bearer ?? cookie ?? "");
   }
+
+  async operatorIdentity(request: Request): Promise<string | null> {
+    if (this.mode === "access") {
+      return this.access.operatorIdentity
+        ? await this.access.operatorIdentity(request)
+        : await this.access.allows(request) ? "access" : null;
+    }
+    // The deployment holds one operator credential; it is named, never recorded.
+    return await this.allows(request) ? "operator credential" : null;
+  }
 }
 
 export class InstallationOperatorHttp {

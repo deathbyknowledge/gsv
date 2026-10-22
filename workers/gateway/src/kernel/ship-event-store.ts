@@ -35,6 +35,9 @@ const shipEventSchema = z.object({
 });
 
 /** Durable, ordered Ship events per owner; a row leaves the queue once its Ship admits it. */
+/** How many events wait for one owner's Ship, and since when. */
+export type ShipEventBacklog = { queued: number; oldestQueuedAt: number | null };
+
 export class ShipEventStore {
   private readonly sql: SqlStorage;
   constructor(storage: DurableObjectStorage) { this.sql = storage.sql; }
@@ -87,6 +90,14 @@ export class ShipEventStore {
        WHERE event_id = ?`,
       error.slice(0, 1_000), nextAttemptAtMs, now, eventId,
     );
+  }
+
+  backlog(ownerUid: number): ShipEventBacklog {
+    const row = this.sql.exec<{ queued: number; oldest: number | null }>(
+      "SELECT COUNT(*) AS queued, MIN(created_at) AS oldest FROM ship_events WHERE owner_uid = ?",
+      ownerUid,
+    ).one();
+    return { queued: row.queued, oldestQueuedAt: row.oldest };
   }
 
   ownersWithEvents(): number[] {

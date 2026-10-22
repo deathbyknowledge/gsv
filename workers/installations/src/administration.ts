@@ -7,11 +7,8 @@ export const ADMIN_INSTALLATIONS_PAGE_SIZE = 50;
 export const ADMIN_VISIBLE_INSTALLATION_STATES = [
   "reserved",
   "provisioning",
-  "trialing",
   "active",
-  "past_due",
   "restricted",
-  "cancelled",
   "retained",
   "deleting",
 ] as const satisfies readonly InstallationState[];

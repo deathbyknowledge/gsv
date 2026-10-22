@@ -10,3 +10,4 @@ export * from "./web-search";
 export * from "./feedback";
 export * from "./instances";
 export * from "./deployment";
+export * from "./operator";

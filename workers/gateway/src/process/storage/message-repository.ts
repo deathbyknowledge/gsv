@@ -385,6 +385,67 @@ export class ProcessMessageRepository {
     return row?.id ?? null;
   }
 
+  /**
+   * The shape of each run's input and the targets of its tool calls, for
+   * operator inspection. Returns lengths, flags and names only, never text.
+   */
+  describeRuns(runIds: string[]): Map<string, {
+    inputChars: number | null;
+    inputHasMedia: boolean;
+    originKind: string | null;
+    hasEvents: boolean;
+    toolTargets: Map<string, string>;
+  }> {
+    const runs = new Map<string, {
+      inputChars: number | null;
+      inputHasMedia: boolean;
+      originKind: string | null;
+      hasEvents: boolean;
+      toolTargets: Map<string, string>;
+    }>();
+    if (runIds.length === 0) return runs;
+    for (const runId of runIds) {
+      runs.set(runId, { inputChars: null, inputHasMedia: false, originKind: null, hasEvents: false, toolTargets: new Map() });
+    }
+    const placeholders = runIds.map(() => "?").join(", ");
+    const inputs = this.store.sql.exec<{ run_id: string; chars: number; has_media: number; origin_kind: string | null }>(
+      // Supported legacy rows may hold malformed JSON; json_valid keeps one from failing the query.
+      `SELECT run_id,
+              MAX(length(content), COALESCE(length(CASE WHEN json_valid(payload_json) THEN json_extract(payload_json, '$.text') END), 0)) AS chars,
+              media_json IS NOT NULL AS has_media,
+              COALESCE(
+                CASE WHEN json_valid(origin_json) THEN json_extract(origin_json, '$.kind') END,
+                CASE WHEN json_valid(payload_json) THEN json_extract(payload_json, '$.origin.kind') END
+              ) AS origin_kind
+         FROM messages
+        WHERE run_id IN (${placeholders}) AND role = 'user' AND group_message_id IS NULL
+        ORDER BY id ASC`,
+      ...runIds,
+    ).toArray();
+    for (const row of inputs) {
+      const run = runs.get(row.run_id);
+      if (!run || run.inputChars !== null) continue;
+      run.inputChars = row.chars;
+      run.inputHasMedia = row.has_media === 1;
+      run.originKind = row.origin_kind;
+    }
+    const records = this.store.sql.exec<{ run_id: string; kind: string; call_id: string | null; target: string | null }>(
+      `SELECT run_id, kind,
+              CASE WHEN json_valid(payload_json) THEN json_extract(payload_json, '$.callId') END AS call_id,
+              CASE WHEN json_valid(payload_json) THEN json_extract(payload_json, '$.target') END AS target
+         FROM messages
+        WHERE run_id IN (${placeholders}) AND kind IN ('call', 'event')`,
+      ...runIds,
+    ).toArray();
+    for (const row of records) {
+      const run = runs.get(row.run_id);
+      if (!run) continue;
+      if (row.kind === "event") run.hasEvents = true;
+      else if (row.call_id && row.target) run.toolTargets.set(row.call_id, row.target);
+    }
+    return runs;
+  }
+
   getMessagesForGenerationAfter(opts: {
     generation: number;
     afterMessageId: number;

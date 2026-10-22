@@ -76,6 +76,12 @@ from a suspension. Accounts does not notify a Kernel when it restricts or
 resets an installation, so already-authenticated traffic observes those
 changes within a minute.
 
+Accounts also holds an operator binding to the Gateway for the Ship health
+view in administration. The Gateway resolves the installation through the
+directory first and answers only for an active or suspended Ship, so the view
+never allocates Kernel state. Its answer is validated against a public contract
+that carries counts, times, names and outcomes, never content.
+
 All deployments require directory resolution; a missing directory binding fails
 closed. Historical standalone data remains outside
 current routing; see the [retirement guide](../how-to/standalone-retirement.md).

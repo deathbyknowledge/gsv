@@ -7,6 +7,7 @@ import { InstallationDeletionInventories, type InstallationDeletionInventoryReso
 import { AccountsDeletionRuntime } from "./deletion-runtime";
 import type { InstallationDeletionService } from "@humansandmachines/gsv/services/lifecycle";
 import { InstallationDeletionHttp } from "./deletion-http";
+import type { AdminAuditRecorder } from "./admin/insight";
 
 const namespaceId = "a".repeat(32);
 async function fixture() {
@@ -133,11 +134,34 @@ describe("persisted deletion inspection epochs", () => {
     const state = await fixture();
     const runtime = new AccountsDeletionRuntime(state.db, {}, undefined, 20, state.clock, state.configuration);
     const endpoint = `https://admin.example.invalid/admin/api/installations/${state.a.installationId}/deletion/inspection`;
-    const denied = new InstallationDeletionHttp(runtime, { allows: async () => false }, "https://admin.example.invalid");
+    // Only an admitted request reaches the audit log.
+    const audits: Parameters<AdminAuditRecorder>[1][] = [];
+    const audited: AdminAuditRecorder = async (_request, action, mutation) => {
+      audits.push(action);
+      return await mutation();
+    };
+    const denied = new InstallationDeletionHttp(runtime, { allows: async () => false }, "https://admin.example.invalid", audited);
     expect((await denied.handle(new Request(endpoint, { method: "POST" })))?.status).toBe(403);
-    const allowed = new InstallationDeletionHttp(runtime, { allows: async () => true }, "https://admin.example.invalid");
+    const allowed = new InstallationDeletionHttp(runtime, { allows: async () => true }, "https://admin.example.invalid", audited);
     expect((await allowed.handle(new Request(endpoint, { method: "POST", headers: { origin: "https://foreign.example.invalid" } })))?.status).toBe(403);
+    expect(audits).toEqual([]);
     expect((await allowed.handle(new Request(endpoint, { method: "POST", headers: { origin: "https://admin.example.invalid" } })))?.status).toBe(201);
+    expect(audits).toEqual([{ name: "ship.deletion.inspection", installationId: state.a.installationId }]);
+  });
+
+  it("answers and keeps the cause when a deletion step cannot be audited", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const state = await fixture();
+    const runtime = new AccountsDeletionRuntime(state.db, {}, undefined, 20, state.clock, state.configuration);
+    const unaudited: AdminAuditRecorder = async () => { throw new Error("D1_ERROR: network connection lost"); };
+    const http = new InstallationDeletionHttp(runtime, { allows: async () => true }, "https://admin.example.invalid", unaudited);
+    const response = await http.handle(new Request(`https://admin.example.invalid/admin/api/installations/${state.a.installationId}/deletion/inspection`, {
+      method: "POST", headers: { origin: "https://admin.example.invalid" },
+    }));
+    expect(response?.status).toBe(503);
+    expect(warn).toHaveBeenCalledWith("[Operator] Admin request failed:", expect.stringContaining("/deletion/inspection"),
+      expect.objectContaining({ exceptionMessage: expect.stringContaining("network connection lost") }));
+    warn.mockRestore();
   });
 
   it("accepts the bounded candidate list above the ordinary JSON body limit", async () => {
