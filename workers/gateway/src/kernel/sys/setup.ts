@@ -14,7 +14,6 @@ import {
 } from "@humansandmachines/gsv/protocol";
 import { handleSysBootstrap } from "./bootstrap";
 import { ensureAccountHomeLayout } from "../account-home";
-import { RipgitClient } from "../../fs";
 import { gsvInferenceFeaturesFromEnv } from "../../inference/features";
 import { ensurePersonalController } from "../personal-controller";
 import { normalizeLanguage } from "../language";
