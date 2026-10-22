@@ -190,6 +190,12 @@ export default defineConfig({
                   if (request.method === "POST" && segments[2] === "messages") {
                     const body = await request.json();
                     if (body.status === "read") {
+                      const pause = pausedSend;
+                      if (pause?.kind === "read") {
+                        blockedSend = body;
+                        await pause.promise;
+                        blockedSend = null;
+                      }
                       records.push({ kind: "read", version, phoneNumberId: segments[1], body, result: { success: true } });
                       return Response.json({ success: true });
                     }

@@ -252,7 +252,7 @@ async function linkedPeer(window: "open" | "closed"): Promise<LinkedPeerFixture>
   return { stub, peer: typedStub<ManagedPeerStub>(stub), route };
 }
 
-async function pauseGraphSend(kind: "template" | "window-rejection"): Promise<void> {
+async function pauseGraphSend(kind: "template" | "window-rejection" | "read"): Promise<void> {
   // SAFETY: The Cloudflare test environment declares WHATSAPP_API as a Fetcher binding.
   const binding = env.WHATSAPP_API as Fetcher;
   await binding.fetch("https://graph.test/pause-send", { method: "POST", body: kind });
@@ -1004,6 +1004,44 @@ describe("managed WhatsApp clean-instance flow", () => {
 
     await expect(activity(false, "run-2")).resolves.toEqual({ ok: true });
     expect((await reactions()).slice(before + 3)).toEqual([{ message_id: "wamid.in.superseded.2", emoji: "" }]);
+  });
+
+  it("adds no 👀 for a run whose route changed while its read receipt was in flight", async () => {
+    const { stub, route } = await linkedPeer("open");
+    const channel = new deployedAdapter.ManagedWhatsAppChannel(createExecutionContext(),
+      typedStub<ConstructorParameters<typeof deployedAdapter.ManagedWhatsAppChannel>[1]>(env));
+    const activity = (active: boolean, runId?: string) => channel.adapterSetActivity(
+      { installationId: route.installationId }, "managed", { kind: "dm" as const, id: ACTOR },
+      { kind: "typing", active, routeGeneration: route.generation, runId },
+    );
+    const reactions = async () => (await sentMessages())
+      .filter((record) => record.body.type === "reaction")
+      .map((record) => record.body.reaction);
+
+    expect((await SELF.fetch(await text("wamid.in.relinked.1", "question before relink"))).status).toBe(200);
+    await vi.waitFor(async () => { expect((await sentMessages()).at(-1)?.body.text?.body).toBe("Personal received question before relink"); });
+    await expect(activity(false)).resolves.toEqual({ ok: true });
+    const before = (await reactions()).length;
+
+    await pauseGraphSend("read");
+    const starting = activity(true, "run-before-relink");
+    await vi.waitFor(async () => { expect(await pausedGraphSend()).toMatchObject({ status: "read" }); });
+    // The person relinks while the old run's read receipt is still in flight.
+    await runInDurableObject(stub, async (_instance, context) => {
+      const state = await context.storage.get<ManagedWhatsAppPeerState>(STATE_KEY);
+      await context.storage.put(STATE_KEY, { ...state!, activeRoute: { ...state!.activeRoute!, generation: "relinked-generation" } });
+    });
+    await resumeGraphSend();
+    await starting;
+
+    expect((await reactions()).slice(before)).toEqual([]);
+    const after = await runInDurableObject(stub, async (_instance, context) => {
+      const state = await context.storage.get<ManagedWhatsAppPeerState>(STATE_KEY);
+      await context.storage.put(STATE_KEY, { ...state!, activeRoute: route });
+      return state!;
+    });
+    expect(after.workingReactionMessageId).toBeUndefined();
+    expect(after.workingReactionRunId).toBeUndefined();
   });
 
   it("clears a 👀 whose addition had an unknown outcome, but not one Meta rejected", async () => {

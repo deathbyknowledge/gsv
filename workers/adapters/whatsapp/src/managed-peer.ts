@@ -358,6 +358,11 @@ export class ManagedWhatsAppPeer extends DurableObject<ManagedWhatsAppPeerEnv> {
   ): Promise<void> {
     const move = this.workingReaction.then(async () => {
       const state = await this.requireState();
+      // A run's move applies only while its route is still active. A relink or disconnect may
+      // have cleared 👀 while this move waited; the platform-scope cleanup itself always applies.
+      if (owner && (
+        state.activeRoute?.installationId !== owner.installationId || state.activeRoute.generation !== owner.generation
+      )) return;
       const current = state.workingReactionMessageId;
       // A superseded run's stop can arrive after its successor started; it must not clear the successor's 👀.
       if (!target && runId && state.workingReactionRunId && state.workingReactionRunId !== runId) return;
