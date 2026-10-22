@@ -14,25 +14,23 @@ export class InstallationDeletionHttp {
     private readonly runtime: AccountsDeletionRuntime,
     private readonly access: InstallationAdminAccess,
     private readonly origin: string,
-    private readonly record: AdminAuditRecorder = async () => {},
+    private readonly audited: AdminAuditRecorder = async (_request, _action, mutation) => await mutation(),
   ) {}
 
   async handle(request: Request): Promise<Response | null> {
-    const response = await this.route(request);
-    const action = /\/deletion(?:\/([a-z-]+))?$/.exec(new URL(request.url).pathname)?.[1] ?? "begin";
-    if (response && request.method === "POST" && response.ok) {
-      const installationId = decodeURIComponent(/^\/admin\/api\/installations\/([^/]+)\//.exec(new URL(request.url).pathname)![1]!);
-      await this.record(request, `ship.deletion.${action}`, installationId);
-    }
-    return response;
-  }
-
-  private async route(request: Request): Promise<Response | null> {
     const route = /^\/admin\/api\/installations\/([^/]+)\/deletion(?:\/(retire|inventory|retry|inspect|inspection|import|operator-resources))?$/.exec(new URL(request.url).pathname);
     if (!route) return null;
-    const json = (value: JsonValue, status = 200) => Response.json(value, { status, headers: noStoreHeaders() });
     if (!await this.access.allows(request)) return json({ error: "Forbidden" }, 403);
-    if (request.method === "POST" && !hasExpectedOrigin(request, this.origin)) return json({ error: "Forbidden" }, 403);
+    if (request.method !== "POST") return await this.route(request, route);
+    if (!hasExpectedOrigin(request, this.origin)) return json({ error: "Forbidden" }, 403);
+    let installationId: string;
+    try { installationId = decodeURIComponent(route[1]!); }
+    catch { return await this.route(request, route); }
+    return await this.audited(request, { name: `ship.deletion.${route[2] ?? "begin"}`, installationId },
+      () => this.route(request, route), (response) => ({ refused: !response.ok }));
+  }
+
+  private async route(request: Request, route: RegExpExecArray): Promise<Response> {
     try {
       const installationId = decodeURIComponent(route[1]);
       const action = route[2];
@@ -83,4 +81,8 @@ export class InstallationDeletionHttp {
       return json({ error: "The deletion request could not be completed." }, 503);
     }
   }
+}
+
+function json(value: JsonValue, status = 200): Response {
+  return Response.json(value, { status, headers: noStoreHeaders() });
 }

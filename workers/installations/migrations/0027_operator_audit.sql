@@ -7,7 +7,10 @@ CREATE TABLE operator_audit_events (
   action          TEXT NOT NULL,
   installation_id TEXT,
   detail_json     TEXT,
-  reason          TEXT
+  reason          TEXT,
+  -- Written as `pending` before the action runs, so a committed action is never
+  -- left without a row; `pending` remains when its outcome could not be written.
+  outcome         TEXT NOT NULL DEFAULT 'pending' CHECK (outcome IN ('pending', 'completed', 'error'))
 );
 
 CREATE INDEX operator_audit_events_at ON operator_audit_events (at DESC);

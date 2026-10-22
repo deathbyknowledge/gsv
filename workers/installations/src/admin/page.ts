@@ -117,12 +117,18 @@ export function formatDuration(ms: number): string {
   return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
 }
 
+const AUDIT_OUTCOME_NOTES: Record<OperatorAuditEvent["outcome"], string> = {
+  completed: "",
+  error: "<small>Returned an error</small>",
+  pending: "<small>Outcome not recorded</small>",
+};
+
 export function auditTable(events: readonly OperatorAuditEvent[], showShip: boolean): string {
   return `<div class="table-wrap"><table class="audit"><thead><tr><th>When</th><th>Operator</th><th>Action</th>${showShip ? "<th>Ship</th>" : ""}<th>Reason</th></tr></thead>
     <tbody>${events.map((event) => `<tr>
       <td>${formatTime(event.at)}</td>
       <td>${escapeHtml(event.actor)}</td>
-      <td><strong>${escapeHtml(event.action)}</strong>${event.detail ? `<small>${Object.entries(event.detail).map(([key, value]) => `${escapeHtml(key)}: ${escapeHtml(value)}`).join(" · ")}</small>` : ""}</td>
+      <td><strong>${escapeHtml(event.action)}</strong>${AUDIT_OUTCOME_NOTES[event.outcome]}${event.detail ? `<small>${Object.entries(event.detail).map(([key, value]) => `${escapeHtml(key)}: ${escapeHtml(value)}`).join(" · ")}</small>` : ""}</td>
       ${showShip ? `<td>${event.installationId ? `<a href="/admin/installations/${encodeURIComponent(event.installationId)}">${escapeHtml(event.handle ?? event.installationId)}</a>${event.handle ? `<small>${escapeHtml(event.installationId)}</small>` : ""}` : "—"}</td>` : ""}
       <td>${event.reason ? escapeHtml(event.reason) : "—"}</td>
     </tr>`).join("")}</tbody></table></div>`;

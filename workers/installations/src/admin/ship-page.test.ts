@@ -10,12 +10,12 @@ import { InstallationAdminService } from "./service";
 
 const origin = "http://localhost:8976";
 
-function stack(gateway?: OperatorGatewayService, timeoutMs?: number) {
+function stack(gateway?: OperatorGatewayService, timeoutMs?: number, insightDb: D1Database = env.INSTALLATIONS_DB) {
   const accounts = new AccountStore(env.INSTALLATIONS_DB, "example.com");
   const onboarding = new InstallationOnboardingStore(env.INSTALLATIONS_DB, accounts);
   const service = new InstallationAdminService(env.INSTALLATIONS_DB, accounts, onboarding,
     { id: "principal_ship_page_operator", email: "operator@gsv.invalid", displayName: "Operator" }, {});
-  const insight = new ShipInsight(env.INSTALLATIONS_DB, { gateway, mailDomain: "ship.space", timeoutMs });
+  const insight = new ShipInsight(insightDb, { gateway, mailDomain: "ship.space", timeoutMs });
   const http = new InstallationAdminHttp(service, new CloudflareInstallationAdminAccess({ environment: "development", origin }),
     origin, {}, undefined, insight);
   return { service, onboarding, http, insight };
@@ -35,6 +35,23 @@ async function createShip(http: InstallationAdminHttp, service: InstallationAdmi
   await http.handle(form("/admin/installations", { operationId: `operation_${crypto.randomUUID()}`, handle }));
   const list = await service.listInstallations({ query: handle, state: null, page: 1 });
   return list.installations[0]!.installationId;
+}
+
+/** The audit log's database, failing each statement that starts with `failing` while `fail.on` is set. */
+function auditDb(failing: string) {
+  const fail = { on: false };
+  const db = new Proxy(env.INSTALLATIONS_DB, {
+    get(target, property) {
+      if (property !== "prepare") return Reflect.get(target, property, target);
+      return (sql: string) => {
+        const statement = target.prepare(sql);
+        if (!fail.on || !sql.trim().startsWith(failing)) return statement;
+        const failed = () => Promise.reject(new Error("D1_ERROR: network connection lost"));
+        return { bind: () => ({ run: failed, first: failed, all: failed }), run: failed, first: failed, all: failed };
+      };
+    },
+  });
+  return { db, fail };
 }
 
 async function activate(
@@ -199,15 +216,46 @@ describe("operator audit log", () => {
     expect(latest).toMatchObject({ action: "ship.suspend", actor: "development", reason: "chargeback" });
   });
 
-  it("records nothing when an action fails", async () => {
+  it("records a refused action as an error", async () => {
     const { http, service, insight } = stack();
     const installationId = await createShip(http, service, "unchanged");
-    const before = (await insight.audit.list({ installationId, page: 1 })).events.length;
     const refused = await http.handle(form(`/admin/installations/${installationId}/reset`, {
       operationId: `reset_${crypto.randomUUID()}`, confirmHandle: "wrong",
     }));
     expect(refused?.status).not.toBe(201);
-    expect((await insight.audit.list({ installationId, page: 1 })).events).toHaveLength(before);
+    const events = (await insight.audit.list({ installationId, page: 1 })).events;
+    expect(events.map((event) => [event.action, event.outcome])).toEqual([["ship.reset", "error"], ["ship.create", "completed"]]);
+    expect(await page(http, `/admin/installations/${installationId}`)).toContain("Returned an error");
+  });
+
+  it("changes nothing when the audit log cannot record the action", async () => {
+    const audit = auditDb("INSERT INTO operator_audit_events");
+    const ships = stack(undefined, undefined, audit.db);
+    const { http, service } = ships;
+    const installationId = await createShip(http, service, "unrecorded");
+    await activate(ships, installationId);
+    audit.fail.on = true;
+    const suspend = await http.handle(form(`/admin/installations/${installationId}/lifecycle`, { state: "restricted" }));
+    expect(suspend?.status).toBe(503);
+    expect((await service.getInstallation(installationId))?.state).toBe("active");
+    const create = await http.handle(form("/admin/installations", { operationId: `operation_${crypto.randomUUID()}`, handle: "neverborn" }));
+    expect(create?.status).toBe(503);
+    expect((await service.listInstallations({ query: "neverborn", state: null, page: 1 })).installations).toEqual([]);
+  });
+
+  it("reports a committed action as done and keeps its record when the outcome cannot be written", async () => {
+    const audit = auditDb("UPDATE operator_audit_events");
+    const ships = stack(undefined, undefined, audit.db);
+    const { http, service, insight } = ships;
+    const installationId = await createShip(http, service, "halfrecorded");
+    await activate(ships, installationId);
+    audit.fail.on = true;
+    const suspend = await http.handle(form(`/admin/installations/${installationId}/lifecycle`, { state: "restricted", reason: "abuse" }));
+    expect(suspend?.status).toBe(303);
+    expect((await service.getInstallation(installationId))?.state).toBe("restricted");
+    const [latest] = (await insight.audit.list({ installationId, page: 1 })).events;
+    expect(latest).toMatchObject({ action: "ship.suspend", reason: "abuse", outcome: "pending" });
+    expect(await page(http, `/admin/installations/${installationId}`)).toContain("Outcome not recorded");
   });
 
   it("names the Access operator by the verified token's email", async () => {

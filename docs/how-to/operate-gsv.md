@@ -125,6 +125,12 @@ page lists its recent entries, and `<admin-origin>/admin/audit` lists every
 entry. Entries outlive the Ship they describe. They name it only by Ship ID and
 hold no owner data.
 
+Accounts writes the entry before the change runs. If it cannot, the change does
+not happen and the operator gets a retryable error. A change that returned an
+error is marked "Returned an error". If the outcome could not be written after
+the change ran, the change is still reported as done and its entry reads
+"Outcome not recorded"; check the Ship's current state.
+
 ## Connect services and verify cleanup
 
 Enabled adapters require their application secrets declared in the adapter

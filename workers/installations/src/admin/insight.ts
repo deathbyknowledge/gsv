@@ -44,16 +44,24 @@ export type OperatorAuditEvent = {
   handle: string | null;
   detail: Record<string, string> | null;
   reason: string | null;
+  outcome: OperatorAuditOutcome;
 };
 
-/** Records a completed operator mutation; the actor comes from the request's admission. */
-export type AdminAuditRecorder = (
+export type OperatorAuditOutcome = "pending" | "completed" | "error";
+
+/** What an audited action reports once it has run. `refused` marks an action that answered with an error. */
+export type OperatorAuditResult = { installationId?: string; detail?: Record<string, string>; refused?: boolean };
+
+/**
+ * Runs an operator mutation under its audit row; the actor comes from the
+ * request's admission. Call it only after the request is admitted.
+ */
+export type AdminAuditRecorder = <T>(
   request: Request,
-  action: string,
-  installationId?: string,
-  detail?: Record<string, string>,
-  reason?: string | null,
-) => Promise<void>;
+  action: { name: string; installationId?: string; reason?: string | null },
+  mutation: () => Promise<T>,
+  describe?: (result: T) => OperatorAuditResult,
+) => Promise<T>;
 
 export type OperatorAuditPage = { events: OperatorAuditEvent[]; page: number; totalPages: number };
 
@@ -147,21 +155,45 @@ export class ShipInsight {
 export class OperatorAuditLog {
   constructor(private readonly db: D1Database) {}
 
-  async record(input: {
-    actor: string;
-    action: string;
-    installationId?: string;
-    detail?: Record<string, string>;
-    reason?: string | null;
-  }): Promise<void> {
+  /**
+   * Writes the row before the mutation runs: if it cannot be written, nothing
+   * changes. A committed mutation is reported as done even when its outcome
+   * cannot be written afterwards; its row then stays `pending`.
+   */
+  async run<T>(
+    input: { actor: string; action: string; installationId?: string; reason?: string | null },
+    mutation: () => Promise<T>,
+    describe?: (result: T) => OperatorAuditResult,
+  ): Promise<T> {
+    const id = `audit_${crypto.randomUUID()}`;
     const reason = input.reason?.trim().slice(0, REASON_MAX_LENGTH) || null;
     await this.db.prepare(
-      `INSERT INTO operator_audit_events (id, at, actor, action, installation_id, detail_json, reason)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
-    ).bind(
-      `audit_${crypto.randomUUID()}`, Date.now(), input.actor.slice(0, 256), input.action,
-      input.installationId ?? null, input.detail ? JSON.stringify(input.detail) : null, reason,
-    ).run();
+      `INSERT INTO operator_audit_events (id, at, actor, action, installation_id, reason, outcome)
+       VALUES (?, ?, ?, ?, ?, ?, 'pending')`,
+    ).bind(id, Date.now(), input.actor.slice(0, 256), input.action, input.installationId ?? null, reason).run();
+    let result: T;
+    try {
+      result = await mutation();
+    } catch (error) {
+      await this.finish(id, { refused: true });
+      throw error;
+    }
+    await this.finish(id, describe?.(result) ?? {});
+    return result;
+  }
+
+  private async finish(id: string, result: OperatorAuditResult): Promise<void> {
+    try {
+      await this.db.prepare(
+        `UPDATE operator_audit_events
+         SET outcome = ?, installation_id = COALESCE(installation_id, ?), detail_json = ?
+         WHERE id = ?`,
+      ).bind(result.refused ? "error" : "completed", result.installationId ?? null,
+        result.detail ? JSON.stringify(result.detail) : null, id).run();
+    } catch (error) {
+      // The row already records the action; it stays `pending` and the page says so.
+      console.warn("[Operator] Audit outcome not recorded:", id, error instanceof Error ? error.name : "unknown");
+    }
   }
 
   async list(input: { installationId?: string; page: number; pageSize?: number }): Promise<OperatorAuditPage> {
@@ -173,22 +205,22 @@ export class OperatorAuditLog {
       this.db.prepare(`SELECT COUNT(*) AS total FROM operator_audit_events a ${where}`)
         .bind(...bindings).first<{ total: number }>(),
       this.db.prepare(
-        `SELECT a.id, a.at, a.actor, a.action, a.installation_id, a.detail_json, a.reason, i.handle
+        `SELECT a.id, a.at, a.actor, a.action, a.installation_id, a.detail_json, a.reason, a.outcome, i.handle
          FROM operator_audit_events a LEFT JOIN installations i ON i.id = a.installation_id
          ${where} ORDER BY a.at DESC, a.rowid DESC LIMIT ? OFFSET ?`,
       ).bind(...bindings, pageSize, (input.page - 1) * pageSize).all<{
         id: string; at: number; actor: string; action: string; installation_id: string | null;
-        detail_json: string | null; reason: string | null; handle: string | null;
+        detail_json: string | null; reason: string | null; outcome: OperatorAuditOutcome; handle: string | null;
       }>(),
     ]);
-    // SAFETY: detail_json is only written by record() from a Record<string, string>.
+    // SAFETY: detail_json is only written by finish() from a Record<string, string>.
     return {
       page: input.page,
       totalPages: Math.max(1, Math.ceil((count?.total ?? 0) / pageSize)),
       events: rows.results.map((row) => ({
         id: row.id, at: row.at, actor: row.actor, action: row.action, installationId: row.installation_id,
         handle: row.handle, detail: row.detail_json ? JSON.parse(row.detail_json) as Record<string, string> : null,
-        reason: row.reason,
+        reason: row.reason, outcome: row.outcome,
       })),
     };
   }

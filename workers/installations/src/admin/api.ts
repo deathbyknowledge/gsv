@@ -17,7 +17,7 @@ export class InstallationAdminApi {
     private readonly service: AdminService,
     private readonly access: InstallationAdminAccess,
     private readonly origin: string,
-    private readonly record: AdminAuditRecorder = async () => {},
+    private readonly audited: AdminAuditRecorder = async (_request, _action, mutation) => await mutation(),
   ) {}
 
   async handle(request: Request): Promise<Response | null> {
@@ -34,10 +34,9 @@ export class InstallationAdminApi {
       if (collection) {
         if (request.method === "GET") return json(await this.service.listInstallations(readInstallationListQuery(url)));
         const body = await readJsonObject(request);
-        const issued = await this.service.create({
-          operationId: requireString(body.operationId, "operationId"), handle: requireString(body.handle, "handle"),
-        });
-        await this.record(request, "ship.create", issued.installation.installationId);
+        const input = { operationId: requireString(body.operationId, "operationId"), handle: requireString(body.handle, "handle") };
+        const issued = await this.audited(request, { name: "ship.create" }, () => this.service.create(input),
+          (result) => ({ installationId: result.installation.installationId }));
         return json(issued, 201);
       }
       if (!route) return null;
@@ -51,29 +50,28 @@ export class InstallationAdminApi {
       }
       if (request.method === "POST") {
         if (action === "onboarding") {
-          const issued = await this.service.reissueOnboarding(installationId);
-          await this.record(request, "ship.setup-link.reissue", installationId);
+          const issued = await this.audited(request, { name: "ship.setup-link.reissue", installationId },
+            () => this.service.reissueOnboarding(installationId));
           return json(issued);
         }
         if (action === "lifecycle") {
           const { state, reason: reasonValue } = await readJsonObject(request);
           if (state !== "active" && state !== "restricted") throw new Error("installation state is invalid");
           const reason = readOperatorReason(reasonValue);
-          await this.service.setInstallationState(installationId, state);
-          await this.record(request, state === "restricted" ? "ship.suspend" : "ship.reactivate", installationId, undefined,
-            reason);
+          await this.audited(request, { name: state === "restricted" ? "ship.suspend" : "ship.reactivate", installationId, reason },
+            () => this.service.setInstallationState(installationId, state));
           return json({ installationId, state });
         }
         if (action === "reset") {
           const body = await readJsonObject(request);
           const reason = readOperatorReason(body.reason);
-          const reset = await this.service.resetInstallation(installationId, {
+          const input = {
             operationId: requireString(body.operationId, "operationId"),
             confirmHandle: requireString(body.confirmHandle, "confirmHandle"),
-          });
-          await this.record(request, "ship.reset", installationId,
-            { replacementInstallationId: reset.installation.installationId },
-            reason);
+          };
+          const reset = await this.audited(request, { name: "ship.reset", installationId, reason },
+            () => this.service.resetInstallation(installationId, input),
+            (result) => ({ detail: { replacementInstallationId: result.installation.installationId } }));
           return json(reset, 201);
         }
       }

@@ -4,7 +4,7 @@ import type { InstallationAdminAccess } from "./access";
 import { InstallationAdminApi, readInstallationListQuery } from "./api";
 import { adminInstallationPage, adminInstallationsPage, adminNewInstallationPage, type InstallationAdminPresentation, type ShipView } from "./installations-page";
 import { adminAuditPage } from "./audit-page";
-import type { ShipInsight } from "./insight";
+import type { AdminAuditRecorder, OperatorAuditResult, ShipInsight } from "./insight";
 import { adminErrorPage, adminStylesheet } from "./page";
 import type { IssuedAdminInstallation } from "./service";
 import { InstallationDeletionHttp } from "../deletion-http";
@@ -36,9 +36,9 @@ export class InstallationAdminHttp<
     deletion?: AccountsDeletionRuntime,
     private readonly insight?: ShipInsight,
   ) {
-    const record = this.record.bind(this);
-    this.api = new InstallationAdminApi(service, access, origin, record);
-    this.deletion = deletion ? new InstallationDeletionHttp(deletion, access, origin, record) : undefined;
+    const audited: AdminAuditRecorder = (request, action, mutation, describe) => this.audited(request, action, mutation, describe);
+    this.api = new InstallationAdminApi(service, access, origin, audited);
+    this.deletion = deletion ? new InstallationDeletionHttp(deletion, access, origin, audited) : undefined;
   }
 
   async handle(request: Request): Promise<Response | null> {
@@ -74,8 +74,9 @@ export class InstallationAdminHttp<
         requireAdminMutationOrigin(request, this.origin);
         const form = await readAdminForm(request);
         createFormInput = { operationId: requireString(form.get("operationId"), "operationId"), handle: requireString(form.get("handle"), "handle") };
-        const issued = await this.service.create(createFormInput);
-        await this.record(request, "ship.create", issued.installation.installationId);
+        const input = createFormInput;
+        const issued = await this.audited(request, { name: "ship.create" }, () => this.service.create(input),
+          (result) => ({ installationId: result.installation.installationId }));
         return adminInstallationPage(issued.installation, issued, undefined, false, 201, this.presentation, await this.shipView(issued.installation));
       }
       if (route && request.method === "POST") {
@@ -85,23 +86,25 @@ export class InstallationAdminHttp<
           const form = await readAdminForm(request);
           const state = form.get("state");
           if (state !== "active" && state !== "restricted") throw new Error("installation state is invalid");
-          await this.service.setInstallationState(installationId, state);
-          await this.record(request, state === "restricted" ? "ship.suspend" : "ship.reactivate", installationId, undefined, form.get("reason"));
+          await this.audited(request,
+            { name: state === "restricted" ? "ship.suspend" : "ship.reactivate", installationId, reason: form.get("reason") },
+            () => this.service.setInstallationState(installationId, state));
           return adminRedirect(`/admin/installations/${encodeURIComponent(installationId)}`);
         }
         if (route[2] === "onboarding") {
-          const issued = await this.service.reissueOnboarding(installationId);
-          await this.record(request, "ship.setup-link.reissue", installationId);
+          const issued = await this.audited(request, { name: "ship.setup-link.reissue", installationId },
+            () => this.service.reissueOnboarding(installationId));
           return adminInstallationPage(issued.installation, issued, undefined, false, 200, this.presentation, await this.shipView(issued.installation));
         }
         if (route[2] === "reset") {
           const form = await readAdminForm(request);
-          const issued = await this.service.resetInstallation(installationId, {
+          const input = {
             operationId: requireString(form.get("operationId"), "operationId"),
             confirmHandle: requireString(form.get("confirmHandle"), "confirmHandle"),
-          });
-          await this.record(request, "ship.reset", installationId,
-            { replacementInstallationId: issued.installation.installationId }, form.get("reason"));
+          };
+          const issued = await this.audited(request, { name: "ship.reset", installationId, reason: form.get("reason") },
+            () => this.service.resetInstallation(installationId, input),
+            (result) => ({ detail: { replacementInstallationId: result.installation.installationId } }));
           return adminInstallationPage(issued.installation, issued, undefined, false, 201, this.presentation, await this.shipView(issued.installation));
         }
       }
@@ -130,17 +133,17 @@ export class InstallationAdminHttp<
     }
   }
 
-  /** Records a completed operator action. Called only after the action succeeds. */
-  private async record(
+  /** Runs an admitted operator mutation under its audit row. */
+  private async audited<T>(
     request: Request,
-    action: string,
-    installationId?: string,
-    detail?: Record<string, string>,
-    reason?: string | null,
-  ): Promise<void> {
-    if (!this.insight) return;
+    action: { name: string; installationId?: string; reason?: string | null },
+    mutation: () => Promise<T>,
+    describe?: (result: T) => OperatorAuditResult,
+  ): Promise<T> {
+    if (!this.insight) return await mutation();
     const actor = await this.access.operatorIdentity?.(request) ?? "operator";
-    await this.insight.audit.record({ actor, action, installationId, detail, reason });
+    return await this.insight.audit.run({ actor, action: action.name, installationId: action.installationId, reason: action.reason },
+      mutation, describe);
   }
 
   private async shipView(installation: Detail): Promise<ShipView | undefined> {
