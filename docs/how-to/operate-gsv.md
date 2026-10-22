@@ -82,41 +82,38 @@ choose **set up recovery**. This binds current root authorization to the verifie
 email. The owner can then see the Ship in **My Ships** and start administrator
 recovery there if needed.
 
-## Check on a Ship {#check-on-a-ship}
-
-Each Ship in administration shows its health from the Ship itself: the
-personal process state, queued input, pending approvals, open responsibilities,
-queued Ship events, linked messengers, connected devices and the most recent
-runs with each step's duration and outcome. Administration reads this through
-a deployment-owned binding to the Gateway that only Accounts holds, and only for
-a Ship the directory lists as active or suspended.
-
-The health view is metadata only: counts, times, tool and model names, and
-outcomes. It never includes message text, tool arguments or output, prompts,
-file contents, or the identifiers of people a Ship talks to on a messenger.
-
 The sending address must be enabled with the provider and its DNS records
 verified before codes can be delivered. The public deployment creates and
 preserves the owner-authentication secret. Keep the deployment state on
 redeploy so existing verification and session records remain usable. Owner
 verification mail is independent of a Ship's messaging adapters.
 
-## Check on a Ship
+## Check on a Ship {#check-on-a-ship}
 
 Each Ship's administration page shows its handle, mail address, hostnames and
 lifecycle state. It also shows the owner's full email, as a `mailto:` link,
-and their sign-in methods. When Accounts has the `OPERATOR_GATEWAY` binding, the page adds the
-Ship's health and a timeline of its recent runs. Health covers the Ship's state,
-queue, approvals, open work, linked messengers and online devices. Each run
-shows its origin, input length, duration and outcome, and its steps flag
-anything that failed or took longer than a minute. The timeline holds only
-metadata: no message text, tool arguments, output or file contents. Devices
-appear as `Device 1`, `Device 2` and so on, numbered by first connection,
-because their own names often include a person's name. If the Ship's own
-process cannot be read, the timeline says "Run history unavailable" rather than
-showing no runs. The health read gives up after three seconds. If the binding is missing or the read fails,
-the page names the reason and the rest of it still works. Set
-`GSV_MAIL_DOMAIN` to show the Ship's mail address.
+and their sign-in methods. Set `GSV_MAIL_DOMAIN` to show the Ship's mail
+address.
+
+When Accounts has the `OPERATOR_GATEWAY` binding, the page adds health from the
+Ship itself: the personal process state, queued input, pending approvals, open
+responsibilities, queued Ship events, linked messengers and connected devices.
+Administration reads this through a deployment-owned binding to the Gateway
+that only Accounts holds, and only for a Ship the directory lists as active or
+suspended. Devices appear as `Device 1`, `Device 2` and so on, numbered by first
+connection, because their own names often include a person's name.
+
+A timeline lists the most recent runs. Each run shows its origin, input length,
+duration and outcome, and its steps flag anything that failed or took longer
+than a minute. If the Ship's own process cannot be read, the timeline says "Run
+history unavailable" rather than showing no runs.
+
+Health and the timeline are metadata only: counts, times, tool and model names,
+and outcomes. They never include message text, tool arguments or output,
+prompts, file contents, or the identifiers of people a Ship talks to on a
+messenger. The health read gives up after three seconds. If the binding is
+missing or the read fails, the page names the reason and the rest of it still
+works.
 
 Accounts records every operator change in an audit log: creating a Ship,
 reissuing its setup link, suspending, reactivating, resetting, and each
