@@ -1084,6 +1084,40 @@ describe("managed WhatsApp clean-instance flow", () => {
     ]);
   });
 
+  it("keeps retrying a 👀 removal that Meta rate limited", async () => {
+    const { route } = await linkedPeer("open");
+    const channel = new deployedAdapter.ManagedWhatsAppChannel(createExecutionContext(),
+      typedStub<ConstructorParameters<typeof deployedAdapter.ManagedWhatsAppChannel>[1]>(env));
+    const installation = { installationId: route.installationId };
+    const surface = { kind: "dm" as const, id: ACTOR };
+    const activity = (active: boolean, runId: string) => channel.adapterSetActivity(
+      installation, "managed", surface, { kind: "typing", active, routeGeneration: route.generation, runId },
+    );
+    const reactions = async () => (await sentMessages())
+      .filter((record) => record.body.type === "reaction")
+      .map((record) => record.body.reaction);
+    // SAFETY: The Cloudflare test environment declares WHATSAPP_API as a Fetcher binding.
+    const graph = env.WHATSAPP_API as Fetcher;
+
+    expect((await SELF.fetch(await text("wamid.in.throttled.1", "first go"))).status).toBe(200);
+    await vi.waitFor(async () => { expect((await sentMessages()).at(-1)?.body.text?.body).toBe("Personal received first go"); });
+    await expect(activity(false, "run-earlier")).resolves.toEqual({ ok: true });
+    const before = (await reactions()).length;
+    await expect(activity(true, "run-a")).resolves.toEqual({ ok: true });
+
+    expect((await SELF.fetch(await text("wamid.in.throttled.2", "second go"))).status).toBe(200);
+    await vi.waitFor(async () => { expect((await sentMessages()).at(-1)?.body.text?.body).toBe("Personal received second go"); });
+    // A rate limit passes, so the removal stays recorded and the next move retries it.
+    await graph.fetch("https://graph.test/fail-next-reaction", { method: "POST", body: "throttled" });
+    await expect(activity(true, "run-b")).resolves.toEqual({ ok: true });
+    await expect(activity(false, "run-b")).resolves.toEqual({ ok: true });
+
+    expect((await reactions()).slice(before)).toEqual([
+      { message_id: "wamid.in.throttled.1", emoji: "👀" },
+      { message_id: "wamid.in.throttled.1", emoji: "" },
+    ]);
+  });
+
   it("forgets a 👀 whose removal Meta rejected, so the next message gets one", async () => {
     const { route } = await linkedPeer("open");
     const channel = new deployedAdapter.ManagedWhatsAppChannel(createExecutionContext(),

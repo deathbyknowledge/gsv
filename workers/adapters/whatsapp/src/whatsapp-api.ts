@@ -93,6 +93,14 @@ export class ManagedWhatsAppDeliveryError extends Error {
   get templateRejected(): boolean {
     return isWhatsAppTemplateErrorCode(this.graphCode);
   }
+
+  get rateLimited(): boolean {
+    return this.graphStatus !== undefined && isWhatsAppRateLimit(this.graphStatus, this.graphCode);
+  }
+}
+
+function isWhatsAppRateLimit(status: number, code: number | undefined): boolean {
+  return status === 429 || (code !== undefined && RATE_LIMIT_CODES.has(code));
 }
 
 export function isWhatsAppTemplateErrorCode(code: number | undefined): boolean {
@@ -328,7 +336,7 @@ export function classifyWhatsAppFailure(
   idempotent: boolean,
 ): DeliveryFailureKind {
   if (code === WHATSAPP_WINDOW_CLOSED_CODE) return "permanent";
-  if (status === 429 || (code !== undefined && RATE_LIMIT_CODES.has(code))) return "retryable";
+  if (isWhatsAppRateLimit(status, code)) return "retryable";
   const kind = classifyNonIdempotentProviderStatus(status);
   return kind === "ambiguous" && idempotent ? "retryable" : kind;
 }

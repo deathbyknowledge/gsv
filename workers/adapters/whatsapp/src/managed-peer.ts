@@ -361,14 +361,16 @@ export class ManagedWhatsAppPeer extends DurableObject<ManagedWhatsAppPeerEnv> {
       const current = state.workingReactionMessageId;
       // A superseded run's stop can arrive after its successor started; it must not clear the successor's 👀.
       if (!target && runId && state.workingReactionRunId && state.workingReactionRunId !== runId) return;
-      const react = async (messageId: string, emoji: string): Promise<"applied" | "ambiguous" | "failed"> => {
+      const react = async (messageId: string, emoji: string): Promise<"applied" | "ambiguous" | "throttled" | "failed"> => {
         try {
           await reactToWhatsAppMessage(
             this.accessToken(), this.phoneNumberId(), state.actorId, messageId, emoji, this.whatsAppFetch(owner),
           );
           return "applied";
         } catch (error) {
-          const outcome = error instanceof ManagedWhatsAppDeliveryError && error.kind === "ambiguous" ? "ambiguous" : "failed";
+          const outcome = !(error instanceof ManagedWhatsAppDeliveryError) ? "failed"
+            : error.kind === "ambiguous" ? "ambiguous"
+              : error.rateLimited ? "throttled" : "failed";
           console.warn(JSON.stringify({
             component: "managed_whatsapp",
             event: "reaction_delivery_failed",
@@ -381,11 +383,15 @@ export class ManagedWhatsAppPeer extends DurableObject<ManagedWhatsAppPeerEnv> {
       };
       let next = current;
       if (current !== target) {
-        // A removal with an unknown outcome keeps its message recorded, so the next start or stop
-        // retries it. One Meta refused is forgotten: retrying it would block every later 👀.
-        const cleared = !current || await react(current, "") !== "ambiguous";
+        // A removal with an unknown outcome or a rate limit keeps its message recorded, so the next
+        // start or stop retries it. One Meta refused is forgotten: retrying it would block every later 👀.
+        const removal = current ? await react(current, "") : "applied";
+        const cleared = removal === "applied" || removal === "failed";
         // Meta may have applied an addition whose outcome is unknown; removing an absent 👀 is harmless.
-        if (cleared) next = target && await react(target, "👀") !== "failed" ? target : undefined;
+        if (cleared) {
+          const addition = target ? await react(target, "👀") : "failed";
+          next = addition === "applied" || addition === "ambiguous" ? target : undefined;
+        }
       }
       const nextRunId = target ? runId : undefined;
       await this.ctx.storage.transaction(async (txn) => {

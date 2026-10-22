@@ -113,9 +113,10 @@ export default defineConfig({
                     failNextTemplate = true;
                     return Response.json({ ok: true });
                   }
-                  // The next reaction fails with an unknown outcome (500), or with a definite rejection (400) when the body says so.
+                  // The next reaction fails with an unknown outcome (500), a definite rejection (400 for
+                  // "rejected") or a rate limit (429 for "throttled").
                   if (request.method === "POST" && url.pathname === "/fail-next-reaction") {
-                    failNextReaction = (await request.text()) === "rejected" ? 400 : 500;
+                    failNextReaction = { rejected: 400, throttled: 429 }[await request.text()] ?? 500;
                     return Response.json({ ok: true });
                   }
                   if (request.method === "GET" && url.pathname === "/records") {
@@ -215,7 +216,7 @@ export default defineConfig({
                       failNextReaction = false;
                       rejected.push({ kind: "message", status, body });
                       return Response.json(
-                        { error: { message: status === 400 ? "rejected" : "unknown", type: "OAuthException", code: status === 400 ? 131026 : 2, fbtrace_id: "trace-reaction" } },
+                        { error: { message: status === 500 ? "unknown" : "rejected", type: "OAuthException", code: { 400: 131026, 429: 130429 }[status] ?? 2, fbtrace_id: "trace-reaction" } },
                         { status },
                       );
                     }
