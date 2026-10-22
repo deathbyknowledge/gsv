@@ -1,6 +1,7 @@
 import { Bash } from "just-bash";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { KernelContext } from "../../../kernel/context";
+import * as admission from "../../../kernel/approaches/admission";
 import * as federation from "../../../kernel/federation";
 import * as profiles from "../../../kernel/profiles";
 import { testPeer } from "../../../test-support/peers";
@@ -9,7 +10,11 @@ import { buildContactCommand } from "./contact";
 function shell(installationIdentity: KernelContext["installationIdentity"] = null, primaryDomain?: string) {
   const env = { GSV_PUBLIC_CONFIG: primaryDomain ? JSON.stringify({ primaryDomain }) : undefined };
   // SAFETY: handlers are mocked here; command parsing only reads the caller grant, installation address and public deployment config.
-  const ctx = { installationIdentity, env, peer: testPeer({ account: { uid: 1000, gid: 1000, gids: [1000], username: "owner", home: "/home/owner", cwd: "/home/owner" }, calls: ["contact.*", "profile.resolve"] }) } as KernelContext;
+  const owner = { uid: 1000, gid: 1000, gids: [1000], username: "owner", gecos: "Owner Person", home: "/home/owner", cwd: "/home/owner" };
+  const ctx = {
+    installationIdentity, env, peer: testPeer({ account: owner, calls: ["contact.*", "profile.resolve", "approach.create"] }),
+    auth: { getPasswdByUid: () => owner }, profiles: { get: () => null },
+  } as unknown as KernelContext;
   return new Bash({ customCommands: [buildContactCommand(ctx)] });
 }
 
@@ -35,6 +40,41 @@ describe("contact invitation handling", () => {
     }
     expect(create).not.toHaveBeenCalled();
     expect(accept).not.toHaveBeenCalled();
+  });
+});
+
+describe("contact connect", () => {
+  const esteve = { installationId: "inst_test", handle: "esteve", canonicalOrigin: "https://esteve.ship.space" };
+  const actor = { shipId: "ship:ada", subjectId: "subject:ada" };
+  const profile = { url: "https://ada.ship.space/profile", actor, revision: 3, displayName: "Ada", contactPolicy: "requests" };
+
+  it("resolves the handle and sends one message request under the owner's name", async () => {
+    // SAFETY: the command forwards the resolved fields; the resolver's other document fields are not read.
+    const resolve = vi.spyOn(profiles, "handleProfileResolve").mockResolvedValue({ profile } as unknown as Awaited<ReturnType<typeof profiles.handleProfileResolve>>);
+    const create = vi.spyOn(admission, "handleApproachCreate").mockImplementation(async () => { throw new Error("reached create"); });
+    const bash = shell(esteve);
+    expect((await bash.exec("contact connect @ada --message 'Hi Ada' --handling manual")).stderr).toContain("reached create");
+    expect(resolve).toHaveBeenCalledWith({ url: "https://ada.ship.space/profile" }, expect.anything());
+    expect(create).toHaveBeenCalledWith(expect.objectContaining({
+      profileUrl: profile.url, recipient: actor, profileRevision: 3, displayName: "Owner Person", text: "Hi Ada", shipHandlesMessages: false,
+      idempotencyKey: expect.stringMatching(/^connect:[A-Za-z0-9_-]{43}$/),
+    }), expect.anything());
+    const [first] = create.mock.calls[0];
+    await bash.exec("contact connect ada --message 'Hi Ada' --handling ship --name 'Owner (work)'");
+    expect(create).toHaveBeenLastCalledWith(expect.objectContaining({ idempotencyKey: first.idempotencyKey, displayName: "Owner (work)", shipHandlesMessages: true }), expect.anything());
+    await bash.exec("contact connect @ada --message 'Another message' --handling ship");
+    expect(create.mock.lastCall?.[0].idempotencyKey).not.toBe(first.idempotencyKey);
+  });
+
+  it("sends nothing without a message or a handling choice", async () => {
+    const resolve = vi.spyOn(profiles, "handleProfileResolve");
+    const create = vi.spyOn(admission, "handleApproachCreate");
+    const bash = shell(esteve);
+    for (const command of ["contact connect @ada --handling manual", "contact connect @ada --message 'Hi'", "contact connect @ada --message 'Hi' --handling auto", "contact connect"]) {
+      expect((await bash.exec(command)).exitCode).toBe(1);
+    }
+    expect(resolve).not.toHaveBeenCalled();
+    expect(create).not.toHaveBeenCalled();
   });
 });
 

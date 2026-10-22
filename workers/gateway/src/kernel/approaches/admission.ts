@@ -6,7 +6,7 @@ import { actorRefSchema, approachContentSchema, jsonValueSchema } from "@humansa
 import { z } from "zod/mini";
 import type { KernelContext } from "../context";
 import { APPROACH_LIFETIME_MS } from "../approach-store";
-import { contactHandlingChoice, requireContactHuman } from "../federation/authority";
+import { contactHandlingChoice, requireContactCaller, requireContactHuman } from "../federation/authority";
 import { handleProfileResolve, profileOwnerActive } from "../profiles";
 import { canonicalJson, randomBase64Url, sha256Base64Url } from "../federation-crypto";
 import { localShipDocumentV2 } from "../federation/protocol";
@@ -27,11 +27,11 @@ const createSchema = z.strictObject({
 });
 
 export function handleApproachGet(args: ApproachGetArgs, ctx: KernelContext): ApproachResult {
-  return { approach: ctx.approaches.owned(idSchema.parse(args.approachId), requireContactHuman(ctx)).summary };
+  return { approach: ctx.approaches.owned(idSchema.parse(args.approachId), requireContactCaller(ctx, true)).summary };
 }
 
 export function handleApproachList(args: ApproachListArgs, ctx: KernelContext): ApproachListResult {
-  const ownerUid = requireContactHuman(ctx);
+  const ownerUid = requireContactCaller(ctx, true);
   const direction = z.enum(["incoming", "outgoing"]).parse(args.direction);
   const status = z.optional(z.enum(["active", "history"])).parse(args.status);
   const limit = args.limit ?? 30;
@@ -42,7 +42,7 @@ export function handleApproachList(args: ApproachListArgs, ctx: KernelContext): 
 }
 
 export async function handleApproachCreate(input: ApproachCreateArgs, ctx: KernelContext): Promise<ApproachResult> {
-  const ownerUid = requireContactHuman(ctx);
+  const ownerUid = requireContactCaller(ctx, true);
   const args = createSchema.parse(input);
   contactHandlingChoice(args.shipHandlesMessages, ctx);
   return await ctx.coordinateFederationContact(`approach-send:${ownerUid}:${args.idempotencyKey}`, () => createApproach(args, ownerUid, ctx));
@@ -80,7 +80,7 @@ async function createApproach(args: ApproachCreateArgs, ownerUid: number, ctx: K
   if (new TextEncoder().encode(JSON.stringify({ document, content, setup: { token } })).length + 1024 > MAX_PUBLIC_JSON_BYTES) {
     throw new Error("This message exceeds the encoded request limit");
   }
-  requireContactHuman(ctx);
+  requireContactCaller(ctx, true);
   const prepared = ctx.federation.transaction(() => {
     const peerContact = ctx.federation.getByRemote(ownerUid, profile.actor.shipId, profile.actor.subjectId);
     if (peerContact?.state === "active") throw new Error("You already have a conversation with this person");
@@ -127,7 +127,7 @@ export async function handleApproachDecide(args: ApproachDecideArgs, ctx: Kernel
 }
 
 export async function handleApproachRetry(args: ApproachRetryArgs, ctx: KernelContext): Promise<ApproachResult> {
-  const ownerUid = requireContactHuman(ctx);
+  const ownerUid = requireContactCaller(ctx, true);
   const record = ctx.approaches.retry(idSchema.parse(args.approachId), ownerUid, revisionSchema.parse(args.expectedRevision));
   await ctx.scheduleApproachMaintenance();
   ctx.broadcastToUserUid(ownerUid, "approach.changed");

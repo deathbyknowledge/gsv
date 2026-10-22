@@ -91,6 +91,10 @@ export const BUILTIN_SKILL_FILES = [
   {
     path: "contacts/SKILL.md",
     content: contactsSkill,
+    previousSha256s: [
+      // Untouched skill before contact connect and public-by-default profiles.
+      "97a1024acb6e2d0a0356d61558d55cdd7750aabae7600ae5b3a7978b117e49ca",
+    ],
   },
   {
     path: "gsv-manual/SKILL.md",

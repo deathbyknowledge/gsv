@@ -980,10 +980,15 @@ metadata. Each queued delivery retains the wire version chosen when it was creat
 
 ### Public profiles and first messages
 
-Each space has one opt-in, owner-authenticated profile at `https://SPACE/profile`. Reading the same
+Each space has one owner-authenticated profile at `https://SPACE/profile`. The Kernel publishes
+it by default on the owner's first sign-in, with their display name and `contactPolicy: "requests"`,
+and applies that default once, so an explicit unpublish stays private. Reading the
 address with `Accept: application/json` returns its signed document. Publication is atomic;
-draft changes stay private until the next explicit publish. No public alias is required. All profile mutations and first-contact decisions require the direct
-signed-in human; Ship may resolve a public profile but cannot publish or accept on their behalf.
+draft changes stay private until the next explicit publish. No public alias is required. Profile
+mutations and first-contact decisions require the direct signed-in human. The owner's canonical Ship
+may resolve a profile and create, read, list and retry outgoing message requests (`approach.create`,
+`approach.get`, `approach.list`, `approach.retry`) on their behalf, but cannot publish a profile or
+accept an incoming request.
 
 ```ts
 type ProfileAndApproachSyscalls = {

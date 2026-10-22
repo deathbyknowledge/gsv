@@ -30,6 +30,7 @@ import {
 import {
   ensurePersonalController,
 } from "./personal-controller";
+import { ensureDefaultProfile } from "./profiles";
 import {
   recordMachineAddedResponsibility,
 } from "./lifecycle-responsibilities";
@@ -231,6 +232,11 @@ async handleSysConnect(
         ownerUid,
         kind: "ship",
       });
+      try {
+        await ensureDefaultProfile(ownerUid, ctx);
+      } catch (error) {
+        console.warn("[Kernel] Failed to publish the default profile:", exceptionDiagnostics(error));
+      }
     }
 
     if (ctx.auth.credentialEpoch(outcome.peer.principal.account.uid) !== credentialEpoch

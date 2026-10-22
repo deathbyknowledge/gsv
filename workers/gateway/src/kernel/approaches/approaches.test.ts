@@ -17,7 +17,7 @@ import { handleProfilePublish, handleProfileUpdate } from "../profiles";
 import { handleFederationHttpRequest } from "../federation";
 import { handleContactBlockList, handleContactBlockSet } from "../federation/preferences";
 import { localShipDocumentV2 } from "../federation/protocol";
-import { handleApproachCreate, handleApproachDecide, handleApproachRetry } from "./admission";
+import { handleApproachCreate, handleApproachDecide, handleApproachGet, handleApproachRetry } from "./admission";
 import { processApproachMaintenance } from "./runtime";
 import { claimApproach } from "./pairing";
 import { APPROACH_CLAIM_PATH, APPROACH_PATH, signApproachValue } from "./shared";
@@ -98,10 +98,23 @@ describe("authenticated first contact", () => {
     });
   });
 
-  it("requires direct human creation and key possession for the exact recipient, then fences a block", async () => {
+  it("lets the owner's canonical Ship send a request and reads it back, but rejects other processes", async () => {
     await withSpaces(async (sender, recipient, profile) => {
       installTransport(sender, recipient, profile);
-      await expect(sender.run((ctx) => handleApproachCreate(sendIntent(profile), { ...ctx, processId: "proc:ship" }))).rejects.toThrow("signed-in human");
+      const procs = { get: (pid: string) => pid === "proc:ship" ? { isPersonalController: true, ownerUid: OWNER.uid } : { isPersonalController: false, ownerUid: OWNER.uid } };
+      // SAFETY: the authority check reads only the process's controller flag and owner.
+      const asProcess = (ctx: KernelContext, processId: string) => ({ ...ctx, processId, procs } as unknown as KernelContext);
+      await expect(sender.run((ctx) => handleApproachCreate(sendIntent(profile), asProcess(ctx, "proc:crew")))).rejects.toThrow("signed-in human or their Ship");
+      const sent = (await sender.run((ctx) => handleApproachCreate({ ...sendIntent(profile), shipHandlesMessages: false }, asProcess(ctx, "proc:ship")))).approach;
+      expect((await sender.run((ctx) => handleApproachGet({ approachId: sent.id }, asProcess(ctx, "proc:ship")))).approach.id).toBe(sent.id);
+      await expect(sender.run((ctx) => handleApproachDecide({ approachId: sent.id, expectedRevision: sent.revision, decision: "withdraw" }, asProcess(ctx, "proc:ship")))).rejects.toThrow("signed-in human");
+      await sender.run((ctx) => handleApproachDecide({ approachId: sent.id, expectedRevision: sent.revision, decision: "withdraw" }, ctx));
+    });
+  });
+
+  it("requires key possession for the exact recipient, then fences a block", async () => {
+    await withSpaces(async (sender, recipient, profile) => {
+      installTransport(sender, recipient, profile);
       const created = (await sender.run((ctx) => handleApproachCreate(sendIntent(profile), ctx))).approach;
       await sender.run(processApproachMaintenance);
       const incoming = (await recipient.run((ctx) => ctx.approaches.list(OWNER.uid, { direction: "incoming", limit: 10 })))[0];

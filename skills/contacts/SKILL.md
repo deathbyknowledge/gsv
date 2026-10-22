@@ -1,6 +1,6 @@
 ---
 name: contacts
-description: Invite people to connect their Ships by handle or email, accept contact invitations, message existing contacts, and coordinate work with them.
+description: Add people by handle, invite them to connect their Ships by link or email, accept contact invitations, message existing contacts, and coordinate work with them.
 ---
 
 # Contacts
@@ -9,16 +9,25 @@ Run commands through `Shell` on target `gsv`. Use `man contact`, `man message`,
 and `man mail` for syntax. Contact trust changes belong to the owner or their
 canonical Ship; delegated processes cannot create or accept invitations.
 
-## Invite Someone
+## Add Someone by Handle
 
-Check `contact list --json` for an existing connection. If the person is new,
-create a private invitation. Neither an existing contact nor a published profile
-is required. `contact find` reads public profiles only; a 404 does not rule out
-inviting that person.
+When the owner says "add @handle" or names a person on your service, check
+`contact list --json` for an existing connection, then send a message request:
+`contact connect @handle --message TEXT --handling manual|ship`. Keep the
+message short and in the owner's voice, for example saying who is connecting.
+No approval is needed beyond the owner asking. The other person decides whether
+to accept; report the request as sent, not as connected. Profiles are public by
+default, so this usually works. If it fails because the profile is unavailable
+or not receiving requests, fall back to a private invitation below.
 
-Use the owner's handling choice when creating or accepting: `--handling manual`
-leaves new messages for the owner; `--handling ship` lets Ship handle them.
-Ask if the owner has not already chosen. Each person decides for their own side.
+Use the owner's handling choice when connecting, creating or accepting:
+`--handling manual` leaves new messages for the owner; `--handling ship` lets
+Ship handle them. Ask if the owner has not already chosen. Each person decides
+for their own side.
+
+## Invite Someone by Link
+
+A private invitation needs neither an existing contact nor a public profile.
 
 1. Create the link with `contact invite create`, the chosen handling flag, and
    `--expires 7d` to give the recipient time to respond. Keep the returned `url`.
@@ -61,8 +70,11 @@ does not send a message or process earlier ones.
 - `mail status DELIVERY_ID` checks invitation email delivery.
 - `contact invite list --all` distinguishes acceptance, expiry and cancellation;
   `contact list` shows the resulting connection.
+- A sent `contact connect` request reports its state when it was created; the
+  contact appears in `contact list` once the person accepts.
 - `message delivery show DELIVERY_ID` checks contact message delivery.
 
-Creating a link, sending it, accepting it, and replying are separate outcomes.
+Sending a request, creating a link, sending it, accepting it, and replying are
+separate outcomes.
 Report the state you can verify. For UI flows and details, read
 `wiki read gsv-manual/pages/integrations/contacts.md`.

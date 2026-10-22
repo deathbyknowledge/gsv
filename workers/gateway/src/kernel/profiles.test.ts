@@ -8,7 +8,8 @@ import type { KernelContext } from "./context";
 import { FederationStore } from "./federation-store";
 import { FederationIdentity } from "./federation-crypto";
 import { ProfileStore } from "./profile-store";
-import { handleProfileGet, handleProfileUpdate, handleProfilePublish, handleProfileUnpublish, handleProfileResolve, resolveSpacePublicProfile, verifyPublicProfile } from "./profiles";
+import { ConfigStore } from "./config";
+import { ensureDefaultProfile, handleProfileGet, handleProfileUpdate, handleProfilePublish, handleProfileUnpublish, handleProfileResolve, resolveSpacePublicProfile, verifyPublicProfile } from "./profiles";
 import { KERNEL_V045_ADD_HUMAN_INVITATIONS } from "./schema/v045_add_human_invitations";
 import { KERNEL_V069_SINGLE_HUMAN_SPACE } from "./schema/v069_single_human_space";
 import { jsonValueSchema } from "@humansandmachines/gsv/protocol";
@@ -105,10 +106,44 @@ describe("explicit profile publication", () => {
     });
   });
 
-  it("starts private and publishes only the exact approved snapshot across later draft edits", async () => {
+  it("publishes a public, request-open profile by default once, so an unpublish stays private", async () => {
+    await runWithRealKernelSql(async (sql, storage) => {
+      const ctx = profileContext(storage, sql);
+      await ensureDefaultProfile(OWNER.uid, ctx);
+      const published = ctx.profiles.published({ space: true })!;
+      expect(published.profile).toMatchObject({ displayName: OWNER.gecos, about: "", contactPolicy: "requests", representation: "human", revision: 1 });
+      await verifyPublicProfile(published.profile, "https://local.example/profile");
+      expect(handleProfileGet(ctx).profile).toMatchObject({ revision: 1, published: { revision: 1 } });
+      expect(ctx.broadcastToUserUid).toHaveBeenCalledWith(OWNER.uid, "profile.changed");
+      await ensureDefaultProfile(OWNER.uid, ctx);
+      expect(ctx.profiles.published({ space: true })).toEqual(published);
+      await handleProfileUnpublish({ expectedRevision: 1 }, ctx);
+      await ensureDefaultProfile(OWNER.uid, ctx);
+      expect(ctx.profiles.published({ space: true })).toBeNull();
+      expect(handleProfileGet(ctx).profile).toMatchObject({ revision: 2 });
+    });
+  });
+
+  it("publishes a draft saved before the default, opened to message requests, and leaves an owner-published profile alone", async () => {
+    await runWithRealKernelSql(async (sql, storage) => {
+      const ctx = profileContext(storage, sql);
+      handleProfileUpdate({ expectedRevision: 0, draft: { ...DRAFT, contactPolicy: "closed" } }, ctx);
+      await ensureDefaultProfile(OWNER.uid, ctx);
+      expect(ctx.profiles.published({ space: true })!.profile).toMatchObject({ displayName: DRAFT.displayName, about: DRAFT.about, contactPolicy: "requests", revision: 2 });
+    });
+    await runWithRealKernelSql(async (sql, storage) => {
+      const ctx = profileContext(storage, sql);
+      handleProfileUpdate({ expectedRevision: 0, draft: { ...DRAFT, contactPolicy: "invitation" } }, ctx);
+      await handleProfilePublish({ expectedRevision: 1 }, ctx);
+      await ensureDefaultProfile(OWNER.uid, ctx);
+      expect(ctx.profiles.published({ space: true })!.profile).toMatchObject({ contactPolicy: "invitation", revision: 1 });
+    });
+  });
+
+  it("offers an open default draft and publishes only the exact approved snapshot across later draft edits", async () => {
     await runWithRealKernelSql(async (_sql, storage) => {
       const ctx = profileContext(storage);
-      expect(handleProfileGet(ctx).profile).toMatchObject({ revision: 0, draft: { contactPolicy: "closed" } });
+      expect(handleProfileGet(ctx).profile).toMatchObject({ revision: 0, draft: { contactPolicy: "requests" } });
       handleProfileUpdate({ expectedRevision: 0, draft: DRAFT }, ctx);
       expect(ctx.profiles.published({ space: true })).toBeNull();
       await handleProfilePublish({ expectedRevision: 1 }, ctx);
@@ -179,8 +214,9 @@ describe("explicit profile publication", () => {
   });
 });
 
-function profileContext(storage: DurableObjectStorage): KernelContext {
+function profileContext(storage: DurableObjectStorage, sql?: SqlStorage): KernelContext {
   const context = {
+    ...(sql ? { config: new ConfigStore(sql) } : undefined),
     installationIdentity: { installationId: `inst_${crypto.randomUUID()}`, canonicalOrigin: "https://local.example", handle: "local" },
     peer: testPeer({ kind: "human", account: OWNER, calls: ["profile.*"] }), callerOwnerUid: OWNER.uid, connection: {},
     profiles: new ProfileStore(storage), federation: new FederationStore(storage), federationIdentity: new FederationIdentity(storage),

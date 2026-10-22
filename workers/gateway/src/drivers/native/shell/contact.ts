@@ -1,6 +1,7 @@
 import { defineCommand } from "just-bash";
 import type { ExecResult } from "just-bash";
 import type {
+  ApproachResult,
   ContactInviteCreateArgs,
   ContactRequestCreateArgs,
   ContactRequestState,
@@ -8,6 +9,9 @@ import type {
 } from "@humansandmachines/gsv/protocol";
 import { contactDisplayName, jsonObjectSchema } from "@humansandmachines/gsv/protocol";
 import type { KernelContext } from "../../../kernel/context";
+import { resolveCallerOwnerUid } from "../../../kernel/context";
+import { handleApproachCreate } from "../../../kernel/approaches/admission";
+import { sha256Base64Url } from "../../../kernel/federation-crypto";
 import {
   handleContactAliasSet,
   handleContactIdentity,
@@ -69,6 +73,9 @@ async function runContactCommand(args: string[], ctx: KernelContext): Promise<Ex
       requireCommandCapability(ctx, "profile.resolve");
       requireArgumentCount(rest, 1, "find requires: contact find @HANDLE|ADDRESS");
       return json(await handleProfileResolve({ url: profileAddress(rest[0], ctx) }, ctx));
+    case "connect":
+      requireCommandCapability(ctx, "approach.create");
+      return json(await connectToPerson(rest, ctx));
     case "list":
       return listContacts(rest, ctx);
     case "alias":
@@ -155,6 +162,37 @@ async function manageInvite(args: string[], ctx: KernelContext): Promise<ExecRes
     return json(handleContactInviteCancel({ inviteId: rest[0] }, ctx));
   }
   throw new Error("invite requires create, accept, list, or cancel");
+}
+
+/**
+ * Send a first message request to a published profile. The owner's canonical
+ * Ship may do this for them; the recipient still decides whether to accept.
+ */
+async function connectToPerson(args: string[], ctx: KernelContext): Promise<ApproachResult> {
+  const address = requireShellOptionValue(args[0], "connect");
+  let text: string | undefined;
+  let displayName: string | undefined;
+  let shipHandlesMessages: boolean | undefined;
+  for (let index = 1; index < args.length; index += 2) {
+    const option = args[index];
+    const value = requireShellOptionValue(args[index + 1], option);
+    if (option === "--message" && text === undefined) text = value;
+    else if (option === "--name" && displayName === undefined) displayName = value;
+    else if (option === "--handling" && shipHandlesMessages === undefined) shipHandlesMessages = parseHandling(value);
+    else throw new Error(`unexpected or repeated connect option: ${option}`);
+  }
+  if (!text?.trim()) throw new Error("connect requires --message TEXT");
+  if (shipHandlesMessages === undefined) throw new Error("Ask the owner who should handle new messages, then use --handling manual|ship");
+  const { profile } = await handleProfileResolve({ url: profileAddress(address, ctx) }, ctx);
+  const ownerUid = resolveCallerOwnerUid(ctx);
+  const origin = ctx.installationIdentity?.canonicalOrigin;
+  const account = ctx.auth.getPasswdByUid(ownerUid);
+  const name = displayName ?? (origin ? ctx.profiles.get(ownerUid, origin)?.draft.displayName : undefined) ?? account?.gecos ?? account?.username;
+  if (!name?.trim()) throw new Error("connect requires --name DISPLAY_NAME");
+  return await handleApproachCreate({
+    profileUrl: profile.url, recipient: profile.actor, profileRevision: profile.revision, displayName: name, text, shipHandlesMessages,
+    idempotencyKey: `connect:${await sha256Base64Url(`${profile.actor.shipId}\n${profile.actor.subjectId}\n${text}`)}`,
+  }, ctx);
 }
 
 function parseHandling(value: string): boolean {
@@ -321,6 +359,7 @@ function contactUsage(): string {
     "Usage:",
     "  contact identity",
     "  contact find @HANDLE|ADDRESS",
+    "  contact connect @HANDLE|ADDRESS --message TEXT --handling manual|ship [--name DISPLAY_NAME]",
     "  contact list [--all] [--json]",
     "  contact alias CONTACT_ID NAME|--clear",
     "  contact invite create --handling manual|ship [--expires DURATION]",
@@ -335,7 +374,9 @@ function contactUsage(): string {
     "",
     "Ask the owner who should handle new messages unless they already chose. manual leaves messages for the owner;",
     "ship lets Ship handle future incoming messages. The choice affects only this owner's side and can change later.",
-    "find reads published profiles only. Private invitations need neither a public profile nor an existing contact.",
+    "Profiles are public by default. connect finds the person's profile and sends them a first message request;",
+    "they decide whether to accept. The request fails if the profile is unavailable or not receiving requests.",
+    "Private invitations need neither a public profile nor an existing contact.",
     "To invite someone at a known email address, create an invitation and send its url with mail send; see mail help.",
     "Otherwise share the url with the owner. Check email delivery with mail status and acceptance with contact invite list --all.",
     "Creating or sending a link does not mean it was accepted.",
