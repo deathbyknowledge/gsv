@@ -144,7 +144,7 @@ export class ShipInsight {
       }
       return { kind: "ok", snapshot: snapshot.data };
     } catch (error) {
-      console.warn("[Operator] Ship snapshot failed:", error instanceof Error ? error.name : "unknown");
+      console.warn("[Operator] Ship snapshot failed:", exceptionDiagnostics(error));
       return { kind: "unavailable", reason: "failed" };
     } finally {
       if (timer !== undefined) clearTimeout(timer);

@@ -173,6 +173,17 @@ describe("Ship page", () => {
     expect(body).not.toContain("0 waiting for approval");
   });
 
+  it("keeps the cause when the snapshot call fails", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const gateway: OperatorGatewayService = { operatorShipSnapshot: async () => { throw new Error("Durable Object reset because its code was updated"); } };
+    const { http, service } = stack(gateway);
+    const installationId = await createShip(http, service, "unreachable");
+    expect(await page(http, `/admin/installations/${installationId}`)).toContain("Health unavailable");
+    expect(warn).toHaveBeenCalledWith("[Operator] Ship snapshot failed:",
+      expect.objectContaining({ exceptionMessage: "Durable Object reset because its code was updated" }));
+    warn.mockRestore();
+  });
+
   it("rejects a malformed snapshot instead of rendering it", async () => {
     const gateway: OperatorGatewayService = { operatorShipSnapshot: async () => JSON.parse('{"found":true,"snapshot":{"version":2}}') };
     const { http, service } = stack(gateway);
@@ -184,6 +195,17 @@ describe("Ship page", () => {
 });
 
 describe("operator audit log", () => {
+  it("keeps the cause when the audit page cannot be read", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const audit = auditDb("SELECT");
+    const { http } = stack(undefined, undefined, audit.db);
+    audit.fail.on = true;
+    const response = await http.handle(new Request(`${origin}/admin/audit`));
+    expect(response?.status).toBe(503);
+    expect(warn).toHaveBeenCalledWith("[Operator] Admin request failed:", "/admin/audit", expect.objectContaining({ exceptionName: "Error" }));
+    warn.mockRestore();
+  });
+
   it("records every Ship action with the operator and reason, and shows it on the Ship and audit pages", async () => {
     const ships = stack();
     const { http, service, insight } = ships;

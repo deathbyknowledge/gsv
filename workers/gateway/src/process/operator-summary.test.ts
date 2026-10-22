@@ -31,6 +31,21 @@ function seedRun(process: Process, runId: string, startedAt: number, origin: str
 }
 
 describe("operator run summary", () => {
+  it("still describes a run whose legacy message has a malformed origin", async () => {
+    const stub = await initProcess("operator-summary-legacy-origin", ROOT_IDENTITY);
+    await runInProcess(stub, async (process: Process) => {
+      seedRun(process, "run:msg:legacy", 1_000_000, "client");
+      process.store.sql.exec("UPDATE messages SET origin_json = '{not json' WHERE run_id = 'run:msg:legacy' AND role = 'user'");
+      process.store.traces.finishRunTrace("run:msg:legacy", "ok", 1_010_000);
+
+      const summary = await process.operatorRunSummary(10);
+
+      expect(summary?.runs.map((run) => [run.runId, run.origin, run.inputChars])).toEqual([
+        ["run:msg:legacy", "other", "SECRET-INPUT the person's private words".length],
+      ]);
+    });
+  });
+
   it("describes recent runs with timings and outcomes, newest first, without any content", async () => {
     const stub = await initProcess("operator-summary", ROOT_IDENTITY);
     await runInProcess(stub, async (process: Process) => {

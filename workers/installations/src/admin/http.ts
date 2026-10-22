@@ -117,6 +117,7 @@ export class InstallationAdminHttp<
         return isAdminApiPath(url.pathname) ? json({ error: "Forbidden" }, 403) : adminText("Forbidden", 403);
       }
       const failure = installationAdminFailure(error instanceof Error ? error : new Error("request failed"));
+      if (failure.status >= 500) console.warn("[Operator] Admin request failed:", url.pathname, exceptionDiagnostics(error));
       if (isAdminApiPath(url.pathname)) return json({ error: failure.message }, failure.status);
       if (request.method === "POST" && url.pathname === "/admin/installations") {
         return adminNewInstallationPage(failure.message, false, failure.status, createFormInput, this.presentation.navigation);

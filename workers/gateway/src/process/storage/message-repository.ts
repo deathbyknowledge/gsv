@@ -409,10 +409,14 @@ export class ProcessMessageRepository {
     }
     const placeholders = runIds.map(() => "?").join(", ");
     const inputs = this.store.sql.exec<{ run_id: string; chars: number; has_media: number; origin_kind: string | null }>(
+      // Supported legacy rows may hold malformed JSON; json_valid keeps one from failing the query.
       `SELECT run_id,
-              MAX(length(content), COALESCE(length(json_extract(payload_json, '$.text')), 0)) AS chars,
+              MAX(length(content), COALESCE(length(CASE WHEN json_valid(payload_json) THEN json_extract(payload_json, '$.text') END), 0)) AS chars,
               media_json IS NOT NULL AS has_media,
-              COALESCE(json_extract(origin_json, '$.kind'), json_extract(payload_json, '$.origin.kind')) AS origin_kind
+              COALESCE(
+                CASE WHEN json_valid(origin_json) THEN json_extract(origin_json, '$.kind') END,
+                CASE WHEN json_valid(payload_json) THEN json_extract(payload_json, '$.origin.kind') END
+              ) AS origin_kind
          FROM messages
         WHERE run_id IN (${placeholders}) AND role = 'user' AND group_message_id IS NULL
         ORDER BY id ASC`,
@@ -427,8 +431,8 @@ export class ProcessMessageRepository {
     }
     const records = this.store.sql.exec<{ run_id: string; kind: string; call_id: string | null; target: string | null }>(
       `SELECT run_id, kind,
-              json_extract(payload_json, '$.callId') AS call_id,
-              json_extract(payload_json, '$.target') AS target
+              CASE WHEN json_valid(payload_json) THEN json_extract(payload_json, '$.callId') END AS call_id,
+              CASE WHEN json_valid(payload_json) THEN json_extract(payload_json, '$.target') END AS target
          FROM messages
         WHERE run_id IN (${placeholders}) AND kind IN ('call', 'event')`,
       ...runIds,
