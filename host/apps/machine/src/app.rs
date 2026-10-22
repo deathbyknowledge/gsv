@@ -92,7 +92,7 @@ pub(crate) async fn run_with_shutdown(
         let driver_settings = settings.clone();
         let driver = async {
             if driver_settings.auth.token.is_none() {
-                runtime.pairing_required("Connect this computer to a space.");
+                runtime.pairing_required("Connect this computer to a Ship.");
                 driver_shutdown.cancelled().await;
                 return Ok(());
             }

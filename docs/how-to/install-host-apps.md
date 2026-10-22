@@ -87,12 +87,12 @@ reconnect. A remembered sign-in lasts 30 days and renews during use.
 Browser tabs share renewal and sign-out; Desktop has its own stored session.
 A temporary network interruption reconnects without asking you to sign in again.
 
-If self-service setup of a Ship was interrupted, **Continue setup** returns to owner email
+If activating a Ship was interrupted, **Continue setup** returns to owner email
 sign-in and your existing Ship. For the Desktop app's configured operator,
 this stays inside the app; another operator's recovery page opens in the browser.
 The owner signs in with the email used at signup, then continues
-setup with fresh authorization instead of creating another Ship.
-For a setup link issued directly by an operator, ask that operator for a new link.
+activation with fresh authorization instead of creating another Ship.
+For an activation link issued directly by an operator, ask that operator for a new link.
 An incompatible client or rejected connection shows the gateway's error instead
 of retrying indefinitely.
 

@@ -5,7 +5,7 @@ You can use a hosting operator or run the same stack in your own Cloudflare acco
 
 ## Get Ship
 
-If an operator has created a Ship for you, open its setup invitation and choose
+If an operator has created a Ship for you, open its activation link and choose
 your password. Each Ship has one personal account; you do not need to choose
 another username. Continue to review the early-access disclosure and confirm the
 age, Terms of Service and Privacy Policy
@@ -29,29 +29,29 @@ Ship**. Choose a handle, enter your email, confirm the age, Terms and Privacy
 agreement, and select **Continue**. Your handle (`@alex`) and Ship address
 (`alex.example.com`) appear separately. Verify your email with the six-digit code,
 then pick a password and select **Activate Ship**. No registration invite is
-needed, and the terms you agreed to at signup are not asked again during setup.
+needed, and the terms you agreed to at signup are not asked again during activation.
 Handles use lowercase letters, numbers and hyphens; uppercase input is converted
 automatically. Validation and availability feedback appears beside the field.
 One verified email can create one Ship.
 
-If creation is interrupted, retry with the same handle to resume that setup.
+If creation is interrupted, retry with the same handle to resume that activation.
 
 A friend's invitation link opens an invitation modal on the signup page. Continue
 and verify your email; existing users choose their Ship, while new users choose a
-handle and finish setup. The invitation stays with you through setup; accept it
+handle and finish activation. The invitation stays with you through activation; accept it
 in People after choosing who handles incoming messages.
 
-If setup is interrupted or its link expires, opening the unfinished Ship shows
+If activation is interrupted or its link expires, opening the unfinished Ship shows
 **Continue setup**. Sign in with the same email and select **Continue** beside its
-handle. This resumes the same Ship and renews its setup authorization. Ships
-created with an earlier signup code can resume setup this way too. For a setup
+handle. This resumes the same Ship and renews its activation link. Ships
+created with an earlier signup code can resume activation this way too. For an activation
 link issued directly by an operator, ask the operator to renew it.
 
-Email sign-in through **Open Ship** lists your Ships and unfinished setups.
+Email sign-in through **Open Ship** lists your Ships and unfinished activations.
 It is separate from signing in to a Ship. Signing in with email alone does not
 create a Ship or grant operator administration rights. The signup page also
 links to the [Desktop app](/how-to/install-host-apps) for macOS, Windows and Linux.
-If Desktop cannot connect after setup completes, choose your Ship from the list
+If Desktop cannot connect after activation completes, choose your Ship from the list
 to retry opening it.
 
 ## Run your own operator

@@ -42,9 +42,9 @@ export class InstallationSignup {
     const space = await this.accounts.reserveInstallation({ principalId, operationId, handle, ownerSetup: true });
     const owned = await this.db.prepare("SELECT 1 FROM installations WHERE id = ? AND owner_setup = 1 AND owner_principal_id = ?")
       .bind(space.installationId, principalId).first();
-    if (!owned) throw new Error("Ship setup is unavailable.");
+    if (!owned) throw new Error("Ship activation is unavailable.");
     if (space.state === "active") return { origin: space.canonicalOrigin, handle: space.handle, onboardingToken: null, expiresAt: null };
-    if (!["reserved", "provisioning"].includes(space.state)) throw new Error("Ship setup is unavailable.");
+    if (!["reserved", "provisioning"].includes(space.state)) throw new Error("Ship activation is unavailable.");
     const startedAt = Date.now();
     try {
       await this.policy?.prepare({ operationId, installationId: space.installationId });
@@ -60,7 +60,7 @@ export class InstallationSignup {
         event: { stream: "operational", name: "installation.setup.failed", properties: {
           diagnosticId, outcome: "failed", stage: "activation", errorType: "unknown", durationMs: Date.now() - startedAt,
         } } });
-      throw new Error(`Ship setup failed. Try again. Reference: ${diagnosticId}`, { cause });
+      throw new Error(`Ship activation failed. Try again. Reference: ${diagnosticId}`, { cause });
     }
   }
 }

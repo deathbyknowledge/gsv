@@ -48,7 +48,7 @@ describe("Desktop machine enrollment", () => {
   });
 
   it.each([
-    { failure: "Machine setup was cancelled.", message: "Machine setup was cancelled." },
+    { failure: "Connecting was cancelled.", message: "Connecting was cancelled." },
     { failure: { unexpected: "private fixture data" }, message: "Could not connect this computer. Retry." },
   ])("normalizes native command failures at the bridge: $message", async ({ failure, message }) => {
     const invoke = vi.fn().mockRejectedValue(failure);

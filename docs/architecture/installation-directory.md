@@ -104,7 +104,7 @@ its stable owner-authentication secret and the claim's issuance times; D1 stores
 only the hash. Concurrent resumes cannot invalidate each other. Expiry rotates
 the bearer while preserving the claim identity retained by the Kernel.
 Clients clear rejected capabilities so an
-already activated space returns to ordinary sign-in. Operator-issued setup links
+already activated space returns to ordinary sign-in. Operator-issued activation links
 instead direct the person to request a replacement from the operator.
 
 The directory's `memberships` rows are ownership records, with an
