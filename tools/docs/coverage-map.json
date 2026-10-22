@@ -429,7 +429,7 @@
         "workers/gateway/src/installation/operator-entrypoint.ts",
         "workers/gateway/src/kernel/operator-snapshot.ts",
         "workers/gateway/src/process/operator-summary.ts",
-        "workers/installations/src/operator-environment.ts"
+        "workers/installations/src/admin/insight.ts"
       ],
       "docs": [
         "docs/how-to/operate-gsv.md",

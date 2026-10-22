@@ -22,7 +22,7 @@ function request(token?: string): Request {
 
 describe("installation admin access", () => {
   it("admits only the configured localhost origin in development", async () => {
-    const verify = vi.fn(async () => undefined);
+    const verify = vi.fn(async () => ({}));
     const access = new CloudflareInstallationAdminAccess({
       environment: "development", origin: "http://localhost:8976",
     }, verify);
@@ -48,7 +48,7 @@ describe("installation admin access", () => {
   });
 
   it("verifies production assertions against the configured issuer and audience", async () => {
-    const verify = vi.fn(async () => undefined);
+    const verify = vi.fn(async () => ({}));
     const access = new CloudflareInstallationAdminAccess({ ...production, audience: " installation-admin " }, verify);
     await expect(access.allows(request(" signed-token "))).resolves.toBe(true);
     expect(verify).toHaveBeenCalledWith("signed-token", production.teamDomain, "installation-admin");
@@ -59,14 +59,14 @@ describe("installation admin access", () => {
     "https://operator.cloudflareaccess.com/", "https://operator.cloudflareaccess.com/path",
     "https://operator.cloudflareaccess.com.evil.example", "https://user@operator.cloudflareaccess.com",
   ])("fails closed for invalid Access team domain %j", async (teamDomain) => {
-    const verify = vi.fn(async () => undefined);
+    const verify = vi.fn(async () => ({}));
     const access = new CloudflareInstallationAdminAccess({ ...production, teamDomain }, verify);
     await expect(access.allows(request("signed-token"))).resolves.toBe(false);
     expect(verify).not.toHaveBeenCalled();
   });
 
   it("requires a nonempty audience and assertion before invoking the verifier", async () => {
-    const verify = vi.fn(async () => undefined);
+    const verify = vi.fn(async () => ({}));
     for (const audience of [undefined, "", "  "]) {
       const access = new CloudflareInstallationAdminAccess({ ...production, audience }, verify);
       await expect(access.allows(request("signed-token"))).resolves.toBe(false);
@@ -86,7 +86,7 @@ describe("installation admin access", () => {
   });
 
   it("does not admit unknown environments or allow localhost to bypass production verification", async () => {
-    const verify = vi.fn(async () => undefined);
+    const verify = vi.fn(async () => ({}));
     for (const environment of ["", "staging", "test"]) {
       const access = new CloudflareInstallationAdminAccess({ ...production, environment }, verify);
       await expect(access.allows(request("signed-token"))).resolves.toBe(false);

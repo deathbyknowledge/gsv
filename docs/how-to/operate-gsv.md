@@ -101,6 +101,28 @@ preserves the owner-authentication secret. Keep the deployment state on
 redeploy so existing verification and session records remain usable. Owner
 verification mail is independent of a Ship's messaging adapters.
 
+## Check on a Ship
+
+Each Ship's administration page shows its handle, mail address, hostnames and
+lifecycle state. It also shows the owner's email, masked, and their sign-in
+methods. When Accounts has the `OPERATOR_GATEWAY` binding, the page adds the
+Ship's health and a timeline of its recent runs. Health covers the Ship's state,
+queue, approvals, open work, linked messengers and online devices. Each run
+shows its origin, input length, duration and outcome, and its steps flag
+anything that failed or took longer than a minute. The timeline holds only
+metadata: no message text, tool arguments, output or file contents. The health
+read gives up after three seconds. If the binding is missing or the read fails,
+the page names the reason and the rest of it still works. Set
+`GSV_MAIL_DOMAIN` to show the Ship's mail address.
+
+Accounts records every operator change in an audit log: creating a Ship,
+reissuing its setup link, suspending, reactivating, resetting, and each
+deletion step. Each entry names the operator and the action, plus any reason
+the operator gave. Suspend and reset forms take an optional reason. A Ship's
+page lists its recent entries, and `<admin-origin>/admin/audit` lists every
+entry. Entries outlive the Ship they describe. They name it only by Ship ID and
+hold no owner data.
+
 ## Connect services and verify cleanup
 
 Enabled adapters require their application secrets declared in the adapter
