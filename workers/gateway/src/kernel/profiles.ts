@@ -27,6 +27,13 @@ function defaultProfileDraft(account: { gecos: string; username: string }): Prof
   return { displayName: account.gecos || account.username, about: "", contactPolicy: "requests", representation: "human" };
 }
 
+/** The name the owner shows to other people: their profile's display name, else their account name. */
+export function ownerDisplayName(ownerUid: number, ctx: KernelContext): string | undefined {
+  const origin = ctx.installationIdentity?.canonicalOrigin;
+  const account = ctx.auth.getPasswdByUid(ownerUid);
+  return (origin ? ctx.profiles.get(ownerUid, origin)?.draft.displayName : undefined) ?? account?.gecos ?? account?.username;
+}
+
 /**
  * Publish the owner's profile once by default. Runs on every human sign-in but
  * acts only until the default has been applied, so a later unpublish stays

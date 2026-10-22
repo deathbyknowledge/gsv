@@ -7,6 +7,7 @@ import { testPeer } from "../../test-support/peers";
 import { createInstallationStorage } from "../../installation/storage";
 import { getConversationById } from "../../shared/utils";
 import type { KernelContext } from "../context";
+import type { ProcessRecord } from "../processes";
 import { ApproachStore } from "../approach-store";
 import { FederationStore } from "../federation-store";
 import { FederationIdentity } from "../federation-crypto";
@@ -101,9 +102,9 @@ describe("authenticated first contact", () => {
   it("lets the owner's canonical Ship send a request and reads it back, but rejects other processes", async () => {
     await withSpaces(async (sender, recipient, profile) => {
       installTransport(sender, recipient, profile);
-      const procs = { get: (pid: string) => pid === "proc:ship" ? { isPersonalController: true, ownerUid: OWNER.uid } : { isPersonalController: false, ownerUid: OWNER.uid } };
-      // SAFETY: the authority check reads only the process's controller flag and owner.
-      const asProcess = (ctx: KernelContext, processId: string) => ({ ...ctx, processId, procs } as unknown as KernelContext);
+      const procs = { get: (pid: string): Pick<ProcessRecord, "isPersonalController" | "ownerUid"> | null => ({ isPersonalController: pid === "proc:ship", ownerUid: OWNER.uid }) };
+      // SAFETY: the authority check reads only the calling process's controller flag and owner from the registry.
+      const asProcess = (ctx: KernelContext, processId: string) => ({ ...ctx, processId, procs } as KernelContext);
       await expect(sender.run((ctx) => handleApproachCreate(sendIntent(profile), asProcess(ctx, "proc:crew")))).rejects.toThrow("signed-in human or their Ship");
       const sent = (await sender.run((ctx) => handleApproachCreate({ ...sendIntent(profile), shipHandlesMessages: false }, asProcess(ctx, "proc:ship")))).approach;
       expect((await sender.run((ctx) => handleApproachGet({ approachId: sent.id }, asProcess(ctx, "proc:ship")))).approach.id).toBe(sent.id);

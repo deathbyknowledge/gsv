@@ -1,5 +1,6 @@
 import { Bash } from "just-bash";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import type { PublicProfile } from "@humansandmachines/gsv/protocol";
 import type { KernelContext } from "../../../kernel/context";
 import * as admission from "../../../kernel/approaches/admission";
 import * as federation from "../../../kernel/federation";
@@ -10,11 +11,7 @@ import { buildContactCommand } from "./contact";
 function shell(installationIdentity: KernelContext["installationIdentity"] = null, primaryDomain?: string) {
   const env = { GSV_PUBLIC_CONFIG: primaryDomain ? JSON.stringify({ primaryDomain }) : undefined };
   // SAFETY: handlers are mocked here; command parsing only reads the caller grant, installation address and public deployment config.
-  const owner = { uid: 1000, gid: 1000, gids: [1000], username: "owner", gecos: "Owner Person", home: "/home/owner", cwd: "/home/owner" };
-  const ctx = {
-    installationIdentity, env, peer: testPeer({ account: owner, calls: ["contact.*", "profile.resolve", "approach.create"] }),
-    auth: { getPasswdByUid: () => owner }, profiles: { get: () => null },
-  } as unknown as KernelContext;
+  const ctx = { installationIdentity, env, peer: testPeer({ account: { uid: 1000, gid: 1000, gids: [1000], username: "owner", home: "/home/owner", cwd: "/home/owner" }, calls: ["contact.*", "profile.resolve", "approach.create"] }) } as KernelContext;
   return new Bash({ customCommands: [buildContactCommand(ctx)] });
 }
 
@@ -46,11 +43,12 @@ describe("contact invitation handling", () => {
 describe("contact connect", () => {
   const esteve = { installationId: "inst_test", handle: "esteve", canonicalOrigin: "https://esteve.ship.space" };
   const actor = { shipId: "ship:ada", subjectId: "subject:ada" };
-  const profile = { url: "https://ada.ship.space/profile", actor, revision: 3, displayName: "Ada", contactPolicy: "requests" };
+  // SAFETY: the command forwards only these resolved fields; the signed document's other fields are not read.
+  const profile = { url: "https://ada.ship.space/profile", actor, revision: 3, displayName: "Ada", contactPolicy: "requests" } as PublicProfile;
 
   it("resolves the handle and sends one message request under the owner's name", async () => {
-    // SAFETY: the command forwards the resolved fields; the resolver's other document fields are not read.
-    const resolve = vi.spyOn(profiles, "handleProfileResolve").mockResolvedValue({ profile } as unknown as Awaited<ReturnType<typeof profiles.handleProfileResolve>>);
+    const resolve = vi.spyOn(profiles, "handleProfileResolve").mockResolvedValue({ profile });
+    vi.spyOn(profiles, "ownerDisplayName").mockReturnValue("Owner Person");
     const create = vi.spyOn(admission, "handleApproachCreate").mockImplementation(async () => { throw new Error("reached create"); });
     const bash = shell(esteve);
     expect((await bash.exec("contact connect @ada --message 'Hi Ada' --handling manual")).stderr).toContain("reached create");

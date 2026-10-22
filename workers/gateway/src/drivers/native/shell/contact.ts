@@ -26,7 +26,7 @@ import {
   handleContactRevoke,
 } from "../../../kernel/federation";
 import { handleContactPreferencesUpdate } from "../../../kernel/federation/preferences";
-import { handleProfileResolve } from "../../../kernel/profiles";
+import { handleProfileResolve, ownerDisplayName } from "../../../kernel/profiles";
 import { deploymentPresentation } from "@humansandmachines/gsv/services/deployment";
 import { shipAddress } from "../../../installation/identity";
 import {
@@ -184,10 +184,7 @@ async function connectToPerson(args: string[], ctx: KernelContext): Promise<Appr
   if (!text?.trim()) throw new Error("connect requires --message TEXT");
   if (shipHandlesMessages === undefined) throw new Error("Ask the owner who should handle new messages, then use --handling manual|ship");
   const { profile } = await handleProfileResolve({ url: profileAddress(address, ctx) }, ctx);
-  const ownerUid = resolveCallerOwnerUid(ctx);
-  const origin = ctx.installationIdentity?.canonicalOrigin;
-  const account = ctx.auth.getPasswdByUid(ownerUid);
-  const name = displayName ?? (origin ? ctx.profiles.get(ownerUid, origin)?.draft.displayName : undefined) ?? account?.gecos ?? account?.username;
+  const name = displayName ?? ownerDisplayName(resolveCallerOwnerUid(ctx), ctx);
   if (!name?.trim()) throw new Error("connect requires --name DISPLAY_NAME");
   return await handleApproachCreate({
     profileUrl: profile.url, recipient: profile.actor, profileRevision: profile.revision, displayName: name, text, shipHandlesMessages,
