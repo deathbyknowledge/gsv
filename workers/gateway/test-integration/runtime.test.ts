@@ -414,6 +414,80 @@ describe("gateway runtime integration", () => {
       .toBe("Reply after closing the window.");
   });
 
+  it("preserves a scheduled process's explicit messenger destination when correcting a send", async () => {
+    const client = await setupClient();
+    const challenge = inboundResult(await sendServiceFrame(harness, inboundFrame({
+      id: "reminder-link", deliveryId: "reminder-link", messageId: "reminder-link", text: "connect",
+    })));
+    if (!challenge.challenge) throw new Error("Missing link challenge");
+    await client.sys.link.consume({ code: challenge.challenge.code });
+    expect(await client.adapter.connect({ adapter: "discord", accountId: ACCOUNT_ID })).toMatchObject({
+      ok: true, connected: true, authenticated: true,
+    });
+    const { conversation } = await client.conversation.ship({});
+    if (!conversation.handlerPid) throw new Error("Missing Ship");
+    await configureDeterministicAi(client, conversation.handlerPid, ai.baseUrl);
+    await client.sys.config.set({
+      key: `users/${USER_UID}/ai/tools/approval`,
+      value: JSON.stringify({ default: "auto", rules: [] }),
+    });
+    const listed = await client.shell.exec({ input: "message destinations --json" });
+    if (listed.status !== "completed") throw new Error("Destination listing did not complete");
+    const { destinations } = z.object({
+      destinations: z.array(z.object({ id: z.string(), kind: z.string() })),
+    }).parse(JSON.parse(listed.stdout ?? ""));
+    const destination = destinations.find(({ kind }) => kind === "adapter");
+    if (!destination) throw new Error("Missing linked messenger destination");
+    const command = `message send --to ${destination.id} --message 'Synthetic reminder.'`;
+    ai.enqueue({ kind: "tool-calls", calls: [{
+      id: "reminder-send", name: "Shell", arguments: { input: command },
+    }] });
+    const correction = ai.hold({ kind: "tool-calls", calls: [{
+      id: "reminder-correction", name: "Shell", arguments: { input: `${command} --also` },
+    }] });
+    ai.enqueue({ kind: "tool-calls", calls: [{
+      id: "reminder-finish", name: "Send", arguments: { yield: true },
+    }] });
+    try {
+      const { schedule } = await client.sched.add({
+        name: "Scheduled reminder",
+        enabled: false,
+        expression: { kind: "after", afterMs: 60_000 },
+        target: {
+          kind: "command.exec",
+          command: `proc spawn --non-interactive --model ${MODEL_ID} --label 'Scheduled reminder' 'Send a synthetic reminder to the linked messenger.'`,
+        },
+      });
+      expect(await client.sched.run({ id: schedule.id, mode: "force" })).toMatchObject({
+        ran: 1, results: [{ scheduleId: schedule.id, status: "ok" }],
+      });
+      await correction.started;
+      const process = (await client.proc.list()).processes.find(({ label }) => label === "Scheduled reminder");
+      if (!process) throw new Error("Schedule did not create the reminder process");
+      expect(process).toMatchObject({ personal: false, interactive: false, parentPid: null });
+      expect(process.pid).not.toBe(conversation.handlerPid);
+      const retryContext = JSON.stringify(ai.requests.at(-1)?.messages);
+      expect(retryContext).toContain("message send --to needs --also");
+      expect(retryContext).not.toContain("Run-control command rejected");
+      expect(await listOutbound(harness, ACCOUNT_ID)).toEqual([]);
+
+      correction.release();
+      const outbound = await waitForOutbound(harness, ACCOUNT_ID, 1);
+      expect(outbound).toHaveLength(1);
+      expect(outbound[0]).toMatchObject({
+        accountId: ACCOUNT_ID,
+        message: { surface: SURFACE, actorId: ACTOR_ID, text: "Synthetic reminder." },
+      });
+      await waitFor(async () => {
+        const history = await client.proc.history({ pid: process.pid });
+        return history.ok && history.activeRunId === null;
+      }, "reminder run to finish");
+      expect(await listOutbound(harness, ACCOUNT_ID)).toHaveLength(1);
+    } finally {
+      correction.release();
+    }
+  });
+
   it("routes reciprocal adapter ingress, durable commands, and automatic replies", async () => {
     const client = await setupClient();
     const beforeChallenge = await processHistoryCounts(client);

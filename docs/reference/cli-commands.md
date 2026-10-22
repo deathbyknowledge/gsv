@@ -352,6 +352,11 @@ message send --message "Here is the report." && yield
 message send --to DESTINATION --message "Here is the report elsewhere." --attach /tmp/report.pdf --also
 ```
 
+If an explicit send is rejected because `--also` is missing, keep `--to` and
+add `--also` to the retry. Removing `--to` sends into the process's current
+conversation instead; a scheduled Work process does not inherit Ship's
+messenger destination.
+
 `message send` allocates a stable delivery id before contacting an adapter and
 retries one transport failure with that same id. If delivery still cannot be
 confirmed, its error includes the id; pass it back with `--delivery-id` to
