@@ -1,6 +1,7 @@
 import { exceptionDiagnostics } from "../../../../packages/gsv/src/diagnostics.js";
 import {
   AdapterRetirement,
+  sameAdapterDataOwner,
   type AdapterDataOwner,
   type AdapterDataScope,
 } from "../../shared/src/retirement";
@@ -358,11 +359,11 @@ export class ManagedWhatsAppPeer extends DurableObject<ManagedWhatsAppPeerEnv> {
   ): Promise<void> {
     const move = this.workingReaction.then(async () => {
       const state = await this.requireState();
-      // A run's move applies only while its route is still active. A relink or disconnect may
-      // have cleared 👀 while this move waited; the platform-scope cleanup itself always applies.
-      if (owner && (
-        state.activeRoute?.installationId !== owner.installationId || state.activeRoute.generation !== owner.generation
-      )) return;
+      // A run's move applies only while its route is still active: a relink or disconnect may
+      // have cleared 👀 while this move waited. The platform-scope cleanup after a route change
+      // clears only a 👀 placed under another route; the new route's run may already own it.
+      if (owner ? !sameAdapterDataOwner(owner, state.activeRoute)
+        : state.activeRoute && sameAdapterDataOwner(state.workingReactionRoute, state.activeRoute)) return;
       const current = state.workingReactionMessageId;
       // A superseded run's stop can arrive after its successor started; it must not clear the successor's 👀.
       if (!target && runId && state.workingReactionRunId && state.workingReactionRunId !== runId) return;
@@ -387,7 +388,11 @@ export class ManagedWhatsAppPeer extends DurableObject<ManagedWhatsAppPeerEnv> {
         }
       };
       let next = current;
-      if (current !== target) {
+      if (target && current === target && runId !== state.workingReactionRunId) {
+        // A new run on the message still recorded: an earlier removal with an unknown outcome
+        // may have taken its 👀 off. Sending the same reaction again is harmless.
+        await react(target, "👀");
+      } else if (current !== target) {
         // A removal with an unknown outcome or a rate limit keeps its message recorded, so the next
         // start or stop retries it. One Meta refused is forgotten: retrying it would block every later 👀.
         const removal = current ? await react(current, "") : "applied";
@@ -399,11 +404,16 @@ export class ManagedWhatsAppPeer extends DurableObject<ManagedWhatsAppPeerEnv> {
         }
       }
       const nextRunId = target ? runId : undefined;
+      const nextRoute = target && owner
+        ? { installationId: owner.installationId, generation: owner.generation }
+        : next ? state.workingReactionRoute : undefined;
       try {
         await this.ctx.storage.transaction(async (txn) => {
           const latest = await txn.get<ManagedWhatsAppPeerState>(STATE_KEY);
           if (latest) {
-            await txn.put(STATE_KEY, { ...latest, workingReactionMessageId: next, workingReactionRunId: nextRunId });
+            await txn.put(STATE_KEY, {
+              ...latest, workingReactionMessageId: next, workingReactionRunId: nextRunId, workingReactionRoute: nextRoute,
+            });
           }
         });
       } catch (error) {

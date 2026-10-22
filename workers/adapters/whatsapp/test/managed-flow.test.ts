@@ -1222,6 +1222,70 @@ describe("managed WhatsApp clean-instance flow", () => {
     ]);
   });
 
+  it("puts 👀 back when a new run starts on a message whose removal had an unknown outcome", async () => {
+    const { route } = await linkedPeer("open");
+    const channel = new deployedAdapter.ManagedWhatsAppChannel(createExecutionContext(),
+      typedStub<ConstructorParameters<typeof deployedAdapter.ManagedWhatsAppChannel>[1]>(env));
+    const installation = { installationId: route.installationId };
+    const surface = { kind: "dm" as const, id: ACTOR };
+    const activity = (active: boolean, runId: string) => channel.adapterSetActivity(
+      installation, "managed", surface, { kind: "typing", active, routeGeneration: route.generation, runId },
+    );
+    const reactions = async () => (await sentMessages())
+      .filter((record) => record.body.type === "reaction")
+      .map((record) => record.body.reaction);
+    // SAFETY: The Cloudflare test environment declares WHATSAPP_API as a Fetcher binding.
+    const graph = env.WHATSAPP_API as Fetcher;
+
+    expect((await SELF.fetch(await text("wamid.in.restart.1", "one more thing"))).status).toBe(200);
+    await vi.waitFor(async () => { expect((await sentMessages()).at(-1)?.body.text?.body).toBe("Personal received one more thing"); });
+    await expect(activity(false, "run-earlier")).resolves.toEqual({ ok: true });
+    const before = (await reactions()).length;
+    await expect(activity(true, "run-a")).resolves.toEqual({ ok: true });
+    // Meta may have applied this removal, so the message stays recorded and may have no 👀.
+    await graph.fetch("https://graph.test/fail-next-reaction", { method: "POST" });
+    await expect(activity(false, "run-a")).resolves.toEqual({ ok: true });
+    await expect(activity(true, "run-b")).resolves.toEqual({ ok: true });
+    await expect(activity(false, "run-b")).resolves.toEqual({ ok: true });
+
+    expect((await reactions()).slice(before)).toEqual([
+      { message_id: "wamid.in.restart.1", emoji: "👀" },
+      { message_id: "wamid.in.restart.1", emoji: "👀" },
+      { message_id: "wamid.in.restart.1", emoji: "" },
+    ]);
+  });
+
+  it("keeps the new link's 👀 when the relink is finalized after it started working", async () => {
+    const { peer, route: previous } = await linkedPeer("open");
+    const reactions = async () => (await sentMessages())
+      .filter((record) => record.body.type === "reaction")
+      .map((record) => record.body.reaction);
+    expect((await SELF.fetch(await text("wamid.in.successor.1", "/link"))).status).toBe(200);
+    await vi.waitFor(async () => {
+      expect((await sentMessages()).at(-1)?.body.text?.body).toMatch(/^[A-HJ-NP-Z2-9]{4}(?:-[A-HJ-NP-Z2-9]{4}){2}$/);
+    });
+    const code = ((await sentMessages()).at(-1)?.body.text?.body ?? "").replaceAll("-", "");
+    // SAFETY: The test environment exposes the declared Durable Object namespace binding.
+    const namespace = env.MANAGED_WHATSAPP_PAIRING as DurableObjectNamespace;
+    const pairing = typedStub<ManagedPairingStub>(namespace.get(namespace.idFromName(`pair:${code}`)));
+    const operation = {
+      code, installationId: previous.installationId, localUid: 1000,
+      operationId: "operation_relink_successor", canonicalOrigin: "https://test.gsv.space",
+    };
+    const prepared = await pairing.prepare(operation);
+    await pairing.activate({ code, operationId: operation.operationId, route: prepared.route, canonicalOrigin: operation.canonicalOrigin });
+    // The new link is live before finalization, so its run can mark the message first.
+    await expect(peer.setTyping(previous.installationId, { kind: "dm", id: ACTOR }, ACTOR, prepared.route.generation, true, "run-successor"))
+      .resolves.toEqual({ accepted: true });
+    const before = (await reactions()).length;
+    await pairing.finalize({ code, operationId: operation.operationId, route: prepared.route, canonicalOrigin: operation.canonicalOrigin });
+
+    expect((await reactions()).slice(before)).toEqual([]);
+    await expect(peer.setTyping(previous.installationId, { kind: "dm", id: ACTOR }, ACTOR, prepared.route.generation, false, "run-successor"))
+      .resolves.toEqual({ accepted: true });
+    expect((await reactions()).slice(before)).toEqual([{ message_id: "wamid.in.successor.1", emoji: "" }]);
+  });
+
 });
 
 it("does not export the retired linked-device entrypoints", async () => {
