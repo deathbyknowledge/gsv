@@ -27,6 +27,7 @@ export async function servePublicProfileRequest(
   request: Request,
   path: PublicProfilePath,
   resolve: (locator: PublicProfileLocator) => Promise<PublicProfileProjection | null>,
+  homeOrigin?: string,
 ): Promise<Response> {
   if (request.method !== "GET" && request.method !== "HEAD") return new Response("Method Not Allowed", { status: 405, headers: { allow: "GET, HEAD", "cache-control": "no-store" } });
   if ("invalid" in path) return unavailable();
@@ -35,7 +36,7 @@ export async function servePublicProfileRequest(
   const profile = projection.profile;
   const source = JSON.stringify(profile);
   const json = path.json || (request.headers.get("accept") ?? "").split(",").some((entry) => entry.trim().split(";")[0] === "application/json");
-  const body = json ? source : renderPublicProfile(profile);
+  const body = json ? source : renderPublicProfile(profile, homeOrigin);
   const etag = `"${await sha256Base64Url(body)}"`;
   const current = await resolve(path.locator);
   if (!current || current.profile.signature !== profile.signature || current.revision !== profile.revision) return unavailable();
