@@ -63,6 +63,15 @@ inference, Process ticks, and schedules. Suspending an installation does not
 erase data or recursively cancel work already admitted; durable work
 rechecks the gate before new admission and may resume after reactivation.
 
+Inside a Kernel or Process, the gate remembers an `active` answer for one
+minute and shares one directory lookup among concurrent requests, so ordinary
+traffic does not query Accounts per frame. A refusal is never remembered. A
+lookup that fails or takes longer than two seconds is recorded as a diagnostic.
+If Accounts confirmed the installation active within the last ten minutes, work
+continues and the lookup is retried every ten seconds. Otherwise the request
+fails with a retryable "Ship is briefly unreachable" error. A suspension
+therefore takes effect within about a minute, or once Accounts answers again.
+
 All deployments require directory resolution; a missing directory binding fails
 closed. Historical standalone data remains outside
 current routing; see the [retirement guide](../how-to/standalone-retirement.md).

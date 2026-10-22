@@ -19,7 +19,7 @@ import {
   handleSysSetupAssist,
 } from "./sys/setup-assist";
 import {
-  managedInstallationWorkGate,
+  ManagedInstallationGate,
   resolveManagedInstallationById,
   setupRecoveryDetails,
 } from "../installation/lifecycle";
@@ -42,6 +42,8 @@ import type {
 
 
 export class ManagedOnboarding {
+  private gate?: ManagedInstallationGate;
+
   constructor(readonly host: Kernel) {}
 
 managedOnboardingInProgress = false;
@@ -303,9 +305,7 @@ managedOnboardingService(): GatewayEnv["INSTALLATION_DIRECTORY"] | null {
 
 async managedWorkGate() {
     this.host.retirement.assertActive();
-    return await managedInstallationWorkGate(
-      this.host.env,
-      this.host.installationId,
-    );
+    this.gate ??= new ManagedInstallationGate(this.host.env, () => this.host.installationId);
+    return await this.gate.check();
   }
 }
