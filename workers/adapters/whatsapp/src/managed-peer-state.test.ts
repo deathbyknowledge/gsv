@@ -125,7 +125,7 @@ describe("managed WhatsApp peer state", () => {
       operationId: "operation-1",
       route: nextRoute,
       now: 1_000,
-    })).toThrow("Disconnect this WhatsApp identity");
+    })).toThrow("Disconnect your WhatsApp account");
   });
 
   it("fences disconnects by the exact active generation and replays them safely", () => {

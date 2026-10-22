@@ -105,9 +105,9 @@ export function buildSlackApprovalBlocks(
       type: "actions",
       block_id: "gsv_hil_decision",
       elements: [
-        approvalButton("Approve once", APPROVE_ACTION_ID, value, "primary"),
-        approvalButton("Always approve", APPROVE_ALWAYS_ACTION_ID, value),
-        approvalButton("Deny", DENY_ACTION_ID, value, "danger"),
+        approvalButton("Allow once", APPROVE_ACTION_ID, value, "primary"),
+        approvalButton("Always allow", APPROVE_ALWAYS_ACTION_ID, value),
+        approvalButton("Block", DENY_ACTION_ID, value, "danger"),
       ],
     },
   ];

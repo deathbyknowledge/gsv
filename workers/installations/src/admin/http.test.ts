@@ -52,7 +52,7 @@ it("runs fresh installation administration through the public screens without co
   const installationId = list.installations[0].installationId;
   const path = `/admin/installations/${installationId}`;
   const detail = await html(await http.handle(new Request(`${origin}${path}`)));
-  expect(detail).toContain("Reissue onboarding link");
+  expect(detail).toContain("Reissue activation link");
   expect(detail).not.toContain(firstClaim.hash.slice(1));
   const reissued = claim(await html(await http.handle(form(`${path}/onboarding`, {}))));
   await expect(onboarding.authorize({ installationId, token: firstClaim.hash.slice(1) })).resolves.toMatchObject({ ok: false });

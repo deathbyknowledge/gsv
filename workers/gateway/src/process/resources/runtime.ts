@@ -9,6 +9,7 @@ import {
   resourceBlockSchema, type ProcMediaInput, type ResourceBlock, jsonValueSchema, type FileResourceReference,
   type JsonValue,
 } from "@humansandmachines/gsv/protocol";
+import { exceptionDiagnostics } from "@humansandmachines/gsv/telemetry";
 import { processMediaPath, processMediaPrefix, storeIncomingProcessMedia, type StoreIncomingProcessMediaOptions, parseStoredProcessMedia, type StoredProcessMedia } from "../media";
 import { buildImageBlock, describeStoredProcessMedia } from "../history/media-renderer";
 import {
@@ -25,6 +26,8 @@ import type { InternalRequestFrame } from "../../protocol/process-frames";
 import type {
   ProcessRunAttachArgs,
   ProcessRunAttachResult,
+  ProcessRunStagedArgs,
+  ProcessRunStagedResult,
 } from "../../protocol/process-frames";
 import type { MessageRecord } from "../store";
 import { storedHistoryMedia } from "../storage/history-media";
@@ -98,6 +101,8 @@ type ResourceWritePlan = {
 type PreparedRunAttachments = {
   media: RunOutputMedia[];
   resources: ResourceBlock[];
+  /** Archive objects this attach created; a refused attach removes them. */
+  createdKeys: string[];
 };
 
 export class ProcessResources {
@@ -901,55 +906,85 @@ export class ProcessResources {
   ): Promise<PreparedRunAttachments> {
     const media: RunOutputMedia[] = [];
     const resources: ResourceBlock[] = [];
+    const createdKeys: string[] = [];
     const seen = new Set<string>();
     let totalBytes = 0;
-    for (const raw of input) {
-      const parsed = resourceBlockSchema.safeParse(raw);
-      if (!parsed.success) throw new Error("proc.run.attach media requires a valid resource");
-      const item = parsed.data;
-      if (!Number.isSafeInteger(item.ref.size) || item.ref.size < 0) {
-        throw new Error("proc.run.attach media requires an exact size");
-      }
-      if (item.ref.size > MAX_MESSAGE_MEDIA_PART_BYTES) {
-        throw new Error(
-          `proc.run.attach media exceeds per-item limit (${MAX_MESSAGE_MEDIA_PART_BYTES} bytes)`,
-        );
-      }
-      const sourceId = JSON.stringify([item.ref.target, item.ref.path, item.ref.revision]);
-      if (seen.has(sourceId)) continue;
-      seen.add(sourceId);
-      totalBytes += item.ref.size;
-      if (totalBytes > MAX_MESSAGE_MEDIA_TOTAL_BYTES) {
-        throw new Error(
-          `proc.run.attach media exceeds total limit (${MAX_MESSAGE_MEDIA_TOTAL_BYTES} bytes)`,
-        );
-      }
-      const resource = (
-        await this.retainResource(item, {
+    try {
+      for (const raw of input) {
+        const parsed = resourceBlockSchema.safeParse(raw);
+        if (!parsed.success) throw new Error("proc.run.attach media requires a valid resource");
+        const item = parsed.data;
+        if (!Number.isSafeInteger(item.ref.size) || item.ref.size < 0) {
+          throw new Error("proc.run.attach media requires an exact size");
+        }
+        if (item.ref.size > MAX_MESSAGE_MEDIA_PART_BYTES) {
+          throw new Error(
+            `proc.run.attach media exceeds per-item limit (${MAX_MESSAGE_MEDIA_PART_BYTES} bytes)`,
+          );
+        }
+        const sourceId = JSON.stringify([item.ref.target, item.ref.path, item.ref.revision]);
+        if (seen.has(sourceId)) continue;
+        seen.add(sourceId);
+        totalBytes += item.ref.size;
+        if (totalBytes > MAX_MESSAGE_MEDIA_TOTAL_BYTES) {
+          throw new Error(
+            `proc.run.attach media exceeds total limit (${MAX_MESSAGE_MEDIA_TOTAL_BYTES} bytes)`,
+          );
+        }
+        const retained = await this.retainResource(item, {
           runId,
           signal: this.host.run.runAbortSignal(runId),
           current,
-        })
-      ).resource;
-      const ref = resource.ref;
-      media.push(
-        outputMedia(
-          {
-            type: resource.mediaType ?? mediaTypeFromContentType(ref.contentType),
-            filename: resource.filename?.trim() ? resource.filename : undefined,
-            duration: resource.duration,
-            transcription: resource.transcription?.trim() ? resource.transcription : undefined,
-          },
-          ref.contentType,
-          ref.path.replace(/^\/+/, ""),
-          ref.path,
-          ref.size,
-          ref.revision,
-        ),
-      );
-      resources.push(resource);
+        });
+        if (retained.createdKey) createdKeys.push(retained.createdKey);
+        const resource = retained.resource;
+        const ref = resource.ref;
+        media.push(
+          outputMedia(
+            {
+              type: resource.mediaType ?? mediaTypeFromContentType(ref.contentType),
+              filename: resource.filename?.trim() ? resource.filename : undefined,
+              duration: resource.duration,
+              transcription: resource.transcription?.trim() ? resource.transcription : undefined,
+            },
+            ref.contentType,
+            ref.path.replace(/^\/+/, ""),
+            ref.path,
+            ref.size,
+            ref.revision,
+          ),
+        );
+        resources.push(resource);
+      }
+    } catch (error) {
+      await this.deleteRefusedAttachCopies(createdKeys);
+      throw error;
     }
-    return { media, resources };
+    return { media, resources, createdKeys };
+  }
+
+  handleProcRunStaged(args: ProcessRunStagedArgs): ProcessRunStagedResult {
+    return this.host.ctx.storage.transactionSync((): ProcessRunStagedResult => {
+      const run = this.host.runs.active;
+      if (!run || run.runId !== args.runId) return { ok: true, count: 0 };
+      const count = run.outputMedia?.length ?? 0;
+      if (count > 0 || !args.requestId) return { ok: true, count };
+      // A CodeMode program's shell calls carry their own request ids, so its
+      // in-flight calls are fenced alongside the run's tool calls.
+      const running = [
+        ...this.host.store.tools.pendingDispatchIds(run.runId),
+        ...[...this.host.codeModeResponses].filter(([, waiter]) => waiter.runId === run.runId).map(([id]) => id),
+      ];
+      const fenced = new Set(running);
+      run.stagingFences = [
+        ...(run.stagingFences ?? []).filter((item) => fenced.has(item.dispatchId)),
+        ...running
+          .filter((dispatchId) => dispatchId !== args.requestId)
+          .map((dispatchId) => ({ dispatchId, destination: args.destination })),
+      ];
+      this.host.runs.active = run;
+      return { ok: true, count };
+    });
   }
 
   async handleProcRunAttach(args: ProcessRunAttachArgs): Promise<ProcessRunAttachResult> {
@@ -981,60 +1016,101 @@ export class ProcessResources {
     } catch (error) {
       return { ok: false, error: error instanceof Error ? error.message : String(error) };
     }
-    const { media: normalized, resources: retained } = prepared;
+    const { media: normalized, resources: retained, createdKeys } = prepared;
 
     const keys = normalized.map((item) => item.key).sort();
     const releaseMedia = await this.acquireMediaKeyAdmissions(keys);
+    let result: ProcessRunAttachResult | undefined;
     try {
-      for (const item of normalized) {
-        const object = await this.host.storage.head(item.key);
-        if (!object) {
-          return { ok: false, error: `media not found: ${item.key}` };
-        }
-        const storedMimeType = object.httpMetadata?.contentType || "application/octet-stream";
-        if (object.size !== item.size || storedMimeType !== item.mimeType) {
-          return {
-            ok: false,
-            error: `media descriptor does not match stored data: ${item.key}`,
-          };
-        }
-      }
+      result = await this.commitRunAttachments(args, runId, current, normalized, retained);
+    } finally {
+      releaseMedia();
+      if (!result?.ok) await this.deleteRefusedAttachCopies(createdKeys);
+    }
+    return result;
+  }
 
-      return this.host.ctx.storage.transactionSync((): ProcessRunAttachResult => {
-        if (!current()) {
-          return { ok: false, error: "the process run is no longer active" };
-        }
-        const run = this.host.runs.active;
-        if (!run || run.runId !== runId) {
-          return { ok: false, error: "the process run is no longer active" };
-        }
-        const merged = new Map((run.outputMedia ?? []).map((item) => [item.key, item]));
-        for (const item of normalized) {
-          merged.set(item.key, item);
-        }
-        const media = [...merged.values()];
-        const combinedBytes = media.reduce((sum, item) => sum + item.size, 0);
-        if (media.length > MAX_MESSAGE_MEDIA_ITEMS) {
-          return {
-            ok: false,
-            error: `proc.run.attach accepts at most ${MAX_MESSAGE_MEDIA_ITEMS} media items`,
-          };
-        }
-        if (combinedBytes > MAX_MESSAGE_MEDIA_TOTAL_BYTES) {
-          return {
-            ok: false,
-            error: `proc.run.attach media exceeds total limit (${MAX_MESSAGE_MEDIA_TOTAL_BYTES} bytes)`,
-          };
-        }
-
-        run.outputMedia = media;
-        delete run.outputMediaPersisted;
-        this.host.runs.active = run;
-        return { ok: true, runId, media: retained };
-      });
+  /**
+   * Removes archive copies a refused attach created. A concurrent attach of the
+   * same file may already reference one, so only unreferenced copies go.
+   */
+  private async deleteRefusedAttachCopies(keys: string[]): Promise<void> {
+    if (keys.length === 0) return;
+    const releaseMedia = await this.acquireMediaKeyAdmissions([...new Set(keys)].sort());
+    try {
+      const unreferenced = keys.filter((key) =>
+        !this.host.store.messages.referencesMediaKey(key)
+        && !this.host.runs.active?.outputMedia?.some((item) => item.key === key));
+      if (unreferenced.length > 0) await this.host.storage.delete(unreferenced);
+    } catch (error) {
+      console.warn("[Process] Failed to remove refused attachment copies:", exceptionDiagnostics(error));
     } finally {
       releaseMedia();
     }
+  }
+
+  private async commitRunAttachments(
+    args: ProcessRunAttachArgs,
+    runId: string,
+    current: () => boolean,
+    normalized: RunOutputMedia[],
+    retained: ResourceBlock[],
+  ): Promise<ProcessRunAttachResult> {
+    for (const item of normalized) {
+      const object = await this.host.storage.head(item.key);
+      if (!object) {
+        return { ok: false, error: `media not found: ${item.key}` };
+      }
+      const storedMimeType = object.httpMetadata?.contentType || "application/octet-stream";
+      if (object.size !== item.size || storedMimeType !== item.mimeType) {
+        return {
+          ok: false,
+          error: `media descriptor does not match stored data: ${item.key}`,
+        };
+      }
+    }
+
+    return this.host.ctx.storage.transactionSync((): ProcessRunAttachResult => {
+      if (!current()) {
+        return { ok: false, error: "the process run is no longer active" };
+      }
+      const run = this.host.runs.active;
+      if (!run || run.runId !== runId) {
+        return { ok: false, error: "the process run is no longer active" };
+      }
+      const fence = run.stagingFences?.find((item) => item.dispatchId === args.requestId);
+      if (fence) {
+        return {
+          ok: false,
+          error: `a message went to ${fence.destination} without files while this attach was running, `
+            + "so these files would have gone to your owner instead. To send them to "
+            + `${fence.destination}, use message send --to ${fence.destination} --attach PATH --also`,
+        };
+      }
+      const merged = new Map((run.outputMedia ?? []).map((item) => [item.key, item]));
+      for (const item of normalized) {
+        merged.set(item.key, item);
+      }
+      const media = [...merged.values()];
+      const combinedBytes = media.reduce((sum, item) => sum + item.size, 0);
+      if (media.length > MAX_MESSAGE_MEDIA_ITEMS) {
+        return {
+          ok: false,
+          error: `proc.run.attach accepts at most ${MAX_MESSAGE_MEDIA_ITEMS} media items`,
+        };
+      }
+      if (combinedBytes > MAX_MESSAGE_MEDIA_TOTAL_BYTES) {
+        return {
+          ok: false,
+          error: `proc.run.attach media exceeds total limit (${MAX_MESSAGE_MEDIA_TOTAL_BYTES} bytes)`,
+        };
+      }
+
+      run.outputMedia = media;
+      delete run.outputMediaPersisted;
+      this.host.runs.active = run;
+      return { ok: true, runId, media: retained };
+    });
   }
 
   runOutputMediaResource(media: RunOutputMedia): ResourceBlock {

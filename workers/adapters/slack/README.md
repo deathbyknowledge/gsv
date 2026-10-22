@@ -189,8 +189,8 @@ target must authorize its read scopes once.
 
 ## Approval buttons
 
-Human-approval prompts in direct messages use **Approve once**, **Always
-approve**, and **Deny** buttons. A click becomes
+Human-approval prompts in direct messages use **Allow once**, **Always
+allow**, and **Block** buttons. A click becomes
 an exact `proc.hil` request through the linked human's interaction-scoped peer.
 The opaque callback identity remains adapter-owned and is never rendered to the
 human. Once resolved, the original message is replaced with the decision and

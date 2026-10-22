@@ -37,12 +37,12 @@ const createGenerationServiceMock = vi.fn((_options?: KernelTestValue) => ({
   stream: vi.fn(),
   generateText: vi.fn(),
 }));
-const seedBuiltinSkillsToHomeMock = vi.fn();
+const retireSeededSkillsMock = vi.fn();
 import * as inferenceService from "../inference/execution-client";
-import * as skillsSeed from "./sys/skills-seed";
+import * as seededSkills from "./sys/seeded-skills";
 import * as adapterTargets from "./adapter-targets";
 vi.spyOn(inferenceService, "createGenerationService").mockImplementation(createGenerationServiceMock);
-vi.spyOn(skillsSeed, "seedBuiltinSkillsToHome").mockImplementation(seedBuiltinSkillsToHomeMock);
+vi.spyOn(seededSkills, "retireSeededSkills").mockImplementation(retireSeededSkillsMock);
 
 import {
   handleAiContext,
@@ -78,8 +78,8 @@ beforeEach(() => {
   mediaAbortMock.mockClear();
   mediaInputBodies.length = 0;
   createGenerationServiceMock.mockClear();
-  seedBuiltinSkillsToHomeMock.mockReset();
-  seedBuiltinSkillsToHomeMock.mockResolvedValue({ username: "sam", copied: 0, skipped: 0 });
+  retireSeededSkillsMock.mockReset();
+  retireSeededSkillsMock.mockResolvedValue(undefined);
 });
 
 function makeDevice(partial: Partial<TargetRecord> & { target_id: string }): TargetRecord {
@@ -713,7 +713,7 @@ describe("handleAiConfig", () => {
         skillIndexMode: "summary",
       });
       expect(result).not.toHaveProperty("skillIndex");
-      expect(seedBuiltinSkillsToHomeMock).not.toHaveBeenCalled();
+      expect(retireSeededSkillsMock).not.toHaveBeenCalled();
       expect(warn).toHaveBeenCalledWith(
         expect.stringContaining("failed to refresh skills.d index"),
       );
@@ -736,7 +736,7 @@ describe("handleAiConfig", () => {
       skillIndexMode: "off",
       skillIndex: [],
     });
-    expect(seedBuiltinSkillsToHomeMock).not.toHaveBeenCalled();
+    expect(retireSeededSkillsMock).not.toHaveBeenCalled();
     expect(ripgit.fetch).not.toHaveBeenCalled();
   });
 
@@ -752,16 +752,15 @@ describe("handleAiConfig", () => {
     }))).resolves.toMatchObject({ skillIndexMode: "names" });
   });
 
-  it("reconciles the owning user's built-in skills before collecting the prompt index", async () => {
-    let seedingComplete = false;
-    seedBuiltinSkillsToHomeMock.mockImplementation(async () => {
-      seedingComplete = true;
-      return { username: "sam", copied: 3, skipped: 3 };
+  it("retires copied built-in skills from both homes before collecting the prompt index", async () => {
+    let retired = 0;
+    retireSeededSkillsMock.mockImplementation(async () => {
+      retired += 1;
     });
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     const ripgit = {
       fetch: vi.fn(async () => {
-        expect(seedingComplete).toBe(true);
+        expect(retired).toBe(2);
         return new Response("missing", { status: 404 });
       }),
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
@@ -775,11 +774,24 @@ describe("handleAiConfig", () => {
 
     await handleAiConfig({}, ctx);
 
-    expect(seedBuiltinSkillsToHomeMock).toHaveBeenCalledWith(
+    expect(retireSeededSkillsMock).toHaveBeenCalledWith(
       expect.any(Object),
       expect.objectContaining({ uid: 1000, username: "sam", home: "/home/sam" }),
     );
+    expect(retireSeededSkillsMock).toHaveBeenCalledWith(expect.any(Object), expect.objectContaining({ uid: 2000 }));
     expect(ripgit.fetch).toHaveBeenCalled();
+  });
+
+  it("still builds the prompt when copied skills cannot be retired", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    retireSeededSkillsMock.mockRejectedValue(new Error("ripgit temporarily unavailable"));
+    try {
+      await expect(handleAiConfig({}, makeAiConfigContext({ "config/ai/skills/index_mode": "off" })))
+        .resolves.toMatchObject({ skillIndexMode: "off" });
+      expect(warn).toHaveBeenCalledWith("[Prompt] failed to retire copied built-in skills:", expect.objectContaining({ exceptionMessage: "ripgit temporarily unavailable" }));
+    } finally {
+      warn.mockRestore();
+    }
   });
 
   it("returns the text executor for kernel and process callers", async () => {

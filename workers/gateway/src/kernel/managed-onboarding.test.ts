@@ -75,3 +75,26 @@ describe.each(["authorization", "pending-recovery", "recovery", "activation"] as
     },
   );
 });
+
+describe("managed work gate", () => {
+  it("reuses a recent Accounts confirmation until a lifecycle change invalidates it", async () => {
+    let state: "active" | "retained" = "active";
+    const resolveInstallation = vi.fn(async (installationId: string) => ({
+      found: true as const, installationId, handle: "gate", canonicalOrigin: "https://gate.example", state,
+    }));
+    // SAFETY: the work gate reads only its directory binding, installation id and retirement state.
+    const host = {} as Kernel;
+    Object.assign(host, {
+      env: { INSTALLATION_DIRECTORY: { resolveInstallation, resolveHostname: vi.fn() } },
+      installationId: "inst_gate",
+      retirement: { assertActive: () => {} },
+    });
+    const onboarding = new ManagedOnboarding(host);
+    await expect(onboarding.managedWorkGate()).resolves.toEqual({ allowed: true });
+    state = "retained";
+    await expect(onboarding.managedWorkGate()).resolves.toEqual({ allowed: true });
+    onboarding.invalidateWorkGate();
+    await expect(onboarding.managedWorkGate()).resolves.toMatchObject({ allowed: false, code: 503 });
+    expect(resolveInstallation).toHaveBeenCalledTimes(2);
+  });
+});

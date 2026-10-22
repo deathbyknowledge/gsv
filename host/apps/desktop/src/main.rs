@@ -259,7 +259,7 @@ async fn speech_attach(
     main_window(&window)?;
     let session = host.session.lock().await;
     if session.current.generation != generation {
-        return Err("The configured space has changed.".into());
+        return Err("The selected Ship has changed.".into());
     }
     Ok(host.speech.attach(updates))
 }
@@ -274,7 +274,7 @@ async fn speech_command(
     main_window(&window)?;
     let session = host.session.lock().await;
     if session.current.generation != generation {
-        return Err("The configured space has changed.".into());
+        return Err("The selected Ship has changed.".into());
     }
     host.speech.command(command).await
 }
@@ -289,7 +289,7 @@ async fn shortcuts_configure(
     main_window(&window)?;
     let session = host.session.lock().await;
     if session.current.generation != generation {
-        return Err("The configured space has changed.".into());
+        return Err("The selected Ship has changed.".into());
     }
     host.shortcuts
         .lock()
@@ -307,7 +307,7 @@ async fn shortcuts_edit(
     main_window(&window)?;
     let session = host.session.lock().await;
     if session.current.generation != generation {
-        return Err("The configured space has changed.".into());
+        return Err("The selected Ship has changed.".into());
     }
     host.shortcuts.lock().await.edit().await
 }

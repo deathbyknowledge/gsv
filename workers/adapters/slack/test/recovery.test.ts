@@ -16,7 +16,7 @@ async function pairingCode(previousCode?: string): Promise<string> {
     const text = calls.findLast((call) => (
       call.method === "chat.postMessage"
       && call.body.channel === "DALICE01"
-      && call.body.text?.includes("Pairing code:")
+      && call.body.text?.includes("Code:")
     ))?.body.text ?? "";
     code = text.match(/[A-HJ-NP-Z2-9]{4}(?:-[A-HJ-NP-Z2-9]{4}){2}/)?.[0]?.replaceAll("-", "") ?? "";
     expect(code).toHaveLength(12);

@@ -63,7 +63,8 @@ export type AiSkillIndexEntry = {
   name: string;
   description: string;
   source: {
-    kind: "home";
+    /** `system` skills are the read-only built-ins at /sys/skills.d. */
+    kind: "system" | "home";
     label: string;
     writable: boolean;
   };

@@ -1042,7 +1042,7 @@ describe("model context", () => {
               id: `invalid-terminal-${generationCalls}`,
               name: "Shell",
               arguments: {
-                input: "message send --to here --message hello",
+                input: "message send --attach /tmp/file",
               },
             },
           ]);
@@ -1077,7 +1077,7 @@ describe("model context", () => {
         status: "error",
         reason: "message.command.failed",
         error: expect.stringContaining(
-          "message send does not accept --to for the current conversation",
+          "message send does not accept --attach for the current conversation",
         ),
       });
     });

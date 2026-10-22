@@ -21,7 +21,7 @@ Kernel at all. Both remain in their own records.
 | `timestamp` | When the call was dispatched |
 | `principalKind`, `uid` | Who asked: the peer's principal kind and account |
 | `pid`, `runId` | The process and run when a process asked |
-| `target` | The place the call went to: a target id, or `gsv` for the cloud home |
+| `target` | The connection the call went to: a target id, or `gsv` for Ship's home |
 | `call` | The syscall name |
 | `args` | The call's arguments as sent, as JSON text, whole; cut at 16 KB with the cut marked |
 | `purpose` | The one-sentence purpose the calling tool supplied for the person, when there was one; see [tool purpose](../reference/syscalls.md#tool-purpose) |
@@ -145,9 +145,9 @@ denied, cancelled and stale-expired calls all use the same store transition
 notification. No recurring timer or history query drives this feed.
 
 Open **Settings → Logs** to inspect the complete list and an individual
-action's arguments, outcome and failure details. Process links open Fleet's
-process inspector. Fleet retains its compact activity summaries.
-On phones, each Logs entry stacks its action, outcome, place and time without horizontal
+action's arguments, outcome and failure details. Rows for Ship and for
+helpers open Work's inspector. Work retains its compact activity summaries.
+On phones, each Logs entry stacks its action, outcome, connection and time without horizontal
 scrolling. Tap the entry for its arguments, purpose and process; **raw** switches the action
 label to the syscall name.
 

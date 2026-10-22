@@ -62,7 +62,7 @@ contract and the distinction between peers, adapters, machines, and targets.
 
 ## Why deployment names still say `channel-*`
 
-User-facing docs prefer **adapter** because that is the better product term.
+User-facing docs and the interface say **messenger** for a connected messaging app; **adapter** remains the engineering term for the transport that implements it.
 Some deployed components and worker names still use `channel-*` because those
 are compatibility names in release artifacts and service bindings. Each
 adapter's `adapter.json` owns that deployment metadata; the public Alchemy stack
@@ -240,6 +240,11 @@ ordinary `proc.hil` request through a Kernel-derived, interaction-scoped
 linked-human peer. The adapter service account never receives ambient
 `proc.hil` authority, and provider reply threading is not authorization.
 
+An approval for a deleted or inaccessible Process is terminal. The Kernel
+preserves the protocol error code, so the adapter resolves the callback as stale
+and continues delivering later messages. Temporary transport or service failures
+remain retryable; retrying never changes the person's selected decision.
+
 The `message` shell command exposes delivery context and the explicit path for a
 separate or cross-channel message. `message current` describes the directed endpoint
 and the transport-neutral current-conversation commands. It includes an opaque
@@ -255,7 +260,7 @@ and thread mappings. It selects destinations through `here`, opaque GSV ids, or
 unambiguous generic labels rather than provider fields, and only accepts owned
 interactive processes. The canonical personal process may also set a private
 DM to an owned non-personal process when that exact latest DM message started
-its current run. This opens an explicitly labeled INTERNAL WORK / WORK SESSION;
+its current run. This opens an explicitly labeled HELPER;
 the human uses `/ship` for the canonical SHIP.
 Changing a selection does not change an existing run route: the current Message
 stays directed to its origin, while the next inbound message enters the new selection.
