@@ -159,6 +159,8 @@ export type ProcessAdapterDeliverArgs = {
 export type ProcessRunAttachArgs = {
   runId: string;
   media: ResourceBlock[];
+  /** The tool call staging these files. */
+  requestId?: string;
 };
 
 export type ProcessRunAttachResult =
@@ -168,6 +170,14 @@ export type ProcessRunAttachResult =
       media: ResourceBlock[];
     }
   | { ok: false; error: string };
+
+/**
+ * Asked before a send elsewhere without files: counts the files staged for the run's next
+ * current-conversation message. With none, the tool calls running alongside `requestId` may no
+ * longer stage any, so a parallel `message attach` cannot reach the owner instead of `destination`.
+ */
+export type ProcessRunStagedArgs = { runId: string; requestId?: string; destination: string };
+export type ProcessRunStagedResult = { ok: true; count: number };
 
 export type ProcessResourcesRetainArgs = {
   batchId: string;
@@ -208,6 +218,7 @@ export type InternalSyscallDomains = {
   };
   "proc.adapter.deliver": { args: ProcessAdapterDeliverArgs; result: ProcSendResult };
   "proc.run.attach": { args: ProcessRunAttachArgs; result: ProcessRunAttachResult };
+  "proc.run.staged": { args: ProcessRunStagedArgs; result: ProcessRunStagedResult };
   "proc.resources.retain": {
     args: ProcessResourcesRetainArgs;
     result: { resources: ResourceBlock[] };

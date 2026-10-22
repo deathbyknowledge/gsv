@@ -134,7 +134,7 @@ impl SessionStore {
                     .bytes()
                     .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
             {
-                return Err("Invalid setup authorization.".into());
+                return Err("Invalid activation link.".into());
             }
         }
         let mut pending_revokes = self.pending_revokes.clone();

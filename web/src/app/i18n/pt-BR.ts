@@ -29,6 +29,7 @@ export const ptBR = {
   "approval.capability": "Capacidade",
   "approval.customMatch": "Capacidade personalizada",
   "approval.target.allMachines": "Todas as conexões",
+  "approval.target.allExternal": "Todas as conexões, exceto o lar do Ship",
   "approval.target.shipComputer": "Lar do Ship",
   "approval.target.cloudBrowsers": "Navegadores na nuvem",
   "approval.target.cloudComputers": "Computadores na nuvem",
@@ -1116,6 +1117,7 @@ export const ptBR = {
 
   // Session: Ship address
   "session.address.label": "Nome de usuário ou endereço",
+  "session.welcome.addressPreview": "Seu endereço",
   "session.address.placeholder": "nome de usuário ou domínio",
   "session.address.required": "Digite um nome de usuário ou domínio.",
   "session.address.failed": "Não foi possível abrir o Ship. Tente de novo.",
@@ -1222,6 +1224,8 @@ export const ptBR = {
   "shell.header.unread": "Mensagens ou solicitações não lidas",
   "shell.header.views": "Visualizações",
   "shell.nav.memory": "memória",
+  "shell.nav.work": "trabalho",
+  "shell.help.work": "Trabalho",
   "shell.nav.people": "contatos",
   "shell.nav.settings": "configurações",
   "shell.nav.help": "ajuda",

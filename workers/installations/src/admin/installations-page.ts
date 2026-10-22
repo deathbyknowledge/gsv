@@ -69,12 +69,12 @@ export function adminNewInstallationPage(
     status,
     content: `<section class="narrow stack">
       <div class="page-heading">
-        <div><p class="eyebrow">NEW INSTALLATION</p><h1>Create a Ship</h1></div>
+        <div><p class="eyebrow">NEW SHIP</p><h1>Create a Ship</h1></div>
         <a class="button secondary" href="/admin/installations">Cancel</a>
       </div>
       ${error ? errorNotice(error) : ""}
       <form class="panel stack" method="post" action="/admin/installations">
-        <div><h2>Ship identity</h2><p>The handle becomes the Ship’s address. The owner sets a password using the one-time setup link.</p></div>
+        <div><h2>Ship identity</h2><p>The handle becomes the Ship’s address. The owner sets a password using the one-time activation link.</p></div>
         <input type="hidden" name="operationId" value="${escapeHtml(operationId)}">
         <label><span>Handle</span><input name="handle" required minlength="1" maxlength="63" pattern="[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?" autocomplete="off" placeholder="hank" value="${escapeHtml(values?.handle ?? "")}"></label>
         <div class="form-actions"><button type="submit">Create Ship</button></div>
@@ -110,7 +110,7 @@ export function adminInstallationPage<Detail extends AdminInstallation>(
       <div class="grid">
         <section class="panel"><p class="eyebrow">IDENTITY</p><h2>Ship details</h2>
           <dl class="definition-list">
-            <dt>Installation ID</dt><dd>${escapeHtml(installation.installationId)}</dd>
+            <dt>Ship ID</dt><dd>${escapeHtml(installation.installationId)}</dd>
             <dt>Canonical origin</dt><dd><a href="${escapeHtml(installation.canonicalOrigin)}" target="_blank" rel="noreferrer">${escapeHtml(installation.canonicalOrigin)}</a></dd>
             <dt>Lifecycle</dt><dd>${stateBadge(installation.state)}</dd>
             <dt>Provisioning</dt><dd>${stateBadge(installation.operationState)}</dd>
@@ -130,7 +130,7 @@ export function adminInstallationPage<Detail extends AdminInstallation>(
 
 function installationFilters(list: AdminInstallationList): string {
   return `<form class="panel filters" method="get" action="/admin/installations">
-    <label><span>Search handle or installation ID</span><input type="search" name="q" maxlength="100" value="${escapeHtml(list.query)}" placeholder="hank or inst_…"></label>
+    <label><span>Search handle or Ship ID</span><input type="search" name="q" maxlength="100" value="${escapeHtml(list.query)}" placeholder="hank or inst_…"></label>
     <label><span>Lifecycle state</span><select name="state"><option value="">All states</option>${ADMIN_VISIBLE_INSTALLATION_STATES.map((state) => `<option value="${state}"${list.state === state ? " selected" : ""}>${escapeHtml(state.replaceAll("_", " "))}</option>`).join("")}</select></label>
     <button type="submit">Search</button>
     <a class="button secondary" href="/admin/installations">Reset</a>
@@ -187,12 +187,12 @@ function provisioningPanel(
 ): string {
   const canReissue = installation.state === "reserved"
     || installation.state === "provisioning";
-  return `<section class="panel"><p class="eyebrow">PROVISIONING</p><h2>Onboarding</h2>
+  return `<section class="panel"><p class="eyebrow">PROVISIONING</p><h2>Activation</h2>
     <dl class="definition-list">
       <dt>Operation</dt><dd>${stateBadge(installation.operationState)}</dd>
       <dt>Link expiry</dt><dd>${formatDate(installation.onboardingExpiresAt)}</dd>
     </dl>
-    ${canReissue ? `<p>Reissuing invalidates any current link and shows its replacement once.</p><form class="form-actions" method="post" action="${installationPath}/onboarding"><button class="secondary" type="submit">Reissue onboarding link</button></form>` : "<p>Onboarding is complete; no active provisioning capability is needed.</p>"}
+    ${canReissue ? `<p>Reissuing invalidates any current link and shows its replacement once.</p><form class="form-actions" method="post" action="${installationPath}/onboarding"><button class="secondary" type="submit">Reissue activation link</button></form>` : "<p>Activation is complete; no active provisioning capability is needed.</p>"}
   </section>`;
 }
 
@@ -201,7 +201,7 @@ function lifecyclePanel(
   installationPath: string,
 ): string {
   if (installation.state === "active") {
-    return `<section class="panel danger-zone"><p class="eyebrow">LIFECYCLE</p><h2>Suspend Ship</h2><p>Suspension retains the installation identity and data while blocking work until reactivation.</p><form class="form-actions" method="post" action="${installationPath}/lifecycle"><button class="danger" type="submit" name="state" value="restricted">Suspend ${escapeHtml(installation.handle)}</button></form></section>`;
+    return `<section class="panel danger-zone"><p class="eyebrow">LIFECYCLE</p><h2>Suspend Ship</h2><p>Suspension retains the Ship ID and data while blocking work until reactivation.</p><form class="form-actions" method="post" action="${installationPath}/lifecycle"><button class="danger" type="submit" name="state" value="restricted">Suspend ${escapeHtml(installation.handle)}</button></form></section>`;
   }
   if (installation.state === "restricted") {
     return `<section class="panel"><p class="eyebrow">LIFECYCLE</p><h2>Reactivate Ship</h2><p>Reactivation restores routing and resumes paused durable work.</p><form class="form-actions" method="post" action="${installationPath}/lifecycle"><button type="submit" name="state" value="active">Reactivate ${escapeHtml(installation.handle)}</button></form></section>`;
@@ -218,12 +218,12 @@ function resetPanel(
   }
   const operationId = `reset_${crypto.randomUUID()}`;
   return `<section class="panel danger-zone"><p class="eyebrow">FRESH SHIP</p><h2>Reset ${escapeHtml(installation.handle)}</h2>
-    <p>Reset assigns this handle to a new installation ID and starts onboarding again. Existing sessions and background work stop because the previous installation becomes inactive.</p>
-    <p><strong>This does not delete the previous installation's stored data.</strong> It records that data as pending deletion so a separate deletion operation can remove it from every owning service.</p>
+    <p>Reset assigns this handle to a new Ship ID and starts activation again. Existing sessions and background work stop because the previous Ship becomes inactive.</p>
+    <p><strong>This does not delete the previous Ship's stored data.</strong> It records that data as pending deletion so a separate deletion operation can remove it from every owning service.</p>
     <form class="form-actions" method="post" action="${installationPath}/reset">
       <input type="hidden" name="operationId" value="${escapeHtml(operationId)}">
       <label><span>Type ${escapeHtml(installation.handle)} to confirm</span><input name="confirmHandle" required autocomplete="off" value=""></label>
-      <button class="danger" type="submit">Reset and issue onboarding link</button>
+      <button class="danger" type="submit">Reset and issue activation link</button>
     </form>
   </section>`;
 }

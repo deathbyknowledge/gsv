@@ -15,6 +15,7 @@ import {
   resolveSkillDocument,
   validateSkillMarkdown,
 } from "./skills";
+import { BUILTIN_SKILL_NAMES } from "./sys/builtin-skills";
 
 const IDENTITY: ProcessIdentity = {
   uid: 1000,
@@ -47,7 +48,7 @@ describe("collectFilesystemSkillDocuments", () => {
 
     const docs = await collectFilesystemSkillDocuments(fs, ctx, AGENT_IDENTITY);
 
-    expect(docs.map((doc) => doc.id)).toEqual([
+    expect(homeSkills(docs).map((doc) => doc.id)).toEqual([
       "user:shared",
       "agent:shared",
       "specialized",
@@ -117,7 +118,7 @@ describe("collectFilesystemSkillDocuments", () => {
         id: "device-management/adding-devices",
       },
     });
-    expect(topLevelOnly.map((doc) => doc.id)).toEqual(["device-management"]);
+    expect(homeSkills(topLevelOnly).map((doc) => doc.id)).toEqual(["device-management"]);
     await expect(listSkillFiles(fs, docs.find((doc) => doc.id === "device-management")!)).resolves.toEqual(["notes.md"]);
   });
 
@@ -140,7 +141,7 @@ describe("collectFilesystemSkillDocuments", () => {
 
     const docs = await collectFilesystemSkillDocuments(fs, ctx, AGENT_IDENTITY);
 
-    expect(docs.map((doc) => doc.id).sort()).toEqual([
+    expect(homeSkills(docs).map((doc) => doc.id).sort()).toEqual([
       "agent:device-management",
       "agent:device-management/adding-devices",
       "user:device-management",
@@ -277,7 +278,7 @@ describe("collectKernelSkillDocuments", () => {
 
     const index = await collectPromptSkillIndex(ctx);
 
-    expect(index.map((entry) => entry.id)).toEqual(["device-management"]);
+    expect(homeSkills(index).map((entry) => entry.id)).toEqual(["device-management"]);
     expect(readKeys).not.toContain("sam/home:skills.d/device-management/skills.d");
   });
 
@@ -299,11 +300,11 @@ describe("collectKernelSkillDocuments", () => {
 
     const docs = await collectKernelSkillDocuments(ctx);
 
-    expect(docs.map((doc) => doc.name)).toEqual([
+    expect(homeSkills(docs).map((doc) => doc.name)).toEqual([
       "owner-skill",
       "agent-skill",
     ]);
-    expect(docs.map((doc) => doc.path)).toEqual([
+    expect(homeSkills(docs).map((doc) => doc.path)).toEqual([
       "/home/sam/skills.d/owner.md",
       "/home/friday/skills.d/agent.md",
     ]);
@@ -311,6 +312,63 @@ describe("collectKernelSkillDocuments", () => {
     expect(readKeys).toContain("friday/home:skills.d");
   });
 });
+
+describe("system skills", () => {
+  it("gives a process owned by a human the built-in skills first, from /sys/skills.d", async () => {
+    const ctx = makeAgentOwnedContext({
+      ripgitEntries: {
+        "sam/home:skills.d": [{ name: "owner.md", mode: "100644", hash: "owner", type: "blob" }],
+        "sam/home:skills.d/owner.md": skillMarkdown("owner-skill", "User-wide skill."),
+      },
+    });
+
+    const index = await collectPromptSkillIndex(ctx);
+
+    const system = index.filter((entry) => entry.source.kind === "system");
+    expect(system.map((entry) => entry.id)).toEqual([...BUILTIN_SKILL_NAMES].sort());
+    expect(index.slice(0, system.length)).toEqual(system);
+    expect(index.at(-1)).toMatchObject({ id: "owner-skill", source: { label: "user" } });
+    const docs = await collectKernelSkillDocuments(ctx);
+    expect(docs.find((doc) => doc.id === "browser-target")).toMatchObject({
+      path: "/sys/skills.d/browser-target/SKILL.md",
+      source: { kind: "system", label: "system", writable: false },
+    });
+  });
+
+  it("serves built-in skills without a home repository", async () => {
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+    const ctx = {} as KernelContext;
+    const docs = await collectFilesystemSkillDocuments(makeSkillFs({}), ctx, IDENTITY);
+    expect(docs.map((doc) => doc.id)).toEqual([...BUILTIN_SKILL_NAMES].sort());
+  });
+
+  it("keeps built-in names for the built-in skills, hiding a home skill that claims one", async () => {
+    const ctx = makeAgentOwnedContext();
+    const fs = makeSkillFs({
+      "/home/sam/skills.d": ["memory", "notes.md"],
+      "/home/sam/skills.d/memory": ["SKILL.md", "skills.d"],
+      "/home/sam/skills.d/memory/SKILL.md": skillMarkdown("memory", "An old copy."),
+      "/home/sam/skills.d/memory/skills.d": ["journal"],
+      "/home/sam/skills.d/memory/skills.d/journal": ["SKILL.md"],
+      "/home/sam/skills.d/memory/skills.d/journal/SKILL.md": skillMarkdown("journal", "Nested in the copy."),
+      "/home/sam/skills.d/notes.md": skillMarkdown("browser-target", "Claims a built-in name."),
+      "/home/friday/skills.d": ["mine.md"],
+      "/home/friday/skills.d/mine.md": skillMarkdown("mine", "The agent's own skill."),
+    });
+
+    const docs = await collectFilesystemSkillDocuments(fs, ctx, AGENT_IDENTITY);
+
+    expect(docs.filter((doc) => doc.source.kind === "home").map((doc) => doc.id)).toEqual(["mine"]);
+    expect(resolveSkillDocument(docs, "memory")).toMatchObject({
+      ok: true,
+      doc: { path: "/sys/skills.d/memory/SKILL.md", source: { kind: "system" } },
+    });
+  });
+});
+
+function homeSkills<T extends { source: { kind: string } }>(docs: T[]): T[] {
+  return docs.filter((doc) => doc.source.kind === "home");
+}
 
 function makeAgentOwnedContext(options: {
   ripgitEntries?: Record<string, string | Array<{ name: string; mode: string; hash: string; type: "tree" | "blob" | "symlink" }>>;

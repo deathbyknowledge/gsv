@@ -181,7 +181,7 @@ browser stops. Space retirement clears that pending work.
 The Gateway resolves that identity through the trusted directory and the Kernel
 broadcasts a payload-free `instance.changed` signal only to that owner's clients.
 Instrument updates its shared target and browser caches from this signal; it
-does not need Fleet to be open or poll browser inventories. Browser contents,
+does not need Work to be open or poll browser inventories. Browser contents,
 credentials and handoff purposes are not included in the notification.
 
 The instance coordinator serializes snapshot attempts and retains ownership of

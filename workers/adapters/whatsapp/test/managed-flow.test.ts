@@ -398,7 +398,7 @@ describe("managed WhatsApp clean-instance flow", () => {
     const buttons = approvalMessage!.body.interactive!.action.buttons;
     expect(approvalMessage!.body.interactive!.body.text).toContain("Check the current time.");
     expect(approvalMessage!.body.interactive!.body.text).not.toContain("\"date\"");
-    expect(buttons.map((button) => button.reply.title)).toEqual(["Approve once", "Always approve", "Deny"]);
+    expect(buttons.map((button) => button.reply.title)).toEqual(["Allow once", "Always allow", "Block"]);
     const approveAlways = buttons[1]!.reply.id;
     expect(approveAlways).toMatch(/^gsvh:[A-Za-z0-9_-]{16}:a$/);
     const approvalMessageId = approvalMessage!.result.id!;
@@ -406,7 +406,7 @@ describe("managed WhatsApp clean-instance flow", () => {
     expect((await SELF.fetch(await notification("wamid.in.3", {
       type: "interactive",
       context: { from: "34600000000", id: approvalMessageId },
-      interactive: { type: "button_reply", button_reply: { id: approveAlways, title: "Always approve" } },
+      interactive: { type: "button_reply", button_reply: { id: approveAlways, title: "Always allow" } },
     }))).status).toBe(200);
     await vi.waitFor(async () => {
       expect(await gatewayCalls()).toContainEqual(expect.objectContaining({
@@ -427,7 +427,7 @@ describe("managed WhatsApp clean-instance flow", () => {
       }));
       expect(await sentMessages()).toContainEqual(expect.objectContaining({
         body: expect.objectContaining({
-          text: expect.objectContaining({ body: expect.stringContaining("Approved for this conversation.") }),
+          text: expect.objectContaining({ body: expect.stringContaining("Allowed for this conversation.") }),
           context: { message_id: approvalMessageId },
         }),
       }));
@@ -443,7 +443,7 @@ describe("managed WhatsApp clean-instance flow", () => {
     expect((await SELF.fetch(await notification("wamid.in.4", {
       type: "interactive",
       context: { from: "34600000000", id: approvalMessageId },
-      interactive: { type: "button_reply", button_reply: { id: approveAlways, title: "Always approve" } },
+      interactive: { type: "button_reply", button_reply: { id: approveAlways, title: "Always allow" } },
     }))).status).toBe(200);
     await vi.waitFor(async () => {
       expect((await sentMessages()).filter((record) => record.body.context?.message_id === approvalMessageId))

@@ -112,9 +112,9 @@ export async function handleSlackApprovalCallback(
 
 function resolutionStatus(resolution: AdapterHilResolution | undefined): string {
   switch (resolution) {
-    case "approve": return "Approved once.";
-    case "approve_always": return "Approved for this conversation.";
-    case "deny": return "Denied.";
+    case "approve": return "Allowed once.";
+    case "approve_always": return "Allowed for this conversation.";
+    case "deny": return "Blocked.";
     default: return "This approval is no longer pending.";
   }
 }

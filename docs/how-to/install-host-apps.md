@@ -55,8 +55,8 @@ Invoke-WebRequest -UseBasicParsing https://install.ship.space/install.ps1 -OutFi
 ```
 
 This installs only `gsv.exe` and `gsvd.exe`, plus the Visual C++ runtime if needed.
-It does not install WebView2. Pair the computer with the invitation
-from Fleet, then inspect it with `gsv daemon status`.
+It does not install WebView2. Connect the computer with the invitation
+from Work, then inspect it with `gsv daemon status`.
 
 Use `GSV_CHANNEL=dev` for the moving development channel, or set
 `GSV_VERSION=vX.Y.Z` to install an immutable release tag.
@@ -79,7 +79,7 @@ Desktop starts with **Create your Ship** and **Open Ship**. Create takes you thr
 [signup](/get-started/); Open lets you sign in with email or enter a handle or domain.
 The address form also works for Ships owned by someone else or served by another
 operator. Contact invitation links open a modal on the signup site, where you can
-verify your email or enter your Ship address before sign-in and explicit acceptance.
+verify your email or enter your handle or address before sign-in and explicit acceptance.
 
 Desktop and browser windows can stay connected to the same Ship at once. They
 receive new conversation messages live and refresh server state after a
@@ -87,13 +87,13 @@ reconnect. A remembered sign-in lasts 30 days and renews during use.
 Browser tabs share renewal and sign-out; Desktop has its own stored session.
 A temporary network interruption reconnects without asking you to sign in again.
 
-If self-service setup of a Ship was interrupted, **Continue setup** returns to owner email
+If activating a Ship was interrupted, **Continue activation** returns to owner email
 sign-in and your existing Ship. For the Desktop app's configured operator,
 this stays inside the app; another operator's recovery page opens in the browser.
 The owner signs in with the email used at signup, then continues
-setup with fresh authorization instead of creating another Ship.
-For a setup link issued directly by an operator, ask that operator for a new link.
-An incompatible client or rejected connection shows the gateway's error instead
+activation with fresh authorization instead of creating another Ship.
+For an activation link issued directly by an operator, ask that operator for a new link.
+An incompatible client or rejected connection shows your Ship's error instead
 of retrying indefinitely.
 
 ## Install location
@@ -151,7 +151,7 @@ By default commands run as `NT SERVICE\gsvd`, a dedicated virtual account,
 with read/write access to the selected workspace. The default is
 `%USERPROFILE%\GSV`. Choose a folder whose permissions your user can change
 without administrator elevation. Approval installs the boot service; it does not
-grant agents extra access to protected application or system folders.
+grant Ship or its helpers extra access to protected application or system folders.
 This identity does not inherit your personal SSH keys,
 user-installed tools, mapped drives, or browser sessions. Configure credentials
 and tools for the service account, or choose its Log On account in Windows
@@ -195,12 +195,12 @@ On Unix, when the `gsvd` user service already exists, the installer:
 5. checks the installed versions and service health.
 
 If migration or the health check fails, the previous executable and service
-definition are restored. A machine without an existing service is not silently
+definition are restored. A computer without an existing service is not silently
 enrolled; run `gsv daemon install` after configuring a driver credential.
 
 ## Automatic daemon updates
 
-On Linux and macOS, a connected machine keeps itself current. When the gateway is redeployed,
+On Linux and macOS, a connected computer keeps itself current. When the gateway is redeployed,
 `gsvd` learns about it the next time it connects: a gateway that requires a
 newer protocol rejects the handshake and names the release it needs, and a
 gateway that merely runs a newer release reports it on a successful connect.
@@ -254,12 +254,12 @@ A failed upgrade restores the previous
 installation. A Windows headless update leaves an existing Desktop installation
 alone.
 
-Desktop uses the same Instrument source as the web UI. It is the only desktop
+Desktop uses the same interface source as the web app. It is the only desktop
 implementation shipped by releases. Launching opens the installed version;
 rerun the installer to update it.
 
-After signing in, choose Connect this computer to make it a target. Desktop
-handles pairing and background service installation. Not now skips this step;
+After signing in, choose Connect this computer to make it a connection. Desktop
+handles connecting and background service installation. Not now skips this step;
 reopen it from the Ship menu under This computer. An existing connection for
 the same Ship and account resumes automatically. Connections to another Ship
 or account and your separate CLI login are preserved. The background service

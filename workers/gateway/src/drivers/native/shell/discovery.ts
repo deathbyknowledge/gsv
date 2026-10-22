@@ -145,7 +145,7 @@ const NATIVE_COMMAND_DESCRIPTORS = defineNativeCommandDescriptors({
   txt2img: command("Generate an image file from a text prompt.", "Create, draw, or generate a picture, photo, illustration, or image from words.", ["image", "photo", "picture", "illustration", "draw", "create", "generate"], [], ["txt2img [OPTIONS] -o PATH PROMPT..."], ["ai.image.generate"]),
   stt: command("Transcribe an audio file to text.", "Listen to, understand, or transcribe a voice note, recording, speech, or audio file.", ["audio", "voice", "voice-note", "recording", "speech", "listen", "transcribe"], [], ["stt [OPTIONS] AUDIO"], ["ai.transcription.create"]),
   tts: command("Synthesize spoken audio from text.", "Create a voice message, spoken reply, narration, or audio file from text.", ["audio", "voice", "speak", "speech", "narration", "voice-message"], [], ["tts [OPTIONS] -o PATH TEXT..."], ["ai.speech.create"]),
-  skills: command("Inspect and maintain reusable agent workflows stored in skills.d.", "Create, open, or update procedural memory for a workflow that should be repeatable later.", ["workflow", "procedure", "automation", "skill", "instructions", "playbook", "create", "save", "persist", "reuse", "repeat"], [], [
+  skills: command("Inspect and maintain reusable agent workflows stored in skills.d.", "Create, open, or update procedural memory for a workflow to repeat next time.", ["workflow", "procedure", "automation", "skill", "instructions", "playbook", "create", "save", "persist", "reuse", "repeat"], [], [
     "skills list [skill]",
     "skills tree [skill]",
     "skills search <query>",
@@ -262,7 +262,7 @@ export class ShellDiscoveryCatalog {
       const filesystemDocs = await collectFilesystemSkillDocuments(this.fs, this.ctx, this.identity);
       // Fall back to the same persisted registry used for prompt assembly when
       // a caller has no materialized home mount yet.
-      const docs = filesystemDocs.length > 0
+      const docs = filesystemDocs.some((doc) => doc.source.kind === "home")
         ? filesystemDocs
         : await collectKernelSkillDocuments(this.ctx);
       return docs.map((doc) => ({
@@ -397,6 +397,8 @@ function discoveryScore(
   const bodyTokens = new Set(significantTokens(body));
 
   let score = name === normalizedQuery ? 120 : 0;
+  // Only what an entry says about itself earns the coverage bonus: a long
+  // skill body mentions most words and must not outrank a matching command.
   let matched = 0;
   for (const token of queryTokens) {
     if (nameTokens.includes(token)) {
@@ -410,7 +412,6 @@ function discoveryScore(
       matched += 1;
     } else if (bodyTokens.has(token)) {
       score += 2;
-      matched += 1;
     }
   }
   score += matched * matched * 2;

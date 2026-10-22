@@ -57,7 +57,7 @@ export function renderAdapterHilPrompt(
     presentation.action,
   ];
   if (controls === "chat") {
-    lines.push("", "Open Chat to approve or deny this action.");
+    lines.push("", "Open Chat to allow or block this action.");
   }
   return prefixHilScope(lines.join("\n"), presentation.scope);
 }
@@ -85,20 +85,12 @@ function prefixHilScope(
   text: string,
   scope: AdapterHilPresentation["scope"],
 ): string {
-  const prefix = scope === "work"
-    ? "[WORK SESSION]"
-    : scope === "personal"
-      ? "[PERSONAL INTELLIGENCE]"
-      : "";
+  const prefix = scope === "work" ? "[HELPER]" : "";
   return prefix ? `${prefix} ${text}` : text;
 }
 
 function processModePrefix(context: AdapterDeliveryContext): string {
-  return context.processMode === "work"
-    ? "[WORK SESSION]"
-    : context.processMode === "ship" && context.shipDisplaced
-      ? "[PERSONAL INTELLIGENCE]"
-      : "";
+  return context.processMode === "work" ? "[HELPER]" : "";
 }
 
 /**
@@ -115,8 +107,8 @@ function summarizeAdapterHilRequest(request: ProcHilRequest): string {
 
 function describeAdapterHilRequest(request: ProcHilRequest): string {
   const place = request.target === "gsv"
-    ? "in your cloud home"
-    : `on ${safePlainDetail(request.target, 80) ?? "a connected place"}`;
+    ? "in Ship's home"
+    : `on ${safePlainDetail(request.target, 80) ?? "a connection"}`;
   switch (request.syscall) {
     case "shell.exec": return `run a command ${place}`;
     case "fs.read": return `read a file ${place}`;
