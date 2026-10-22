@@ -1,7 +1,7 @@
 # Use a cloud browser
 
-A cloud browser lets Ship use websites while your personal devices are offline.
-It appears in Fleet alongside your connected browsers and computers. Your
+A cloud browser lets Ship use websites while your own devices are offline.
+It appears in Work alongside your connected browsers and computers. Your
 operator must enable cloud browsers; the local development stack enables them.
 
 For website tasks, Ship checks for a suitable existing browser and can start a
@@ -10,34 +10,34 @@ explicitly ask Ship to create one. If browser access is unavailable, Ship should
 explain the actual availability or startup problem. A website may separately
 require you to sign in through the browser view.
 
-The browser list below Chat's prompt and in Fleet updates automatically as
-browsers start, become ready or stop. Opening Fleet or refreshing is unnecessary.
+The browser list below Chat's prompt and in Work updates automatically as
+browsers start, become ready or stop. Opening Work or refreshing is unnecessary.
 
 By default, Ship can run commands, use the network and manage files in cloud
 browsers without asking for each action. This includes websites whose logins
 the browser remembers. To require approval, choose **Cloud browsers** in
-**Settings → permissions** and set the relevant actions to **Ask** or **Block**.
+**Settings → Permissions** and set the relevant actions to **Ask** or **Block**.
 Existing custom policies keep their rules. Connected personal browsers and
 computers retain their separate approval requirements.
 
 ## Watch and use the browser
 
 Ask Ship to use a browser. Ship reuses your account's current cloud browser,
-including one that is still starting. More work can use another tab. Fleet's
+including one that is still starting. More work can use another tab. Work's
 **browser** action follows the same rule and opens the view immediately.
 
 Click the browser below Chat's prompt, a browser link in its work receipt, or a
-running browser in Fleet to watch Ship work. Chat stays open behind the view.
+running browser in Work to watch Ship work. Chat stays open behind the view.
 The browser window has tabs and an address bar, with the page filling its width.
 Use **expand** for a larger view and **more → stop browser** to stop it;
-**close** leaves the browser running. The text controls match the rest of Instrument.
+**close** leaves the browser running. The text controls match the rest of the web app.
 The view follows the tab Ship is reading or interacting with, including text
 reads and screenshots, and shows its cursor and clicks. Opening a background tab
 leaves the view in place until Ship uses it. You can click, scroll, paste and type
 directly in that view. Clicking pins the view to that tab; choose **Follow Ship**
 to follow again. Watching leaves Ship running. Your input gets brief priority
 while you are interacting, and browser actions run in sequence so a human click
-cannot split an agent's click or typing action. Closing the view leaves the
+cannot split Ship's click or typing action. Closing the view leaves the
 browser and Ship running.
 Switching tabs or returning to Follow Ship pauses input until an image from the
 new view has loaded. Reconnection and returning from a hidden view also require
@@ -195,9 +195,9 @@ They never silently become empty objects or prevent unrelated sites from saving.
 
 Every instance has a fixed lifetime. Reusing it does not extend that lifetime
 or reserve more time. Ship or you can stop it sooner with **stop browser**.
-A stopped or failed instance stays terminal; another start creates another target
+A stopped or failed instance stays terminal; another start creates another browser
 with a new eight-character ID. Export useful files before stopping: temporary
-files disappear. Stopped browsers leave the ordinary Fleet list. `instance list
+files disappear. Stopped browsers leave the ordinary Work list. `instance list
 --all` includes your 64 most recently created terminal browsers alongside active
 ones. Inventory omits per-site save issues; `instance get ID` retrieves recent
 details. Older instances retain their identity, status and start-request receipts
@@ -208,7 +208,7 @@ A slow page or failed live frame does not by itself stop the browser. Health
 checks run independently of page JavaScript, and temporary provider failures
 have a one-minute recovery window within the original lifetime. A confirmed
 missing session or a persistent failure stops the instance. Recovery never
-repeats an agent action. Diagnostics identify the operation that timed out.
+repeats a browser action. Diagnostics identify the operation that timed out.
 
 Ship can request an additional isolated browser with `--new`. It has a distinct
 name and ID and is temporary: it does not share your saved logins or replace your
@@ -418,7 +418,7 @@ a clean local installation and exercises concurrent start reuse, automatic saved
 cookie/local-storage/IndexedDB restoration, passive viewing, cursor reporting,
 human input alongside agent work, input revocation, stop and saved-state deletion.
 Login and live-view checks both use `sys.browser.watch`, the same streamed view
-as Instrument. Checks cover following page commands, pinned tabs, rapid tab changes,
+as the web app. Checks cover following page commands, pinned tabs, rapid tab changes,
 and closing the followed tab. Browser
 artifact checks also cover screenshots, binary shell operations and file
 transfers in both directions between the browser and `gsv`, nested web components,

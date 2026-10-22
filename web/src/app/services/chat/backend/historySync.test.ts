@@ -256,7 +256,7 @@ describe("shared typed process history synchronization", () => {
 
   it("reports older gateways explicitly without accepting their compatibility messages", async () => {
     const h = harness([{ ok: true, pid: "p", messages: [], messageCount: 0 }]);
-    await expect(h.sync.read("p")).rejects.toThrow("does not support typed process history");
+    await expect(h.sync.read("p")).rejects.toThrow("does not support typed history");
     expect(h.current()).toBeUndefined();
   });
 });

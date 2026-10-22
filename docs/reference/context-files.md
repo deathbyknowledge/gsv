@@ -82,17 +82,26 @@ pitfalls to avoid.
 Skill sources are layered:
 
 ```text
-the owning user's ~/skills.d/
-the run-as agent's ~/skills.d/, when distinct from the owner
+/sys/skills.d/                 built-in skills, read-only (system)
+the owning user's ~/skills.d/  (user)
+the run-as agent's ~/skills.d/, when distinct from the owner (agent)
 ```
 
-For a process running as a distinct agent account, owner skills are considered
-before agent-specific skills.
+Every process reads the built-in skills first, whatever account it runs as, so
+a delegated Crew process sees the same built-ins as the Ship. For a process
+running as a distinct agent account, owner skills are considered before
+agent-specific skills.
 
-The gateway ships built-in skills as text modules. `sys.bootstrap` seeds them
-into the bootstrapped user's `~/skills.d/`. Prompt configuration also
-restores missing built-in skill paths before collecting the skill index.
-Existing and customized files are never overwritten.
+The gateway serves the built-in skills from the bundled `skills/` directory at
+`/sys/skills.d`. They are read-only and change only with a deployment. Their
+names are reserved: `skills create` refuses one, and a home skill that claims a
+built-in name is not listed or resolved.
+
+Homes used to receive copies of the built-in skills. The first time a process
+loads its prompt after an upgrade, the gateway removes those copies from the
+homes it reads: a copy that matches a shipped revision is deleted, and an edited
+copy is kept as the person's own skill under a new name, such as
+`memory-custom`, in one home commit.
 
 Supported forms:
 
@@ -119,7 +128,7 @@ Creation writes `~/skills.d/<name>/SKILL.md` and refuses to overwrite an
 existing skill. Read the current skill first and pass `--replace` only for an
 intentional revision. Do not silently persist one-off workflows, credentials,
 private content, or transient account, message, and target identifiers. The
-seeded `skill-authoring` skill contains the full authoring workflow.
+built-in `skill-authoring` skill contains the full authoring workflow.
 
 ## Editing Guidance
 

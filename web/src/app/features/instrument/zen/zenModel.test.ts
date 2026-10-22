@@ -194,7 +194,7 @@ describe("parsePromptInput", () => {
 
 describe("places", () => {
   it("labels the cloud home and known places", () => {
-    expect(placeLabel("gsv", places)).toBe("your cloud");
+    expect(placeLabel("gsv", places)).toBe("Ship’s home");
     expect(placeLabel("laptop", places)).toBe("MacBook 16");
     expect(placeLabel("ghost", places)).toBe("ghost");
   });
@@ -931,8 +931,8 @@ describe("momentsFromConversation", () => {
       ["call", "du", "laptop", null],
     ]);
     expect(moment.timeline?.find((event) => event.kind === "call" && event.call.callId === "sync-a")).toMatchObject({ startedAt: 25, endedAt: 30, call: { failed: true } });
-    expect(summaryText(moment)).toBe("5 actions on MacBook 16 and your cloud · 1 failed and retried");
-    expect(receiptSummary(moment, places).filter((part) => part.tone === "place").map((part) => part.text)).toEqual(["MacBook 16", "your cloud"]);
+    expect(summaryText(moment)).toBe("5 actions on MacBook 16 and Ship’s home · 1 failed and retried");
+    expect(receiptSummary(moment, places).filter((part) => part.tone === "place").map((part) => part.text)).toEqual(["MacBook 16", "Ship’s home"]);
   });
 
   it("shows the current purpose or action count without thinking text or a timer", () => {

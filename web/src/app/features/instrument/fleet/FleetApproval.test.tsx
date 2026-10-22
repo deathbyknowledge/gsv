@@ -55,7 +55,7 @@ describe("pending child approval controls", () => {
     await view.close();
     view = await mount("child-run");
     try {
-      const button = remember ? "always allow" : "run it";
+      const button = remember ? "Always allow" : "Allow once";
       await vi.waitFor(() => expect(view.buttons().find((node) => collectText(node).trim() === button)?.props.disabled).toBe(false));
       await act(async () => { await view.buttons().find((node) => collectText(node).trim() === button)?.props.onClick?.(); });
       const expected: ProcHilArgs = { pid: "child", requestId: "child-request", decision: "approve" };

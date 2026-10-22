@@ -290,7 +290,7 @@ async function attachToReply(
     type: "req",
     id: crypto.randomUUID(),
     call: "proc.run.attach",
-    args: { runId, media: resources },
+    args: { runId, media: resources, ...(ctx.toolOwner ? { requestId: ctx.toolOwner.requestId } : undefined) },
   };
   const response = await sendFrameToProcess(ctx.installationId, pid, request);
   if (!response || response.type !== "res" || !response.ok) {
@@ -311,6 +311,20 @@ async function attachToReply(
     ...result.media.map((item) => `path=${item.ref.path}`),
     "",
   ].join("\n"));
+}
+
+async function stagedReplyFileCount(pid: string, runId: string, destination: string, ctx: KernelContext): Promise<number> {
+  const request: InternalRequestFrame<"proc.run.staged"> = {
+    type: "req",
+    id: crypto.randomUUID(),
+    call: "proc.run.staged",
+    args: { runId, destination, ...(ctx.toolOwner ? { requestId: ctx.toolOwner.requestId } : undefined) },
+  };
+  const response = await sendFrameToProcess(ctx.installationId, pid, request);
+  if (!response || response.type !== "res" || !response.ok) {
+    throw new Error("could not check this run's staged attachments; retry the send");
+  }
+  return response.data.count;
 }
 
 async function showCurrentReplyDestination(
@@ -680,6 +694,16 @@ async function sendMessage(
       + "stage files with `message attach PATH...`, then issue `message send ...` as its own "
       + "direct Shell tool call without --to or --also. For an additional adapter delivery, "
       + "copy an opaque destination from `message current --json` or `message destinations`",
+    );
+  }
+  // A send elsewhere never takes staged files, and the run's final reply would carry them to the owner instead.
+  // The Process also stops tool calls running alongside this one from staging files afterwards.
+  const staged = ctx.processId && ctx.processRunId && attachmentPaths.length === 0
+    ? await stagedReplyFileCount(ctx.processId, ctx.processRunId, requestedDestination, ctx) : 0;
+  if (staged > 0) {
+    throw new Error(
+      `${staged === 1 ? "1 file" : `${staged} files`} staged with \`message attach\` goes with your next reply in this conversation, `
+      + `not to ${requestedDestination}. To send a file to ${requestedDestination}, repeat this command with --attach PATH`,
     );
   }
   if (requestedDestination.startsWith("contact:")) {

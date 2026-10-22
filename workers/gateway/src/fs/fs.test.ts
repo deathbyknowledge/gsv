@@ -4,6 +4,7 @@ import { GsvFs, parseMode, isValidMode, resolveUserPath } from "./index";
 import type { KernelRefs } from "./index";
 import type { ProcessIdentity } from "@humansandmachines/gsv/protocol";
 import { R2MountBackend } from "./backends/r2";
+import { BUILTIN_SKILL_NAMES } from "../kernel/sys/builtin-skills";
 
 const ROOT: ProcessIdentity = {
   uid: 0,
@@ -1107,7 +1108,21 @@ describe("GsvFs virtual /sys config tree", () => {
   it("lists the kernel views under /sys by their current names", async () => {
     const fs = makeConfigBackedFs(ROOT, {});
 
-    expect(await fs.readdir("/sys")).toEqual(["capabilities", "config", "targets", "users"]);
+    expect(await fs.readdir("/sys")).toEqual(["capabilities", "config", "skills.d", "targets", "users"]);
+  });
+
+  it("serves the built-in skills read-only at /sys/skills.d", async () => {
+    const fs = makeFs(SAM);
+
+    expect(await fs.readdir("/sys/skills.d")).toEqual([...BUILTIN_SKILL_NAMES].sort());
+    expect(await fs.readdir("/sys/skills.d/memory")).toEqual(["SKILL.md"]);
+    expect((await fs.stat("/sys/skills.d/memory")).isDirectory).toBe(true);
+    expect((await fs.stat("/sys/skills.d/memory/SKILL.md")).isFile).toBe(true);
+    await expect(fs.readFile("/sys/skills.d/memory/SKILL.md")).resolves.toContain("name: memory");
+    await expect(fs.writeFile("/sys/skills.d/memory/SKILL.md", "mine")).rejects.toThrow("EPERM");
+    await expect(fs.writeFile("/sys/skills.d/new/SKILL.md", "mine")).rejects.toThrow("EPERM");
+    await expect(fs.mkdir("/sys/skills.d/new")).rejects.toThrow("EPERM");
+    await expect(fs.rm("/sys/skills.d/memory", { recursive: true })).rejects.toThrow("EPERM");
   });
 
   it("lists nested /sys/config directories based on config key prefixes", async () => {

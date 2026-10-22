@@ -3,7 +3,6 @@ type KernelTestValue<T = string | number | boolean | null | undefined> = T;
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { testPeer } from "../../test-support/peers";
 import type { KernelContext } from "../context";
-import { BUILTIN_SKILL_FILES } from "./builtin-skills";
 import { handleSysBootstrap } from "./bootstrap";
 import { ManualUpdater, type ManualUpdateState } from "./manual";
 import manualVersion from "./manual-version.json";
@@ -88,7 +87,7 @@ describe("handleSysBootstrap", () => {
     applyMock.mockResolvedValue({ head: "home123" });
   });
 
-  it("imports only root/gsv-manual and seeds the bundled skills", async () => {
+  it("imports only root/gsv-manual and writes no skills into the home", async () => {
     const ctx = makeContext();
 
     const result = await handleSysBootstrap(undefined, ctx);
@@ -102,35 +101,7 @@ describe("handleSysBootstrap", () => {
       "https://github.com/deathbyknowledge/gsv-manual",
       manualVersion.revision,
     );
-    expect(BUILTIN_SKILL_FILES.map((skill) => skill.path)).toEqual([
-      "browser-target/SKILL.md",
-      "contacts/SKILL.md",
-      "gsv-manual/SKILL.md",
-      "image-reading/SKILL.md",
-      "memory/SKILL.md",
-      "process-orchestration/SKILL.md",
-      "skill-authoring/SKILL.md",
-    ]);
-    expect(BUILTIN_SKILL_FILES.every((skill) => skill.content.startsWith("---\n"))).toBe(true);
-    const expectedSkillOps = BUILTIN_SKILL_FILES.map((skill) => ({
-      type: "put",
-      path: `skills.d/${skill.path}`,
-      contentBytes: Array.from(new TextEncoder().encode(skill.content)),
-    }));
-    expect(applyMock).toHaveBeenCalledWith(
-      { owner: "root", repo: "home" },
-      "root",
-      "root@gsv.local",
-      "gsv: seed built-in skills",
-      [
-        {
-          type: "put",
-          path: "skills.d/.dir",
-          contentBytes: [],
-        },
-        ...expectedSkillOps,
-      ],
-    );
+    expect(applyMock).not.toHaveBeenCalled();
     expect(ctx.config.set).toHaveBeenCalledWith("repos/root/gsv-manual/description", "Ship Manual");
     expect(ctx.config.set).toHaveBeenCalledWith("repos/root/gsv-manual/ref", "main");
     expect(ctx.config.set).toHaveBeenCalledWith("repos/root/gsv-manual/visibility", "public");
@@ -145,28 +116,6 @@ describe("handleSysBootstrap", () => {
       head: "manual123",
       changed: true,
     });
-  });
-
-  it("preserves an existing skill while adding the other bundled skills", async () => {
-    readPathMock.mockImplementation((_repo: KernelTestValue, path: string) => Promise.resolve(
-      path === "skills.d/browser-target/SKILL.md"
-        ? { kind: "file", bytes: new Uint8Array([1]), size: 1 }
-        : { kind: "missing" },
-    ));
-
-    await handleSysBootstrap(undefined, makeContext());
-
-    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-    const operations = applyMock.mock.calls[0]?.[4] as Array<{ path: string }>;
-    expect(operations.map((operation) => operation.path)).toEqual([
-      "skills.d/.dir",
-      "skills.d/contacts/SKILL.md",
-      "skills.d/gsv-manual/SKILL.md",
-      "skills.d/image-reading/SKILL.md",
-      "skills.d/memory/SKILL.md",
-      "skills.d/process-orchestration/SKILL.md",
-      "skills.d/skill-authoring/SKILL.md",
-    ]);
   });
 
   it("uses the independently configured manual upstream and ref", async () => {
@@ -187,7 +136,7 @@ describe("handleSysBootstrap", () => {
     expect(result.ref).toBe("release");
   });
 
-  it("does not seed skills when the manual import fails", async () => {
+  it("writes nothing when the manual import fails", async () => {
     importFromUpstreamMock.mockRejectedValue(new Error("manual unavailable"));
 
     await expect(handleSysBootstrap(undefined, makeContext())).rejects.toThrow(

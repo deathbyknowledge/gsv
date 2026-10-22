@@ -102,7 +102,7 @@ const BUILTIN_TARGETS = [
   { value: targetOptionValue({ route: "instance", platform: "browser" }), label: "approval.target.cloudBrowsers" },
   { value: targetOptionValue({ route: "instance", platform: "linux" }), label: "approval.target.cloudComputers" },
 ] satisfies { value: string; label: TextKey }[];
-const LEGACY_EXTERNAL_TARGET = { value: targetOptionValue("targets/*"), label: "approval.target.allMachines" } satisfies { value: string; label: TextKey };
+const LEGACY_EXTERNAL_TARGET = { value: targetOptionValue("targets/*"), label: "approval.target.allExternal" } satisfies { value: string; label: TextKey };
 
 export function humanToolCapabilityLabel(capability: string): string {
   const normalized = capability.trim();
@@ -182,8 +182,11 @@ export function targetIndexForRule(target: ToolApprovalTarget | undefined, targe
 
 /** Human label for a rule's machine scope (mirrors the target Select options). */
 export function targetLabelForRule(target: ToolApprovalTarget | undefined, targets: readonly AgentToolTarget[]): string {
-  if (!target || target === "targets/*") {
+  if (!target) {
     return t("approval.target.allMachines");
+  }
+  if (target === "targets/*") {
+    return t("approval.target.allExternal");
   }
   if (target === "gsv") {
     return t("approval.target.shipComputer");

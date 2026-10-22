@@ -1,8 +1,6 @@
 import type { SysBootstrapArgs, SysBootstrapResult } from "@humansandmachines/gsv/protocol";
-import { RipgitClient } from "../../fs/ripgit/client";
 import type { KernelContext } from "../context";
-import { principalOf, requirePrincipal } from "../context";
-import { seedBuiltinSkillsToHome } from "./skills-seed";
+import { principalOf } from "../context";
 
 type BootstrapTiming = {
   label: string;
@@ -43,16 +41,11 @@ export async function handleSysBootstrap(
     throw new Error("Authenticated identity required");
   }
 
-  const ripgit = new RipgitClient(ctx.env.RIPGIT);
   const startedAt = Date.now();
   const timings: BootstrapTiming[] = [];
 
   try {
     const imported = await timeBootstrapStep(timings, "import-gsv-manual", () => ctx.manual.refresh());
-    await timeBootstrapStep(timings, "seed-skills", () => seedBuiltinSkillsToHome(
-      ripgit,
-      requirePrincipal(ctx).account,
-    ));
 
     console.info(
       `[sys.bootstrap] completed in ${Date.now() - startedAt}ms (${formatBootstrapTimings(timings)})`,

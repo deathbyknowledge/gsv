@@ -103,9 +103,9 @@ describe("Slack approval interactions", () => {
     const submitted = buildSlackApprovalStatusMessage({
       action: "Requested action: run \"date\".",
       scope: "work",
-    }, "Denied.");
+    }, "Blocked.");
     expect(submitted.text).toBe(
-      "[WORK SESSION] Denied.\n\nRequested action: run \"date\".",
+      "[HELPER] Blocked.\n\nRequested action: run \"date\".",
     );
     expect(submitted.text).not.toContain(PROMPT);
     expect(submitted.blocks.some((block) => block.type === "actions")).toBe(false);

@@ -279,7 +279,7 @@ focuses the existing window. The independent `gsvd` service keeps running.
 ## Machine enrollment
 
 Desktop offers Connect this computer after sign-in and through its Ship menu.
-The frontend creates the same ordinary device invitation as Fleet; the native
+The frontend creates the same ordinary connection invitation as Work; the native
 host passes it on private stdin to `gsv pair - --preserve-cli-login --no-replace`.
 The CLI stores the driver credential in private `config.toml` and owns OS
 service installation; `gsvd` owns the persistent machine connection. Existing

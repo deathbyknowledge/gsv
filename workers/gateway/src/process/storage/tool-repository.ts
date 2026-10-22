@@ -164,6 +164,15 @@ export class ProcessToolRepository {
     };
   }
 
+  pendingDispatchIds(runId: string): string[] {
+    return this.store.sql.exec<{ dispatch_id: string }>(
+      `SELECT dispatch_id
+         FROM pending_tool_calls
+        WHERE run_id = ? AND status IN ('registered', 'pending')`,
+      runId,
+    ).toArray().map((row) => row.dispatch_id);
+  }
+
   isRunResolved(runId: string): boolean {
     const count = this.store.first<{ cnt: number }>(
       `SELECT COUNT(*) as cnt

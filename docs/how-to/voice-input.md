@@ -1,13 +1,13 @@
 # Use Voice Input
 
-Zen can turn speech into a draft in both the web UI and Desktop. You review the
+Chat can turn speech into a draft in both the web app and Desktop. You review the
 text before sending it.
 
-## Record in the web UI
+## Record in the web app
 
-1. Open your Ship over HTTPS and go to Zen.
+1. Open your Ship over HTTPS and go to Chat.
 2. Choose **record** in the action row below the prompt, beside the attachment
-   and place controls, and allow microphone access when your browser asks.
+   and connection controls, and allow microphone access when your browser asks.
 3. The prompt becomes a live waveform that responds to your voice. Speak, then
    choose **stop**. A recording stops automatically after five minutes.
 4. Wait for **transcribing…**. The text appears at the current cursor in your
@@ -18,22 +18,22 @@ Your existing draft is preserved underneath the recording surface and returns
 after transcription or cancellation. Pressing Enter during recording stops the recording;
 it does not send the transcript. Sending becomes available once transcription
 finishes. **cancel** or Escape discards the recording or pending transcription
-and keeps your typed draft. You can start recording while the places list is
-still loading; loading it does not interrupt voice input at your default cloud place.
-Switching conversations or places discards pending voice input. A late result
+and keeps your typed draft. You can start recording while the connections list is
+still loading; loading it does not interrupt voice input at Ship's home.
+Switching conversations or connections discards pending voice input. A late result
 cannot enter another conversation. If the connection drops or the tab is hidden,
 capture stops and the audio stays in the tab. Return to Chat and choose **retry
 transcription** when ready; reconnecting does not upload it automatically.
 
 Your browser records audio locally until you stop. The finished audio goes
-through your Ship's authenticated Gateway to its configured transcription
+through your Ship over an authenticated connection to its configured transcription
 provider. It is not attached to the message. Browser recordings are limited to
 25 MiB; the operator can enforce a smaller limit. If transcription fails or returns
 no speech, **retry transcription** reuses the recording held in this tab.
 **download audio** saves the original recording, and **discard recording** removes
 it. Sending or clearing typed text does not discard a finished recording awaiting
 retry. Audio is kept in memory, so retry or download it before closing or reloading
-the tab, signing out, or changing conversations or places.
+the tab, signing out, or changing conversations or connections.
 
 If microphone access is denied, allow it in the browser's site permissions and
 try again. Recording requires a browser with microphone recording support and
@@ -49,7 +49,7 @@ keeping the draft. Enter finishes the current segment, sends it, and keeps
 listening. Editing dictated text stops dictation so later partials cannot undo
 your correction.
 
-Open **Settings → voice**, or **voice settings** from the recording panel, to
+Open **Settings → Voice**, or **voice settings** from the recording panel, to
 choose your microphone, voice shortcuts and spoken replies. This section
 appears only in the Desktop app and its preferences are stored on this computer.
 The selected microphone applies to dictation and voice shortcuts. Leaving Chat
@@ -66,7 +66,7 @@ transcribed may need repeating. See
 
 ## Handsfree mode
 
-In **Settings → voice**, enable **Handsfree mode**. Keep Desktop running and
+In **Settings → Voice**, enable **Handsfree mode**. Keep Desktop running and
 signed in; you can leave any page selected and minimize the window or keep it
 behind your game or another application.
 The default talk shortcut is **Option+Space** on macOS and
@@ -78,8 +78,8 @@ stops speech and cancels recording, retaining displayed draft
 text. Starting a recording also stops the current spoken reply.
 
 The shortcut records into a separate voice draft and sends an ordinary message
-to your personal Ship. Chat's typed text, attachments and selected place stay
-untouched, including when you are viewing another process or a People conversation.
+to your Ship. Chat's typed text, attachments and selected connection stay
+untouched, including when you are viewing a helper or a People conversation.
 Starting or sending does not change pages or activate a different window.
 
 A small handsfree status panel follows you between pages while recording,
@@ -93,7 +93,7 @@ discarding it.
 
 **Read replies** can follow the voice conversation, read all new Ship replies,
 or stay off. Replies are read across pages. Sending a typed message to your
-personal Ship ends the voice conversation. Only newly
+Ship ends the voice conversation. Only newly
 committed visible replies are read; opening history or reconnecting does not
 replay earlier messages. Replies arriving while the microphone is recording
 are left in Chat without being spoken. Code blocks and tables get a short cue

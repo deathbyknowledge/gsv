@@ -26,11 +26,11 @@ days; you can cancel it before acceptance.
 On a managed deployment, the link opens a centered invitation showing who invited you.
 Choose **Continue**. Existing users select their Ship; new users verify their
 email and create one. The contact invitation stays with them through signup and
-setup. In their Ship, they choose who handles new messages and accept the connection.
+activation. In their Ship, they choose who handles new messages and accept the connection.
 Each person's choice affects only their own incoming messages. Neither person
 needs to publish a profile.
 
-The recipient can also enter a Ship address, including one hosted by another
+The recipient can also enter their handle or address, including a Ship hosted by another
 operator. This remains available if the browser cannot load or save signup state.
 Deployments without a signup service open that address form directly.
 If someone shares a link or a contact code, **I have an invitation** lets you
@@ -151,7 +151,7 @@ tab attention and your Ship chat's new-message line; it does not revoke Ship's e
 assignment.
 
 Blocking ends the connection, withdraws its attachment grants and refuses new
-messages and requests from that identity. Unblocking permits a new connection;
+messages and requests from that person. Unblocking permits a new connection;
 it does not restore the old one. Delivered messages remain in history. Both
 conversation Details and a message request's controls offer block and unblock.
 **Blocked people** keeps these controls available even after an old request expires.

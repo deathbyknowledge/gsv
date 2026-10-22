@@ -76,6 +76,15 @@ import type {
   FrameCancellationReason,
 } from "./do-shared";
 
+/** Calls that authenticate or grant credentials confirm the installation with Accounts every time. */
+const FRESH_ADMISSION_CALLS = new Set<string>([
+  "sys.connect",
+  "sys.pair.redeem",
+  "account.recovery.redeem",
+  "account.recovery.code.start",
+  "account.recovery.code.redeem",
+]);
+
 const PROCESS_REQUEST_CANCEL_TTL_MS = 60_000;
 
 const MAX_PROCESS_REQUEST_CANCELLATIONS = 1024;
@@ -213,7 +222,7 @@ async handleReq(
         frame.call !== "sys.setup"
         && frame.call !== "sys.setup.assist"
       ) {
-        const gate = await this.host.onboarding.managedWorkGate();
+        const gate = await this.host.onboarding.managedWorkGate({ fresh: FRESH_ADMISSION_CALLS.has(frame.call) });
         if (!gate.allowed) {
           this.sendError(connection, frame.id, gate.code, gate.message, gate.details);
           return;

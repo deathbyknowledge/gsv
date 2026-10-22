@@ -77,7 +77,7 @@ pub enum MachineCommand {
 }
 
 fn normalize_origin(value: &str) -> Result<String, String> {
-    let mut url = Url::parse(value).map_err(|_| "Invalid machine connection.")?;
+    let mut url = Url::parse(value).map_err(|_| "Invalid connection.")?;
     match url.scheme() {
         "wss" => {
             let _ = url.set_scheme("https");
@@ -105,7 +105,7 @@ fn invitation_identity(code: &str) -> Result<Identity, String> {
         target_id: String,
         label: String,
     }
-    let invalid = || "The saved machine invitation is invalid.".to_owned();
+    let invalid = || "The saved invitation is invalid.".to_owned();
     if code.len() > 4096 {
         return Err(invalid());
     }
@@ -132,7 +132,7 @@ fn configured_identity(config: &CliConfig) -> Result<Option<Identity>, String> {
     let Some(token) = config.device.token.as_deref() else {
         return Ok(None);
     };
-    let invalid = "The saved machine connection is incomplete.";
+    let invalid = "The saved connection is incomplete.";
     let id = config
         .device
         .id
@@ -172,7 +172,7 @@ fn pending_identity(config: &CliConfig) -> Result<Option<Identity>, String> {
             let code = pending
                 .get("code")
                 .and_then(|value| value.as_str())
-                .ok_or("The saved machine invitation is invalid.")?;
+                .ok_or("The saved invitation is invalid.")?;
             invitation_identity(code)
         })
         .transpose()
@@ -337,7 +337,7 @@ fn command_arguments(
             let expected = snapshot
                 .pending
                 .clone()
-                .ok_or("There is no unfinished machine setup.")?;
+                .ok_or("There is no unfinished connection.")?;
             Ok((
                 vec!["pair", "--preserve-cli-login", "--no-replace"],
                 None,
@@ -376,7 +376,7 @@ where
     Fut: Future<Output = Result<Snapshot, String>>,
 {
     if cancelled.has_changed().unwrap_or(true) {
-        return Err("Machine setup was cancelled.".into());
+        return Err("Connecting was cancelled.".into());
     }
     let work = async {
         loop {
@@ -400,7 +400,7 @@ where
     };
     tokio::select! {
         biased;
-        _ = cancelled.changed() => Err("Machine setup was cancelled.".into()),
+        _ = cancelled.changed() => Err("Connecting was cancelled.".into()),
         result = tokio::time::timeout(timeout, work) => result.map_err(|_| "This computer did not connect. Retry.")?,
     }
 }
@@ -431,7 +431,7 @@ async fn run_cli(
     timeout: Duration,
 ) -> Result<(), String> {
     if cancelled.has_changed().unwrap_or(true) {
-        return Err("Machine setup was cancelled.".into());
+        return Err("Connecting was cancelled.".into());
     }
     let mut command = Command::new(executable);
     command
@@ -472,25 +472,25 @@ async fn run_cli(
                 .0
                 .stdin
                 .take()
-                .ok_or("Could not deliver the machine invitation.")?;
+                .ok_or("Could not deliver the invitation.")?;
             stdin
                 .write_all(input.as_bytes())
                 .await
-                .map_err(|_| "Could not deliver the machine invitation.")?;
+                .map_err(|_| "Could not deliver the invitation.")?;
         }
         let status = child
             .0
             .wait()
             .await
-            .map_err(|_| "Could not finish machine setup.")?;
+            .map_err(|_| "Could not finish connecting this computer.")?;
         if !status.success() {
-            return Err("Could not connect this computer. Retry to finish setup.".to_owned());
+            return Err("Could not connect this computer. Retry to finish connecting.".to_owned());
         }
         Ok(())
     };
     tokio::select! {
         biased;
-        _ = cancelled.changed() => Err("Machine setup was cancelled.".into()),
-        result = tokio::time::timeout(timeout, work) => result.map_err(|_| "Connecting this computer timed out. Retry to finish setup.")?,
+        _ = cancelled.changed() => Err("Connecting was cancelled.".into()),
+        result = tokio::time::timeout(timeout, work) => result.map_err(|_| "Connecting this computer timed out. Retry to finish connecting.")?,
     }
 }

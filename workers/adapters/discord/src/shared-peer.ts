@@ -212,7 +212,7 @@ export class DiscordPeer extends DurableObject<SharedDiscordEnv> {
     return { terminal: true, responses: [{
       message: {
         deliveryId: `pair:${pairing.claimId}:${input.message.id}`, surface: { kind: "dm", id: state.dmSurfaceId! }, actorId: state.actorId,
-        text: `Connect this Discord identity to your GSV.\n\nPairing code: ${pairing.code.match(/.{4}/g)!.join("-")}\n\nOpen your GSV → Messengers → Discord, enter the code, and confirm the identity shown there. This code expires in 10 minutes.`,
+        text: `Connect your Discord account to your GSV.\n\nCode: ${pairing.code.match(/.{4}/g)!.join("-")}\n\nOpen your GSV → Messengers → Discord, enter the code, and confirm the account shown there. This code expires in 10 minutes.`,
       }, expiresAt: pairing.expiresAt, context: { kind: "pairing", claimId: pairing.claimId },
     }] };
   }

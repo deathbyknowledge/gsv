@@ -317,7 +317,7 @@ function InstrumentReady({ initialPath, handsfreeDirty }: { initialPath: string;
           <p>{t("shell.help.viewsHint")}</p>
           <dl>
             <dt>c</dt><dd>Chat</dd>
-            <dt>f</dt><dd>Fleet</dd>
+            <dt>f</dt><dd>{t("shell.help.work")}</dd>
             <dt>m</dt><dd>{t("shell.help.memory")}</dd>
             <dt>p</dt><dd>{t("shell.help.people")}</dd>
             <dt>s</dt><dd>{t("settings.title")}</dd>
@@ -358,7 +358,7 @@ function InstrumentReady({ initialPath, handsfreeDirty }: { initialPath: string;
             </dl>
           </>}
           {distance === "fleet" && <>
-            <h4>Fleet</h4>
+            <h4>{t("shell.help.work")}</h4>
             <dl>
               <dt>j / ↓</dt><dd>{t("shell.help.nextRow")}</dd>
               <dt>k / ↑</dt><dd>{t("shell.help.previousRow")}</dd>
