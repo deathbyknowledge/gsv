@@ -3,13 +3,15 @@ import type { PublicProfile } from "@humansandmachines/gsv/protocol";
 /** `homeOrigin` is the operator's own site (their primary domain); without one the wordmark stays plain. */
 export function renderPublicProfile(profile: PublicProfile, homeOrigin?: string): string {
   const documentUrl = `${profile.origin}/_gsv/federation/v2/subjects/${encodeURIComponent(profile.actor.subjectId)}`;
+  // Handles in the request form resolve only on the operator's own domain.
+  const handleDomain = homeOrigin ? new URL(homeOrigin).host : undefined;
   // The handle is the profile's name; the space's canonical host starts with it.
   const handle = `@${new URL(profile.origin).hostname.split(".")[0]}`;
   // An open profile offers the request form; a restricted one says so in the same place.
   const restricted = profile.contactPolicy === "requests"
     ? `<details class="connect" id="connect"><summary>Message from your Ship <span aria-hidden="true">↗</span></summary>
-<form data-profile="${escapeHtml(profile.url)}"><label for="your-space">Your handle</label><div class="connect-input"><input id="your-space" name="space" placeholder="@yourhandle" autocomplete="username" autocapitalize="none" spellcheck="false" required maxlength="2048"><button type="submit">open my Ship</button></div>
-<p>You’ll write your message in your Ship.</p><p class="connect-error" role="alert" hidden></p></form>
+<form data-profile="${escapeHtml(profile.url)}"${handleDomain ? ` data-handle-domain="${escapeHtml(handleDomain)}"` : ""}><label for="your-space">${handleDomain ? "Your handle" : "Your Ship address"}</label><div class="connect-input"><input id="your-space" name="space" placeholder="${handleDomain ? "@yourhandle" : "yourship.example"}" autocomplete="username" autocapitalize="none" spellcheck="false" required maxlength="2048"><button type="submit">open my Ship</button></div>
+<p>${handleDomain ? `Handles work for Ships on ${escapeHtml(handleDomain)}; for a Ship elsewhere, enter its full address. ` : ""}You’ll write your message in your Ship.</p><p class="connect-error" role="alert" hidden></p></form>
 <noscript>Copy this profile address and open People in your Ship to start a conversation.</noscript></details>`
     : `<p class="restricted" data-info-row>Message requests restricted<span class="info" tabindex="0" role="button" aria-describedby="restricted-info" aria-label="About restricted message requests"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true" focusable="false"><circle cx="8" cy="8" r="6.4" stroke="currentColor" stroke-width="1.2"/><text x="8" y="11.55" text-anchor="middle" font-size="9.5" font-weight="700" font-family="ui-sans-serif, system-ui, sans-serif" fill="currentColor" stroke="none">?</text></svg></span><span class="info-bubble" id="restricted-info" role="tooltip">${RESTRICTED}</span></p>`;
   return `<!doctype html>

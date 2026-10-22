@@ -44,7 +44,15 @@ export function Profile({ account, active, edit: editing, focusBio, onDirty, onE
   });
   const publish = useMutation({
     mutationFn: async (input: { revision: number; fields: ProfileFields | null }) => {
-      const revision = input.fields ? (await client.profile.update({ expectedRevision: input.revision, draft: input.fields })).profile.revision : input.revision;
+      let revision = input.revision;
+      if (input.fields) {
+        // Commit the saved draft before publishing: if publishing fails, the edit stays saved as
+        // unpublished changes and save can retry, instead of leaving a stale local draft.
+        const saved = (await client.profile.update({ expectedRevision: input.revision, draft: input.fields })).profile;
+        setDraft(null);
+        await refresh(saved);
+        revision = saved.revision;
+      }
       return (await client.profile.publish({ expectedRevision: revision })).profile;
     },
     onSuccess: async (state) => { setDraft(null); await refresh(state); onBack(); },

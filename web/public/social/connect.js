@@ -7,14 +7,14 @@ if (form instanceof HTMLFormElement) {
     if (!(input instanceof HTMLInputElement) || !(error instanceof HTMLElement)) return;
     try {
       const value = input.value.trim();
+      // A bare handle names a Ship on the operator's own domain; any other Ship needs its full address.
       const handle = value.replace(/^@/, "").toLowerCase();
-      const domain = location.host.split(".").slice(1).join(".");
-      const destination = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(handle) && domain
-        ? new URL(`${location.protocol}//${handle}.${domain}/`)
-        : new URL(value.includes("://") ? value : `https://${value}`);
-      if (!/^https?:$/.test(destination.protocol) || (destination.protocol === "http:" && destination.protocol !== location.protocol)
-        || destination.username || destination.password || destination.pathname !== "/" || destination.search || destination.hash) {
-        throw new Error("Enter your handle, such as @alex, or your Ship’s HTTPS address.");
+      const domain = form.dataset.handleDomain;
+      const isHandle = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(handle);
+      if (isHandle && !domain) throw new Error("Enter your Ship’s full HTTPS address.");
+      const destination = isHandle ? new URL(`https://${handle}.${domain}/`) : new URL(value.includes("://") ? value : `https://${value}`);
+      if (destination.protocol !== "https:" || destination.username || destination.password || destination.pathname !== "/" || destination.search || destination.hash) {
+        throw new Error(domain ? "Enter your handle, such as @alex, or your Ship’s full HTTPS address." : "Enter your Ship’s full HTTPS address.");
       }
       const profile = form.dataset.profile;
       if (!profile) throw new Error("This profile is unavailable.");

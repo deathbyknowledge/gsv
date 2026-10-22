@@ -26,10 +26,13 @@ describe("public profile projection serving", () => {
     const html = await response.text();
     expect(html).toContain('data-profile="https://profile.example/@person"');
     expect(html).toContain('src="/social/connect.js"');
-    expect(html).toContain('placeholder="@yourhandle"');
+    expect(html).not.toContain("data-handle-domain");
     expect(html).toContain('<span class="brand wordmark">Ship</span>');
     const linked = await (await servePublicProfileRequest(new Request(PROFILE.url), { locator: { alias: "person" }, json: false }, async () => projection, "https://ship.example")).text();
     expect(linked).toContain('<a class="brand wordmark" href="https://ship.example">Ship</a>');
+    const open = await (await servePublicProfileRequest(new Request(PROFILE.url), { locator: { alias: "person" }, json: false }, async () => ({ ...projection, profile: { ...PROFILE, contactPolicy: "requests" } }), "https://ship.example")).text();
+    expect(open).toContain('data-handle-domain="ship.example"');
+    expect(open).toContain('placeholder="@yourhandle"');
     expect(html).not.toContain("Message requests restricted");
     const restricted = await (await servePublicProfileRequest(new Request(PROFILE.url), { locator: { alias: "person" }, json: false }, async () => projection)).text();
     expect(restricted).toContain('<p class="restricted" data-info-row>Message requests restricted');
