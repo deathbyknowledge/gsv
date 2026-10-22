@@ -90,6 +90,8 @@ export function Profile({ account, active, edit: editing, focusBio, onDirty, onE
   // Without a recorded handle, the profile keeps the name it already has.
   const named = (shown: ProfileFields): ProfileFields => state?.handle ? { ...shown, displayName: state.handle } : shown;
   const title = state ? (state.handle ? `@${state.handle}` : state.draft.displayName) : "";
+  // A stored name that predates the handle still needs saving, even without other edits.
+  const renamePending = !!state?.handle && state.draft.displayName !== state.handle;
   const policyLabel = (policy: ProfileFields["contactPolicy"]) => t(policy === "requests" ? "people.profile.policyRequests" : "people.profile.policyInvitation");
   const status = state && <p role="status" class="people-note">{state.published ? rich(t("people.profile.publishedAt"), { link: <a href={state.published.url} target="_blank" rel="noopener noreferrer">{state.published.url}</a> }) : t("people.profile.private")}</p>;
   const copyAddress = state && <span class="people-profile-handle">
@@ -135,7 +137,9 @@ export function Profile({ account, active, edit: editing, focusBio, onDirty, onE
       {status}
       <form class="people-form" onSubmit={(event) => {
         event.preventDefault();
-        if (valid && editable && canPublish && !stale && (draft || !live)) publish.mutate({ revision: draft?.revision ?? state.revision, fields: draft ? named(draft.fields) : null });
+        if (valid && editable && canPublish && !stale && (draft || !live || renamePending)) {
+          publish.mutate({ revision: draft?.revision ?? state.revision, fields: draft ? named(draft.fields) : renamePending ? named(state.draft) : null });
+        }
       }}>
         <TextArea label={t("people.profile.about")} value={fields.about} maxLength={2048} rows={4} disabled={!editable} placeholder={t("people.profile.emptyBio")}
           onChange={(about) => edit({ about })} textareaProps={{ ref: bio }} />
@@ -147,7 +151,7 @@ export function Profile({ account, active, edit: editing, focusBio, onDirty, onE
         {stale && <p class="people-error">{t("people.profile.stale")}</p>}
         <div class="people-actions">
           <span {...noteFor("save")}>
-            <Button type="submit" variant="primary" aria-describedby="people-profile-save-note" disabled={!editable || !canPublish || !valid || stale || (!dirty && live)} label={publish.isPending ? t("common.saving") : t("people.profile.save")} />
+            <Button type="submit" variant="primary" aria-describedby="people-profile-save-note" disabled={!editable || !canPublish || !valid || stale || (!dirty && live && !renamePending)} label={publish.isPending ? t("common.saving") : t("people.profile.save")} />
           </span>
           <span {...noteFor("draft")}>
             <Button variant="secondary" aria-describedby="people-profile-save-note" disabled={!editable || !valid || !dirty || stale} label={save.isPending ? t("common.saving") : t("people.profile.saveDraft")} onClick={() => { if (draft) save.mutate({ ...draft, fields: named(draft.fields) }); }} />
