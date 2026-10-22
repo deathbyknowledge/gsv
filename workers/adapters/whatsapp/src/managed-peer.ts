@@ -205,9 +205,8 @@ export class ManagedWhatsAppPeer extends DurableObject<ManagedWhatsAppPeerEnv> {
   async quiesceInstallation(input: InstallationDeletionRequest) {
     const receipt = await this.lifecycle.quiesce(input);
     // A retired route can no longer stop its run's 👀, so quiescence clears it like a relink.
-    if (!(await this.ctx.storage.get<ManagedWhatsAppPeerState>(STATE_KEY))?.activeRoute) {
-      await this.clearWorkingReactionAfterRouteChange();
-    }
+    // The cleanup keeps a 👀 owned by whichever route is still active.
+    await this.clearWorkingReactionAfterRouteChange();
     return receipt;
   }
   async eraseInstallation(input: InstallationDeletionRequest) { return await this.lifecycle.erase(input); }
