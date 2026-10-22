@@ -36,6 +36,16 @@ function running(process: Process, runId: string, ...dispatchIds: string[]): voi
   }
 }
 
+/** Registers shell calls a running CodeMode program has in flight under its owning tool call. */
+function nested(process: Process, runId: string, ownerDispatchId: string, ...requestIds: string[]): void {
+  for (const id of requestIds) {
+    process.codeModeResponses.set(id, {
+      runId, ownerDispatchId, call: "shell.exec", args: {},
+      resolve: () => {}, reject: () => {}, timeoutId: setTimeout(() => {}, 0),
+    });
+  }
+}
+
 describe("staged reply files", () => {
   afterEach(() => { vi.restoreAllMocks(); });
 
@@ -66,6 +76,45 @@ describe("staged reply files", () => {
         "a message went to contact:friend without files while this attach was running",
       );
       expect(process.runs.active?.outputMedia).toBeUndefined();
+    });
+  });
+
+  it("refuses an attach that ran alongside a send elsewhere in the same CodeMode program", async () => {
+    const stub = await initProcess("run-staged-codemode", ROOT_IDENTITY);
+    const resource = await photo(stub);
+    await runInProcess(stub, async (process: Process) => {
+      process.runs.active = { runId: "run-photo" };
+      running(process, "run-photo", "call-codemode");
+      nested(process, "run-photo", "call-codemode", "codemode-attach", "codemode-send");
+      expect(await process.recvFrame(staged("run-photo", "codemode-send"))).toMatchObject({ ok: true, data: { ok: true, count: 0 } });
+      const refused = await process.recvFrame(attach("run-photo", "codemode-attach", [resource]));
+      expect(refused).toMatchObject({ ok: true, data: { ok: false } });
+      expect(process.runs.active?.outputMedia).toBeUndefined();
+    });
+  });
+
+  it("refuses an attach from one CodeMode program while another sends elsewhere", async () => {
+    const stub = await initProcess("run-staged-codemode-pair", ROOT_IDENTITY);
+    const resource = await photo(stub);
+    await runInProcess(stub, async (process: Process) => {
+      process.runs.active = { runId: "run-photo" };
+      running(process, "run-photo", "call-codemode-a", "call-codemode-b");
+      nested(process, "run-photo", "call-codemode-a", "codemode-attach");
+      nested(process, "run-photo", "call-codemode-b", "codemode-send");
+      await process.recvFrame(staged("run-photo", "codemode-send"));
+      expect(await process.recvFrame(attach("run-photo", "codemode-attach", [resource]))).toMatchObject({ ok: true, data: { ok: false } });
+    });
+  });
+
+  it("reports a CodeMode attach that staged first to the send that follows", async () => {
+    const stub = await initProcess("run-staged-codemode-first", ROOT_IDENTITY);
+    const resource = await photo(stub);
+    await runInProcess(stub, async (process: Process) => {
+      process.runs.active = { runId: "run-photo" };
+      running(process, "run-photo", "call-codemode");
+      nested(process, "run-photo", "call-codemode", "codemode-attach", "codemode-send");
+      expect(await process.recvFrame(attach("run-photo", "codemode-attach", [resource]))).toMatchObject({ ok: true, data: { ok: true } });
+      expect(await process.recvFrame(staged("run-photo", "codemode-send"))).toMatchObject({ ok: true, data: { ok: true, count: 1 } });
     });
   });
 

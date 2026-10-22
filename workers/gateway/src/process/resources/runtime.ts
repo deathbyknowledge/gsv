@@ -969,7 +969,12 @@ export class ProcessResources {
       if (!run || run.runId !== args.runId) return { ok: true, count: 0 };
       const count = run.outputMedia?.length ?? 0;
       if (count > 0 || !args.requestId) return { ok: true, count };
-      const running = this.host.store.tools.pendingDispatchIds(run.runId);
+      // A CodeMode program's shell calls carry their own request ids, so its
+      // in-flight calls are fenced alongside the run's tool calls.
+      const running = [
+        ...this.host.store.tools.pendingDispatchIds(run.runId),
+        ...[...this.host.codeModeResponses].filter(([, waiter]) => waiter.runId === run.runId).map(([id]) => id),
+      ];
       const fenced = new Set(running);
       run.stagingFences = [
         ...(run.stagingFences ?? []).filter((item) => fenced.has(item.dispatchId)),
