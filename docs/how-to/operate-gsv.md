@@ -104,8 +104,8 @@ verification mail is independent of a Ship's messaging adapters.
 ## Check on a Ship
 
 Each Ship's administration page shows its handle, mail address, hostnames and
-lifecycle state. It also shows the owner's email, masked, and their sign-in
-methods. When Accounts has the `OPERATOR_GATEWAY` binding, the page adds the
+lifecycle state. It also shows the owner's full email, as a `mailto:` link,
+and their sign-in methods. When Accounts has the `OPERATOR_GATEWAY` binding, the page adds the
 Ship's health and a timeline of its recent runs. Health covers the Ship's state,
 queue, approvals, open work, linked messengers and online devices. Each run
 shows its origin, input length, duration and outcome, and its steps flag

@@ -78,7 +78,7 @@ describe("Ship page", () => {
     expect(list).toContain('value="restricted"');
   });
 
-  it("shows the owner masked with sign-in methods, the mail address and every live hostname", async () => {
+  it("shows the owner's email with sign-in methods, the mail address and every live hostname", async () => {
     const ships = stack();
     const { http, service } = ships;
     const installationId = await createShip(http, service, "valent");
@@ -101,8 +101,8 @@ describe("Ship page", () => {
     ]);
 
     const body = await page(http, `/admin/installations/${installationId}`);
-    expect(body).toContain("v••••@example.org");
-    expect(body).not.toContain("valentin@example.org");
+    // Operators contact owners from this page, so it shows the whole address.
+    expect(body).toContain('<a class="select-all" href="mailto:valentin@example.org">valentin@example.org</a>');
     expect(body).toContain("email");
     expect(body).toContain("accounts.google.com");
     expect(body).toContain("valent@ship.space");

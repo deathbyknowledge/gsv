@@ -16,7 +16,7 @@ export const AUDIT_PAGE_SIZE = 50;
 const REASON_MAX_LENGTH = 500;
 
 export type ShipOwner = {
-  /** Masked; the operator pages never show a full owner address. */
+  /** Shown in full: operators contact owners from the Ship page. */
   email: string | null;
   operatorIssued: boolean;
   signIn: string[];
@@ -109,7 +109,7 @@ export class ShipInsight {
     const operatorIssued = !owner || owner.primary_email.endsWith("@gsv.invalid");
     return {
       owner: {
-        email: owner && !operatorIssued ? maskEmail(owner.primary_email) : null,
+        email: owner && !operatorIssued ? owner.primary_email : null,
         operatorIssued,
         signIn: signIn.results.map((row) => signInLabel(row.method)),
       },
@@ -192,12 +192,6 @@ export class OperatorAuditLog {
       })),
     };
   }
-}
-
-export function maskEmail(email: string): string {
-  const at = email.lastIndexOf("@");
-  if (at < 1) return "••••";
-  return `${email[0]}••••${email.slice(at)}`;
 }
 
 function signInLabel(method: string): string {

@@ -170,6 +170,7 @@ const ADMIN_STYLES = `
 :root { color: #e8e8ef; background: #09090d; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; color-scheme: dark; }
 body { min-width: 320px; min-height: 100vh; margin: 0; }
 a { color: #b9b6ff; }
+.select-all { user-select: all; }
 .topbar { min-height: 62px; display: flex; align-items: center; gap: 30px; padding: 0 28px; border-bottom: 1px solid #292932; }
 .brand { display: flex; align-items: center; gap: 14px; color: inherit; text-decoration: none; }
 .brand strong { letter-spacing: .12em; } .brand span, .topbar small { color: #858593; }

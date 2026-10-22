@@ -144,7 +144,9 @@ function identityPanel(installation: AdminInstallation, context?: ShipContext): 
   const owner = context
     ? context.owner.operatorIssued
       ? "Not linked (issued by an operator)"
-      : `${escapeHtml(context.owner.email ?? "Unknown")}${context.owner.signIn.length ? ` <small>${context.owner.signIn.map(escapeHtml).join(", ")}</small>` : ""}`
+      : `${context.owner.email
+        ? `<a class="select-all" href="mailto:${escapeHtml(context.owner.email)}">${escapeHtml(context.owner.email)}</a>`
+        : "Unknown"}${context.owner.signIn.length ? ` <small>${context.owner.signIn.map(escapeHtml).join(", ")}</small>` : ""}`
     : "";
   return `<section class="panel"><p class="eyebrow">IDENTITY</p><h2>Ship details</h2>
     <dl class="definition-list">
