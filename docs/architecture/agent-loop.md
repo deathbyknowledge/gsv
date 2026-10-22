@@ -99,23 +99,24 @@ this order:
 1. **System context** from `config/ai/context.d/*.md`.
 2. **Home context** from `~/context.d/*.md`, backed by the user's ripgit home
    repository with R2 fallback.
-3. **Available skills** from layered `skills.d` directories. This is a compact
-   command-oriented index only; full `SKILL.md` bodies are read explicitly with
-   `skills show <skill>`.
+3. **Available skills** from the built-in `/sys/skills.d` and layered home
+   `skills.d` directories. This is a compact command-oriented index only; full
+   `SKILL.md` bodies are read explicitly with `skills show <skill>`.
 
-Skill discovery reads the owning user's home `skills.d` and the run-as agent's
-home `skills.d` when that account is distinct from the owner.
+Skill discovery reads the read-only built-in skills, then the owning user's
+home `skills.d`, then the run-as agent's home `skills.d` when that account is
+distinct from the owner.
 The prompt uses a configurable compact skill index (`summary`, `names`, or
 `off`) and tells processes to start unfamiliar work with
 `man --search -- '<plain-language goal>'`. That live search returns exact next
 actions such as `skills show`; long source paths and full skill bodies are not
 embedded in standing context.
 
-System-provided skills are bundled into the gateway and seeded into user home
-`skills.d` during bootstrap. Before prompt skill discovery, the gateway restores
-any missing built-in paths while preserving existing files.
-This includes the `contacts` workflow for invitations and contact messaging:
-existing accounts receive it on their next AI configuration load, without a reset.
+Built-in skills are bundled into the gateway and served read-only at
+`/sys/skills.d` to every process, so a deployment updates them everywhere at
+once. Their names are reserved. Before prompt skill discovery, the gateway
+removes earlier copies of built-in skills from the homes the process reads, once
+per account and Kernel lifetime; an edited copy is kept under a new name.
 
 The rendered standing prompt belongs to the live context epoch and may be reused
 across ordinary runs. Resolved model config, tool list, and approval policy are run

@@ -253,6 +253,12 @@ unavailable when the installation has no mailbox.
 Other configurable sources cover federation ingress, new contacts, new machines,
 connected adapters, and adapter authentication loss.
 
+`skills list` shows the built-in skills, served read-only from `/sys/skills.d`,
+before the owner's and the agent's own. `skills create` writes to the current
+account's `~/skills.d` and refuses a built-in name. `man --search` ranks a
+command or workflow by what it says about itself; words that appear only in a
+skill's body add little, so a long skill does not outrank a matching command.
+
 `message search "words"` searches retained conversation messages saved after search was
 enabled, including those later archived, and defaults to Ship. Older search entries
 are removed as the conversation database approaches its storage budget; their original

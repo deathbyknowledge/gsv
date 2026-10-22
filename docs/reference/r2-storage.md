@@ -30,11 +30,11 @@ The native `fs.*` and `shell.exec` handlers use `GsvFs`, a Linux-like virtual fi
 
 | Path | Backing Store | Notes |
 |---|---|---|
-| `/sys/*`, `/proc/*`, `/dev/*` | Kernel SQLite and live registries | Virtual control-plane files. |
+| `/sys/*`, `/proc/*`, `/dev/*` | Kernel SQLite and live registries | Virtual control-plane files. `/sys/skills.d` serves the built-in skills from the gateway bundle, read-only. |
 | `/etc/passwd`, `/etc/shadow`, `/etc/group` | Kernel auth tables | Overlaid on top of regular `/etc` storage. |
 | `/home` | Account-home namespace | Virtual ancestor that exists without an R2 marker and lists only account homes the caller may manage. |
 | `~/context.d/*` | ripgit home repo, with R2 fallback | Account context. Human account context is shared with its owned agents; agent account context is role-local. |
-| `~/skills.d/*` | ripgit home repo, with R2 fallback | Reusable process skills layered from the owner and run-as agent. |
+| `~/skills.d/*` | ripgit home repo, with R2 fallback | Reusable process skills layered after the built-ins, from the owner and run-as agent. |
 | `/src/repos/{human}/personal/*` | ripgit Personal wiki repo | Human-owned durable personal memory shared by all owned agents. |
 | Other home files | R2 | Stored as ordinary objects with uid/gid/mode metadata. |
 | `/src/repos/{owner}/{repo}` | ripgit repo | Visible source repositories. Each writable filesystem mutation creates an immediate ripgit commit. |
@@ -115,8 +115,9 @@ ripgit stores versioned content. It is used anywhere history, diffs, search, or 
 | Registered source repos, for example `{owner}/{repo}` | repository config | `/src/repos/{owner}/{repo}`, `repo.*`, `rgit` | Source inspection and generic repo operations. |
 | `{username}/{workspaceId}` | `workspaceRepoRef(workspaceId, username)` | `/workspaces/{workspaceId}` | Task workspace files and checkpoints. |
 
-The gateway bundle contains the built-in skills. Bootstrap copies those files
-into user home repos under `skills.d/` when they are missing.
+The gateway bundle contains the built-in skills and serves them at
+`/sys/skills.d`; nothing copies them into home repos. Copies left by earlier
+releases are removed from a home when its process next loads a prompt.
 
 Workspace repos contain normal versioned task files. Process transcript
 archives live under the run-as agent's home rather than in workspace metadata.
