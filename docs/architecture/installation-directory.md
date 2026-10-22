@@ -63,6 +63,12 @@ inference, Process ticks, and schedules. Suspending an installation does not
 erase data or recursively cancel work already admitted; durable work
 rechecks the gate before new admission and may resume after reactivation.
 
+Accounts also holds an operator binding to the Gateway for the Ship health
+view in administration. The Gateway resolves the installation through the
+directory first and answers only for an active or suspended Ship, so the view
+never allocates Kernel state. Its answer is validated against a public contract
+that carries counts, times, names and outcomes, never content.
+
 All deployments require directory resolution; a missing directory binding fails
 closed. Historical standalone data remains outside
 current routing; see the [retirement guide](../how-to/standalone-retirement.md).

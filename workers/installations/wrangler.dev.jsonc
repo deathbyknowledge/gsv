@@ -42,6 +42,14 @@
       "props": {
         "authority": "installation-owner-recovery"
       }
+    },
+    {
+      "binding": "OPERATOR_GATEWAY",
+      "service": "gsv-gateway-dev",
+      "entrypoint": "OperatorGatewayEntrypoint",
+      "props": {
+        "authority": "installation-operator"
+      }
     }
   ]
 }

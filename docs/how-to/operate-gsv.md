@@ -82,6 +82,19 @@ choose **set up recovery**. This binds current root authorization to the verifie
 email. The owner can then see the Ship in **My Ships** and start administrator
 recovery there if needed.
 
+## Check on a Ship {#check-on-a-ship}
+
+Each Ship in administration shows its health from the Ship itself: the
+personal process state, queued input, pending approvals, open responsibilities,
+queued Ship events, linked messengers, connected devices and the most recent
+runs with each step's duration and outcome. Administration reads this through
+a deployment-owned binding to the Gateway that only Accounts holds, and only for
+a Ship the directory lists as active or suspended.
+
+The health view is metadata only: counts, times, tool and model names, and
+outcomes. It never includes message text, tool arguments or output, prompts,
+file contents, or the identifiers of people a Ship talks to on a messenger.
+
 The sending address must be enabled with the provider and its DNS records
 verified before codes can be delivered. The public deployment creates and
 preserves the owner-authentication secret. Keep the deployment state on

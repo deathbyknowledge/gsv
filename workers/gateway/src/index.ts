@@ -60,6 +60,7 @@ export { Conversation } from "./conversation/do";
 export { GatewayLifecycleEntrypoint } from "./installation/deletion-entrypoint";
 export { GatewayRecoveryEntrypoint } from "./installation/recovery-entrypoint";
 export { InstancesGatewayEntrypoint } from "./installation/instances-entrypoint";
+export { OperatorGatewayEntrypoint } from "./installation/operator-entrypoint";
 
 export default {
   async fetch(request, env): Promise<Response> {

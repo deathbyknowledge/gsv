@@ -1,4 +1,5 @@
 import type { TelemetryEnvironment } from "@humansandmachines/gsv/telemetry";
+import type { OperatorSnapshotEnvironment } from "./operator-environment";
 import { WorkerEntrypoint } from "cloudflare:workers";
 import { configuredDomainAliases, configuredOriginAliases } from "@humansandmachines/gsv/services/deployment";
 import type { InstallationDirectoryResult, InstallationDirectoryService } from "@humansandmachines/gsv/services/directory";
@@ -23,7 +24,7 @@ import { createAccountsDeletionRuntime } from "./deletion-runtime";
 import { configuredDeletionEnvironment, type DeletionResourceEnvironment } from "./deletion-verifier";
 export { InstallationOwnershipEntrypoint } from "./owner-service";
 
-export default class InstallationService extends WorkerEntrypoint<Env & InstallationOwnerEnvironment & DeletionResourceEnvironment & TelemetryEnvironment>
+export default class InstallationService extends WorkerEntrypoint<Env & InstallationOwnerEnvironment & DeletionResourceEnvironment & TelemetryEnvironment & OperatorSnapshotEnvironment>
   implements InstallationDirectoryService, InstallationOnboardingService {
   async scheduled(): Promise<void> {
     await cleanExpiredOwnerAuthentication(this.env);
