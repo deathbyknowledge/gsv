@@ -46,6 +46,7 @@ import {
   handleProcObserve,
   handleProcSpawn,
   forwardToProcess,
+  ProcessRequestError,
 } from "./proc-handlers";
 import { handleAccountCreate, handleAccountList } from "./agents";
 import { handleSysConfigGet, handleSysConfigSet } from "./sys/config";
@@ -913,6 +914,9 @@ async function dispatchKernel(
   } catch (err) {
     if (ctx.requestSignal?.aborted) {
       return errFrame(frame.id, 499, requestCancelMessage(ctx.requestSignal));
+    }
+    if (err instanceof ProcessRequestError) {
+      return { type: "res", id: frame.id, ok: false, error: err.error };
     }
     const message = err instanceof Error ? err.message : String(err);
     return errFrame(frame.id, 500, message);

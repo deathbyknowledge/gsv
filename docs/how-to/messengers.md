@@ -2,12 +2,12 @@
 
 Once a messenger is connected, you can talk to Ship from it just like you do on the desktop — anything you can ask Ship, you can ask from anywhere.
 
-Ship's messenger support is extensible. This page documents the messengers
-bundled with the current release; it is not a complete list of the messengers
-Ship can support.
+Messengers are extensible. This page documents the messengers bundled with the
+current release; it is not a complete list of messaging apps Ship can connect.
 
 Your deployment operator enables the Telegram, Slack, Discord, and WhatsApp
-apps offered in **Messengers**. You connect your account with a short-lived code.
+apps offered in **Messengers**. You connect your account on that messenger with
+a short-lived code.
 You do not need to create a bot or paste its token into your Ship.
 
 ## Ask Ship to connect
@@ -29,17 +29,16 @@ You can also connect through **Settings → Messengers**, using the steps below.
 
 1. In Ship, open **Messengers → Telegram** and use the link to open the official
    Ship bot.
-2. Send the bot any private message. It replies with a short-lived
-   code.
+2. Send the bot any private message. It replies with a short-lived code.
 3. Enter that code back in Ship. Ship shows the Telegram display name, handle,
    and numeric ID that requested it.
 4. Confirm only if that is your Telegram account. The code alone cannot choose
-   a Ship or user; your signed-in session supplies both.
+   an installation or user; the signed-in Ship session supplies both.
 5. Send another message in Telegram. It reaches the same Ship conversation
    you use in Ship, without selecting a helper.
 
-If the Telegram account was connected to another Ship, requesting or inspecting a
-code does not interrupt it. The route moves only after confirmation succeeds.
+If your Telegram account was connected to another Ship, requesting or inspecting
+a code does not interrupt it. The route moves only after confirmation succeeds.
 Use **Disconnect** on the connected account to revoke it.
 
 Try it from your phone, away from your desk: *What's on my Mac's clipboard?*
@@ -47,16 +46,15 @@ Try it from your phone, away from your desk: *What's on my Mac's clipboard?*
 ### Commands
 
 ```
-/where                          show SHIP or the selected WORK SESSION
+/where                          show SHIP or the selected HELPER
 /ship                           return this direct message to Ship
 ```
 
-Ask Ship when you want a direct line to one piece of its
-work. It selects the helper internally, confirms what will receive the
-next message, and remains your Ship. The current answer still
-comes from Ship; later messages go to the visibly labeled helper
-until you enter `/ship`. Returning to Ship also gives Ship a
-small event naming the helper, without copying its transcript.
+Ask Ship when you want a direct line to one of its helpers. It selects the
+helper internally, confirms what will receive the next message, and remains
+your Ship. The current answer still comes from Ship; later messages use the
+visibly labeled helper until you enter `/ship`. Returning to Ship also gives it
+a small event naming the helper, without copying its transcript.
 
 When a direct-message approval is pending, copy one of the full commands shown
 in that prompt. Each includes a unique `hil[...]` token; do not omit it or reuse
@@ -70,14 +68,14 @@ a command from an older prompt.
 3. Mention `@GSV` in a channel, or send the app a direct message. Ship sends a
    short-lived code to your Slack direct messages.
 4. Enter the code back in Ship. Check the Slack user ID shown before confirming.
-5. Confirm only if it is your Slack account. The code itself cannot select a
-   Ship or local user; your signed-in session supplies both.
+5. Confirm only if it is your Slack account. The code itself cannot select an
+   installation or local user; the signed-in Ship session supplies both.
 6. Mention `@GSV` again to start a conversation. In a channel, replies remain
    in the originating thread. The first mention only requested the code and is
    not replayed to Ship.
 
-The app installation belongs to the Slack workspace, while the connection belongs
-to one human author. If Alice and Bob use the same workspace, each connects
+The app installation belongs to the Slack workspace, while the connection
+belongs to one person. If Alice and Bob use the same workspace, each connects
 separately and each author's mentions keep routing to their own Ship. Making
 Alice and Bob Contacts does not change that default Slack route. Either Ship
 can still contact the other explicitly through Ship's normal federation model.
@@ -90,7 +88,7 @@ succeeds; delayed messages and replies from the old connection are rejected.
 Slack supports incoming files and Ship resource attachments in addressed messages.
 With personal Slack authorization, the connected workspace can also appear as a
 read-only filesystem and command target. The operator-owned app performs writes;
-your personal OAuth token determines read visibility. See the Slack adapter
+your personal OAuth token determines read visibility. See the Slack messenger's
 README in the source tree for configuration and target details.
 
 ## Discord
@@ -98,12 +96,12 @@ README in the source tree for configuration and target details.
 1. Open **Messengers → Discord** in the Ship you want to connect.
 2. Use the operator application's install link if the bot is not already in the
    intended server, or open a direct message with it.
-3. Mention the bot with `pair`, or message it privately. It sends a private code.
-4. Enter the code in Ship, inspect the Discord account, and confirm it.
+3. Mention the bot with `connect`, or message it privately. It sends a private code.
+4. Enter the code in Ship, check the Discord account shown, and confirm it.
 5. Send another DM or server mention to start a conversation.
 
-Installing the bot does not connect everyone in a server. Each person connects their
-own account, and a server route is separate from a direct-message route. Two
+Installing the bot does not connect everyone in a server. Each person connects
+their own account, and a server route is separate from a direct-message route. Two
 people in the same server can use different Ships. Replies remain bound to the
 confirmed author and observed destination.
 
@@ -127,11 +125,11 @@ You can send text, photos, documents, voice notes, videos, and locations. Ship
 replies with text and attachments, and a long reply arrives as several
 messages, one per prose paragraph. Headings stay with the following block;
 code blocks, lists, tables and quotations stay together. Approval
-prompts arrive with reply buttons; the decision comes back as a reply quoting
-the prompt.
+prompts arrive with **Allow once**, **Always allow** and **Block** buttons; the
+decision comes back as a reply quoting the prompt.
 
 Markdown document uploads keep their `.md` filename and original contents;
-Ship uploads them as plain text because Meta does not accept
+the WhatsApp messenger uploads them as plain text because Meta does not accept
 the Markdown MIME type.
 
 WhatsApp accepts a free-form message from Ship only within 24 hours of your last
@@ -150,7 +148,7 @@ before out-of-window messages can be sent. It uses one body parameter and a
 quick-reply button labelled **Show me**. `WHATSAPP_TEMPLATE_NAME` and
 `WHATSAPP_TEMPLATE_LANGUAGE` select the template; an empty name disables it.
 Meta determines its category and bills each template accordingly. See the
-WhatsApp adapter README's "Message templates" section for the exact contract.
+WhatsApp messenger README's "Message templates" section for the exact contract.
 
 Availability depends on the operator's Meta account and the current terms for
 this use of the WhatsApp Business Platform. Ask your operator whether the
@@ -166,8 +164,8 @@ instead. The operator sets `WHATSAPP_UNREACHABLE_CALLING_CODES` when Meta's
 record for the account differs from the number's country, or empties it once
 Meta has unlocked cross-border messaging.
 
-The earlier linked-device WhatsApp messenger, which connected by scanning a QR code, is no
-longer bundled, and its connections do not carry over.
+The earlier linked-device messenger, which connected by scanning a QR code, is
+no longer bundled, and its connections do not carry over.
 
 ## Disconnect or switch Ships {#disconnect-or-change-a-space}
 

@@ -43,17 +43,17 @@ describe("renderAdapterSend", () => {
     expect(rendered.message.text.length).toBeLessThan(2_000);
     expect(rendered.message.text).not.toContain("\u202e");
     expect(rendered.message.text).toContain("…");
-    expect(rendered.message.text).toContain("Open Chat to approve or deny");
+    expect(rendered.message.text).toContain("Open Chat to allow or block");
     expect(rendered.message.text).not.toContain("request-1");
     expect(rendered.message.text).not.toContain("hil[");
 
     const presentation = createAdapterHilPresentation(context, request);
     const nativePrompt = renderAdapterHilPrompt(presentation, "native");
-    const resolved = renderAdapterHilResolution(presentation, "Approved once.");
-    expect(nativePrompt).toContain("[WORK SESSION] I need your confirmation");
+    const resolved = renderAdapterHilResolution(presentation, "Allowed once.");
+    expect(nativePrompt).toContain("[HELPER] I need your confirmation");
     expect(nativePrompt).not.toContain("Open Chat");
-    expect(resolved).toContain("[WORK SESSION] Approved once.");
-    expect(resolved).toContain("Run a command in your cloud home.");
+    expect(resolved).toContain("[HELPER] Allowed once.");
+    expect(resolved).toContain("Run a command in Ship's home.");
     expect(resolved).not.toContain("I need your confirmation");
   });
 

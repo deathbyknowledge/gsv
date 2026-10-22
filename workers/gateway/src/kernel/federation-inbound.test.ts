@@ -1,5 +1,5 @@
 import { env } from "cloudflare:workers";
-import { evictDurableObject, runInDurableObject } from "cloudflare:test";
+import { evictDurableObject, reset, runInDurableObject } from "cloudflare:test";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   jsonValueSchema,
@@ -123,7 +123,10 @@ describe("federation inbound boundary", () => {
     recipientSubjectId = state.recipientSubjectId;
   });
 
-  afterEach(() => {
+  afterEach(async () => {
+    // Responsibility alarms belong to this test's Kernel, not the next test's mocks.
+    await reset();
+    await vi.dynamicImportSettled();
     vi.restoreAllMocks();
   });
 

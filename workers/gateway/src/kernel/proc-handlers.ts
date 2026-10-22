@@ -6,7 +6,7 @@
  * proc.send/kill/history/reset — forwarded to the Process DO via recvFrame.
  */
 
-import type { FrameBody, RequestFrame, ResponseFrame } from "../protocol/frames";
+import type { FrameBody, FrameError, RequestFrame, ResponseFrame } from "../protocol/frames";
 import { resolveEffectiveAiModelStack } from "./ai";
 import { createProcessAiConfig, processAiConfigInputError } from "../process/ai-config";
 import type { ArgsOf, ResultOf, SyscallName } from "../syscalls";
@@ -55,6 +55,13 @@ type ForwardedProcessResult = {
   data?: ResultOf<SyscallName>;
   body?: FrameBody;
 };
+
+/** Preserve a Process request's protocol error through the Kernel dispatcher. */
+export class ProcessRequestError extends Error {
+  constructor(readonly error: FrameError) {
+    super(error.message);
+  }
+}
 
 export function handleProcList(
   args: ProcListArgs,
@@ -756,7 +763,7 @@ export async function forwardToProcess(
   const callerOwnerUid = resolveCallerOwnerUid(ctx);
   if (frame.call === "proc.hil" && (identity.kind !== "human" || ctx.processId
     || !["credential", "adapter-link"].includes(ctx.peer?.provenance.kind ?? ""))) {
-    throw new Error("Permission denied: approval requires a human interaction");
+    throw new ProcessRequestError({ code: 403, message: "Permission denied: approval requires a human interaction", retryable: false });
   }
   // SAFETY: dispatch routes only Process-targeting calls here, whose syscall
   // arguments all use the shared optional `pid` target field.
@@ -764,22 +771,22 @@ export async function forwardToProcess(
   // A process can omit its own pid. External callers must select one explicitly.
   const pid = args.pid ?? ctx.processId;
   if (!pid) {
-    throw new Error(`${frame.call} requires pid outside a process`);
+    throw new ProcessRequestError({ code: 400, message: `${frame.call} requires pid outside a process`, retryable: false });
   }
 
   const proc = ctx.procs.get(pid);
   if (!proc) {
-    throw new Error(`Process not found: ${pid}`);
+    throw new ProcessRequestError({ code: 404, message: `Process not found: ${pid}`, retryable: false });
   }
 
   if (proc.ownerUid !== callerOwnerUid && identity.account.uid !== 0) {
-    throw new Error(`Permission denied: cannot access process ${pid}`);
+    throw new ProcessRequestError({ code: 403, message: `Permission denied: cannot access process ${pid}`, retryable: false });
   }
 
   const ownedCall = frame.call === "codemode.run" || frame.call === "proc.history.compact";
   const owner = ownedCall && pid === ctx.processId ? nestedToolOwner(ctx) : undefined;
   if (frame.call === "codemode.run" && nestedToolOwner(ctx) && pid !== ctx.processId) {
-    throw new Error("Agent CodeMode execution must belong to its calling process");
+    throw new ProcessRequestError({ code: 403, message: "Agent CodeMode execution must belong to its calling process", retryable: false });
   }
   const processFrame = ownedCall
     ? { ...frame, toolOwner: owner }
@@ -871,7 +878,7 @@ export async function forwardToProcess(
         ctx.ipcCalls.cancelBySourcePid({ uid: proc.ownerUid, sourcePid: pid });
         reconcileKilledProcess(proc.ownerUid, pid, ctx);
       }
-      throw new Error(response.error.message);
+      throw new ProcessRequestError(response.error);
     }
   }
 

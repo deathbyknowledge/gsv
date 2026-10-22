@@ -28,13 +28,16 @@ export function ZenDraftAttachment({ attachment, onRemove, disabled }: { attachm
 const PASTE_PREVIEW_CHARACTERS = 280;
 
 /** Long pasted text as a chip: its size stands in for the text, and hovering shows how it begins. */
-export function ZenDraftPaste({ paste, onRemove, disabled }: { paste: ZenPaste; onRemove?: () => void; disabled?: boolean }) {
+export function ZenDraftPaste({ paste, onRemove, onChange, disabled }: { paste: ZenPaste; onRemove?: () => void; onChange?: (text: string) => void; disabled?: boolean }) {
   const t = useT();
   const preview = paste.text.length > PASTE_PREVIEW_CHARACTERS ? `${paste.text.slice(0, PASTE_PREVIEW_CHARACTERS)}…` : paste.text;
   return <li class="zen-draft-attachment" title={preview}>
     <details class="zen-paste-preview">
       <summary class="file-name">{t("chat.media.pasted")}<small>{t("chat.media.characters", { count: paste.characters, characters: paste.characters.toLocaleString("en-US") })}</small></summary>
-      <pre>{paste.text}</pre>
+      {onChange
+        ? <textarea value={paste.text} aria-label={t("chat.media.editPasted")} spellcheck={false} disabled={disabled}
+          onInput={(event) => onChange(event.currentTarget.value)} onKeyDown={(event) => event.stopPropagation()} />
+        : <pre>{paste.text}</pre>}
     </details>
     {onRemove && <button type="button" onClick={onRemove} disabled={disabled} aria-label={t("chat.media.removePasted")}>×</button>}
   </li>;

@@ -45,7 +45,7 @@ describe("WhatsApp approval buttons", () => {
   it("renders at most three short reply buttons bound to one persisted token", async () => {
     const controls = await prepareWhatsAppApproval(storage(), describeWhatsAppApproval(CONTEXT, REQUEST));
     expect(controls).not.toBeNull();
-    expect(controls!.text).toContain("Run a command in your cloud home.\n\"date\"");
+    expect(controls!.text).toContain("Run a command in Ship's home.\n\"date\"");
     expect(controls!.buttons).toHaveLength(3);
     expect(controls!.buttons.every((button) => [...button.title].length <= 20)).toBe(true);
     expect(controls!.buttons.map((button) => button.id)).toEqual([
@@ -61,9 +61,9 @@ describe("WhatsApp approval buttons", () => {
         body: { text: controls!.text },
         action: {
           buttons: [
-            { type: "reply", reply: { id: `gsvh:${controls!.token}:o`, title: "Approve once" } },
-            { type: "reply", reply: { id: `gsvh:${controls!.token}:a`, title: "Always approve" } },
-            { type: "reply", reply: { id: `gsvh:${controls!.token}:d`, title: "Deny" } },
+            { type: "reply", reply: { id: `gsvh:${controls!.token}:o`, title: "Allow once" } },
+            { type: "reply", reply: { id: `gsvh:${controls!.token}:a`, title: "Always allow" } },
+            { type: "reply", reply: { id: `gsvh:${controls!.token}:d`, title: "Block" } },
           ],
         },
       },
@@ -110,8 +110,8 @@ describe("WhatsApp approval buttons", () => {
       providerMessageId: "wamid.prompt",
       data: `gsvh:${controls.token}:a`,
     });
-    expect(status).toContain("Approved for this conversation.");
-    expect(status).toContain("Run a command in your cloud home.\n\"date\"");
+    expect(status).toContain("Allowed for this conversation.");
+    expect(status).toContain("Run a command in Ship's home.\n\"date\"");
     expect(linkedPeerFrame).toHaveBeenCalledWith(
       { installationId: "installation_test" },
       expect.objectContaining({ accountId: "managed", actorId: "34611111189", routeGeneration: "generation-1", interactionId: "wamid.reply" }),
@@ -124,7 +124,7 @@ describe("WhatsApp approval buttons", () => {
       surfaceId: "34611111189",
       providerMessageId: "wamid.prompt",
       data: `gsvh:${controls.token}:a`,
-    })).toContain("Approved for this conversation.");
+    })).toContain("Allowed for this conversation.");
     expect(linkedPeerFrame).toHaveBeenCalledOnce();
     expect(await handleWhatsAppApprovalReply(store, gateway, { installationId: "installation_test" }, {
       interactionId: "wamid.other",

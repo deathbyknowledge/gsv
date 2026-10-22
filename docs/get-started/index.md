@@ -5,7 +5,7 @@ You can use a hosting operator or run the same stack in your own Cloudflare acco
 
 ## Get Ship
 
-If an operator has created a Ship for you, open its activation invitation and choose
+If an operator has created a Ship for you, open its activation link and choose
 your password. Each Ship has one personal account; you do not need to choose
 another username. Continue to review the early-access disclosure and confirm the
 age, Terms of Service and Privacy Policy
@@ -34,20 +34,20 @@ Handles use lowercase letters, numbers and hyphens; uppercase input is converted
 automatically. Validation and availability feedback appears beside the field.
 One verified email can create one Ship.
 
-If creation is interrupted, retry with the same handle to resume it.
+If creation is interrupted, retry with the same handle to resume that activation.
 
 A friend's invitation link opens an invitation modal on the signup page. Continue
 and verify your email; existing users choose their Ship, while new users choose a
-handle and activate their Ship. The invitation stays with you through activation; accept it
+handle and finish activation. The invitation stays with you through activation; accept it
 in People after choosing who handles incoming messages.
 
 If activation is interrupted or its link expires, opening the unfinished Ship shows
 **Continue activation**. Sign in with the same email and select **Continue** beside its
-handle. This resumes the same Ship and renews its activation authorization. Ships
+handle. This resumes the same Ship and renews its activation link. Ships
 created with an earlier signup code can resume activation this way too. For an activation
 link issued directly by an operator, ask the operator to renew it.
 
-Email sign-in through **Open Ship** lists your Ships, including any not yet activated.
+Email sign-in through **Open Ship** lists your Ships and unfinished activations.
 It is separate from signing in to a Ship. Signing in with email alone does not
 create a Ship or grant operator administration rights. The signup page also
 links to the [Desktop app](/how-to/install-host-apps) for macOS, Windows and Linux.

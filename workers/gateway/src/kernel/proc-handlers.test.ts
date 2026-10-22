@@ -10,6 +10,7 @@ import type { KernelContext } from "./context";
 import * as utils from "../shared/utils";
 import { forwardToProcess, handleProcFork, handleProcIpcCall, handleProcIpcSend, handleProcSpawn, handleProcList, resolveRunAsIdentity } from "./proc-handlers";
 import { resolveCallerOwnerUid } from "./context";
+import { dispatch, type DispatchDeps } from "./dispatch";
 
 const IDENTITY: ProcessIdentity = {
   uid: 1000,
@@ -106,6 +107,50 @@ function makeProcessCleanupMocks() {
 }
 
 describe("proc handlers", () => {
+  it("returns a terminal 404 for an approval whose process has been deleted", async () => {
+    const ctx = makeForwardContext();
+    vi.mocked(ctx.procs.get).mockReturnValue(null);
+    const frame: RequestFrame<"proc.hil"> = {
+      type: "req", id: "obsolete-approval", call: "proc.hil",
+      args: { pid: "deleted-process", requestId: "old-request", decision: "approve" },
+    };
+    // SAFETY: a Process request uses the registry and RPC transport, not device dispatch dependencies.
+    const result = await dispatch(frame, { type: "kernel", id: frame.id }, ctx, {} as DispatchDeps);
+    expect(result).toEqual({
+      handled: true,
+      response: { type: "res", id: frame.id, ok: false,
+        error: { code: 404, message: "Process not found: deleted-process", retryable: false } },
+    });
+    expect(sendFrameToProcessMock).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { code: 410, message: "Process was killed", retryable: false },
+    { code: 403, message: "Approval is no longer authorized", retryable: false },
+    { code: 503, message: "Process temporarily unavailable", retryable: true },
+  ])("preserves a Process response's error classification: $code", async (error) => {
+    const frame: RequestFrame<"proc.hil"> = {
+      type: "req", id: "approval", call: "proc.hil",
+      args: { pid: "proc-1", requestId: "request", decision: "approve" },
+    };
+    sendFrameToProcessMock.mockResolvedValueOnce({ type: "res", id: frame.id, ok: false, error });
+    // SAFETY: a Process request does not use device dispatch dependencies.
+    await expect(dispatch(frame, { type: "kernel", id: frame.id }, makeForwardContext(), {} as DispatchDeps))
+      .resolves.toEqual({ handled: true, response: { type: "res", id: frame.id, ok: false, error } });
+  });
+
+  it("keeps unexpected Process transport failures retryable as server errors", async () => {
+    const frame: RequestFrame<"proc.hil"> = {
+      type: "req", id: "approval", call: "proc.hil",
+      args: { pid: "proc-1", requestId: "request", decision: "approve" },
+    };
+    sendFrameToProcessMock.mockRejectedValueOnce(new Error("Process connection lost"));
+    // SAFETY: a Process request does not use device dispatch dependencies.
+    await expect(dispatch(frame, { type: "kernel", id: frame.id }, makeForwardContext(), {} as DispatchDeps))
+      .resolves.toMatchObject({ handled: true, response: { ok: false,
+        error: { code: 500, message: "Process connection lost" } } });
+  });
+
   it("keeps child approval decisions human-only and forwards the original request unchanged", async () => {
     const ctx = makeForwardContext();
     const frame: RequestFrame<"proc.hil"> = { type: "req", id: "decision", call: "proc.hil",

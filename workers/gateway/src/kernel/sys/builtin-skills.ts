@@ -84,6 +84,8 @@ export const BUILTIN_SKILL_FILES = [
       "78f679e2688356fb1579f9aae400bb3deb9d2f05e2c23059fdb3cd0c1e245673",
       // Untouched skill before closing cloud browsers when work is finished.
       "8d99e5d48add62320e0e8fec91f7daaddd8f4ab3a04d58ab01bd80439cf57096",
+      // Untouched skill before the browser choice, sign-in routes and trust guidance.
+      "a3a63d79ea483b2407507699e1dab6d9fa353f6ed8ccaa5d1793faf54010315b",
     ],
   },
   {

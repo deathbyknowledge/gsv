@@ -87,7 +87,7 @@ reconnect. A remembered sign-in lasts 30 days and renews during use.
 Browser tabs share renewal and sign-out; Desktop has its own stored session.
 A temporary network interruption reconnects without asking you to sign in again.
 
-If self-service activation of a Ship was interrupted, **Continue activation** returns to owner email
+If activating a Ship was interrupted, **Continue activation** returns to owner email
 sign-in and your existing Ship. For the Desktop app's configured operator,
 this stays inside the app; another operator's recovery page opens in the browser.
 The owner signs in with the email used at signup, then continues
