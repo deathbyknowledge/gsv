@@ -2,7 +2,9 @@ import type { AdminInstallation, AdminInstallationList, AdminInstallationListQue
 import { hasExpectedOrigin, json, noStoreHeaders, readRequestBody, requireString } from "../http";
 import type { InstallationAdminAccess } from "./access";
 import { InstallationAdminApi, readInstallationListQuery } from "./api";
-import { adminInstallationPage, adminInstallationsPage, adminNewInstallationPage, type InstallationAdminPresentation } from "./installations-page";
+import { adminInstallationPage, adminInstallationsPage, adminNewInstallationPage, type InstallationAdminPresentation, type ShipView } from "./installations-page";
+import { adminAuditPage } from "./audit-page";
+import type { ShipInsight } from "./insight";
 import { adminErrorPage, adminStylesheet } from "./page";
 import type { IssuedAdminInstallation } from "./service";
 import { InstallationDeletionHttp } from "../deletion-http";
@@ -32,9 +34,11 @@ export class InstallationAdminHttp<
     private readonly origin: string,
     private readonly presentation: InstallationAdminPresentation<Detail, Summary> = {},
     deletion?: AccountsDeletionRuntime,
+    private readonly insight?: ShipInsight,
   ) {
-    this.api = new InstallationAdminApi(service, access, origin);
-    this.deletion = deletion ? new InstallationDeletionHttp(deletion, access, origin) : undefined;
+    const record = this.record.bind(this);
+    this.api = new InstallationAdminApi(service, access, origin, record);
+    this.deletion = deletion ? new InstallationDeletionHttp(deletion, access, origin, record) : undefined;
   }
 
   async handle(request: Request): Promise<Response | null> {
@@ -54,33 +58,41 @@ export class InstallationAdminHttp<
         && (request.method === "GET" || head)) {
         return adminInstallationsPage(await this.service.listInstallations(readInstallationListQuery(url)), undefined, head, 200, this.presentation);
       }
+      if (url.pathname === "/admin/audit" && (request.method === "GET" || head)) {
+        const page = readAuditPage(url);
+        return adminAuditPage(this.insight ? await this.insight.audit.list({ page }) : null, head, this.presentation.navigation);
+      }
       if (url.pathname === "/admin/installations/new" && (request.method === "GET" || head)) {
         return adminNewInstallationPage(undefined, head, 200, undefined, this.presentation.navigation);
       }
       if (route && !route[2] && (request.method === "GET" || head)) {
         const installation = await this.service.getInstallation(decodeInstallationId(route[1]));
-        if (!installation) return adminErrorPage("The installation does not exist.", 404, head, this.presentation.navigation);
-        return adminInstallationPage(installation, undefined, undefined, head, 200, this.presentation);
+        if (!installation) return adminErrorPage("The Ship does not exist.", 404, head, this.presentation.navigation);
+        return adminInstallationPage(installation, undefined, undefined, head, 200, this.presentation, await this.shipView(installation));
       }
       if (url.pathname === "/admin/installations" && request.method === "POST") {
         requireAdminMutationOrigin(request, this.origin);
         const form = await readAdminForm(request);
         createFormInput = { operationId: requireString(form.get("operationId"), "operationId"), handle: requireString(form.get("handle"), "handle") };
         const issued = await this.service.create(createFormInput);
-        return adminInstallationPage(issued.installation, issued, undefined, false, 201, this.presentation);
+        await this.record(request, "ship.create", issued.installation.installationId);
+        return adminInstallationPage(issued.installation, issued, undefined, false, 201, this.presentation, await this.shipView(issued.installation));
       }
       if (route && request.method === "POST") {
         requireAdminMutationOrigin(request, this.origin);
         const installationId = decodeInstallationId(route[1]);
         if (route[2] === "lifecycle") {
-          const state = (await readAdminForm(request)).get("state");
+          const form = await readAdminForm(request);
+          const state = form.get("state");
           if (state !== "active" && state !== "restricted") throw new Error("installation state is invalid");
           await this.service.setInstallationState(installationId, state);
+          await this.record(request, state === "restricted" ? "ship.suspend" : "ship.reactivate", installationId, undefined, form.get("reason"));
           return adminRedirect(`/admin/installations/${encodeURIComponent(installationId)}`);
         }
         if (route[2] === "onboarding") {
           const issued = await this.service.reissueOnboarding(installationId);
-          return adminInstallationPage(issued.installation, issued, undefined, false, 200, this.presentation);
+          await this.record(request, "ship.setup-link.reissue", installationId);
+          return adminInstallationPage(issued.installation, issued, undefined, false, 200, this.presentation, await this.shipView(issued.installation));
         }
         if (route[2] === "reset") {
           const form = await readAdminForm(request);
@@ -88,7 +100,9 @@ export class InstallationAdminHttp<
             operationId: requireString(form.get("operationId"), "operationId"),
             confirmHandle: requireString(form.get("confirmHandle"), "confirmHandle"),
           });
-          return adminInstallationPage(issued.installation, issued, undefined, false, 201, this.presentation);
+          await this.record(request, "ship.reset", installationId,
+            { replacementInstallationId: issued.installation.installationId }, form.get("reason"));
+          return adminInstallationPage(issued.installation, issued, undefined, false, 201, this.presentation, await this.shipView(issued.installation));
         }
       }
       return isAdminApiPath(url.pathname)
@@ -107,11 +121,44 @@ export class InstallationAdminHttp<
         let installation: Detail | null = null;
         try { installation = await this.service.getInstallation(decodeInstallationId(route[1])); }
         catch { installation = null; }
-        if (installation) return adminInstallationPage(installation, undefined, failure.message, false, failure.status, this.presentation);
+        if (installation) {
+          return adminInstallationPage(installation, undefined, failure.message, false, failure.status, this.presentation,
+            await this.shipView(installation).catch(() => undefined));
+        }
       }
       return adminErrorPage(failure.message, failure.status, head, this.presentation.navigation);
     }
   }
+
+  /** Records a completed operator action. Called only after the action succeeds. */
+  private async record(
+    request: Request,
+    action: string,
+    installationId?: string,
+    detail?: Record<string, string>,
+    reason?: string | null,
+  ): Promise<void> {
+    if (!this.insight) return;
+    const actor = await this.access.operatorIdentity?.(request) ?? "operator";
+    await this.insight.audit.record({ actor, action, installationId, detail, reason });
+  }
+
+  private async shipView(installation: Detail): Promise<ShipView | undefined> {
+    if (!this.insight) return undefined;
+    const [context, health] = await Promise.all([
+      this.insight.context(installation),
+      this.insight.health(installation.installationId),
+    ]);
+    return { context, health };
+  }
+}
+
+function readAuditPage(url: URL): number {
+  const value = url.searchParams.get("page");
+  if (value === null) return 1;
+  const page = Number(value);
+  if (!Number.isSafeInteger(page) || page < 1) throw new Error("page is invalid");
+  return page;
 }
 
 export class AdminForbiddenError extends Error {}

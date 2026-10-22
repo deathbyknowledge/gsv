@@ -1,6 +1,10 @@
 import { ADMIN_VISIBLE_INSTALLATION_STATES, type AdminInstallationListQuery } from "../administration";
-import { hasExpectedOrigin, json, noStoreHeaders, readJsonObject, requireString } from "../http";
+import { hasExpectedOrigin, json, noStoreHeaders, readJsonObject, requireString, type JsonValue } from "../http";
 import type { InstallationAdminAccess } from "./access";
+import type { AdminAuditRecorder } from "./insight";
+import { z } from "zod";
+
+const operatorReasonSchema = z.string().max(500).nullish();
 import type { InstallationAdminService } from "./service";
 
 type AdminService = Pick<InstallationAdminService,
@@ -13,6 +17,7 @@ export class InstallationAdminApi {
     private readonly service: AdminService,
     private readonly access: InstallationAdminAccess,
     private readonly origin: string,
+    private readonly record: AdminAuditRecorder = async () => {},
   ) {}
 
   async handle(request: Request): Promise<Response | null> {
@@ -29,9 +34,11 @@ export class InstallationAdminApi {
       if (collection) {
         if (request.method === "GET") return json(await this.service.listInstallations(readInstallationListQuery(url)));
         const body = await readJsonObject(request);
-        return json(await this.service.create({
+        const issued = await this.service.create({
           operationId: requireString(body.operationId, "operationId"), handle: requireString(body.handle, "handle"),
-        }), 201);
+        });
+        await this.record(request, "ship.create", issued.installation.installationId);
+        return json(issued, 201);
       }
       if (!route) return null;
       let installationId: string;
@@ -43,19 +50,31 @@ export class InstallationAdminApi {
         return installation ? json(installation) : json({ error: "Not Found" }, 404);
       }
       if (request.method === "POST") {
-        if (action === "onboarding") return json(await this.service.reissueOnboarding(installationId));
+        if (action === "onboarding") {
+          const issued = await this.service.reissueOnboarding(installationId);
+          await this.record(request, "ship.setup-link.reissue", installationId);
+          return json(issued);
+        }
         if (action === "lifecycle") {
-          const { state } = await readJsonObject(request);
+          const { state, reason: reasonValue } = await readJsonObject(request);
           if (state !== "active" && state !== "restricted") throw new Error("installation state is invalid");
+          const reason = readOperatorReason(reasonValue);
           await this.service.setInstallationState(installationId, state);
+          await this.record(request, state === "restricted" ? "ship.suspend" : "ship.reactivate", installationId, undefined,
+            reason);
           return json({ installationId, state });
         }
         if (action === "reset") {
           const body = await readJsonObject(request);
-          return json(await this.service.resetInstallation(installationId, {
+          const reason = readOperatorReason(body.reason);
+          const reset = await this.service.resetInstallation(installationId, {
             operationId: requireString(body.operationId, "operationId"),
             confirmHandle: requireString(body.confirmHandle, "confirmHandle"),
-          }), 201);
+          });
+          await this.record(request, "ship.reset", installationId,
+            { replacementInstallationId: reset.installation.installationId },
+            reason);
+          return json(reset, 201);
         }
       }
       return json({ error: "Not Found" }, 404);
@@ -79,4 +98,10 @@ export function readInstallationListQuery(url: URL): AdminInstallationListQuery 
   const page = pageValue ? Number(pageValue) : 1;
   if (!Number.isSafeInteger(page) || page < 1 || page > 1_000_000) throw new Error("page is invalid");
   return { query, state: state ?? null, page };
+}
+
+function readOperatorReason(value: JsonValue | undefined): string | null {
+  const reason = operatorReasonSchema.safeParse(value);
+  if (!reason.success) throw new Error("request reason is invalid");
+  return reason.data ?? null;
 }

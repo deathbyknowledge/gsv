@@ -5,13 +5,29 @@ import { accountsDeletionInspectionSchema } from "./deletion-inspections";
 import { operatorResourceAttestationSchema } from "./operator-resource-contracts";
 import type { AccountsDeletionRuntime } from "./deletion-runtime";
 import type { InstallationAdminAccess } from "./admin/access";
+import type { AdminAuditRecorder } from "./admin/insight";
 import { hasExpectedOrigin, noStoreHeaders, readJsonObject, readRequestBody, requireString, type JsonValue } from "./http";
 
 /** Deletion control uses the existing operator authentication and mutation origin. */
 export class InstallationDeletionHttp {
-  constructor(private readonly runtime: AccountsDeletionRuntime, private readonly access: InstallationAdminAccess, private readonly origin: string) {}
+  constructor(
+    private readonly runtime: AccountsDeletionRuntime,
+    private readonly access: InstallationAdminAccess,
+    private readonly origin: string,
+    private readonly record: AdminAuditRecorder = async () => {},
+  ) {}
 
   async handle(request: Request): Promise<Response | null> {
+    const response = await this.route(request);
+    const action = /\/deletion(?:\/([a-z-]+))?$/.exec(new URL(request.url).pathname)?.[1] ?? "begin";
+    if (response && request.method === "POST" && response.ok) {
+      const installationId = decodeURIComponent(/^\/admin\/api\/installations\/([^/]+)\//.exec(new URL(request.url).pathname)![1]!);
+      await this.record(request, `ship.deletion.${action}`, installationId);
+    }
+    return response;
+  }
+
+  private async route(request: Request): Promise<Response | null> {
     const route = /^\/admin\/api\/installations\/([^/]+)\/deletion(?:\/(retire|inventory|retry|inspect|inspection|import|operator-resources))?$/.exec(new URL(request.url).pathname);
     if (!route) return null;
     const json = (value: JsonValue, status = 200) => Response.json(value, { status, headers: noStoreHeaders() });

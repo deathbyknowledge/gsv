@@ -6,15 +6,25 @@ import type {
 import { ADMIN_VISIBLE_INSTALLATION_STATES } from "../administration";
 import type { IssuedAdminInstallation } from "./service";
 import type { AdminNavigationItem } from "./page";
+import type { OperatorRun, OperatorShipSnapshot } from "@humansandmachines/gsv/services/operator";
+import type { OperatorAuditEvent, ShipContext, ShipHealth } from "./insight";
 import {
   adminPageResponse,
+  auditTable,
   errorNotice,
   escapeHtml,
   formatDate,
+  formatDuration,
   formatInteger,
+  formatTime,
   onboardingNotice,
   stateBadge,
 } from "./page";
+
+/** What the Ship page shows beyond the installation record; absent when no insight is configured. */
+export type ShipView = { context: ShipContext; health: ShipHealth };
+
+const SLOW_STEP_MS = 60_000;
 
 /** Slot HTML is trusted operator presentation; its renderer owns escaping all inserted data. */
 export type InstallationAdminPresentation<
@@ -43,7 +53,7 @@ export function adminInstallationsPage<Summary extends AdminInstallationSummary>
     content: `<section class="stack">
       <div class="page-heading">
         <div><p class="eyebrow">OPERATOR</p><h1>Ships</h1></div>
-        <div class="actions"><span>${formatInteger(list.total)} ${list.total === 1 ? "result" : "results"}</span><a class="button" href="/admin/installations/new">New Ship</a></div>
+        <div class="actions"><span>${formatInteger(list.total)} ${list.total === 1 ? "result" : "results"}</span><a class="button secondary" href="/admin/installations/new">Create a Ship manually</a></div>
       </div>
       ${error ? errorNotice(error) : ""}
       ${installationFilters(list)}
@@ -69,7 +79,7 @@ export function adminNewInstallationPage(
     status,
     content: `<section class="narrow stack">
       <div class="page-heading">
-        <div><p class="eyebrow">NEW INSTALLATION</p><h1>Create a Ship</h1></div>
+        <div><p class="eyebrow">NEW SHIP</p><h1>Create a Ship</h1></div>
         <a class="button secondary" href="/admin/installations">Cancel</a>
       </div>
       ${error ? errorNotice(error) : ""}
@@ -90,8 +100,12 @@ export function adminInstallationPage<Detail extends AdminInstallation>(
   head = false,
   status = 200,
   presentation: Pick<InstallationAdminPresentation<Detail>, "navigation" | "overview" | "panel"> = {},
+  ship?: ShipView,
 ): Response {
   const installationPath = `/admin/installations/${encodeURIComponent(installation.installationId)}`;
+  const host = hostOf(installation.canonicalOrigin);
+  const aliases = ship?.context.hostnames.filter((entry) => entry.kind === "alias").map((entry) => entry.hostname) ?? [];
+  const subtitle = [ship?.context.mailAddress, host, ...aliases.map((alias) => `+ ${alias}`)].filter((part): part is string => Boolean(part));
   return adminPageResponse({
     title: installation.handle,
     section: "installations",
@@ -101,25 +115,23 @@ export function adminInstallationPage<Detail extends AdminInstallation>(
     content: `<section class="stack">
       <div><a href="/admin/installations">← Ships</a></div>
       <div class="page-heading">
-        <div><p class="eyebrow">SHIP</p><h1>${escapeHtml(installation.handle)}</h1></div>
+        <div><p class="eyebrow">SHIP</p><h1>${escapeHtml(installation.handle)}</h1><p class="subtitle">${subtitle.map(escapeHtml).join(" · ")}</p></div>
         <div class="actions">${stateBadge(installation.state)}<a class="button secondary" href="${escapeHtml(installation.canonicalOrigin)}" target="_blank" rel="noreferrer">Open Ship</a></div>
       </div>
       ${error ? errorNotice(error) : ""}
       ${issued ? onboardingNotice(issued) : ""}
       ${presentation.overview?.(installation) ?? ""}
       <div class="grid">
-        <section class="panel"><p class="eyebrow">IDENTITY</p><h2>Ship details</h2>
-          <dl class="definition-list">
-            <dt>Installation ID</dt><dd>${escapeHtml(installation.installationId)}</dd>
-            <dt>Canonical origin</dt><dd><a href="${escapeHtml(installation.canonicalOrigin)}" target="_blank" rel="noreferrer">${escapeHtml(installation.canonicalOrigin)}</a></dd>
-            <dt>Lifecycle</dt><dd>${stateBadge(installation.state)}</dd>
-            <dt>Provisioning</dt><dd>${stateBadge(installation.operationState)}</dd>
-            <dt>Created</dt><dd>${formatDate(installation.createdAt)}</dd>
-            <dt>Activated</dt><dd>${formatDate(installation.activatedAt)}</dd>
-            ${installation.reset ? `<dt>Reset from</dt><dd>${escapeHtml(installation.reset.previousInstallationId)}</dd><dt>Old data deletion</dt><dd>${stateBadge(installation.reset.dataDeletionState)}</dd>` : ""}
-          </dl>
-        </section>
+        ${identityPanel(installation, ship?.context)}
+        ${ship ? healthPanel(ship.health) : ""}
+      </div>
+      ${ship?.health.kind === "ok" ? timelinePanel(ship.health.snapshot) : ""}
+      <div class="grid">
         ${presentation.panel?.(installation) ?? ""}
+        ${ship ? recentActionsPanel(ship.context.audit) : ""}
+      </div>
+      <div><p class="eyebrow">ACTIONS</p></div>
+      <div class="grid">
         ${provisioningPanel(installation, installationPath)}
         ${lifecyclePanel(installation, installationPath)}
         ${resetPanel(installation, installationPath)}
@@ -128,9 +140,94 @@ export function adminInstallationPage<Detail extends AdminInstallation>(
   });
 }
 
+function identityPanel(installation: AdminInstallation, context?: ShipContext): string {
+  const owner = context
+    ? context.owner.operatorIssued
+      ? "Not linked (issued by an operator)"
+      : `${escapeHtml(context.owner.email ?? "Unknown")}${context.owner.signIn.length ? ` <small>${context.owner.signIn.map(escapeHtml).join(", ")}</small>` : ""}`
+    : "";
+  return `<section class="panel"><p class="eyebrow">IDENTITY</p><h2>Ship details</h2>
+    <dl class="definition-list">
+      <dt>Ship ID</dt><dd>${escapeHtml(installation.installationId)}</dd>
+      ${context ? `<dt>Owner</dt><dd>${owner}</dd>` : ""}
+      ${context ? `<dt>Hostnames</dt><dd>${context.hostnames.map((entry) => `${escapeHtml(entry.hostname)} <small>${escapeHtml(entry.kind)}${entry.state === "active" ? "" : ` · ${escapeHtml(entry.state)}`}</small>`).join("<br>") || "None"}</dd>` : `<dt>Address</dt><dd><a href="${escapeHtml(installation.canonicalOrigin)}" target="_blank" rel="noreferrer">${escapeHtml(installation.canonicalOrigin)}</a></dd>`}
+      <dt>Lifecycle</dt><dd>${stateBadge(installation.state)}</dd>
+      <dt>Provisioning</dt><dd>${stateBadge(installation.operationState)}</dd>
+      <dt>Created</dt><dd>${formatDate(installation.createdAt)}</dd>
+      <dt>Activated</dt><dd>${formatDate(installation.activatedAt)}</dd>
+      ${installation.reset ? `<dt>Reset from</dt><dd>${escapeHtml(installation.reset.previousInstallationId)}</dd><dt>Old data deletion</dt><dd>${stateBadge(installation.reset.dataDeletionState)}</dd>` : ""}
+    </dl>
+  </section>`;
+}
+
+function healthPanel(health: ShipHealth): string {
+  if (health.kind === "unavailable") {
+    return `<section class="panel"><p class="eyebrow">HEALTH</p><h2>Health unavailable</h2>
+      <p>The Ship's health could not be read: <strong>${escapeHtml(health.reason)}</strong>. Everything else on this page comes from Accounts.</p>
+    </section>`;
+  }
+  const { snapshot } = health;
+  const ship = snapshot.ship;
+  return `<section class="panel"><p class="eyebrow">HEALTH · ${formatTime(snapshot.capturedAt)}</p><h2>${ship ? `Ship ${escapeHtml(ship.state)}` : "No Ship process"}</h2>
+    <dl class="definition-list">
+      ${ship ? `<dt>Last active</dt><dd>${formatDate(ship.lastActiveAt)}</dd>
+      <dt>Working on</dt><dd>${ship.activeRunId ? escapeHtml(ship.activeRunId) : "Nothing"}</dd>
+      <dt>Queue · approvals</dt><dd>${formatInteger(ship.queuedCount)} queued · ${formatInteger(ship.pendingApprovals)} waiting for approval</dd>
+      <dt>Last compaction</dt><dd>${formatDate(ship.lastCompactionAt)}</dd>` : ""}
+      <dt>Open work</dt><dd>${formatInteger(snapshot.openResponsibilities)} open responsibilities</dd>
+      <dt>Ship events</dt><dd>${formatInteger(snapshot.shipEvents.queued)} queued${snapshot.shipEvents.oldestQueuedAt === null ? "" : ` · oldest ${formatDate(snapshot.shipEvents.oldestQueuedAt)}`}</dd>
+      <dt>Processes</dt><dd>${formatInteger(snapshot.processes.total)} · ${formatInteger(snapshot.processes.running)} running</dd>
+      <dt>Messengers</dt><dd>${snapshot.messengers.map((entry) => `${escapeHtml(entry.adapter)}${entry.linkedAt === null ? "" : ` <small>linked ${formatDate(entry.linkedAt)}</small>`}`).join("<br>") || "None linked"}</dd>
+      <dt>Devices</dt><dd>${snapshot.targets.map((target) => `${escapeHtml(target.id)} ${stateBadge(target.online ? "online" : "offline")}${target.online || target.lastSeenAt === null ? "" : ` <small>seen ${formatDate(target.lastSeenAt)}</small>`}`).join("<br>") || "None"}</dd>
+    </dl>
+  </section>`;
+}
+
+function timelinePanel(snapshot: OperatorShipSnapshot): string {
+  if (snapshot.runs.length === 0) {
+    return `<section class="panel"><p class="eyebrow">TIMELINE</p><h2>No recent runs</h2></section>`;
+  }
+  return `<section class="panel"><p class="eyebrow">TIMELINE · METADATA ONLY</p><h2>Recent runs</h2>
+    <div class="table-wrap"><table class="timeline"><thead><tr><th>Started</th><th>From</th><th>Input</th><th>Took</th><th>Outcome</th><th>Steps</th></tr></thead>
+    <tbody>${snapshot.runs.map(timelineRow).join("")}</tbody></table></div>
+  </section>`;
+}
+
+function timelineRow(run: OperatorRun): string {
+  const slow = run.steps.filter((step) => (step.durationMs ?? 0) > SLOW_STEP_MS).length;
+  const failed = run.steps.filter((step) => step.status === "error").length;
+  const flags = [slow ? `${slow} slow` : "", failed ? `${failed} failed` : ""].filter(Boolean).join(" · ");
+  const input = [run.inputChars === null ? "" : `${formatInteger(run.inputChars)} chars`, run.inputHasMedia ? "media" : ""]
+    .filter(Boolean).join(" + ") || "—";
+  return `<tr>
+    <td>${formatTime(run.startedAt)}</td>
+    <td>${escapeHtml(run.origin)}</td>
+    <td>${escapeHtml(input)}</td>
+    <td>${run.durationMs === null ? "running" : escapeHtml(formatDuration(run.durationMs))}</td>
+    <td>${stateBadge(run.status)}</td>
+    <td>${run.steps.length === 0 ? "—" : `<details><summary>${formatInteger(run.steps.length)} steps${flags ? ` · <span class="flag">${escapeHtml(flags)}</span>` : ""}</summary><ol class="steps">${run.steps.map((step) => {
+      const slowStep = (step.durationMs ?? 0) > SLOW_STEP_MS;
+      const classes = [step.status === "error" ? "step-error" : "", slowStep ? "step-slow" : ""].filter(Boolean).join(" ");
+      return `<li${classes ? ` class="${classes}"` : ""}><span>+${escapeHtml(formatDuration(Math.max(0, step.startedAt - run.startedAt)))}</span> ${escapeHtml(step.kind)} <strong>${escapeHtml(step.name)}</strong>${step.target ? ` on ${escapeHtml(step.target)}` : ""} · ${step.durationMs === null ? "running" : escapeHtml(formatDuration(step.durationMs))} · ${escapeHtml(step.status)}${slowStep ? " · slow" : ""}</li>`;
+    }).join("")}</ol></details>`}</td>
+  </tr>`;
+}
+
+function recentActionsPanel(events: OperatorAuditEvent[]): string {
+  return `<section class="panel"><p class="eyebrow">OPERATOR ACTIONS</p><h2>Recent actions</h2>
+    ${events.length ? auditTable(events, false) : "<p>No operator has changed this Ship.</p>"}
+    <p><a href="/admin/audit">Full audit log →</a></p>
+  </section>`;
+}
+
+function hostOf(origin: string): string {
+  try { return new URL(origin).host; }
+  catch { return origin; }
+}
+
 function installationFilters(list: AdminInstallationList): string {
   return `<form class="panel filters" method="get" action="/admin/installations">
-    <label><span>Search handle or installation ID</span><input type="search" name="q" maxlength="100" value="${escapeHtml(list.query)}" placeholder="hank or inst_…"></label>
+    <label><span>Search handle or Ship ID</span><input type="search" name="q" maxlength="100" value="${escapeHtml(list.query)}" placeholder="hank or inst_…"></label>
     <label><span>Lifecycle state</span><select name="state"><option value="">All states</option>${ADMIN_VISIBLE_INSTALLATION_STATES.map((state) => `<option value="${state}"${list.state === state ? " selected" : ""}>${escapeHtml(state.replaceAll("_", " "))}</option>`).join("")}</select></label>
     <button type="submit">Search</button>
     <a class="button secondary" href="/admin/installations">Reset</a>
@@ -201,10 +298,10 @@ function lifecyclePanel(
   installationPath: string,
 ): string {
   if (installation.state === "active") {
-    return `<section class="panel danger-zone"><p class="eyebrow">LIFECYCLE</p><h2>Suspend Ship</h2><p>Suspension retains the installation identity and data while blocking work until reactivation.</p><form class="form-actions" method="post" action="${installationPath}/lifecycle"><button class="danger" type="submit" name="state" value="restricted">Suspend ${escapeHtml(installation.handle)}</button></form></section>`;
+    return `<section class="panel danger-zone"><p class="eyebrow">LIFECYCLE</p><h2>Suspend Ship</h2><p>Suspension keeps the Ship's identity and data while blocking work until reactivation.</p><form class="form-actions" method="post" action="${installationPath}/lifecycle">${reasonField()}<button class="danger" type="submit" name="state" value="restricted">Suspend ${escapeHtml(installation.handle)}</button></form></section>`;
   }
   if (installation.state === "restricted") {
-    return `<section class="panel"><p class="eyebrow">LIFECYCLE</p><h2>Reactivate Ship</h2><p>Reactivation restores routing and resumes paused durable work.</p><form class="form-actions" method="post" action="${installationPath}/lifecycle"><button type="submit" name="state" value="active">Reactivate ${escapeHtml(installation.handle)}</button></form></section>`;
+    return `<section class="panel"><p class="eyebrow">LIFECYCLE</p><h2>Reactivate Ship</h2><p>Reactivation restores routing and resumes paused durable work.</p><form class="form-actions" method="post" action="${installationPath}/lifecycle">${reasonField()}<button type="submit" name="state" value="active">Reactivate ${escapeHtml(installation.handle)}</button></form></section>`;
   }
   return `<section class="panel"><p class="eyebrow">LIFECYCLE</p><h2>No operator transition</h2><p>Lifecycle controls are unavailable while this Ship is ${escapeHtml(installation.state.replaceAll("_", " "))}.</p></section>`;
 }
@@ -218,12 +315,17 @@ function resetPanel(
   }
   const operationId = `reset_${crypto.randomUUID()}`;
   return `<section class="panel danger-zone"><p class="eyebrow">FRESH SHIP</p><h2>Reset ${escapeHtml(installation.handle)}</h2>
-    <p>Reset assigns this handle to a new installation ID and starts onboarding again. Existing sessions and background work stop because the previous installation becomes inactive.</p>
-    <p><strong>This does not delete the previous installation's stored data.</strong> It records that data as pending deletion so a separate deletion operation can remove it from every owning service.</p>
+    <p>Reset assigns this handle to a new Ship ID and starts onboarding again. Existing sessions and background work stop because the previous Ship becomes inactive.</p>
+    <p><strong>This does not delete the previous Ship's stored data.</strong> It records that data as pending deletion so a separate deletion operation can remove it from every owning service.</p>
     <form class="form-actions" method="post" action="${installationPath}/reset">
       <input type="hidden" name="operationId" value="${escapeHtml(operationId)}">
+      ${reasonField()}
       <label><span>Type ${escapeHtml(installation.handle)} to confirm</span><input name="confirmHandle" required autocomplete="off" value=""></label>
       <button class="danger" type="submit">Reset and issue onboarding link</button>
     </form>
   </section>`;
+}
+
+function reasonField(): string {
+  return `<label><span>Reason (optional, kept in the audit log)</span><input name="reason" maxlength="500" autocomplete="off" value=""></label>`;
 }
