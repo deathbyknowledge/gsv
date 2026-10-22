@@ -159,6 +159,20 @@ describe("Ship page", () => {
     expect(body).toContain("Open work");
   });
 
+  it("says the run history is unavailable instead of showing no runs", async () => {
+    const unread = (installationId: string): OperatorShipSnapshot => ({
+      ...snapshot(installationId), runs: null,
+      ship: { ...snapshot(installationId).ship!, pendingApprovals: null, lastCompactionAt: null },
+    });
+    const ships = stack({ operatorShipSnapshot: async (input) => ({ found: true, snapshot: unread(input.installationId) }) });
+    const installationId = await createShip(ships.http, ships.service, "unreadruns");
+    await activate(ships, installationId);
+    const body = await page(ships.http, `/admin/installations/${installationId}`);
+    expect(body).toContain("Run history unavailable");
+    expect(body).not.toContain("No recent runs");
+    expect(body).not.toContain("0 waiting for approval");
+  });
+
   it("rejects a malformed snapshot instead of rendering it", async () => {
     const gateway: OperatorGatewayService = { operatorShipSnapshot: async () => JSON.parse('{"found":true,"snapshot":{"version":2}}') };
     const { http, service } = stack(gateway);

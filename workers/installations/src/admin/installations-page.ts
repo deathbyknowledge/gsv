@@ -174,8 +174,8 @@ function healthPanel(health: ShipHealth): string {
     <dl class="definition-list">
       ${ship ? `<dt>Last active</dt><dd>${formatDate(ship.lastActiveAt)}</dd>
       <dt>Working on</dt><dd>${ship.activeRunId ? escapeHtml(ship.activeRunId) : "Nothing"}</dd>
-      <dt>Queue · approvals</dt><dd>${formatInteger(ship.queuedCount)} queued · ${formatInteger(ship.pendingApprovals)} waiting for approval</dd>
-      <dt>Last compaction</dt><dd>${formatDate(ship.lastCompactionAt)}</dd>` : ""}
+      <dt>Queue · approvals</dt><dd>${formatInteger(ship.queuedCount)} queued · ${ship.pendingApprovals === null ? "approvals unavailable" : `${formatInteger(ship.pendingApprovals)} waiting for approval`}</dd>
+      <dt>Last compaction</dt><dd>${snapshot.runs === null ? "Unavailable" : formatDate(ship.lastCompactionAt)}</dd>` : ""}
       <dt>Open work</dt><dd>${formatInteger(snapshot.openResponsibilities)} open responsibilities</dd>
       <dt>Ship events</dt><dd>${formatInteger(snapshot.shipEvents.queued)} queued${snapshot.shipEvents.oldestQueuedAt === null ? "" : ` · oldest ${formatDate(snapshot.shipEvents.oldestQueuedAt)}`}</dd>
       <dt>Processes</dt><dd>${formatInteger(snapshot.processes.total)} · ${formatInteger(snapshot.processes.running)} running</dd>
@@ -186,6 +186,10 @@ function healthPanel(health: ShipHealth): string {
 }
 
 function timelinePanel(snapshot: OperatorShipSnapshot): string {
+  if (snapshot.runs === null) {
+    return `<section class="panel"><p class="eyebrow">TIMELINE</p><h2>Run history unavailable</h2>
+      <p>The Ship's own process could not be read; its health above still comes from the Ship.</p></section>`;
+  }
   if (snapshot.runs.length === 0) {
     return `<section class="panel"><p class="eyebrow">TIMELINE</p><h2>No recent runs</h2></section>`;
   }

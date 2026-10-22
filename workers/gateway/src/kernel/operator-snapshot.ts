@@ -1,4 +1,5 @@
 import type { OperatorShipSnapshot } from "@humansandmachines/gsv/services/operator";
+import { exceptionDiagnostics } from "@humansandmachines/gsv/telemetry";
 import type { ProcessOperatorSummary } from "../process/operator-summary";
 import type { IdentityLinkStore } from "./identity-links";
 import type { ProcessRegistry } from "./processes";
@@ -26,7 +27,10 @@ export type OperatorSnapshotSources = {
 export async function buildOperatorShipSnapshot(sources: OperatorSnapshotSources): Promise<OperatorShipSnapshot> {
   const processes = sources.procs.list();
   const ship = processes.find((process) => process.isPersonalController) ?? null;
-  const summary = ship ? await sources.shipSummary(ship.processId).catch(() => null) : null;
+  const summary = ship ? await sources.shipSummary(ship.processId).catch((error) => {
+    console.warn("[Operator] Ship Process summary unavailable:", exceptionDiagnostics(error));
+    return null;
+  }) : null;
   const ownerUid = ship?.ownerUid ?? null;
   const devices = sources.targets.listForUser(0, [])
     .sort((left, right) => left.first_seen_at - right.first_seen_at || left.target_id.localeCompare(right.target_id))
@@ -46,7 +50,7 @@ export async function buildOperatorShipSnapshot(sources: OperatorSnapshotSources
           lastActiveAt: ship.lastActiveAt,
           activeRunId: ship.activeRunId,
           queuedCount: ship.queuedCount,
-          pendingApprovals: summary?.pendingApprovals ?? 0,
+          pendingApprovals: summary?.pendingApprovals ?? null,
           lastCompactionAt: summary?.lastCompactionAt ?? null,
         }
       : null,
@@ -54,7 +58,7 @@ export async function buildOperatorShipSnapshot(sources: OperatorSnapshotSources
       total: processes.length,
       running: processes.filter((process) => process.state !== "idle").length,
     },
-    runs: (summary?.runs ?? []).map((run) => ({
+    runs: summary === null ? (ship ? null : []) : summary.runs.map((run) => ({
       ...run,
       steps: run.steps.map((step) => step.target === undefined ? step : { ...step, target: deviceLabel(step.target) }),
     })),

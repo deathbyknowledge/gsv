@@ -112,8 +112,9 @@ shows its origin, input length, duration and outcome, and its steps flag
 anything that failed or took longer than a minute. The timeline holds only
 metadata: no message text, tool arguments, output or file contents. Devices
 appear as `Device 1`, `Device 2` and so on, numbered by first connection,
-because their own names often include a person's name. The health
-read gives up after three seconds. If the binding is missing or the read fails,
+because their own names often include a person's name. If the Ship's own
+process cannot be read, the timeline says "Run history unavailable" rather than
+showing no runs. The health read gives up after three seconds. If the binding is missing or the read fails,
 the page names the reason and the rest of it still works. Set
 `GSV_MAIL_DOMAIN` to show the Ship's mail address.
 

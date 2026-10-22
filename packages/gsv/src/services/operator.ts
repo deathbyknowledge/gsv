@@ -49,14 +49,16 @@ export const operatorShipSnapshotSchema = z.strictObject({
     lastActiveAt: timestamp.nullable(),
     activeRunId: label.nullable(),
     queuedCount: z.number().int().nonnegative(),
-    pendingApprovals: z.number().int().nonnegative(),
+    /** Null, like `runs`, when the Ship's Process could not be read. */
+    pendingApprovals: z.number().int().nonnegative().nullable(),
     lastCompactionAt: timestamp.nullable(),
   }).nullable(),
   processes: z.strictObject({
     total: z.number().int().nonnegative(),
     running: z.number().int().nonnegative(),
   }),
-  runs: z.array(operatorRunSchema).max(50),
+  /** Newest first; null when the Ship's Process could not be read, never an empty stand-in. */
+  runs: z.array(operatorRunSchema).max(50).nullable(),
   messengers: z.array(z.strictObject({
     adapter: label,
     linkedAt: timestamp.nullable(),

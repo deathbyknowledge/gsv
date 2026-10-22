@@ -75,11 +75,15 @@ describe("operator Ship snapshot", () => {
     expect(JSON.stringify(snapshot)).not.toMatch(/John|Maria|removed-since/);
   });
 
-  it("still answers when the Ship's Process cannot", async () => {
+  it("reports the Process portion as unavailable, with a diagnostic, when the Ship's Process cannot answer", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     const ship = process({ processId: "proc:ship", isPersonalController: true });
     const snapshot = await buildOperatorShipSnapshot(sources([ship], vi.fn(async () => { throw new Error("Process unavailable"); })));
-    expect(snapshot.ship).toMatchObject({ pid: "proc:ship", pendingApprovals: 0, lastCompactionAt: null });
-    expect(snapshot.runs).toEqual([]);
+    // Zeros here would read as an idle Ship with no recent runs.
+    expect(snapshot.ship).toMatchObject({ pid: "proc:ship", pendingApprovals: null, lastCompactionAt: null });
+    expect(snapshot.runs).toBeNull();
+    expect(warn).toHaveBeenCalledWith("[Operator] Ship Process summary unavailable:", expect.objectContaining({ exceptionName: "Error" }));
+    warn.mockRestore();
   });
 
   it("reports a space without a Ship", async () => {
