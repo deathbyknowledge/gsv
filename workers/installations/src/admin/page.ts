@@ -117,11 +117,11 @@ export function formatDuration(ms: number): string {
   return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
 }
 
-const AUDIT_OUTCOME_NOTES: Record<OperatorAuditEvent["outcome"], string> = {
+const AUDIT_OUTCOME_NOTES = {
   completed: "",
   error: "<small>Returned an error</small>",
   pending: "<small>Outcome not recorded</small>",
-};
+} satisfies Record<OperatorAuditEvent["outcome"], string>;
 
 export function auditTable(events: readonly OperatorAuditEvent[], showShip: boolean): string {
   return `<div class="table-wrap"><table class="audit"><thead><tr><th>When</th><th>Operator</th><th>Action</th>${showShip ? "<th>Ship</th>" : ""}<th>Reason</th></tr></thead>

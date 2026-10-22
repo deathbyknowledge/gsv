@@ -10,7 +10,7 @@ import { InstallationAdminService } from "./service";
 
 const origin = "http://localhost:8976";
 
-function stack(gateway?: OperatorGatewayService, timeoutMs?: number, insightDb: D1Database = env.INSTALLATIONS_DB) {
+function stack(gateway?: OperatorGatewayService, timeoutMs?: number, insightDb: Pick<D1Database, "prepare"> = env.INSTALLATIONS_DB) {
   const accounts = new AccountStore(env.INSTALLATIONS_DB, "example.com");
   const onboarding = new InstallationOnboardingStore(env.INSTALLATIONS_DB, accounts);
   const service = new InstallationAdminService(env.INSTALLATIONS_DB, accounts, onboarding,
@@ -40,17 +40,10 @@ async function createShip(http: InstallationAdminHttp, service: InstallationAdmi
 /** The audit log's database, failing each statement that starts with `failing` while `fail.on` is set. */
 function auditDb(failing: string) {
   const fail = { on: false };
-  const db = new Proxy(env.INSTALLATIONS_DB, {
-    get(target, property) {
-      if (property !== "prepare") return Reflect.get(target, property, target);
-      return (sql: string) => {
-        const statement = target.prepare(sql);
-        if (!fail.on || !sql.trim().startsWith(failing)) return statement;
-        const failed = () => Promise.reject(new Error("D1_ERROR: network connection lost"));
-        return { bind: () => ({ run: failed, first: failed, all: failed }), run: failed, first: failed, all: failed };
-      };
-    },
-  });
+  const db: Pick<D1Database, "prepare"> = {
+    // A statement on a missing table fails inside D1, as a dropped connection would.
+    prepare: (sql) => env.INSTALLATIONS_DB.prepare(fail.on && sql.trim().startsWith(failing) ? "SELECT * FROM operator_audit_unreachable" : sql),
+  };
   return { db, fail };
 }
 

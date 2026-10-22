@@ -7,6 +7,7 @@ import { InstallationDeletionInventories, type InstallationDeletionInventoryReso
 import { AccountsDeletionRuntime } from "./deletion-runtime";
 import type { InstallationDeletionService } from "@humansandmachines/gsv/services/lifecycle";
 import { InstallationDeletionHttp } from "./deletion-http";
+import type { AdminAuditRecorder } from "./admin/insight";
 
 const namespaceId = "a".repeat(32);
 async function fixture() {
@@ -134,15 +135,18 @@ describe("persisted deletion inspection epochs", () => {
     const runtime = new AccountsDeletionRuntime(state.db, {}, undefined, 20, state.clock, state.configuration);
     const endpoint = `https://admin.example.invalid/admin/api/installations/${state.a.installationId}/deletion/inspection`;
     // Only an admitted request reaches the audit log.
-    const audited = vi.fn(async (_request: Request, _action: { name: string }, mutation: () => Promise<unknown>) => await mutation());
-    const denied = new InstallationDeletionHttp(runtime, { allows: async () => false }, "https://admin.example.invalid", audited as never);
+    const audits: Parameters<AdminAuditRecorder>[1][] = [];
+    const audited: AdminAuditRecorder = async (_request, action, mutation) => {
+      audits.push(action);
+      return await mutation();
+    };
+    const denied = new InstallationDeletionHttp(runtime, { allows: async () => false }, "https://admin.example.invalid", audited);
     expect((await denied.handle(new Request(endpoint, { method: "POST" })))?.status).toBe(403);
-    const allowed = new InstallationDeletionHttp(runtime, { allows: async () => true }, "https://admin.example.invalid", audited as never);
+    const allowed = new InstallationDeletionHttp(runtime, { allows: async () => true }, "https://admin.example.invalid", audited);
     expect((await allowed.handle(new Request(endpoint, { method: "POST", headers: { origin: "https://foreign.example.invalid" } })))?.status).toBe(403);
-    expect(audited).not.toHaveBeenCalled();
+    expect(audits).toEqual([]);
     expect((await allowed.handle(new Request(endpoint, { method: "POST", headers: { origin: "https://admin.example.invalid" } })))?.status).toBe(201);
-    expect(audited).toHaveBeenCalledTimes(1);
-    expect(audited.mock.calls[0]?.[1]).toEqual({ name: "ship.deletion.inspection", installationId: state.a.installationId });
+    expect(audits).toEqual([{ name: "ship.deletion.inspection", installationId: state.a.installationId }]);
   });
 
   it("accepts the bounded candidate list above the ordinary JSON body limit", async () => {

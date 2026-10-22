@@ -3,6 +3,7 @@ import {
   type OperatorGatewayService,
   type OperatorShipSnapshot,
 } from "@humansandmachines/gsv/services/operator";
+import { exceptionDiagnostics } from "@humansandmachines/gsv/telemetry";
 
 /** Optional operator bindings; without them the Ship page still renders from Accounts alone. */
 export type OperatorEnvironment = {
@@ -73,7 +74,7 @@ export class ShipInsight {
   private readonly timeoutMs: number;
 
   constructor(
-    private readonly db: D1Database,
+    private readonly db: Pick<D1Database, "prepare">,
     options: { gateway?: OperatorGatewayService; mailDomain?: string; timeoutMs?: number } = {},
   ) {
     this.audit = new OperatorAuditLog(db);
@@ -153,7 +154,7 @@ export class ShipInsight {
 
 /** Append-only record of operator actions. */
 export class OperatorAuditLog {
-  constructor(private readonly db: D1Database) {}
+  constructor(private readonly db: Pick<D1Database, "prepare">) {}
 
   /**
    * Writes the row before the mutation runs: if it cannot be written, nothing
@@ -192,7 +193,7 @@ export class OperatorAuditLog {
         result.detail ? JSON.stringify(result.detail) : null, id).run();
     } catch (error) {
       // The row already records the action; it stays `pending` and the page says so.
-      console.warn("[Operator] Audit outcome not recorded:", id, error instanceof Error ? error.name : "unknown");
+      console.warn("[Operator] Audit outcome not recorded:", id, exceptionDiagnostics(error));
     }
   }
 
