@@ -82,6 +82,7 @@ describe("WhatsApp installation retirement", () => {
     const surfaceId = "34690404040";
     const space = "quiesced-reaction-fixture";
     const { peer, route } = await pair(surfaceId, space);
+    // SAFETY: the Meta fixture's /records endpoint returns the requests it received as GraphRecords.
     const reactions = async () => ((await (await bindings.WHATSAPP_API!.fetch("https://fixture/records")).json()) as Array<GraphRecord & { body: { type?: string; reaction?: unknown } }>)
       .filter((record) => record.kind === "message" && record.body.to === surfaceId && record.body.type === "reaction")
       .map((record) => record.body.reaction);
