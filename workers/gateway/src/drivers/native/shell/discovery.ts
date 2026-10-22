@@ -396,6 +396,8 @@ function discoveryScore(
   const bodyTokens = new Set(significantTokens(body));
 
   let score = name === normalizedQuery ? 120 : 0;
+  // Only what an entry says about itself earns the coverage bonus: a long
+  // skill body mentions most words and must not outrank a matching command.
   let matched = 0;
   for (const token of queryTokens) {
     if (nameTokens.includes(token)) {
@@ -409,7 +411,6 @@ function discoveryScore(
       matched += 1;
     } else if (bodyTokens.has(token)) {
       score += 2;
-      matched += 1;
     }
   }
   score += matched * matched * 2;
