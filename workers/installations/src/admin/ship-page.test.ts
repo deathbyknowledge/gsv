@@ -236,6 +236,15 @@ describe("operator audit log", () => {
     expect((await service.listInstallations({ query: "neverborn", state: null, page: 1 })).installations).toEqual([]);
   });
 
+  it("still shows a new activation link when the Ship page's own reads fail", async () => {
+    const audit = auditDb("SELECT");
+    const { http } = stack(undefined, undefined, audit.db);
+    audit.fail.on = true;
+    const created = await http.handle(form("/admin/installations", { operationId: `operation_${crypto.randomUUID()}`, handle: "unreadable" }));
+    expect(created?.status).toBe(201);
+    expect(await created!.text()).toContain("ACTIVATION LINK ISSUED");
+  });
+
   it("reports a committed action as done and keeps its record when the outcome cannot be written", async () => {
     const audit = auditDb("UPDATE operator_audit_events");
     const ships = stack(undefined, undefined, audit.db);

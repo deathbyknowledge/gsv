@@ -1,3 +1,4 @@
+import { exceptionDiagnostics } from "@humansandmachines/gsv/telemetry";
 import type { AdminInstallation, AdminInstallationList, AdminInstallationListQuery, AdminInstallationSummary } from "../administration";
 import { hasExpectedOrigin, json, noStoreHeaders, readRequestBody, requireString } from "../http";
 import type { InstallationAdminAccess } from "./access";
@@ -126,7 +127,7 @@ export class InstallationAdminHttp<
         catch { installation = null; }
         if (installation) {
           return adminInstallationPage(installation, undefined, failure.message, false, failure.status, this.presentation,
-            await this.shipView(installation).catch(() => undefined));
+            await this.shipView(installation));
         }
       }
       return adminErrorPage(failure.message, failure.status, head, this.presentation.navigation);
@@ -146,13 +147,22 @@ export class InstallationAdminHttp<
       mutation, describe);
   }
 
+  /**
+   * Best effort: the page also follows committed actions, so a failed read
+   * must not hide their result, such as a link shown only once.
+   */
   private async shipView(installation: Detail): Promise<ShipView | undefined> {
     if (!this.insight) return undefined;
-    const [context, health] = await Promise.all([
-      this.insight.context(installation),
-      this.insight.health(installation.installationId),
-    ]);
-    return { context, health };
+    try {
+      const [context, health] = await Promise.all([
+        this.insight.context(installation),
+        this.insight.health(installation.installationId),
+      ]);
+      return { context, health };
+    } catch (error) {
+      console.warn("[Operator] Ship page details unavailable:", installation.installationId, exceptionDiagnostics(error));
+      return undefined;
+    }
   }
 }
 
