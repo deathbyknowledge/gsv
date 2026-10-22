@@ -367,9 +367,9 @@ automatic retry. An outcome that may have reached the provider is reported as
 
 `contact` manages relationships with people on other Ships.
 `contact find @HANDLE|ADDRESS` reads a published public profile. Profiles are
-public by default; an unavailable one was made private by its owner and does not
-establish whether the Ship exists. Private invitations work without a published
-profile or an existing contact.
+public by default, but an unavailable profile does not establish whether the Ship
+exists: the address may be mistyped, the Ship elsewhere, or the profile private.
+Private invitations work without a published profile or an existing contact.
 `contact connect @HANDLE|ADDRESS --message TEXT --handling manual|ship [--name DISPLAY_NAME]`
 sends that profile a first message request, which the person accepts or declines
 in People. The signed-in human or their canonical Ship may send it; repeating the

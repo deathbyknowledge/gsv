@@ -987,8 +987,9 @@ address with `Accept: application/json` returns its signed document. Publication
 draft changes stay private until the next explicit publish. No public alias is required. Profile
 mutations and first-contact decisions require the direct signed-in human. The owner's canonical Ship
 may resolve a profile and create, read, list and retry outgoing message requests (`approach.create`,
-`approach.get`, `approach.list`, `approach.retry`) on their behalf, but cannot publish a profile or
-accept an incoming request.
+`approach.get`, `approach.list`, `approach.retry`) on their behalf. Incoming requests, publishing a
+profile and every decision stay with the signed-in human; a process reading or listing an incoming
+request is rejected.
 
 ```ts
 type ProfileAndApproachSyscalls = {

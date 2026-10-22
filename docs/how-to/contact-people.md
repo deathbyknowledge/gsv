@@ -59,8 +59,9 @@ and `contact connect @esteve --message TEXT --handling manual|ship` sends the sa
 first message request. Telling Ship "add @esteve" is enough: Ship resolves the
 handle and sends the request without a separate approval, and Esteve decides
 whether to accept. Profiles are public by default, so a handle normally resolves.
-An unavailable profile means its owner made it private; it does not mean the Ship
-is missing and does not prevent sharing a private invitation.
+An unavailable profile does not establish whether the Ship exists: the handle may
+be mistyped, the Ship elsewhere, or the profile private. It does not prevent
+sharing a private invitation.
 Chat’s **+ → find a person** uses the same lookup and lets you mention the profile
 in your draft without contacting them. Review the profile and your prefilled display
 name, choose who handles new messages, then send a first message.

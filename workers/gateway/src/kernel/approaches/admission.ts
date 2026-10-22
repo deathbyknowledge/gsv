@@ -26,13 +26,21 @@ const createSchema = z.strictObject({
   shipHandlesMessages: z.optional(z.boolean()),
 });
 
+/** The owner's canonical Ship sees only the requests it may send; incoming requests are the human's to read and decide. */
+function requireOutgoingForProcess(direction: "incoming" | "outgoing", ctx: KernelContext): void {
+  if (ctx.processId && direction !== "outgoing") throw new Error("Incoming message requests require the signed-in human");
+}
+
 export function handleApproachGet(args: ApproachGetArgs, ctx: KernelContext): ApproachResult {
-  return { approach: ctx.approaches.owned(idSchema.parse(args.approachId), requireContactCaller(ctx, true)).summary };
+  const record = ctx.approaches.owned(idSchema.parse(args.approachId), requireContactCaller(ctx, true));
+  requireOutgoingForProcess(record.summary.direction, ctx);
+  return { approach: record.summary };
 }
 
 export function handleApproachList(args: ApproachListArgs, ctx: KernelContext): ApproachListResult {
   const ownerUid = requireContactCaller(ctx, true);
   const direction = z.enum(["incoming", "outgoing"]).parse(args.direction);
+  requireOutgoingForProcess(direction, ctx);
   const status = z.optional(z.enum(["active", "history"])).parse(args.status);
   const limit = args.limit ?? 30;
   const before = args.before ? z.strictObject({ createdAtMs: z.int().check(z.positive()), id: idSchema }).parse(args.before) : undefined;
@@ -128,7 +136,9 @@ export async function handleApproachDecide(args: ApproachDecideArgs, ctx: Kernel
 
 export async function handleApproachRetry(args: ApproachRetryArgs, ctx: KernelContext): Promise<ApproachResult> {
   const ownerUid = requireContactCaller(ctx, true);
-  const record = ctx.approaches.retry(idSchema.parse(args.approachId), ownerUid, revisionSchema.parse(args.expectedRevision));
+  const id = idSchema.parse(args.approachId);
+  requireOutgoingForProcess(ctx.approaches.owned(id, ownerUid).summary.direction, ctx);
+  const record = ctx.approaches.retry(id, ownerUid, revisionSchema.parse(args.expectedRevision));
   await ctx.scheduleApproachMaintenance();
   ctx.broadcastToUserUid(ownerUid, "approach.changed");
   return { approach: record.summary };
