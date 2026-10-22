@@ -153,7 +153,7 @@ describe("Ship reply preference", () => {
       expect(output.resolveRunRoute("ship", "followup", 1000)).toMatchObject({ kind: "connection", connectionId: "web" });
       await Promise.all(pending);
       expect(adapterSetActivity).toHaveBeenCalledExactlyOnceWith(
-        { installationId: "inst-replies" }, "managed", destination.surface, { kind: "typing", active: false },
+        { installationId: "inst-replies" }, "managed", destination.surface, { kind: "typing", active: false, runId: "followup" },
       );
       shipReplies.recordAdapter(1000);
       expect(output.resolveRunRoute("ship", "followup", 1000)).toMatchObject({ kind: "adapter", destination });
@@ -168,7 +168,7 @@ describe("Ship reply preference", () => {
       await Promise.all(pending);
       expect(adapterSetActivity).toHaveBeenCalledTimes(3);
       expect(adapterSetActivity).toHaveBeenLastCalledWith(
-        { installationId: "inst-replies" }, "managed", { kind: "dm", id: "another-private" }, { kind: "typing", active: false },
+        { installationId: "inst-replies" }, "managed", { kind: "dm", id: "another-private" }, { kind: "typing", active: false, runId: "followup" },
       );
       for (const kind of ["dm", "group"] as const) {
         const exact = runRoutes.setAdapterRoute({ runId: kind, processId: "ship", uid: 1000, destination: { ...destination, surface: { kind, id: "explicit" } } });

@@ -28,6 +28,8 @@ export type ManagedWhatsAppPeerState = {
   lastInboundMessageId?: string;
   /** The inbound message carrying the 👀 reaction while Ship works on it. */
   workingReactionMessageId?: string;
+  /** The Ship run that owns the 👀; a stop from any other run leaves it in place. */
+  workingReactionRunId?: string;
   activeRoute?: ManagedWhatsAppPeerRoute;
   pairing?: ManagedWhatsAppPairingState;
   lastDisconnect?: {
@@ -64,6 +66,7 @@ export function bindManagedWhatsAppPeerIdentity(
     lastInboundAt: latest ? receivedAt : state?.lastInboundAt,
     lastInboundMessageId: latest ? inbound.messageId : state?.lastInboundMessageId,
     workingReactionMessageId: state?.workingReactionMessageId,
+    workingReactionRunId: state?.workingReactionRunId,
     activeRoute: state?.activeRoute,
     pairing: state?.pairing,
     lastDisconnect: state?.lastDisconnect,

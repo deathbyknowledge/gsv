@@ -119,6 +119,7 @@ export function adapterTypingActivity(route: AdapterDeliveryRoute, active: boole
   return {
     kind: "typing",
     active,
+    runId: route.runId,
     ...(route.routeGeneration === undefined
       ? undefined
       : { routeGeneration: route.routeGeneration }),

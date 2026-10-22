@@ -103,6 +103,7 @@ export default defineConfig({
               let resumeSend = null;
               let blockedSend = null;
               let failNextTemplate = false;
+              let failNextReaction = false;
               const windowRejections = new Set();
               let nextId = 100;
               export default {
@@ -110,6 +111,10 @@ export default defineConfig({
                   const url = new URL(request.url);
                   if (request.method === "POST" && url.pathname === "/fail-next-template") {
                     failNextTemplate = true;
+                    return Response.json({ ok: true });
+                  }
+                  if (request.method === "POST" && url.pathname === "/fail-next-reaction") {
+                    failNextReaction = true;
                     return Response.json({ ok: true });
                   }
                   if (request.method === "GET" && url.pathname === "/records") {
@@ -203,6 +208,11 @@ export default defineConfig({
                         { error: { message: "Re-engagement message", type: "OAuthException", code: 131047 } },
                         { status: 400 },
                       );
+                    }
+                    if (body.type === "reaction" && failNextReaction) {
+                      failNextReaction = false;
+                      rejected.push({ kind: "message", status: 500, body });
+                      return Response.json({ error: { message: "unknown", type: "OAuthException", code: 2 } }, { status: 500 });
                     }
                     if (body.type === "template" && failNextTemplate) {
                       failNextTemplate = false;

@@ -303,6 +303,7 @@ export class ManagedWhatsAppPeer extends DurableObject<ManagedWhatsAppPeerEnv> {
     actorId: string,
     routeGeneration: string,
     active: boolean,
+    runId?: string,
   ): Promise<{ accepted: boolean }> {
     const state = await this.requireState();
     this.assertPeerDestination(state, surface, actorId);
@@ -334,7 +335,7 @@ export class ManagedWhatsAppPeer extends DurableObject<ManagedWhatsAppPeerEnv> {
       }
       // The typing indicator fades after about 25 seconds, so 👀 marks longer work.
       const working = active && whatsAppWindowOpen(state, Date.now()) ? state.lastInboundMessageId : undefined;
-      await this.moveWorkingReaction(working, owner);
+      await this.moveWorkingReaction(working, runId, owner);
     } finally { release(); }
     return { accepted: true };
   }
@@ -343,11 +344,16 @@ export class ManagedWhatsAppPeer extends DurableObject<ManagedWhatsAppPeerEnv> {
    * Keeps 👀 on at most one message. Moves run one at a time, so a stop never
    * overtakes the start it clears. Reactions are best effort and never block delivery.
    */
-  private moveWorkingReaction(target: string | undefined, owner: AdapterDataScope): Promise<void> {
+  private moveWorkingReaction(
+    target: string | undefined,
+    runId: string | undefined,
+    owner: AdapterDataScope,
+  ): Promise<void> {
     const move = this.workingReaction.then(async () => {
       const state = await this.requireState();
       const current = state.workingReactionMessageId;
-      if (current === target) return;
+      // A superseded run's stop can arrive after its successor started; it must not clear the successor's 👀.
+      if (!target && runId && state.workingReactionRunId && state.workingReactionRunId !== runId) return;
       const react = async (messageId: string, emoji: string): Promise<boolean> => {
         try {
           await reactToWhatsAppMessage(
@@ -359,11 +365,18 @@ export class ManagedWhatsAppPeer extends DurableObject<ManagedWhatsAppPeerEnv> {
           return false;
         }
       };
-      if (current) await react(current, "");
-      const next = target && await react(target, "👀") ? target : undefined;
+      let next = current;
+      if (current !== target) {
+        // A failed removal keeps its message recorded, so the next start or stop retries it.
+        const cleared = !current || await react(current, "");
+        if (cleared) next = target && await react(target, "👀") ? target : undefined;
+      }
+      const nextRunId = target ? runId : undefined;
       await this.ctx.storage.transaction(async (txn) => {
         const latest = await txn.get<ManagedWhatsAppPeerState>(STATE_KEY);
-        if (latest) await txn.put(STATE_KEY, { ...latest, workingReactionMessageId: next });
+        if (latest) {
+          await txn.put(STATE_KEY, { ...latest, workingReactionMessageId: next, workingReactionRunId: nextRunId });
+        }
       });
     });
     this.workingReaction = move.catch(() => undefined);

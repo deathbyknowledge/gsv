@@ -67,8 +67,10 @@ eligibility. The adapter does not enforce or assume a geographic exception.
   of the person's last message. Meta hides it after about 25 seconds, so while
   the window is open the adapter also reacts 👀 to that message when a run
   starts and removes the reaction when the run stops. The peer records the one
-  message carrying 👀 and serializes moves, so a stop never overtakes its start.
-  Reactions are best effort and never block delivery.
+  message carrying 👀 and the run that owns it, and serializes moves, so a stop
+  never overtakes its start and a superseded run's late stop cannot clear its
+  successor's reaction. A failed removal stays recorded and is retried on the
+  next start or stop. Reactions are best effort and never block delivery.
 
 ## Message templates
 

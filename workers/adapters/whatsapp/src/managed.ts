@@ -64,6 +64,7 @@ type ManagedWhatsAppPeerStub = {
     actorId: string,
     routeGeneration: string,
     active: boolean,
+    runId?: string,
   ): Promise<{ accepted: boolean }>;
   disconnect(input: AdapterPairingDisconnectInput): Promise<AdapterPairingDisconnectResult>;
 };
@@ -166,6 +167,7 @@ export class ManagedWhatsAppChannel extends WorkerEntrypoint<Env> implements Ada
         surface.id,
         routeGeneration,
         activity.active,
+        activity.runId,
       );
       if (!result.accepted) {
         throw new Error("WhatsApp route changed before activity delivery");

@@ -961,6 +961,74 @@ describe("managed WhatsApp clean-instance flow", () => {
     expect((await reactions()).slice(before + 3)).toEqual([{ message_id: "wamid.in.working.2", emoji: "" }]);
   });
 
+  it("ignores a stop from a superseded run that arrives after its successor started", async () => {
+    const { route } = await linkedPeer("open");
+    const channel = new deployedAdapter.ManagedWhatsAppChannel(createExecutionContext(),
+      typedStub<ConstructorParameters<typeof deployedAdapter.ManagedWhatsAppChannel>[1]>(env));
+    const installation = { installationId: route.installationId };
+    const surface = { kind: "dm" as const, id: ACTOR };
+    const activity = (active: boolean, runId: string) => channel.adapterSetActivity(
+      installation, "managed", surface, { kind: "typing", active, routeGeneration: route.generation, runId },
+    );
+    const reactions = async () => (await sentMessages())
+      .filter((record) => record.body.type === "reaction")
+      .map((record) => record.body.reaction);
+
+    expect((await SELF.fetch(await text("wamid.in.superseded.1", "first part"))).status).toBe(200);
+    await vi.waitFor(async () => { expect((await sentMessages()).at(-1)?.body.text?.body).toBe("Personal received first part"); });
+    await expect(activity(false, "run-earlier")).resolves.toEqual({ ok: true });
+    const before = (await reactions()).length;
+    await expect(activity(true, "run-1")).resolves.toEqual({ ok: true });
+
+    expect((await SELF.fetch(await text("wamid.in.superseded.2", "second part"))).status).toBe(200);
+    await vi.waitFor(async () => { expect((await sentMessages()).at(-1)?.body.text?.body).toBe("Personal received second part"); });
+    await expect(activity(true, "run-2")).resolves.toEqual({ ok: true });
+    // The superseded run's stop arrives late; run 2 is still working.
+    await expect(activity(false, "run-1")).resolves.toEqual({ ok: true });
+    expect((await reactions()).slice(before)).toEqual([
+      { message_id: "wamid.in.superseded.1", emoji: "👀" },
+      { message_id: "wamid.in.superseded.1", emoji: "" },
+      { message_id: "wamid.in.superseded.2", emoji: "👀" },
+    ]);
+
+    await expect(activity(false, "run-2")).resolves.toEqual({ ok: true });
+    expect((await reactions()).slice(before + 3)).toEqual([{ message_id: "wamid.in.superseded.2", emoji: "" }]);
+  });
+
+  it("keeps retrying a 👀 removal that failed instead of stranding it", async () => {
+    const { route } = await linkedPeer("open");
+    const channel = new deployedAdapter.ManagedWhatsAppChannel(createExecutionContext(),
+      typedStub<ConstructorParameters<typeof deployedAdapter.ManagedWhatsAppChannel>[1]>(env));
+    const installation = { installationId: route.installationId };
+    const surface = { kind: "dm" as const, id: ACTOR };
+    const activity = (active: boolean, runId: string) => channel.adapterSetActivity(
+      installation, "managed", surface, { kind: "typing", active, routeGeneration: route.generation, runId },
+    );
+    const reactions = async () => (await sentMessages())
+      .filter((record) => record.body.type === "reaction")
+      .map((record) => record.body.reaction);
+    // SAFETY: The Cloudflare test environment declares WHATSAPP_API as a Fetcher binding.
+    const graph = env.WHATSAPP_API as Fetcher;
+
+    expect((await SELF.fetch(await text("wamid.in.stranded.1", "first ask"))).status).toBe(200);
+    await vi.waitFor(async () => { expect((await sentMessages()).at(-1)?.body.text?.body).toBe("Personal received first ask"); });
+    await expect(activity(false, "run-earlier")).resolves.toEqual({ ok: true });
+    const before = (await reactions()).length;
+    await expect(activity(true, "run-a")).resolves.toEqual({ ok: true });
+
+    expect((await SELF.fetch(await text("wamid.in.stranded.2", "second ask"))).status).toBe(200);
+    await vi.waitFor(async () => { expect((await sentMessages()).at(-1)?.body.text?.body).toBe("Personal received second ask"); });
+    await graph.fetch("https://graph.test/fail-next-reaction", { method: "POST" });
+    // Removing 👀 from the first message fails, so it stays the one to clear.
+    await expect(activity(true, "run-b")).resolves.toEqual({ ok: true });
+    await expect(activity(false, "run-b")).resolves.toEqual({ ok: true });
+
+    expect((await reactions()).slice(before)).toEqual([
+      { message_id: "wamid.in.stranded.1", emoji: "👀" },
+      { message_id: "wamid.in.stranded.1", emoji: "" },
+    ]);
+  });
+
 });
 
 it("does not export the retired linked-device entrypoints", async () => {
