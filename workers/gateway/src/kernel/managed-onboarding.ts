@@ -303,9 +303,15 @@ managedOnboardingService(): GatewayEnv["INSTALLATION_DIRECTORY"] | null {
     return this.host.env.INSTALLATION_DIRECTORY ?? null;
   }
 
-async managedWorkGate() {
+/** `fresh` asks Accounts even after a recent confirmation; use it before granting new authority. */
+  async managedWorkGate(options: { fresh?: boolean } = {}) {
     this.host.retirement.assertActive();
     this.gate ??= new ManagedInstallationGate(this.host.env, () => this.host.installationId);
-    return await this.gate.check();
+    return await this.gate.check(options);
+  }
+
+  /** A lifecycle change from Accounts must apply before the next admission. */
+  invalidateWorkGate(): void {
+    this.gate?.invalidate();
   }
 }

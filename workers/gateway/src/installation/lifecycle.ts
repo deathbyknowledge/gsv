@@ -53,16 +53,12 @@ export async function managedInstallationWorkGate(
   bindings: ManagedInstallationLifecycleBindings,
   installationId: string,
 ): Promise<ManagedInstallationWorkGate> {
-  return (await lookupManagedWorkGate(bindings, installationId)).gate;
+  return await lookupManagedWorkGate(bindings, installationId);
 }
 
 /** How long a confirmed-active answer stands before Accounts is asked again. */
 const ACTIVE_CONFIRMATION_MS = 60_000;
-/** How long a confirmed-active installation keeps working while Accounts lookups fail. */
-const LOOKUP_OUTAGE_GRACE_MS = 10 * 60_000;
 const LOOKUP_TIMEOUT_MS = 2_000;
-/** While Accounts is failing, a grace answer stands this long so requests do not each wait on a lookup. */
-const LOOKUP_RETRY_MS = 10_000;
 
 const UNAVAILABLE: ManagedInstallationWorkGate = {
   allowed: false,
@@ -77,13 +73,11 @@ const UNREACHABLE: ManagedInstallationWorkGate = {
 
 /**
  * One Durable Object's view of its Accounts admission. It remembers an active
- * answer for a minute, shares one lookup among concurrent callers, and keeps a
- * recently active installation working through a failed lookup. A refusal from
- * Accounts is never remembered.
+ * answer for a minute and shares one lookup among concurrent callers. A refusal
+ * or a failed lookup is never remembered, so an outage fails closed.
  */
 export class ManagedInstallationGate {
   private confirmedAt?: number;
-  private graceUntil = 0;
   private lookup?: Promise<ManagedInstallationWorkGate>;
 
   constructor(
@@ -91,23 +85,24 @@ export class ManagedInstallationGate {
     private readonly installationId: () => string,
   ) {}
 
-  async check(): Promise<ManagedInstallationWorkGate> {
-    if (this.confirmedAt !== undefined && Date.now() - this.confirmedAt < ACTIVE_CONFIRMATION_MS) {
+  /** `fresh` asks Accounts even after a recent confirmation, for calls that grant new authority. */
+  async check(options: { fresh?: boolean } = {}): Promise<ManagedInstallationWorkGate> {
+    if (!options.fresh && this.confirmedAt !== undefined && Date.now() - this.confirmedAt < ACTIVE_CONFIRMATION_MS) {
       return { allowed: true };
     }
-    if (Date.now() < this.graceUntil) return { allowed: true };
+    if (options.fresh) return await this.refresh();
     this.lookup ??= this.refresh().finally(() => { this.lookup = undefined; });
     return await this.lookup;
   }
 
+  /** Forgets the last confirmation, so the next check asks Accounts. */
+  invalidate(): void {
+    this.confirmedAt = undefined;
+  }
+
   private async refresh(): Promise<ManagedInstallationWorkGate> {
-    const { gate, lookupFailed } = await lookupManagedWorkGate(this.bindings, this.installationId());
-    if (gate.allowed) this.confirmedAt = Date.now();
-    else if (!lookupFailed) this.confirmedAt = undefined;
-    else if (this.confirmedAt !== undefined && Date.now() - this.confirmedAt < LOOKUP_OUTAGE_GRACE_MS) {
-      this.graceUntil = Date.now() + LOOKUP_RETRY_MS;
-      return { allowed: true };
-    }
+    const gate = await lookupManagedWorkGate(this.bindings, this.installationId());
+    this.confirmedAt = gate.allowed ? Date.now() : undefined;
     return gate;
   }
 }
@@ -115,9 +110,9 @@ export class ManagedInstallationGate {
 async function lookupManagedWorkGate(
   bindings: ManagedInstallationLifecycleBindings,
   installationIdValue: string,
-): Promise<{ gate: ManagedInstallationWorkGate; lookupFailed: boolean }> {
+): Promise<ManagedInstallationWorkGate> {
   const directory = bindings.INSTALLATION_DIRECTORY;
-  if (!directory) return { gate: UNAVAILABLE, lookupFailed: false };
+  if (!directory) return UNAVAILABLE;
   const installationId = parseInstallationId(installationIdValue);
   let result: InstallationDirectoryResult;
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -130,24 +125,16 @@ async function lookupManagedWorkGate(
     ]);
   } catch (error) {
     console.warn("[Installation gate] Accounts lookup failed:", exceptionDiagnostics(error));
-    return { gate: UNREACHABLE, lookupFailed: true };
+    return UNREACHABLE;
   } finally {
     clearTimeout(timer);
   }
-  if (!result.found || result.installationId !== installationId) {
-    return { gate: UNAVAILABLE, lookupFailed: false };
-  }
-  if (result.state === "active") return { gate: { allowed: true }, lookupFailed: false };
+  if (!result.found || result.installationId !== installationId) return UNAVAILABLE;
+  if (result.state === "active") return { allowed: true };
   if (result.state === "provisioning") {
-    return {
-      gate: { allowed: false, code: 503, message: "Finish setting up your Ship", details: setupRecoveryDetails(bindings, result) },
-      lookupFailed: false,
-    };
+    return { allowed: false, code: 503, message: "Finish setting up your Ship", details: setupRecoveryDetails(bindings, result) };
   }
-  return {
-    gate: result.state === "restricted"
-      ? { allowed: false, code: 423, message: "Managed installation is suspended" }
-      : UNAVAILABLE,
-    lookupFailed: false,
-  };
+  return result.state === "restricted"
+    ? { allowed: false, code: 423, message: "Managed installation is suspended" }
+    : UNAVAILABLE;
 }

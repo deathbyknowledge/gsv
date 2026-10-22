@@ -153,7 +153,7 @@ describe("managed installation gate", () => {
     expect(service.resolveInstallation).toHaveBeenCalledTimes(2);
   });
 
-  it("keeps a recently active installation working while Accounts fails, and records why", async () => {
+  it("fails closed when Accounts cannot answer after the cache expires, and records why", async () => {
     vi.useFakeTimers();
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     let failing = false;
@@ -164,15 +164,33 @@ describe("managed installation gate", () => {
     await expect(gate.check()).resolves.toEqual({ allowed: true });
     failing = true;
     vi.advanceTimersByTime(60_001);
-    await expect(gate.check()).resolves.toEqual({ allowed: true });
-    // Requests during the outage do not each wait on Accounts.
-    await expect(gate.check()).resolves.toEqual({ allowed: true });
-    expect(warn).toHaveBeenCalledTimes(1);
+    // An outage cannot be told apart from a suspension, so a stale active answer is never reused.
+    await expect(gate.check()).resolves.toEqual(unreachable);
     expect(warn).toHaveBeenCalledWith(
       "[Installation gate] Accounts lookup failed:", expect.objectContaining({ exceptionMessage: "D1_ERROR: internal error" }),
     );
-    vi.advanceTimersByTime(10 * 60_000);
-    await expect(gate.check()).resolves.toEqual(unreachable);
+  });
+
+  it("asks Accounts again after an invalidation and applies its refusal", async () => {
+    let state: "active" | "retained" = "active";
+    const { service, gate } = gateWith(async () => ({ ...active, state }));
+    await expect(gate.check()).resolves.toEqual({ allowed: true });
+    state = "retained";
+    gate.invalidate();
+    await expect(gate.check()).resolves.toEqual({ allowed: false, code: 503, message: "Managed installation is unavailable" });
+    expect(service.resolveInstallation).toHaveBeenCalledTimes(2);
+  });
+
+  it("asks Accounts for a fresh answer before granting new authority", async () => {
+    let state: "active" | "restricted" = "active";
+    const { service, gate } = gateWith(async () => ({ ...active, state }));
+    await expect(gate.check()).resolves.toEqual({ allowed: true });
+    state = "restricted";
+    await expect(gate.check()).resolves.toEqual({ allowed: true });
+    await expect(gate.check({ fresh: true })).resolves.toMatchObject({ allowed: false, code: 423 });
+    // The refusal also ends the remembered confirmation for ordinary traffic.
+    await expect(gate.check()).resolves.toMatchObject({ allowed: false, code: 423 });
+    expect(service.resolveInstallation).toHaveBeenCalledTimes(3);
   });
 
   it("reports a failed lookup as briefly unreachable without an earlier confirmation", async () => {
