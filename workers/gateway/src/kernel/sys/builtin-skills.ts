@@ -86,6 +86,8 @@ export const BUILTIN_SKILL_FILES = [
       "8d99e5d48add62320e0e8fec91f7daaddd8f4ab3a04d58ab01bd80439cf57096",
       // Untouched skill before the browser choice, sign-in routes and trust guidance.
       "a3a63d79ea483b2407507699e1dab6d9fa353f6ed8ccaa5d1793faf54010315b",
+      // Untouched skill before background-only tabs and the automation-block rule.
+      "7c784479d52388d90eabab587799af523ddafd23286625b9b25f27ba612ce07f",
     ],
   },
   {
