@@ -1,8 +1,9 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { bodyFromBytes, type ResourceBlock } from "@humansandmachines/gsv/protocol";
 import type { Process } from "./do";
 import type { InternalRequestFrame } from "../protocol/process-frames";
 import { initProcess, ROOT_IDENTITY, runInProcess } from "./do-test-harness";
+import * as utils from "../shared/utils";
 
 function staged(runId: string, requestId?: string): InternalRequestFrame<"proc.run.staged"> {
   return {
@@ -36,6 +37,8 @@ function running(process: Process, runId: string, ...dispatchIds: string[]): voi
 }
 
 describe("staged reply files", () => {
+  afterEach(() => { vi.restoreAllMocks(); });
+
   it("counts the files waiting for the active run's next reply", async () => {
     const stub = await initProcess("run-staged-count", ROOT_IDENTITY);
     const resource = await photo(stub);
@@ -63,6 +66,35 @@ describe("staged reply files", () => {
         "a message went to contact:friend without files while this attach was running",
       );
       expect(process.runs.active?.outputMedia).toBeUndefined();
+    });
+  });
+
+  it("removes the archived copy of a file whose attach the fence refused", async () => {
+    const bytes = new TextEncoder().encode("holiday photo");
+    const source: ResourceBlock = {
+      type: "resource",
+      ref: { type: "file", target: "gsv", path: "/root/photo.jpg", revision: "rev-photo", contentType: "image/jpeg", size: bytes.length },
+      mediaType: "image",
+      filename: "photo.jpg",
+    };
+    vi.spyOn(utils, "sendFrameToKernel").mockImplementation(async (_installationId, _pid, frame) => {
+      if (frame.call !== "fs.transfer.send") throw new Error(`unexpected ${frame.call}`);
+      return {
+        type: "res", id: frame.id, ok: true,
+        data: { ok: true, path: source.ref.path, size: bytes.length, revision: source.ref.revision, contentType: source.ref.contentType },
+        body: { length: bytes.length, stream: new ReadableStream({ start(controller) { controller.enqueue(bytes); controller.close(); } }) },
+      };
+    });
+    const stub = await initProcess("run-staged-cleanup", ROOT_IDENTITY);
+    await runInProcess(stub, async (process: Process) => {
+      process.runs.active = { runId: "run-photo" };
+      running(process, "run-photo", "call-attach", "call-send");
+      await process.recvFrame(staged("run-photo", "call-send"));
+      const key = await process.resources.resourceRetentionKey(source);
+      expect(key).toBeTruthy();
+      const refused = await process.recvFrame(attach("run-photo", "call-attach", [source]));
+      expect(refused).toMatchObject({ ok: true, data: { ok: false } });
+      expect(await process.storage.head(key!)).toBeNull();
     });
   });
 
