@@ -44,11 +44,35 @@ describe("operator Ship snapshot", () => {
       processes: { total: 2, running: 1 },
       runs: [],
       messengers: [{ adapter: "whatsapp", linkedAt: 42 }],
-      targets: [{ id: "macbook-air", online: true, lastSeenAt: 99 }],
+      targets: [{ id: "Device 1", online: true, lastSeenAt: 99 }],
       shipEvents: { queued: 2, oldestQueuedAt: 77 },
       openResponsibilities: 3,
     });
     expect(JSON.stringify(snapshot)).not.toContain("34690104444");
+  });
+
+  it("labels devices by when they were first seen, in the device list and in every run step", async () => {
+    const ship = process({ processId: "proc:ship", isPersonalController: true });
+    const device = (target_id: string, first_seen_at: number) => ({
+      target_id, owner_uid: 1000, label: target_id, description: "", implements: [], platform: "darwin", version: "1",
+      online: false, first_seen_at, last_seen_at: first_seen_at, connected_at: null, disconnected_at: null,
+    });
+    const step = (target: string) => ({ kind: "tool" as const, name: "Shell", target, startedAt: 1, durationMs: 1, status: "ok" as const });
+    const summary = vi.fn(async () => ({
+      pendingApprovals: 0, lastCompactionAt: null,
+      runs: [{
+        runId: "run:1", origin: "client" as const, inputChars: 3, inputHasMedia: false, startedAt: 1, durationMs: 5, status: "ok" as const,
+        steps: [step("device-Johns-MacBook-Pro"), step("gsv"), step("device-Maria-Work-Laptop"), step("device-removed-since")],
+      }],
+    }));
+    const snapshot = await buildOperatorShipSnapshot({
+      ...sources([ship], summary),
+      targets: { listForUser: () => [device("device-Maria-Work-Laptop", 20), device("device-Johns-MacBook-Pro", 10)] },
+    });
+    expect(snapshot.targets.map((target) => target.id)).toEqual(["Device 1", "Device 2"]);
+    expect(snapshot.runs[0]?.steps.map((entry) => entry.target)).toEqual(["Device 1", "gsv", "Device 2", "Other device"]);
+    // Device names often carry a person's or employer's name; operators see only the labels.
+    expect(JSON.stringify(snapshot)).not.toMatch(/John|Maria|removed-since/);
   });
 
   it("still answers when the Ship's Process cannot", async () => {

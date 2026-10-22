@@ -110,7 +110,9 @@ Ship's health and a timeline of its recent runs. Health covers the Ship's state,
 queue, approvals, open work, linked messengers and online devices. Each run
 shows its origin, input length, duration and outcome, and its steps flag
 anything that failed or took longer than a minute. The timeline holds only
-metadata: no message text, tool arguments, output or file contents. The health
+metadata: no message text, tool arguments, output or file contents. Devices
+appear as `Device 1`, `Device 2` and so on, numbered by first connection,
+because their own names often include a person's name. The health
 read gives up after three seconds. If the binding is missing or the read fails,
 the page names the reason and the rest of it still works. Set
 `GSV_MAIL_DOMAIN` to show the Ship's mail address.

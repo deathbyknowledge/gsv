@@ -59,12 +59,12 @@ function snapshot(installationId: string): OperatorShipSnapshot {
       durationMs: 438_000, status: "ok",
       steps: [
         { kind: "tool", name: "Shell", target: "gsv", startedAt: at + 9_000, durationMs: 3_000, status: "error" },
-        { kind: "tool", name: "Shell", target: "macbook-air", startedAt: at + 31_000, durationMs: 375_000, status: "ok" },
+        { kind: "tool", name: "Shell", target: "Device 1", startedAt: at + 31_000, durationMs: 375_000, status: "ok" },
         { kind: "delivery", name: "Send message", startedAt: at + 438_000, durationMs: 200, status: "ok" },
       ],
     }],
     messengers: [{ adapter: "whatsapp", linkedAt: at - 86_400_000 }],
-    targets: [{ id: "macbook-air", online: true, lastSeenAt: at }],
+    targets: [{ id: "Device 1", online: true, lastSeenAt: at }],
     shipEvents: { queued: 0, oldestQueuedAt: null },
     openResponsibilities: 3,
   };
@@ -140,7 +140,7 @@ describe("Ship page", () => {
     const body = await page(http, `/admin/installations/${installationId}`);
     expect(operatorShipSnapshot).toHaveBeenCalledWith({ version: 1, installationId, runLimit: 20 });
     expect(body).toContain("whatsapp");
-    expect(body).toContain("macbook-air");
+    expect(body).toContain("Device 1");
     expect(body).toContain("10,450 chars");
     expect(body).toContain("7m 18s");
     expect(body).toContain("6m 15s");

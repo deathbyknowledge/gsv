@@ -21,13 +21,20 @@ export type OperatorSnapshotSources = {
 /**
  * Assembles the operator view of a Ship from Kernel state and the Ship's own
  * Process. Every field is a count, time, name or outcome; nothing here reads
- * message text, actor identifiers or tool data.
+ * message text, actor identifiers, device names or tool data.
  */
 export async function buildOperatorShipSnapshot(sources: OperatorSnapshotSources): Promise<OperatorShipSnapshot> {
   const processes = sources.procs.list();
   const ship = processes.find((process) => process.isPersonalController) ?? null;
   const summary = ship ? await sources.shipSummary(ship.processId).catch(() => null) : null;
   const ownerUid = ship?.ownerUid ?? null;
+  const devices = sources.targets.listForUser(0, [])
+    .sort((left, right) => left.first_seen_at - right.first_seen_at || left.target_id.localeCompare(right.target_id))
+    .slice(0, 50);
+  // Device names often carry a person's or employer's name, so operators see a
+  // label numbered by first connection instead.
+  const deviceLabels = new Map(devices.map((device, index) => [device.target_id, `Device ${index + 1}`]));
+  const deviceLabel = (targetId: string) => targetId === "gsv" ? "gsv" : deviceLabels.get(targetId) ?? "Other device";
   return {
     version: 1,
     installationId: sources.installationId,
@@ -47,13 +54,16 @@ export async function buildOperatorShipSnapshot(sources: OperatorSnapshotSources
       total: processes.length,
       running: processes.filter((process) => process.state !== "idle").length,
     },
-    runs: summary?.runs ?? [],
+    runs: (summary?.runs ?? []).map((run) => ({
+      ...run,
+      steps: run.steps.map((step) => step.target === undefined ? step : { ...step, target: deviceLabel(step.target) }),
+    })),
     messengers: sources.identityLinks.list().slice(0, 50).map((link) => ({
       adapter: link.adapter,
       linkedAt: link.createdAt,
     })),
-    targets: sources.targets.listForUser(0, []).slice(0, 50).map((target) => ({
-      id: target.target_id,
+    targets: devices.map((target) => ({
+      id: deviceLabel(target.target_id),
       online: target.online,
       lastSeenAt: target.last_seen_at,
     })),

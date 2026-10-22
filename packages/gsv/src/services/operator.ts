@@ -17,7 +17,7 @@ export const operatorRunStepSchema = z.strictObject({
   kind: z.enum(["inference", "tool", "delivery"]),
   /** A tool, model or delivery name; never arguments or output. */
   name: label,
-  /** The target a tool ran on, such as `gsv` or a device id. */
+  /** Where a tool ran: `gsv`, a device label such as `Device 1`, or `Other device`; never a device's own name. */
   target: label.optional(),
   startedAt: timestamp,
   durationMs: duration,
@@ -62,6 +62,7 @@ export const operatorShipSnapshotSchema = z.strictObject({
     linkedAt: timestamp.nullable(),
   })).max(50),
   targets: z.array(z.strictObject({
+    /** `Device 1`, `Device 2`… numbered by first connection; never a device's own name. */
     id: label,
     online: z.boolean(),
     lastSeenAt: timestamp.nullable(),
