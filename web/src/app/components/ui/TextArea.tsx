@@ -122,6 +122,7 @@ export function TextArea(props: TextAreaProps) {
         value={value}
         placeholder={placeholder}
         rows={rows}
+        maxLength={maxLength > 0 ? maxLength : undefined}
         disabled={disabled}
         readOnly={readonly}
         spellcheck={false}

@@ -134,7 +134,7 @@ export function Profile({ account, active, edit: editing, focusBio, onDirty, onE
     {!canRead && <p class="people-note">{t("people.profile.noAccess")}</p>}
     {error && <p class="people-error" role="alert">{error.message}</p>}
     {profile.isPending && connected && canRead && <LoadingState variant="panel">{t("people.profile.loading")}</LoadingState>}
-    {state && !editing && preview(state.draft, null)}
+    {state && !editing && preview(state.draft, unpublishedChanges ? t("people.profile.previewSaved") : null)}
     {state && fields && editing && <>
       {status}
       <form class="people-form" onSubmit={(event) => {
