@@ -29,6 +29,7 @@
  *   anything else is committed as your message and answered briefly a second later
  */
 import { GSVClient, type GsvPeerInfo } from "@humansandmachines/gsv/client";
+import type { ProfileState } from "@humansandmachines/gsv/protocol";
 import {
   wireFrameSchemas,
   buildBinaryFrame,
@@ -116,6 +117,11 @@ function forgetSeededSession(): void {
 
 const OWNER = { uid: 1000, username: "esteve", home: "/home/esteve" };
 const SHIP = { pid: "p-ship", uid: 1001, username: "ship", home: "/home/ship" };
+const PROFILE_URL = `https://${OWNER.username}.ship.space/profile`;
+/** The owner's own profile, public by default with an empty bio, editable in memory. */
+let ownProfile: ProfileState = {
+  revision: 1, url: PROFILE_URL, draft: { displayName: OWNER.username, about: "", contactPolicy: "requests", representation: "human" }, published: { url: PROFILE_URL, revision: 1 },
+};
 const HELPER = { pid: "p-helper", label: "tidy the notes archive" };
 const SHIP_CONVERSATION = "c-ship";
 /** The config this browser keeps for the mock, with its storage key: the welcome card's dismissal and the owner's language. */
@@ -158,7 +164,7 @@ const targets: SysTargetSummary[] = [
 ];
 
 const accounts: AccountSummary[] = [
-  { uid: OWNER.uid, username: OWNER.username, displayName: "Esteve", relation: "self", runnable: false, capabilities: ["sys.ledger.list", "sys.target.list", "proc.list", "r12y.list", "r12y.source.list", "sched.list", "r12y.get", "r12y.update", "sched.add", "sched.update", "conversation.send", "profile.resolve", "contact.list", "sys.pair.create", "fs.read", "sys.config.set"] },
+  { uid: OWNER.uid, username: OWNER.username, displayName: "Esteve", relation: "self", runnable: false, capabilities: ["sys.ledger.list", "sys.target.list", "proc.list", "r12y.list", "r12y.source.list", "sched.list", "r12y.get", "r12y.update", "sched.add", "sched.update", "conversation.send", "profile.resolve", "profile.get", "profile.update", "profile.publish", "profile.unpublish", "contact.list", "sys.pair.create", "fs.read", "sys.config.set"] },
   { uid: SHIP.uid, username: SHIP.username, displayName: "Ship", relation: "personal-agent", runnable: true },
 ];
 
@@ -848,6 +854,22 @@ function route(socket: MockSocket, id: string, call: string, args: JsonValue): s
       return respond(id, { message: sent.message, handlerPid: SHIP.pid, runId: sent.runId });
     }
     case "contact.list": return respond(id, { contacts: [] });
+    case "profile.get": return respond(id, { profile: ownProfile });
+    case "profile.update": {
+      const { draft } = z.object({ expectedRevision: z.number(), draft: z.object({
+        displayName: z.string(), about: z.string(), contactPolicy: z.enum(["requests", "invitation", "closed"]), representation: z.enum(["human", "human-and-ship"]),
+      }) }).parse(args);
+      ownProfile = { ...ownProfile, revision: ownProfile.revision + 1, draft };
+      return respond(id, { profile: ownProfile });
+    }
+    case "profile.publish": {
+      ownProfile = { ...ownProfile, published: { url: PROFILE_URL, revision: ownProfile.revision } };
+      return respond(id, { profile: ownProfile });
+    }
+    case "profile.unpublish": {
+      ownProfile = { revision: ownProfile.revision + 1, url: ownProfile.url, draft: ownProfile.draft };
+      return respond(id, { profile: ownProfile });
+    }
     case "profile.resolve": {
       const { url } = z.object({ url: z.string().url() }).parse(args);
       const origin = new URL(url).origin;

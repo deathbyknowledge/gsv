@@ -1,6 +1,6 @@
 import { useMutation, useQueryClient } from "@tanstack/preact-query";
 import { useQuery } from "../../../services/navigation/viewQueries";
-import { useLayoutEffect, useState } from "preact/hooks";
+import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
 import { profileFieldsSchema, type ProfileFields, type ProfileState } from "@humansandmachines/gsv/protocol";
 import { useGateway } from "../../../services/gateway/GatewayProvider";
 import { LoadingState } from "../../../components/ui/Spinner";
@@ -8,8 +8,24 @@ import { INSTRUMENT_PROFILE_KEY } from "../wire/queryKeys";
 import { canConfigure } from "../settings/settingsModel";
 import type { ConsoleAccount } from "../../../domain/system/consoleModels";
 import { rich, useT } from "../../../i18n/locale";
+import { Button } from "../../../components/ui/Button";
+import { Checkbox } from "../../../components/ui/Checkbox";
+import { IconButton } from "../../../components/ui/IconButton";
+import { InfoTip } from "../../../components/ui/InfoTip";
+import { Select } from "../../../components/ui/Select";
+import { Tag } from "../../../components/ui/Tag";
+import { TextArea } from "../../../components/ui/TextArea";
+import { Hint } from "../../../components/ui/Tooltip";
 
-export function Profile({ account, active, onDirty, onBack }: { account: ConsoleAccount; active: boolean; onDirty: (dirty: boolean) => void; onBack: () => void }) {
+/** The space handle is the first label of the profile's canonical host. */
+function profileHandle(url: string): string {
+  return new URL(url).hostname.split(".")[0];
+}
+
+export function Profile({ account, active, edit: editing, focusBio, onDirty, onEdit, onBack }: {
+  account: ConsoleAccount; active: boolean; edit: boolean; focusBio: boolean; onDirty: (dirty: boolean) => void;
+  onEdit: (focus?: "bio") => void; onBack: () => void;
+}) {
   const t = useT();
   const { client, connected } = useGateway();
   const cache = useQueryClient();
@@ -26,7 +42,13 @@ export function Profile({ account, active, onDirty, onBack }: { account: Console
     mutationFn: async (input: { revision: number; fields: ProfileFields }) => (await client.profile.update({ expectedRevision: input.revision, draft: input.fields })).profile,
     onSuccess: async (state) => { setDraft(null); await refresh(state); },
   });
-  const publish = useMutation({ mutationFn: async (revision: number) => (await client.profile.publish({ expectedRevision: revision })).profile, onSuccess: refresh });
+  const publish = useMutation({
+    mutationFn: async (input: { revision: number; fields: ProfileFields | null }) => {
+      const revision = input.fields ? (await client.profile.update({ expectedRevision: input.revision, draft: input.fields })).profile.revision : input.revision;
+      return (await client.profile.publish({ expectedRevision: revision })).profile;
+    },
+    onSuccess: async (state) => { setDraft(null); await refresh(state); onBack(); },
+  });
   const unpublish = useMutation({
     mutationFn: async (revision: number) => (await client.profile.unpublish({ expectedRevision: revision })).profile,
     onSuccess: async (state, revision) => {
@@ -45,49 +67,96 @@ export function Profile({ account, active, onDirty, onBack }: { account: Console
     setDraft({ revision: draft?.revision ?? state.revision, fields: { ...fields, ...patch } });
   };
   const editable = connected && canConfigure(account, "profile.update") && !pending;
+  const canPublish = canConfigure(account, "profile.publish");
+  // The saved draft is what visitors see.
+  const live = !!state?.published && state.published.revision === state.revision;
   useLayoutEffect(() => { onDirty(dirty || pending); }, [dirty, pending, onDirty]);
   const error = profile.error ?? save.error ?? publish.error ?? unpublish.error;
+  const bio = useRef<HTMLTextAreaElement>(null);
+  const [copied, setCopied] = useState<"copied" | "failed" | null>(null);
+  // The note under the save buttons explains whichever one is hovered or focused.
+  const [saveNote, setSaveNote] = useState<"save" | "draft" | null>(null);
+  const noteFor = (which: "save" | "draft") => ({
+    onPointerEnter: () => setSaveNote(which), onPointerLeave: () => setSaveNote(null),
+    onFocusIn: () => setSaveNote(which), onFocusOut: () => setSaveNote(null),
+  });
+  useEffect(() => { if (editing && focusBio && state) bio.current?.focus(); }, [editing, focusBio, !!state]);
+  useEffect(() => { setCopied(null); }, [editing]);
+
+  const handle = state ? profileHandle(state.url) : "";
+  // The handle is the profile's name; saving publishes it even when an older draft carried another name.
+  const named = (shown: ProfileFields): ProfileFields => ({ ...shown, displayName: handle });
+  const policyLabel = (policy: ProfileFields["contactPolicy"]) => t(policy === "requests" ? "people.profile.policyRequests" : "people.profile.policyInvitation");
+  const status = state && <p role="status" class="people-note">{state.published ? rich(t("people.profile.publishedAt"), { link: <a href={state.published.url} target="_blank" rel="noopener noreferrer">{state.published.url}</a> }) : t("people.profile.private")}</p>;
+  const copyAddress = state && <span class="people-profile-handle">
+    <h2>@{handle}</h2>
+    <Hint text={t("people.profile.copyAddress")}>
+      <IconButton glyph="copy" ghost size="small" ariaLabel={t("people.profile.copyAddress")} onClick={() => {
+        void navigator.clipboard.writeText(state.url).then(() => setCopied("copied"), () => setCopied("failed"));
+      }} />
+    </Hint>
+    <span class="people-note" role="status">{copied === "copied" ? t("shell.copied") : copied === "failed" ? t("people.profile.copyFailed") : ""}</span>
+  </span>;
+  const preview = (shown: ProfileFields, note: string | null) => state && <div class="people-profile-preview" aria-label={t("people.profile.preview")}>
+    {note && <p class="people-note">{note}</p>}
+    {copyAddress}
+    {shown.about ? <p class="people-profile-about">{shown.about}</p>
+      : <p class="people-profile-about is-empty">{t("people.profile.emptyBio")}{" "}
+        {!editing && <span class="people-profile-complete"><Button variant="link" label={t("people.profile.completeBio")} disabled={!connected || !canConfigure(account, "profile.update")} onClick={() => onEdit("bio")} /></span>}</p>}
+    <p class="people-profile-policy">{policyLabel(shown.contactPolicy)}</p>
+    {shown.representation === "human-and-ship" && <p class="people-note">{t("people.profile.representationNote")}</p>}
+  </div>;
+  const unpublishedChanges = !!state?.published && state.published.revision !== state.revision;
 
   return <section class="people-profile" aria-labelledby="people-profile-title">
     <header class="people-conversation-header">
-      <button type="button" class="people-action people-conversation-back" aria-label={t("people.back.label")} onClick={onBack}>←</button>
-      <div class="people-conversation-title"><h1 id="people-profile-title">{t("people.profile.title")}</h1></div>
+      <span class="people-conversation-back"><IconButton glyph="arrowBack" ghost size={32} ariaLabel={t("people.back.label")} onClick={onBack} /></span>
+      <div class="people-conversation-title people-profile-title">
+        <h1 id="people-profile-title">{t(editing ? "people.profile.editTitle" : "people.profile.title")}</h1>
+        {state && !editing && <>
+          <span class="people-profile-tag"><Tag boxed size="medium" tone={state.published ? "accent" : "idle"} label={t(state.published ? "people.profile.publicLabel" : "people.profile.privateLabel")} /></span>
+          {unpublishedChanges && <span class="people-profile-tag"><Tag boxed size="medium" tone="update" label={t("people.profile.unpublishedChanges")} /></span>}
+          <InfoTip position="bottom" label={t("people.profile.visibilityQuestion")} title={t("people.profile.visibilityQuestion")} text={t(state.published ? "people.profile.visibilityPublic" : "people.profile.visibilityPrivate")} />
+        </>}
+      </div>
+      {state && !editing && <span class="people-profile-edit"><Button variant="link" label={`${t("people.profile.edit")}${dirty ? " ·" : ""}`} disabled={!connected || !canConfigure(account, "profile.update")} onClick={() => onEdit()} /></span>}
     </header>
     <div class="people-profile-scroll" data-scroll-edge><div class="people-own-profile">
-    <p class="people-note">{t("people.profile.intro")}</p>
+    {editing && <p class="people-note">{t("people.profile.intro")}</p>}
     {!canRead && <p class="people-note">{t("people.profile.noAccess")}</p>}
     {error && <p class="people-error" role="alert">{error.message}</p>}
     {profile.isPending && connected && canRead && <LoadingState variant="panel">{t("people.profile.loading")}</LoadingState>}
-    {state && fields && <>
-      <p role="status" class="people-note">{state.published ? rich(t("people.profile.publishedAt"), { link: <a href={state.published.url} target="_blank" rel="noopener noreferrer">{state.published.url}</a> }) : t("people.profile.private")}</p>
-      <form class="people-form" onSubmit={(event) => { event.preventDefault(); if (draft && valid && editable && !stale) save.mutate(draft); }}>
-        <label>{t("people.profile.displayName")}<input value={fields.displayName} maxLength={80} disabled={!editable} onInput={(event) => edit({ displayName: event.currentTarget.value })} /></label>
-        <label>{t("people.profile.about")}<textarea value={fields.about} maxLength={2048} rows={4} disabled={!editable} onInput={(event) => edit({ about: event.currentTarget.value })} /></label>
-        <label>{t("people.profile.policy")}<select value={fields.contactPolicy} disabled={!editable} onChange={(event) => {
-          const value = event.currentTarget.value;
-          if (value === "requests" || value === "invitation" || value === "closed") edit({ contactPolicy: value });
-        }}><option value="requests">{t("people.profile.policyRequests")}</option><option value="invitation">{t("people.profile.policyInvitation")}</option><option value="closed">{t("people.profile.policyClosed")}</option></select></label>
-        <label class="people-profile-representation"><input type="checkbox" checked={fields.representation === "human-and-ship"} disabled={!editable} onChange={(event) => edit({ representation: event.currentTarget.checked ? "human-and-ship" : "human" })} />{t("people.profile.representation")}</label>
-        <p class="people-note">{t("people.profile.representationHint")}</p>
+    {state && !editing && preview(state.draft, null)}
+    {state && fields && editing && <>
+      {status}
+      <form class="people-form" onSubmit={(event) => {
+        event.preventDefault();
+        if (valid && editable && canPublish && !stale && (draft || !live)) publish.mutate({ revision: draft?.revision ?? state.revision, fields: draft ? named(draft.fields) : null });
+      }}>
+        <TextArea label={t("people.profile.about")} value={fields.about} maxLength={2048} rows={4} disabled={!editable} placeholder={t("people.profile.emptyBio")}
+          onChange={(about) => edit({ about })} textareaProps={{ ref: bio }} />
+        <Select block label={t("people.profile.policy")} disabled={!editable}
+          options={[{ value: "requests", label: t("people.profile.policyRequests") }, { value: "invitation", label: t("people.profile.policyInvitation") }]}
+          value={fields.contactPolicy === "requests" ? 0 : 1} onChange={(index) => edit({ contactPolicy: index === 0 ? "requests" : "invitation" })} />
+        <Checkbox checked={fields.representation === "human-and-ship"} disabled={!editable} label={t("people.profile.representation")} info={t("people.profile.representationHint")}
+          onChange={(checked) => edit({ representation: checked ? "human-and-ship" : "human" })} />
         {stale && <p class="people-error">{t("people.profile.stale")}</p>}
         <div class="people-actions">
-          <button class="ibtn" type="submit" disabled={!editable || !valid || !dirty || stale}>{save.isPending ? t("common.saving") : t("people.profile.saveDraft")}</button>
-          {draft && <button class="people-action" type="button" disabled={pending} onClick={() => { setDraft(null); save.reset(); }}>{t("people.profile.discard")}</button>}
+          <span {...noteFor("save")}>
+            <Button type="submit" variant="primary" aria-describedby="people-profile-save-note" disabled={!editable || !canPublish || !valid || stale || (!dirty && live)} label={publish.isPending ? t("common.saving") : t("people.profile.save")} />
+          </span>
+          <span {...noteFor("draft")}>
+            <Button variant="secondary" aria-describedby="people-profile-save-note" disabled={!editable || !valid || !dirty || stale} label={save.isPending ? t("common.saving") : t("people.profile.saveDraft")} onClick={() => { if (draft) save.mutate({ ...draft, fields: named(draft.fields) }); }} />
+          </span>
+          {draft && <Button variant="link" tone="neutral" disabled={pending} label={t("people.profile.discard")} onClick={() => { setDraft(null); save.reset(); }} />}
         </div>
+        <p id="people-profile-save-note" class="people-note people-profile-save-note" aria-live="polite">{saveNote && t(saveNote === "save" ? "people.profile.saveTip" : "people.profile.saveDraftTip")}</p>
       </form>
-      <div class="people-profile-preview" aria-label={t("people.profile.preview")}>
-        <p class="people-note">{t(dirty ? "people.profile.previewUnsaved" : "people.profile.previewSaved")}</p>
-        <span class="people-profile-address">{state.url}</span><h2>{fields.displayName}</h2>
-        {fields.about && <p class="people-profile-about">{fields.about}</p>}
-        <p>{t(fields.contactPolicy === "requests" ? "people.profile.showsRequests" : fields.contactPolicy === "invitation" ? "people.profile.showsInvitation" : "people.profile.showsClosed")}</p>
-        {fields.representation === "human-and-ship" && <p class="people-note">{t("people.profile.representationNote")}</p>}
-      </div>
-      <p class="people-note">{t(dirty ? "people.profile.saveFirst" : "people.profile.publishHint")}</p>
-      <div class="people-actions">
-        <button type="button" class="ibtn is-primary" disabled={!connected || pending || dirty || !valid || !state.revision || !canConfigure(account, "profile.publish") || state.published?.revision === state.revision} onClick={() => publish.mutate(state.revision)}>{t(publish.isPending ? "people.profile.publishing" : "people.profile.publish")}</button>
-        {state.published && <button type="button" class="people-action is-danger" disabled={!connected || pending || !canConfigure(account, "profile.unpublish")} onClick={() => unpublish.mutate(state.revision)}>{t("people.profile.unpublish")}</button>}
-      </div>
-      <p class="people-note">{t("people.profile.unpublishHint")}</p>
+      {preview(fields, t(dirty ? "people.profile.previewUnsaved" : "people.profile.previewSaved"))}
+      {state.published && <div class="people-actions">
+        <Button variant="dangerGhost" disabled={!connected || pending || !canConfigure(account, "profile.unpublish")} label={t("people.profile.unpublish")} onClick={() => unpublish.mutate(state.revision)} />
+      </div>}
+      {state.published && <p class="people-note">{t("people.profile.unpublishHint")}</p>}
     </>}
     </div></div>
   </section>;

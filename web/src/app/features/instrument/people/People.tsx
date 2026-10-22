@@ -44,7 +44,7 @@ export function People({ onDirtyChange, onAsk }: {
   const [invitation, setInvitation] = useState<InvitationDraft>(() => ({ code: pendingContactInvitation() ?? "", issued: null, shipHandlesMessages: null }));
   const [idea, setIdea] = useState(0);
   const [chosenIdea, setChosenIdea] = useState<{ index: number; contactId: string | null } | null>(null);
-  const [{ view, contactId, requestId, direction, history, archived }, open] = usePeopleRoute();
+  const [{ view, contactId, requestId, direction, history, archived, edit, focusBio }, open] = usePeopleRoute();
   const inboxContact = useRef(contactId);
   if (view === "inbox") inboxContact.current = contactId;
   const [dialog, setDialog] = useState<"profile" | "invitation" | "blocked" | null>(() => invitation.code ? "invitation" : compose.url ? "profile" : null);
@@ -171,7 +171,7 @@ export function People({ onDirtyChange, onAsk }: {
           <button class="people-action" disabled={busy} onClick={(event) => { event.currentTarget.closest("details")?.removeAttribute("open"); setFilter(""); open({ view: "inbox", contactId: null, archived: !archived }); }}>{t(archived ? "people.inbox.showCurrent" : "people.inbox.showArchived")}</button>
           <button class="people-action" disabled={busy || !account || !canConfigure(account, "contact.block.list")} onClick={(event) => { event.currentTarget.closest("details")?.removeAttribute("open"); setDialog("blocked"); }}>{t("people.blocked.open")}</button>
         </div></details>
-        {human && <button class="people-self" aria-current={view === "profile" ? "page" : undefined} disabled={busy || !canConfigure(account!, "profile.get")} onClick={() => open({ view: "profile" })}><span>{profile.data?.draft.displayName || account?.displayName || account?.username}</span><small>{t("people.profile.footer")}{profileDirty ? " ·" : ""}</small></button>}
+        {human && <button class="people-self" aria-current={view === "profile" ? "page" : undefined} disabled={busy || !canConfigure(account!, "profile.get")} onClick={() => open({ view: "profile", edit: false, focusBio: false })}><span>{profile.data ? `@${new URL(profile.data.url).hostname.split(".")[0]}` : account?.displayName || account?.username}{profileDirty ? " ·" : ""}</span></button>}
         {!connected && <span role="status">{t("people.reconnecting")}</span>}
       </footer>
     </aside>
@@ -188,7 +188,7 @@ export function People({ onDirtyChange, onAsk }: {
         {requestId ? request.data ? <MessageRequest key={requestId} request={request.data} account={account} onOpen={showConversation} /> : request.error ? <p class="people-error" role="alert">{request.error.message}</p> : <LoadingState variant="panel">{t("people.requests.opening")}</LoadingState>
           : <div class="people-empty"><p>{t("people.requests.select")}</p></div>}
       </RetainedView>
-      <RetainedView active={active && view === "profile"}>{account && <Profile key={account.uid} account={account} active={active && view === "profile"} onDirty={setProfileDirty} onBack={() => open({ view: "inbox", contactId: null })} />}</RetainedView>
+      <RetainedView active={active && view === "profile"}>{account && <Profile key={account.uid} account={account} active={active && view === "profile"} edit={edit} focusBio={focusBio} onDirty={setProfileDirty} onEdit={(focus) => open({ view: "profile", edit: true, focusBio: focus === "bio" })} onBack={() => edit ? open({ view: "profile", edit: false, focusBio: false }) : open({ view: "inbox", contactId: null })} />}</RetainedView>
       {view === "contacts" && <div class="people-empty"><p>{t("people.contacts.select")}</p></div>}
     </section>
     <FleetDialog open={active && dialog !== null} title={t(dialog === "blocked" ? "people.blocked.title" : dialog === "invitation" ? "people.connect.title" : "people.compose.title")} onClose={() => { if (!busy) { clearContactInvitation(); setDialog(null); } }}>
