@@ -458,19 +458,21 @@ export class ManagedWhatsAppPeer extends DurableObject<ManagedWhatsAppPeerEnv> {
     input: AdapterPairingActivateInput,
   ): Promise<AdapterPairingPreparation> {
     const route = routeWithOrigin(input.route, input.canonicalOrigin);
-    return await this.ctx.storage.transaction(async (txn) => {
+    const finalized = await this.ctx.storage.transaction(async (txn) => {
       this.retirement.requireLive(route);
       const state = await txn.get<ManagedWhatsAppPeerState>(STATE_KEY);
       if (!state) throw new Error("Managed WhatsApp peer is not initialized");
-      const finalized = finalizeManagedWhatsAppPairing(state, {
+      const result = finalizeManagedWhatsAppPairing(state, {
         claimId,
         expiresAt,
         operationId: requireOpaque(input.operationId, "operationId"),
         route,
       });
-      if (finalized.changed) await txn.put(STATE_KEY, finalized.state);
-      return finalized.preparation;
+      if (result.changed) await txn.put(STATE_KEY, result.state);
+      return result;
     });
+    if (finalized.changed) await this.clearWorkingReactionAfterRouteChange();
+    return finalized.preparation;
   }
 
   async sendPairingConfirmation(operationId: string, canonicalOrigin: string): Promise<void> {
@@ -504,7 +506,18 @@ export class ManagedWhatsAppPeer extends DurableObject<ManagedWhatsAppPeerEnv> {
       });
       if (result.state !== state) await txn.put(STATE_KEY, result.state);
       return { disconnected: result.disconnected };
+    }).then(async (result) => {
+      if (result.disconnected) await this.clearWorkingReactionAfterRouteChange();
+      return result;
     });
+  }
+
+  /**
+   * A run on the previous route can no longer stop its 👀: its stop is refused as stale.
+   * The platform clears the reaction itself when the route changes.
+   */
+  private async clearWorkingReactionAfterRouteChange(): Promise<void> {
+    await this.moveWorkingReaction(undefined, undefined, null);
   }
 
   async alarm(): Promise<void> {

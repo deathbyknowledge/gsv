@@ -140,6 +140,7 @@ type ManagedPeerStub = {
     actorId: string,
     routeGeneration: string,
     active: boolean,
+    runId?: string,
   ): Promise<{ accepted: boolean }>;
 };
 type LinkedPeerFixture = {
@@ -525,6 +526,12 @@ describe("managed WhatsApp clean-instance flow", () => {
       operationId: "operation_relink",
       canonicalOrigin: "https://test.gsv.space",
     };
+    // Ship is working on the old link when the person relinks.
+    await expect(peer.setTyping("installation_test", { kind: "dm", id: ACTOR }, ACTOR, firstGeneration, true, "run-old-link"))
+      .resolves.toEqual({ accepted: true });
+    expect(await graphRecords()).toContainEqual(expect.objectContaining({
+      kind: "message", body: expect.objectContaining({ type: "reaction", reaction: { message_id: "wamid.in.7", emoji: "👀" } }),
+    }));
     const relinked = await relinking.prepare(relinkOperation);
     await relinking.activate({
       code: normalizedRelinkCode,
@@ -539,6 +546,10 @@ describe("managed WhatsApp clean-instance flow", () => {
       canonicalOrigin: relinkOperation.canonicalOrigin,
     });
     expect(relinked.route.generation).not.toBe(firstGeneration);
+    // The old link's stop is refused, so the relink itself clears its 👀.
+    expect(await graphRecords()).toContainEqual(expect.objectContaining({
+      kind: "message", body: expect.objectContaining({ type: "reaction", reaction: { message_id: "wamid.in.7", emoji: "" } }),
+    }));
     await vi.waitFor(async () => {
       expect(await gatewayCalls()).toContainEqual(expect.objectContaining({
         installation: { installationId: "installation_test" },

@@ -2980,6 +2980,7 @@ describe("Kernel adapter route replies", () => {
         kind: "typing",
         active: true,
         routeGeneration: "generation-42",
+        runId: route.runId,
       },
     );
   });
