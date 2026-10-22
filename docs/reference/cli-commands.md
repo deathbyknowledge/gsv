@@ -271,7 +271,10 @@ next current-conversation message; it does not create an extra message. The
 Process retains each exact source revision in its immutable media archive before
 committing the message. `--mime` can classify a single attachment for
 presentation while its reference retains the source's authoritative stored
-content type. A direct Shell call using a literal block sends a message and
+content type. Staged files never go to another destination: a `message send
+--to` without its own `--attach` is refused while files are staged, because the
+run's next reply would otherwise carry them to the owner. A `message attach`
+running in parallel with such a send is refused instead. A direct Shell call using a literal block sends a message and
 leaves the run active:
 
 ```bash

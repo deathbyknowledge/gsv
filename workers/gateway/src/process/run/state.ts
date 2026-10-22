@@ -165,6 +165,8 @@ export const runStateSchema = z.object({
   approvalPolicy: toolApprovalPolicySchema.optional(),
   outputMedia: z.array(runOutputMediaSchema).optional(),
   stagedOutputMediaKeys: z.array(z.string()).optional(),
+  /** Tool calls that were running when this run sent elsewhere without files; they may not stage reply files. */
+  stagingFences: z.array(z.object({ dispatchId: z.string(), destination: z.string() })).optional(),
   outputMediaPersisted: z.boolean().optional(),
 });
 
