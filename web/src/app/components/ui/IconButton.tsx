@@ -1,6 +1,6 @@
 import "./IconButton.css";
 
-export type IconButtonGlyph = "back" | "arrowBack" | "menu" | "max" | "min" | "close" | "plus" | "help" | "attention" | "refresh" | "newTab" | "attach" | "transcribe" | "mic" | "send" | "stop" | "sidepanel" | "edit";
+export type IconButtonGlyph = "back" | "arrowBack" | "menu" | "max" | "min" | "close" | "plus" | "help" | "attention" | "refresh" | "newTab" | "attach" | "transcribe" | "mic" | "send" | "stop" | "sidepanel" | "edit" | "copy";
 export type IconButtonSize = "small" | "medium" | "large" | number;
 /** Visual treatment. "default" = filled box with border; "floating" = borderless
  *  and transparent, glyph-only, with a color-shift on hover (for use inside bars
@@ -182,6 +182,12 @@ const GLYPHS = {
     <svg width="50%" height="50%" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="square" stroke-linejoin="miter">
       <path d="M11.2 2.8 L13.2 4.8 L5.5 12.5 L2.8 13.2 L3.5 10.5 Z" />
       <path d="M9.7 4.3 L11.7 6.3" />
+    </svg>
+  ),
+  copy: (
+    <svg width="50%" height="50%" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round">
+      <rect x="5" y="5" width="8" height="9" rx="1" />
+      <path d="M10 3V2H2v9h1" />
     </svg>
   ),
 };

@@ -1,4 +1,9 @@
 /* Ported from Checkbox.dc.html — values transcribed verbatim. */
+/* Colours are theme tokens. Neon glows switch off on the light themes through
+   --gsv-cb-glow (the blur radius), which the light theme roots zero out. */
+:is(.instrument.is-light, .gsv-auth-theme.is-light) {
+  --gsv-cb-glow: 0px;
+}
 .gsv-cb {
   position: relative;
   display: inline-flex;
@@ -17,42 +22,42 @@
 }
 .gsv-cb-box {
   flex: none;
-  border: 1.5px solid #7d78c8;
-  background: #0a0822;
+  border: 1.5px solid var(--text-dim);
+  background: var(--panel-2);
   display: flex;
   align-items: center;
   justify-content: center;
   transition: border-color 0.12s, background 0.12s;
 }
 .gsv-cb:hover .gsv-cb-box {
-  border-color: #a9a4ff;
-  background: #100e2a;
+  border-color: var(--accent);
+  background: var(--hover);
 }
 .gsv-cb-input:focus-visible + .gsv-cb-box {
-  border-color: #b3aeff;
-  box-shadow: 0 0 0 1px rgba(150, 140, 255, 0.35);
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--live) 35%, transparent);
   outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
 .gsv-cb-fill {
-  background: #cbc7ff;
-  box-shadow: 0 0 6px #cbc7ff;
+  background: var(--accent-bright);
+  box-shadow: 0 0 var(--gsv-cb-glow, 6px) var(--accent-bright);
 }
 .gsv-cb-label {
   letter-spacing: 0.04em;
-  color: #a8a2dc;
+  color: var(--label);
   transition: color 0.12s;
 }
 .gsv-cb.is-on .gsv-cb-label {
-  color: #efeefe;
+  color: var(--text);
 }
 .gsv-cb.is-disabled {
   cursor: not-allowed;
   opacity: 0.45;
 }
 .gsv-cb.is-disabled:hover .gsv-cb-box {
-  border-color: #7d78c8;
-  background: #0a0822;
+  border-color: var(--text-dim);
+  background: var(--panel-2);
 }
 .gsv-cb-sm .gsv-cb-box {
   width: 13px;
@@ -113,7 +118,7 @@
   /* size from .gsv-paragraph-small (12px) */
   line-height: 1.5;
   letter-spacing: 0.02em;
-  color: #7d78b8;
+  color: var(--text-dim);
   max-width: 46ch;
 }
 .gsv-cb-stat {
@@ -133,30 +138,30 @@
   letter-spacing: 0.1em;
 }
 .gsv-cb-fld.is-error .gsv-cb-msg {
-  color: #ff6f8c;
+  color: var(--error);
 }
 .gsv-cb-fld.is-error .gsv-cb-dot {
-  background: #ff6f8c;
-  box-shadow: 0 0 6px #ff6f8c;
+  background: var(--error);
+  box-shadow: 0 0 var(--gsv-cb-glow, 6px) var(--error);
 }
 .gsv-cb-fld.is-success .gsv-cb-msg {
-  color: #5ef2a0;
+  color: var(--online);
 }
 .gsv-cb-fld.is-success .gsv-cb-dot {
-  background: #5ef2a0;
-  box-shadow: 0 0 6px #5ef2a0;
+  background: var(--online);
+  box-shadow: 0 0 var(--gsv-cb-glow, 6px) var(--online);
 }
 .gsv-cb-fld.is-info .gsv-cb-msg {
-  color: #8f8aff;
+  color: var(--live);
 }
 .gsv-cb-fld.is-info .gsv-cb-dot {
-  background: #8f8aff;
-  box-shadow: 0 0 6px #8f8aff;
+  background: var(--live);
+  box-shadow: 0 0 var(--gsv-cb-glow, 6px) var(--live);
 }
 .gsv-cb-fld.is-warn .gsv-cb-msg {
-  color: #e0a64c;
+  color: var(--warn);
 }
 .gsv-cb-fld.is-warn .gsv-cb-dot {
-  background: #e0a64c;
-  box-shadow: 0 0 6px #e0a64c;
+  background: var(--warn);
+  box-shadow: 0 0 var(--gsv-cb-glow, 6px) var(--warn);
 }

@@ -454,6 +454,10 @@
  * ink-colored glyphs at the same density. Toggled by the shell with the l key, or the system setting. */
 .instrument.is-scale-15 { --type-scale: 1.5; }
 .instrument.is-scale-2 { --type-scale: 2; }
+/* Design system fields (input, text area, select) sit on a raised surface in the app: white in light. */
+.instrument { --gsv-field-surface: var(--active); }
+.instrument.is-light { --gsv-field-surface: var(--panel); }
+
 .instrument.is-light {
   color-scheme: light;
   --void: #f4f3fb;

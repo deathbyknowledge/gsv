@@ -1,4 +1,10 @@
 /* Ported from Select.dc.html — values transcribed verbatim. */
+/* Colours are theme tokens. Neon glows switch off on the light themes through
+   --gsv-fld-glow (the blur radius), which the light theme roots zero out. */
+:is(.instrument.is-light, .gsv-auth-theme.is-light) {
+  --gsv-fld-glow: 0px;
+  --gsv-sel-list-shadow: 0 12px 30px rgba(20, 17, 43, 0.15);
+}
 .gsv-sel {
   position: relative;
   font-family: var(--gsv-font-mono);
@@ -10,8 +16,8 @@
   align-items: center;
   gap: 8px;
   margin: 0;
-  border: 1px solid #4a449e;
-  background: #0a0822;
+  border: 1px solid var(--border-raised);
+  background: var(--gsv-field-surface, var(--panel-2));
   color: inherit;
   cursor: pointer;
   font: inherit;
@@ -20,15 +26,15 @@
 }
 .gsv-sel-trig:not(:disabled):hover,
 .gsv-sel-trig:not(:disabled):focus-visible {
-  border-color: #6b62c4;
+  border-color: var(--primary-hi);
   outline: none;
 }
 .gsv-sel-trig:focus-visible {
-  outline: 2px solid #b3aeff;
+  outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
 .gsv-sel.is-open .gsv-sel-trig {
-  border-color: #b3aeff;
+  border-color: var(--accent);
 }
 .gsv-sel.is-disabled {
   opacity: 0.5;
@@ -37,7 +43,7 @@
 .gsv-sel-val {
   display: grid;
   gap: 2px;
-  color: #f4f2ff;
+  color: var(--text-hi);
   flex: 1;
   min-width: 0;
 }
@@ -51,7 +57,7 @@
   letter-spacing: 0.03em;
 }
 .gsv-sel-val > small {
-  color: #8f89c8;
+  color: var(--text-muted);
   font-size: 9px;
   letter-spacing: 0.01em;
 }
@@ -96,8 +102,8 @@
 }
 .gsv-sel-group {
   padding: 9px 12px 5px;
-  border-top: 1px solid #25224d;
-  color: #7d78b8;
+  border-top: 1px solid var(--rule-inner);
+  color: var(--text-dim);
   font-family: var(--gsv-font-mono);
   font-size: 9px;
   letter-spacing: 0.18em;
@@ -120,21 +126,24 @@
   white-space: nowrap;
 }
 .gsv-sel-row-copy > small {
-  color: #8f89c8;
+  color: var(--text-muted);
   font-size: 9.5px;
   letter-spacing: 0.01em;
+}
+.gsv-sel-row.is-selected {
+  background: color-mix(in srgb, var(--accent) 10%, var(--gsv-field-surface, var(--panel-2)));
 }
 .gsv-sel-row:hover,
 .gsv-sel-row:focus-visible,
 .gsv-sel-row.is-highlighted {
-  background: #201c4d;
+  background: color-mix(in srgb, var(--accent) 24%, var(--gsv-field-surface, var(--panel-2)));
   outline: none;
 }
 /* Keyboard highlight stays visible even on the selected row, whose inline
    background would otherwise override the .is-highlighted background. Scoped to
    :not(:hover) so mouse hover keeps its original background-only appearance. */
 .gsv-sel-row.is-highlighted:not(:hover) {
-  box-shadow: inset 0 0 0 1px #6b62c4;
+  box-shadow: inset 0 0 0 1px var(--primary-hi);
 }
 .gsv-fld {
   display: flex;
@@ -152,17 +161,17 @@
   /* size from .gsv-sublabel (12px) */
   letter-spacing: 0.22em;
   text-transform: uppercase;
-  color: #b3aee2;
+  color: var(--label);
 }
 .gsv-fld-req {
   /* size from .gsv-sublabel (12px) */
-  color: #7d78b8;
+  color: var(--text-dim);
   letter-spacing: 0.14em;
 }
 .gsv-fld-desc {
   /* size + line-height from .gsv-paragraph-small (12px reading, up from 10px) */
   letter-spacing: 0.02em;
-  color: #7d78b8;
+  color: var(--text-dim);
   margin-bottom: 10px;
   max-width: 46ch;
 }
@@ -184,30 +193,30 @@
   letter-spacing: 0.1em;
 }
 .gsv-fld.is-error .gsv-fld-msg {
-  color: #ff6f8c;
+  color: var(--error);
 }
 .gsv-fld.is-error .gsv-fld-dot {
-  background: #ff6f8c;
-  box-shadow: 0 0 6px #ff6f8c;
+  background: var(--error);
+  box-shadow: 0 0 var(--gsv-fld-glow, 6px) var(--error);
 }
 .gsv-fld.is-success .gsv-fld-msg {
   color: var(--online);
 }
 .gsv-fld.is-success .gsv-fld-dot {
   background: var(--online);
-  box-shadow: 0 0 6px var(--online);
+  box-shadow: 0 0 var(--gsv-fld-glow, 6px) var(--online);
 }
 .gsv-fld.is-info .gsv-fld-msg {
-  color: #8f8aff;
+  color: var(--live);
 }
 .gsv-fld.is-info .gsv-fld-dot {
-  background: #8f8aff;
-  box-shadow: 0 0 6px #8f8aff;
+  background: var(--live);
+  box-shadow: 0 0 var(--gsv-fld-glow, 6px) var(--live);
 }
 .gsv-fld.is-warn .gsv-fld-msg {
-  color: #e0a64c;
+  color: var(--warn);
 }
 .gsv-fld.is-warn .gsv-fld-dot {
-  background: #e0a64c;
-  box-shadow: 0 0 6px #e0a64c;
+  background: var(--warn);
+  box-shadow: 0 0 var(--gsv-fld-glow, 6px) var(--warn);
 }

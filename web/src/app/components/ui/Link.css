@@ -2,7 +2,7 @@
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  color: var(--link, #8fb6ff);
+  color: var(--link);
   /* family + size + .04em tracking from .gsv-listitem */
   text-decoration: none;
   cursor: pointer;
@@ -10,19 +10,19 @@
 }
 
 .gsv-link-label {
-  border-bottom: 1px solid var(--link, #8fb6ff);
+  border-bottom: 1px solid var(--link);
   padding-bottom: 2px;
   transition: border-color 120ms ease;
 }
 
 .gsv-link:hover,
 .gsv-link:focus-visible {
-  color: var(--link-hover, #b8d2ff);
+  color: color-mix(in srgb, var(--link) 60%, var(--text-hi));
 }
 
 .gsv-link:hover .gsv-link-label,
 .gsv-link:focus-visible .gsv-link-label {
-  border-color: var(--link-hover, #b8d2ff);
+  border-color: color-mix(in srgb, var(--link) 60%, var(--text-hi));
 }
 
 .gsv-link:focus-visible {
