@@ -71,10 +71,10 @@ export async function prepareTelegramApproval(
     replyMarkup: {
       inline_keyboard: [
         [
-          { text: "Approve once", callback_data: approvalCallbackData(token, "o") },
-          { text: "Always approve", callback_data: approvalCallbackData(token, "a") },
+          { text: "Allow once", callback_data: approvalCallbackData(token, "o") },
+          { text: "Always allow", callback_data: approvalCallbackData(token, "a") },
         ],
-        [{ text: "Deny", callback_data: approvalCallbackData(token, "d") }],
+        [{ text: "Block", callback_data: approvalCallbackData(token, "d") }],
       ],
     },
   };
@@ -157,9 +157,9 @@ async function finishTelegramCallback(
 
 function resolutionText(resolution: AdapterHilResolution | undefined): string {
   switch (resolution) {
-    case "approve": return "Approved once.";
-    case "approve_always": return "Approved for this conversation.";
-    case "deny": return "Denied.";
+    case "approve": return "Allowed once.";
+    case "approve_always": return "Allowed for this conversation.";
+    case "deny": return "Blocked.";
     default: return "This approval is no longer pending.";
   }
 }

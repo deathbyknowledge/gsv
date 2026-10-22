@@ -142,7 +142,7 @@ async function handleRuntimeMessage(message: RuntimeMessage): Promise<RuntimeRes
       case "clear-diagnostics":
         return await clearDiagnosticsState();
       case "save-config": {
-        if (browserPairing.isPairing) throw new Error("Finish or stop pairing before changing connection settings");
+        if (browserPairing.isPairing) throw new Error("Finish or stop connecting before changing connection settings");
         const config = await saveConfig(message.config);
         addActivity({
           kind: "connection",

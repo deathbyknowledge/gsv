@@ -185,7 +185,7 @@ export class ManagedTelegramChannel extends WorkerEntrypoint<Env> implements Ada
       botUsername: validManagedTelegramBotUsername(this.env.TELEGRAM_BOT_USERNAME)
         ? normalizedManagedTelegramBotUsername(this.env.TELEGRAM_BOT_USERNAME)
         : undefined,
-      instructions: "Open a private chat with the bot and send /link to get a pairing code.",
+      instructions: "Open a private chat with the bot and send /link to get a code.",
     };
   }
 

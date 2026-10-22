@@ -45,7 +45,7 @@ Choose **Browser** in the same flow. Download and unzip the extension, called
 **Your Ship**, enable developer mode at `chrome://extensions`, and load its folder.
 Click the **Your Ship** icon in the browser toolbar to open its panel. If it is
 not visible, click the **Extensions** (puzzle-piece) button and select
-**Your Ship**. Paste the invitation and choose **Pair this browser**.
+**Your Ship**. Paste the invitation and choose **connect this browser**.
 
 While your Ship works in a tab, Chrome shows a banner at the top of that tab.
 That is Chrome's notice that an extension is driving the page; it goes when the
