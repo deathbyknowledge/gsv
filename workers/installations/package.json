@@ -11,6 +11,7 @@
     "./admin/http": "./src/admin/http.ts",
     "./admin/page": "./src/admin/page.ts",
     "./admin/installations-page": "./src/admin/installations-page.ts",
+    "./admin/insight": "./src/admin/insight.ts",
     "./http": "./src/http.ts",
     "./store": "./src/store.ts",
     "./domain": "./src/domain.ts",
