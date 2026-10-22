@@ -381,8 +381,9 @@ export class ManagedWhatsAppPeer extends DurableObject<ManagedWhatsAppPeerEnv> {
       };
       let next = current;
       if (current !== target) {
-        // A failed removal keeps its message recorded, so the next start or stop retries it.
-        const cleared = !current || await react(current, "") === "applied";
+        // A removal with an unknown outcome keeps its message recorded, so the next start or stop
+        // retries it. One Meta refused is forgotten: retrying it would block every later 👀.
+        const cleared = !current || await react(current, "") !== "ambiguous";
         // Meta may have applied an addition whose outcome is unknown; removing an absent 👀 is harmless.
         if (cleared) next = target && await react(target, "👀") !== "failed" ? target : undefined;
       }
