@@ -99,6 +99,46 @@ describe("WhatsApp installation retirement", () => {
     expect(await peer.setTyping(space, { kind: "dm", id: surfaceId }, surfaceId, route.generation, false, "run-working")).toEqual({ accepted: true });
   });
 
+  it("clears a retired space's retained 👀 on quiesce while another space's route is active, and keeps that route's own 👀", async () => {
+    const surfaceId = "34690505050";
+    const space = "quiesced-retained-reaction-fixture";
+    const { peer, route } = await pair(surfaceId, space);
+    // SAFETY: the Meta fixture's /records endpoint returns the requests it received as GraphRecords.
+    const reactions = async () => ((await (await bindings.WHATSAPP_API!.fetch("https://fixture/records")).json()) as Array<GraphRecord & { body: { type?: string; reaction?: unknown } }>)
+      .filter((record) => record.kind === "message" && record.body.to === surfaceId && record.body.type === "reaction")
+      .map((record) => record.body.reaction);
+    expect(await peer.setTyping(space, { kind: "dm", id: surfaceId }, surfaceId, route.generation, true, "run-retained")).toEqual({ accepted: true });
+    // The number relinked to another space while the old route's removal had an unknown outcome:
+    // its 👀 stays recorded under the old route.
+    const successor = { installationId: "successor-reaction-fixture", generation: "successor-route" };
+    const retained = await runInDurableObject(peer, async (_instance, state) => {
+      const current = (await state.storage.get<ManagedWhatsAppPeerState>(stateKey))!;
+      await state.storage.put(stateKey, { ...current, activeRoute: { ...current.activeRoute!, ...successor } });
+      return current.workingReactionRoute;
+    });
+    expect(retained).toEqual({ installationId: space, generation: route.generation });
+
+    await peer.quiesceInstallation({ version: 1, installationId: space, operationId: "retire-retained-reaction-fixture" });
+    expect(await reactions()).toEqual([
+      { message_id: `wamid.first.${surfaceId}`, emoji: "👀" },
+      { message_id: `wamid.first.${surfaceId}`, emoji: "" },
+    ]);
+    const cleared = await runInDurableObject(peer, async (_instance, state) => (await state.storage.get<ManagedWhatsAppPeerState>(stateKey))!);
+    expect([cleared.workingReactionMessageId, cleared.workingReactionRoute]).toEqual([undefined, undefined]);
+
+    // A 👀 owned by the active route survives the retirement of another space.
+    await runInDurableObject(peer, async (_instance, state) => {
+      const current = (await state.storage.get<ManagedWhatsAppPeerState>(stateKey))!;
+      await state.storage.put(stateKey, {
+        ...current, workingReactionMessageId: `wamid.first.${surfaceId}`, workingReactionRunId: "run-successor", workingReactionRoute: successor,
+      });
+    });
+    await peer.quiesceInstallation({ version: 1, installationId: "unrelated-retired-fixture", operationId: "retire-unrelated-fixture" });
+    expect(await reactions()).toHaveLength(2);
+    const kept = await runInDurableObject(peer, async (_instance, state) => (await state.storage.get<ManagedWhatsAppPeerState>(stateKey))!);
+    expect(kept.workingReactionRoute).toEqual(successor);
+  });
+
   it("restores the retained claim's expiry alarm after removing a retired previous-route cleanup", async () => {
     const claim = bindings.MANAGED_WHATSAPP_PAIRING.getByName("pair:RETIREMENTEXPIRY");
     await runInDurableObject(claim, async (instance, state) => {
