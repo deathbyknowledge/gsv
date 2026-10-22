@@ -1050,6 +1050,37 @@ describe("managed WhatsApp clean-instance flow", () => {
     expect((await reactions()).slice(afterAmbiguous)).toEqual([]);
   });
 
+  it("takes 👀 back off when its record cannot be stored", async () => {
+    const { stub, route } = await linkedPeer("open");
+    const reactions = async () => (await sentMessages())
+      .filter((record) => record.body.type === "reaction")
+      .map((record) => record.body.reaction);
+    expect((await SELF.fetch(await text("wamid.in.unrecorded", "storage drops the record"))).status).toBe(200);
+    await vi.waitFor(async () => { expect((await sentMessages()).at(-1)?.body.text?.body).toBe("Personal received storage drops the record"); });
+    const before = (await reactions()).length;
+    const warn = vi.spyOn(console, "warn");
+    await runInDurableObject(stub, async (instance, state) => {
+      const failure = vi.spyOn(state.storage, "transaction").mockRejectedValueOnce(new Error("storage unavailable"));
+      try {
+        await instance.setTyping(route.installationId, { kind: "dm", id: ACTOR }, ACTOR, route.generation, true, "run-unrecorded");
+      } finally {
+        failure.mockRestore();
+      }
+    });
+    // Without its record no stop could find this 👀, so it comes straight back off.
+    expect((await reactions()).slice(before)).toEqual([
+      { message_id: "wamid.in.unrecorded", emoji: "👀" },
+      { message_id: "wamid.in.unrecorded", emoji: "" },
+    ]);
+    const failure = warn.mock.calls.map(([line]) => String(line)).find((line) => line.includes("reaction_record_failed"));
+    expect(JSON.parse(failure ?? "{}")).toMatchObject({
+      component: "managed_whatsapp", event: "reaction_record_failed", diagnostics: { exceptionMessage: "storage unavailable" },
+    });
+    expect(failure).not.toContain(ACTOR);
+    expect(failure).not.toContain("wamid.in.unrecorded");
+    warn.mockRestore();
+  });
+
   it("keeps retrying a 👀 removal that failed instead of stranding it", async () => {
     const { route } = await linkedPeer("open");
     const channel = new deployedAdapter.ManagedWhatsAppChannel(createExecutionContext(),

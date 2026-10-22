@@ -394,14 +394,27 @@ export class ManagedWhatsAppPeer extends DurableObject<ManagedWhatsAppPeerEnv> {
         }
       }
       const nextRunId = target ? runId : undefined;
-      await this.ctx.storage.transaction(async (txn) => {
-        const latest = await txn.get<ManagedWhatsAppPeerState>(STATE_KEY);
-        if (latest) {
-          await txn.put(STATE_KEY, { ...latest, workingReactionMessageId: next, workingReactionRunId: nextRunId });
-        }
-      });
+      try {
+        await this.ctx.storage.transaction(async (txn) => {
+          const latest = await txn.get<ManagedWhatsAppPeerState>(STATE_KEY);
+          if (latest) {
+            await txn.put(STATE_KEY, { ...latest, workingReactionMessageId: next, workingReactionRunId: nextRunId });
+          }
+        });
+      } catch (error) {
+        // Without its record no stop could find a 👀 just added, so take it back off.
+        // A removal that went unrecorded is retried later, which is harmless.
+        if (next && next !== current) await react(next, "");
+        throw error;
+      }
     });
-    this.workingReaction = move.catch(() => undefined);
+    this.workingReaction = move.catch((error) => {
+      console.warn(JSON.stringify({
+        component: "managed_whatsapp",
+        event: "reaction_record_failed",
+        diagnostics: exceptionDiagnostics(error),
+      }));
+    });
     return this.workingReaction;
   }
 
