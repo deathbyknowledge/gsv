@@ -1,5 +1,6 @@
 import { installationDeletionManifestSchema, installationDeletionEvidenceSchema } from "./deletion-inventory";
 import { z } from "zod";
+import { exceptionDiagnostics } from "@humansandmachines/gsv/telemetry";
 import { installationDeletionInventoryImportSchema } from "@humansandmachines/gsv/services/lifecycle-discovery";
 import { accountsDeletionInspectionSchema } from "./deletion-inspections";
 import { operatorResourceAttestationSchema } from "./operator-resource-contracts";
@@ -26,8 +27,14 @@ export class InstallationDeletionHttp {
     let installationId: string;
     try { installationId = decodeURIComponent(route[1]!); }
     catch { return await this.route(request, route); }
-    return await this.audited(request, { name: `ship.deletion.${route[2] ?? "begin"}`, installationId },
-      () => this.route(request, route), (response) => ({ refused: !response.ok }));
+    try {
+      return await this.audited(request, { name: `ship.deletion.${route[2] ?? "begin"}`, installationId },
+        () => this.route(request, route), (response) => ({ refused: !response.ok }));
+    } catch (error) {
+      // route() answers its own failures, so this is the audit record itself failing.
+      console.warn("[Operator] Admin request failed:", new URL(request.url).pathname, exceptionDiagnostics(error));
+      return json({ error: "The operator request could not be completed." }, 503);
+    }
   }
 
   private async route(request: Request, route: RegExpExecArray): Promise<Response> {

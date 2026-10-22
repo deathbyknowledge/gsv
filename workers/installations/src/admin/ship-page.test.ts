@@ -195,6 +195,20 @@ describe("Ship page", () => {
 });
 
 describe("operator audit log", () => {
+  it("keeps the cause when an API action cannot be audited", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const audit = auditDb("INSERT INTO operator_audit_events");
+    const { http } = stack(undefined, undefined, audit.db);
+    audit.fail.on = true;
+    const response = await http.handle(new Request(`${origin}/admin/api/installations`, {
+      method: "POST", headers: { origin, "content-type": "application/json" },
+      body: JSON.stringify({ operationId: `operation_${crypto.randomUUID()}`, handle: "apiunaudited" }),
+    }));
+    expect(response?.status).toBe(503);
+    expect(warn).toHaveBeenCalledWith("[Operator] Admin request failed:", "/admin/api/installations", expect.objectContaining({ exceptionName: "Error" }));
+    warn.mockRestore();
+  });
+
   it("keeps the cause when the audit page cannot be read", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     const audit = auditDb("SELECT");

@@ -2,6 +2,7 @@ import { ADMIN_VISIBLE_INSTALLATION_STATES, type AdminInstallationListQuery } fr
 import { hasExpectedOrigin, json, noStoreHeaders, readJsonObject, requireString, type JsonValue } from "../http";
 import type { InstallationAdminAccess } from "./access";
 import type { AdminAuditRecorder } from "./insight";
+import { exceptionDiagnostics } from "@humansandmachines/gsv/telemetry";
 import { z } from "zod";
 
 const operatorReasonSchema = z.string().max(500).nullish();
@@ -80,6 +81,7 @@ export class InstallationAdminApi {
       const message = error instanceof Error ? error.message : "";
       if (["handle ", "installation", "operationId ", "request ", "JSON ", "query ", "state ", "page "]
         .some((prefix) => message.startsWith(prefix))) return json({ error: message }, 400);
+      console.warn("[Operator] Admin request failed:", url.pathname, exceptionDiagnostics(error));
       return json({ error: "The operator request could not be completed." }, 503);
     }
   }

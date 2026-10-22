@@ -149,6 +149,21 @@ describe("persisted deletion inspection epochs", () => {
     expect(audits).toEqual([{ name: "ship.deletion.inspection", installationId: state.a.installationId }]);
   });
 
+  it("answers and keeps the cause when a deletion step cannot be audited", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const state = await fixture();
+    const runtime = new AccountsDeletionRuntime(state.db, {}, undefined, 20, state.clock, state.configuration);
+    const unaudited: AdminAuditRecorder = async () => { throw new Error("D1_ERROR: network connection lost"); };
+    const http = new InstallationDeletionHttp(runtime, { allows: async () => true }, "https://admin.example.invalid", unaudited);
+    const response = await http.handle(new Request(`https://admin.example.invalid/admin/api/installations/${state.a.installationId}/deletion/inspection`, {
+      method: "POST", headers: { origin: "https://admin.example.invalid" },
+    }));
+    expect(response?.status).toBe(503);
+    expect(warn).toHaveBeenCalledWith("[Operator] Admin request failed:", expect.stringContaining("/deletion/inspection"),
+      expect.objectContaining({ exceptionMessage: expect.stringContaining("network connection lost") }));
+    warn.mockRestore();
+  });
+
   it("accepts the bounded candidate list above the ordinary JSON body limit", async () => {
     const state = await fixture();
     const runtime = new AccountsDeletionRuntime(state.db, {}, undefined, 20, state.clock, state.configuration);
