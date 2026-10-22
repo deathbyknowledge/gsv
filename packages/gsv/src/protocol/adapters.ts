@@ -203,7 +203,8 @@ export const adapterLinkedPeerContextSchema = z.strictObject({
 });
 
 export type AdapterActivity =
-  | { kind: "typing"; active: boolean; routeGeneration?: string }
+  /** `runId` names the run that started or stopped, so an adapter can ignore a late stop from a superseded run. */
+  | { kind: "typing"; active: boolean; routeGeneration?: string; runId?: string }
   | { kind: "recording"; active: boolean; routeGeneration?: string }
   | { kind: "uploading"; active: boolean; routeGeneration?: string };
 
@@ -212,6 +213,7 @@ export const adapterActivitySchema = z.discriminatedUnion("kind", [
     kind: z.literal("typing"),
     active: z.boolean(),
     routeGeneration: z.optional(z.string()),
+    runId: z.optional(z.string()),
   }),
   z.strictObject({
     kind: z.literal("recording"),

@@ -1,5 +1,5 @@
 import * as deployedAdapter from "../src/managed";
-import { env, runInDurableObject, SELF } from "cloudflare:test";
+import { createExecutionContext, env, runInDurableObject, SELF } from "cloudflare:test";
 import { describe, expect, it, vi } from "vitest";
 import { binaryBodyFromOwnedBytes } from "../../shared/src/media-body";
 import type { ManagedWhatsAppPeer } from "../src/managed-peer";
@@ -35,6 +35,7 @@ type GraphRecord = {
     status?: string;
     message_id?: string;
     typing_indicator?: { type: string };
+    reaction?: { message_id: string; emoji: string };
     file?: { name: string; type: string; bytes: number[] };
   };
   result: { id?: string; success?: boolean };
@@ -139,6 +140,7 @@ type ManagedPeerStub = {
     actorId: string,
     routeGeneration: string,
     active: boolean,
+    runId?: string,
   ): Promise<{ accepted: boolean }>;
 };
 type LinkedPeerFixture = {
@@ -250,7 +252,7 @@ async function linkedPeer(window: "open" | "closed"): Promise<LinkedPeerFixture>
   return { stub, peer: typedStub<ManagedPeerStub>(stub), route };
 }
 
-async function pauseGraphSend(kind: "template" | "window-rejection"): Promise<void> {
+async function pauseGraphSend(kind: "template" | "window-rejection" | "read"): Promise<void> {
   // SAFETY: The Cloudflare test environment declares WHATSAPP_API as a Fetcher binding.
   const binding = env.WHATSAPP_API as Fetcher;
   await binding.fetch("https://graph.test/pause-send", { method: "POST", body: kind });
@@ -524,6 +526,12 @@ describe("managed WhatsApp clean-instance flow", () => {
       operationId: "operation_relink",
       canonicalOrigin: "https://test.gsv.space",
     };
+    // Ship is working on the old link when the person relinks.
+    await expect(peer.setTyping("installation_test", { kind: "dm", id: ACTOR }, ACTOR, firstGeneration, true, "run-old-link"))
+      .resolves.toEqual({ accepted: true });
+    expect(await graphRecords()).toContainEqual(expect.objectContaining({
+      kind: "message", body: expect.objectContaining({ type: "reaction", reaction: { message_id: "wamid.in.7", emoji: "👀" } }),
+    }));
     const relinked = await relinking.prepare(relinkOperation);
     await relinking.activate({
       code: normalizedRelinkCode,
@@ -538,6 +546,10 @@ describe("managed WhatsApp clean-instance flow", () => {
       canonicalOrigin: relinkOperation.canonicalOrigin,
     });
     expect(relinked.route.generation).not.toBe(firstGeneration);
+    // The old link's stop is refused, so the relink itself clears its 👀.
+    expect(await graphRecords()).toContainEqual(expect.objectContaining({
+      kind: "message", body: expect.objectContaining({ type: "reaction", reaction: { message_id: "wamid.in.7", emoji: "" } }),
+    }));
     await vi.waitFor(async () => {
       expect(await gatewayCalls()).toContainEqual(expect.objectContaining({
         installation: { installationId: "installation_test" },
@@ -922,6 +934,356 @@ describe("managed WhatsApp clean-instance flow", () => {
     await expect(sending).resolves.toMatchObject({ ok: true });
     await expect(peer.sendMessage(route.installationId, message)).resolves.toMatchObject({ ok: true });
     expect(await templateMessages()).toHaveLength(before + 1);
+  });
+
+  it("marks the message Ship is working on with 👀 until the run stops", async () => {
+    const { route } = await linkedPeer("open");
+    const channel = new deployedAdapter.ManagedWhatsAppChannel(createExecutionContext(),
+      typedStub<ConstructorParameters<typeof deployedAdapter.ManagedWhatsAppChannel>[1]>(env));
+    const installation = { installationId: route.installationId };
+    const surface = { kind: "dm" as const, id: ACTOR };
+    const activity = (active: boolean) => channel.adapterSetActivity(
+      installation, "managed", surface, { kind: "typing", active, routeGeneration: route.generation },
+    );
+    const reactions = async () => (await sentMessages())
+      .filter((record) => record.body.type === "reaction")
+      .map((record) => record.body.reaction);
+
+    expect((await SELF.fetch(await text("wamid.in.working.1", "first question"))).status).toBe(200);
+    await vi.waitFor(async () => { expect((await sentMessages()).at(-1)?.body.text?.body).toBe("Personal received first question"); });
+    // Earlier runs in this flow may still hold a reaction; stopping clears it.
+    await expect(activity(false)).resolves.toEqual({ ok: true });
+    const before = (await reactions()).length;
+
+    await expect(activity(true)).resolves.toEqual({ ok: true });
+    expect((await reactions()).slice(before)).toEqual([{ message_id: "wamid.in.working.1", emoji: "👀" }]);
+
+    // A run for a newer message moves the reaction instead of leaving the old one behind.
+    expect((await SELF.fetch(await text("wamid.in.working.2", "second question"))).status).toBe(200);
+    await vi.waitFor(async () => { expect((await sentMessages()).at(-1)?.body.text?.body).toBe("Personal received second question"); });
+    await expect(activity(true)).resolves.toEqual({ ok: true });
+    expect((await reactions()).slice(before + 1)).toEqual([
+      { message_id: "wamid.in.working.1", emoji: "" },
+      { message_id: "wamid.in.working.2", emoji: "👀" },
+    ]);
+
+    await expect(activity(false)).resolves.toEqual({ ok: true });
+    await expect(activity(false)).resolves.toEqual({ ok: true });
+    expect((await reactions()).slice(before + 3)).toEqual([{ message_id: "wamid.in.working.2", emoji: "" }]);
+  });
+
+  it("ignores a stop from a superseded run that arrives after its successor started", async () => {
+    const { route } = await linkedPeer("open");
+    const channel = new deployedAdapter.ManagedWhatsAppChannel(createExecutionContext(),
+      typedStub<ConstructorParameters<typeof deployedAdapter.ManagedWhatsAppChannel>[1]>(env));
+    const installation = { installationId: route.installationId };
+    const surface = { kind: "dm" as const, id: ACTOR };
+    const activity = (active: boolean, runId: string) => channel.adapterSetActivity(
+      installation, "managed", surface, { kind: "typing", active, routeGeneration: route.generation, runId },
+    );
+    const reactions = async () => (await sentMessages())
+      .filter((record) => record.body.type === "reaction")
+      .map((record) => record.body.reaction);
+
+    expect((await SELF.fetch(await text("wamid.in.superseded.1", "first part"))).status).toBe(200);
+    await vi.waitFor(async () => { expect((await sentMessages()).at(-1)?.body.text?.body).toBe("Personal received first part"); });
+    await expect(activity(false, "run-earlier")).resolves.toEqual({ ok: true });
+    const before = (await reactions()).length;
+    await expect(activity(true, "run-1")).resolves.toEqual({ ok: true });
+
+    expect((await SELF.fetch(await text("wamid.in.superseded.2", "second part"))).status).toBe(200);
+    await vi.waitFor(async () => { expect((await sentMessages()).at(-1)?.body.text?.body).toBe("Personal received second part"); });
+    await expect(activity(true, "run-2")).resolves.toEqual({ ok: true });
+    // The superseded run's stop arrives late; run 2 is still working.
+    await expect(activity(false, "run-1")).resolves.toEqual({ ok: true });
+    expect((await reactions()).slice(before)).toEqual([
+      { message_id: "wamid.in.superseded.1", emoji: "👀" },
+      { message_id: "wamid.in.superseded.1", emoji: "" },
+      { message_id: "wamid.in.superseded.2", emoji: "👀" },
+    ]);
+
+    await expect(activity(false, "run-2")).resolves.toEqual({ ok: true });
+    expect((await reactions()).slice(before + 3)).toEqual([{ message_id: "wamid.in.superseded.2", emoji: "" }]);
+  });
+
+  it("adds no 👀 for a run whose route changed while its read receipt was in flight", async () => {
+    const { stub, route } = await linkedPeer("open");
+    const channel = new deployedAdapter.ManagedWhatsAppChannel(createExecutionContext(),
+      typedStub<ConstructorParameters<typeof deployedAdapter.ManagedWhatsAppChannel>[1]>(env));
+    const activity = (active: boolean, runId?: string) => channel.adapterSetActivity(
+      { installationId: route.installationId }, "managed", { kind: "dm" as const, id: ACTOR },
+      { kind: "typing", active, routeGeneration: route.generation, runId },
+    );
+    const reactions = async () => (await sentMessages())
+      .filter((record) => record.body.type === "reaction")
+      .map((record) => record.body.reaction);
+
+    expect((await SELF.fetch(await text("wamid.in.relinked.1", "question before relink"))).status).toBe(200);
+    await vi.waitFor(async () => { expect((await sentMessages()).at(-1)?.body.text?.body).toBe("Personal received question before relink"); });
+    await expect(activity(false)).resolves.toEqual({ ok: true });
+    const before = (await reactions()).length;
+
+    await pauseGraphSend("read");
+    const starting = activity(true, "run-before-relink");
+    await vi.waitFor(async () => { expect(await pausedGraphSend()).toMatchObject({ status: "read" }); });
+    // The person relinks while the old run's read receipt is still in flight.
+    await runInDurableObject(stub, async (_instance, context) => {
+      const state = await context.storage.get<ManagedWhatsAppPeerState>(STATE_KEY);
+      await context.storage.put(STATE_KEY, { ...state!, activeRoute: { ...state!.activeRoute!, generation: "relinked-generation" } });
+    });
+    await resumeGraphSend();
+    await starting;
+
+    expect((await reactions()).slice(before)).toEqual([]);
+    const after = await runInDurableObject(stub, async (_instance, context) => {
+      const state = await context.storage.get<ManagedWhatsAppPeerState>(STATE_KEY);
+      await context.storage.put(STATE_KEY, { ...state!, activeRoute: route });
+      return state!;
+    });
+    expect(after.workingReactionMessageId).toBeUndefined();
+    expect(after.workingReactionRunId).toBeUndefined();
+  });
+
+  it("clears a 👀 whose addition had an unknown outcome, but not one Meta rejected", async () => {
+    const { route } = await linkedPeer("open");
+    const channel = new deployedAdapter.ManagedWhatsAppChannel(createExecutionContext(),
+      typedStub<ConstructorParameters<typeof deployedAdapter.ManagedWhatsAppChannel>[1]>(env));
+    const installation = { installationId: route.installationId };
+    const surface = { kind: "dm" as const, id: ACTOR };
+    const activity = (active: boolean, runId: string) => channel.adapterSetActivity(
+      installation, "managed", surface, { kind: "typing", active, routeGeneration: route.generation, runId },
+    );
+    const reactions = async () => (await sentMessages())
+      .filter((record) => record.body.type === "reaction")
+      .map((record) => record.body.reaction);
+    // SAFETY: The Cloudflare test environment declares WHATSAPP_API as a Fetcher binding.
+    const graph = env.WHATSAPP_API as Fetcher;
+    const warn = vi.spyOn(console, "warn");
+
+    expect((await SELF.fetch(await text("wamid.in.ambiguous.1", "unknown outcome"))).status).toBe(200);
+    await vi.waitFor(async () => { expect((await sentMessages()).at(-1)?.body.text?.body).toBe("Personal received unknown outcome"); });
+    await expect(activity(false, "run-earlier")).resolves.toEqual({ ok: true });
+    const before = (await reactions()).length;
+    // Meta may have applied 👀 before answering 500, so the stop still removes it.
+    await graph.fetch("https://graph.test/fail-next-reaction", { method: "POST" });
+    await expect(activity(true, "run-ambiguous")).resolves.toEqual({ ok: true });
+    await expect(activity(false, "run-ambiguous")).resolves.toEqual({ ok: true });
+    expect((await reactions()).slice(before)).toEqual([{ message_id: "wamid.in.ambiguous.1", emoji: "" }]);
+    // The failure keeps Meta's answer for diagnosis, without the person's number or message.
+    const failure = warn.mock.calls.map(([line]) => String(line)).find((line) => line.includes("reaction_delivery_failed"));
+    expect(JSON.parse(failure ?? "{}")).toMatchObject({
+      component: "managed_whatsapp", event: "reaction_delivery_failed", outcome: "ambiguous",
+      diagnostics: { providerStatusCode: 500, errorCode: "2", providerRequestId: "trace-reaction" },
+    });
+    expect(failure).not.toContain(ACTOR);
+    expect(failure).not.toContain("wamid.in.ambiguous.1");
+    warn.mockRestore();
+
+    expect((await SELF.fetch(await text("wamid.in.ambiguous.2", "rejected outright"))).status).toBe(200);
+    await vi.waitFor(async () => { expect((await sentMessages()).at(-1)?.body.text?.body).toBe("Personal received rejected outright"); });
+    const afterAmbiguous = (await reactions()).length;
+    await graph.fetch("https://graph.test/fail-next-reaction", { method: "POST", body: "rejected" });
+    await expect(activity(true, "run-rejected")).resolves.toEqual({ ok: true });
+    await expect(activity(false, "run-rejected")).resolves.toEqual({ ok: true });
+    expect((await reactions()).slice(afterAmbiguous)).toEqual([]);
+  });
+
+  it("takes 👀 back off when its record cannot be stored", async () => {
+    const { stub, route } = await linkedPeer("open");
+    const reactions = async () => (await sentMessages())
+      .filter((record) => record.body.type === "reaction")
+      .map((record) => record.body.reaction);
+    expect((await SELF.fetch(await text("wamid.in.unrecorded", "storage drops the record"))).status).toBe(200);
+    await vi.waitFor(async () => { expect((await sentMessages()).at(-1)?.body.text?.body).toBe("Personal received storage drops the record"); });
+    const before = (await reactions()).length;
+    const warn = vi.spyOn(console, "warn");
+    await runInDurableObject(stub, async (instance, state) => {
+      const failure = vi.spyOn(state.storage, "transaction").mockRejectedValueOnce(new Error("storage unavailable"));
+      try {
+        await instance.setTyping(route.installationId, { kind: "dm", id: ACTOR }, ACTOR, route.generation, true, "run-unrecorded");
+      } finally {
+        failure.mockRestore();
+      }
+    });
+    // Without its record no stop could find this 👀, so it comes straight back off.
+    expect((await reactions()).slice(before)).toEqual([
+      { message_id: "wamid.in.unrecorded", emoji: "👀" },
+      { message_id: "wamid.in.unrecorded", emoji: "" },
+    ]);
+    const failure = warn.mock.calls.map(([line]) => String(line)).find((line) => line.includes("reaction_record_failed"));
+    expect(JSON.parse(failure ?? "{}")).toMatchObject({
+      component: "managed_whatsapp", event: "reaction_record_failed", diagnostics: { exceptionMessage: "storage unavailable" },
+    });
+    expect(failure).not.toContain(ACTOR);
+    expect(failure).not.toContain("wamid.in.unrecorded");
+    warn.mockRestore();
+  });
+
+  it("keeps retrying a 👀 removal that failed instead of stranding it", async () => {
+    const { route } = await linkedPeer("open");
+    const channel = new deployedAdapter.ManagedWhatsAppChannel(createExecutionContext(),
+      typedStub<ConstructorParameters<typeof deployedAdapter.ManagedWhatsAppChannel>[1]>(env));
+    const installation = { installationId: route.installationId };
+    const surface = { kind: "dm" as const, id: ACTOR };
+    const activity = (active: boolean, runId: string) => channel.adapterSetActivity(
+      installation, "managed", surface, { kind: "typing", active, routeGeneration: route.generation, runId },
+    );
+    const reactions = async () => (await sentMessages())
+      .filter((record) => record.body.type === "reaction")
+      .map((record) => record.body.reaction);
+    // SAFETY: The Cloudflare test environment declares WHATSAPP_API as a Fetcher binding.
+    const graph = env.WHATSAPP_API as Fetcher;
+
+    expect((await SELF.fetch(await text("wamid.in.stranded.1", "first ask"))).status).toBe(200);
+    await vi.waitFor(async () => { expect((await sentMessages()).at(-1)?.body.text?.body).toBe("Personal received first ask"); });
+    await expect(activity(false, "run-earlier")).resolves.toEqual({ ok: true });
+    const before = (await reactions()).length;
+    await expect(activity(true, "run-a")).resolves.toEqual({ ok: true });
+
+    expect((await SELF.fetch(await text("wamid.in.stranded.2", "second ask"))).status).toBe(200);
+    await vi.waitFor(async () => { expect((await sentMessages()).at(-1)?.body.text?.body).toBe("Personal received second ask"); });
+    await graph.fetch("https://graph.test/fail-next-reaction", { method: "POST" });
+    // Removing 👀 from the first message fails, so it stays the one to clear.
+    await expect(activity(true, "run-b")).resolves.toEqual({ ok: true });
+    await expect(activity(false, "run-b")).resolves.toEqual({ ok: true });
+
+    expect((await reactions()).slice(before)).toEqual([
+      { message_id: "wamid.in.stranded.1", emoji: "👀" },
+      { message_id: "wamid.in.stranded.1", emoji: "" },
+    ]);
+  });
+
+  it("keeps retrying a 👀 removal that Meta rate limited", async () => {
+    const { route } = await linkedPeer("open");
+    const channel = new deployedAdapter.ManagedWhatsAppChannel(createExecutionContext(),
+      typedStub<ConstructorParameters<typeof deployedAdapter.ManagedWhatsAppChannel>[1]>(env));
+    const installation = { installationId: route.installationId };
+    const surface = { kind: "dm" as const, id: ACTOR };
+    const activity = (active: boolean, runId: string) => channel.adapterSetActivity(
+      installation, "managed", surface, { kind: "typing", active, routeGeneration: route.generation, runId },
+    );
+    const reactions = async () => (await sentMessages())
+      .filter((record) => record.body.type === "reaction")
+      .map((record) => record.body.reaction);
+    // SAFETY: The Cloudflare test environment declares WHATSAPP_API as a Fetcher binding.
+    const graph = env.WHATSAPP_API as Fetcher;
+
+    expect((await SELF.fetch(await text("wamid.in.throttled.1", "first go"))).status).toBe(200);
+    await vi.waitFor(async () => { expect((await sentMessages()).at(-1)?.body.text?.body).toBe("Personal received first go"); });
+    await expect(activity(false, "run-earlier")).resolves.toEqual({ ok: true });
+    const before = (await reactions()).length;
+    await expect(activity(true, "run-a")).resolves.toEqual({ ok: true });
+
+    expect((await SELF.fetch(await text("wamid.in.throttled.2", "second go"))).status).toBe(200);
+    await vi.waitFor(async () => { expect((await sentMessages()).at(-1)?.body.text?.body).toBe("Personal received second go"); });
+    // A rate limit passes, so the removal stays recorded and the next move retries it.
+    await graph.fetch("https://graph.test/fail-next-reaction", { method: "POST", body: "throttled" });
+    await expect(activity(true, "run-b")).resolves.toEqual({ ok: true });
+    await expect(activity(false, "run-b")).resolves.toEqual({ ok: true });
+
+    expect((await reactions()).slice(before)).toEqual([
+      { message_id: "wamid.in.throttled.1", emoji: "👀" },
+      { message_id: "wamid.in.throttled.1", emoji: "" },
+    ]);
+  });
+
+  it("forgets a 👀 whose removal Meta rejected, so the next message gets one", async () => {
+    const { route } = await linkedPeer("open");
+    const channel = new deployedAdapter.ManagedWhatsAppChannel(createExecutionContext(),
+      typedStub<ConstructorParameters<typeof deployedAdapter.ManagedWhatsAppChannel>[1]>(env));
+    const installation = { installationId: route.installationId };
+    const surface = { kind: "dm" as const, id: ACTOR };
+    const activity = (active: boolean, runId: string) => channel.adapterSetActivity(
+      installation, "managed", surface, { kind: "typing", active, routeGeneration: route.generation, runId },
+    );
+    const reactions = async () => (await sentMessages())
+      .filter((record) => record.body.type === "reaction")
+      .map((record) => record.body.reaction);
+    // SAFETY: The Cloudflare test environment declares WHATSAPP_API as a Fetcher binding.
+    const graph = env.WHATSAPP_API as Fetcher;
+
+    expect((await SELF.fetch(await text("wamid.in.unremovable.1", "first try"))).status).toBe(200);
+    await vi.waitFor(async () => { expect((await sentMessages()).at(-1)?.body.text?.body).toBe("Personal received first try"); });
+    await expect(activity(false, "run-earlier")).resolves.toEqual({ ok: true });
+    const before = (await reactions()).length;
+    await expect(activity(true, "run-a")).resolves.toEqual({ ok: true });
+
+    expect((await SELF.fetch(await text("wamid.in.unremovable.2", "second try"))).status).toBe(200);
+    await vi.waitFor(async () => { expect((await sentMessages()).at(-1)?.body.text?.body).toBe("Personal received second try"); });
+    // Retrying a removal Meta refused would block every later 👀.
+    await graph.fetch("https://graph.test/fail-next-reaction", { method: "POST", body: "rejected" });
+    await expect(activity(true, "run-b")).resolves.toEqual({ ok: true });
+    await expect(activity(false, "run-b")).resolves.toEqual({ ok: true });
+
+    expect((await reactions()).slice(before)).toEqual([
+      { message_id: "wamid.in.unremovable.1", emoji: "👀" },
+      { message_id: "wamid.in.unremovable.2", emoji: "👀" },
+      { message_id: "wamid.in.unremovable.2", emoji: "" },
+    ]);
+  });
+
+  it("puts 👀 back when a new run starts on a message whose removal had an unknown outcome", async () => {
+    const { route } = await linkedPeer("open");
+    const channel = new deployedAdapter.ManagedWhatsAppChannel(createExecutionContext(),
+      typedStub<ConstructorParameters<typeof deployedAdapter.ManagedWhatsAppChannel>[1]>(env));
+    const installation = { installationId: route.installationId };
+    const surface = { kind: "dm" as const, id: ACTOR };
+    const activity = (active: boolean, runId: string) => channel.adapterSetActivity(
+      installation, "managed", surface, { kind: "typing", active, routeGeneration: route.generation, runId },
+    );
+    const reactions = async () => (await sentMessages())
+      .filter((record) => record.body.type === "reaction")
+      .map((record) => record.body.reaction);
+    // SAFETY: The Cloudflare test environment declares WHATSAPP_API as a Fetcher binding.
+    const graph = env.WHATSAPP_API as Fetcher;
+
+    expect((await SELF.fetch(await text("wamid.in.restart.1", "one more thing"))).status).toBe(200);
+    await vi.waitFor(async () => { expect((await sentMessages()).at(-1)?.body.text?.body).toBe("Personal received one more thing"); });
+    await expect(activity(false, "run-earlier")).resolves.toEqual({ ok: true });
+    const before = (await reactions()).length;
+    await expect(activity(true, "run-a")).resolves.toEqual({ ok: true });
+    // Meta may have applied this removal, so the message stays recorded and may have no 👀.
+    await graph.fetch("https://graph.test/fail-next-reaction", { method: "POST" });
+    await expect(activity(false, "run-a")).resolves.toEqual({ ok: true });
+    await expect(activity(true, "run-b")).resolves.toEqual({ ok: true });
+    await expect(activity(false, "run-b")).resolves.toEqual({ ok: true });
+
+    expect((await reactions()).slice(before)).toEqual([
+      { message_id: "wamid.in.restart.1", emoji: "👀" },
+      { message_id: "wamid.in.restart.1", emoji: "👀" },
+      { message_id: "wamid.in.restart.1", emoji: "" },
+    ]);
+  });
+
+  it("keeps the new link's 👀 when the relink is finalized after it started working", async () => {
+    const { peer, route: previous } = await linkedPeer("open");
+    const reactions = async () => (await sentMessages())
+      .filter((record) => record.body.type === "reaction")
+      .map((record) => record.body.reaction);
+    expect((await SELF.fetch(await text("wamid.in.successor.1", "/link"))).status).toBe(200);
+    await vi.waitFor(async () => {
+      expect((await sentMessages()).at(-1)?.body.text?.body).toMatch(/^[A-HJ-NP-Z2-9]{4}(?:-[A-HJ-NP-Z2-9]{4}){2}$/);
+    });
+    const code = ((await sentMessages()).at(-1)?.body.text?.body ?? "").replaceAll("-", "");
+    // SAFETY: The test environment exposes the declared Durable Object namespace binding.
+    const namespace = env.MANAGED_WHATSAPP_PAIRING as DurableObjectNamespace;
+    const pairing = typedStub<ManagedPairingStub>(namespace.get(namespace.idFromName(`pair:${code}`)));
+    const operation = {
+      code, installationId: previous.installationId, localUid: 1000,
+      operationId: "operation_relink_successor", canonicalOrigin: "https://test.gsv.space",
+    };
+    const prepared = await pairing.prepare(operation);
+    await pairing.activate({ code, operationId: operation.operationId, route: prepared.route, canonicalOrigin: operation.canonicalOrigin });
+    // The new link is live before finalization, so its run can mark the message first.
+    await expect(peer.setTyping(previous.installationId, { kind: "dm", id: ACTOR }, ACTOR, prepared.route.generation, true, "run-successor"))
+      .resolves.toEqual({ accepted: true });
+    const before = (await reactions()).length;
+    await pairing.finalize({ code, operationId: operation.operationId, route: prepared.route, canonicalOrigin: operation.canonicalOrigin });
+
+    expect((await reactions()).slice(before)).toEqual([]);
+    await expect(peer.setTyping(previous.installationId, { kind: "dm", id: ACTOR }, ACTOR, prepared.route.generation, false, "run-successor"))
+      .resolves.toEqual({ accepted: true });
+    expect((await reactions()).slice(before)).toEqual([{ message_id: "wamid.in.successor.1", emoji: "" }]);
   });
 
 });

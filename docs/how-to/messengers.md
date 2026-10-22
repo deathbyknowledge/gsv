@@ -128,6 +128,10 @@ code blocks, lists, tables and quotations stay together. Approval
 prompts arrive with **Allow once**, **Always allow** and **Block** buttons; the
 decision comes back as a reply quoting the prompt.
 
+While Ship works on your message, it reacts to that message with 👀 and removes
+the reaction when it replies, asks for approval or stops. WhatsApp's typing
+indicator also appears, but WhatsApp hides it after about 25 seconds.
+
 Markdown document uploads keep their `.md` filename and original contents;
 the WhatsApp messenger uploads them as plain text because Meta does not accept
 the Markdown MIME type.
