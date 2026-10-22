@@ -63,6 +63,19 @@ inference, Process ticks, and schedules. Suspending an installation does not
 erase data or recursively cancel work already admitted; durable work
 rechecks the gate before new admission and may resume after reactivation.
 
+Inside a Kernel or Process, the gate remembers an `active` answer for one
+minute and shares one directory lookup among concurrent requests, so ordinary
+traffic does not query Accounts per frame. A refusal is never remembered and
+clears an earlier confirmation. Calls that authenticate or grant credentials
+(`sys.connect`, device pairing and account recovery, and the recovery and
+owner-link authorizations Accounts requests) always ask Accounts. Deletion
+quiescence clears the confirmation. A lookup that fails or takes longer than
+two seconds is recorded as a diagnostic and fails closed with a retryable
+"Ship is briefly unreachable" error, because an outage cannot be told apart
+from a suspension. Accounts does not notify a Kernel when it restricts or
+resets an installation, so already-authenticated traffic observes those
+changes within a minute.
+
 All deployments require directory resolution; a missing directory binding fails
 closed. Historical standalone data remains outside
 current routing; see the [retirement guide](../how-to/standalone-retirement.md).

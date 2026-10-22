@@ -61,7 +61,7 @@ import { resolveToolSyscall } from "../../syscalls/constants";
 import { stringifyStoredProcessMedia } from "../media";
 import { assistantHistoryRecords } from "../storage/history-records";
 import type { DurableTask, DurableTaskOptions } from "../../shared/durable-tasks";
-import { MANAGED_LIFECYCLE_RECHECK_MS, managedInstallationWorkGate } from "../../installation/lifecycle";
+import { MANAGED_LIFECYCLE_RECHECK_MS, ManagedInstallationGate } from "../../installation/lifecycle";
 import GSV_DELEGATED_TASK_CONTEXT from "../../prompts/tasks/delegated.md";
 import { createContextProjection, parseContextProjection } from "../context";
 import { deriveGenerationContextId } from "../context-message-metadata";
@@ -84,6 +84,8 @@ function runControlRegistration(
 }
 
 export class ProcessRun {
+  private gate?: ManagedInstallationGate;
+
   constructor(private readonly host: Process) {}
 
   async executeRunControlAction(
@@ -1942,7 +1944,8 @@ export class ProcessRun {
   }
 
   async managedWorkGate() {
-    return await managedInstallationWorkGate(this.host.env, this.host.installationId);
+    this.gate ??= new ManagedInstallationGate(this.host.env, () => this.host.installationId);
+    return await this.gate.check();
   }
 
   async onMediaPreparationTimeout(runId: string): Promise<void> {
