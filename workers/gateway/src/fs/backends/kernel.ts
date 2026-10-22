@@ -25,6 +25,7 @@ import {
 } from "../../kernel/ai-model-stack";
 import type { MountBackend, ExtendedMountStat } from "../mount";
 import { normalizePath } from "../utils";
+import { readSystemSkillPath } from "../../kernel/sys/builtin-skills";
 
 const TEXT_ENCODER = new TextEncoder();
 const PROC_HISTORY_PAGE_SIZE = 500;
@@ -430,6 +431,8 @@ export class KernelMountBackend implements MountBackend {
   }
 
   private readSys(path: string): string | undefined {
+    const skill = readSystemSkillPath(path);
+    if (skill.kind === "file") return skill.content;
     if (!this.kernel) return undefined;
     const rel = path.slice("/sys/".length);
 
@@ -800,6 +803,7 @@ export class KernelMountBackend implements MountBackend {
       "/etc/cron.d",
     ];
     if (virtualDirs.includes(path)) return true;
+    if (readSystemSkillPath(path).kind === "directory") return true;
 
     if (!this.kernel) return false;
 
@@ -861,6 +865,8 @@ export class KernelMountBackend implements MountBackend {
   }
 
   private async readdirVirtual(path: string): Promise<string[] | undefined> {
+    const skills = readSystemSkillPath(path);
+    if (skills.kind === "directory") return skills.entries;
     if (!this.kernel) return undefined;
 
     if (path === "/proc") {
@@ -880,7 +886,7 @@ export class KernelMountBackend implements MountBackend {
     }
 
     if (path === "/sys") {
-      return ["capabilities", "config", "targets", "users"];
+      return ["capabilities", "config", "skills.d", "targets", "users"];
     }
 
     if (path === "/sys/config") {

@@ -15,23 +15,33 @@ import type { KernelContext } from "./context";
 
 const TEXT_ENCODER = new TextEncoder();
 const TEXT_DECODER = new TextDecoder();
-const memoryContextChecks = new WeakMap<KernelContext["auth"], Map<string, Promise<void>>>();
+const homeReconciliations = new WeakMap<KernelContext["auth"], Map<string, Promise<void>>>();
 
 /** Retire old generated memory before context assembly, once per account and Kernel lifetime. */
 export function ensureSharedMemoryContext(
   ctx: Pick<KernelContext, "env" | "auth">,
   identity: ProcessIdentity,
 ): Promise<void> {
+  return reconcileHomeOnce(ctx, identity, "gsv: retire generated memory context", retiredMemoryContextOps);
+}
+
+/** Applies one home reconciliation once per account and Kernel lifetime; a failure is retried on the next call. */
+export function reconcileHomeOnce(
+  ctx: Pick<KernelContext, "env" | "auth">,
+  identity: ProcessIdentity,
+  message: string,
+  collect: (client: RipgitClient, snapshot: RipgitRepoRef) => Promise<RipgitApplyOp[]>,
+): Promise<void> {
   if (!ctx.env.RIPGIT) return Promise.resolve();
-  let checks = memoryContextChecks.get(ctx.auth);
+  let checks = homeReconciliations.get(ctx.auth);
   if (!checks) {
     checks = new Map();
-    memoryContextChecks.set(ctx.auth, checks);
+    homeReconciliations.set(ctx.auth, checks);
   }
-  const key = `${identity.uid}:${identity.username}`;
+  const key = `${message}\0${identity.uid}:${identity.username}`;
   const pending = checks.get(key);
   if (pending) return pending;
-  const task = seedAccountHome(ctx.env, identity, "gsv: retire generated memory context", retiredMemoryContextOps)
+  const task = seedAccountHome(ctx.env, identity, message, collect)
     .catch((error) => {
       checks.delete(key);
       throw error;

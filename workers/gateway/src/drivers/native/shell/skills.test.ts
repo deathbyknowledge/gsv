@@ -144,6 +144,41 @@ describe("skills shell command", () => {
     expect(state.entries["/home/sam/skills.d"]).toBeUndefined();
   });
 
+  it("lists and shows the built-in skills alongside home skills", async () => {
+    const command = buildSkillsCommand(makeSkillFs({
+      "/home/sam/skills.d": ["daily-review"],
+      "/home/sam/skills.d/daily-review": ["SKILL.md"],
+      "/home/sam/skills.d/daily-review/SKILL.md": skillMarkdown("daily-review", "Run the daily review."),
+    }), makeContext(), IDENTITY);
+
+    const list = await command.execute(["list"]);
+    expect(list.exitCode).toBe(0);
+    expect(list.stdout).toContain("browser-target");
+    expect(list.stdout).toContain("daily-review");
+
+    const show = await command.execute(["show", "memory"]);
+    expect(show.exitCode).toBe(0);
+    expect(show.stdout).toContain("/sys/skills.d/memory/SKILL.md");
+  });
+
+  it("refuses to create or replace a skill under a built-in name", async () => {
+    const state = makeMutableSkillFs({ "/home/sam": [] });
+    const command = buildSkillsCommand(state.fs, makeContext(), IDENTITY);
+
+    for (const extra of [[], ["--replace"]]) {
+      const refused = await run(command, [
+        "create",
+        "browser-target",
+        "--description",
+        "My own browser workflow.",
+        ...extra,
+      ], "# Browser\n\nDo it my way.");
+      expect(refused.exitCode).toBe(1);
+      expect(refused.stderr).toContain("'browser-target' is a built-in skill; choose another name");
+    }
+    expect(state.writes).toEqual([]);
+  });
+
   it("delegates persisted name and description limits to Kernel validation", async () => {
     const state = makeMutableSkillFs({ "/home/sam": [] });
     const command = buildSkillsCommand(state.fs, makeContext(), IDENTITY);

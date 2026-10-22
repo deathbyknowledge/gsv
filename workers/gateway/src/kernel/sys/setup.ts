@@ -15,7 +15,6 @@ import {
 import { handleSysBootstrap } from "./bootstrap";
 import { ensureAccountHomeLayout } from "../account-home";
 import { RipgitClient } from "../../fs";
-import { seedBuiltinSkillsToHome } from "./skills-seed";
 import { gsvInferenceFeaturesFromEnv } from "../../inference/features";
 import { ensurePersonalController } from "../personal-controller";
 import { normalizeLanguage } from "../language";
@@ -416,16 +415,6 @@ export async function handleSysSetup(
         });
       },
     );
-
-    if (bootstrap && ctx.env.RIPGIT) {
-      // handleSysBootstrap seeds the first setup user's skills; seed root explicitly too.
-      const ripgit = new RipgitClient(ctx.env.RIPGIT);
-      await timeSetupStep(
-        timings,
-        "seed-root-skills",
-        () => seedBuiltinSkillsToHome(ripgit, rootProcessIdentity),
-      );
-    }
 
     const processIdentity: ProcessIdentity = {
       uid,
