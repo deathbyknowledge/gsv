@@ -233,7 +233,7 @@ async fn connection_wait_rejects_a_replaced_binding_and_cancels_promptly() {
             .await
             .unwrap()
             .unwrap(),
-        "Machine setup was cancelled."
+        "Connecting was cancelled."
     );
 }
 

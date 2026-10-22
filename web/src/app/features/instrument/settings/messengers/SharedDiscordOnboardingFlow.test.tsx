@@ -37,7 +37,7 @@ it("opens server installation and requires explicit confirmation of the Discord 
     expect(inspect).toHaveBeenCalledWith({ adapter: "discord", code: "ABCD-EFGH-JKLM" });
     expect(confirm).not.toHaveBeenCalled();
     expect(nodeWithLabel(nodes(), "Discord user discord:user:2001").props.sub).toContain("application:1000:guild:4001");
-    await click("YES, CONNECT THIS IDENTITY");
+    await click("YES, CONNECT THIS ACCOUNT");
     expect(confirm).toHaveBeenCalledWith({ adapter: "discord", code: "ABCD-EFGH-JKLM" });
   } finally { await root.unmount(); vi.unstubAllGlobals(); }
 });

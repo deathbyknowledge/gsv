@@ -37,18 +37,18 @@ export class BrowserPairing {
   stop(): void { this.generation++; }
 
   async pair(code: string): Promise<ExtensionConfig> {
-    if (this.pending) throw new Error("Browser pairing is already in progress");
+    if (this.pending) throw new Error("This browser is already connecting");
     this.pending = true;
     const generation = this.generation;
-    const checkCurrent = () => { if (generation !== this.generation) throw new Error("Pairing stopped. Retry to finish connecting this browser."); };
+    const checkCurrent = () => { if (generation !== this.generation) throw new Error("Connecting stopped. Retry to finish connecting this browser."); };
     try {
       const initial = await this.operations.config();
       const previous = await this.operations.load();
       const selectedCode = code.trim() || previous?.code;
-      if (!selectedCode) throw new Error("Copy a device invitation from Ship's Connect flow first.");
+      if (!selectedCode) throw new Error("Copy an invitation from Ship's connect flow first.");
       const invite = decodeDevicePairingCode(selectedCode);
       if (previous && previous.code.trim() !== selectedCode) {
-        throw new Error("Clear the field and retry to finish the previous pairing first.");
+        throw new Error("Clear the field and retry to finish connecting with the previous invitation first.");
       }
       const pending = previous ?? { code: selectedCode, credential: createPairingCredential() };
       checkCurrent();
@@ -62,11 +62,11 @@ export class BrowserPairing {
         throw error;
       }
       if (result.pairing.id !== invite.id || result.pairing.username !== invite.username || result.pairing.targetId !== invite.targetId || result.pairing.state !== "paired") {
-        throw new Error("Ship returned a different pairing identity");
+        throw new Error("Ship returned a different connection than the invitation named");
       }
       const old = await this.operations.config();
       checkCurrent();
-      if (JSON.stringify(old) !== JSON.stringify(initial)) throw new Error("Connection settings changed during pairing. Retry to apply this invitation.");
+      if (JSON.stringify(old) !== JSON.stringify(initial)) throw new Error("Connection settings changed while connecting. Retry to apply this invitation.");
       const saved = await this.operations.commit({ ...old, gatewayUrl: invite.gatewayUrl, username: invite.username, deviceId: invite.targetId, token: pending.credential, autoConnect: true });
       await this.operations.save(null);
       checkCurrent();

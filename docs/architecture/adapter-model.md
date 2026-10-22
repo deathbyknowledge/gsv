@@ -62,7 +62,7 @@ contract and the distinction between peers, adapters, machines, and targets.
 
 ## Why deployment names still say `channel-*`
 
-User-facing docs prefer **adapter** because that is the better product term.
+User-facing docs and the interface say **messenger** for a connected messaging app; **adapter** remains the engineering term for the transport that implements it.
 Some deployed components and worker names still use `channel-*` because those
 are compatibility names in release artifacts and service bindings. Each
 adapter's `adapter.json` owns that deployment metadata; the public Alchemy stack
@@ -260,7 +260,7 @@ and thread mappings. It selects destinations through `here`, opaque GSV ids, or
 unambiguous generic labels rather than provider fields, and only accepts owned
 interactive processes. The canonical personal process may also set a private
 DM to an owned non-personal process when that exact latest DM message started
-its current run. This opens an explicitly labeled INTERNAL WORK / WORK SESSION;
+its current run. This opens an explicitly labeled HELPER;
 the human uses `/ship` for the canonical SHIP.
 Changing a selection does not change an existing run route: the current Message
 stays directed to its origin, while the next inbound message enters the new selection.

@@ -118,7 +118,7 @@ describe("Ship page", () => {
     const body = await page(http, `/admin/installations/${installationId}`);
     expect(body).toContain("Health unavailable");
     expect(body).toContain("not connected");
-    expect(body).toContain("Reissue onboarding link");
+    expect(body).toContain("Reissue activation link");
   });
 
   it("gives up on a slow health read", async () => {

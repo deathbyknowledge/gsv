@@ -83,7 +83,7 @@ export class InstallationOperatorHttp {
         </form>
         <p id="operator-status" role="status"></p>
         <div id="operator-result" hidden>
-          <p><a id="setup-link" class="button" hidden>Set up your Ship</a></p>
+          <p><a id="setup-link" class="button" hidden>Activate your Ship</a></p>
           <div id="credential-result" hidden><p>Save this operator credential now. It is shown once.</p><textarea id="operator-credential" readonly rows="3"></textarea></div>
           <p><a href="/admin/installations">Manage Ships</a></p>
         </div>
@@ -145,6 +145,6 @@ form.addEventListener('submit', async (event) => {
       document.getElementById('credential-result').hidden = false;
       document.getElementById('operator-credential').value = attempt.operatorToken;
     }
-    status.textContent = result.onboardingUrl ? 'Your first Ship is ready to set up.' : 'This Ship already has a setup claim. Use administration if you need to reissue it.';
+    status.textContent = result.onboardingUrl ? 'Your first Ship is ready to activate.' : 'This Ship already has an activation link. Use administration if you need to reissue it.';
   } catch (error) { status.textContent = error.message; } finally { button.disabled = false; }
 });`;

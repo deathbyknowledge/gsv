@@ -384,7 +384,7 @@ async function pairingCodeFor(actorId: string, previousCode?: string): Promise<s
     const channel = actorId === "UALICE01" ? "DALICE01" : "DBOB0001";
     const text = (await slackApiCalls()).findLast((call) => (
       call.method === "chat.postMessage"
-      && call.body.text?.includes("Pairing code:")
+      && call.body.text?.includes("Code:")
       && call.body.channel === channel
     ))?.body.text ?? "";
     normalizedCode = text
@@ -522,7 +522,7 @@ async function sendApproval(
   const messageId = approvalPost?.result?.ts;
   const sourceText = approvalPost?.body.text;
   expect(messageId).toBeTruthy();
-  expect(sourceText).toContain("Run a command in your cloud home.\n\"date\"");
+  expect(sourceText).toContain("Run a command in Ship's home.\n\"date\"");
   expect(sourceText).not.toContain("managed-request-1");
   expect(sourceText).not.toContain("hil[");
   return { messageId: messageId!, sourceText: sourceText!, approveValue: approveValue! };
@@ -1040,14 +1040,14 @@ describe("managed Slack clean-instance flow", () => {
         body: expect.objectContaining({
           channel: "DALICE01",
           ts: approval.messageId,
-          text: expect.stringContaining("Approved once."),
+          text: expect.stringContaining("Allowed once."),
         }),
       }));
       const update = (await slackApiCalls()).find((call) => (
         call.method === "chat.update"
         && call.body.ts === approval.messageId
       ));
-      expect(update?.body.text).toContain("Run a command in your cloud home.\n\"date\"");
+      expect(update?.body.text).toContain("Run a command in Ship's home.\n\"date\"");
       expect(update?.body.text).not.toContain("I need your confirmation");
       expect(update?.body.text).not.toContain("hil[");
     });

@@ -68,12 +68,12 @@ export function adminStylesheet(head: boolean): Response {
 export function onboardingNotice(issued: IssuedAdminInstallation): string {
   const url = escapeHtml(issued.onboarding.onboardingUrl);
   const resetCopy = issued.reset
-    ? `<p>The previous installation <strong>${escapeHtml(issued.reset.previousInstallationId)}</strong> is offline. Its stored data is recorded as ${escapeHtml(issued.reset.dataDeletionState)} deletion; reset itself did not erase it.</p>`
+    ? `<p>The previous Ship <strong>${escapeHtml(issued.reset.previousInstallationId)}</strong> is offline. Its stored data is recorded as ${escapeHtml(issued.reset.dataDeletionState)} deletion; reset itself did not erase it.</p>`
     : "";
   return `<section class="notice success" aria-live="polite">
-    <div><p class="eyebrow">ONBOARDING LINK ISSUED</p><h2>${escapeHtml(issued.installation.handle)} is ready to claim</h2>
+    <div><p class="eyebrow">ACTIVATION LINK ISSUED</p><h2>${escapeHtml(issued.installation.handle)} is ready to claim</h2>
     <p>This capability is shown only in this response. Reissuing it invalidates the previous link.</p>${resetCopy}</div>
-    <a class="button" href="${url}" target="_blank" rel="noreferrer">Open onboarding</a>
+    <a class="button" href="${url}" target="_blank" rel="noreferrer">Open activation link</a>
     <code>${url}</code><small>Expires ${formatDate(issued.onboarding.expiresAt)}</small>
   </section>`;
 }

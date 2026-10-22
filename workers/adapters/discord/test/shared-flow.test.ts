@@ -39,8 +39,8 @@ async function message(id: string, actor: string, text: string, guild?: string, 
 }
 async function issue(actor: string, id: string, guild?: string): Promise<string> {
   await message(id, actor, "pair", guild);
-  const messages = await until(sent, (rows) => rows.some((row) => row.channel === `8${actor}` && row.body.content?.includes("Pairing code:")));
-  const code = messages.filter((row) => row.channel === `8${actor}` && row.body.content?.includes("Pairing code:")).at(-1)!.body.content!.match(/Pairing code: ([A-Z2-9-]+)/)![1];
+  const messages = await until(sent, (rows) => rows.some((row) => row.channel === `8${actor}` && row.body.content?.includes("Code:")));
+  const code = messages.filter((row) => row.channel === `8${actor}` && row.body.content?.includes("Code:")).at(-1)!.body.content!.match(/Code: ([A-Z2-9-]+)/)![1];
   return code;
 }
 async function link(code: string, installationId: string): Promise<AdapterPairingPreparation> {
@@ -95,7 +95,7 @@ describe("shared Discord provider → peer → Gateway", () => {
     await message("3402", "2202", "<@1000> hello", "4001", "5001");
     const ingress = (await until(calls, (rows) => rows.filter((row) => row.call === "adapter.inbound").length === 2)).filter((row) => row.call === "adapter.inbound");
     expect(new Set(ingress.map((row) => row.installation.installationId))).toEqual(new Set(["server-a", "server-b"]));
-    expect((await sent()).filter((row) => row.body.content?.includes("Pairing code:")).every((row) => ["82201", "82202"].includes(row.channel))).toBe(true);
+    expect((await sent()).filter((row) => row.body.content?.includes("Code:")).every((row) => ["82201", "82202"].includes(row.channel))).toBe(true);
   });
 
   it("offers fresh private pairing after password revocation and uses a new route after confirmation", async () => {
@@ -103,10 +103,10 @@ describe("shared Discord provider → peer → Gateway", () => {
     const initial = await link(await issue("2211", "3411"), "recovery-space");
     const before = (await sent()).length;
     await message("3412", "2211", "__identity_revoked__");
-    const messages = await until(sent, (rows) => rows.slice(before).some((row) => row.body.content?.includes("Pairing code:")));
-    const reply = messages.slice(before).find((row) => row.body.content?.includes("Pairing code:"))!;
+    const messages = await until(sent, (rows) => rows.slice(before).some((row) => row.body.content?.includes("Code:")));
+    const reply = messages.slice(before).find((row) => row.body.content?.includes("Code:"))!;
     expect(reply.channel).toBe("82211");
-    const code = reply.body.content!.match(/Pairing code: ([A-Z2-9-]+)/)![1];
+    const code = reply.body.content!.match(/Code: ([A-Z2-9-]+)/)![1];
     await expect(adapter.adapterPairingInspect({ installationId: "recovery-space" }, code)).resolves.toMatchObject({ linked: true });
     const replacement = await link(code, "recovery-space");
     expect(replacement.route.generation).not.toBe(initial.route.generation);
@@ -128,8 +128,8 @@ describe("shared Discord provider → peer → Gateway", () => {
     body.stream = new ReadableStream({ async start(controller) { await gate; controller.enqueue(new Uint8Array([1, 2, 3])); controller.close(); } });
     const pending = peer.sendMessage("old-space", { deliveryId: "delayed-media", surface: { kind: "dm", id: "82301" }, actorId: "discord:user:2301", routeGeneration: old.route.generation, text: "old-space-private", media: [{ type: "document", mimeType: "application/octet-stream", filename: "fixture.bin", body: { offset: 0, length: 3 } }] }, body);
     await message("3502", "2301", "pair");
-    const rows = await until(sent, (values) => values.filter((row) => row.body.content?.includes("Pairing code:")).length === 2);
-    const code = rows.filter((row) => row.body.content?.includes("Pairing code:")).at(-1)!.body.content!.match(/Pairing code: ([A-Z2-9-]+)/)![1];
+    const rows = await until(sent, (values) => values.filter((row) => row.body.content?.includes("Code:")).length === 2);
+    const code = rows.filter((row) => row.body.content?.includes("Code:")).at(-1)!.body.content!.match(/Code: ([A-Z2-9-]+)/)![1];
     const replacement = await link(code, "new-space");
     expect(replacement.previousRoute).toEqual(old.route);
     release();
@@ -158,8 +158,8 @@ describe("shared Discord provider → peer → Gateway", () => {
     const old = await link(await issue("2401", "3601"), "queued-old");
     const peer = bindings.DISCORD_PEER.getByName(discordPeerName(discordAccount("1000"), discordActor("2401")));
     await message("3602", "2401", "pair");
-    const rows = await until(sent, (values) => values.filter((row) => row.body.content?.includes("Pairing code:")).length === 2);
-    const code = rows.filter((row) => row.body.content?.includes("Pairing code:")).at(-1)!.body.content!.match(/Pairing code: ([A-Z2-9-]+)/)![1];
+    const rows = await until(sent, (values) => values.filter((row) => row.body.content?.includes("Code:")).length === 2);
+    const code = rows.filter((row) => row.body.content?.includes("Code:")).at(-1)!.body.content!.match(/Code: ([A-Z2-9-]+)/)![1];
     await link(code, "queued-new");
     await runInDurableObject(peer, async (_instance, state) => {
       await state.storage.put("discord_peer:inbound:queued-old-message", {

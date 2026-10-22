@@ -143,7 +143,7 @@ describe("ManagedSlackOnboardingFlow", () => {
     });
     expect(nodeWithLabel(nodes(), "Slack user U12345").props.sub).toBe("Slack ID U12345");
 
-    await click("YES, CONNECT THIS IDENTITY");
+    await click("YES, CONNECT THIS ACCOUNT");
     expect(mocks.confirm).toHaveBeenCalledWith({
       adapter: "slack",
       code: "ABCD-EFGH-JKLM",

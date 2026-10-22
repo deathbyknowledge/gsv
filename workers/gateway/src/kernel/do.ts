@@ -704,6 +704,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
   }
 
   async quiesceInstallation(input: InstallationDeletionRequest) {
+    this.onboarding.invalidateWorkGate();
     return this.deletion.quiesce(input);
   }
 
@@ -786,14 +787,14 @@ export class Kernel extends DurableObject<GatewayEnv> {
   }
 
   async authorizeRootRecovery(input: AuthorizeRootRecoveryInput): Promise<{ authorized: true }> {
-    const gate = await this.onboarding.managedWorkGate();
+    const gate = await this.onboarding.managedWorkGate({ fresh: true });
     if (!gate.allowed) throw new Error("This Ship is unavailable");
     this.accountRecovery.authorize(input);
     return { authorized: true };
   }
 
   async confirmOwnerLinkAuthorization(attemptId: string): Promise<{ authorized: true }> {
-    const gate = await this.onboarding.managedWorkGate();
+    const gate = await this.onboarding.managedWorkGate({ fresh: true });
     if (!gate.allowed) throw new Error("This Ship is unavailable");
     this.accountRecovery.confirmOwnerLink(attemptId);
     return { authorized: true };

@@ -107,7 +107,7 @@ describe("managed Telegram peer state", () => {
       operationId: "operation-1",
       route: nextRoute,
       now: 1_000,
-    })).toThrow("Disconnect this Telegram identity");
+    })).toThrow("Disconnect your Telegram account");
   });
 
   it("fences disconnects by the exact active generation and replays them safely", () => {

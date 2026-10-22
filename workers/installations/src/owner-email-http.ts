@@ -65,7 +65,7 @@ export class InstallationOwnerEmailHttp {
     const purpose: Purpose = url.pathname === "/owner/link" ? "link" : url.pathname === "/owner/recover" ? "recover" : "login";
     const challengeId = crypto.randomUUID();
     const browserSecret = randomSecret();
-    const title = purpose === "link" ? "Recovery email" : purpose === "recover" ? "Recover your Ship" : "Sign in";
+    const title = purpose === "link" ? "Account recovery" : purpose === "recover" ? "Recover your Ship" : "Sign in";
     const explanation = purpose === "link" ? "Verify an email address to recover administrator access if you lose it."
       : purpose === "recover" ? "Verify your email to reset the administrator password."
       : "Enter your email to receive a sign-in code and see your Ships.";
@@ -76,7 +76,7 @@ export class InstallationOwnerEmailHttp {
       ${purpose === "link" ? `${hidden("ownerAttemptId", "")}${hidden("secret", "")}` : ""}
       <label>Email<input name="email" type="email" required maxlength="254" autocomplete="email" autofocus></label>
       <button>Send code</button></form>
-      <nav><a href="/owner/spaces">My Ships</a>${purpose !== "recover" ? '<a href="/owner/recover">Recover a Ship</a>' : ""}
+      <nav><a href="/owner/spaces">My Ships</a>${purpose !== "recover" ? '<a href="/owner/recover">Recover your Ship</a>' : ""}
       ${this.existingIdentityProvider && purpose !== "login" ? `<a id="existing-identity" href="/owner/identity/${purpose}">Use existing identity provider</a>` : ""}</nav>
       ${purpose === "link" ? `<script nonce="${nonce}">const p=new URLSearchParams(location.hash.slice(1));history.replaceState(null,"",location.pathname);document.querySelector('[name="ownerAttemptId"]').value=p.get("id")||"";document.querySelector('[name="secret"]').value=p.get("secret")||"";const identity=document.getElementById("existing-identity");if(identity)identity.hash=p.toString();</script>` : ""}`,
     200, [setCookie(browserCookie(challengeId), browserSecret, 600), setCookie(pendingCookie(challengeId), randomSecret(), 600)], nonce);
@@ -128,9 +128,9 @@ export class InstallationOwnerEmailHttp {
     return page(`<h1>My Ships</h1><p>${html(session.email)}</p>
       ${spaces.length ? `<ul class="spaces">${spaces.map(space => `<li><div>${space.state === "active"
         ? `<a href="${html(space.canonicalOrigin)}">${html(space.handle)}</a>` : html(space.handle)}<small>${html(space.state)}</small></div>
-        ${space.state === "active" ? `<a class="secondary" href="/owner/recover?handle=${encodeURIComponent(space.handle)}">Recover access</a>` : ""}</li>`).join("")}</ul>`
+        ${space.state === "active" ? `<a class="secondary" href="/owner/recover?handle=${encodeURIComponent(space.handle)}">Recover your Ship</a>` : ""}</li>`).join("")}</ul>`
         : "<p>No Ships linked yet. Open your Ship and verify your email in Settings → sign-in → Account recovery.</p>"}
-      <nav><a href="/owner/recover">Recover a Ship</a><form method="post" action="/owner/logout"><button class="text">Sign out</button></form></nav>`);
+      <nav><a href="/owner/recover">Recover your Ship</a><form method="post" action="/owner/logout"><button class="text">Sign out</button></form></nav>`);
   }
 }
 

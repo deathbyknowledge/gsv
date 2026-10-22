@@ -659,7 +659,7 @@ describe("gateway runtime integration", () => {
       return personalRouteReply !== undefined;
     }, "personal route confirmation");
     expect(personalRouteReply?.message.text).toBe(
-      "[PERSONAL INTELLIGENCE] work direct line ready",
+      "work direct line ready",
     );
 
     const beforeNormal = await client.proc.list();
@@ -699,7 +699,7 @@ describe("gateway runtime integration", () => {
         deliveryId: expect.any(String),
         surface: SURFACE,
         actorId: ACTOR_ID,
-        text: `[WORK SESSION] ${INTEGRATION_REPLY}`,
+        text: `[HELPER] ${INTEGRATION_REPLY}`,
         replyToId: "normal-one-message",
       },
     });
@@ -722,7 +722,7 @@ describe("gateway runtime integration", () => {
     ))?.message).toMatchObject({
       surface: SURFACE,
       actorId: ACTOR_ID,
-      text: `[WORK SESSION] ${INTEGRATION_REPLY}`,
+      text: `[HELPER] ${INTEGRATION_REPLY}`,
       replyToId: "normal-two-message",
     });
 
