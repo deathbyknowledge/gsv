@@ -15,6 +15,7 @@ export default defineConfig({
               const calls = [];
               let approvalReleased = false;
               let recoveryReleased = false;
+              let obsoleteApprovalRecovered = false;
               export class AdapterGatewayEntrypoint extends WorkerEntrypoint {
                 async resolveInstallation(id) { return { found: true, installationId: id, state: id.startsWith("retired-") ? "retained" : "active", handle: "test", canonicalOrigin: "https://test.gsv.space" }; }
                 async serviceFrame(installation, frame) {
@@ -45,6 +46,16 @@ export default defineConfig({
                 }
                 async linkedPeerFrame(installation, context, frame) {
                   calls.push({ installation, linkedContext: context, call: frame.call, args: frame.args });
+                  if (frame.args.requestId === "obsolete-approval-404" || frame.args.requestId === "obsolete-approval-503") {
+                    const unavailable = frame.args.requestId === "obsolete-approval-503" && !obsoleteApprovalRecovered;
+                    return {
+                      type: "res", id: frame.id, ok: false,
+                      error: {
+                        code: unavailable ? 503 : 404,
+                        message: unavailable ? "Process service unavailable" : "Process not found: proc-deleted",
+                      },
+                    };
+                  }
                   if (frame.args.requestId === "held-retirement-approval") {
                     const until = Date.now() + 5000;
                     while (!approvalReleased && Date.now() < until) await new Promise((resolve) => setTimeout(resolve, 10));
@@ -70,6 +81,7 @@ export default defineConfig({
                 async fetch(request) {
                   if (new URL(request.url).pathname === "/release-approval") approvalReleased = true;
                   if (new URL(request.url).pathname === "/release-recovery") recoveryReleased = true;
+                  if (new URL(request.url).pathname === "/recover-obsolete-approval") obsoleteApprovalRecovered = true;
                   return Response.json(calls);
                 }
               }
