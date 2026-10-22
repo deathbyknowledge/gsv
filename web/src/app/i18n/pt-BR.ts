@@ -948,6 +948,7 @@ export const ptBR = {
   "people.profile.unpublishedChanges": "alterações não publicadas",
   "people.profile.visibilityQuestion": "Quem pode ver meu perfil?",
   "people.profile.visibilityPublic": "Qualquer pessoa com seu endereço pode vê-lo, e as pessoas podem encontrar você pelo seu @nome de usuário e enviar uma solicitação de mensagem. Escolha editar para mudar ou torná-lo privado.",
+  "people.profile.visibilityPublicInvite": "Qualquer pessoa com seu endereço pode vê-lo. Só as pessoas que você convida podem se conectar, então ninguém pode enviar uma solicitação de mensagem. Escolha editar para mudar ou torná-lo privado.",
   "people.profile.visibilityPrivate": "Só você. As pessoas ainda podem se conectar com você por um link de convite privado. Escolha editar para publicá-lo.",
   "people.profile.copyAddress": "copiar endereço do perfil",
   "people.profile.copyFailed": "Não foi possível copiar. Selecione o endereço no navegador.",

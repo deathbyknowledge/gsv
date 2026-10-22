@@ -942,6 +942,7 @@ export const en = {
   "people.profile.unpublishedChanges": "unpublished changes",
   "people.profile.visibilityQuestion": "Who can see my profile?",
   "people.profile.visibilityPublic": "Anyone with your address can see it, and people can find you by your handle and send you a message request. Choose edit to change it or make it private.",
+  "people.profile.visibilityPublicInvite": "Anyone with your address can see it. Only people you invite can connect, so no one can send you a message request. Choose edit to change it or make it private.",
   "people.profile.visibilityPrivate": "Only you. People can still connect with you through a private invitation link. Choose edit to publish it.",
   "people.profile.copyAddress": "copy profile address",
   "people.profile.copyFailed": "Could not copy. Select the address from your browser instead.",

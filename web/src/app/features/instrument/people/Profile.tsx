@@ -88,7 +88,12 @@ export function Profile({ account, active, edit: editing, focusBio, onDirty, onE
 
   // The recorded handle is the profile's name; saving publishes it even when an older draft carried another.
   // Without a recorded handle, the profile keeps the name it already has.
-  const named = (shown: ProfileFields): ProfileFields => state?.handle ? { ...shown, displayName: state.handle } : shown;
+  const named = (shown: ProfileFields): ProfileFields => ({
+    ...shown,
+    ...(state?.handle ? { displayName: state.handle } : undefined),
+    // The Kernel enforces "closed" exactly like "invitation"; save the option the editor shows.
+    ...(shown.contactPolicy === "closed" ? { contactPolicy: "invitation" as const } : undefined),
+  });
   const title = state ? (state.handle ? `@${state.handle}` : state.draft.displayName) : "";
   // A stored name that predates the handle still needs saving, even without other edits.
   const renamePending = !!state?.handle && state.draft.displayName !== state.handle;
@@ -122,7 +127,7 @@ export function Profile({ account, active, edit: editing, focusBio, onDirty, onE
         {state && !editing && <>
           <span class="people-profile-tag"><Tag boxed size="medium" tone={state.published ? "accent" : "idle"} label={t(state.published ? "people.profile.publicLabel" : "people.profile.privateLabel")} /></span>
           {unpublishedChanges && <span class="people-profile-tag"><Tag boxed size="medium" tone="update" label={t("people.profile.unpublishedChanges")} /></span>}
-          <InfoTip position="bottom" label={t("people.profile.visibilityQuestion")} title={t("people.profile.visibilityQuestion")} text={t(state.published ? "people.profile.visibilityPublic" : "people.profile.visibilityPrivate")} />
+          <InfoTip position="bottom" label={t("people.profile.visibilityQuestion")} title={t("people.profile.visibilityQuestion")} text={t(!state.published ? "people.profile.visibilityPrivate" : state.draft.contactPolicy === "requests" ? "people.profile.visibilityPublic" : "people.profile.visibilityPublicInvite")} />
         </>}
       </div>
       {state && !editing && <span class="people-profile-edit"><Button variant="link" label={`${t("people.profile.edit")}${dirty ? " ·" : ""}`} disabled={!connected || !canConfigure(account, "profile.update")} onClick={() => onEdit()} /></span>}

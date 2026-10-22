@@ -943,6 +943,7 @@ export const es = {
   "people.profile.unpublishedChanges": "cambios sin publicar",
   "people.profile.visibilityQuestion": "¿Quién puede ver mi perfil?",
   "people.profile.visibilityPublic": "Cualquiera con tu dirección puede verlo, y la gente puede encontrarte por tu @usuario y enviarte una solicitud de mensaje. Elige editar para cambiarlo o hacerlo privado.",
+  "people.profile.visibilityPublicInvite": "Cualquiera con tu dirección puede verlo. Solo pueden conectar las personas que invitas, así que nadie puede enviarte una solicitud de mensaje. Elige editar para cambiarlo o hacerlo privado.",
   "people.profile.visibilityPrivate": "Solo tú. La gente aún puede conectar contigo mediante un enlace de invitación privado. Elige editar para publicarlo.",
   "people.profile.copyAddress": "copiar dirección del perfil",
   "people.profile.copyFailed": "No se ha podido copiar. Selecciona la dirección desde el navegador.",
