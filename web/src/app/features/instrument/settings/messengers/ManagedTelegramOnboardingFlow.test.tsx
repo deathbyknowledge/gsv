@@ -130,14 +130,14 @@ describe("ManagedTelegramOnboardingFlow", () => {
     expect(mocks.currentStep).toBe(2);
     expect(nodeWithLabel(nodes(), "@hank").props.sub).toBe("Telegram ID 12345");
 
-    await click("YES, CONNECT THIS IDENTITY");
+    await click("YES, CONNECT THIS ACCOUNT");
     expect(mocks.confirm).toHaveBeenCalledWith({
       adapter: "telegram",
       code: "ABCD-EFGH-JKLM",
     });
     expect(mocks.currentStep).toBe(3);
     const success = nodes().find((node) =>
-      node.props.text?.includes("personal intelligence")
+      node.props.text?.includes("now reaches your Ship")
     );
     expect(success).toBeTruthy();
   });

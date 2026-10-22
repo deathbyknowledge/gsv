@@ -31,10 +31,10 @@ describe("Settings approval labels", () => {
     expect(options.tools.find((option) => option.value === "fs.read")?.label).toBe("Read files");
     expect(options.tools.find((option) => option.value === "sys.mcp.call")?.label).toBe("Call MCP tools");
     expect(options.targets.find((option) => option.value === targetOptionValue("machine:123"))?.label).toBe("My MacBook");
-    expect(options.targets.find((option) => option.value === targetOptionValue("gsv"))?.label).toBe("Ship computer");
+    expect(options.targets.find((option) => option.value === targetOptionValue("gsv"))?.label).toBe("Ship’s home");
     expect(options.targets.find((option) => option.value === targetOptionValue({ route: "instance", platform: "browser" }))?.label).toBe("Cloud browsers");
     expect(options.targets.find((option) => option.value === targetOptionValue({ route: "instance", platform: "linux" }))?.label).toBe("Cloud computers");
-    expect(options.targets.find((option) => option.value === "")?.label).toBe("All machines");
+    expect(options.targets.find((option) => option.value === "")?.label).toBe("All connections");
   });
 
   it("offers the cloud-browser scope before any instance exists", () => {
@@ -57,6 +57,7 @@ describe("Settings approval labels", () => {
 
   it("keeps the legacy external-machine scope distinct from the default all-target scope", () => {
     const options = permissionOptionsForRule({ match: "fs.*", target: "targets/*", action: "ask" }, []);
-    expect(options.targets.filter((option) => option.label === "All machines").map((option) => option.value)).toEqual(["", targetOptionValue("targets/*")]);
+    expect(options.targets.filter((option) => option.label === "All connections").map((option) => option.value)).toEqual([""]);
+    expect(options.targets.filter((option) => option.label === "All connections except Ship’s home").map((option) => option.value)).toEqual([targetOptionValue("targets/*")]);
   });
 });

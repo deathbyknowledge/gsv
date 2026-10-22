@@ -35,7 +35,7 @@ You can also connect through **Settings → Messengers**, using the steps below.
 4. Confirm only if that is your Telegram account. The code alone cannot choose
    an installation or user; the signed-in Ship session supplies both.
 5. Send another message in Telegram. It reaches the same Ship conversation
-   you use in Ship, without selecting a process.
+   you use in Ship, without selecting a helper.
 
 If your Telegram account was connected to another Ship, requesting or inspecting
 a code does not interrupt it. The route moves only after confirmation succeeds.
@@ -77,7 +77,7 @@ a command from an older prompt.
 The app installation belongs to the Slack workspace, while the connection
 belongs to one person. If Alice and Bob use the same workspace, each connects
 separately and each author's mentions keep routing to their own Ship. Making
-Alice and Bob Contacts does not change that default Slack route. A linked Ship
+Alice and Bob Contacts does not change that default Slack route. Either Ship
 can still contact the other explicitly through Ship's normal federation model.
 
 Public channel and thread responses identify whose Ship produced them.
@@ -117,8 +117,8 @@ Platform. You message that number from your own WhatsApp account.
    number is already connected to another Ship, send `/link` to get a new code.
 3. Enter the code back in Ship. Ship shows the WhatsApp profile name and the
    masked number that requested it.
-4. Confirm only if that is your WhatsApp number. The code alone cannot choose an
-   installation or user; the signed-in Ship session supplies both.
+4. Confirm only if that is your WhatsApp number. The code alone cannot choose a
+   Ship or user; your signed-in session supplies both.
 5. Send another message. It reaches the same Ship conversation you use in Ship.
 
 You can send text, photos, documents, voice notes, videos, and locations. Ship
@@ -176,5 +176,5 @@ generation. Delayed messages from the old route cannot cross into the new one.
 
 ## See also
 
-- [Connect Devices](/how-to/connect-devices) — give Ship access to your machines
+- [Connect Devices](/how-to/connect-devices) — give Ship access to your computers
 - [Get Started](/get-started/)

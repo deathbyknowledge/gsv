@@ -128,13 +128,13 @@ describe("places", () => {
     const places = orderPlaces([target({ deviceId: "browser-1", kind: "browser", label: "Chrome" }), target({})]);
     expect(places.map((place) => place.id)).toEqual([CLOUD_TARGET_ID, "laptop", "browser-1"]);
     expect(places[0].kind).toBe("cloud");
-    expect(places[0].label).toBe("your cloud");
+    expect(places[0].label).toBe("Ship’s home");
   });
 
   it("keeps an existing cloud target instead of adding a second one", () => {
     const places = orderPlaces([target({ deviceId: CLOUD_TARGET_ID, kind: "unknown", label: "gsv" })]);
     expect(places).toHaveLength(1);
-    expect(places[0].label).toBe("your cloud");
+    expect(places[0].label).toBe("Ship’s home");
     expect(places[0].kind).toBe("cloud");
   });
 
@@ -287,7 +287,7 @@ describe("ledgerFromSysLines", () => {
       sysLine({ call: "future.operation", args: '{"secret":"private fixture"}' }),
     ]);
     expect(lines.map(({ action, detail }) => ({ what: words(action), detail }))).toEqual([
-      { what: "read the ledger", detail: "" },
+      { what: "read the logs", detail: "" },
       { what: "listed accounts", detail: "" },
       { what: "listed responsibilities", detail: "open · active · waiting" },
       { what: "created a schedule", detail: "Morning check" },

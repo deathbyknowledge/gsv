@@ -1,6 +1,6 @@
 # Get Started
 
-Ship brings together your accounts, conversations, memory and connected machines.
+Ship brings together your accounts, conversations, memory and connected computers.
 You can use a hosting operator or run the same stack in your own Cloudflare account.
 
 ## Get Ship
@@ -10,8 +10,8 @@ your password. Each Ship has one personal account; you do not need to choose
 another username. Continue to review the early-access disclosure and confirm the
 age, Terms of Service and Privacy Policy
 agreement before creating your account. **Back** lets you revise your credentials.
-Creating your account signs you in and opens **Ship**, your conversation with your personal agent.
-The first time you enter Instrument, a welcome card from Kawah appears with the
+Creating your account signs you in and opens Chat, your conversation with your Ship.
+The first time you open the web app, a welcome card from Kawah appears with the
 heading "Welcome to your Ship!" and large, readable text. Close it
 or choose **Try it out!** to dismiss it for your account across web and Desktop.
 If the welcome cannot be loaded, choose **Retry** to check again.
@@ -20,13 +20,13 @@ ask Ship to switch languages, or change **Settings → Preferences → Language*
 The welcome stays in your conversation across devices.
 The card links to the community Discord; the **Feedback** button in the header
 is available when your operator offers it.
-Start with what you want to do. You can connect devices from **Fleet** and
+Start with what you want to do. You can connect computers and browsers from **Work** and
 configure models and other connections from **Settings** when you need them.
 
 When your operator enables open registration, its signup page opens directly on
 the handle and email form. Desktop starts with **Create your Ship** and **Open
 Ship**. Choose a handle, enter your email, confirm the age, Terms and Privacy
-agreement, and select **Continue**. Your handle (`@alex`) and Ship address
+agreement, and select **Continue**. Your handle (`@alex`) and its address
 (`alex.example.com`) appear separately. Verify your email with the six-digit code,
 then pick a password and select **Activate Ship**. No registration invite is
 needed, and the terms you agreed to at signup are not asked again during activation.
@@ -42,7 +42,7 @@ handle and finish activation. The invitation stays with you through activation; 
 in People after choosing who handles incoming messages.
 
 If activation is interrupted or its link expires, opening the unfinished Ship shows
-**Continue setup**. Sign in with the same email and select **Continue** beside its
+**Continue activation**. Sign in with the same email and select **Continue** beside its
 handle. This resumes the same Ship and renews its activation link. Ships
 created with an earlier signup code can resume activation this way too. For an activation
 link issued directly by an operator, ask the operator to renew it.
@@ -73,13 +73,13 @@ Existing standalone deployments should read the
 
 ## Look around
 
-The web console is called **Instrument** and has five views:
+The web app has five views:
 
 - **Chat** is your Ship conversation, and where you inspect what a run did.
-- **Fleet** lists your places and processes, with files opened from a place.
+- **Work** lists your connections, then Ship and its helpers, with files opened from a connection.
 - **Memory** shows your personal knowledge pages.
 - **People** holds conversations, message requests and private contacts across Ships, plus your public profile.
-- **Settings** holds preferences (models), standing responsibilities, permissions, instructions, messengers, MCP connections and **Logs** for actions and their outcomes. The **sign-in** section appears only for root, for personal password resets and administrator recovery setup.
+- **Settings** holds **Preferences** (models), **Standing responsibilities**, **Permissions**, **Instructions**, **Messengers**, **MCP servers** and **Logs** for actions and their outcomes. The **Sign-in** section appears only for the administrator, for personal password resets and administrator recovery.
 
 On phones, tap **menu** in the header to switch views. A dot on the menu button
 marks unread People activity. Choosing a view
@@ -93,15 +93,15 @@ People messages. Tap **N ongoing** (or **plans** when none are active) to open
 **ongoing**, **routines** or **history**.
 Each responsibility shows a short status and its next check; tap it to read the
 full waiting explanation, inspect details or ask Ship about it. Your draft stays
-intact while you look. Event-driven policies live in **Settings → standing**.
+intact while you look. Event-driven policies live in **Settings → Standing responsibilities**.
 
 The **+** menu attaches files, finds people and files, and prepares requests to
 create a routine, connect a computer or start a browser. These requests and
 **ask Ship** controls add ordinary editable text to your draft. Review or change
 it before sending; selecting a request does not send it. **Find a person** accepts
 a handle such as `@esteve` or a full address for another Ship. **Reference a file**
-adds a file’s target and path as soon as you select its name. Use **../** at the
-top of a place’s file list to move toward its filesystem root.
+adds a file’s connection and path as soon as you select its name. Use **../** at the
+top of a connection’s file list to move toward its filesystem root.
 
 In the browser and when added to your Home Screen, the header and bottom controls
 leave room for your phone's notch and home indicator. The star field still fills
@@ -109,13 +109,13 @@ the screen, continuing behind the home indicator in the Home Screen app.
 Browser tabs and the extension's toolbar show Ship's cursor, a pale block on a
 dark square. Home Screen shortcuts, the desktop app and the browser extension's
 own icon use the same ASCII ship you see at sign-in.
-Fleet, Memory and Settings scroll to the bottom edge, with extra space after the
+Work, Memory and Settings scroll to the bottom edge, with extra space after the
 last item so it can rest above the home indicator.
 Opening the keyboard reduces the content area between the header and composer;
 the page itself stays fixed. Lists and message history scroll within that area.
 Closing the keyboard restores the conversation's available space. The content
 height eases between sizes; reduced motion makes the change immediate. Sign-in and
-setup use the same layout.
+activation use the same layout.
 
 On phones, **Memory** opens a full-height page browser. Select a page to read it,
 then use **← pages** to return. Loading feedback appears in the visible pane.
@@ -128,7 +128,7 @@ Under **Appearance**, choose **Match system** to follow this device's light or
 dark appearance. An explicit theme choice applies to both sign-in and the app.
 Before you choose, **Default** keeps sign-in dark and the app light.
 
-The Desktop app also includes **Settings → voice** for its microphone, shortcuts,
+The Desktop app also includes **Settings → Voice** for its microphone, shortcuts,
 and spoken replies. Enable **Handsfree mode** to talk to your Ship from any page
 or another app while Desktop stays running and signed in. Its voice draft stays
 separate from Chat's typed text and attachments. These preferences stay on that computer. Chat's
@@ -137,27 +137,27 @@ separate from Chat's typed text and attachments. These preferences stay on that 
 Open **People** to try making plans or working together with someone on Ship.
 **connect** creates a shareable invitation; accepting it opens your conversation.
 You can talk directly or choose **ask Ship** to prepare a request in your Ship chat.
-A dot beside **people** marks waiting activity, and Zen shows unread conversations
+A dot beside **people** marks waiting activity, and Chat shows unread conversations
 and message requests above the prompt, including after a reload. See
 [Contact people](/how-to/contact-people) for the full flow.
 
-If your operator enables cloud browsers, Fleet also offers **start browser**.
+If your operator enables cloud browsers, Work also offers **start browser**.
 You can [sign in and save website logins](/how-to/cloud-browsers) there so Ship
-can use those sites while your personal devices are offline.
+can use those sites while your own devices are offline.
 Ship can use cloud browsers without per-action approval by default. To change
-that, select **Cloud browsers** under **Settings → permissions** and choose
+that, select **Cloud browsers** under **Settings → Permissions** and choose
 **Ask** or **Block**; personal computers and browsers keep their existing rules.
 
 On wider screens, open **Help** in the header and choose **Search Chat** to find earlier messages.
 Press `Ctrl+K` from any view to open the same search. In Chat, `/` opens search in browse
 mode, and `Ctrl/Cmd+F` also works while typing. Open a match to read the
-surrounding conversation. Closing search returns to your place and draft.
+surrounding conversation. Closing search returns you to where you were, with your draft.
 
 The composer always shows **Message your Ship** when empty. **send** appears beside
 the prompt when you have a draft or attachments. The action row below groups **+**
-for attachments, the current place, and **record**. The place starts on **your cloud** (`gsv`).
+for attachments, the current connection, and **record**. It starts on **Ship's home** (`gsv`).
 Open its chooser to select another destination for your next message or command;
-your draft and selected place stay while you move between views.
+your draft and selected connection stay while you move between views.
 While reconnecting, you can keep editing your draft and adding attachments.
 Sending becomes available when the connection returns; your draft is not sent automatically.
 The header stays above the scrolling content. Tap a message once to select it

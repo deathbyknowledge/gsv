@@ -18,7 +18,7 @@ closing the view leave Ship running.
 
 Connecting your personal browser is optional. Use it when you want Ship to work
 in its existing tabs and signed-in sessions, or when a site needs a feature
-available only on your device.
+available only in your own browser.
 
 1. In Ship, open **Work** (called Fleet in older versions), click **connect** beside Connections (Places in older versions), and choose **Browser.** Give it a name or leave the default.
 2. Download the extension, **Your Ship**, and load it at `chrome://extensions` with developer mode on.
@@ -29,11 +29,11 @@ You can close the sidebar after connecting. The extension keeps working while Ch
 
 ## Try it
 
-Ask your agent: *What can you do with my browser extension?*
+Ask Ship: *What can you do with my browser extension?*
 
 ### Cross-device: fire from your phone, act on your laptop
 
-Text Ship from Telegram while you're away from your desk: *Go to my billing portal and grab this month's invoice.* The browser action runs in your logged-in session on your laptop. This is the one that makes it clear this isn't just a browser agent — the browser is one tool a mind on the edge reaches across the machines it spans.
+Text Ship from Telegram while you're away from your desk: *Go to my billing portal and grab this month's invoice.* The browser action runs in your logged-in session on your laptop. This is the one that makes it clear this isn't just a browser agent — the browser is one tool a mind on the edge reaches across the computers it spans.
 
 ### Sites with no API, behind your login
 
@@ -46,7 +46,7 @@ Most of the web you actually use has no API and no export button. The extension 
 
 ### Always-on watching
 
-Ship keeps watching on the edge whether or not you're at the machine. Point it at a page and tell it what to wait for.
+Ship keeps watching on the edge whether or not you're at your computer. Point it at a page and tell it what to wait for.
 
 - *Check [URL] every hour and tell me when the price drops below $X.*
 - *Watch [support ticket] and message me when the status changes.*
@@ -55,6 +55,6 @@ Ship keeps watching on the edge whether or not you're at the machine. Point it a
 
 ## See also
 
-- [Connect Devices](/how-to/connect-devices) — connect your machines for broader OS-level access
+- [Connect Devices](/how-to/connect-devices) — connect your computers for broader OS-level access
 - [Examples](/examples/)
 - [Get Started](/get-started/)

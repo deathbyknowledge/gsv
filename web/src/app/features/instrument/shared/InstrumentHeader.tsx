@@ -22,12 +22,13 @@ type InstrumentHeaderProps = {
   navigationRef: RefObject<HTMLElement>;
 };
 
-/** The current view's name beside the wordmark; Chat and Fleet are names and stay as they are. */
+/** The current view's name beside the wordmark; Chat is a name and stays as it is. */
 const VIEW_LABELS = {
+  fleet: "shell.nav.work",
   memory: "shell.nav.memory",
   people: "shell.nav.people",
   settings: "shell.nav.settings",
-} satisfies Record<Exclude<Distance, "zen" | "fleet">, TextKey>;
+} satisfies Record<Exclude<Distance, "zen">, TextKey>;
 
 export function InstrumentHeader({ distance, onNavigate, peopleWaiting, helper, onShip, help, onHelp, helpButtonRef,
   navigationOpen, onNavigationToggle, navigationButtonRef, navigationRef }: InstrumentHeaderProps) {
@@ -38,7 +39,7 @@ export function InstrumentHeader({ distance, onNavigate, peopleWaiting, helper, 
         <button type="button" aria-label={t("shell.header.home")} onClick={() => onNavigate("zen")}>
           <Wordmark />
         </button>
-        {distance !== "zen" && <span class="instrument-current-view">{distance === "fleet" ? "fleet" : t(VIEW_LABELS[distance])}</span>}
+        {distance !== "zen" && <span class="instrument-current-view">{t(VIEW_LABELS[distance])}</span>}
         <Feedback view={distance} />
         <PlatformIdentity />
         {helper && <span class="instrument-helper">{t("shell.header.helper")} · <button type="button" onClick={onShip}>{t("shell.header.backToShip")}</button></span>}
@@ -53,7 +54,7 @@ export function InstrumentHeader({ distance, onNavigate, peopleWaiting, helper, 
           <kbd>c</kbd><span class="view-label">chat</span>
         </button>
         <button type="button" aria-current={distance === "fleet" ? "page" : undefined} aria-keyshortcuts="f" onClick={() => onNavigate("fleet")}>
-          <kbd>f</kbd><span class="view-label">fleet</span>
+          <kbd>f</kbd><span class="view-label">{t("shell.nav.work")}</span>
         </button>
         <button type="button" aria-current={distance === "memory" ? "page" : undefined} aria-keyshortcuts="m" onClick={() => onNavigate("memory")}>
           <kbd>m</kbd><span class="view-label">{t("shell.nav.memory")}</span>

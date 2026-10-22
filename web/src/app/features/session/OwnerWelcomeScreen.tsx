@@ -231,7 +231,7 @@ export function OwnerWelcomeScreen({ ready, resume, load, onConnect, addressPane
             status={handleError || availability === "unavailable" ? "error" : availability === "available" ? "success" : "none"}
             message={handleError || (availability === "available" ? t("session.welcome.available") : availability === "unavailable" ? t("session.welcome.taken") : "")}
             inputProps={{ autoFocus: true, autoCapitalize: "none", spellcheck: false, maxLength: 63 }} />
-          {spaceDomain && <p class="desktop-welcome-detail desktop-welcome-address-preview">{t("session.address.label")} <span>{handle.trim() || t("session.welcome.handlePlaceholder")}.{spaceDomain}</span></p>}
+          {spaceDomain && <p class="desktop-welcome-detail desktop-welcome-address-preview">{t("session.welcome.addressPreview")} <span>{handle.trim() || t("session.welcome.handlePlaceholder")}.{spaceDomain}</span></p>}
         </div>}
         {(step === "email" || (step === "claim" && !owner)) && <TextInput label={t("session.welcome.email")} value={email} onChange={setEmail} disabled={busy} placeholder={t("session.welcome.emailPlaceholder")}
           inputProps={{ autoFocus: step === "email", type: "email", autoComplete: "email", maxLength: 254, required: true }} />}
