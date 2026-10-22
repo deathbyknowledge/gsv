@@ -312,6 +312,10 @@ export class ProcessToolRepository {
     return record;
   }
 
+  pendingHilCount(): number {
+    return this.store.first<{ count: number }>("SELECT COUNT(*) AS count FROM pending_hil")?.count ?? 0;
+  }
+
   clearPendingHil(
     status: Exclude<ProcTraceSpanStatus, "running"> = "aborted",
   ): void {
