@@ -240,6 +240,11 @@ ordinary `proc.hil` request through a Kernel-derived, interaction-scoped
 linked-human peer. The adapter service account never receives ambient
 `proc.hil` authority, and provider reply threading is not authorization.
 
+An approval for a deleted or inaccessible Process is terminal. The Kernel
+preserves the protocol error code, so the adapter resolves the callback as stale
+and continues delivering later messages. Temporary transport or service failures
+remain retryable; retrying never changes the person's selected decision.
+
 The `message` shell command exposes delivery context and the explicit path for a
 separate or cross-channel message. `message current` describes the directed endpoint
 and the transport-neutral current-conversation commands. It includes an opaque

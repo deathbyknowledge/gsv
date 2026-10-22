@@ -1095,6 +1095,11 @@ retain their ordinary handler requirement.
 
 ## Processes: `proc.*`
 
+Requests forwarded to a Process preserve its protocol error code and retryability.
+A missing Process returns `404` with `retryable: false`; invalid targets and
+authorization failures return terminal `400` and `403` errors. In particular, an
+approval callback for a deleted Process must not be retried as a server failure.
+
 `proc.*` controls GSV AI processes. These are long-lived agent processes, not shell commands.
 
 Runtime behavior:
