@@ -81,6 +81,7 @@ import {
   lookupWhatsAppMedia,
   ManagedWhatsAppDeliveryError,
   markWhatsAppMessageRead,
+  reactToWhatsAppMessage,
   sendWhatsAppMessage,
   uploadWhatsAppMedia,
   WHATSAPP_WINDOW_CLOSED_ERROR,
@@ -176,6 +177,7 @@ export class ManagedWhatsAppPeer extends DurableObject<ManagedWhatsAppPeerEnv> {
   private readonly deliveries: DeliveryLedger;
   private readonly inboundDeliveries: InboundDeliveryLedger<InboundPayload, ResponseContext>;
   private drainPromise?: Promise<void>;
+  private workingReaction: Promise<void> = Promise.resolve();
 
   constructor(ctx: DurableObjectState, env: ManagedWhatsAppPeerEnv) {
     super(ctx, env);
@@ -302,34 +304,70 @@ export class ManagedWhatsAppPeer extends DurableObject<ManagedWhatsAppPeerEnv> {
     routeGeneration: string,
     active: boolean,
   ): Promise<{ accepted: boolean }> {
-    if (!active) return { accepted: true };
     const state = await this.requireState();
     this.assertPeerDestination(state, surface, actorId);
     if (
       state.activeRoute?.installationId !== installationId
       || state.activeRoute.generation !== routeGeneration
     ) {
-      return { accepted: false };
+      // Stopping never fails: a stale route has nothing of this run left to clear.
+      return { accepted: !active };
     }
-    if (!state.lastInboundMessageId) return { accepted: true };
     const owner = { installationId, generation: routeGeneration };
     const release = this.retirement.start(owner);
     try {
-      await markWhatsAppMessageRead(
-        this.accessToken(),
-        this.phoneNumberId(),
-        state.lastInboundMessageId,
-        this.whatsAppFetch(owner),
-        { typing: true },
-      );
-    } catch {
-      console.warn(JSON.stringify({
-        component: "managed_whatsapp",
-        event: "typing_delivery_failed",
-      }));
-    }
-    finally { release(); }
+      if (active && state.lastInboundMessageId) {
+        try {
+          await markWhatsAppMessageRead(
+            this.accessToken(),
+            this.phoneNumberId(),
+            state.lastInboundMessageId,
+            this.whatsAppFetch(owner),
+            { typing: true },
+          );
+        } catch {
+          console.warn(JSON.stringify({
+            component: "managed_whatsapp",
+            event: "typing_delivery_failed",
+          }));
+        }
+      }
+      // The typing indicator fades after about 25 seconds, so 👀 marks longer work.
+      const working = active && whatsAppWindowOpen(state, Date.now()) ? state.lastInboundMessageId : undefined;
+      await this.moveWorkingReaction(working, owner);
+    } finally { release(); }
     return { accepted: true };
+  }
+
+  /**
+   * Keeps 👀 on at most one message. Moves run one at a time, so a stop never
+   * overtakes the start it clears. Reactions are best effort and never block delivery.
+   */
+  private moveWorkingReaction(target: string | undefined, owner: AdapterDataScope): Promise<void> {
+    const move = this.workingReaction.then(async () => {
+      const state = await this.requireState();
+      const current = state.workingReactionMessageId;
+      if (current === target) return;
+      const react = async (messageId: string, emoji: string): Promise<boolean> => {
+        try {
+          await reactToWhatsAppMessage(
+            this.accessToken(), this.phoneNumberId(), state.actorId, messageId, emoji, this.whatsAppFetch(owner),
+          );
+          return true;
+        } catch {
+          console.warn(JSON.stringify({ component: "managed_whatsapp", event: "reaction_delivery_failed" }));
+          return false;
+        }
+      };
+      if (current) await react(current, "");
+      const next = target && await react(target, "👀") ? target : undefined;
+      await this.ctx.storage.transaction(async (txn) => {
+        const latest = await txn.get<ManagedWhatsAppPeerState>(STATE_KEY);
+        if (latest) await txn.put(STATE_KEY, { ...latest, workingReactionMessageId: next });
+      });
+    });
+    this.workingReaction = move.catch(() => undefined);
+    return this.workingReaction;
   }
 
   async inspectPairing(claimId: string, expiresAt: number): Promise<AdapterPairingCandidate> {

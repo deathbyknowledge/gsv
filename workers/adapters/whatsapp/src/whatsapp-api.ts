@@ -115,6 +115,22 @@ export async function sendWhatsAppMessage(
   return { messageId: result.messages[0]!.id };
 }
 
+/** Sets this number's reaction on one message; an empty emoji removes it. */
+export async function reactToWhatsAppMessage(
+  accessToken: string,
+  phoneNumberId: string,
+  to: string,
+  messageId: string,
+  emoji: string,
+  fetcher: ManagedWhatsAppFetch = fetch,
+): Promise<void> {
+  await sendWhatsAppMessage(accessToken, phoneNumberId, {
+    to,
+    type: "reaction",
+    reaction: { message_id: messageId, emoji },
+  }, fetcher);
+}
+
 /** Marks one inbound message read; the typing indicator rides on the same call. */
 export async function markWhatsAppMessageRead(
   accessToken: string,

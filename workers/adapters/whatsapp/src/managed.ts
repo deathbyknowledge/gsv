@@ -155,7 +155,7 @@ export class ManagedWhatsAppChannel extends WorkerEntrypoint<Env> implements Ada
         throw new Error("Managed WhatsApp account ID is invalid");
       }
       if (surface.kind !== "dm") throw new Error("Managed WhatsApp supports direct messages only");
-      if (activity.kind !== "typing" || !activity.active) return { ok: true };
+      if (activity.kind !== "typing") return { ok: true };
       const routeGeneration = activity.routeGeneration?.trim();
       if (!routeGeneration) {
         throw new Error("Managed WhatsApp route generation is required");
@@ -165,7 +165,7 @@ export class ManagedWhatsAppChannel extends WorkerEntrypoint<Env> implements Ada
         surface,
         surface.id,
         routeGeneration,
-        true,
+        activity.active,
       );
       if (!result.accepted) {
         throw new Error("WhatsApp route changed before activity delivery");

@@ -1,5 +1,5 @@
 import * as deployedAdapter from "../src/managed";
-import { env, runInDurableObject, SELF } from "cloudflare:test";
+import { createExecutionContext, env, runInDurableObject, SELF } from "cloudflare:test";
 import { describe, expect, it, vi } from "vitest";
 import { binaryBodyFromOwnedBytes } from "../../shared/src/media-body";
 import type { ManagedWhatsAppPeer } from "../src/managed-peer";
@@ -35,6 +35,7 @@ type GraphRecord = {
     status?: string;
     message_id?: string;
     typing_indicator?: { type: string };
+    reaction?: { message_id: string; emoji: string };
     file?: { name: string; type: string; bytes: number[] };
   };
   result: { id?: string; success?: boolean };
@@ -922,6 +923,42 @@ describe("managed WhatsApp clean-instance flow", () => {
     await expect(sending).resolves.toMatchObject({ ok: true });
     await expect(peer.sendMessage(route.installationId, message)).resolves.toMatchObject({ ok: true });
     expect(await templateMessages()).toHaveLength(before + 1);
+  });
+
+  it("marks the message Ship is working on with 👀 until the run stops", async () => {
+    const { route } = await linkedPeer("open");
+    const channel = new deployedAdapter.ManagedWhatsAppChannel(createExecutionContext(),
+      typedStub<ConstructorParameters<typeof deployedAdapter.ManagedWhatsAppChannel>[1]>(env));
+    const installation = { installationId: route.installationId };
+    const surface = { kind: "dm" as const, id: ACTOR };
+    const activity = (active: boolean) => channel.adapterSetActivity(
+      installation, "managed", surface, { kind: "typing", active, routeGeneration: route.generation },
+    );
+    const reactions = async () => (await sentMessages())
+      .filter((record) => record.body.type === "reaction")
+      .map((record) => record.body.reaction);
+
+    expect((await SELF.fetch(await text("wamid.in.working.1", "first question"))).status).toBe(200);
+    await vi.waitFor(async () => { expect((await sentMessages()).at(-1)?.body.text?.body).toBe("Personal received first question"); });
+    // Earlier runs in this flow may still hold a reaction; stopping clears it.
+    await expect(activity(false)).resolves.toEqual({ ok: true });
+    const before = (await reactions()).length;
+
+    await expect(activity(true)).resolves.toEqual({ ok: true });
+    expect((await reactions()).slice(before)).toEqual([{ message_id: "wamid.in.working.1", emoji: "👀" }]);
+
+    // A run for a newer message moves the reaction instead of leaving the old one behind.
+    expect((await SELF.fetch(await text("wamid.in.working.2", "second question"))).status).toBe(200);
+    await vi.waitFor(async () => { expect((await sentMessages()).at(-1)?.body.text?.body).toBe("Personal received second question"); });
+    await expect(activity(true)).resolves.toEqual({ ok: true });
+    expect((await reactions()).slice(before + 1)).toEqual([
+      { message_id: "wamid.in.working.1", emoji: "" },
+      { message_id: "wamid.in.working.2", emoji: "👀" },
+    ]);
+
+    await expect(activity(false)).resolves.toEqual({ ok: true });
+    await expect(activity(false)).resolves.toEqual({ ok: true });
+    expect((await reactions()).slice(before + 3)).toEqual([{ message_id: "wamid.in.working.2", emoji: "" }]);
   });
 
 });

@@ -64,7 +64,11 @@ eligibility. The adapter does not enforce or assume a geographic exception.
   template. Outside it the adapter sends the operator's message template
   instead; see below.
 - Typing is shown by attaching WhatsApp's typing indicator to the read receipt
-  of the person's last message.
+  of the person's last message. Meta hides it after about 25 seconds, so while
+  the window is open the adapter also reacts 👀 to that message when a run
+  starts and removes the reaction when the run stops. The peer records the one
+  message carrying 👀 and serializes moves, so a stop never overtakes its start.
+  Reactions are best effort and never block delivery.
 
 ## Message templates
 
