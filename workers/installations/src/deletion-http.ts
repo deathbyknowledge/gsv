@@ -5,7 +5,7 @@ import { installationDeletionInventoryImportSchema } from "@humansandmachines/gs
 import { accountsDeletionInspectionSchema } from "./deletion-inspections";
 import { operatorResourceAttestationSchema } from "./operator-resource-contracts";
 import type { AccountsDeletionRuntime } from "./deletion-runtime";
-import type { InstallationAdminAccess } from "./admin/access";
+import { AdminForbiddenError, type InstallationAdminAccess } from "./admin/access";
 import type { AdminAuditRecorder } from "./admin/insight";
 import { hasExpectedOrigin, noStoreHeaders, readJsonObject, readRequestBody, requireString, type JsonValue } from "./http";
 
@@ -31,6 +31,7 @@ export class InstallationDeletionHttp {
       return await this.audited(request, { name: `ship.deletion.${route[2] ?? "begin"}`, installationId },
         () => this.route(request, route), (response) => ({ refused: !response.ok }));
     } catch (error) {
+      if (error instanceof AdminForbiddenError) return json({ error: "Forbidden" }, 403);
       // route() answers its own failures, so this is the audit record itself failing.
       console.warn("[Operator] Admin request failed:", new URL(request.url).pathname, exceptionDiagnostics(error));
       return json({ error: "The operator request could not be completed." }, 503);

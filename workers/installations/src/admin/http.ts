@@ -1,7 +1,7 @@
 import { exceptionDiagnostics } from "@humansandmachines/gsv/telemetry";
 import type { AdminInstallation, AdminInstallationList, AdminInstallationListQuery, AdminInstallationSummary } from "../administration";
 import { hasExpectedOrigin, json, noStoreHeaders, readRequestBody, requireString } from "../http";
-import type { InstallationAdminAccess } from "./access";
+import { AdminForbiddenError, type InstallationAdminAccess } from "./access";
 import { InstallationAdminApi, readInstallationListQuery } from "./api";
 import { adminInstallationPage, adminInstallationsPage, adminNewInstallationPage, type InstallationAdminPresentation, type ShipView } from "./installations-page";
 import { adminAuditPage } from "./audit-page";
@@ -143,7 +143,10 @@ export class InstallationAdminHttp<
     describe?: (result: T) => OperatorAuditResult,
   ): Promise<T> {
     if (!this.insight) return await mutation();
-    const actor = await this.access.operatorIdentity?.(request) ?? "operator";
+    // Access without per-operator identity records a shared actor; an identity
+    // that fails a second verification refuses the action rather than losing attribution.
+    const actor = this.access.operatorIdentity ? await this.access.operatorIdentity(request) : "operator";
+    if (actor === null) throw new AdminForbiddenError();
     return await this.insight.audit.run({ actor, action: action.name, installationId: action.installationId, reason: action.reason },
       mutation, describe);
   }
@@ -175,7 +178,6 @@ function readAuditPage(url: URL): number {
   return page;
 }
 
-export class AdminForbiddenError extends Error {}
 
 export function requireAdminMutationOrigin(request: Request, origin: string): void {
   if (!hasExpectedOrigin(request, origin)) throw new AdminForbiddenError();

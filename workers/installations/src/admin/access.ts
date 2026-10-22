@@ -26,6 +26,9 @@ export interface InstallationAdminAccess {
   operatorIdentity?(request: Request): Promise<string | null>;
 }
 
+/** An admitted request whose operator cannot be confirmed for the action it asks for. */
+export class AdminForbiddenError extends Error {}
+
 export class CloudflareInstallationAdminAccess implements InstallationAdminAccess {
   constructor(
     private readonly config: InstallationAdminAccessConfiguration,

@@ -1,6 +1,6 @@
 import { ADMIN_VISIBLE_INSTALLATION_STATES, type AdminInstallationListQuery } from "../administration";
 import { hasExpectedOrigin, json, noStoreHeaders, readJsonObject, requireString, type JsonValue } from "../http";
-import type { InstallationAdminAccess } from "./access";
+import { AdminForbiddenError, type InstallationAdminAccess } from "./access";
 import type { AdminAuditRecorder } from "./insight";
 import { exceptionDiagnostics } from "@humansandmachines/gsv/telemetry";
 import { z } from "zod";
@@ -78,6 +78,7 @@ export class InstallationAdminApi {
       }
       return json({ error: "Not Found" }, 404);
     } catch (error) {
+      if (error instanceof AdminForbiddenError) return json({ error: "Forbidden" }, 403);
       const message = error instanceof Error ? error.message : "";
       if (["handle ", "installation", "operationId ", "request ", "JSON ", "query ", "state ", "page "]
         .some((prefix) => message.startsWith(prefix))) return json({ error: message }, 400);

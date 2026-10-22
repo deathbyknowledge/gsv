@@ -195,6 +195,23 @@ describe("Ship page", () => {
 });
 
 describe("operator audit log", () => {
+  it("refuses an action whose operator can no longer be identified, instead of recording it anonymously", async () => {
+    const { service, onboarding, insight } = stack();
+    const installationId = await createShip(stack().http, service, "unattributed");
+    await activate({ service, onboarding }, installationId);
+    // Admitted, but the second verification for the audit row fails.
+    const http = new InstallationAdminHttp(service, { allows: async () => true, operatorIdentity: async () => null }, origin, {}, undefined, insight);
+    const response = await http.handle(form(`/admin/installations/${installationId}/lifecycle`, { state: "restricted" }));
+    expect(response?.status).toBe(403);
+    expect((await service.getInstallation(installationId))?.state).toBe("active");
+    const api = await http.handle(new Request(`${origin}/admin/api/installations/${installationId}/lifecycle`, {
+      method: "POST", headers: { origin, "content-type": "application/json" }, body: JSON.stringify({ state: "restricted" }),
+    }));
+    expect(api?.status).toBe(403);
+    expect((await service.getInstallation(installationId))?.state).toBe("active");
+    expect((await insight.audit.list({ installationId, page: 1 })).events.map((event) => event.action)).toEqual(["ship.create"]);
+  });
+
   it("keeps the cause when an API action cannot be audited", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     const audit = auditDb("INSERT INTO operator_audit_events");
