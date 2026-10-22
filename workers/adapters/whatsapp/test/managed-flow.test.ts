@@ -1006,6 +1006,50 @@ describe("managed WhatsApp clean-instance flow", () => {
     expect((await reactions()).slice(before + 3)).toEqual([{ message_id: "wamid.in.superseded.2", emoji: "" }]);
   });
 
+  it("clears a 👀 whose addition had an unknown outcome, but not one Meta rejected", async () => {
+    const { route } = await linkedPeer("open");
+    const channel = new deployedAdapter.ManagedWhatsAppChannel(createExecutionContext(),
+      typedStub<ConstructorParameters<typeof deployedAdapter.ManagedWhatsAppChannel>[1]>(env));
+    const installation = { installationId: route.installationId };
+    const surface = { kind: "dm" as const, id: ACTOR };
+    const activity = (active: boolean, runId: string) => channel.adapterSetActivity(
+      installation, "managed", surface, { kind: "typing", active, routeGeneration: route.generation, runId },
+    );
+    const reactions = async () => (await sentMessages())
+      .filter((record) => record.body.type === "reaction")
+      .map((record) => record.body.reaction);
+    // SAFETY: The Cloudflare test environment declares WHATSAPP_API as a Fetcher binding.
+    const graph = env.WHATSAPP_API as Fetcher;
+    const warn = vi.spyOn(console, "warn");
+
+    expect((await SELF.fetch(await text("wamid.in.ambiguous.1", "unknown outcome"))).status).toBe(200);
+    await vi.waitFor(async () => { expect((await sentMessages()).at(-1)?.body.text?.body).toBe("Personal received unknown outcome"); });
+    await expect(activity(false, "run-earlier")).resolves.toEqual({ ok: true });
+    const before = (await reactions()).length;
+    // Meta may have applied 👀 before answering 500, so the stop still removes it.
+    await graph.fetch("https://graph.test/fail-next-reaction", { method: "POST" });
+    await expect(activity(true, "run-ambiguous")).resolves.toEqual({ ok: true });
+    await expect(activity(false, "run-ambiguous")).resolves.toEqual({ ok: true });
+    expect((await reactions()).slice(before)).toEqual([{ message_id: "wamid.in.ambiguous.1", emoji: "" }]);
+    // The failure keeps Meta's answer for diagnosis, without the person's number or message.
+    const failure = warn.mock.calls.map(([line]) => String(line)).find((line) => line.includes("reaction_delivery_failed"));
+    expect(JSON.parse(failure ?? "{}")).toMatchObject({
+      component: "managed_whatsapp", event: "reaction_delivery_failed", outcome: "ambiguous",
+      diagnostics: { providerStatusCode: 500, errorCode: "2", providerRequestId: "trace-reaction" },
+    });
+    expect(failure).not.toContain(ACTOR);
+    expect(failure).not.toContain("wamid.in.ambiguous.1");
+    warn.mockRestore();
+
+    expect((await SELF.fetch(await text("wamid.in.ambiguous.2", "rejected outright"))).status).toBe(200);
+    await vi.waitFor(async () => { expect((await sentMessages()).at(-1)?.body.text?.body).toBe("Personal received rejected outright"); });
+    const afterAmbiguous = (await reactions()).length;
+    await graph.fetch("https://graph.test/fail-next-reaction", { method: "POST", body: "rejected" });
+    await expect(activity(true, "run-rejected")).resolves.toEqual({ ok: true });
+    await expect(activity(false, "run-rejected")).resolves.toEqual({ ok: true });
+    expect((await reactions()).slice(afterAmbiguous)).toEqual([]);
+  });
+
   it("keeps retrying a 👀 removal that failed instead of stranding it", async () => {
     const { route } = await linkedPeer("open");
     const channel = new deployedAdapter.ManagedWhatsAppChannel(createExecutionContext(),

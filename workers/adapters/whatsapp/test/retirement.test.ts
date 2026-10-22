@@ -78,6 +78,26 @@ describe("WhatsApp installation retirement", () => {
     expect(await other.peer.sendMessage(other.route.installationId, { deliveryId: "preserved-after-retirement", surface: { kind: "dm", id: "34690202020" }, actorId: "34690202020", routeGeneration: other.route.generation, text: "preserved" })).toMatchObject({ ok: true });
   });
 
+  it("clears the Ship's 👀 when its space is quiesced", async () => {
+    const surfaceId = "34690404040";
+    const space = "quiesced-reaction-fixture";
+    const { peer, route } = await pair(surfaceId, space);
+    const reactions = async () => ((await (await bindings.WHATSAPP_API!.fetch("https://fixture/records")).json()) as Array<GraphRecord & { body: { type?: string; reaction?: unknown } }>)
+      .filter((record) => record.kind === "message" && record.body.to === surfaceId && record.body.type === "reaction")
+      .map((record) => record.body.reaction);
+    expect(await peer.setTyping(space, { kind: "dm", id: surfaceId }, surfaceId, route.generation, true, "run-working")).toEqual({ accepted: true });
+    expect(await reactions()).toEqual([{ message_id: `wamid.first.${surfaceId}`, emoji: "👀" }]);
+
+    // The run's own stop is refused once its route is gone, so quiescence removes 👀.
+    const retire = { version: 1 as const, installationId: space, operationId: "retire-reaction-fixture" };
+    await peer.quiesceInstallation(retire);
+    expect(await reactions()).toEqual([
+      { message_id: `wamid.first.${surfaceId}`, emoji: "👀" },
+      { message_id: `wamid.first.${surfaceId}`, emoji: "" },
+    ]);
+    expect(await peer.setTyping(space, { kind: "dm", id: surfaceId }, surfaceId, route.generation, false, "run-working")).toEqual({ accepted: true });
+  });
+
   it("restores the retained claim's expiry alarm after removing a retired previous-route cleanup", async () => {
     const claim = bindings.MANAGED_WHATSAPP_PAIRING.getByName("pair:RETIREMENTEXPIRY");
     await runInDurableObject(claim, async (instance, state) => {

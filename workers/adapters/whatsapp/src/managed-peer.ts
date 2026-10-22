@@ -201,7 +201,14 @@ export class ManagedWhatsAppPeer extends DurableObject<ManagedWhatsAppPeerEnv> {
   }
 
   async inspectInstallationResource(installationId: string) { return await this.lifecycle.inspect(installationId); }
-  async quiesceInstallation(input: InstallationDeletionRequest) { return await this.lifecycle.quiesce(input); }
+  async quiesceInstallation(input: InstallationDeletionRequest) {
+    const receipt = await this.lifecycle.quiesce(input);
+    // A retired route can no longer stop its run's 👀, so quiescence clears it like a relink.
+    if (!(await this.ctx.storage.get<ManagedWhatsAppPeerState>(STATE_KEY))?.activeRoute) {
+      await this.clearWorkingReactionAfterRouteChange();
+    }
+    return receipt;
+  }
   async eraseInstallation(input: InstallationDeletionRequest) { return await this.lifecycle.erase(input); }
   async installationDeletionStatus(input: InstallationDeletionRequest) { return await this.lifecycle.status(input); }
 
@@ -354,22 +361,30 @@ export class ManagedWhatsAppPeer extends DurableObject<ManagedWhatsAppPeerEnv> {
       const current = state.workingReactionMessageId;
       // A superseded run's stop can arrive after its successor started; it must not clear the successor's 👀.
       if (!target && runId && state.workingReactionRunId && state.workingReactionRunId !== runId) return;
-      const react = async (messageId: string, emoji: string): Promise<boolean> => {
+      const react = async (messageId: string, emoji: string): Promise<"applied" | "ambiguous" | "failed"> => {
         try {
           await reactToWhatsAppMessage(
             this.accessToken(), this.phoneNumberId(), state.actorId, messageId, emoji, this.whatsAppFetch(owner),
           );
-          return true;
-        } catch {
-          console.warn(JSON.stringify({ component: "managed_whatsapp", event: "reaction_delivery_failed" }));
-          return false;
+          return "applied";
+        } catch (error) {
+          const outcome = error instanceof ManagedWhatsAppDeliveryError && error.kind === "ambiguous" ? "ambiguous" : "failed";
+          console.warn(JSON.stringify({
+            component: "managed_whatsapp",
+            event: "reaction_delivery_failed",
+            action: emoji ? "add" : "remove",
+            outcome,
+            diagnostics: exceptionDiagnostics(error),
+          }));
+          return outcome;
         }
       };
       let next = current;
       if (current !== target) {
         // A failed removal keeps its message recorded, so the next start or stop retries it.
-        const cleared = !current || await react(current, "");
-        if (cleared) next = target && await react(target, "👀") ? target : undefined;
+        const cleared = !current || await react(current, "") === "applied";
+        // Meta may have applied an addition whose outcome is unknown; removing an absent 👀 is harmless.
+        if (cleared) next = target && await react(target, "👀") !== "failed" ? target : undefined;
       }
       const nextRunId = target ? runId : undefined;
       await this.ctx.storage.transaction(async (txn) => {
