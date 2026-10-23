@@ -1233,6 +1233,9 @@ export const en = {
 
   // Shell: keyboard help
   "shell.help.label": "Help",
+  "shell.help.manual": "Ship Manual",
+  "shell.help.discord": "For further help, ask in our Discord.",
+  "shell.help.ownership": "Your information is yours.",
   "shell.help.search": "Search Chat",
   "shell.help.views": "Views & appearance",
   "shell.help.viewsHint": "Navigation shortcuts work outside text fields and the connection and model forms. See Settings to toggle off background stars.",

@@ -1234,6 +1234,9 @@ export const es = {
 
   // Shell: keyboard help
   "shell.help.label": "Ayuda",
+  "shell.help.manual": "Manual de Ship",
+  "shell.help.discord": "Para obtener más ayuda, pregunta en nuestro Discord.",
+  "shell.help.ownership": "Tu información es tuya.",
   "shell.help.search": "Buscar en Chat",
   "shell.help.views": "Vistas y apariencia",
   "shell.help.viewsHint": "Los atajos de navegación funcionan fuera de los campos de texto y de los formularios de conexión y de modelo. Ve a Configuración para desactivar las estrellas de fondo.",

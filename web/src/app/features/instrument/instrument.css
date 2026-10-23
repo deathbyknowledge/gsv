@@ -561,6 +561,13 @@
 .instrument-help dl { display: grid; grid-template-columns: auto 1fr; gap: 0 14px; margin: 0 0 10px; }
 .instrument-help dt { color: var(--text-hi); white-space: nowrap; }
 .instrument-help dd { margin: 0; }
+.instrument-help-footer { margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--border); }
+.instrument-help-footer a { color: var(--text); text-decoration: underline; text-underline-offset: 3px; }
+.instrument-help-footer .instrument-help-discord { margin-top: 10px; }
+.instrument-help-footer .instrument-help-discord a { color: inherit; }
+.instrument-help-footer a:hover { color: var(--accent); }
+.instrument-help-footer a:focus-visible { outline: 1px solid var(--accent); outline-offset: 3px; }
+.instrument-help-footer p:last-child { margin-bottom: 0; }
 @container instrument (max-width: 350px) {
   .instrument-help dl { grid-template-columns: minmax(0, 1fr); }
   .instrument-help dd { margin-bottom: 8px; }

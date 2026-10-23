@@ -383,6 +383,11 @@ function InstrumentReady({ initialPath, handsfreeDirty }: { initialPath: string;
               <dt>{t("shell.keys.enterOrSpace")}</dt><dd>{t("shell.help.activate")}</dd>
             </dl>
           </>}
+          <footer class="instrument-help-footer">
+            <a href="https://github.com/deathbyknowledge/gsv-manual/blob/main/index.md" target="_blank" rel="noopener noreferrer">{t("shell.help.manual")}</a>
+            <p class="instrument-help-discord"><a href="https://discord.gg/hy9ExJJFvn" target="_blank" rel="noopener noreferrer">{t("shell.help.discord")}</a></p>
+            <p>{t("shell.help.ownership")}</p>
+          </footer>
         </aside>
       ) : null}
       <div class="distance" data-view={distance} ref={scrollEdgesRef}>
