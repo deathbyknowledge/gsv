@@ -7,9 +7,8 @@
 [![MIT License](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
 [![Release](https://img.shields.io/github/v/release/deathbyknowledge/gsv)](https://github.com/deathbyknowledge/gsv/releases)
 [![Discord](https://img.shields.io/badge/Discord-join-5865F2?logo=discord&logoColor=white)](https://discord.gg/hy9ExJJFvn)
-[![X](https://img.shields.io/badge/X-@gsvspace-000?logo=x&logoColor=white)](https://x.com/gsvspace)
-[![Docs](https://img.shields.io/badge/docs-gsv.space-111)](https://gsv.space)
-[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/deathbyknowledge/gsv)
+[![X](https://img.shields.io/badge/X-@shipdotspace-000?logo=x&logoColor=white)](https://x.com/gsvspace)
+[![Docs](https://img.shields.io/badge/docs-ship.space-111)](https://ship.space)
 
 **🚀 Public beta is here! Issues and PRs very welcome.**
 
