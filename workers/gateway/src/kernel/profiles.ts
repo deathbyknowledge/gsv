@@ -17,9 +17,10 @@ const revisionSchema = z.int().check(z.nonnegative());
 export function handleProfileGet(ctx: KernelContext): ProfileGetResult {
   const ownerUid = requireContactHuman(ctx);
   const origin = profileOrigin(ctx);
+  const handle = ctx.installationIdentity?.handle;
   const existing = ctx.profiles.get(ownerUid, origin);
-  if (existing) return { profile: existing };
-  return { profile: { revision: 0, url: `${origin}/profile`, draft: defaultProfileDraft(ownerUid, ctx) } };
+  if (existing) return { profile: { ...existing, ...(handle ? { handle } : undefined) } };
+  return { profile: { revision: 0, url: `${origin}/profile`, draft: defaultProfileDraft(ownerUid, ctx), ...(handle ? { handle } : undefined) } };
 }
 
 /** A profile is named by the Ship's handle, public and open to message requests unless its owner chooses otherwise. */

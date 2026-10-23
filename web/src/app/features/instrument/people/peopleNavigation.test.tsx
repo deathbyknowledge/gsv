@@ -9,7 +9,9 @@ describe("People destinations", () => {
   it.each([
     { view: "inbox" as const, contactId: "contact/one+two", archived: true },
     { view: "requests" as const, requestId: "request-one", direction: "outgoing" as const, history: true },
-    { view: "profile" as const },
+    { view: "profile" as const, edit: false },
+    { view: "profile" as const, edit: true, focusBio: false },
+    { view: "profile" as const, edit: true, focusBio: true },
     { view: "contacts" as const },
   ])("restores a linked destination: %o", (route) => {
     const url = new URL(peoplePath(route), "https://ship.example");

@@ -190,8 +190,10 @@ describe("explicit profile publication", () => {
       await verifyPublicProfile(approved.profile, "https://local.example/profile");
       expect(JSON.stringify(approved.profile)).not.toContain(OWNER.username);
       expect(approved.profile).not.toHaveProperty("ownerUid");
-      handleProfileUpdate({ expectedRevision: 1, draft: { ...DRAFT, about: "Private revision" } }, ctx);
-      expect(handleProfileGet(ctx).profile).toMatchObject({ revision: 2, draft: { about: "Private revision" }, published: { revision: 1 } });
+      handleProfileUpdate({ expectedRevision: 1, draft: { ...DRAFT, about: "Private revision", contactPolicy: "invitation" } }, ctx);
+      expect(handleProfileGet(ctx).profile).toMatchObject({
+        revision: 2, draft: { about: "Private revision", contactPolicy: "invitation" }, published: { revision: 1, contactPolicy: "requests" },
+      });
       expect(ctx.profiles.published({ space: true })!.profile).toEqual(approved.profile);
       await expect(verifyPublicProfile({ ...approved.profile, displayName: "Tampered" }, approved.profile.url)).rejects.toThrow("signature");
     });
