@@ -2,7 +2,7 @@
 
 GSV is an open-source, user-owned personal intelligence operating environment. Its gateway is a lightweight, globally reachable control plane; agents are durable processes; capabilities gate syscalls; targets are Unix-shaped capability environments backed by GSV, machines, browsers, or services; and adapters own messaging transport.
 
-Ship is the product name. GSV remains the runtime, protocol, package and resource identity; `.gsv` paths and the `gsv` target remain stable. The external CLI command remains `gsv`. Operators own public domains, accepted legacy aliases, presentation links and update catalogs. Accounts may lazily materialize a preferred-domain alias only from a recorded canonical hostname; aliases never change the installation ID or its canonical federation origin. Kernel-owned reconciliation turns operator release briefs into deduplicated ordinary responsibilities during personal-agent access, without a fleet-wide write or an announcement-only wake.
+Ship is the product name. GSV remains the runtime, protocol, package and resource identity; `.gsv` paths and the `gsv` target remain stable. Open-network lexicons are the deliberate exception: Ship's public record types use the flat `space.ship.*` namespace. The external CLI command remains `gsv`. Operators own public domains, accepted legacy aliases, presentation links and update catalogs. Accounts may lazily materialize a preferred-domain alias only from a recorded canonical hostname; aliases never change the installation ID or its canonical federation origin. Kernel-owned reconciliation turns operator release briefs into deduplicated ordinary responsibilities during personal-agent access, without a fleet-wide write or an announcement-only wake.
 
 This document is the root engineering contract for the repository. It explains how to change GSV without eroding that model. Use the code as the source of truth, and update this file when the architecture deliberately changes.
 
@@ -127,6 +127,7 @@ Contact conversations have no mandatory Process handler. Pairing and first-messa
 - `extension/`: browser-backed target and browser integration.
 - `workers/instances/`: optional cloud browser and computer provisioning, profiles, human control, metering, and instance-owned cleanup.
 - `workers/ripgit/`: git-backed repositories and filesystem storage operations.
+- `workers/pds/`: optional ATProto host for each installation's public repository, its did:plc, files and firehose. The Kernel decides what is published; the PDS signs, stores and serves it.
 
 Keep platform-specific identity and delivery behavior in its adapter. Keep visual presentation in the web and Desktop clients. Keep target selection below stable syscall contracts.
 
@@ -166,6 +167,7 @@ OS service privilege must never become an agent shell privilege by accident.
 ### Data and security
 
 - Enforce authorization in the Kernel, not only in UI or callers.
+- Only what a person chose to make public goes to the open network. The Kernel owns who may publish, approval of agent publishing and the collections features reserve.
 - Agent approval follows the actual destination through native commands and CodeMode. The Kernel retains the owning tool and the Process applies its run policy before nested machine, mail, or MCP effects; a cancelled or superseded owner cannot authorize dispatch. Future shell schedules require their own approval by default.
 - Managed onboarding capabilities authorize only first-boot setup for one installation. Store them hashed in accounts, keep them out of URLs after the browser reads the fragment, and let only the Kernel create local credentials.
 - Accounts owns open registration for verified owners. Each self-service signup resumes one durable provisioning operation; private policy prepares its plan before setup authorization. Contact invitations remain Kernel-owned and do not grant or reserve signup places. Desktop owner sessions use explicit bearer authentication and never grant Kernel login or root recovery.
@@ -220,6 +222,7 @@ gsv/
 ├── workers/
 │   ├── gateway/   # Kernel, Process, syscalls, inference, filesystem
 │   ├── adapters/  # External-platform Worker implementations and test channel
+│   ├── pds/       # ATProto host for public repositories
 │   └── ripgit/    # Git-backed repository Worker
 ├── packages/gsv/  # Public TypeScript client and protocol
 ├── web/           # Instrument web UI and browser-side gateway integration
