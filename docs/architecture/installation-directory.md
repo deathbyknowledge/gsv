@@ -160,8 +160,10 @@ The managed composition uses this to prevent GSV mailboxes from registering more
 Operators manage reserved and blocked public usernames at **Administration → Signup**
 (`/admin/signup`). Accounts stores both lists; edits take effect immediately without
 redeployment. Enter one name per line or separate entries with commas (up to 500
-per list). Reserved names are available only for operator-controlled installations
-created through administration. Blocked names are unavailable for all new allocations,
+per list). Each form field accepts up to 16,000 characters; both lists can be saved
+together at that size, including accented names. Reserved names are available only
+for operator-controlled installations created through administration. Blocked names
+are unavailable for all new allocations,
 including operator creation, and take precedence over reserved entries.
 Configured service hostnames and built-in routes remain protected.
 

@@ -76,6 +76,35 @@ it("enforces a block committed after availability and immediately before reserva
   expect(await accounts.resolveHostname(`${name}.example.com`)).toEqual({ found: false });
 });
 
+it.each(["a", "ắ"])("saves both full policy lists with %s names through administration", async (character) => {
+  const { http } = admin();
+  const entries = (prefix: string) => Array.from({ length: 500 }, (_, i) => `${prefix}${character.repeat(26)}${String(i).padStart(3, "0")}`);
+  const reserved = entries("r"), blocked = entries("b");
+  const reservedInput = `${reserved.join("\r\n")}\r\n`, blockedInput = `${blocked.join("\r\n")}\r\n`;
+  expect(reservedInput.length).toBe(16000);
+  expect(blockedInput.length).toBe(16000);
+  const response = await http.handle(save(blockedInput, origin, reservedInput));
+  expect(response?.status).toBe(303);
+  expect(await policy.list()).toEqual({ reserved, blocked });
+});
+
+it("cancels oversized policy form streams without changing the saved lists", async () => {
+  const { http, service } = admin();
+  const update = vi.spyOn(service, "setUsernamePolicy");
+  const cancelled = vi.fn();
+  const response = await http.handle(new Request(`${origin}/admin/signup`, {
+    method: "POST", headers: { origin, "content-type": "application/x-www-form-urlencoded" },
+    body: new ReadableStream<Uint8Array>({
+      pull(controller) { controller.enqueue(new Uint8Array(320 * 1024 + 1)); }, cancel: cancelled,
+    }),
+  }));
+  expect(response?.status).toBe(400);
+  expect(await response?.text()).toContain("request body is too large");
+  expect(cancelled).toHaveBeenCalledOnce();
+  expect(update).not.toHaveBeenCalled();
+  expect(await policy.list()).toEqual(initial);
+});
+
 it("rejects unauthorized saves, preserves invalid input safely, and never partially replaces policy", async () => {
   const { http } = admin();
   const denied = admin(false).http;

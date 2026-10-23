@@ -76,7 +76,8 @@ export class InstallationAdminHttp<
       }
       if (url.pathname === "/admin/signup" && request.method === "POST") {
         requireAdminMutationOrigin(request, this.origin);
-        const form = await readAdminForm(request);
+        // Two 16,000-character fields can use nine encoded bytes per UTF-16 code unit, plus form framing.
+        const form = await readAdminForm(request, 320 * 1024);
         const reserved = form.get("reserved"), blocked = form.get("blocked");
         if (reserved === null || blocked === null) throw new Error("handle lists are required");
         const input = { reserved, blocked };
@@ -208,10 +209,10 @@ export function requireAdminMutationOrigin(request: Request, origin: string): vo
   if (!hasExpectedOrigin(request, origin)) throw new AdminForbiddenError();
 }
 
-export async function readAdminForm(request: Request): Promise<URLSearchParams> {
+export async function readAdminForm(request: Request, maxBytes = 16 * 1024): Promise<URLSearchParams> {
   const type = request.headers.get("content-type")?.split(";", 1)[0]?.trim();
   if (type !== "application/x-www-form-urlencoded") throw new Error("form body is required");
-  const bytes = await readRequestBody(request, 16 * 1024);
+  const bytes = await readRequestBody(request, maxBytes);
   return new URLSearchParams(new TextDecoder().decode(bytes));
 }
 
