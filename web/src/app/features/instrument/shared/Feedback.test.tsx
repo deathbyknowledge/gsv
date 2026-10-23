@@ -86,9 +86,9 @@ describe("feedback", () => {
     await type("A draft started from the header");
     const node = collectNodes(tree).find((candidate) => candidate.type === "dialog")!;
     // SAFETY: Feedback owns this dialog ref; the hook only uses open, showModal and close.
-    const ref = node.ref as RefObject<HTMLDialogElement>;
+    const ref = node.ref as RefObject<Pick<HTMLDialogElement, "open" | "showModal" | "close">>;
     const dialog = { open: false, showModal: vi.fn(() => { dialog.open = true; }), close: vi.fn(() => { dialog.open = false; }) };
-    ref.current = dialog as unknown as HTMLDialogElement;
+    ref.current = dialog;
     fixture.openRequest = 1;
     await mount();
     expect(dialog.showModal).toHaveBeenCalledOnce();

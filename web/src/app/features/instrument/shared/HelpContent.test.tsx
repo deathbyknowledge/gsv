@@ -1,4 +1,4 @@
-import type { ComponentChildren, JSX, VNode } from "preact";
+import type { ComponentChildren, VNode } from "preact";
 import { act } from "preact/test-utils";
 import { afterEach, expect, it, vi } from "vitest";
 import { collectNodes, createTestRoot, collectText } from "../../../testing/testHarness";
@@ -23,11 +23,11 @@ it.each(["MacIntel", "Win32"])("keeps onboarding destinations and shortcuts rele
     await root.render(<Harness />);
     const nodes = collectNodes(tree);
     // SAFETY: Help's keyboard boundary only reads key and stops propagation; native activation remains enabled.
-    const content = nodes.find((node) => node.props.class === "instrument-help-content") as VNode<JSX.HTMLAttributes<HTMLDivElement>>;
+    const content = nodes.find((node) => node.props.class === "instrument-help-content") as VNode<{ onKeyDown?: (event: Pick<KeyboardEvent, "key" | "stopPropagation" | "preventDefault">) => void }>;
     for (const key of [" ", "Enter", "Tab", "Escape", "s"]) {
       const stopPropagation = vi.fn();
       const preventDefault = vi.fn();
-      await act(() => content.props.onKeyDown?.({ key, stopPropagation, preventDefault } as unknown as JSX.TargetedKeyboardEvent<HTMLDivElement>));
+      await act(() => content.props.onKeyDown?.({ key, stopPropagation, preventDefault }));
       expect(stopPropagation).toHaveBeenCalledTimes(key === " " || key === "Enter" ? 1 : 0);
       expect(preventDefault).not.toHaveBeenCalled();
     }
@@ -40,7 +40,9 @@ it.each(["MacIntel", "Win32"])("keeps onboarding destinations and shortcuts rele
     expect(hrefs.some((href) => href?.includes("gsv-manual") && href.startsWith("/memory"))).toBe(true);
     const disclosures = nodes.filter((node) => node.type === "details");
     expect(disclosures).toHaveLength(1);
-    expect(disclosures.every((node) => !(node.props as { open?: boolean }).open)).toBe(true);
+    // SAFETY: The filtered nodes are native details elements; open is their disclosure state.
+    const details = disclosures as VNode<{ open?: boolean }>[];
+    expect(details.every((node) => !node.props.open)).toBe(true);
     expect(nodes.filter((node) => node.type === "summary")).toHaveLength(1);
     const text = collectText(tree);
     for (const label of ["What can Ship help with?", "Getting started", "Memory", "Keyboard shortcuts", "Need more help?"]) expect(text).toContain(label);
@@ -48,14 +50,14 @@ it.each(["MacIntel", "Win32"])("keeps onboarding destinations and shortcuts rele
     expect(text).not.toContain("Chat · browse");
     expect(text).not.toContain("Your information is yours");
     // SAFETY: The native link handler reads only these event fields and the href.
-    const link = links.find((node) => node.props.href === "/chat/settings?section=permissions") as VNode<JSX.AnchorHTMLAttributes<HTMLAnchorElement>>;
+    const link = links.find((node) => node.props.href === "/chat/settings?section=permissions") as VNode<{ href: string; onClick?: (event: { button: number; defaultPrevented: boolean; preventDefault: () => void; metaKey?: boolean; currentTarget: { getAttribute: () => string } }) => void }>;
     const preventDefault = vi.fn();
     const event = { button: 0, defaultPrevented: false, preventDefault, currentTarget: { getAttribute: () => link.props.href } };
-    await act(() => link.props.onClick?.(event as unknown as JSX.TargetedMouseEvent<HTMLAnchorElement>));
+    await act(() => link.props.onClick?.(event));
     expect(onNavigate).toHaveBeenCalledWith("/chat/settings?section=permissions");
     expect(preventDefault).toHaveBeenCalledOnce();
     onNavigate.mockClear();
-    await act(() => link.props.onClick?.({ ...event, metaKey: true } as unknown as JSX.TargetedMouseEvent<HTMLAnchorElement>));
+    await act(() => link.props.onClick?.({ ...event, metaKey: true }));
     expect(onNavigate).not.toHaveBeenCalled();
     const feedback = nodes.find((node) => node.type === "button" && node.props.class === "instrument-help-feedback");
     expect(collectText(feedback)).toBe("Feedback");
@@ -71,17 +73,17 @@ it.each(["MacIntel", "Win32"])("keeps onboarding destinations and shortcuts rele
     expect(shortcutText).not.toContain("Need more help?");
     expect(shortcutNodes.some((node) => node.type === "details")).toBe(false);
     expect(shortcutText).toContain(platform === "MacIntel" ? "⌘ F" : "Ctrl + F");
-    const sections: Record<Distance, string[]> = {
-      zen: ["Chat · browse", "Chat · input"],
-      memory: ["Memory"],
-      fleet: ["Work", "Expanded file"],
-      people: ["Contact messages"],
-      settings: ["Settings"],
-    };
-    for (const distance of Object.keys(sections) as Distance[]) {
+    const sections = [
+      { distance: "zen", headings: ["Chat · browse", "Chat · input"] },
+      { distance: "memory", headings: ["Memory"] },
+      { distance: "fleet", headings: ["Work", "Expanded file"] },
+      { distance: "people", headings: ["Contact messages"] },
+      { distance: "settings", headings: ["Settings"] },
+    ] satisfies { distance: Distance; headings: string[] }[];
+    for (const { distance, headings: expectedHeadings } of sections) {
       await root.render(<Harness distance={distance} />);
       const headings = collectNodes(tree).filter((node) => node.type === "h4").map((node) => collectText(node));
-      expect(headings).toEqual(["Views & appearance", ...sections[distance]]);
+      expect(headings).toEqual(["Views & appearance", ...expectedHeadings]);
       expect(collectText(tree)).toContain("Search Chat");
       if (distance === "memory" || distance === "fleet") expect(collectText(tree)).toContain(platform === "MacIntel" ? "⌘ Enter" : "Ctrl + Enter");
     }
