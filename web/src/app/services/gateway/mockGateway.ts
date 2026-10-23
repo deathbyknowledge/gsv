@@ -26,6 +26,7 @@
  *   /reply     a plain reply is committed (finishing an open step first)
  *   /approve, /approve-old   a shell approval, with and without a purpose
  *   /approve-mail, /approve-file   an email or file approval; y/n decides, a new message interrupts
+ *   /approve-helper   the background helper asks for a shell approval, answered from the corner card or Work
  *   anything else is committed as your message and answered briefly a second later
  */
 import { GSVClient, type GsvPeerInfo } from "@humansandmachines/gsv/client";
@@ -305,13 +306,15 @@ type OpenRun = { runId: string; question: ConversationMessage | null; open: Open
 type Revised = { revision: number; record: ProcHistoryRecord };
 type World = {
   messages: ConversationMessage[]; sequence: number;
+  /** The background helper's own pending approval, independent of Ship's run. */
+  helperApproval: ProcHilRequest | null;
   records: Revised[]; revision: number; messageId: number; recordId: number;
   ledger: SysLedgerLine[];
   /** The last context the Process announced and its monotonic revision; history reads return it, as the gateway's do. */
   context: ProcContextState | null; contextRevision: number;
   run: OpenRun | null; connections: number; sockets: Set<MockSocket>;
 };
-const world: World = { messages: [], sequence: 0, records: [], revision: 1, messageId: 0, recordId: 0, ledger: [], context: null, contextRevision: 0, run: null, connections: 0, sockets: new Set() };
+const world: World = { messages: [], sequence: 0, helperApproval: null, records: [], revision: 1, messageId: 0, recordId: 0, ledger: [], context: null, contextRevision: 0, run: null, connections: 0, sockets: new Set() };
 const fresh = freshRequested();
 let streamSeq = 0;
 
@@ -347,7 +350,7 @@ function appendGroup(runId: string, data: ProcHistoryRecordData[], metadata?: Pr
 function processes(): ProcListEntry[] {
   return [
     { pid: SHIP.pid, uid: OWNER.uid, username: SHIP.username, interactive: true, personal: true, parentPid: null, state: world.run ? (world.run.approval ? "waiting_hil" : world.run.open ? "waiting_tool" : "running") : "idle", activeRunId: world.run?.runId ?? null, queuedCount: 0, lastActiveAt: world.messages.at(-1)?.createdAt ?? null, label: "ship", createdAt: at(6, 10, 0), cwd: SHIP.home },
-    { pid: HELPER.pid, uid: OWNER.uid, username: SHIP.username, interactive: false, personal: false, parentPid: SHIP.pid, state: "running", activeRunId: "run-helper", queuedCount: 0, lastActiveAt: Date.now() - 40_000, label: HELPER.label, createdAt: at(0, 7, 58), cwd: SHIP.home },
+    { pid: HELPER.pid, uid: OWNER.uid, username: SHIP.username, interactive: false, personal: false, parentPid: SHIP.pid, state: world.helperApproval ? "waiting_hil" : "running", activeRunId: "run-helper", queuedCount: 0, lastActiveAt: Date.now() - 40_000, label: HELPER.label, createdAt: at(0, 7, 58), cwd: SHIP.home },
   ];
 }
 
@@ -363,7 +366,7 @@ function history(pid: string, since: string | undefined): ProcHistoryRecordsResu
   return {
     ok: true, pid, format: 2, records, messages: [], messageCount: pid === SHIP.pid ? world.messageId : 0,
     hasMoreBefore: false, hasMoreAfter: false, activeRunId: pid === SHIP.pid ? world.run?.runId ?? null : null,
-    pendingHil: pid === SHIP.pid ? world.run?.approval?.request ?? null : null, context: pid === SHIP.pid ? world.context : null, contextRevision: world.context?.revision ?? 0,
+    pendingHil: pid === SHIP.pid ? world.run?.approval?.request ?? null : pid === HELPER.pid ? world.helperApproval : null, context: pid === SHIP.pid ? world.context : null, contextRevision: world.context?.revision ?? 0,
     historyRevision: world.revision, historyGeneration: 1, historyResetRevision: 0, reset: false, hasMore: false, cursor: `mock:${world.revision}`,
   };
 }
@@ -401,6 +404,11 @@ type ShipRuntime = { state: "running" | "waiting_tool" | "waiting_hil" | "idle";
 function announce(state: ShipRuntime["state"], runId: string | null): void {
   const runtime: ShipRuntime = { state, activeRunId: runId, queuedCount: 0, lastActiveAt: Date.now() };
   broadcast("proc.changed", { pid: SHIP.pid, changes: ["state"], runtime });
+}
+
+function announceHelper(): void {
+  const runtime: ShipRuntime = { state: world.helperApproval ? "waiting_hil" : "running", activeRunId: "run-helper", queuedCount: 0, lastActiveAt: Date.now() };
+  broadcast("proc.changed", { pid: HELPER.pid, changes: ["state"], runtime });
 }
 
 /** The Process's own proc.changed, which always carries the history revision so clients read the delta. */
@@ -648,6 +656,15 @@ function finishRun(run: OpenRun, text: string | null): void {
 async function answer(run: OpenRun, trigger: string): Promise<void> {
   await wait(0);
   if (!live(run)) return;
+  if (trigger === "/approve-helper") {
+    world.helperApproval = {
+      pid: HELPER.pid, requestId: `helper-approval-${Date.now()}`, runId: "run-helper", callId: "call-helper", toolName: "Shell",
+      syscall: "shell.exec", target: "gsv", args: { input: "du -sh ~/notes/archive/*" },
+      purpose: "measure how much room each notes archive folder takes", createdAt: Date.now(),
+    };
+    announceHelper();
+    broadcast("proc.run.hil.requested", world.helperApproval);
+  }
   const approval = approvalFor(trigger);
   if (approval) {
     await askApproval(run, approval);
@@ -809,6 +826,11 @@ function route(socket: MockSocket, id: string, call: string, args: JsonValue): s
     }
     case "proc.hil": {
       const { pid = SHIP.pid, requestId, decision } = hilArgs.parse(args);
+      if (pid === HELPER.pid && world.helperApproval?.requestId === requestId) {
+        world.helperApproval = null;
+        announceHelper();
+        return respond(id, { ok: true, pid, requestId, decision, resumed: true, pendingHil: null });
+      }
       const run = world.run;
       const approval = run?.approval;
       if (pid !== SHIP.pid || !run || !approval || approval.request.requestId !== requestId) {
