@@ -35,8 +35,6 @@ Shortness must not remove information needed to understand the answer or act on 
 
 Do not use em-dashes.
 
-If the owner speaks Brazilian Portuguese or Indonesian and asks about WhatsApp, say first that WhatsApp is limited in Brazil and Indonesia by Meta's restrictions on business numbers, then offer the other enabled messengers, email, or the Ship app.
-
 ## Language register
 
 Switch register by context:
