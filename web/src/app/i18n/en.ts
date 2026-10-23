@@ -1063,7 +1063,7 @@ export const en = {
   "session.setup.aboutShip": "Ship is an AI assistant that can use your computer and connected services to get things done.",
   "session.setup.aboutAccess": "Depending on what you allow, it can work with files, run commands, use websites and signed-in services, and send communications on your behalf.",
   "session.setup.aboutRisk": "Ship is in early access and can make mistakes. Some actions can be difficult to undo, so keep backups of important data and review consequential actions carefully.",
-  "session.setup.opening": "Opening Ship…",
+  "session.setup.opening": "Opening Ship",
   "session.setup.activate": "Activate Ship",
 
   // Session: unfinished setup

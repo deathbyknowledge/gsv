@@ -1064,7 +1064,7 @@ export const es = {
   "session.setup.aboutShip": "Ship es un asistente de IA que puede usar tu ordenador y tus servicios conectados para hacer las cosas por ti.",
   "session.setup.aboutAccess": "Según lo que le permitas, puede trabajar con archivos, ejecutar comandos, usar sitios web y servicios con sesión iniciada y enviar comunicaciones en tu nombre.",
   "session.setup.aboutRisk": "Ship está en acceso anticipado y puede cometer errores. Algunas acciones pueden ser difíciles de deshacer, así que guarda copias de seguridad de los datos importantes y revisa con atención las acciones con consecuencias.",
-  "session.setup.opening": "Abriendo Ship…",
+  "session.setup.opening": "Abriendo Ship",
   "session.setup.activate": "Activar Ship",
 
   // Session: unfinished setup

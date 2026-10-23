@@ -11,6 +11,8 @@ another username. Continue to review the early-access disclosure and confirm the
 age, Terms of Service and Privacy Policy
 agreement before creating your account. **Back** lets you revise your credentials.
 Creating your account signs you in and opens Chat, your conversation with your Ship.
+While activation completes, **Opening Ship** cycles through three, two, one and
+no dots. With reduced motion enabled, the three dots stay still.
 The first time you open the web app, a welcome card from Kawah appears with the
 heading "Welcome to your Ship!" and large, readable text. Close it
 or choose **Try it out!** to dismiss it for your account across web and Desktop.
