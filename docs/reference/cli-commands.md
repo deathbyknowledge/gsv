@@ -141,7 +141,6 @@ message delivery show DELIVERY_ID [--json]
 message send [--message TEXT]
 yield
 message send --to DESTINATION [--message TEXT] [--attach PATH]... [--mime TYPE] [--delivery-id ID] [--responsibility ID] [--also]
-contact identity
 contact find @HANDLE|ADDRESS
 contact list [--all] [--json]
 contact alias CONTACT_ID NAME|--clear

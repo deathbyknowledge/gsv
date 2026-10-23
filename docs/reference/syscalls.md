@@ -736,7 +736,6 @@ never supplied by the remote person, and activation admits no Ship work itself.
 
 | Syscall | Behavior |
 |---|---|
-| `contact.identity` | Returns this installation's signed Ship document and the caller's local federation subject. |
 | `contact.invite.create` | Creates a one-use pairing code and shareable link, with an optional expiry of up to seven days. |
 | `contact.invite.accept` | Accepts a link or code, verifies and consumes the remote invite, creates both contact records, and ensures the local Contact conversation. |
 | `contact.invite.list` | Lists invitation lifecycle metadata without exposing recoverable invitation secrets. |
@@ -846,10 +845,6 @@ type ContactRequestRecord = {
   updatedAtMs: number;
 };
 type ContactSyscalls = {
-  "contact.identity": {
-    args: Record<string, never>;
-    result: { document: FederationShipDocument; subject: FederationSubject };
-  };
   "contact.invite.create": {
     args: { expiresInSeconds?: number };
     result: { inviteId: string; code: string; url?: string; expiresAtMs: number };
