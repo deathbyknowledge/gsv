@@ -15,7 +15,7 @@ describe("Git proxy requests", () => {
         },
       },
     );
-    const match = matchGitPath(new URL(request.url));
+    const match = matchGitPath(request);
     expect(match).not.toBeNull();
 
     const proxied = await buildGitProxyRequest(request, match!, "alice");
