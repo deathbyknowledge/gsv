@@ -1,0 +1,21 @@
+{
+  // The host as it deploys, with the smoke worker as its PLC directory and Accounts.
+  "name": "gsv-pds-smoke-host",
+  "main": "../src/index.ts",
+  "compatibility_date": "2026-08-22",
+  "compatibility_flags": ["nodejs_compat"],
+  "durable_objects": {
+    "bindings": [
+      { "name": "REPOS", "class_name": "HostedRepo" },
+      { "name": "FIREHOSE", "class_name": "HostFirehose" }
+    ]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["HostedRepo", "HostFirehose"] }],
+  "r2_buckets": [{ "binding": "BLOBS", "bucket_name": "gsv-pds-smoke-blobs" }],
+  // run.mjs sets the origins for the port it picks, and a fresh PLC_ROTATION_KEY.
+  "vars": {
+    "PDS_ORIGIN": "http://127.0.0.1:9",
+    "PLC_URL": "http://127.0.0.1:9"
+  },
+  "services": [{ "binding": "INSTALLATION_DIRECTORY", "service": "gsv-pds-smoke", "entrypoint": "SmokeAccounts" }]
+}

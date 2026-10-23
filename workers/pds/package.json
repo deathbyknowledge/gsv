@@ -6,6 +6,7 @@
   "scripts": {
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
+    "smoke": "node smoke/run.mjs",
     "cf-typegen": "wrangler types --include-runtime=false --config wrangler.test.jsonc"
   },
   "dependencies": {

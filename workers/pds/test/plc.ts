@@ -8,7 +8,6 @@ import {
   type DidPlcString,
   type IndexedEntryWithSigner,
 } from "@atcute/did-plc";
-import { vi } from "vitest";
 import type { DidDocument } from "../src/host/identity";
 
 /**
@@ -65,15 +64,6 @@ export class FakePlcDirectory {
     }
     return new Response(null, { status: 200 });
   }
-}
-
-/** Sends this isolate's requests for origin to the directory and fails any other outbound request. */
-export function installFakePlc(directory: FakePlcDirectory, origin: string): void {
-  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
-    const request = new Request(input, init);
-    if (new URL(request.url).origin !== origin) throw new Error(`Unexpected request to ${request.url}`);
-    return directory.handle(request);
-  });
 }
 
 /** The document plc.directory serves for an operation's state. */

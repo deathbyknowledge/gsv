@@ -11,8 +11,8 @@ import { admitInstallation } from "../src/gsv/admission";
 import type { PdsEnv } from "../src/gsv/env";
 import { PdsPublisherEntrypoint } from "../src/gsv/publisher";
 import worker from "../src/index";
-import { FakePlcDirectory, installFakePlc } from "./plc";
-import { deliver, errorOf, read, rejection } from "./support";
+import { FakePlcDirectory } from "./plc";
+import { deliver, errorOf, installFakePlc, read, rejection } from "./support";
 
 const NOTE = "space.gsv.note";
 

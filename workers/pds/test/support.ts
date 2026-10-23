@@ -2,6 +2,7 @@ import { runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
 import { expect, vi } from "vitest";
 import { z } from "zod";
 import type { HostedRepo } from "../src/host/repo";
+import type { FakePlcDirectory } from "./plc";
 
 /** Parses a successful XRPC response with the schema a test expects. */
 export async function read<T extends z.ZodType>(schema: T, response: Promise<Response>): Promise<z.output<T>> {
@@ -38,5 +39,14 @@ export async function deliver(repo: DurableObjectStub<HostedRepo>): Promise<void
         delivered,
       ).one().pending;
     })).toBe(0);
+  });
+}
+
+/** Sends this isolate's requests for origin to the directory and fails any other outbound request. */
+export function installFakePlc(directory: FakePlcDirectory, origin: string): void {
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const request = new Request(input, init);
+    if (new URL(request.url).origin !== origin) throw new Error(`Unexpected request to ${request.url}`);
+    return directory.handle(request);
   });
 }

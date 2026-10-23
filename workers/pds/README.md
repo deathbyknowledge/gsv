@@ -80,3 +80,22 @@ XRPC reads, including an unknown DID that must not address any object.
 The GSV tests use an in-memory Accounts directory. They cover the publishing
 authority, installations that are not active, the handles a new account may
 take, the installation's blob prefix, and how each installation state reads.
+
+## Smoke check
+
+```bash
+GOAT=/path/to/goat npm run smoke --workspace @humansandmachines/gsv-pds
+```
+
+The smoke check runs a clean local host and checks it with
+[goat](https://github.com/bluesky-social/goat), the reference ATProto CLI. One
+wrangler session runs the host from `src/index.ts`. A second runs
+`smoke/worker.ts`, which stands in for the PLC directory, Accounts and the
+Kernel's publisher binding. The run creates an account, uploads a blob, and
+creates, updates and deletes records in three commits. goat then resolves the
+DID, exports and inspects the repository, reads the records and blobs, and
+lists the host's accounts. It also follows the firehose live and from cursor 0,
+verifying each commit's signature and MST.
+
+goat 0.2.5 and later refuse loopback addresses, so `GOAT` must name a goat
+0.2.4 binary.

@@ -13,5 +13,5 @@
     // ignores; without this, @atproto's CID type collapses to an empty interface.
     "paths": { "multiformats/*": ["../../node_modules/multiformats/types/src/*"] }
   },
-  "include": ["src/**/*", "test/**/*"]
+  "include": ["src/**/*", "test/**/*", "smoke/**/*"]
 }

@@ -12,9 +12,9 @@ import { FIREHOSE_NAME, HostFirehose, type OutboxEvent, type RepoState } from ".
 import { mintIdentity, registerGenesis } from "../src/host/identity";
 import { HostedRepo, type LexObject, type RepoWrite } from "../src/host/repo";
 import { handleXrpc, type Admission } from "../src/host/xrpc";
-import { FakePlcDirectory, installFakePlc } from "./plc";
+import { FakePlcDirectory } from "./plc";
 import { framesFor, subscribe, verifyCommit, type Frame } from "./relay";
-import { deliver, errorOf, read, rejection } from "./support";
+import { deliver, errorOf, installFakePlc, read, rejection } from "./support";
 
 const NOTE = "space.gsv.note";
 
