@@ -99,6 +99,15 @@ export const en = {
 
   // Settings: preferences and models
   "settings.unavailableOption": "{value} (unavailable)",
+  "settings.preferences.leaveUnsaved": "You have unsaved preferences. Leave without saving? Your changes will be kept here.",
+  "settings.preferences.noChanges": "No unsaved changes",
+  "settings.preferences.unsaved": "Unsaved changes",
+  "settings.preferences.save": "Save changes",
+  "settings.account.title": "Account",
+  "settings.account.deleteTitle": "Delete your account",
+  "settings.account.deleteRequest": "To delete your account, email {email} and we’ll delete it manually for you.",
+  "settings.account.deleteExplanation": "Ship is still in early access, so we haven’t added a self-service deletion option yet.",
+
   "settings.preferences.title": "Preferences",
   "settings.preferences.intro": "Defaults for {name}. Helpers without their own settings inherit these defaults.",
   "settings.preferences.loading": "Loading preferences…",
@@ -146,9 +155,12 @@ export const en = {
   "settings.reasoning.save": "save effort",
 
   // Settings: language, timezone and appearance
+  "settings.language.invalid": "Enter a valid language code, such as es-MX.",
+  "settings.language.code": "Language code",
+  "settings.language.custom": "Other language…",
   "settings.language.label": "Language",
   "settings.language.placeholder": "Automatic",
-  "settings.language.hint": "Ship starts in this language, and the interface uses it when a translation is available. Choose a suggestion or enter a language code, such as es-MX. You can ask Ship to switch at any time.",
+  "settings.language.hint": "Ship and the interface use this language. You can ask Ship to switch at any time.",
   "settings.language.save": "save language",
   "settings.language.useDevice": "use this device’s language",
   "settings.timezone.label": "Timezone",
@@ -162,6 +174,7 @@ export const en = {
   "settings.appearance.system": "Match system",
   "settings.appearance.light": "Light",
   "settings.appearance.dark": "Dark",
+  "settings.appearance.showStars": "Show stars",
   "settings.appearance.hint": "Saved on this device only, not to your account. Press l outside a text field to switch between light and dark.",
 
   // Settings: standing responsibilities
@@ -194,6 +207,7 @@ export const en = {
   "settings.permissions.ruleTarget": "Rule {number} target",
   "settings.permissions.action": "Action",
   "settings.permissions.ruleAction": "Rule {number} action",
+  "settings.permissions.moveDown": "move down",
   "settings.permissions.moveUp": "move up",
   "settings.permissions.addRule": "add rule",
   "settings.permissions.save": "save policy",
@@ -240,6 +254,7 @@ export const en = {
   "settings.instructions.gone": "This instruction file is no longer available.",
 
   // Settings: messengers
+  "settings.messengers.comingSoon": "Coming soon",
   "settings.messengers.title": "Messengers",
   "settings.messengers.intro": "Choose where you talk to your Ship.",
   "settings.messengers.telegram": "Talk to your Ship from Telegram.",
@@ -444,6 +459,7 @@ export const en = {
   "settings.recovery.setUp": "set up recovery",
 
   // Settings: logs
+  "settings.logs.intro": "See what Ship has done, when it happened, and whether it succeeded. Select an entry for details.",
   "settings.logs.title": "Logs",
   "settings.logs.activity": "Activity",
   "settings.logs.history": "Syscall history",
@@ -1238,7 +1254,7 @@ export const en = {
   "shell.help.label": "Help",
   "shell.help.search": "Search Chat",
   "shell.help.views": "Views & appearance",
-  "shell.help.viewsHint": "Navigation shortcuts work outside text fields and the connection and model forms.",
+  "shell.help.viewsHint": "Navigation shortcuts work when you’re not typing or setting up a connection or AI model. See Settings to toggle off background stars.",
   "shell.help.memory": "Memory",
   "shell.help.people": "People",
   "shell.help.theme": "Switch between light and dark",

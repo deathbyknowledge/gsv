@@ -2,6 +2,24 @@
 
 One Settings surface uses the web app header and existing gateway services. It edits the signed-in account’s defaults; it never chooses another account when identity is unavailable.
 
+Preferences → Appearance also offers **Show stars**. This device-local choice
+applies immediately to the shared background across views and sign-in, and
+survives reloads. Turning stars off stops their renderer and animation.
+
+Appearance is the first Preferences group and applies immediately. Model order,
+reasoning, language and timezone use one sticky Save changes bar. Language is a
+native select offering English, Spanish and Portuguese. The
+complete draft is validated before the existing per-key writes begin. Failed
+saves retain drafts and refresh server state so partially saved changes are not
+blindly rewritten. Save, discard and dirty status remain visible while scrolling.
+Leaving unsaved preferences prompts before navigation, including browser history;
+accepted navigation preserves the draft. Other settings retain their own save flows.
+Standing responsibilities put the checkbox alongside a single title/description
+label, separated from the next responsibility by spacing and a rule. Logs explains
+its action history above the entries. Messengers lists WhatsApp first and labels
+Slack and Discord Coming soon; their connect and reconnect actions are disabled while existing links remain inspectable and removable.
+Account explains manual early-access deletion and links to hello@humansandmachin.es.
+
 The section rail fits its widest label, including an unsaved-change marker, and
 its buttons keep their natural height at every zoom level. A short
 viewport scrolls the rail instead of compressing its buttons. On narrow layouts,
@@ -11,7 +29,7 @@ with the same selection exposed through `aria-current`.
 On wide layouts, the rail divider follows its natural width and reaches the top
 of the window. Only the content panes scroll; neither can pass behind the header.
 
-- Preferences shows the effective first choice and fallback order. Every entry can be dragged or moved with arrow controls across personal, shared and included models. Saving writes the owner's `ai/model_order` ID list and clears an older `preferred_model` choice, preserving model definitions and credentials. Use configured order clears both ordering preferences. Missing IDs are skipped and newly available models follow the saved order. The gateway and UI share ordering semantics, including process first-choice overrides. Reasoning is saved independently. Add model uses the web app's controls in both themes, with provider/connection fields and optional settings behind a disclosure. It shares gateway validation and profile serialization with the rest of the web app; Codex sign-in is explicit and polling stops when the form is hidden or closed. Model drafts survive section and view changes and participate in sign-out and reload protection. Appearance chooses Match system, Light or Dark; it applies immediately and is stored in this browser's storage rather than server settings, shared with the `l` key and the sign-in screens.
+- Preferences shows the effective first choice and fallback order. Every entry can be dragged or moved with arrow controls across personal, shared and included models. Saving writes the owner's `ai/model_order` ID list and clears an older `preferred_model` choice, preserving model definitions and credentials. Use configured order clears both ordering preferences. Missing IDs are skipped and newly available models follow the saved order. The gateway and UI share ordering semantics, including process first-choice overrides. Reasoning shares the preference save action. Add model uses the web app's controls in both themes, with provider/connection fields and optional settings behind a disclosure. It shares gateway validation and profile serialization with the rest of the web app; Codex sign-in is explicit and polling stops when the form is hidden or closed. Model drafts survive section and view changes and participate in sign-out and reload protection. Appearance chooses Match system, Light or Dark; it applies immediately and is stored in this browser's storage rather than server settings, shared with the `l` key and the sign-in screens.
 - Preferences also edits the owner's Language and Timezone. Activation derives the initial language from the browser; the owner can choose another BCP 47 language tag or clear it. Ship uses it as a starting hint and follows the user's current language or explicit request. The interface follows it when a catalog exists for that language; production builds include only English so far (see [Interface language](../../../i18n/README.md)). Language drafts participate in the existing unsaved-change protection, and saves use the owner-scoped locale configuration boundary.
 - Permissions edits simple approval policies without changing rule order. Target specificity, then capability specificity, then source order determine matching. Unknown or malformed policies remain unchanged and can be inspected verbatim. Preparing a replacement starts from the inherited policy and requires a separate save; failed saves retain the draft. Saving rereads the account key and refuses an observed concurrent change. Account grants remain authoritative and are inspectable with human-readable labels.
 - Instructions lists `~/context.d/*.md` files and loads one selected file at a time. New instruction opens a name and the same Markdown editor; `.md` is added automatically, and creation rechecks for file or directory name collisions. A missing folder is an empty state. Reads retain exact text; non-text, incomplete, and failed reads cannot be saved. Blank files are valid. Only the selected file is written or deleted. Deletion requires its own capability and an inline confirmation that also explains any unsaved changes being discarded. New and existing drafts survive section switches; failed operations keep the draft and selection. Successful changes cancel stale reads and update the affected list/file caches.
@@ -51,7 +69,7 @@ continue to use their existing default connection.
 
 Custom MCP headers are an optional disclosure in the add-server form. Values remain masked, empty rows are ignored, and malformed or duplicate names cannot be submitted. Header drafts survive section and view changes and participate in sign-out and reload protection. Successful creation clears the values; failed creation retains them. Headers use the existing MCP transport contract and are never saved into browser storage.
 
-The approval editor supports tool/target/action rules. Contacts, invitations, conversations, public profiles and cross-Ship request management belong to People.
+The compact approval editor supports tool/target/action rules, with arrow buttons to reorder rows and a small Remove directly beneath each tool dropdown. Contacts, invitations, conversations, public profiles and cross-Ship request management belong to People.
 
 Settings includes a quiet sign-out action beside the current username. Unsaved work across all retained web app views requires confirmation before signing out; the shared session service clears the stored credential, revokes the current UI token and returns to login.
 

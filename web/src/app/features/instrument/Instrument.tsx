@@ -190,15 +190,14 @@ function InstrumentReady({ initialPath, handsfreeDirty }: { initialPath: string;
         return true;
       }
       if (reference) setFleetRequest({ reference });
-      navigateApp(visitedPaths.current[to] ?? DISTANCE_TO_PATH[to]);
-      return true;
+      return navigateApp(visitedPaths.current[to] ?? DISTANCE_TO_PATH[to]);
     },
     [distance, fleetDirty, t],
   );
 
   const openSearch = useCallback(() => {
     if (status.state !== "connected") return;
-    move("zen");
+    if (!move("zen")) return;
     setHelp(false);
     setSearchRequested(true);
   }, [move, status.state]);
