@@ -1,0 +1,117 @@
+import type { ComponentChildren, JSX, RefObject, VNode } from "preact";
+import { useLayoutEffect } from "preact/hooks";
+import { act } from "preact/test-utils";
+import { QueryClient, QueryClientProvider } from "@tanstack/preact-query";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { collectNodes, collectText, createTestRoot } from "../../../testing/testHarness";
+import { GatewayProvider } from "../../../services/gateway/GatewayProvider";
+import { chatProcessMediaQueryKey } from "../../../services/chat/hooks/useChatProcesses";
+import { AttachmentPreview } from "./AttachmentPreview";
+import { AttachmentPreviews } from "./AttachmentPreviews";
+import { ZenMedia } from "./ZenMedia";
+
+let previewTree: ComponentChildren;
+const dialogElement = { showModal: vi.fn(), close: vi.fn() };
+
+// Keep the real viewer hooks and URL ownership; only replace DOM insertion.
+vi.mock("./AttachmentPreview", async (importOriginal) => {
+  const { AttachmentPreview } = await importOriginal<typeof import("./AttachmentPreview")>();
+  return { AttachmentPreview: (props: Parameters<typeof AttachmentPreview>[0]) => {
+    previewTree = AttachmentPreview(props);
+    // SAFETY: The viewer returns a dialog with this ref. The lifecycle uses only showModal/close.
+    const dialog = previewTree as VNode<JSX.DialogHTMLAttributes<HTMLDialogElement>>;
+    (dialog.ref as RefObject<HTMLDialogElement>).current = dialogElement as unknown as HTMLDialogElement;
+    useLayoutEffect(() => () => { previewTree = null; }, []);
+    return null;
+  } };
+});
+
+let root: ReturnType<typeof createTestRoot> | undefined;
+afterEach(async () => {
+  await root?.unmount();
+  root = undefined;
+  previewTree = null;
+  vi.restoreAllMocks();
+  vi.clearAllMocks();
+  vi.unstubAllGlobals();
+});
+
+async function open() {
+  let rowTree: ComponentChildren;
+  class Trigger { isConnected = true; focus = vi.fn(); }
+  const trigger = new Trigger();
+  vi.stubGlobal("HTMLElement", Trigger);
+  vi.stubGlobal("window", Object.assign(new EventTarget(), { location: { search: "" }, sessionStorage: { getItem: () => null } }));
+  vi.stubGlobal("document", Object.assign(new EventTarget(), { activeElement: trigger }));
+  const cache = new QueryClient({ defaultOptions: { queries: { gcTime: Infinity } } });
+  const blob = new Blob(["package main\n"], { type: "text/plain" });
+  cache.setQueryData(chatProcessMediaQueryKey({ key: "source", pid: "proc:test" }), { blob });
+  function Row() {
+    rowTree = ZenMedia({ media: { type: "document", mimeType: blob.type, key: "source", filename: "main.go" }, processId: "proc:test" });
+    useLayoutEffect(() => () => { rowTree = null; trigger.isConnected = false; }, []);
+    return collectNodes(rowTree).filter((node) => node.type === AttachmentPreview);
+  }
+  function Shell({ showRow }: { showRow: boolean }) {
+    return <GatewayProvider><QueryClientProvider client={cache}>
+      <AttachmentPreviews>{showRow && <Row />}</AttachmentPreviews>
+    </QueryClientProvider></GatewayProvider>;
+  }
+  root = createTestRoot("Shell-owned attachment preview");
+  await root.render(<Shell showRow />);
+  const rowUrl = collectNodes(rowTree).find((node) => node.type === "a")?.props.href;
+  await act(() => { collectNodes(rowTree).find((node) => node.type === "button")?.props.onClick?.(); });
+  await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
+  return {
+    trigger,
+    rowUrl,
+    removeRow: () => root!.render(<Shell showRow={false} />),
+    row: () => rowTree,
+  };
+}
+
+describe("shell-owned attachment previews", () => {
+  it.each(["close", "escape", "session teardown"])("survives source row unmount until %s", async (ending) => {
+    const revoke = vi.spyOn(URL, "revokeObjectURL");
+    const view = await open();
+    const url = collectNodes(previewTree).find((node) => node.type === "a")?.props.href;
+    expect(url).toMatch(/^blob:/);
+    expect(url).not.toBe(view.rowUrl);
+    expect(dialogElement.showModal).toHaveBeenCalledOnce();
+    expect(collectText(previewTree)).toContain("package main\n");
+
+    await view.removeRow();
+    expect(view.row()).toBeNull();
+    expect(collectText(previewTree)).toContain("package main\n");
+    expect(dialogElement.close).not.toHaveBeenCalled();
+    expect(revoke).toHaveBeenCalledWith(view.rowUrl);
+    expect(revoke).not.toHaveBeenCalledWith(url);
+    // The retained download still resolves to the exact authenticated bytes.
+    expect(await (await fetch(url!)).text()).toBe("package main\n");
+
+    if (ending === "session teardown") {
+      await root!.unmount();
+      root = undefined;
+    } else {
+      await act(() => {
+        if (ending === "close") collectNodes(previewTree).find((node) => node.type === "button")?.props.onClick?.();
+        else {
+          // SAFETY: This is the dialog VNode, and cancel only reads preventDefault.
+          const dialog = previewTree as VNode<JSX.DialogHTMLAttributes<HTMLDialogElement>>;
+          const event = new Event("cancel", { cancelable: true }) as JSX.TargetedEvent<HTMLDialogElement>;
+          dialog.props.onCancel?.(event);
+          expect(event.defaultPrevented).toBe(true);
+        }
+      });
+    }
+    expect(previewTree).toBeNull();
+    expect(dialogElement.close).toHaveBeenCalledOnce();
+    expect(revoke).toHaveBeenCalledWith(url);
+    expect(view.trigger.focus).not.toHaveBeenCalled();
+  });
+
+  it("returns focus to the source action when it is still connected", async () => {
+    const view = await open();
+    await act(() => { collectNodes(previewTree).find((node) => node.type === "button")?.props.onClick?.(); });
+    expect(view.trigger.focus).toHaveBeenCalledExactlyOnceWith({ preventScroll: true });
+  });
+});

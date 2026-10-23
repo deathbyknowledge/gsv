@@ -7,10 +7,13 @@ import { MediaPreviewProvider } from "../../../services/platform/MediaPreview";
 import { GatewayProvider } from "../../../services/gateway/GatewayProvider";
 import { chatProcessMediaQueryKey } from "../../../services/chat/hooks/useChatProcesses";
 import { AttachmentPreview } from "./AttachmentPreview";
+import { AttachmentPreviews } from "./AttachmentPreviews";
 import { ZenDraftPaste, ZenMedia } from "./ZenMedia";
 
+vi.mock("./AttachmentPreview", () => ({ AttachmentPreview: vi.fn(() => null) }));
+
 let root: ReturnType<typeof createTestRoot> | undefined;
-afterEach(async () => { await root?.unmount(); root = undefined; vi.unstubAllGlobals(); });
+afterEach(async () => { await root?.unmount(); root = undefined; vi.unstubAllGlobals(); vi.clearAllMocks(); });
 
 async function links(desktop: boolean, type: "image" | "document", mimeType: string, url?: string) {
   let tree: ComponentChildren;
@@ -25,7 +28,7 @@ async function links(desktop: boolean, type: "image" | "document", mimeType: str
   }
   root = createTestRoot("Attachment actions");
   await root.render(<GatewayProvider><QueryClientProvider client={cache}>
-    {desktop ? <MediaPreviewProvider preview={preview}><Harness /></MediaPreviewProvider> : <Harness />}
+    <AttachmentPreviews>{desktop ? <MediaPreviewProvider preview={preview}><Harness /></MediaPreviewProvider> : <Harness />}</AttachmentPreviews>
   </QueryClientProvider></GatewayProvider>);
   // SAFETY: All matching nodes are anchor VNodes; the generic harness omits DOM-specific attributes.
   const anchors = collectNodes(tree).filter((node) => node.type === "a") as VNode<JSX.AnchorHTMLAttributes<HTMLAnchorElement>>[];
@@ -34,12 +37,12 @@ async function links(desktop: boolean, type: "image" | "document", mimeType: str
 
 describe("attachment opening", () => {
   it("opens browser images in the app without downloading or navigating", async () => {
-    const { anchors, preview, nodes } = await links(false, "image", "image/png");
+    const { anchors, preview } = await links(false, "image", "image/png");
     // SAFETY: The anchor handler only uses Event.preventDefault.
     const event = new Event("click", { cancelable: true }) as JSX.TargetedMouseEvent<HTMLAnchorElement>;
     await act(() => { anchors[0].props.onClick?.(event); });
     expect(event.defaultPrevented).toBe(true);
-    expect(nodes().some((node) => node.type === AttachmentPreview)).toBe(true);
+    expect(AttachmentPreview).toHaveBeenCalledWith(expect.objectContaining({ blob: expect.any(Blob), mimeType: "image/png" }), expect.anything());
     expect(preview).not.toHaveBeenCalled();
     expect(anchors[1].props.download).toBe("attachment.png");
   });
@@ -49,7 +52,7 @@ describe("attachment opening", () => {
     const open = nodes().find((node) => node.type === "button");
     expect(collectText(open)).toBe("attachment.png");
     await act(() => open?.props.onClick?.());
-    expect(nodes().some((node) => node.type === AttachmentPreview)).toBe(true);
+    expect(AttachmentPreview).toHaveBeenCalledWith(expect.objectContaining({ blob: expect.any(Blob), mimeType }), expect.anything());
     expect(anchors).toHaveLength(1);
     expect(collectText(anchors[0])).toBe("download");
     expect(anchors[0].props.download).toBe("attachment.png");

@@ -282,9 +282,11 @@ action. Raster images appear in the message and can be enlarged. Text, JSON, CSV
 open as text, Markdown uses the chat sanitizer, and PDFs use the browser's native viewer when
 available. Text previews are limited to 1 MiB; larger text, unsupported binaries and active formats
 such as HTML and SVG offer download instead of executing content. Audio and video retain their
-inline players. No attachment is uploaded to an external viewer.
+inline players. Common source and configuration filenames (including `Dockerfile`) are recognized
+even when the browser supplies no MIME type. No attachment is uploaded to an external viewer.
 
-The preview owns its temporary URL, so navigating away from the source message cannot invalidate an
+The signed-in Instrument shell owns the active preview and its temporary URL, independently of
+message rows and conversation paging. Navigating away from the source message cannot invalidate an
 open preview; closing or unmounting it, or signing out, releases that URL. Close or Escape returns
 to the conversation. Desktop retains native file saving and its raster-image viewer.
 Older messages may link directly to a remote file; those links still open separately in the browser,

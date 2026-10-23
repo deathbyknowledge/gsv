@@ -4,6 +4,7 @@ import { useColorTheme } from "../../components/ui/useColorTheme";
 import { InstrumentBackdrop } from "./shared/InstrumentBackdrop";
 import { SessionScreens } from "../session/SessionScreens";
 import { useSession } from "../../services/session/SessionProvider";
+import { AttachmentPreviews } from "./zen/AttachmentPreviews";
 import { TerminalProvider } from "../../services/terminal/TerminalProvider";
 import { DevicePairingProvider } from "../../services/machines/DevicePairingProvider";
 import { Zen } from "./zen/Zen";
@@ -385,6 +386,7 @@ function InstrumentReady({ initialPath, handsfreeDirty }: { initialPath: string;
           </>}
         </aside>
       ) : null}
+      <AttachmentPreviews>
       <div class="distance" data-view={distance} ref={scrollEdgesRef}>
         <BrowserControlOverlay />
         <RetainedView active={distance === "zen"}>
@@ -444,6 +446,7 @@ function InstrumentReady({ initialPath, handsfreeDirty }: { initialPath: string;
           />
         </RetainedView>
       </div>
+      </AttachmentPreviews>
       </div>
       </div>
     </div>
